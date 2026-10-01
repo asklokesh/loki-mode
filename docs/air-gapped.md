@@ -32,7 +32,7 @@ egress severed:
 | `loki plan <spec> --json` | works -- full cost and complexity estimate |
 | `loki proof list` | works |
 | `loki proof verify <id>` | works, and correctly reported `tree_drift: true` |
-| `loki heal <repo> --assess --json` | works -- maturity, ranked targets, runtime |
+| `loki modernize <repo> --to <target> --dry-run --json` | works -- analysis, estimates, no execution |
 
 The whole evaluate-before-you-buy path runs disconnected. You can assess a
 legacy codebase, estimate what a build would cost, and verify an existing
@@ -70,10 +70,9 @@ PR (`git push` and `gh pr create` after a successful run when `gh` is
 installed; `LOKI_DELEGATE_PR=0` turns it off).
 
 With a non-claude provider selected, `loki start` on the default (bash) route
-and `loki quickstart` never prompt the `claude` CLI, even when one is
-installed: PRD enrichment, done recognition, the council voters, the USAGE.md
-refresh and the quickstart intent check fall back to their deterministic
-paths. The opt-in Bun loop (`LOKI_SDK_LOOP=1`) is not yet held to this.
+never prompts the `claude` CLI, even when one is installed: PRD enrichment,
+done recognition, the council voters and the USAGE.md refresh fall back to
+their deterministic paths. The opt-in Bun loop (`LOKI_SDK_LOOP=1`) is not yet held to this.
 `LOKI_ALLOW_CLAUDE_SIDECALLS=1` restores those claude calls, and the audit then lists them as REQUIRED egress, so it cannot read air-gap ready.
 
 **We cannot run a build with no model at all.** Nobody can. What we can do is
@@ -96,7 +95,7 @@ in v8.6.0 requires a second explicit opt-in on top of that -- see
 
 ## Why `unknown` is the right answer offline
 
-`loki heal --assess` reports `dependency_staleness: unknown` and always will
+`loki modernize <repo> --to <target> --dry-run` reports `dependency_staleness: unknown` offline and always will
 without a network call. We know your manifest pins lodash 3.x; we do not know
 what is current upstream, and we will not guess.
 

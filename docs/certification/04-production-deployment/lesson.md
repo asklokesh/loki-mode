@@ -208,14 +208,12 @@ The completion council prevents premature termination and infinite loops. It is 
 | `LOKI_COUNCIL_MIN_ITERATIONS` | `3` | Min iterations before council runs |
 | `LOKI_COUNCIL_STAGNATION_LIMIT` | `5` | Max iterations with no git changes |
 
-CLI commands:
+The completion council is now part of the internal verification process. View completion verdicts via:
 
 ```bash
-loki council status        # Check council state
-loki council verdicts      # View past verdicts
-loki council convergence   # Check convergence metrics
-loki council force-review  # Force a council review
-loki council report        # Generate council report
+loki dashboard            # View all run verdicts in the dashboard
+loki verify [run-id]      # Verify a specific run's receipt
+loki proof list           # List past proofs and their verdicts
 ```
 
 ## QA Phase Configuration

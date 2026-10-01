@@ -24,7 +24,7 @@ Everything that exists today, including:
 - proof-of-run generation and local inspection: `loki proof list|show|open`.
 - Sharing a proof to a GitHub Gist: `loki proof share <id>` (uses your own `gh`
   auth; no Loki service involved).
-- Benchmark harness (`loki bench`), healing (`loki heal`), all CLI commands.
+- Benchmark harness (`loki bench`), legacy system modernization (`loki modernize <path> --to <target>`), all CLI commands.
 - Self-hosting the hosted publish endpoint: `loki proof share --hosted` posts to
   YOUR `LOKI_HOSTED_ENDPOINT`. Running your own endpoint is free.
 - Enterprise auth seams that already exist and are env-gated, not paywalled:

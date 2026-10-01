@@ -236,12 +236,10 @@ The Completion Council panel provides visibility into the multi-agent definition
 - `POST /api/council/force-review` - Trigger manual review
 
 **CLI Commands:**
+The completion council verdicts are now visible in the dashboard (Proof tab) and accessible via:
 ```bash
-loki council status         # Current state
-loki council verdicts       # Decision history
-loki council convergence    # Convergence data
-loki council force-review   # Trigger review
-loki council report         # Generate report
+loki dashboard             # View all run verdicts and council decisions
+loki verify [run-id]       # Verify a specific run's receipt and council verdict
 ```
 
 ---

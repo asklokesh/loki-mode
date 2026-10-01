@@ -464,7 +464,7 @@ For how Loki compares with other tools, see [docs/COMPARISON.md](docs/COMPARISON
 |---------|-------------|
 | `loki start [PRD]` | Start with optional PRD file (also accepts an issue ref; replaces deprecated `loki run`). Auto-opens the dashboard in the browser for interactive runs and passes native `--effort`/`--max-budget-usd`/`--fallback-model` for resilience (v7.25.0) |
 | `loki stop` | Stop execution |
-| `loki modernize heal <path>` | Legacy system healing (archaeology, stabilize, isolate, modernize, validate -- v6.67.0; was: `loki heal`) |
+| `loki modernize <path> --to <target>` | Legacy system modernization (archaeology, stabilize, isolate, modernize, validate; requires target like `python3` or `java21`). Use `--dry-run` for estimates only; full execution not yet ready. |
 | `loki pause` / `resume` | Pause/resume after current session |
 | `loki steer "<note>"` | Nudge a running build with a directive (writes `.loki/HUMAN_INPUT.md`; the loop reads it when `LOKI_PROMPT_INJECTION=1`) (v8.0.0) |
 | `loki status` | Show current status |

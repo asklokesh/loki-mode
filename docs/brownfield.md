@@ -26,44 +26,25 @@ SAS-to-PySpark. If you want a vendor-run modernization program, look at them
 seriously. What follows is what we do differently, not a claim that they are
 bad at this.
 
-## Start here: a read-only assessment that costs nothing
+## Start here: read-only analysis before modernizing
 
 ```sh
-loki heal ./your-repo --assess --json
+loki modernize ./your-repo --to <target> --dry-run --json
 ```
 
-No provider call, no API key, no spend, no writes. It reports:
+Use `--to python3` or `--to java21` (or another target). No provider call needed for `--dry-run`, no API key, no spend, no writes. It reports:
 
-- a **maturity level** with the reason stated (for example: "No test/spec files
-  detected: changes are unguarded")
-- **ranked targets** with blast-radius reasoning per file ("isolated (no inbound
-  imports -> low blast radius), 12 LOC")
-- **debt signals**: test ratio, TODO density
-- **the runtime it declares**: Node engine constraint, dependency count, and the
-  frameworks actually present in the manifest
-- **dependency lock status**
+- an **assessment** of what would be required for modernization
+- **dependency analysis** with complexity estimates
+- **blast-radius reasoning** per file
+- **the runtime it detects**: Node engine constraint, dependency count, frameworks present
+- **cost and time estimates**
 
-This is the honest opening move: you learn where to start before committing to
-anything.
+The `--dry-run` flag provides the honest opening move: you learn what would be involved before committing to anything.
 
-### What it deliberately does not tell you
+## Modernization (planned feature)
 
-`dependency_staleness` reports `unknown`, always, offline. We know your manifest
-pins lodash 3.x; we do not know what is current upstream without a network call,
-and we will not guess. That refusal is the same reason the assessment works
-inside an air-gapped network at all.
-
-## The healing phases
-
-```sh
-loki heal ./your-repo --phase archaeology   # map dependencies, catalog friction
-loki heal ./your-repo --phase stabilize     # add observability and tests, no behavior change
-loki heal ./your-repo --phase isolate       # adapter boundaries between components
-loki heal ./your-repo --phase modernize     # replace one component at a time, behind adapters
-loki heal ./your-repo --phase validate      # prove behavioral equivalence against the baseline
-```
-
-These call a provider and cost money. `--assess` does not.
+Legacy system modernization via `loki modernize <path> --to <target>` is being redesigned in v10. The `--dry-run` path (analysis only) is available now. Full execution (actual modernization with phases) will follow in a future release.
 
 ## Behavioral equivalence is the part worth arguing about
 

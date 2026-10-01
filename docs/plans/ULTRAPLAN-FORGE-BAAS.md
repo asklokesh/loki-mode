@@ -520,9 +520,9 @@ These feed back into the RAG injector so future projects benefit. This is the "m
 
 Forge functions execute inside the existing sandbox image. The Phase B vault sidecar (when it lands) becomes the secret-injection layer for forge functions automatically - no separate work.
 
-### 5.7 Healing mode
+### 5.7 Legacy system modernization
 
-`loki heal <path>` already exists at `autonomy/loki:9916`. Forge integrates by exposing `forge_db_introspect` against the *legacy* db and generating a characterization-test scaffolding. The healing flow then has structured ground truth instead of grepping for SQL strings.
+Forge can integrate with `loki modernize <path> --to <target>` to provide database schema understanding for legacy system conversions. The modernize flow would use `forge_db_introspect` to generate equivalence tests instead of string matching.
 
 ---
 

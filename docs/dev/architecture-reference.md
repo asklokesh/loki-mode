@@ -20,17 +20,11 @@ APPROVE is still required, and a reproduced blocking finding always vetoes
 regardless of vote count. D13 requires every council/review agent to pin its
 model explicitly rather than inherit the session model.
 
-## Legacy System Healing (introduced v6.67.0)
-- **Status**: Still active, no breaking changes since v6.67.0. Note: in v7.4.20 the `legacy-healing-auditor` reviewer was gated on healing-mode signals to avoid firing on non-healing changes.
-- **Inspired by**: Amazon AGI Lab's "How Agentic AI Helps Heal Systems We Can't Replace"
-- **CLI**: `loki heal <path> [--phase archaeology|stabilize|isolate|modernize|validate]` (`autonomy/loki` `cmd_heal`)
-- **Principles**: Friction-as-semantics, failure-first learning, universal adapters, incremental healing, institutional knowledge preservation
-- **Artifacts**: `.loki/healing/` (friction-map.json, failure-modes.json, institutional-knowledge.md)
-- **Review**: `legacy-healing-auditor` specialist added to code review pool (gated)
-- **Gate**: backward-compatibility / legacy-healing auditor (healing mode; not one of the 8 numbered gates) blocks removal of unclassified friction
-- **Hooks**: `hook_pre_healing_modify()` (`autonomy/hooks/migration-hooks.sh:283`), `hook_post_healing_modify()` (`:328`), `hook_healing_phase_gate()` (`:386`)
-- **Memory**: `FrictionPoint` and `FailureMode` schemas for healing-specific memory entries
-- **Skill**: `skills/healing.md` | **Reference**: `references/legacy-healing-patterns.md`
+## Legacy System Modernization (v10+)
+- **Status**: Redesigned in v10. Removed multi-phase healing system from v6-v9.
+- **v10 path**: `loki modernize <repo> --to <target> [--dry-run]` for analysis and conversion
+- **Design**: docs/v10/MODERNIZE.md
+- **Principles**: Behavior equivalence verification, deterministic oracles, risk-stratified execution
 
 ## Memory System (core complete v5.15.0; managed-memory + RAG injector v7.1.0+)
 - **Episodic**: Specific interaction traces (`.loki/memory/episodic/`)

@@ -12,7 +12,7 @@ Source: the D30 directive as dispatched on 2026-09-28 (PROGRESS.md 01:51Z entry)
 - First targets: Python 2 to 3, then Java 8 to 21. COBOL to Java and AngularJS to React come after the eval gates pass on the first two (section 6).
 
 **Non-goals**
-- No change to the legacy `loki migrate` (`autonomy/loki:17489`, `dashboard/migration_engine.py`). It is legacy engine code, `autonomy/loki` is on the no-edit list, and its phase gates are agent-judged rather than behavior-captured. It stays as it is.
+- The legacy migration system is removed in v10. `loki modernize` is the v10 replacement.
 - No model-judged equivalence. Equivalence is a deterministic diff over captured cases.
 - No claim of "complete" for a codebase unless every unit is proven equivalent.
 - No new always-on prompt text outside the cache-stable prefix.
@@ -37,7 +37,7 @@ loki modernize <repo> --to "<target>" [--budget USD] [--workers N] [--remote URL
 **Routing**
 - `bin/loki` gets one `modernize)` arm ahead of the `LOKI_ENGINE` block that execs `bun "$BUN_CLI" engine10 modernize "$@"`, so the legacy default tonight does not block it.
 - The engine10 `cli.ts` TABLE gets `modernize: { module: "modernize/cli.ts", fn: "main" }`.
-- Without bun, the command exits 1 with a one-line hint. It never falls back to `loki migrate`.
+- Without bun, the command exits 1 with a one-line hint and installation instructions.
 
 **Modernization id:** `mod-<utc>-<short>`. All state lives under `<repo>/.loki/modernize/<mid>/`.
 

@@ -17,10 +17,8 @@ real-claude timing in (d) therefore rests on the recorded logs (`run1.log`, `run
 `raw.log`) plus the source reading below. The gate's `--real` mode must pass a token via
 `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN`, or run with the real HOME.
 
-Entry point chosen for a new user (README.md "Use it"): `loki quickstart` is interactive and
-asks for an idea, so it cannot fix a given repo; the README's one-shot task command is
-`loki quick "<task>"`, which is what run1.log used and what the gate runs. The v10 engine
-(`LOKI_ENGINE=v10 loki "<task>" --no-pr`) is tested as a second entry.
+Entry point chosen for a new user (README.md "Use it"): the v10 one-shot task command is
+`loki "<task>"`, which is what the gate runs with `loki "<task>" --no-pr`. Both the stub and real provider paths are tested.
 
 | # | Defect | Reproduced | Command and rc | Evidence line | Class | Source |
 |---|--------|-----------|----------------|---------------|-------|--------|

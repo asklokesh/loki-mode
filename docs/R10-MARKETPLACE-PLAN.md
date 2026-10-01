@@ -87,12 +87,9 @@ read-only package `agents/` or `templates/` dirs (those are wiped on
 npm/Docker upgrade and would dirty cherry-pick). A user-global `~/.loki`
 store is a natural future extension; not implemented here.
 
-### CLI surface
-- `loki agent install <source>` / `loki agent installed`
-- `loki template install <source>` / `loki template list`
-- `<source>` = local path | dir containing `manifest.json` | git repo URL
-  (cloned shallow to temp, manifest read, temp discarded) | raw http(s)
-  manifest URL.
+### CLI surface (planned for future release)
+- Agent installation and template management commands (not yet implemented)
+- Sources: local path, git repo, or manifest URL
 
 ### Reader integration (avoids write-only)
 - `cmd_agent list / info / run / start / review`: union built-in

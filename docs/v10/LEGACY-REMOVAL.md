@@ -11,7 +11,7 @@ Entry point: package.json `bin.loki = bin/loki`. `BASH_CLI=autonomy/loki` (bin/l
 | bin/loki:81, 92, 115 | bad LOKI_TS_ENTRY, BUN_FROM_SOURCE miss, no dist and no src: exec bash | plain error, exit non-zero |
 | bin/loki:242-243 | LOKI_LEGACY_BASH=1 forces bash for every command | delete the knob |
 | bin/loki:300-309 | `modernize` without `--to` goes to bash (heal, migrate) | v10 modernize only, hidden (6c); `heal`, `migrate` deleted (6e) |
-| bin/loki:313-319 | `loki legacy <args>` re-execs with LOKI_ENGINE=legacy | delete; migration note |
+| bin/loki:313-319 | legacy engine entry point (v9 fallback) | delete; migration note to v10 only |
 | bin/loki:325-326 | `LOKI_ENGINE` switch, default v10, any other value skips v10 | delete the variable, v10 unconditional |
 | bin/loki:331-342 | status, verify, dashboard, keys reach v10 only with explicit LOKI_ENGINE=v10; bare `verify` picks newest of e10 run vs legacy proof | always engine10 status/verify/keys; dashboard goes to `loki control` once D56 flips |
 | bin/loki:344 | bare `loki` and any flag-first call go to bash | engine10 usage (engine10/cli.ts USAGE) |
@@ -39,7 +39,7 @@ One-word bash commands (autonomy/loki main(), line 21621) and their fate:
 
 ## 2. Docs and help surface (Wave 1)
 
-`grep -rlE "run.sh|LOKI_ENGINE|loki legacy|legacy engine"` counts (files / mentions):
+Grep for legacy engine references counts (files / mentions):
 - Root: README.md 19, SKILL.md 10, ARCHITECTURE.md 9, COMPONENTS.md 4, AGENTS.md 2, CONTRIBUTING.md 2, TESTING.md 2, CLAUDE.md 1, SETUP.md 1, Dockerfile 1.
 - docs/: 109 files, 1200 mentions. Shipped (package.json `docs/**/*.md`). Heaviest: v10/BOARD.md 72, BUG-AUDIT-v6.61.0.md 61, ONE-RUN-AUDIT.md 44, BRANCH-LIFECYCLE-PLAN.md 44, CONFIG-FILE-PLAN.md 41, architecture/STATE-MACHINES.md 33, test-scenarios/edge-cases.md 32, v10/ENGINE.md 30, V8-AGENT-SDK-PLAN.md 28, dev/project-structure.md 14. Most are legacy plans: delete, not edit. Keep docs/v10/ (internal records; exclude from `files`).
 - wiki/: 6 files, 13 mentions (Quality-Gates, Enterprise-Features, Enterprise, Contributing, Checkpoints, API-Reference). Quality-Gates and Checkpoints are legacy features: delete pages.
@@ -98,4 +98,4 @@ Wall check for every slice: v10 suite, Bun Parity (redefined in W2-01), first-ru
 
 ## 5. Guard spec (D57 item 4)
 
-New test `tests/test-no-legacy-refs.sh`: for every path in `npm pack --dry-run --json` output (the shipped set) plus README.md and wiki/, fail on `autonomy/run\.sh`, a bare `\brun\.sh\b` not preceded by `moat/` or `bench/`, `LOKI_ENGINE`, `LOKI_LEGACY_BASH`, or `loki legacy`. Exclusions: CHANGELOG.md and docs/MIGRATION-10.6.md (the migration note) only. Positive control: the test plants one hit in a temp copy and must go red (loki-verify). Phase in: advisory after Wave 1, blocking after W2-11.
+New test `tests/test-no-legacy-refs.sh`: for every path in `npm pack --dry-run --json` output (the shipped set) plus README.md and wiki/, fail on `autonomy/run\.sh`, a bare `\brun\.sh\b` not preceded by `moat/` or `bench/`, `LOKI_ENGINE`, or `LOKI_LEGACY_BASH`. Exclusions: CHANGELOG.md and docs/MIGRATION-10.6.md (the migration note) only. Positive control: the test plants one hit in a temp copy and must go red (loki-verify). Phase in: advisory after Wave 1, blocking after W2-11.
