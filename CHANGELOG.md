@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.17 (2026-10-01)
+
+A `next` release. `loki verify` now refuses unsigned receipts and catches a tampered event log even when the end of the log is deleted, `loki backlog` runs a repo's issues headless from one `loki.yaml`, and v10 runs post to Slack.
+
+### Added
+- `loki backlog owner/repo --all | --label X | --issues 1,2,3` runs a v10 issue-mode run per issue, each in its own worktree and branch, with a concurrency cap and a daily budget stop, and prints one line per issue plus a summary. Exit 0 only when every issue ended with a PR or VERIFIED. `--dry-run` lists what would run (D51-A3).
+- `loki.yaml` (repo root, then `~/.loki/loki.yaml`) configures provider and models, the NAME of the env var holding a GitHub token, repos, concurrency, budgets, knowledge sources and notifications; `loki config validate` checks it against `schemas/loki-yaml.schema.json`. An annotated example is in `docs/loki.yaml.example` (D51-A3).
+- Slack notifications on the v10 path for PR opened, BLOCKED (with its question) and run finished, from the webhook in the env var named by `LOKI_SLACK_WEBHOOK_ENV` (default `LOKI_SLACK_WEBHOOK_URL`). The URL is never logged, and a slow or failing webhook never fails a run (D51-A4).
+- loki-seal is listed in this repo's plugin marketplace: `/plugin marketplace add asklokesh/loki-mode`, then `/plugin install loki-seal@loki-mode` (D48).
+- Every `next` release that passes Post-Release Smoke and the first-run gate on the exact npm-installed version is promoted to `latest` automatically; a lower version is never promoted (D49).
+
+### Changed
+- `loki verify` refuses a receipt with no signature: exit 3 on the v10 engine and BLOCKED on the legacy path. `--allow-unsigned` or `LOKI_VERIFY_ALLOW_UNSIGNED=1` accepts it with an explicit "integrity not attested" line. A malformed signature reads TAMPERED on both engines, and the check cannot be disabled by a `base64.py` or `json.py` committed in the verified repo (A-121b).
+- The Security Audit reuses a parent commit's passing result for a version-only release only after a clean scan of the new commits, and scans merge commits' own content (D44, E-157, E-159).
+
+### Fixed
+- v10 runs end with a signed `log.sealed` line, so deleting the end of the event log after a tamper was detected now reads TAMPERED in `loki verify` instead of VERIFIED. Receipts sealed by earlier versions still verify. A run interrupted before it completed reads UNCHECKED (exit 2) (A-117).
+- The secret scan fails closed when its git range is invalid or empty (E-159).
+
 ## v10.5.16 (2026-10-01)
 
 A `next` release. Quiet `loki quick` output stays short and clean, the v10 Reason line never prints a credential, and a stray config file in your home directory is never moved.
