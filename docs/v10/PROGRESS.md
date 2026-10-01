@@ -1754,9 +1754,14 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D46 drop: reverted c2c43fd10 on main (5d25b205; reverted paths identical to aad61f9a; local test-first-run-gate rc=0, 0 FAIL). train/34 5d25b205 pushed with E-163 r3 (haiku fix; env parse probes abc/-5/nan/inf/0 -> 20, 46/0), A-134b r4, E-162.
 - D48-flip r4 (fixture fix) building; D48-r2b (pubkey, null-jwt exits 3 under --pubkey) built, in opus re-review; it needs the flip re-landed first.
 
-## 2026-10-01T06:07Z v10.5.20 promoted; v10.5.21 (D48 engine flip) released; train/39
+## 2026-10-01T06:07Z v10.5.20 promoted; v10.5.21 (D48 engine flip) cut, Release FAILED, NOT published (see 06:30Z); train/39
 - v10.5.20 240f3285: Release success; npm gitHead 240f3285f42b matches; dist-tags latest=10.5.20 next=10.5.20 (auto-promote, watcher bybzbhat6). Contents A-134b, E-162, E-163.
 - train/35 RED (Tests shard 1/8: "1 command(s) absent from 'loki help': keys"). D46 drop of D48-r2b (76e3d25c, revert clean vs flip-r4 merge). Fix r2c 2e7c68a3 (one help line), re-landed as 3eade3d4; train/37 green on Tests, Bun Parity, Coverage, Security Audit.
 - train/36 76e3d25c green (all four); main fast-forwarded; v10.5.21 189f347e pushed (--check-clean rc=0, parent == origin/main). CHANGELOG corrected: the flip's Unreleased notes said "loki verify unchanged"; r3 routes bare verify to v10 when the newest run is a v10 run (bin/loki:296-305), exit 4 for a non-VERIFIED outcome. Watcher bpighrue2.
 - Tier A red on every train since train/33: E-162 ran tests/test-shard-coverage.sh before the Python deps install; two pytest-gated suites (run-all-tests.sh:782-787) were not registered, 666 of 668. Fix 55d559ea moves the step after pip install (train/38).
 - train/39 c34511e5 = flip + keys (D48 rows 2, 7-9) + Tier A fix + 10.5.21 merge; local help, registration, shard-coverage, docs-drift, v10-ops all rc=0.
+
+## 2026-10-01T06:29Z CORRECTION: v10.5.21 not published (P0, fix forward)
+- v10.5.21 189f347e: Release run completed failure. Tests at that SHA failed in shard 6/8: "CHANGELOG Unreleased does not record the v10 default flip" (tests/test-engine10-legacy-notice.sh). The release CHANGELOG moved the flip note from Unreleased into the v10.5.21 section. Post-Release Smoke and Promote skipped; npm dist-tags latest=next=10.5.20. The 06:07Z entry's "released" was premature and is corrected above; rows say released only once npm has the version.
+- Moat suite passed at 189f347e, so the train/39 P2.checklist-verify-not-shadowed failure did not recur on the same code (local p2 run on c34511e5 also PASS); still treated as unconfirmed until train/40.
+- Fix baf5e2c8: the test now requires 'Loki 10.*now the default' anywhere in CHANGELOG. Intent kept: a copy of CHANGELOG with that line removed fails the pattern, the real file passes. train/40 baf5e2c8 in CI; on green, fast-forward and cut 10.5.22 (flip, keys, Tier A fix), CHANGELOG stating 10.5.21 was never published.
