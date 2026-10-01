@@ -245,7 +245,18 @@ if [ -z "${LOKI_QUICK_INNER:-}" ] && [ "${LOKI_VERBOSE:-0}" != "1" ] && [ "${BAS
     case "${1:-}" in */quick-prd-*.md | quick-prd-*.md)
         _qd="$(cd "$(dirname "$1")" && pwd -P)"; rm -f "$_qd/quick-receipt.txt"
         # Async with default INT/QUIT (a bare `&` child ignores them), signals forwarded.
-        ( trap - INT QUIT; LOKI_QUICK_DIR="$_qd" LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 exec "$BASH" "$0" "$@" >"$_qd/quick-run.log" ) &
+        # A Node/Bun parent starts us with SIGPIPE ignored, and bash cannot reset a
+        # signal ignored on entry; every `echo big | head -1` then prints "echo: write
+        # error: Broken pipe" onto the user's terminal. Re-exec the inner run through
+        # python3 with SIGPIPE back at default (SIG_DFL survives exec).
+        _qexec=("$BASH" "$0" "$@")
+        # Env differences under python (not bash): LC_CTYPE may be set when the locale is
+        # C, macOS adds __CF_USER_TEXT_ENCODING, and SIGXFSZ stays ignored.
+        # The import probe guards a python3 that exists but is broken (CLT stub, pyenv shim).
+        if command -v python3 >/dev/null 2>&1 && python3 -c 'import os,signal' >/dev/null 2>&1; then
+            _qexec=(python3 -c 'import os,signal,sys;signal.signal(signal.SIGPIPE,signal.SIG_DFL);os.execv(sys.argv[1],sys.argv[1:])' "${_qexec[@]}")
+        fi
+        ( trap - INT QUIT; LOKI_QUICK_DIR="$_qd" LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 exec "${_qexec[@]}" >"$_qd/quick-run.log" ) &
         _qpid=$!
         trap 'kill -INT "$_qpid" 2>/dev/null' INT
         trap 'kill -TERM "$_qpid" 2>/dev/null' TERM HUP
@@ -7429,7 +7440,22 @@ init_loki_dir() {
         fi
     fi
 
-    mkdir -p .loki/{state,queue,messages,logs,config,prompts,artifacts,scripts}
+    # crash.sh's disclosure sentinel can have left a regular FILE at .loki/config
+    # (LOKI_DIR is the project .loki); mkdir -p of the config DIRECTORY then fails
+    # with "File exists". Fold the file into the directory (back-compat sentinel only),
+    # but ONLY when it holds nothing except that sentinel, and NEVER for ~/.loki (a run
+    # started from $HOME): there config is the user's real settings FILE (telemetry opt-out).
+    if [ -f .loki/config ] && [ ! -L .loki/config ] \
+       && [ "$(cd .loki 2>/dev/null && pwd -P)" != "$(cd "${HOME:-/nonexistent}/.loki" 2>/dev/null && pwd -P)" ] \
+       && [ -z "$(grep -v -e '^DISCLOSURE_SHOWN=true$' -e '^[[:space:]]*$' .loki/config 2>/dev/null)" ]; then
+        mv .loki/config .loki/config.disclosure.tmp 2>/dev/null \
+            && mkdir -p .loki/config 2>/dev/null \
+            && mv .loki/config.disclosure.tmp .loki/config/disclosure 2>/dev/null
+    fi
+    # Retry once: a concurrent creator of the same dir can make the first mkdir -p
+    # fail with "File exists" (seen on CI, leaked to the quiet quick terminal).
+    mkdir -p .loki/{state,queue,messages,logs,config,prompts,artifacts,scripts} 2>/dev/null \
+        || mkdir -p .loki/{state,queue,messages,logs,config,prompts,artifacts,scripts}
     mkdir -p .loki/queue
     mkdir -p .loki/state/checkpoints
     mkdir -p .loki/artifacts/{releases,reports,backups}
@@ -7757,11 +7783,11 @@ write_dashboard_state() {
     local tasks_failed=0
 
     if [ -f ".loki/state/orchestrator.json" ]; then
-        current_phase=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('currentPhase', 'BOOTSTRAP'))" 2>/dev/null || echo "BOOTSTRAP")
-        version=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('version', 'unknown'))" 2>/dev/null || echo "unknown")
-        started_at=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('startedAt', ''))" 2>/dev/null || echo "")
-        tasks_completed=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('metrics', {}).get('tasksCompleted', 0))" 2>/dev/null || echo "0")
-        tasks_failed=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('metrics', {}).get('tasksFailed', 0))" 2>/dev/null || echo "0")
+        _dv=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('currentPhase', 'BOOTSTRAP'))" 2>/dev/null) && current_phase="$_dv"
+        _dv=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('version', 'unknown'))" 2>/dev/null) && version="$_dv"
+        _dv=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('startedAt', ''))" 2>/dev/null) && started_at="$_dv"
+        _dv=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('metrics', {}).get('tasksCompleted', 0))" 2>/dev/null) && tasks_completed="$_dv"
+        _dv=$(python3 -c "import json; print(json.load(open('.loki/state/orchestrator.json')).get('metrics', {}).get('tasksFailed', 0))" 2>/dev/null) && tasks_failed="$_dv"
     fi
 
     # Emit phase change event if phase has changed (checked in background monitor loop)
