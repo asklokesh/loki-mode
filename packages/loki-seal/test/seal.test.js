@@ -9,6 +9,7 @@ const { spawnSync } = require('child_process');
 
 const SEAL = path.join(__dirname, '..', 'bin', 'loki-seal.js');
 const root = fs.mkdtempSync(path.join(process.env.LOKI_RUN_TMP || os.tmpdir(), 'seal-fx-'));
+process.env.LOKI_RUN_TMP = root; // child hooks write loki-seal-err-* counters here, never the real tmpdir
 test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 let n = 0;
@@ -350,6 +351,30 @@ test('a failing state dir releases after LOKI_SEAL_MAX_BLOCKS hook errors', () =
   assert.deepStrictEqual(codes.slice(0, 3), [2, 2, 2]);
   assert.strictEqual(codes[3], 0, codes.join(','));
   assert.match(last.stdout, /NOT VERIFIED \(released after 3 blocks: hook error\)/);
+});
+
+test('a successful stop resets the hook-error counter', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  const real = path.join(root, 'realstate3'); fs.mkdirSync(real);
+  const link = path.join(root, 'linkstate3'); fs.symlinkSync(real, link);
+  const tmp = path.join(root, 'errtmp3'); fs.mkdirSync(tmp);
+  const bad = { LOKI_SEAL_STATE_DIR: link, LOKI_SEAL_MAX_BLOCKS: '2', LOKI_RUN_TMP: tmp };
+  const good = { LOKI_SEAL_STATE_DIR: path.join(root, 'state3'), LOKI_SEAL_MAX_BLOCKS: '2', LOKI_RUN_TMP: tmp };
+  assert.deepStrictEqual([sealEnv(d, bad).status, sealEnv(d, bad).status], [2, 2]);
+  assert.strictEqual(sealEnv(d, good).status, 0);
+  assert.strictEqual(sealEnv(d, bad).status, 2, 'counter must restart after a good stop');
+});
+
+test('an unusable error-counter dir falls back to stop_hook_active', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  const real = path.join(root, 'realstate4'); fs.mkdirSync(real);
+  const link = path.join(root, 'linkstate4'); fs.symlinkSync(real, link);
+  const env = { ...process.env, LOKI_SEAL_STATE_DIR: link, LOKI_RUN_TMP: path.join(root, 'no-such-dir') };
+  const go = (extra) => spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's4', cwd: d, ...extra }), env, encoding: 'utf8' });
+  assert.strictEqual(go({}).status, 2);
+  const r = go({ stop_hook_active: true });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(r.stdout, /NOT VERIFIED \(released after a repeated stop: hook error/);
 });
 
 test('a FIFO named *.test.js does not hang Stop', () => {
