@@ -71,7 +71,9 @@ loki-seal is a Claude Code Stop hook that runs your repo's real test suite when 
 
 ## Loki 10 engine
 
-Loki Mode now runs the v10 engine for all commands. Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
+Loki Mode now runs the v10 engine for all commands. <!-- loki10-default -->
+
+Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
 
 ```
 loki "fix the login redirect loop" --no-pr
