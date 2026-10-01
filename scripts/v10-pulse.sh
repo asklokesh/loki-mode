@@ -476,7 +476,7 @@ VIOLATION_PRIORITY = [
     "AGENT_OVER_BUDGET", "STALE_PROGRESS", "UNEVIDENCED_CLAIM", "RELEASED_AHEAD_OF_NPM",
     "ORPHAN_TEST", "ORPHAN_WORKTREE", "STRAY_CONTAINER", "STRAY_WORKTREE",
     "WORKTREE_COUNT", "IDLE_BUILDERS", "UNDERSTAFFED", "LOW_READY", "NO_RECENT_RELEASE",
-    "LOW_RELEASE_VOLUME", "MERGED_NOT_RELEASED_STALE", "CONTROL_OVERSIZE",
+    "LOW_RELEASE_VOLUME", "RELEASE_SLO", "MERGED_NOT_RELEASED_STALE", "CONTROL_OVERSIZE",
 ]
 
 violations = []          # list of (code, text)
@@ -2392,6 +2392,25 @@ def check_release_cadence():
 safe(check_release_cadence)
 
 
+# RELEASE_SLO (D46): 3-6 `next` releases per rolling hour. The npm `time`
+# map cannot tell dist-tags apart per version, so this counts EVERY publish in
+# the trailing 60 minutes; after D44 every release goes to `next`, so the two
+# are the same. Unknown npm data never reaches here (npm_result is None and
+# "Releases (last hour): UNKNOWN" is already emitted), so no false pass.
+def check_release_slo():
+    if npm_result is None:
+        return
+    n = npm_result["count_1h"]
+    if n < 3:
+        add_violation(
+            "RELEASE_SLO",
+            "%d next releases in the trailing 60 minutes (target 3-6, D46)%s" % (n, cache_note("npm")),
+        )
+
+
+safe(check_release_slo)
+
+
 # --- 8. CONTROL.md line budget ----------------------------------------------
 def check_control_md():
     with open(CONTROL_MD, "r", encoding="utf-8") as f:
@@ -3227,6 +3246,7 @@ _NEXT_ACTION_TEXT = {
     "UNDERSTAFFED": "staff more engineers now, the ready queue is deep and BOARD shows fewer than 8 rows building",
     "LOW_READY": "the Product Owner should cut the named number of additional slices onto the ready queue",
     "NO_RECENT_RELEASE": "cut a release now, none has shipped in over 90 minutes",
+    "RELEASE_SLO": "cut releases now, fewer than 3 next releases shipped in the trailing 60 minutes (D46)",
     "LOW_RELEASE_VOLUME": "investigate why release throughput is below the 30/day target",
     "MERGED_NOT_RELEASED_STALE": "run scripts/board-mark-released.sh <tag> to flip the named row(s), their merge commit already shipped",
     "CONTROL_OVERSIZE": "trim docs/v10/CONTROL.md back under its 40-line budget",
