@@ -250,7 +250,10 @@ if [ -z "${LOKI_QUICK_INNER:-}" ] && [ "${LOKI_VERBOSE:-0}" != "1" ] && [ "${BAS
         # error: Broken pipe" onto the user's terminal. Re-exec the inner run through
         # python3 with SIGPIPE back at default (SIG_DFL survives exec).
         _qexec=("$BASH" "$0" "$@")
-        if command -v python3 >/dev/null 2>&1; then
+        # Env differences under python (not bash): LC_CTYPE may be set when the locale is
+        # C, macOS adds __CF_USER_TEXT_ENCODING, and SIGXFSZ stays ignored.
+        # The import probe guards a python3 that exists but is broken (CLT stub, pyenv shim).
+        if command -v python3 >/dev/null 2>&1 && python3 -c 'import os,signal' >/dev/null 2>&1; then
             _qexec=(python3 -c 'import os,signal,sys;signal.signal(signal.SIGPIPE,signal.SIG_DFL);os.execv(sys.argv[1],sys.argv[1:])' "${_qexec[@]}")
         fi
         ( trap - INT QUIT; LOKI_QUICK_DIR="$_qd" LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 exec "${_qexec[@]}" >"$_qd/quick-run.log" ) &
@@ -7439,8 +7442,12 @@ init_loki_dir() {
 
     # crash.sh's disclosure sentinel can have left a regular FILE at .loki/config
     # (LOKI_DIR is the project .loki); mkdir -p of the config DIRECTORY then fails
-    # with "File exists". Fold the file into the directory (back-compat sentinel only).
-    if [ -f .loki/config ] && [ ! -L .loki/config ]; then
+    # with "File exists". Fold the file into the directory (back-compat sentinel only),
+    # but ONLY when it holds nothing except that sentinel, and NEVER for ~/.loki (a run
+    # started from $HOME): there config is the user's real settings FILE (telemetry opt-out).
+    if [ -f .loki/config ] && [ ! -L .loki/config ] \
+       && [ "$(cd .loki 2>/dev/null && pwd -P)" != "$(cd "${HOME:-/nonexistent}/.loki" 2>/dev/null && pwd -P)" ] \
+       && [ -z "$(grep -v -e '^DISCLOSURE_SHOWN=true$' -e '^[[:space:]]*$' .loki/config 2>/dev/null)" ]; then
         mv .loki/config .loki/config.disclosure.tmp 2>/dev/null \
             && mkdir -p .loki/config 2>/dev/null \
             && mv .loki/config.disclosure.tmp .loki/config/disclosure 2>/dev/null
