@@ -386,6 +386,8 @@ fi
 # and the rebuilt dist), 20 -> 23 historical, 56 -> 59 total.
 # 60 60 36 24 0: commit d4dc9b8a added 1 more exact fingerprint for the same
 # file-name false positive in the train/14 dist rebuild, 23 -> 24, 59 -> 60.
+# 61 61 36 25 0: commit eb4e2155 (a dist rebuild before E-156 removed the
+# literal at the source), 24 -> 25, 60 -> 61. E-156 ends this churn.
 _ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
 _ignore_shape="$(python3 - "$_ignore" <<'PY'
 import re, sys
@@ -399,10 +401,10 @@ print(len(entries), len(set(entries)),
       sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
 PY
 )"
-if [ "$_ignore_shape" = "60 60 36 24 0" ]; then
+if [ "$_ignore_shape" = "61 61 36 25 0" ]; then
   ok "gitleaks baseline contains 36 current and 23 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 60 60 36 24 0)"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 61 61 36 25 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
