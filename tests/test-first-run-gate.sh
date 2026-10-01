@@ -31,17 +31,30 @@ quick)
     [ "$FAKE_MODE" = truetest ] && sed -i.bak 's/node --test/true/' package.json && rm -f package.json.bak
     [ "$FAKE_MODE" = modpkg ] && sed -i.bak 's/1.0.0/1.0.1/' package.json && rm -f package.json.bak
     mkdir -p .loki/runs/r
-    echo '{}' > .loki/runs/r/receipt.json
-    if [ "$FAKE_MODE" = prefix ]; then echo "receipt ${D:0:12}"; else echo "receipt_sha256: $D"; fi
+    # a real v10 run: receipt carries cost.usd, the event log carries a cost event (0 + source marker when unmetered)
+    echo '{"cost":{"usd":0}}' > .loki/runs/r/receipt.json
+    if [ "$FAKE_MODE" = nocost ]; then
+        echo '{"cost":{"usd":null}}' > .loki/runs/r/receipt.json; echo '{"type":"cost","data":{"usd":null}}' > .loki/runs/r/events.jsonl
+    else echo '{"type":"cost","data":{"usd":0,"source":"cli-unmetered"}}' > .loki/runs/r/events.jsonl; fi
+    # the v10 quiet summary: start line then Outcome, PR, Receipt, NOT PROVEN, Cost, Time (7 lines)
+    if [ "$FAKE_MODE" = nostart ]; then echo "Loki engine starting"; else echo "Loki 10 engine (set LOKI_ENGINE=legacy to use the old engine)"; fi
+    echo "Outcome:    VERIFIED"
+    echo "PR:         none (local)"
+    if [ "$FAKE_MODE" = prefix ]; then echo "Receipt:    receipt ${D:0:12}"; else echo "Receipt:    receipt_sha256: $D"; fi
+    if [ "$FAKE_MODE" = nolabel ]; then echo "Proof gaps: none"; else echo "NOT PROVEN: none"; fi
+    echo "Cost:       \$0.00"
+    echo "Time:       1s"
     [ "$FAKE_MODE" = long ] && seq 1 30
     [ "$FAKE_MODE" = exit1 ] && exit 1
     exit 0 ;;
 verify)
+    if [ -f .loki/failed-run ] && [ "$FAKE_MODE" != skipbare ]; then echo "Outcome: FAILED (no sealed receipt)"; exit 4; fi # bare verify after a failed v10 run
     echo "VERDICT: VERIFIED"
     if [ "$FAKE_MODE" = baddigest ]; then echo "receipt_sha256: $(printf 'b%.0s' $(seq 64))"; else echo "receipt_sha256: $D"; fi
     if [ "$FAKE_MODE" = unsigned ]; then echo "attestation: UNSIGNED (no key)"; else echo "attestation: VERIFIED against the local JWKS"; fi
     exit 0 ;;
 *) # the gate's G8 run: loki "<task>" --no-pr with FRG_SKIP set
+    mkdir -p .loki; : > .loki/failed-run
     if [ "$FAKE_MODE" = skipver ]; then echo "Outcome:    VERIFIED"; exit 0; fi
     echo "Outcome:    FAILED"; exit 1 ;;
 esac
@@ -61,7 +74,7 @@ expect() { # expect <mode> <assertion> <PASS|FAIL>
 }
 
 run_gate clean
-for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time skip-not-verified skip-not-verified-legacy; do expect clean $a PASS; done
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time engine-start-line cost-non-null skip-not-verified skip-bare-verify skip-not-verified-legacy; do expect clean $a PASS; done
 [ "$RC" -eq 0 ] && ok "clean: gate exits 0" || bad "clean: gate exit $RC"
 [ -s "$T/report-clean.txt" ] && ok "clean: report written" || bad "clean: no report"
 
@@ -76,6 +89,10 @@ run_gate exit1;      expect exit1 exit-honest FAIL;          [ "$RC" -ne 0 ] && 
 run_gate prefix;     expect prefix digest-matches FAIL
 run_gate baddigest;  expect baddigest digest-matches FAIL;   [ "$RC" -ne 0 ] && ok "baddigest: exits non-zero" || bad "baddigest: exit 0"
 run_gate skipmain;   expect skipmain exit-honest FAIL;       expect skipmain tests-green FAIL;  [ "$RC" -ne 0 ] && ok "skipmain: exits non-zero" || bad "skipmain: exit 0"
+run_gate nostart;    expect nostart engine-start-line FAIL;  [ "$RC" -ne 0 ] && ok "nostart: exits non-zero" || bad "nostart: exit 0"
+run_gate nolabel;    expect nolabel engine-start-line FAIL
+run_gate nocost;     expect nocost cost-non-null FAIL;       [ "$RC" -ne 0 ] && ok "nocost: exits non-zero" || bad "nocost: exit 0"
+run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && ok "skipbare: exits non-zero" || bad "skipbare: exit 0"
 run_gate skiprc0;    expect skiprc0 skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skiprc0: 9b needs rc 3" || bad "skiprc0: exit 0"
 run_gate skipver;    expect skipver skip-not-verified FAIL;  expect skipver skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
 
