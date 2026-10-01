@@ -76,6 +76,19 @@ if [ "$SIGNED" = yes ]; then
         && ok "loki verify reports attestation: VERIFIED" || bad "no attestation: VERIFIED line" "$(printf '%s\n' "$VOUT" | grep attestation)"
 fi
 
+# D47 / A-121b: a receipt with verification.attestation (and gpg_signature) stripped is
+# UNSIGNED; the hash excludes `verification`, so it still recomputes. loki verify must
+# refuse it unless --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) is given.
+cp "$PJ" "$PJ.orig"
+python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); v=d.setdefault('verification', {}); v.pop('attestation', None); v.pop('gpg_signature', None); json.dump(d, open(p,'w'))" "$PJ"
+UOUT="$( cd "$FIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify < /dev/null 2>&1 )"; URC=$?
+[ "$URC" -ne 0 ] && printf '%s\n' "$UOUT" | grep -q 'attestation: UNSIGNED, integrity not attested; refusing' \
+    && ok "stripped receipt: verify refuses (rc=$URC)" || bad "stripped receipt not refused" "rc=$URC"
+AOUT="$( cd "$FIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify --allow-unsigned < /dev/null 2>&1 )"; ARC=$?
+[ "$ARC" -eq 0 ] && printf '%s\n' "$AOUT" | grep -q 'accepted by --allow-unsigned' \
+    && ok "stripped receipt: --allow-unsigned passes with the explicit line" || bad "--allow-unsigned did not pass" "rc=$ARC"
+cp "$PJ.orig" "$PJ"
+
 # Tamper: edit proof.json, verify must exit non-zero, say BLOCKED and TAMPERED, and
 # evidence.json must not record VERIFIED.
 python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['iterations']=999; json.dump(d, open(p,'w'))" "$PJ"

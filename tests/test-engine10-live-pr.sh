@@ -112,12 +112,22 @@ else
     bad "status context loki/deep-verify missing on ${HEAD_SHA:-(no sha)} (got: $(printf '%s' "$CTX" | tr '\n' ','))"
 fi
 
-# 4. loki verify <run> exits 0 (UNSIGNED also exits 0 and is stated).
+# 4. loki verify <run> exits 0 (D47: UNSIGNED exits 3 and is refused; a signed run exits 0,
+#    or the unsigned run is accepted explicitly with --allow-unsigned and the line says so).
 loki verify "$RUN" >"$W/verify.out" 2>&1
 vrc=$?
 VLINE="$(grep -E '^(verdict|attestation):' "$W/verify.out" | tr '\n' ' ')"
 if [ "$vrc" -eq 0 ]; then
     ok "loki verify $RUN rc=0: $VLINE"
+elif [ "$vrc" -eq 3 ] && grep -q '^verdict: UNSIGNED' "$W/verify.out" \
+    && grep -q 'refusing (pass --allow-unsigned to accept)' "$W/verify.out"; then
+    loki verify "$RUN" --allow-unsigned >"$W/verify2.out" 2>&1
+    v2=$?
+    if [ "$v2" -eq 0 ] && grep -q 'accepted by --allow-unsigned' "$W/verify2.out"; then
+        ok "loki verify $RUN UNSIGNED refused rc=3, accepted rc=0 with --allow-unsigned: $VLINE"
+    else
+        bad "loki verify $RUN --allow-unsigned rc=$v2: $(tr '\n' ' ' < "$W/verify2.out")"
+    fi
 else
     bad "loki verify $RUN rc=$vrc: $(tr '\n' ' ' < "$W/verify.out")"
 fi

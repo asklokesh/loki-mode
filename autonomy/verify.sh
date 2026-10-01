@@ -3074,6 +3074,15 @@ sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
     declare -f _deploy_receipt_verdict >/dev/null 2>&1 || return 0
     local att
     att="$(_deploy_receipt_verdict "$pj")"
+    # D47: UNSIGNED is never a pass; --allow-unsigned / LOKI_VERIFY_ALLOW_UNSIGNED=1 accepts it, said aloud.
+    if [ "$att" = "UNSIGNED" ]; then
+        if [ "${VERIFY_ALLOW_UNSIGNED:-0}" = "1" ] || [ "${LOKI_VERIFY_ALLOW_UNSIGNED:-}" = "1" ]; then
+            printf 'attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)\n'
+            return 0
+        fi
+        printf 'attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)\n'
+        return 1
+    fi
     printf 'attestation: %s\n' "$att"
     [ "$att" != "TAMPERED" ]
 }
@@ -3093,6 +3102,7 @@ verify_main() {
     VERIFY_CHECK_FRESH=0
     # Opt-in machine-readable stdout (--json). Default 0 = exactly today.
     VERIFY_JSON=0
+    VERIFY_ALLOW_UNSIGNED=0
 
     # Fail-closed defaults. These globals are read at the end of this function
     # (the VERDICT banner and the function return code). verify_compute_verdict()
@@ -3158,6 +3168,7 @@ verify_main() {
                 # verdict above stays authoritative for the exit code. Unset =
                 # exactly today's behavior. See verify_hosted_enrich().
                 VERIFY_HOSTED=1; shift ;;
+            --allow-unsigned) VERIFY_ALLOW_UNSIGNED=1; shift ;;
             --) shift; break ;;
             -*)
                 _verify_err "unknown option: $1"; verify_help; return $VERIFY_EXIT_ERROR ;;
