@@ -28,7 +28,7 @@ export const EVENT_TYPES = [
   "heartbeat", "session.started", "session.ended", "cost", "wall.sealed",
   "tests.restored", "test.result", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "variant",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -173,6 +173,7 @@ export interface Receipt {
   model: string;
   resumed: boolean;
   events_sha256: string;
+  log_seal?: true; // A-117: the supervisor appends a signed log.sealed line after run.completed; verify requires it only when this is set (older receipts predate it)
   receipt_sha256: string;
   verification: { jwt: string | null; kid: string | null };
 }

@@ -6,6 +6,8 @@
 // some sibling path is absent, so this test says nothing about any other
 // slice's files.
 import { describe, expect, test } from "bun:test";
+import { sealedLog } from "./log_fixture.ts";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -61,7 +63,7 @@ function baseReceiptFields(): Record<string, unknown> {
     provider: "claude",
     model: "claude-x",
     resumed: false,
-    events_sha256: "f".repeat(64),
+    events_sha256: createHash("sha256").digest("hex"), // empty: these fixtures carry no events.jsonl
   };
 }
 
@@ -195,6 +197,7 @@ describe("verifyReceipt: signed (E-22 green: verifies against the JWKS)", () => 
       // exactly the way seal.ts (E-10) is specified to at sign time -- this
       // is the local JWKS the receipt is checked against.
       process.env["LOKI_RECEIPT_SIGNING_KEY"] = pem;
+      sealedLog(runDir, hash, runId);
       const result = await verifyReceipt(path);
       expect(result.verdict).toBe("VERIFIED");
       expect(result.reasons).toEqual([]);

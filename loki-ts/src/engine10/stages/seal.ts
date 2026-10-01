@@ -257,6 +257,7 @@ export const sealStage: Stage = {
       model: ctx.model,
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
+      log_seal: true,
     };
 
     // Sign first so a failed key lands in NOT PROVEN before hashing.

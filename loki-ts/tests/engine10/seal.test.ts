@@ -7,7 +7,8 @@
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { sealedLog } from "./log_fixture.ts";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -41,7 +42,7 @@ function makeRepo(name: string): { repo: string; base: string } {
   const base = sh(["git", "rev-parse", "HEAD"], repo).trim();
   writeFileSync(join(repo, "a.txt"), "two\n");
   sh(["mkdir", "-p", ".loki/runs/r1"], repo);
-  writeFileSync(join(repo, ".loki/runs/r1/events.jsonl"), '{"v":1}\n');
+  writeFileSync(join(repo, ".loki/runs/r1/events.jsonl"), JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: "r1", type: "run.started", stage: null, data: {} }) + "\n");
   return { repo, base };
 }
 
@@ -184,6 +185,7 @@ describe("engine10 seal", () => {
     const out: string[] = [];
     const w = process.stdout.write.bind(process.stdout);
     process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    sealedLog(dirname(path), r.receipt_sha256);
     try { expect(await verifyMain(["r1"], { runsRoot: dirname(ctx.runDir) })).toBe(0); } finally { process.stdout.write = w; }
     expect(out.join("")).toContain("attestation: VERIFIED");
     for (const text of [readFileSync(path, "utf8"), readFileSync(join(ctx.runDir, "receipt.md"), "utf8"), JSON.stringify(events), out.join("")]) expect(text).not.toContain(secret);
@@ -209,6 +211,7 @@ describe("engine10 seal", () => {
     const { ctx } = ctxFor(repo, base);
     await commitStage.run(ctx, new AbortController().signal);
     const path = (await sealStage.run(ctx, new AbortController().signal)).data.receipt_path as string;
+    sealedLog(dirname(path), (JSON.parse(readFileSync(path, "utf8")) as Receipt).receipt_sha256);
     // Rotate: a new active key, the old one retired.
     const rotated = join(root, "rot", "new.pem");
     writeFileSync(rotated, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string, { mode: 0o600 });
@@ -222,6 +225,7 @@ describe("engine10 seal", () => {
     // A known kid with a flipped signature byte stays TAMPERED; a non-string jwt is UNCHECKED, not a crash.
     const good = JSON.parse(readFileSync(path, "utf8")) as Receipt;
     process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    copyFileSync(join(dirname(path), "events.jsonl"), join(root, "rot", "events.jsonl")); // A-117: verify reads the log beside the receipt
     const badSig = join(root, "rot", "badsig.json");
     const jwt = good.verification.jwt!;
     writeFileSync(badSig, JSON.stringify({ ...good, verification: { ...good.verification, jwt: jwt.slice(0, -2) + (jwt.endsWith("AA") ? "BB" : "AA") } }));
