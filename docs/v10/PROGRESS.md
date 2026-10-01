@@ -1653,7 +1653,7 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - In review: A-130b (be50510f), A-134b (3bbec935). Building: A-117 r2, A-118, A-121b, A-119b (7edf4ae0 awaiting one clean full run).
 - Seats capped by worktrees 15/15 and load about 15-25; no new seats this tick.
 
-## 2026-10-01T01:44Z train/18 green, v10.5.15 cut, train/20 cut
+## 2026-10-01T01:41Z train/18 green, v10.5.15 cut, train/20 cut
 - train/18 37267ebd: Tests, Bun Parity, Coverage (baseline) all success (watcher b3l054ag3, 01:38:25Z). origin/main fast-forwarded 2f4462b7..37267ebd.
 - v10.5.15 release commit a7945d67 (parent 37267ebd == origin/main; `release.sh --check-clean` rc=0), pushed by SHA. Contents: A-119, A-115b. Watcher armed for Release run, npm version/gitHead, next == 10.5.15, latest unchanged (10.5.10).
 - train/19 89bf645b (P0-t15) is superseded for main because it lacks the release commit; train/20 c57eb914 = train/19 + main (release merge c908a37f), pushed 01:43Z, Tier B watcher armed.
