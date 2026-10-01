@@ -107,9 +107,9 @@ describe("assert_delta classifier", () => {
   it("D53. classifyTestEdit: literal-only with line, old, new and inTask; any doubt is weakened", () => {
     const src = "def test_a():\n    assert f(1) == 4\n";
     expect(classifyTestEdit("test_a.py", src, src.replace("4", "5"), "f returns 5", C, C)).toEqual([{ kind: "literal-only", file: "test_a.py", line: 2, old: "4", new: "5", inTask: true }]);
-    expect(classifyTestEdit("test_a.py", src, src.replace("4", "5"), "f returns 6", C, C)[0].kind).toBe("weakened");
-    expect(classifyTestEdit("test_a.py", src, src.replace("def", "@pytest.mark.skip\ndef"), "5", C, C)[0].kind).toBe("weakened");
-    expect(classifyTestEdit("test_a.py", src, src.replace("4", "5"), "5", { run: 1, skipped: 0 }, { run: 0, skipped: 0 })[0].kind).toBe("weakened");
+    expect(classifyTestEdit("test_a.py", src, src.replace("4", "5"), "f returns 6", C, C)[0]?.kind).toBe("weakened");
+    expect(classifyTestEdit("test_a.py", src, src.replace("def", "@pytest.mark.skip\ndef"), "5", C, C)[0]?.kind).toBe("weakened");
+    expect(classifyTestEdit("test_a.py", src, src.replace("4", "5"), "5", { run: 1, skipped: 0 }, { run: 0, skipped: 0 })[0]?.kind).toBe("weakened");
   });
 
   // D50-F2r2: opus round-1 review probes.

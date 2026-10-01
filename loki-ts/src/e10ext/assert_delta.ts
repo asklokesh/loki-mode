@@ -232,7 +232,7 @@ export function assertDeltaNotes(repoDir: string, baseSha: string, headRef: stri
     const show = (ref: string): string => execFileSync("git", ["show", `${ref}:${path}`], { cwd: repoDir, encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] });
     const head = headRef ? show(headRef) : readFileSync(join(repoDir, path), "utf8");
     const r = classifyTestEdit(path, show(baseSha), head, task, baseCounts, headCounts);
-    return r[0].kind === "literal-only" ? r.map((e) => `assertion value changed (not shown to be required by the task): ${e.file}:${e.line} ${e.old} -> ${e.new}`) : null;
+    return r[0]?.kind ==="literal-only" ? r.map((e) => `assertion value changed (not shown to be required by the task): ${e.file}:${e.line} ${e.old} -> ${e.new}`) : null;
   } catch {
     return null;
   }
