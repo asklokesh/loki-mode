@@ -256,7 +256,10 @@ if [ -z "${LOKI_QUICK_INNER:-}" ] && [ "${LOKI_VERBOSE:-0}" != "1" ] && [ "${BAS
         if command -v python3 >/dev/null 2>&1 && python3 -c 'import os,signal' >/dev/null 2>&1; then
             _qexec=(python3 -c 'import os,signal,sys;signal.signal(signal.SIGPIPE,signal.SIG_DFL);os.execv(sys.argv[1],sys.argv[1:])' "${_qexec[@]}")
         fi
-        ( trap - INT QUIT; LOKI_QUICK_DIR="$_qd" LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 exec "${_qexec[@]}" >"$_qd/quick-run.log" ) &
+        # A background job gets stdin=/dev/null. Only a TTY needs it back (pause-mode
+        # keypress resume); a pipe would block the provider, which reads inherited stdin.
+        if [ -t 0 ]; then exec 3<&0; else exec 3</dev/null; fi
+        ( trap - INT QUIT; LOKI_QUICK_DIR="$_qd" LOKI_QUICK_OUTER_PID=$$ LOKI_QUICK_INNER=1 exec "${_qexec[@]}" >"$_qd/quick-run.log" <&3 3<&- ) &
         _qpid=$!
         trap 'kill -INT "$_qpid" 2>/dev/null' INT
         trap 'kill -TERM "$_qpid" 2>/dev/null' TERM HUP
@@ -265,8 +268,10 @@ if [ -z "${LOKI_QUICK_INNER:-}" ] && [ "${LOKI_VERBOSE:-0}" != "1" ] && [ "${BAS
         trap - INT TERM HUP
         _qw=$(grep -cF '[WARN]' "$_qd/quick-run.log" 2>/dev/null); _qw="${_qw:-0}"
         if [ "$_qrc" -ne 0 ] || [ ! -s "$_qd/quick-receipt.txt" ]; then
-            _qr=$(grep -E '\[(ERROR|WARN)\]|[Ss]topped|[Ff]ailed' "$_qd/quick-run.log" 2>/dev/null | tail -n 3)
-            echo "${_qr:-$(tail -n 3 "$_qd/quick-run.log" 2>/dev/null)}"
+            # Anchored to log_error/log_warn lines (optional ANSI prefix) and capped at 200
+            # chars so a long prompt line mentioning "failed" is never dumped.
+            _qr=$(grep -E $'^(\033\\[[0-9;]*m)?\\[(ERROR|WARN)\\]' "$_qd/quick-run.log" 2>/dev/null | tail -n 3 | cut -c1-200)
+            echo "${_qr:-$(tail -n 3 "$_qd/quick-run.log" 2>/dev/null | cut -c1-200)}"
         fi
         [ "$_qw" -gt 0 ] && echo "Warnings: $_qw (see $_qd/quick-run.log)"
         cat "$_qd/quick-receipt.txt" 2>/dev/null
