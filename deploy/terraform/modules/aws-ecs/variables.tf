@@ -65,12 +65,6 @@ variable "desired_count" {
   default     = 1
 }
 
-variable "dashboard_allowed_hosts" {
-  description = "Comma-separated Host headers the dashboard accepts besides loopback (LOKI_DASHBOARD_ALLOWED_HOSTS). Needed when bound to 0.0.0.0 without enterprise auth; with enterprise auth any Host is accepted. /health and /metrics are always exempt."
-  type        = string
-  default     = ""
-}
-
 variable "dashboard_port" {
   description = "Port the control plane binds. Mirrors the Helm chart's config.dashboardPort so the two deployment paths agree."
   type        = number

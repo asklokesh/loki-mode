@@ -13,9 +13,6 @@ data:
   LOKI_PROVIDER: {{ .Values.config.provider | quote }}
   LOKI_DASHBOARD_HOST: {{ .Values.config.dashboardHost | quote }}
   LOKI_DASHBOARD_PORT: {{ .Values.config.dashboardPort | quote }}
-  {{- if .Values.config.dashboardAllowedHosts }}
-  LOKI_DASHBOARD_ALLOWED_HOSTS: {{ .Values.config.dashboardAllowedHosts | quote }}
-  {{- end }}
   {{- if .Values.config.otelEndpoint }}
   LOKI_OTEL_ENDPOINT: {{ .Values.config.otelEndpoint | quote }}
   {{- end }}

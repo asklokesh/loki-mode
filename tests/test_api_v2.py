@@ -81,12 +81,6 @@ async def app(engine, db_session_factory, tmp_path):
         _app.dependency_overrides.clear()
 
 
-@pytest.fixture(autouse=True)
-def _allow_test_host(monkeypatch):
-    # httpx base_url is http://test; the Host allowlist is explicit opt-in.
-    monkeypatch.setenv("LOKI_DASHBOARD_ALLOWED_HOSTS", "test")
-
-
 @pytest_asyncio.fixture
 async def client(app):
     """Create an httpx AsyncClient for testing."""

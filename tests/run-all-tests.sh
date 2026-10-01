@@ -1229,7 +1229,6 @@ run_test "Council Write Transcript Threshold" "$SCRIPT_DIR/test-council-write-tr
 run_test "Cross Project Lift" "$SCRIPT_DIR/test-cross-project-lift.sh"
 run_test "Da Veto" "$SCRIPT_DIR/test-da-veto.sh"
 run_test "Dashboard Identity" "$SCRIPT_DIR/test-dashboard-identity.sh"
-run_test "UI bare loki" "$SCRIPT_DIR/test-ui-bare-loki.sh"
 run_test "Dashboard Json Guards" "$SCRIPT_DIR/test-dashboard-json-guards.sh"
 run_test "Dashboard Memory Endpoints" "$SCRIPT_DIR/test-dashboard-memory-endpoints.sh"
 run_test "Dashboard Multiproject" "$SCRIPT_DIR/test-dashboard-multiproject.sh"

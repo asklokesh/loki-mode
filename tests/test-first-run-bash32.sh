@@ -42,7 +42,7 @@ trap 'rm -rf "$HOME_DIR"' EXIT
 
 echo "T1 -- the welcome screen renders (/bin/bash major $BASH_MAJOR)"
 
-out=$(LOKI_LANDING=1 HOME="$HOME_DIR" /bin/bash "$LOKI" 2>&1)
+out=$(HOME="$HOME_DIR" /bin/bash "$LOKI" 2>&1)
 if printf '%s' "$out" | grep -q "Loki Mode v"; then
     ok "bare loki prints the welcome banner"
 else
