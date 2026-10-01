@@ -39,10 +39,6 @@ jobs:
       - name: Structural checks
         run: bash scripts/structural-checks.sh
 
-      # E-162: the slice has no 8-shard Tests, so the partition guard runs here.
-      - name: Shard coverage
-        run: bash tests/test-shard-coverage.sh
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -52,6 +48,11 @@ jobs:
 
       - name: Install Python test dependencies (for R5 dashboard/web-app pytest)
         run: python3 -m pip install -r requirements-test.txt
+
+      # E-162: the slice has no 8-shard Tests, so the partition guard runs here.
+      # After the pip install: two suites register only when pytest imports.
+      - name: Shard coverage
+        run: bash tests/test-shard-coverage.sh
 
       # oven-sh/setup-bun caches the bun install directory by default (no
       # no-cache: true set here), so bun installs are already cached; this
