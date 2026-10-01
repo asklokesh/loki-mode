@@ -172,14 +172,62 @@ else
 fi
 
 _scan_rc=0
-"$GITLEAKS_BIN" git . \
-  "${_config_arg[@]+"${_config_arg[@]}"}" \
-  "${_log_opts_arg[@]}" \
-  --gitleaks-ignore-path .gitleaksignore \
-  --report-format json \
-  --report-path "$GITLEAKS_REPORT" \
-  --redact \
-  --no-banner || _scan_rc=$?
+_revs="${GITLEAKS_RANGE:---all}"
+
+# E-159 (b), FAIL OPEN closed: gitleaks 8.30.0 exits 0 when its own internal
+# `git log` fails (an invalid range, HEAD~5 on a short repo) and scans nothing.
+# Refuse unless git itself can walk the revisions first, and below also treat a
+# "[git] fatal" line in the scanner's output as a failure.
+# shellcheck disable=SC2086
+if ! git rev-list $_revs >/dev/null 2>&1; then
+  echo "FAIL: 'git rev-list ${_revs}' failed -- nothing would be scanned, refusing to report a clean scan" >&2
+  _scan_rc=1
+else
+  _err_log="$(mktemp "${TMPDIR:-/tmp}/loki-gitleaks-stderr.XXXXXX")"
+  "$GITLEAKS_BIN" git . \
+    "${_config_arg[@]+"${_config_arg[@]}"}" \
+    "${_log_opts_arg[@]}" \
+    --gitleaks-ignore-path .gitleaksignore \
+    --report-format json \
+    --report-path "$GITLEAKS_REPORT" \
+    --redact \
+    --no-banner 2> >(tee "$_err_log" >&2) || _scan_rc=$?
+  wait
+  if [ "$_scan_rc" -eq 0 ] && grep -q '\[git\] fatal' "$_err_log" 2>/dev/null; then
+    echo "FAIL: gitleaks reported a git fatal error yet exited 0 -- the scan did not cover the requested history" >&2
+    _scan_rc=1
+  fi
+
+  # E-159 (a), evil merge: a merge commit's OWN added content (e.g. `merge -s ours
+  # --no-commit` plus a token in the merge itself) is invisible to the per-commit
+  # scan above, which diffs merges against nothing. `--cc` shows only hunks that
+  # differ from ALL parents, so ordinary merges contribute nothing and an evil merge
+  # contributes exactly its own content. Same trusted config as the main scan.
+  if [ "$_scan_rc" -eq 0 ]; then
+    _mrc=0
+    # Scope: the explicit range, else everything since the last trusted release tag.
+    # A merge scan over ALL history reports 36 historical findings that stdin mode cannot
+    # baseline (no commit in the fingerprint), so older merges stay covered only by the
+    # per-commit scan above; every merge since the trusted base is covered here.
+    _mrevs="$_revs"
+    if [ -z "$GITLEAKS_RANGE" ] && [ -n "$_base_sha" ]; then
+      _mrevs="${_base_sha}..${_tip}"
+    fi
+    # shellcheck disable=SC2086
+    git log --merges -p --cc $_mrevs 2>/dev/null \
+      | "$GITLEAKS_BIN" stdin \
+          "${_config_arg[@]+"${_config_arg[@]}"}" \
+          --report-format json \
+          --report-path "${GITLEAKS_REPORT%.json}-merges.json" \
+          --redact \
+          --no-banner || _mrc=$?
+    if [ "$_mrc" -ne 0 ]; then
+      echo "FAIL: gitleaks found content added by a merge commit itself (git log --merges --cc ${_mrevs})" >&2
+      _scan_rc="$_mrc"
+    fi
+  fi
+  rm -f -- "$_err_log"
+fi
 
 [ -z "$_config_tmp" ] || rm -f -- "$_config_tmp"
 if [ -n "$_tip_config_backup" ]; then
