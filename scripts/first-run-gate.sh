@@ -7,6 +7,8 @@
 #   --real              real provider (needs ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN,
 #                       the throwaway HOME has no login); also times raw `claude -p` and
 #                       appends both to docs/v10/METRICS.md
+#   --engine legacy     the no-bun machine (plain `npm i -g` user): legacy verify, 15-line budget, no v10-only
+#                       checks, and the legacy fallback line must be printed naming bun. Run it with bun off PATH.
 #   --installed <spec>  npm-install that exact package into a temp prefix and run IT
 #
 # Test hooks: FRG_LOKI overrides the loki binary; FRG_REPORT the report path.
@@ -14,13 +16,14 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="fix the bug that makes the failing test in sum.test.js fail"
-MODE=stub SPEC=""
+MODE=stub SPEC="" ENGINE=v10
 while [ $# -gt 0 ]; do
     case "$1" in
         --stub) MODE=stub ;;
         --real) MODE=real ;;
+        --engine) ENGINE="${2:-}"; case "$ENGINE" in v10|legacy) ;; *) echo "--engine needs v10 or legacy" >&2; exit 2 ;; esac; shift ;;
         --installed) SPEC="${2:-}"; [ -n "$SPEC" ] || { echo "--installed needs a spec" >&2; exit 2; }; shift ;;
-        *) echo "usage: $0 [--stub|--real] [--installed <npm spec>]" >&2; exit 2 ;;
+        *) echo "usage: $0 [--stub|--real] [--engine v10|legacy] [--installed <npm spec>]" >&2; exit 2 ;;
     esac
     shift
 done
@@ -51,8 +54,18 @@ export HOME="$T/home" LOKI_NO_BROWSER=1 npm_config_cache="$T/npm-cache" npm_conf
 # --- which loki ---------------------------------------------------------------
 LOKI="${FRG_LOKI:-$REPO_ROOT/bin/loki}"
 if [ -n "$SPEC" ]; then
-    npm install --silent --no-audit --no-fund --prefix "$T/prefix" "$SPEC" >"$T/install.log" 2>&1 \
+    # The legacy leg is a user with no bun at all: omit optional deps so loki-mode's optional bun is not installed beside it.
+    OMIT=""; [ "$ENGINE" = legacy ] && OMIT="--omit=optional"
+    # shellcheck disable=SC2086
+    npm install --silent --no-audit --no-fund $OMIT --prefix "$T/prefix" "$SPEC" >"$T/install.log" 2>&1 \
         || { echo "FAIL install: npm install $SPEC failed (see $T/install.log)"; exit 1; }
+    if [ "$ENGINE" = legacy ]; then
+        for d in "$T/prefix/node_modules" "$T/prefix/node_modules/loki-mode/node_modules" "$T/prefix/lib/node_modules/loki-mode/node_modules"; do
+            for b in "$d/bun" "$d"/@oven/bun-*; do
+                [ -e "$b" ] && { echo "FAIL legacy-no-bun: bun is installed at $b; the legacy leg must represent a user with no bun (install with --omit=optional)"; exit 1; }
+            done
+        done
+    fi
     LOKI="$T/prefix/node_modules/.bin/loki"
 fi
 
@@ -120,7 +133,8 @@ else res FAIL no-stray-files "unexpected changes: $(echo "$BAD" | tr '\t\n' '  '
 # 4. printed receipt digest: FULL 64-hex, equal to the receipt_sha256 loki verify reports
 VOUT="$T/verify.log"
 # D48: bare `loki verify` stays the legacy deterministic verify; the receipt a v10 run seals is checked by the v10 verify.
-LOKI_ENGINE=v10 "$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?
+if [ "$ENGINE" = legacy ]; then "$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?
+else LOKI_ENGINE=v10 "$LOKI" verify < /dev/null > "$VOUT" 2>&1; VRC=$?; fi
 PRINTED=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Eio '(receipt_sha256|sha256|receipt)[^0-9a-f]*[0-9a-f]{64}' \
     | head -1 | grep -Eo '[0-9a-f]{64}$')
 VERIFIED_D=$(sed -n 's/^.*receipt_sha256[^0-9a-f]*\([0-9a-f]\{64\}\).*$/\1/p' "$VOUT" | head -1)
@@ -139,13 +153,20 @@ else res FAIL receipt-signed "loki verify reports no valid signature: $(grep -Ei
 
 # 7. terminal output 8 lines or fewer without --verbose (D48: the v10 quiet budget; was 15 on the legacy engine)
 LINES=$(wc -l < "$T/out.log" | tr -d ' ')
-[ "$LINES" -le 8 ] && res PASS output-lines "$LINES lines (max 8)" || res FAIL output-lines "$LINES lines (max 8)"
+MAXL=8; [ "$ENGINE" = legacy ] && MAXL=15 # legacy quiet budget
+[ "$LINES" -le "$MAXL" ] && res PASS output-lines "$LINES lines (max $MAXL)" || res FAIL output-lines "$LINES lines (max $MAXL)"
 
 # 8. wall time recorded
 echo "$WALL" | grep -Eq '^[0-9]+$' && res PASS wall-time "recorded ${WALL}s" || res FAIL wall-time "not recorded"
 
-# 7b. D48: the default entry is the Loki 10 engine: one start line naming it, then Outcome, PR, Receipt, NOT PROVEN, Cost, Time
 OUTC=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log")
+if [ "$ENGINE" = legacy ]; then
+    # no-bun leg: the fallback must be announced and name the reason, never silent
+    if grep -q 'loki: using the legacy engine (the Loki 10 engine needs bun' <<<"$OUTC"; then
+        res PASS legacy-fallback-line "fallback line printed and names bun"
+    else res FAIL legacy-fallback-line "no legacy-engine fallback line naming bun (is bun still on PATH?)"; fi
+else
+# 7b. D48: the default entry is the Loki 10 engine: one start line naming it, then Outcome, PR, Receipt, NOT PROVEN, Cost, Time
 MISSL=""; for l in Outcome PR Receipt 'NOT PROVEN' Cost Time; do grep -q "^$l:" <<<"$OUTC" || MISSL="$MISSL $l"; done
 if head -1 <<<"$OUTC" | grep -q '^Loki 10 engine (set LOKI_ENGINE=legacy' && [ -z "$MISSL" ]; then
     res PASS engine-start-line "start line names Loki 10; Outcome/PR/Receipt/NOT PROVEN/Cost/Time present"
@@ -173,9 +194,12 @@ PY
 )
 case "$CJ" in ok*) res PASS cost-non-null "$CJ" ;; *) res FAIL cost-non-null "$CJ" ;; esac
 
+fi
+
 # 9. G8 (stub only): an agent that skips the target test (node { skip: true } on the target) must not end VERIFIED. Runs the v10 engine,
 #    whose verify stage judges skips and test configuration (A-115); since D48 this IS the default engine, so no LOKI_ENGINE is set.
 if [ "$MODE" = stub ]; then
+  if [ "$ENGINE" = v10 ]; then
     mkdir -p "$T/skip" && mk_bugrepo "$T/skip"
     ( cd "$T/skip" && FRG_SKIP=1 "$LOKI" "$TASK" --no-pr ) < /dev/null > "$T/skip.log" 2>&1; SRC=$?
     if [ "$SRC" -ne 0 ] && ! grep -Eqi '^Outcome: *VERIFIED|verdict: *verified' "$T/skip.log"; then
@@ -186,11 +210,13 @@ if [ "$MODE" = stub ]; then
     if [ "$VRC" -eq 4 ] && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipv.log" | grep -Eqi 'VERDICT:? *VERIFIED|^VERIFIED'; then
         res PASS skip-bare-verify "bare verify after a failed default run: rc=$VRC, $(head -1 "$T/skipv.log")"
     else res FAIL skip-bare-verify "bare verify after a failed default run: rc=$VRC, $(head -1 "$T/skipv.log")"; fi
+  fi
     # 9b. the same skip under the escape hatch (LOKI_ENGINE=legacy `loki quick`, D48): the headline must not be a verified verdict. Its rc is reported, not
     #     asserted: legacy prints NOT VERIFIED but can exit 0 (exit-honest policy, G1's domain).
     mkdir -p "$T/skipl" && mk_bugrepo "$T/skipl"
     ( cd "$T/skipl" && FRG_SKIP=1 LOKI_ENGINE=legacy "$LOKI" quick "$TASK" ) < /dev/null > "$T/skipl.log" 2>&1; LRC=$?
     HH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Ei '^Outcome:' | head -1)
+    if [ "$ENGINE" = legacy ]; then HH="main run headline not checked in legacy mode; 9b checked only the legacy skipped-target run above"; fi
     LH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Ei 'Evidence Receipt' | head -1)
     if [ "$LRC" -eq 3 ] && grep -Eqi 'NOT VERIFIED' <<<"$LH" && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Eqi 'verdict: *verified|Evidence Receipt:? *VERIFIED'; then
         res PASS skip-not-verified-legacy "legacy skipped target: rc=3, headline: ${LH:-none} (honest run: ${HH:-none})"
