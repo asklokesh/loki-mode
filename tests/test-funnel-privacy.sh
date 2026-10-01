@@ -70,12 +70,18 @@ BINDIR="$SANDBOX/bin"
 mkdir -p "$BINDIR"
 cat > "$BINDIR/curl" <<'STUB'
 #!/usr/bin/env bash
-# Capture the JSON body (-d) of every telemetry POST, one per line.
-prev=""
+# Capture the JSON body (-d) of every off-machine POST, one per line. Loopback
+# calls (run.sh's dashboard /api/focus registration) are not egress.
+prev=""; url=""; body=""
 for a in "$@"; do
-    if [ "$prev" = "-d" ]; then printf '%s\n' "$a" >> "$LOKI_TEST_CAPTURE"; fi
+    case "$a" in http*://*) url="$a" ;; esac
+    if [ "$prev" = "-d" ]; then body="$a"; fi
     prev="$a"
 done
+case "$url" in
+    http://127.0.0.1[:/]*|http://localhost[:/]*|http://\[::1\][:/]*) ;;
+    *) [ -n "$body" ] && printf '%s\n' "$body" >> "$LOKI_TEST_CAPTURE" ;;
+esac
 exit 0
 STUB
 chmod +x "$BINDIR/curl"
