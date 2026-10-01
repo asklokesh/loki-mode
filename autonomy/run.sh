@@ -1066,7 +1066,7 @@ _loki_invoke_argv_provider() {
 
     LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
     _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
-        "${_LOKI_INVOKE_ARGV[@]}" 2>&1 \
+        "${_LOKI_INVOKE_ARGV[@]}" < /dev/null 2>&1 \
         | tee -a "$log_file" "$agent_log" "$iter_output"
     _loki_argv_pipe_status=("${PIPESTATUS[@]}")
     return "$(_loki_provider_pipeline_exit_code \
@@ -6942,7 +6942,7 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
                 # the EXACT resolved file content (the shell writes it verbatim).
                 # Compressing prose into the merged source would corrupt the file,
                 # so disable caveman unconditionally here. No-op when absent.
-                resolution=$(CAVEMAN_DEFAULT_MODE=off claude "${_cr_argv[@]}" -p "$conflict_prompt" --output-format text 2>/dev/null)
+                resolution=$(CAVEMAN_DEFAULT_MODE=off claude "${_cr_argv[@]}" -p "$conflict_prompt" --output-format text < /dev/null 2>/dev/null)
                 ;;
             codex)
                 resolution=$(codex exec --sandbox workspace-write --skip-git-repo-check "$conflict_prompt" 2>/dev/null)
@@ -16449,7 +16449,7 @@ _dispatch_reviewer() {
             fi
             _loki_with_deadline "$_codex_cap" \
                 codex exec --sandbox workspace-write --skip-git-repo-check "$prompt_text" \
-                > "$review_output"
+                < /dev/null > "$review_output"
             ;;
         cline)
             local _cline_cap="$_review_budget"
@@ -16459,7 +16459,7 @@ _dispatch_reviewer() {
             local _cline_argv=(-y)
             [ -n "${LOKI_CLINE_MODEL:-}" ] && _cline_argv+=(-m "$LOKI_CLINE_MODEL")
             _loki_with_deadline "$_cline_cap" cline "${_cline_argv[@]}" "$prompt_text" \
-                > "$review_output"
+                < /dev/null > "$review_output"
             ;;
         aider)
             local _aider_cap="$_review_budget"
@@ -25502,12 +25502,12 @@ except Exception as exc:
                 LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
                 _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
                 claude "${_loki_claude_argv[@]}" -p "$prompt" \
-            --output-format stream-json --verbose 2>&1
+            --output-format stream-json --verbose < /dev/null 2>&1
                 else
                 LOKI_DEADLINE_IDLE_TIMEOUT="${LOKI_PROVIDER_IDLE_TIMEOUT:-0}" \
                 _loki_with_deadline "${LOKI_PROVIDER_CALL_TIMEOUT:-0}" \
                 claude "${_loki_claude_argv[@]}" -p "$prompt" \
-            --output-format stream-json --verbose 2>&1
+            --output-format stream-json --verbose < /dev/null 2>&1
                 fi | \
             tee -a "$log_file" "$agent_log" "$iter_output" | \
             python3 -u -c '

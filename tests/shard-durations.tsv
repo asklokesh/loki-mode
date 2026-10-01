@@ -697,3 +697,4 @@ Loki Seal marketplace (D48 r10)	2
 Quick integrity exit code (A-118)	5
 Quick quiet failure tail and stdin (A-134b)	40
 Docker Bun	0
+Provider stdin closed under verbose (A-134c)	10

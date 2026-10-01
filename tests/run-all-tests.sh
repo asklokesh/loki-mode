@@ -1623,6 +1623,7 @@ run_test "Quick config safety (P0-t15)" "$SCRIPT_DIR/test-quick-config-safety.sh
 run_test "Loki Seal marketplace (D48 r10)" "$SCRIPT_DIR/test-loki-seal-marketplace.sh"
 run_test "Quick integrity exit code (A-118)" "$SCRIPT_DIR/test-quick-integrity-rc.sh"
 run_test "Quick quiet failure tail and stdin (A-134b)" "$SCRIPT_DIR/test-quick-quiet-tail.sh"
+run_test "Provider stdin closed under verbose (A-134c)" "$SCRIPT_DIR/test-provider-stdin-closed.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
