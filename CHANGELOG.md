@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.0 (2026-10-01)
+
+A `next` release. This minor release marks the turn to v10 only: the plan to retire the legacy engine and dashboards is set, and the install and release pipeline is hardened for it.
+
+### Install
+- Cleaner global install: `npm i -g loki-mode` now depends on the per-platform `@oven/bun-*` packages instead of the `bun` meta-package, so no postinstall script has to run. Windows resolves `bun.exe` from the `@oven` package, and the old baseline pins are gone.
+
+### Release safety
+- New real-repo acceptance gate (`scripts/real-repo-gate.sh`): a clean `npm install` of the candidate, then `loki start` against three real repositories with a 15 minute cap, before `latest` may move. Its first run against 10.5.35 failed all three repos on routing, which is the next fix.
+- A push to main reuses the verdict of a train that already verified the identical commit, so verified work reaches users without a second full CI run.
+- The release captain (`scripts/train-cycle.sh`) no longer cancels a train whose required checks are still running by cutting a newer one.
+
+### Direction (docs only)
+- Loki Control Plane design (docs/v10/CONTROL-PLANE.md): one live run view replaces the old dashboards.
+- Legacy removal plan (docs/v10/LEGACY-REMOVAL.md): v10 only, with the inventory of routes, commands and directories to retire.
+- Five basics come first: `loki start` runs v10, the dashboard prints the URL it actually bound, scope control, clean install, and the real-repo gate.
+
+### Coming in 10.6.x
+- `loki start` routed to v10 (with `--no-pr` and `loki <file.md>`), scope control, the Control Plane live view, and the dashboard port-leak fix. A first dashboard port fix was reverted from this release after it broke three test suites.
+
+### Known issues
+- `npm view` can lag a publish by up to about 30 minutes; the release pipeline waits rather than failing.
+
 ## v10.5.35 (2026-10-01)
 
 A `next` release.
