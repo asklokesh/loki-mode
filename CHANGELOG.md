@@ -10,12 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
-## v10.6.5 (2026-10-01)
+## v10.6.6 (2026-10-01)
 
-A `next` release. It ships the changes prepared for v10.6.1, v10.6.3 and v10.6.4, none of which was published.
-
-### `loki start` with an issue or a task runs v10
-- `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "a task in words"` now run the Loki 10 engine, the same as `loki owner/repo#N` and `loki "<task>"`. Flags such as `--no-pr` pass through. `loki start` with a PRD file, a flag first, or a single word keeps its previous behavior.
+A `next` release. It ships the changes prepared for v10.6.1, v10.6.3, v10.6.4 and v10.6.5, none of which was published.
 
 ### Scope control
 - v10 runs stay inside the task. After a run, any edit to an existing file outside the plan's scope is restored before commit and listed in the receipt under NOT PROVEN as `unrelated edit reverted: <file>`. Test files, new files and files you had already modified are kept. When the planner produced no scope (small tasks), nothing is reverted and the receipt says so.
@@ -31,7 +28,12 @@ A `next` release. It ships the changes prepared for v10.6.1, v10.6.3 and v10.6.4
 
 ### Not in this release
 - Dashboard bound-URL and test port-leak fix: withdrawn after it failed the bare `loki` UI test (v10.6.3); planned for next week.
+- `loki start <issue ref>` routed to v10: withdrawn after it regressed moat property P9 (v10.6.5); planned for next week.
 - Removal of the legacy commands: withdrawn after it failed the test suite (v10.6.2); planned for next week.
+
+## v10.6.5 (2026-10-01, not published)
+
+Not published. Its `loki start` routing change regressed moat property P9 and was withdrawn; everything else shipped in v10.6.6.
 
 ## v10.6.4 (2026-10-01, not published)
 
