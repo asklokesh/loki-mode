@@ -221,6 +221,13 @@ expect_contains "R1 shellcheck" "$out" "$(printf 'R1\tshellcheck\tautonomy/hooks
 out="$(sel 'dashboard/api_runs.py')"
 expect_contains "R1 py_syntax" "$out" "$(printf 'R1\tpy_syntax\tdashboard/api_runs.py')"
 
+# Helper script guard: tests/lib/*.py trigger R0 (broad-blast-radius),
+# so they must emit R0 ALL, never py_test. This guards against a regression
+# where match_kind would convert ALL .py files to py_test.
+out="$(sel 'tests/lib/scan-doc-cli-drift.py')"
+expect_contains "R0 helper script" "$out" "$(printf 'R0\tALL')"
+expect_not_contains "helper never py_test" "$out" "$(printf 'py_test')"
+
 # R2: a changed test file runs itself.
 out="$(sel 'tests/test-bootstrap.sh')"
 expect_contains "R2 self" "$out" "$(printf 'R2\tshell_test\ttests/test-bootstrap.sh')"
@@ -388,6 +395,17 @@ if old_matcher_finds "autonomy/lib/fast_verify.py" "$REPO_ROOT/tests/moat/p2-hon
 else
     PASS=$((PASS + 1))
     echo "PASS: mutation control -- old basename+.py matcher misses it (confirms this guard can detect the regression)"
+fi
+
+# Real train/43 regression: tests/lib helper scripts matched as dependents were
+# emitted as py_test/shell_test and failed (pytest rc 5). Replay the range.
+if git -C "$REPO_ROOT" cat-file -e e38e3029b^{commit} 2>/dev/null && git -C "$REPO_ROOT" cat-file -e 9b22a3477^{commit} 2>/dev/null; then
+    out="$(cd "$REPO_ROOT" && bash "$SELECT" --base 9b22a3477 --head e38e3029b)"
+    if printf '%s\n' "$out" | grep -E '(py_test|shell_test)[[:space:]]+tests/lib/' >/dev/null; then
+        FAIL=$((FAIL + 1)); echo "FAIL: train/43 range emits a tests/lib helper as a test"
+    else
+        PASS=$((PASS + 1)); echo "PASS: train/43 range emits no tests/lib helper as a test"
+    fi
 fi
 
 echo ""
