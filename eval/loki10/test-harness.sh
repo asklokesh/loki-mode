@@ -253,6 +253,16 @@ prj="$R/logs/$(ls "$R/logs")/pr.json"
 rtmp="$(sed -n 's/^run tmp: //p' "$T/pass.log")"
 [ -n "$rtmp" ] && [ ! -e "$rtmp" ] && pass "run tmp removed after the run" || fail "run tmp left behind: $rtmp"
 
+# E-101: verify archive directories are created even when absent
+rm -rf "$T/archive-repo-root" "$T/archive-ext"
+R="$T/out-archive-absent"
+STUB_MODE=pass RUN --arm raw-claude --task fx-greet --out "$R" >"$T/archive-absent.log" 2>&1
+if [ -d "$T/archive-repo-root/eval/loki10/archive" ] && [ -d "$T/archive-ext" ]; then
+    pass "archive directories created when absent"
+else
+    fail "archive directories not created: repo=$([ -d "$T/archive-repo-root/eval/loki10/archive" ] && echo exists || echo missing) ext=$([ -d "$T/archive-ext" ] && echo exists || echo missing)"
+fi
+
 # Probe arm: dumps what it can see (Rb) and checks the future commit.
 cat > "$T/bin/probe-stub" <<'EOF'
 #!/usr/bin/env bash
