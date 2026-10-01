@@ -45,9 +45,10 @@ class TestsIntegrity(unittest.TestCase):
         with open(full, "w") as h:
             h.write(text)
 
-    def gen(self):
-        self.git("add", ".")
-        self.git("commit", "--allow-empty", "-m", "work")
+    def gen(self, commit=True):
+        if commit:
+            self.git("add", ".")
+            self.git("commit", "--allow-empty", "-m", "work")
         loki_dir = os.path.join(self.proj, ".loki")
         os.makedirs(loki_dir, exist_ok=True)
         d = _run_generator(loki_dir, os.path.join(loki_dir, "proofs", "p"),
@@ -103,6 +104,84 @@ class TestsIntegrity(unittest.TestCase):
         self.assertTrue(items["tests_integrity:assertions_edited"]["post_headline"])
         self.assertEqual(items["tests_integrity:assertions_edited"]["status"], "inconclusive")
         self.assertNotIn("tests_integrity", items)
+
+    def failed_with(self, line, commit=True, fname="sum.test.js"):
+        self.write(fname, HONEST + line + "\n")
+        _, items = self.gen(commit)
+        return items.get("tests_integrity", {}).get("status")
+
+    def test_js_skip_forms_are_failed(self):
+        for line in ("test('b', { skip: 'flaky' }, () => {});",
+                     "test('b', { skip: 'msg' }, () => {});",
+                     "test('b', { todo: true }, () => {});",
+                     "it.skip ('a', () => {});",
+                     "xtest('a', () => {});",
+                     "test.only('a', () => {});",
+                     "describe.skip('a', () => {});"):
+            with self.subTest(line=line):
+                self.tearDown()
+                self.setUp()
+                self.assertEqual(self.failed_with(line), "failed")
+
+    def test_skip_false_is_not_a_skip(self):
+        self.assertIsNone(self.failed_with("test('b', { skip: false }, () => {});"))
+
+    def test_uncommitted_skip_is_failed(self):
+        self.assertEqual(self.failed_with("test('b', { skip: true }, () => {});", commit=False), "failed")
+
+    def test_uncommitted_delete_is_failed(self):
+        os.remove(os.path.join(self.proj, "sum.test.js"))
+        _, items = self.gen(commit=False)
+        self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_untracked_new_test_with_skip_is_failed(self):
+        self.assertEqual(self.failed_with("test.skip('b', () => {});", commit=False, fname="new.test.js"), "failed")
+
+    def test_dependency_bump_in_package_json_is_not_failed(self):
+        self.write("package.json", '{"name":"x","version":"1.0.0","devDependencies":{"jest":"^30.0.0","@types/jest":"^30.0.0"}}\n')
+        _, items = self.gen()
+        self.assertNotIn("tests_integrity", items)
+
+    def test_package_json_test_script_change_is_failed(self):
+        self.write("package.json", '{"name":"x","version":"1.0.0","scripts":{"test":"true"}}\n')
+        _, items = self.gen()
+        self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_new_conftest_is_disclosed_not_failed(self):
+        self.write("conftest.py", "import pytest\n")
+        head, items = self.gen()
+        self.assertNotIn("tests_integrity", items)
+        self.assertEqual(items["tests_integrity:config_added"]["status"], "inconclusive")
+
+    def test_modified_preexisting_conftest_is_failed(self):
+        self.write("conftest.py", "import pytest\n")
+        self.git("add", ".")
+        self.git("commit", "-m", "conftest")
+        self.base = self.git("rev-parse", "HEAD").stdout.strip()
+        self.write("conftest.py", "import pytest\ncollect_ignore = ['x']\n")
+        _, items = self.gen()
+        self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_iterator_skip_in_rust_test_is_not_a_skip(self):
+        self.write("tests/it.rs", "fn t() { let v: Vec<i32> = (0..3).skip(1).collect(); }\n")
+        _, items = self.gen()
+        self.assertNotIn("tests_integrity", items)
+
+    def test_non_ascii_test_path_delete_is_failed(self):
+        self.write("t\u00e9st.test.js", HONEST)
+        self.git("add", ".")
+        self.git("commit", "-m", "add")
+        self.base = self.git("rev-parse", "HEAD").stdout.strip()
+        os.remove(os.path.join(self.proj, "t\u00e9st.test.js"))
+        _, items = self.gen(commit=False)
+        self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_lone_cr_cannot_hide_a_skip(self):
+        full = os.path.join(self.proj, "sum.test.js")
+        with open(full, "wb") as h:
+            h.write(HONEST.encode() + b"x\rtest.skip('b', () => {});\n")
+        _, items = self.gen()
+        self.assertEqual(items["tests_integrity"]["status"], "failed")
 
     def test_honest_diff_has_no_item(self):
         self.write("sum.js", "module.exports=(a,b)=>b+a\n")

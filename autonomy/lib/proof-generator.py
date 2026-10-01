@@ -1115,77 +1115,157 @@ def _empty_tree_sha(repo_dir):
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
-# A-118 / D47: tests_integrity. Did the diff WEAKEN the tests that vouch for it?
-# CFG_* are copied from loki-ts/src/engine10/stages/verify.ts (A-115); keep in sync.
+# A-118 / D47: tests_integrity. Did the run WEAKEN the tests that vouch for it?
+# CFG_ALWAYS is copied from loki-ts/src/engine10/stages/verify.ts (A-115); keep in sync.
+# The comparison is base vs the final WORKING TREE plus untracked files (like
+# collect_workspace_diff), so uncommitted work is covered.
 _TI_CFG_ALWAYS = re.compile(r"(^|/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$")
 _TI_CFG_SHARED = re.compile(r"(^|/)(setup\.cfg|pyproject\.toml|package\.json)$")
-_TI_CFG_LINE = re.compile(r"^[+-].*(pytest|jest|mocha|vitest|\"test\"\s*:|addopts|testpaths)", re.I | re.M)
+# setup.cfg / pyproject.toml: runner-config lines only, never dependency lines.
+_TI_CFG_LINE = re.compile(
+    r"^[+-]\s*(addopts|testpaths|python_(files|classes|functions)|norecursedirs|\[tool\.pytest|\[tool:pytest|\[pytest)",
+    re.M)
+_TI_NEW_DISCLOSE = re.compile(r"(^|/)conftest\.py$")
 _TI_TEST_FILE = re.compile(
     r"(^|/)(tests?|__tests__|spec|specs)/|\.(test|spec)\.[\w]+$|(^|/)test_[^/]*\.py$|_test\.(py|go|rs)$|(^|/)conftest\.py$")
-_TI_SKIP = re.compile(
-    r"\{\s*skip\s*:\s*true|\.skip\(|\bxit\(|\bxdescribe\(|@pytest\.mark\.(skip|skipif|xfail)\b|pytest\.skip\("
-    r"|@unittest\.skip|\bskipTest\(|\bt\.Skip\(|#\[ignore\]|\.todo\(")
+_TI_SKIP_JS = re.compile(
+    r"\{[^}]*\b(skip|todo)\s*:\s*(?!(?:false|0|null|undefined)\b)\S"
+    r"|\b(it|test|describe|suite|context|specify)\s*\.\s*(skip|only|todo)\b"
+    r"|\bx(it|test|describe)\s*\(|\bf(it|describe)\s*\("
+    r"|\b(t|ctx)\s*\.\s*(skip|todo)\s*\(")
+_TI_SKIP_PY = re.compile(
+    r"@pytest\.mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail)\s*\(|@unittest\.(skip|expectedFailure)|\bskipTest\s*\(")
+_TI_SKIP_GO = re.compile(r"\b[tb]\.Skip(f|Now)?\s*\(")
+_TI_SKIP_RS = re.compile(r"#\[ignore")
+_TI_SKIP_BY_EXT = (
+    (("js", "jsx", "ts", "tsx", "mjs", "cjs"), _TI_SKIP_JS),
+    (("py",), _TI_SKIP_PY), (("go",), _TI_SKIP_GO), (("rs",), _TI_SKIP_RS))
 _TI_ASSERT = re.compile(r"\bassert|\bexpect\(|\.should\b|\.to[A-Z]\w*\(|\bt\.(Error|Fatal)")
+_TI_PKG_KEYS = ("jest", "mocha", "vitest", "ava")
+
+
+def _ti_skip_re(path):
+    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    for exts, rx in _TI_SKIP_BY_EXT:
+        if ext in exts:
+            return rx
+    return None
 
 
 def _ti_run(repo, *args):
+    """Run a read-only git command; returns text decoded from bytes (so a lone
+    CR is never a line break; callers split on \\n only), or None on failure."""
     try:
-        r = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, timeout=30)
+        r = subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=repo,
+                           capture_output=True, timeout=30)
     except Exception:
         return None
-    return r.stdout if r.returncode == 0 else None
+    if r.returncode != 0:
+        return None
+    return r.stdout.decode("utf-8", "replace")
+
+
+def _ti_pkg_view(text):
+    """Test-relevant slice of a package.json, or None when unparseable."""
+    try:
+        d = json.loads(text) if text.strip() else {}
+    except ValueError:
+        return None
+    if not isinstance(d, dict):
+        return None
+    scripts = d.get("scripts") if isinstance(d.get("scripts"), dict) else {}
+    view = {k: v for k, v in scripts.items() if re.match(r"^(pre|post)?test(:.*)?$", k)}
+    return {"scripts": view, **{k: d[k] for k in _TI_PKG_KEYS if k in d}}
 
 
 def _collect_tests_integrity(target_dir, base):
-    """Return {"weakened": [reason...], "assertions_edited": [file...]} or None.
+    """Return {"weakened": [...], "assertions_edited": [...], "disclosed": [...]} or None.
 
-    Derived only from the diff between base and HEAD. None when there is no
-    usable diff (no repo, no base), so no item is ever invented."""
+    Derived from base vs the final working tree (committed, staged, unstaged and
+    untracked). None when there is no usable diff (no repo, no base)."""
     if not base:
         return None
-    names = _ti_run(target_dir, "diff", "--name-status", "-M", base, "HEAD")
+    names = _ti_run(target_dir, "diff", "--relative", "--name-status", "-M", "-z", base, "--")
     if names is None:
         return None
-    weakened, edited = [], []
+    weakened, edited, disclosed = [], [], []
     greenfield = base == _empty_tree_sha(target_dir)
-    changed = []
-    for line in names.splitlines():
-        parts = line.split("\t")
-        st, paths = parts[0][:1], parts[1:]
-        changed.extend(paths)
-        if st in ("D", "R") and _TI_TEST_FILE.search(paths[0]):
-            weakened.append("test file %s: %s"
-                            % ("deleted" if st == "D" else "renamed", paths[0]))
+    toks = names.split("\0")
+    entries, i = [], 0  # (status, old_path, new_path)
+    while i < len(toks) and toks[i]:
+        st = toks[i][:1]
+        if st in "RC" and i + 2 < len(toks):
+            entries.append((st, toks[i + 1], toks[i + 2]))
+            i += 3
+        else:
+            entries.append((st, toks[i + 1] if i + 1 < len(toks) else "", toks[i + 1] if i + 1 < len(toks) else ""))
+            i += 2
+    untracked = _ti_run(target_dir, "ls-files", "--others", "--exclude-standard", "-z") or ""
+    for u in untracked.split("\0"):
+        if u and not u.startswith(".loki/"):
+            entries.append(("A", u, u))
+    for st, old, new in entries:
+        if st in ("D", "R") and _TI_TEST_FILE.search(old):
+            weakened.append("test file %s: %s" % ("deleted" if st == "D" else "renamed", old))
     if not greenfield:
-        for f in changed:
-            if _TI_CFG_ALWAYS.search(f):
-                weakened.append("test runner config changed: " + f)
-            elif _TI_CFG_SHARED.search(f):
-                d = _ti_run(target_dir, "diff", "-U0", base, "HEAD", "--", f) or ""
-                if not d or _TI_CFG_LINE.search(d):
-                    weakened.append("test runner config changed: " + f)
-    patch = _ti_run(target_dir, "diff", "-U0", "-M", base, "HEAD") or ""
-    cur, removed_assert = None, False
-    for line in patch.splitlines() + ["diff --git a/ b/"]:
+        for st, old, new in entries:
+            path = new if st != "D" else old
+            if _TI_CFG_ALWAYS.search(path):
+                if st == "A" and _TI_NEW_DISCLOSE.search(path):
+                    disclosed.append("new test runner config: " + path)
+                else:
+                    weakened.append("test runner config changed: " + path)
+            elif _TI_CFG_SHARED.search(path):
+                if path.endswith("package.json"):
+                    before = _ti_run(target_dir, "show", "%s:./%s" % (base, old)) or ""
+                    try:
+                        with open(os.path.join(target_dir, new), encoding="utf-8", errors="replace") as h:
+                            after = h.read()
+                    except OSError:
+                        after = ""
+                    b, a = _ti_pkg_view(before), _ti_pkg_view(after)
+                    if b is None or a is None or b != a:
+                        weakened.append("test runner config changed: " + path)
+                else:
+                    d = _ti_run(target_dir, "diff", "--relative", "-U0", base, "--", path) or ""
+                    if st == "A" or _TI_CFG_LINE.search(d):
+                        weakened.append("test runner config changed: " + path)
+    # Skip markers: added lines of tracked test files, and the content of untracked ones.
+    patch = _ti_run(target_dir, "diff", "--relative", "-U0", "-M", base, "--") or ""
+    cur, rx, removed_assert = None, None, False
+    for line in patch.split("\n") + ["diff --git a/ b/"]:
         if line.startswith("diff --git "):
             if cur and removed_assert and cur not in edited:
                 edited.append(cur)
-            cur, removed_assert = None, False
+            cur, rx, removed_assert = None, None, False
         elif line.startswith("+++ b/"):
             cur = line[6:] if _TI_TEST_FILE.search(line[6:]) else None
-        elif cur and line.startswith("+") and _TI_SKIP.search(line):
+            rx = _ti_skip_re(cur) if cur else None
+        elif cur and line.startswith("+") and rx and rx.search(line):
             weakened.append("skip added in %s" % cur)
         elif cur and line.startswith("-") and not line.startswith("---") \
                 and _TI_ASSERT.search(line):
             removed_assert = True
-    seen, uniq = set(), []
+    for u in untracked.split("\0"):
+        if not u or u.startswith(".loki/") or not _TI_TEST_FILE.search(u):
+            continue
+        rx = _ti_skip_re(u)
+        if not rx:
+            continue
+        try:
+            with open(os.path.join(target_dir, u), "rb") as h:
+                text = h.read().decode("utf-8", "replace")
+        except OSError:
+            continue
+        if any(rx.search(ln) for ln in text.split("\n")):
+            weakened.append("skip added in %s" % u)
+    uniq = []
     for w in weakened:
-        if w not in seen:
-            seen.add(w)
+        if w not in uniq:
             uniq.append(w)
-    if not uniq and not edited:
+    if not uniq and not edited and not disclosed:
         return None
-    return {"weakened": uniq, "assertions_edited": edited}
+    return {"weakened": uniq, "assertions_edited": edited, "disclosed": disclosed}
 
 
 def _collect_iterations(loki_dir):
@@ -1601,6 +1681,14 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
             "item": "tests_integrity:assertions_edited",
             "status": "inconclusive",
             "reason": "assertion lines edited in: " + ", ".join(_ae),
+            "post_headline": True,
+        })
+    _di = (facts.get("tests_integrity") or {}).get("disclosed")
+    if _di:
+        degraded.append({
+            "item": "tests_integrity:config_added",
+            "status": "inconclusive",
+            "reason": "; ".join(_di),
             "post_headline": True,
         })
 
