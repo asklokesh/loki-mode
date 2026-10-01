@@ -1,0 +1,43 @@
+# DOC-02 allowlist for tests/test-docs-cli-drift.sh: intentional historical mentions.
+# Format: path<TAB>token<TAB>reason. token is exactly what the scanner prints.
+docs/BUG-AUDIT-v6.61.0.md	--csv	historical v6.61.0 bug audit
+docs/COMPETITIVE-SCORECARD.md	v9.8	dated 2026-08-03 scorecard generated against v9.8.1
+docs/DASHBOARD_V2_CHECKLIST.md	v6.0	historical planning checklist (target v6.0.0)
+docs/DEPLOY-PLAN.md	--deploy	plan text rejecting the loki preview --deploy alternative
+docs/R3-COST-OBSERVABILITY-DESIGN.md	--cost	design text rejecting the loki metrics --cost alternative
+docs/UNCERTAINTY-ESCALATION-PLAN.md	v7.19	dated plan titled for v7.19.2
+docs/V8-AGENT-SDK-PLAN.md	--reviewers-file	historical v8 plan, proposed flag
+docs/architecture/ADR-001-runtime-migration.md	loki ts-version	ADR phase 1 history, scaffold command
+docs/architecture/DASHBOARD_V2_ARCHITECTURE.md	--db	draft design (Status: Design Phase), never built
+docs/architecture/bmad-integration-validation.md	v6.0	dated 2026-02-25 validation report against v6.0.0
+docs/bug-fixes/agent-12-scenario-fixes.md	v6.71	historical bug-fix record
+docs/bug-fixes/agent-14-uat-newuser-fixes.md	v6.71	historical bug-fix record
+docs/competitive/bolt-new-analysis.md	--quick	dated competitive report, proposed flag
+docs/competitive/bolt-new-analysis.md	loki eject	dated competitive report, proposed command
+docs/competitive/emergence-others-analysis.md	v6.71	dated competitive report header
+docs/competitive/replit-lovable-analysis.md	loki connect	dated competitive report, proposed command
+docs/plans/FORGE-AUTONOMOUS-QUEUE.md	loki promote	Forge plan record, not on main
+docs/plans/FORGE-AUTONOMOUS-QUEUE.md	loki forge	Forge plan record, not on main
+docs/plans/ULTRAPLAN-FORGE-BAAS.md	loki forge	Forge plan, not on main
+docs/plans/ULTRAPLAN-FORGE-BAAS.md	loki migrate-from	Forge plan, not on main
+docs/plans/ULTRAPLAN-FORGE-BAAS.md	loki promote	Forge plan, not on main
+docs/plans/ULTRAPLAN-FORGE-BAAS.md	loki forge-detect	Forge plan, not on main
+docs/prd-purple-lab-platform-v2.md	--complexity	PRD proposal, flag not built
+docs/prd-purple-lab-platform.md	--complexity	PRD proposal, flag not built
+docs/v10/ADOPTION-PLAN.md	loki legacy	v10 plan for the E-31 alias, not on main yet
+docs/v10/ENGINE.md	loki legacy	E-31 slice spec for the planned alias, not on main yet
+docs/v10/SCORECARD-PLAN.md	loki trimmed	output marker text [loki trimmed N lines], not a command
+docs/INSTALLATION.md	--pro	partial flag typed before TAB in the shell-completion example
+docs/TOOLS.md	loki tools	output text printed by tools/tool-index.py, not a command
+docs/authorization.md	--role	denial: names the removed --role option
+docs/siem-integration.md	--framework	denial: names the removed compliance --framework option
+docs/exit-codes.md	--no-such-flag	deliberate unknown flag documenting exit code 64
+docs/openclaw-integration.md	loki openclaw	denial: states the command does not exist
+docs/certification/02-enterprise-features/quiz.md	loki auth	wrong-answer distractor in a quiz
+docs/certification/02-enterprise-features/quiz.md	--new-token	wrong-answer distractor in a quiz
+docs/certification/02-enterprise-features/quiz.md	--enterprise	wrong-answer distractor in a quiz
+docs/certification/04-production-deployment/quiz.md	--max-cost	wrong-answer distractor in a quiz
+docs/certification/certification-exam.md	loki auth	wrong-answer distractor in the exam
+docs/certification/certification-exam.md	--new-token	wrong-answer distractor in the exam
+docs/certification/certification-exam.md	--enterprise	wrong-answer distractor in the exam
+docs/certification/certification-exam.md	--max-cost	wrong-answer distractor in the exam

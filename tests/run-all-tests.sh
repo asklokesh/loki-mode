@@ -1593,6 +1593,7 @@ run_test "Loki 10 gate publish script (EV-6)" "$SCRIPT_DIR/../eval/loki10/test-p
 run_test "Loki 10 user docs match USAGE and the default marker (E-34)" "$SCRIPT_DIR/test-engine10-docs.sh"
 run_test "Loki modernize py2/3 capture tracer (M-09)" "$SCRIPT_DIR/test-modernize-py-capture.sh"
 run_test "Loki modernize user guide matches cli.ts flags (M-30)" "$SCRIPT_DIR/test-modernize-docs.sh"
+run_test "Docs name only CLI commands, flags and versions on main (DOC-02)" "$SCRIPT_DIR/test-docs-cli-drift.sh"
 run_test "loki modernize always routes to engine10 (M-08)" "$SCRIPT_DIR/test-modernize-dispatch.sh"
 run_test "Dependency inventory Latest/Bump self-consistency (DEP-01)" "$SCRIPT_DIR/test-dep-inventory.sh"
 run_test "Usage governor calibration and dedup (G-01)" "$SCRIPT_DIR/test-usage-governor.sh"
