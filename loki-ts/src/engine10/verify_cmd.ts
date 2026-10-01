@@ -128,13 +128,15 @@ function latestRunId(runsRoot: string): string | null {
 }
 const EXIT_BY_VERDICT: Record<Verdict, number> = {
   VERIFIED: 0,
-  UNSIGNED: 0,
+  UNSIGNED: 3, // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
   TAMPERED: 1,
   UNCHECKED: 2,
 };
 export async function main(args: readonly string[], deps: VerifyDeps = {}): Promise<number> {
+  const allowUnsigned = args.includes("--allow-unsigned") || process.env["LOKI_VERIFY_ALLOW_UNSIGNED"] === "1";
+  args = args.filter((a) => a !== "--allow-unsigned");
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified/unsigned, 1 tampered, 2 unchecked, 66 no runs.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n");
     return 0;
   }
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
@@ -149,7 +151,8 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);
   if (result.verdict === "UNSIGNED") {
-    process.stdout.write("attestation: UNSIGNED (this receipt carries no signature)\n");
+    process.stdout.write(allowUnsigned ? "attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)\n" : "attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)\n");
+    return allowUnsigned ? 0 : EXIT_BY_VERDICT.UNSIGNED;
   } else if (result.verdict === "VERIFIED") {
     process.stdout.write("attestation: VERIFIED against the local JWKS\n");
   }
