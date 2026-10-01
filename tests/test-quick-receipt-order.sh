@@ -21,7 +21,7 @@ cat > "$T/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
 [ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
-[ -z "${STUB_SKIP:-}" ] || { sed -i.bak "s/'sums', /'sums', { skip: true }, /" sum.test.js && rm -f sum.test.js.bak; }
+[ -z "${STUB_SKIP:-}" ] || { [ "$STUB_SKIP" = reason ] && _sk="'flaky'" || _sk=true; sed -i.bak "s/'sums', /'sums', { skip: $_sk }, /" sum.test.js && rm -f sum.test.js.bak; }
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
 echo "stub claude done"
 STUB
@@ -137,7 +137,7 @@ STUB_SKIP=1 run_quick "$SFIX" "$T/sout.log"; SRC=$?
 sed 's/\x1b\[[0-9;]*m//g' "$T/sout.log" | grep -qE '^Evidence Receipt: NOT VERIFIED \(tests weakened: skip added in sum\.test\.js' \
     && ok "quiet headline names the weakening" || bad "quiet headline does not name the weakening" "$(grep 'Evidence Receipt' "$T/sout.log")"
 SVFIX="$T/skipv"; mk_fix "$SVFIX"
-STUB_SKIP=1 run_quick "$SVFIX" "$T/svout.log" LOKI_VERBOSE=1
+STUB_SKIP=reason run_quick "$SVFIX" "$T/svout.log" LOKI_VERBOSE=1
 SVRC=$?
 [ "$SVRC" -eq 3 ] && ok "verbose run that adds a skip exits 3" || bad "verbose skip run rc=$SVRC (want 3)"
 
