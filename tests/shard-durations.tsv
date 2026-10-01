@@ -702,3 +702,4 @@ Docker Bun	0
 Provider stdin closed under verbose (A-134c)	10
 D51 Phase B workspaces (B01)	1
 json schemas validate real why and status output (D48 r5)	60
+train-cycle.sh release captain: train, promote, release, locks, dry-run (RC-AUTO)	30
