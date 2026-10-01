@@ -3,6 +3,7 @@
 // id; post-PR: detached deep verify, then Slack notify.
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
+import { backstopCommit } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -85,17 +86,6 @@ export function readOriginUrl(repoDir: string): string | null {
 export function githubRepoFromUrl(url: string | null): string | null {
   const m = url?.match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/);
   return m?.[1] ?? null;
-}
-/** Commits whatever a killed or crashed worker left uncommitted or untracked (minus .loki), so it
- *  reaches the pushed branch: `git diff` alone misses untracked files, and nothing pushes a tree
- *  that was never committed. Withheld-token env, hooks/fsmonitor off (repoDir/.git is agent-writable).
- *  A clean tree, or add/reset failing, is a no-op: best-effort, never the reason a run fails. */
-function backstopCommit(repoDir: string, workerEnv: NodeJS.ProcessEnv, runId: string): void {
-  const g = (args: string[]) => execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: repoDir, env: workerEnv, stdio: "ignore" });
-  try { g(["add", "-A", "--", "."]); g(["reset", "-q", "--", ".loki"]); g(["diff", "--cached", "--quiet"]); } catch (err) {
-    if ((err as { status?: number }).status !== 1) return; // add/reset failed, or truly nothing staged
-    try { g(["commit", "-q", "-m", `loki: backstop commit (${runId})`, "-m", `Loki-Run: ${runId}`]); } catch { /* best-effort */ }
-  }
 }
 export class SupervisorLog { // single writer with a running sha256 of the bytes it appended
   private readonly log: EventLog;
@@ -229,11 +219,10 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   if (verdict === "FAILED") {
     const stages = fold(readEvents(log.path)).stages; // A-104c: a failed commit stage already chose what to exclude (Wall files, lockfiles, pre-run dirt); a blanket `add -A` would undo it
     const baseE = stages["intake"], base = baseE?.type === "stage.completed" && typeof baseE.data.base_sha === "string" ? baseE.data.base_sha : null;
-    if (base !== null && stages["commit"]?.type !== "stage.failed") backstopCommit(opts.repoDir, workerEnv, opts.runId); // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
-    try {
-      const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: opts.repoDir, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-      hasDiff = base !== null && head !== base;
-    } catch { /* no HEAD yet (intake never committed a base): no diff */ }
+    if (base !== null && stages["commit"]?.type !== "stage.failed") backstopCommit(opts.repoDir, workerEnv, opts.runId, base, baseE?.type === "stage.completed" ? baseE.data.preexisting_dirty : undefined); // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
+    try { // net diff against base (a revert commit can leave HEAD past base with nothing to publish); any failure counts as a diff
+      execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "diff", "--quiet", "--no-ext-diff", "--no-textconv", String(base), "HEAD", "--", ".", ":(exclude).loki"], { cwd: opts.repoDir, env: workerEnv, stdio: "ignore" });
+    } catch { hasDiff = base !== null; }
   }
   if (opts.pr && intact && origin && verdict !== "ALREADY_SATISFIED" && (verdict !== "FAILED" || hasDiff)) {
     const pushEnv: PushEnv = { _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };

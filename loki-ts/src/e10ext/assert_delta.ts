@@ -89,6 +89,14 @@ def stripped(t):
 def consts(t):
     return [n for n in ast.walk(t) if isinstance(n, ast.Constant)]
 
+def shadowed(t):
+    for scope in [t] + [n for n in t.body if isinstance(n, ast.ClassDef)]:
+        names = [n.name for n in scope.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test")]
+        if len(names) != len(set(names)):
+            return True
+    return False
+if shadowed(bt) or shadowed(ht):
+    out("weakened")
 sb, sh = stripped(bt), stripped(ht)
 if not tests(ht) or norm(sb) != norm(sh):
     out("weakened")
@@ -134,7 +142,12 @@ for f in tests(ht):
                 and isinstance(c.args[0], ast.Constant) and isinstance(c.args[0].value, str) and isinstance(c.args[1], (ast.List, ast.Tuple)):
             cols = [x.strip() for x in c.args[0].value.split(",")]
             # a column counts only if every use of its name in the body is the right operand of a direct eq assert
-            solo = {k for k in cols if all(id(n) in rights for n in ast.walk(f) if isinstance(n, ast.Name) and n.id == k and n not in [m for dd in f.decorator_list for m in ast.walk(dd)])}
+            if any(kw.arg == "indirect" for kw in c.keywords):
+                continue
+            deco = {id(m) for dd in f.decorator_list for m in ast.walk(dd)}
+            uses = {k: [n for n in ast.walk(f) if isinstance(n, ast.Name) and n.id == k and id(n) not in deco] for k in cols}
+            # the column must be read at least once, and only as the right operand of a direct eq assert
+            solo = {k for k, u in uses.items() if u and all(id(n) in rights for n in u)}
             for r in c.args[1].elts:
                 for i, e in enumerate(r.elts if isinstance(r, (ast.Tuple, ast.List)) else [r]):
                     if isinstance(e, ast.Constant) and i < len(cols) and cols[i] in solo:
@@ -155,10 +168,13 @@ def generic(v):
         or (isinstance(v, (int, float)) and abs(v) < 10)
 
 def in_task(v, f):
+    task0 = d["task"]
     t = v if isinstance(v, str) else repr(v)
     if t == "":
         return False
-    tok = r"(?<![\w.])" + re.escape(t) + r"(?![\w]|\.\d)"
+    # bounded by whitespace, string ends or ,;:()[]{}"' only; never glued to - + or a digit group separator
+    tok = r"(?<![^\s,;:()\[\]{}\"'])(?<!\d,)" + re.escape(t) + r"(?:(?=[\s,;:()\[\]{}\"']|$)(?!,\d)|\.(?=\s|$))"
+    task = re.sub(r"(?<=\d),(?=\d{3}\b)", "", task0)
     if not generic(v):
         return re.search(tok, task) is not None
     # a generic value counts only right next to the identifier the test calls

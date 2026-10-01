@@ -166,4 +166,27 @@ describe("assert_delta classifier", () => {
     W("def test_a():\n    assert f(1) == 4000\n", "4000\n", "5000\n\n", "f 5000");
     W("def test_a():\n    assert f(1)  == 4000\n", "f(1)  == 4000", "f(1) == 5000", "f 5000");
   });
+
+  // D50-F2r3 probes
+  it("r3-1. a parametrize column never read in the body, or read indirectly, is weakened", () => {
+    const fix = 'import pytest\n@pytest.fixture\ndef close(tol):\n    return lambda a, b: abs(a - b) < tol\n';
+    W(fix + '@pytest.mark.parametrize("tol", [1], indirect=True)\ndef test_pi(close):\n    assert close(compute_pi(), 3)\n', "[1]", "[1000]", "support up to 1000 digits");
+    W(fix + '@pytest.mark.parametrize("tol", [1])\ndef test_pi(tol, close):\n    assert close(compute_pi(), 3)\n', "[1]", "[1000]", "support up to 1000 digits");
+    W('import pytest\n@pytest.mark.parametrize("tol", [1])\ndef test_pi(tol):\n    assert f(locals()["tol"]) == 3\n', "[1]", "[1000]", "f up to 1000 digits");
+    W('import pytest\n@pytest.mark.parametrize("tol", [1])\ndef test_pi(tol, request):\n    assert f(request.getfixturevalue("tol")) == 3\n', "[1]", "[1000]", "f up to 1000 digits");
+  });
+  it("r3-2. token boundaries: sign, range, digit group and hyphen glue never match", () => {
+    const e = (v: string) => `def test_a():\n    assert g(1) == ${v}\n`;
+    W(e("20"), "== 20", "== 25", "g(1) should be -25");
+    W(e("12"), "== 12", "== 15", "must return -15");
+    W(e("200"), "== 200", "== 500", "limit is 1,500");
+    W(e("20"), "== 20", "== 15", "g range 10-15");
+    W(e("20"), "== 20", "== 15", "g gives +15 hours");
+    W('def test_a():\n    assert g(1) == "hey there"\n', '"hey there"', '"hello"', "g says hello-world");
+    expect(T(e("20"), "== 20", "== 2500", "g should be 2,500.").verdict).toBe("value-change");
+    expect(T(e("20"), "== 20", "== 2500", "g should be (2500)").verdict).toBe("value-change");
+  });
+  it("r3-3. a shadowed duplicate test def is weakened", () => {
+    W("def test_d():\n    assert f(1) == 4000\n\n\ndef test_d():\n    assert f(2) == 4000\n", "== 4000\n\n\ndef", "== 5000\n\n\ndef", "f 5000");
+  });
 });
