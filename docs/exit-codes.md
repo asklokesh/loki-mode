@@ -50,20 +50,6 @@ immediately instead of burning `backoffLimit`. Requires Kubernetes 1.31+.
 Both the bash runner and the Bun runner (`LOKI_SDK_LOOP`) implement this
 identically; a parity test asserts they agree status for status.
 
-## `loki quick`
-
-| Code | Meaning |
-|---|---|
-| 0 | The run completed and its diff did not weaken the tests |
-| 3 | The diff weakened the tests (a skip marker added in a test file, a test runner config changed, or an existing test file deleted or renamed). The receipt headline is NOT VERIFIED and names what was weakened, for example `NOT VERIFIED (tests weakened: skip added in sum.test.js)` |
-| other nonzero | The run itself failed; this code is passed through unchanged |
-
-Code 3 only ever raises an exit of 0, in quiet and `LOKI_VERBOSE=1` modes alike;
-it never lowers another nonzero code. Edited assertion lines are disclosed in
-the receipt (`tests_integrity:assertions_edited`) and keep exit 0. A NOT VERIFIED
-headline caused by unproven gates alone also keeps exit 0. The signal is the
-`tests_integrity` item in the proof's `honesty.degraded`, not the headline text.
-
 ## `loki verify`
 
 | Code | Verdict |

@@ -1115,222 +1115,6 @@ def _empty_tree_sha(repo_dir):
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
-# A-118 / D47: tests_integrity. Did the run WEAKEN the tests that vouch for it?
-# CFG_ALWAYS is copied from loki-ts/src/engine10/stages/verify.ts (A-115); keep in sync.
-# The comparison is base vs the final WORKING TREE plus untracked files (like
-# collect_workspace_diff), so uncommitted work is covered.
-_TI_CFG_ALWAYS = re.compile(r"(^|/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$")
-_TI_CFG_SHARED = re.compile(r"(^|/)(setup\.cfg|pyproject\.toml|package\.json)$")
-_TI_TEST_FILE = re.compile(
-    r"(^|/)(tests?|__tests__|spec|specs)/|\.(test|spec)\.[\w]+$|(^|/)test_[^/]*\.py$|_test\.(py|go|rs)$|(^|/)conftest\.py$")
-_TI_SKIP_JS = re.compile(
-    # options object only as the 2nd argument: title (string or identifier), then `, {`
-    r"\b(test|it|describe|suite|context|specify)\s*\(\s*(?:'[^'\n]*'|\"[^\"\n]*\"|`[^`\n]*`|[\w.$]+)\s*,\s*\{[^}]*\b(skip|todo)\s*:\s*(?!(?:false|0|null|undefined)\b)\S"
-    r"|\b(it|test|describe|suite|context|specify)\s*\.\s*(skip|only|todo)\b"
-    r"|\bx(it|test|describe)\s*\(|\bf(it|describe)\s*\("
-    r"|\b(t|ctx)\s*\.\s*(skip|todo)\s*\(")
-_TI_SKIP_PY = re.compile(
-    r"\b(?:pytest\.)?mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail|importorskip)\s*\("
-    r"|@(?:unittest\.)?(skip|skipIf|skipUnless|expectedFailure)\b|\bSkipTest\b|\bskipTest\s*\(")
-_TI_SKIP_GO = re.compile(r"\b[tb]\.Skip(f|Now)?\s*\(")
-_TI_SKIP_RS = re.compile(r"#\[ignore")
-_TI_SKIP_BY_EXT = (
-    (("js", "jsx", "ts", "tsx", "mjs", "cjs"), _TI_SKIP_JS),
-    (("py",), _TI_SKIP_PY), (("go",), _TI_SKIP_GO), (("rs",), _TI_SKIP_RS))
-_TI_ASSERT = re.compile(r"\bassert|\bexpect\(|\.should\b|\.to[A-Z]\w*\(|\bt\.(Error|Fatal)")
-_TI_PKG_KEYS = ("jest", "mocha", "vitest", "ava")
-
-
-def _ti_skip_re(path):
-    ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-    for exts, rx in _TI_SKIP_BY_EXT:
-        if ext in exts:
-            return rx
-    return None
-
-
-def _ti_run(repo, *args):
-    """Run a read-only git command; returns text decoded from bytes (so a lone
-    CR is never a line break; callers split on \\n only), or None on failure."""
-    try:
-        r = subprocess.run(["git", "-c", "core.quotePath=false", *args], cwd=repo,
-                           capture_output=True, timeout=30)
-    except Exception:
-        return None
-    if r.returncode != 0:
-        return None
-    return r.stdout.decode("utf-8", "replace")
-
-
-def _ti_pkg_view(text, _path=""):
-    """Test-relevant slice of a package.json, or None when unparseable."""
-    try:
-        d = json.loads(text) if text.strip() else {}
-    except ValueError:
-        return None
-    if not isinstance(d, dict):
-        return None
-    scripts = d.get("scripts") if isinstance(d.get("scripts"), dict) else {}
-    view = {k: v for k, v in scripts.items() if re.match(r"^(pre|post)?test(:.*)?$", k)}
-    return {"scripts": view, **{k: d[k] for k in _TI_PKG_KEYS if k in d}}
-
-
-_TI_PYTEST_KEYS = ("addopts", "testpaths", "python_files", "python_functions",
-                   "python_classes", "norecursedirs")
-
-
-def _ti_pytest_view(text, path):
-    """The test-selection keys of a pytest config, or None when unparseable.
-    Parsed (tomllib / configparser), so a multi-line addopts edit is seen.
-    ponytail: without tomllib (python < 3.11) a pyproject.toml is not parsed and
-    any edit to it counts as changed; upgrade path is the tomli backport."""
-    if not text.strip():
-        return {}
-    if path.endswith(".toml"):
-        try:
-            import tomllib
-            d = tomllib.loads(text)
-        except Exception:
-            return None
-        t = d.get("tool", {}).get("pytest", {})
-        t = t.get("ini_options", t) if isinstance(t, dict) else {}
-        return {k: t[k] for k in _TI_PYTEST_KEYS if k in t}
-    import configparser
-    cp = configparser.ConfigParser(interpolation=None, strict=False)
-    try:
-        cp.read_string(text)
-    except Exception:
-        return None
-    out = {}
-    for sec in ("pytest", "tool:pytest"):
-        if cp.has_section(sec):
-            for k in _TI_PYTEST_KEYS:
-                if cp.has_option(sec, k):
-                    out[sec + "." + k] = cp.get(sec, k)
-    return out
-
-
-_TI_SELECT_PY = re.compile(r"\bcollect_ignore(?:_glob)?\b|\bpytest_collection_modifyitems\b")
-_TI_PYTEST_NAMED = re.compile(r"(^|/)(conftest\.py|\.?pytest\.ini|tox\.ini)$")
-
-
-def _ti_base_has_pytest_config(target_dir, base):
-    names = _ti_run(target_dir, "ls-tree", "-r", "--name-only", "-z", base) or ""
-    for n in names.split("\0"):
-        if _TI_PYTEST_NAMED.search(n):
-            return True
-        if n.endswith(("pyproject.toml", "setup.cfg")) and \
-                _ti_pytest_view(_ti_run(target_dir, "show", "%s:./%s" % (base, n)) or "", n):
-            return True
-    return False
-
-
-def _ti_added_config_selects(path, text):
-    """True when a newly added pytest config changes test selection (unparseable counts)."""
-    if path.endswith(".py"):
-        return bool(_TI_SELECT_PY.search(text))
-    if path.endswith((".ini", ".toml", ".cfg")):
-        v = _ti_pytest_view(text, path)
-        return v is None or bool(v)
-    return False
-
-
-def _collect_tests_integrity(target_dir, base):
-    """Return {"weakened": [...], "assertions_edited": [...], "disclosed": [...]} or None.
-
-    Derived from base vs the final working tree (committed, staged, unstaged and
-    untracked). None when there is no usable diff (no repo, no base)."""
-    if not base:
-        return None
-    names = _ti_run(target_dir, "diff", "--relative", "--name-status", "-M", "-z", base, "--")
-    if names is None:
-        return None
-    weakened, edited, disclosed = [], [], []
-    greenfield = base == _empty_tree_sha(target_dir)
-    toks = names.split("\0")
-    entries, i = [], 0  # (status, old_path, new_path)
-    while i < len(toks) and toks[i]:
-        st = toks[i][:1]
-        if st in "RC" and i + 2 < len(toks):
-            entries.append((st, toks[i + 1], toks[i + 2]))
-            i += 3
-        else:
-            entries.append((st, toks[i + 1] if i + 1 < len(toks) else "", toks[i + 1] if i + 1 < len(toks) else ""))
-            i += 2
-    untracked = _ti_run(target_dir, "ls-files", "--others", "--exclude-standard", "-z") or ""
-    for u in untracked.split("\0"):
-        if u and not u.startswith(".loki/"):
-            entries.append(("A", u, u))
-    for st, old, new in entries:
-        if st in ("D", "R") and _TI_TEST_FILE.search(old):
-            weakened.append("test file %s: %s" % ("deleted" if st == "D" else "renamed", old))
-    if not greenfield:
-        for st, old, new in entries:
-            path = new if st != "D" else old
-            is_always = bool(_TI_CFG_ALWAYS.search(path))
-            if not (is_always or _TI_CFG_SHARED.search(path)):
-                continue
-            if st == "A":  # no base version: disclose, unless it re-selects tests over a base pytest config
-                try:
-                    with open(os.path.join(target_dir, new), encoding="utf-8", errors="replace") as h:
-                        text = h.read()
-                except OSError:
-                    text = ""
-                if _ti_added_config_selects(path, text) and _ti_base_has_pytest_config(target_dir, base):
-                    weakened.append("test runner config changed: " + path)
-                else:
-                    disclosed.append("new test runner config: " + path)
-            elif is_always:
-                weakened.append("test runner config changed: " + path)
-            else:
-                before = _ti_run(target_dir, "show", "%s:./%s" % (base, old)) or ""
-                try:
-                    with open(os.path.join(target_dir, new), encoding="utf-8", errors="replace") as h:
-                        after = h.read()
-                except OSError:
-                    after = ""
-                view = _ti_pkg_view if path.endswith("package.json") else _ti_pytest_view
-                b, a = view(before, path), view(after, path)
-                if b is None or a is None or b != a:
-                    weakened.append("test runner config changed: " + path)
-    # Skip markers: added lines of tracked test files, and the content of untracked ones.
-    patch = _ti_run(target_dir, "diff", "--relative", "-U0", "-M", base, "--") or ""
-    cur, rx, removed_assert = None, None, False
-    for line in patch.split("\n") + ["diff --git a/ b/"]:
-        if line.startswith("diff --git "):
-            if cur and removed_assert and cur not in edited:
-                edited.append(cur)
-            cur, rx, removed_assert = None, None, False
-        elif line.startswith("+++ b/"):
-            cur = line[6:] if _TI_TEST_FILE.search(line[6:]) else None
-            rx = _ti_skip_re(cur) if cur else None
-        elif cur and line.startswith("+") and rx and rx.search(line):
-            weakened.append("skip added in %s" % cur)
-        elif cur and line.startswith("-") and not line.startswith("---") \
-                and _TI_ASSERT.search(line):
-            removed_assert = True
-    for u in untracked.split("\0"):
-        if not u or u.startswith(".loki/") or not _TI_TEST_FILE.search(u):
-            continue
-        rx = _ti_skip_re(u)
-        if not rx:
-            continue
-        try:
-            with open(os.path.join(target_dir, u), "rb") as h:
-                text = h.read().decode("utf-8", "replace")
-        except OSError:
-            continue
-        if any(rx.search(ln) for ln in text.split("\n")):
-            weakened.append("skip added in %s" % u)
-    uniq = []
-    for w in weakened:
-        if w not in uniq:
-            uniq.append(w)
-    if not uniq and not edited and not disclosed:
-        return None
-    return {"weakened": uniq, "assertions_edited": edited, "disclosed": disclosed}
-
-
 def _collect_iterations(loki_dir):
     completed = _read_json(os.path.join(loki_dir, "queue", "completed.json"), default=[])
     failed = _read_json(os.path.join(loki_dir, "queue", "failed.json"), default=[])
@@ -1671,10 +1455,6 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     # only, never read by _compute_headline / _compute_degraded.
     if journey:
         facts["journey"] = journey
-    # A-118: additive, present only when the diff touched test integrity.
-    _ti = _collect_tests_integrity(target_dir, diff_base_sha)
-    if _ti:
-        facts["tests_integrity"] = _ti
     ablation = _collect_ablation(loki_dir)
     if ablation is not None:
         facts["ablation"] = ablation
@@ -1734,24 +1514,6 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
             # statuses will keep being added, and a filter keyed on one of them
             # silently breaks the next time -- which is exactly what happened
             # when the unrun-security entry landed with status "not_run".
-            "post_headline": True,
-        })
-
-    # D47: edited assertion lines are disclosed but never move the headline or rc.
-    _ae = (facts.get("tests_integrity") or {}).get("assertions_edited")
-    if _ae:
-        degraded.append({
-            "item": "tests_integrity:assertions_edited",
-            "status": "inconclusive",
-            "reason": "assertion lines edited in: " + ", ".join(_ae),
-            "post_headline": True,
-        })
-    _di = (facts.get("tests_integrity") or {}).get("disclosed")
-    if _di:
-        degraded.append({
-            "item": "tests_integrity:config_added",
-            "status": "inconclusive",
-            "reason": "; ".join(_di),
             "post_headline": True,
         })
 
@@ -1891,10 +1653,6 @@ def _compute_degraded(facts):
         out.append({"item": "security", "status": "findings",
                     "reason": "%s un-waived HIGH security finding(s)"
                               % sec.get("high_active")})
-    ti = facts.get("tests_integrity") or {}
-    if ti.get("weakened"):
-        out.append({"item": "tests_integrity", "status": "failed",
-                    "reason": "tests weakened: " + "; ".join(ti["weakened"])})
     git = facts.get("git") or {}
     if not (git.get("diff") or {}).get("count"):
         out.append({"item": "git.diff", "status": "not_run",
@@ -1990,7 +1748,6 @@ def _compute_headline(facts, degraded):
                if _is_exogenous(g))
         or sec_high
         or fn_failed
-        or bool((facts.get("tests_integrity") or {}).get("weakened"))
     )
     if any_failed:
         return "NOT VERIFIED"

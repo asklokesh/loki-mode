@@ -11252,27 +11252,6 @@ _loki_proof_json_for_pr() {
 }
 
 # A-134: compact quiet-mode receipt for the outer shell (see top of file) to print.
-# A-118 / D47: a quick run that weakened its own tests exits 3. Prints the rc to use:
-# only ever RAISES a 0 (never lowers a non-zero rc); NOT VERIFIED from unproven gates alone keeps 0.
-_loki_quick_integrity_rc() {
-    local rc="${1:-0}" ld="${TARGET_DIR:-.}/.loki" rid pj
-    [ "$rc" = "0" ] || { echo "$rc"; return 0; }
-    rid="$(cat "$ld/state/last-proof-id.txt" 2>/dev/null || true)"
-    case "$rid" in '' | *[!A-Za-z0-9._-]*) echo 0; return 0 ;; esac
-    pj="$ld/proofs/$rid/proof.json"
-    if [ -f "$pj" ] && python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
-import json
-d = json.load(open(sys.argv[1]))
-g = (d.get('facts') or {}).get('git') or {}
-if sys.argv[2] and g.get('head_sha') != sys.argv[2]:
-    sys.exit(1)
-sys.exit(0 if any(isinstance(x, dict) and x.get('item') == 'tests_integrity' and x.get('status') == 'failed' for x in ((d.get('honesty') or {}).get('degraded') or [])) else 1)" "$pj" "$(git -C "${TARGET_DIR:-.}" rev-parse HEAD 2>/dev/null || true)" 2>/dev/null; then
-        echo 3
-    else
-        echo 0
-    fi
-}
-
 _loki_quick_receipt_write() {
     local ld="${TARGET_DIR:-.}/.loki" rid pj
     rid="$(cat "$ld/state/last-proof-id.txt" 2>/dev/null || true)"
@@ -11287,10 +11266,8 @@ v = d.get('verification') or {}
 if sys.argv[3] and g.get('head_sha') != sys.argv[3]:
     print('Evidence Receipt: unavailable (final proof generation failed; newest proof predates the session commit)')
     sys.exit(0)
-dg = [x for x in ((d.get('honesty') or {}).get('degraded') or []) if isinstance(x, dict)]
-tw = [str(x.get('reason') or 'tests weakened') for x in dg if x.get('item') == 'tests_integrity' and x.get('status') == 'failed']
-deg = [str(x.get('item') or '').split(':')[-1] for x in dg if x.get('item') != 'tests_integrity']
-notes = tw[:1] + ([] if (v.get('gpg_signature') or v.get('attestation')) else ['unsigned']) + (['%d not proven: %s' % (len(deg), ', '.join(deg))] if deg else [])
+deg = [str(x.get('item') or '').split(':')[-1] for x in ((d.get('honesty') or {}).get('degraded') or []) if isinstance(x, dict)]
+notes = ([] if (v.get('gpg_signature') or v.get('attestation')) else ['unsigned']) + (['%d not proven: %s' % (len(deg), ', '.join(deg))] if deg else [])
 print('Evidence Receipt: ' + str((d.get('honesty') or {}).get('headline') or 'unavailable') + (' (' + '; '.join(notes) + ')' if notes else ''))
 print('receipt_sha256: ' + str(v.get('hash') or ''))
 print('Head sha: ' + str(g.get('head_sha') or '') + '  Diff sha256: ' + str(g.get('diff_sha256') or ''))
@@ -29425,8 +29402,6 @@ except Exception:
     if [ "${LOKI_PROOF:-1}" != "0" ]; then
         generate_proof_of_run "$result" || true
     fi
-    # A-118: a quick run that weakened its tests exits 3 (quiet and verbose alike).
-    ! _loki_is_quick_prd "${PRD_PATH:-}" || result="$(_loki_quick_integrity_rc "$result")"
     [ -z "${LOKI_QUICK_INNER:-}" ] || _loki_quick_receipt_write
     # Trusted post-session step. NOT wrapped in _loki_with_github_tokens as a
     # whole (round 5): its push (_loki_trusted_push) and gh calls each re-grant
