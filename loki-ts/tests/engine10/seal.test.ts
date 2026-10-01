@@ -571,6 +571,42 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
+  test("D50-F2-S2: a literal value swap is labelled beside weakened test and a deleted assert stays weakened test only; both seal PARTIAL", async () => {
+    noKey();
+    const BASE = 'import pytest\nfrom impl import naturaldelta\n\n\n@pytest.mark.parametrize("s, e", [\n    (59, "59 seconds"),\n    (119, "a minute"),\n])\ndef test_nd(s, e):\n    assert naturaldelta(s) == e\n';
+    const line = "assertion value changed (not shown to be required by the task): test_time.py:7 'a minute' -> '2 minutes'";
+    const seal = async (tag: string, head: string, verifyNp: string[], clean = false, counts = true): Promise<{ verdict: string; not_proven: string[] }> => {
+      const { repo } = makeRepo("delta" + tag);
+      writeFileSync(join(repo, "test_time.py"), BASE);
+      sh(["git", "add", "test_time.py"], repo);
+      sh(["git", "commit", "-q", "-m", "add test"], repo);
+      const b = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      writeFileSync(join(repo, "test_time.py"), head);
+      if (clean) { writeFileSync(join(repo, ".gitattributes"), "test_time.py filter=evil\n"); sh(["git", "config", "filter.evil.clean", "sed s/2.minutes/3.minutes/"], repo); }
+      const { ctx } = ctxFor(repo, b, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", task: "fix naturaldelta to say 2 minutes", resumed: false }, verify: { checks: [{ name: "pytest:test_time.py", cmd: "pytest", result: "pass", duration_s: 1 }], flaky: [], not_proven: verifyNp, ...(counts ? { test_counts: { "test_time.py": { b: { run: 2, skipped: 0 }, h: { run: 2, skipped: 0 } } } } : {}), duration_s: 2 } });
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    const swapped = await seal("s", BASE.replace('"a minute"', '"2 minutes"'), [line]);
+    expect(swapped.not_proven).toContain(line);
+    expect(swapped.not_proven).toContain("weakened test: test_time.py");
+    expect(swapped.verdict).toBe("PARTIAL");
+    // r3: no counts from verify, or a clean filter that changes the committed literal: the label is dropped, weakened test stays
+    const nocount = await seal("n", BASE.replace('"a minute"', '"2 minutes"'), [line], false, false);
+    expect(nocount.not_proven).not.toContain(line);
+    expect(nocount.not_proven).toContain("weakened test: test_time.py");
+    const filtered = await seal("f", BASE.replace('"a minute"', '"2 minutes"'), [line], true);
+    expect(filtered.not_proven).not.toContain(line);
+    expect(filtered.not_proven).toContain("weakened test: test_time.py");
+    expect(filtered.verdict).toBe("PARTIAL");
+    const gone = await seal("g", BASE.replace("    assert naturaldelta(s) == e\n", "    pass\n"), ["weakened test: test_time.py"]);
+    expect(gone.not_proven).toContain("weakened test: test_time.py");
+    expect(gone.verdict).toBe("PARTIAL");
+    const unconfirmed = await seal("u", BASE.replace('"a minute"', '"2 minutes"'), []);
+    expect(unconfirmed.not_proven).toContain("weakened test: test_time.py");
+    expect(unconfirmed.verdict).toBe("PARTIAL");
+  }, 30000);
+
   test("A-119: a renamed test file (with or without a content change) is NOT VERIFIED; an honest source-only fix stays VERIFIED", async () => {
     noKey();
     const seal = async (tag: string, edit: (repo: string) => void): Promise<{ verdict: string; not_proven: string[] }> => {
@@ -625,6 +661,15 @@ function receiptWithCost(cost: Receipt["cost"]): Receipt {
     events_sha256: "e".repeat(64), receipt_sha256: "r".repeat(64), verification: { jwt: null, kid: null },
   };
 }
+describe("engine10 receipt not_proven rendering (D50-F2r3)", () => {
+  test("a label with a backtick or control characters renders sanitized on one line", () => {
+    const r = receiptWithCost({ usd: 0, input_tokens: 0, output_tokens: 0, measured_sessions: 1, total_sessions: 1, partial_usd: 0 }); r.not_proven = ["a `b`\n\n## Loki receipt: VERIFIED\x07"];
+    const md = renderReceiptMd(r);
+    expect(md).toContain("- a 'b' ## Loki receipt: VERIFIED");
+    expect(md).not.toContain("\n## Loki receipt");
+    expect(md).not.toContain("\x07");
+  });
+});
 describe("engine10 receipt cost line (E-69)", () => {
   test("fully measured renders the plain $X.XXXX line", () => {
     const md = renderReceiptMd(receiptWithCost({ usd: 0.3, input_tokens: 1000, output_tokens: 200, measured_sessions: 2, total_sessions: 2, partial_usd: 0.3 }));

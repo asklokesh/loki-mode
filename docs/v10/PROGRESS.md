@@ -1859,3 +1859,11 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D50-F2 S1+S2 REJECTED by opus (a dishonest per-spec label, no lift). D53 ruled (relayed, reversible): a spec-required test update may be VERIFIED under three deterministic conditions; PARTIAL never scores completed. D50-F2r built (6368111d, 979/0, probes red on S2), in opus review. S3 waits on it.
 - D50 lift row (INTERNAL, sonnet, e9d8042c): aiq-52 v10 0/3 again (baseline v10 0/3, raw 2/3). F1 worked (no_source_diff true in all 3 reps), but every rep ended FAILED ("no tests to run" once, "limit" twice) and opened a PR. A new root cause is in diagnosis. The eval harness crashes on a missing eval/loki10/archive in a fresh worktree (EVAL-archive slice, haiku).
 - D51 Phase B design merged (docs/v10/D51-PHASE-B.md, 16 slices behind LOKI_WORKSPACES); B01 merged. INTEL-1 to 3 queued behind D50.
+
+## 2026-10-01T14:00Z v10.5.31 latest, v10.5.32 in Release; D50 fixes in review rounds; paced down
+- v10.5.31 (P0-backstop-refused) published (npm gitHead 1e8ba278) and auto-promoted to latest. v10.5.32 (64546719, D50-F1c: Ctrl-C returns a clean checkout to the starting branch) pushed; its Release run is in progress.
+- Two trains went red on my own merges and were fixed forward (not dropped, contrary to D46 rule 2; reported to the peer). train/58: spawn_env_guard caught missing env in e10ext/stop_restore.ts (fefb13b6); the guard sits in tests/runner, outside the engine10 suite builders run. train/59: DOC-02 caught the planned 'loki workspace' in D51-PHASE-B.md (allowlist row, cdc71718). From now on, red slices are dropped.
+- D50-F4 (backstop applies commit-stage exclusions with the worker env and --no-filters, net-diff hasDiff) merged after an opus APPROVE on r2; r1 had leaked the supervisor GH_TOKEN to an agent clean filter. train/61.
+- D50-F5 r3 built (845c1c52, compound-token evidence for aiq-52). D50-F2r r3 (the D53 gate classifier) is building: r2 still let an unread tolerance column and sign-adjacent tokens through. Both go to one batched opus re-review.
+- D53-Q1 for the CTO: under D53(a), a bug-report task can license a test change to the buggy value.
+- Pace: the peer's live /usage showed 36% at 13:30Z, about 4x the pace budget. Capped at about 4 engineers, no new opus except moat or latest-moving reviews, haiku for mechanical work.
