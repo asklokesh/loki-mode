@@ -591,7 +591,9 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const BASE: Record<string, string> = {
       "sum.js": "exports.sum=(a)=>a;\n", "tests/helpers.js": "exports.eq=(a,b)=>expect(a).toBe(b);\n", "tests/sum.test.js": "require('./helpers');require('../sum');\n",
       "__snapshots__/sum.test.js.snap": "6\n", "tests/fixtures/expected.json": "6\n", "__tests__/sum.js": "t\n", "test/sum.js": "t\n", "tests/it.rs": "t\n",
-      "testutil.js": "exports.x=1;\n", "other.test.js": "require('./testutil');\n",
+      "lib/shared.js": "exports.eq=(a,b)=>expect(a).toBe(b);\n", "other.test.js": "require('./lib/shared');\n",
+      "src/utils.js": "exports.sum=(a,b)=>a-b;\n", "tests/utils.test.js": "require('../src/utils');\n", "src/setup.js": "exports.s=1;\n", "test/setup.test.js": "require('../src/setup');\n",
+      "src/string_utils.ts": "export const f=1;\n", "src/string_utils.test.ts": "import './string_utils';\n",
     };
     let n = 0;
     const seal = async (edit: (repo: string) => void, over: Parameters<typeof ctxFor>[3] = {}): Promise<string> => {
@@ -607,9 +609,10 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     };
     const w = (f: string, c = "changed\n") => (r: string) => writeFileSync(join(r, f), c);
     const bak = (f: string) => (r: string) => sh(["git", "mv", f, f + ".bak"], r);
-    for (const edit of [w("tests/helpers.js", "exports.eq=()=>{};\n"), w("testutil.js"), w("__snapshots__/sum.test.js.snap", "5\n"), w("tests/fixtures/expected.json", "5\n"),
+    for (const edit of [w("tests/helpers.js", "exports.eq=()=>{};\n"), w("lib/shared.js"), w("__snapshots__/sum.test.js.snap", "5\n"), w("tests/fixtures/expected.json", "5\n"),
       w("__tests__/sum.js"), bak("test/sum.js"), w("tests/it.rs"), bak("tests/it.rs")]) expect(await seal(edit)).toBe("PARTIAL");
     expect(await seal(bak("test/sum.js"), { implement: { exit: "already_done", tests_reverted: [], duration_s: 1 } })).toBe("PARTIAL");
+    for (const f of ["src/utils.js", "src/setup.js", "src/string_utils.ts"]) expect(await seal(w(f))).toBe("VERIFIED"); // E6-E8: a source file a test imports is not a helper
     expect(await seal((r) => { w("sum.js", "exports.sum=(a)=>a+1;\n")(r); w("tests/new.test.js", "new\n")(r); })).toBe("VERIFIED");
   }, 60000);
 
