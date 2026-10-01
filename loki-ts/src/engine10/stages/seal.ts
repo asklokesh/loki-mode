@@ -107,11 +107,12 @@ export const commitStage: Stage = {
   ...STAGE_BUDGETS.commit,
   async run(ctx: RunContext): Promise<StageResult> {
     // A-104/G2: stage all, unstage .loki/, Wall files (sealed under runDir/wall) and a NEW lockfile with no manifest change in its own directory (judged against baseSha).
+    if (!ctx.baseSha || (await git(ctx, ["rev-parse", "--verify", "-q", `${ctx.baseSha}^{commit}`])).code !== 0) return { status: "failed", data: {}, reason: "base commit not resolvable" }; // A-104b r2: fail closed, every later reset and diff is judged against the base
     if ((await git(ctx, ["add", "-A", "--", "."])).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
-    const staged = (await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha])).out.split("\0").reduce<{ st: string; f: string }[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
+    const sd = await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha]); if (sd.code !== 0) return { status: "failed", data: {}, reason: "git diff against base failed" };
+    const staged = sd.out.split("\0").reduce<{ st: string; f: string }[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
     const drop = staged.concat(untouchedSinceIntake(ctx.repoDir, ctx.outputs().intake?.preexisting_dirty).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m) && dirname(m) === dirname(f)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
-    // A-104b: reset to the run base (not HEAD) so a path the agent committed in implement leaves the final diff too; literal, so ":(top)x" is a filename.
-    if (drop.length > 0 && (await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", ...drop.map(({ f }) => f)])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" };
+    if (drop.length > 0 && (await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", ...drop.map(({ f }) => f)])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" }; // A-104b: reset to the run base (not HEAD) so a path committed in implement leaves the diff too; literal, so ":(top)x" is a filename
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) {
       return { status: "completed", data: { committed: false } };
     }
@@ -128,7 +129,7 @@ export const commitStage: Stage = {
 function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean): Verdict {
   const exit = o.implement?.exit;
   if (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done") return "ALREADY_SATISFIED";
-  if (exit === "spec_conflict") return "SPEC_CONFLICT";
+  if (exit === "spec_conflict") return "SPEC_CONFLICT"; if (o.commit?.failed === true) return "FAILED"; // A-104b r2: a failed commit never seals VERIFIED
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
   if (checks.some((c) => c.result === "fail")) return "FAILED";
