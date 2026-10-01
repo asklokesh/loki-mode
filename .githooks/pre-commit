@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Loki Mode pre-commit hook: author email guard
+#
+# Refuses commits where the author email differs from the repo-local
+# git config user.email, unless LOKI_ALLOW_FOREIGN_AUTHOR=1 is set.
+#
+# This catches fixture commits made with the wrong user.email (e.g.,
+# in a different checkout where the repo-local identity was not set).
+
+set -euo pipefail
+
+# Get the configured user.email for this repo, reading directly from .git/config
+# to avoid being overridden by `git -c user.email=...` invocations.
+git_dir="$(git rev-parse --git-dir)" || exit 1
+configured_email="$(git config --file="$git_dir/config" user.email)" || configured_email=""
+if [ -z "$configured_email" ]; then
+    # No email configured; allow the commit
+    exit 0
+fi
+
+# Allow override
+if [ "${LOKI_ALLOW_FOREIGN_AUTHOR:-}" = "1" ]; then
+    exit 0
+fi
+
+# Get the author email from environment or git var
+author_email="${GIT_AUTHOR_EMAIL:-}"
+if [ -z "$author_email" ]; then
+    # Parse email from `git var GIT_AUTHOR_IDENT`
+    # Format: "Name <email@example.com> timestamp timezone"
+    ident="$(git var GIT_AUTHOR_IDENT)" || ident=""
+    if [[ "$ident" =~ \<([^>]+)\> ]]; then
+        author_email="${BASH_REMATCH[1]}"
+    fi
+fi
+
+if [ -z "$author_email" ]; then
+    # Cannot determine author email; allow the commit
+    exit 0
+fi
+
+# Check if author email matches configured email
+if [ "$author_email" != "$configured_email" ]; then
+    echo "[pre-commit] REFUSED: author email '$author_email' does not match repo-local user.email '$configured_email'" >&2
+    echo "[pre-commit]   Set LOKI_ALLOW_FOREIGN_AUTHOR=1 to override." >&2
+    exit 1
+fi
+
+exit 0
