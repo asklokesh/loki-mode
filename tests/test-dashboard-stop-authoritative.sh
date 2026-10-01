@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.33 regression test: the dashboard Stop endpoints must be AUTHORITATIVE.
 # Bug: /api/control/stop only signaled loki.pid. When that pid was stale (a
 # crashed/restarted session leaves an orphaned loki-run-*.sh under a new pid),

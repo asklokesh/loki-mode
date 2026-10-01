@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.30 regression tests: folder-scoped `loki stop`, `loki stop --all`,
 # per-project dashboard stop endpoint, and the switcher Stop button.
 #   - `loki stop` (no arg) stops ONLY the current folder; other folders survive

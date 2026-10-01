@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # v7.7.29 regression tests: dashboard <-> CLI <-> Docker integration fixes
 # plus the multi-project switcher.
 #   - standalone dashboard PID dir is the fixed ~/.loki/dashboard (cwd-stop)

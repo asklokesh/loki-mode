@@ -27,6 +27,7 @@ for _k in list(os.environ):
         os.environ.pop(_k, None)
 
 import dashboard.server as S  # noqa: E402
+os.environ["LOKI_DASHBOARD_ALLOWED_HOSTS"] = "testserver,test"
 from fastapi.testclient import TestClient  # noqa: E402
 
 FAILURES = []

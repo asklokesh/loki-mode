@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps default allowlist strict
 # Moat property P2: Honest verdict.
 #
 # A model-only "looks good" can never produce a pass, and unknown, unreadable or
