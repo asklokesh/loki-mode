@@ -17,9 +17,9 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - Seal, verify, signing, receipt, outcomes and auth are HIGH: opus reviewers, unanimous, and a reproduced finding blocks.
   - D13: every reviewer's model is pinned explicitly.
 - One writer per file. A file that appears in two cards is written by one card at a time, in the order under "Depends".
-- Engine scope. v10 is the only engine as of v10.6.0.
-  - All routing goes to v10.
-  - Removed: legacy engine support, multi-phase healing, council commands.
+- Engine scope. Until item 4, the README default is legacy `loki quick`/`loki quickstart`, so the gate needs both routes.
+  - v10 gets the real fixes.
+  - Legacy gets default changes only. Build no new machinery on run.sh, which item 4 demotes to `loki legacy`.
 - Every card starts by reproducing its defect on current main in a clean HOME. The firstrun receipts are gone (/private/tmp/claude-501/loki-firstrun is empty), so step 1 rebuilds them from run1.sh and run2.sh.
 
 ## 1. Root causes found in code (evidence for the cards)

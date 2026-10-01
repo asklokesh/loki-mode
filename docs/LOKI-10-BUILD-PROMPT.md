@@ -188,7 +188,7 @@ Order is a default. Re-rank with data, and record why.
   - Build on `dashboard/` or replace it if simpler. Self-hosted and air-gapped, no vendor dependency.
 - **M8. Legacy lane.**
   - Modernize a legacy system using the old system as the oracle: characterization tests generated against the old behavior, and the new code sealed against them.
-  - Build on `loki modernize <path> --to <target> --dry-run` for analysis.
+  - Build on `loki modernize` and `loki heal --assess`.
   - Run a pilot on the 10 public Legacy-Bench tasks, and publish it as a pilot, not a leaderboard claim.
 - **M9. Enterprise readiness.**
   - A SOC 2 readiness mapping that cites file:line or tests for every control, and states that it is not a certification.

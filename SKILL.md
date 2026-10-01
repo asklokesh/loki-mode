@@ -411,7 +411,7 @@ that cannot succeed.
 
 ## First-run UX (v7.29.0)
 
-- **`loki demo`:** guided first-run experience showing a sample Evidence Receipt and cost estimate (no API key required, offline). Non-TTY/CI exits 2 with an automation hint.
+- **`loki quickstart`:** guided 4-step first build (setup check, one-line idea, offline template match, plan review with real estimator figures); Enter-through-everything builds the sample Todo app; non-TTY/CI exits 2 with an automation hint.
 - **Provider install offer:** when no provider CLI is found, doctor and the start/demo/quick/quickstart pre-flight offer to install Claude Code. Consent-gated on an interactive TTY only; the single command executed is printed first; auth handoff via `claude auth login` with readiness confirmed by `claude auth status`. Opt out: `LOKI_NO_INSTALL_OFFER=1`.
 - **`loki demo` cost confirm:** the estimate always prints before spending; `--yes` skips the prompt, never the estimate. `LOKI_COMPLEXITY` is honored by `loki plan` with an honest forced-tier note.
 
@@ -441,7 +441,7 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 | Context Window Tracking | v5.40.0 | Dashboard gauge, per-agent breakdown at `GET /api/context` |
 | Notification Triggers | v5.40.0 | `GET/PUT /api/notifications/triggers` |
 | GitHub integration | v5.42.2 | Import, sync-back, PR creation, export. CLI: `loki github`, API: `/api/github/*` |
-| Legacy System Modernization | v10.6.0 | `loki modernize <path> --to <target>` (python3, java21, etc.). Dry-run estimates supported; full execution pending. |
+| Legacy System Healing | v6.67.0 | `loki heal <path>` -- friction-as-semantics, characterization tests |
 | Unified `loki start` | v6.84.0 | Auto-detects spec (PRD, OpenAPI, etc.) vs issue input |
 | Managed Agents (memory mirror) | v7.2.0 | Opt-in via `LOKI_MANAGED_AGENTS` -- see Managed Agents section |
 | Bun runtime (Phase 1) | v7.3.0 | Read-only commands routed through `bin/loki`; `LOKI_LEGACY_BASH=1` to revert |

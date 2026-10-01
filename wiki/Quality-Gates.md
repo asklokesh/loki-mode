@@ -70,9 +70,15 @@ where a required verification could go green with nothing actually tested.
 
 </details>
 
-### Conditional auditor (not numbered): Backward Compatibility (deprecated)
+### Conditional auditor (not numbered): Backward Compatibility (healing mode)
 
-This auditor was used for healing-mode review in v6-v9. It is no longer active in v10, which uses deterministic equivalence verification instead of friction-mode auditing.
+This is a healing-mode SPECIALIST reviewer, not one of the 8 loop gates. It fires
+only when `LOKI_HEAL_MODE=true`, when `loki heal` is active, or when the diff
+touches files listed in `.loki/healing/friction-map.json`. Greenfield projects
+skip it entirely. It prevents accidental removal of institutional logic or
+behavioral changes to legacy code without explicit documentation, checking
+friction safety, characterization-test coverage, business-rule comment
+preservation, adapter verification, and behavioral baselines.
 
 ### Gate 7: Documentation Coverage
 
@@ -333,7 +339,7 @@ LOKI_HANDOFF_MD=1         # write a structured handoff doc before PAUSE
 ## See Also
 
 - [[Completion Council]] - the multi-agent voting system that gates completion
-- [[CLI Reference]] - `loki verify`, `loki spec`
+- [[CLI Reference]] - `loki verify`, `loki spec`, `loki grill`
 - [[Environment Variables]] - all gate-related env vars in one place
 - [[Configuration]] - council and gate configuration options
 - [[Architecture]] - where the gates sit in the RARV-C closure loop

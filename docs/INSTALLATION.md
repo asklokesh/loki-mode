@@ -201,9 +201,39 @@ package, while `loki-mode-sdk` is the thin client.
 
 ## Quick Start
 
-New here? `loki demo` shows you a sample Evidence Receipt and cost estimate
-without spending credits or requiring an API key. Then drop a spec -- any
-artifact that describes what you want built -- and Loki
+New here? `loki quickstart` (v7.29.0) walks you through your first build in
+four questions (setup check, one-line idea, template pick, plan review with
+a real cost estimate before anything is spent). Pressing Enter at every step
+builds the sample Todo app.
+
+```bash
+loki quickstart
+```
+
+For a fully specified first build, provide the idea, an optional exact shipped
+starter template, and explicit consent:
+
+```bash
+loki quickstart "an internal reporting workspace" --template dashboard --yes
+```
+
+Use `--dry-run` instead of `--yes` to preview the same template and plan without
+provider discovery, file writes, or execution; add `--json` for one versioned
+machine-readable object.
+
+For a local pipeline, pass that object to `--from-preview - --yes`. Loki accepts
+at most 1 MiB from non-terminal stdin, revalidates the schema, and recomputes the
+current estimate before the explicitly consented build starts:
+
+```bash
+loki quickstart "an internal reporting workspace" --template dashboard --dry-run --json \
+  | loki quickstart --from-preview - --yes
+```
+
+Omit `--yes`, pipe malformed or oversized JSON, or use `-` from a terminal and
+the continuation exits `2` before provider discovery, PRD writes, or execution.
+
+Drop a spec -- any artifact that describes what you want built -- and Loki
 Mode takes it from spec to deployed app. Specs can be a markdown PRD, a
 GitHub issue URL, or a YAML feature description.
 

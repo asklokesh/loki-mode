@@ -32,8 +32,15 @@ changed and recreates the StateManager. ChromaDB `_get_chroma_collection()` now
 verifies heartbeat after reconnect and properly nulls both client and collection
 on failure.
 
-### BUG-PU-003: Agent management commands not yet implemented
-**Status:** Planned feature. Agent management commands are being redesigned as part of the marketplace feature plan (R10) and are not yet implemented.
+### BUG-PU-003: `loki agent run` doesn't properly pass agent definitions
+**File:** `autonomy/loki` (cmd_agent run/start)
+**Problem:** The persona was concatenated with the user prompt using a single space,
+making it impossible for the AI to distinguish the role instruction from the task.
+Additionally, `loki agent start` created temp PRDs in /tmp that were never cleaned
+up because `cmd_start` uses `exec` (replaces the process).
+**Fix:** Restructured the prompt with clear section headers ("You are acting as the
+following specialist agent:" / "USER TASK:") separated by delimiters. Changed temp
+PRD location from /tmp to .loki/ directory so it persists alongside the project.
 
 ### BUG-PU-004: `loki telemetry status` fails silently when Jaeger is down
 **File:** `autonomy/loki` (cmd_telemetry status)

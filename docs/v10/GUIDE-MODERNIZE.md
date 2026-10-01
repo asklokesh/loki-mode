@@ -24,7 +24,8 @@ design source of truth; this page is the user-facing summary).
 Use it to port a legacy codebase (Python 2 to 3 today; Java 8 to 21 next)
 where you want a paper trail of exactly what was proven equivalent and
 what was not, rather than a model's unverified claim that the port works.
-This is the only modernization command in v10; the legacy migration system has been removed.
+Do not use it for the existing `loki migrate` (a different, agent-judged
+legacy engine); that command is unchanged and out of scope here.
 
 Only two targets exist right now: `python3` and `java21`. COBOL-to-Java and
 AngularJS-to-React are planned but not built.

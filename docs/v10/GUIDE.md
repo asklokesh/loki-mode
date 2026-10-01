@@ -1,12 +1,20 @@
 # Loki 10 engine guide
 
-Loki 10 engine is the only supported engine as of v10.6.0. It handles `loki "<task>"`, `loki owner/repo#N`, and other commands. The legacy engine has been removed. <!-- loki10-default -->
+Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. Set LOKI_ENGINE=legacy or run `loki legacy <args>` for the previous engine. <!-- loki10-default -->
 
-Loki 10 is the rewritten engine (docs/v10/ENGINE.md). It is the only supported engine as of v10.6.0.
-It handles three entry points: `loki "<task>"`, `loki owner/repo#N`
-(issue mode) and `loki quick "<task>"`. The summary appears after each command starts.
-`loki status`, `loki dashboard`, `loki verify` and all other commands route to v10.
-If bun is missing or LOKI_PROVIDER is unsupported, loki prints an error and exit instructions.
+Loki 10 is the rewritten engine (docs/v10/ENGINE.md). Since the D48 flip it
+is the default for three entry points: `loki "<task>"`, `loki owner/repo#N`
+(issue mode) and `loki quick "<task>"`. Each prints one start line,
+`Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous
+engine)`, then the summary below. Everything else (`loki start`, `loki
+status`, `loki dashboard` and the rest) is unchanged unless you set
+LOKI_ENGINE=v10 explicitly, which also routes status, verify and dashboard
+to the v10 commands. Bare `loki verify` (no LOKI_ENGINE) follows the newest
+run: when the newest entry in .loki/runs/ is a v10 run newer than the newest
+legacy proof it runs the v10 verify, otherwise the legacy verify. If bun is
+missing or LOKI_PROVIDER is unsupported, the default mode falls back to the
+legacy engine and prints one stderr line saying why. The previous engine stays one step away:
+`loki legacy <args>` and LOKI_ENGINE=legacy.
 
 Some pieces named in this guide are still being built. Each one below says
 so plainly instead of describing a finished feature.
@@ -163,7 +171,14 @@ NOT PROVEN line adds the literal entry `kill blocking not enforced`
 (`loki-ts/src/engine10/stages/seal.ts`). opencode is not one of engine10's
 provider names (`claude`, `codex`, `cline`, `aider`); it is not supported.
 
-## Current state (v10.6.0+)
+## After the flip
 
-Loki 10 is the only supported engine as of v10.6.0. All routes use the v10 engine.
-The legacy engine and related commands have been removed.
+D48 made v10 the default for `loki "<task>"`, `loki owner/repo#N` and
+`loki quick "<task>"`. The previous engine stays fully reachable and
+unchanged: `loki legacy <args>` (prints a short deprecation notice to
+stderr, then runs exactly the pre-flip route for `<args>`) and
+`LOKI_ENGINE=legacy` (the same, without the notice, for scripts). Any
+LOKI_ENGINE value other than v10 or unset also keeps the legacy engine.
+Nothing is removed at the flip. The one place that records which state we
+are in is the marked line near the top of this file and of README.md's
+Loki 10 section; it changed in the same commit as the flip.

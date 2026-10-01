@@ -54,7 +54,10 @@ from `archaeology` directly to `modernize`.
 
 **File:** `autonomy/loki`
 
-**Status:** Legacy feature removed in v10.6.0. The `cmd_heal()` function and related healing commands have been superseded by `loki modernize`.
+**Problem:** The `case "$provider"` statement in `cmd_heal()` (around line 9298) had no
+default `*)` clause. If an unknown provider was specified (e.g., `loki heal ./app --provider foo`),
+the case silently fell through, `heal_exit` stayed 0, and the user received a false
+"Healing phase complete" success message.
 
 **Fix:** Added a `*)` default clause that prints an error with supported providers and
 returns 1.
@@ -136,9 +139,11 @@ Several state files during `initialize_workspace()` use direct `cat > file` patt
 (e.g., `orchestrator.json` at line 2955, `budget.json` at line 2980). These are safe because
 initialization runs once before any concurrent access, but could be hardened for robustness.
 
-### Legacy healing phases
+### Phase skip via --phase flag without --resume
 
-The multi-phase healing system has been removed in v10.6.0. Use `loki modernize <path> --to <target> --dry-run` for analysis of legacy systems.
+Users can run `loki heal ./app --phase modernize` and skip prior phases. This is by design
+(expert override), but could be surprising. A warning message when starting at a non-archaeology
+phase without prior healing data could improve UX.
 
 ---
 
