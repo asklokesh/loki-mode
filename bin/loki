@@ -291,7 +291,7 @@ case "${LOKI_ENGINE:-$_loki_engine_default}" in
         _e10=0
         _e10_args=("$@")
         case "${1:-}" in
-            status|verify|dashboard)
+            status|verify|dashboard|keys)
                 [ "${LOKI_ENGINE:-}" = "v10" ] && _e10=1
                 # Bare `loki verify` follows the newest run: a v10 run newer than the newest
                 # legacy proof is verified by v10, so a FAILED default run is never VERIFIED.
