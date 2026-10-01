@@ -114,12 +114,11 @@ jobs:
   # run at the release SHA with conclusion exactly "failure" fails the whole
   # job, even if another run of the same workflow is still in flight (a
   # completed failure is never hidden behind a hopeful retry); (c) else, for
-  # Tests/Bun Parity/Security Audit, reuse the parent's verdict if this push is eligible
+  # Tests/Bun Parity only, reuse the parent's verdict if this push is eligible
   # (see below) and the parent shows a success; (d) else wait for the release
-  # SHA's own result. Security Audit reuses the parent's newest decisive verdict under the SAME
-  # eligibility rule (E-157), only when that verdict is success AND a pinned
-  # gitleaks scan of PARENT..SHA (second-parent commits included) is clean,
-  # because the allowlist admits bytes the parent's audit never scanned.
+  # SHA's own result. Security Audit never reaches (c) -- it is NEVER reused,
+  # so it always resolves via (a), (b), or (d) at the release SHA, which costs
+  # about 4 min on every release regardless of what the push touched.
   # Eligibility (the "(c)" gate) requires every file this push changed to be
   # on the allowlist below, present as the same regular-file mode on both
   # sides (round 3: `git diff --raw`, not `--name-only` -- a rename, add,
@@ -211,16 +210,11 @@ jobs:
       actions: read
       contents: read
     steps:
-      - name: Checkout (full history for the reuse-eligibility diff and the PARENT..SHA secret scan)
+      - name: Checkout (immediate parent + release commit, for the reuse-eligibility diff)
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 2
           persist-credentials: false
-
-      - name: Install gitleaks (pinned, checksum-verified)
-        # E-157: reusing the parent's Security Audit verdict needs a fresh scan of
-        # PARENT..SHA first (see the poll loop). Same pinned binary as the audit.
-        run: bash scripts/install-gitleaks.sh
 
       - name: Require Tests / Bun Parity / Security Audit green, at the release SHA or an eligible parent
         env:
@@ -370,12 +364,8 @@ jobs:
                       fail(f"loki.js.map is not valid JSON: {e}")
                   if not isinstance(old_j, dict) or not isinstance(new_j, dict):
                       fail("loki.js.map is not a JSON object")
-                  # E-157: the dropped debugId must be the same hex/dash shape as the
-                  # JS trailer, never free-form bytes the parent audit did not scan.
-                  for j in (old_j, new_j):
-                      d = j.pop("debugId", None)
-                      if d is not None and not (isinstance(d, str) and re.fullmatch(r"[0-9A-Fa-f-]+", d)):
-                          fail("loki.js.map debugId is not hex/dash shaped")
+                  old_j.pop("debugId", None)
+                  new_j.pop("debugId", None)
                   old_canon = json.dumps(old_j, sort_keys=True, separators=(",", ":")).encode()
                   new_canon = json.dumps(new_j, sort_keys=True, separators=(",", ":")).encode()
                   if not version_only(old_canon, new_canon):
@@ -393,7 +383,7 @@ jobs:
           fi
 
           if [ "$ELIGIBLE" = "1" ]; then
-            echo "Version-bump-only diff against parent $PARENT (every changed file is allowlisted, same-mode, and byte-identical modulo the version string). Tests and Bun Parity may reuse that commit's verdict if it already succeeded there; Security Audit follows the same rule (E-157): a decisive run at $SHA wins, else the parent's newest decisive audit verdict is reused only if it is success."
+            echo "Version-bump-only diff against parent $PARENT (every changed file is allowlisted, same-mode, and byte-identical modulo the version string). Tests and Bun Parity may reuse that commit's verdict if it already succeeded there; Security Audit is always required fresh at $SHA (it triggers only on a VERSION-path push or a PR, and this commit is itself a VERSION push, so it always runs here anyway)."
           else
             echo "Not eligible for parent reuse (see 'normalizer:' diagnostic above if the eligibility check ran, or: empty diff, no resolvable parent, or a non-push event). All required workflows must succeed at $SHA unless already decided by a completed run there."
           fi
@@ -404,8 +394,8 @@ jobs:
           # partial-match entry would never match and the loop would stall
           # until the deadline.
           #
-          # "Security Audit" is required here, and security-audit.yml runs on
-          # every push to main, train/** and slice-* (E-157), so it actually RUNS at a
+          # "Security Audit" is required here, and security-audit.yml carries a
+          # matching `push: paths: [VERSION]` trigger so it actually RUNS at a
           # release commit. Requiring a workflow that never fires at this SHA
           # would deadlock every release rather than gate it, so the trigger
           # and this list must be changed together.
@@ -444,30 +434,6 @@ jobs:
               '$1==w && $2=="completed" && $3==c{f=1} END{exit !f}'
           }
 
-          # E-157: the eligibility allowlist accepts bytes the parent's audit never
-          # scanned (the CHANGELOG block, a merge release's second-parent history).
-          # So the parent's Security Audit verdict is reused ONLY when a pinned
-          # gitleaks scan of PARENT..SHA finds nothing. Reuses
-          # scripts/security-audit-gitleaks.sh for config trust: the BASE release
-          # tag's .gitleaks.toml (or defaults), never the tip's, refusing a changed
-          # one. The scan runs at most once; any failure means "do not reuse".
-          RANGE_SCAN=""
-          range_scan_clean() {
-            if [ -z "$RANGE_SCAN" ]; then
-              RANGE_SCAN=dirty
-              if GITLEAKS_BIN="${GITLEAKS_BIN:-$HOME/.local/share/loki/bin/gitleaks-8.30.0}" \
-                 GITLEAKS_BEFORE="$PARENT" GITLEAKS_TIP="$SHA" \
-                 GITLEAKS_RANGE="${PARENT}..${SHA}" \
-                 GITLEAKS_REPORT="$(mktemp "${TMPDIR:-/tmp}/loki-range-scan.XXXXXX")" \
-                 bash "${GITHUB_WORKSPACE:-.}/scripts/security-audit-gitleaks.sh" >&2; then
-                RANGE_SCAN=clean
-              else
-                echo "  Security Audit: PARENT..SHA scan did not come back clean; not reusing the parent's verdict" >&2
-              fi
-            fi
-            [ "$RANGE_SCAN" = "clean" ]
-          }
-
           deadline=$(( $(date +%s) + 2400 ))
           while :; do
             runs_release="$(fetch_runs "$SHA")"
@@ -484,8 +450,8 @@ jobs:
               #       exactly "failure" fails the job -- checked BEFORE any
               #       wait, so a still-running retry can never hide it;
               #   (c) else reuse the parent's success if this bump is
-              #       eligible (Security Audit too, E-157, via its newest
-              #       decisive parent verdict);
+              #       eligible (never for Security Audit, which is never
+              #       reused);
               #   (d) else wait for the release SHA's own result. Cancelled,
               #       timed_out, and skipped deliberately fall through to (c)
               #       or (d) rather than failing here: they are not evidence
@@ -495,30 +461,17 @@ jobs:
               #       cancel-in-progress concurrency group cancels the
               #       release SHA's own in-flight run.
               if [ "$want" = "Security Audit" ]; then
-                # E-157: same rule as Tests/Bun Parity. A decisive verdict at
-                # the release SHA always wins; only when none exists does an
-                # eligible bump reuse the parent's NEWEST decisive verdict,
-                # and only if that verdict is success (a newer parent failure
-                # masks an older parent success, so it never reuses).
-                label="$SHA"
                 case "$(audit_verdict "$runs_release")" in
                   success) result="success" ;;
                   failure) result="failed" ;;
-                  *)
-                    if [ "$ELIGIBLE" = "1" ] \
-                       && [ "$(audit_verdict "$runs_parent")" = "success" ] \
-                       && range_scan_clean; then
-                      result="success"; label="$PARENT (reused)"
-                    else
-                      result="pending"
-                    fi
-                    ;;
+                  *) result="pending" ;;
                 esac
+                label="$SHA"
               elif has_conclusion "$want" "$runs_release" success; then
                 result="success"; label="$SHA"
               elif has_conclusion "$want" "$runs_release" failure; then
                 result="failed"; label="$SHA"
-              elif [ "$ELIGIBLE" = "1" ] \
+              elif [ "$want" != "Security Audit" ] && [ "$ELIGIBLE" = "1" ] \
                    && has_conclusion "$want" "$runs_parent" success; then
                 result="success"; label="$PARENT (reused)"
               else
