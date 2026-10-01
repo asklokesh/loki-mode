@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.14 (2026-10-01)
+
+A `next` release. v10 is quiet by default and never reports a tampered run as verified, a run stops on a real provider authentication or credit failure, and the signing key file name no longer trips the secret scanner.
+
+### Changed
+- v10 output is quiet by default: one start line, then Outcome, PR, Receipt, NOT PROVEN, Cost and Time. `--verbose` restores the stage lines; `--json` is unchanged. Every outcome other than VERIFIED or ALREADY_SATISFIED prints a `Reason:` line (for example the failing check, the spec-conflict question, "provider credit exhausted", or "engine ended before sealing a receipt"), and NOT PROVEN is never printed empty (A-130).
+- `loki doctor` computes the model catalog age in UTC on both the bash and Bun routes, so the two routes agree at any local time of day (E-158).
+
+### Fixed
+- A v10 run whose event log was modified outside the engine (a line appended, edited, truncated or deleted) now ends FAILED with exit 1 and shows `Receipt: TAMPERED`; previously it could report VERIFIED and exit 0 (A-130).
+- Under the CLI invoker, a provider's authentication or credit failure on its own stderr now stops the run after one session; the provider's stderr is carried in memory, so text an agent prints or writes to a file cannot fake that stop. A crashed verify no longer counts toward a stall (A-113b).
+- The default signing key file name is defined once per language, so rebuilding the bundle no longer produces a secret-scanner false positive (E-156).
+
+### Internal
+- Repository hooks resolve from `CLAUDE_PROJECT_DIR`, so they run from any working directory (founder queue 13).
+- CI runs on `slice-*` branches with per-branch cancellation; main and train runs are never cancelled (D46).
+- The pulse reports a RELEASE_SLO violation when fewer than 3 `next` releases shipped in the trailing hour (D46).
+- The test-runner guards are proven active in sharded CI (E-154c).
+
 ## v10.5.13 (2026-10-01)
 
 A `next` release. It carries everything in v10.5.12, whose version commit landed on main but was never tagged or published (its Release run stopped on three secret-scan false positives on the signing key's file name), plus the work below. The headline: v10 refuses more ways of claiming success it has not earned, receipts are signed natively by default, and every v10 run ends with one named outcome and an honest exit code.
