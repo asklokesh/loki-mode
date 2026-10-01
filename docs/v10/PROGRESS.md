@@ -1646,3 +1646,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Release run success; `npm view loki-mode@10.5.14 version gitHead` = 10.5.14 / 2f4462b7; dist-tags next=10.5.14, latest=10.5.10 (unchanged); release body 17 lines.
 - D46 tally this hour: next releases 1 (10.5.14) vs target 3-6; trains cut 1 (train/17), red 1, dropped 0. Shortfall cause: the main-resident quiet-output flake (P0-t15 in rework).
 - OPUS_SHARE 33.7% vs 30%: no new opus seats until it drops; the open opus work is the A-117 r2 builder (resumed) only.
+
+## 2026-10-01T01:32Z train/18 cut
+- train/18 = 37267ebd (local main d5d679a4: A-119 merge c41a2b83 + docs, plus dist rebuild), pushed by SHA 01:34Z (`git ls-remote origin refs/heads/train/18` = 37267ebd). Tier B watcher armed.
+- P0-t15 round 2 at 54da8960 in sonnet re-review; train/19 = train/18 + P0-t15 when approved.
+- In review: A-130b (be50510f), A-134b (3bbec935). Building: A-117 r2, A-118, A-121b, A-119b (7edf4ae0 awaiting one clean full run).
+- Seats capped by worktrees 15/15 and load about 15-25; no new seats this tick.
