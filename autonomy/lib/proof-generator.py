@@ -1115,6 +1115,79 @@ def _empty_tree_sha(repo_dir):
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
+# A-118 / D47: tests_integrity. Did the diff WEAKEN the tests that vouch for it?
+# CFG_* are copied from loki-ts/src/engine10/stages/verify.ts (A-115); keep in sync.
+_TI_CFG_ALWAYS = re.compile(r"(^|/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$")
+_TI_CFG_SHARED = re.compile(r"(^|/)(setup\.cfg|pyproject\.toml|package\.json)$")
+_TI_CFG_LINE = re.compile(r"^[+-].*(pytest|jest|mocha|vitest|\"test\"\s*:|addopts|testpaths)", re.I | re.M)
+_TI_TEST_FILE = re.compile(
+    r"(^|/)(tests?|__tests__|spec|specs)/|\.(test|spec)\.[\w]+$|(^|/)test_[^/]*\.py$|_test\.(py|go|rs)$|(^|/)conftest\.py$")
+_TI_SKIP = re.compile(
+    r"\{\s*skip\s*:\s*true|\.skip\(|\bxit\(|\bxdescribe\(|@pytest\.mark\.(skip|skipif|xfail)\b|pytest\.skip\("
+    r"|@unittest\.skip|\bskipTest\(|\bt\.Skip\(|#\[ignore\]|\.todo\(")
+_TI_ASSERT = re.compile(r"\bassert|\bexpect\(|\.should\b|\.to[A-Z]\w*\(|\bt\.(Error|Fatal)")
+
+
+def _ti_run(repo, *args):
+    try:
+        r = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, timeout=30)
+    except Exception:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _collect_tests_integrity(target_dir, base):
+    """Return {"weakened": [reason...], "assertions_edited": [file...]} or None.
+
+    Derived only from the diff between base and HEAD. None when there is no
+    usable diff (no repo, no base), so no item is ever invented."""
+    if not base:
+        return None
+    names = _ti_run(target_dir, "diff", "--name-status", "-M", base, "HEAD")
+    if names is None:
+        return None
+    weakened, edited = [], []
+    greenfield = base == _empty_tree_sha(target_dir)
+    changed = []
+    for line in names.splitlines():
+        parts = line.split("\t")
+        st, paths = parts[0][:1], parts[1:]
+        changed.extend(paths)
+        if st in ("D", "R") and _TI_TEST_FILE.search(paths[0]):
+            weakened.append("test file %s: %s"
+                            % ("deleted" if st == "D" else "renamed", paths[0]))
+    if not greenfield:
+        for f in changed:
+            if _TI_CFG_ALWAYS.search(f):
+                weakened.append("test runner config changed: " + f)
+            elif _TI_CFG_SHARED.search(f):
+                d = _ti_run(target_dir, "diff", "-U0", base, "HEAD", "--", f) or ""
+                if not d or _TI_CFG_LINE.search(d):
+                    weakened.append("test runner config changed: " + f)
+    patch = _ti_run(target_dir, "diff", "-U0", "-M", base, "HEAD") or ""
+    cur, removed_assert = None, False
+    for line in patch.splitlines() + ["diff --git a/ b/"]:
+        if line.startswith("diff --git "):
+            if cur and removed_assert and cur not in edited:
+                edited.append(cur)
+            cur, removed_assert = None, False
+        elif line.startswith("+++ b/"):
+            cur = line[6:] if _TI_TEST_FILE.search(line[6:]) else None
+        elif cur and line.startswith("+") and _TI_SKIP.search(line):
+            weakened.append("skip added in %s" % cur)
+        elif cur and line.startswith("-") and not line.startswith("---") \
+                and _TI_ASSERT.search(line):
+            removed_assert = True
+    seen, uniq = set(), []
+    for w in weakened:
+        if w not in seen:
+            seen.add(w)
+            uniq.append(w)
+    if not uniq and not edited:
+        return None
+    return {"weakened": uniq, "assertions_edited": edited}
+
+
 def _collect_iterations(loki_dir):
     completed = _read_json(os.path.join(loki_dir, "queue", "completed.json"), default=[])
     failed = _read_json(os.path.join(loki_dir, "queue", "failed.json"), default=[])
@@ -1455,6 +1528,10 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
     # only, never read by _compute_headline / _compute_degraded.
     if journey:
         facts["journey"] = journey
+    # A-118: additive, present only when the diff touched test integrity.
+    _ti = _collect_tests_integrity(target_dir, diff_base_sha)
+    if _ti:
+        facts["tests_integrity"] = _ti
     ablation = _collect_ablation(loki_dir)
     if ablation is not None:
         facts["ablation"] = ablation
@@ -1514,6 +1591,16 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
             # statuses will keep being added, and a filter keyed on one of them
             # silently breaks the next time -- which is exactly what happened
             # when the unrun-security entry landed with status "not_run".
+            "post_headline": True,
+        })
+
+    # D47: edited assertion lines are disclosed but never move the headline or rc.
+    _ae = (facts.get("tests_integrity") or {}).get("assertions_edited")
+    if _ae:
+        degraded.append({
+            "item": "tests_integrity:assertions_edited",
+            "status": "inconclusive",
+            "reason": "assertion lines edited in: " + ", ".join(_ae),
             "post_headline": True,
         })
 
@@ -1653,6 +1740,10 @@ def _compute_degraded(facts):
         out.append({"item": "security", "status": "findings",
                     "reason": "%s un-waived HIGH security finding(s)"
                               % sec.get("high_active")})
+    ti = facts.get("tests_integrity") or {}
+    if ti.get("weakened"):
+        out.append({"item": "tests_integrity", "status": "failed",
+                    "reason": "tests weakened: " + "; ".join(ti["weakened"])})
     git = facts.get("git") or {}
     if not (git.get("diff") or {}).get("count"):
         out.append({"item": "git.diff", "status": "not_run",
@@ -1748,6 +1839,7 @@ def _compute_headline(facts, degraded):
                if _is_exogenous(g))
         or sec_high
         or fn_failed
+        or bool((facts.get("tests_integrity") or {}).get("weakened"))
     )
     if any_failed:
         return "NOT VERIFIED"
