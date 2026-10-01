@@ -153,8 +153,12 @@ for path in changed:
             fail(f"loki.js.map is not valid JSON: {e}")
         if not isinstance(old_j, dict) or not isinstance(new_j, dict):
             fail("loki.js.map is not a JSON object")
-        old_j.pop("debugId", None)
-        new_j.pop("debugId", None)
+        # E-157: the dropped debugId must be the same hex/dash shape as the
+        # JS trailer, never free-form bytes the parent audit did not scan.
+        for j in (old_j, new_j):
+            d = j.pop("debugId", None)
+            if d is not None and not (isinstance(d, str) and re.fullmatch(r"[0-9A-Fa-f-]+", d)):
+                fail("loki.js.map debugId is not hex/dash shaped")
         old_canon = json.dumps(old_j, sort_keys=True, separators=(",", ":")).encode()
         new_canon = json.dumps(new_j, sort_keys=True, separators=(",", ":")).encode()
         if not version_only(old_canon, new_canon):
