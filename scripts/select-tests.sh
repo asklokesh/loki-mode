@@ -224,6 +224,7 @@ grep_word_and_emit() {
     while IFS= read -r match; do
         [ -n "$match" ] || continue
         emit_kind="$(match_kind "$kind" "$match")"
+        [ -n "$emit_kind" ] || continue
         already_seen "$emit_kind:$match" && continue
         mark_seen "$emit_kind:$match"
         emit "$rule" "$emit_kind" "$match"
@@ -300,13 +301,14 @@ mark_seen() { SEEN="${SEEN}|$1|"; }
 match_kind() {
     local kind="$1" match="$2" basename
     basename="$(basename "$match")"
-    case "$match" in
-        *.py)
-            case "$basename" in
-                test_*.py | *_test.py) [ "$kind" = "shell_test" ] && kind="py_test" ;;
-            esac
-            ;;
-        *.js | *.mjs) [ "$kind" = "shell_test" ] && kind="node_test" ;;
+    # A shell_test candidate that is not a runnable test (a helper under
+    # tests/lib, a fixture) yields no kind: callers skip it, never run it.
+    [ "$kind" = "shell_test" ] || { printf '%s\n' "$kind"; return; }
+    case "$basename" in
+        test_*.py | *_test.py) kind="py_test" ;;
+        test-*.sh | run-*.sh | run_*.sh) ;;
+        *.js | *.mjs) kind="node_test" ;;
+        *) kind="" ;;
     esac
     printf '%s\n' "$kind"
 }
@@ -320,6 +322,7 @@ grep_and_emit() {
     while IFS= read -r match; do
         [ -n "$match" ] || continue
         emit_kind="$(match_kind "$kind" "$match")"
+        [ -n "$emit_kind" ] || continue
         already_seen "$emit_kind:$match" && continue
         mark_seen "$emit_kind:$match"
         emit "$rule" "$emit_kind" "$match"
