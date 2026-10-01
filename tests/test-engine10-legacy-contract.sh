@@ -3,9 +3,9 @@
 #
 # Records today's bin/loki routing as golden rows in
 # tests/fixtures/engine10-legacy-routes.txt and asserts the current shim still
-# routes each argv shape the same way with LOKI_ENGINE unset. When the default
-# flips to v10, `loki legacy <args>` must run exactly the golden route for
-# <args>; those assertions report SKIP until bin/loki has a `legacy)` arm.
+# routes each argv shape the same way with LOKI_ENGINE=legacy, and that
+# `loki legacy <args>` runs exactly the golden route for <args> (D48 flipped
+# the default to v10; the previous engine stays reachable both ways).
 #
 # Method: bin/loki is copied into a scratch repo layout whose autonomy/loki is
 # a stub printing "bash|<argv>", LOKI_TS_ENTRY points at a stub entry, and a
@@ -54,11 +54,12 @@ if command -v timeout >/dev/null 2>&1; then
     TIMEOUT_CMD=("$(command -v timeout)" -k 5 20)
 fi
 
-# Run the copied shim with a clean env: LOKI_ENGINE, LOKI_LEGACY_BASH,
-# LOKI_SDK_*, BUN_FROM_SOURCE and LOKI_PROVIDER all unset.
+# Run the copied shim with a clean env: LOKI_LEGACY_BASH, LOKI_SDK_*,
+# BUN_FROM_SOURCE and LOKI_PROVIDER unset; LOKI_ENGINE=legacy (the D48 escape
+# hatch) is pinned, because LOKI_ENGINE unset now defaults to v10.
 route_of() {
     (cd "$WORK/cwd" && env -i \
-        HOME="$WORK/home" PATH="$WORK/fakebin:/usr/bin:/bin" \
+        HOME="$WORK/home" PATH="$WORK/fakebin:/usr/bin:/bin" LOKI_ENGINE=legacy \
         LOKI_TS_ENTRY="$ENTRY" LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 \
         ${TIMEOUT_CMD[@]+"${TIMEOUT_CMD[@]}"} "$WORK/repo/bin/loki" "$@" </dev/null 2>/dev/null)
 }
