@@ -50,7 +50,8 @@ jobs:
       contents: read
       actions: read
     outputs:
-      skip: ${{ steps.gate.outputs.skip }}
+      # E-160 / D55: skip also when a train/** run already verified this exact SHA.
+      skip: ${{ steps.gate.outputs.skip == 'true' || steps.reuse.outputs.reuse == 'true' }}
     steps:
       - name: Checkout (pushed commit plus its parent)
         uses: actions/checkout@v4
@@ -72,6 +73,25 @@ jobs:
           SHA: ${{ github.sha }}
           EVENT_NAME: ${{ github.event_name }}
         run: bash scripts/ci/version-bump-only.sh gate >> "$GITHUB_OUTPUT"
+
+      # E-160 / D55: a main push of a SHA a train/** Tests run already passed
+      # reuses that verdict. Lockfile changes since BEFORE, a failed or
+      # truncated compare, or any API doubt give reuse=false (full suite).
+      - name: Reuse a train run's verdict for this exact SHA
+        id: reuse
+        continue-on-error: true
+        env:
+          WF_FILE: test.yml
+          CACHE_KEY_FILES: loki-ts/bun.lock requirements-test.txt dashboard-ui/package-lock.json
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          LOKI_E160_REUSE: ${{ vars.LOKI_E160_REUSE }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/train-verdict-reuse.sh gate
 
   node-tests:
     name: Node.js ${{ matrix.node-version }}

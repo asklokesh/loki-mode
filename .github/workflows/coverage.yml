@@ -19,12 +19,49 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # E-162: train/** pushes share one group per ref, so a newer train push
+  # cancels a superseded train's in-progress run. main keeps a per-SHA
+  # group and is never cancelled (Tier B / release verdict).
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/train/')) && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/train/') }}
 
 jobs:
+  # E-160 / D55: a main push of a SHA a train/** run already verified green
+  # reuses that verdict. Any doubt gives reuse=false and the jobs below run.
+  train-reuse:
+    name: Train verdict reuse
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reuse: ${{ steps.reuse.outputs.reuse }}
+    steps:
+      - name: Checkout (scripts/ci only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      - name: Reuse a train run's verdict for this exact SHA
+        id: reuse
+        continue-on-error: true
+        env:
+          WF_FILE: coverage.yml
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          LOKI_E160_REUSE: ${{ vars.LOKI_E160_REUSE }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/train-verdict-reuse.sh gate
+
   bun-coverage:
     name: bun test --coverage
+    needs: [train-reuse]
+    if: ${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

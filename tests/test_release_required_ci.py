@@ -585,6 +585,21 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("Security Audit @ %s (reused)" % self.parent, out)
 
+    def test_e160_parent_main_stubs_plus_one_train_success_still_reuses(self):
+        # D55: the parent's main runs are all skipped stubs; the only decisive
+        # run is the train's success at the same SHA. required-ci reads by
+        # head_sha, so the bump still reuses it.
+        parent = [("Tests", "completed", "skipped"), ("Tests", "completed", "cancelled"),
+                  ("Tests", "completed", "success", "push", "2026-01-01T00:09:00Z"),
+                  ("Bun Parity", "completed", "success"),
+                  ("Security Audit", "completed", "success")]
+        _require_gitleaks(self)
+        rc, out = self._run({self.parent: parent,
+                             self.sha: [("Tests", "completed", "success"),
+                                        ("Bun Parity", "completed", "success")]})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("Security Audit @ %s (reused)" % self.parent, out)
+
     def test_e157_parent_audit_failure_is_not_reused(self):
         rc, out = self._run(self._reuse_fixture([("Security Audit", "completed", "failure")]))
         self.assertEqual(rc, 99, out)
