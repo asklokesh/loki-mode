@@ -1,7 +1,7 @@
 # Morning brief, 2026-10-01 (written 10:20Z)
 
 ## Headline
-- `npm install -g loki-mode` now runs the Loki 10 engine by default, using a bundled bun. `latest` = 10.5.28, gated on both a machine with bun and one without.
+- `npm install -g loki-mode` now runs the Loki 10 engine by default, using a bundled bun. `latest` = 10.5.29, gated on both a machine with bun and one without.
 - 18 release tags overnight (10.5.11 to 10.5.28), 16 published. Two were not published: 10.5.18 (CodeQL) and 10.5.21 (a changelog test). Both were fixed forward.
 
 ## What shipped (on npm latest unless noted)
@@ -31,7 +31,7 @@
 
 ## LOKI MORNING TEST
 ```
-npm install -g loki-mode@latest && loki --version          # 10.5.28
+npm install -g loki-mode@latest && loki --version          # 10.5.29
 mkdir /tmp/lmt && cd /tmp/lmt && git init -q && echo 'module.exports=(a,b)=>a-b' > sum.js && git add sum.js && git commit -qm init
 loki quick "sum.js should add, not subtract"                # first line names the Loki 10 engine; 8 lines or fewer
 loki verify                                                 # VERIFIED rc 0, or rc 4 if the run did not verify
