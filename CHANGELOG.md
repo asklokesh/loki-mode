@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.24 (2026-10-01)
+
+A `next` release of repo tooling and test fixes: no test can launch a real `loki start` against the repo root any more, the funnel-privacy test measures only off-machine traffic, and the fast CI tier stops running helper scripts as tests.
+
+### Fixed
+- Tests no longer launch `loki start` in the repository root. The MiroFish and funnel-privacy tests run `loki start` in a throwaway git fixture with a stub provider that exits at once, under `timeout -k`. A new structural guard (`tests/test-no-start-against-repo-root.sh`) fails when any test starts `loki start` or `run.sh` from the repo root, including `"$LOKI" start`, `bin/loki start`, bare `loki start` and a `cd` back to the root; an allow comment covers only the line directly below it (E-165).
+- The funnel-privacy test records only POST bodies sent to non-loopback hosts. The local dashboard focus call (`run.sh` posting `project_dir` to `127.0.0.1`) is not egress; a telemetry call with telemetry off still fails both zero-egress checks (E-165).
+- The fast CI tier (Tier A) runs a matched file as a test only if it is a runnable test (`test-*.sh`, `run-*.sh`, `run_*.sh`, `test_*.py`, `*_test.py`); helper scripts under `tests/lib` get only the syntax check (E-168).
+
 ## v10.5.23 (2026-10-01)
 
 A `next` release. Jira auto-sync starts when configured, the release gate checks the Loki 10 engine the way users with bun run it, and agent sessions can no longer detach the shared main checkout.
