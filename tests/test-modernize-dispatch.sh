@@ -76,7 +76,8 @@ expect "[--help] falls through to legacy" "BASH modernize --help" "$(run_loki "$
 # 4. An unknown flag still reaches engine10 (the modernize CLI itself rejects
 #    it and exits non-zero; the shim's job is only to route, not validate).
 #    Simulate the CLI's own rejection by having the bun stub exit 2.
-printf '#!/usr/bin/env bash\nprintf "BUN %%s\\n" "$*" >"%s/out"\nexit 2\n' "$T" >"$T/fakebin/bun"
+# The bun resolver probes --version first; answer it so only the real call exits 2.
+printf '#!/usr/bin/env bash\n[ "$1" = --version ] && { echo 1.4.2; exit 0; }\nprintf "BUN %%s\\n" "$*" >"%s/out"\nexit 2\n' "$T" >"$T/fakebin/bun"
 chmod +x "$T/fakebin/bun"
 run_loki "$WITH_BUN" -- modernize repo --to python3 --bogus-flag >/dev/null
 expect "[unknown flag] routes to engine10" "BUN $ENTRY engine10 modernize repo --to python3 --bogus-flag" \
