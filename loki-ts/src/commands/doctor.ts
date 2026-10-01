@@ -19,8 +19,6 @@ import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { getVersion } from "../version.ts";
-import { loadSigningKey } from "../engine10/stages/seal.ts";
-import { RECEIPT_SIGNER_BASENAME } from "../util/receipt_signer.ts";
 
 // ---------- Types (mirror cmd_doctor_json shape) ------------------------------
 
@@ -218,9 +216,7 @@ export async function httpReachable(url: string, timeoutMs = 2000): Promise<bool
 // probabilistic divergence vs bash (which has no timeout). ML imports get
 // 30s; non-ML imports keep 5s.
 export async function pythonImportOk(module: string, useMlPython = false): Promise<boolean> {
-  // find_spec, not import: a real sentence_transformers import costs 4-5s and
-  // dominated doctor. Mirrored in autonomy/loki cmd_doctor.
-  const source = `import importlib.util as u,sys; sys.exit(u.find_spec(${JSON.stringify(module)}) is None)`;
+  const source = `import ${module}`;
   const timeoutMs = useMlPython ? 30000 : 5000;
   if (!useMlPython) {
     const r = await runInline(source, { timeoutMs });
@@ -732,55 +728,15 @@ function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--airgap]\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON\n`);
-  process.stdout.write(`  --fix     Create a missing receipt signing key (never overwrites) and\n`);
-  process.stdout.write(`            print the command to select a provider, then run doctor\n`);
   // --airgap never reaches this handler: bin/loki routes it to the bash audit.
   process.stdout.write(`  --airgap  Audit network egress: model inference, telemetry and the\n`);
   process.stdout.write(`            update check, REQUIRED or optional, and how to disable\n`);
   process.stdout.write(`            each. Exits non-zero while a required egress remains.\n\n`);
   process.stdout.write(`Checks: node, python3, jq, git, curl, bash version,\n`);
   process.stdout.write(`        claude/codex CLIs, and disk space.\n`);
-}
-
-// doctor --fix: only ever ADDS state. Mirrors the bash fix block in cmd_doctor
-// (autonomy/loki) line for line; the bun-parity gate compares stdout.
-function runFix(): void {
-  const out = (l: string): void => void process.stdout.write(l + "\n");
-  out("Fix:");
-  const keyFile =
-    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim() ||
-    resolve(process.env["HOME"] || homedir(), ".loki", "keys", RECEIPT_SIGNER_BASENAME);
-  if (process.env["LOKI_RECEIPT_SIGNING_KEY"]?.trim()) {
-    out("  OK     receipt signing key supplied by LOKI_RECEIPT_SIGNING_KEY");
-  } else if (lstatExists(keyFile)) {
-    out(`  OK     receipt signing key present: ${keyFile}`);
-  } else if (loadSigningKey(true)) {
-    out(`  FIXED  receipt signing key created: ${keyFile}`);
-  } else {
-    out(`  WARN   could not create receipt signing key: ${keyFile}`);
-  }
-  const stateFile = resolve(process.env["LOKI_DIR"] || ".loki", "state", "provider");
-  if (!process.env["LOKI_PROVIDER"] && !existsSync(stateFile)) {
-    for (const p of ["claude", "codex", "cline", "aider", "opencode"]) {
-      if (spawnSync("bash", ["-c", 'command -v "$1" >/dev/null 2>&1', "_", p]).status === 0) {
-        out(`  NEXT   no provider selected; run: loki provider set ${p}`);
-        break;
-      }
-    }
-  }
-  out("");
-}
-
-function lstatExists(f: string): boolean {
-  try {
-    lstatSync(f);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function runText(): Promise<number> {
@@ -1410,24 +1366,17 @@ else:
 
 export async function runDoctor(argv: readonly string[]): Promise<number> {
   let json = false;
-  let fix = false;
   for (const arg of argv) {
     if (arg === "--json") {
       json = true;
-    } else if (arg === "--fix") {
-      fix = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--airgap]\n`);
       return 1;
     }
-  }
-  if (fix && json) {
-    process.stderr.write(`${RED}--fix cannot be combined with --json${NC}\n`);
-    return 1;
   }
 
   if (json) {
@@ -1435,6 +1384,5 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
     return result.summary.ok ? 0 : 1;
   }
-  if (fix) runFix();
   return runText();
 }
