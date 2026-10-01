@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.23 (2026-10-01)
+
+A `next` release. Jira auto-sync starts when configured, the release gate checks the Loki 10 engine the way users with bun run it, and agent sessions can no longer detach the shared main checkout.
+
+### Fixed
+- Jira auto-sync now starts: the sync subscriber passes the account email (`LOKI_JIRA_EMAIL`, new) and API token (`LOKI_JIRA_TOKEN`) to the Jira client. When only some of `LOKI_JIRA_URL`, `LOKI_JIRA_EMAIL` and `LOKI_JIRA_TOKEN` are set it logs one line naming the missing variables (never their values); with none set it stays silent. The setup docs list `LOKI_JIRA_EMAIL` and the known-issue note is removed (E-166).
+- The release promote job installs bun before the first-run gate, so the gate checks the default Loki 10 engine instead of the legacy fallback a bun-less machine gets. The gate's cost check fails with "no v10 run dir" instead of crashing, and a new check fails with "engine fell back to legacy: <reason>" when the default entry fell back. The v10.5.22 promote failed closed on this and `latest` was not moved (P0-promote-bun).
+
+### Changed
+- Repo tooling: the PreToolUse guard blocks detached checkouts (`git checkout --detach`, a tag or SHA, `git switch --detach`) in the primary checkout, and agent sessions are also blocked from other checkouts, hard resets, stash, clean and removing that checkout (E-161).
+- A regression test pins the Wall classifier reading a missing test runner as not run rather than red (E-132).
+
 ## v10.5.22 (2026-10-01)
 
 A `next` release. v10.5.21 was never published: its Release run failed because a test still expected the engine-default note under Unreleased after the release moved it. This release ships everything listed under v10.5.21 (the Loki 10 engine is now the default for `loki "<task>"`, issue mode and `loki quick`, and a bare `loki verify` after a Loki 10 run uses the v10 verifier with exit 4 for a non-VERIFIED outcome), and adds third-party receipt verification.
