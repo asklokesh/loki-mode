@@ -190,7 +190,8 @@ EOF
         runs="$(runs_json "$n_max_sha")"
         for name in "${REQUIRED_TRAIN[@]}"; do
             st="$(check_state "$runs" "$name")"
-            if [ "$st" = pending ] || [ "$st" = missing ]; then
+            # ponytail: only pending holds; a check that never starts (missing) must not wedge phase A forever.
+            if [ "$st" = pending ]; then
                 log A "$local_main" "HOLD train/$n_max still running ($name:$st)"; return 0
             fi
         done
