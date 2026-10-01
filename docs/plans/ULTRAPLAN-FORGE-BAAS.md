@@ -25,7 +25,7 @@ Loki Mode today is a **multi-agent autonomous orchestrator**, not a BaaS. It own
 - An auth layer (`dashboard/auth.py`, `web-app/auth.py`) supporting Bearer tokens, OIDC (Google/Azure/Okta), bcrypt password hashing, RBAC scopes
 - A working completion-council with anti-sycophancy, 3-reviewer parallel review, devil's-advocate fallback
 - A healing-mode for legacy systems (v6.67+) with friction-as-semantics
-- 41 specialized agent types and a queue system
+- Specialized agent types and a queue system
 
 **The gap:** every backend primitive Loki owns is for orchestrating the agent. None of it is for the *application the agent is building*. When `loki start ./prd.md` builds "a Twitter clone with login and image uploads", the agent has to invent the auth flow, choose a DB, set up storage, wire Stripe, etc. - and the user has to run a parallel set of tools (Supabase, Stripe, Cloudflare R2) to support the resulting app.
 

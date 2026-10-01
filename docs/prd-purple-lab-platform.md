@@ -137,8 +137,6 @@ Each card:
 
 Integrations available:
 - **GitHub**: Connect repo, import issues, create PRs (`loki github`, `loki run`)
-- **Jira**: Bidirectional sync (`LOKI_JIRA_*` env vars)
-- **Linear**: Issue sync (`LOKI_LINEAR_*` env vars)
 - **Slack**: Notifications + slash commands (`LOKI_SLACK_*`)
 - **Teams**: Adaptive Cards notifications (`LOKI_TEAMS_*`)
 - **OpenTelemetry**: Trace export (`loki telemetry`)
@@ -197,7 +195,7 @@ Each gate: name, status (pass/fail/pending), details expandable
 
 ### Agent Activity
 
-Real-time grid showing which of the 41 agent types are active:
+Real-time grid showing which agent types are active:
 - Agent name, type, domain, model tier (Opus/Sonnet/Haiku)
 - Current task
 - Status (working/idle/completed)

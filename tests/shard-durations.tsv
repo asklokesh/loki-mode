@@ -663,6 +663,7 @@ release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)	9
 no hardcoded far-future latest a release can overtake (E-73)	1
 Loki modernize py2/3 capture tracer (M-09)	2
 Loki modernize user guide matches cli.ts flags (M-30)	1
+Docs name only CLI commands, flags and versions on main (DOC-02)	5
 loki modernize always routes to engine10 (M-08)	1
 Dependency inventory Latest/Bump self-consistency (DEP-01)	1
 Usage governor calibration and dedup (G-01)	2

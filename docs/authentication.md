@@ -30,7 +30,7 @@ loki enterprise token generate my-token
 loki enterprise token generate ci-bot --scopes "read,write" --expires 30
 
 # With role
-loki enterprise token generate admin-bot --role admin --expires 90
+loki enterprise token generate admin-bot --scopes '*' --expires 90
 ```
 
 Output:
@@ -109,7 +109,7 @@ Predefined roles map to common access patterns:
 Generate token with role:
 
 ```bash
-loki enterprise token generate viewer-bot --role viewer
+loki enterprise token generate viewer-bot --scopes read
 ```
 
 Generate token with custom scopes:
@@ -302,8 +302,8 @@ curl https://accounts.google.com/.well-known/openid-configuration
 # Check client ID is correct
 echo $LOKI_OIDC_CLIENT_ID
 
-# View authentication logs
-loki enterprise audit tail --event auth.fail
+# View recent audit entries
+loki enterprise audit tail
 
 # Check redirect URI is whitelisted in identity provider
 # Should be: http://localhost:57374/auth/oidc/callback

@@ -13,8 +13,8 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 - **Built-in trust layer (verified completion)** - Does not call work done until it is verified: the RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted
 - **Spec-driven development** - Any spec (PRD, GitHub issue, OpenAPI/YAML doc, or one-line brief) drives the build end to end
 - **Executes complete SDLC phases** - From requirements to deployment
-- **Manages multiple AI agents** - Parallel execution with up to 10+ concurrent agents
-- **Provider-agnostic** - runs on Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded); no vendor lock-in. Gemini CLI deprecated v7.5.18.
+- **Manages multiple AI agents** - Parallel execution across git worktrees
+- **Provider-agnostic** - runs on Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded), and opencode (model-agnostic); no vendor lock-in. Gemini CLI deprecated v7.5.18.
 - **MCP server** - 36 tools (35 always available; `loki_memory_redact` is gated on `LOKI_MANAGED_AGENTS`/`LOKI_MANAGED_MEMORY`) plus 3 resources and 2 prompts for integration with MCP-aware clients. Launch with `loki mcp`.
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
@@ -42,7 +42,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 
 - **Zero Configuration** - Works out of the box with sensible defaults
 - **Spec to Production** - Provide a spec (PRD markdown, GitHub issue, YAML brief), Loki handles the rest
-- **Provider-Agnostic** - runs on Claude, Cline, Codex, or Aider, no vendor lock-in (Gemini deprecated v7.5.18)
+- **Provider-Agnostic** - runs on Claude, Cline, Codex, Aider, or opencode, no vendor lock-in (Gemini deprecated v7.5.18)
 - **LSP Grounding** - First-class agent tools for symbol verification via `mcp/lsp_proxy.py` (v7.7.0+; pyright, typescript-language-server, gopls, rust-analyzer, jdtls; lsp_get_diagnostics regression fully fixed v7.7.14)
 - **Cross-Project Learning** - AI improves from every session
 - **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)

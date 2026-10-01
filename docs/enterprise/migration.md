@@ -1,4 +1,4 @@
-# Loki Mode v5.51.0 -- Migration Guide
+# Loki Mode Migration Guide
 
 ## Upgrading from v5.50.0 to v5.51.0
 
@@ -76,10 +76,7 @@ See `docs/enterprise/sdk-guide.md` for installation and usage.
 | `LOKI_TEAMS_WEBHOOK_SECRET` | (unset) | Teams webhook shared secret |
 | `LOKI_OIDC_ISSUER` | (unset) | OIDC identity provider URL |
 | `LOKI_OIDC_CLIENT_ID` | (unset) | OIDC client ID |
-| `LOKI_OIDC_CLIENT_SECRET` | (unset) | OIDC client secret |
-| `LOKI_OIDC_REDIRECT_URI` | (unset) | OIDC redirect URI |
-| `LOKI_CORS_ORIGINS` | localhost | Allowed CORS origins |
-| `LOKI_API_RATE_LIMIT` | 100 | API rate limit (requests/min) |
+| `LOKI_DASHBOARD_CORS` | localhost | Allowed CORS origins |
 
 ### Existing Environment Variables (Unchanged)
 
@@ -101,12 +98,11 @@ These variables from v5.50.0 continue to work identically:
 | `LOKI_TLS_CERT` | (unset) | TLS certificate path |
 | `LOKI_TLS_KEY` | (unset) | TLS key path |
 | `LOKI_JIRA_URL` | (unset) | Jira Cloud base URL |
-| `LOKI_JIRA_EMAIL` | (unset) | Jira user email |
 | `LOKI_JIRA_TOKEN` | (unset) | Jira API token |
-| `LOKI_JIRA_PROJECT_KEY` | (unset) | Default Jira project key |
-| `LOKI_LINEAR_API_KEY` | (unset) | Linear API key |
+| `LOKI_JIRA_EPIC_KEY` | (unset) | Jira epic that run events sync to |
+| `LOKI_LINEAR_TOKEN` | (unset) | Linear API key |
 | `LOKI_LINEAR_TEAM_ID` | (unset) | Linear team ID |
-| `LOKI_LINEAR_WEBHOOK_SECRET` | (unset) | Linear webhook secret |
+| `LOKI_LINEAR_PROJECT_ID` | (unset) | Linear project that run events sync to |
 | `LOKI_GITHUB_SYNC` | (unset) | Enable GitHub sync |
 
 ### API Changes

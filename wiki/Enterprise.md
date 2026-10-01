@@ -1,6 +1,6 @@
 # Enterprise Features
 
-Loki Mode v5.51.0 includes a comprehensive enterprise layer for organizations that need observability, governance, audit compliance, and integration with existing toolchains. All enterprise features are opt-in via environment variables -- when not configured, they add zero overhead.
+Loki Mode includes an enterprise layer (since v5.51.0) for organizations that need observability, governance, audit logging, and integration with existing toolchains. All enterprise features are opt-in via environment variables -- when not configured, they add zero overhead.
 
 ## Documentation Index
 
@@ -38,7 +38,7 @@ OpenTelemetry instrumentation with zero-dependency OTLP/HTTP+JSON export. Provid
 
 ### Policy Engine
 
-Governance-as-code through declarative YAML or JSON policy files. Four enforcement points (pre-execution, pre-deployment, resource, data) with three decision types (ALLOW, DENY, REQUIRE_APPROVAL). Built-in rules for path boundary enforcement, agent concurrency limits, token budgets, secret detection, and PII scanning.
+Governance-as-code through declarative YAML or JSON policy files, evaluated by `src/policies/engine.js` with three decision types (ALLOW, DENY, REQUIRE_APPROVAL). The runner calls it at one point today, `pre_execution`, before each iteration (`check_policy` in `autonomy/run.sh`); REQUIRE_APPROVAL is logged but not yet blocking.
 
 **Activate:** Create `.loki/policies.yaml` in your project directory.
 
@@ -48,13 +48,13 @@ Hash-chained logging with SHA-256. Every API call is recorded in JSONL format. S
 
 The chain detects corruption and truncation. It is NOT tamper-proof: the hash is unkeyed and the genesis value is a constant (`dashboard/audit.py:58,194-200`), so anyone who can write the log can recompute a consistent chain over invented history. This is reproduced in `docs/AUDIT-CHAIN-THREAT-MODEL.md`. An intact chain is not evidence of integrity against a motivated writer; a broken one is good evidence of a problem.
 
-Compliance reports are generated in SOC 2 Type II, ISO 27001 and GDPR shapes. Loki Mode holds no certification against those standards; the reports are inputs to your own audit, not a substitute for one.
+`GET /api/compliance?type=soc2|iso27001|gdpr` summarizes the agent audit log in those report layouts. This is not a compliance certification or attestation; Loki Mode holds none.
 
 **Activate:** Enabled by default. Configure syslog with `LOKI_AUDIT_SYSLOG_HOST`.
 
 ### Integrations
 
-Bidirectional sync with Jira (epic import, RARV status sync, sub-task creation), Linear (GraphQL API, project sync), and GitHub (PR quality reports, issue summaries, status checks). Slack and Teams notifications for real-time execution updates and approval requests.
+One-way status sync from Loki to Jira, Linear and GitHub (`src/integrations/sync-subscriber.js`; changes are not pulled back). Slack and Teams notifications for execution updates.
 
 **Activate:** Set integration-specific env vars (see Integration Cookbook).
 

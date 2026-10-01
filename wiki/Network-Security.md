@@ -164,22 +164,3 @@ spec:
         medium: Memory
         sizeLimit: 256Mi
 ```
-
-## Environment Variables
-
-The following environment variables are documented for future network egress policy enforcement.
-
-> **Planned -- not yet enforced. Target: TBD (post-v7.5.x).** These
-> variables are reserved for a future release. Setting them today has
-> no effect on runtime behavior; rely on the network-level controls
-> (Docker iptables, Kubernetes NetworkPolicy / Cilium FQDN, egress
-> proxy) above for enforcement. They are listed here to establish the
-> interface contract.
-
-| Variable | Description | Default | Status |
-|---|---|---|---|
-| `LOKI_NETWORK_EGRESS_POLICY` | Controls egress behavior: `unrestricted` (default), `ai-only` (restrict to AI APIs), `none` (block all outbound) | `unrestricted` | Planned -- target TBD (post-v7.5.x) |
-| `LOKI_ALLOWED_HOSTS` | Comma-separated list of additional hostnames to allow when egress policy is `ai-only` | (empty) | Planned -- target TBD (post-v7.5.x) |
-| `LOKI_BLOCK_METADATA_ENDPOINT` | Block cloud metadata endpoint (169.254.169.254) from within the application | `false` | Planned -- target TBD (post-v7.5.x) |
-
-When these variables are implemented, they will be enforced at the application level as a defense-in-depth measure alongside the network-level controls described above. Track progress in the GitHub issue tracker; until then, do NOT rely on these variables.

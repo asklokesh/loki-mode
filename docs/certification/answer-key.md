@@ -9,14 +9,14 @@ This file contains answers for all module quizzes and the final certification ex
 | Question | Answer | Explanation |
 |----------|--------|-------------|
 | 1 | B | RARV = Reason, Act, Reflect, Verify |
-| 2 | C | 41 agent types: 37 domain + 4 orchestration |
+| 2 | C | 5 active providers: claude, codex, cline, aider, opencode |
 | 3 | B | After 5 failures, the task moves to `.loki/queue/dead-letter.json` |
 | 4 | C | architecture-strategist is always one of the 3 selected reviewers |
 | 5 | D | 8 quality gates (Static Analysis through Magic Modules Debate); backward-compatibility is a conditional healing-mode auditor, not one of the 8 |
 | 6 | B | Episodic, semantic, and procedural memory |
 | 7 | B | Simple tier uses 3 phases |
 | 8 | C | Gate 7 (Documentation Coverage) checks README presence, docs freshness within 10 commits, and API docs for packages; coverage % is not measured this release |
-| 9 | C | Claude Code supports full features; Codex and Gemini run in degraded mode |
+| 9 | C | Claude Code supports full features; Cline runs reduced, Codex and Aider run degraded |
 | 10 | B | If all 3 reviewers unanimously approve, a Devil's Advocate reviewer runs |
 
 ---
@@ -25,16 +25,16 @@ This file contains answers for all module quizzes and the final certification ex
 
 | Question | Answer | Explanation |
 |----------|--------|-------------|
-| 1 | A | Audit logging is enabled by default since v5.38.0 |
+| 1 | B | Audit logging is enabled by default since v5.38.0 |
 | 2 | C | OTEL activates when `LOKI_OTEL_ENDPOINT` is set to an OTLP endpoint |
 | 3 | C | Default dashboard port is 57374 |
-| 4 | A | `LOKI_ENTERPRISE_AUTH=true` enables token authentication |
-| 5 | D | Syslog supports UDP and TCP via `LOKI_AUDIT_SYSLOG_PROTO` |
-| 6 | D | Without the endpoint set, OTEL uses no-op stubs with zero overhead |
-| 7 | A | `loki enterprise token generate my-token` creates an API token |
-| 8 | D | Set `LOKI_TLS_CERT` and `LOKI_TLS_KEY` to PEM file paths |
-| 9 | A | Controls whether `HUMAN_INPUT.md` can inject directives (disabled by default for security) |
-| 10 | A | `loki enterprise status` shows all enterprise feature states |
+| 4 | B | `LOKI_ENTERPRISE_AUTH=true` enables token authentication |
+| 5 | B | Syslog supports UDP and TCP via `LOKI_AUDIT_SYSLOG_PROTO` |
+| 6 | C | Without the endpoint set, OTEL uses no-op stubs with zero overhead |
+| 7 | B | `loki enterprise token generate my-token` creates an API token |
+| 8 | B | Set `LOKI_TLS_CERT` and `LOKI_TLS_KEY` to PEM file paths |
+| 9 | B | Controls whether `HUMAN_INPUT.md` can inject directives (disabled by default for security) |
+| 10 | B | `loki enterprise status` shows all enterprise feature states |
 
 ---
 
@@ -43,13 +43,13 @@ This file contains answers for all module quizzes and the final certification ex
 | Question | Answer | Explanation |
 |----------|--------|-------------|
 | 1 | B | Goal, Constraints, Context, Output (documented in `skills/agents.md`) |
-| 2 | D | Confidence below 0.40 triggers human decision flag |
+| 2 | C | Confidence below 0.40 triggers human decision flag |
 | 3 | C | Each verification runs independently without seeing the original response |
-| 4 | A | security-sentinel > test-coverage-auditor > performance-oracle > dependency-analyst |
-| 5 | A | Prevents "technically correct but wrong feature" by separating spec and quality reviews |
-| 6 | D | Extraction triggers on novel insights: bug fixes, non-obvious solutions, reusable patterns |
+| 4 | B | security-sentinel > test-coverage-auditor > performance-oracle > dependency-analyst |
+| 5 | B | Prevents "technically correct but wrong feature" by separating spec and quality reviews |
+| 6 | B | Extraction triggers on novel insights: bug fixes, non-obvious solutions, reusable patterns |
 | 7 | C | 4 parallel research agents enhance the plan in the deepen-plan phase |
-| 8 | D | on_file_write triggers lint, typecheck, and secrets scan immediately after writes |
+| 8 | B | on_file_write triggers lint, typecheck, and secrets scan immediately after writes |
 | 9 | C | Stage 1 failure returns to implementation; Stage 2 does not start |
 | 10 | B | Handoffs include completed work, files modified, decisions, open questions, and mistakes |
 
@@ -61,14 +61,31 @@ This file contains answers for all module quizzes and the final certification ex
 |----------|--------|-------------|
 | 1 | C | Dockerfile uses Ubuntu 24.04 as the base image |
 | 2 | B | `.:/workspace:rw` mounts the current directory read-write |
-| 3 | A | Staged autonomy requires human approval before execution |
+| 3 | B | Staged autonomy requires human approval before execution |
 | 4 | C | Default `LOKI_MAX_PARALLEL_AGENTS` is 10 |
-| 5 | A | `loki start --budget 10.00 ./prd.md` or `LOKI_BUDGET_LIMIT=10.00` |
-| 6 | D | The council votes on project completion to prevent premature termination |
-| 7 | B | The session auto-pauses when budget is exceeded |
+| 5 | B | `loki start --budget 10.00 ./prd.md` or `LOKI_BUDGET_LIMIT=10.00` |
+| 6 | B | The council votes on project completion to prevent premature termination |
+| 7 | C | Default dashboard port is 57374 |
 | 8 | B | `LOKI_TLS_CERT` and `LOKI_TLS_KEY` environment variables |
-| 9 | A | Stagnation limit flags when N iterations pass with no git changes |
+| 9 | B | Stagnation limit flags when N iterations pass with no git changes |
 | 10 | B | SANDBOX-SCOPED: `LOKI_ALLOWED_PATHS` restricts which host paths the Docker sandbox bind-mounts writable (`autonomy/sandbox.sh:1222`). It does NOT restrict agent writes inside the workspace. |
+
+---
+
+## Module 5: Troubleshooting Quiz
+
+| Question | Answer | Explanation |
+|----------|--------|-------------|
+| 1 | B | Closed, Open, Half-Open |
+| 2 | C | 3 failures within 60 seconds open the breaker |
+| 3 | C | 300 seconds (5 minutes) cooldown |
+| 4 | B | After 5 failures the task moves to the dead-letter queue |
+| 5 | B | A context clear is triggered and state is reloaded |
+| 6 | B | `.loki/CONTINUITY.md` is read first |
+| 7 | C | `loki reset retries` resets retry counters only |
+| 8 | A | `LOKI_GATE_MOCK=false` disables the mock integrity gate (`autonomy/run.sh`) |
+| 9 | C | After 10+ total attempts, or the same error with 3 different approaches |
+| 10 | B | Hedging language ("probably", "should be fine") is the red flag |
 
 ---
 

@@ -12,8 +12,8 @@ triggers and persistence, and source file references (file:line).
 
 **Last verified:** 2026-03-03 against v6.6.1 codebase (council-reviewed, merged via PR #49).
 
-**Current codebase:** v7.5.7 (2026-04-29). This document has NOT been re-verified
-end-to-end against v7.5.x. Treat shape/semantics as authoritative; treat line
+**Last partial review:** v7.5.7 (2026-04-29). This document has NOT been re-verified
+end-to-end since then. Treat shape/semantics as authoritative; treat line
 numbers as approximate. See "Known drift" and "Known additions" sections below
 before relying on any specific `file:line` reference.
 
@@ -520,25 +520,26 @@ Required provider variables (`loader.sh:65-83`):
 | PROVIDER_HAS_PARALLEL | `"true"` |
 | PROVIDER_DEGRADED | `"false"` |
 
-Supported providers: `claude`, `codex`, `gemini`, `cline`, `aider`
+Supported providers: `claude`, `codex`, `cline`, `aider`, `opencode` (Gemini was removed in v7.5.18)
 
 ### 4.2 Model Tier Selection
 
 Each provider maps the 3 RARV tiers to provider-specific model settings via
 `provider_get_tier_param()`.
 
-Source: `providers/claude.sh:101`, `providers/codex.sh:106`, `providers/gemini.sh:132`,
-`providers/cline.sh:102`, `providers/aider.sh:109`
+Source: `providers/claude.sh`, `providers/codex.sh`, `providers/cline.sh`,
+`providers/aider.sh`, `providers/opencode.sh`
 
 ```
-  RARV Tier     Claude (model)     Codex (effort)   Gemini (thinking)   Cline           Aider
-  ---------     --------------     --------------   -----------------   -----           -----
-  planning      opus               xhigh            high                single model*   single model**
-  development   opus (upgraded)    high             medium              single model*   single model**
-  fast          sonnet (upgraded)  low              low                 single model*   single model**
+  RARV Tier     Claude (model)     Codex (effort)   Cline           Aider            opencode
+  ---------     --------------     --------------   -----           -----            --------
+  planning      opus               xhigh            single model*   single model**   per-tier model***
+  development   opus (upgraded)    high             single model*   single model**   per-tier model***
+  fast          sonnet (upgraded)  low              single model*   single model**   per-tier model***
 
   * Cline: returns LOKI_CLINE_MODEL (default: "default"), single externally-configured model
   ** Aider: returns LOKI_AIDER_MODEL (default: "claude-3.7-sonnet"), single externally-configured model
+  *** opencode: PROVIDER_MODEL_PLANNING / _DEVELOPMENT / _FAST, one model unless overridden per tier
 
   Note: Claude default tier mapping upgrades development->opus and fast->sonnet.
   With LOKI_ALLOW_HAIKU=true: planning=opus, development=sonnet, fast=haiku (original mapping).
@@ -546,8 +547,8 @@ Source: `providers/claude.sh:101`, `providers/codex.sh:106`, `providers/gemini.s
 
 ### 4.3 Degradation States
 
-Source: `providers/claude.sh`, `providers/codex.sh`, `providers/gemini.sh`,
-`providers/cline.sh`, `providers/aider.sh`
+Source: `providers/claude.sh`, `providers/codex.sh`, `providers/cline.sh`,
+`providers/aider.sh`, `providers/opencode.sh`
 
 ```
   Tier 1: Full                Tier 2: Partial             Tier 3: Degraded
@@ -559,15 +560,6 @@ Source: `providers/claude.sh`, `providers/codex.sh`, `providers/gemini.sh`,
   | - MCP support    |        | - Not degraded    |       | - No subagents    |
   | - -p flag prompt |        | - Single model    |       | - Positional prompt|
   +------------------+        +-------------------+       +-------------------+
-
-                                                          +-------------------+
-                                                          | Gemini            |
-                                                          | (Degraded)        |
-                                                          | - Sequential only |
-                                                          | - No MCP          |
-                                                          | - No subagents    |
-                                                          | - Positional prompt|
-                                                          +-------------------+
 
                                                           +-------------------+
                                                           | Aider             |
@@ -586,7 +578,7 @@ Provider capability matrix:
 | Claude   | true      | true     | true| false    |
 | Cline    | true      | false    | true| false    |
 | Codex    | false     | false    | true| true     |
-| Gemini   | false     | false    | false| true    |
+| opencode | false     | false    | true| false    |
 | Aider    | false     | false    | false| true    |
 
 When `PROVIDER_DEGRADED=true`:
@@ -1211,7 +1203,7 @@ Written atomically every 2 seconds by `run.sh` to `.loki/dashboard-state.json`.
   "iteration": 0,
   "complexity": "simple|standard|complex",
   "mode": "autonomous|interactive",
-  "provider": "claude|codex|gemini|cline|aider",
+  "provider": "claude|codex|cline|aider|opencode",
   "current_task": "...",
   "budget": {"limit": 0.0, "used": 0.0, "remaining": 0.0},
   "qualityGates": {"gate_name": {"status": "passed|failed"}}
@@ -1514,7 +1506,7 @@ Source: `autonomy/context-tracker.py`
          v
   Find session file
   Claude: ~/.claude/projects/<slug>/*.jsonl
-  Codex/Gemini: --tokens-input/--tokens-output args
+  Codex: --tokens-input/--tokens-output args
          |
          v
   Parse new entries from last_offset
@@ -1545,9 +1537,8 @@ Provider pricing (USD per million tokens):
 |----------|-------|--------|------------|----------------|
 | Claude | $3.00 | $15.00 | $0.30 | $3.75 |
 | Codex | $2.00 | $8.00 | -- | -- |
-| Gemini | $1.25 | $5.00 | -- | -- |
 
-Context window sizes: Claude=200K, Codex=200K, Gemini=1M
+Context window sizes: Claude=200K, Codex=200K
 
 Persistence: `.loki/context/tracking.json` (atomic write via temp+rename)
 
@@ -1797,7 +1788,7 @@ Override: `COMPLEXITY_TIER` environment variable (bypasses auto-detection)
   loki CLI ──exec──> run.sh ──source──> completion-council.sh
      |                  |                       |
      |                  +──source──> providers/loader.sh
-     |                  |               +──source──> claude.sh|codex.sh|gemini.sh|cline.sh|aider.sh
+     |                  |               +──source──> claude.sh|codex.sh|cline.sh|aider.sh|opencode.sh
      |                  |
      |                  +──python3──> memory/{engine,storage,retrieval,consolidation}.py
      |                  |

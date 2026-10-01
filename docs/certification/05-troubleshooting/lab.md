@@ -60,7 +60,7 @@ cat > .loki/state/circuit-breakers.json << 'EOF'
     "cooldown_until": "2026-02-20T14:30:42Z",
     "failure_window_start": "2026-02-20T14:24:50Z"
   },
-  "api/gemini": {
+  "api/opencode": {
     "state": "HALF_OPEN",
     "failure_count": 0,
     "success_count": 1,
@@ -137,7 +137,7 @@ cat .loki/state/circuit-breakers.json | jq 'to_entries[] | select(.value.state =
 cat .loki/state/circuit-breakers.json | jq '.["api/openai"].cooldown_until'
 
 # Check how many successes the HALF_OPEN circuit needs
-cat .loki/state/circuit-breakers.json | jq '.["api/gemini"].success_count'
+cat .loki/state/circuit-breakers.json | jq '.["api/opencode"].success_count'
 ```
 
 **Questions to answer:**

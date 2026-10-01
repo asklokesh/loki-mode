@@ -1,4 +1,4 @@
-# Loki Mode v5.51.0 -- Integration Cookbook
+# Loki Mode Integration Cookbook
 
 Step-by-step guides for connecting Loki Mode to external services. Each integration is opt-in and configured via environment variables.
 
@@ -173,9 +173,16 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `LOKI_JIRA_URL` | Yes | Jira Cloud base URL |
-| `LOKI_JIRA_EMAIL` | Yes | Jira user email for authentication |
 | `LOKI_JIRA_TOKEN` | Yes | Jira API token |
-| `LOKI_JIRA_PROJECT_KEY` | No | Default Jira project key |
+| `LOKI_JIRA_EPIC_KEY` | No | Epic that run events are synced to |
+
+These are read by `src/integrations/sync-subscriber.js`. The Jira user email is
+passed to `JiraApiClient` in code (see below); no environment variable carries it.
+
+Known issue on main: `src/integrations/sync-subscriber.js` constructs `JiraApiClient`
+without the `email` and `apiToken` it requires, so Jira auto-sync from these
+variables does not start. Construct `JiraApiClient({ baseUrl, email, apiToken })`
+in code until that is fixed.
 
 ### Configuration
 
@@ -187,9 +194,7 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 
    ```bash
    export LOKI_JIRA_URL="https://company.atlassian.net"
-   export LOKI_JIRA_EMAIL="user@company.com"
    export LOKI_JIRA_TOKEN="your-api-token"
-   export LOKI_JIRA_PROJECT_KEY="PROJ"
    ```
 
 3. **Epic Sync:**
@@ -202,7 +207,7 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 
    const api = new JiraApiClient({
      baseUrl: process.env.LOKI_JIRA_URL,
-     email: process.env.LOKI_JIRA_EMAIL,
+     email: 'user@company.com',
      apiToken: process.env.LOKI_JIRA_TOKEN,
    });
 
@@ -250,11 +255,11 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 
 ```bash
 # Test Jira API access
-curl -u "$LOKI_JIRA_EMAIL:$LOKI_JIRA_TOKEN" \
+curl -u "user@company.com:$LOKI_JIRA_TOKEN" \
   "$LOKI_JIRA_URL/rest/api/3/myself" | python3 -m json.tool
 
 # Test epic fetch
-curl -u "$LOKI_JIRA_EMAIL:$LOKI_JIRA_TOKEN" \
+curl -u "user@company.com:$LOKI_JIRA_TOKEN" \
   "$LOKI_JIRA_URL/rest/api/3/issue/PROJ-123" | python3 -m json.tool
 ```
 
@@ -282,9 +287,12 @@ curl -u "$LOKI_JIRA_EMAIL:$LOKI_JIRA_TOKEN" \
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LOKI_LINEAR_API_KEY` | Yes | Linear personal API key |
+| `LOKI_LINEAR_TOKEN` | Yes | Linear personal API key |
 | `LOKI_LINEAR_TEAM_ID` | No | Default team ID for issue creation |
-| `LOKI_LINEAR_WEBHOOK_SECRET` | No | Webhook signing secret for inbound events |
+| `LOKI_LINEAR_PROJECT_ID` | No | Project that run events are synced to |
+
+The webhook signing secret is not an environment variable; set `webhook_secret`
+under `integrations.linear` in `.loki/config.yaml`.
 
 ### Configuration
 
@@ -295,7 +303,7 @@ curl -u "$LOKI_JIRA_EMAIL:$LOKI_JIRA_TOKEN" \
 2. **Set Environment Variables:**
 
    ```bash
-   export LOKI_LINEAR_API_KEY="lin_api_your_key_here"
+   export LOKI_LINEAR_TOKEN="lin_api_your_key_here"
    export LOKI_LINEAR_TEAM_ID="your-team-id"
    ```
 
@@ -304,7 +312,7 @@ curl -u "$LOKI_JIRA_EMAIL:$LOKI_JIRA_TOKEN" \
    ```javascript
    const { LinearClient } = require('./src/integrations/linear/client');
 
-   const client = new LinearClient(process.env.LOKI_LINEAR_API_KEY);
+   const client = new LinearClient(process.env.LOKI_LINEAR_TOKEN);
 
    // Fetch a project with all issues
    const project = await client.getProject('project-id');
@@ -338,14 +346,15 @@ curl -u "$LOKI_JIRA_EMAIL:$LOKI_JIRA_TOKEN" \
 
 5. **Webhook Handler (optional):**
 
-   Configure Linear to send webhooks to your Loki Mode instance for bidirectional sync.
+   Configure Linear to send webhooks to your Loki Mode instance. Signatures are
+   verified when `webhook_secret` is set (`src/integrations/linear/sync.js`).
 
 ### Verification
 
 ```bash
 # Test Linear API access
 curl -X POST https://api.linear.app/graphql \
-  -H "Authorization: $LOKI_LINEAR_API_KEY" \
+  -H "Authorization: $LOKI_LINEAR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"query": "{ viewer { id name } }"}'
 ```

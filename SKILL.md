@@ -458,7 +458,7 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 |---------|--------|-------|
 | Bun runtime (Phase 2+) | TBD | Migrate write-path commands; tracked on `feat/bun-migration` |
 | Managed Agents multiagent path | TBD | `LOKI_EXPERIMENTAL_MANAGED_*` flags -- RESEARCH PREVIEW, not on live API |
-| Benchmarks (HumanEval, SWE-bench) | TBD | Runner scripts and datasets exist in `benchmarks/`; no published results |
+| Benchmarks | TBD | Runner scripts and datasets exist in `benchmarks/`; no published results |
 | `loki run` removal | next major | Currently a deprecated alias for `loki start` |
 
 ## Deprecated

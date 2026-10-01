@@ -1,4 +1,4 @@
-# Loki Mode v5.51.0 -- Enterprise Architecture
+# Loki Mode Enterprise Architecture
 
 ## Overview
 
@@ -27,14 +27,14 @@ Loki Mode's enterprise layer is a non-breaking extension to the core autonomous 
 |  | OTEL Bridge      |  | Policy Engine    |  | Audit Trail      |    |
 |  | (otel.js)        |  | (engine.js)      |  | (log.js)         |    |
 |  | Spans, Metrics   |  | YAML/JSON rules  |  | Hash-chained     |    |
-|  | OTLP/HTTP export |  | 4 enf. points    |  | JSONL, syslog    |    |
+|  | OTLP/HTTP export |  | policy checks    |  | JSONL, syslog    |    |
 |  +--------+---------+  +--------+---------+  +--------+---------+    |
 |           |                      |                      |            |
 |  +--------v---------+  +--------v---------+  +--------v---------+   |
 |  | Span Helpers      |  | Cost Controller  |  | Compliance       |   |
 |  | (spans.js)        |  | (cost.js)        |  | (compliance.js)  |   |
-|  | RARV, agents,     |  | Token budgets,   |  | SOC 2, ISO 27001 |   |
-|  | quality gates     |  | alerts           |  | GDPR reports     |   |
+|  | RARV, agents,     |  | Token budgets,   |  | Audit evidence   |   |
+|  | quality gates     |  | alerts           |  | report templates |   |
 |  +-------------------+  +--------+---------+  +--------+---------+   |
 |                                  |                      |            |
 |  +------------------+  +--------v---------+  +--------v---------+   |
@@ -115,9 +115,12 @@ The `OTLPExporter` class batches spans (flush at 100 or every 5 seconds) and sen
 
 **Source:** `src/policies/engine.js` (core), `src/policies/index.js` (public API), `src/policies/types.js` (validators)
 
-The policy engine provides governance-as-code through declarative policy files. Policies are loaded from `.loki/policies.json` or `.loki/policies.yaml` and evaluated synchronously at enforcement points.
+The policy engine provides governance-as-code through declarative policy files. Policies are loaded from `.loki/policies.json` or `.loki/policies.yaml` and evaluated synchronously.
 
-**Enforcement Points:**
+**Policy points.** The engine accepts the four points below, but at runtime
+`autonomy/run.sh` evaluates only `pre_execution`. The other three are not
+invoked by Loki itself; they are available only to code that calls the engine
+API directly.
 
 | Point | Purpose | Context Fields |
 |-------|---------|----------------|
@@ -223,14 +226,14 @@ All integrations extend `IntegrationAdapter`, which provides:
 **Jira Integration:** `src/integrations/jira/`
 
 - `api-client.js` -- Jira Cloud REST API v3 client with Basic Auth, rate limiting, 10MB response cap
-- `sync-manager.js` -- Bidirectional sync: epic-to-PRD import, RARV-to-Jira status mapping, quality report posting
+- `sync-manager.js` -- Epic-to-PRD import, RARV-to-Jira status mapping, quality report posting
 - `epic-converter.js` -- Converts Jira epics with children to PRD format
 - `webhook-handler.js` -- Handles inbound Jira webhooks
 
 **Linear Integration:** `src/integrations/linear/`
 
 - `client.js` -- Linear GraphQL API client with rate limit tracking, auto-retry
-- `sync.js` -- Bidirectional sync using the reusable adapter pattern
+- `sync.js` -- Linear sync using the reusable adapter pattern
 - `config.js` -- Config loader from `.loki/config.yaml` with minimal YAML parser
 
 **GitHub Integration:** `src/integrations/github/`

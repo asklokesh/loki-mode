@@ -103,7 +103,8 @@ Tokens are SHA256 hashed before storage.
 
 ### RBAC Roles (v5.37.1)
 
-Tokens support role-based access control:
+Tokens support role-based access control (role names resolve to scopes in
+the dashboard API; the CLI takes `--scopes` directly):
 
 | Role | Access Level |
 |------|-------------|
@@ -113,7 +114,7 @@ Tokens support role-based access control:
 | `auditor` | Read + audit log access |
 
 ```bash
-loki enterprise token generate viewer-bot --role viewer --expires 30
+loki enterprise token generate viewer-bot --scopes read --expires 30
 ```
 
 ---

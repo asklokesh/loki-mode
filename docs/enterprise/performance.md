@@ -1,4 +1,4 @@
-# Loki Mode v5.51.0 -- Enterprise Performance Tuning
+# Loki Mode Enterprise Performance Tuning
 
 ## Overview
 
@@ -233,11 +233,8 @@ uvicorn dashboard.server:app --workers 4 --host 0.0.0.0 --port 57374
 
 Dashboard API rate limits protect against abuse:
 
-```bash
-# Default rate limits are built into the API layer
-# Override via env vars if needed
-export LOKI_API_RATE_LIMIT="100"  # requests per minute
-```
+Rate limits are built into the API layer (10 requests/min on control endpoints,
+60 on rate-limited read endpoints) and are not configurable by environment variable.
 
 ### Static Asset Caching
 

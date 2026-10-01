@@ -595,7 +595,7 @@ LOKI_GITHUB_PR_LABEL=automated # Label for created PRs
 
 ### `loki provider`
 
-Manage AI providers (Claude, Codex, Cline, Aider).
+Manage AI providers (Claude, Codex, Cline, Aider, opencode).
 
 ```bash
 loki provider [SUBCOMMAND]
@@ -1960,10 +1960,10 @@ loki start ./prd.md --provider cline
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_MAX_ITERATIONS` | 1000 | Max loop iterations before exit |
-| `LOKI_PROVIDER` | claude | AI provider (claude/codex/cline/aider) |
+| `LOKI_PROVIDER` | claude | AI provider (claude/codex/cline/aider/opencode) |
 | `LOKI_DASHBOARD` | true | Enable web dashboard |
 | `LOKI_DASHBOARD_PORT` | 57374 | Dashboard port |
-| `LOKI_BUDGET` | (none) | Cost budget limit in USD |
+| `LOKI_BUDGET_LIMIT` | (none) | Cost budget limit in USD |
 | `LOKI_GITHUB_IMPORT` | false | Import GitHub issues on start |
 | `LOKI_GITHUB_SYNC` | false | Sync status back to issues |
 | `LOKI_GITHUB_PR` | false | Create PR on completion |

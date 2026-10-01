@@ -312,7 +312,7 @@ Replit Agent has evolved rapidly through four major versions:
 |-----------|:-----------:|:-----------:|:---------:|
 | Natural language to app | Yes | Yes | Yes (via PRD) |
 | Autonomous execution | 200 min sessions | Per-prompt | Unlimited (budget-gated) |
-| Multi-agent orchestration | Parallel agents (Agent 4) | No | Yes (41 agent types, 8 domains) |
+| Multi-agent orchestration | Parallel agents (Agent 4) | No | Yes (agent types across domains) |
 | Self-testing loop | Yes | No | Yes (RARV cycle) |
 | Code review | No | No | Yes (3-reviewer blind review) |
 | Anti-sycophancy | No | No | Yes (devil's advocate) |
@@ -566,7 +566,7 @@ The term "vibe coding" (coined by Andrej Karpathy) has driven explosive growth i
 1. **Credit fatigue will drive users to transparent pricing** -- Loki Mode's BYOK model becomes more attractive as credit complaints mount
 2. **Production quality will become the differentiator** -- Prototype generation is commoditized; who can ship production code wins
 3. **Enterprise adoption requires compliance** -- SOC 2, on-premises, audit logs become table stakes
-4. **Multi-agent orchestration is the next frontier** -- Replit Agent 4's parallel agents are primitive; Loki Mode's 41 agent types are ahead
+4. **Multi-agent orchestration is the next frontier** -- Replit Agent 4's parallel agents are primitive; Loki Mode's agent types are ahead
 5. **Brownfield/legacy support is underserved** -- No competitor addresses existing codebases; Loki Mode's healing system is unique
 6. **Self-hosted alternatives are emerging** -- Projects like December (fully local Lovable/Replit alternative with own LLM) and Tinykit (self-hosted AI app builder) validate the demand for local-first, privacy-preserving alternatives. Loki Mode is already positioned here.
 

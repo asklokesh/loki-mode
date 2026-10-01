@@ -2,7 +2,7 @@
 
 ## What is Loki Mode?
 
-Loki Mode is a multi-agent autonomous system created by [Autonomi](https://www.autonomi.dev/). It takes a Product Requirements Document (PRD) and builds a fully deployed product with minimal human intervention. It supports three AI provider CLIs: Claude Code (full features), OpenAI Codex CLI (degraded mode), and Google Gemini CLI (degraded mode).
+Loki Mode is a multi-agent autonomous system created by [Autonomi](https://www.autonomi.dev/). It takes a Product Requirements Document (PRD) and builds a fully deployed product with minimal human intervention. It supports five provider CLIs: Claude Code (full features), Cline (reduced), OpenAI Codex CLI and Aider (degraded, sequential), and opencode (model-agnostic).
 
 Loki Mode is installed as an npm package and invoked through the `loki` CLI or directly within Claude Code as a skill.
 
@@ -70,18 +70,7 @@ Or via the environment variable `LOKI_COMPLEXITY=simple|standard|complex`.
 
 ## Agents
 
-Loki Mode defines **41 specialized agent types** organized into **8 domains**:
-
-| Domain | Agent Count | Examples |
-|-------|-------------|----------|
-| Engineering | 8 | frontend, backend, database, mobile, api, qa, perf, infra |
-| Operations | 8 | devops, sre, security, monitor, incident, release, cost, compliance |
-| Business | 8 | marketing, sales, finance, legal, support, hr, investor, partnerships |
-| Data | 3 | ml, eng, analytics |
-| Product | 3 | pm, design, techwriter |
-| Growth | 4 | hacker, community, success, lifecycle |
-| Review | 3 | code, business, security |
-| Orchestration | 4 | (internal system agents) |
+Loki Mode defines specialized agent roles across engineering, operations, product, data, growth and review domains.
 
 These agents are **roles defined through prompts**, not separate programs. They are implemented using the Claude Code Task tool with role-specific prompts:
 
@@ -99,7 +88,7 @@ Task(
 )
 ```
 
-A simple project typically uses 5-10 agents. Complex projects use more as needed. The orchestrator spawns only the agents required for the current task.
+The orchestrator spawns only the agents required for the current task.
 
 Full agent type definitions are in `references/agent-types.md`.
 
@@ -154,14 +143,14 @@ The memory engine is implemented in Python (`memory/engine.py`, `memory/retrieva
 
 Loki Mode maps tasks to model tiers rather than specific model names:
 
-| Task Type | Tier | Claude | Codex | Gemini |
-|-----------|------|--------|-------|--------|
-| Architecture, system design | planning | opus | effort=xhigh | thinking=high |
-| Feature implementation, bugs | development | opus | effort=high | thinking=medium |
-| Code review | development | opus (sonnet for reviewers) | effort=high | thinking=medium |
-| Unit tests, linting, docs | fast | sonnet | effort=low | thinking=low |
+| Task Type | Tier | Claude | Codex |
+|-----------|------|--------|-------|
+| Architecture, system design | planning | opus | effort=xhigh |
+| Feature implementation, bugs | development | opus | effort=high |
+| Code review | development | opus (sonnet for reviewers) | effort=high |
+| Unit tests, linting, docs | fast | sonnet | effort=low |
 
-Claude Code has full feature support: parallel agents (up to 10 simultaneous), the Task tool, and MCP integration. Codex and Gemini run in degraded mode: sequential execution only, no Task tool, no parallel agents.
+Claude Code has full feature support: parallel agents (up to 10 simultaneous), the Task tool, and MCP integration. Cline runs in reduced mode; Codex and Aider run in degraded mode (sequential execution only, no Task tool, no parallel agents); opencode is model-agnostic.
 
 ## Key Files
 
@@ -180,4 +169,4 @@ Every Loki Mode project uses these files in the `.loki/` directory:
 
 ## Summary
 
-Loki Mode is an autonomous multi-agent system that follows the RARV cycle to build software from PRDs. It uses 41 agent types organized into 8 domains, enforces quality through 8 gates with blind peer review, and maintains episodic/semantic/procedural memory for continuous learning. Projects are classified into simple, standard, or complex tiers that determine the number of phases executed.
+Loki Mode is an autonomous multi-agent system that follows the RARV cycle to build software from PRDs. It uses specialized agent roles, enforces quality through 8 gates with blind peer review, and maintains episodic/semantic/procedural memory for continuous learning. Projects are classified into simple, standard, or complex tiers that determine the number of phases executed.

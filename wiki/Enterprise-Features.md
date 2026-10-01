@@ -90,8 +90,9 @@ Tokens can be assigned roles that map to permission scopes:
 - `write` includes `read`
 
 ```bash
-# Generate token with role
-loki enterprise token generate ci-bot --role viewer
+# Generate a read-only token (the CLI takes scopes; role names resolve to
+# scopes only through the dashboard API)
+loki enterprise token generate ci-bot --scopes read
 
 # Generate token with custom scopes
 loki enterprise token generate admin-bot --scopes "*" --expires 90
@@ -550,7 +551,7 @@ services:
     environment:
       - LOKI_ENTERPRISE_AUTH=true
       - LOKI_ENTERPRISE_AUDIT=true
-      - LOKI_API_HOST=0.0.0.0
+      - LOKI_DASHBOARD_HOST=0.0.0.0
       - LOKI_TLS_CERT=/certs/cert.pem
       - LOKI_TLS_KEY=/certs/key.pem
       - LOKI_BRANCH_PROTECTION=true

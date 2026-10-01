@@ -17,12 +17,12 @@ D) Review, Approve, Release, Validate
 
 ---
 
-**Question 2:** How many specialized agent types does Loki Mode define?
+**Question 2:** How many active providers does Loki Mode support?
 
-A) 8
-B) 25
-C) 41
-D) 50
+A) 3
+B) 4
+C) 5
+D) 6
 
 ---
 
@@ -83,9 +83,9 @@ D) That cyclomatic complexity stays under 10
 **Question 9:** Which AI provider supports full Loki Mode features including parallel agents and the Task tool?
 
 A) OpenAI Codex CLI
-B) Google Gemini CLI
+B) Cline
 C) Claude Code
-D) All three providers equally
+D) All providers equally
 
 ---
 

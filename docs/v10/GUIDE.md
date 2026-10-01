@@ -140,9 +140,11 @@ provider names (`claude`, `codex`, `cline`, `aider`); it is not supported.
 
 Once v10 becomes the default (docs/v10/DECISIONS.md, D29), `loki`, `loki
 status`, `loki verify` and `loki dashboard` with no `LOKI_ENGINE` set will
-mean the v10 commands described above. The previous engine stays fully
-reachable: `loki legacy <args>` and `LOKI_ENGINE=legacy` both route to it,
-unchanged. Nothing is removed at the flip.
+mean the v10 commands described above. The previous engine stays
+reachable through `LOKI_ENGINE=legacy` (bin/loki sends every value other
+than `v10` to it), unchanged. Nothing is removed at the flip. A separate
+legacy alias command is planned (docs/v10/ENGINE.md, E-31) but is not on
+main.
 
 That flip has not happened on main as of this guide. The opt-in line near
 the top of this file and of README.md's section is the one place that

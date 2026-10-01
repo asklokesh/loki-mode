@@ -16,7 +16,7 @@ GSD is the closest competitor -- a context engineering system that spawns fresh 
 
 | Dimension | Loki Mode | GSD | Winner |
 |-----------|-----------|-----|--------|
-| Feature depth | Deep (memory, council, dashboard, events, 41 agents) | Shallow (6 commands, 11 agents, markdown state) | Loki |
+| Feature depth | Deep (memory, council, dashboard, events, agent roles) | Shallow (6 commands, 11 agents, markdown state) | Loki |
 | Adoption | 594 stars, 6K/wk npm | 11,903 stars, 21K/wk npm | GSD (20x) |
 | Simplicity | Complex (5.4K-line run.sh, 12 Python modules) | Simple (markdown agents + slash commands) | GSD |
 | Full autonomy | Walk away, come back to deployed product | Human checkpoints at discuss/verify/milestone | Loki |
@@ -36,12 +36,11 @@ GSD is the closest competitor -- a context engineering system that spawns fresh 
 | Feature | Loki Mode | Claude-Flow | MetaGPT | CrewAI | Cursor Agent | Devin |
 |---------|-----------|-------------|---------|--------|--------------|-------|
 | **GitHub Stars** | 594 | 13,700 | 62,400 | 25,000+ | N/A (Commercial) | N/A (Commercial) |
-| **Agent Count** | 41 types | 64+ agents | 5 roles | Unlimited | 8 parallel | 1 autonomous |
 | **Parallel Execution** | Yes (multi-agent) | Yes (swarms) | Sequential | Yes (crews) | Yes (8 worktrees) | Yes (fleet) |
-| **Published Benchmarks** | 98.78% HumanEval (self-reported, max 3 retries) | None | 85.9-87.7% HumanEval | None | ~250 tok/s | 15% complex tasks |
+| **Published Benchmarks** | None | None | 85.9-87.7% HumanEval | None | ~250 tok/s | 15% complex tasks |
 | **SWE-bench Score** | Not measured (patch generation harness exists; official evaluator not run, so no resolve rate exists) | Unknown | Unknown | Unknown | Unknown | 15% complex |
 | **Full SDLC** | Yes (8 phases) | Yes | Partial | Partial | No | Partial |
-| **Business Ops** | **Yes (8 agents)** | No | No | No | No | No |
+| **Business Ops** | **Yes** | No | No | No | No | No |
 | **Enterprise Security** | `--dangerously-skip-permissions` | MCP sandboxed | Sandboxed | Audit logs, RBAC | Staged autonomy | Sandboxed |
 | **Cross-Project Learning** | No | AgentDB | No | No | No | Limited |
 | **Observability** | Dashboard + STATUS.txt | Real-time tracing | Logs | Full tracing | Built-in | Full |
@@ -175,43 +174,10 @@ GSD is the closest competitor -- a context engineering system that spawns fresh 
 
 ---
 
-## Benchmark Results (Published 2026-01-05)
+## Benchmark Results
 
-### HumanEval Results (Three-Way Comparison)
-
-**Loki Mode Multi-Agent (with RARV):**
-
-| Metric | Value |
-|--------|-------|
-| **Pass@1** | **98.78%** |
-| Passed | 162/164 problems |
-| Failed | 2 problems (HumanEval/32, HumanEval/50) |
-| RARV Recoveries | 2 (HumanEval/38, HumanEval/132) |
-| Avg Attempts | 1.04 |
-| Model | Claude Opus 4.5 |
-| Time | 45.1 minutes |
-
-**Direct Claude (Single Agent Baseline):**
-
-| Metric | Value |
-|--------|-------|
-| **Pass@1** | **98.17%** |
-| Passed | 161/164 problems |
-| Failed | 3 problems |
-| Model | Claude Opus 4.5 |
-| Time | 21.1 minutes |
-
-**Three-Way Comparison:**
-
-| System | HumanEval Pass@1 | Agent Type |
-|--------|------------------|------------|
-| **Loki Mode (multi-agent)** | **98.78%** | Architect->Engineer->QA->Reviewer |
-| Direct Claude | 98.17% | Single agent |
-| MetaGPT | 85.9-87.7% | Multi-agent (5 roles) |
-
-**Key Finding:** RARV cycle recovered 2 problems that failed on first attempt, demonstrating the value of self-verification loops.
-
-**Failed Problems (after RARV):** HumanEval/32, HumanEval/50
+No benchmark result is published. A self-reported HumanEval run from
+2026-01-05 is withdrawn as a headline figure.
 
 ### SWE-bench Lite: Honest Status
 
@@ -233,7 +199,6 @@ resolve rate is not yet measured." Nothing stronger.
 ## Critical Gaps to Address
 
 ### Priority 1: Benchmarks (PARTIAL)
-- **Real:** 98.78% HumanEval Pass@1 with RARV (162/164, reproducible harness; 98.17% single-agent baseline)
 - **NOT real:** SWE-bench. Patch generation ran (299/300 diffs produced); the official
   evaluator never ran, so there is NO resolve rate and no comparable score.
 - **Next:** run a contamination-resistant evaluator end-to-end (or publish nothing for SWE-bench)

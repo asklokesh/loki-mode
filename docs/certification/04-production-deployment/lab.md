@@ -71,7 +71,7 @@ ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY docker-compose run \
   loki start ./prd.md
 ```
 
-**Note:** Replace `ANTHROPIC_API_KEY` with the appropriate key for your provider (`OPENAI_API_KEY` for Codex, `GOOGLE_API_KEY` for Gemini).
+**Note:** Replace `ANTHROPIC_API_KEY` with the appropriate key for your provider (for example `OPENAI_API_KEY` for Codex).
 
 ## Step 4: Verify the Dashboard
 

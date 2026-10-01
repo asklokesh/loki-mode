@@ -63,16 +63,6 @@ loki start ./prd.md
 | `LOKI_AUDIT_SYSLOG_PORT` | `514` | Syslog server port |
 | `LOKI_AUDIT_SYSLOG_PROTO` | `udp` | Protocol: `udp` or `tcp` |
 | `LOKI_SYSLOG_FACILITY` | `local0` | Syslog facility (local0-local7) |
-| `LOKI_SYSLOG_SEVERITY` | `info` | Minimum severity to forward |
-
-### Filtering
-
-Control audit log verbosity:
-
-```bash
-export LOKI_AUDIT_LEVEL=warning                           # Minimum severity
-export LOKI_AUDIT_EXCLUDE_EVENTS=api.request,api.response # Skip noisy events
-```
 
 ## OpenTelemetry (OTEL) Observability
 

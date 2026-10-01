@@ -8,7 +8,7 @@ Loki Mode supports integration with enterprise SIEM systems for:
 
 - Centralized security monitoring
 - Real-time threat detection
-- Compliance reporting (SOC2, HIPAA, PCI-DSS)
+- Audit evidence for your own compliance reporting
 - Incident response
 - Forensic analysis
 
@@ -385,7 +385,6 @@ logs:
     tags:
       - env:production
       - team:security
-      - compliance:soc2
 
 # Process JSON logs
 logs_config:
@@ -487,14 +486,13 @@ in your SIEM, where the correlation and retention rules already live.
 To pull an evidence slice locally for an auditor:
 
 ```bash
-AUDIT=~/.loki/dashboard/audit/audit.jsonl
+AUDIT=~/.loki/dashboard/audit   # one audit-YYYY-MM-DD.jsonl file per day
 
-# Access events in a date range (SOC2 / HIPAA evidence)
-jq -s 'map(select(.timestamp >= "2026-01-01" and .timestamp <= "2026-12-31"))' \
-  "$AUDIT" > audit-evidence.json
+# Events in a date range
+cat "$AUDIT"/audit-*.jsonl | jq -s 'map(select(.timestamp >= "2026-01-01" and .timestamp <= "2026-12-31"))' > audit-evidence.json
 
-# Token lifecycle events (PCI-DSS Requirement 8)
-jq -c 'select(.event | startswith("auth.token."))' "$AUDIT"
+# Token lifecycle events
+cat "$AUDIT"/audit-*.jsonl | jq -c 'select(.resource_type == "token")'
 ```
 
 Verify the hash chain before handing the file over. There is no
@@ -592,8 +590,8 @@ logger -n syslog.example.com -P 514 "Test from Loki Mode"
 echo $LOKI_AUDIT_SYSLOG_HOST
 loki syslog test
 
-# Check for forwarding errors
-loki enterprise audit tail --event syslog.error
+# Check recent audit entries
+loki enterprise audit tail
 ```
 
 ### Format Issues

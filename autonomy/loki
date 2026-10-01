@@ -3439,7 +3439,7 @@ cmd_start() {
                         ${LOKI_MIROFISH_ROUNDS:+--max-rounds "$LOKI_MIROFISH_ROUNDS"} \
                         ${LOKI_MIROFISH_TIMEOUT:+--timeout "$LOKI_MIROFISH_TIMEOUT"}
                     # PID is tracked in .loki/mirofish/pipeline-state.json by the adapter
-                    echo -e "${CYAN}MiroFish pipeline started in background. Check status: loki mirofish status${NC}"
+                    echo -e "${CYAN}MiroFish pipeline started in background. Status: $LOKI_DIR/mirofish/pipeline-state.json${NC}"
                 else
                     echo -e "${YELLOW}Warning: PRD validation for MiroFish failed. Continuing without.${NC}"
                     unset MIROFISH_URL

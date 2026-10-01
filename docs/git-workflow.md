@@ -19,7 +19,7 @@ When enabled, Loki Mode automatically:
 
 1. Creates a feature branch: `loki/session-<timestamp>-<pid>`
 2. Performs all agent work on the feature branch
-3. Creates a PR at session end (if GitHub CLI is available)
+3. Creates a PR at session end when `LOKI_AUTO_PR=1` (and GitHub CLI is available)
 4. Requires manual review and merge to main
 
 ### Feature Branch Naming
@@ -62,25 +62,8 @@ Delete feature branch
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_BRANCH_PROTECTION` | `false` | Enable automatic feature branch workflow |
-| `LOKI_BASE_BRANCH` | `main` | Target branch for PRs (or `master` if detected) |
-| `LOKI_BRANCH_PREFIX` | `loki/session-` | Prefix for auto-created branches |
-| `LOKI_AUTO_PR` | `true` | Automatically create PR at session end |
-| `LOKI_PR_TEMPLATE` | - | Path to PR description template |
-
-### Configuration File
-
-```yaml
-# .loki/config.yaml
-git:
-  branch_protection:
-    enabled: true
-    base_branch: main
-    branch_prefix: loki/session-
-    auto_pr: true
-    squash_merge: true
-    delete_after_merge: true
-```
+| `LOKI_BRANCH_PROTECTION` | `true` | Run agent work on an auto-created `loki/session-<timestamp>-<pid>` branch |
+| `LOKI_AUTO_PR` | off | Set to `1` to push the session branch and open a PR at session end |
 
 ## Manual Git Workflow
 
@@ -126,7 +109,7 @@ git push origin feature/my-feature
 
 ### Automatic PR Creation
 
-When `LOKI_AUTO_PR=true` and GitHub CLI is installed:
+When `LOKI_AUTO_PR=1` and GitHub CLI is installed:
 
 ```bash
 # Loki Mode automatically runs at session end
@@ -135,47 +118,6 @@ gh pr create \
   --body "$(cat .loki/session-summary.md)" \
   --base main \
   --head loki/session-20260215-143022-12345
-```
-
-### PR Description Template
-
-Create a template for consistent PR descriptions:
-
-```markdown
-# .loki/pr-template.md
-
-## Changes
-
-<!-- Auto-generated summary of changes -->
-
-## Tasks Completed
-
-<!-- List of completed tasks from task queue -->
-
-## Quality Gates
-
-- [ ] All tests passing
-- [ ] Code review completed
-- [ ] No security vulnerabilities
-- [ ] Documentation updated
-
-## Cost
-
-Estimated cost: $X.XX USD
-
-## Session Info
-
-- Start: YYYY-MM-DD HH:MM:SS
-- End: YYYY-MM-DD HH:MM:SS
-- Duration: X hours
-- Iterations: X
-- Provider: claude/cline/codex/aider/opencode
-```
-
-Set template path:
-
-```bash
-export LOKI_PR_TEMPLATE=.loki/pr-template.md
 ```
 
 ## Agent Action Audit

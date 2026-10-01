@@ -110,14 +110,11 @@ By Project:
   unknown:        5
 ```
 
-### Export/Import
+### Export
 
 ```bash
 # Export all learnings
 loki memory export ./learnings-backup.json
-
-# Import learnings
-loki memory import ./learnings-backup.json
 ```
 
 ### Clear Learnings
@@ -142,78 +139,13 @@ loki memory dedupe
 
 ## API Endpoints
 
-### Get Summary
+All memory routes live under `/api/memory` on the dashboard (port 57374):
 
 ```bash
-curl http://localhost:57374/memory
-```
-
-Response:
-```json
-{
-  "patterns": 25,
-  "mistakes": 10,
-  "successes": 15,
-  "location": "/Users/you/.loki/learnings"
-}
-```
-
-### Get Learnings by Type
-
-```bash
-curl "http://localhost:57374/memory/patterns?limit=10"
-```
-
-Response:
-```json
-{
-  "type": "patterns",
-  "entries": [
-    {
-      "description": "Use JWT with refresh tokens",
-      "project": "auth-service",
-      "timestamp": "2026-02-02T12:00:00Z"
-    }
-  ],
-  "total": 25,
-  "limit": 10,
-  "offset": 0
-}
-```
-
-### Search
-
-```bash
-curl "http://localhost:57374/memory/search?q=authentication"
-```
-
-### Clear
-
-```bash
-curl -X DELETE http://localhost:57374/memory/patterns
-```
-
----
-
-## Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LOKI_MEMORY_DIR` | `~/.loki/learnings` | Storage location |
-| `LOKI_MEMORY_ENABLED` | `true` | Enable/disable learning |
-| `LOKI_MEMORY_DEDUPE` | `true` | Auto-deduplicate |
-
-### Config File
-
-```yaml
-# ~/.config/loki-mode/config.yaml
-memory:
-  enabled: true
-  directory: ~/.loki/learnings
-  dedupe: true
-  max_entries_per_type: 1000
+curl http://localhost:57374/api/memory/summary
+curl "http://localhost:57374/api/memory/patterns?limit=10"
+curl "http://localhost:57374/api/memory/search?q=authentication&collection=patterns"
+curl http://localhost:57374/api/memory/stats
 ```
 
 ---

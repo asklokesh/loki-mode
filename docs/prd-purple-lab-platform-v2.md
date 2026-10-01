@@ -165,7 +165,7 @@ URL bar showing current preview path, Refresh button, Open in New Tab button.
 Based on feedback:
 - Memory System Viewer (power-user debug tool, not customer-facing)
 - Full Integrations page (keep GitHub only, defer Jira/Linear/Slack/Teams)
-- 41-agent grid (most sessions have 1-3 agents active; show compact list instead)
+- Agent grid (most sessions have 1-3 agents active; show compact list instead)
 - Code Review panel (let quality gates surface findings inline)
 - Collaboration/multiplayer (acknowledged as future need, not v1)
 - Database provisioning (out of scope for v1)
