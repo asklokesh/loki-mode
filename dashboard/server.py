@@ -1264,6 +1264,14 @@ class WebSocketBoundaryMiddleware:
 app.add_middleware(WebSocketBoundaryMiddleware)
 
 
+_bind_host_override: Optional[str] = None
+
+
+def _bound_non_loopback() -> bool:
+    bind = (_bind_host_override or os.environ.get("LOKI_DASHBOARD_HOST", "")).strip().lower()
+    return bool(bind) and bind not in ("127.0.0.1", "localhost", "::1", "[::1]")
+
+
 @app.middleware("http")
 async def dashboard_control_boundary(request: Request, call_next):
     # EVERY mutation, plus reads that expose operational or credential-adjacent
@@ -1273,6 +1281,17 @@ async def dashboard_control_boundary(request: Request, call_next):
     #
     # /health and /metrics are intentionally NOT in the sensitive list, so a
     # container health probe and a Prometheus scrape keep working unconfigured.
+    # DNS rebinding: a page rebound to 127.0.0.1 sends its own Host, which the
+    # origin check would trust. Refuse any Host not loopback or explicitly allowed.
+    if request.method == "GET" and request.url.path in ("/health", "/metrics"):
+        return await call_next(request)  # probes send Host = pod IP
+    host = request.headers.get("host", "").strip().lower()
+    host = host[:host.index("]") + 1] if host.startswith("[") else host.rsplit(":", 1)[0]
+    extra = {h.strip().lower() for h in os.environ.get("LOKI_DASHBOARD_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    # Non-loopback bind with auth on: any Host is fine (auth is the boundary).
+    open_host = _bound_non_loopback() and (auth.ENTERPRISE_AUTH_ENABLED or auth.OIDC_ENABLED)
+    if not open_host and host not in {"127.0.0.1", "localhost", "[::1]"} | extra:
+        return JSONResponse(status_code=403, content={"detail": "host not allowed"})
     gated = request.method in ("POST", "PUT", "PATCH", "DELETE")
     if gated and not browser_mutation_origin_allowed(request, _cors_origins):
         return JSONResponse(
@@ -1323,6 +1342,16 @@ except ImportError as _operator_exc:  # pragma: no cover - optional dep absent
         _operator_exc)
 else:
     app.include_router(api_operator_router)
+
+# D51 Phase A: first-run onboarding + backlog API and its /start page.
+from .api_start import router as api_start_router, START_HTML as _START_HTML
+app.include_router(api_start_router)
+
+
+@app.get("/start", include_in_schema=False, dependencies=[Depends(auth.require_scope("read"))])
+async def serve_start_page():
+    return FileResponse(_START_HTML, media_type="text/html")
+
 
 # Phase Merge-4: Mount Purple Lab FastAPI app under /lab/ so it appears as a
 # sidebar entry in Dashboard. Same `app` is also wrapped by `standalone_app`
@@ -13076,11 +13105,13 @@ async def serve_spa_catchall(full_path: str):
 def run_server(host: str = None, port: int = None) -> None:
     """Run the dashboard server."""
     import uvicorn
+    global _bind_host_override
     if host is None:
         # Default to localhost-only for security
         host = os.environ.get("LOKI_DASHBOARD_HOST", "127.0.0.1")
     if port is None:
         port = _safe_int_env("LOKI_DASHBOARD_PORT", 57374)
+    _bind_host_override = host
 
     uvicorn_kwargs = {
         "host": host,

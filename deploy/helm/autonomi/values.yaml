@@ -475,6 +475,11 @@ config:
   # Dashboard bind address
   dashboardHost: "0.0.0.0"
   dashboardPort: "57374"
+  # Comma-separated Host headers the dashboard accepts besides loopback
+  # (LOKI_DASHBOARD_ALLOWED_HOSTS), e.g. "loki.example.com". Needed when the
+  # dashboard is bound to 0.0.0.0 WITHOUT enterprise auth; with enterprise auth
+  # enabled any Host is accepted. /health and /metrics are always exempt.
+  dashboardAllowedHosts: ""
 
 # ---------------------------------------------------------------------------
 # Secrets
