@@ -60,8 +60,11 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import re
+import signal
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
@@ -375,6 +378,91 @@ def load_readings(path: Path):
             continue
         readings.append((ts, window_pct, weekly_pct))
     return readings
+
+
+def _parse_timeout_secs():
+    """Parse LOKI_USAGE_LIVE_TIMEOUT, validating with math.isfinite and > 0."""
+    try:
+        v = float(os.environ.get("LOKI_USAGE_LIVE_TIMEOUT") or 20)
+        if math.isfinite(v) and v > 0:
+            return v
+    except (ValueError, TypeError):
+        pass
+    return 20
+
+
+LIVE_READ_TIMEOUT_SECS = _parse_timeout_secs()
+LIVE_READ_MIN_GAP = timedelta(minutes=10)
+_SESSION_RE = re.compile(r"Current session:\s*(\d+(?:\.\d+)?)%\s*used(?:\s*\S+\s*resets\s+([^\n]+))?")
+_WEEK_RE = re.compile(r"Current week \(all models\):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*\S+\s*resets\s+([^\n]+))?")
+
+
+def _kill_group(proc):
+    """SIGTERM the child's process group, SIGKILL after 5s; never raises."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            pass
+        try:
+            proc.communicate(timeout=5)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def live_read_usage(readings_path: Path, now: datetime):
+    """E-163: read live plan usage from the local `/usage` slash command and
+    append one row to the readings TSV (at most one per 10 minutes). Any
+    failure returns status "uncalibrated" and invents nothing."""
+    bad = {"status": "uncalibrated"}
+    existing = load_readings(readings_path)
+    if existing and now - max(r[0] for r in existing) < LIVE_READ_MIN_GAP:
+        return {"status": "recent"}
+    proc = None
+    try:
+        # Own process group so a timeout can reap grandchildren too.
+        proc = subprocess.Popen(
+            ["claude", "-p", "/usage", "--output-format", "json"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True,
+        )
+        try:
+            out, _ = proc.communicate(timeout=LIVE_READ_TIMEOUT_SECS)
+        except subprocess.TimeoutExpired:
+            _kill_group(proc)
+            return bad
+        text = json.loads(out).get("result")
+        sm, wm = _SESSION_RE.search(text), _WEEK_RE.search(text)
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
+        # Kill the process group if Popen succeeded but an error occurred later.
+        if proc is not None:
+            try:
+                _kill_group(proc)
+            except (ProcessLookupError, TypeError):
+                pass
+        return bad
+    if not sm or not wm:
+        return bad
+    try:
+        new_file = not readings_path.exists() or readings_path.stat().st_size == 0
+        with open(readings_path, "a", encoding="utf-8") as fh:
+            if new_file:
+                fh.write("utc_time\twindow_percent\tweekly_percent\n")
+            fh.write(f"{now.strftime('%Y-%m-%dT%H:%M:%SZ')}\t{sm.group(1)}\t{wm.group(1)}\n")
+    except OSError:
+        return bad
+    return {
+        "status": "ok",
+        "session_pct": float(sm.group(1)) if "." in sm.group(1) else int(sm.group(1)),
+        "week_pct": float(wm.group(1)) if "." in wm.group(1) else int(wm.group(1)),
+        "session_resets": (sm.group(2) or "").strip() or None,
+        "week_resets": (wm.group(2) or "").strip() or None,
+    }
 
 
 def _last_wednesday_reset_local(ref_utc: datetime) -> datetime:
@@ -808,6 +896,10 @@ def main(argv=None):
         default=str(LIVE_LOG_PATH),
         help="path to an opt-in statusLine logger's JSONL file",
     )
+    parser.add_argument(
+        "--read-usage", action="store_true",
+        help="calibrate from live `claude -p /usage` before reporting (E-163)",
+    )
     parser.add_argument("--json", action="store_true", help="print JSON instead of a human summary")
     parser.add_argument(
         "--cache-path",
@@ -823,9 +915,12 @@ def main(argv=None):
     if now is None:
         parser.error("--now must be a parseable ISO8601 timestamp")
 
+    live = live_read_usage(Path(args.readings), now) if args.read_usage else None
     cache_path = None if args.no_cache else Path(args.cache_path)
     report = build_report(Path(args.root), Path(args.readings), now, Path(args.live_log), cache_path=cache_path)
 
+    if live is not None:
+        report["live_reading"] = live
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
