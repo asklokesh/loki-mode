@@ -88,5 +88,30 @@ printf '%s\n' "$out" | grep -qx 'CHILD_RUN_TMP=\[unset\]' && ok "E-154: child su
 out="$(cd "$T/repo" && env -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RUN_TMP HOME="$T/home" TMPDIR="$T" LOKI_RECEIPT_SIGNING_KEY_FILE=/caller/key.pem bash tests/run-all-tests.sh 2>&1)"
 printf '%s' "$out" | grep -q "KEYFILE=/caller/key.pem" && ok "E-154: caller-set key file is kept" || bad "E-154: caller key file overridden"
 
+# E-154c: CI drives the runner with LOKI_TEST_SHARD only, so the guards must be
+# active in shard mode (LOKI_TEST_LIST is a no-execution listing mode, not CI).
+mk_runner <<'EOF2'
+run_test "key writer suite" "$SCRIPT_DIR/t-keys.sh"
+EOF2
+rm -rf "$T/home/.loki"
+out="$(run_runner TMPDIR="$T" LOKI_TEST_SHARD=0/1)"; rc=$?
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "key writer suite FAILED: it changed the real"; then
+    ok "E-154c: key guard active under LOKI_TEST_SHARD"
+else bad "E-154c: key guard inactive under LOKI_TEST_SHARD (rc=$rc)"; fi
+rm -rf "$T/home/.loki"
+mk_runner <<'EOF2'
+run_test "switcher suite" "$SCRIPT_DIR/t-switch.sh"
+EOF2
+out="$(run_runner TMPDIR="$T" LOKI_TEST_SHARD=0/1)"; rc=$?
+git -C "$T/repo" checkout -q main
+if [ "$rc" -ne 0 ] && printf '%s' "$out" | grep -q "switcher suite FAILED: it changed the parent checkout HEAD"; then
+    ok "E-155: HEAD guard active under LOKI_TEST_SHARD"
+else bad "E-155: HEAD guard inactive under LOKI_TEST_SHARD (rc=$rc)"; fi
+mk_runner <<'EOF2'
+run_test "printkey suite" "$SCRIPT_DIR/t-printkey.sh"
+EOF2
+out="$(run_runner TMPDIR="$T" LOKI_TEST_SHARD=0/1)"
+printf '%s\n' "$out" | grep -q "^KEYFILE=$T/loki-run\." && ok "E-154c: run-owned key default set under LOKI_TEST_SHARD" || bad "E-154c: no run-owned key default under LOKI_TEST_SHARD"
+
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

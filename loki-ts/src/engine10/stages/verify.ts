@@ -178,11 +178,11 @@ async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestR
     for (const { c, t } of new Set([...un, ...sus])) {
       const [cmd, args] = runnerCmd(t, dir);
       const b = await runOnce(cmd, args, dir, signal, {});
-      base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? [...b.out.matchAll(/^(?:#|\u2139) (?:pass|fail) (\d+)$/gm)].reduce((t, m) => t + +m[1]!, 0) /* node spec prints its failing-tests section after the summary block */, sk: skipped(b.out) });
+      base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? (['pass', 'fail'] as const).reduce((t, k) => t + +([...b.out.matchAll(new RegExp(`^(?:#|\\u2139) ${k} (\\d+)$`, 'gm'))].pop()?.[1] ?? 0), 0) /* node spec prints its failing-tests section after the summary block; take the LAST pass and fail lines, not every one */, sk: skipped(b.out) });
     }
     out.weak = sus.filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n).map(({ c }) => c.name);
     const progress = checks.some((c) => wall.has(c.name) && c.result === "pass")
-      || un.some(({ c }) => rel.has(c.name) && c.result === "pass" && !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n);
+      || sus.some(({ c }) => !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n); // A-115b: sus includes an EDITED relevant file (its base-red ids now pass; the caller's `weakened test:` note keeps it PARTIAL)
     if (progress) {
       for (const { c } of un) {
         if (!rel.has(c.name) && c.result === "fail" && c.ids?.length && c.ids.every((i) => base.get(c)!.red.includes(i))) { out.names.push(c.name); out.ids.push(...c.ids); }
