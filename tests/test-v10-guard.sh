@@ -51,17 +51,20 @@ trap cleanup EXIT
 # payload COMMAND CWD -> JSON on stdout, matching the real hook contract.
 payload() {
     local command="$1" cwd="$2"
-    COMMAND="$command" CWD="$cwd" python3 -c '
+    COMMAND="$command" CWD="$cwd" AGENT_ID="$AGENT_ID" python3 -c '
 import json, os
 print(json.dumps({
     "hook_event_name": "PreToolUse",
     "tool_name": "Bash",
     "tool_input": {"command": os.environ["COMMAND"]},
     "cwd": os.environ["CWD"],
+    **({"agent_id": os.environ["AGENT_ID"]} if os.environ.get("AGENT_ID") else {}),
 }))
 '
 }
 
+# AGENT_ID, when set, is added to the hook input (a subagent call).
+AGENT_ID=""
 # run_guard COMMAND CWD -> sets GUARD_EXIT and GUARD_STDERR
 run_guard() {
     local command="$1" cwd="$2"
@@ -826,6 +829,53 @@ assert_allowed "Sanity: quoted string mentioning git push --force" \
     "echo 'never run git push --force here'" "$SCRIPT_DIR"
 assert_allowed "Sanity: 'confirm'/'term' do not false-trigger the rm/kill prefilter" \
     "echo 'we can confirm the terms'" "$SCRIPT_DIR"
+
+echo ""
+echo "--- Rule 8: checkout-moving git in the primary worktree (E-161) ---"
+REPO8="$LOKI_RUN_TMP/repo-rule8"
+mkdir -p "$REPO8"
+git -C "$REPO8" init -q -b main
+git -C "$REPO8" config user.email test@example.com
+git -C "$REPO8" config user.name "Test"
+echo a > "$REPO8/f.txt"
+git -C "$REPO8" add f.txt
+git -C "$REPO8" commit -q -m init
+git -C "$REPO8" tag v1
+git -C "$REPO8" branch other
+git -C "$REPO8" worktree add -q -b wtb "$LOKI_RUN_TMP/wt8" main
+
+assert_blocked "R8 blocked: git checkout --detach <tag> in the main checkout" \
+    "git checkout --detach v1" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: git checkout <tag> in the main checkout" \
+    "git checkout v1" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: git switch --detach in the main checkout" \
+    "git switch --detach v1" "$REPO8" "RULE8"
+assert_allowed "R8 allowed: git checkout --detach <tag> in a linked worktree" \
+    "git checkout --detach v1" "$LOKI_RUN_TMP/wt8"
+assert_allowed "R8 allowed: leader git checkout main in the main checkout" \
+    "git checkout main" "$REPO8"
+assert_allowed "R8 allowed: leader git merge / revert / commit in the main checkout" \
+    "git merge --no-edit other && git revert --no-edit HEAD" "$REPO8"
+AGENT_ID="agent-1"
+assert_blocked "R8 blocked: subagent git reset --hard in the main checkout" \
+    "git -C $REPO8 reset --hard" "$LOKI_RUN_TMP" "RULE"
+assert_blocked "R8 blocked: subagent git checkout main in the main checkout" \
+    "git checkout main" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: subagent git stash in the main checkout" \
+    "git stash" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: subagent git clean -fd in the main checkout" \
+    "git clean -fd" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: subagent git worktree remove of the main checkout" \
+    "git worktree remove --force $REPO8" "$LOKI_RUN_TMP/wt8" "RULE8"
+assert_allowed "R8 allowed: subagent git checkout in a linked worktree" \
+    "git checkout other" "$LOKI_RUN_TMP/wt8"
+assert_blocked "R8 blocked: subagent cd with no failure handling falls back to main checkout" \
+    "cd $LOKI_RUN_TMP/wt8; git checkout --detach v1" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: unchecked cd, leader, detached checkout from main-checkout cwd" \
+    "cd /nonexistent-dir-e161; git checkout --detach v1" "$REPO8" "RULE8"
+assert_allowed "R8 allowed: cd guarded by && into a linked worktree" \
+    "cd $LOKI_RUN_TMP/wt8 && git checkout --detach v1" "$REPO8"
+AGENT_ID=""
 
 echo ""
 echo "=============================="

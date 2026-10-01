@@ -16,7 +16,7 @@
 #     guard is supposed to make. Silence + exit 0 is the least-privilege
 #     no-op.
 #
-# Seven rules, any match blocks (exit 2) naming the rule. Everything else
+# Eight rules, any match blocks (exit 2) naming the rule. Everything else
 # passes through untouched.
 #   1. Process-kill-by-pattern: pkill, killall, `kill` fed a
 #      pgrep/pkill/pidof/lsof/ps-derived target, or `xargs kill`/`xargs
@@ -57,6 +57,16 @@
 #      these silently overwrite every tracked file in the shared tree. Only
 #      when the resolved repo root is NOT under .claude/worktrees/; a
 #      single-file `git checkout -- <file>` stays allowed everywhere.
+#
+#   8. Checkout-moving git in the PRIMARY worktree (git-dir == common-dir,
+#      not a linked worktree): always blocked for any caller: `git checkout
+#      --detach`, `git checkout <tag|sha|remote-ref>`, `git switch
+#      --detach`. When the hook input carries `agent_id` (a subagent, not the
+#      leader) ALL `git checkout`/`switch`/`reset --hard`/`stash`/`clean`/
+#      `worktree remove` are blocked there; the
+#      leader keeps `git checkout main`, merge, revert, commit. Also blocked:
+#      such a command after a `cd X` not followed by `&&`/`||` when the hook
+#      cwd is the primary worktree (a failed cd falls back to it).
 #
 # Wrappers (env/exec/nohup/time/sudo/nice/timeout/command) and shell control
 # keywords (do/then/else/elif/{/!) are skipped to find the real command.
@@ -113,7 +123,18 @@ sys.stdout.write(cwd if isinstance(cwd, str) else "")
 ' 2>/dev/null || true)
 CWD="${CWD:-$PWD}"
 
-REASON=$(_V10_COMMAND="$COMMAND" _V10_CWD="$CWD" python3 - <<'PY'
+# Caller signal (rule 8): Claude Code adds `agent_id` to hook input only when
+# the tool call comes from a subagent; the main session (leader) has none.
+AGENT_ID=$(printf '%s' "$INPUT" | python3 -c '
+import json, sys
+try:
+    v = json.load(sys.stdin).get("agent_id", "")
+except Exception:
+    v = ""
+sys.stdout.write(v if isinstance(v, str) else "")
+' 2>/dev/null || true)
+
+REASON=$(_V10_COMMAND="$COMMAND" _V10_CWD="$CWD" _V10_AGENT="$AGENT_ID" python3 - <<'PY'
 import os
 import re
 import shlex
@@ -1132,6 +1153,92 @@ def rule7_checkout_restore_wipe(words, name, idx, git_info):
 
 
 # ---------------------------------------------------------------------
+# Rule 8: checkout-moving git in the primary worktree (E-161). Incident: a
+# `cd` into a temp clone failed and `git checkout --detach <tag>` ran 7
+# times in the shared main checkout. Caller signal: hook input `agent_id`
+# (set only for subagents); the leader has none.
+# ---------------------------------------------------------------------
+agent_id = os.environ.get("_V10_AGENT", "")
+
+
+def is_primary_worktree(repo_cwd):
+    def rp(flag):
+        out = subprocess.run(["git", "-C", repo_cwd, "rev-parse", flag],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode != 0:
+            return None
+        return os.path.realpath(os.path.join(repo_cwd, out.stdout.strip()))
+    try:
+        gd, cd_ = rp("--git-dir"), rp("--git-common-dir")
+    except Exception:
+        return False
+    return gd is not None and gd == cd_
+
+
+def _is_branch(repo_cwd, ref):
+    try:
+        out = subprocess.run(["git", "-C", repo_cwd, "rev-parse", "--verify", "-q", "refs/heads/" + ref],
+                             capture_output=True, text=True, timeout=5)
+        return out.returncode == 0
+    except Exception:
+        return False
+
+
+def _is_commitish(repo_cwd, ref):
+    try:
+        out = subprocess.run(["git", "-C", repo_cwd, "rev-parse", "--verify", "-q", ref + "^{commit}"],
+                             capture_output=True, text=True, timeout=5)
+        return out.returncode == 0
+    except Exception:
+        return False
+
+
+def rule8_dangerous(words, git_info):
+    """Return a short description if this git command moves the checkout, else None."""
+    sub, args_idx, repo_cwd, git_dir_override = git_info
+    args = words[args_idx:]
+    flags = [a for a in args if a.startswith("-")]
+    if sub in ("checkout", "switch"):
+        if "--detach" in flags or (sub == "switch" and "-d" in flags):
+            return "git {} --detach".format(sub)
+        if sub == "checkout" and "--" not in args:
+            refs = [a for a in args if not a.startswith("-")]
+            if refs and not _is_branch(repo_cwd, refs[0]) and _is_commitish(repo_cwd, refs[0]):
+                return "git checkout {} (detaches HEAD)".format(refs[0])
+        if agent_id:
+            return "git " + sub
+    elif agent_id and sub == "reset" and "--hard" in flags:
+        return "git reset --hard"
+    elif agent_id and sub in ("stash", "clean"):
+        return "git " + sub
+    elif agent_id and sub == "worktree" and args[:1] == ["remove"]:
+        tgt = [a for a in args[1:] if not a.startswith("-")]
+        if tgt:
+            t = tgt[0] if tgt[0].startswith("/") else os.path.join(repo_cwd, tgt[0])
+            if os.path.isdir(t) and is_primary_worktree(t):
+                return "git worktree remove (main checkout)"
+    return None
+
+
+def rule8_primary_checkout(words, name, git_info, effective_cwd, unchecked_cd):
+    if name != "git" or git_info is None:
+        return None
+    what = rule8_dangerous(words, git_info)
+    if not what:
+        return None
+    repo_cwd = git_info[2]
+    if what.startswith("git worktree remove"):
+        return ("RULE8 (primary checkout): {} targets the main checkout; it must never be removed").format(what)
+    if is_primary_worktree(repo_cwd):
+        return ("RULE8 (primary checkout): {} in the main checkout {}; use 'git worktree add' "
+                "in a run-owned dir instead").format(what, resolve_repo_root(repo_cwd, git_info[3]))
+    if unchecked_cd and is_primary_worktree(cwd):
+        return ("RULE8 (unchecked cd): {} follows a 'cd' with no '&&'/'||' failure handling, and a "
+                "failed cd would fall back to the main checkout {}").format(what, cwd)
+    return None
+
+
+# ---------------------------------------------------------------------
 # Evaluate all rules across all segments, tracking `cd` and a set of repos
 # with a pending BOARD.md change live as we go -- a later `cd`/`git rm`/
 # write must never affect a segment that runs BEFORE it in the command,
@@ -1139,6 +1246,7 @@ def rule7_checkout_restore_wipe(words, name, idx, git_info):
 # unrelated commit in a different repo.
 # ---------------------------------------------------------------------
 effective_cwd = cwd
+unchecked_cd = False
 board_removal_pending_repos = set()
 
 for i, words in enumerate(segs):
@@ -1155,6 +1263,8 @@ for i, words in enumerate(segs):
         candidate = os.path.normpath(candidate)
         if os.path.isdir(candidate):
             effective_cwd = candidate
+        if i + 1 < len(seps) and seps[i + 1] not in ("&&", "||"):
+            unchecked_cd = True
         continue
 
     r = rule1_process_kill(i, segs, words, name, idx)
@@ -1210,6 +1320,11 @@ for i, words in enumerate(segs):
         raise SystemExit(0)
 
     r = rule7_checkout_restore_wipe(words, name, idx, git_info)
+    if r:
+        print(r)
+        raise SystemExit(0)
+
+    r = rule8_primary_checkout(words, name, git_info, effective_cwd, unchecked_cd)
     if r:
         print(r)
         raise SystemExit(0)
