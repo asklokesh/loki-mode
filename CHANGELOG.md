@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.1 (2026-10-01)
+
+A `next` release.
+
+### Scope control
+- v10 runs now stay inside the task. After a run, any edit to an existing file outside the plan's scope is restored to its original content before commit. Each reverted file is listed in the receipt under NOT PROVEN as `unrelated edit reverted: <file>`. Test files, new files and files you had already modified are kept. When the planner produced no scope (small tasks), nothing is reverted and the receipt says so.
+
+### Loki Control Plane v0
+- First cut of the Control Plane that replaces the dashboards: a live run view fed by the engine when `LOKI_CONTROL_URL` is set, plus `loki control`. Off unless configured.
+
+### Dashboard
+- The dashboard publishes the URL it actually bound to (`.loki/dashboard/url`), and the banner and browser opener use it instead of a guessed port. `loki ui` and `dashboard start` reuse a running dashboard only when it belongs to this project. Test runs no longer leave dashboards on ports 57374-57399.
+
+### Release tooling
+- The release captain waits for a train's running checks before cutting a newer train, and no longer waits forever on a check that never started.
+
+### Docs
+- Docs updated for the v10-only direction (D57 wave 1).
+
+### Release note
+- Released under the founder's D59 window, so it was published before CI finished. The handoff records the CI result for this commit.
+
 ## v10.6.0 (2026-10-01)
 
 A `next` release. This minor release marks the turn to v10 only: the plan to retire the legacy engine and dashboards is set, and the install and release pipeline is hardened for it.
