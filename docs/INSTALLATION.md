@@ -150,7 +150,7 @@ Install Loki Mode without the bundled bun binary. This reduces the package size 
 
 **What happens:**
 - The legacy bash engine runs when loki is invoked
-- On first invocation of `loki quick` or any v10 feature, the CLI prints: "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for darwin-aarch64 is missing). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional."
+- Each `loki` command that would use the Loki 10 engine prints this as the first line on stderr: "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for darwin-aarch64 is missing). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional."
 
 **To restore Loki 10 engine access:**
 - Install bun: `curl -fsSL https://bun.sh/install | bash` or `brew install oven-sh/bun/bun`
@@ -164,7 +164,7 @@ Install Loki Mode without the bundled bun binary. This reduces the package size 
 brew tap asklokesh/tap && brew install loki-mode
 ```
 
-Installs the `loki` CLI. The formula in `asklokesh/tap` declares `depends_on "oven-sh/bun/bun"`, so bun is automatically installed as a dependency, ensuring Loki 10 engine access. Without this dependency, the formula would install loki but the first run would print the "no working bun" message (see Slim install above).
+Installs the `loki` CLI. For the Loki 10 default engine the formula in `asklokesh/tap` needs bun; if bun is not installed, run `brew install oven-sh/bun/bun`. Without bun, each Loki 10 command prints the "no working bun" line and runs the legacy engine (see Slim install above).
 
 To also install the skill for interactive use with all providers:
 
