@@ -74,13 +74,18 @@ function buildDetails(data, payload) {
  */
 function initIntegrations() {
   // Jira
-  if (process.env.LOKI_JIRA_URL && process.env.LOKI_JIRA_TOKEN) {
+  var jiraVars = ['LOKI_JIRA_URL', 'LOKI_JIRA_EMAIL', 'LOKI_JIRA_TOKEN'];
+  var jiraMissing = jiraVars.filter(function (k) { return !process.env[k]; });
+  if (jiraMissing.length > 0 && jiraMissing.length < jiraVars.length) {
+    console.error('[sync-subscriber] Jira not started, missing: ' + jiraMissing.join(', '));
+  } else if (jiraMissing.length === 0) {
     try {
       var JiraApiClient = require('./jira/api-client').JiraApiClient;
       var JiraSyncManager = require('./jira/sync-manager').JiraSyncManager;
       var client = new JiraApiClient({
         baseUrl: process.env.LOKI_JIRA_URL,
-        token: process.env.LOKI_JIRA_TOKEN,
+        email: process.env.LOKI_JIRA_EMAIL,
+        apiToken: process.env.LOKI_JIRA_TOKEN,
       });
       var syncManager = new JiraSyncManager({ apiClient: client });
       integrations.push({

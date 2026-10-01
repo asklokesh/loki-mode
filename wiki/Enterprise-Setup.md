@@ -121,14 +121,10 @@ export LOKI_TLS_KEY="/path/to/key.pem"
 
 ```bash
 export LOKI_JIRA_URL="https://company.atlassian.net"
+export LOKI_JIRA_EMAIL="user@company.com"
 export LOKI_JIRA_TOKEN="your-api-token"
 export LOKI_JIRA_EPIC_KEY="PROJ-1"   # optional
 ```
-
-Known issue on main: `src/integrations/sync-subscriber.js` constructs `JiraApiClient`
-without the `email` and `apiToken` it requires, so Jira auto-sync from these
-variables does not start. Construct `JiraApiClient({ baseUrl, email, apiToken })`
-in code until that is fixed.
 
 The sync subscriber (`src/integrations/sync-subscriber.js`) pushes Loki status
 to Jira. It does not pull changes back from Jira.
@@ -216,6 +212,7 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_JIRA_URL` | -- | Jira base URL |
+| `LOKI_JIRA_EMAIL` | -- | Jira user email for the API token |
 | `LOKI_JIRA_TOKEN` | -- | Jira API token |
 | `LOKI_JIRA_EPIC_KEY` | -- | Epic to attach updates to |
 | `LOKI_LINEAR_TOKEN` | -- | Linear API key |

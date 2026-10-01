@@ -173,16 +173,12 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `LOKI_JIRA_URL` | Yes | Jira Cloud base URL |
+| `LOKI_JIRA_EMAIL` | Yes | Email of the Jira user that owns the API token |
 | `LOKI_JIRA_TOKEN` | Yes | Jira API token |
 | `LOKI_JIRA_EPIC_KEY` | No | Epic that run events are synced to |
 
-These are read by `src/integrations/sync-subscriber.js`. The Jira user email is
-passed to `JiraApiClient` in code (see below); no environment variable carries it.
-
-Known issue on main: `src/integrations/sync-subscriber.js` constructs `JiraApiClient`
-without the `email` and `apiToken` it requires, so Jira auto-sync from these
-variables does not start. Construct `JiraApiClient({ baseUrl, email, apiToken })`
-in code until that is fixed.
+These are read by `src/integrations/sync-subscriber.js`. If only some of the
+three required variables are set, it logs one line naming the missing ones.
 
 ### Configuration
 
@@ -194,6 +190,7 @@ in code until that is fixed.
 
    ```bash
    export LOKI_JIRA_URL="https://company.atlassian.net"
+   export LOKI_JIRA_EMAIL="user@company.com"
    export LOKI_JIRA_TOKEN="your-api-token"
    ```
 
