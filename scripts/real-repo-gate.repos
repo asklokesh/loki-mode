@@ -1,0 +1,22 @@
+# D58 basic 5 real-repo acceptance gate expectations (read by scripts/real-repo-gate.sh).
+# Format: spec | expected_outcome | allowed_paths_glob | max_seconds
+#   spec           owner/repo#N (clone + `loki start owner/repo#N`) or corpus:<task-id> (the
+#                  eval/loki10/tasks/<id>/task.json pinned base commit plus its issue text as
+#                  a file task, `loki start ./issue.md`).
+#   allowed paths  comma-separated shell globs (a * crosses /), or (none) for no diff at all.
+#   max_seconds    the wall-time budget for that repo (the hard cap is 900s via timeout -k 30).
+#
+# Repo 1: private augmentiq issue, already satisfied on main. Needs a gh token with access;
+# without it the gate prints a SKIP line for this row.
+asklokesh/augmentiq#52 | ALREADY_SATISFIED | (none) | 60
+#
+# Repos 2 and 3: every open-issue candidate in the corpus (humanize 152/174/333, click 2877/3059/
+# 3487/3572) was checked with `gh issue view` on 2026-10-01 and all are CLOSED upstream (each was
+# fixed after the corpus pinned its base commit), so both rows run as file tasks on the corpus
+# pinned base commit plus the issue text. Chosen because the fix is a few lines in one source
+# file, the hidden tests pin a single behavior, and D50 reruns (METRICS.md) show Loki+sonnet can
+# solve them (click-2877 3/3), so a failure here is a product signal, not an unsolvable task.
+# humanize#333: naturaldelta(float('inf')) OverflowError, one except clause in src/humanize/time.py.
+corpus:pub-humanize-333 | VERIFIED | src/humanize/*.py,tests/*,CHANGELOG*,docs/* | 900
+# click#2877: BytesWarning comparing bytes to str in click.types.Path, one check in src/click/types.py.
+corpus:pub-click-2877 | VERIFIED | src/click/*.py,tests/*,CHANGES.rst,docs/* | 900
