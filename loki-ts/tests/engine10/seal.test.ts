@@ -9,13 +9,13 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
 import { generateKeyPairSync } from "node:crypto";
 import { sealedLog } from "./log_fixture.ts";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
-import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
+import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
@@ -865,6 +865,50 @@ describe("D50-F1 already-satisfied discards run changes", () => {
       const r = receiptOf(await sealStage.run(mkctx({ commit: c.data }).ctx, sig));
       expect(r.not_proven).toContain("pre-existing file not restored: notes.md");
       expect(r.verdict).not.toBe("ALREADY_SATISFIED");
+    }, 30000);
+    test("r4: a symlink left in place of a user file is replaced, never followed", async () => {
+      const { repo, mkctx } = mk("r4-a");
+      const out = join(repo, "..", "r4-a-outside"); mkdirSync(out, { recursive: true }); writeFileSync(join(out, "victim.txt"), "VICTIM\n");
+      rmSync(join(repo, "notes.md")); symlinkSync(join(out, "victim.txt"), join(repo, "notes.md"));
+      expect((await commitStage.run(mkctx().ctx, sig)).status).toBe("completed");
+      expect(readFileSync(join(out, "victim.txt"), "utf8")).toBe("VICTIM\n");
+      expect(lstatSync(join(repo, "notes.md")).isFile()).toBe(true);
+      expect(readFileSync(join(repo, "notes.md"), "utf8")).toBe("USER\n");
+    }, 30000);
+    test("r4: a parent dir replaced by a symlink to outside: nothing written outside", async () => {
+      const { repo, base } = mk("r4-b");
+      mkdirSync(join(repo, "sub")); writeFileSync(join(repo, "sub/deep.md"), "DEEP\n");
+      const snap = snapshotUntracked(repo);
+      const intake = { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, preexisting_untracked: Object.keys(snap), preexisting_untracked_blobs: snap };
+      const out = join(repo, "..", "r4-b-outside"); mkdirSync(out, { recursive: true });
+      rmSync(join(repo, "sub"), { recursive: true }); symlinkSync(out, join(repo, "sub"));
+      const c = await commitStage.run(ctxFor(repo, base, "claude", { intake, implement: { exit: "already_done", tests_reverted: [], duration_s: 3 } }).ctx, sig);
+      // the staged symlink is removed, so the user file lands in a real dir; nothing is ever written through the link
+      expect(c.status).toBe("completed");
+      expect(readdirSync(out)).toEqual([]);
+      expect(lstatSync(join(repo, "sub")).isDirectory()).toBe(true);
+      expect(readFileSync(join(repo, "sub/deep.md"), "utf8")).toBe("DEEP\n");
+    }, 30000);
+    test("r4: safeRestore refuses a symlinked parent and writes nothing outside", () => {
+      const { repo } = makeRepo("r4-d"); const out = join(repo, "..", "r4-d-outside"); mkdirSync(out, { recursive: true });
+      symlinkSync(out, join(repo, "sub"));
+      expect(() => safeRestore(repo, "sub/deep.md", Buffer.from("DEEP\n"), 0o644)).toThrow();
+      expect(readdirSync(out)).toEqual([]);
+    });
+    test("r4: an oversize file changed with mtime restored is detected via ctime", async () => {
+      const prev = process.env.LOKI_E10_SNAPSHOT_MAX; process.env.LOKI_E10_SNAPSHOT_MAX = "8";
+      try {
+        const { repo, base } = makeRepo("r4-c");
+        writeFileSync(join(repo, "big.bin"), "0123456789ABCDEF");
+        const snap = snapshotUntracked(repo); expect(snap["big.bin"]!.startsWith("!")).toBe(true);
+        const intake = { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, preexisting_untracked: Object.keys(snap), preexisting_untracked_blobs: snap };
+        const st = lstatSync(join(repo, "big.bin")); await new Promise((r) => setTimeout(r, 20));
+        writeFileSync(join(repo, "big.bin"), "XXXXXXXXXXXXXXXX"); utimesSync(join(repo, "big.bin"), st.atime, st.mtime);
+        const mk2 = (extra: Record<string, unknown> = {}) => ctxFor(repo, base, "claude", { intake, implement: { exit: "already_done", tests_reverted: [], duration_s: 3 }, ...extra });
+        const c = await commitStage.run(mk2().ctx, sig);
+        const r = receiptOf(await sealStage.run(mk2({ commit: c.data }).ctx, sig));
+        expect(r.not_proven).toContain("pre-existing file not restored: big.bin");
+      } finally { if (prev === undefined) delete process.env.LOKI_E10_SNAPSHOT_MAX; else process.env.LOKI_E10_SNAPSHOT_MAX = prev; }
     }, 30000);
   });
 });

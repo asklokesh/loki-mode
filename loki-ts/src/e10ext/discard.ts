@@ -1,8 +1,26 @@
 // D50-F1: an ALREADY_SATISFIED run must end with no source diff against base. Lives outside engine10 core to keep it under its line cap.
-import { execFileSync } from "node:child_process"; import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"; import { dirname, join } from "node:path";
+import { execFileSync } from "node:child_process"; import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs"; import { dirname, join, relative, sep } from "node:path";
 import type { Obj, StageResult } from "../engine10/types.ts";
 
 type Git = (args: string[]) => Promise<{ out: string; code: number }>;
+
+/** r4: restore one file without ever following a link. Every parent component is lstat-checked (a symlink or non-dir throws),
+ *  a non-regular or differing leaf is unlinked (empty dir: rmdir), and content is written with O_EXCL. */
+export function safeRestore(repoDir: string, f: string, want: Buffer, mode: number): void {
+  const root = realpathSync(repoDir), fp = join(root, f), rel = relative(root, dirname(fp));
+  if (rel.startsWith("..")) throw new Error("outside repo");
+  let cur = root;
+  for (const part of rel === "" ? [] : rel.split(sep)) {
+    cur = join(cur, part);
+    let st; try { st = lstatSync(cur); } catch { mkdirSync(cur); continue; }
+    if (!st.isDirectory()) throw new Error("parent is not a real directory");
+  }
+  let st; try { st = lstatSync(fp); } catch { st = null; }
+  if (st?.isFile() && readFileSync(fp).equals(want)) { chmodSync(fp, mode); return; }
+  if (st) { if (st.isDirectory()) rmdirSync(fp); else unlinkSync(fp); }
+  const fd = openSync(fp, "wx", mode); try { writeFileSync(fd, want); } finally { closeSync(fd); }
+  chmodSync(fp, mode);
+}
 
 /** Run-level "nothing to change" signals, the same three seal's verdictOf honours. */
 export function alreadySatisfied(o: Partial<Record<string, Obj>>): boolean {
@@ -22,10 +40,9 @@ export async function discardIfSatisfied(git: Git, base: string, o: Partial<Reco
   for (const [f, v] of Object.entries((o.intake?.preexisting_untracked_blobs ?? {}) as Record<string, string>)) {
     const fp = join(repoDir, f);
     try {
-      if (v.startsWith("!")) { const st = lstatSync(fp); if (`!${st.size}:${st.mtimeMs}` !== v) throw new Error("changed, not snapshotted"); continue; }
+      if (v.startsWith("!")) { const st = lstatSync(fp); if (`!${st.size}:${st.mtimeMs}:${st.ctimeMs}` !== v) throw new Error("changed, not snapshotted"); continue; }
       const [sha, mode] = v.split(" "), want = execFileSync("git", ["cat-file", "blob", sha!], { cwd: repoDir, env: process.env, maxBuffer: 1 << 28 });
-      if (!existsSync(fp) || !readFileSync(fp).equals(want)) { mkdirSync(dirname(fp), { recursive: true }); writeFileSync(fp, want); }
-      chmodSync(fp, parseInt(mode ?? "644", 8));
+      safeRestore(repoDir, f, want, parseInt(mode ?? "644", 8));
     } catch { notProven.push(f); }
   }
   // pre-existing dirty files go back to their intake blob; no blob = left as is
