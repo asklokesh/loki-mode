@@ -385,7 +385,7 @@ provider_invoke() {
     # array is empty, and a bare "${arr[@]}" under `set -u` aborts with "unbound
     # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
     # nothing when unset/empty and preserves spaced elements otherwise.
-    claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@"
+    claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- populate _LOKI_INVOKE_ARGV with the
@@ -656,5 +656,5 @@ provider_invoke_with_tier() {
     # Guard empty auto-flag array under `set -u` on bash 3.2 (stock macOS): a bare
     # "${arr[@]}" on an empty array aborts with "unbound variable". ${arr[@]+...}
     # expands to nothing when empty and preserves spaced elements otherwise.
-    claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@"
+    claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }

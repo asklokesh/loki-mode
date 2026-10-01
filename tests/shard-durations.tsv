@@ -698,3 +698,4 @@ Quick integrity exit code (A-118)	5
 Quick quiet failure tail and stdin (A-134b)	40
 Pre-commit author email guard (E-153)	10
 Docker Bun	0
+Provider stdin closed under verbose (A-134c)	10
