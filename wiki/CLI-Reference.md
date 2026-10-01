@@ -1174,6 +1174,17 @@ loki enterprise audit tail
 
 ## Verification Commands
 
+### `loki keys export` and `loki verify --pubkey`
+
+`loki keys export` prints the receipt-signing public key as a JWK with its kid (never the private key). A third party holding only that file verifies a v10 receipt on another machine, with no `~/.loki`:
+
+```bash
+loki keys export > pub.json
+loki verify --pubkey pub.json ./receipt.json   # or a run id
+```
+
+Exit: 0 VERIFIED, 1 TAMPERED (body or signature changed), 2 UNCHECKED (kid does not match the given key, or the key file is unusable), 3 UNSIGNED (no signature: refused under `--pubkey` even with `--allow-unsigned`), 4 run outcome not verified.
+
 ### `loki verify`
 
 Deterministic PR verification (Autonomi Verify MVP). Verifies the current
