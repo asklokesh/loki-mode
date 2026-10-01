@@ -3071,7 +3071,7 @@ sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
     # Provenance: the deploy gate's own verdict (Ed25519 attestation against the local
     # key plus LOKI_RECEIPT_RETIRED_PUBKEYS; unknown kid or no key is UNCHECKED).
     # Defined in autonomy/loki, so it is absent when verify.sh runs standalone.
-    declare -f _deploy_receipt_verdict >/dev/null 2>&1 || return 0
+    declare -f _deploy_receipt_verdict >/dev/null 2>&1 || { echo "attestation: UNCHECKED (run via loki verify)"; return 0; }
     local att
     att="$(_deploy_receipt_verdict "$pj")"
     printf 'attestation: %s\n' "$att"
