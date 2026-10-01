@@ -58,6 +58,8 @@ identically; a parity test asserts they agree status for status.
 | 3 | The diff weakened the tests (a skip marker added in a test file, a test runner config changed, or an existing test file deleted or renamed). The receipt headline is NOT VERIFIED and names what was weakened, for example `NOT VERIFIED (tests weakened: skip added in sum.test.js)` |
 | other nonzero | The run itself failed; this code is passed through unchanged |
 
+`loki quick` has no `--json` flag; its structured result is `loki why --json`, schema: `schemas/why-result.schema.json` (`state.lastExitCode` carries the ladder above).
+
 Code 3 only ever raises an exit of 0, in quiet and `LOKI_VERBOSE=1` modes alike;
 it never lowers another nonzero code. Edited assertion lines are disclosed in
 the receipt (`tests_integrity:assertions_edited`) and keep exit 0. A NOT VERIFIED
@@ -72,6 +74,8 @@ headline caused by unproven gates alone also keeps exit 0. The signal is the
 | 1 | CONCERNS (findings below the block threshold, or inconclusive evidence) |
 | 2 | BLOCKED (findings at or above the block threshold) |
 | 3 | Verifier error: it could not complete, and never silently passes |
+
+`loki verify` has no `--json` flag. `loki status --json` schema: `schemas/status-result.schema.json`.
 
 Code 3 matters more than it looks. A verifier that cannot run is not a pass,
 so `[ $rc -eq 0 ]` is the only safe test for "verified" -- `[ $rc -ne 2 ]`

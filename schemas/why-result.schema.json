@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autonomi.dev/loki-mode/schemas/why-result.schema.json",
+  "title": "loki why --json",
+  "description": "Output of `loki why --json`, the machine-readable outcome of the last build (loki quick and loki start leave the records it reads). loki quick and loki verify have no --json flag of their own; this is the structured result of the quick path. The command exits 0 with this document, or 1 with no stdout when no run exists. Validated against real output by tests/test-json-schemas.sh.",
+  "type": "object",
+  "required": ["state", "completion", "completion_is_stale", "head_sha", "last_error_present"],
+  "properties": {
+    "state": {
+      "type": "object",
+      "required": ["status", "iterationCount"],
+      "properties": {
+        "status": { "type": "string" },
+        "iterationCount": { "type": "integer", "minimum": 0 },
+        "lastExitCode": {
+          "type": "integer",
+          "description": "Exit code of the run. loki quick ladder (docs/exit-codes.md): 0 completed and tests not weakened, 3 diff weakened the tests (NOT VERIFIED), any other nonzero is the run's own failure passed through unchanged (for example 20, deterministic terminal failure).",
+          "minimum": 0
+        }
+      }
+    },
+    "completion": {
+      "type": "object",
+      "properties": {
+        "outcome": { "type": "string" },
+        "branch": { "type": "string" },
+        "start_sha": { "type": "string" },
+        "head_sha": { "type": "string" },
+        "files_changed": { "type": "integer", "minimum": 0 },
+        "pr_url": { "type": "string" }
+      }
+    },
+    "last_error": { "type": "object" },
+    "last_error_present": { "type": "boolean" },
+    "last_error_readable": { "type": "boolean" },
+    "last_error_recognized": { "type": "boolean" },
+    "last_error_action": { "type": ["string", "null"] },
+    "completion_is_stale": { "type": "boolean" },
+    "head_sha": { "type": "string" },
+    "rework": {
+      "type": ["object", "null"],
+      "properties": {
+        "progress_iterations": { "type": "integer", "minimum": 0 },
+        "rework_iterations": { "type": "integer", "minimum": 0 },
+        "total_iterations": { "type": "integer", "minimum": 0 },
+        "rework_cost_usd": { "type": "number", "minimum": 0 },
+        "verdict": { "type": "string" }
+      }
+    }
+  }
+}
