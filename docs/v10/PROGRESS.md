@@ -1837,3 +1837,7 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - click-2877: v10 3/3, raw 3/3 (baseline false ALREADY_SATISFIED did not recur: noise). humanize-333: v10 1/3, raw 1/3 (parity, hard task).
 - humanize-174: v10 0/3, raw 2/3 (real). aiq-52-searchbar (expected no_change_needed): v10 0/3 (1 opened a PR, 2 no PR but not scored completed), raw 2/3 (real).
 - Data: ~/loki-ci-logs/d50-rerun-20261001T0932/*/results.jsonl. Root-cause analyst running on the two real losses; the top cause gets the first fix and a per-model profile row. Internal; not published.
+
+## 2026-10-01T10:27Z D50 root causes (haiku analyst on the rerun logs)
+- aiq-52 (no_change_needed): v10 reached ALREADY_SATISFIED in 2/3 but only after implement had already edited source (no_source_diff=false); the harness requires no PR, no source diff, no-change evidence, hidden pass, rc 0 and not capped. Raw sonnet checked first and changed nothing. Fix D50-F1 building (restore source to base on ALREADY_SATISFIED).
+- humanize-174: the spec changes rounding behaviour encoded in tests/test_time.py. Raw sonnet changed code plus assertions (684 passed). v10: rep2 BLOCKED "spec conflict ... non-editable test assertions", rep1 and rep3 hit the iteration cap (rep3 draft PR weakened tests). D50-F2: opus architect designing spec-required assertion changes without a weakening loophole.
