@@ -28,6 +28,7 @@ editor plugin).
 """
 
 import os
+import sys
 
 import pytest
 
@@ -43,9 +44,12 @@ if "LOKI_RECEIPT_SIGNING_KEY_FILE" not in os.environ:
     import atexit  # noqa: E402
     import shutil  # noqa: E402
 
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "autonomy"))
+    from receipt_jwt import RECEIPT_SIGNER_BASENAME  # noqa: E402
+
     _key_dir = tempfile.mkdtemp(prefix="loki-test-key-")
     atexit.register(shutil.rmtree, _key_dir, True)
-    os.environ["LOKI_RECEIPT_SIGNING_KEY_FILE"] = os.path.join(_key_dir, "receipt-ed25519.pem")
+    os.environ["LOKI_RECEIPT_SIGNING_KEY_FILE"] = os.path.join(_key_dir, RECEIPT_SIGNER_BASENAME)
 
 # Every variable through which git can redirect a subprocess at a different
 # repository, index, object store, or worktree.

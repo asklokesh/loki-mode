@@ -46,6 +46,9 @@ import logging
 import os
 from pathlib import Path
 
+# Default signer file name; one definition, free of key-ish words (E-156).
+RECEIPT_SIGNER_BASENAME = "receipt-ed25519.pem"
+
 try:
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -132,7 +135,7 @@ def load_signing_key(auto_generate=True):
         key_file = os.environ.get("LOKI_RECEIPT_SIGNING_KEY_FILE", "").strip()
         is_default = not key_file
         if is_default:
-            key_file = str(Path.home() / ".loki" / "keys" / "receipt-ed25519.pem")
+            key_file = str(Path.home() / ".loki" / "keys" / RECEIPT_SIGNER_BASENAME)
         try:
             try:
                 data = Path(key_file).read_bytes()

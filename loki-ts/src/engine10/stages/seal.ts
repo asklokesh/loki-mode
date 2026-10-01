@@ -8,6 +8,7 @@ import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKey
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { run } from "../../util/shell.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -65,7 +66,7 @@ export function loadSigningKey(generate = true): KeyObject | null {
     let pem: string | Buffer = inline ?? "";
     if (!inline) {
       const given = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim();
-      const file = given || join(process.env["HOME"] || homedir(), ".loki", "keys", "receipt-ed25519.pem");
+      const file = given || join(process.env["HOME"] || homedir(), ".loki", "keys", RECEIPT_SIGNER_BASENAME);
       try {
         pem = readFileSync(file);
         if (!given) for (const [f, m] of [[file, 0o600], [dirname(file), 0o700]] as const) if (statSync(f).mode & 0o077) chmodSync(f, m);

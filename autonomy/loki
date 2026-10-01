@@ -14447,7 +14447,7 @@ else:
 import os, sys
 sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 sys.path.insert(0, sys.argv[1])
-from receipt_jwt import load_signing_key, _CRYPTO_AVAILABLE
+from receipt_jwt import load_signing_key, _CRYPTO_AVAILABLE, RECEIPT_SIGNER_BASENAME
 if not _CRYPTO_AVAILABLE:
     print("nocrypto")
 else:
