@@ -765,7 +765,7 @@ For how Loki compares with other tools, see [docs/COMPARISON.md](docs/COMPARISON
 | `loki cockpit` | Live multi-repo status as an inline terminal image (Kitty/iTerm2/WezTerm/Ghostty); text + dashboard fallback elsewhere (v7.126.0) |
 | `loki dashboard` | Open web dashboard |
 | `loki preview` | Print running app URL and open in browser (Live App Preview, v7.24.0; was: `loki open`) |
-| `loki web` | Launch Purple Lab web UI [DEPRECATED in v7.44.0 -- use `loki start` which auto-opens the dashboard at http://localhost:57374; for the hosted platform see Autonomi Cloud] |
+| `loki web` | Launch Purple Lab web UI [DEPRECATED in v7.44.0 -- use `loki start` which auto-opens the dashboard at http://localhost:57374] |
 | `loki doctor` | Check environment and dependencies |
 | `loki plan [PRD]` | Pre-execution analysis: complexity, cost, iterations |
 | `loki review [--staged\|--diff]` | AI-powered code review with severity filtering |

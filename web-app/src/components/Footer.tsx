@@ -17,7 +17,6 @@ const COLUMNS: FooterColumn[] = [
     links: [
       { label: 'Features', to: '/' },
       { label: 'Templates', to: '/templates' },
-      { label: 'Pricing', href: 'https://www.autonomi.dev/#pricing' },
       { label: 'Docs', href: 'https://github.com/asklokesh/loki-mode/wiki' },
     ],
   },

@@ -14,7 +14,7 @@ Named after the Norse god of mischief, Loki Mode operates autonomously and can s
 
 ### Is Loki Mode free?
 
-Yes, Loki Mode is free and source-available under the BUSL-1.1 license. However, you need API access to Claude or Codex (which have their own pricing).
+Yes, Loki Mode is entirely free. It is source-available under the BUSL-1.1 license. You can provide your own API keys for Claude or Codex (or use free alternatives), which may have their own pricing, but Loki Mode itself costs nothing.
 
 ### What AI providers are supported?
 
@@ -292,7 +292,7 @@ This runs in an isolated Docker container.
 
 ### Is there an enterprise version?
 
-The Loki Mode CLI is source-available (BUSL-1.1). Some enterprise features ship in the CLI and are enabled via configuration (below). The commercial editions for teams and enterprises (Autonomi Cloud, Autonomi Enterprise) are separate offerings sold under the Autonomi brand. Enable the in-CLI enterprise features with:
+Loki Mode is entirely free, including all enterprise features. The CLI is source-available (BUSL-1.1). Enterprise features like workspaces, audit logging, Helm and ECS deployment, budget limits, and Slack integration ship in the free CLI and are enabled via configuration (below):
 
 ```bash
 export LOKI_ENTERPRISE_AUTH=true
