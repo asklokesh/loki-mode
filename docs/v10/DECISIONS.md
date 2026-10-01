@@ -375,3 +375,11 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
   6. A v10-pulse RELEASE_SLO alarm fires below 3 `next` releases in the trailing 60 minutes; on it, the Chief of Staff ships the newest green train or the last green tree first, then fixes the cause.
   7. Slices stay small enough to build and pass in under 30 minutes; bigger work is split.
 - NOT applied without direct founder approval: moving the release-blocking full-history gitleaks scan (`--all`) out of the Release path (item 4 of the relay). It weakens a security gate on a relayed instruction; queued as FOUNDER-QUEUE row 14.
+
+## D47 (CTO, 2026-10-01): honest exits on the default path, and UNSIGNED is never a pass
+1. Legacy `loki quick` exits 3 when the diff weakens tests: a skip marker added, test runner config changed, or an existing test file deleted or renamed. Edited assertion lines are disclosed in the receipt and keep rc 0. A NOT VERIFIED headline from unproven gates alone keeps rc 0.
+2. The signal is a proof fact (tests_integrity in degraded[]), never the headline. It only raises an inner rc of 0, in quiet and verbose modes alike. first-run-gate G1 counts green only as pass 2 and fail 0, so a skip is not green.
+3. `loki verify` exits 3 on UNSIGNED on both engines, on any machine, with or without a local key, because a stripped receipt must never rank above UNCHECKED (rc 2).
+4. Recording the kid outside the hash and markers inside the body were rejected: verification is already unhashed and a forger can rewrite any body field.
+5. `--allow-unsigned` or LOKI_VERIFY_ALLOW_UNSIGNED=1 accepts UNSIGNED with an explicit line. It never changes TAMPERED or UNCHECKED, and verify never creates a key.
+6. Both slices (A-118, A-121b) are HIGH tier with red-first fixtures (skip, config, rename, downgrade, fresh HOME). They land before `latest` is promoted, together with A-115.
