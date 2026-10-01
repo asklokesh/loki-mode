@@ -248,13 +248,18 @@ async function main() {
   }
   // Plain Stop stdout goes only to the debug log; systemMessage is what the docs show to the user.
   process.stdout.write(JSON.stringify({ systemMessage: receipt }));
+  try { fs.unlinkSync(errFile()); } catch { /* no counter yet */ }
 }
 
 // Hook errors are counted outside the state dir (which may be the thing that is failing), so the
 // release valve still fires. One byte is appended per error to a private per-session file.
-function countHookError() {
+function errFile() {
   const key = crypto.createHash('sha1').update(ctx.root + '\0' + (ctx.input.session_id || '')).digest('hex');
-  const f = path.join(os.tmpdir(), `loki-seal-err-${process.getuid ? process.getuid() : 0}-${key}`);
+  return path.join(process.env.LOKI_RUN_TMP || os.tmpdir(), `loki-seal-err-${process.getuid ? process.getuid() : 0}-${key}`);
+}
+
+function countHookError() {
+  const f = errFile();
   const fd = fs.openSync(f, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_APPEND | fs.constants.O_NOFOLLOW, 0o600);
   try {
     fs.writeSync(fd, 'x');
@@ -272,9 +277,11 @@ main().catch((e) => {
   }
   const max = +process.env.LOKI_SEAL_MAX_BLOCKS || MAX_BLOCKS;
   let n = 0;
-  try { n = countHookError(); } catch { /* counter unavailable: stay closed */ }
-  if (n > max) {
-    process.stdout.write(JSON.stringify({ systemMessage: `loki-seal: NOT VERIFIED (released after ${max} blocks: hook error)\nlast error: ${m}` }));
+  let counted = true;
+  try { n = countHookError(); } catch { counted = false; }
+  // Counter unavailable (tmpdir read-only or full): a repeated stop (stop_hook_active) releases instead.
+  if (counted ? n > max : ctx.input.stop_hook_active === true) {
+    process.stdout.write(JSON.stringify({ systemMessage: `loki-seal: NOT VERIFIED (released after ${counted ? max + ' blocks' : 'a repeated stop'}: hook error)\nlast error: ${m}` }));
     process.exit(0);
   }
   // Fail closed: exit 2 blocks the stop; any other non-zero exit would let it through.
