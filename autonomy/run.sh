@@ -11263,7 +11263,10 @@ _loki_quick_integrity_rc() {
     if [ -f "$pj" ] && python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import json
 d = json.load(open(sys.argv[1]))
-sys.exit(0 if any(isinstance(x, dict) and x.get('item') == 'tests_integrity' and x.get('status') == 'failed' for x in ((d.get('honesty') or {}).get('degraded') or [])) else 1)" "$pj" 2>/dev/null; then
+g = (d.get('facts') or {}).get('git') or {}
+if sys.argv[2] and g.get('head_sha') != sys.argv[2]:
+    sys.exit(1)
+sys.exit(0 if any(isinstance(x, dict) and x.get('item') == 'tests_integrity' and x.get('status') == 'failed' for x in ((d.get('honesty') or {}).get('degraded') or [])) else 1)" "$pj" "$(git -C "${TARGET_DIR:-.}" rev-parse HEAD 2>/dev/null || true)" 2>/dev/null; then
         echo 3
     else
         echo 0

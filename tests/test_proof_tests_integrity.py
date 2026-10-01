@@ -68,6 +68,7 @@ class TestsIntegrity(unittest.TestCase):
         self.assertIsNot(res["headline_consistent"], False)
 
     def test_config_change_is_failed(self):
+        self.rebase_base(**{"jest.config.js": "module.exports={}\n"})
         self.write("jest.config.js", "module.exports={testPathIgnorePatterns:['x']}\n")
         _, items = self.gen()
         self.assertEqual(items["tests_integrity"]["status"], "failed")
@@ -182,6 +183,71 @@ class TestsIntegrity(unittest.TestCase):
             h.write(HONEST.encode() + b"x\rtest.skip('b', () => {});\n")
         _, items = self.gen()
         self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def rebase_base(self, **files):
+        for name, text in files.items():
+            self.write(name.replace("__", "/"), text)
+        self.git("add", ".")
+        self.git("commit", "-m", "base2")
+        self.base = self.git("rev-parse", "HEAD").stdout.strip()
+
+    PYPROJECT = ('[tool.pytest.ini_options]\naddopts = [\n  "-q",\n]\n')
+
+    def test_multiline_addopts_filter_is_failed(self):
+        for extra in ('  "-k not sum",\n', '  "--deselect=test_calc.py::test_sum",\n'):
+            with self.subTest(extra=extra):
+                self.tearDown()
+                self.setUp()
+                self.rebase_base(**{"pyproject.toml": self.PYPROJECT})
+                self.write("pyproject.toml", self.PYPROJECT.replace('  "-q",\n', '  "-q",\n' + extra))
+                _, items = self.gen()
+                self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_pyproject_dependency_edit_is_not_failed(self):
+        self.rebase_base(**{"pyproject.toml": self.PYPROJECT + '[project]\ndependencies = ["a"]\n'})
+        self.write("pyproject.toml", self.PYPROJECT + '[project]\ndependencies = ["a", "b"]\n')
+        _, items = self.gen()
+        self.assertNotIn("tests_integrity", items)
+
+    def test_ini_testpaths_change_is_failed(self):
+        self.rebase_base(**{"pytest.ini": "[pytest]\ntestpaths = tests\n"})
+        self.write("pytest.ini", "[pytest]\ntestpaths = tests/unit\n")
+        _, items = self.gen()
+        self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_idiomatic_python_skips_are_failed(self):
+        for body in ('from unittest import skip\n\n@skip("flaky")\ndef test_a():\n    pass\n',
+                     'import unittest\ndef test_a():\n    raise unittest.SkipTest("x")\n',
+                     'from unittest import SkipTest\ndef test_a():\n    raise SkipTest\n',
+                     'from unittest import skipIf\n@skipIf(True, "x")\ndef test_a():\n    pass\n',
+                     'import pytest\nx = pytest.importorskip("zzz")\n'):
+            with self.subTest(body=body):
+                self.tearDown()
+                self.setUp()
+                self.write("test_calc.py", body)
+                _, items = self.gen(commit=False)
+                self.assertEqual(items["tests_integrity"]["status"], "failed")
+
+    def test_pagination_options_are_not_skips(self):
+        for line in ("page([1,2,3,4], { skip: 1, take: 2 });",
+                     "db.user.findMany({ skip: 10, take: 5 });"):
+            with self.subTest(line=line):
+                self.tearDown()
+                self.setUp()
+                self.assertNotEqual(self.failed_with(line, commit=False, fname="new.test.js"), "failed")
+
+    def test_new_shared_config_files_are_disclosed_not_failed(self):
+        for name, text in (("svc/pyproject.toml", "[project]\nname='x'\n"),
+                           ("setup.cfg", "[metadata]\nname = x\n"),
+                           ("web/package.json", '{"scripts":{"test":"vitest"}}\n'),
+                           ("web/jest.config.js", "module.exports={}\n")):
+            with self.subTest(name=name):
+                self.tearDown()
+                self.setUp()
+                self.write(name, text)
+                _, items = self.gen()
+                self.assertNotIn("tests_integrity", items)
+                self.assertEqual(items["tests_integrity:config_added"]["status"], "inconclusive")
 
     def test_honest_diff_has_no_item(self):
         self.write("sum.js", "module.exports=(a,b)=>b+a\n")

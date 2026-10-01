@@ -1121,20 +1121,16 @@ def _empty_tree_sha(repo_dir):
 # collect_workspace_diff), so uncommitted work is covered.
 _TI_CFG_ALWAYS = re.compile(r"(^|/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$")
 _TI_CFG_SHARED = re.compile(r"(^|/)(setup\.cfg|pyproject\.toml|package\.json)$")
-# setup.cfg / pyproject.toml: runner-config lines only, never dependency lines.
-_TI_CFG_LINE = re.compile(
-    r"^[+-]\s*(addopts|testpaths|python_(files|classes|functions)|norecursedirs|\[tool\.pytest|\[tool:pytest|\[pytest)",
-    re.M)
-_TI_NEW_DISCLOSE = re.compile(r"(^|/)conftest\.py$")
 _TI_TEST_FILE = re.compile(
     r"(^|/)(tests?|__tests__|spec|specs)/|\.(test|spec)\.[\w]+$|(^|/)test_[^/]*\.py$|_test\.(py|go|rs)$|(^|/)conftest\.py$")
 _TI_SKIP_JS = re.compile(
-    r"\{[^}]*\b(skip|todo)\s*:\s*(?!(?:false|0|null|undefined)\b)\S"
+    r"\b(test|it|describe|suite|context|specify)\s*\([^\n]*?,\s*\{[^}]*\b(skip|todo)\s*:\s*(?!(?:false|0|null|undefined)\b)\S"
     r"|\b(it|test|describe|suite|context|specify)\s*\.\s*(skip|only|todo)\b"
     r"|\bx(it|test|describe)\s*\(|\bf(it|describe)\s*\("
     r"|\b(t|ctx)\s*\.\s*(skip|todo)\s*\(")
 _TI_SKIP_PY = re.compile(
-    r"@pytest\.mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail)\s*\(|@unittest\.(skip|expectedFailure)|\bskipTest\s*\(")
+    r"@pytest\.mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail|importorskip)\s*\("
+    r"|@(?:unittest\.)?(skip|skipIf|skipUnless|expectedFailure)\b|\bSkipTest\b|\bskipTest\s*\(")
 _TI_SKIP_GO = re.compile(r"\b[tb]\.Skip(f|Now)?\s*\(")
 _TI_SKIP_RS = re.compile(r"#\[ignore")
 _TI_SKIP_BY_EXT = (
@@ -1165,7 +1161,7 @@ def _ti_run(repo, *args):
     return r.stdout.decode("utf-8", "replace")
 
 
-def _ti_pkg_view(text):
+def _ti_pkg_view(text, _path=""):
     """Test-relevant slice of a package.json, or None when unparseable."""
     try:
         d = json.loads(text) if text.strip() else {}
@@ -1176,6 +1172,41 @@ def _ti_pkg_view(text):
     scripts = d.get("scripts") if isinstance(d.get("scripts"), dict) else {}
     view = {k: v for k, v in scripts.items() if re.match(r"^(pre|post)?test(:.*)?$", k)}
     return {"scripts": view, **{k: d[k] for k in _TI_PKG_KEYS if k in d}}
+
+
+_TI_PYTEST_KEYS = ("addopts", "testpaths", "python_files", "python_functions",
+                   "python_classes", "norecursedirs")
+
+
+def _ti_pytest_view(text, path):
+    """The test-selection keys of a pytest config, or None when unparseable.
+    Parsed (tomllib / configparser), so a multi-line addopts edit is seen.
+    ponytail: without tomllib (python < 3.11) a pyproject.toml is not parsed and
+    any edit to it counts as changed; upgrade path is the tomli backport."""
+    if not text.strip():
+        return {}
+    if path.endswith(".toml"):
+        try:
+            import tomllib
+            d = tomllib.loads(text)
+        except Exception:
+            return None
+        t = d.get("tool", {}).get("pytest", {})
+        t = t.get("ini_options", t) if isinstance(t, dict) else {}
+        return {k: t[k] for k in _TI_PYTEST_KEYS if k in t}
+    import configparser
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    try:
+        cp.read_string(text)
+    except Exception:
+        return None
+    out = {}
+    for sec in ("pytest", "tool:pytest"):
+        if cp.has_section(sec):
+            for k in _TI_PYTEST_KEYS:
+                if cp.has_option(sec, k):
+                    out[sec + "." + k] = cp.get(sec, k)
+    return out
 
 
 def _collect_tests_integrity(target_dir, base):
@@ -1210,26 +1241,24 @@ def _collect_tests_integrity(target_dir, base):
     if not greenfield:
         for st, old, new in entries:
             path = new if st != "D" else old
-            if _TI_CFG_ALWAYS.search(path):
-                if st == "A" and _TI_NEW_DISCLOSE.search(path):
-                    disclosed.append("new test runner config: " + path)
-                else:
+            is_always = bool(_TI_CFG_ALWAYS.search(path))
+            if not (is_always or _TI_CFG_SHARED.search(path)):
+                continue
+            if st == "A":  # no base version: nothing was narrowed, disclose only
+                disclosed.append("new test runner config: " + path)
+            elif is_always:
+                weakened.append("test runner config changed: " + path)
+            else:
+                before = _ti_run(target_dir, "show", "%s:./%s" % (base, old)) or ""
+                try:
+                    with open(os.path.join(target_dir, new), encoding="utf-8", errors="replace") as h:
+                        after = h.read()
+                except OSError:
+                    after = ""
+                view = _ti_pkg_view if path.endswith("package.json") else _ti_pytest_view
+                b, a = view(before, path), view(after, path)
+                if b is None or a is None or b != a:
                     weakened.append("test runner config changed: " + path)
-            elif _TI_CFG_SHARED.search(path):
-                if path.endswith("package.json"):
-                    before = _ti_run(target_dir, "show", "%s:./%s" % (base, old)) or ""
-                    try:
-                        with open(os.path.join(target_dir, new), encoding="utf-8", errors="replace") as h:
-                            after = h.read()
-                    except OSError:
-                        after = ""
-                    b, a = _ti_pkg_view(before), _ti_pkg_view(after)
-                    if b is None or a is None or b != a:
-                        weakened.append("test runner config changed: " + path)
-                else:
-                    d = _ti_run(target_dir, "diff", "--relative", "-U0", base, "--", path) or ""
-                    if st == "A" or _TI_CFG_LINE.search(d):
-                        weakened.append("test runner config changed: " + path)
     # Skip markers: added lines of tracked test files, and the content of untracked ones.
     patch = _ti_run(target_dir, "diff", "--relative", "-U0", "-M", base, "--") or ""
     cur, rx, removed_assert = None, None, False

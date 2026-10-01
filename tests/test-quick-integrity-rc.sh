@@ -29,6 +29,16 @@ mk_proof failed '[{"item":"tests_integrity","status":"failed","reason":"tests we
 mk_proof unproven '[{"item":"build","status":"not_run"},{"item":"quality_gate:a","status":"not_run"},{"item":"quality_gate:b","status":"not_run"}]'
 mk_proof edited '[{"item":"tests_integrity:assertions_edited","status":"inconclusive","post_headline":true}]'
 mkdir -p "$T/none"
+# Freshness: a failed proof counts only when its head_sha is the repo's current HEAD.
+mk_proof stale '[{"item":"tests_integrity","status":"failed"}]'
+mk_proof fresh '[{"item":"tests_integrity","status":"failed"}]'
+for d in stale fresh; do
+    git -C "$T/$d" init -q
+    git -C "$T/$d" -c user.email=t@example.invalid -c user.name=t commit -q --allow-empty -m c
+done
+H="$(git -C "$T/fresh" rev-parse HEAD)"
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"degraded":[{"item":"tests_integrity","status":"failed"}]}}\n' "$H" > "$T/fresh/.loki/proofs/p1/proof.json"
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"degraded":[{"item":"tests_integrity","status":"failed"}]}}\n' "0000000000000000000000000000000000000000" > "$T/stale/.loki/proofs/p1/proof.json"
 
 check() { # check <dir> <inner rc> <want> <label>
     local got
@@ -41,6 +51,8 @@ check failed 1 1 "inner rc 1 stays 1"
 check unproven 0 0 "honest run with 3 unproven gates keeps rc 0"
 check edited 0 0 "assertion edits alone keep rc 0"
 check none 0 0 "no proof keeps rc 0"
+check fresh 0 3 "failed item on a proof for the current HEAD gives 3"
+check stale 0 0 "stale proof (head_sha is not HEAD) never drives the rc"
 
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
