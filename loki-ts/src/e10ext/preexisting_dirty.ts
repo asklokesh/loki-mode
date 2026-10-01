@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;
 
 const blob = (repoDir: string, path: string): string =>
-  execFileSync("git", ["hash-object", "--", path], { cwd: repoDir, encoding: "utf8" }).trim();
+  execFileSync("git", ["hash-object", "--", path], { cwd: repoDir, encoding: "utf8", env: process.env }).trim();
 
 /** Splits `git status --porcelain` lines into blocking ones and {lockfile path: blob sha} for modified lockfiles. */
 export function splitDirty(repoDir: string, lines: string[]): { blocking: string[]; preexisting: Record<string, string> } {
