@@ -1324,6 +1324,16 @@ except ImportError as _operator_exc:  # pragma: no cover - optional dep absent
 else:
     app.include_router(api_operator_router)
 
+# D51 Phase A: first-run onboarding + backlog API and its /start page.
+from .api_start import router as api_start_router, START_HTML as _START_HTML
+app.include_router(api_start_router)
+
+
+@app.get("/start", include_in_schema=False, dependencies=[Depends(auth.require_scope("read"))])
+async def serve_start_page():
+    return FileResponse(_START_HTML, media_type="text/html")
+
+
 # Phase Merge-4: Mount Purple Lab FastAPI app under /lab/ so it appears as a
 # sidebar entry in Dashboard. Same `app` is also wrapped by `standalone_app`
 # in web-app/server.py for `loki web` (port 57375). One source of truth, no
