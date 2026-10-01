@@ -590,6 +590,46 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(honest.verdict).toBe("VERIFIED");
   }, 30000);
 
+  test("A-119b: helper, snapshot, fixture and unrecognised-name test edits or renames are NOT VERIFIED; already_done too; source-only and a new test stay VERIFIED", async () => {
+    noKey();
+    const BASE: Record<string, string> = {
+      "sum.js": "exports.sum=(a)=>a;\n", "tests/helpers.js": "exports.eq=(a,b)=>expect(a).toBe(b);\n", "tests/sum.test.js": "require('./helpers');require('../sum');\n",
+      "__snapshots__/sum.test.js.snap": "6\n", "tests/fixtures/expected.json": "6\n", "__tests__/sum.js": "t\n", "test/sum.js": "t\n", "tests/it.rs": "t\n",
+      "lib/shared.js": "exports.eq=(a,b)=>expect(a).toBe(b);\n", "other.test.js": "require('./lib/shared');\n",
+      "src/utils.js": "exports.sum=(a,b)=>a-b;\n", "tests/utils.test.js": "require('../src/utils');\n", "src/setup.js": "exports.s=1;\n", "test/setup.test.js": "require('../src/setup');\n",
+      "src/string_utils.ts": "export const f=1;\n",
+      "src/h1.js": "// callers assert\nexports.x=1;\n", "src/h2.js": "const assert=require('assert');\nexports.y=1;\nassert(true);\n", "src/h3.js": "exports.m='assert failed';\nexports.z=1;\n",
+      "src/h4.js": "function expect(tok){return tok;}\nexports.z=1;\n", "src/h5.js": "console.assert(true);\nexports.z=1;\n", "src/h6.js": "exports.a=1;exports.b=2;\n/* expect( minified assert */\n",
+      "src/mix.js": "exports.eq=(a,b)=>expect(a).toBe(b);\nexports.k=1;\n",
+      "tests/honest.test.js": "require('../src/h1');require('../src/h2');require('../src/h3');require('../src/h4');require('../src/h5');require('../src/h6');require('../src/mix');\n", "src/string_utils.test.ts": "import './string_utils';\n",
+    };
+    let n = 0;
+    const seal = async (edit: (repo: string) => void, over: Parameters<typeof ctxFor>[3] = {}): Promise<string> => {
+      const { repo } = makeRepo("w119b" + n++);
+      for (const [f, c] of Object.entries(BASE)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); }
+      sh(["git", "add", ...Object.keys(BASE)], repo);
+      sh(["git", "commit", "-q", "-m", "tests"], repo);
+      const b = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      edit(repo);
+      const { ctx } = ctxFor(repo, b, "claude", over);
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal)).verdict;
+    };
+    const w = (f: string, c = "changed\n") => (r: string) => writeFileSync(join(r, f), c);
+    const bak = (f: string) => (r: string) => sh(["git", "mv", f, f + ".bak"], r);
+    for (const edit of [w("tests/helpers.js", "exports.eq=()=>{};\n"), w("lib/shared.js"), w("__snapshots__/sum.test.js.snap", "5\n"), w("tests/fixtures/expected.json", "5\n"),
+      w("__tests__/sum.js"), bak("test/sum.js"), w("tests/it.rs"), bak("tests/it.rs")]) expect(await seal(edit)).toBe("PARTIAL");
+    expect(await seal(bak("test/sum.js"), { implement: { exit: "already_done", tests_reverted: [], duration_s: 1 } })).toBe("PARTIAL");
+    for (const f of ["src/utils.js", "src/setup.js", "src/string_utils.ts"]) expect(await seal(w(f))).toBe("VERIFIED"); // E6-E8: a source file a test imports is not a helper
+    // F1-F6: honest edits to an imported source file that only mentions assert stay VERIFIED; removing an expect( line is PARTIAL
+    const ed = (f: string, a: string, b: string) => (r: string) => writeFileSync(join(r, f), BASE[f]!.replace(a, b));
+    for (const [f, a, b] of [["src/h1.js", "x=1", "x=2"], ["src/h2.js", "y=1", "y=2"], ["src/h3.js", "z=1", "z=2"], ["src/h4.js", "z=1", "z=2"], ["src/h5.js", "z=1", "z=2"], ["src/h6.js", "a=1", "a=3"]] as const)
+      expect(await seal(ed(f, a, b))).toBe("VERIFIED");
+    expect(await seal(ed("src/mix.js", "k=1", "k=2"))).toBe("VERIFIED");
+    expect(await seal(ed("src/mix.js", "expect(a).toBe(b)", "a===b"))).toBe("PARTIAL");
+    expect(await seal((r) => { w("sum.js", "exports.sum=(a)=>a+1;\n")(r); w("tests/new.test.js", "new\n")(r); })).toBe("VERIFIED");
+  }, 60000);
+
   test("an unusable key: signed false, SIGNING_UNAVAILABLE on NOT PROVEN, hash still recomputes", async () => {
     const keyFile = join(root, "k2.pem");
     writeFileSync(keyFile, "not a pem\n", { mode: 0o600 });
