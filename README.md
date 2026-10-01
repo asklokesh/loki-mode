@@ -24,7 +24,6 @@ Before a build counts as done, a review council selects reviewers from a special
 - [loki doctor](#loki-doctor)
 - [Modernization: status of loki modernize](#modernization-status-of-loki-modernize)
 - [Providers](#providers)
-- [Legacy engine reference](#legacy-engine-reference) (the engine `loki` runs by default today)
 
 ## Install
 
@@ -72,19 +71,19 @@ loki-seal is a Claude Code Stop hook that runs your repo's real test suite when 
 
 ## Loki 10 engine
 
-Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. Set LOKI_ENGINE=legacy or run `loki legacy <args>` for the previous engine. <!-- loki10-default -->
-
-Loki 10 is the rewritten engine and the default for tasks, issue mode and `quick`; `status`, `verify` and `dashboard` use it when `LOKI_ENGINE=v10` is set. Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
+Loki Mode now runs the v10 engine for all commands. Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
 
 ```
-LOKI_ENGINE=v10 loki "fix the login redirect loop" --no-pr
+loki "fix the login redirect loop" --no-pr
 ```
 
 ```
-LOKI_ENGINE=v10 loki owner/repo#123
+loki owner/repo#123
 ```
 
-The router sends a quoted multi-word task, a GitHub, GitLab or Jira issue reference, and the `status`, `verify` and `dashboard` subcommands to the v10 engine. A one-word argument that is not an issue ref, or any first argument starting with `-`, stays on the legacy CLI. Flags (`loki-ts/src/engine10/cli.ts` USAGE): `--no-pr` builds and verifies without opening a pull request, `--deep` requests the deep verify pass and a longer implement budget, `--provider <name>` picks the coding provider (`--json` and `--verbose` are also parsed by the supervisor, see [Quiet output](#quiet-output)). The v10 engine needs Bun; without it the command exits 1 with a message.
+The v10 engine accepts a quoted multi-word task, a GitHub, GitLab or Jira issue reference, `status`, `verify`, `dashboard`, and other subcommands. Flags (`loki-ts/src/engine10/cli.ts` USAGE): `--no-pr` builds and verifies without opening a pull request, `--deep` requests the deep verify pass and a longer implement budget, `--provider <name>` picks the coding provider (`--json` and `--verbose` are also parsed by the supervisor, see [Quiet output](#quiet-output)). The engine needs Bun; without it the command exits 1 with a message and installation instructions.
+
+Migration note: Legacy engine removed in 10.6.0; use `loki "<task>"`, `loki owner/repo#N`, or `loki backlog` instead.
 
 ### The state machine
 
@@ -148,10 +147,10 @@ Every sealed v10 run writes a receipt to `.loki/runs/<run-id>/receipt.json`. `re
 Receipts are signed by default. On the first run Loki generates an Ed25519 key at `~/.loki/keys/receipt-ed25519.pem` (mode 0600, directory 0700), or you supply your own with `LOKI_RECEIPT_SIGNING_KEY` or `LOKI_RECEIPT_SIGNING_KEY_FILE`. See [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
 
 ```
-LOKI_ENGINE=v10 loki verify
+loki verify
 ```
 
-`loki verify [run-id]` (latest run by default) re-hashes the receipt, checks the signature against your local key (and retired keys listed in `LOKI_RECEIPT_RETIRED_PUBKEYS`), and checks the receipt against the event log. Verdicts and exit codes on the v10 path (`loki-ts/src/engine10/verify_cmd.ts`):
+`loki verify [run-id]` (latest run by default) re-hashes the receipt, checks the signature against your local key (and retired keys listed in `LOKI_RECEIPT_RETIRED_PUBKEYS`), and checks the receipt against the event log. Verdicts and exit codes (`loki-ts/src/engine10/verify_cmd.ts`):
 
 | Verdict | Exit | Meaning |
 |---------|------|---------|
@@ -162,8 +161,6 @@ LOKI_ENGINE=v10 loki verify
 | (no runs) | 66 | No receipt to verify. |
 
 A verified receipt is bound to the run's event log, so a receipt lifted out of its run, or a log edited after sealing, does not verify. Signing proves the receipt came from the key holder; it does not prove the generated code is bug-free. A receipt only claims what its checks ran, and states what they did not.
-
-On the legacy engine, receipts live under `.loki/proofs/<run_id>/` and are inspected with `loki proof list`, `loki proof show <id>` and `loki proof verify <id>` (exit 0 clean, 1 on tamper or drift, 2 could not check).
 
 ## Quiet output
 
@@ -213,10 +210,7 @@ Exit 0 when every required check passes; optional warnings (an absent provider C
 
 ## Modernization: status of loki modernize
 
-There are two different things behind the name today.
-
-- `loki modernize heal <path>` and `loki modernize migrate <path>` are the shipped legacy commands (agent-driven phases). `loki modernize heal <path> --assess` is read-only. See [Already have a codebase](#already-have-a-codebase-start-read-only).
-- `loki modernize <repo> --to <target>` is the new v10 command with behavior-captured equivalence. It is routed to the v10 engine whatever `LOKI_ENGINE` says, but it is not finished: only the `--dry-run` estimate works (inventory, dependency graph, unit clustering, cost, time and risk estimate, no model spend). A real run stops after the estimate and prints `modernize: oracle capture and execution are not built yet; use --dry-run`. Targets `python3` and `java21` exist; the Java dependency graph is not wired in yet. Nothing in v10 modernize claims a unit is proven equivalent today. Design: [docs/v10/MODERNIZE.md](docs/v10/MODERNIZE.md), user summary: [docs/v10/GUIDE-MODERNIZE.md](docs/v10/GUIDE-MODERNIZE.md).
+Migration: `loki modernize heal <repo> --assess` was a legacy command for read-only analysis. The v10 path `loki modernize <repo> --to <target>` is not yet finished: only `--dry-run` works (inventory, dependency graph, unit clustering, cost, time and risk estimate). A real run stops after the estimate and prints `modernize: oracle capture and execution are not built yet; use --dry-run`. Targets `python3` and `java21` exist; the Java dependency graph is not wired in yet. Design: [docs/v10/MODERNIZE.md](docs/v10/MODERNIZE.md), user summary: [docs/v10/GUIDE-MODERNIZE.md](docs/v10/GUIDE-MODERNIZE.md).
 
 ## Providers
 
@@ -233,98 +227,6 @@ Loki's autonomy and quality loop are the product; the coding CLI is swappable. W
 Claude Code is the provider Loki is built for and the one that is run end to end by us. The others are wired in but are experimental. On a non-Claude provider the v10 summary says so: the Cost line reads `not measured` and NOT PROVEN adds `kill blocking not enforced`. See [Provider Guide](skills/providers.md).
 
 ---
-
-# Legacy engine reference
-
-Everything below describes the legacy engine, which `loki` still runs by default (and which stays reachable when Loki 10 is made the default). The long-form commands, `loki start`, `loki quick`, `loki quickstart` and `loki proof` all live here.
-
-## Use it
-
-```bash
-loki quickstart                   # guided first build: asks a few questions, quotes cost, builds
-```
-
-That is the whole happy path. It asks for a one-line idea, picks a template,
-shows the real cost and time estimate before spending anything, then builds.
-Press Enter through every step and you get a sample Todo app.
-
-One command, no prompts (CI, scripts, containers, any shell without a terminal):
-
-```bash
-loki quickstart "a todo app with user accounts" --yes
-```
-
-Both halves are required with no terminal: an idea (or a path to a PRD file)
-and an explicit `--yes`. Given both, Loki picks the top-ranked template
-automatically, prints the same honest cost and time estimate, and starts the
-build without asking anything. Missing either half exits 2 with the
-needs-a-terminal message and writes nothing, so an ambient `LOKI_AUTO_CONFIRM`
-or a stray argument in CI can never start a paid build on its own. Existing
-files are never overwritten: if `prd.md` is present the PRD lands at
-`prd-quickstart.md`, then numbered suffixes as needed.
-
-Choose an exact shipped starter when the top-ranked match is not the one you
-want:
-
-```bash
-loki quickstart --list-templates
-loki quickstart --list-templates --json       # schema-v1 automation output
-loki quickstart "an internal reporting workspace" --template dashboard --yes
-```
-
-Template discovery works without a terminal or provider and lists every shipped
-starter's stable name and purpose in catalog order. It returns before estimation,
-consent, PRD writes, or build execution. Positional input and execution/preview
-flags are intentionally incompatible; `--json` is the only optional modifier.
-
-`--template` accepts an exact template name for idea inputs and works the same
-way with interactive use or `--dry-run` (including JSON preview). Unknown
-templates, duplicate flags, and combinations with a PRD path refuse before
-provider discovery, estimation, writes, or build execution.
-
-Preview the same deterministic template choice and estimator-backed plan with
-zero writes or execution:
-
-```bash
-loki quickstart "a todo app with user accounts" --dry-run
-```
-
-Preview requires an idea or readable PRD path, works without a terminal or AI
-provider, and exits before creating a PRD or starting a build. `--dry-run` and
-`--yes` are mutually exclusive so execution intent is never ambiguous.
-
-For scripts and local dashboards, add `--json` to receive one versioned JSON
-object instead of terminal text:
-
-```bash
-loki quickstart "a todo app with user accounts" --dry-run --json > preview.json
-loki quickstart --verify-preview preview.json --json
-loki quickstart --from-preview preview.json --yes
-```
-
-The object contains the input kind, deterministic selected template (or `null`
-for an existing PRD), the exact estimator response under `plan`, and a bounded
-continuation containing the exact idea/template or the PRD path and SHA-256.
-`--verify-preview` validates the same bounded duplicate-key-rejecting schema and
-requires either a currently shipped idea template or the unchanged digest-bound
-PRD, while emitting no idea or PRD path. It accepts a file or piped stdin and
-returns before provider discovery, estimation, writes, or build execution.
-`--from-preview` requires explicit argv `--yes`, rejects malformed, conflicting,
-symlinked, or changed inputs before provider and build boundaries, then uses the
-existing no-clobber quickstart path. The saved plan is evidence rather than
-execution authority: Loki recomputes and displays the current estimate before
-starting. `--json` requires `--dry-run`; invalid input or estimator failure
-writes no JSON, and preview still exits before provider discovery, file writes,
-or build execution.
-
-Or go straight at it:
-
-```bash
-loki quick "build a landing page with a signup form"     # one-shot task
-loki start prd.md                                        # build from a spec you wrote
-loki modernize heal ./your-repo --assess                 # existing codebase, read-only
-```
-
 
 ## Try it first, without installing
 
@@ -346,121 +248,7 @@ Headline: VERIFIED WITH GAPS
 | Cost          | $10.3218                                 |
 ```
 
-**"WITH GAPS" is the point.** Build was not run, security has findings, and the
-receipt says so on its own front page. Recompute the diff hash yourself and
-check it matches -- you are not asked to trust the agent's self-report.
-
-## How the legacy engine works
-
-Drop a spec: a PRD, GitHub issue, OpenAPI/JSON/YAML, or a one-line brief. Loki Mode classifies complexity (`run.sh:detect_complexity()`), selects reviewers from a specialist pool (`agents/types.json` ships the role definitions; 10 are keyword-scored by the review selector at `run.sh:FOCUS_KEYWORDS`, alongside the mandatory reviewers, and the rest are role descriptions in `references/agents.md` that the orchestrator adopts per phase rather than separate processes), with a blind review council and optional git-worktree streams on Claude Code, sequential on most other providers, and runs autonomous RARV cycles (Reason, Act, Reflect, Verify; see `run.sh:run_autonomous()`) with 8 quality gates (see `skills/quality-gates.md`). Code is not "done" until it passes automated verification. Output is a Git repo with source, tests, configs and audit logs.
-
-**Why verified completion matters.** Self-reported completion is the failure users actually hit: the agent says it is done and the work is not. Loki treats "done" as a claim to be checked. [docs/EVALUATING.md](docs/EVALUATING.md) puts a runnable command next to every claim we make, and states plainly what we do not have (no enterprise case studies, no independent benchmark placement, and generation is not air-gapped). `bash tests/test-competitor-verify-surface.sh` reruns our check of which local agent CLIs expose a command that verifies their own output.
-
-## Already have a codebase? Start read-only.
-
-Most agents are built to create new apps. The harder, more valuable problem is
-the ten-year-old repo that pays the bills. Loki works on both, and on an
-existing codebase it starts by **changing nothing**:
-
-```bash
-loki modernize heal ./your-repo --assess          # read-only. no writes, no commits.
-loki modernize heal ./your-repo --assess --json   # same, machine-readable
-```
-
-You get a modernization readiness report: language mix, a 4-level maturity
-rating, technical-debt signals (test coverage, TODO density, oversized files,
-dependency staleness), and a **ranked list of where to start** -- ordered by
-blast radius, so the first change is the one least likely to break something.
-
-Then, if you want it to act:
-
-```bash
-loki modernize heal ./your-repo --strict          # block ALL behavioral change without approval
-loki modernize heal ./your-repo --phase archaeology   # extract knowledge only
-loki modernize heal ./your-repo --compliance healthcare   # preset flag: healthcare, fintech or government (not a certification)
-```
-
-The healing pipeline runs in phases -- archaeology, stabilize, isolate,
-modernize, validate -- and the validate phase checks **behavioral equivalence
-against the pre-change baseline**, not just that the tests are green. Friction
-points (the weird code that exists for a reason nobody remembers) are cataloged
-before anything touches them, because in a legacy system the strange code is
-usually load-bearing.
-
-## The Evidence Receipt: don't trust the agent, check it
-
-Every coding agent tells you it finished. Loki hands you something you can
-check yourself.
-
-**We are not the only tool that checks its own work, and you should be
-suspicious of anyone who claims to be.** Lovable runs a security scan on every
-publish and can block the publish outright. Claude Code's review has a step that
-checks findings against actual code behavior. Replit says its agent tests its
-own work.
-
-The difference is what you are left holding. Their output lives in their
-dashboard: a findings count in a dialog, a check run that by design never blocks
-a merge. Ours is a **file**. It is bound to a specific diff by `diff_sha256`, it
-records what was NOT proven as prominently as what was, and someone who has
-never installed Loki can re-verify it from the repository alone. Commit it,
-attach it to the PR, hand it to an auditor.
-
-Portable, diff-bound, and honest about its gaps -- that is the claim, and it is
-the one worth checking.
-
-Each run writes a receipt to `.loki/proofs/<run_id>/` that separates
-**deterministic FACTS** (the git diff with base and head SHAs plus a
-`diff_sha256`, the test command and its exit code, the build command and its
-exit code, each gate verdict) from **AI ASSESSMENTS** (the council verdict,
-labeled as judgment, never as proof). The headline is computed from the facts
-alone:
-
-| Headline | Means |
-|---|---|
-| VERIFIED | tests ran a real command and exited 0, diff non-empty, nothing skipped |
-| VERIFIED WITH GAPS | each gap listed by name |
-| NOT VERIFIED | a check ran and failed |
-
-```bash
-loki proof list            # every receipt from this project
-loki proof show <id>       # the facts, the assessments, and the headline
-loki proof verify <id>     # re-hash the receipt and re-derive the diff
-```
-
-`loki proof verify` exits 0 clean, 1 on tamper or drift, 2 when it could not check
-(full table: [docs/exit-codes.md](docs/exit-codes.md)). Receipts are attached
-to pull requests automatically (`LOKI_PROVEN_PR=0` to opt out), so a reviewer
-sees the evidence next to the code.
-
-**What the receipt does NOT claim.** On the unsigned path the generator is
-trusted: someone who rewrites both the facts and the headline into a mutually
-consistent lie and recomputes the hash will still pass verification. That is
-defense-in-depth, not non-forgeability, and neutral non-forgeability needs the
-signed record. We tested for exactly this and locked the limitation into the
-suite (`tests/test-proof-forgery-defense.sh`), and in v7.111.0 we removed our
-own earlier "non-forgeable" claim once we found it was false on that path. An
-honest boundary you can verify beats a marketing claim you cannot.
-
-To close that gap, receipts are signed automatically with an Ed25519 key
-generated on first run (or your own via `LOKI_RECEIPT_SIGNING_KEY_FILE`; this needs the
-Python `cryptography` package, otherwise the receipt stays unsigned). See [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
-
-## What the legacy engine guarantees
-
-- **Verified completion** - the evidence gate (`skills/quality-gates.md`) refuses a "done" claim on an empty git diff against the run-start commit, blocks completion when tests run red, blocks when a serveable app is confirmed unhealthy (opt out `LOKI_EVIDENCE_BOOT_GATE=0`) or a credential is detected in the changed files (opt out `LOKI_EVIDENCE_SECRET_GATE=0`).
-- **An honest checklist verifier** - each completion checklist item is checked deterministically before the completion council accepts "done". A check that cannot be established is reported as inconclusive (pending), never as a false pass or a false failure. `rc == 0` alone is not a pass: a test check goes green only on a real "N passed" signal from the runner.
-- **Quality gates and review** - 8 quality gates (`skills/quality-gates.md`), blind 3-reviewer code review (`run.sh:run_code_review()`), anti-sycophancy checks.
-- **Standalone verification: `loki verify`** - runs the deterministic gates (build, tests, static analysis, secret scan, dependency audit) against any branch or PR diff, including code written by other agents or humans. Exit codes 0 VERIFIED, 1 CONCERNS, 2 BLOCKED, 3 verifier error; machine-readable evidence at `.loki/verify/evidence.json`. Inconclusive evidence is reported as CONCERNS; see [docs/exit-codes.md](docs/exit-codes.md) for the known gaps, including `--fast`, which can exit 0 when nothing was scanned.
-- **Living spec and pre-build interrogation** - `loki spec` locks a spec and detects drift; `loki grill` runs a Devil's-Advocate interrogation of the spec before you build.
-- **Confidence is not evidence** - when the agent's self-reported confidence spikes to near-certainty, Loki forces an extra verification pass (opt out `LOKI_CONFIDENCE_SPIKE=0`).
-- **Stops paying for failures that cannot succeed** - a positively identified permanent failure (bad credentials, unknown model, exhausted quota) exits instead of burning the retry budget; an unrecognized error still retries (opt out `LOKI_SMART_RETRY=0`).
-- **Cross-project memory** - episodic, semantic and procedural memory with optional vector search (`memory/engine.py`).
-- **Guided first build** - `loki quickstart` quotes the real cost and time estimate before anything is spent. `loki preview` prints the running app URL.
-- **MCP server** - 36 tools plus 3 resources and 2 prompts (`mcp/server.py`, magic tools from `mcp/magic_tools.py`, the managed-memory tool from `mcp/managed_tools.py`). Of the 36, 35 are always available; `loki_memory_redact` only succeeds when `LOKI_MANAGED_AGENTS=true` and `LOKI_MANAGED_MEMORY=true`. Launch with `loki mcp`.
-- **Legacy system healing** - `loki modernize heal` runs archaeology, stabilize, isolate, modernize and validate phases (`skills/healing.md`).
-- **Self-hosted and source-available (BUSL-1.1)** - your keys, your infrastructure. Free for personal, internal and academic use.
-
----
+**"WITH GAPS" is the point.** Build was not run, security has findings, and the receipt says so on its own front page. Recompute the diff hash yourself and check it matches.
 
 ## Loki does not lie about "done"
 
@@ -492,81 +280,6 @@ The receipt's headline is computed only from the facts:
 This is honesty-of-done, not a claim of perfection. The receipt proves the
 completion claim is backed by deterministic evidence and is independently
 re-checkable; it does not claim the generated code is bug-free.
-
-<details>
-<summary><strong>Verify a receipt yourself -- <code>loki proof</code> commands, tamper/drift checks, proven PRs (advanced)</strong></summary>
-
-### Verify it yourself
-
-Receipts are written to `.loki/proofs/<run_id>/` automatically at run completion
-(opt out with `LOKI_PROOF=0`). Inspect and re-check them with `loki proof`
-(aliased as `loki receipt`):
-
-```bash
-loki proof list              # every receipt: run id, time, council verdict, cost, files
-loki proof show <id>         # the full proof.json (facts, assessments, honesty)
-loki proof verify <id>       # re-check the receipt against the repo (exit 0 clean, 1 tamper/drift, 2 could not check)
-```
-
-`loki proof verify` does two independent checks and prints the result as JSON:
-
-- **Tamper check** -- recomputes the receipt's integrity hash and compares it to
-  the recorded one. If anyone edited the receipt after it was written, `hash_ok`
-  is `false`.
-- **Drift check** -- re-runs the diff from the recorded base SHA against the
-  current repo and compares the file/insertion/deletion counts and `diff_sha256`
-  to what the receipt recorded. If the repo no longer matches, `diff_drift` is
-  `true`.
-
-A clean receipt prints `"ok": true` and exits 0. A tampered or drifted receipt
-exits 1. When a check cannot run (for example a receipt with no recorded base
-SHA), the verifier reports it as unverifiable rather than passing it silently.
-
-```json
-{
-  "hash_ok": true,
-  "diff_drift": false,
-  "gpg_ok": "n/a",
-  "degraded": [],
-  "reason": "",
-  "ok": true
-}
-```
-
-You can share a receipt as a self-contained HTML page (`loki proof open <id>`),
-or publish it as a GitHub Gist with `loki proof share <id>` (opt-in; the page is
-redacted before it leaves your machine). Receipts carry an Ed25519
-attestation (`LOKI_RECEIPT_SIGNING_KEY_FILE` to use your own key).
-
-### Proven PR
-
-When Loki opens a pull request, the PR body includes the Evidence Receipt
-summary, so a reviewer does not have to take the agent on faith. It shows the
-honest verdict (VERIFIED / VERIFIED WITH GAPS / NOT VERIFIED), the key facts
-(diff hash, tests, secure-gate, cost), and a "verify this yourself" line:
-`loki proof verify <id>` against the recorded base SHA. A green claim appears
-only when the receipt's own headline is VERIFIED. This is on by default whenever
-Loki opens or advises a PR; opt out with `LOKI_PROVEN_PR=0`.
-
-For a review-before-publish workflow, preparation and GitHub mutation are two
-explicit steps:
-
-```bash
-loki start owner/repo#42 --prepare-pr  # builds and writes exact title/body locally
-loki ship --publish                    # pushes that issue branch and opens the PR
-```
-
-The second command consumes `.loki/state/pr-title.txt` and
-`.loki/state/pr-body.md` byte-for-byte. Plain `loki ship`, previews, and default
-start paths remain non-publishing. A failed PR creation preserves both files and
-prints the exact remote-branch rollback command.
-
-An optional advisory status check (`loki: verified-completion`) maps the verdict
-to a GitHub check-run. It is opt-in (`LOKI_PROVEN_PR_CHECK=1`) and can never block
-a merge on its own. To make verified-completion blocking, add it as a required
-status check in your repository's branch-protection settings.
-
-</details>
 
 <details>
 <summary><b>Setup details: providers, other models, what loki doctor checks</b></summary>
@@ -701,11 +414,11 @@ See the [Installation Guide](docs/INSTALLATION.md) for the long form.
 <details>
 <summary><strong>Runtime architecture: dual Bash/Bun runtime and the rollback flag</strong></summary>
 
-Loki Mode runs a dual runtime by design: the Bash engine is the stable core (the autonomous loop, quality gates and completion council), and newer product surfaces are TypeScript/Bun modules that wrap it. Bash support is not going away.
+Loki Mode v10 runs on the Bun runtime by default, which hosts the autonomous build engine. Bash is used for system integration where needed.
 
-- Commands routed to the Bun runtime when `bun` is on `PATH` (the router is `bin/loki`): `version`, `--version`, `-v`, `status`, `stats`, `doctor`, `provider`, `memory`, `rollback`, `kpis`, `trust`, `proof`, `receipt`, `wiki`, `crash`, `internal`, and `report kpis`. Every other command runs on the Bash CLI (`autonomy/loki`), including the autonomous `loki start` loop (`autonomy/run.sh`), unless `LOKI_SDK_LOOP` or `LOKI_SDK_MODE=full` selects the Bun loop.
-- If `bun` is not on `PATH`, the shim falls through to Bash silently.
-- Force every command onto the Bash path with `LOKI_LEGACY_BASH=1 loki <cmd>`. This is a rollback flag for the Bun route; it is not the same as the legacy engine switch.
+- Commands that require Bun: `version`, `--version`, `-v`, `status`, `stats`, `doctor`, `provider`, `memory`, `rollback`, `kpis`, `trust`, `wiki`, `crash`, `internal`, and `report kpis`.
+- If `bun` is not on `PATH`, commands exit 1 with installation instructions.
+- For troubleshooting, force commands onto alternate paths with environment variables; see `loki doctor` for available options.
 
 See [UPGRADING.md](UPGRADING.md) and [ADR-001: Runtime Migration](docs/architecture/ADR-001-runtime-migration.md).
 
@@ -735,14 +448,6 @@ All formats land in the same RARV pipeline and pass the same 8 quality gates (`s
 </details>
 
 ---
-
-## Internal architecture (legacy engine)
-
-- **RARV cycle** - every iteration: Reason (read state), Act (execute, commit), Reflect (update context), Verify (run tests, check spec). Failures trigger self-correction. [Core Workflow](references/core-workflow.md)
-- **8 quality gates** - static analysis, test suite (pass/fail), blind 3-reviewer code review with severity blocking, anti-sycophancy Devil's Advocate, mock-integrity detection, test-mutation detection, documentation coverage, and Magic Modules debate. Backward compatibility is a conditional healing-mode auditor, not one of the 8. [Quality Gates](skills/quality-gates.md)
-- **Memory** - episodic (interaction traces), semantic (generalized patterns), procedural (learned skills). Vector search optional. [Memory Architecture](references/memory-system.md)
-- **Dashboard** - real-time monitoring, task queue, WebSocket streaming and a Live App Preview. Starts at `localhost:57374`. [Dashboard Guide](docs/dashboard-guide.md)
-- **Enterprise layer** - TLS, OIDC bearer-token validation (the foundation for SSO; browser SAML login is roadmap), scoped RBAC, OTEL tracing and audit logs, activated via env vars. See [Enterprise Identity Roadmap](docs/ENTERPRISE-IDENTITY-ROADMAP.md) and [Enterprise Guide](docs/enterprise/architecture.md).
 
 For how Loki compares with other tools, see [docs/COMPARISON.md](docs/COMPARISON.md) and [docs/EVALUATING.md](docs/EVALUATING.md).
 
