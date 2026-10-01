@@ -7,6 +7,7 @@
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
+import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -184,6 +185,7 @@ describe("engine10 seal", () => {
     const out: string[] = [];
     const w = process.stdout.write.bind(process.stdout);
     process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    sealedLog(dirname(path), r.receipt_sha256);
     try { expect(await verifyMain(["r1"], { runsRoot: dirname(ctx.runDir) })).toBe(0); } finally { process.stdout.write = w; }
     expect(out.join("")).toContain("attestation: VERIFIED");
     for (const text of [readFileSync(path, "utf8"), readFileSync(join(ctx.runDir, "receipt.md"), "utf8"), JSON.stringify(events), out.join("")]) expect(text).not.toContain(secret);
@@ -209,6 +211,7 @@ describe("engine10 seal", () => {
     const { ctx } = ctxFor(repo, base);
     await commitStage.run(ctx, new AbortController().signal);
     const path = (await sealStage.run(ctx, new AbortController().signal)).data.receipt_path as string;
+    sealedLog(dirname(path), (JSON.parse(readFileSync(path, "utf8")) as Receipt).receipt_sha256);
     // Rotate: a new active key, the old one retired.
     const rotated = join(root, "rot", "new.pem");
     writeFileSync(rotated, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }) as string, { mode: 0o600 });

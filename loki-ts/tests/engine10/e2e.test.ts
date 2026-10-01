@@ -151,7 +151,7 @@ describe("engine10 e2e (stub claude)", () => {
     const seqs = r.events.map((e) => e.seq);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
     expect(r.events[0]!.type).toBe("run.started");
-    expect(r.events.at(-1)!.type).toBe("run.completed");
+    expect(r.events.at(-2)!.type).toBe("run.completed");
     expect(r.events.some((e) => e.type === "receipt.sealed")).toBe(true);
 
     const runId = r.runDir.split("/").pop();
@@ -205,7 +205,7 @@ describe("engine10 e2e (stub claude)", () => {
     expect(opened.map((e) => e.data.url)).toEqual([`local://${r.origin}#loki/${runId}`]);
     expect(git(r.origin, "rev-parse", `refs/heads/loki/${runId}`)).toBe(git(r.repo, "rev-parse", "HEAD"));
     expect(JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8")).repo).toBe(r.origin);
-    const done = r.events.at(-1)!;
+    const done = r.events.at(-2)!;
     expect(done.type).toBe("run.completed");
     expect(done.data.not_proven).toContain("commit status loki/deep-verify not set (local origin)");
     expect(r.out).toContain(`PR:         local://${r.origin}#loki/${runId}`);

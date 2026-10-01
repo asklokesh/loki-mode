@@ -4,7 +4,7 @@
 // against the active + retired keys), UNSIGNED (jwt null). Node crypto only, no python (A-121).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createHash, createPublicKey, verify } from "node:crypto";
+import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
@@ -23,6 +23,14 @@ interface AttestationOutcome {
   status: "verified" | "tampered" | "unchecked";
   reason: string | null;
 }
+/** The public key for a kid: the local key's public half, or a retired one from LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Never creates a key. */
+function pubFor(kid: unknown): KeyObject | undefined {
+  const active = loadSigningKey(false);
+  const pubs = (process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
+    try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
+  });
+  return [...(active ? [createPublicKey(active)] : []), ...pubs].find((k) => kidOf(k) === kid);
+}
 /** Native EdDSA check against the local key's public half plus LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Selection is by kid; an unknown kid is refused, never tried against every key. */
 function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome {
   const bad = (reason: string): AttestationOutcome => ({ status: "tampered", reason });
@@ -36,11 +44,7 @@ function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome
     return bad("malformed token");
   }
   if (header?.alg !== "EdDSA") return bad(`unexpected alg: ${String(header?.alg)}`);
-  const active = loadSigningKey(false);
-  const pubs = (process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
-    try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
-  });
-  const pub = [...(active ? [createPublicKey(active)] : []), ...pubs].find((k) => kidOf(k) === header.kid);
+  const pub = pubFor(header.kid);
   // An unknown kid (other machine, CI, after a rotation) cannot be checked here; that is not evidence of tampering.
   if (!pub) return { status: "unchecked", reason: `no key for kid ${String(header.kid)} on this machine (set LOKI_RECEIPT_SIGNING_KEY_FILE or LOKI_RECEIPT_RETIRED_PUBKEYS)` };
   if (!verify(null, Buffer.from(`${h}.${p}`), pub, Buffer.from(s, "base64url"))) return bad("signature does not verify");
@@ -48,7 +52,7 @@ function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome
 }
 /** A-117: the worker seals before the supervisor can detect a log tamper, so the receipt alone cannot say so. Bind it to events.jsonl: the log must exist, hold a
  *  prefix hashing to receipt.events_sha256, contiguous seq from 0 and no tamper.detected. Removing the evidence breaks these too.
- *  ponytail: a forger who rewrites the whole post-seal tail consistently is not caught; only a signature made after the run could close that. */
+ *  Deleting the post-seal tail is closed by checkLogSeal (signed receipts); an unsigned receipt carries no key, so it stays exposed to that. */
 function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): string | null {
   const bound = receipt["events_sha256"];
   if (typeof bound !== "string" || bound === createHash("sha256").digest("hex")) return null; // no log bound at seal time (a real run writes run.started first; the receipt hash covers this field)
@@ -60,6 +64,19 @@ function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): s
   const h = createHash("sha256"); // the worker hashed the log as it stood at seal; the supervisor may lag, so any line-boundary prefix may match
   for (const l of lines) { if (h.copy().digest("hex") === bound) return null; h.update(l + "\n"); }
   return h.digest("hex") === bound ? null : "events.jsonl does not match the hash recorded at seal";
+}
+/** A-117: after run.completed the supervisor appends a log.sealed line, signed over the sha256 of every earlier byte plus a tampered flag. A signed receipt needs it
+ *  right after run.completed (deep verify may append later events). A sealed receipt with no run.completed is an interrupted run: UNCHECKED, not TAMPERED. */
+function checkLogSeal(receiptPath: string, hash: string, kid: unknown): { verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null {
+  const path = join(dirname(receiptPath), "events.jsonl"), events = readEvents(path), done = events.findIndex((e) => e.type === "run.completed");
+  if (!events.some((e) => e.type === "receipt.sealed" && e.data["receipt_sha256"] === hash)) return { verdict: "TAMPERED", reason: "events.jsonl has no receipt.sealed event for this receipt" };
+  if (done < 0) return { verdict: "UNCHECKED", reason: "run did not complete (no run.completed in events.jsonl)" };
+  const seal = events[done + 1], d = seal?.type === "log.sealed" ? seal.data : null;
+  if (!d) return { verdict: "TAMPERED", reason: "events.jsonl has no signed log.sealed line after run.completed" };
+  const lines = readFileSync(path, "utf8").split("\n").filter((l) => l.trim() !== ""), sha = createHash("sha256").update(lines.slice(0, done + 1).join("\n") + "\n").digest("hex");
+  const pub = d["kid"] === kid ? pubFor(kid) : undefined; // the line must be signed by the key that signed the receipt
+  if (!pub || d["events_sha256"] !== sha || d["tampered"] !== false || typeof d["sig"] !== "string" || !verify(null, Buffer.from(`${sha}:false`), pub, Buffer.from(d["sig"], "base64url"))) return { verdict: "TAMPERED", reason: "log.sealed line is invalid, forged, or records a tamper" };
+  return null;
 }
 export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}): Promise<VerifyResult> {
   if (!existsSync(receiptPath)) {
@@ -90,6 +107,8 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   const outcome = checkAttestation(jwt, computed);
   if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
+  const seal = checkLogSeal(receiptPath, computed, (JSON.parse(Buffer.from(jwt.split(".")[0]!, "base64url").toString()) as { kid?: unknown }).kid);
+  if (seal) return { verdict: seal.verdict, reasons: [seal.reason] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }
 function latestRunId(runsRoot: string): string | null {
