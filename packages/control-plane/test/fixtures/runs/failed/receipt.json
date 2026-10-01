@@ -1,0 +1,54 @@
+{
+  "schema": "loki.v10.receipt/1",
+  "run_id": "e10-20261001T155510Z-2b3f",
+  "task": {
+    "source": "text",
+    "sha256": "982a130e3cb8ef5642b3f3fa83f9e564126fba16a73537bb1251b4328a2fa3b0"
+  },
+  "repo": "",
+  "base_sha": "ecf9aaf87d44c2b3c952f65e837360969e10b07b",
+  "head_sha": "ecf9aaf87d44c2b3c952f65e837360969e10b07b",
+  "tree": "c98045c7173d68a1bbe96987eecc6d8a01f6bdc9",
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "wall": {
+    "files": [],
+    "passed": null
+  },
+  "checks": [],
+  "not_proven": [
+    "full suite",
+    "app boot",
+    "council",
+    "security scan",
+    "repo not recorded by intake",
+    "cost unmetered (CLI invoker; recorded as 0)"
+  ],
+  "verdict": "FAILED",
+  "evidence": [],
+  "cost": {
+    "usd": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "measured_sessions": 3,
+    "total_sessions": 3,
+    "partial_usd": 0,
+    "source": "cli-invoker-unmetered"
+  },
+  "time": {
+    "wall_s": 0.186,
+    "stages": {
+      "plan": 0.098,
+      "implement": 0.088
+    }
+  },
+  "provider": "claude",
+  "model": "sonnet",
+  "resumed": false,
+  "events_sha256": "a340e0f04cafc4b8c0a22973ba9c62a33942422d7becb523ead88c07a2c859e1",
+  "log_seal": true,
+  "receipt_sha256": "6ee6c71e2e8bfb6f74e03811c168ca5420291abcd9b7e6433a2dcf7456d615c9",
+  "verification": {
+    "jwt": "redacted-fixture-signature",
+    "kid": "Sy4aUtvKTkFBOOXepd5NqH6Er9sAoPJn8yS-i5KWhj4"
+  }
+}

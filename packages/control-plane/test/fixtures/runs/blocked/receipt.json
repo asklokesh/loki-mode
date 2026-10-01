@@ -1,0 +1,55 @@
+{
+  "schema": "loki.v10.receipt/1",
+  "run_id": "e10-20261001T155511Z-4420",
+  "task": {
+    "source": "text",
+    "sha256": "982a130e3cb8ef5642b3f3fa83f9e564126fba16a73537bb1251b4328a2fa3b0"
+  },
+  "repo": "",
+  "base_sha": "978bb1c66d1a01ec9d87b602241a13ed3ea0aa9a",
+  "head_sha": "978bb1c66d1a01ec9d87b602241a13ed3ea0aa9a",
+  "tree": "c98045c7173d68a1bbe96987eecc6d8a01f6bdc9",
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "wall": {
+    "files": [],
+    "passed": null
+  },
+  "checks": [],
+  "not_proven": [
+    "full suite",
+    "app boot",
+    "council",
+    "security scan",
+    "repo not recorded by intake",
+    "cost unmetered (CLI invoker; recorded as 0)"
+  ],
+  "verdict": "SPEC_CONFLICT",
+  "spec_conflict_reason": "the task contradicts calc.ts: add must stay pure but the task asks for a global counter",
+  "evidence": [],
+  "cost": {
+    "usd": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "measured_sessions": 3,
+    "total_sessions": 3,
+    "partial_usd": 0,
+    "source": "cli-invoker-unmetered"
+  },
+  "time": {
+    "wall_s": 0.179,
+    "stages": {
+      "plan": 0.1,
+      "implement": 0.079
+    }
+  },
+  "provider": "claude",
+  "model": "sonnet",
+  "resumed": false,
+  "events_sha256": "e707fae5cfe8b4f922f09cf6de342be0a89311651e4cd7e5bf3930de7aca702f",
+  "log_seal": true,
+  "receipt_sha256": "a24849f507383f7205885f48da787503055429309a6c206177568e8ab67b2a5a",
+  "verification": {
+    "jwt": "redacted-fixture-signature",
+    "kid": "mXPZ1ZDIoyMb3fKATTO1XyFvPQ0QzoG-BlnSg30SH6A"
+  }
+}

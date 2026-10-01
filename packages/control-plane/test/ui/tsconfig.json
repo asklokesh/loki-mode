@@ -1,0 +1,7 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext", "moduleResolution": "bundler", "jsx": "react-jsx", "strict": true, "noEmit": true, "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": { "react": ["../../ui/node_modules/react"], "react/*": ["../../ui/node_modules/react/*"], "@testing-library/react": ["../../ui/node_modules/@testing-library/react"], "@happy-dom/global-registrator": ["../../ui/node_modules/@happy-dom/global-registrator"] }
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "source_id": "corpus0000000000",
+  "run_id": "e10-20261001T155510Z-2b3f",
+  "origin_repo": null,
+  "issue_ref": null,
+  "task_source": "text",
+  "provider": "claude",
+  "model": "sonnet",
+  "started_at": "2026-10-01T15:55:10.554Z",
+  "ended_at": "2026-10-01T15:55:11.056Z",
+  "verdict": "FAILED",
+  "pr_url": null,
+  "pr_draft": null,
+  "cost_usd": 0,
+  "partial_usd": 0,
+  "measured_sessions": 3,
+  "total_sessions": 3,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "wall_s": 0.522,
+  "last_seq": 28,
+  "last_event_at": "2026-10-01T15:55:11.057Z",
+  "tampered": false,
+  "conflict": false,
+  "stages": [
+    {
+      "stage": "intake",
+      "started_at": "2026-10-01T15:55:10.626Z",
+      "ended_at": "2026-10-01T15:55:10.715Z",
+      "status": "completed"
+    },
+    {
+      "stage": "wall",
+      "started_at": "2026-10-01T15:55:10.718Z",
+      "ended_at": "2026-10-01T15:55:10.821Z",
+      "status": "completed"
+    },
+    {
+      "stage": "plan",
+      "started_at": "2026-10-01T15:55:10.721Z",
+      "ended_at": "2026-10-01T15:55:10.820Z",
+      "status": "completed"
+    },
+    {
+      "stage": "implement",
+      "started_at": "2026-10-01T15:55:10.822Z",
+      "ended_at": "2026-10-01T15:55:10.911Z",
+      "status": "completed"
+    },
+    {
+      "stage": "verify",
+      "started_at": "2026-10-01T15:55:10.911Z",
+      "ended_at": "2026-10-01T15:55:10.933Z",
+      "status": "failed"
+    },
+    {
+      "stage": "commit",
+      "started_at": "2026-10-01T15:55:10.934Z",
+      "ended_at": "2026-10-01T15:55:10.978Z",
+      "status": "completed"
+    },
+    {
+      "stage": "seal",
+      "started_at": "2026-10-01T15:55:10.978Z",
+      "ended_at": "2026-10-01T15:55:11.010Z",
+      "status": "completed"
+    }
+  ],
+  "stages_completed": [
+    "intake",
+    "plan",
+    "wall",
+    "implement",
+    "commit",
+    "seal"
+  ],
+  "receipt": {
+    "sha256": "6ee6c71e2e8bfb6f74e03811c168ca5420291abcd9b7e6433a2dcf7456d615c9",
+    "signed": true,
+    "verdict": "FAILED",
+    "path": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-run-cp00-tfHB2T/failed/repo/.loki/runs/e10-20261001T155510Z-2b3f/receipt.json"
+  },
+  "not_proven": [
+    "full suite",
+    "app boot",
+    "council",
+    "security scan",
+    "repo not recorded by intake",
+    "cost unmetered (CLI invoker; recorded as 0)"
+  ]
+}

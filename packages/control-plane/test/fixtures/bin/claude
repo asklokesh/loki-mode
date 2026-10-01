@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# CP-00 stub claude CLI. Extra modes for the corpus; every other mode (done, already, tamper, nochange)
+# delegates to the engine10 e2e stub (loki-ts/tests/engine10/fixtures/e2e/bin/claude).
+#   spec:     implement session reports LOKI_SPEC_CONFLICT (BLOCKED)
+#   slow:     implement session sleeps past a tiny LOKI_E10_CAP_S (cap.hit, BUDGET_STOP)
+#   unpriced: implement edits like "done" but writes a result-cost file with no dollar figure
+#   docs:     implement adds NOTES.md only, so no relevant test exists (checks empty, PARTIAL)
+set -u
+E2E="$(cd "$(dirname "$0")/../../../../../loki-ts/tests/engine10/fixtures/e2e/bin" && pwd)/claude"
+prompt=""; args=("$@")
+while [ $# -gt 0 ]; do if [ "$1" = "-p" ]; then prompt="${2:-}"; shift; fi; shift; done
+case "$prompt" in
+  *"Loki 10 implement stage"*)
+    case "${CP_STUB_MODE:-}" in
+      spec) echo "LOKI_SPEC_CONFLICT: the task contradicts calc.ts: add must stay pure but the task asks for a global counter"; exit 0 ;;
+      slow) sleep 20; exit 0 ;;
+      unpriced)
+        mkdir -p .loki/metrics
+        printf '{"input_tokens":10,"output_tokens":5,"model":"sonnet"}' > ".loki/metrics/result-cost-${LOKI_ITERATION}.json"
+        E2E_STUB_MODE=done exec "$E2E" "${args[@]}" ;;
+      docs) printf "# Notes\n\nA tiny calculator.\n" > NOTES.md; echo "LOKI_DONE"; exit 0 ;;
+    esac ;;
+esac
+exec "$E2E" "${args[@]}"

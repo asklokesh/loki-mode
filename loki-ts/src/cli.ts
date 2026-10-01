@@ -34,6 +34,8 @@ Phase 2 ported (Bun-native, fast):
                          (subcmds: list | show <id> | open <id> | share <id>)
   wiki <subcmd>          Auto-generated, cited codebase wiki + Q&A
                          (subcmds: generate | show [section] | ask "<question>")
+  control <subcmd>       Control plane (preview, needs LOKI_CONTROL=1)
+                         (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
 
 All other commands fall through to the bash CLI (autonomy/loki).
 Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
@@ -203,6 +205,13 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // when bun is installed (see loki-ts/tests/commands/wiki.test.ts).
       const { runWiki } = await import("./commands/wiki.ts");
       return runWiki(rest);
+    }
+
+    case "control": {
+      // D56 control plane (preview, gated by LOKI_CONTROL=1 inside runControl).
+      // bash cmd_control (autonomy/loki) is the LOKI_LEGACY_BASH fallback.
+      const { runControl } = await import("./commands/control.ts");
+      return runControl(rest);
     }
 
     case "internal": {

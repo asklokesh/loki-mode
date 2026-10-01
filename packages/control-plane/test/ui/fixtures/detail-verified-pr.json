@@ -1,0 +1,92 @@
+{
+  "source_id": "corpus0000000000",
+  "run_id": "e10-20261001T155508Z-d4b7",
+  "origin_repo": null,
+  "issue_ref": null,
+  "task_source": "text",
+  "provider": "claude",
+  "model": "sonnet",
+  "started_at": "2026-10-01T15:55:08.212Z",
+  "ended_at": "2026-10-01T15:55:09.108Z",
+  "verdict": "VERIFIED",
+  "pr_url": "local:///var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-run-cp00-tfHB2T/verified-pr/origin.git#loki/e10-20261001T155508Z-d4b7",
+  "pr_draft": false,
+  "cost_usd": 0,
+  "partial_usd": 0,
+  "measured_sessions": 3,
+  "total_sessions": 3,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "wall_s": 0.925,
+  "last_seq": 31,
+  "last_event_at": "2026-10-01T15:55:09.109Z",
+  "tampered": false,
+  "conflict": false,
+  "stages": [
+    {
+      "stage": "intake",
+      "started_at": "2026-10-01T15:55:08.283Z",
+      "ended_at": "2026-10-01T15:55:08.367Z",
+      "status": "completed"
+    },
+    {
+      "stage": "wall",
+      "started_at": "2026-10-01T15:55:08.370Z",
+      "ended_at": "2026-10-01T15:55:08.471Z",
+      "status": "completed"
+    },
+    {
+      "stage": "plan",
+      "started_at": "2026-10-01T15:55:08.372Z",
+      "ended_at": "2026-10-01T15:55:08.470Z",
+      "status": "completed"
+    },
+    {
+      "stage": "implement",
+      "started_at": "2026-10-01T15:55:08.472Z",
+      "ended_at": "2026-10-01T15:55:08.561Z",
+      "status": "completed"
+    },
+    {
+      "stage": "verify",
+      "started_at": "2026-10-01T15:55:08.561Z",
+      "ended_at": "2026-10-01T15:55:08.679Z",
+      "status": "completed"
+    },
+    {
+      "stage": "commit",
+      "started_at": "2026-10-01T15:55:08.679Z",
+      "ended_at": "2026-10-01T15:55:08.757Z",
+      "status": "completed"
+    },
+    {
+      "stage": "seal",
+      "started_at": "2026-10-01T15:55:08.758Z",
+      "ended_at": "2026-10-01T15:55:08.791Z",
+      "status": "completed"
+    }
+  ],
+  "stages_completed": [
+    "intake",
+    "plan",
+    "wall",
+    "implement",
+    "verify",
+    "commit",
+    "seal"
+  ],
+  "receipt": {
+    "sha256": "04e777f6b9b3c854b5d1329ec1f8d96ee8ff78ac7aa432de63fbcf0d323b729e",
+    "signed": true,
+    "verdict": "VERIFIED",
+    "path": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-run-cp00-tfHB2T/verified-pr/repo/.loki/runs/e10-20261001T155508Z-d4b7/receipt.json"
+  },
+  "not_proven": [
+    "full suite",
+    "app boot",
+    "council",
+    "security scan",
+    "cost unmetered (CLI invoker; recorded as 0)",
+    "commit status loki/deep-verify not set (local origin)"
+  ]
+}

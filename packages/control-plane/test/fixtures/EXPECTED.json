@@ -1,0 +1,231 @@
+{
+  "run_count": 8,
+  "verdict_counts": {
+    "SPEC_CONFLICT": 1,
+    "FAILED": 2,
+    "PARTIAL": 1,
+    "VERIFIED": 4
+  },
+  "runs": {
+    "blocked": {
+      "verdict": "SPEC_CONFLICT",
+      "receipt_verdict": "SPEC_CONFLICT",
+      "tampered": false,
+      "cap_hit": false,
+      "event_count": 29,
+      "stages_completed": [
+        "intake",
+        "plan",
+        "wall",
+        "implement",
+        "commit",
+        "seal"
+      ],
+      "cost_usd": 0,
+      "measured_sessions": 3,
+      "total_sessions": 3,
+      "pr_url": null,
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "repo not recorded by intake",
+        "cost unmetered (CLI invoker; recorded as 0)"
+      ]
+    },
+    "cap-hit": {
+      "verdict": "FAILED",
+      "receipt_verdict": "FAILED",
+      "tampered": false,
+      "cap_hit": true,
+      "event_count": 9,
+      "stages_completed": [
+        "commit",
+        "seal"
+      ],
+      "cost_usd": null,
+      "measured_sessions": 0,
+      "total_sessions": 0,
+      "pr_url": null,
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "task source not recorded by intake",
+        "repo not recorded by intake",
+        "resume state not recorded by intake",
+        "cost not measured (no iteration ids recorded)"
+      ]
+    },
+    "failed": {
+      "verdict": "FAILED",
+      "receipt_verdict": "FAILED",
+      "tampered": false,
+      "cap_hit": false,
+      "event_count": 29,
+      "stages_completed": [
+        "intake",
+        "plan",
+        "wall",
+        "implement",
+        "commit",
+        "seal"
+      ],
+      "cost_usd": 0,
+      "measured_sessions": 3,
+      "total_sessions": 3,
+      "pr_url": null,
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "repo not recorded by intake",
+        "cost unmetered (CLI invoker; recorded as 0)"
+      ]
+    },
+    "partial": {
+      "verdict": "PARTIAL",
+      "receipt_verdict": "PARTIAL",
+      "tampered": false,
+      "cap_hit": false,
+      "event_count": 29,
+      "stages_completed": [
+        "intake",
+        "plan",
+        "wall",
+        "implement",
+        "verify",
+        "commit",
+        "seal"
+      ],
+      "cost_usd": 0,
+      "measured_sessions": 3,
+      "total_sessions": 3,
+      "pr_url": null,
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "repo not recorded by intake",
+        "cost unmetered (CLI invoker; recorded as 0)"
+      ]
+    },
+    "tampered": {
+      "verdict": "VERIFIED",
+      "receipt_verdict": "VERIFIED",
+      "tampered": true,
+      "cap_hit": false,
+      "event_count": 32,
+      "stages_completed": [
+        "intake",
+        "wall",
+        "plan",
+        "implement",
+        "verify",
+        "commit",
+        "seal"
+      ],
+      "cost_usd": 0,
+      "measured_sessions": 0,
+      "total_sessions": 0,
+      "pr_url": null,
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "repo not recorded by intake",
+        "cost unmetered (CLI invoker; recorded as 0)",
+        "event log modified outside the engine"
+      ]
+    },
+    "unpriced": {
+      "verdict": "VERIFIED",
+      "receipt_verdict": "VERIFIED",
+      "tampered": false,
+      "cap_hit": false,
+      "event_count": 30,
+      "stages_completed": [
+        "intake",
+        "plan",
+        "wall",
+        "implement",
+        "verify",
+        "commit",
+        "seal"
+      ],
+      "cost_usd": null,
+      "measured_sessions": 2,
+      "total_sessions": 3,
+      "pr_url": null,
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "repo not recorded by intake",
+        "cost unmetered (CLI invoker; recorded as 0)"
+      ]
+    },
+    "verified": {
+      "verdict": "VERIFIED",
+      "receipt_verdict": "VERIFIED",
+      "tampered": false,
+      "cap_hit": false,
+      "event_count": 30,
+      "stages_completed": [
+        "intake",
+        "plan",
+        "wall",
+        "implement",
+        "verify",
+        "commit",
+        "seal"
+      ],
+      "cost_usd": 0,
+      "measured_sessions": 3,
+      "total_sessions": 3,
+      "pr_url": null,
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "repo not recorded by intake",
+        "cost unmetered (CLI invoker; recorded as 0)"
+      ]
+    },
+    "verified-pr": {
+      "verdict": "VERIFIED",
+      "receipt_verdict": "VERIFIED",
+      "tampered": false,
+      "cap_hit": false,
+      "event_count": 32,
+      "stages_completed": [
+        "intake",
+        "plan",
+        "wall",
+        "implement",
+        "verify",
+        "commit",
+        "seal"
+      ],
+      "cost_usd": 0,
+      "measured_sessions": 3,
+      "total_sessions": 3,
+      "pr_url": "local:///var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-run-cp00-tfHB2T/verified-pr/origin.git#loki/e10-20261001T155508Z-d4b7",
+      "not_proven": [
+        "full suite",
+        "app boot",
+        "council",
+        "security scan",
+        "cost unmetered (CLI invoker; recorded as 0)",
+        "commit status loki/deep-verify not set (local origin)"
+      ]
+    }
+  }
+}

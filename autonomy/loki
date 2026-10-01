@@ -1782,6 +1782,7 @@ show_help() {
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
     echo "  ultracode update verify version voice watch watchdog web welcome why"
     echo "  wiki worktree (wt)"
+    echo "  control (preview, needs LOKI_CONTROL=1)"
     echo ""
     echo "Any command: loki <command> --help"
     echo ""
@@ -21619,7 +21620,7 @@ status stop pause resume monitor watch watchdog dashboard web open preview share
 memory context ctx checkpoint state report kpis cost metrics stats logs otel \
 syslog telemetry crash config provider doctor setup-skill onboard quickstart \
 welcome update self-update rollback failover cluster enterprise remote deploy docker \
-sandbox api mcp magic compound assets export wiki docs explain why audit compliance \
+sandbox api mcp magic compound assets export wiki control docs explain why audit compliance \
 secrets analyze optimize bench ci reset cleanup notify trigger voice sentrux \
 worktree wt projects cp rc trust-metrics serve agent code self_update test help version"
     local best
@@ -22109,6 +22110,9 @@ main() {
             ;;
         wiki)
             cmd_wiki "$@"
+            ;;
+        control)
+            cmd_control "$@"
             ;;
         magic)
             cmd_magic "$@"
@@ -33839,6 +33843,35 @@ cmd_outcomes() {
             ;;
     esac
     LOKI_DIR="${LOKI_DIR:-.loki}" python3 "$lib" "$@"
+}
+
+# loki control -- D56 control plane (preview). The live route is the Bun CLI
+# (loki-ts/src/commands/control.ts); this is the LOKI_LEGACY_BASH / no-shim
+# fallback. It keeps the gate and help in bash and hands the work to Bun.
+cmd_control() {
+    local sub="${1:-}"
+    case "$sub" in
+        ""|-h|--help|help)
+            echo "Usage: loki control <command> [options]   (preview, requires LOKI_CONTROL=1)"
+            echo ""
+            echo "Commands:"
+            echo "  serve [--port N] [--db PATH]   Run the control plane + UI on 127.0.0.1"
+            echo "  backfill [DIR]                 Ship DIR/.loki/runs to the control plane"
+            echo "  status                         Show whether the control plane is reachable"
+            return 0
+            ;;
+    esac
+    if [ "${LOKI_CONTROL:-}" != "1" ]; then
+        echo "loki control is in preview. Enable it with: export LOKI_CONTROL=1"
+        return 0
+    fi
+    local cli="$SKILL_DIR/loki-ts/dist/loki.js"
+    if ! command -v bun >/dev/null 2>&1; then
+        echo "loki control requires bun (https://bun.sh)" >&2
+        return 1
+    fi
+    [ -f "$cli" ] || cli="$SKILL_DIR/loki-ts/src/cli.ts"
+    exec bun "$cli" control "$@"
 }
 
 cmd_wiki() {
