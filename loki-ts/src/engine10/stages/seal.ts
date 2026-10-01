@@ -170,7 +170,7 @@ export function renderReceiptMd(r: Receipt): string {
     "",
     ...(r.evidence.length ? ["### Evidence (already-satisfied)", ...r.evidence.map((e) => `- ${e}`), ""] : []),
     "### NOT PROVEN",
-    ...r.not_proven.map((n) => `- ${n}`),
+    ...r.not_proven.map((n) => `- ${sanitizeReason(n)}`),
     "",
   ].join("\n");
 }
@@ -205,7 +205,7 @@ export const sealStage: Stage = {
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
-    for (const t of weakTests) { notProven.add(`weakened test: ${t}`); const h = { run: 0, skipped: 0 }; /* counts were compared by verify (a mismatch lists "weakened test"); seal only re-confirms the literal-only diff */ for (const n of (verifyNotProven.some((v) => v.startsWith(`assertion value changed (not shown to be required by the task): ${t}:`)) ? assertDeltaNotes(ctx.repoDir, ctx.baseSha, head, t, str(o.intake?.task) ?? "", h, h) : null) ?? []) notProven.add(n); }
+    for (const t of weakTests) notProven.add(`weakened test: ${t}`); // D50-F2r2: labels come from verify (real counts); seal has none
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) notProven.add(n);
