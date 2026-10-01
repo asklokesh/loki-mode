@@ -1680,3 +1680,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D46 drop: A-134b merge reverted on local main 3924bc3f; local main now has no code diff from origin/main (`git diff --stat origin/main main -- . ':!docs'` empty), so no replacement train. A-134b back to its builder (register plus shard row, timeout -k).
 - Process miss (mine): I merged A-134b on the reviewer's conditional approval without the repo-wide test-file guards. New rule in memory: any slice adding tests/*.sh runs the registration, E-00 and shellcheck guards before merge.
 - v10.5.16 Release run still in progress at 02:23Z. D46 hour 02:00Z: 0 confirmed so far (10.5.16 pending), trains cut 22 and 23, red 1 (23), dropped A-134b.
+
+## 2026-10-01T02:45Z D49: 10.5.16 promoted to latest
+- Founder confirmed D49 and the D48 engine flip directly in this session (02:42Z). First-run gate stub on the npm-installed 10.5.16: 0 assertions failed, wall 34s (scripts/first-run-gate.sh --installed loki-mode@10.5.16). promote.yml run 36807172046: completed success. npm dist-tags now {"latest":"10.5.16","next":"10.5.16"} (was latest 10.5.10).
+- Slices pushed to origin for slice CI during review: slice-A-117, slice-A-121b(-r2), slice-A-118, slice-A-134b-r4, slice-E-157-r4, slice-E-159-r2.
+- Reviews in flight (opus, HIGH): A-117 r3, A-118 r2, A-121b r2, E-157 r4 + E-159 r2. D48 wave 1 building (sonnet): gaming matrix (row 1), portable verify (row 2), doctor --fix (row 6), loki-seal marketplace (row 10).
