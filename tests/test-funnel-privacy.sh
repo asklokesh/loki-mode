@@ -240,6 +240,7 @@ fi
 # 4. Telemetry ON but analytics NOT opted in -> the funnel stage still emits
 #    NOTHING. Default OFF even for telemetry-on users.
 # ---------------------------------------------------------------------------
+    # start-guard-allow: provider is the BINDIR stub shim, telemetry only
 new_case telemetry_only
 env PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
     LOKI_TELEMETRY=on LOKI_TTY_INTERACTIVE=1 \
@@ -301,6 +302,7 @@ new_case route_bun
 # emit already happened in the shim, and the Bun runner it exec'd must not
 # outlive the test.
 (
+      # start-guard-allow: provider is the BINDIR stub shim, telemetry only
   cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
       LOKI_TELEMETRY=on LOKI_ANALYTICS=on LOKI_TTY_INTERACTIVE=1 LOKI_SDK_LOOP=1 \
       "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null || true
@@ -312,6 +314,7 @@ $GREP -q "first_start_attempted" "$LOKI_TEST_CAPTURE" 2>/dev/null && BUN_HIT=1
 new_case route_bash
 env PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
     LOKI_TELEMETRY=on LOKI_ANALYTICS=on LOKI_TTY_INTERACTIVE=1 LOKI_LEGACY_BASH=1 \
+    # start-guard-allow: provider is the BINDIR stub shim, telemetry only
     "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null
 settle
 BASH_HIT=0
