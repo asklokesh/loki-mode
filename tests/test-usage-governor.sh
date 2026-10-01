@@ -812,6 +812,40 @@ else
     [ -n "$GC_PID" ] && kill -9 "$GC_PID" 2>/dev/null
 fi
 
+# ---------------------------------------------------------------------------
+# T23 (E-163 r2): invalid LOKI_USAGE_LIVE_TIMEOUT (abc) falls back to 20
+# ---------------------------------------------------------------------------
+echo "T23 -- LOKI_USAGE_LIVE_TIMEOUT=abc falls back to default 20"
+_timeout_test_output="$(LOKI_USAGE_LIVE_TIMEOUT=abc python3 - "$TOOL" <<'PYEOF'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("ug", sys.argv[1])
+ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+print("TIMEOUT_SECS", ug.LIVE_READ_TIMEOUT_SECS)
+PYEOF
+)"
+if echo "$_timeout_test_output" | grep -q "^TIMEOUT_SECS 20$"; then
+  ok "LOKI_USAGE_LIVE_TIMEOUT=abc falls back to default 20"
+else
+  bad "expected TIMEOUT_SECS=20, got: $_timeout_test_output"
+fi
+
+# ---------------------------------------------------------------------------
+# T24 (E-163 r2): negative LOKI_USAGE_LIVE_TIMEOUT (-5) falls back to 20
+# ---------------------------------------------------------------------------
+echo "T24 -- LOKI_USAGE_LIVE_TIMEOUT=-5 falls back to default 20"
+_timeout_test_neg="$(LOKI_USAGE_LIVE_TIMEOUT=-5 python3 - "$TOOL" <<'PYEOF'
+import importlib.util, os, sys
+spec = importlib.util.spec_from_file_location("ug", sys.argv[1])
+ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+print("TIMEOUT_SECS", ug.LIVE_READ_TIMEOUT_SECS)
+PYEOF
+)"
+if echo "$_timeout_test_neg" | grep -q "^TIMEOUT_SECS 20$"; then
+  ok "LOKI_USAGE_LIVE_TIMEOUT=-5 falls back to default 20"
+else
+  bad "expected TIMEOUT_SECS=20 for negative value, got: $_timeout_test_neg"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

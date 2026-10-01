@@ -60,6 +60,7 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import math
 import os
 import re
 import signal
@@ -379,7 +380,18 @@ def load_readings(path: Path):
     return readings
 
 
-LIVE_READ_TIMEOUT_SECS = float(os.environ.get("LOKI_USAGE_LIVE_TIMEOUT") or 20)
+def _parse_timeout_secs():
+    """Parse LOKI_USAGE_LIVE_TIMEOUT, validating with math.isfinite and > 0."""
+    try:
+        v = float(os.environ.get("LOKI_USAGE_LIVE_TIMEOUT") or 20)
+        if math.isfinite(v) and v > 0:
+            return v
+    except (ValueError, TypeError):
+        pass
+    return 20
+
+
+LIVE_READ_TIMEOUT_SECS = _parse_timeout_secs()
 LIVE_READ_MIN_GAP = timedelta(minutes=10)
 _SESSION_RE = re.compile(r"Current session:\s*(\d+(?:\.\d+)?)%\s*used(?:\s*\S+\s*resets\s+([^\n]+))?")
 _WEEK_RE = re.compile(r"Current week \(all models\):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*\S+\s*resets\s+([^\n]+))?")
@@ -411,6 +423,7 @@ def live_read_usage(readings_path: Path, now: datetime):
     existing = load_readings(readings_path)
     if existing and now - max(r[0] for r in existing) < LIVE_READ_MIN_GAP:
         return {"status": "recent"}
+    proc = None
     try:
         # Own process group so a timeout can reap grandchildren too.
         proc = subprocess.Popen(
@@ -426,6 +439,12 @@ def live_read_usage(readings_path: Path, now: datetime):
         text = json.loads(out).get("result")
         sm, wm = _SESSION_RE.search(text), _WEEK_RE.search(text)
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
+        # Kill the process group if Popen succeeded but an error occurred later.
+        if proc is not None:
+            try:
+                _kill_group(proc)
+            except (ProcessLookupError, TypeError):
+                pass
         return bad
     if not sm or not wm:
         return bad
