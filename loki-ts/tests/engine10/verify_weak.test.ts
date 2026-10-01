@@ -119,4 +119,23 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     writeFileSync(join(dir, "package.json"), pkg("true", ""));
     expect(testConfigChanged(dir, base, ["package.json", "jest.config.js", "src/a.ts"])).toEqual(["package.json", "jest.config.js"]);
   });
+  // D50-F2-S2: humanize-174 shape. A literal swap in a parametrize row of a test calling the named symbol is worded as a spec change; never a verdict change.
+  const HBASE = 'import pytest\nfrom impl import naturaldelta\n\n\n@pytest.mark.parametrize("s, e", [\n    (59, "59 seconds"),\n    (119, "a minute"),\n])\ndef test_nd(s, e):\n    assert naturaldelta(s) == e\n\n\ndef test_ok():\n    assert True\n';
+  const HIMPL = (r: string): Record<string, string> => ({ "impl.py": `def naturaldelta(s):\n    return "59 seconds" if s < 60 else "${r}"\n` });
+  const HTASK = "fix naturaldelta in impl.py, see test_time.py; 119 seconds is 2 minutes";
+  test("D50-F2-S2: literal value swap in a test calling the named symbol: labelled beside weakened test", async () => {
+    const d = await verify({ ...HIMPL("a minute"), "test_time.py": HBASE, "test_o.py": "def test_x():\n    assert True\n" }, { ...HIMPL("2 minutes"), "test_time.py": HBASE.replace('(119, "a minute")', '(119, "2 minutes")') }, HTASK, py("test_time.py"), py("test_o.py"));
+    expect(d.not_proven).toEqual(["weakened test: test_time.py", "assertion value changed (not shown to be required by the task): test_time.py:7 'a minute' -> '2 minutes'"]);
+  }, 60_000);
+  test("D50-F2-S2: the same fixture with the assert deleted stays weakened test", async () => {
+    const d = await verify({ ...HIMPL("a minute"), "test_time.py": HBASE, "test_o.py": "def test_x():\n    assert True\n" }, { ...HIMPL("2 minutes"), "test_time.py": HBASE.replace("    assert naturaldelta(s) == e\n", "    pass\n") }, HTASK, py("test_time.py"), py("test_o.py"));
+    expect(d.not_proven).toContain("weakened test: test_time.py");
+    expect(d.not_proven.some((n) => n.startsWith("assertion value changed"))).toBe(false);
+  }, 60_000);
+  test("D50-F2r: if True -> if False in a test is weakened test only, never the required-by-task label", async () => {
+    const B = "from impl import naturaldelta\n\n\ndef test_nd():\n    if True:\n        assert naturaldelta(119) == 'a minute'\n";
+    const d = await verify({ ...HIMPL("a minute"), "test_time.py": B, "test_o.py": "def test_x():\n    assert True\n" }, { ...HIMPL("2 minutes"), "test_time.py": B.replace("if True", "if False") }, HTASK + " True False", py("test_time.py"), py("test_o.py"));
+    expect(d.not_proven.join("\n")).toContain("weakened test");
+    expect(d.not_proven.join("\n")).not.toContain("required by the task");
+  }, 60_000);
 });
