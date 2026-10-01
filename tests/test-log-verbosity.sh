@@ -103,6 +103,7 @@ case "$help_out" in
     *) bad "--log-level is undocumented in start --help" ;;
 esac
 
+# start-guard-allow: invalid --log-level is rejected before any build starts
 bad_out="$("$LOKI" start --log-level nonsense </dev/null 2>&1 || true)"
 case "$bad_out" in
     *"must be debug, info, warn, or error"*)

@@ -47,8 +47,10 @@ run_start() {
     printf '// stub\n' > "$root/loki-ts/dist/loki.js"
     # run with our fake bun first on PATH
     if [ -z "$sdk" ]; then
+        # start-guard-allow: bin/loki is a copied shim whose autonomy/loki is a stub
         PATH="$WORK/bin:$PATH" bash "$root/bin/loki" start ./prd.md 2>/dev/null
     else
+        # start-guard-allow: bin/loki is a copied shim whose autonomy/loki is a stub
         PATH="$WORK/bin:$PATH" LOKI_SDK_LOOP="$sdk" bash "$root/bin/loki" start ./prd.md 2>/dev/null
     fi
 }
@@ -76,6 +78,7 @@ case "$out" in
 esac
 
 # 4. LOKI_SDK_LOOP=1 but LOKI_LEGACY_BASH=1 -> bash wins (legacy override precedes)
+# start-guard-allow: bin/loki is a copied shim whose autonomy/loki is a stub
 out="$(PATH="$WORK/bin:$PATH" LOKI_LEGACY_BASH=1 LOKI_SDK_LOOP=1 bash "$WORK/repo/bin/loki" start ./prd.md 2>/dev/null)"
 case "$out" in
     *ROUTE=BASH*) ok "LOKI_LEGACY_BASH=1 wins over LOKI_SDK_LOOP=1 (rollback precedence)" ;;
