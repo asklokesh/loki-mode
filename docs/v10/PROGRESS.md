@@ -1819,3 +1819,13 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Also: empty or unknown ctx.baseSha does not fail closed (nothing filtered, junk committed to the run branch; Seal then reads FAILED). Production always sets baseSha (worker.ts:47).
 - Held up: judging against baseSha never drops a real source change from the receipt diff (verifyReceipt and verifyMain VERIFIED rc 0 on the fixture); monorepo per-directory lockfiles correct; suites 94/0, gate --stub 0 failed.
 - A-104b r2 building: machine.ts routes a failed commit to the failure path; seal.ts refuses VERIFIED when commit did not complete; the commit stage fails on empty or unresolvable baseSha or a failed diff. Red-first tests plus the full moat suite.
+
+## 2026-10-01T09:32Z D50 (top engineering priority): loss classification; 3-rep rerun started
+- Baseline artifacts: ~/loki-ci-logs/d50-v10-sonnet and d50-raw-sonnet (results.jsonl, logs/<task>.<arm>.<run>/arm_stdout.log); harness eval/loki10/run.sh at c5eaddb0.
+- Loki+sonnet losses vs raw sonnet (haiku analyst, from arm_stdout.log):
+  - aiq-52-searchbar: dirty-tree refusal ("M frontend/package-lock.json", 0.7s). The baseline ran before E-164 (7b0ba412 merged after c5eaddb0), so this class may be recovered.
+  - pub-click-2877: false ALREADY_SATISFIED (no PR; hidden tests fail). Real defect in the already-done check.
+  - pub-humanize-174: implement ran 95s and produced an empty diff with no already_done marker; FAILED, no PR. Raw sonnet completed it.
+  - pub-humanize-333: PR opened and hidden tests failed; verify did not catch the wrong fix. Raw sonnet completed it.
+  - pub-click-3059: raw sonnet failed it too, so it is not a Loki-specific loss.
+- Rerun (b) started 2026-10-01T09:32Z: the 4 Loki-specific tasks x 3 reps, arms v10 and raw-claude, model claude-sonnet-5, at main 575ddebcf; out ~/loki-ci-logs/d50-rerun-*. No lift number is cited until it finishes. Then fix the top cause first and record a per-model stage profile with a lift row.
