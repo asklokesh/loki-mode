@@ -57,8 +57,42 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/slice-') }}
 
 jobs:
+  # E-160 / D55: a main push of a SHA a train/** run already verified green
+  # reuses that verdict. Any doubt gives reuse=false and the jobs below run.
+  train-reuse:
+    name: Train verdict reuse
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reuse: ${{ steps.reuse.outputs.reuse }}
+    steps:
+      - name: Checkout (scripts/ci only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      - name: Reuse a train run's verdict for this exact SHA
+        id: reuse
+        continue-on-error: true
+        env:
+          WF_FILE: security-audit.yml
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ github.run_id }}
+          REPO: ${{ github.repository }}
+          LOKI_E160_REUSE: ${{ vars.LOKI_E160_REUSE }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/ci/train-verdict-reuse.sh gate
+
   npm-audit:
     name: npm audit (high+)
+    needs: [train-reuse]
+    if: ${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -84,6 +118,8 @@ jobs:
 
   python-audit:
     name: pip-audit (requirements reporting, SDK new-findings-blocking)
+    needs: [train-reuse]
+    if: ${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # This job only reads the checked-out manifests. Do not inherit the
@@ -257,6 +293,8 @@ jobs:
 
   secret-scan:
     name: gitleaks (secrets, new-findings-blocking)
+    needs: [train-reuse]
+    if: ${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -484,6 +522,8 @@ jobs:
 
   bun-audit:
     name: bun audit (best-effort)
+    needs: [train-reuse]
+    if: ${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

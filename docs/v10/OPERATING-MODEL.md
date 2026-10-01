@@ -29,7 +29,7 @@ The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The compa
 
 ## Release pipeline
 - Tier A fast gate on every change (target 60-120s): syntax checks, changed-file shellcheck, diff-selected tests, moat suite split per property. It is feedback, not release authority.
-- Tier B full verification on every main commit (target 5-6 min, hard 10 min per job, never cancelled on main).
+- Tier B: every main commit has a full Tier B verdict on its exact tree, run on main or on the train that produced it (D55); never cancelled on main.
 - Release = a lookup: publish a commit whose tree already has a Tier B pass. A VERSION-only bump reuses its parent's verdict. Target: 2 min from verified to npm.
 - Trains: the Release Manager batches merged slices; one push per train; releases when verified; the next train opens immediately. Never hold a train for one HIGH slice.
 - If Tier B fails on main: stop releases, open a P0 fix-forward slice. Never unpublish; npm deprecate is allowed.
