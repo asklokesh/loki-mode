@@ -27,7 +27,7 @@ Phase 2 ported (Bun-native, fast):
   provider list          List available providers and install status
   memory list            Cross-project learnings counts
   memory index [rebuild] Show or rebuild memory index
-  doctor [--json]        System prerequisites health check
+  doctor [--json|--fix]  System prerequisites health check
   rollback <subcmd>      Restore .loki/ state from a checkpoint
                          (subcmds: list | show <id> | to <id> | latest)
   proof <subcmd>         Inspect/share proof-of-run artifacts
