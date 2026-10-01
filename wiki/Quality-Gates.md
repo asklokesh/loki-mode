@@ -1,5 +1,7 @@
 # Quality Gates
 
+> Legacy engine note: this page documents the legacy engine (`loki start`, `LOKI_ENGINE=legacy`), which still ships in 10.6.6 and is being removed. For the current Loki 10 commands (`loki "<task>"`, `loki owner/repo#N`, `loki backlog`, `loki verify`) see [[Home]] and [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+
 Loki Mode never calls work done until it is verified. Before any change is
 accepted, it passes a stack of quality gates: deterministic checks plus a
 multi-agent review. This page describes the gate stack, the completion-time

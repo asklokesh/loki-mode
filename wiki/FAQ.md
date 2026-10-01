@@ -42,7 +42,7 @@ docker pull asklokesh/loki-mode
 
 ### What are the prerequisites?
 
-- Node.js 16+ (for npm install)
+- Node.js 20+ (for npm install)
 - Claude Code CLI installed and authenticated
 - A spec describing what you want to build (PRD markdown file, GitHub issue, or YAML feature brief)
 

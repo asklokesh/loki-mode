@@ -191,9 +191,8 @@ both of us if you find it here.
 
 - **No published enterprise case studies.** We have adoption signal (fork ratio
   well above the norm for a tool this size) but no named enterprise references.
-- **No independent third-party benchmark placement.** The SWE-bench Verified
-  leaderboard is months stale and every entry on it is self-reported, ours would
-  be too.
+- **No independent third-party benchmark placement.** Public leaderboards are
+  self-reported, and ours would be too.
 - **Only the CLI surface is audited, not whole products.** Section 6 measures
   every named competitor that ships a local CLI (opencode, aider, codex, Claude
   Code, cursor-agent) and none exposes output verification. That is a real

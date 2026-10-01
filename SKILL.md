@@ -5,13 +5,15 @@ description: An autonomous software factory that knows what it is supposed to de
 
 # Loki Mode v10.6.6
 
+**Current entry points (Loki 10 engine):** `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run the Loki 10 engine and end with a signed receipt (`loki verify`). `loki backlog owner/repo --all` runs many issues in parallel. Guide: `docs/v10/GUIDE.md`. The skill instructions below, and `loki start`, describe the legacy engine, which still ships and is being removed (`loki start owner/repo#N` still routes to it; prefer `loki owner/repo#N`).
+
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
 **Spec in, verified product out.** Spec-driven: a "spec" is whatever describes the work -- a Markdown PRD, a GitHub issue, an OpenAPI doc, a Jira ticket (a PRD is one form of spec). The differentiator is the trust layer: Loki does not call work done until it is verified. The RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate must all clear before completion is accepted. The evidence gate blocks on empty-diff, red tests, an unhealthy serveable app (runtime-boot axis, `LOKI_EVIDENCE_BOOT_GATE=0` to opt out), and a leaked credential in the changed files (secret-leak axis, `LOKI_EVIDENCE_SECRET_GATE=0` to opt out) -- v8.0.0.
 
 **Evidence Receipt (verify it yourself).** Every run writes a receipt to `.loki/proofs/<run_id>/` (opt out with `LOKI_PROOF=0`) that separates deterministic FACTS (git diff with base/head SHAs and a `diff_sha256`, the test command + exit code, the build command + exit code, each gate verdict) from AI ASSESSMENTS (the council verdict, labeled judgment not proof). The headline is computed only from the facts: VERIFIED (tests ran a real command and exited 0, diff non-empty, nothing skipped), VERIFIED WITH GAPS (each gap listed by name), or NOT VERIFIED (a check ran and failed). Inspect and re-check with `loki proof list|show <id>|verify <id>` (aliased `loki receipt`); `loki proof verify` re-hashes the receipt (tamper) and re-derives the diff from the recorded base SHA against the live repo (drift), exiting 0 clean / 1 tamper-or-drift / 2 could not check (64 usage, 66 unknown id; see `docs/exit-codes.md`). This is honesty-of-done, not a claim that the code is bug-free.
 
-**Provider-agnostic (stable since v5.0.0):** runs on Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers; no vendor lock-in. Gemini deprecated v7.5.18. See `skills/providers.md`. **Current track (v8.0.0):** the Anthropic Agent SDK route (see below), spec-mode expansion for OpenAPI/GraphQL/Postman contracts, the runtime-boot and secret-leak evidence axes, and `loki steer` / `loki why` for mid-run control. Earlier tracks: LSP grounding as a first-class agent tool (v7.7.x) and Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
+**Provider-agnostic (stable since v5.0.0):** runs on Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers; no vendor lock-in. Gemini deprecated v7.5.18. See `skills/providers.md`. **Legacy track (v8.0.0):** the Anthropic Agent SDK route (see below), spec-mode expansion for OpenAPI/GraphQL/Postman contracts, the runtime-boot and secret-leak evidence axes, and `loki steer` / `loki why` for mid-run control. Earlier tracks: LSP grounding as a first-class agent tool (v7.7.x) and Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
 
 **Runtime migration:** Bash-to-Bun migration. Read-only commands (`version`, `status`, `stats`, `doctor`, `provider show/list`, `memory list/index`) flow through Bun runtime via `bin/loki` since v7.3.0. Every other command remains on the Bash runtime (`autonomy/loki`). Rollback: `LOKI_LEGACY_BASH=1`. See `UPGRADING.md` and `docs/architecture/ADR-001-runtime-migration.md`.
 
@@ -105,13 +107,13 @@ These rules guide autonomous operation. Test results and code quality always tak
 | Integration tests, E2E, deployment | **development** | opus | sonnet | effort=high |
 | Unit tests, linting, docs, simple fixes | **fast** | sonnet | haiku | effort=low |
 
-**Parallelization rule (Claude only):** Launch up to 10 agents simultaneously for independent tasks.
+**Parallelization rule (Claude only):** Launch independent tasks in parallel.
 
 **Degraded mode (Codex/Cline/Aider):** No parallel agents or Task tool. Codex has MCP support. Runs RARV cycle sequentially. See `skills/model-selection.md`.
 
 **Git worktree parallelism:** For true parallel feature development, use `--parallel` flag with run.sh. See `skills/parallel-workflows.md`.
 
-**Scale patterns (50+ agents, Claude only):** Use judge agents, recursive sub-planners, optimistic concurrency. See `references/cursor-learnings.md`.
+**Scale patterns (Claude only):** Use judge agents, recursive sub-planners, optimistic concurrency. See `references/cursor-learnings.md`.
 
 ---
 
@@ -195,7 +197,7 @@ This protocol governs **skill module** loading -- task-scoped instruction files 
 
 ## Invocation
 
-**Unified entry point (v6.84.0):** `loki start [SPEC|ISSUE-REF]` auto-detects whether the input is a PRD file, an issue URL, an issue number, or another spec format (e.g. OpenAPI). No need to pick between `loki start` and `loki run` -- the single command handles all cases.
+**Legacy entry point (v6.84.0, being removed; for Loki 10 use `loki "<task>"` or `loki owner/repo#N`):** `loki start [SPEC|ISSUE-REF]` auto-detects whether the input is a PRD file, an issue URL, an issue number, or another spec format (e.g. OpenAPI). No need to pick between `loki start` and `loki run` -- the single command handles all cases.
 
 ```bash
 # Standard mode (Claude - full features)
@@ -459,15 +461,16 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 | Bun runtime (Phase 2+) | TBD | Migrate write-path commands; tracked on `feat/bun-migration` |
 | Managed Agents multiagent path | TBD | `LOKI_EXPERIMENTAL_MANAGED_*` flags -- RESEARCH PREVIEW, not on live API |
 | Benchmarks | TBD | Runner scripts and datasets exist in `benchmarks/`; no published results |
-| `loki run` removal | next major | Currently a deprecated alias for `loki start` |
+| `loki run` removal | with legacy removal | Currently a deprecated alias for `loki start` |
 
 ## Deprecated
 
 | Item | Deprecated In | Notes |
 |------|---------------|-------|
-| `loki run <issue>` | v6.84.0 | Alias for `loki start`. Will be removed in next major. |
+| `loki run <issue>` | v6.84.0 | Alias for `loki start`. Removal is part of the planned legacy removal. |
+| `loki start`, RARV skill loop | v10.6.6 | Legacy engine, planned for removal; use `loki "<task>"` / `loki owner/repo#N`. |
 | VSCode extension (`vscode-extension/`) | v7.2.0 | No longer actively maintained; dashboard web UI is the supported front-end. |
 
 ---
 
-**v10.6.6 | [Autonomi](https://www.autonomi.dev/) flagship product | ~410 lines core**
+**v10.6.6 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**

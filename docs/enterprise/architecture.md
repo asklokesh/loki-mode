@@ -202,7 +202,7 @@ Key methods:
 - `AuditLog.verifyChain()` -- Verify hash chain integrity, returns `{ valid, entries, brokenAt, error }`
 - `AuditLog.readEntries(filter)` -- Query entries with `who`, `what`, `since`, `until` filters
 
-The public API at `src/audit/index.js` adds compliance reporting (`generateReport('soc2'|'iso27001'|'gdpr')`) and data residency checks (`checkProvider(provider, region)`).
+The public API at `src/audit/index.js` adds audit report summaries and data residency checks (`checkProvider(provider, region)`).
 
 **Python Audit (Dashboard-Level):** `dashboard/audit.py`
 

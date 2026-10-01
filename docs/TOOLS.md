@@ -607,7 +607,7 @@ Model cost advisor -- /tmp/ws
   Projected saving:    UNKNOWN
   Records found: 0  measured: 0  priced: 0
 
-  Cited external benchmark (SWE-bench verified) -- NOT a measurement of your workload:
+  Cited external benchmark -- NOT a measurement of your workload:
     MiniMax M2.5 (open weights)    score 75.8   cost $36.64
     Claude Opus 4.6                score 75.6   cost $275.76
     the harness itself was worth about 3.4 points on an identical model

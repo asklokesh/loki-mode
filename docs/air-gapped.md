@@ -13,7 +13,7 @@ Verified from vendor documentation, 2026-07-31:
 | Cursor | No. Cloud service; embeddings are uploaded (obfuscated and encrypted). |
 | Claude Code | Partly. Runs against Bedrock / Vertex / Foundry in your own cloud, so data residency is yours -- but a model endpoint is still required. |
 | Lovable, Replit, Emergent | No. Browser products on their infrastructure. |
-| opencode | Structurally yes (MIT, self-hostable) -- but no SOC2, SSO, audit logs, or support. |
+| opencode | Structurally yes (MIT, self-hostable) -- but no SSO, audit logs, or support. |
 
 Devin's is the strongest enterprise packaging in the category and it still
 cannot run disconnected. That is a structural property of a hosted control

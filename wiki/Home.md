@@ -6,9 +6,23 @@
 
 ---
 
+## Quick start (Loki 10 engine)
+
+```bash
+bun install -g loki-mode        # or: npm install -g loki-mode
+loki doctor                     # checks your setup, names any blocker
+loki "fix the login redirect loop" --no-pr
+loki owner/repo#123             # an issue to a pull request, with a signed receipt
+loki verify                     # re-check the newest receipt
+```
+
+`loki start owner/repo#N` still routes to the legacy engine; use `loki owner/repo#N`. The legacy engine is being removed. Everything in Loki Mode is free: there are no paid editions. Guide: [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+
+---
+
 ## What is Loki Mode?
 
-Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
+Loki Mode is a free, source-available autonomous coding agent that:
 
 - **Built-in trust layer (verified completion)** - Does not call work done until it is verified: the RARV-C closure loop, 8 quality gates, the completion council, and the verified-completion evidence gate all have to clear before completion is accepted
 - **Spec-driven development** - Any spec (PRD, GitHub issue, OpenAPI/YAML doc, or one-line brief) drives the build end to end
@@ -47,7 +61,7 @@ Loki Mode is an enterprise-grade autonomous AI development orchestrator that:
 - **Cross-Project Learning** - AI improves from every session
 - **Dark Dashboard** - Vercel/Linear-inspired dark theme with sidebar navigation (replaces the deprecated VS Code extension as of v7.2.0)
 
-### For Enterprises
+### Enterprise controls (free, opt-in; legacy engine)
 
 - **Token Authentication** - Secure API access with scoped tokens
 - **Audit Logging** - Compliance-ready JSONL audit trails
@@ -118,4 +132,4 @@ See [[Changelog]] for detailed release notes.
 
 ---
 
-*This documentation is automatically updated with each release.*
+*Wiki pages that describe the legacy engine say so at the top.*

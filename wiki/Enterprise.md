@@ -48,7 +48,7 @@ Hash-chained logging with SHA-256. Every API call is recorded in JSONL format. S
 
 The chain detects corruption and truncation. It is NOT tamper-proof: the hash is unkeyed and the genesis value is a constant (`dashboard/audit.py:58,194-200`), so anyone who can write the log can recompute a consistent chain over invented history. This is reproduced in `docs/AUDIT-CHAIN-THREAT-MODEL.md`. An intact chain is not evidence of integrity against a motivated writer; a broken one is good evidence of a problem.
 
-`GET /api/compliance?type=soc2|iso27001|gdpr` summarizes the agent audit log in those report layouts. This is not a compliance certification or attestation; Loki Mode holds none.
+`GET /api/compliance` summarizes the agent audit log. It is a log summary, not a compliance certification or attestation; Loki Mode holds none.
 
 **Activate:** Enabled by default. Configure syslog with `LOKI_AUDIT_SYSLOG_HOST`.
 

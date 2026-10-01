@@ -6,18 +6,32 @@ Get Loki Mode running in under 5 minutes.
 
 ## Prerequisites
 
-- **Node.js 16+** or **Homebrew** (macOS/Linux)
+- **Bun**, **Node.js 20+** or **Homebrew** (macOS/Linux)
 - **Claude Code CLI** installed and authenticated
 - A spec describing what to build -- a PRD markdown file, GitHub issue, YAML feature brief, or any natural-language description
 
 ---
 
-## Installation
-
-### Option 1: npm (Recommended)
+## Quick start (Loki 10 engine)
 
 ```bash
-npm install -g loki-mode
+loki doctor
+loki "fix the login redirect loop" --no-pr   # a task
+loki owner/repo#123                          # a GitHub, GitLab or Jira issue to a pull request
+loki verify                                  # re-check the newest signed receipt
+```
+
+`loki start` still runs the legacy engine, which is being removed; the walkthrough below uses it and is a legacy path. See [docs/v10/GUIDE.md](https://github.com/asklokesh/loki-mode/blob/main/docs/v10/GUIDE.md).
+
+---
+
+## Installation
+
+### Option 1: Bun (recommended) or npm
+
+```bash
+bun install -g loki-mode
+npm install -g loki-mode   # works without Bun (bash fallback)
 ```
 
 ### Option 2: Homebrew (macOS/Linux)

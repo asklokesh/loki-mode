@@ -16,6 +16,10 @@ missing or LOKI_PROVIDER is unsupported, the default mode falls back to the
 legacy engine and prints one stderr line saying why. The previous engine stays one step away:
 `loki legacy <args>` and LOKI_ENGINE=legacy.
 
+`loki start owner/repo#N` still routes to the legacy engine, not Loki 10. Use
+`loki owner/repo#N` instead. The legacy engine is being removed (planned work
+resumes 2026-10-07, see docs/v10/LEGACY-REMOVAL.md).
+
 Some pieces named in this guide are still being built. Each one below says
 so plainly instead of describing a finished feature.
 

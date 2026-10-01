@@ -32,7 +32,7 @@ The history was replaced wholesale and `verifyChain()` reported `valid: true`.
 `dashboard/audit.py` is a separate implementation with the same property:
 genesis is the constant `"0" * 64` (`:58`, `:115`), and `_compute_chain_hash`
 (`:194-200`) is an unkeyed `sha256(prev_hash + entry_json)`. Its own docstring
-at `:197` calls the result tamper-evident. Forged with the writer's exact recipe
+at `:197` overstates what the chain proves. Forged with the writer's exact recipe
 (`json.dumps(entry, sort_keys=True, default=str)`, field `_integrity_hash`,
 `:369-371`), `verify_log_integrity` reports:
 
