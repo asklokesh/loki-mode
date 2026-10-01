@@ -16,6 +16,7 @@ export interface Route {
 const TABLE: Record<string, { module: string; fn: string }> = {
   status: { module: "status.ts", fn: "main" },
   verify: { module: "verify_cmd.ts", fn: "main" },
+  keys: { module: "keys_cmd.ts", fn: "main" },
   dashboard: { module: "dashboard/server.ts", fn: "main" },
   modernize: { module: "modernize/cli.ts", fn: "main" },
   // Hidden subcommands spawned by the supervisor.
@@ -28,7 +29,8 @@ const USAGE = `Usage (LOKI_ENGINE=v10):
   loki "<task>"                   run the engine on a free-text task
   loki <issue-url|owner/repo#N>   run on an issue
   loki status [run-id]            latest run by default
-  loki verify [run-id]            check receipt hashes and signature
+  loki verify [--pubkey <file>] [run-id|receipt.json]  check receipt hashes and signature
+  loki keys export                print the receipt-signing public key (JWK + kid)
   loki dashboard                  serve the local dashboard
   loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
 Flags: --deep, --provider <name>, --no-pr

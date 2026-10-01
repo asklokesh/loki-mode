@@ -275,7 +275,7 @@ fi
 if [ "${LOKI_ENGINE:-}" = "v10" ]; then
     _e10=0
     case "${1:-}" in
-        status|verify|dashboard) _e10=1 ;;
+        status|verify|dashboard|keys) _e10=1 ;;
         ""|-*) _e10=0 ;;
         # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
         */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) _e10=1 ;;

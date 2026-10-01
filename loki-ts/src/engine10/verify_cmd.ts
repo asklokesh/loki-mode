@@ -4,9 +4,10 @@
 // against the active + retired keys), UNSIGNED (jwt null). Node crypto only, no python (A-121).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { createPublicKey, verify } from "node:crypto";
+import { createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
 import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
+import { takePubkey } from "./keys_cmd.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
   verdict: Verdict;
@@ -17,13 +18,14 @@ export interface VerifyResult {
 export const computeReceiptHash = (receipt: Record<string, unknown>): string => receiptSha256(receipt as never);
 export interface VerifyDeps {
   runsRoot?: string; // overrides lokiDir()/runs, for tests
+  pubkey?: KeyObject; // --pubkey: check against this key only, never the local JWKS
 }
 interface AttestationOutcome {
   status: "verified" | "tampered" | "unchecked";
   reason: string | null;
 }
 /** Native EdDSA check against the local key's public half plus LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Selection is by kid; an unknown kid is refused, never tried against every key. */
-function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome {
+function checkAttestation(jwt: string, expectedHash: string, given?: KeyObject): AttestationOutcome {
   const bad = (reason: string): AttestationOutcome => ({ status: "tampered", reason });
   const [h, p, s, ...rest] = jwt.split(".");
   if (!h || !p || !s || rest.length > 0) return bad("malformed token");
@@ -35,8 +37,8 @@ function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome
     return bad("malformed token");
   }
   if (header?.alg !== "EdDSA") return bad(`unexpected alg: ${String(header?.alg)}`);
-  const active = loadSigningKey(false);
-  const pubs = (process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
+  const active = given ? null : loadSigningKey(false);
+  const pubs = given ? [given] : (process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
     try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
   });
   const pub = [...(active ? [createPublicKey(active)] : []), ...pubs].find((k) => kidOf(k) === header.kid);
@@ -69,7 +71,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   if (!jwt) {
     return { verdict: "UNSIGNED", reasons: [], receiptSha256: computed };
   }
-  const outcome = checkAttestation(jwt, computed);
+  const outcome = checkAttestation(jwt, computed, deps.pubkey);
   if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
@@ -100,13 +102,17 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
     process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified/unsigned, 1 tampered, 2 unchecked, 66 no runs.\n");
     return 0;
   }
+  const pk = takePubkey(args);
+  if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
+  args = pk.args;
+  if (pk.pubkey) deps = { ...deps, pubkey: pk.pubkey };
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
   const runId = args[0] ?? latestRunId(runsRoot) ?? undefined;
   if (!runId) {
     process.stderr.write("loki verify: no runs found\n");
     return 66;
   }
-  const receiptPath = join(runsRoot, runId, "receipt.json");
+  const receiptPath = existsSync(runId) && statSync(runId).isFile() ? runId : join(runsRoot, runId, "receipt.json"); // a receipt file path works directly
   const result = await verifyReceipt(receiptPath, deps);
   process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
