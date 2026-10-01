@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.35 (2026-10-01)
+
+A `next` release.
+
+### Changes
+- Reapply "Merge fix(py-shutdown): handle SIGPIPE and avoid daemon thread shutdown deadlock"
+- fix(py-shutdown): move SIGPIPE and os._exit to __main__ block
+- feat(release): re-land train-cycle.sh release captain (RC-AUTO2)
+
 ## v10.5.34 (2026-10-01)
 
 A `next` release. `loki start` now always opens a working dashboard instead of a "dashboard_frontend_not_found" error page.
