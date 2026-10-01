@@ -399,7 +399,7 @@ fi
 
 # Real train/43 regression: tests/lib helper scripts matched as dependents were
 # emitted as py_test/shell_test and failed (pytest rc 5). Replay the range.
-if git -C "$REPO_ROOT" cat-file -e e38e3029b^{commit} 2>/dev/null && git -C "$REPO_ROOT" cat-file -e 9b22a3477^{commit} 2>/dev/null; then
+if git -C "$REPO_ROOT" cat-file -e "e38e3029b^{commit}" 2>/dev/null && git -C "$REPO_ROOT" cat-file -e "9b22a3477^{commit}" 2>/dev/null; then
     out="$(cd "$REPO_ROOT" && bash "$SELECT" --base 9b22a3477 --head e38e3029b)"
     if printf '%s\n' "$out" | grep -E '(py_test|shell_test)[[:space:]]+tests/lib/' >/dev/null; then
         FAIL=$((FAIL + 1)); echo "FAIL: train/43 range emits a tests/lib helper as a test"
