@@ -7601,9 +7601,9 @@ invoke_cline() {
     shift
     local model="${LOKI_CLINE_MODEL:-}"
     if [[ -n "$model" ]]; then
-        cline -y -m "$model" "$prompt" "$@" 2>&1
+        cline -y -m "$model" "$prompt" "$@" < /dev/null 2>&1
     else
-        cline -y "$prompt" "$@" 2>&1
+        cline -y "$prompt" "$@" < /dev/null 2>&1
     fi
 }
 
@@ -7614,9 +7614,9 @@ invoke_cline_capture() {
     shift
     local model="${LOKI_CLINE_MODEL:-}"
     if [[ -n "$model" ]]; then
-        cline -y -m "$model" "$prompt" "$@" 2>&1
+        cline -y -m "$model" "$prompt" "$@" < /dev/null 2>&1
     else
-        cline -y "$prompt" "$@" 2>&1
+        cline -y "$prompt" "$@" < /dev/null 2>&1
     fi
 }
 
