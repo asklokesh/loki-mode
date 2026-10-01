@@ -14,7 +14,7 @@ name: Bun Parity
 on:
   push:
     # D44: train/N branches run Tier B before main is fast-forwarded to them.
-    branches: [main, "train/**"]
+    branches: [main, "train/**", "slice-*"]
   pull_request:
     branches: [main]
 
@@ -22,8 +22,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # D46: slice-* pushes share one group per ref and cancel superseded runs;
+  # main and train/** keep a per-SHA group and are never cancelled (Tier B).
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/slice-')) && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/slice-') }}
 
 jobs:
   bun-parity:
