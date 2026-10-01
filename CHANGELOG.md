@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.27 (2026-10-01)
+
+A `next` release. Provider calls can no longer hang on an open stdin, loki-seal recovers its stop-hook counter correctly, and the repository refuses commits by a foreign author in its main checkout.
+
+### Fixed
+- Provider invocations that pass the prompt as an argument (claude, codex, opencode, cline, aider, including the mainline `claude -p` calls, the merge-conflict resolver and the review calls) read stdin from `/dev/null`. A verbose run (`LOKI_VERBOSE=1`) started with a stdin pipe that never closes no longer blocks the provider. Calls that feed the prompt through stdin are unchanged (A-134c).
+- loki-seal resets its hook-error counter after a successful stop, and when the counter file cannot be written (read-only or full temp dir) a repeated stop releases instead of blocking again. The counter lives under `LOKI_RUN_TMP` when set (A-04b).
+
+### Changed
+- Repo tooling: a pre-commit hook in `.githooks` refuses a commit in the main checkout whose author email differs from the repo-local `user.email`, so a fixture commit made from the wrong directory fails loudly; `LOKI_ALLOW_FOREIGN_AUTHOR=1` overrides it (E-153).
+
 ## v10.5.26 (2026-10-01)
 
 A `next` release. The promote gate now recognizes the exact message `loki` prints when the Loki 10 engine cannot run, so the two-leg gate can promote; the Docker images ship the same bun version as the npm package; and the repo hook judges a detached checkout by the directory a command actually changes into.
