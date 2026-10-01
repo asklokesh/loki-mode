@@ -33,6 +33,23 @@ _ROOT = pathlib.Path(__file__).resolve().parents[1]
 _RELEASE = _ROOT / ".github" / "workflows" / "release.yml"
 
 
+def _gitleaks_bin():
+    """The pinned binary scripts/install-gitleaks.sh puts on disk, else PATH."""
+    pinned = pathlib.Path.home() / ".local/share/loki/bin/gitleaks-8.30.0"
+    if pinned.is_file() and os.access(pinned, os.X_OK):
+        return str(pinned)
+    return shutil.which("gitleaks")
+
+
+def _require_gitleaks(tc):
+    """Skip locally when absent, but FAIL under CI: a guard that silently does not run
+    is an absent measurement reported as a pass."""
+    if _gitleaks_bin() is None:
+        if os.environ.get("CI"):
+            tc.fail("gitleaks is not installed in CI (scripts/install-gitleaks.sh step missing)")
+        tc.skipTest("gitleaks not installed")
+
+
 def _required_names():
     """The workflow names release.yml waits for, read from the file itself."""
     src = _RELEASE.read_text(encoding="utf-8", errors="replace")
@@ -494,7 +511,7 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         env = dict(os.environ)
         env.update({"SHA": self.sha, "REPO": "o/r", "EVENT_NAME": "push", "GH_TOKEN": "x",
                     "GITHUB_WORKSPACE": str(_ROOT),
-                    "GITLEAKS_BIN": shutil.which("gitleaks") or "/nonexistent-gitleaks",
+                    "GITLEAKS_BIN": _gitleaks_bin() or "/nonexistent-gitleaks",
                     "PATH": bindir + ":" + env.get("PATH", "/usr/bin:/bin")})
         r = subprocess.run(["bash", "-c", script], cwd=self.repo, env=env,
                             capture_output=True, text=True, timeout=timeout)
@@ -632,7 +649,6 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
             _write(self.repo, k, v)
         return self._commit_all("release 9.57.0")
 
-    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
     def test_e157_clean_range_still_reuses(self):
         new_sha = self._bump()
         fx = self._audited_parent_fixture(new_sha)
@@ -641,7 +657,6 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.assertEqual(rc, 0, out)
         self.assertIn("(reused)", out)
 
-    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
     def test_e157_secret_in_allowlisted_changelog_block_is_not_reused(self):
         header, old = "# Changelog\n\n", "## v9.56.0\n\nold.\n"
         _write(self.repo, "CHANGELOG.md", header + old)
@@ -655,7 +670,6 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.assertEqual(rc, 99, out)
         self.assertNotIn("Security Audit @ %s (reused)" % parent, out)
 
-    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
     def test_e157_merge_release_hiding_a_leak_in_second_parent_is_not_reused(self):
         _git(self.repo, "checkout", "-q", "-b", "side")
         _write(self.repo, "leak.txt", "token = %s\n" % self.TOKEN)
@@ -685,7 +699,6 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.sha = new_sha
         return self._run(fx)
 
-    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks not installed")
     def test_e157_hex_debugid_is_still_eligible(self):
         rc, out = self._map_release("0123abcd-4567-89ef")
         self.assertEqual(rc, 0, out)
