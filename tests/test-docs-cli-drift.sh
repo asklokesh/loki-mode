@@ -49,6 +49,9 @@ OUT="$(python3 "$SCAN" "$REPO_ROOT")"
 RC=$?
 if [ "$RC" -eq 2 ]; then
     bad "scanner could not read its ground truth; check is inert"
+elif [ "$RC" -ne 0 ] && ! printf '%s\n' "$OUT" | grep -q "	"; then
+    bad "scanner exited $RC with no findings; treating as a crash, not clean"
+    RC=2
 fi
 # Allowlist: path<TAB>token<TAB>reason. A finding is allowed when its path and
 # token match an entry, so the entry survives edits to other lines.

@@ -15,8 +15,9 @@ every user doc. Rules, each checked against the code at scan time:
               must not be older than VERSION's major.minor.
 
 Known limits (ponytail: lenient on purpose, tighten when a real miss shows up):
-R2 accepts any flag literal in the sources, so it does not prove a flag is
-valid for that particular command. Prose outside code spans is not parsed.
+R2 accepts any flag literal in the sources (help strings included), so it does
+not prove a flag is valid for that particular command. R1 checks only the
+top-level command, not subcommands. Prose outside code spans is not parsed.
 
 Output: one finding per line, path<TAB>line<TAB>rule<TAB>token.
 Exit 0 = no findings, 1 = findings, 2 = ground truth could not be read (the
@@ -44,7 +45,7 @@ def read(rel):
 
 
 def die(msg):
-    print(f"cannot read ground truth: {msg}", file=sys.stderr)
+    print(f"scan is inert: {msg}", file=sys.stderr)
     sys.exit(2)
 
 
@@ -139,4 +140,7 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as exc:  # a crash is unmeasured, never clean
+        die(f"{type(exc).__name__}: {exc}")
