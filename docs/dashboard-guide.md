@@ -305,6 +305,18 @@ The dashboard includes several security measures:
 | **Python injection fix** | `completion-council.sh` sanitizes inputs to prevent code injection |
 | **CORS configuration** | Configurable via `LOKI_DASHBOARD_CORS` environment variable (default: localhost only) |
 
+### Host allowlist (DNS rebinding defense)
+
+The dashboard refuses any request whose `Host` header is not loopback (`127.0.0.1`, `localhost`, `[::1]`) with 403, except `GET /health` and `GET /metrics`, which are always exempt so container probes (Host = pod IP) and scrapers work.
+
+| Deployment | Behavior |
+|------------|----------|
+| Local default (bound to 127.0.0.1) | Only loopback Hosts; add others via `LOKI_DASHBOARD_ALLOWED_HOSTS` |
+| Non-loopback bind (`0.0.0.0` or `LOKI_DASHBOARD_HOST` set) with `LOKI_ENTERPRISE_AUTH` or OIDC enabled | Any Host accepted; authentication is the boundary |
+| Non-loopback bind without auth | Only loopback plus `LOKI_DASHBOARD_ALLOWED_HOSTS` |
+
+`LOKI_DASHBOARD_ALLOWED_HOSTS` is a comma-separated list of host names (no port), e.g. `loki.example.com,10.0.0.5`. Helm: `config.dashboardAllowedHosts`. Terraform (aws-ecs): `dashboard_allowed_hosts`.
+
 ---
 
 ## Technical Architecture

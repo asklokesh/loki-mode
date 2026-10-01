@@ -151,6 +151,7 @@ resource "aws_ecs_task_definition" "controlplane" {
       environment = [
         { name = "LOKI_DASHBOARD_PORT", value = tostring(var.dashboard_port) },
         { name = "LOKI_LOG_LEVEL", value = var.log_level },
+        { name = "LOKI_DASHBOARD_ALLOWED_HOSTS", value = var.dashboard_allowed_hosts },
       ]
 
       // Secrets arrive as secret references, never as plaintext environment

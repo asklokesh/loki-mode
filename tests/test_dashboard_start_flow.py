@@ -259,7 +259,8 @@ def test_dns_rebinding_host_refused(tmp_path, monkeypatch):
     for path, body in (("/api/backlog/run", {"all": True}), ("/api/control/stop", None)):
         r = c.post(path, json=body, headers=evil)
         assert r.status_code == 403 and r.json()["detail"] == "host not allowed"
-    assert c.get("/health", headers=evil).status_code == 403
+    assert c.get("/health", headers=evil).status_code == 200  # probes exempt
+    assert c.get("/api/status", headers=evil).status_code == 403
     assert c.get("/health").status_code == 200
     assert c.get("/health", headers={"Host": "localhost:57374"}).status_code == 200
     assert c.get("/health", headers={"Host": "[::1]:57374"}).status_code == 200
