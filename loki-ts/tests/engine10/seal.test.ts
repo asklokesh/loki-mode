@@ -889,6 +889,28 @@ describe("D50-F1 already-satisfied discards run changes", () => {
       expect(lstatSync(join(repo, "sub")).isDirectory()).toBe(true);
       expect(readFileSync(join(repo, "sub/deep.md"), "utf8")).toBe("DEEP\n");
     }, 30000);
+    test("r5: a pre-existing dirty lockfile replaced by a symlink is never written through", async () => {
+      const { repo, base } = makeRepo("r5-a");
+      writeFileSync(join(repo, "package-lock.json"), "L0\n"); sh(["git", "add", "package-lock.json"], repo); sh(["git", "commit", "-q", "-m", "lock"], repo);
+      const base2 = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      writeFileSync(join(repo, "package-lock.json"), "L1 intake\n");
+      const blob = sh(["git", "hash-object", "-w", "package-lock.json"], repo).trim();
+      const out = join(repo, "..", "r5-a-outside"); mkdirSync(out, { recursive: true }); writeFileSync(join(out, "victim.txt"), "VICTIM\n");
+      rmSync(join(repo, "package-lock.json")); symlinkSync(join(out, "victim.txt"), join(repo, "package-lock.json"));
+      const intake = { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, preexisting_dirty: { "package-lock.json": blob } };
+      const c = await commitStage.run(ctxFor(repo, base2, "claude", { intake, implement: { exit: "already_done", tests_reverted: [], duration_s: 3 } }).ctx, sig);
+      expect(base2).not.toBe(base);
+      expect(readFileSync(join(out, "victim.txt"), "utf8")).toBe("VICTIM\n");
+      const l = lstatSync(join(repo, "package-lock.json"));
+      if (l.isFile()) expect(readFileSync(join(repo, "package-lock.json"), "utf8")).toBe("L1 intake\n");
+      else expect(JSON.stringify(c.data.not_proven ?? [])).toContain("package-lock.json");
+    }, 30000);
+    test("r5: discard.ts has no raw writeFileSync or chmodSync outside safeRestore", () => {
+      const src = readFileSync(join(import.meta.dir, "../../src/e10ext/discard.ts"), "utf8");
+      const a = src.indexOf("export function safeRestore"), b = src.indexOf("\n}\n", a);
+      const rest = src.slice(0, a) + src.slice(b);
+      expect(rest.replace(/^import .*$/gm, "")).not.toMatch(/\b(writeFileSync|chmodSync|unlinkSync|rmSync|renameSync|copyFileSync|symlinkSync|openSync|rmdirSync)\(/);
+    });
     test("r4: safeRestore refuses a symlinked parent and writes nothing outside", () => {
       const { repo } = makeRepo("r4-d"); const out = join(repo, "..", "r4-d-outside"); mkdirSync(out, { recursive: true });
       symlinkSync(out, join(repo, "sub"));

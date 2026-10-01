@@ -46,6 +46,8 @@ export async function discardIfSatisfied(git: Git, base: string, o: Partial<Reco
     } catch { notProven.push(f); }
   }
   // pre-existing dirty files go back to their intake blob; no blob = left as is
-  for (const f of Object.keys(pre)) if (staged.some((s) => s.f === f) && !keep.has(f)) { try { writeFileSync(join(repoDir, f), execFileSync("git", ["cat-file", "blob", pre[f]!], { cwd: repoDir, env: process.env })); } catch { notProven.push(f); } }
+  for (const f of Object.keys(pre)) if (staged.some((s) => s.f === f) && !keep.has(f)) {
+    try { let m = 0o644; try { const l = lstatSync(join(repoDir, f)); if (l.isFile()) m = l.mode & 0o777; } catch { /* absent */ } safeRestore(repoDir, f, execFileSync("git", ["cat-file", "blob", pre[f]!], { cwd: repoDir, env: process.env, maxBuffer: 1 << 28 }), m); } catch { notProven.push(f); }
+  }
   return { status: "completed", data: { committed: false, discarded: gone.length, ...(notProven.length > 0 ? { not_proven: notProven.map((f) => `pre-existing file not restored: ${f}`) } : {}) } };
 }
