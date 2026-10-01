@@ -10,9 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
-## v10.5.12 (2026-09-30)
+## v10.5.13 (2026-10-01)
 
-A `next` release. `loki quick` on an existing repository now commits only the fix, receipts get a local signing key by default, the Wall detects `node:test` repositories, and the new `packages/loki-seal` Claude Code plugin blocks "done" on red or weakened tests.
+A `next` release. It carries everything in v10.5.12, whose version commit landed on main but was never tagged or published (its Release run stopped on three secret-scan false positives on the signing key's file name), plus the work below. The headline: v10 refuses more ways of claiming success it has not earned, receipts are signed natively by default, and every v10 run ends with one named outcome and an honest exit code.
+
+### Added
+- One named outcome and a fixed exit ladder for v10 runs: VERIFIED and ALREADY_SATISFIED exit 0, FAILED 1, usage or preflight errors 2, a cost or time cap 3, BLOCKED (spec conflict) 4, STALLED 5. `--json` prints one object with `ok`, `outcome`, `stop`, `run_id` and `receipt_sha256`. A BLOCKED run posts its one question, and names an opened draft PR when there is one (A-110).
+- v10 signs receipts natively with Ed25519 (no Python needed) and by default. A receipt signed by a key this machine does not know reads UNCHECKED, not TAMPERED; a retired key still verifies (A-121).
+- Legacy `loki quick` prints its Evidence Receipt after the final commit, so the printed head and digest match what `loki verify` checks; it is quiet by default, with `--verbose` (or `LOKI_VERBOSE=1`) for the setup chatter, and its headline names the unsigned state and the not-proven count. Legacy `loki verify` reports the receipt's signature as VERIFIED, UNCHECKED, TAMPERED or UNSIGNED, and a tampered receipt is BLOCKED everywhere, including `evidence.json` (A-134).
+- `loki doctor` blocks only on the selected provider and ends with one line: `Ready: <provider> (<model>), <receipt signing state>`, or the blocker (A-123).
+
+### Changed
+- The GPG receipt-signing layer is removed; both engines use one local Ed25519 key family. The deploy gate trusts the local key and reads an unknown key as UNCHECKED (A-122).
+- v10 judges only the delta against a pristine base: a test already failing before the run is listed as `pre red` in NOT PROVEN, but only when the run proves progress on the task's own target tests. The task's relevant tests are always run, whatever files the diff touched (A-112, A-114).
+- Empty, all-skipped or zero-test check runs are `not_run`, never a pass (A-111).
+- A stall is named by the failing test, a run stops on a real provider authentication or credit failure, and `--resume` is removed from v10 (exit 2) (A-113).
+- The Wall classifies node:test output on node 20, 22 and 26: a test that fails for an unrelated reason (Jest globals, a missing package at top level) is discarded, while a real red stays red, including a child-process crash, an ESM missing export, and nested subtests (A-103, A-103c, A-103d).
+
+### Fixed
+- False VERIFIED results closed: a run that fixed nothing while an unrelated test was already red; a run whose diff avoided the target test; a target test that was skipped, xfailed, deselected, cut short by `pytest.exit`, or deleted; a test-configuration change (conftest.py, pytest/jest/vitest config) is disclosed in NOT PROVEN (A-112, A-114, A-115).
+- A quick-PRD run no longer emits the USAGE_DOC_REQUIRED instruction on the Bun route (A-132b).
+- `loki doctor`: the bash and Bun routes name a missing Node.js identically, and a not-yet-created signing key reads "receipts will be signed on first run".
+
+### Internal
+- The first-run gate gains G8: a skipped target test must not seal VERIFIED, on both the v10 and the default `loki quick` path.
+- Tests never write the real `~/.loki/keys`, and the test runner fails loudly if a test switches the parent checkout's branch (E-154, E-155, E-154b).
+- The moat P1 probe's negative control runs on a throwaway HOME, since a signing key now auto-generates; trigger-server tests restore the handler's signing attributes between tests.
+
+## v10.5.12 (2026-09-30, not published)
+
+Not published to npm: the Release run stopped on three secret-scan false positives. Everything below ships in v10.5.13. `loki quick` on an existing repository now commits only the fix, receipts get a local signing key by default, the Wall detects `node:test` repositories, and the new `packages/loki-seal` Claude Code plugin blocks "done" on red or weakened tests.
 
 ### Added
 - `packages/loki-seal`: a Claude Code plugin whose Stop hook blocks the agent from finishing while tests are red or were weakened (fewer tests than the session baseline, a crashed or empty run). It subtracts tests that were already red at session start, releases after repeated hook errors so a broken hook never traps a session, and ships an advisory skill and a demo. It is installed from a clone of this repository (A-04).
