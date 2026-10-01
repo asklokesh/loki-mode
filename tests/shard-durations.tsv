@@ -204,7 +204,6 @@ report cost agrees with its own budget state file	0
 loki stop is bounded regardless of provider timeout	4
 kill_provider_child never signals outside its own process group	6
 resource monitor reaps its sleep child on shutdown (BACKLOG 22)	0
-Python shutdown SIGABRT with piped output (PY-ABORT)	1
 audit chain claims match what the chain proves	1
 audit subsystem Node suites (witness, manifest, crosslink)	2
 dashboard unmeasured cost never renders as zero (node --test)	0
