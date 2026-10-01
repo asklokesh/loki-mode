@@ -53,6 +53,6 @@ These demos serve as starting points for real projects. Copy any file and custom
 
 ## About Loki Mode
 
-Loki Mode is a multi-agent autonomous system for Claude Code, OpenAI Codex CLI, and Google Gemini CLI. It takes a PRD (Product Requirements Document) and builds fully deployed products with minimal human intervention.
+Loki Mode is a multi-agent autonomous system for Claude Code, OpenAI Codex CLI, Cline, Aider and opencode. It takes a PRD (Product Requirements Document) and builds fully deployed products with minimal human intervention.
 
 Learn more at [autonomi.dev](https://www.autonomi.dev/)

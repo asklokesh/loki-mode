@@ -4,7 +4,7 @@
 #   -f deploy/helm/autonomi/values-production.yaml \
 #   -f deploy/helm/autonomi/values-ha.yaml
 
-# The control plane writes a tamper-evident, hash-chain audit log
+# The control plane writes a hash-chain audit log
 # (dashboard/audit.py). That chain head lives in a per-PROCESS module global, so
 # the audit writer is SINGLE-WRITER by construction: running >1 replica against a
 # shared audit volume interleaves entries from independent chains and the on-disk

@@ -393,7 +393,7 @@ ingress:
 #
 #   controlplaneAudit -- mounted at /home/loki/.loki/dashboard/audit on the
 #     control-plane Deployment ONLY. The dashboard hash-chain audit
-#     (dashboard/audit.py) writes tamper-evident JSONL to $HOME/.loki/dashboard/
+#     (dashboard/audit.py) writes hash-chained JSONL to $HOME/.loki/dashboard/
 #     audit (HOME=/home/loki). This is a separate concern from the worker audit.
 #
 # NOTE: a single ReadWriteOnce workspace PVC backs ONE build per release. The
@@ -437,9 +437,9 @@ persistence:
   # AUDIT DURABILITY -- two distinct chains, honest scope:
   #   Worker audit:  PLAIN JSONL written by the bash audit_log helper to
   #     /workspace/.loki/logs/audit-YYYYMMDD.jsonl. Durable across pod loss via
-  #     the workspace volume above. It is NOT tamper-evident and is NOT shipped to
+  #     the workspace volume above. It is NOT hash-chained and is NOT shipped to
   #     a SIEM. Do not represent it as either.
-  #   Control-plane audit:  tamper-evident HASH-CHAIN JSONL written by
+  #   Control-plane audit:  HASH-CHAIN JSONL written by
   #     dashboard/audit.py to /home/loki/.loki/dashboard/audit, made durable by
   #     this volume. Full SIEM ingestion is roadmap, not wired here.
   auditLogs:
@@ -468,9 +468,9 @@ config:
   # not by pointing the code at /data/*. Do not reintroduce those env vars.
   # Log level (DEBUG, INFO, WARNING, ERROR)
   logLevel: "INFO"
-  # Maximum concurrent RARV workers per pod
+  # Exported as LOKI_MAX_WORKERS; no runtime code reads it today
   maxWorkers: "4"
-  # Provider (claude, codex, gemini)
+  # Provider (claude, codex, cline, aider, opencode)
   provider: "claude"
   # Dashboard bind address
   dashboardHost: "0.0.0.0"

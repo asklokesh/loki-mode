@@ -184,8 +184,8 @@ a separate worker `/data/checkpoints` or `/data/audit` mount.
   Concurrent independent builds need separate releases; per-Job dynamic claims are
   future work.
 - **Worker audit is plain JSONL** on the durable `/workspace` volume (it survives
-  pod loss). It is **not** tamper-evident and is **not** shipped to a SIEM. The
-  tamper-evident hash-chain is the separate control-plane/dashboard audit chain;
+  pod loss). It is **not** hash-chained and is **not** shipped to a SIEM. The
+  hash-chained log is the separate control-plane/dashboard audit chain;
   full SIEM ingestion is roadmap.
 
 ## Production Deployment
