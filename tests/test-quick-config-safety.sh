@@ -68,7 +68,7 @@ fi
 mkdir -p "$T/home1b/.loki"
 printf 'DISCLOSURE_SHOWN=true\n' > "$T/home1b/.loki/config"
 preflight "$T/home1b" "$T/home1b"
-[ -f "$T/home1b/.loki/config" ] && ok "sentinel-only ~/.loki/config is left alone too" || bad "~/.loki/config folded"
+[ -f "$T/home1b/.loki/config" ] && ok "sentinel-only ~/.loki/config is left alone too" || bad "HOME .loki/config folded"
 
 # (1c) a project config file with a real setting is not folded away
 mkdir -p "$T/proj/.loki" "$T/home2"
