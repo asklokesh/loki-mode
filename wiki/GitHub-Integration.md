@@ -125,8 +125,8 @@ loki import
 When a session completes, Loki Mode can create a PR:
 
 ```bash
-# Enable GitHub integration
-export LOKI_GITHUB_ENABLED=true
+# Create a PR on completion
+export LOKI_GITHUB_PR=true
 
 # Start session
 loki start ./prd.md
@@ -161,11 +161,10 @@ Closes #123
 
 ## Notifications
 
-Configure GitHub notifications:
+Sync status back to the source issue as comments:
 
 ```bash
-# Notify on issue comment
-export LOKI_GITHUB_NOTIFY=true
+export LOKI_GITHUB_SYNC=true
 
 # Webhook for status updates
 export LOKI_WEBHOOK_URL="https://your-webhook.com/github"
@@ -179,9 +178,9 @@ export LOKI_WEBHOOK_URL="https://your-webhook.com/github"
 
 | Variable | Description |
 |----------|-------------|
-| `LOKI_GITHUB_ENABLED` | Enable GitHub integration |
-| `LOKI_GITHUB_NOTIFY` | Post updates as issue comments |
-| `LOKI_GITHUB_AUTO_PR` | Automatically create PRs |
+| `LOKI_GITHUB_IMPORT` | Import open issues as tasks on start |
+| `LOKI_GITHUB_SYNC` | Post status updates as issue comments |
+| `LOKI_GITHUB_PR` | Create a PR on completion |
 | `GITHUB_TOKEN` | GitHub API token (uses gh auth if not set) |
 
 ### Config File
@@ -189,17 +188,10 @@ export LOKI_WEBHOOK_URL="https://your-webhook.com/github"
 ```yaml
 # .loki/config.yaml
 github:
-  enabled: true
-  auto_pr: true
-  notify: true
-  pr_template: |
-    ## Summary
-    {{ summary }}
-
-    ## Changes
-    {{ changes }}
-
-    Closes #{{ issue_number }}
+  import: true
+  sync: true
+  pr: true
+  pr_label: loki-mode
 ```
 
 ---

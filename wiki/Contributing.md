@@ -50,7 +50,7 @@ loki-mode/
   CHANGELOG.md           # Release history
 
   autonomy/              # Runtime and CLI (run.sh, loki, completion-council.sh)
-  providers/             # Multi-provider support (Claude, Codex, Cline, Aider)
+  providers/             # Multi-provider support (Claude, Codex, Cline, Aider, opencode)
   skills/                # On-demand skill modules
   references/            # Detailed documentation
   memory/                # Memory system (Python)
@@ -58,7 +58,7 @@ loki-mode/
   dashboard-ui/          # Dashboard frontend (web components)
   events/                # Event bus (Python, TypeScript, Bash)
   tests/                 # Test suites
-  benchmarks/            # SWE-bench and HumanEval benchmarks
+  benchmarks/            # Benchmark harnesses
   wiki/                  # GitHub Wiki content
   vscode-extension/      # VS Code integration
 ```

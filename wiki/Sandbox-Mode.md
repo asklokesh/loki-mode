@@ -123,10 +123,10 @@ sandbox:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_SANDBOX_MODE` | `false` | Enable sandbox |
-| `LOKI_SANDBOX_IMAGE` | `asklokesh/loki-mode:latest` | Docker image |
+| `LOKI_SANDBOX_IMAGE` | `loki-mode:sandbox` | Docker image |
 | `LOKI_SANDBOX_MEMORY` | `4g` | Memory limit |
-| `LOKI_SANDBOX_CPU` | `2` | CPU limit |
-| `LOKI_SANDBOX_NETWORK` | `true` | Allow network access |
+| `LOKI_SANDBOX_CPUS` | `2` | CPU limit |
+| `LOKI_SANDBOX_NETWORK` | `bridge` | Network mode: `bridge`, `none`, `host` |
 
 ---
 

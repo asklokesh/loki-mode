@@ -8,7 +8,7 @@ Complete reference for all Loki Mode environment variables.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LOKI_PROVIDER` | `claude` | AI provider: claude, codex, cline, aider |
+| `LOKI_PROVIDER` | `claude` | AI provider: claude, codex, cline, aider, opencode |
 | `LOKI_MAX_RETRIES` | `50` | Maximum retry attempts |
 | `LOKI_BASE_WAIT` | `60` | Base wait time (seconds) |
 | `LOKI_MAX_WAIT` | `3600` | Maximum wait time (seconds) |
@@ -27,8 +27,6 @@ Complete reference for all Loki Mode environment variables.
 | `LOKI_DASHBOARD_CORS` | `http://localhost:57374,http://127.0.0.1:57374` | Comma-separated allowed CORS origins |
 | `LOKI_TLS_CERT` | - | Path to PEM certificate file (enables HTTPS) |
 | `LOKI_TLS_KEY` | - | Path to PEM private key file (enables HTTPS) |
-| `LOKI_API_PORT` | *(deprecated)* | Legacy variable, no longer used. Dashboard serves API on unified port 57374 via `LOKI_DASHBOARD_PORT` |
-| `LOKI_API_HOST` | `localhost` | Legacy API server host |
 | `LOKI_API_TOKEN` | - | API authentication token (for legacy/remote access) |
 
 ---
@@ -103,7 +101,6 @@ OIDC is enabled when both `LOKI_OIDC_ISSUER` and `LOKI_OIDC_CLIENT_ID` are set. 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_BRANCH_PROTECTION` | `false` | Auto-create feature branches for agent sessions |
-| `LOKI_CODEX_RPM` | `15` | Codex provider rate limit (requests per minute) |
 
 ---
 

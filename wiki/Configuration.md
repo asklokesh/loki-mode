@@ -375,16 +375,15 @@ notifications:
 
 ## Environment Variable Override
 
-Any config option can be overridden with environment variables:
+Each config key maps to one environment variable (the canonical list is
+`LOKI_CONFIG_MAP` in `autonomy/lib/config-map.sh`). An environment variable that
+is already set wins over the config file:
 
 ```bash
-# Pattern: LOKI_<SECTION>_<OPTION> (uppercase, underscores)
-
-# Examples:
-export LOKI_CORE_MAX_RETRIES=100
-export LOKI_DASHBOARD_ENABLED=false
-export LOKI_PARALLEL_ENABLED=true
-export LOKI_GITHUB_IMPORT=true
+export LOKI_MAX_RETRIES=100        # core.max_retries
+export LOKI_DASHBOARD=false        # dashboard.enabled
+export LOKI_PARALLEL_MODE=true     # parallel.enabled
+export LOKI_GITHUB_IMPORT=true     # github.import
 ```
 
 ## Output-token compressor (caveman)

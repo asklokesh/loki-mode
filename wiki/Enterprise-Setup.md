@@ -121,31 +121,22 @@ export LOKI_TLS_KEY="/path/to/key.pem"
 
 ```bash
 export LOKI_JIRA_URL="https://company.atlassian.net"
-export LOKI_JIRA_EMAIL="user@company.com"
 export LOKI_JIRA_TOKEN="your-api-token"
-export LOKI_JIRA_PROJECT_KEY="PROJ"
+export LOKI_JIRA_EPIC_KEY="PROJ-1"   # optional
 ```
 
-**Verify:**
-```bash
-curl -u "$LOKI_JIRA_EMAIL:$LOKI_JIRA_TOKEN" \
-  "$LOKI_JIRA_URL/rest/api/3/myself"
-```
+The sync subscriber (`src/integrations/sync-subscriber.js`) pushes Loki status
+to Jira. It does not pull changes back from Jira.
 
 ### Linear Integration
 
 ```bash
-export LOKI_LINEAR_API_KEY="lin_api_your_key"
+export LOKI_LINEAR_TOKEN="lin_api_your_key"
 export LOKI_LINEAR_TEAM_ID="your-team-id"
+export LOKI_LINEAR_PROJECT_ID="your-project-id"   # optional
 ```
 
-**Verify:**
-```bash
-curl -X POST https://api.linear.app/graphql \
-  -H "Authorization: $LOKI_LINEAR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "{ viewer { id name } }"}'
-```
+Like Jira, Linear sync is one-way (Loki status pushed to Linear).
 
 ### GitHub Integration
 
@@ -192,8 +183,7 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 | `LOKI_ENTERPRISE_AUTH` | -- | Enable token auth |
 | `LOKI_TLS_CERT` | -- | TLS certificate path |
 | `LOKI_TLS_KEY` | -- | TLS key path |
-| `LOKI_CORS_ORIGINS` | localhost | Allowed CORS origins |
-| `LOKI_API_RATE_LIMIT` | 100 | Requests per minute |
+| `LOKI_DASHBOARD_CORS` | localhost | Allowed CORS origins (comma-separated) |
 
 ### Audit
 
@@ -214,25 +204,23 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 |----------|---------|-------------|
 | `LOKI_OIDC_ISSUER` | -- | OIDC issuer URL |
 | `LOKI_OIDC_CLIENT_ID` | -- | OIDC client ID |
-| `LOKI_OIDC_CLIENT_SECRET` | -- | OIDC client secret |
-| `LOKI_OIDC_REDIRECT_URI` | -- | OIDC redirect URI |
+| `LOKI_OIDC_AUDIENCE` | client ID | Expected token audience |
 
 ### Integrations
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOKI_JIRA_URL` | -- | Jira base URL |
-| `LOKI_JIRA_EMAIL` | -- | Jira user email |
 | `LOKI_JIRA_TOKEN` | -- | Jira API token |
-| `LOKI_JIRA_PROJECT_KEY` | -- | Default project key |
-| `LOKI_LINEAR_API_KEY` | -- | Linear API key |
+| `LOKI_JIRA_EPIC_KEY` | -- | Epic to attach updates to |
+| `LOKI_LINEAR_TOKEN` | -- | Linear API key |
 | `LOKI_LINEAR_TEAM_ID` | -- | Linear team ID |
-| `LOKI_LINEAR_WEBHOOK_SECRET` | -- | Linear webhook secret |
+| `LOKI_LINEAR_PROJECT_ID` | -- | Linear project ID |
 | `LOKI_GITHUB_SYNC` | -- | Enable GitHub sync |
 | `LOKI_SLACK_BOT_TOKEN` | -- | Slack bot token |
 | `LOKI_SLACK_SIGNING_SECRET` | -- | Slack signing secret |
 | `LOKI_SLACK_CHANNEL` | -- | Default Slack channel |
-| `LOKI_SLACK_WEBHOOK_URL` | -- | Slack webhook URL |
+| `LOKI_SLACK_WEBHOOK` | -- | Slack webhook URL |
 | `LOKI_TEAMS_WEBHOOK_URL` | -- | Teams webhook URL |
 | `LOKI_TEAMS_WEBHOOK_SECRET` | -- | Teams webhook secret |
 

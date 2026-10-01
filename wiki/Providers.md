@@ -1,19 +1,20 @@
 # Providers
 
-Loki is provider-agnostic: the autonomy loop is the product, and the coding CLI underneath is swappable. Supported providers: Claude Code, OpenAI Codex CLI, Cline, and Aider.
+Loki is provider-agnostic: the autonomy loop is the product, and the coding CLI underneath is swappable. Supported providers: Claude Code, OpenAI Codex CLI, Cline, Aider, and opencode.
 
 ---
 
 ## Overview
 
-Loki Mode supports four active AI providers with different capability levels, plus historical/upcoming entries:
+Loki Mode supports five active AI providers with different capability levels, plus historical/upcoming entries:
 
 | Provider | Status | Task Tool | Parallel | MCP | Context |
 |----------|--------|-----------|----------|-----|---------|
-| **Claude** | Active (Tier 1, Full, E2E-verified) | Yes | Yes (10+) | Yes | 200K |
+| **Claude** | Active (Tier 1, Full, E2E-verified) | Yes | Yes | Yes | 200K |
 | **Cline** | Experimental (Tier 2) - community-tested | No | No | No | varies |
 | **Codex** | Experimental (Tier 3) - community-tested | No | No | No | 128K |
 | **Aider** | Experimental (Tier 3) - community-tested | No | No | No | varies |
+| **opencode** | Experimental (model-agnostic) | No | No | Yes | varies |
 | **Google Gemini CLI** | DEPRECATED v7.5.18 | -- | -- | -- | -- |
 
 **Status note (2026-06-09):** Claude Code is the primary, fully supported provider and the one Loki Mode is built for; it is the only provider we E2E-verify ourselves with real spec-to-code builds. Codex, Cline, and Aider have working wiring but no end-to-end verified build on our side, so they are labeled experimental (community-tested). Codex on a fresh non-git directory previously failed with "Not inside a trusted directory"; the harness now passes `--skip-git-repo-check`.
@@ -116,7 +117,7 @@ claude --dangerously-skip-permissions
 ### Capabilities
 
 - **Task Tool** - Spawn subagents for parallel work
-- **Parallel Agents** - Up to 10+ concurrent agents
+- **Parallel Agents** - Concurrent subagents via the Task tool
 - **MCP Integration** - Extended tool capabilities
 - **Extended Thinking** - Deep reasoning for complex problems
 - **3 Model Tiers** - Right-size for each task
@@ -276,6 +277,32 @@ loki start ./prd.md --provider aider
 
 ---
 
+## opencode
+
+Model-agnostic route: opencode reaches many model providers (including any
+OpenAI-compatible endpoint and local models) through its own registry.
+Sequential execution, MCP supported.
+
+### Invocation
+
+```bash
+opencode run --auto "<prompt>"
+```
+
+### Configuration
+
+```bash
+# Set as provider
+export LOKI_PROVIDER=opencode
+
+# Pick the model as provider/model (default comes from the catalog)
+export LOKI_OPENCODE_MODEL=openrouter/deepseek/deepseek-v3.2
+
+loki start ./prd.md --provider opencode
+```
+
+---
+
 ## Provider Management
 
 ### Check Current Provider
@@ -331,7 +358,7 @@ loki start ./prd.md --provider cline
 
 **Claude:** Full support
 ```
-Spawn up to 10+ parallel subagents for:
+Spawn parallel subagents for:
 - Research tasks
 - Code review
 - Testing
@@ -364,6 +391,7 @@ Each task completes before next begins
 | Codex | 128K | Medium projects |
 | Cline | varies | Depends on backend model |
 | Aider | varies | Depends on backend model |
+| opencode | varies | Depends on backend model |
 
 ---
 
