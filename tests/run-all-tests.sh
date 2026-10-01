@@ -1612,6 +1612,7 @@ run_test "SettingsPage has no Gemini (D44)" "$SCRIPT_DIR/test-settingspage-no-ge
 run_test "Trusted push agent config (D44)" "$SCRIPT_DIR/test-trusted-push-agent-config.sh"
 run_test "v10 guard rules (D44)" "$SCRIPT_DIR/test-v10-guard.sh"
 run_test "first-run gate assertion logic (A-02)" "$SCRIPT_DIR/test-first-run-gate.sh"
+run_test "json schemas validate real why and status output (D48 r5)" "$SCRIPT_DIR/test-json-schemas.sh"
 run_test "Every test suite is registered in a runner (D44)" "$SCRIPT_DIR/test-registration-coverage.sh"
 run_test "Structural checks catch planted defects (D44-C)" "$SCRIPT_DIR/test-structural-checks.sh"
 run_test "v10 ops (E-142)" "$SCRIPT_DIR/test-v10-ops.sh"
