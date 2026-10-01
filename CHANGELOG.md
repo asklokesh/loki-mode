@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.19 (2026-10-01)
+
+A `next` release. v10.5.18 was never published, because its Release run was blocked by CodeQL findings in the new `/start` onboarding API. This release fixes those findings and carries everything listed under v10.5.18. Legacy `loki quick` now exits non-zero when tests were weakened to make a run pass.
+
+### Fixed
+- The `/start` dashboard API resolves provider binaries and credential file names only from fixed allowlists, so request input can never choose the program that is run or the file that is written. This closes CodeQL alerts 604-607 (command-line and path injection) (P0).
+- Legacy `loki quick` exits 3 when the `tests_integrity` check fails: a skip was added, the test runner config was changed to deselect tests, or a test file was weakened. Before, it printed `Evidence Receipt: NOT VERIFIED` and still exited 0. Module-level `pytestmark` skips are caught. On Python 3.10, where `tomllib` is missing, only the `[tool.pytest.ini_options]` section of `pyproject.toml` is compared, so a dependency edit is not read as a test-config change (A-118, D47).
+
+### Changed
+- The README is the full v10 guide again, with Mermaid diagrams, loki-seal marketplace install, unsigned-receipt exit 3 and automatic promotion. The loki-seal README installs from the published repo marketplace (DOC-01).
+
 ## v10.5.18 (2026-10-01)
 
 A `next` release. Running `loki` with no arguments opens a local dashboard to connect a provider and GitHub, pick a repo and complete its open issues; v10 runs start even when a task's setup rewrote a lockfile; and the docs were swept for stale claims.
