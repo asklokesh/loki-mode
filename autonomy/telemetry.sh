@@ -168,7 +168,7 @@ _loki_known_command() {
     case "${1:-}" in
         --help|--version|-h|-v|agent|analyze|api|assets\
         |audit|bench|checkpoint|ci|cleanup|cluster|cockpit|code\
-        |completions|compliance|compound|config|context|cost|council|cp\
+        |completions|compliance|compound|config|context|control|cost|council|cp\
         |crash|ctx|dashboard|demo|deploy|docker|docs|doctor\
         |dogfood|enterprise|explain|export|failover|github|grill|handoff\
         |heal|help|import|init|internal|issue|kpis|logs\

@@ -1,0 +1,69 @@
+// The only file that talks to the control service. Shapes mirror packages/control-plane/src/server/runs.ts (parseRun, listRuns, runDetail).
+
+export type Verdict = "VERIFIED" | "PARTIAL" | "FAILED" | "SPEC_CONFLICT" | string;
+
+export interface RunRow {
+  source_id: string;
+  run_id: string;
+  origin_repo: string | null;
+  issue_ref: string | null;
+  task_source: string | null;
+  provider: string | null;
+  model: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  verdict: Verdict | null; // null while the run is still in progress
+  pr_url: string | null;
+  pr_draft: boolean | null;
+  cost_usd: number | null; // null when any session was unpriced: show "unpriced", never 0
+  partial_usd: number | null;
+  measured_sessions: number;
+  total_sessions: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  wall_s: number | null;
+  last_seq: number;
+  last_event_at: string | null;
+  tampered: boolean;
+  conflict: boolean;
+  // Live view: status is "running" until run.completed arrives. Optional so older captures still type-check.
+  status?: "running" | "completed";
+  elapsed_s?: number | null;
+  current_stage?: string | null;
+  files_touched?: string[];
+}
+
+/** GET /v1/runs: total is the filtered count, next_cursor an opaque offset. */
+export interface RunsResponse { runs: RunRow[]; total: number; next_cursor: string | null }
+
+/** status is the stage event suffix: "started" while open, else "completed" / "failed" / ... */
+export interface TimelineStage { stage: string; started_at: string | null; ended_at: string | null; status: string }
+
+/** GET /v1/runs/:source/:run: the summary row, flat, plus the folded detail. */
+export interface RunDetailResponse extends RunRow {
+  stages: TimelineStage[];
+  stages_completed: string[];
+  receipt: { sha256: string | null; signed: boolean; verdict: string | null; path: string | null } | null;
+  not_proven: string[];
+}
+
+export interface RunFilters { verdict?: string; repo?: string; since?: string }
+
+const base = (): string => (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";
+
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(`${base()}${path}`);
+  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  return (await res.json()) as T;
+}
+
+export function listRuns(f: RunFilters = {}): Promise<RunsResponse> {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(f)) if (v) q.set(k, v);
+  const s = q.toString();
+  return get<RunsResponse>(`/v1/runs${s ? `?${s}` : ""}`);
+}
+
+export function getRun(source: string, run: string): Promise<RunDetailResponse> {
+  return get<RunDetailResponse>(`/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`);
+}

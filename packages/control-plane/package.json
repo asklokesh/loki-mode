@@ -1,0 +1,20 @@
+{
+  "name": "@loki/control-plane",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test ./test/",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build:ui": "cd ui && bun install --frozen-lockfile && bun run build",
+    "build:server": "bun build src/server/serve.ts --target=bun --outfile dist/server.js",
+    "build:all": "bun run build:ui && bun run build:server",
+    "db:generate": "drizzle-kit generate --dialect sqlite --schema ./src/db/schema.ts --out ./drizzle"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.3",
+    "hono": "^4.13.12"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.11"
+  }
+}

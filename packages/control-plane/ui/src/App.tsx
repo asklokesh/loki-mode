@@ -1,0 +1,242 @@
+import { Activity, ExternalLink, Moon, Sun, TriangleAlert } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { getRun, listRuns, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
+
+const MISSING = "not recorded";
+
+export function fmtCost(r: Pick<RunRow, "cost_usd" | "partial_usd" | "measured_sessions" | "total_sessions">): string {
+  if (r.cost_usd !== null && r.cost_usd !== undefined) return `$${r.cost_usd.toFixed(4)}`;
+  if (r.total_sessions > 0 && r.measured_sessions < r.total_sessions) {
+    return `unpriced (${r.measured_sessions} of ${r.total_sessions} sessions priced)`;
+  }
+  return "unpriced";
+}
+
+const durationS = (s: TimelineStage): number | null =>
+  s.started_at && s.ended_at ? (Date.parse(s.ended_at) - Date.parse(s.started_at)) / 1000 : null;
+
+const fmtSecs = (s: number | null | undefined): string => (typeof s === "number" ? `${s.toFixed(1)}s` : MISSING);
+const fmtTime = (t: string | null | undefined): string => (t ? t.replace("T", " ").replace(/\.\d+Z$/, "Z") : MISSING);
+
+const VERDICT_CLASS: Record<string, string> = {
+  VERIFIED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-emerald-500/30",
+  PARTIAL: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
+  FAILED: "bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30",
+  SPEC_CONFLICT: "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-violet-500/30",
+};
+
+export function VerdictBadge({ verdict }: { verdict: string | null }) {
+  const cls = verdict ? (VERDICT_CLASS[verdict] ?? "bg-slate-500/15 text-slate-600 dark:text-slate-300 ring-slate-500/30") : "bg-slate-500/15 text-slate-600 dark:text-slate-300 ring-slate-500/30";
+  return <span data-testid="verdict" className={`inline-block rounded px-2 py-0.5 text-xs font-medium ring-1 ${cls}`}>{verdict ?? "in progress"}</span>;
+}
+
+function PrLink({ url }: { url: string | null }) {
+  if (!url) return <span className="text-slate-500">no PR</span>;
+  const web = /^https?:\/\//.test(url);
+  return web ? (
+    <a href={url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sky-600 hover:underline dark:text-sky-400">
+      PR <ExternalLink size={12} />
+    </a>
+  ) : (
+    <span className="break-all font-mono text-xs" title="local origin, no web URL">{url}</span>
+  );
+}
+
+function EmptyRuns() {
+  return (
+    <div className="rounded border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
+      <p className="text-lg font-medium">No runs ingested yet</p>
+      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Connect a run in one of two ways:</p>
+      <ul className="mx-auto mt-3 max-w-xl space-y-2 text-left text-sm">
+        <li>Set <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">LOKI_CONTROL_URL</code> in the environment of <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">loki start</code> and runs ship as they happen.</li>
+        <li>Run <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">loki control backfill</code> to ship runs already on disk.</li>
+      </ul>
+    </div>
+  );
+}
+
+export const POLL_MS = 3000; // within the 2 to 5 s live window
+
+/** Loads fn; while `again(data)` is true it re-polls every POLL_MS without clearing the screen. */
+function useLoad<T>(fn: () => Promise<T>, deps: unknown[], again?: (d: T) => boolean): { data: T | null; error: string | null } {
+  const [state, set] = useState<{ data: T | null; error: string | null }>({ data: null, error: null });
+  useEffect(() => {
+    let live = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    set({ data: null, error: null });
+    const load = () => fn().then((data) => {
+      if (!live) return;
+      set({ data, error: null });
+      if (again?.(data)) timer = setTimeout(load, POLL_MS);
+    }, (e: Error) => {
+      if (!live) return;
+      set((p) => ({ data: p.data, error: e.message }));
+      if (again) timer = setTimeout(load, POLL_MS); // keep trying while a live view is open
+    });
+    void load();
+    return () => { live = false; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return state;
+}
+
+const isRunning = (r: Pick<RunRow, "status">): boolean => r.status === "running";
+
+/** Live elapsed: server value at fetch time, advanced by the local clock once a second while running. */
+export function Elapsed({ run }: { run: RunRow }) {
+  const [base] = useState(() => ({ at: Date.now(), s: run.elapsed_s ?? 0 }));
+  const [, tick] = useState(0);
+  const running = isRunning(run);
+  useEffect(() => { if (!running) return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [running]);
+  const s = running ? Math.max(run.elapsed_s ?? 0, base.s + (Date.now() - base.at) / 1000) : (run.elapsed_s ?? run.wall_s);
+  return <span data-testid="elapsed">{typeof s === "number" ? `${Math.floor(s)}s` : MISSING}</span>;
+}
+
+export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
+  const [verdict, setVerdict] = useState("");
+  const [repo, setRepo] = useState("");
+  const [since, setSince] = useState("");
+  const { data, error } = useLoad(() => listRuns({ verdict, repo, since: since ? `${since}T00:00:00Z` : "" }), [verdict, repo, since], (d) => d.runs.some(isRunning));
+  const filtered = Boolean(verdict || repo || since);
+  const inp = "rounded border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900";
+  return (
+    <section>
+      <h1 className="mb-4 text-xl font-semibold">Runs</h1>
+      <div className="mb-4 flex flex-wrap items-end gap-3 text-sm">
+        <label className="flex flex-col gap-1">Verdict
+          <select aria-label="Verdict" className={inp} value={verdict} onChange={(e) => setVerdict(e.target.value)}>
+            <option value="">All</option>
+            {["VERIFIED", "PARTIAL", "FAILED", "SPEC_CONFLICT"].map((v) => <option key={v}>{v}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">Repo
+          <input aria-label="Repo" className={inp} value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/name" />
+        </label>
+        <label className="flex flex-col gap-1">Since
+          <input aria-label="Since" type="date" className={inp} value={since} onChange={(e) => setSince(e.target.value)} />
+        </label>
+      </div>
+      {error && <p role="alert" className="text-red-600">Could not load runs: {error}</p>}
+      {!data && !error && <p className="text-slate-500">Loading runs</p>}
+      {data && data.runs.length === 0 && (filtered ? <p>No runs match these filters.</p> : <EmptyRuns />)}
+      {data && data.runs.length > 0 && (
+        <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-100 text-xs uppercase text-slate-500 dark:bg-slate-900">
+              <tr><th className="p-2">Verdict</th><th className="p-2">Run</th><th className="p-2">Repo</th><th className="p-2">Started</th><th className="p-2">Progress</th><th className="p-2">Cost</th><th className="p-2">PR</th></tr>
+            </thead>
+            <tbody>
+              {data.runs.map((r) => (
+                <tr key={`${r.source_id}/${r.run_id}`} data-testid="run-row" className="border-t border-slate-200 dark:border-slate-800">
+                  <td className="p-2"><VerdictBadge verdict={r.verdict} />{r.tampered && <span className="ml-1 text-xs text-red-600">tampered</span>}</td>
+                  <td className="p-2 font-mono text-xs">
+                    <a href={`#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} onClick={() => onOpen?.(r)} className="text-sky-600 hover:underline dark:text-sky-400">{r.run_id}</a>
+                  </td>
+                  <td className="p-2">{r.origin_repo ?? MISSING}</td>
+                  <td className="p-2">{fmtTime(r.started_at)}</td>
+                  <td className="p-2 text-xs" data-testid="progress">{isRunning(r) ? <>{r.current_stage ?? "starting"}, <Elapsed run={r} />, {(r.files_touched ?? []).length} files</> : ""}</td>
+                  <td className="p-2" data-testid="cost">{fmtCost(r)}</td>
+                  <td className="p-2"><PrLink url={r.pr_url} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Card({ title, children }: { title: string; children: ReactNode }) {
+  return <div className="rounded border border-slate-200 p-4 dark:border-slate-800"><h2 className="mb-2 text-sm font-semibold uppercase text-slate-500">{title}</h2>{children}</div>;
+}
+
+function Timeline({ stages }: { stages: TimelineStage[] }) {
+  if (stages.length === 0) return <p className="text-slate-500">No stages ingested for this run.</p>;
+  return (
+    <ol className="space-y-1 text-sm">
+      {stages.map((s) => (
+        <li key={s.stage} data-testid="stage" className="flex items-center justify-between gap-4">
+          <span className="font-medium">{s.stage}</span>
+          <span className="text-slate-500">{s.status === "started" ? "running" : fmtSecs(durationS(s))}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+export function RunDetail({ source, run }: { source: string; run: string }) {
+  const { data, error } = useLoad<RunDetailResponse>(() => getRun(source, run), [source, run], isRunning);
+  if (error) return <p role="alert" className="text-red-600">Could not load run: {error}</p>;
+  if (!data) return <p className="text-slate-500">Loading run</p>;
+  const r = data;
+  return (
+    <section className="space-y-4">
+      <a href="#/runs" className="text-sm text-sky-600 hover:underline dark:text-sky-400">Back to runs</a>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="font-mono text-lg font-semibold">{r.run_id}</h1>
+        <VerdictBadge verdict={r.verdict} />
+        {r.tampered && <span className="inline-flex items-center gap-1 text-sm text-red-600"><TriangleAlert size={14} />event log tampered</span>}
+        {r.conflict && <span className="inline-flex items-center gap-1 text-sm text-amber-600"><TriangleAlert size={14} />conflicting events ingested</span>}
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card title="Summary">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+            <dt className="text-slate-500">Repo</dt><dd>{r.origin_repo ?? MISSING}</dd>
+            <dt className="text-slate-500">Issue</dt><dd>{r.issue_ref ?? MISSING}</dd>
+            <dt className="text-slate-500">Provider</dt><dd>{r.provider ?? MISSING}</dd>
+            <dt className="text-slate-500">Model</dt><dd>{r.model ?? MISSING}</dd>
+            <dt className="text-slate-500">Started</dt><dd>{fmtTime(r.started_at)}</dd>
+            {isRunning(r) && <><dt className="text-slate-500">Current stage</dt><dd data-testid="current-stage">{r.current_stage ?? "starting"}</dd></>}
+            <dt className="text-slate-500">{isRunning(r) ? "Elapsed" : "Wall time"}</dt><dd>{isRunning(r) ? <Elapsed run={r} /> : fmtSecs(r.wall_s)}</dd>
+            {isRunning(r) && <><dt className="text-slate-500">Files touched</dt><dd data-testid="files-touched">{(r.files_touched ?? []).join(", ") || "none yet"}</dd></>}
+            <dt className="text-slate-500">Cost</dt><dd data-testid="cost">{fmtCost(r)}</dd>
+            <dt className="text-slate-500">PR</dt><dd><PrLink url={r.pr_url} /></dd>
+          </dl>
+        </Card>
+        <Card title="Stage timeline"><Timeline stages={data.stages} /></Card>
+      </div>
+      <Card title="Receipt">
+        <div className="space-y-3 text-sm">
+          {data.receipt ? (
+            <p>Receipt verdict: <VerdictBadge verdict={data.receipt.verdict} /> <span className="ml-2 font-mono text-xs text-slate-500">{data.receipt.sha256}</span></p>
+          ) : <p className="text-slate-500">No receipt ingested for this run.</p>}
+          <div>
+            <h3 className="font-medium">NOT PROVEN</h3>
+            {data.not_proven.length === 0 ? <p className="text-slate-500">Nothing listed as not proven.</p> : (
+              <ul className="list-disc pl-5">{data.not_proven.map((n) => <li key={n} data-testid="not-proven">{n}</li>)}</ul>
+            )}
+          </div>
+        </div>
+      </Card>
+    </section>
+  );
+}
+
+function route(hash: string): { source: string; run: string } | null {
+  const m = /^#\/runs\/([^/]+)\/([^/]+)$/.exec(hash);
+  return m ? { source: decodeURIComponent(m[1]!), run: decodeURIComponent(m[2]!) } : null;
+}
+
+export function App() {
+  const [hash, setHash] = useState(globalThis.location?.hash ?? "");
+  const [dark, setDark] = useState(() => { try { return localStorage.getItem("loki-theme") !== "light"; } catch { return true; } });
+  useEffect(() => { const f = () => setHash(location.hash); addEventListener("hashchange", f); return () => removeEventListener("hashchange", f); }, []);
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", dark);
+    try { localStorage.setItem("loki-theme", dark ? "dark" : "light"); } catch { /* storage unavailable */ }
+  }, [dark]);
+  const r = route(hash);
+  return (
+    <div className="flex min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <nav className="w-48 shrink-0 border-r border-slate-200 p-4 dark:border-slate-800">
+        <div className="mb-6 font-semibold">Loki Control</div>
+        <a href="#/runs" className="flex items-center gap-2 rounded bg-slate-100 px-2 py-1 text-sm dark:bg-slate-900"><Activity size={14} />Runs</a>
+        <button type="button" onClick={() => setDark(!dark)} aria-label="Toggle theme" className="mt-6 flex items-center gap-2 text-sm text-slate-500">
+          {dark ? <Sun size={14} /> : <Moon size={14} />}{dark ? "Light theme" : "Dark theme"}
+        </button>
+      </nav>
+      <main className="flex-1 overflow-x-auto p-6">{r ? <RunDetail source={r.source} run={r.run} /> : <RunsList />}</main>
+    </div>
+  );
+}

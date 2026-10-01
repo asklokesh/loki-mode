@@ -1,0 +1,92 @@
+{
+  "source_id": "corpus0000000000",
+  "run_id": "e10-20261001T155506Z-72b6",
+  "origin_repo": null,
+  "issue_ref": null,
+  "task_source": "text",
+  "provider": "claude",
+  "model": "sonnet",
+  "started_at": "2026-10-01T15:55:07.017Z",
+  "ended_at": "2026-10-01T15:55:07.617Z",
+  "verdict": "VERIFIED",
+  "pr_url": null,
+  "pr_draft": null,
+  "cost_usd": 0,
+  "partial_usd": 0,
+  "measured_sessions": 3,
+  "total_sessions": 3,
+  "input_tokens": 0,
+  "output_tokens": 0,
+  "wall_s": 0.625,
+  "last_seq": 29,
+  "last_event_at": "2026-10-01T15:55:07.618Z",
+  "tampered": false,
+  "conflict": false,
+  "stages": [
+    {
+      "stage": "intake",
+      "started_at": "2026-10-01T15:55:07.089Z",
+      "ended_at": "2026-10-01T15:55:07.176Z",
+      "status": "completed"
+    },
+    {
+      "stage": "wall",
+      "started_at": "2026-10-01T15:55:07.179Z",
+      "ended_at": "2026-10-01T15:55:07.289Z",
+      "status": "completed"
+    },
+    {
+      "stage": "plan",
+      "started_at": "2026-10-01T15:55:07.182Z",
+      "ended_at": "2026-10-01T15:55:07.287Z",
+      "status": "completed"
+    },
+    {
+      "stage": "implement",
+      "started_at": "2026-10-01T15:55:07.290Z",
+      "ended_at": "2026-10-01T15:55:07.382Z",
+      "status": "completed"
+    },
+    {
+      "stage": "verify",
+      "started_at": "2026-10-01T15:55:07.382Z",
+      "ended_at": "2026-10-01T15:55:07.504Z",
+      "status": "completed"
+    },
+    {
+      "stage": "commit",
+      "started_at": "2026-10-01T15:55:07.505Z",
+      "ended_at": "2026-10-01T15:55:07.582Z",
+      "status": "completed"
+    },
+    {
+      "stage": "seal",
+      "started_at": "2026-10-01T15:55:07.582Z",
+      "ended_at": "2026-10-01T15:55:07.615Z",
+      "status": "completed"
+    }
+  ],
+  "stages_completed": [
+    "intake",
+    "plan",
+    "wall",
+    "implement",
+    "verify",
+    "commit",
+    "seal"
+  ],
+  "receipt": {
+    "sha256": "e4e99efc71783f7b990534e5b418f57f49896644e93373aa29f17fbe5b0adaa3",
+    "signed": true,
+    "verdict": "VERIFIED",
+    "path": "/private/var/folders/2t/2qvt7wb54qv1tckcfs90rd7w0000gn/T/loki-run-cp00-tfHB2T/verified/repo/.loki/runs/e10-20261001T155506Z-72b6/receipt.json"
+  },
+  "not_proven": [
+    "full suite",
+    "app boot",
+    "council",
+    "security scan",
+    "repo not recorded by intake",
+    "cost unmetered (CLI invoker; recorded as 0)"
+  ]
+}

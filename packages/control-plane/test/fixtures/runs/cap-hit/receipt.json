@@ -1,0 +1,52 @@
+{
+  "schema": "loki.v10.receipt/1",
+  "run_id": "e10-20261001T155512Z-e3a2",
+  "task": {
+    "source": "text",
+    "sha256": ""
+  },
+  "repo": "",
+  "base_sha": "5c1d9b91cca580b6afcd4c134397bb210ca7b4cf",
+  "head_sha": "5c1d9b91cca580b6afcd4c134397bb210ca7b4cf",
+  "tree": "c98045c7173d68a1bbe96987eecc6d8a01f6bdc9",
+  "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "wall": {
+    "files": [],
+    "passed": null
+  },
+  "checks": [],
+  "not_proven": [
+    "full suite",
+    "app boot",
+    "council",
+    "security scan",
+    "task source not recorded by intake",
+    "repo not recorded by intake",
+    "resume state not recorded by intake",
+    "cost not measured (no iteration ids recorded)"
+  ],
+  "verdict": "FAILED",
+  "evidence": [],
+  "cost": {
+    "usd": null,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "measured_sessions": 0,
+    "total_sessions": 0,
+    "partial_usd": 0
+  },
+  "time": {
+    "wall_s": 0,
+    "stages": {}
+  },
+  "provider": "claude",
+  "model": "sonnet",
+  "resumed": false,
+  "events_sha256": "d096fae3786d368c40e3167602cd6bf7f15802fbf88ba53a4d25cd66f8f6c607",
+  "log_seal": true,
+  "receipt_sha256": "9345574169b8302ec134203a447496cba3833da10de59ea2d6339417559edec4",
+  "verification": {
+    "jwt": "redacted-fixture-signature",
+    "kid": "nEgOOci5RAyQ74W_yd2i2j8HVJXYavgqeYiLt7B1Fkw"
+  }
+}
