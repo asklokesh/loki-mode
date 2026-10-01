@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.25 (2026-10-01)
+
+A `next` release. `npm install -g loki-mode` now brings its own bun, so the Loki 10 engine (the default since v10.5.22) runs on machines that never installed bun. When it still cannot run, `loki` says so plainly on the first line instead of falling back quietly, and the release gate now checks both kinds of machine before moving `latest`.
+
+### Added
+- bun 1.4.2 ships as an optional dependency. npm installs only the one platform package that matches the machine (`@oven/bun-<os>-<arch>`). Measured cost: about 62MB on macOS arm64; published sizes are 79.5MB for linux-x64, 69.3MB for macOS x64 and 86.1MB for Windows x64. Platforms bun does not support skip it without failing the install (P0-nobun).
+
+### Changed
+- `loki` looks for a working bun on PATH, then the bundled copy (`node_modules/bun/bin/bun.exe`, or the platform package's `bin/bun` when install scripts were skipped), and accepts one only if `bun --version` succeeds within 2 seconds. A bun-less or broken machine runs the legacy engine and prints this as the first line on stderr: `loki: the Loki 10 engine cannot run on this machine: no working bun (...). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional.` `LOKI_ENGINE=v10` with no working bun still exits 1. The probe adds about 10ms to commands that route to the engine, and none to `loki --version` or `loki status` (P0-nobun).
+- The promote gate runs twice against the published version: once with bun (Loki 10 expectations) and once as a machine with no bun (installed without optional dependencies and bun removed from PATH, legacy expectations: legacy `loki verify`, at most 15 output lines, a skipped target test must not read VERIFIED, and the fallback line must name the reason). `latest` moves only when both pass (E-167).
+
 ## v10.5.24 (2026-10-01)
 
 A `next` release of repo tooling and test fixes: no test can launch a real `loki start` against the repo root any more, the funnel-privacy test measures only off-machine traffic, and the fast CI tier stops running helper scripts as tests.
