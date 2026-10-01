@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 
 export function currentBranch(repoDir: string): string | null {
   try {
-    const b = execFileSync("git", ["symbolic-ref", "--short", "-q", "HEAD"], { cwd: repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const b = execFileSync("git", ["symbolic-ref", "--short", "-q", "HEAD"], { cwd: repoDir, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
     return b || null;
   } catch { return null; }
 }
@@ -15,7 +15,7 @@ export function restoreBranch(repoDir: string, orig: string | null): void {
   if (run === orig) return;
   try {
     // a checkout would carry the run's uncommitted edits onto the user's branch, so switch back only when the tracked tree is clean
-    if (execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: repoDir, encoding: "utf8" }).trim()) throw new Error("dirty");
-    execFileSync("git", ["checkout", orig], { cwd: repoDir, stdio: "ignore" });
+    if (execFileSync("git", ["status", "--porcelain", "--untracked-files=no"], { cwd: repoDir, env: process.env, encoding: "utf8" }).trim()) throw new Error("dirty");
+    execFileSync("git", ["checkout", orig], { cwd: repoDir, env: process.env, stdio: "ignore" });
   } catch { process.stderr.write(`engine10: stopped; tree left on run branch ${run ?? "(detached)"}, return with: git checkout ${orig}\n`); }
 }
