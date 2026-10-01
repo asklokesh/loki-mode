@@ -208,7 +208,7 @@ loki doctor --json     # machine-readable; JSON is emitted in full even on failu
 loki doctor --airgap   # audit network egress and how to disable each
 ```
 
-Exit 0 when every required check passes; optional warnings (an absent provider CLI) do not fail it. It checks the required tools, the provider CLIs and your login, and says what to install for each gap. The same contract holds for `--json`, so it is usable as an init-container or CI preflight gate. `loki doctor --fix` is not available.
+Exit 0 when every required check passes; optional warnings (an absent provider CLI) do not fail it. It checks the required tools, the provider CLIs and your login, and says what to install for each gap. The same contract holds for `--json`, so it is usable as an init-container or CI preflight gate.
 
 ## Modernization: status of loki modernize
 
