@@ -1727,3 +1727,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D51 Phase A on latest (10.5.17): `loki backlog` + loki.yaml + Slack (v10 path). Pending on train/30: bare `loki` opens the UI with PAT onboarding and backlog complete-all.
 - D50: baseline in METRICS.md (Loki+haiku 7/10 vs raw haiku 4/10; Loki+sonnet 5/10 vs raw sonnet 9/10, a LOSS). E-164 (setup-dirtied lockfile) fixed.
 - Pacing: from 04:35Z the governor paces to about 0.48%/h of the week (about 7 engineers).
+
+## 2026-10-01T04:33Z LEAD HANDOFF STATE (paced mode from 04:35Z, about 4 engineers)
+- npm: latest=next=10.5.17 (78d8713b, auto-promoted). origin/main=78d8713b. train/30 bb9658a1 in CI (D51-A12 UI, E-164, DOC-02); when green: ff main, cut 10.5.18 (D49 auto-promotes).
+- Local main ahead of train/30: A-118 re-landed with r5 (cdc8213df, 3.10 pyproject fallback), loki-seal README install (f8ba34a34). Next train after train/30.
+- Built, not merged: D48-r1 gaming matrix de71397dd (CTO call on pre-red), D48-r2 keys export/--pubkey b073d50a (opus review), E-162 slice CI tier-down 6b9738fdc (pushed, review), E-163 live /usage governor 678f2162e (review), DOC-01 r2 README (agent finishing), D48-r6 doctor --fix (dropped; needs: caveman suppression, spawn env, CI test fix).
+- Open rows: A-119c (add-based helper weakening, keep core under cap), A-121c (CTO), A-134c, E-160 (CTO), E-161 guard, E-165 (P0 guard: mirofish test launches a live build), E-166 Jira wiring, D48 rows 3-9, D50 harness items, D51 Phase B/C.
+- Rules this session learned: re-land a dropped slice by reverting the revert, then merging the fix; rebuild dist in the main checkout after any merge touching loki-ts (no symlinked node_modules); no `|` or `||` in BOARD cells; run the registration, shard, spawn-env, dist-guard and docs-drift checks before every train.
