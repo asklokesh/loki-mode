@@ -12,6 +12,8 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync,
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
+import { runMachine } from "../../src/engine10/machine.ts";
+import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
@@ -681,4 +683,69 @@ describe("A-104 commit only the fix (G2)", () => {
     await commitStage.run(ctx, new AbortController().signal);
     expect(committed(repo, base)).toEqual(["a.txt", "go.sum"]);
   });
+
+  test("A-104b: a path starting with :(top) is unstaged literally, never read as a pathspec", async () => {
+    const { repo, base } = makeRepo("a104b-top");
+    sh(["mkdir", "-p", join(repo, ":(top)x")], repo);
+    writeFileSync(join(repo, ":(top)x/loki_wall_a.js"), "// wall\n");
+    const { ctx } = ctxFor(repo, base);
+    expect((await commitStage.run(ctx, new AbortController().signal)).status).toBe("completed");
+    expect(committed(repo, base)).toEqual(["a.txt"]);
+  });
+
+  test("A-104b: a stray lockfile in packages/b is not explained by a packages/a manifest change", async () => {
+    const { repo, base } = makeRepo("a104b-mono");
+    sh(["mkdir", "-p", join(repo, "packages/a"), join(repo, "packages/b")], repo);
+    writeFileSync(join(repo, "packages/a/package.json"), "{}\n");
+    writeFileSync(join(repo, "packages/a/package-lock.json"), "{}\n");
+    writeFileSync(join(repo, "packages/b/package-lock.json"), "{}\n");
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    expect(committed(repo, base)).toEqual(["a.txt", "packages/a/package-lock.json", "packages/a/package.json"]);
+  });
+
+  test("A-104b: a lockfile and Wall file the agent committed during implement are judged against the run base", async () => {
+    const { repo, base } = makeRepo("a104b-base");
+    dirty(repo);
+    sh(["git", "-C", repo, "add", "package-lock.json", "loki_wall_top.js"], repo);
+    sh(["git", "-C", repo, "commit", "-q", "-m", "agent wip"], repo);
+    const { ctx } = ctxFor(repo, base);
+    await commitStage.run(ctx, new AbortController().signal);
+    expect(committed(repo, base)).toEqual(["a.txt"]);
+    expect(existsSync(join(repo, "package-lock.json"))).toBe(true);
+  });
+
+  test("A-104b r2: a failed reset fails the commit stage, the machine skips seal, and the run exits non-zero", async () => {
+    const { repo, base } = makeRepo("a104b-failreset");
+    writeFileSync(join(repo, "src.js"), "x\n");
+    sh(["git", "-C", repo, "add", "src.js"], repo);
+    sh(["git", "-C", repo, "commit", "-q", "-m", "agent wip"], repo);
+    writeFileSync(join(root, "outside.txt"), "o\n");
+    const h = sh(["git", "hash-object", "--", "../outside.txt"], repo).trim();
+    const { ctx } = ctxFor(repo, base, "claude", { intake: { source: "text", title: "t", preexisting_dirty: { "../outside.txt": h } } });
+    const intake = { ...commitStage, name: "intake" as const, run: async () => ({ status: "completed" as const, data: { source: "text", title: "t", preexisting_dirty: { "../outside.txt": h } } }) };
+    const stages: Record<string, typeof commitStage> = { intake, commit: commitStage, seal: sealStage };
+    const r = await runMachine(ctx as never, { flow: ["intake", "commit", "seal"], load: async (n: StageName) => stages[n] ?? null });
+    expect(r.stopped).toBe("commit failed");
+    expect(r.outputs.seal).toBeUndefined();
+    expect(outcomeOf("FAILED", false, r.stopped)).toBe("FAILED");
+    expect(EXIT[outcomeOf("FAILED", false, r.stopped)]).not.toBe(0);
+    expect(sh(["git", "-C", repo, "status", "--porcelain"], repo)).toContain("a.txt");
+    // defense in depth: a caller that seals anyway still never gets VERIFIED
+    const { ctx: c2 } = ctxFor(repo, base, "claude", { commit: { failed: true, reason: "git reset failed" } });
+    const s = await sealStage.run(c2, new AbortController().signal);
+    expect(receiptOf(s).verdict).toBe("FAILED");
+  });
+
+  for (const [label, bad] of [["empty", ""], ["unknown", "f".repeat(40)]] as const) {
+    test(`A-104b r2: ${label} baseSha fails the commit stage and commits nothing`, async () => {
+      const { repo, base } = makeRepo(`a104b-badbase-${label}`);
+      dirty(repo);
+      const { ctx } = ctxFor(repo, bad);
+      const c = await commitStage.run(ctx, new AbortController().signal);
+      expect(c.status).toBe("failed");
+      expect(sh(["git", "-C", repo, "rev-parse", "HEAD"], repo).trim()).toBe(base);
+      expect(sh(["git", "-C", repo, "diff", "--cached", "--name-only"], repo).trim()).toBe("");
+    });
+  }
 });
