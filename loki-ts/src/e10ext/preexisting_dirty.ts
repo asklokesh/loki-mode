@@ -5,8 +5,9 @@ import { execFileSync } from "node:child_process"; import { lstatSync } from "no
 
 const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;
 
-const blob = (repoDir: string, path: string): string =>
-  execFileSync("git", ["hash-object", "-w", "--", path], { cwd: repoDir, encoding: "utf8", env: process.env }).trim();
+// --no-filters: never run a clean filter from the agent-writable .git/config; stderr silenced so a deleted recorded file prints no `fatal:`
+const blob = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string =>
+  execFileSync("git", ["hash-object", "-w", "--no-filters", "--", path], { cwd: repoDir, encoding: "utf8", env, stdio: ["ignore", "pipe", "ignore"] }).trim();
 
 /** Splits `git status --porcelain` lines into blocking ones and {lockfile path: blob sha} for modified lockfiles. */
 export function splitDirty(repoDir: string, lines: string[]): { blocking: string[]; preexisting: Record<string, string> } {
@@ -38,9 +39,9 @@ export function snapshotUntracked(repoDir: string): Record<string, string> {
   return out;
 }
 
-export function untouchedSinceIntake(repoDir: string, recorded: unknown): string[] {
+export function untouchedSinceIntake(repoDir: string, recorded: unknown, env: NodeJS.ProcessEnv = process.env): string[] {
   if (!recorded || typeof recorded !== "object") return [];
   return Object.entries(recorded as Record<string, unknown>)
-    .filter(([p, h]) => { try { return blob(repoDir, p) === h; } catch { return false; } })
+    .filter(([p, h]) => { try { return blob(repoDir, p, env) === h; } catch { return false; } })
     .map(([p]) => p);
 }

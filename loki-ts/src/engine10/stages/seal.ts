@@ -8,7 +8,7 @@ import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKey
 import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { discardIfSatisfied } from "../../e10ext/discard.ts"; import { untouchedSinceIntake } from "../../e10ext/preexisting_dirty.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
+import { discardIfSatisfied } from "../../e10ext/discard.ts"; import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { run } from "../../util/shell.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -110,8 +110,8 @@ export const commitStage: Stage = {
     if (!ctx.baseSha || (await git(ctx, ["rev-parse", "--verify", "-q", `${ctx.baseSha}^{commit}`])).code !== 0) return { status: "failed", data: {}, reason: "base commit not resolvable" }; // A-104b r2: fail closed, every later reset and diff is judged against the base
     if ((await git(ctx, ["add", "-A", "--", "."])).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
     const sd = await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha]); if (sd.code !== 0) return { status: "failed", data: {}, reason: "git diff against base failed" };
-    const staged = sd.out.split("\0").reduce<{ st: string; f: string }[]>((a, t, i, all) => (i % 2 === 0 && t ? [...a, { st: t, f: all[i + 1]! }] : a), []);
-    const drop = staged.concat(untouchedSinceIntake(ctx.repoDir, ctx.outputs().intake?.preexisting_dirty).map((f) => ({ st: "L", f }))).filter(({ st, f }) => f.startsWith(".loki/") || st === "L" || /(^|\/)loki_wall_[^/]*$/.test(f) || (st === "A" && !staged.some(({ f: m }) => /(^|\/)(package\.json|pyproject\.toml|requirements\.txt|Cargo\.toml|go\.mod)$/.test(m) && dirname(m) === dirname(f)) && /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|poetry\.lock|Cargo\.lock|go\.sum)$/.test(f)));
+    const staged = parseStaged(sd.out);
+    const drop = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty);
     const sat = await discardIfSatisfied((a) => git(ctx, a), ctx.baseSha, ctx.outputs(), staged, new Set(drop.filter(({ st }) => st === "L").map(({ f }) => f)), ctx.repoDir); if (sat) return sat; // D50-F1
     if (drop.length > 0 && (await git(ctx, ["--literal-pathspecs", "reset", "-q", ctx.baseSha, "--", ...drop.map(({ f }) => f)])).code !== 0) return { status: "failed", data: {}, reason: "git reset failed" }; // A-104b: reset to the run base (not HEAD) so a path committed in implement leaves the diff too; literal, so ":(top)x" is a filename
     if ((await git(ctx, ["diff", "--cached", "--quiet"])).code === 0) return { status: "completed", data: { committed: false } };
