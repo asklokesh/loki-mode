@@ -194,16 +194,17 @@ export const sealStage: Stage = {
     const wallGreenOnBase = typeof base.pass === "number" && base.pass > 0 && base.fail === 0 && wallNotRun === 0;
     // An uncomputable diff is treated like an empty one: nothing is proven changed.
     const preRedChecks = strs(o.verify?.pre_red_checks); // A-112: recorded as fail, skipped by the verdict
-    const verdict = verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0, wallGreenOnBase);
+    // A-119: any edit, delete or rename (--no-renames shows D plus A) of a pre-existing test file is NOT VERIFIED, same as verify's own notes.
+    const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [];
+    const weakTests: string[] = [];
+    for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
+    const verdict = verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase);
 
     const notProven = new Set<string>(DEEP_NOT_PROVEN);
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
-    const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [];
-    for (let i = 0; i + 1 < rawDiff.length; i += 2) {
-      if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) notProven.add(`weakened test: ${rawDiff[i + 1]}`);
-    }
+    for (const t of weakTests) notProven.add(`weakened test: ${t}`);
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) notProven.add(n);

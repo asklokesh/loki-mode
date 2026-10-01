@@ -564,6 +564,28 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.not_proven.some((n) => n.includes("a.txt"))).toBe(false);
   }, 30000);
 
+  test("A-119: a renamed test file (with or without a content change) is NOT VERIFIED; an honest source-only fix stays VERIFIED", async () => {
+    noKey();
+    const seal = async (tag: string, edit: (repo: string) => void): Promise<{ verdict: string; not_proven: string[] }> => {
+      const { repo } = makeRepo("rename" + tag);
+      writeFileSync(join(repo, "sum.test.js"), "expect 6\n");
+      sh(["git", "add", "sum.test.js"], repo);
+      sh(["git", "commit", "-q", "-m", "add test"], repo);
+      const b = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      edit(repo);
+      const { ctx } = ctxFor(repo, b);
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    };
+    const weakened = await seal("w", (r) => { sh(["git", "mv", "sum.test.js", "sum.spec.test.js"], r); writeFileSync(join(r, "sum.spec.test.js"), "expect 5\n"); });
+    expect(weakened.not_proven).toContain("weakened test: sum.test.js");
+    expect(weakened.verdict).not.toBe("VERIFIED");
+    const pure = await seal("p", (r) => { sh(["git", "mv", "sum.test.js", "sum.spec.test.js"], r); });// a pure rename is still a test edit: PARTIAL by decision
+    expect(pure.verdict).not.toBe("VERIFIED");
+    const honest = await seal("h", (r) => { writeFileSync(join(r, "a.txt"), "fixed\n"); });
+    expect(honest.verdict).toBe("VERIFIED");
+  }, 30000);
+
   test("an unusable key: signed false, SIGNING_UNAVAILABLE on NOT PROVEN, hash still recomputes", async () => {
     const keyFile = join(root, "k2.pem");
     writeFileSync(keyFile, "not a pem\n", { mode: 0o600 });
