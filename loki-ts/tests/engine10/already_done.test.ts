@@ -162,13 +162,37 @@ describe("findEvidence compound matching (D50-F5)", () => {
   test("a -less suffix is an inflection (passwordless vs password-reset)", () => {
     noCandidate("add passwordless login", "src/password-reset.ts", "resetPassword", 'import { resetPassword } from "./password-reset";');
   });
+  test("derivational suffixes are not compounds (authorization, productivity, information)", () => {
+    noCandidate("add authorization checks", "src/author.ts", "Author", 'import { Author } from "./author";');
+    noCandidate("productivity report", "src/product.ts", "Product", 'import { Product } from "./product";');
+    noCandidate("show information panel", "src/inform.ts", "inform", 'import { inform } from "./inform";');
+  });
+  test("string literals, block comments and Python docstrings never count as imports", () => {
+    const cases: [string, string][] = [
+      ["src/search-command.test.tsx", `const s = "x from 'search-command'";`],
+      ["src/search-command.test.tsx", `/*\nimport { SearchCommand } from "./search-command";\n*/`],
+      ["tests/search_command.test.py", `"""\nimport search_command\nfrom search_command import SearchCommand\n"""`],
+    ];
+    for (const [tf, body] of cases) {
+      const sf = tf.replace(".test", "").replace("tests/", "src/");
+      const dir = repo({ [sf]: "", [tf]: body });
+      expect(findEvidence(AIQ, mapOf([{ path: sf, symbols: ["SearchCommand"] }]), testsOf(tf), dir)).toEqual([]);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test("a real Python from-import still links", () => {
+    const dir = repo({ "src/search_command.py": "", "tests/search_command.test.py": "from search_command import SearchCommand" });
+    const hits = findEvidence(AIQ, mapOf([{ path: "src/search_command.py", symbols: ["SearchCommand"] }]), testsOf("tests/search_command.test.py"), dir);
+    expect(hits.length).toBe(2);
+    rmSync(dir, { recursive: true, force: true });
+  });
   test("a stem that appears only in a comment or string is not an import", () => {
     const dir = repo({ "src/search-command.tsx": "", "src/search-command.test.tsx": '// covers ./search-command\nconst s = "import ./search-command";\nconst a = 1; // import search-command' });
     expect(findEvidence(AIQ, mapOf([src]), testsOf("src/search-command.test.tsx"), dir)).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
   test("vendored and generated directories are skipped", () => {
-    for (const d of ["vendor", "third_party", "build", ".venv", "coverage"]) {
+    for (const d of ["vendor", "third_party", "build", ".venv", "coverage", "__generated__"]) {
       noCandidate(AIQ, `${d}/search-command.tsx`, "SearchCommand", 'import { SearchCommand } from "./search-command";');
     }
   });

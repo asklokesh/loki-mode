@@ -18,14 +18,22 @@ function parts(s: string): string[] {
 
 const MIN_PREFIX = 5; // a stem token this long or longer may be the front of a compound keyword ("search" in "searchbar")
 
-const INFLECTION = /^(s|es|ed|er|ers|ing|ings|ion|ions|ly|less)$/; // "exporting" is "export" inflected, not a compound ("searchbar" is)
+// "exporting", "authorization", "productivity" are a stem plus a suffix, not a compound ("searchbar" is). Remainders under 3 chars never count.
+const SUFFIX = /^(ation|ization|isation|ity|ivity|ments?|ives?|als?|ures?|ness|ism|ist|ize|ise|able|ible|ous|ics?|ings?|ed|ers?|ions?|ly|less|es|s)$/;
 
-const VENDORED = new Set(["vendor", "third_party", "build", ".venv", "coverage", "node_modules", "dist"]);
+const VENDORED = new Set(["vendor", "third_party", "build", ".venv", "__generated__", "coverage", "node_modules", "dist"]);
 const vendored = (p: string): boolean => p.split("/").some((s) => VENDORED.has(s));
+
+/** Import statements only, normalized: comments and Python triple-quoted strings are stripped first, then a line must START as an import, an export-from, a `} from`, or a require assignment. */
+function importLines(src: string): string[] {
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/("""|''')[\s\S]*?\1/g, "").replace(/(^|\s)(\/\/|#).*$/gm, "$1");
+  const stmt = /^\s*(import\b|from\s+\S+\s+import\b|export\b.*\bfrom\s+["']|\}\s*from\s+["']|(const|let|var)\b.*\brequire\s*\()/;
+  return code.split("\n").filter((l) => stmt.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+}
 
 /** Compound match: `word` is a run of adjacent parts glued together, or starts with a part of at least MIN_PREFIX chars. */
 function fuzzyHit(word: string, ps: string[]): boolean {
-  if (ps.some((p) => p.length >= MIN_PREFIX && word.length > p.length && word.startsWith(p) && !INFLECTION.test(word.slice(p.length)))) return true;
+  if (ps.some((p) => p.length >= MIN_PREFIX && word.length >= p.length + 3 && word.startsWith(p) && !SUFFIX.test(word.slice(p.length)))) return true;
   for (let i = 0; i < ps.length; i++) for (let j = i + 2; j <= ps.length; j++) if (ps.slice(i, j).join("") === word) return true;
   return false;
 }
@@ -41,7 +49,7 @@ export function linkedHits(word: string, repoMap: RepoMap, testMap: TestMap, rep
     if (vendored(t.path) || !fuzzyHit(word, parts(basename(t.path)))) continue;
     let body: string[];
     try {
-      body = readFileSync(join(repoDir, t.path), "utf8").split("\n").filter((l) => !/^\s*(\/\/|#|\*|\/\*)/.test(l) && /^\s*(import\b|from\s+\S+\s+import\b)|\brequire\s*\(|\bfrom\s+["']/.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+      body = importLines(readFileSync(join(repoDir, t.path), "utf8"));
     } catch {
       continue;
     }
