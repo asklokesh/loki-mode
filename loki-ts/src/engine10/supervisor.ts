@@ -1,7 +1,7 @@
 // Loki 10 supervisor (P0, docs/v10/ENGINE.md sections 5, 6, 10): eval marker first, origin pinned once, worker
 // spawned with withheld tokens; single writer of events.jsonl (seq, hash, tamper refusal)
 // id; post-PR: detached deep verify, then Slack notify.
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -154,7 +154,7 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
 // Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
 // backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 function spawnWorker(
-  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void,
+  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void, onStopped: () => void = () => {},
 ): Promise<{ code: number | null; killed: boolean }> {
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
@@ -165,7 +165,7 @@ function spawnWorker(
     let killed = false;
     let settled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); process.exit(sig === "SIGINT" ? 130 : 143); }; // the worker no longer shares the terminal's group, so forward a stop to it
+    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); onStopped(); process.exit(sig === "SIGINT" ? 130 : 143); }; // the worker no longer shares the terminal's group, so forward a stop to it
     process.once("SIGINT", onStop);
     process.once("SIGTERM", onStop);
     const finish = (code: number | null) => {
@@ -208,11 +208,11 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
   const backstopMs = backstopS(capS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
   const escalateMs = Math.max(0, Math.min(2000, capS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
-  let sealed: Record<string, unknown> | null = null;
+  let sealed: Record<string, unknown> | null = null; const origBranch = currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
-    if (e?.type === "receipt.sealed") sealed = e.data;
-  });
+    if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") sealed = e.data;
+  }, () => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); restoreBranch(opts.repoDir, origBranch); });
   const workerExit = worker.killed ? null : worker.code;
   const sealedData = sealed as Record<string, unknown> | null;
   const v = sealedData?.verdict;
