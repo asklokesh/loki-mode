@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.20 (2026-10-01)
+
+A `next` release. Quiet `loki quick` failures show the real error lines, standalone `autonomy/verify.sh` reports its attestation status instead of staying silent, and CI spends less time on slice branches.
+
+### Fixed
+- When a quiet `loki quick` run fails, the tail it prints is the last three `[ERROR]` or `[WARN]` lines of the run log (falling back to the last three lines), each capped at 200 characters, instead of an unanchored log tail (A-134b).
+- `loki quick` hands stdin back to the inner run only when stdin is a terminal, so a run started from a pipe no longer blocks a provider that reads inherited stdin (A-134b).
+- Running `autonomy/verify.sh` on its own prints `attestation: UNCHECKED (run via loki verify)` instead of omitting the attestation line (A-134b).
+
+### Changed
+- CI: pushes to `slice-*` branches run the fast Tier A gate plus the suites selected by the diff instead of the full 8-shard Tests matrix. A newer push to the same `train/*` branch cancels the superseded Tests run. `main` and train runs still run the full matrix, and `main` runs are never cancelled (E-162).
+- The internal usage governor can calibrate from a live `/usage` reading. The read times out, kills its whole process group and falls back to the recorded readings when it cannot parse the result. This affects only the development swarm and is not part of the CLI (E-163).
+
 ## v10.5.19 (2026-10-01)
 
 A `next` release. v10.5.18 was never published, because its Release run was blocked by CodeQL findings in the new `/start` onboarding API. This release fixes those findings and carries everything listed under v10.5.18. Legacy `loki quick` now exits non-zero when tests were weakened to make a run pass.
