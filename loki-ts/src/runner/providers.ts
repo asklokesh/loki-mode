@@ -310,7 +310,6 @@ async function writeCaptured(
   // on stderr; completion-promise text on stdout).
   const body = stderr.length > 0 ? `${stderr}\n${stdout}` : stdout;
   await Bun.write(path, body);
-  await Bun.write(`${path}.stderr`, stderr); // always written, even empty, so a file the agent planted there is overwritten; the provider's own stderr alone, so the session can classify it without the transcript (A-113b)
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +427,7 @@ export function claudeProvider(): ProviderInvoker {
       return {
         exitCode: r.exitCode,
         capturedOutputPath: call.iterationOutputPath,
+        stderr: r.stderr,
       };
     },
   };

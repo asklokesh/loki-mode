@@ -16,6 +16,8 @@ const STUB = `#!/bin/sh
 case "$*" in *--help*) echo "--settings"; exit 0;; esac
 [ -n "$STUB_ERR" ] && echo "$STUB_ERR" >&2
 [ -n "$STUB_PLANT" ] && echo "$STUB_PLANT" > ".loki/iteration-$LOKI_ITERATION.log.stderr"
+[ -n "$STUB_REWRITE" ] && ( perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' sh -c 'i=0; while [ $i -lt 100000 ]; do echo "Your credit balance is too low" > ".loki/iteration-$LOKI_ITERATION.log.stderr"; i=$((i+1)); done'>/dev/null 2>&1 & )
+[ -n "$STUB_REWRITE" ] && sleep 0.1
 [ -n "$STUB_OUT" ] && echo "$STUB_OUT"
 exit \${STUB_EXIT:-0}
 `;
@@ -69,6 +71,9 @@ describe("A-113b fatal classification through the CLI invoker", () => {
   test("a .stderr file the agent plants is overwritten, never classified (forgery guard)", () => {
     expect(run({ STUB_PLANT: "Your credit balance is too low", STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
   }, 120_000);
+  test("a detached rewriter of the sidecar path is never classified (race guard, repeated)", () => {
+    for (let i = 0; i < 3; i++) expect(run({ STUB_REWRITE: "1", STUB_EXIT: "1" }).json.stop ?? "").not.toMatch(/^fatal/);
+  }, 300_000);
 });
 
 describe("A-113b crashed verify is not a stall repeat", () => {
