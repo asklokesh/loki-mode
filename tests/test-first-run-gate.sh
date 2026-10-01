@@ -125,5 +125,25 @@ run_legacy legacylong; expect legacy-long output-lines FAIL;             [ "$RC"
 # the v10 leg still rejects the legacy fallback and still enforces 8 lines
 run_gate clean; printf '%s\n' "$OUT" | grep -q 'legacy-fallback-line' && bad "v10 leg ran the legacy check" || ok "v10 leg unchanged: no legacy check"
 
+# --installed legacy leg: optional deps omitted, and a bun left in the install dir fails closed
+mkdir -p "$T/fakebin"
+cat > "$T/fakebin/npm" <<'NPM'
+#!/usr/bin/env bash
+echo "$*" >> "$FAKE_NPM_ARGS"
+while [ $# -gt 0 ]; do [ "$1" = --prefix ] && P="$2"; shift; done
+mkdir -p "$P/node_modules/.bin"; cp "$FAKE_LOKI_SRC" "$P/node_modules/.bin/loki"
+[ -n "${FAKE_NPM_BUN:-}" ] && mkdir -p "$P/node_modules/bun"
+exit 0
+NPM
+chmod +x "$T/fakebin/npm"
+run_inst() { # run_inst <withbun|nobun>
+    OUT=$(env -u LOKI_RUN_TMP PATH="$T/fakebin:$PATH" FAKE_NPM_ARGS="$T/npm-args" FAKE_LOKI_SRC="$T/fake-loki" FAKE_LEGACY=1 FAKE_MODE=clean \
+        ${2:+FAKE_NPM_BUN=1} FRG_REPORT="$T/report-inst.txt" bash "$GATE" --stub --engine legacy --installed loki-mode@x 2>&1); RC=$?
+}
+rm -f "$T/npm-args"; run_inst nobun
+grep -q -- '--omit=optional' "$T/npm-args" && ok "installed legacy: omits optional deps" || bad "installed legacy: no --omit=optional"
+run_inst withbun withbun
+[ "$RC" -ne 0 ] && printf '%s\n' "$OUT" | grep -q 'FAIL legacy-no-bun: bun is installed at' && ok "installed legacy: bun in install dir fails closed" || bad "installed legacy: bun not rejected"
+
 echo "first-run-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

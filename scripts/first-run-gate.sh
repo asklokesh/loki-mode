@@ -54,8 +54,18 @@ export HOME="$T/home" LOKI_NO_BROWSER=1 npm_config_cache="$T/npm-cache" npm_conf
 # --- which loki ---------------------------------------------------------------
 LOKI="${FRG_LOKI:-$REPO_ROOT/bin/loki}"
 if [ -n "$SPEC" ]; then
-    npm install --silent --no-audit --no-fund --prefix "$T/prefix" "$SPEC" >"$T/install.log" 2>&1 \
+    # The legacy leg is a user with no bun at all: omit optional deps so loki-mode's optional bun is not installed beside it.
+    OMIT=""; [ "$ENGINE" = legacy ] && OMIT="--omit=optional"
+    # shellcheck disable=SC2086
+    npm install --silent --no-audit --no-fund $OMIT --prefix "$T/prefix" "$SPEC" >"$T/install.log" 2>&1 \
         || { echo "FAIL install: npm install $SPEC failed (see $T/install.log)"; exit 1; }
+    if [ "$ENGINE" = legacy ]; then
+        for d in "$T/prefix/node_modules" "$T/prefix/node_modules/loki-mode/node_modules" "$T/prefix/lib/node_modules/loki-mode/node_modules"; do
+            for b in "$d/bun" "$d"/@oven/bun-*; do
+                [ -e "$b" ] && { echo "FAIL legacy-no-bun: bun is installed at $b; the legacy leg must represent a user with no bun (install with --omit=optional)"; exit 1; }
+            done
+        done
+    fi
     LOKI="$T/prefix/node_modules/.bin/loki"
 fi
 
@@ -206,6 +216,7 @@ if [ "$MODE" = stub ]; then
     mkdir -p "$T/skipl" && mk_bugrepo "$T/skipl"
     ( cd "$T/skipl" && FRG_SKIP=1 LOKI_ENGINE=legacy "$LOKI" quick "$TASK" ) < /dev/null > "$T/skipl.log" 2>&1; LRC=$?
     HH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out.log" | grep -Ei '^Outcome:' | head -1)
+    if [ "$ENGINE" = legacy ]; then HH="main run headline not checked in legacy mode; 9b checked only the legacy skipped-target run above"; fi
     LH=$(sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Ei 'Evidence Receipt' | head -1)
     if [ "$LRC" -eq 3 ] && grep -Eqi 'NOT VERIFIED' <<<"$LH" && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipl.log" | grep -Eqi 'verdict: *verified|Evidence Receipt:? *VERIFIED'; then
         res PASS skip-not-verified-legacy "legacy skipped target: rc=3, headline: ${LH:-none} (honest run: ${HH:-none})"
