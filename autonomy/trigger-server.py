@@ -42,6 +42,7 @@ import os
 import queue
 import re
 import secrets
+import signal
 import socket
 import socketserver
 import subprocess
@@ -373,6 +374,9 @@ def _reap_child(proc):
     abandoning the child (which would leave a zombie until this process exits),
     a one-shot daemon thread blocks on wait() until the child finishes. Errors
     are swallowed because the only goal is to drain the child's exit status.
+
+    Daemon threads must not write to stdout to avoid blocking the interpreter
+    shutdown with closed-pipe issues; logging goes to stderr only.
     """
     try:
         proc.wait()
@@ -1418,4 +1422,24 @@ def main():
 
 
 if __name__ == "__main__":
+    # ponytail: SIGPIPE handler for piped output. When stdout is a pipe and the
+    # reader closes early (e.g., `| head`), Python tries to write to a closed
+    # pipe, raising BrokenPipeError. The default handler raises; SIG_DFL
+    # silently closes. Guarded with hasattr for portability (Windows has no SIGPIPE).
+    if hasattr(signal, "SIGPIPE"):
+        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
     main()
+
+    # ponytail: flush stdout/stderr inside try/except BrokenPipeError before
+    # exit, then call os._exit() to avoid daemon thread cleanup during
+    # interpreter shutdown. This prevents the "could not acquire lock for
+    # <stdout> at interpreter shutdown" error when stdout is a closed pipe
+    # (e.g., piped to `head`, a hook timeout, or a killed parent).
+    # Only in __main__, never inside main(), so tests/callers can import main().
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except BrokenPipeError:
+        pass
+    os._exit(0)
