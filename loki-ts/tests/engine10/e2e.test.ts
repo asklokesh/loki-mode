@@ -124,11 +124,11 @@ describe("engine10 e2e (stub claude)", () => {
     expect(r.out).toMatch(/^Reason:\s+.*empty diff/m);
     expect(r.out.trim().split("\n").filter((l) => !l.includes("ended FAILED")).length).toBeLessThanOrEqual(8); // stdout only: the E-67 stderr line stays
   });
-  test("A-130 quiet by default: at most 15 lines (G6), stage lines only with --verbose", () => {
+  test("A-130 quiet by default: at most 8 lines (D48), start line names the engine, stage lines only with --verbose", () => {
     const q = runEngine("done");
     const lines = q.out.trim().split("\n");
-    expect(lines.length).toBeLessThanOrEqual(15);
-    expect(lines[0]).toContain("engine10");
+    expect(lines.length).toBeLessThanOrEqual(8);
+    expect(lines[0]).toBe("Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)");
     expect(q.out).not.toMatch(/^\[\d\d:\d\d\]/m);
     expect(q.out).toMatch(/^Receipt:\s+sha256:[0-9a-f]{64}/m);
     expect(q.out).toContain("NOT PROVEN:");

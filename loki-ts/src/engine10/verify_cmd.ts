@@ -147,6 +147,9 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   }
   const receiptPath = join(runsRoot, runId, "receipt.json");
   const result = await verifyReceipt(receiptPath, deps);
+  // An intact receipt of a run that did not verify is never reported as VERIFIED.
+  const outcome = result.verdict === "VERIFIED" ? String((() => { try { return JSON.parse(readFileSync(receiptPath, "utf8")).verdict; } catch { return "VERIFIED"; } })()) : "VERIFIED";
+  if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") { process.stdout.write(`run: ${runId}\nverdict: NOT VERIFIED (run outcome ${outcome}; receipt integrity intact)\n`); return 1; }
   process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
   if (result.receiptSha256) process.stdout.write(`receipt_sha256: ${result.receiptSha256}\n`);
   for (const reason of result.reasons) process.stdout.write(`  ${reason}\n`);

@@ -17,23 +17,13 @@ export interface EvidenceHit {
 }
 
 const DOC_FILES = ["CHANGELOG.md", "README.md"];
-// One keyword hit alone is too weak: a task that merely names a file that already exists (its own
-// filename is a "keyword") would otherwise always look like a candidate. Requiring a second,
-// independent source (a test, or a CHANGELOG/README heading) is the cheap half of the two-gate
-// design; the confirmation call below is the real, file-citing decision.
+// One keyword hit alone is too weak (a task naming an existing file would always look like a candidate); a second independent source is the cheap gate.
 const MIN_CATEGORIES = 2;
-// Caps the brief and the receipt's evidence list on a real repo where a task's common words can
-// rack up dozens of incidental hits (a CHANGELOG spans years of unrelated entries). Capped per
-// source, not on the concatenated total: a flat `slice(0, 20)` after `[...code, ...test,
-// ...changelog]` can let one noisy source (e.g. 30 code hits) crowd out the other two entirely,
-// so the brief and receipt would show only one source even though the gate required two.
+// Caps the brief and receipt evidence per source, not on the concatenated total, so one noisy source cannot crowd out the other two.
 const PER_SOURCE_CAP = 7;
 
-// Generic words carry no signal that THIS task's feature exists: they show up in almost any
-// changelog entry or test name regardless of what the task actually asks for (E-66 review: "Add a
-// dark mode toggle to the settings page" matched 653 lines here on words alone, none of them
-// naming the actual feature). Not exhaustive by design -- a curated list, not a dictionary; a
-// keyword that survives it still needs a second independent category to become a candidate.
+// Generic words carry no signal that THIS task's feature exists (E-66 review: "Add a dark mode toggle" matched 653 lines on words alone).
+// A curated list, not a dictionary; a surviving keyword still needs a second independent category.
 const STOP_WORDS = new Set([
   // function words
   "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from", "had", "has", "have",

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+- The Loki 10 (lean v10) engine is now the default for `loki "<task>"`, `loki owner/repo#N` (issue mode) and `loki quick "<task>"` (D48 rows 7-9). Each prints one start line, `Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)`, then Outcome, PR, Receipt, NOT PROVEN, Cost and Time (at most 8 lines). `loki quick` runs the engine's lean small-task path (E-64) and opens no PR. With no bun, or with a provider the engine has no invoker for, these entry points fall back to the legacy engine. `loki start`, `loki status`, `loki verify` and `loki dashboard` are unchanged.
+- `loki legacy <args>` and `LOKI_ENGINE=legacy` run the previous engine exactly as before; both are now covered by routing tests.
+- A v10 run on the CLI invoker (`LOKI_E10_INVOKER=cli`, the stub provider) records cost 0 with the source marker `cli-invoker-unmetered` in the cost event, receipt and efficiency record instead of null, and lists `cost unmetered (CLI invoker; recorded as 0)` under NOT PROVEN, so every run has a non-null cost without presenting 0 as measured.
+- The first-run gate (`scripts/first-run-gate.sh`) now runs the v10 engine for `loki quick`: output budget 8 lines (was 15), a start-line check, a non-null cost check, and the legacy skipped-target check runs under `LOKI_ENGINE=legacy`.
+
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
