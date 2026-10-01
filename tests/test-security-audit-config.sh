@@ -33,7 +33,16 @@ echo "=== security-audit.yml gitleaks config isolation (E-114) ==="
 [ -f "$SCRIPT" ] || { echo "  FAIL: $SCRIPT missing"; exit 1; }
 [ -x "$SCRIPT" ] || { echo "  FAIL: $SCRIPT is not executable"; exit 1; }
 
-GITLEAKS_BIN="$(command -v gitleaks 2>/dev/null || true)"
+# Prefer the pinned binary scripts/install-gitleaks.sh puts on disk, then PATH.
+GITLEAKS_BIN=""
+_pinned="$HOME/.local/share/loki/bin/gitleaks-8.30.0"
+if [ -x "$_pinned" ]; then GITLEAKS_BIN="$_pinned"; else GITLEAKS_BIN="$(command -v gitleaks 2>/dev/null || true)"; fi
+if [ -z "$GITLEAKS_BIN" ] && [ -n "${CI:-}" ]; then
+  echo "  FAIL: no gitleaks binary under CI -- the Wall checks would not run (install scripts/install-gitleaks.sh first)"
+  echo
+  echo "=== $PASS passed, 1 failed ==="
+  exit 1
+fi
 if [ -z "$GITLEAKS_BIN" ]; then
   echo "  SKIP: no gitleaks binary on PATH -- live scenarios not run (not a pass)"
   echo
@@ -360,6 +369,11 @@ if _run_script "$REPO_H" "$TMP_ROOT/report-h.json" "GITLEAKS_RANGE=HEAD~50..HEAD
   bad "E-159b: the script reported a clean scan for an invalid range"
 else
   ok "E-159b: the script refuses an invalid range instead of passing"
+fi
+if _run_script "$REPO_H" "$TMP_ROOT/report-h3.json" "GITLEAKS_RANGE=HEAD..HEAD"; then
+  bad "E-159: an empty range (zero commits walked) was reported as a clean scan"
+else
+  ok "E-159: an empty range (zero commits walked) is refused"
 fi
 if _run_script "$REPO_H" "$TMP_ROOT/report-h2.json"; then
   ok "E-159b: a valid default (--all) scan of a clean repo still passes"

@@ -180,6 +180,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # E-159: tests/test-security-audit-config.sh drives the secret-scan script with the
+      # real pinned gitleaks and FAILS (never skips) under CI when it is absent.
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: bash scripts/install-gitleaks.sh
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
