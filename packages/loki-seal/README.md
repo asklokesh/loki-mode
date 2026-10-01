@@ -6,7 +6,7 @@ loki-seal is a Claude Code Stop hook. When the agent tries to finish, it runs yo
 
 ## Install
 
-From a terminal: `claude plugin marketplace add <owner/repo or local path>`, then open `/plugin` in Claude Code and install `loki-seal` from that marketplace (the `/plugin` UI is the documented install path). A local checkout of `packages/loki-seal` works as the path until anything is published.
+In Claude Code: `/plugin marketplace add asklokesh/loki-mode`, then `/plugin install loki-seal@loki-mode`. A local checkout also works: `/plugin marketplace add <path to a loki-mode checkout>`.
 
 The plugin is the enforcing install: its `hooks/hooks.json` registers SessionStart and Stop. The skill (`skills/loki-seal/SKILL.md`) is advisory guidance only and registers no hooks, so a skill-only install does not enforce anything.
 
