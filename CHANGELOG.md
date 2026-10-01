@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.26 (2026-10-01)
+
+A `next` release. The promote gate now recognizes the exact message `loki` prints when the Loki 10 engine cannot run, so the two-leg gate can promote; the Docker images ship the same bun version as the npm package; and the repo hook judges a detached checkout by the directory a command actually changes into.
+
+### Fixed
+- The promote gate's no-bun leg looks for the fallback line `loki` actually prints ("the Loki 10 engine cannot run on this machine: no working bun"), and the bun leg's fallback check also catches "Running the legacy engine instead". v10.5.25's promote failed only on this text check (every other check on both legs passed), so `latest` was not moved. A test now fails if the gate and `bin/loki` stop sharing that text.
+- Docker images (`Dockerfile`, `Dockerfile.sandbox`) install bun 1.4.2, matching the npm optional dependency; a structural test keeps the two pins equal (E-169).
+
+### Changed
+- Repo tooling: the PreToolUse guard resolves a checked `cd DIR` (with `&&`, `|| exit` or `|| return`) or `git -C DIR` before judging a detached checkout, so a checkout inside a linked worktree is allowed; an unresolvable target, `cd X || true`, or a `cd` inside a subshell that has closed is judged by the session's directory and stays blocked (E-161b).
+
 ## v10.5.25 (2026-10-01)
 
 A `next` release. `npm install -g loki-mode` now brings its own bun, so the Loki 10 engine (the default since v10.5.22) runs on machines that never installed bun. When it still cannot run, `loki` says so plainly on the first line instead of falling back quietly, and the release gate now checks both kinds of machine before moving `latest`.
