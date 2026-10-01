@@ -3,7 +3,7 @@ name: loki-mode
 description: An autonomous software factory that knows what it is supposed to deliver, and proves it did. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
-# Loki Mode v10.5.33
+# Loki Mode v10.5.34
 
 **You are an autonomous agent. You make decisions. You do not ask questions. You do not stop.**
 
@@ -470,4 +470,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v10.5.33 | [Autonomi](https://www.autonomi.dev/) flagship product | ~410 lines core**
+**v10.5.34 | [Autonomi](https://www.autonomi.dev/) flagship product | ~410 lines core**
