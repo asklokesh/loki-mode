@@ -1636,3 +1636,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - REAL-provider mode: NOT RUN. The swarm has no provider credential in its environment and does not read stored secrets; FOUNDER-QUEUE row 15 has the exact command. Cost/wall vs raw `claude -p`: pending that run.
 - `latest` NOT promoted: needs the real-provider pass plus A-117 (loki verify on a tampered log, building) and A-118 (legacy quick exits 0 on NOT VERIFIED, CTO call).
 - Trains: train/16 (bba2e5ec) in Tier B. 1 `next` release in the trailing hour vs the D46 target of 3-6.
+
+## 2026-10-01T01:14Z train/17 red (D46 tally: cut 1, red 1, dropped 0)
+- train/17 935b2766 Tests run 36799190925: shard 4 only, 49/50 passed. The one failure is tests/test-quick-receipt-order.sh "default output is 16 lines (max 15)". The 16 lines are stderr noise (mkdir .loki/config exists, 2 caveman bootstrap lines, echo broken pipe), the same main-resident failure as train/15. A-115b is not implicated, so nothing is dropped. Fix forward is slice-P0-t15, in rework (2 reviewer blockers). train/18 = train/17 + P0-t15 once approved. Bun Parity and Coverage: success.
+- v10.5.14 (2f4462b7) Release run still in progress at 01:10Z; next=10.5.13, latest=10.5.10 (npm view dist-tags).
+- Staffed 01:12Z: A-119 opus review, A-130b and A-134b builders, CTO call on A-118/A-121b.
