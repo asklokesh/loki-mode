@@ -148,6 +148,31 @@ describe("findEvidence compound matching (D50-F5)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  // Review: an exact single-part equality is no compounding at all and must never be a candidate.
+  const noCandidate = (task: string, file: string, sym: string, importLine: string, testFile = file.replace(/(\.\w+)$/, ".test$1")) => {
+    const dir = repo({ [file]: "", [testFile]: importLine });
+    expect(findEvidence(task, mapOf([{ path: file, symbols: [sym] }]), testsOf(testFile), dir)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  };
+  test("exact part equality is not a candidate (user, api, notification)", () => {
+    noCandidate("rate limiting to the user endpoint", "src/user-service.ts", "getUser", 'import { getUser } from "./user-service";');
+    noCandidate("retries to api", "src/api-client.ts", "ApiClient", 'import { ApiClient } from "./api-client";');
+    noCandidate("email notification setting", "src/notification_settings.py", "NotificationSettings", "from notification_settings import NotificationSettings");
+  });
+  test("a -less suffix is an inflection (passwordless vs password-reset)", () => {
+    noCandidate("add passwordless login", "src/password-reset.ts", "resetPassword", 'import { resetPassword } from "./password-reset";');
+  });
+  test("a stem that appears only in a comment or string is not an import", () => {
+    const dir = repo({ "src/search-command.tsx": "", "src/search-command.test.tsx": '// covers ./search-command\nconst s = "import ./search-command";\nconst a = 1; // import search-command' });
+    expect(findEvidence(AIQ, mapOf([src]), testsOf("src/search-command.test.tsx"), dir)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+  test("vendored and generated directories are skipped", () => {
+    for (const d of ["vendor", "third_party", "build", ".venv", "coverage"]) {
+      noCandidate(AIQ, `${d}/search-command.tsx`, "SearchCommand", 'import { SearchCommand } from "./search-command";');
+    }
+  });
+
   test("an inflected keyword (exporting vs export) is not a compound match", () => {
     const dir = repo({ "tools/receipt-export.py": "", "tests/test_receipt_export.py": "import receipt_export" });
     const hits = findEvidence("support exporting invoices", mapOf([{ path: "tools/receipt-export.py", symbols: ["export"] }]), testsOf("tests/test_receipt_export.py"), dir);
