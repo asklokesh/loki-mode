@@ -6,6 +6,7 @@
 // recomputed in Python from receipt.json, so a TS canonicalizer bug cannot
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
 import { generateKeyPairSync } from "node:crypto";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
@@ -792,5 +793,39 @@ describe("D50-F1 already-satisfied discards run changes", () => {
       const { ctx: c2 } = ctxFor(repo, base, "claude", { implement: { exit: "already_done", tests_reverted: [], duration_s: 3 }, commit: { failed: true } });
       expect(receiptOf(await sealStage.run(c2, sig)).verdict).toBe("FAILED");
     } finally { sh(["chmod", "755", join(repo, "d")], repo); }
+  }, 30000);
+
+  test("r2: untracked user file survives the discard byte for byte (also with intake.already_satisfied)", async () => {
+    for (const intakeSat of [false, true]) {
+      const { repo, base } = makeRepo(`sat-untracked-${intakeSat}`);
+      writeFileSync(join(repo, "notes.md"), "my notes\n\u00e9\n");
+      const pre = untrackedAtIntake(repo);
+      expect(pre).toContain("notes.md");
+      writeFileSync(join(repo, "new.txt"), "stray\n");
+      const intake = { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, preexisting_untracked: pre, ...(intakeSat ? { already_satisfied: true } : {}) };
+      const { ctx } = ctxFor(repo, base, "claude", { intake, implement: { exit: intakeSat ? "done" : "already_done", tests_reverted: [], duration_s: 3 } });
+      expect((await commitStage.run(ctx, sig)).status).toBe("completed");
+      expect(readFileSync(join(repo, "notes.md"), "utf8")).toBe("my notes\n\u00e9\n");
+      expect(sh(["git", "diff", "--cached", "--name-only"], repo)).toBe("");
+      expect(existsSync(join(repo, "new.txt"))).toBe(false);
+      expect(sh(["git", "rev-parse", "HEAD"], repo).trim()).toBe(base);
+    }
+  }, 30000);
+
+  test("r2: a pre-existing dirty lockfile edited by the run ends with its intake content", async () => {
+    const { repo, base } = makeRepo("sat-lock");
+    writeFileSync(join(repo, "package-lock.json"), "L0\n");
+    sh(["git", "add", "package-lock.json"], repo);
+    sh(["git", "commit", "-q", "-m", "lock"], repo);
+    const b2 = sh(["git", "rev-parse", "HEAD"], repo).trim();
+    writeFileSync(join(repo, "package-lock.json"), "L1 intake\n");
+    const { preexisting } = splitDirty(repo, [" M package-lock.json"]);
+    writeFileSync(join(repo, "package-lock.json"), "L2 run\n");
+    const intake = { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", resumed: false, preexisting_dirty: preexisting };
+    const { ctx } = ctxFor(repo, b2, "claude", { intake, implement: { exit: "already_done", tests_reverted: [], duration_s: 3 } });
+    expect((await commitStage.run(ctx, sig)).status).toBe("completed");
+    expect(readFileSync(join(repo, "package-lock.json"), "utf8")).toBe("L1 intake\n");
+    expect(sh(["git", "rev-parse", "HEAD"], repo).trim()).toBe(b2);
+    expect(base).toBeTruthy();
   }, 30000);
 });

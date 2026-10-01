@@ -1,4 +1,5 @@
 // D50-F1: an ALREADY_SATISFIED run must end with no source diff against base. Lives outside engine10 core to keep it under its line cap.
+import { execFileSync } from "node:child_process"; import { writeFileSync } from "node:fs"; import { join } from "node:path";
 import type { Obj, StageResult } from "../engine10/types.ts";
 
 type Git = (args: string[]) => Promise<{ out: string; code: number }>;
@@ -11,10 +12,13 @@ export function alreadySatisfied(o: Partial<Record<string, Obj>>): boolean {
 
 /** Null when the run is not already-satisfied (nothing touched). Otherwise restores every staged path to base
  *  (except .loki/ and pre-existing dirt in `keep`) and resets HEAD and index to base; any git failure is a failed stage. */
-export async function discardIfSatisfied(git: Git, base: string, o: Partial<Record<string, Obj>>, staged: { st: string; f: string }[], keep: Set<string>): Promise<StageResult | null> {
+export async function discardIfSatisfied(git: Git, base: string, o: Partial<Record<string, Obj>>, staged: { st: string; f: string }[], keep: Set<string>, repoDir: string): Promise<StageResult | null> {
   if (!alreadySatisfied(o)) return null;
-  const gone = staged.filter(({ f }) => !keep.has(f) && !f.startsWith(".loki/")), lit = ["--literal-pathspecs"];
+  const pre = (o.intake?.preexisting_dirty ?? {}) as Record<string, string>, own = new Set((Array.isArray(o.intake?.preexisting_untracked) ? o.intake.preexisting_untracked : []) as string[]); // r2: user files from intake are never touched
+  const gone = staged.filter(({ f }) => !keep.has(f) && !own.has(f) && !(f in pre) && !f.startsWith(".loki/")), lit = ["--literal-pathspecs"];
   const del = gone.filter(({ st }) => st === "A").map(({ f }) => f), back = gone.filter(({ st }) => st !== "A").map(({ f }) => f);
   if ((del.length > 0 && (await git([...lit, "rm", "-q", "-f", "--", ...del])).code !== 0) || (back.length > 0 && (await git([...lit, "restore", `--source=${base}`, "--staged", "--worktree", "--", ...back])).code !== 0) || (await git(["reset", "-q", base])).code !== 0) return { status: "failed", data: {}, reason: "already-satisfied discard failed" };
-  return { status: "completed", data: { committed: false, discarded: gone.length } };
+  const notProven: string[] = []; // pre-existing dirty files go back to their intake blob; no blob = left as is
+  for (const f of Object.keys(pre)) if (staged.some((s) => s.f === f) && !keep.has(f)) { try { writeFileSync(join(repoDir, f), execFileSync("git", ["cat-file", "blob", pre[f]!], { cwd: repoDir, env: process.env })); } catch { notProven.push(f); } }
+  return { status: "completed", data: { committed: false, discarded: gone.length, ...(notProven.length > 0 ? { not_proven: notProven } : {}) } };
 }
