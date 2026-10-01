@@ -876,6 +876,21 @@ assert_blocked "R8 blocked: unchecked cd, leader, detached checkout from main-ch
 assert_allowed "R8 allowed: cd guarded by && into a linked worktree" \
     "cd $LOKI_RUN_TMP/wt8 && git checkout --detach v1" "$REPO8"
 AGENT_ID=""
+W8="$LOKI_RUN_TMP/wt8"
+assert_allowed "R8 allowed: production shape, var cd into linked worktree, subshell cd, detach" \
+    "R=$W8; cd \"\$R\" || exit 1; (cd sub && true); git checkout -q --detach v1" "$REPO8"
+assert_blocked "R8 blocked: same shape with cd into the main checkout" \
+    "R=$REPO8; cd \"\$R\" || exit 1; git checkout -q --detach v1" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: unresolvable cd then detach fails closed" \
+    "cd \"\$(echo $W8)\" || exit 1; git checkout -q --detach v1" "$REPO8" "RULE8"
+assert_allowed "R8 allowed: git -C linked worktree checkout --detach" \
+    "git -C $W8 checkout --detach v1" "$REPO8"
+assert_allowed "R8 allowed: subshell cd linked && detach from main cwd" \
+    "(cd $W8 && git checkout --detach v1)" "$REPO8"
+assert_blocked "R8 blocked: detach at top level after the subshell" \
+    "(cd $W8 && true); git checkout --detach v1" "$REPO8" "RULE8"
+assert_blocked "R8 blocked: cd || true is not a checked cd" \
+    "cd $W8 || true; git checkout --detach v1" "$REPO8" "RULE8"
 
 echo ""
 echo "=============================="
