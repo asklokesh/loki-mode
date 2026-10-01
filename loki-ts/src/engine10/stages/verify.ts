@@ -4,7 +4,7 @@
 // the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/
 // machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { failIds } from "../failures.ts";
@@ -95,13 +95,39 @@ export function skipped(out: string): number {
 }
 const CFG_ALWAYS = /(^|\/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
 const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json|vite\.config\.[\w.]+)$/;
-const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|\btest\s*:|addopts|testpaths|testPathIgnorePatterns|testMatch|testRegex|testIgnore|\bexclude\b)/im; // A-119b: in-block jest keys, vite test block
+const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|\btest\s*:|addopts|testpaths|testPathIgnorePatterns|testMatch|testRegex|testIgnore)/im;
+/** A-119b: a changed `exclude` line is test config only inside a `test:` (vite/vitest) or `jest` block: walk up by indentation to the enclosing openers.
+ *  ruff/mypy/setuptools exclude and vite optimizeDeps.exclude are not. ponytail: indentation heuristic, a one-line compact block is caught by CFG_LINE instead. */
+function excludeInTestBlock(repoDir: string, baseSha: string, f: string, d: string): boolean {
+  const git = (a: string[]): string[] => { try { return execFileSync("git", a, { cwd: repoDir, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env: process.env }).split("\n"); } catch { return []; } };
+  const side = { "+": () => readFileSync(join(repoDir, f), "utf8").split("\n"), "-": () => git(["show", `${baseSha}:${f}`]) };
+  const files: Partial<Record<"+" | "-", string[]>> = {};
+  let no = { "+": 0, "-": 0 };
+  for (const l of d.split("\n")) {
+    const h = /^@@ -(\d+)(?:,\d+)? \+(\d+)/.exec(l);
+    if (h) { no = { "-": +h[1]!, "+": +h[2]! }; continue; }
+    const k = l[0] as "+" | "-" | undefined;
+    if (k !== "+" && k !== "-") continue;
+    if (l.startsWith("+++") || l.startsWith("---")) continue;
+    const at = no[k]++;
+    if (!/^[+-]\s*["']?exclude["']?\s*[:=]/.test(l)) continue;
+    let ls: string[]; try { ls = files[k] ??= side[k](); } catch { return true; } // unreadable: fail closed
+    let ind = (/^\s*/.exec(ls[at - 1] ?? l.slice(1)) as RegExpExecArray)[0].length;
+    for (let i = at - 2; i >= 0 && ind > 0; i--) {
+      const m = /^(\s*)\S/.exec(ls[i]!);
+      if (!m || m[1]!.length >= ind) continue;
+      ind = m[1]!.length;
+      if (/^\s*["']?(?:test|jest)["']?\s*[:={]/.test(ls[i]!)) return true;
+    }
+  }
+  return false;
+}
 /** A-115: changed files that configure the test runner. Files that also hold dependencies and metadata (setup.cfg, pyproject.toml,
  *  package.json) count only when a changed line names a runner or the test script, or the file is new (no diff against base).
  *  ponytail: a hit needs a human look, never a verdict; a runner key renamed without one of those words slips through. */
 export function testConfigChanged(repoDir: string, baseSha: string, changed: string[]): string[] {
   const diff = (f: string): string => execFileSync("git", ["diff", "-U0", baseSha, "--", f], { cwd: repoDir, encoding: "utf8", env: process.env });
-  return changed.filter((f) => CFG_ALWAYS.test(f) || (CFG_SHARED.test(f) && (() => { const d = diff(f); return !d || CFG_LINE.test(d); })()));
+  return changed.filter((f) => CFG_ALWAYS.test(f) || (CFG_SHARED.test(f) && (() => { const d = diff(f); return !d || CFG_LINE.test(d) || excludeInTestBlock(repoDir, baseSha, f, d); })()));
 }
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */

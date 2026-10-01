@@ -8,7 +8,7 @@ const DIR = /(^|\/)(tests?|__tests__|__snapshots__|__fixtures__|fixtures)\//;
 const JS = /\.[cm]?[jt]sx?$/;
 const IMPORT = /(?:require\(\s*|from\s+|import\s+)["'](\.{1,2}\/[^"']+)["']/g;
 const EXT = ["", ".js", ".ts", ".mjs", ".cjs", ".jsx", ".tsx", "/index.js", "/index.ts"];
-// a source file a test imports is a helper only if its BASE content asserts (a plain `utils.js` stays a source file)
+// a source file a test imports is a helper only if the lines the edit removed or changed assert (a plain `utils.js` stays a source file)
 const ASSERTS = /\bexpect\(|\bassert\b|\.should\b|\bt\.(?:equal|ok)\b/;
 const run = (cwd: string, args: string[], input?: string): Buffer =>
   execFileSync("git", ["-c", "core.quotePath=false", ...args], { cwd, input, maxBuffer: 256 << 20, stdio: ["pipe", "pipe", "ignore"], env: process.env });
@@ -30,22 +30,25 @@ function blobs(repoDir: string, baseSha: string, paths: string[]): Map<string, s
 
 /** `paths`: base-tree paths the diff changed or deleted. Returns those that count as test weakening. */
 export function weakBasePaths(repoDir: string, baseSha: string, paths: string[], isTest: (p: string) => boolean): string[] {
-  const inDir = paths.filter((p) => DIR.test(p) || isTest(p));
-  const rest = paths.filter((p) => !inDir.includes(p) && JS.test(p));
+  const inDir = paths.filter((p) => DIR.test(p) || isTest(p)), inDirSet = new Set(inDir);
+  const rest = paths.filter((p) => !inDirSet.has(p) && JS.test(p)), restSet = new Set(rest);
   if (!rest.length) return inDir;
   try {
-    const hits = run(repoDir, ["grep", "-z", "-l", "-e", "require", "-e", "import", baseSha, "--", "*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs", "*.mts", "*.cts"]).toString().split("\0").filter(Boolean)
-      .map((h) => h.slice(baseSha.length + 1)).filter((t) => DIR.test(t) || isTest(t));
+    let hits: string[] = [];
+    try {
+      hits = run(repoDir, ["grep", "-z", "-l", "-e", "require", "-e", "import", baseSha, "--", "*.js", "*.jsx", "*.ts", "*.tsx", "*.mjs", "*.cjs", "*.mts", "*.cts"]).toString().split("\0").filter(Boolean)
+        .map((h) => h.slice(baseSha.length + 1)).filter((t) => DIR.test(t) || isTest(t));
+    } catch (e) { if ((e as { status?: number }).status !== 1) throw e; } // exit 1 = no match
     const imported = new Set<string>();
     for (const [t, src] of blobs(repoDir, baseSha, hits)) {
       for (const m of src.matchAll(IMPORT)) {
         const b = normalize(join(dirname(t), m[1]!));
-        const hit = EXT.map((e) => b + e).find((c) => rest.includes(c));
+        const hit = EXT.map((e) => b + e).find((c) => restSet.has(c));
         if (hit) imported.add(hit);
       }
     }
-    if (!imported.size) return inDir;
-    const body = blobs(repoDir, baseSha, [...imported]);
-    return [...inDir, ...[...imported].filter((p) => ASSERTS.test(body.get(p) ?? ""))];
-  } catch { return inDir; }
+    // only the lines the edit removed or changed (base side) decide: a mention of assert elsewhere in the file is not weakening
+    const removed = (p: string): string => run(repoDir, ["diff", "-U0", "--no-renames", baseSha, "--", p]).toString().split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---")).join("\n");
+    return [...inDir, ...[...imported].filter((p) => ASSERTS.test(removed(p)))];
+  } catch { return [...inDir, ...rest]; } // fail closed: an unreadable base never clears a JS edit
 }

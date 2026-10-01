@@ -121,6 +121,14 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     writeFileSync(join(dir, "vite.config.ts"), "export default {\n  test: {\n  },\n  plugins: [1],\n};\n");
     expect(testConfigChanged(dir, base, ["package.json", "vite.config.ts"])).toEqual([]);
   });
+  test("A-119b: ruff/mypy/optimizeDeps exclude is not test config; vite test.exclude is", () => {
+    const dir = repo({ "pyproject.toml": "[tool.ruff]\nline-length = 88\n", "vite.config.ts": "export default {\n  optimizeDeps: {\n    include: [],\n  },\n  test: {\n    globals: true,\n  },\n};\n" }), base = sh(dir, ["rev-parse", "HEAD"]);
+    writeFileSync(join(dir, "pyproject.toml"), '[tool.ruff]\nline-length = 88\nexclude = ["build"]\n[tool.mypy]\nexclude = ["x"]\n');
+    writeFileSync(join(dir, "vite.config.ts"), "export default {\n  optimizeDeps: {\n    include: [],\n    exclude: ['a'],\n  },\n  test: {\n    globals: true,\n  },\n};\n");
+    expect(testConfigChanged(dir, base, ["pyproject.toml", "vite.config.ts"])).toEqual([]);
+    writeFileSync(join(dir, "vite.config.ts"), "export default {\n  optimizeDeps: {\n    include: [],\n  },\n  test: {\n    globals: true,\n    exclude: ['a'],\n  },\n};\n");
+    expect(testConfigChanged(dir, base, ["vite.config.ts"])).toEqual(["vite.config.ts"]);
+  });
   test("testConfigChanged: a package.json dependency edit is not config; a scripts.test edit is; always-config names are", () => {
     const pkg = (t: string, deps: string): string => `{\n  "scripts": {\n    "test": "${t}"\n  },\n  "dependencies": {${deps}}\n}\n`;
     const dir = repo({ "package.json": pkg("node --test", "") }), base = sh(dir, ["rev-parse", "HEAD"]);
