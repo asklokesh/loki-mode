@@ -1734,3 +1734,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Built, not merged: D48-r1 gaming matrix de71397dd (CTO call on pre-red), D48-r2 keys export/--pubkey b073d50a (opus review), E-162 slice CI tier-down 6b9738fdc (pushed, review), E-163 live /usage governor 678f2162e (review), DOC-01 r2 README (agent finishing), D48-r6 doctor --fix (dropped; needs: caveman suppression, spawn env, CI test fix).
 - Open rows: A-119c (add-based helper weakening, keep core under cap), A-121c (CTO), A-134c, E-160 (CTO), E-161 guard, E-165 (P0 guard: mirofish test launches a live build), E-166 Jira wiring, D48 rows 3-9, D50 harness items, D51 Phase B/C.
 - Rules this session learned: re-land a dropped slice by reverting the revert, then merging the fix; rebuild dist in the main checkout after any merge touching loki-ts (no symlinked node_modules); no `|` or `||` in BOARD cells; run the registration, shard, spawn-env, dist-guard and docs-drift checks before every train.
+
+## 2026-10-01T04:58Z P0: v10.5.18 release blocked by CodeQL
+- v10.5.18 (981d9734) Release run FAILED at required-ci: Security Audit failed on CodeQL alert 607 py/command-line-injection (critical) at dashboard/api_start.py:120, plus path-injection 604-606 (lines 69, 75), all from D51-A12 onboarding (provider name from the request reaching subprocess and a file path). Not published; npm latest/next stay 10.5.17.
+- Fix forward (main already contains it): slice-P0-codeql (constant allowlists for the provider binary and secret file names) in progress; then train with it, then re-cut the release.
+- train/31 731a335d is green on Tests/Parity/Coverage but its Security Audit fails on the same alert; it will not release until the fix lands.
+- D48-flip rejected by opus (bare loki verify still legacy after a default v10 run: FAILED run reads VERIFIED); r2 in progress.
