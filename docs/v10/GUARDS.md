@@ -797,3 +797,25 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   no-op (`return dict(row)`) reproduces the incident directly: the planted
   secret and the log paths both survive.
   Run: `bash tests/test-prune-worktrees.sh && bash tests/test-eval-archive.sh`.
+
+## 21. A failed `cd` let an agent detach the shared main checkout (E-161)
+
+- **Incident:** an agent ran `cd <temp clone>` which failed, then fell back
+  to the shared main checkout and ran `git checkout --detach <tag>` there 7
+  times, leaving the founder's checkout detached each time.
+- **Guard:** RULE8 in `scripts/v10-guard.sh` (PreToolUse Bash hook). In the
+  primary worktree (git-dir equals git-common-dir) it blocks `git checkout
+  --detach`, `git checkout <tag|sha|remote-ref>` and `git switch --detach`
+  for every caller. When the hook input carries `agent_id` (set only for
+  subagents; the leader has none) it also blocks all `git checkout`/`switch`,
+  `reset --hard`, `stash`, `clean` and `worktree remove` of the main
+  checkout. A dangerous git command after a `cd` not followed by `&&`/`||`
+  is blocked when the hook cwd is the primary worktree. The leader keeps
+  `git checkout main`, merge, revert and commit.
+- **Limit:** `cd X || true; git ...` counts as handled. If a host stops
+  sending `agent_id`, only the always-on detach forms remain.
+- **The test that proves it fires:** `tests/test-v10-guard.sh` (Rule 8
+  section): detached checkout in the main checkout blocked, same in a linked
+  worktree allowed, leader `git checkout main` allowed, subagent forms and
+  the unchecked-`cd` case blocked.
+  Run: `bash tests/test-v10-guard.sh`.
