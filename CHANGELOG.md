@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.33 (2026-10-01)
+
+A `next` release. A Loki 10 run that fails no longer opens a pull request made of files you had already changed before the run.
+
+### Fixed
+- When a Loki 10 run ends FAILED, the supervisor's backstop commit now applies the same exclusions as the normal commit stage: files that were already modified before the run and that the run did not touch, Wall test files, new lockfiles with no manifest change in their directory (including `bun.lock`), and `.loki/`. If nothing of the run's own work is left, no commit is made and no pull request opens. Before this, the backstop ran `git add -A`, so leftover setup changes (for example `npm install` output in tracked files) could be committed and pushed in a pull request for a run that changed nothing. A worker that is stopped mid-run still gets its own edits committed, as before (D50-F4).
+- Whether a failed run has a diff is now measured as the net difference between the run's base and the final commit, so a run whose commits cancel out opens no pull request (D50-F4).
+- The backstop runs git with the worker's environment and with filters off (`git hash-object --no-filters`), so a clean filter configured in the repository can never see the supervisor's GitHub token (D50-F4).
+
 ## v10.5.32 (2026-10-01)
 
 A `next` release. Stopping a Loki 10 run with Ctrl-C or SIGTERM now returns your checkout to the branch you started on.
