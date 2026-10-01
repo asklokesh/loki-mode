@@ -27,14 +27,14 @@ function repo(base: Record<string, string>): string {
   return dir;
 }
 /** `work` is written on top of the base commit; `sel(files)` answers impacted(): the named-files call gets the target only. */
-async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef): Promise<V> {
+async function verify(base: Record<string, string>, work: Record<string, string>, task: string, target: TestRef, other: TestRef, narrow = false): Promise<V> {
   const dir = repo(base), baseSha = sh(dir, ["rev-parse", "HEAD"]);
   for (const [f, c] of Object.entries(work)) writeFileSync(join(dir, f), c);
   mkdirSync(join(dir, ".loki"), { recursive: true });
   writeFileSync(join(dir, ".loki", "repomap.json"), JSON.stringify({ files: Object.keys(base) }));
   const ctx = {
     repoDir: dir, runDir: join(dir, ".loki"), baseSha, emit: () => {},
-    tests: { detect: async () => ({ runners: [], tests: [target, other] }), impacted: (_m: unknown, f: string[]) => (f.includes(target.path) ? [target] : f.length ? [target, other] : []) },
+    tests: { detect: async () => ({ runners: [], tests: [target, other] }), impacted: (_m: unknown, f: string[]) => (f.includes(target.path) && (!narrow || f.length === 1) ? [target] : f.length ? [target, other] : []) },
     outputs: () => ({ intake: { task, repomap_ref: join(dir, ".loki", "repomap.json") }, wall: { files: [] } }),
   } as unknown as RunContext;
   return (await verifyStage.run(ctx, new AbortController().signal)).data as unknown as V;
@@ -96,6 +96,20 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     const d = await verify(TWO, { "impl.py": "def double(x):\n    return x * 2\n" }, TASK, py("test_target.py"), py("test_old.py"));
     expect(d.pre_red).toEqual(["test_old.py::test_old"]);
     expect(d.not_proven).toEqual([]);
+  }, 60_000);
+  test("A-115b: honest fix that appends a test to the relevant file, unrelated red elsewhere: red target went green, pre_red subtracted, weakened note only", async () => {
+    const d = await verify(TWO, { "impl.py": "def double(x):\n    return x * 2\n", "test_target.py": TGT + "def test_new():\n    assert True\n" }, "see test_target.py", py("test_target.py"), py("test_old.py"), true);
+    expect(d.pre_red).toEqual(["test_old.py::test_old"]);
+    expect(d.not_proven).toEqual(["weakened test: test_target.py"]);
+  }, 60_000);
+  test("A-115b: a base node test printing pass/fail lines does not inflate the base count", async () => {
+    const noise = "console.log('# pass 40');console.log('# fail 40');";
+    const sum = "const {sum}=require('./sum.js');";
+    const d = await verify(
+      { "sum.js": "exports.sum=(a)=>a.slice(1).reduce((x,y)=>x+y,0);\n", "sum.test.js": T + sum + noise + "t('sums all',()=>{assert.strictEqual(sum([1,2,3]),6);});t('ok',()=>{});\n", "other.test.js": T + "t('unrelated',()=>{assert.strictEqual(1,2);});\n" },
+      { "sum.js": "exports.sum=(a)=>a.reduce((x,y)=>x+y,0);\n" },
+      "fix sum.js, covered by sum.test.js", node("sum.test.js"), node("other.test.js"));
+    expect(d.not_proven.filter((n) => /fewer tests/.test(n))).toEqual([]);
   }, 60_000);
   test("testConfigChanged: a package.json dependency edit is not config; a scripts.test edit is; always-config names are", () => {
     const pkg = (t: string, deps: string): string => `{\n  "scripts": {\n    "test": "${t}"\n  },\n  "dependencies": {${deps}}\n}\n`;
