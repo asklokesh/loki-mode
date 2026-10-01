@@ -1813,3 +1813,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Shipped in 10.5.26: gate text fix 4b290f31 (plus a gate/bin/loki literal-sync test), E-161b, E-169. 10.5.25 (bundled bun 1.4.2, resolver, two-leg gate) is now on latest through 10.5.26.
 - Merged since: E-153 (pre-commit foreign-author guard, main checkout), A-04b (loki-seal counter fixes, 34/0), A-134c plus r2 (provider stdin from /dev/null incl. cline; TS run.sh tests 652/0 before and after with a real install). train/53 6b1ade3a in CI.
 - A-104b (Seal: literal-pathspec reset, per-directory lockfiles, judge against baseSha) built, 935/0 engine10; in opus review because item 3 changes what Seal judges.
+
+## 2026-10-01T09:19Z A-104b REJECT (opus): pre-existing moat gap, failed commit stage still seals VERIFIED
+- Repro (opus): agent commits src.js during implement, leaves a.txt uncommitted; a lockfile recorded at intake as ../outside.txt makes the new literal-pathspecs reset fail, so the commit stage returns "failed: git reset failed"; machine.ts still advances to seal and seal.ts never checks commit success, so the receipt reads VERIFIED with a.txt left modified. Predates A-104b; the new rc check never stopped Seal.
+- Also: empty or unknown ctx.baseSha does not fail closed (nothing filtered, junk committed to the run branch; Seal then reads FAILED). Production always sets baseSha (worker.ts:47).
+- Held up: judging against baseSha never drops a real source change from the receipt diff (verifyReceipt and verifyMain VERIFIED rc 0 on the fixture); monorepo per-directory lockfiles correct; suites 94/0, gate --stub 0 failed.
+- A-104b r2 building: machine.ts routes a failed commit to the failure path; seal.ts refuses VERIFIED when commit did not complete; the commit stage fails on empty or unresolvable baseSha or a failed diff. Red-first tests plus the full moat suite.
