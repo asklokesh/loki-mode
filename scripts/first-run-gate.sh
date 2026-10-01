@@ -50,11 +50,7 @@ BASE=$(git -C "$T/repo" rev-parse HEAD)
 
 # Throwaway HOME first: npm must not read ~/.npmrc or ~/.npm.
 ORIG_HOME="$HOME"
-# Ports are machine-global: the legacy runs below start run.sh's dashboard, which would bind the
-# user's REAL default 57374 and outlive the gate (P0-DASH-LEAK2). Disable it and, belt and braces,
-# point any dashboard at a free high port.
-LOKI_DASHBOARD_PORT="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')"
-export HOME="$T/home" LOKI_NO_BROWSER=1 LOKI_DASHBOARD=false LOKI_DASHBOARD_PORT npm_config_cache="$T/npm-cache" npm_config_userconfig="$T/home/.npmrc"
+export HOME="$T/home" LOKI_NO_BROWSER=1 npm_config_cache="$T/npm-cache" npm_config_userconfig="$T/home/.npmrc"
 
 # --- which loki ---------------------------------------------------------------
 LOKI="${FRG_LOKI:-$REPO_ROOT/bin/loki}"

@@ -707,5 +707,4 @@ json schemas validate real why and status output (D48 r5)	60
 train-cycle.sh release captain: train, promote, release, locks, dry-run (RC-AUTO)	30
 train verdict reuse on main push (E-160, D55)	10
 real-repo acceptance gate logic (D58-GATE)	6
-Dashboard leak2: fail-closed reuse and bound-port URL	5
 Loki control plane wiring: serve, backfill, UI (CP-04)	60

@@ -19183,14 +19183,6 @@ _loki_dashboard_reusable() {
     return 1
 }
 
-# Publish the URL of the port actually bound or reused, so the launcher (bg
-# banner, browser opener) never guesses the default 57374 after start_dashboard
-# walked past a refused port.
-_loki_publish_dashboard_url() {
-    mkdir -p .loki/dashboard 2>/dev/null || return 0
-    printf '%s\n' "$1" > .loki/dashboard/url.tmp 2>/dev/null && mv -f .loki/dashboard/url.tmp .loki/dashboard/url 2>/dev/null || true
-}
-
 start_dashboard() {
     loki_background_services_enabled || return 0
     log_header "Starting Loki Dashboard"
@@ -19270,7 +19262,6 @@ start_dashboard() {
     if [ "${DASHBOARD_REUSED:-0}" = "1" ]; then
         export LOKI_DASHBOARD_PORT="$DASHBOARD_PORT"
         log_info "Dashboard already live on port $DASHBOARD_PORT; reusing it."
-        _loki_publish_dashboard_url "http://127.0.0.1:${DASHBOARD_PORT}/"
         return 0
     fi
 
@@ -19428,7 +19419,6 @@ start_dashboard() {
         DASHBOARD_LAST_ALIVE=$(date +%s)
         log_info "Dashboard started (PID: $DASHBOARD_PID)"
         log_info "Dashboard: ${CYAN}${url_scheme}://127.0.0.1:$DASHBOARD_PORT/${NC}"
-        _loki_publish_dashboard_url "${url_scheme}://127.0.0.1:${DASHBOARD_PORT}/"
 
         # Auto-open the dashboard in the browser, but ONLY for an interactive
         # foreground session. loki_open_url (lib/browser-open.sh) refuses on
@@ -28826,8 +28816,6 @@ main() {
         fi
         # Initialize .loki directory first
         mkdir -p .loki/logs
-        # A url left by an earlier run must never be mistaken for this child's.
-        rm -f .loki/dashboard/url
 
         local log_file=".loki/logs/background-$(date +%Y%m%d-%H%M%S).log"
         local pid_file
@@ -28881,19 +28869,6 @@ main() {
         echo "$bg_pid" > "$pid_file"
         register_pid "$bg_pid" "background-session" "log=$log_file"
 
-        # The child picks the dashboard port (it walks past refused ports), so
-        # print the URL it publishes, never the requested default.
-        local _bg_dash_line="disabled (LOKI_DASHBOARD=false)"
-        if [ "$ENABLE_DASHBOARD" = "true" ] && loki_background_services_enabled; then
-            _bg_dash_line="starting (run: loki dashboard url, or see $log_file)"
-            local _bg_i
-            for _bg_i in $(seq 1 60); do
-                if [ -s .loki/dashboard/url ]; then _bg_dash_line="$(head -1 .loki/dashboard/url)"; break; fi
-                kill -0 "$bg_pid" 2>/dev/null || break
-                sleep 0.5
-            done
-        fi
-
         echo ""
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
         echo -e "${GREEN}  Loki Mode Running in Background${NC}"
@@ -28903,7 +28878,7 @@ main() {
         echo -e "  ${CYAN}Path:${NC}       $project_path"
         echo -e "  ${CYAN}PID:${NC}        $bg_pid"
         echo -e "  ${CYAN}Log:${NC}        $log_file"
-        echo -e "  ${CYAN}Dashboard:${NC}  ${_bg_dash_line}"
+        echo -e "  ${CYAN}Dashboard:${NC}  http://127.0.0.1:${DASHBOARD_PORT}/"
         echo ""
         echo -e "${YELLOW}Control Commands:${NC}"
         echo -e "  ${DIM}Pause:${NC}      touch .loki/PAUSE"
