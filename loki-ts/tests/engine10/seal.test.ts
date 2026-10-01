@@ -7,7 +7,7 @@
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -41,7 +41,7 @@ function makeRepo(name: string): { repo: string; base: string } {
   const base = sh(["git", "rev-parse", "HEAD"], repo).trim();
   writeFileSync(join(repo, "a.txt"), "two\n");
   sh(["mkdir", "-p", ".loki/runs/r1"], repo);
-  writeFileSync(join(repo, ".loki/runs/r1/events.jsonl"), '{"v":1}\n');
+  writeFileSync(join(repo, ".loki/runs/r1/events.jsonl"), JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: "r1", type: "run.started", stage: null, data: {} }) + "\n");
   return { repo, base };
 }
 
@@ -222,6 +222,7 @@ describe("engine10 seal", () => {
     // A known kid with a flipped signature byte stays TAMPERED; a non-string jwt is UNCHECKED, not a crash.
     const good = JSON.parse(readFileSync(path, "utf8")) as Receipt;
     process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+    copyFileSync(join(dirname(path), "events.jsonl"), join(root, "rot", "events.jsonl")); // A-117: verify reads the log beside the receipt
     const badSig = join(root, "rot", "badsig.json");
     const jwt = good.verification.jwt!;
     writeFileSync(badSig, JSON.stringify({ ...good, verification: { ...good.verification, jwt: jwt.slice(0, -2) + (jwt.endsWith("AA") ? "BB" : "AA") } }));

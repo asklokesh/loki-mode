@@ -6,6 +6,7 @@
 // some sibling path is absent, so this test says nothing about any other
 // slice's files.
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -61,7 +62,7 @@ function baseReceiptFields(): Record<string, unknown> {
     provider: "claude",
     model: "claude-x",
     resumed: false,
-    events_sha256: "f".repeat(64),
+    events_sha256: createHash("sha256").digest("hex"), // empty: these fixtures carry no events.jsonl
   };
 }
 

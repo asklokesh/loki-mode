@@ -3,9 +3,10 @@
 // (recompute receipt_sha256 with `verification`+itself removed), SIGNATURE (native Ed25519
 // against the active + retired keys), UNSIGNED (jwt null). Node crypto only, no python (A-121).
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
-import { createPublicKey, verify } from "node:crypto";
+import { dirname, join } from "node:path";
+import { createHash, createPublicKey, verify } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
+import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
@@ -45,6 +46,21 @@ function checkAttestation(jwt: string, expectedHash: string): AttestationOutcome
   if (!verify(null, Buffer.from(`${h}.${p}`), pub, Buffer.from(s, "base64url"))) return bad("signature does not verify");
   return payload?.receipt_sha256 === expectedHash ? { status: "verified", reason: null } : bad("attestation binds a different receipt hash");
 }
+/** A-117: the worker seals before the supervisor can detect a log tamper, so the receipt alone cannot say so. Bind it to events.jsonl: the log must exist, hold a
+ *  prefix hashing to receipt.events_sha256, contiguous seq from 0 and no tamper.detected. Removing the evidence breaks these too.
+ *  ponytail: a forger who rewrites the whole post-seal tail consistently is not caught; only a signature made after the run could close that. */
+function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): string | null {
+  const bound = receipt["events_sha256"];
+  if (typeof bound !== "string" || bound === createHash("sha256").digest("hex")) return null; // no log bound at seal time (a real run writes run.started first; the receipt hash covers this field)
+  const path = join(dirname(receiptPath), "events.jsonl");
+  if (!existsSync(path)) return "events.jsonl is missing";
+  const raw = readFileSync(path, "utf8"), events = readEvents(path), lines = raw.split("\n").filter((l) => l.trim() !== "");
+  if (events.length !== lines.length || events.some((e, i) => e.seq !== i)) return "events.jsonl has a forged, edited or missing line";
+  if (events.some((e) => e.type === "tamper.detected")) return "the supervisor detected events.jsonl being modified during the run";
+  const h = createHash("sha256"); // the worker hashed the log as it stood at seal; the supervisor may lag, so any line-boundary prefix may match
+  for (const l of lines) { if (h.copy().digest("hex") === bound) return null; h.update(l + "\n"); }
+  return h.digest("hex") === bound ? null : "events.jsonl does not match the hash recorded at seal";
+}
 export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}): Promise<VerifyResult> {
   if (!existsSync(receiptPath)) {
     return { verdict: "UNCHECKED", reasons: [`receipt not found: ${receiptPath}`] };
@@ -63,6 +79,8 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
       reasons: [`receipt_sha256 mismatch: recorded ${JSON.stringify(recorded)}, computed ${computed}`],
     };
   }
+  const logProblem = checkEventLog(receiptPath, receipt);
+  if (logProblem) return { verdict: "TAMPERED", reasons: [logProblem] };
   const verification = (receipt["verification"] ?? {}) as { jwt?: string | null };
   const jwt = verification.jwt ?? null;
   if (jwt !== null && typeof jwt !== "string") return { verdict: "UNCHECKED", reasons: ["verification.jwt is not a string"] };
