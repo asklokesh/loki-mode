@@ -1629,6 +1629,7 @@ run_test "Quick quiet failure tail and stdin (A-134b)" "$SCRIPT_DIR/test-quick-q
 run_test "Pre-commit author email guard (E-153)" "$SCRIPT_DIR/test-pre-commit-author-guard.sh"
 run_test "Provider stdin closed under verbose (A-134c)" "$SCRIPT_DIR/test-provider-stdin-closed.sh"
 run_test "D51 Phase B workspaces (B01)" "$SCRIPT_DIR/test-workspace.sh"
+run_test "Python shutdown SIGABRT with piped output (PY-ABORT)" "$SCRIPT_DIR/test-py-shutdown-abort.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
