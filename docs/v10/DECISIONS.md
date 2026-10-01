@@ -408,3 +408,10 @@ Loki's definition: "autonomous software factory that runs with the knowledge of 
 3. 10x defined: merge-ready PRs per hour of wall clock and per hour of human attention on a 20-issue backlog vs one raw Claude Code session; target 10x on both, from parallelism, zero babysitting and attached evidence. Measured and published.
 4. Reuse dashboard/, notify.sh, deploy/helm, docker-compose, terraform, playwright-verify.sh and issue-providers.sh; delete UI and endpoints that do not serve the flow. One UI, one config file, one engine.
 5. Phase A (today): first-run UI, backlog view, headless plus loki.yaml, Slack. Phase B: workspaces, cross-repo runs, combined integration testing with evidence. Phase C: one container image, Helm and ECS, org connect, audit log.
+
+## D39 amendment (founder, relayed 03:16Z): "Sprint, then pace"
+1. Full speed until the D48 deadline at 04:35Z.
+2. From 04:35Z the governor paces to about 0.48% of the weekly limit per hour (projected <= 75% used at the 2026-10-07T17:00Z reset), about 7 concurrent engineers at today's burn; the ceiling is recomputed hourly from new /usage readings (docs/v10/usage-readings.tsv; first reading 2026-10-01T03:14Z: window 11%, weekly 25%).
+3. Priority inside the paced budget: release flow, then D50 harness and lift eval, then D51 Phase A, then docs, then the remaining D48 polish.
+4. Builders run as cloud sessions first (the 250 USD cloud credit is used before plan usage).
+5. If the 5h window passes 80%, pause new work until it resets; never let a run die mid-release.

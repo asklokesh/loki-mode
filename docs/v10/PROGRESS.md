@@ -1694,3 +1694,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Applied now: (1) opus reviews only for moat, latest-moving and signing slices; sonnet, 10-min cap, for the rest; slices under 150 changed lines. (3) New builders launch as remote (cloud) agents, so local load is reviewers, gate and Release Captain only. (4) A train is cut on any green reviewed slice, every 10-15 min, even while the previous train is in CI.
 - (2) Slice CI tier-down is BOARD E-162, sequenced after E-157 r4 because both edit test.yml.
 - After-numbers go in the 03:35Z entry.
+
+## 2026-10-01T03:08Z usage governor calibrated; pacing decided; A-118 r3
+- First usage reading in docs/v10/usage-readings.tsv: 2026-10-01T03:14:00Z, window 11%, weekly 25%. Founder pacing (D39 amendment): sprint to 04:35Z, then about 0.48%/h (about 7 engineers).
+- A-118 r2 opus REJECT (4 blockers: multi-line pyproject addopts and unittest @skip bypasses; pagination `{ skip: n }` and new shared config files falsely accused); r3 with the builder.
+- Pushed for slice CI: slice-D51-A3 14ff9ae2 (backlog plus loki.yaml), slice-D51-A4 adb838b2 (Slack on v10). slice-D51-A12 and slice-D48-r6 were blocked by pre-push gitleaks on synthetic strings; a fix agent is moving both to source-level fixes.
