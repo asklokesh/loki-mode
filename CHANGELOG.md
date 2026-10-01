@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.30 (2026-10-01)
+
+A `next` release. A Loki 10 run that finds the task already satisfied now leaves the repository as it found it, and `loki why --json` and `loki status --json` have published JSON Schemas.
+
+### Fixed
+- When a Loki 10 run ends ALREADY_SATISFIED, the commit stage discards the edits the run's implement step made, restoring those paths to the run's base and resetting HEAD and the index, so no source diff, commit or pull request is left behind. Before this, a run could report the task as already satisfied while still leaving implement's source changes in the working tree (D50-F1).
+- The discard restores only what the run changed. Files that were untracked or already modified when the run started keep their content, including a lockfile that was dirty at intake. A file it cannot restore safely makes the outcome NOT PROVEN instead of being overwritten. A failed discard fails the commit stage and seals FAILED (D50-F1).
+- The restore never writes through a symbolic link: every write checks the target and each parent directory with lstat first, stays inside the repository and creates files exclusively, so a link planted by the agent cannot redirect a write outside the repository. A test fails if a raw file write reappears in the discard path (D50-F1).
+
+### Added
+- JSON Schemas for `loki why --json` (`schemas/why-result.schema.json`) and `loki status --json` (`schemas/status-result.schema.json`), validated in tests against real command output, each with a sample that must be rejected (D48 row 5).
+
+### Documentation
+- docs/INSTALLATION.md documents the slim install (`npm install -g loki-mode --omit=optional`, without the bundled bun): every Loki 10 command then prints the "cannot run on this machine: no working bun" line and runs the legacy engine. Homebrew installs need bun installed separately (`brew install oven-sh/bun/bun`) (E-170).
+
 ## v10.5.29 (2026-10-01)
 
 A `next` release. A Loki 10 run whose commit stage fails no longer lands a backstop commit or opens a pull request.
