@@ -13568,11 +13568,16 @@ print(json.dumps({
 cmd_doctor() {
     local json_output=false
     local airgap_audit=false
+    local fix=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --json)
                 json_output=true
+                shift
+                ;;
+            --fix)
+                fix=true
                 shift
                 ;;
             --airgap)
@@ -13582,10 +13587,12 @@ cmd_doctor() {
             --help|-h)
                 echo -e "${BOLD}loki doctor${NC} - Check system prerequisites"
                 echo ""
-                echo "Usage: loki doctor [--json] [--airgap]"
+                echo "Usage: loki doctor [--json] [--fix] [--airgap]"
                 echo ""
                 echo "Options:"
                 echo "  --json    Output machine-readable JSON"
+                echo "  --fix     Create a missing receipt signing key (never overwrites) and"
+                echo "            print the command to select a provider, then run doctor"
                 echo "  --airgap  Audit network egress: model inference, telemetry and"
                 echo "            the update check, whether each is REQUIRED or optional,"
                 echo "            and how to disable it; names what it does not audit"
@@ -13598,7 +13605,7 @@ cmd_doctor() {
                 ;;
             *)
                 echo -e "${RED}Unknown option: $1${NC}"
-                echo "Usage: loki doctor [--json] [--airgap]"
+                echo "Usage: loki doctor [--json] [--fix] [--airgap]"
                 return 1
                 ;;
         esac
@@ -13609,9 +13616,41 @@ cmd_doctor() {
         return $?
     fi
 
+    if [ "$fix" = true ] && [ "$json_output" = true ]; then
+        echo -e "${RED}--fix cannot be combined with --json${NC}" >&2
+        return 1
+    fi
+
     if [ "$json_output" = true ]; then
         cmd_doctor_json
         return $?
+    fi
+
+    # doctor --fix: only ever ADDS state. Mirrored in loki-ts/src/commands/doctor.ts
+    # (runFix); the bun-parity gate compares stdout.
+    if [ "$fix" = true ]; then
+        echo "Fix:"
+        local _fx_file="${LOKI_RECEIPT_SIGNING_KEY_FILE:-}"
+        [ -n "$_fx_file" ] || _fx_file="${HOME}/.loki/keys/receipt-ed25519.pem"
+        if [ -n "$(printf %s "${LOKI_RECEIPT_SIGNING_KEY:-}" | tr -d '[:space:]')" ]; then
+            echo "  OK     receipt signing key supplied by LOKI_RECEIPT_SIGNING_KEY"
+        elif [ -e "$_fx_file" ] || [ -L "$_fx_file" ]; then
+            echo "  OK     receipt signing key present: $_fx_file"
+        elif python3 -E -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; sys.path.insert(0, sys.argv[1]); from receipt_jwt import load_signing_key; sys.exit(0 if load_signing_key(auto_generate=True)[1] else 1)' "$SKILL_DIR/autonomy" >/dev/null 2>&1; then
+            echo "  FIXED  receipt signing key created: $_fx_file"
+        else
+            echo "  WARN   could not create receipt signing key: $_fx_file"
+        fi
+        if [ -z "${LOKI_PROVIDER:-}" ] && [ ! -f "${LOKI_DIR:-.loki}/state/provider" ]; then
+            local _fx_p
+            for _fx_p in claude codex cline aider opencode; do
+                if command -v "$_fx_p" >/dev/null 2>&1; then
+                    echo "  NEXT   no provider selected; run: loki provider set $_fx_p"
+                    break
+                fi
+            done
+        fi
+        echo ""
     fi
 
     echo -e "${BOLD}Loki Mode Doctor${NC}"
@@ -13637,6 +13676,37 @@ cmd_doctor() {
     local warn_count=0
 
     # Helper: check command exists and optionally check version
+    # Provider CLI --version probes run in parallel with a hard 5s kill each (polled, so no orphan timer process)
+    # (aider alone can take 1s+, and an unbounded probe could hang doctor).
+    # Output is cached per provider; doctor_check reads the cache. Probes that
+    # time out leave an empty version, same as a CLI that prints nothing.
+    local _doctor_vdir _doctor_pids="" _c
+    _doctor_vdir=$(mktemp -d 2>/dev/null) || _doctor_vdir=""
+    for _c in claude codex cline aider opencode; do
+        [ -n "$_doctor_vdir" ] || break
+        command -v "$_c" >/dev/null 2>&1 || continue
+        (
+            "$_c" --version >"$_doctor_vdir/$_c" 2>/dev/null </dev/null &
+            _p=$!
+            _n=0
+            while kill -0 "$_p" 2>/dev/null && [ "$_n" -lt 50 ]; do
+                sleep 0.1
+                _n=$((_n + 1))
+            done
+            kill "$_p" 2>/dev/null || true
+            wait "$_p" 2>/dev/null || true
+        ) &
+        _doctor_pids="$_doctor_pids $!"
+    done
+    # shellcheck disable=SC2086
+    [ -z "$_doctor_pids" ] || wait $_doctor_pids 2>/dev/null || true
+    _doctor_ver() {
+        if [ -n "$_doctor_vdir" ] && [ -f "$_doctor_vdir/$1" ]; then
+            head -1 "$_doctor_vdir/$1" 2>/dev/null
+        else
+            "$1" --version 2>/dev/null | head -1
+        fi
+    }
     doctor_check() {
         local name="$1"
         local cmd="$2"
@@ -13682,19 +13752,19 @@ cmd_doctor() {
                 version=$(curl --version 2>/dev/null | head -1 | awk '{print $2}')
                 ;;
             claude)
-                version=$(claude --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                version=$(_doctor_ver claude | sed 's/[^0-9.]//g' | head -1)
                 ;;
             codex)
-                version=$(codex --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                version=$(_doctor_ver codex | sed 's/[^0-9.]//g' | head -1)
                 ;;
             cline)
-                version=$(cline --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                version=$(_doctor_ver cline | sed 's/[^0-9.]//g' | head -1)
                 ;;
             aider)
-                version=$(aider --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                version=$(_doctor_ver aider | sed 's/[^0-9.]//g' | head -1)
                 ;;
             opencode)
-                version=$(opencode --version 2>/dev/null | head -1 | sed 's/[^0-9.]//g' | head -1)
+                version=$(_doctor_ver opencode | sed 's/[^0-9.]//g' | head -1)
                 ;;
         esac
 
@@ -13774,6 +13844,7 @@ cmd_doctor() {
     doctor_check_provider "Cline CLI"   cline  || true
     doctor_check_provider "Aider CLI"   aider  || true
     doctor_check_provider "opencode CLI" opencode || true
+    [ -z "$_doctor_vdir" ] || rm -rf "$_doctor_vdir"
 
     # Check if at least one provider is installed (detect_any_provider is the
     # shared helper from provider-offer.sh, extracted from this exact loop).
@@ -14004,8 +14075,11 @@ except Exception:
     echo ""
 
     echo -e "${CYAN}Integrations:${NC}"
+    # Presence probe via find_spec: a real `import sentence_transformers` costs
+    # 4-5s and dominated doctor. Mirrored in loki-ts/src/commands/doctor.ts.
+    local _DOCTOR_SPEC_PY='import importlib.util as u,sys; sys.exit(u.find_spec(sys.argv[1]) is None)'
     # MCP SDK check
-    if python3 -c "import mcp" 2>/dev/null; then
+    if python3 -c "$_DOCTOR_SPEC_PY" mcp 2>/dev/null; then
         echo -e "  ${GREEN}PASS${NC}  MCP SDK (Python)"
         pass_count=$((pass_count + 1))
     else
@@ -14020,14 +14094,14 @@ except Exception:
         _py_ml="python3.12"
     fi
     # Vector search dependencies
-    if $_py_ml -c "import numpy" 2>/dev/null; then
+    if $_py_ml -c "$_DOCTOR_SPEC_PY" numpy 2>/dev/null; then
         echo -e "  ${GREEN}PASS${NC}  numpy (vector search)"
         pass_count=$((pass_count + 1))
     else
         echo -e "  ${YELLOW}WARN${NC}  numpy - not installed (pip3 install numpy)"
         warn_count=$((warn_count + 1))
     fi
-    if $_py_ml -c "import sentence_transformers" 2>/dev/null; then
+    if $_py_ml -c "$_DOCTOR_SPEC_PY" sentence_transformers 2>/dev/null; then
         echo -e "  ${GREEN}PASS${NC}  sentence-transformers (embeddings)"
         pass_count=$((pass_count + 1))
     else

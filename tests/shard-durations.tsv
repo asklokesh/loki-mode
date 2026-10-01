@@ -688,3 +688,4 @@ Council trivial-diff probe skip (A-133)	10
 run-all-tests guards: real key dir + parent HEAD (E-154, E-155)	3
 Quick receipt order and quiet output (A-134)	90
 Quick config safety (P0-t15)	35
+doctor --fix and 2s doctor budget (both routes)	40
