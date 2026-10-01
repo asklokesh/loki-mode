@@ -9310,7 +9310,9 @@ _deploy_receipt_verdict() {
     # attestation that is not a string, not a 3-part JWS, or whose header/payload are not
     # JSON with alg EdDSA is junk, so TAMPERED, never UNCHECKED, with or without a key.
     if ! python3 -E - "$pj" >/dev/null 2>&1 <<'PYSHAPE'
-import sys, json, base64
+import sys
+sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+import json, base64
 def dec(x):
     return json.loads(base64.urlsafe_b64decode(x + "=" * (-len(x) % 4)))
 v = json.load(open(sys.argv[1])).get("verification") or {}

@@ -164,5 +164,24 @@ VTABLE_HEAD="$(sed 's/\x1b\[[0-9;]*m//g' "$T/vout.log" | sed -n 's/^| Head sha |
 [ -n "$VTABLE_HEAD" ] && [ "$VTABLE_HEAD" = "$VHEAD" ] \
     && ok "verbose receipt table Head equals HEAD" || bad "verbose receipt table Head differs from HEAD" "table=${VTABLE_HEAD:-none} head=$VHEAD"
 
+# A-121b: the token-shape block of _deploy_receipt_verdict runs with the verified repo as cwd;
+# a committed base64.py or json.py must not shadow the stdlib and disable it. Run the block
+# exactly as autonomy/loki does (python3 -E - from the repo dir) on a junk "x.y.z".
+SHAPE_PY="$T/shape.py"
+sed -n "/<<'PYSHAPE'/,/^PYSHAPE\$/p" "$REPO_ROOT/autonomy/loki" | sed '1d;$d' > "$SHAPE_PY"
+[ -s "$SHAPE_PY" ] || bad "could not extract the PYSHAPE block from autonomy/loki"
+for shadow in base64 json; do
+    SD="$T/shadow-$shadow"; mkdir -p "$SD"
+    printf '{"verification":{"attestation":"x.y.z"}}\n' > "$SD/proof.json"
+    if [ "$shadow" = base64 ]; then
+        printf '%s\n' "def urlsafe_b64decode(x): return b'{\"alg\":\"EdDSA\"}'" > "$SD/base64.py"
+    else
+        printf 'def load(f): return {"verification": {}}\n' > "$SD/json.py"
+    fi
+    ( cd "$SD" && python3 -E - proof.json < "$SHAPE_PY" >/dev/null 2>&1 ); src=$?
+    [ "$src" -ne 0 ] && ok "shape check refuses junk with a committed $shadow.py (rc=$src)" \
+        || bad "committed $shadow.py shadows the shape check" "rc=$src"
+done
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
