@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { failIds } from "../failures.ts";
+import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -161,8 +161,8 @@ export async function runCheck(
  *  NOT PROVEN (a skipped target is not a fixed target). Weak also means it ran FEWER tests than base (pytest.exit, xfail, a deleted test):
  *  every relevant pass is compared with its base run, and xfailed counts as skipped, never passed.
  *  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
-async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[]; weak: string[] }> {
-  const out = { ids: [] as string[], names: [] as string[], weak: [] as string[] };
+async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[]; weak: string[]; cnt: Record<string, { b: { run: number; skipped: number }; h: { run: number; skipped: number } }> }> {
+  const out = { ids: [] as string[], names: [] as string[], weak: [] as string[], cnt: {} as Record<string, { b: { run: number; skipped: number }; h: { run: number; skipped: number } }> };
   const pairs = checks.flatMap((c) => {
     const t = tests.find((x) => `${x.runner}:${x.path}` === c.name);
     return t ? [{ c, t }] : [];
@@ -180,7 +180,7 @@ async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestR
       const b = await runOnce(cmd, args, dir, signal, {});
       base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? (['pass', 'fail'] as const).reduce((t, k) => t + +([...b.out.matchAll(new RegExp(`^(?:#|\\u2139) ${k} (\\d+)$`, 'gm'))].pop()?.[1] ?? 0), 0) /* node spec prints its failing-tests section after the summary block; take the LAST pass and fail lines, not every one */, sk: skipped(b.out) });
     }
-    out.weak = sus.filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n).map(({ c }) => c.name);
+    out.weak = sus.filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n).map(({ c }) => c.name); for (const { c } of sus) out.cnt[c.name] = { b: { run: base.get(c)!.n, skipped: base.get(c)!.sk }, h: { run: c.n ?? 0, skipped: c.sk ?? 0 } };
     const progress = checks.some((c) => wall.has(c.name) && c.result === "pass")
       || sus.some(({ c }) => !out.weak.includes(c.name) && base.get(c)!.red.length > 0 && (c.n ?? 0) >= base.get(c)!.n); // A-115b: sus includes an EDITED relevant file (its base-red ids now pass; the caller's `weakened test:` note keeps it PARTIAL)
     if (progress) {
@@ -285,10 +285,10 @@ export const verifyStage: Stage = {
     // E-98a/E-115: a check that ran (not_run has its own NOT PROVEN entry at seal) on a system interpreter/ruff.
     // A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { execFileSync("git", ["cat-file", "-e", `${ctx.baseSha}:${f}`], { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); return true; } catch { return false; } };
-    const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).map((t) => `weakened test: ${t.path}`); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
+    const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[`${t.runner}:${t.path}`]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
     const weakened = [...modifiedRel, ...testConfigChanged(ctx.repoDir, ctx.baseSha, changed).map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
     const notProven = [...weakened, ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
-    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names } };
+    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, test_counts: testCounts } };
   },
 };
 export const stage = verifyStage;
