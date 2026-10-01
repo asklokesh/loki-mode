@@ -295,24 +295,6 @@ probe_case "the council circuit breaker stays wired" \
     'if false; then' \
     bash tests/test-council-convergence-floor.sh
 
-# The three safety valves. They are the only things that stop a run on its own,
-# so a disconnected one means a build spends until something external kills it.
-# check_max_iterations is probed at its IN-LOOP site: it has two call sites, and
-# breaking the pre-loop one alone left the loop still bounded, which reported a
-# misleading MUTATION SURVIVED.
-probe_case "the budget valve stays wired" \
-    "autonomy/run.sh" 'if check_budget_limit; then' 'if false; then' \
-    bash tests/test-max-duration.sh
-
-probe_case "the duration valve stays wired" \
-    "autonomy/run.sh" 'if check_max_duration; then' 'if false; then' \
-    bash tests/test-max-duration.sh
-
-MUTPROBE_AFTER='if check_budget_limit; then' \
-probe_case "the in-loop iteration valve stays wired" \
-    "autonomy/run.sh" 'if check_max_iterations; then' 'if false; then' \
-    bash tests/test-max-duration.sh
-
 # The startup preflight. It decides whether a build may begin at all, and until
 # v8.25.0 nothing tested it -- four checks with no evidence any still fired. Two
 # probes, one per direction, because the two failure modes are opposite: a
@@ -552,20 +534,6 @@ probe_case "a missing detector still fail-closes" \
 probe_case "every runtime dependency stays packaged" \
     "package.json" '"learning/",' '' \
     bash tests/test-detectors-are-packaged.sh
-
-# The stale-install hint on `loki start`. The first probe is the mistake that
-# was actually made: `2>/dev/null` on a call whose ONLY output is on stderr,
-# which makes the feature silently dead while every source review looks right.
-probe_case "the update hint's stderr is not discarded" \
-    "autonomy/loki" \
-    '    maybe_print_update_hint || true' \
-    '    maybe_print_update_hint 2>/dev/null || true' \
-    bash tests/test-start-update-hint.sh
-
-probe_case "loki start still calls the update hint" \
-    "autonomy/loki" \
-    '    maybe_print_update_hint || true' '    :' \
-    bash tests/test-start-update-hint.sh
 
 # doctor must SEE a broken install. Until v8.43.0 it only checked external
 # commands, so an install with zero gate detectors -- the shape every npm user

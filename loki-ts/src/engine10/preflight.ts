@@ -12,7 +12,7 @@ export async function checkPreflight(o: PreflightOptions): Promise<PreflightResu
   const fatal =
     wt.exitCode !== 0 || wt.stdout.trim() !== "true" ? `not a git repository: ${o.repoDir} is not inside a git work tree; run loki from inside a git checkout` :
     !name.stdout.trim() || !email.stdout.trim() ? `git identity is not set; run: git config user.name "you" && git config user.email "you@example.com"` :
-    !envVar ? `the v10 engine has no ${o.provider} invoker yet; use LOKI_ENGINE=legacy loki start --provider ${o.provider}` :
+    !envVar ? `the v10 engine has no ${o.provider} invoker yet; use claude, codex, cline or aider` :
     o.provider !== "claude" && truthy(env["LOKI_HOST_GUARD"]) ? `LOKI_HOST_GUARD=1 is set but provider '${o.provider}' has no enforced PreToolUse hook; unset LOKI_HOST_GUARD or use --provider claude` :
     !cliOk ? `provider CLI '${cli}' is not on PATH; install it or set ${envVar} to its path` :
     null;

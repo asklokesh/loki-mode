@@ -135,8 +135,6 @@ ALIAS_ROWS=(
     "onboard|analyze onboard|--help"
     "code|analyze code|--help"
     "context|analyze context|--help"
-    "heal|modernize heal|--help"
-    "migrate|modernize migrate|--help"
 )
 
 assert_row() {
@@ -260,13 +258,11 @@ assert_no_loki_exit_parity explain "analyze explain" "--help"
 assert_no_loki_exit_parity onboard "analyze onboard" "--help"
 assert_no_loki_exit_parity code "analyze code" "--help"
 assert_no_loki_exit_parity context "analyze context" "--help"
-assert_no_loki_exit_parity heal "modernize heal" "--help"
-assert_no_loki_exit_parity migrate "modernize migrate" "--help"
 
 # Phase B (slice B2): prove each new alias creates NO .loki in a clean dir (the
 # named no-side-effect contract). _deprecated_alias gates its telemetry emit on
 # .loki already existing, so a forwarding alias must leave a fresh dir pristine.
-for _b2_alias in compound explain onboard code context heal migrate; do
+for _b2_alias in compound explain onboard code context; do
     _b2_fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-b2-noloki.XXXXXX")"
     ( cd "$_b2_fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "$_b2_alias" --help >/dev/null 2>&1 ) || true
     if [ ! -e "$_b2_fresh/.loki" ]; then
@@ -317,47 +313,7 @@ assert_short_alias open preview
 # 'analyze context' (the pointer uses the typed token 'ctx').
 assert_short_alias ctx "analyze context"
 
-# 'run' has its own inline deprecation (cmd_run, v6.84.0) aligned to the
-# standardized pointer. A real 'loki run <N>' touches the network/issue path,
-# so assert the contract on a bogus ref that exits fast: the pointer is present
-# and suppressed under --json.
-assert_run_alias() {
-    local label="run -> start <issue> (inline alias)"
-    local pat; pat="$(dep_pattern "start <issue-ref>")"
-    local err
-    run_loki run 999999 >/dev/null 2>"$WORKDIR/run.err" || true
-    err="$(cat "$WORKDIR/run.err")"
-    if echo "$err" | grep -qF "$pat"; then
-        log_pass "$label: deprecation line present"
-    else
-        log_fail "$label: deprecation line present" "missing: $pat (got head: $(echo "$err" | head -1))"
-    fi
-    run_loki run 999999 --json >/dev/null 2>"$WORKDIR/runj.err" || true
-    err="$(cat "$WORKDIR/runj.err")"
-    if echo "$err" | grep -qF "$pat"; then
-        log_fail "$label: --json suppresses deprecation line" "line leaked under --json"
-    else
-        log_pass "$label: --json suppresses deprecation line"
-    fi
-}
-assert_run_alias
-
-# ---------------------------------------------------------------------------
-# v7.31 finding 3: the 'run' alias must add NO side effect in a clean dir. The
-# telemetry emit creates .loki/events/pending; gate it on .loki existing (like
-# every other alias). In a fresh dir with no .loki, `loki run <bogus>` must
-# leave NO .loki behind.
-# ---------------------------------------------------------------------------
-{
-    fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-run-noloki.XXXXXX")"
-    ( cd "$fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" run 999999 >/dev/null 2>&1 ) || true
-    if [ ! -e "$fresh/.loki" ]; then
-        log_pass "run alias: no .loki created in a clean dir (no-side-effect contract)"
-    else
-        log_fail "run alias: no .loki created in a clean dir" ".loki was created: $(find "$fresh/.loki" -type f 2>/dev/null | head -1)"
-    fi
-    rm -rf "$fresh"
-}
+# 'run' no longer has an inline deprecation: cmd_run was removed in 10.6.0 (D57).
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 4: positional machine-output formats (export json|csv|timeline)
@@ -449,7 +405,7 @@ fi
 # block (they live in the footer / `loki help aliases`). We check the entry
 # tokens specifically, not prose.
 ENTRY_TOKENS="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | awk '{print $1}')"
-ALIAS_TOKENS="stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc compound explain onboard code context heal migrate"
+ALIAS_TOKENS="stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc compound explain onboard code context"
 alias_leak=0
 for tok in $ALIAS_TOKENS; do
     if echo "$ENTRY_TOKENS" | grep -qx "$tok"; then
@@ -477,7 +433,7 @@ fi
 
 # `loki help aliases` lists every alias-table row.
 ALIASES_OUT="$(run_loki help aliases 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
-for tok in stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc run compound explain onboard code context ctx heal migrate; do
+for tok in stats metrics cost export share dogfood kpis trust-metrics serve open otel cp wt rc run compound explain onboard code context ctx; do
     if echo "$ALIASES_OUT" | grep -qE "^  $tok( |\$)"; then
         log_pass "help aliases: lists '$tok'"
     else

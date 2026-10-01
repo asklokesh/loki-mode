@@ -119,8 +119,8 @@ jobs:
           echo "githead=${GITHEAD}" >> "$GITHUB_OUTPUT"
 
       # FAIL CLOSED, both machines a user can have. Leg 1 (bun installed) runs the
-      # v10 engine; leg 2 (a plain `npm i -g` user, no bun) runs the legacy engine
-      # with bun removed from PATH. Either failure fails this step, so the dist-tag
+      # v10 engine; leg 2 (a plain `npm i -g` user, no bun) removes bun from PATH and
+      # asserts the one plain "no working bun" error line and exit code 1. Either failure fails this step, so the dist-tag
       # step never runs. Both legs install the same exact version.
       - name: First-run gate on the exact installed version (both legs)
         id: gate
@@ -135,7 +135,7 @@ jobs:
           command -v bun >/dev/null || { echo "FATAL: leg 1 needs bun on PATH"; exit 1; }
           echo "== leg 1: with bun (v10 engine) =="
           bash scripts/first-run-gate.sh --installed "loki-mode@${VERSION}"
-          echo "== leg 2: without bun (legacy engine) =="
+          echo "== leg 2: without bun (plain error, exit 1) =="
           # Filter every PATH entry that holds a bun binary; node and npm stay.
           NEWPATH=""
           IFS=: read -ra DIRS <<< "$PATH"
@@ -143,7 +143,7 @@ jobs:
             [ -e "$d/bun" ] || NEWPATH="${NEWPATH:+$NEWPATH:}$d"
           done
           PATH="$NEWPATH" bash -c '! command -v bun >/dev/null' || { echo "FATAL: bun still on PATH for leg 2"; exit 1; }
-          PATH="$NEWPATH" bash scripts/first-run-gate.sh --installed "loki-mode@${VERSION}" --engine legacy
+          PATH="$NEWPATH" bash scripts/first-run-gate.sh --installed "loki-mode@${VERSION}" --engine nobun
           echo "result=PASS" >> "$GITHUB_OUTPUT"
 
       # PREFLIGHT for every channel BEFORE any latest moves, so a Docker or

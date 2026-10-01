@@ -302,11 +302,10 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     }
 
     case "start": {
-      // v8 Phase 4: the RARV autonomous loop on the Bun route. Reached from
-      // bin/loki only when LOKI_SDK_LOOP is truthy (the default route still runs
-      // the bash cmd_start). Parses the supported flag subset -> runAutonomous.
-      const { runStart } = await import("./commands/start.ts");
-      return runStart(rest);
+      // D57: the Bun RARV loop is removed. bin/loki routes `loki start` to the Loki 10 engine;
+      // reaching it here means the shim was bypassed.
+      process.stderr.write('loki: start was removed in 10.6.0; use loki "<task>".\n');
+      return 2;
     }
 
     case "engine10": {

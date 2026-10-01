@@ -20,7 +20,6 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_SH="$REPO_ROOT/autonomy/run.sh"
-LOKI="$REPO_ROOT/autonomy/loki"
 
 PASS=0
 FAIL=0
@@ -90,27 +89,6 @@ for lvl in info warn error; do
         bad "level '${lvl}' suppressed an ERROR -- a quiet run could not say why it failed"
     fi
 done
-
-# The CLI surface: flags exist, are documented, and reject a bad value rather
-# than silently ignoring it.
-help_out="$("$LOKI" start --help </dev/null 2>&1 || true)"
-case "$help_out" in
-    *"--quiet"*) ok "start --help documents --quiet" ;;
-    *) bad "--quiet is undocumented in start --help" ;;
-esac
-case "$help_out" in
-    *"--log-level"*) ok "start --help documents --log-level" ;;
-    *) bad "--log-level is undocumented in start --help" ;;
-esac
-
-# start-guard-allow: invalid --log-level is rejected before any build starts
-bad_out="$("$LOKI" start --log-level nonsense </dev/null 2>&1 || true)"
-case "$bad_out" in
-    *"must be debug, info, warn, or error"*)
-        ok "an invalid --log-level is rejected with a message naming the valid values" ;;
-    *)
-        bad "an invalid --log-level was accepted or failed without saying why" ;;
-esac
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

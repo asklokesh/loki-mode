@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # E-40 (docs/v10/ENGINE.md 23:00Z cut): live PR smoke on a sandbox GitHub repo.
-# Runs one small real task through bin/loki with LOKI_ENGINE=v10 from the dist
+# Runs one small real task through bin/loki from the dist
 # entry (LOKI_TS_ENTRY, default loki-ts/dist/loki.js) against
 # LOKI_E10_LIVE_REPO=<owner>/<sandbox>, then checks the five Wall items.
 # Without the variable it prints SKIP and exits 0; SKIP never counts as done.
@@ -31,7 +31,7 @@ command -v python3 >/dev/null 2>&1 || die "python3 not on PATH"
 
 : "${LOKI_TS_ENTRY:=$ROOT/loki-ts/dist/loki.js}"
 [ -f "$LOKI_TS_ENTRY" ] || die "engine entry missing: $LOKI_TS_ENTRY (build dist first: cd loki-ts && bun run build)"
-export LOKI_TS_ENTRY LOKI_ENGINE=v10 LOKI_NO_BROWSER=1
+export LOKI_TS_ENTRY LOKI_NO_BROWSER=1
 echo "entry: $LOKI_TS_ENTRY"
 
 W="$(mktemp -d "${TMPDIR:-/tmp}/loki-e10-live.XXXXXX")" || exit 1

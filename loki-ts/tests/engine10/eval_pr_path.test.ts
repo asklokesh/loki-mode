@@ -65,7 +65,6 @@ function runEngine(): Run {
   const stubEnvLog = join(tmp, "stub-env.log");
   const env: Record<string, string | undefined> = {
     ...process.env,
-    LOKI_ENGINE: "v10",
     LOKI_TS_ENTRY: ENTRY,
     LOKI_E10_INVOKER: "cli",
     LOKI_CLAUDE_CLI: join(STUB_DIR, "claude"),

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autonomi.dev/loki-mode/schemas/why-result.schema.json",
   "title": "loki why --json",
-  "description": "Output of `loki why --json`, the machine-readable outcome of the last build (loki quick and loki start leave the records it reads). loki quick and loki verify have no --json flag of their own; this is the structured result of the quick path. The command exits 0 with this document, or 1 with no stdout when no run exists. Validated against real output by tests/test-json-schemas.sh.",
+  "description": "Output of `loki why --json`, the machine-readable outcome of the last build (loki quick and loki start leave the records it reads). loki quick and loki verify have no --json flag of their own; this is the structured result of the quick path. The command exits 0 with this document, or 1 with no stdout when no run exists.",
   "type": "object",
   "required": ["state", "completion", "completion_is_stale", "head_sha", "last_error_present"],
   "properties": {

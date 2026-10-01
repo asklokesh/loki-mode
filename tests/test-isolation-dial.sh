@@ -22,18 +22,12 @@ pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
 fail() { FAIL=$((FAIL+1)); echo "FAIL: $1 -- ${2:-}"; }
 
 MAIN_HELP="$(bash "$LOKI" --help 2>&1 || true)"
-START_HELP="$(bash "$LOKI" start --help 2>&1 || true)"
 
 # 1. documented in help
 if echo "$MAIN_HELP" | grep -q -- "--isolation"; then
     pass "--isolation documented in main help"
 else
     fail "--isolation missing from main help"
-fi
-if echo "$START_HELP" | grep -q -- "--isolation" && echo "$START_HELP" | grep -qiE "none.*worktree.*docker"; then
-    pass "--isolation (none|worktree|docker) documented in 'start --help'"
-else
-    fail "--isolation levels missing from 'start --help'"
 fi
 
 # 2 + 3. mapping + fail-closed, via the same case logic used in cmd_start.
@@ -76,17 +70,6 @@ if [ $rc -eq 2 ]; then
     pass "isolation=bogus -> rejected (rc=2, fail-closed)"
 else
     fail "bogus fail-closed" "expected rc=2, got $rc"
-fi
-
-# 4. Real CLI rejects a bogus value BEFORE launching (proves the flag is parsed
-# in cmd_start and errors early). Run in a throwaway dir; grep the error line.
-TMP="$(mktemp -d)"
-real_out="$( cd "$TMP" && git init -q 2>/dev/null; bash "$LOKI" start --isolation bogus ./nope.md 2>&1 )"
-rm -rf "$TMP"
-if echo "$real_out" | grep -qiE "isolation must be one of: none, worktree, docker"; then
-    pass "real 'loki start --isolation bogus' errors before launch"
-else
-    fail "real CLI bogus rejection" "did not see the isolation error"
 fi
 
 echo ""

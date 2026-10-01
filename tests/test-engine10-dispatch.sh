@@ -48,77 +48,81 @@ expect() { # expect <label> <want> <got>
     if [ "$3" = "$2" ]; then ok "$1"; else bad "$1 (want '$2', got '$3')"; fi
 }
 
-# 1. D48 flip: LOKI_ENGINE unset routes the three entry points to engine10 and everything else as before.
-expect "[unset] 'fix x' -> engine10" "BUN $ENTRY engine10 fix x" "$(run_loki "$WITH_BUN" -- "fix x")"
-expect "[unset] owner/repo#3 -> engine10" "BUN $ENTRY engine10 owner/repo#3" "$(run_loki "$WITH_BUN" -- "owner/repo#3")"
-expect "[unset] https issue url -> engine10" "BUN $ENTRY engine10 https://github.com/o/r/issues/7" \
+# 1. Every entry point routes to engine10 (D57); nothing routes to a previous engine.
+expect "'fix x' -> engine10" "BUN $ENTRY engine10 fix x" "$(run_loki "$WITH_BUN" -- "fix x")"
+expect "owner/repo#3 -> engine10" "BUN $ENTRY engine10 owner/repo#3" "$(run_loki "$WITH_BUN" -- "owner/repo#3")"
+expect "https issue url -> engine10" "BUN $ENTRY engine10 https://github.com/o/r/issues/7" \
     "$(run_loki "$WITH_BUN" -- "https://github.com/o/r/issues/7")"
-expect "[unset] quick 'fix x' -> engine10 --no-pr" "BUN $ENTRY engine10 --no-pr fix x" "$(run_loki "$WITH_BUN" -- quick "fix x")"
-expect "[unset] quick --help stays legacy" "BASH quick --help" "$(run_loki "$WITH_BUN" -- quick --help)"
-expect "[unset] bare quick stays legacy" "BASH quick" "$(run_loki "$WITH_BUN" -- quick)"
-expect "[unset] status -> bun cli (not engine10)" "BUN $ENTRY status" "$(run_loki "$WITH_BUN" -- status)"
-expect "[unset] start -> bash" "BASH start" "$(run_loki "$WITH_BUN" -- start)"
-expect "[unset] no bun falls back to legacy, no error" "BASH fix x" "$(run_loki "$NO_BUN" -- "fix x")"
-expect "[unset] provider without an invoker -> legacy" "BASH fix x" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- "fix x")"
-expect "[unset] LOKI_LEGACY_BASH=1 -> bash" "BASH quick fix x" "$(run_loki "$WITH_BUN" LOKI_LEGACY_BASH=1 -- quick "fix x")"
+expect "flag-first --no-pr 'fix x' -> engine10" "BUN $ENTRY engine10 --no-pr fix x" "$(run_loki "$WITH_BUN" -- --no-pr "fix x")"
+expect "quick 'fix x' -> engine10 --no-pr" "BUN $ENTRY engine10 --no-pr fix x" "$(run_loki "$WITH_BUN" -- quick "fix x")"
+expect "quick --no-pr 'fix x' -> engine10" "BUN $ENTRY engine10 --no-pr --no-pr fix x" "$(run_loki "$WITH_BUN" -- quick --no-pr "fix x")"
+expect "quick --help -> engine10 --help" "BUN $ENTRY engine10 --help" "$(run_loki "$WITH_BUN" -- quick --help)"
+expect "start 'fix x' -> engine10" "BUN $ENTRY engine10 fix x" "$(run_loki "$WITH_BUN" -- start "fix x")"
+expect "start owner/repo#3 -> engine10" "BUN $ENTRY engine10 owner/repo#3" "$(run_loki "$WITH_BUN" -- start "owner/repo#3")"
+expect "start owner/repo#1 --no-pr -> engine10 with the flag" "BUN $ENTRY engine10 owner/repo#1 --no-pr" "$(run_loki "$WITH_BUN" -- start "owner/repo#1" --no-pr)"
+expect "start --no-pr owner/repo#1 -> engine10 with the flag" "BUN $ENTRY engine10 --no-pr owner/repo#1" "$(run_loki "$WITH_BUN" -- start --no-pr "owner/repo#1")"
+expect "owner/repo#1 --no-pr -> engine10 (unchanged)" "BUN $ENTRY engine10 owner/repo#1 --no-pr" "$(run_loki "$WITH_BUN" -- "owner/repo#1" --no-pr)"
+expect "run owner/repo#3 -> engine10" "BUN $ENTRY engine10 owner/repo#3" "$(run_loki "$WITH_BUN" -- run "owner/repo#3")"
+expect "start --provider=codex 'fix x' -> engine10" "BUN $ENTRY engine10 --provider codex fix x" \
+    "$(run_loki "$WITH_BUN" -- start --provider=codex "fix x")"
+: >"$T/cwd/prd.md"
+expect "start prd.md -> engine10" "BUN $ENTRY engine10 prd.md" "$(run_loki "$WITH_BUN" -- start prd.md)"
+mkdir -p "$T/cwd/sub"; : >"$T/cwd/sub/task.yaml"; : >"$T/cwd/task.txt"
+expect "loki ./prd.md -> engine10" "BUN $ENTRY engine10 ./prd.md" "$(run_loki "$WITH_BUN" -- ./prd.md)"
+expect "start ./prd.md -> engine10" "BUN $ENTRY engine10 ./prd.md" "$(run_loki "$WITH_BUN" -- start ./prd.md)"
+expect "loki sub/task.yaml -> engine10" "BUN $ENTRY engine10 sub/task.yaml" "$(run_loki "$WITH_BUN" -- sub/task.yaml)"
+expect "loki task.txt -> engine10" "BUN $ENTRY engine10 task.txt" "$(run_loki "$WITH_BUN" -- task.txt)"
+expect "loki prd.md -> engine10" "BUN $ENTRY engine10 prd.md" "$(run_loki "$WITH_BUN" -- prd.md)"
+expect "a missing prd.md stays a bash command word" "BASH nosuch.md" "$(run_loki "$WITH_BUN" -- nosuch.md)"
+expect "status -> bun cli (not engine10)" "BUN $ENTRY status" "$(run_loki "$WITH_BUN" -- status)"
+expect "single word stays bash" "BASH refactorize" "$(run_loki "$WITH_BUN" -- refactorize)"
+expect "LOKI_ENGINE is ignored" "BUN $ENTRY engine10 fix x" "$(run_loki "$WITH_BUN" LOKI_ENGINE=legacy -- "fix x")"
+expect "loki legacy is not a route" "BASH legacy fix x" "$(run_loki "$WITH_BUN" -- legacy "fix x")"
+# The hidden engine10 form internal callers use.
+expect "engine10 status run-1 keeps args" "BUN $ENTRY engine10 status run-1" "$(run_loki "$WITH_BUN" -- engine10 status run-1)"
+expect "engine10 dashboard" "BUN $ENTRY engine10 dashboard" "$(run_loki "$WITH_BUN" -- engine10 dashboard)"
 
-# 1b. Escape hatches: LOKI_ENGINE=legacy (and any non-v10 value) and `loki legacy` run the previous engine.
-for eng in "LOKI_ENGINE=legacy" "LOKI_ENGINE=v9"; do
-    expect "[$eng] 'fix x' -> bash" "BASH fix x" "$(run_loki "$WITH_BUN" "$eng" -- "fix x")"
-    expect "[$eng] owner/repo#3 -> bash" "BASH owner/repo#3" "$(run_loki "$WITH_BUN" "$eng" -- "owner/repo#3")"
-    expect "[$eng] quick 'fix x' -> bash" "BASH quick fix x" "$(run_loki "$WITH_BUN" "$eng" -- quick "fix x")"
-    expect "[$eng] status -> bun cli" "BUN $ENTRY status" "$(run_loki "$WITH_BUN" "$eng" -- status)"
+# 1b. Routes with no v10 equivalent exit 2 with one line and run nothing.
+for a in "start" "run" "quick" "quickstart" "start --parallel x" "start --bg x" "run --openspec x" "quick --yolo x" \
+    "start 123" "start PROJ-456" "start ./my-project" "run refactorize"; do
+    # shellcheck disable=SC2086
+    got="$(run_loki "$WITH_BUN" -- $a)"
+    expect "[$a] exit 2" "2" "$(cat "$T/rc")"
+    expect "[$a] nothing ran" "" "$got"
+    expect "[$a] one plain line" "1" "$(wc -l <"$T/stderr" | tr -d ' ')"
+    grep -q 'was removed in 10.6.0; use loki "<task>"' "$T/stderr" && ok "[$a] names the v10 alternative" || bad "[$a] message: $(cat "$T/stderr")"
 done
-expect "[legacy alias] 'fix x' -> bash" "BASH fix x" "$(run_loki "$WITH_BUN" -- legacy "fix x")"
-expect "[legacy alias] owner/repo#3 -> bash" "BASH owner/repo#3" "$(run_loki "$WITH_BUN" -- legacy "owner/repo#3")"
-expect "[legacy alias] quick 'fix x' -> bash" "BASH quick fix x" "$(run_loki "$WITH_BUN" -- legacy quick "fix x")"
-expect "[legacy alias] with LOKI_ENGINE=v10 set still -> bash" "BASH fix x" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- legacy "fix x")"
+got="$(run_loki "$WITH_BUN" -- start ./missing.md)"
+expect "[start ./missing.md] exit 2" "2" "$(cat "$T/rc")"
+expect "[start ./missing.md] nothing ran" "" "$got"
+grep -q 'missing.md not found' "$T/stderr" && ok "[start ./missing.md] says not found" || bad "[start ./missing.md] message: $(cat "$T/stderr")"
+expect "quick with a one-word task still routes" "BUN $ENTRY engine10 --no-pr refactorize" "$(run_loki "$WITH_BUN" -- quick refactorize)"
+expect "start with two bare words routes as one task" "BUN $ENTRY engine10 fix bug" "$(run_loki "$WITH_BUN" -- start fix bug)"
+expect "provider without an invoker -> exit 2" "2" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- "fix x" >/dev/null; cat "$T/rc")"
+expect "LOKI_LEGACY_BASH=1 -> bash CLI" "BASH status" "$(run_loki "$WITH_BUN" LOKI_LEGACY_BASH=1 -- status)"
 
-# 2. LOKI_ENGINE=v10: tasks, issue refs, status, verify, dashboard reach engine10.
-for a in "fix x" "owner/repo#12" "https://github.com/o/r/issues/7" \
-    "https://gitlab.com/g/p/-/issues/4" "https://x.atlassian.net/browse/AB-1" status verify dashboard; do
-    expect "[v10] '$a' -> engine10" "BUN $ENTRY engine10 $a" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- "$a")"
-done
-expect "[v10] status run-1 keeps args" "BUN $ENTRY engine10 status run-1" \
-    "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- status run-1)"
-expect "[v10] single word stays legacy" "BASH refactorize" \
-    "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- refactorize)"
-
-# 2b. Default engine: bare verify follows a v10 run only when it has no args or an e10-* id; flags stay legacy.
+# 2. Bare verify follows a v10 run only when it has no args or an e10-* id; flags stay on the bash verify.
 mkdir -p "$T/cwd/.loki/runs/e10-20260101T000000Z-aa"
-expect "[unset+run] bare verify -> engine10" "BUN $ENTRY engine10 verify" "$(run_loki "$WITH_BUN" -- verify)"
-expect "[unset+run] verify e10-id -> engine10" "BUN $ENTRY engine10 verify e10-20260101T000000Z-aa" "$(run_loki "$WITH_BUN" -- verify e10-20260101T000000Z-aa)"
+expect "[run] bare verify -> engine10" "BUN $ENTRY engine10 verify" "$(run_loki "$WITH_BUN" -- verify)"
+expect "[run] verify e10-id -> engine10" "BUN $ENTRY engine10 verify e10-20260101T000000Z-aa" "$(run_loki "$WITH_BUN" -- verify e10-20260101T000000Z-aa)"
 for a in "--fast ." "--pr" "--json" "--no-such-flag"; do
     # shellcheck disable=SC2086
-    expect "[unset+run] verify $a -> legacy" "BASH verify $a" "$(run_loki "$WITH_BUN" -- verify $a)"
+    expect "[run] verify $a -> bash" "BASH verify $a" "$(run_loki "$WITH_BUN" -- verify $a)"
 done
 rm -rf "$T/cwd/.loki"
 
-# Legacy commands and existing paths fall through unchanged under v10.
-for w in estimate intent outcomes; do
-    expect "[v10] legacy $w stays legacy" "BASH $w" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- "$w")"
-done
-expect "[v10] start -> bash" "BASH start" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- start)"
-expect "[v10] --help -> bash" "BASH --help" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- --help)"
-: >"$T/cwd/prd.md"
-expect "[v10] existing file prd.md -> bash" "BASH prd.md" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- prd.md)"
-
-# 3. LOKI_LEGACY_BASH=1 still wins.
-expect "[v10+legacy] status -> bash" "BASH status" \
-    "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 LOKI_LEGACY_BASH=1 -- status)"
-expect "[v10+legacy] 'fix x' -> bash" "BASH fix x" \
-    "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 LOKI_LEGACY_BASH=1 -- "fix x")"
-
-# 4. No bun plus v10: exit 1 with the message; nothing ran.
+# 3. No bun: one plain error line plus the fix, exit 1, nothing ran, never a legacy fallback.
 if PATH="$NO_BUN" command -v bun >/dev/null 2>&1; then
     bad "no-bun case needs a PATH without bun ($NO_BUN has one)"
 else
-    got="$(run_loki "$NO_BUN" LOKI_ENGINE=v10 -- "fix x")"
-    expect "[v10 no bun] exit 1" "1" "$(cat "$T/rc")"
-    expect "[v10 no bun] nothing ran" "" "$got"
-    if grep -q 'LOKI_ENGINE=v10 needs bun' "$T/stderr"; then ok "[v10 no bun] message"; else bad "[v10 no bun] message missing: $(cat "$T/stderr")"; fi
-    # Unset engine without bun keeps today's silent bash fallback.
-    expect "[unset no bun] 'fix x' -> bash" "BASH fix x" "$(run_loki "$NO_BUN" -- "fix x")"
+    for a in "fix x" "owner/repo#3"; do
+        got="$(run_loki "$NO_BUN" -- "$a")"
+        expect "[no bun] '$a' exit 1" "1" "$(cat "$T/rc")"
+        expect "[no bun] '$a' nothing ran" "" "$got"
+        expect "[no bun] '$a' one line" "1" "$(wc -l <"$T/stderr" | tr -d ' ')"
+        grep -q '^loki: the Loki 10 engine cannot run on this machine: no working bun (.*)\. To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh\.$' "$T/stderr" \
+            && ok "[no bun] '$a' message" || bad "[no bun] '$a' message: $(cat "$T/stderr")"
+    done
 fi
 
 # 5. engine10 appears only in the one cli.ts arm (and the one bin/loki block):
@@ -137,7 +141,7 @@ else
     bad "cli.ts arm lazy import missing"
 fi
 # 6. bin/loki: engine10 is reached only through its two known exec arms --
-#    the modernize) arm (M-08) and the LOKI_ENGINE=v10 block (D29) -- never a
+#    the modernize) arm (M-08) and the engine block (D57) -- never a
 #    stray third exec line anywhere else in the file. Anchored on the arms'
 #    own text, not line numbers, so edits elsewhere in the file don't rot it.
 BIN="$REPO/bin/loki"
@@ -155,7 +159,7 @@ find_fi() {
         }' "$BIN"
 }
 mod_start="$(grep -nF 'if [ "${1:-}" = "modernize" ]; then' "$BIN" | head -1 | cut -d: -f1)"
-v10_start="$(grep -nF '# Loki 10 engine (D29, flipped' "$BIN" | head -1 | cut -d: -f1)" # D48: the block is a case now; bounded by its trailing unset line
+v10_start="$(grep -nF '# Loki 10 is the only engine (D57)' "$BIN" | head -1 | cut -d: -f1)"
 if [ -n "$mod_start" ] && [ -n "$v10_start" ]; then
     mod_end="$(find_fi "$mod_start")"
     v10_end="$(grep -nF 'unset _e10 _e10_args' "$BIN" | head -1 | cut -d: -f1)"
@@ -164,9 +168,9 @@ if [ -n "$mod_start" ] && [ -n "$v10_start" ]; then
     v10_hits="$(sed -n "${v10_start},${v10_end}p" "$BIN" | grep -cF "$EXEC_PAT")"
     expect "bin/loki: exactly 2 engine10 exec lines total" "2" "$total"
     expect "bin/loki: modernize) arm has its own engine10 exec" "1" "$mod_hits"
-    expect "bin/loki: LOKI_ENGINE=v10 block has its own engine10 exec" "1" "$v10_hits"
+    expect "bin/loki: engine block has its own engine10 exec" "1" "$v10_hits"
 else
-    bad "bin/loki: could not locate the modernize) arm or the LOKI_ENGINE=v10 block"
+    bad "bin/loki: could not locate the modernize) arm or the engine block"
 fi
 
 echo "Results: $PASS passed, $FAIL failed"

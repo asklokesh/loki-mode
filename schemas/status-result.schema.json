@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autonomi.dev/loki-mode/schemas/status-result.schema.json",
   "title": "loki status --json",
-  "description": "Output of `loki status --json`. Exits 0 with this document, including when no run is active (status inactive). Validated against real output by tests/test-json-schemas.sh.",
+  "description": "Output of `loki status --json`. Exits 0 with this document, including when no run is active (status inactive).",
   "type": "object",
   "required": ["version", "status", "iteration", "provider", "task_counts"],
   "properties": {

@@ -281,8 +281,8 @@ _loki_bun_why() {
 
 # M-08 (docs/v10/MODERNIZE.md section 2): the NEW `loki modernize <repo> --to
 # <target>` form always reaches the Loki 10 (Bun) modernize CLI, regardless of
-# LOKI_ENGINE or the default engine flip. Ahead of the v10 block below so
-# tonight's legacy default never blocks it; $1 is already "modernize" so "$@"
+# the engine routing below. Ahead of the v10 block below so
+# the bash route never blocks it; $1 is already "modernize" so "$@"
 # reproduces it as the router's own first argument without a shift.
 #
 # `loki modernize` is ALSO an existing legacy noun (autonomy/loki cmd_modernize,
@@ -308,174 +308,93 @@ if [ "${1:-}" = "modernize" ]; then
     unset _loki_mod_a
 fi
 
-# `loki legacy <args>` (D29/D48): the previous engine, exactly as LOKI_ENGINE=legacy.
-# Re-runs this shim with the pin so every route below is the pre-flip route.
+# Loki 10 is the only engine (D57). `loki "<task>"`, `loki owner/repo#N`, a spec file
+# (.md, .txt, .yaml, .yml) and `loki start|run|quick <task|file>` reach engine10.
+# `engine10 <sub>` is the hidden form internal callers use (verify --pubkey, keys).
+_loki_removed() {
+    echo "loki: $1 was removed in 10.6.0; use loki \"<task>\"." >&2
+    exit 2
+}
+_e10=0
+_e10_args=("$@")
 case "${1:-}" in
-    legacy)
-        shift
-        [ -f "$REPO_ROOT/autonomy/lib/engine10-legacy-notice.txt" ] && cat "$REPO_ROOT/autonomy/lib/engine10-legacy-notice.txt" >&2
-        LOKI_ENGINE=legacy exec "$SCRIPT_PATH" "$@"
-        ;;
-esac
-
-# Loki 10 engine (D29, flipped to the default by D48 rows 7-9). LOKI_ENGINE unset
-# or v10 routes `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` to
-# engine10; LOKI_ENGINE=v10 (explicit) also routes status/verify/dashboard. Any
-# other value (legacy, v9, ...) skips this block: the previous engine, unchanged.
-_loki_engine_default="v10"
-case "${LOKI_ENGINE:-$_loki_engine_default}" in
-    v10)
-        _e10=0
-        _e10_args=("$@")
-        case "${1:-}" in
-            status|verify|dashboard|keys)
-                [ "${LOKI_ENGINE:-}" = "v10" ] && _e10=1
-                # Bare `loki verify` follows the newest run: a v10 run newer than the newest
-                # legacy proof is verified by v10, so a FAILED default run is never VERIFIED.
-                # Only a bare call or a v10 run id (e10-*) goes there; any flag (--fast, --pr, --json, unknown) stays on legacy verify.
-                if [ "$1" = "verify" ] && [ "$_e10" = "0" ] && [ -z "${LOKI_ENGINE:-}" ] && case "${2:-}" in ""|e10-*) true ;; *) false ;; esac; then
-                    _r10=""; _p10=""
-                    for _d in "${LOKI_DIR:-.loki}"/runs/e10-*/; do [ -d "$_d" ] && _r10="$_d"; done
-                    for _d in "${LOKI_DIR:-.loki}"/proofs/*/proof.json; do [ -f "$_d" ] && { [ -z "$_p10" ] || [ "$_d" -nt "$_p10" ]; } && _p10="$_d"; done
-                    if [ -n "$_r10" ] && { [ -z "$_p10" ] || [ "$_r10" -nt "$_p10" ]; }; then _e10=1; fi
-                    unset _r10 _p10 _d
-                fi
-                ;;
-            ""|-*) _e10=0 ;;
-            # quick: the lean small path, no PR (legacy quick never opened one). A flag-first
-            # call (--help, -v) stays on the legacy quick.
-            quick)
-                case "${2:-}" in
-                    ""|-*) _e10=0 ;;
-                    *) _e10=1; _e10_args=(--no-pr "${@:2}") ;;
-                esac
-                ;;
-            # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
-            */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) _e10=1 ;;
-            *" "*) _e10=1 ;;
-            # ponytail: a one-word argument stays on the legacy CLI. The telemetry
-            # allowlist is not a command registry (estimate, intent, outcomes are
-            # missing from it), so it cannot decide routing. Multi-word tasks and
-            # issue refs reach v10.
-            *) _e10=0 ;;
-        esac
-        # Default (unset) mode never breaks a host: no bun, or a provider engine10 has no
-        # invoker for, falls through to the legacy engine. Explicit v10 keeps its hard error.
-        if [ "$_e10" = "1" ] && [ "${LOKI_ENGINE:-}" != "v10" ]; then
-            case "${LOKI_PROVIDER:-claude}" in
-                claude|codex|cline|aider) ;;
-                *)
-                    _e10=0
-                    echo "loki: using the legacy engine (the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider)." >&2
-                    ;;
+    engine10) _e10=1 ;;
+    start|run|quick)
+        _e10_args=(); _e10_help=0; _e10_task=0; _e10_skip=0; _e10_nw=0; _e10_w1=""
+        [ "$1" = "quick" ] && _e10_args=(--no-pr)
+        for _a in "${@:2}"; do
+            if [ "$_e10_skip" = "1" ]; then _e10_skip=0; _e10_args+=("$_a"); continue; fi
+            case "$_a" in
+                --no-pr|--deep|--json|--verbose) _e10_args+=("$_a") ;;
+                --provider) _e10_skip=1; _e10_args+=("$_a") ;;
+                --provider=*) _e10_args+=(--provider "${_a#--provider=}") ;;
+                -h|--help) _e10_help=1 ;;
+                -*) _loki_removed "loki $1 $_a" ;;
+                *) _e10_task=1; _e10_nw=$((_e10_nw + 1)); _e10_w1="${_e10_w1:-$_a}"; _e10_args+=("$_a") ;;
             esac
-            if [ "$_e10" = "1" ]; then
-                _lb=$(_loki_bun)
-                if [ -z "$_lb" ]; then
-                    _e10=0
-                    case "$(uname -s 2>/dev/null)" in
-                        Darwin) _os=darwin ;; Linux) _os=linux ;; MINGW*|MSYS*|CYGWIN*) _os=win32 ;; *) _os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]') ;;
-                    esac
-                    case "$(uname -m 2>/dev/null)" in
-                        arm64|aarch64) _arch=aarch64 ;; x86_64|amd64) _arch=x64 ;; *) _arch=$(uname -m 2>/dev/null) ;;
-                    esac
-                    echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for ${_os}-${_arch} is $(_loki_bun_why)). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
-                fi
-            fi
+        done
+        if [ "$_e10_help" = "1" ]; then _e10_args=(--help)
+        elif [ "$_e10_task" = "0" ]; then _loki_removed "loki $1 without a task"
+        elif [ "$1" != "quick" ] && [ "$_e10_nw" = "1" ]; then
+            # Same rule as `loki <arg>`: one word is a task only as an issue ref, a spec file or text with a space.
+            case "$_e10_w1" in
+                */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|*" "*) ;;
+                *.md|*.txt|*.yaml|*.yml) [ -f "$_e10_w1" ] || { echo "loki: $_e10_w1 not found" >&2; exit 2; } ;;
+                *) _loki_removed "loki $1 $_e10_w1" ;;
+            esac
         fi
-        if [ "$_e10" = "1" ]; then
-            _lb=$(_loki_bun)
-            [ -n "$_lb" ] || { echo "Error: LOKI_ENGINE=v10 needs bun. Install bun from https://bun.sh, or set LOKI_ENGINE=legacy to use the previous engine." >&2; exit 1; }
-            exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
-        fi
-        unset _e10 _e10_args
+        _e10=1
         ;;
+    verify)
+        # Bare `loki verify` follows the newest run: a v10 run newer than the newest
+        # proof is verified by v10, so a FAILED default run is never VERIFIED.
+        # Only a bare call or a v10 run id (e10-*) goes there.
+        if case "${2:-}" in ""|e10-*) true ;; *) false ;; esac; then
+            _r10=""; _p10=""
+            for _d in "${LOKI_DIR:-.loki}"/runs/e10-*/; do [ -d "$_d" ] && _r10="$_d"; done
+            for _d in "${LOKI_DIR:-.loki}"/proofs/*/proof.json; do [ -f "$_d" ] && { [ -z "$_p10" ] || [ "$_d" -nt "$_p10" ]; } && _p10="$_d"; done
+            if [ -n "$_r10" ] && { [ -z "$_p10" ] || [ "$_r10" -nt "$_p10" ]; }; then _e10=1; fi
+            unset _r10 _p10 _d
+        fi
+        ;;
+    quickstart) echo "loki: quickstart was removed in 10.6.0; use loki \"<task>\" (or loki to open the UI)." >&2; exit 2 ;;
+    --no-pr|--deep|--json|--verbose|--provider|--provider=*) _e10=1 ;;
+    ""|-*) _e10=0 ;;
+    # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
+    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) _e10=1 ;;
+    *" "*) _e10=1 ;;
+    # An existing spec file as the first argument is the task text.
+    *.md|*.txt|*.yaml|*.yml) [ -f "$1" ] && _e10=1 ;;
+    # ponytail: any other one-word argument is a bash CLI command, not a task.
+    *) _e10=0 ;;
 esac
+if [ "$_e10" = "1" ]; then
+    case "${LOKI_PROVIDER:-claude}" in
+        claude|codex|cline|aider) ;;
+        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider." >&2; exit 2 ;;
+    esac
+    _lb=$(_loki_bun)
+    if [ -z "$_lb" ]; then
+        case "$(uname -s 2>/dev/null)" in
+            Darwin) _os=darwin ;; Linux) _os=linux ;; MINGW*|MSYS*|CYGWIN*) _os=win32 ;; *) _os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]') ;;
+        esac
+        case "$(uname -m 2>/dev/null)" in
+            arm64|aarch64) _arch=aarch64 ;; x86_64|amd64) _arch=x64 ;; *) _arch=$(uname -m 2>/dev/null) ;;
+        esac
+        echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for ${_os}-${_arch} is $(_loki_bun_why)). To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh." >&2
+        exit 1
+    fi
+    case "${1:-}" in
+        engine10) exec "$_lb" "$BUN_CLI" "$@" ;;
+        *) exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}" ;;
+    esac
+fi
+unset _e10 _e10_args
 
-# Bun must be installed for the new path; if it isn't, fall through to bash
-# silently rather than fail. This keeps users on systems without Bun working.
+# Bun must be installed for the Bun-routed commands; if it isn't, fall through to bash
+# silently rather than fail. This keeps non-engine commands working on systems without Bun.
 if ! command -v bun &>/dev/null; then
     exec "$BASH_CLI" "$@"
-fi
-
-# v8 Phase 4: route `start` to the Bun RARV loop ONLY when LOKI_SDK_LOOP is on.
-# Default (unset) keeps `loki start` on the bash cmd_start, byte-identical. This
-# guard is AFTER the legacy check (LOKI_LEGACY_BASH=1 still force-overrides to
-# bash above) and AFTER the bun-presence check (a bun-less host already fell to
-# bash). Accepts 1|true to match the flag's documented =1 usage; bash cannot
-# cheaply reproduce truthy()'s yes/on spellings, so those are not honored here
-# (documented divergence, same as other bin/loki bool guards). v8.1: LOKI_SDK_LOOP
-# may also be set by the mode resolver above (LOKI_SDK_MODE=full -> LOOP=1), so
-# `LOKI_SDK_MODE=full loki start` now correctly routes the loop to Bun here.
-#
-# RUN-25 iter 2 (T3(c) pre-flight): the Bun runAutonomous loop handles the RARV
-# loop only. Orchestration flags that do pre-loop work the Bun loop does NOT do
-# (git-worktree parallel streams, GitHub/issue import, Docker sandbox, the API
-# server, backgrounding, alternate spec sources) must run on the bash route so the
-# user gets FULL behavior even with the loop flag on. Scan the start args for any
-# such flag (or an issue-ref positional) and, if present, DIVERT back to bash
-# instead of taking the Bun fork. This is the "pre-loop handled, not rejected"
-# guarantee that makes the eventual loop default-flip a no-regression. Runner
-# flags (--simple, --allow-haiku, --regen-prd, --skip-memory, provider knobs) are
-# handled by start.ts and do NOT divert. See artifacts/ITER1-FLAG-RECONCILE.md.
-_loki_start_needs_bash() {
-    # $@ = the start args (already know $1 = start). Return 0 (divert to bash) if
-    # any bash-only orchestration flag or an issue-ref spec is present.
-    local a
-    local explicit_provider=""
-    local provider_value_next=0
-    for a in "$@"; do
-        if [ "$provider_value_next" = "1" ]; then
-            explicit_provider="$a"
-            provider_value_next=0
-            continue
-        fi
-        case "$a" in
-            --provider)
-                provider_value_next=1 ;;
-            --provider=*)
-                explicit_provider="${a#--provider=}" ;;
-            --parallel|--bg|--background|--github|--api|--sandbox \
-            |--fast|--repo-fast|--full|--repo-full \
-            |--bmad-project|--openspec \
-            |--mirofish|--mirofish-docker|--mirofish-rounds|--mirofish-timeout|--mirofish-bg \
-            |--issue|--dry-run|--no-start|--output|--worktree|-w|--pr|--ship|--detach|-d)
-                return 0 ;;
-            --isolation)
-                # value follows; only worktree/docker/sandbox divert (none stays Bun).
-                _loki_iso_next=1 ;;
-            worktree|wt|docker|sandbox)
-                [ "${_loki_iso_next:-0}" = "1" ] && { unset _loki_iso_next; return 0; }
-                _loki_iso_next=0 ;;
-            *)
-                # issue-ref positional: owner/repo#N, a tracker URL, or *#<digits>.
-                case "$a" in
-                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) return 0 ;;
-                esac
-                _loki_iso_next=0 ;;
-        esac
-    done
-    unset _loki_iso_next
-
-    # The Bun RARV loop has not ported the opencode invoker yet. Keep the
-    # released, autonomous shell adapter reachable when SDK mode is enabled
-    # instead of accepting the selection and then failing after intake. CLI
-    # selection wins over env, which wins over the project-level saved choice.
-    local effective_provider="$explicit_provider"
-    if [ -z "$effective_provider" ] && [ -n "${LOKI_PROVIDER:-}" ]; then
-        effective_provider="$LOKI_PROVIDER"
-    fi
-    if [ -z "$effective_provider" ] && [ -f "${PWD}/.loki/state/provider" ]; then
-        effective_provider="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"
-    fi
-    [ "$effective_provider" = "opencode" ] && return 0
-    return 1
-}
-if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
-    if _loki_start_needs_bash "${@:2}"; then
-        exec "$BASH_CLI" "$@"
-    fi
-    exec bun "$BUN_CLI" "$@"
 fi
 
 # CLI consolidation (Phase A): `trust detail` is the grouped form of the

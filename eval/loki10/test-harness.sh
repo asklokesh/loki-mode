@@ -44,18 +44,18 @@
 #  12. (EV-3) config isolation: all three arms get a fresh empty
 #      CLAUDE_CONFIG_DIR (operator's overridden) and env auth; auth reaches
 #      only the arm (never setup, baseline or grade); the token is in no log;
-#      (E-38) LOKI_ENGINE=legacy on the legacy arm, v10 on the v10 arm
+#      (E-38) no engine switch is set on any arm
 #  13. (E-38) --tasks a,b runs exactly those ids; an unknown id exits 2
 #  14. (E-52) LOKI_TS_ENTRY and an allowlisted LOKI_E10_* knob reach the v10
 #      arm env; a non-allowlisted LOKI_E10_* knob and a GH_TOKEN canary do
-#      not; the legacy arm gets neither knob
+#      not
 #  15. (EV-13) expected_outcome=no_change_needed: badoutcome value rejected
 #      by the validator; a hidden test failing at repo.ref -> task_invalid
 #      (inverted from the normal rule); completed only with no PR, no source
 #      diff and the arm's own evidence (v10 receipt verdict, or the
-#      raw-claude/legacy textual claim) -- a PR, a dirty diff, missing
+#      raw-claude textual claim) -- a PR, a dirty diff, missing
 #      evidence, a wrong v10 verdict or a failed regression check each alone
-#      block completion, checked for v10, raw-claude and legacy; v10's own
+#      block completion, checked for v10 and raw-claude; v10's own
 #      sealed Wall test file left in the tree never counts as that diff, but
 #      a real source change alongside it still does
 #  16. (D30) validate accepts tier:medium, rejects an unknown tier value; a
@@ -63,7 +63,7 @@
 #      only the medium task
 #  17. (E-62/EV-8) v10 defaults to the repo's own bin/loki (never a global
 #      install) and the manifest records the resolved binary path plus the
-#      agent SDK version; v10 and legacy refuse (nonzero exit, no results
+#      agent SDK version; v10 refuses (nonzero exit, no results
 #      row) when loki-ts/node_modules differs from bun.lock -- a stale
 #      installed version and a missing node_modules dir alike; raw-claude is
 #      not gated by loki-ts at all
@@ -356,19 +356,6 @@ for m in noevents stale oldpath badfield; do
         || fail "R1b: $m row: $(tail -1 "$R/results.jsonl")"
 done
 
-# ---- R2. loki-arm cost only from provider-sourced records
-R="$T/out-metrics"
-STUB_MODE=pass RUN --arm legacy --task v-committed-metrics --out "$R" >/dev/null 2>&1
-[ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && [ "$(row "$R/results.jsonl" cost_usd)" = null ] \
-    && pass "R2: committed .loki/metrics -> task_invalid, no cost" || fail "R2: metrics row: $(tail -1 "$R/results.jsonl")"
-R="$T/out-estimate"
-STUB_MODE=pass STUB_LOKI_COST=estimate RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
-[ "$(row "$R/results.jsonl" cost_usd)" = null ] && pass "R2: record without provider cost_source -> cost null" \
-    || fail "R2: estimate cost=$(row "$R/results.jsonl" cost_usd)"
-R="$T/out-provider"
-STUB_MODE=pass STUB_LOKI_COST=provider RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
-[ "$(row "$R/results.jsonl" cost_usd)" = 0.5 ] && pass "R2: provider-sourced record -> cost recorded" \
-    || fail "R2: provider cost=$(row "$R/results.jsonl" cost_usd)"
 
 # ---- Ra. nonce: early exit 0 and skip-only pytest cannot pass
 R="$T/out-exit0"
@@ -582,11 +569,6 @@ out="$(MRUN_NOBIN --arm v10 --task fx-greet --out "$R" 2>&1)"; rc=$?
 [ "$rc" != 0 ] && [ ! -s "$R/results.jsonl" ] && printf '%s' "$out" | grep -q "node_modules is missing" \
     && pass "E-62: v10 refuses when loki-ts/node_modules is missing" \
     || fail "E-62: missing node_modules rc=$rc out=$out"
-R="$T/out-mini-legacy-nomodules"
-out="$(MRUN_NOBIN --arm legacy --task fx-greet --out "$R" 2>&1)"; rc=$?
-[ "$rc" != 0 ] && printf '%s' "$out" | grep -q "node_modules is missing" \
-    && pass "E-62: legacy arm also refuses on a missing loki-ts/node_modules" \
-    || fail "E-62: legacy missing node_modules rc=$rc out=$out"
 mkdir -p "$M/loki-ts/node_modules/fake-pinned-dep"
 set_dep_version 1.2.3
 
@@ -702,12 +684,10 @@ no_auth_outside_arm() {
         pass "$2: no auth token in the arm argv"
     fi
 }
-for arm in raw-claude v10 legacy; do
+for arm in raw-claude v10; do
     R="$T/out-iso-$arm"
     STUB_MODE=noop STUB_V10_MARKER=1 CLAUDE_CONFIG_DIR="$T/operator-cfg" RUN --arm "$arm" --task fx-iso --out "$R" >/dev/null 2>&1
-    # E-38: the engine is pinned per loki arm, so the default flip cannot move EV-5.
-    eng="$arm"; [ "$arm" = raw-claude ] && eng="unset"
-    want="ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=set api_key=unset engine=$eng"
+    want="ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=set api_key=unset"
     got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
     [ "$got" = "$want" ] && pass "$arm arm env carries the config isolation" || fail "$arm isolation: got '$got'"
     [ "$(row "$R/results.jsonl" auth_source)" = '"env:CLAUDE_CODE_OAUTH_TOKEN"' ] \
@@ -719,7 +699,7 @@ done
 R="$T/out-iso-apikey"
 STUB_MODE=pass ANTHROPIC_API_KEY="$FAKE_KEY" RUN --arm raw-claude --task fx-iso --out "$R" >/dev/null 2>&1
 got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
-[ "$got" = "ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=unset api_key=set engine=unset" ] \
+[ "$got" = "ENV-CHECK2: config=rundir/claude-config claude_md=absent oauth=unset api_key=set" ] \
     && pass "operator API key passed to the arm alone" || fail "api key isolation: got '$got'"
 no_auth_outside_arm "$R" "api-key"
 if grep -rqF -e "$FAKE_OAUTH" -e "$FAKE_KEY" "$T"/out-*; then fail "auth token value written to a log"; else pass "auth token value appears in no log"; fi
@@ -752,12 +732,6 @@ got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
     || fail "E-52: v10 ENV-CHECK3: got '$got'"
 grep -rqF "$GH_CANARY" "$R" && fail "E-52: GH_TOKEN canary reached a log" || pass "E-52: GH_TOKEN canary in no log"
 
-R="$T/out-e52-legacy"
-LOKI_TS_ENTRY="/fake/dist/loki.js" LOKI_E10_PLAN="plan-value" GH_TOKEN="$GH_CANARY" \
-    LOKI_EVAL_LOKI_BIN="$T/bin/e52-stub" RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
-got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
-[ "$got" = "ENV-CHECK3: entry=unset plan=unset task_text=unset gh=" ] \
-    && pass "E-52: legacy arm gets neither LOKI_TS_ENTRY nor LOKI_E10_PLAN" || fail "E-52: legacy ENV-CHECK3: got '$got'"
 
 # ---- 15. (EV-13) expected_outcome=no_change_needed
 R="$T/out-nc-badbase"
@@ -766,8 +740,9 @@ STUB_MODE=noop RUN --arm raw-claude --task v-nochange-badbase --out "$R" >/dev/n
     && pass "EV-13: hidden test failing at repo.ref -> task_invalid for no_change_needed" \
     || fail "EV-13: badbase row: $(tail -1 "$R/results.jsonl")"
 
-# raw-claude and legacy: same textual-evidence rule, exercised on both arms.
-for arm in raw-claude legacy; do
+# raw-claude: textual-evidence rule.
+# shellcheck disable=SC2043
+for arm in raw-claude; do
     R="$T/out-nc-$arm-pass"
     STUB_MODE=alreadydone RUN --arm "$arm" --task v-nochange --out "$R" >/dev/null 2>&1
     J="$R/results.jsonl"
@@ -982,25 +957,6 @@ rc=$?
     || fail "D34: unreachable-source rc=$rc: $(cat "$T/ms-unreachable.out")"
 
 # ---- 19. (S41-01) partial-stream cost, the allowlist grant, and the new row fields
-# A minimal inline arm: no push (cost_usd is set unconditionally right after
-# the arm exits, whether or not it ever opens a PR -- same as R2's estimate
-# stub above), just an efficiency record with cost_source partial-stream
-# (E-98e's killed-session shape).
-cat > "$T/bin/s41-partial-stub" <<'EOF'
-#!/usr/bin/env bash
-mkdir -p .loki/metrics/efficiency
-printf '{"iteration": 1, "cost_source": "partial-stream", "cost_usd": 0.5, "input_tokens": 10}\n' \
-    > .loki/metrics/efficiency/iteration-1.json
-echo '{"type":"result"}'
-EOF
-chmod +x "$T/bin/s41-partial-stub"
-R="$T/out-s41-partial"
-LOKI_EVAL_LOKI_BIN="$T/bin/s41-partial-stub" RUN --arm legacy --task fx-greet --out "$R" >/dev/null 2>&1
-J="$R/results.jsonl"
-[ "$(row "$J" cost_usd)" = 0.5 ] && [ "$(row "$J" cost_partial_usd)" = 0.5 ] \
-    && [ "$(row "$J" cost_source)" = '"loki efficiency records (cost_source=partial-stream)"' ] \
-    && pass "S41-01: partial-stream record priced, not null; cost_partial_usd recorded" \
-    || fail "S41-01: partial row: $(tail -1 "$J")"
 
 cat > "$T/bin/e52b-stub" <<'EOF'
 #!/usr/bin/env bash

@@ -35,6 +35,7 @@ run() {
     rm -f "$T/out" "$T/stderr"
     (cd "$T/cwd" && env -i HOME="$T/home" PATH="$T/fakebin:/usr/bin:/bin" LOKI_TELEMETRY_DISABLED=1 \
         LOKI_TS_ENTRY="$T/entry.ts" ${TO[@]+"${TO[@]}"} bash "$T/root/bin/loki" "fix the login bug") >/dev/null 2>"$T/stderr"
+    rc=$?
     out="$(cat "$T/out" 2>/dev/null || true)"
 }
 PLAIN='loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for'
@@ -48,15 +49,15 @@ grep -q "cannot run on this machine" "$T/stderr" && bad "(a) printed fallback li
 # (b) bundled bun that crashes
 mkbun "$BUNDLED" BUNDLED 132
 run
-case "$out" in "BASH "*) ok "(b) legacy route" ;; *) bad "(b) got '$out'" ;; esac
-head -1 "$T/stderr" | grep -qF "$PLAIN" && head -1 "$T/stderr" | grep -qF "is failed to start, exit 132). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." \
+[ -z "$out" ] && [ "$rc" = "1" ] && ok "(b) nothing ran, exit 1" || bad "(b) out='$out' rc=$rc"
+head -1 "$T/stderr" | grep -qF "$PLAIN" && head -1 "$T/stderr" | grep -qF "is failed to start, exit 132). To fix: reinstall with npm install -g loki-mode (it includes bun), or install bun from https://bun.sh." \
     && ok "(b) plain line says failed to start, exit 132" || bad "(b) stderr: $(cat "$T/stderr")"
 
 # (c) no candidate
 rm -rf "$T/root/node_modules"
 run
-case "$out" in "BASH "*) ok "(c) legacy route" ;; *) bad "(c) got '$out'" ;; esac
-head -1 "$T/stderr" | grep -qF "$PLAIN" && head -1 "$T/stderr" | grep -qE "is missing\)\. Running the legacy engine instead\." \
+[ -z "$out" ] && [ "$rc" = "1" ] && ok "(c) nothing ran, exit 1" || bad "(c) out='$out' rc=$rc"
+head -1 "$T/stderr" | grep -qF "$PLAIN" && head -1 "$T/stderr" | grep -qE "is missing\)\. To fix: reinstall with npm install -g loki-mode" \
     && ok "(c) plain line says missing" || bad "(c) stderr: $(cat "$T/stderr")"
 
 # (d) PATH bun wins over a bundled one
@@ -75,7 +76,7 @@ case "$out" in "EXE $T/entry.ts engine10 "*) ok "(e) bun.exe location routes to 
 mkdir -p "$T/root/node_modules/bun/bin"
 printf '#!/usr/bin/env bash\necho "postinstall script was not run" >&2\nexit 1\n' >"$T/root/node_modules/bun/bin/bun.exe"
 run
-case "$out" in "BASH "*) ok "(f) stub rejected, legacy route" ;; *) bad "(f) got '$out'" ;; esac
+[ -z "$out" ] && [ "$rc" = "1" ] && ok "(f) stub rejected, nothing ran, exit 1" || bad "(f) out='$out' rc=$rc"
 head -1 "$T/stderr" | grep -qF "is failed to start, exit 1)." && ok "(f) plain line names exit 1" || bad "(f) stderr: $(cat "$T/stderr")"
 
 # (g) Windows per-platform package ships bin/bun.exe

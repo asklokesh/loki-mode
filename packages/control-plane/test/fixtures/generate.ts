@@ -50,7 +50,7 @@ function runOne(c: Case, tmp: string): void {
   const keyDir = join(tmp, c.name, "key");
   mkdirSync(keyDir, { recursive: true });
   const env: Record<string, string | undefined> = {
-    ...process.env, LOKI_ENGINE: "v10", LOKI_TS_ENTRY: join(ROOT, "loki-ts/src/cli.ts"), LOKI_E10_INVOKER: "cli",
+    ...process.env, LOKI_TS_ENTRY: join(ROOT, "loki-ts/src/cli.ts"), LOKI_E10_INVOKER: "cli",
     LOKI_CLAUDE_CLI: join(HERE, "bin/claude"), PATH: `${join(HERE, "bin")}:${process.env.PATH ?? ""}`,
     E2E_STUB_MODE: c.e2e ?? "done", ...(c.cp ? { CP_STUB_MODE: c.cp } : {}), LOKI_NO_BROWSER: "1", LOKI_E10_PLAN: "1",
     LOKI_RECEIPT_SIGNING_KEY_FILE: join(keyDir, "k.pem"), ...c.env,
