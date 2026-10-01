@@ -87,6 +87,34 @@ UOUT="$( cd "$FIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify < /dev/null 2>
 AOUT="$( cd "$FIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify --allow-unsigned < /dev/null 2>&1 )"; ARC=$?
 [ "$ARC" -eq 0 ] && printf '%s\n' "$AOUT" | grep -q 'accepted by --allow-unsigned' \
     && ok "stripped receipt: --allow-unsigned passes with the explicit line" || bad "--allow-unsigned did not pass" "rc=$ARC"
+# A-121b round 2: a JUNK attestation (body edited, SIGNING_UNAVAILABLE injected, hash recomputed)
+# must be non-zero on legacy, with a fresh HOME and with the signing key present.
+mkdir -p "$T/home2"
+junk_case() { # junk_case <label> <python expr for attestation>
+    python3 - "$PJ.orig" "$PJ" "$REPO_ROOT/autonomy/lib/proof-verify.py" "$2" <<'PYJ'
+import sys, json, hashlib, importlib.util
+sp = importlib.util.spec_from_file_location("pv", sys.argv[3]); m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+d = json.load(open(sys.argv[1]))
+d["not_proven"] = ["SIGNING_UNAVAILABLE"]
+body = {k: v for k, v in d.items() if k != "verification"}
+v = d.get("verification") or {}
+v["hash"] = hashlib.sha256(m._canonical(body).encode("utf-8")).hexdigest()
+v.pop("gpg_signature", None)
+v["attestation"] = eval(sys.argv[4])
+d["verification"] = v
+json.dump(d, open(sys.argv[2], "w"))
+PYJ
+    local h rc out
+    for h in "$T/home2" "$T/home"; do
+        out="$( cd "$FIX" && HOME="$h" "$REPO_ROOT/bin/loki" verify < /dev/null 2>&1 )"; rc=$?
+        { [ "$rc" -ne 0 ] && ! printf '%s\n' "$out" | grep -q '^VERDICT: VERIFIED'; } \
+            && ok "junk attestation ($1) refused rc=$rc (HOME=${h##*/})" || bad "junk attestation ($1) passed" "rc=$rc HOME=${h##*/}"
+    done
+}
+junk_case "abc.def" '"abc.def"'
+junk_case "int 0" '0'
+junk_case "two-part" '"aaaa.bbbb"'
+junk_case "non-base64 header" '"!!!.e30.sig"'
 cp "$PJ.orig" "$PJ"
 
 # Tamper: edit proof.json, verify must exit non-zero, say BLOCKED and TAMPERED, and

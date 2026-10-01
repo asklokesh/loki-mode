@@ -9306,6 +9306,30 @@ _deploy_receipt_verdict() {
     # evaluated, so no key set is written and the verdict is UNCHECKED, never
     # TAMPERED: the hash is fine, we just cannot vouch for who signed it. A
     # local key only proves "a holder of this key", not an independent build.
+    # Token SHAPE before any key lookup (mirrors engine10 checkAttestation): a present
+    # attestation that is not a string, not a 3-part JWS, or whose header/payload are not
+    # JSON with alg EdDSA is junk, so TAMPERED, never UNCHECKED, with or without a key.
+    if ! python3 -E - "$pj" >/dev/null 2>&1 <<'PYSHAPE'
+import sys, json, base64
+def dec(x):
+    return json.loads(base64.urlsafe_b64decode(x + "=" * (-len(x) % 4)))
+v = json.load(open(sys.argv[1])).get("verification") or {}
+t = v.get("attestation")
+if t is None or t == "":
+    sys.exit(0)
+if not isinstance(t, str):
+    sys.exit(1)
+parts = t.split(".")
+if len(parts) != 3 or not all(parts):
+    sys.exit(1)
+try:
+    h = dec(parts[0]); dec(parts[1])
+except Exception:
+    sys.exit(1)
+sys.exit(0 if isinstance(h, dict) and h.get("alg") == "EdDSA" else 1)
+PYSHAPE
+    then printf '%s' "TAMPERED"; return 0; fi
+
     local jwks att
     jwks="$(mktemp "${TMPDIR:-/tmp}/loki-jwks.XXXXXX")" || { printf '%s' "UNCHECKED"; return 0; }
     python3 -E - "${_LOKI_SCRIPT_DIR}" "$pj" >"$jwks" 2>/dev/null <<'PY' || true
