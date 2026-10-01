@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.28 (2026-10-01)
+
+A `next` release that closes a false-VERIFIED path in the Loki 10 engine's Seal: a run whose commit stage fails now ends FAILED and is never sealed VERIFIED.
+
+### Fixed
+- A run whose commit stage fails stops with outcome FAILED (exit 1) before Seal and the PR step run, and Seal itself refuses VERIFIED when the commit did not complete. Before this, a failed commit (for example, a reset that could not apply) could still produce a VERIFIED receipt that did not cover all of the agent's changes (A-104b).
+- The commit stage fails, committing nothing, when the run's base commit is empty or cannot be resolved, or when the diff against it fails, instead of committing unfiltered files (A-104b).
+- The unstage step runs with literal pathspecs and checks its exit code, so a path such as `:(top)x/file` is not read as a pathspec and committed (A-104b).
+- A new lockfile counts as explained only by a manifest change in its own directory, so in a monorepo a stray `packages/b` lockfile no longer rides along with a `packages/a` manifest change (A-104b).
+- Lockfiles and Wall files are judged against the run's base commit, so ones the agent committed during implement are also left out of the commit; real source changes the agent committed stay in the receipt's diff (A-104b).
+
 ## v10.5.27 (2026-10-01)
 
 A `next` release. Provider calls can no longer hang on an open stdin, loki-seal recovers its stop-hook counter correctly, and the repository refuses commits by a foreign author in its main checkout.
