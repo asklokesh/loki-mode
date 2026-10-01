@@ -168,7 +168,7 @@ describe("findEvidence compound matching (D50-F5)", () => {
     noCandidate("show information panel", "src/inform.ts", "inform", 'import { inform } from "./inform";');
   });
   test("more suffixes are not compounds (ful, hood, ship, dom, ance, ency, ator, ence)", () => {
-    for (const [kw, stem] of [["successful", "success"], ["neighborhood", "neighbor"], ["ownership", "owner"], ["chiefdom", "chief"], ["performance", "perform"], ["dependency", "depend"], ["validator", "valid"], ["existence", "exist"], ["parentwards", "parent"], ["colorish", "color"]]) {
+    for (const [kw, stem] of <[string, string][]>[["successful", "success"], ["neighborhood", "neighbor"], ["ownership", "owner"], ["chiefdom", "chief"], ["performance", "perform"], ["dependency", "depend"], ["validator", "valid"], ["existence", "exist"], ["parentwards", "parent"], ["colorish", "color"]]) {
       noCandidate(`improve ${kw} flow`, `src/${stem}.ts`, stem, `import { x } from "./${stem}";`);
     }
   });
