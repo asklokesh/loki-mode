@@ -738,6 +738,52 @@ else
   echo "$OUT22" | sed 's/^/        /'
 fi
 
+# E-163: live /usage reading (subprocess mocked, real claude never called)
+LR_OUT="$(TOOL="$TOOL" python3 - <<'PYEOF' 2>&1
+import importlib.util, json, os, subprocess, tempfile
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from unittest import mock
+spec = importlib.util.spec_from_file_location("ug", os.environ["TOOL"])
+ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+TXT = ("Current session: 12% used \u00b7 resets Oct 1 at 3:20am (America/New_York)\n"
+       "Current week (all models): 25% used \u00b7 resets Oct 7 at 1pm\n"
+       "Current week (Fable): 0% used")
+def run_ok(text):
+    return mock.Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({"result": text}), ""))
+now = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+d = Path(tempfile.mkdtemp()); tsv = d / "r.tsv"
+tsv.write_text("utc_time\twindow_percent\tweekly_percent\n")
+with mock.patch.object(ug.subprocess, "run", run_ok(TXT)):
+    r = ug.live_read_usage(tsv, now)
+print("PARSE", r["status"], r["session_pct"], r["week_pct"], r["session_resets"], "|", r["week_resets"])
+print("ROWS", len(ug.load_readings(tsv)))
+with mock.patch.object(ug.subprocess, "run", run_ok(TXT)) as m:
+    r2 = ug.live_read_usage(tsv, now + timedelta(minutes=5))
+print("DEDUP", len(ug.load_readings(tsv)), m.call_count)
+with mock.patch.object(ug.subprocess, "run", run_ok(TXT)):
+    ug.live_read_usage(tsv, now + timedelta(minutes=11))
+print("LATER", len(ug.load_readings(tsv)))
+d2 = Path(tempfile.mkdtemp()); t2 = d2 / "r.tsv"
+with mock.patch.object(ug.subprocess, "run", run_ok("usage is now shown elsewhere")):
+    print("FORMAT", ug.live_read_usage(t2, now)["status"], t2.exists())
+with mock.patch.object(ug.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 20)):
+    print("TIMEOUT", ug.live_read_usage(t2, now)["status"], t2.exists())
+with mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError()):
+    print("MISSING", ug.live_read_usage(t2, now)["status"])
+with mock.patch.object(ug.subprocess, "run", mock.Mock(return_value=subprocess.CompletedProcess([], 0, "not json", ""))):
+    print("NONJSON", ug.live_read_usage(t2, now)["status"])
+PYEOF
+)"
+echo "$LR_OUT" | sed 's/^/        /'
+echo "$LR_OUT" | grep -q "^PARSE ok 12 25 Oct 1 at 3:20am (America/New_York) | Oct 7 at 1pm$" && ok "live /usage fixture parses 12 / 25 with resets" || bad "live parse"
+echo "$LR_OUT" | grep -q "^ROWS 1$" && ok "live reading appended one row" || bad "live append"
+echo "$LR_OUT" | grep -q "^DEDUP 1 0$" && ok "10-minute de-dup holds (no call, no row)" || bad "live dedup"
+echo "$LR_OUT" | grep -q "^LATER 2$" && ok "row appended after 10 minutes" || bad "live later row"
+echo "$LR_OUT" | grep -q "^FORMAT uncalibrated False$" && ok "changed format -> uncalibrated, no row" || bad "live format"
+echo "$LR_OUT" | grep -q "^TIMEOUT uncalibrated False$" && ok "timeout -> uncalibrated, no row" || bad "live timeout"
+echo "$LR_OUT" | grep -q "^MISSING uncalibrated$" && echo "$LR_OUT" | grep -q "^NONJSON uncalibrated$" && ok "missing claude / non-JSON -> uncalibrated" || bad "live missing/nonjson"
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -584,7 +584,7 @@ if main_sha is not None:
 GOVERNOR_DEADLINE_SECS = float(os.environ.get("PULSE_GOVERNOR_DEADLINE_SECS", "45") or "45")
 GOVERNOR_DEADLINE = T0 + GOVERNOR_DEADLINE_SECS
 _governor_argv = shlex.split(os.environ["PULSE_GOVERNOR_CMD"]) if os.environ.get("PULSE_GOVERNOR_CMD") else [
-    sys.executable, os.path.join(REPO_ROOT, "scripts", "usage-governor.py"), "--json",
+    sys.executable, os.path.join(REPO_ROOT, "scripts", "usage-governor.py"), "--json", "--read-usage",
 ]
 
 
