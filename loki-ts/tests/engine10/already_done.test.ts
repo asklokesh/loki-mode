@@ -2,9 +2,9 @@
 // deterministic evidence search and its confirmation gate.
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   buildAlreadyDoneCommentArgv,
   buildConfirmBrief,
@@ -109,6 +109,56 @@ describe("findEvidence (deterministic search)", () => {
     expect(hits.length).toBeLessThanOrEqual(10);
     expect(new Set(hits.map((h) => h.source))).toEqual(new Set(["code", "test"]));
     expect(hits.some((h) => h.source === "test")).toBe(true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("findEvidence compound matching (D50-F5)", () => {
+  function repo(files: Record<string, string>) {
+    const dir = mkdtempSync(join(tmpdir(), "e10-already-done-compound-"));
+    for (const [f, body] of Object.entries(files)) {
+      mkdirSync(join(dir, dirname(f)), { recursive: true });
+      writeFileSync(join(dir, f), body);
+    }
+    return dir;
+  }
+  const src = { path: "src/search-command.tsx", symbols: ["SearchCommand"] };
+  const mapOf = (entries: { path: string; symbols: string[] }[]) => ({ files: entries.map((e) => e.path), entries, truncated: false });
+  const testsOf = (...paths: string[]) => ({ runners: ["bun" as const], tests: paths.map((path) => ({ runner: "bun" as const, path })) });
+  const AIQ = "[Feature]: add searchbar\n\nthere is no searchbar to find things";
+
+  test("aiq-52 shape: searchbar vs search-command.tsx + a test importing it is a candidate", () => {
+    const dir = repo({ "src/search-command.tsx": "export function SearchCommand() {}", "src/search-command.test.tsx": 'import { SearchCommand } from "./search-command";' });
+    const hits = findEvidence(AIQ, mapOf([src]), testsOf("src/search-command.test.tsx"), dir);
+    expect(new Set(hits.map((h) => h.source))).toEqual(new Set(["code", "test"]));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("no related file: no candidate", () => {
+    const dir = repo({ "src/billing.tsx": "", "src/billing.test.tsx": 'import "./billing";' });
+    const hits = findEvidence(AIQ, mapOf([{ path: "src/billing.tsx", symbols: ["Billing"] }]), testsOf("src/billing.test.tsx"), dir);
+    expect(hits).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("source file without a referencing test: not two categories", () => {
+    const dir = repo({ "src/search-command.tsx": "", "src/search-command.test.tsx": "test('x', () => {});" });
+    expect(findEvidence(AIQ, mapOf([src]), testsOf("src/search-command.test.tsx"), dir)).toEqual([]);
+    expect(findEvidence(AIQ, mapOf([src]), testsOf(), dir)).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("an inflected keyword (exporting vs export) is not a compound match", () => {
+    const dir = repo({ "tools/receipt-export.py": "", "tests/test_receipt_export.py": "import receipt_export" });
+    const hits = findEvidence("support exporting invoices", mapOf([{ path: "tools/receipt-export.py", symbols: ["export"] }]), testsOf("tests/test_receipt_export.py"), dir);
+    expect(hits).toEqual([]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("a stem token under 5 chars is not a prefix match", () => {
+    const dir = repo({ "src/tab-bar.tsx": "", "src/tab-bar.test.tsx": 'import "./tab-bar";' });
+    const hits = findEvidence("add tabular layout", mapOf([{ path: "src/tab-bar.tsx", symbols: ["TabBar"] }]), testsOf("src/tab-bar.test.tsx"), dir);
+    expect(hits).toEqual([]);
     rmSync(dir, { recursive: true, force: true });
   });
 });
