@@ -64,12 +64,15 @@ def _creds_dir() -> Path:
 
 
 def _write_secret(name: str, value: str) -> None:
-    fd = os.open(_creds_dir() / name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    dest = _creds_dir() / name
+    tmp = dest.with_name(".%s.%d.tmp" % (name, os.getpid()))
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     try:
         os.fchmod(fd, 0o600)
         os.write(fd, (value + "\n").encode())
     finally:
         os.close(fd)
+    os.replace(tmp, dest)
 
 
 def _read_secret(name: str) -> Optional[str]:
@@ -144,7 +147,7 @@ def _prepare_workdir(repo: str, number: int, token: str) -> str:
         base = str(_home() / "repos" / slug)
         if not os.path.isdir(base):
             os.makedirs(os.path.dirname(base), exist_ok=True)
-            subprocess.run(["gh", "repo", "clone", repo, base], env=env, check=True,
+            subprocess.run(["gh", "repo", "clone", "--", repo, base], env=env, check=True,
                            capture_output=True, timeout=600)
     try:
         _git("fetch", "origin", cwd=base, env=env)
@@ -195,7 +198,7 @@ def _read_outcome(workdir: str, rc: int) -> dict:
                 continue
             d = e.get("data") or {}
             if e.get("type") == "pr.opened" and d.get("url"):
-                pr_url = d["url"]
+                pr_url = d["url"] if str(d["url"]).startswith("https://") else None
             if e.get("type") == "stage.completed" and e.get("stage") == "implement" and d.get("spec_conflict_reason"):
                 question = str(d["spec_conflict_reason"])
     if rc == 0:
@@ -292,7 +295,7 @@ def list_repos():
 
 @router.post("/api/onboarding/repo", dependencies=_scope("control"))
 def set_repo(body: RepoIn):
-    if not _REPO_RE.match(body.repo) or ".." in body.repo:
+    if not _REPO_RE.match(body.repo) or ".." in body.repo or body.repo.startswith("-"):
         raise HTTPException(400, "repo must look like owner/repo")
     _save_cfg(repo=body.repo)
     return {"repo": body.repo}
@@ -405,7 +408,7 @@ def backlog_run(body: RunIn):
     queued = []
     with _lock:
         for n in nums:
-            if _RUNS.get(n, {}).get("status") in ("queued", "running"):
+            if _RUNS.get(n, {}).get("status") in ("queued", "preparing", "running"):
                 continue
             _RUNS[n] = {"number": n, "title": issues[n]["title"], "status": "queued", "proc": None, "workdir": None}
             queued.append(n)

@@ -1273,6 +1273,13 @@ async def dashboard_control_boundary(request: Request, call_next):
     #
     # /health and /metrics are intentionally NOT in the sensitive list, so a
     # container health probe and a Prometheus scrape keep working unconfigured.
+    # DNS rebinding: a page rebound to 127.0.0.1 sends its own Host, which the
+    # origin check would trust. Refuse any Host not loopback or explicitly allowed.
+    host = request.headers.get("host", "").strip().lower()
+    host = host[:host.index("]") + 1] if host.startswith("[") else host.rsplit(":", 1)[0]
+    extra = {h.strip().lower() for h in os.environ.get("LOKI_DASHBOARD_ALLOWED_HOSTS", "").split(",") if h.strip()}
+    if host not in {"127.0.0.1", "localhost", "[::1]"} | extra:
+        return JSONResponse(status_code=403, content={"detail": "host not allowed"})
     gated = request.method in ("POST", "PUT", "PATCH", "DELETE")
     if gated and not browser_mutation_origin_allowed(request, _cors_origins):
         return JSONResponse(

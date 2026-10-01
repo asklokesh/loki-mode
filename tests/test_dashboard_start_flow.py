@@ -248,3 +248,24 @@ def test_queue_drains_without_polling(env, monkeypatch):
             break
         real_sleep(0.02)
     assert len(calls["launch"]) == 2
+
+
+def test_dns_rebinding_host_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LOKI_DIR", str(tmp_path / ".loki"))
+    from dashboard import server
+    evil = {"Host": "evil.com:57374", "Origin": "http://evil.com:57374"}
+    c = TestClient(server.app, base_url="http://127.0.0.1:57374")
+    for path, body in (("/api/backlog/run", {"all": True}), ("/api/control/stop", None)):
+        r = c.post(path, json=body, headers=evil)
+        assert r.status_code == 403 and r.json()["detail"] == "host not allowed"
+    assert c.get("/health", headers=evil).status_code == 403
+    assert c.get("/health").status_code == 200
+    assert c.get("/health", headers={"Host": "localhost:57374"}).status_code == 200
+    assert c.get("/health", headers={"Host": "[::1]:57374"}).status_code == 200
+
+
+def test_repo_leading_dash_rejected(env):
+    client, _, _, _ = env
+    client.post("/api/onboarding/github", json={"token": PAT})
+    assert client.post("/api/onboarding/repo", json={"repo": "--x/y"}).status_code == 400
