@@ -19157,6 +19157,32 @@ _loki_object_store_hydrate_checkpoints() {
     return 0
 }
 
+# A running dashboard is reusable only if its /health version equals this CLI's
+# VERSION and GET / serves a 200 text/html page (an older or frontend-less
+# instance would show the user a broken page).
+_loki_dashboard_reusable() {
+    local port="$1" want want_pkg health probe
+    want="$(tr -d '[:space:]' <"${SCRIPT_DIR%/*}/VERSION" 2>/dev/null)" || return 1
+    [ -n "$want" ] || return 1
+    want_pkg="$(cd "${SCRIPT_DIR%/*}" 2>/dev/null && pwd -P)" || return 1
+    health="$(curl -s --max-time 2 "http://127.0.0.1:${port}/health" 2>/dev/null)" || return 1
+    # Same version AND same package path: a dashboard started from another (or
+    # deleted) install can report the same version yet serve no frontend.
+    case "$health" in
+        *"\"version\":\"${want}\""* | *"\"version\": \"${want}\""*) ;;
+        *) return 1 ;;
+    esac
+    case "$health" in
+        *"\"package\":\"${want_pkg}\""* | *"\"package\": \"${want_pkg}\""*) ;;
+        *) return 1 ;;
+    esac
+    probe="$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null)" || return 1
+    case "$probe" in
+        "200 text/html"*) return 0 ;;
+    esac
+    return 1
+}
+
 start_dashboard() {
     loki_background_services_enabled || return 0
     log_header "Starting Loki Dashboard"
@@ -19170,9 +19196,10 @@ start_dashboard() {
     local attempt=0
     local DASHBOARD_REUSED=0
 
-    while lsof -i :$DASHBOARD_PORT &>/dev/null && [ $attempt -lt $max_attempts ]; do
+    # LISTEN only: leftover client sockets (browser CLOSE_WAIT) do not hold the port.
+    while lsof -nP -iTCP:"$DASHBOARD_PORT" -sTCP:LISTEN &>/dev/null && [ $attempt -lt $max_attempts ]; do
         # Check if it's our own dashboard
-        local existing_pid=$(lsof -ti :$DASHBOARD_PORT 2>/dev/null | head -1)
+        local existing_pid=$(lsof -nP -t -iTCP:"$DASHBOARD_PORT" -sTCP:LISTEN 2>/dev/null | head -1)
         if [ -n "$existing_pid" ]; then
             # Only kill a process positively identified as OUR dashboard.
             # `-o comm=` yields just the executable name ("python3"), so the old
@@ -19197,14 +19224,20 @@ start_dashboard() {
                         "http://127.0.0.1:${DASHBOARD_PORT}/api/status" 2>/dev/null || true)
                 fi
                 if [ "$_dash_alive" = "200" ]; then
-                    log_info "Reusing the healthy dashboard already serving on port $DASHBOARD_PORT (not killing it)."
-                    DASHBOARD_REUSED=1
+                    if _loki_dashboard_reusable "$DASHBOARD_PORT"; then
+                        log_info "Reusing the healthy dashboard already serving on port $DASHBOARD_PORT (not killing it)."
+                        DASHBOARD_REUSED=1
+                        break
+                    fi
+                    # Live but a different version or no working UI: never send the
+                    # browser there, and do not kill it either. Try the next port.
+                    log_info "Dashboard on port $DASHBOARD_PORT is a different version or has no working UI; not reusing it."
+                else
+                    log_step "Killing stuck dashboard on port $DASHBOARD_PORT (PID: $existing_pid, not serving)..."
+                    kill "$existing_pid" 2>/dev/null || true
+                    sleep 1
                     break
                 fi
-                log_step "Killing stuck dashboard on port $DASHBOARD_PORT (PID: $existing_pid, not serving)..."
-                kill "$existing_pid" 2>/dev/null || true
-                sleep 1
-                break
             else
                 log_info "Port $DASHBOARD_PORT in use by non-dashboard process ($proc_cmd), skipping..."
             fi

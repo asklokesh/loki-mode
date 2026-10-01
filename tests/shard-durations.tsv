@@ -552,6 +552,8 @@ Add-dir reaches provider	1
 Auto-PR default on	0
 Delegate PR refuses the repo default branch	2
 Dashboard port ownership	0
+Dashboard static fallback and reuse	15
+No dashboard leak from suites	20
 Doctor --json skills section	7
 Emit hang forensics	2
 Issue PRD honesty	0

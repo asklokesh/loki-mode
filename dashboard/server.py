@@ -1484,7 +1484,8 @@ except Exception as _e:  # noqa: BLE001
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
-    return {"status": "healthy", "service": "loki-dashboard"}
+    return {"status": "healthy", "service": "loki-dashboard", "version": str(_version),
+            "package": os.path.realpath(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))}
 
 
 # Provider model catalog endpoint
@@ -11571,29 +11572,35 @@ PROJECT_ROOT = os.path.dirname(DASHBOARD_DIR)
 
 # Possible static file locations (in order of preference)
 # Resolves correctly regardless of PYTHONPATH, symlinks, or install method
-STATIC_LOCATIONS = [
-    os.path.join(DASHBOARD_DIR, "static"),           # dashboard/static/ (production)
-    os.path.join(PROJECT_ROOT, "dashboard-ui", "dist"),  # dashboard-ui/dist/ (development)
-]
+def _static_candidates(skill_dir=None, home=None):
+    """Static dirs in preference order: package, LOKI_SKILL_DIR, ~/.claude skill, dev build."""
+    skill_dir = os.environ.get("LOKI_SKILL_DIR", "") if skill_dir is None else skill_dir
+    home_skill = os.path.join(home or os.path.expanduser("~"), ".claude", "skills", "loki-mode")
+    cands = [os.path.join(DASHBOARD_DIR, "static")]
+    if skill_dir:
+        cands.append(os.path.join(skill_dir, "dashboard", "static"))
+    cands.append(os.path.join(home_skill, "dashboard", "static"))
+    cands.append(os.path.join(PROJECT_ROOT, "dashboard-ui", "dist"))
+    if skill_dir:
+        cands.append(os.path.join(skill_dir, "dashboard-ui", "dist"))
+    cands.append(os.path.join(home_skill, "dashboard-ui", "dist"))
+    return cands
 
-# Add LOKI_SKILL_DIR env var fallback (set by loki CLI and run.sh)
-_skill_dir = os.environ.get("LOKI_SKILL_DIR", "")
-if _skill_dir:
-    STATIC_LOCATIONS.append(os.path.join(_skill_dir, "dashboard", "static"))
-    STATIC_LOCATIONS.append(os.path.join(_skill_dir, "dashboard-ui", "dist"))
 
-# Add ~/.claude/skills/loki-mode fallback (installed skill location)
-_home_skill = os.path.join(os.path.expanduser("~"), ".claude", "skills", "loki-mode")
-if os.path.isdir(_home_skill):
-    STATIC_LOCATIONS.append(os.path.join(_home_skill, "dashboard", "static"))
-    STATIC_LOCATIONS.append(os.path.join(_home_skill, "dashboard-ui", "dist"))
+def _pick_static_dir(candidates):
+    """First candidate that CONTAINS index.html; an empty or partial dir must not win."""
+    for loc in candidates:
+        if os.path.isfile(os.path.join(loc, "index.html")):
+            return loc
+    return None
 
-STATIC_DIR = None
-for loc in STATIC_LOCATIONS:
-    if os.path.isdir(loc):
-        STATIC_DIR = loc
-        logger.info(f"Static files found at: {loc}")
-        break
+
+STATIC_LOCATIONS = _static_candidates()
+STATIC_DIR = _pick_static_dir(STATIC_LOCATIONS)
+if STATIC_DIR:
+    logger.info("Dashboard frontend served from: %s", STATIC_DIR)
+else:
+    logger.warning("Dashboard frontend NOT found (looked in %s); serving built-in fallback page", STATIC_LOCATIONS)
 
 if STATIC_DIR:
     from fastapi.staticfiles import StaticFiles
@@ -11717,16 +11724,22 @@ async def serve_index():
         if os.path.isfile(index_path):
             return FileResponse(index_path, media_type="text/html")
 
-    # Return 503 when frontend files are not found
-    return JSONResponse(
-        content={
-            "error": "dashboard_frontend_not_found",
-            "detail": "The dashboard API is running, but the frontend files were not found. "
-                      "Run: cd dashboard-ui && npm run build",
-            "api_docs": "/docs",
-            "health": "/health",
-        },
-        status_code=503,
+    # No frontend anywhere: a browser must never see developer JSON.
+    return HTMLResponse(content=_fallback_page(), status_code=503)
+
+
+def _fallback_page() -> str:
+    import html as _html
+    return (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        "<title>Loki Mode Dashboard</title></head>"
+        '<body style="font-family:system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem">'
+        "<h1>Loki Mode dashboard UI is not installed</h1>"
+        f"<p>The dashboard API is running (version {_html.escape(str(_version))}) "
+        "but this install has no frontend files.</p>"
+        "<p>Reinstall to fix it:</p><pre>npm install -g loki-mode@latest</pre>"
+        '<p><a href="/docs">API docs</a> | <a href="/health">Health</a></p>'
+        "</body></html>"
     )
 
 
