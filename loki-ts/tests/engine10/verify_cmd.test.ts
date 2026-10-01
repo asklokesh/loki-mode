@@ -480,4 +480,38 @@ describe("main() UNSIGNED policy (D47)", () => {
       expect((await runMain(["u1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(2);
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
+
+  test("D48 r3: a non-VERIFIED run outcome exits 4 signed or unsigned, with or without --allow-unsigned; VERIFIED+unsigned+flag is 0", async () => {
+    const dir = tmpDir();
+    try {
+      const failed = (r: Record<string, unknown>) => { r["verdict"] = "FAILED"; const { receipt_sha256: _a, verification: _b, ...rest } = r; r["receipt_sha256"] = computeReceiptHash(rest); };
+      writeUnsignedReceipt(dir, "f1", failed);
+      for (const a of [[], ["--allow-unsigned"]]) {
+        const r = await runMain(["f1", ...a], join(dir, "runs"));
+        expect(r.code).toBe(4);
+        expect(r.out).toContain("NOT VERIFIED");
+      }
+      writeUnsignedReceipt(dir, "v1");
+      expect((await runMain(["v1", "--allow-unsigned"], join(dir, "runs"))).code).toBe(0);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("D48 r3: FAILED + signed exits 4", async () => {
+    if (!CRYPTO_PY) { console.log("SKIP: no python3 with cryptography"); return; }
+    const dir = tmpDir();
+    const home = tmpDir();
+    try {
+      const fields = baseReceiptFields();
+      fields["run_id"] = "fs1";
+      fields["verdict"] = "FAILED";
+      const hash = computeReceiptHash(fields);
+      const { pem, jwt, kid } = signWithFreshKey(hash, "fs1");
+      const runDir = join(dir, "runs", "fs1");
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ ...fields, receipt_sha256: hash, verification: { jwt, kid } }));
+      await withEnv({ HOME: home, LOKI_RECEIPT_SIGNING_KEY: pem, LOKI_RECEIPT_SIGNING_KEY_FILE: undefined }, async () => {
+        expect((await runMain(["fs1"], join(dir, "runs"))).code).toBe(4);
+      });
+    } finally { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
+  });
 });

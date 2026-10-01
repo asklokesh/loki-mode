@@ -295,7 +295,8 @@ case "${LOKI_ENGINE:-$_loki_engine_default}" in
                 [ "${LOKI_ENGINE:-}" = "v10" ] && _e10=1
                 # Bare `loki verify` follows the newest run: a v10 run newer than the newest
                 # legacy proof is verified by v10, so a FAILED default run is never VERIFIED.
-                if [ "$1" = "verify" ] && [ "$_e10" = "0" ] && [ -z "${LOKI_ENGINE:-}" ]; then
+                # Only a bare call or a v10 run id (e10-*) goes there; any flag (--fast, --pr, --json, unknown) stays on legacy verify.
+                if [ "$1" = "verify" ] && [ "$_e10" = "0" ] && [ -z "${LOKI_ENGINE:-}" ] && case "${2:-}" in ""|e10-*) true ;; *) false ;; esac; then
                     _r10=""; _p10=""
                     for _d in "${LOKI_DIR:-.loki}"/runs/e10-*/; do [ -d "$_d" ] && _r10="$_d"; done
                     for _d in "${LOKI_DIR:-.loki}"/proofs/*/proof.json; do [ -f "$_d" ] && { [ -z "$_p10" ] || [ "$_d" -nt "$_p10" ]; } && _p10="$_d"; done

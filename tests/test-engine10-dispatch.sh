@@ -84,6 +84,16 @@ expect "[v10] status run-1 keeps args" "BUN $ENTRY engine10 status run-1" \
 expect "[v10] single word stays legacy" "BASH refactorize" \
     "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- refactorize)"
 
+# 2b. Default engine: bare verify follows a v10 run only when it has no args or an e10-* id; flags stay legacy.
+mkdir -p "$T/cwd/.loki/runs/e10-20260101T000000Z-aa"
+expect "[unset+run] bare verify -> engine10" "BUN $ENTRY engine10 verify" "$(run_loki "$WITH_BUN" -- verify)"
+expect "[unset+run] verify e10-id -> engine10" "BUN $ENTRY engine10 verify e10-20260101T000000Z-aa" "$(run_loki "$WITH_BUN" -- verify e10-20260101T000000Z-aa)"
+for a in "--fast ." "--pr" "--json" "--no-such-flag"; do
+    # shellcheck disable=SC2086
+    expect "[unset+run] verify $a -> legacy" "BASH verify $a" "$(run_loki "$WITH_BUN" -- verify $a)"
+done
+rm -rf "$T/cwd/.loki"
+
 # Legacy commands and existing paths fall through unchanged under v10.
 for w in estimate intent outcomes; do
     expect "[v10] legacy $w stays legacy" "BASH $w" "$(run_loki "$WITH_BUN" LOKI_ENGINE=v10 -- "$w")"

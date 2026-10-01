@@ -172,9 +172,9 @@ if [ "$MODE" = stub ]; then
     if [ "$SRC" -ne 0 ] && ! grep -Eqi '^Outcome: *VERIFIED|verdict: *verified' "$T/skip.log"; then
         res PASS skip-not-verified "skipped target: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"
     else res FAIL skip-not-verified "skipped target sealed: rc=$SRC, $(grep -Ei '^Outcome:' "$T/skip.log" | head -1)"; fi
-    # 9a. bare `loki verify` after the skipped default run must follow the v10 run: non-zero and never VERIFIED (D48 review blocker)
+    # 9a. bare `loki verify` after the skipped default run must follow the v10 run: exit 4 and never VERIFIED (D48 review blocker)
     ( cd "$T/skip" && "$LOKI" verify ) < /dev/null > "$T/skipv.log" 2>&1; VRC=$?
-    if [ "$VRC" -ne 0 ] && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipv.log" | grep -Eqi 'VERDICT:? *VERIFIED|^VERIFIED'; then
+    if [ "$VRC" -eq 4 ] && ! sed 's/\x1b\[[0-9;]*m//g' "$T/skipv.log" | grep -Eqi 'VERDICT:? *VERIFIED|^VERIFIED'; then
         res PASS skip-bare-verify "bare verify after a failed default run: rc=$VRC, $(head -1 "$T/skipv.log")"
     else res FAIL skip-bare-verify "bare verify after a failed default run: rc=$VRC, $(head -1 "$T/skipv.log")"; fi
     # 9b. the same skip under the escape hatch (LOKI_ENGINE=legacy `loki quick`, D48): the headline must not be a verified verdict. Its rc is reported, not
