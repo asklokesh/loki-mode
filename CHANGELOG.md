@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.18 (2026-10-01)
+
+A `next` release. Running `loki` with no arguments opens a local dashboard to connect a provider and GitHub, pick a repo and complete its open issues; v10 runs start even when a task's setup rewrote a lockfile; and the docs were swept for stale claims.
+
+### Added
+- `loki` with no arguments starts the local dashboard and opens `/start`: choose a provider (a logged-in `claude` or `codex` CLI is detected), connect GitHub with a personal access token (stored at `~/.loki/credentials/github`, file mode 0600, never logged or returned by the API), pick a repo, then select issues and press "Complete selected" or "Complete all". Each issue runs as a v10 issue-mode run in its own worktree and branch, with live status (queued, running, PR open, BLOCKED with its question, failed). `--no-open`, `LOKI_HEADLESS=1` or a non-interactive shell print the URL instead of opening a browser; `LOKI_LANDING=1` keeps the previous landing text (D51-A12).
+- A CI check fails when a doc names a `loki` command or flag the CLI does not accept, or shows an old version as current (DOC-02).
+
+### Changed
+- The dashboard refuses requests whose Host is not `127.0.0.1`, `localhost` or `[::1]`, which blocks DNS-rebinding pages from driving it. `/health` and `/metrics` stay open for probes. A dashboard bound to a non-loopback address accepts other hosts only with enterprise auth enabled or hosts listed in `LOKI_DASHBOARD_ALLOWED_HOSTS` (wired into the Helm chart and Terraform module) (D51-A12).
+- Stale-doc sweep across docs/, wiki/, SKILL.md, deploy/ and examples/: 223 corrections, including removal of unverified benchmark, compliance and agent-count claims (DOC-02).
+
+### Fixed
+- The v10 engine no longer refuses to start when a task's own setup step modified a tracked lockfile (package-lock.json, yarn.lock, pnpm-lock.yaml, bun.lock, poetry.lock, Cargo.lock, go.sum). The change is recorded as pre-existing and is never attributed to the run or included in the PR unless the fix changes it; any other dirty tracked file still refuses (E-164).
+
 ## v10.5.17 (2026-10-01)
 
 A `next` release. `loki verify` now refuses unsigned receipts and catches a tampered event log even when the end of the log is deleted, `loki backlog` runs a repo's issues headless from one `loki.yaml`, and v10 runs post to Slack.
