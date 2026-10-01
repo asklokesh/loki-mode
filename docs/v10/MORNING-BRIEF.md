@@ -1,7 +1,7 @@
 # Morning brief, 2026-10-01 (written 10:20Z)
 
 ## Headline
-- `npm install -g loki-mode` now runs the Loki 10 engine by default, using a bundled bun. `latest` = 10.5.27, gated on both a machine with bun and one without.
+- `npm install -g loki-mode` now runs the Loki 10 engine by default, using a bundled bun. `latest` = 10.5.28, gated on both a machine with bun and one without.
 - 18 release tags overnight (10.5.11 to 10.5.28), 16 published. Two were not published: 10.5.18 (CodeQL) and 10.5.21 (a changelog test). Both were fixed forward.
 
 ## What shipped (on npm latest unless noted)
@@ -9,7 +9,7 @@
 - Bundled bun 1.4.2 as an optional dependency, with a resolver and a plain line when it cannot run (P0-nobun). It adds about 62MB on macOS arm64; npm lists 79.5MB for linux-x64.
 - Two-leg promote gate (E-167): `latest` moves only if the published version passes on a machine with bun (v10 checks) and one without (legacy checks plus the fallback line).
 - `loki keys export` and `loki verify --pubkey` let third parties check a receipt (D48 row 2).
-- Seal: a failed commit stage now ends FAILED and never seals VERIFIED (A-104b). This is in 10.5.28, which is on `next` and waiting for its promote.
+- Seal: a failed commit stage now ends FAILED and never seals VERIFIED (A-104b). Shipped in 10.5.28, promoted to `latest` at 10:17Z.
 - Also: Jira auto-sync wiring (E-166), provider stdin closed (A-134c), loki-seal counter fixes, CodeQL injection fix in the `/start` API, `loki` with no arguments opens the dashboard onboarding.
 
 ## D48 table (honest)
@@ -31,7 +31,7 @@
 
 ## LOKI MORNING TEST
 ```
-npm install -g loki-mode@latest && loki --version          # 10.5.27
+npm install -g loki-mode@latest && loki --version          # 10.5.28
 mkdir /tmp/lmt && cd /tmp/lmt && git init -q && echo 'module.exports=(a,b)=>a-b' > sum.js && git add sum.js && git commit -qm init
 loki quick "sum.js should add, not subtract"                # first line names the Loki 10 engine; 8 lines or fewer
 loki verify                                                 # VERIFIED rc 0, or rc 4 if the run did not verify
