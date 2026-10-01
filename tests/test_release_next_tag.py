@@ -123,5 +123,56 @@ class PromoteWorkflow(unittest.TestCase):
         self.assertIn("PROMOTED", joined)
 
 
+class PromoteAutoTrigger(unittest.TestCase):
+    """D49: auto-promote after a green Post-Release Smoke."""
+
+    def setUp(self):
+        self.doc = yaml.safe_load(_PROMOTE.read_text(encoding="utf-8"))
+        self.on = self.doc.get("on", self.doc.get(True))
+        self.job = self.doc["jobs"]["promote"]
+
+    def test_workflow_run_trigger_on_post_release_smoke(self):
+        wr = self.on["workflow_run"]
+        self.assertEqual(wr["workflows"], ["Post-Release Smoke"])
+        self.assertEqual(wr["types"], ["completed"])
+        smoke = yaml.safe_load((_WF / "post-release-smoke.yml").read_text(encoding="utf-8"))
+        self.assertEqual(smoke["name"], "Post-Release Smoke")
+
+    def test_workflow_dispatch_still_present(self):
+        self.assertIn("version", self.on["workflow_dispatch"]["inputs"])
+
+    def test_success_conclusion_gate_and_release_origin(self):
+        cond = " ".join(str(self.job["if"]).split())
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", cond)
+        self.assertIn("github.event.workflow_run.event == 'workflow_run'", cond)
+        self.assertIn("github.event_name == 'workflow_dispatch'", cond)
+
+    def test_version_derivation_step_reads_version_file_at_head_sha(self):
+        steps = self.job["steps"]
+        co = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout"))
+        self.assertIn("github.event.workflow_run.head_sha", co["with"]["ref"])
+        der = next(s for s in steps if s.get("id") == "ver")
+        self.assertIn("VERSION", der["run"])
+        self.assertIn("tr -d", der["run"])
+        self.assertNotIn("inputs.version", "\n".join(str(s.get("env", "")) for s in steps if s.get("id") != "ver"))
+
+    def test_semver_guard_never_lowers_latest(self):
+        r = next(s["run"] for s in self.job["steps"] if s.get("id") == "npm")
+        self.assertIn("dist-tags.latest", r)
+        self.assertIn("sort -V", r)
+        self.assertIn("lower than current latest", r)
+        self.assertLess(r.index("lower than current latest"), r.index("gitHead"))
+
+    def test_npm_retry_with_backoff_and_hard_failure(self):
+        r = next(s["run"] for s in self.job["steps"] if s.get("id") == "npm")
+        self.assertIn("sleep 30", r)
+        self.assertIn("for i in 1 2 3 4 5 6 7 8 9 10", r)
+        self.assertIn("not served by npm after", r)
+
+    def test_concurrency_never_cancels(self):
+        self.assertIs(self.doc["concurrency"]["cancel-in-progress"], False)
+        self.assertEqual(self.doc["concurrency"]["group"], "promote")
+
+
 if __name__ == "__main__":
     unittest.main()
