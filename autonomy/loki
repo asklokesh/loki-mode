@@ -1871,39 +1871,12 @@ for p in range(int(sys.argv[1]), int(sys.argv[1]) + 100):
 PY
 }
 
-# Fail-closed reuse check for a dashboard found via the ~/.loki/dashboard
-# registry or a busy port: reusable only if /health reports THIS package's
-# version AND realpath, and GET / is 200 text/html. Any missing field, curl
-# error or mismatch means "not ours". Mirrors _loki_dashboard_reusable in run.sh.
-_loki_dashboard_port_is_ours() {
-    local port="$1" want want_pkg health probe
-    case "$port" in ''|*[!0-9]*) return 1 ;; esac
-    want="$(tr -d '[:space:]' <"$SKILL_DIR/VERSION" 2>/dev/null)" || return 1
-    [ -n "$want" ] || return 1
-    want_pkg="$(cd "$SKILL_DIR" 2>/dev/null && pwd -P)" || return 1
-    health="$(curl -s --max-time 2 "http://127.0.0.1:${port}/health" 2>/dev/null)" || return 1
-    case "$health" in
-        *"\"version\":\"${want}\""* | *"\"version\": \"${want}\""*) ;;
-        *) return 1 ;;
-    esac
-    case "$health" in
-        *"\"package\":\"${want_pkg}\""* | *"\"package\": \"${want_pkg}\""*) ;;
-        *) return 1 ;;
-    esac
-    probe="$(curl -s -o /dev/null -w '%{http_code} %{content_type}' --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null)" || return 1
-    case "$probe" in "200 text/html"*) return 0 ;; esac
-    return 1
-}
-
 cmd_ui() {
     local port="" pid=""
     if [ -f "$DASHBOARD_PID_FILE" ]; then
         pid=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null)
         if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
             port=$(cat "${DASHBOARD_PID_DIR}/port" 2>/dev/null)
-            # A registry entry whose live server is not this package's dashboard
-            # (stale, foreign worktree, other version) is never reused.
-            _loki_dashboard_port_is_ours "$port" || port=""
         fi
     fi
     if [ -z "$port" ]; then
@@ -3785,18 +3758,9 @@ cmd_start() {
                 # + cockpit, honoring the card's "open dashboard" promise. The
                 # cockpit hint is printed by _loki_start_handoff for the Both path.
                 args+=("--bg")
-                # Open the URL the runner PUBLISHES for the port it actually bound
-                # or reused (it walks past refused ports); never guess the default
-                # 57374, which may be a foreign or stale dashboard. stdout must
-                # stay unredirected: loki_open_url checks the TTY.
-                local _dfile="${PWD}/.loki/dashboard/url"
-                rm -f "$_dfile" 2>/dev/null
-                (
-                    for _ in $(seq 1 120); do
-                        if [ -s "$_dfile" ]; then loki_open_url "$(head -1 "$_dfile")" 2>/dev/null; exit 0; fi
-                        sleep 0.5
-                    done
-                ) &
+                local _du="http://127.0.0.1:${LOKI_DASHBOARD_PORT:-57374}"
+                # stdout must stay unredirected: loki_open_url checks the TTY.
+                loki_open_url "$_du" 2>/dev/null &
                 ;;
             launch-bg-watch)
                 # Watch (cockpit only) detaches without opening the browser.
@@ -7517,15 +7481,13 @@ cmd_dashboard_start() {
     if [ -f "$DASHBOARD_PID_FILE" ]; then
         local existing_pid
         existing_pid=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null)
-        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null \
-            && _loki_dashboard_port_is_ours "$(cat "${DASHBOARD_PID_DIR}/port" 2>/dev/null)"; then
+        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
             echo -e "${YELLOW}Dashboard server already running (PID: $existing_pid)${NC}"
             echo ""
             cmd_dashboard_status
             exit 0
         fi
-        # Stale PID file, or a live server that is not this package's dashboard
-        # (never killed here, just not reused): remove the registry entry.
+        # Stale PID file, remove it
         rm -f "$DASHBOARD_PID_FILE"
     fi
 

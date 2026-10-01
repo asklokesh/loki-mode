@@ -5,17 +5,6 @@
 set -euo pipefail
 # Tests always run headless: no suite may open a browser (S-103).
 export LOKI_NO_BROWSER=1
-# TCP ports are machine-global, so a throwaway HOME does not stop a suite from
-# binding the developer's REAL dashboard port (P0-DASH-LEAK2: orphaned test
-# dashboards on 57374-57383 were reused by the user's `loki start`). Point every
-# suite that leaves the port unset at a free high port outside 57374-57399.
-if [ -z "${LOKI_DASHBOARD_PORT:-}" ]; then
-    for _dp_try in 1 2 3 4 5; do
-        _dp="$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])' 2>/dev/null || true)"
-        case "$_dp" in ''|*[!0-9]*) continue ;; esac
-        if [ "$_dp" -lt 57374 ] || [ "$_dp" -gt 57420 ]; then export LOKI_DASHBOARD_PORT="$_dp"; break; fi
-    done
-fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -1538,7 +1527,6 @@ run_test "Delegate PR refuses the repo default branch" "$SCRIPT_DIR/test-delegat
 run_test "Dashboard port ownership" "$SCRIPT_DIR/test-dashboard-port-ownership.sh"
 run_test "Dashboard static fallback and reuse" "$SCRIPT_DIR/test-dashboard-static-fallback.sh"
 run_test "No dashboard leak from suites" "$SCRIPT_DIR/test-no-dashboard-leak.sh"
-run_test "Dashboard leak2: fail-closed reuse and bound-port URL" "$SCRIPT_DIR/test-dashboard-leak2.sh"
 run_test "Doctor --json skills section" "$SCRIPT_DIR/test-doctor-json-skills.sh"
 run_test "Emit hang forensics" "$SCRIPT_DIR/test-emit-hang-forensics.sh"
 run_test "Issue PRD honesty" "$SCRIPT_DIR/test-issue-prd-is-honest.sh"
