@@ -62,6 +62,7 @@ import glob
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -378,10 +379,28 @@ def load_readings(path: Path):
     return readings
 
 
-LIVE_READ_TIMEOUT_SECS = 20
+LIVE_READ_TIMEOUT_SECS = float(os.environ.get("LOKI_USAGE_LIVE_TIMEOUT") or 20)
 LIVE_READ_MIN_GAP = timedelta(minutes=10)
 _SESSION_RE = re.compile(r"Current session:\s*(\d+(?:\.\d+)?)%\s*used(?:\s*\S+\s*resets\s+([^\n]+))?")
 _WEEK_RE = re.compile(r"Current week \(all models\):\s*(\d+(?:\.\d+)?)%\s*used(?:\s*\S+\s*resets\s+([^\n]+))?")
+
+
+def _kill_group(proc):
+    """SIGTERM the child's process group, SIGKILL after 5s; never raises."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            pass
+        try:
+            proc.communicate(timeout=5)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
 
 
 def live_read_usage(readings_path: Path, now: datetime):
@@ -393,11 +412,18 @@ def live_read_usage(readings_path: Path, now: datetime):
     if existing and now - max(r[0] for r in existing) < LIVE_READ_MIN_GAP:
         return {"status": "recent"}
     try:
-        proc = subprocess.run(
+        # Own process group so a timeout can reap grandchildren too.
+        proc = subprocess.Popen(
             ["claude", "-p", "/usage", "--output-format", "json"],
-            capture_output=True, text=True, timeout=LIVE_READ_TIMEOUT_SECS,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True,
         )
-        text = json.loads(proc.stdout).get("result")
+        try:
+            out, _ = proc.communicate(timeout=LIVE_READ_TIMEOUT_SECS)
+        except subprocess.TimeoutExpired:
+            _kill_group(proc)
+            return bad
+        text = json.loads(out).get("result")
         sm, wm = _SESSION_RE.search(text), _WEEK_RE.search(text)
     except (OSError, subprocess.SubprocessError, ValueError, TypeError, AttributeError):
         return bad

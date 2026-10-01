@@ -750,28 +750,28 @@ TXT = ("Current session: 12% used \u00b7 resets Oct 1 at 3:20am (America/New_Yor
        "Current week (all models): 25% used \u00b7 resets Oct 7 at 1pm\n"
        "Current week (Fable): 0% used")
 def run_ok(text):
-    return mock.Mock(return_value=subprocess.CompletedProcess([], 0, json.dumps({"result": text}), ""))
+    return mock.Mock(return_value=mock.Mock(communicate=mock.Mock(return_value=(json.dumps({"result": text}), ""))))
 now = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
 d = Path(tempfile.mkdtemp()); tsv = d / "r.tsv"
 tsv.write_text("utc_time\twindow_percent\tweekly_percent\n")
-with mock.patch.object(ug.subprocess, "run", run_ok(TXT)):
+with mock.patch.object(ug.subprocess, "Popen", run_ok(TXT)):
     r = ug.live_read_usage(tsv, now)
 print("PARSE", r["status"], r["session_pct"], r["week_pct"], r["session_resets"], "|", r["week_resets"])
 print("ROWS", len(ug.load_readings(tsv)))
-with mock.patch.object(ug.subprocess, "run", run_ok(TXT)) as m:
+with mock.patch.object(ug.subprocess, "Popen", run_ok(TXT)) as m:
     r2 = ug.live_read_usage(tsv, now + timedelta(minutes=5))
 print("DEDUP", len(ug.load_readings(tsv)), m.call_count)
-with mock.patch.object(ug.subprocess, "run", run_ok(TXT)):
+with mock.patch.object(ug.subprocess, "Popen", run_ok(TXT)):
     ug.live_read_usage(tsv, now + timedelta(minutes=11))
 print("LATER", len(ug.load_readings(tsv)))
 d2 = Path(tempfile.mkdtemp()); t2 = d2 / "r.tsv"
-with mock.patch.object(ug.subprocess, "run", run_ok("usage is now shown elsewhere")):
+with mock.patch.object(ug.subprocess, "Popen", run_ok("usage is now shown elsewhere")):
     print("FORMAT", ug.live_read_usage(t2, now)["status"], t2.exists())
-with mock.patch.object(ug.subprocess, "run", side_effect=subprocess.TimeoutExpired("claude", 20)):
+with mock.patch.object(ug.subprocess, "Popen", mock.Mock(return_value=mock.Mock(communicate=mock.Mock(side_effect=[subprocess.TimeoutExpired("claude", 20), ("", "")])))), mock.patch.object(ug.os, "killpg"):
     print("TIMEOUT", ug.live_read_usage(t2, now)["status"], t2.exists())
-with mock.patch.object(ug.subprocess, "run", side_effect=FileNotFoundError()):
+with mock.patch.object(ug.subprocess, "Popen", side_effect=FileNotFoundError()):
     print("MISSING", ug.live_read_usage(t2, now)["status"])
-with mock.patch.object(ug.subprocess, "run", mock.Mock(return_value=subprocess.CompletedProcess([], 0, "not json", ""))):
+with mock.patch.object(ug.subprocess, "Popen", mock.Mock(return_value=mock.Mock(communicate=mock.Mock(return_value=("not json", ""))))):
     print("NONJSON", ug.live_read_usage(t2, now)["status"])
 PYEOF
 )"
@@ -783,6 +783,34 @@ echo "$LR_OUT" | grep -q "^LATER 2$" && ok "row appended after 10 minutes" || ba
 echo "$LR_OUT" | grep -q "^FORMAT uncalibrated False$" && ok "changed format -> uncalibrated, no row" || bad "live format"
 echo "$LR_OUT" | grep -q "^TIMEOUT uncalibrated False$" && ok "timeout -> uncalibrated, no row" || bad "live timeout"
 echo "$LR_OUT" | grep -q "^MISSING uncalibrated$" && echo "$LR_OUT" | grep -q "^NONJSON uncalibrated$" && ok "missing claude / non-JSON -> uncalibrated" || bad "live missing/nonjson"
+
+# E-163 r2: a timed-out live read must reap grandchildren (own process group)
+GC_DIR="$FIXTURE_ROOT/gc"; mkdir -p "$GC_DIR/bin"
+cat > "$GC_DIR/bin/claude" <<STUB
+#!/bin/bash
+sleep 300 &
+echo \$! > "$GC_DIR/gc.pid"
+sleep 300
+STUB
+chmod +x "$GC_DIR/bin/claude"
+export GC_DIR TOOL
+GC_OUT="$(PATH="$GC_DIR/bin:$PATH" LOKI_USAGE_LIVE_TIMEOUT=1 python3 - <<'PYEOF' 2>&1
+import importlib.util, os
+from datetime import datetime, timezone
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("ug", os.environ["TOOL"])
+ug = importlib.util.module_from_spec(spec); spec.loader.exec_module(ug)
+d = Path(os.environ["GC_DIR"])
+print("GCSTATUS", ug.live_read_usage(d / "r.tsv", datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc))["status"])
+PYEOF
+)"
+GC_PID="$(cat "$GC_DIR/gc.pid" 2>/dev/null)"
+if [ -n "$GC_PID" ] && ! kill -0 "$GC_PID" 2>/dev/null && echo "$GC_OUT" | grep -q "^GCSTATUS uncalibrated$"; then
+    ok "timeout reaps grandchild process group, stays uncalibrated"
+else
+    bad "grandchild survived timeout (pid=$GC_PID): $GC_OUT"
+    [ -n "$GC_PID" ] && kill -9 "$GC_PID" 2>/dev/null
+fi
 
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
