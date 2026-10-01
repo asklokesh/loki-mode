@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.16 (2026-10-01)
+
+A `next` release. Quiet `loki quick` output stays short and clean, the v10 Reason line never prints a credential, and a stray config file in your home directory is never moved.
+
+### Fixed
+- Quiet `loki quick` no longer prints stray stderr lines (the caveman output-compressor bootstrap notices, a `.loki/config` "File exists" error, and an `echo: write error: Broken pipe`), so the default output stays within its line budget. The bootstrap notices go to the quiet run log instead (P0-t15).
+- When a project's `.loki/config` is a leftover file holding only the disclosure marker (`DISCLOSURE_SHOWN=true`), it is folded into the `.loki/config/` directory instead of failing. A config file with any other setting is left untouched, and `~/.loki/config` (for example one holding `TELEMETRY_DISABLED=true`) is never moved, even when `loki quick` runs from your home directory (P0-t15).
+- The quiet inner run resets SIGPIPE through python3 only when python3 can actually import `os` and `signal`; a missing or broken python3 falls back to plain bash (P0-t15).
+- The v10 `Reason:` line redacts GitHub tokens, Anthropic, OpenAI and AWS keys, Slack tokens, JWTs, Google AI keys and Bearer tokens before it is cut to 200 characters, so a credential echoed in a failing check's output never reaches the terminal. The patterns match the receipt redactor in `autonomy/lib/proof_redact.py` (A-130b).
+
 ## v10.5.15 (2026-10-01)
 
 A `next` release. A v10 run that renames or deletes an existing test file can no longer be sealed as VERIFIED, and verify counts progress on an edited relevant test file correctly.
