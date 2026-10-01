@@ -157,7 +157,7 @@ export interface Receipt {
    *  verdict, and also empty on the OTHER ways a run seals ALREADY_SATISFIED (an issue already
    *  closed, Wall already green on the base tree, or implement's own LOKI_ALREADY_DONE marker):
    *  none of those goes through this search, so none of them has search hits to carry. */
-  evidence: string[];
+  evidence: string[]; pre_existing_dirty?: string[]; // E-164: lockfiles modified at intake by setup, never attributed to the run; omitted when none
   cost: {
     usd: number | null;
     input_tokens: number;

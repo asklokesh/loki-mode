@@ -1,0 +1,30 @@
+// E-164: a task's own setup step (npm install) can rewrite a tracked lockfile before the run starts.
+// Lockfile-only modifications are allowed at intake and recorded as pre-existing; any other dirty
+// tracked file still refuses. Lives outside engine10 core to keep it under its line cap.
+import { execFileSync } from "node:child_process";
+
+const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;
+
+const blob = (repoDir: string, path: string): string =>
+  execFileSync("git", ["hash-object", "--", path], { cwd: repoDir, encoding: "utf8" }).trim();
+
+/** Splits `git status --porcelain` lines into blocking ones and {lockfile path: blob sha} for modified lockfiles. */
+export function splitDirty(repoDir: string, lines: string[]): { blocking: string[]; preexisting: Record<string, string> } {
+  const blocking: string[] = [];
+  const preexisting: Record<string, string> = {};
+  for (const l of lines) {
+    // the caller trims the whole status output, so the first line may have lost its leading space
+    const m = /^([ MADRCU?!]{1,2}) (.+)$/.exec(l);
+    if (m && /^(M|MM)$/.test(m[1]!.trim()) && LOCKFILE.test(m[2]!)) preexisting[m[2]!] = blob(repoDir, m[2]!);
+    else blocking.push(l);
+  }
+  return { blocking, preexisting };
+}
+
+/** Recorded lockfiles the run left byte-identical to intake: never attributed to the run, so Commit must not stage them. */
+export function untouchedSinceIntake(repoDir: string, recorded: unknown): string[] {
+  if (!recorded || typeof recorded !== "object") return [];
+  return Object.entries(recorded as Record<string, unknown>)
+    .filter(([p, h]) => { try { return blob(repoDir, p) === h; } catch { return false; } })
+    .map(([p]) => p);
+}
