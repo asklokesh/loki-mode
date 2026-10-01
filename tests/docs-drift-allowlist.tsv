@@ -42,3 +42,5 @@ docs/certification/certification-exam.md	--new-token	wrong-answer distractor in 
 docs/certification/certification-exam.md	--enterprise	wrong-answer distractor in the exam
 docs/certification/certification-exam.md	--max-cost	wrong-answer distractor in the exam
 docs/v10/D51-PHASE-B.md	loki workspace	planned D51 Phase B command (slice B12, behind LOKI_WORKSPACES); design doc, not yet on main
+docs/v10/CONTROL-PLANE.md	loki control	planned D56 command (CP-04, behind LOKI_CONTROL=1); design doc, not yet on main
+docs/v10/LEGACY-REMOVAL.md	loki control	planned D56 command referenced by the D57 inventory; not yet on main
