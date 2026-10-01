@@ -6,13 +6,13 @@
     "url": "https://github.com/asklokesh/loki-mode",
     "source": "github"
   },
-  "version": "10.5.17",
+  "version": "10.5.18",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "loki-mode",
-      "version": "10.5.17",
+      "version": "10.5.18",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
