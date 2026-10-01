@@ -7437,6 +7437,14 @@ init_loki_dir() {
         fi
     fi
 
+    # crash.sh's disclosure sentinel can have left a regular FILE at .loki/config
+    # (LOKI_DIR is the project .loki); mkdir -p of the config DIRECTORY then fails
+    # with "File exists". Fold the file into the directory (back-compat sentinel only).
+    if [ -f .loki/config ] && [ ! -L .loki/config ]; then
+        mv .loki/config .loki/config.disclosure.tmp 2>/dev/null \
+            && mkdir -p .loki/config 2>/dev/null \
+            && mv .loki/config.disclosure.tmp .loki/config/disclosure 2>/dev/null
+    fi
     # Retry once: a concurrent creator of the same dir can make the first mkdir -p
     # fail with "File exists" (seen on CI, leaked to the quiet quick terminal).
     mkdir -p .loki/{state,queue,messages,logs,config,prompts,artifacts,scripts} 2>/dev/null \
