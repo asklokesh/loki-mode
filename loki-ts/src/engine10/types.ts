@@ -173,6 +173,7 @@ export interface Receipt {
   model: string;
   resumed: boolean;
   events_sha256: string;
+  log_seal?: true; // A-117: the supervisor appends a signed log.sealed line after run.completed; verify requires it only when this is set (older receipts predate it)
   receipt_sha256: string;
   verification: { jwt: string | null; kid: string | null };
 }

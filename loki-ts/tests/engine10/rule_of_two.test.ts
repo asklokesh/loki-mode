@@ -118,7 +118,7 @@ describe("E-03 rule of two", () => {
     expect(events.some((e) => e.stage === "constructor" || e.stage === "__proto__")).toBe(false);
     expect(r.tampered).toBe(false);
     expect(r.verdict).toBe("VERIFIED");
-    const done = events.at(-1)!;
+    const done = events.findLast((e) => e.type === "run.completed")!;
     expect(done.type).toBe("run.completed");
     expect(done.data.pr_url).toBe("https://github.com/acme/widget/pull/1");
     expect(events[0]!.data.origin_repo).toBe("acme/widget");
@@ -139,7 +139,7 @@ console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verd
     expect(pr.calls.length).toBe(0);
     expect(r.tampered).toBe(true);
     expect(r.notProven).toContain(TAMPER_NOT_PROVEN);
-    expect(events.at(-1)!.data.not_proven).toContain(TAMPER_NOT_PROVEN);
+    expect(events.findLast((e) => e.type === "run.completed")!.data.not_proven).toContain(TAMPER_NOT_PROVEN);
   }, 30_000);
 
   test("engine.json exists after a failing run", async () => {
@@ -152,9 +152,9 @@ console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verd
     expect(r.verdict).toBe("FAILED");
     expect(pr.calls.length).toBe(0);
     const events = readEvents(join(dir, marker.events));
-    expect(events.at(-1)!.type).toBe("run.completed");
-    expect(events.at(-1)!.data.verdict).toBe("FAILED");
-    expect(events.at(-1)!.data.cost_usd).toBeNull();
+    expect(events.findLast((e) => e.type === "run.completed")!.type).toBe("run.completed");
+    expect(events.findLast((e) => e.type === "run.completed")!.data.verdict).toBe("FAILED");
+    expect(events.findLast((e) => e.type === "run.completed")!.data.cost_usd).toBeNull();
   }, 30_000);
 
   test("marker is written even when the worker cannot spawn", async () => {
@@ -221,7 +221,7 @@ setInterval(() => {}, 1000);
       try { process.kill(gc, 0); await Bun.sleep(100); } catch { alive = false; }
     }
     expect(alive).toBe(false);
-    const done = readEvents(join(dir, ".loki/runs/e10-t7/events.jsonl")).at(-1)!;
+    const done = readEvents(join(dir, ".loki/runs/e10-t7/events.jsonl")).findLast((e) => e.type === "run.completed")!;
     expect(done.type).toBe("run.completed");
   }, 30_000);
 
@@ -259,7 +259,7 @@ console.log(JSON.stringify({ type: "cost", stage: "implement", data: { session_i
     const events = readEvents(join(dir, ".loki/runs/e10-t9/events.jsonl"));
     expect(events.some((e) => e.type === "session.ended")).toBe(false);
     expect(events.filter((e) => e.type === "cost").map((e) => e.data.usd)).toEqual([0.25]);
-    expect(events.at(-1)!.data.cost_usd).toBe(0.25);
+    expect(events.findLast((e) => e.type === "run.completed")!.data.cost_usd).toBe(0.25);
   }, 30_000);
 
   // E-66 review finding 4: a text run has no issue to post the already-done comment to, so main()

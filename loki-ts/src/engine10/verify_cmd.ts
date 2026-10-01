@@ -66,11 +66,11 @@ function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): s
   return h.digest("hex") === bound ? null : "events.jsonl does not match the hash recorded at seal";
 }
 /** A-117: after run.completed the supervisor appends a log.sealed line, signed over the sha256 of every earlier byte plus a tampered flag. A signed receipt needs it
- *  right after run.completed (deep verify may append later events). A sealed receipt with no run.completed is an interrupted run: UNCHECKED, not TAMPERED. */
+ *  right after run.completed (deep verify may append later events: lines after log.sealed are unauthenticated and no reader may trust them). A sealed receipt with no run.completed is an interrupted run: UNCHECKED, not TAMPERED. */
 function checkLogSeal(receiptPath: string, hash: string, kid: unknown): { verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null {
   const path = join(dirname(receiptPath), "events.jsonl"), events = readEvents(path), done = events.findIndex((e) => e.type === "run.completed");
   if (!events.some((e) => e.type === "receipt.sealed" && e.data["receipt_sha256"] === hash)) return { verdict: "TAMPERED", reason: "events.jsonl has no receipt.sealed event for this receipt" };
-  if (done < 0) return { verdict: "UNCHECKED", reason: "run did not complete (no run.completed in events.jsonl)" };
+  if (done < 0) return { verdict: "UNCHECKED", reason: "run did not complete, or the log was truncated (no run.completed in events.jsonl)" };
   const seal = events[done + 1], d = seal?.type === "log.sealed" ? seal.data : null;
   if (!d) return { verdict: "TAMPERED", reason: "events.jsonl has no signed log.sealed line after run.completed" };
   const lines = readFileSync(path, "utf8").split("\n").filter((l) => l.trim() !== ""), sha = createHash("sha256").update(lines.slice(0, done + 1).join("\n") + "\n").digest("hex");
@@ -107,7 +107,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   const outcome = checkAttestation(jwt, computed);
   if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
-  const seal = checkLogSeal(receiptPath, computed, (JSON.parse(Buffer.from(jwt.split(".")[0]!, "base64url").toString()) as { kid?: unknown }).kid);
+  const seal = receipt["log_seal"] !== true ? null : checkLogSeal(receiptPath, computed, (JSON.parse(Buffer.from(jwt.split(".")[0]!, "base64url").toString()) as { kid?: unknown }).kid);
   if (seal) return { verdict: seal.verdict, reasons: [seal.reason] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }

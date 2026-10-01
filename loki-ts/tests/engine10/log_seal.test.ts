@@ -15,13 +15,13 @@ afterAll(() => { if (saved === undefined) delete process.env["LOKI_RECEIPT_SIGNI
 
 let n = 0;
 /** A signed run whose log line 1 is edited before the seal (the supervisor then appends tamper.detected), or an honest one. */
-function run(tamper: boolean): { dir: string; path: string; lines: () => string[]; put: (l: string[]) => void } {
+function run(tamper: boolean, marker = true): { dir: string; path: string; lines: () => string[]; put: (l: string[]) => void } {
   const id = `e10-ls-${n++}`, dir = join(root, "runs", id), ev = join(dir, "events.jsonl");
   mkdirSync(dir, { recursive: true });
   const log = new SupervisorLog(ev, id);
   log.append("run.started", null, { provider: "claude" });
   if (tamper) writeFileSync(ev, readFileSync(ev, "utf8").replace('"claude"', '"claudX"'));
-  const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)) };
+  const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", events_sha256: sha(readFileSync(ev)), ...(marker ? { log_seal: true } : {}) };
   const hash = receiptSha256(body as never);
   writeFileSync(join(dir, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: hash, verification: signReceipt(id, hash) }, null, 2));
   log.append("receipt.sealed", "seal", { receipt_sha256: hash });
@@ -57,6 +57,17 @@ describe("A-117 log.sealed", () => {
       r.put([...l.slice(0, -1), JSON.stringify(e)]);
       expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
     }
+  });
+  test("back-compat: a receipt without the log_seal marker keeps the round-1 checks (VERIFIED on an old-style log, no log.sealed line)", async () => {
+    const r = run(false, false);
+    r.put(r.lines().slice(0, -1));
+    expect((await verifyReceipt(r.path)).verdict).toBe("VERIFIED");
+    expect((await verifyReceipt(run(true, false).path)).verdict).toBe("TAMPERED"); // tamper.detected still counts
+  });
+  test("a marker-bearing receipt cannot shed the marker: removing it breaks receipt_sha256", async () => {
+    const r = run(false);
+    writeFileSync(r.path, readFileSync(r.path, "utf8").replace('"log_seal": true,', ""));
+    expect((await verifyReceipt(r.path)).verdict).toBe("TAMPERED");
   });
   test("an interrupted run (sealed, no run.completed) is UNCHECKED rc 2", async () => {
     const r = run(false);
