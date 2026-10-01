@@ -1782,3 +1782,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Evidence: bin/loki:329-331 falls back to legacy when bun is absent; loki-ts/scripts/build.ts:162,206 build target "bun"; node loki-ts/dist/loki.js --version gives "ReferenceError: Bun is not defined" (dist line 1569). Most npm users have no bun.
 - The bun-less gate failures on 10.5.22 (digest, verify, signed) come from scripts/first-run-gate.sh:123 forcing LOKI_ENGINE=v10 for verify, not from a legacy regression since 10.5.16; output-lines 13 is legacy quick against the new 8-line cap (legacy budget is 15). E-167 extended to a no-bun leg with legacy expectations.
 - Opus architect comparing a node-runnable engine10 with shipping bun as an npm dependency; slices follow. The flip is not described as done for npm users until this lands.
+
+## 2026-10-01T07:34Z Promote PAUSED until the two-leg gate lands
+- gh workflow disable promote.yml at 07:33Z (state disabled_manually), while 10.5.23's Post-Release Smoke ran. Reason: the promote gate now proves only the bun path; a plain npm install has no bun and gets legacy, which no gate leg checks. latest stays 10.5.20 (gate working); next 10.5.22, 10.5.23 Release success. Re-enable after E-167 (two legs, both must pass) is merged and on main.
+- Architect (opus): option B (bun@1.4.2 optionalDependency, resolver to node_modules/@oven/bun-*/bin/bun with a --version probe) over A (node build: about 14 files, 300-450 lines, breaks the engine10 budget). Install size 26.6MB to about 90-110MB: FOUNDER-QUEUE 17.
+- Building: E-167 (two-leg promote gate), P0-nobun-S2 (resolver plus plain cannot-run start line; no dependency added).
+- train/46 bb82c599 (E-165 r3, E-168 r2) in CI; train/45 was green.
