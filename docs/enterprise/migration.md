@@ -98,6 +98,7 @@ These variables from v5.50.0 continue to work identically:
 | `LOKI_TLS_CERT` | (unset) | TLS certificate path |
 | `LOKI_TLS_KEY` | (unset) | TLS key path |
 | `LOKI_JIRA_URL` | (unset) | Jira Cloud base URL |
+| `LOKI_JIRA_EMAIL` | (unset) | Jira user email for the API token |
 | `LOKI_JIRA_TOKEN` | (unset) | Jira API token |
 | `LOKI_JIRA_EPIC_KEY` | (unset) | Jira epic that run events sync to |
 | `LOKI_LINEAR_TOKEN` | (unset) | Linear API key |

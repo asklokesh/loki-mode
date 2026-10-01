@@ -55,6 +55,46 @@ function makeEvent(type, payload) {
 // --- Tests ---
 
 describe('sync-subscriber', () => {
+  describe('initIntegrations (Jira)', () => {
+    const keys = ['LOKI_JIRA_URL', 'LOKI_JIRA_EMAIL', 'LOKI_JIRA_TOKEN', 'LOKI_LINEAR_TOKEN', 'LOKI_GITHUB_SYNC'];
+    let saved, prevLog, prevErr, errs, logs;
+    beforeEach(() => {
+      saved = {};
+      keys.forEach((k) => { saved[k] = process.env[k]; delete process.env[k]; });
+      subscriber._setIntegrations([]);
+      prevLog = console.log; prevErr = console.error; errs = []; logs = [];
+      console.log = (m) => logs.push(String(m));
+      console.error = (m) => errs.push(String(m));
+    });
+    afterEach(() => {
+      console.log = prevLog; console.error = prevErr;
+      keys.forEach((k) => { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; });
+      subscriber._setIntegrations([]);
+    });
+
+    it('constructs a Jira client when url, email and token are set', () => {
+      process.env.LOKI_JIRA_URL = 'https://example.atlassian.net';
+      process.env.LOKI_JIRA_EMAIL = 'u@example.com';
+      process.env.LOKI_JIRA_TOKEN = 'tok';
+      subscriber.initIntegrations();
+      const list = subscriber._getIntegrations();
+      assert.equal(list.length, 1);
+      assert.equal(list[0].name, 'jira');
+      assert.deepEqual(errs, []);
+    });
+
+    it('logs one line naming the missing variable', () => {
+      process.env.LOKI_JIRA_URL = 'https://example.atlassian.net';
+      process.env.LOKI_JIRA_TOKEN = 'tok';
+      const realExit = process.exit;
+      process.exit = () => {};
+      try { subscriber.initIntegrations(); } finally { process.exit = realExit; }
+      assert.equal(subscriber._getIntegrations().length, 0);
+      assert.equal(errs.length, 1);
+      assert.match(errs[0], /missing: LOKI_JIRA_EMAIL$/);
+    });
+  });
+
   describe('RARV_STATUS_MAP', () => {
     it('maps iteration_start to building', () => {
       assert.equal(RARV_STATUS_MAP['iteration_start'], 'building');
