@@ -1740,3 +1740,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Fix forward (main already contains it): slice-P0-codeql (constant allowlists for the provider binary and secret file names) in progress; then train with it, then re-cut the release.
 - train/31 731a335d is green on Tests/Parity/Coverage but its Security Audit fails on the same alert; it will not release until the fix lands.
 - D48-flip rejected by opus (bare loki verify still legacy after a default v10 run: FAILED run reads VERIFIED); r2 in progress.
+
+## 2026-10-01T05:22Z v10.5.19 cut (CodeQL fix forward), train/33 pushed
+- train/32 aad61f9a green: Tests, Bun Parity, Coverage (baseline), Security Audit all completed success (watcher bs3ybh02p). main fast-forwarded to aad61f9a.
+- v10.5.19 release commit 47050d65 pushed by SHA (parent == origin/main; --check-clean rc=0). It carries the unpublished 10.5.18 content plus the CodeQL 604-607 fix, A-118 r5 and DOC-01. Release run and auto-promote watcher: bqimqxkgo.
+- Merged on local main: D48-flip r3 (opus APPROVE: FAILED receipt exits 4 with or without --allow-unsigned; dispatch 56/0; gate --stub 0 failed), A-134b r4 (sonnet APPROVE; registration rc=0, shard rc=0, own test 6/0), E-162 (opus APPROVE as CTO call).
+- train/33 63db8710 pushed. Guards: registration rc=0, shard-coverage rc=0 (E2e Features row 19 -> 20 to keep the five heaviest suites in distinct shards), v10-ops rc=0, run-shellcheck rc=0, docs-cli-drift rc=0, release-dist-guard rc=0, budget.test 24 pass.
+- REJECTED, fix rounds building: E-163 (live /usage timeout has no process-group kill), D48-r2 (unsigned receipt exits 0 under --pubkey; merge conflicts with the exit-4 change).
