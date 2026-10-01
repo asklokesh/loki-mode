@@ -1771,3 +1771,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - promote.yml run at 07:00Z: completed failure, correctly refused to move latest. first-run-gate.sh --installed loki-mode@10.5.22 ran on ubuntu-latest WITHOUT bun; the installed CLI fell back to the legacy engine ("the Loki 10 engine needs bun"), so 7 v10 checks failed (digest-matches, verify-ok, receipt-signed, output-lines 13>8, engine-start-line, cost-non-null, skip-bare-verify) and the cost check crashed with IndexError (no v10 run dir).
 - P0 fix slice-P0-promote-bun building: setup-bun in promote (and any other gate job on an installed package), cost check fails closed instead of crashing, explicit "engine fell back to legacy" check. CTO (opus) review before merge; release-gate change.
 - train/42 73dbe61b (E-166, E-161, E-132 test, E-165) in CI.
+
+## 2026-10-01T07:21Z v10.5.23 cut (E-166, E-161, P0-promote-bun, E-132 test); E-165 on train/45
+- train/44 a3dd76e6 green on Tests, Bun Parity, Coverage, Security Audit, Tier A; main fast-forwarded; v10.5.23 0b27f4a1 pushed (--check-clean rc=0, parent == origin/main, map sources clean, version embedded once). Watcher b120po3q0 covers the Release run, npm and the promote run, which is the first promote with the bun fix; if its gate passes, latest moves to 10.5.23 and the manual 10.5.22 promote is moot.
+- E-161 false block found during the cut: a cd into the release worktree then git checkout --detach was blocked as if in the main checkout; git -C worked. Row E-161b (HIGH) added.
+- train/45 33bbdb75 (adds E-165 r3: funnel-privacy counts only off-machine egress; caller was run.sh:24659 POST to 127.0.0.1/api/focus) in CI.
+- E-168 r2 (Tier A selects only runnable test files; train/43 range replay) finishing; E-168 r1 2a83f272 rejected by me: helpers fell through to bash execution.
