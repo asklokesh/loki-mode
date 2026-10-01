@@ -164,7 +164,7 @@ only_docs() { # stdin: paths. 0 when non-empty and all docs
 
 # ---- Phase A: train ----------------------------------------------------------
 phase_a() {
-    local local_main trains n_max=0 have=0 sha n
+    local local_main trains n_max=0 n_max_sha="" have=0 sha n runs name st
     net git -C "$REPO" fetch --quiet "$REMOTE" main 2>/dev/null || { log A "" "FETCH_FAIL skip"; return 0; }
     local_main="$(g rev-parse refs/heads/main 2>/dev/null)" || { log A "" "NO_LOCAL_MAIN skip"; return 0; }
     if [ "$local_main" = "$(g rev-parse "$REMOTE/main" 2>/dev/null)" ]; then return 0; fi
@@ -177,12 +177,24 @@ phase_a() {
     [ "$LS_FAIL" = 1 ] && { log A "$local_main" "LSREMOTE_FAIL skip"; return 0; }
     while read -r sha n; do
         [ -n "$n" ] || continue
-        [ "$n" -gt "$n_max" ] && n_max="$n"
+        if [ "$n" -gt "$n_max" ]; then n_max="$n"; n_max_sha="$sha"; fi
         [ "$sha" = "$local_main" ] && have=1
     done <<EOF
 $trains
 EOF
     if [ "$have" = 1 ]; then return 0; fi
+    # Never supersede a train whose required checks are still running: a new
+    # train cancels the old one's CI, so pushing every cycle means no train
+    # ever finishes. LOKI_TC_NO_HOLD=1 overrides.
+    if [ -n "$n_max_sha" ] && [ "${LOKI_TC_NO_HOLD:-0}" != 1 ] && is_ancestor "$REMOTE/main" "$n_max_sha"; then
+        runs="$(runs_json "$n_max_sha")"
+        for name in "${REQUIRED_TRAIN[@]}"; do
+            st="$(check_state "$runs" "$name")"
+            if [ "$st" = pending ] || [ "$st" = missing ]; then
+                log A "$local_main" "HOLD train/$n_max still running ($name:$st)"; return 0
+            fi
+        done
+    fi
     n=$((n_max + 1))
     if [ "$DRY_RUN" = 1 ]; then
         log A "$local_main" "WOULD_PUSH $local_main:refs/heads/train/$n"; return 0
