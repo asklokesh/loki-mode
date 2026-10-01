@@ -1885,3 +1885,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D50-F5 r3 built (845c1c52, compound-token evidence for aiq-52). D50-F2r r3 (the D53 gate classifier) is building: r2 still let an unread tolerance column and sign-adjacent tokens through. Both go to one batched opus re-review.
 - D53-Q1 for the CTO: under D53(a), a bug-report task can license a test change to the buggy value.
 - Pace: the peer's live /usage showed 36% at 13:30Z, about 4x the pace budget. Capped at about 4 engineers, no new opus except moat or latest-moving reviews, haiku for mechanical work.
+
+## 2026-10-01T15:15Z v10.5.33 latest; train/64 in CI; reds dropped per D46 rule 2
+- Releases per hour (D46 amendment target 6): 1 in the trailing hour (v10.5.33 at 14:57Z, npm gitHead 95049844, auto-promoted to latest). The automated captain (train-cycle.sh) is merged locally for train/65 and is not yet running live.
+- v10.5.33: D50-F4 (a failed run never opens a PR of the user's pre-existing changes; backstop with the worker env and --no-filters).
+- train/62 red on tsc (D50-F2r TS2532): F2r dropped, re-landed as F2r4 with a typecheck fix. train/63 red: RC-AUTO (Linux fixture default branch master) and PY-ABORT (os._exit in main() killed pytest workers) dropped and re-landed as RC-AUTO2 and PY-ABORT2. The new rule from two incidents: every loki-ts slice runs bun run typecheck; bun test does not typecheck.
+- train/64 (b9b7c8a3) in CI: P0 dashboard fix (founder-reported: loki start showed the frontend-not-found JSON; test suites had leaked dashboards into the real HOME and reuse trusted them; now reuse needs same version, package and HTML, LISTEN-only port check, built-in HTML fallback, first-run gate checks GET /), D54 no-pricing sweep, D50-F5, D50-F2r4.
+- D54 product scope recorded (docs/PRODUCT.md, free, no editions); OPEN ITEMS ledger re-ranked; D50-W1 and D53-Q1 ruled.
