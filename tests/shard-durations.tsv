@@ -682,6 +682,7 @@ v10 guard rules (D44)	34
 Every test suite is registered in a runner (D44)	8
 Structural checks catch planted defects (D44-C)	45
 No script or test removes run-owned temp dirs by glob (E-140)	2
+No test starts a build against the repo root (E-165)	2
 v10 ops (E-142)	70
 first-run gate assertion logic (A-02)	12
 release publishes to npm next; promote.yml gates latest on the first-run gate (A-01)	3

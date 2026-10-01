@@ -409,8 +409,21 @@ else
     log_fail "5.1 loki start --help shows mirofish" "mirofish not mentioned in help output"
 fi
 
+# E-165: `loki start` runs only in a throwaway git repo with a stub provider on
+# PATH that exits at once, under timeout -k. Never in the repo root.
+START_FX="$_TEST_TMPDIR/start-fx"
+mkdir -p "$START_FX/bin" "$START_FX/repo"
+printf '#!/bin/sh\nexit 1\n' > "$START_FX/bin/claude"
+chmod +x "$START_FX/bin/claude"
+git -C "$START_FX/repo" init -q
+run_start_fx() {
+    ( cd "$START_FX/repo" || exit 1
+      LOKI_NO_BROWSER=1 HOME="$START_FX" PATH="$START_FX/bin:$PATH" \
+          timeout -k 5 30 "$PROJECT_ROOT/autonomy/loki" start "$@" 2>&1 </dev/null )
+}
+
 # 5.2 --no-mirofish is a recognized flag (doesn't error as unknown)
-output=$("$PROJECT_ROOT/autonomy/loki" start --no-mirofish 2>&1 || true)
+output=$(run_start_fx --no-mirofish || true)
 if echo "$output" | grep -qi "unknown option\|unrecognized option"; then
     log_fail "5.2 --no-mirofish recognized flag" "flagged as unknown option"
 else
@@ -418,7 +431,7 @@ else
 fi
 
 # 5.3 --mirofish-docker without image shows error
-output=$("$PROJECT_ROOT/autonomy/loki" start --mirofish-docker 2>&1 || true)
+output=$(run_start_fx --mirofish-docker || true)
 if echo "$output" | grep -qi "requires"; then
     log_pass "5.3 --mirofish-docker without image shows requires error"
 else
@@ -426,7 +439,7 @@ else
 fi
 
 # 5.4 --mirofish-rounds without number shows error
-output=$("$PROJECT_ROOT/autonomy/loki" start --mirofish-rounds 2>&1 || true)
+output=$(run_start_fx --mirofish-rounds || true)
 if echo "$output" | grep -qi "requires"; then
     log_pass "5.4 --mirofish-rounds without number shows requires error"
 else
