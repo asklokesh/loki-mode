@@ -243,6 +243,42 @@ if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; t
     exec "$BASH_CLI" "$@"
 fi
 
+# Loki 10 bun resolver: bun on PATH, then an npm-installed @oven/bun-* optional
+# dependency under REPO_ROOT (postinstall moves it to node_modules/bun/bin/bun.exe;
+# under --ignore-scripts it stays in @oven/bun-<os>-<arch>). A candidate counts only if `--version` exits 0
+# within 2s. Prints the path, or nothing.
+_loki_bun_probe() {
+    local c="$1" t p w rc
+    t=$(command -v timeout || command -v gtimeout || true)
+    if [ -n "$t" ]; then "$t" -k 1 2 "$c" --version >/dev/null 2>&1; return $?; fi
+    "$c" --version >/dev/null 2>&1 &
+    p=$!
+    ( sleep 2; kill -9 "$p" 2>/dev/null ) >/dev/null 2>&1 &
+    w=$!
+    { wait "$p"; } 2>/dev/null; rc=$?
+    kill "$w" 2>/dev/null
+    return $rc
+}
+_loki_bun() {
+    local c
+    c=$(command -v bun 2>/dev/null || true)
+    if [ -n "$c" ] && _loki_bun_probe "$c"; then printf '%s\n' "$c"; return 0; fi
+    for c in "$REPO_ROOT/node_modules/bun/bin/bun.exe" "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun; do
+        [ -x "$c" ] && _loki_bun_probe "$c" && { printf '%s\n' "$c"; return 0; }
+    done
+    return 0
+}
+# Reason text for the fallback notice: missing, or failed to start, exit N.
+_loki_bun_why() {
+    local c rc
+    for c in "$REPO_ROOT/node_modules/bun/bin/bun.exe" "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun; do
+        [ -x "$c" ] || continue
+        _loki_bun_probe "$c"; rc=$?
+        echo "failed to start, exit $rc"; return 0
+    done
+    echo missing
+}
+
 # M-08 (docs/v10/MODERNIZE.md section 2): the NEW `loki modernize <repo> --to
 # <target>` form always reaches the Loki 10 (Bun) modernize CLI, regardless of
 # LOKI_ENGINE or the default engine flip. Ahead of the v10 block below so
@@ -264,8 +300,9 @@ fi
 if [ "${1:-}" = "modernize" ]; then
     for _loki_mod_a in "$@"; do
         if [ "$_loki_mod_a" = "--to" ]; then
-            command -v bun >/dev/null 2>&1 || { echo "Error: loki modernize needs bun." >&2; exit 1; }
-            exec bun "$BUN_CLI" engine10 "$@"
+            _lb=$(_loki_bun)
+            [ -n "$_lb" ] || { echo "Error: loki modernize needs bun." >&2; exit 1; }
+            exec "$_lb" "$BUN_CLI" engine10 "$@"
         fi
     done
     unset _loki_mod_a
@@ -325,15 +362,31 @@ case "${LOKI_ENGINE:-$_loki_engine_default}" in
         # Default (unset) mode never breaks a host: no bun, or a provider engine10 has no
         # invoker for, falls through to the legacy engine. Explicit v10 keeps its hard error.
         if [ "$_e10" = "1" ] && [ "${LOKI_ENGINE:-}" != "v10" ]; then
-            case "${LOKI_PROVIDER:-claude}" in claude|codex|cline|aider) ;; *) _e10=0 ;; esac
-            command -v bun >/dev/null 2>&1 || _e10=0
-            if [ "$_e10" = "0" ]; then
-                echo "loki: using the legacy engine (the Loki 10 engine needs bun and LOKI_PROVIDER of claude, codex, cline or aider)." >&2
+            case "${LOKI_PROVIDER:-claude}" in
+                claude|codex|cline|aider) ;;
+                *)
+                    _e10=0
+                    echo "loki: using the legacy engine (the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider)." >&2
+                    ;;
+            esac
+            if [ "$_e10" = "1" ]; then
+                _lb=$(_loki_bun)
+                if [ -z "$_lb" ]; then
+                    _e10=0
+                    case "$(uname -s 2>/dev/null)" in
+                        Darwin) _os=darwin ;; Linux) _os=linux ;; MINGW*|MSYS*|CYGWIN*) _os=win32 ;; *) _os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]') ;;
+                    esac
+                    case "$(uname -m 2>/dev/null)" in
+                        arm64|aarch64) _arch=aarch64 ;; x86_64|amd64) _arch=x64 ;; *) _arch=$(uname -m 2>/dev/null) ;;
+                    esac
+                    echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for ${_os}-${_arch} is $(_loki_bun_why)). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
+                fi
             fi
         fi
         if [ "$_e10" = "1" ]; then
-            command -v bun >/dev/null 2>&1 || { echo "Error: LOKI_ENGINE=v10 needs bun. Install bun, or set LOKI_ENGINE=legacy to use the previous engine." >&2; exit 1; }
-            exec bun "$BUN_CLI" engine10 "${_e10_args[@]}"
+            _lb=$(_loki_bun)
+            [ -n "$_lb" ] || { echo "Error: LOKI_ENGINE=v10 needs bun. Install bun from https://bun.sh, or set LOKI_ENGINE=legacy to use the previous engine." >&2; exit 1; }
+            exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi
         unset _e10 _e10_args
         ;;
