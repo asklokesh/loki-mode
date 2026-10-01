@@ -94,8 +94,8 @@ export function skipped(out: string): number {
     .reduce((t, l) => t + [...l.matchAll(/(\d+) (?:skipped|deselected|xfailed)|skipped (\d+)/g)].reduce((u, m) => u + +(m[1] ?? m[2]!), 0), 0);
 }
 const CFG_ALWAYS = /(^|\/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
-const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json)$/;
-const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|addopts|testpaths)/im;
+const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json|vite\.config\.[\w.]+)$/;
+const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|\btest\s*:|addopts|testpaths|testPathIgnorePatterns|testMatch|testRegex|testIgnore|\bexclude\b)/im; // A-119b: in-block jest keys, vite test block
 /** A-115: changed files that configure the test runner. Files that also hold dependencies and metadata (setup.cfg, pyproject.toml,
  *  package.json) count only when a changed line names a runner or the test script, or the file is new (no diff against base).
  *  ponytail: a hit needs a human look, never a verdict; a runner key renamed without one of those words slips through. */

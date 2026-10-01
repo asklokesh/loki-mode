@@ -586,6 +586,33 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(honest.verdict).toBe("VERIFIED");
   }, 30000);
 
+  test("A-119b: helper, snapshot, fixture and unrecognised-name test edits or renames are NOT VERIFIED; already_done too; source-only and a new test stay VERIFIED", async () => {
+    noKey();
+    const BASE: Record<string, string> = {
+      "sum.js": "exports.sum=(a)=>a;\n", "tests/helpers.js": "exports.eq=(a,b)=>expect(a).toBe(b);\n", "tests/sum.test.js": "require('./helpers');require('../sum');\n",
+      "__snapshots__/sum.test.js.snap": "6\n", "tests/fixtures/expected.json": "6\n", "__tests__/sum.js": "t\n", "test/sum.js": "t\n", "tests/it.rs": "t\n",
+      "testutil.js": "exports.x=1;\n", "other.test.js": "require('./testutil');\n",
+    };
+    let n = 0;
+    const seal = async (edit: (repo: string) => void, over: Parameters<typeof ctxFor>[3] = {}): Promise<string> => {
+      const { repo } = makeRepo("w119b" + n++);
+      for (const [f, c] of Object.entries(BASE)) { mkdirSync(dirname(join(repo, f)), { recursive: true }); writeFileSync(join(repo, f), c); }
+      sh(["git", "add", ...Object.keys(BASE)], repo);
+      sh(["git", "commit", "-q", "-m", "tests"], repo);
+      const b = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      edit(repo);
+      const { ctx } = ctxFor(repo, b, "claude", over);
+      await commitStage.run(ctx, new AbortController().signal);
+      return receiptOf(await sealStage.run(ctx, new AbortController().signal)).verdict;
+    };
+    const w = (f: string, c = "changed\n") => (r: string) => writeFileSync(join(r, f), c);
+    const bak = (f: string) => (r: string) => sh(["git", "mv", f, f + ".bak"], r);
+    for (const edit of [w("tests/helpers.js", "exports.eq=()=>{};\n"), w("testutil.js"), w("__snapshots__/sum.test.js.snap", "5\n"), w("tests/fixtures/expected.json", "5\n"),
+      w("__tests__/sum.js"), bak("test/sum.js"), w("tests/it.rs"), bak("tests/it.rs")]) expect(await seal(edit)).toBe("PARTIAL");
+    expect(await seal(bak("test/sum.js"), { implement: { exit: "already_done", tests_reverted: [], duration_s: 1 } })).toBe("PARTIAL");
+    expect(await seal((r) => { w("sum.js", "exports.sum=(a)=>a+1;\n")(r); w("tests/new.test.js", "new\n")(r); })).toBe("VERIFIED");
+  }, 60000);
+
   test("an unusable key: signed false, SIGNING_UNAVAILABLE on NOT PROVEN, hash still recomputes", async () => {
     const keyFile = join(root, "k2.pem");
     writeFileSync(keyFile, "not a pem\n", { mode: 0o600 });

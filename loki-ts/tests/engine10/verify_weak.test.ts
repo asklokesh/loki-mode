@@ -111,6 +111,16 @@ describe("engine10 verify: weakened checks (A-115)", () => {
       "fix sum.js, covered by sum.test.js", node("sum.test.js"), node("other.test.js"));
     expect(d.not_proven.filter((n) => /fewer tests/.test(n))).toEqual([]);
   }, 60_000);
+  test("A-119b: a jest-block key in package.json and a vite.config test.exclude are test configuration; a dependency edit is not", () => {
+    const dir = repo({ "package.json": '{\n  "jest": {\n    "verbose": true\n  },\n  "dependencies": {\n    "a": "1"\n  }\n}\n', "vite.config.ts": "export default {\n  test: {\n  },\n  plugins: [],\n};\n" });
+    const base = sh(dir, ["rev-parse", "HEAD"]);
+    writeFileSync(join(dir, "package.json"), '{\n  "jest": {\n    "verbose": true,\n    "testPathIgnorePatterns": ["sum"]\n  },\n  "dependencies": {\n    "a": "1"\n  }\n}\n');
+    writeFileSync(join(dir, "vite.config.ts"), "export default {\n  test: {\n    exclude: ['sum.test.ts'],\n  },\n  plugins: [],\n};\n");
+    expect(testConfigChanged(dir, base, ["package.json", "vite.config.ts"])).toEqual(["package.json", "vite.config.ts"]);
+    writeFileSync(join(dir, "package.json"), '{\n  "jest": {\n    "verbose": true\n  },\n  "dependencies": {\n    "a": "2"\n  }\n}\n');
+    writeFileSync(join(dir, "vite.config.ts"), "export default {\n  test: {\n  },\n  plugins: [1],\n};\n");
+    expect(testConfigChanged(dir, base, ["package.json", "vite.config.ts"])).toEqual([]);
+  });
   test("testConfigChanged: a package.json dependency edit is not config; a scripts.test edit is; always-config names are", () => {
     const pkg = (t: string, deps: string): string => `{\n  "scripts": {\n    "test": "${t}"\n  },\n  "dependencies": {${deps}}\n}\n`;
     const dir = repo({ "package.json": pkg("node --test", "") }), base = sh(dir, ["rev-parse", "HEAD"]);
