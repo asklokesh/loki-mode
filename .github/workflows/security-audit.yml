@@ -33,6 +33,7 @@ on:
       - 'VERSION'
     branches:
       - main
+      - 'slice-*'
   schedule:
     # Mondays at 07:00 UTC
     - cron: '0 7 * * 1'
@@ -43,8 +44,10 @@ permissions:
   security-events: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # D46: slice-* pushes share one group per ref and cancel superseded runs;
+  # main and train/** keep a per-SHA group and are never cancelled (Tier B).
+  group: ${{ github.workflow }}-${{ (github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/slice-')) && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || startsWith(github.ref, 'refs/heads/slice-') }}
 
 jobs:
   npm-audit:
