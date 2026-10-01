@@ -138,7 +138,7 @@ provider_invoke() {
     [ -n "$prompt" ] || return 1
     prompt="$PROVIDER_COMMIT_HYGIENE"$'\n\n'"$prompt"
     command -v opencode >/dev/null 2>&1 || return 127
-    opencode run --auto --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" "$@"
+    opencode run --auto --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_with_tier <tier> <prompt>
@@ -154,7 +154,7 @@ provider_invoke_with_tier() {
     command -v opencode >/dev/null 2>&1 || return 127
     local model
     model="$(provider_get_tier_param "$tier")"
-    opencode run --auto --model "$model" "$prompt" "$@"
+    opencode run --auto --model "$model" "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- see providers/claude.sh for rationale.

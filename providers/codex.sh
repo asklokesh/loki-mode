@@ -225,7 +225,7 @@ provider_invoke() {
     done < <(_codex_model_flag "$PROVIDER_MODEL_DEVELOPMENT")
     codex exec --sandbox workspace-write --skip-git-repo-check \
         "${model_flag[@]+"${model_flag[@]}"}" \
-        "$prompt" "$@"
+        "$prompt" "$@" < /dev/null
 }
 
 # Model tier to effort level parameter (Codex uses effort, not separate models)
@@ -359,7 +359,7 @@ provider_invoke_with_tier() {
         --skip-git-repo-check \
         "${model_flag[@]+"${model_flag[@]}"}" \
         "${extra_flags[@]+"${extra_flags[@]}"}" \
-        "$prompt" "$@"
+        "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- see providers/claude.sh for the full

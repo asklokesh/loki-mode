@@ -130,7 +130,7 @@ provider_invoke() {
           --yes-always \
           --no-auto-commits \
           --model "$model" \
-          $extra_flags "$@" 2>&1
+          $extra_flags "$@" < /dev/null 2>&1
 }
 
 # Model tier to parameter (Aider uses single model, returns model name)
