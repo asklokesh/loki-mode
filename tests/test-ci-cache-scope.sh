@@ -176,6 +176,35 @@ else
     bad "YAML parser failed on fixture: $(cat "$WORK/fixture.err")"
 fi
 
+# E-162: slice-* pushes skip the 8-shard Tests matrix (Tier A runs the
+# diff-selected suites instead); train/** and main keep it; only train/** refs
+# cancel superseded Tests runs, never main.
+if python3 - "$REPO_ROOT/.github/workflows" <<'PY'
+import sys, yaml
+d = sys.argv[1]
+t = yaml.safe_load(open(d + '/test.yml'))
+a = yaml.safe_load(open(d + '/tier-a.yml'))
+trig = lambda w: w.get(True) or w.get('on')
+tb = trig(t)['push']['branches']
+ab = trig(a)['push']['branches']
+errs = []
+if 'slice-*' in tb: errs.append('test.yml still triggers on slice-* (8-shard matrix)')
+if 'main' not in tb or 'train/**' not in tb: errs.append('test.yml lost main or train/**')
+if t['jobs']['shell-tests']['strategy']['matrix']['shard'] != list(range(8)): errs.append('shell-tests no longer 8 shards')
+if 'slice-*' not in ab: errs.append('tier-a.yml does not run on slice-*')
+steps = ' '.join(str(s.get('run', '')) for s in a['jobs']['select-and-run']['steps'])
+for need in ('select-tests.sh', 'structural-checks.sh', 'test-shard-coverage.sh'):
+    if need not in steps: errs.append('tier-a.yml missing ' + need)
+c = t['concurrency']
+cip = str(c['cancel-in-progress'])
+if 'refs/heads/train/' not in cip: errs.append('train refs do not cancel in progress')
+if 'refs/heads/main' in cip or 'slice-' in cip: errs.append('cancel-in-progress mentions main or slice')
+if 'github.sha' not in str(c['group']) or 'refs/heads/train/' not in str(c['group']): errs.append('group is not per-ref for train and per-sha otherwise')
+print('\n'.join(errs)); sys.exit(1 if errs else 0)
+PY
+then ok "E-162: slice has Tier A not the 8-shard matrix; train/main keep 8 shards; only train cancels"
+else bad "E-162 workflow shape (see above)"; fi
+
 echo
 echo "==============================================================="
 echo "Results: $PASS passed, $FAIL failed, $((PASS + FAIL)) total"
