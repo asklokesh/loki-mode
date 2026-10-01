@@ -120,12 +120,14 @@ case "$help_out" in
     *) bad "--max-duration is undocumented" ;;
 esac
 
+# start-guard-allow: invalid --max-duration is rejected before any build starts
 bad_out="$("$LOKI" start --max-duration 0 </dev/null 2>&1 || true)"
 case "$bad_out" in
     *"positive duration"*) ok "--max-duration 0 is rejected with a usable message" ;;
     *) bad "--max-duration 0 was accepted silently" ;;
 esac
 
+# start-guard-allow: invalid --max-duration is rejected before any build starts
 bad_out="$("$LOKI" start --max-duration nonsense </dev/null 2>&1 || true)"
 case "$bad_out" in
     *"positive duration"*) ok "a non-numeric --max-duration is rejected" ;;

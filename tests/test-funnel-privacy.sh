@@ -37,7 +37,7 @@ GREP=/usr/bin/grep
 # fallback kill the full invoked process group instead of leaving a runner child.
 cap_command() {
     if command -v timeout >/dev/null 2>&1; then
-        timeout -s KILL 20 env "$@"
+        timeout -k 5 20 env "$@"
         return $?
     fi
 
@@ -80,6 +80,15 @@ exit 0
 STUB
 chmod +x "$BINDIR/curl"
 
+# E-165: every `loki start` runs in a throwaway git repo (never the repo root)
+# with a stub provider that exits at once, under cap_command (timeout -k).
+printf '#!/bin/sh\nexit 1\n' > "$BINDIR/claude"
+chmod +x "$BINDIR/claude"
+FX="$SANDBOX/fx"
+mkdir -p "$FX"
+git -C "$FX" init -q
+for spec in secret-client-prd.md some-spec.md spec.md; do echo "# PRD" > "$FX/$spec"; done
+
 # Fresh per-case state: new HOME, new capture file.
 new_case() {
     CASE_HOME="$SANDBOX/home.$1"
@@ -105,13 +114,13 @@ settle() {
 # the invoked command to finish. Hard-cap every invocation so a `start` that
 # reaches a real runner cannot outlive the test.
 run_cli() {
-    cap_command PATH="$BINDIR:$PATH" \
+    ( cd "$FX" || exit 1; cap_command PATH="$BINDIR:$PATH" \
         HOME="$HOME" \
         LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
         LOKI_TELEMETRY=on \
         LOKI_ANALYTICS=on \
         LOKI_TTY_INTERACTIVE=1 \
-        "$REPO_ROOT/bin/loki" "$@" >"$SANDBOX/out.txt" 2>"$SANDBOX/err.txt" </dev/null || true
+        "$REPO_ROOT/bin/loki" "$@" >"$SANDBOX/out.txt" 2>"$SANDBOX/err.txt" </dev/null ) || true
     return 0
 }
 
@@ -215,9 +224,9 @@ fi
 # 3. Gates OFF (the default) -> ZERO egress.
 # ---------------------------------------------------------------------------
 new_case default_off
-env PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
+( cd "$FX" || exit 1; cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
     LOKI_TELEMETRY=off LOKI_TTY_INTERACTIVE=1 \
-    "$REPO_ROOT/bin/loki" start ./secret-client-prd.md >/dev/null 2>&1 </dev/null
+    "$REPO_ROOT/bin/loki" start ./secret-client-prd.md >/dev/null 2>&1 </dev/null )
 sleep 1
 if [ -s "$LOKI_TEST_CAPTURE" ]; then
     bad "telemetry off: zero egress" "$(cat "$LOKI_TEST_CAPTURE")"
@@ -226,9 +235,9 @@ else
 fi
 
 new_case do_not_track
-env PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
+( cd "$FX" || exit 1; cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
     DO_NOT_TRACK=1 LOKI_TTY_INTERACTIVE=1 \
-    "$REPO_ROOT/bin/loki" start ./secret-client-prd.md >/dev/null 2>&1 </dev/null
+    "$REPO_ROOT/bin/loki" start ./secret-client-prd.md >/dev/null 2>&1 </dev/null )
 sleep 1
 if [ -s "$LOKI_TEST_CAPTURE" ]; then
     bad "DO_NOT_TRACK=1: zero egress" "$(cat "$LOKI_TEST_CAPTURE")"
@@ -240,11 +249,10 @@ fi
 # 4. Telemetry ON but analytics NOT opted in -> the funnel stage still emits
 #    NOTHING. Default OFF even for telemetry-on users.
 # ---------------------------------------------------------------------------
-    # start-guard-allow: provider is the BINDIR stub shim, telemetry only
 new_case telemetry_only
-env PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
+( cd "$FX" || exit 1; cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
     LOKI_TELEMETRY=on LOKI_TTY_INTERACTIVE=1 \
-    "$REPO_ROOT/bin/loki" start ./secret-client-prd.md >/dev/null 2>&1 </dev/null
+    "$REPO_ROOT/bin/loki" start ./secret-client-prd.md >/dev/null 2>&1 </dev/null )
 sleep 1
 if $GREP -q "first_start_attempted" "$LOKI_TEST_CAPTURE" 2>/dev/null; then
     bad "telemetry on, analytics off: no funnel event" "$(cat "$LOKI_TEST_CAPTURE")"
@@ -302,20 +310,18 @@ new_case route_bun
 # emit already happened in the shim, and the Bun runner it exec'd must not
 # outlive the test.
 (
-      # start-guard-allow: provider is the BINDIR stub shim, telemetry only
-  cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
+  ( cd "$FX" || exit 1; cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
       LOKI_TELEMETRY=on LOKI_ANALYTICS=on LOKI_TTY_INTERACTIVE=1 LOKI_SDK_LOOP=1 \
-      "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null || true
+      "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null ) || true
 ) 2>/dev/null
 settle
 BUN_HIT=0
 $GREP -q "first_start_attempted" "$LOKI_TEST_CAPTURE" 2>/dev/null && BUN_HIT=1
 
 new_case route_bash
-env PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
+( cd "$FX" || exit 1; cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
     LOKI_TELEMETRY=on LOKI_ANALYTICS=on LOKI_TTY_INTERACTIVE=1 LOKI_LEGACY_BASH=1 \
-    # start-guard-allow: provider is the BINDIR stub shim, telemetry only
-    "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null
+    "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null )
 settle
 BASH_HIT=0
 $GREP -q "first_start_attempted" "$LOKI_TEST_CAPTURE" 2>/dev/null && BASH_HIT=1
