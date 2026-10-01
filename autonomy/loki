@@ -14218,7 +14218,7 @@ STALE_DAYS = 90
 p = os.environ['LOKI_CATALOG_PATH']
 try:
     updated = json.load(open(p))['updated']
-    age = (datetime.date.today() - datetime.date.fromisoformat(updated)).days
+    age = (datetime.datetime.now(datetime.timezone.utc).date() - datetime.date.fromisoformat(updated)).days
 except Exception:
     print('warn|Catalog unreadable or missing an ISO \"updated\" date -- cannot determine age')
 else:
@@ -14734,7 +14734,7 @@ _cat_path = os.environ['LOKI_CATALOG_PATH']
 try:
     import datetime as _dt
     _cat_updated = json.load(open(_cat_path))['updated']
-    _cat_age = (_dt.date.today() - _dt.date.fromisoformat(_cat_updated)).days
+    _cat_age = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.date.fromisoformat(_cat_updated)).days
     if _cat_age > CATALOG_STALE_DAYS:
         # Deliberately NOT counted. The block comment above states catalog age is
         # excluded from pass/fail/warn and from 'ok' so a stale catalog can never
