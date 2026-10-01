@@ -179,6 +179,11 @@ curl -X POST "$LOKI_TEAMS_WEBHOOK_URL" \
 These are read by `src/integrations/sync-subscriber.js`. The Jira user email is
 passed to `JiraApiClient` in code (see below); no environment variable carries it.
 
+Known issue on main: `src/integrations/sync-subscriber.js` constructs `JiraApiClient`
+without the `email` and `apiToken` it requires, so Jira auto-sync from these
+variables does not start. Construct `JiraApiClient({ baseUrl, email, apiToken })`
+in code until that is fixed.
+
 ### Configuration
 
 1. **Create a Jira API Token:**

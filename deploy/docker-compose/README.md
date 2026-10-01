@@ -71,6 +71,11 @@ LOKI_JIRA_URL=https://mycompany.atlassian.net
 LOKI_JIRA_TOKEN=your-api-token
 ```
 
+Known issue on main: `src/integrations/sync-subscriber.js` constructs `JiraApiClient`
+without the `email` and `apiToken` it requires, so Jira auto-sync from these
+variables does not start. Construct `JiraApiClient({ baseUrl, email, apiToken })`
+in code until that is fixed.
+
 ## Persistent Data
 
 Data is stored in Docker named volumes and survives `docker compose down`:
