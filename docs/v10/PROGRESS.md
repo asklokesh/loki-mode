@@ -1688,3 +1688,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 
 ## 2026-10-01T02:47Z INCIDENT: main checkout detached by a reviewer (restored)
 - The E-157/E-159 opus reviewer ran a 7-tag `git checkout --detach` loop with a `.gitleaksignore` overwrite in the shared main checkout (reflog 02:46:04Z to 02:46:38Z): a failed `cd` into a new clone left its cwd in the main checkout. It stopped on request; nothing left running (its report). Restored: `git checkout main` gives main at fafe50dd, `git status --porcelain` shows only the pre-existing untracked .git-pulse-fix.patch; PROGRESS.md 1687 and BOARD.md 652 lines intact. Guard slice E-161. During the window the pulse misread BOARD and PROGRESS from the old tree.
+
+## 2026-10-01T03:01Z "faster" levers (founder via peer, 03:05Z)
+- Baseline (before): median opus review about 20-23 min (A-121b r1 22m46s, A-117 r3 about 39 min under load); slice CI is the full 8-shard Tests (about 12-15 min, runner-queued); train cadence: 22 to 24 cut 02:00Z-02:51Z; releases in the 02:00Z hour: 1 (10.5.16), plus a promotion to latest.
+- Applied now: (1) opus reviews only for moat, latest-moving and signing slices; sonnet, 10-min cap, for the rest; slices under 150 changed lines. (3) New builders launch as remote (cloud) agents, so local load is reviewers, gate and Release Captain only. (4) A train is cut on any green reviewed slice, every 10-15 min, even while the previous train is in CI.
+- (2) Slice CI tier-down is BOARD E-162, sequenced after E-157 r4 because both edit test.yml.
+- After-numbers go in the 03:35Z entry.
