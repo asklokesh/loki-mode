@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.34 (2026-10-01)
+
+A `next` release. `loki start` now always opens a working dashboard instead of a "dashboard_frontend_not_found" error page.
+
+### Fixed
+- `loki start` could open the browser on a page showing `{"error":"dashboard_frontend_not_found", ...}`. A dashboard left running from another install (or from a test run) was reused because it answered its health check, even though it could not serve the UI. Now a running dashboard is reused only when its `/health` reports the same version and the same install path as this `loki`, and its home page actually returns HTML; otherwise a fresh dashboard starts on a free port (P0-DASH-STATIC).
+- The dashboard picks its UI from the first location that actually contains the built frontend (`index.html`): the installed package, then `LOKI_SKILL_DIR`, then `~/.claude/skills/loki-mode`, then a local `dashboard-ui/dist` build. Before this, an empty or partial directory earlier in that list was chosen and the UI could not load (P0-DASH-STATIC).
+- If no frontend is found anywhere, the dashboard home page shows a plain HTML status page with the version, a link to the API docs and the reinstall command (`npm install -g loki-mode@latest`), instead of developer JSON (P0-DASH-STATIC).
+- `loki dashboard start` no longer reports "port already in use" just because a browser still holds a closed connection to that port; only a listening process counts (P0-DASH-STATIC).
+- `/health` now reports the dashboard's version and install path.
+- A Loki 10 run on a task whose feature already exists under a compound name (for example "searchbar" against an existing `search-command` module with a test that imports it) now finds that evidence and can stop as already satisfied, instead of re-implementing the feature (D50-F5).
+
+### Changed
+- Docs and the web app no longer mention pricing, paid editions or commercial plans. Loki Mode is free, and the FAQ lists the full feature set, including multi-repo workspaces, the container with Helm and ECS, the audit log, budgets and Slack (D54).
+- Repo tooling: test suites that start a dashboard run with a throwaway HOME and stop their own dashboard by PID, a guard test fails if a suite touches the real dashboard registry or leaves a dashboard running, and the first-run gate checks that the dashboard home page returns HTML.
+- Loki 10's internal label for a changed test value is now an honest note next to "weakened test", and the classifier behind it runs Python in isolated mode outside the repository (D50-F2r). Verdicts are unchanged: any edit to an existing test still ends PARTIAL.
+
 ## v10.5.33 (2026-10-01)
 
 A `next` release. A Loki 10 run that fails no longer opens a pull request made of files you had already changed before the run.
