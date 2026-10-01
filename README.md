@@ -26,15 +26,16 @@ npm install -g loki-mode      # or: bun install -g loki-mode
 loki quickstart               # guided first build
 loki start ./prd.md           # build from a PRD
 loki start owner/repo#123     # build from an issue
+loki quick "fix the login bug"   # one small task on the Loki 10 engine
 ```
 
 Works with Claude Code (full support), Cline, OpenAI Codex CLI, Aider and opencode.
 
 Before a build counts as done, a review council selects reviewers from a specialist pool (`agents/types.json`, scored by `run.sh:FOCUS_KEYWORDS`). The bundled MCP server exposes 36 tools over stdio (`mcp/server.py`).
 
-## Loki 10 engine (preview)
+## Loki 10 engine
 
-Opt-in: set LOKI_ENGINE=v10 <!-- loki10-default -->
+Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. Set LOKI_ENGINE=legacy or run `loki legacy <args>` for the previous engine. <!-- loki10-default -->
 
 Guide, provider table and summary format: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
 

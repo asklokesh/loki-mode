@@ -1,10 +1,16 @@
 # Loki 10 engine guide
 
-Opt-in: set LOKI_ENGINE=v10 <!-- loki10-default -->
+Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. Set LOKI_ENGINE=legacy or run `loki legacy <args>` for the previous engine. <!-- loki10-default -->
 
-Loki 10 is the rewritten engine (docs/v10/ENGINE.md). It is not the default
-yet. Every command below only runs when LOKI_ENGINE=v10 is set; leave it
-unset and `loki` keeps using the current (legacy) engine exactly as before.
+Loki 10 is the rewritten engine (docs/v10/ENGINE.md). Since the D48 flip it
+is the default for three entry points: `loki "<task>"`, `loki owner/repo#N`
+(issue mode) and `loki quick "<task>"`. Each prints one start line,
+`Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous
+engine)`, then the summary below. Everything else (`loki start`, `loki
+status`, `loki verify`, `loki dashboard` and the rest) is unchanged unless
+you set LOKI_ENGINE=v10 explicitly, which also routes status, verify and
+dashboard to the v10 commands. The previous engine stays one step away:
+`loki legacy <args>` and LOKI_ENGINE=legacy.
 
 Some pieces named in this guide are still being built. Each one below says
 so plainly instead of describing a finished feature.
@@ -12,19 +18,34 @@ so plainly instead of describing a finished feature.
 ## Quickstart
 
 Put the task first, as a quoted multi-word string, so bin/loki's router
-sends it to the v10 engine instead of the legacy one. A one-word argument
-that is not an issue ref, or any first argument starting with `-`, stays
-on the legacy engine.
+sends it to the v10 engine. A one-word argument that is not an issue ref,
+or any first argument starting with `-`, stays on the legacy engine.
 
 ```
-LOKI_ENGINE=v10 loki "fix the login redirect loop" --no-pr
+loki "fix the login redirect loop" --no-pr
 ```
+
+`loki quick "<task>"` is the small-task entry. It runs the same engine
+without opening a pull request (the legacy quick never opened one), and the
+engine's own sizing picks the lean path for a small task: Plan and Wall are
+skipped and implement starts on sonnet, escalating to the top model only
+on a real test failure (E-64; `LOKI_E10_CASCADE=0` turns the cascade off).
+`loki quick --help` and a flag-first `loki quick -v "<task>"` stay on the
+legacy quick.
+
+```
+loki quick "fix the login redirect loop"
+```
+
+If bun is not installed, or LOKI_PROVIDER names a provider the v10 engine
+has no invoker for (anything but claude, codex, cline, aider), these entry
+points fall back to the legacy engine instead of failing.
 
 Issue refs work the same way:
 
 ```
-LOKI_ENGINE=v10 loki owner/repo#123
-LOKI_ENGINE=v10 loki https://github.com/owner/repo/issues/123
+loki owner/repo#123
+loki https://github.com/owner/repo/issues/123
 ```
 
 bin/loki routes GitHub, GitLab (`.../-/issues/N`) and Jira
@@ -58,9 +79,13 @@ verify, seal) and then, in the supervisor, the pr stage, ending in the
 Slack is not part of the v10 engine surface (no command, no notification
 hook) and is in progress, tracked with the other wave 3 items.
 
-## The 5-line summary
+## The summary
 
-A finished run prints five lines, one label each:
+A finished run prints the start line, then one label per line (Outcome,
+PR, Receipt, NOT PROVEN, Cost, Time; a Reason line is added for any
+outcome other than VERIFIED or ALREADY_SATISFIED). The quiet default stays
+within 8 lines. The block below is the older 5-line form; the labels are the
+same:
 
 ```
 PR:         https://github.com/owner/repo/pull/1
@@ -81,7 +106,13 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
   separate `; flaky ...` clause on the same line.
 - **Cost**: the provider-reported dollar figure and token count. When the
   provider does not report cost, this line reads `not measured` instead of
-  `$0.00`; a missing cost is never rendered as free.
+  `$0.00`; a missing cost is never rendered as free. The one exception is the
+  CLI invoker (LOKI_E10_INVOKER=cli, which the first-run gate's stub uses): it
+  has no dollar figure to report, so the run records 0 with the source marker
+  `cli-invoker-unmetered` in the cost event, the receipt (`cost.source`) and
+  the efficiency record, shows `$0.00 (...; CLI invoker records no cost)`, and
+  adds `cost unmetered (CLI invoker; recorded as 0)` to NOT PROVEN. The cost
+  fields are never null on such a run.
 - **Time**: total wall time, then each stage's own duration in parentheses.
 
 This formatter (`loki-ts/src/engine10/output.ts`, `formatSummary`) is
@@ -138,13 +169,12 @@ provider names (`claude`, `codex`, `cline`, `aider`); it is not supported.
 
 ## After the flip
 
-Once v10 becomes the default (docs/v10/DECISIONS.md, D29), `loki`, `loki
-status`, `loki verify` and `loki dashboard` with no `LOKI_ENGINE` set will
-mean the v10 commands described above. The previous engine stays fully
-reachable: `loki legacy <args>` and `LOKI_ENGINE=legacy` both route to it,
-unchanged. Nothing is removed at the flip.
-
-That flip has not happened on main as of this guide. The opt-in line near
-the top of this file and of README.md's section is the one place that
-records which state we are in; it changes in the same commit as the flip
-itself.
+D48 made v10 the default for `loki "<task>"`, `loki owner/repo#N` and
+`loki quick "<task>"`. The previous engine stays fully reachable and
+unchanged: `loki legacy <args>` (prints a short deprecation notice to
+stderr, then runs exactly the pre-flip route for `<args>`) and
+`LOKI_ENGINE=legacy` (the same, without the notice, for scripts). Any
+LOKI_ENGINE value other than v10 or unset also keeps the legacy engine.
+Nothing is removed at the flip. The one place that records which state we
+are in is the marked line near the top of this file and of README.md's
+Loki 10 section; it changed in the same commit as the flip.

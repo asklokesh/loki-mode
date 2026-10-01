@@ -1,9 +1,9 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { recordSessionCost, resultCostPath } from "./cost.ts";
+import { recordSessionCost, resultCostPath, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
@@ -122,12 +122,16 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const ownPartial = partialUsagePath(ownRoot, opts.iterationId), destPartial = partialUsagePath(cfg.lokiRoot, opts.iterationId); // E-98e: killed session's partial-usage snapshot, same copy
   if (ownPartial !== destPartial && existsSync(ownPartial)) { mkdirSync(dirname(destPartial), { recursive: true }); copyFileSync(ownPartial, destPartial); }
   const model = opts.model ?? cfg.model ?? resolveModel(cfg.provider); // opts.model (E-45/E-64 pin) wins, matching session.started's precedence
+  if (process.env["LOKI_E10_INVOKER"] === "cli" && cfg.provider === "claude" && status !== "killed" && !existsSync(dest)) { // D48: the CLI invoker (stub) reports no cost; record 0 with a marker, never null
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, JSON.stringify({ total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model, source: UNMETERED }));
+  }
   const info = { status, durationMs: Math.round(durationS * 1000), model };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
   const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
-    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.source || "not measured",
+    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.unmetered ? UNMETERED : c.source || "not measured",
   });
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {

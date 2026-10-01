@@ -899,13 +899,13 @@ loki enterprise status
 
 ## Loki 10 engine (preview)
 
-Opt-in: set LOKI_ENGINE=v10 <!-- loki10-default -->
+Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. Set LOKI_ENGINE=legacy or run `loki legacy <args>` for the previous engine. <!-- loki10-default -->
 
 A rewritten engine is under active development. Full guide, provider
 table and the 5-line summary format: [docs/v10/GUIDE.md](../docs/v10/GUIDE.md).
 
 ```
-LOKI_ENGINE=v10 loki "fix the login redirect loop" --no-pr
+loki "fix the login redirect loop" --no-pr
 ```
 
 The router (bin/loki), the CLI surface (`--help`), and the run itself
