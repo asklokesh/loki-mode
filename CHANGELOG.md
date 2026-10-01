@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.5.15 (2026-10-01)
+
+A `next` release. A v10 run that renames or deletes an existing test file can no longer be sealed as VERIFIED, and verify counts progress on an edited relevant test file correctly.
+
+### Fixed
+- A v10 run whose diff deletes or renames a test file that existed before the run (for example renaming `sum.test.js` to `sum.spec.test.js` and weakening an expectation) now seals PARTIAL with `weakened test: <file>` under NOT PROVEN; previously the entry was listed but the verdict could still be VERIFIED (A-119).
+- Verify counts an edited relevant test file as progress when the test ids that were red on the base now pass, while the run still stays PARTIAL because the file was edited; the node test runner's base pass/fail count is read from the last summary lines, so a mid-output count no longer skews the comparison (A-115b).
+
 ## v10.5.14 (2026-10-01)
 
 A `next` release. v10 is quiet by default and never reports a tampered run as verified, a run stops on a real provider authentication or credit failure, and the signing key file name no longer trips the secret scanner.
