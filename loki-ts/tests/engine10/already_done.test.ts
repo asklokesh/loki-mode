@@ -167,6 +167,22 @@ describe("findEvidence compound matching (D50-F5)", () => {
     noCandidate("productivity report", "src/product.ts", "Product", 'import { Product } from "./product";');
     noCandidate("show information panel", "src/inform.ts", "inform", 'import { inform } from "./inform";');
   });
+  test("more suffixes are not compounds (ful, hood, ship, dom, ance, ency, ator, ence)", () => {
+    for (const [kw, stem] of [["successful", "success"], ["neighborhood", "neighbor"], ["ownership", "owner"], ["chiefdom", "chief"], ["performance", "perform"], ["dependency", "depend"], ["validator", "valid"], ["existence", "exist"], ["parentwards", "parent"], ["colorish", "color"]]) {
+      noCandidate(`improve ${kw} flow`, `src/${stem}.ts`, stem, `import { x } from "./${stem}";`);
+    }
+  });
+  test("multi-line template literals and Python backslash continuations are not imports", () => {
+    const cases: [string, string, string][] = [
+      ["src/search-command.tsx", "src/search-command.test.tsx", "const fx = `\nimport { SearchCommand } from './search-command';\n`;"],
+      ["src/search_command.py", "src/search_command.test.py", 'x = "a\\\nimport search_command"'],
+    ];
+    for (const [sf, tf, body] of cases) {
+      const dir = repo({ [sf]: "", [tf]: body });
+      expect(findEvidence(AIQ, mapOf([{ path: sf, symbols: ["SearchCommand"] }]), testsOf(tf), dir)).toEqual([]);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
   test("string literals, block comments and Python docstrings never count as imports", () => {
     const cases: [string, string][] = [
       ["src/search-command.test.tsx", `const s = "x from 'search-command'";`],

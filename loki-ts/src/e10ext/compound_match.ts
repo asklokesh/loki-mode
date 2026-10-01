@@ -19,14 +19,14 @@ function parts(s: string): string[] {
 const MIN_PREFIX = 5; // a stem token this long or longer may be the front of a compound keyword ("search" in "searchbar")
 
 // "exporting", "authorization", "productivity" are a stem plus a suffix, not a compound ("searchbar" is). Remainders under 3 chars never count.
-const SUFFIX = /^(ation|ization|isation|ity|ivity|ments?|ives?|als?|ures?|ness|ism|ist|ize|ise|able|ible|ous|ics?|ings?|ed|ers?|ions?|ly|less|es|s)$/;
+const SUFFIX = /^(ation|ization|isation|ity|ivity|ments?|ives?|als?|ures?|ness|ism|ist|ize|ise|able|ible|ous|ics?|ings?|ed|ers?|ions?|ly|less|es|s|(ful|hood|ship|dom|ance|ence|ancy|ency|ator|ant|ent|ary|ery|ory|ward|wise|like|ish)s?)$/;
 
 const VENDORED = new Set(["vendor", "third_party", "build", ".venv", "__generated__", "coverage", "node_modules", "dist"]);
 const vendored = (p: string): boolean => p.split("/").some((s) => VENDORED.has(s));
 
 /** Import statements only, normalized: comments and Python triple-quoted strings are stripped first, then a line must START as an import, an export-from, a `} from`, or a require assignment. */
 function importLines(src: string): string[] {
-  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/("""|''')[\s\S]*?\1/g, "").replace(/(^|\s)(\/\/|#).*$/gm, "$1");
+  const code = src.replace(/\\\r?\n/g, "").replace(/\/\*[\s\S]*?\*\//g, "").replace(/`[^`]*`/g, "``").replace(/("""|''')[\s\S]*?\1/g, "").replace(/(^|\s)(\/\/|#).*$/gm, "$1");
   const stmt = /^\s*(import\b|from\s+\S+\s+import\b|export\b.*\bfrom\s+["']|\}\s*from\s+["']|(const|let|var)\b.*\brequire\s*\()/;
   return code.split("\n").filter((l) => stmt.test(l)).map((l) => l.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
 }
