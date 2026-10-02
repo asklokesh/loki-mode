@@ -316,11 +316,7 @@ fi
 # needs both: the correct count being SOMEWHERE on the page says nothing about
 # what else the page still tells a reader.
 #
-# The walkthrough pages are here because they are CURRENT public surfaces: the
-# rendered architecture diagram and the competitor comparison table both
-# advertise a tool count. They also state it in several places each (SVG label,
-# tooltip description, tooltip tags, table cell), which is how a partial fix
-# hides. Historical surfaces (CHANGELOG, artifacts/, dated plans such as
+# Historical surfaces (CHANGELOG, artifacts/, dated plans such as
 # docs/V8-AGENT-SDK-PLAN.md and the dated docs/competitive/ reports) are
 # deliberately NOT listed -- a past snapshot describing the surface AT THAT TIME
 # is accurate and must not be rewritten. docs/RARV-C-CHANGE-MAP.md is historical
@@ -337,8 +333,6 @@ wiki/CLI-Reference.md
 server.json
 COMPONENTS.md
 CLAUDE.md
-docs/walkthrough/architecture.html
-docs/walkthrough/comparison.html
 docs/WANG-PRINCIPLES-PLAN.md
 SURFACES_EOF
 )"

@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Loki Mode Overview</title>
+<meta name="description" content="Loki Mode 10 explained for users, engineers, architects, executives, and as a pitch, with real flow diagrams.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --accent: #553DE9; --accent-soft: rgba(85,61,233,.09);
+  --ok: #0E9F8E; --ok-soft: rgba(14,159,142,.10);
+  --warn: #B86E00; --warn-soft: rgba(184,110,0,.10);
+  --bad: #C0367E; --bad-soft: rgba(192,54,126,.10);
+  --bg: #FAF9F7; --card: #FFFFFF; --text: #1C1A2E; --muted: #5F6473;
+  --border: #E6E3DD; --code: #F2F0EC;
+  --shadow: 0 1px 2px rgba(20,16,40,.05), 0 8px 24px rgba(20,16,40,.05);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --accent: #9A8BFF; --accent-soft: rgba(154,139,255,.13);
+    --ok: #3CCFBC; --ok-soft: rgba(60,207,188,.12);
+    --warn: #F0B44C; --warn-soft: rgba(240,180,76,.12);
+    --bad: #F07AB8; --bad-soft: rgba(240,122,184,.12);
+    --bg: #111117; --card: #1A1A24; --text: #ECEAF4; --muted: #A2A3B5;
+    --border: #2C2C3B; --code: #23232F; --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  --accent: #9A8BFF; --accent-soft: rgba(154,139,255,.13);
+  --ok: #3CCFBC; --ok-soft: rgba(60,207,188,.12);
+  --warn: #F0B44C; --warn-soft: rgba(240,180,76,.12);
+  --bad: #F07AB8; --bad-soft: rgba(240,122,184,.12);
+  --bg: #111117; --card: #1A1A24; --text: #ECEAF4; --muted: #A2A3B5;
+  --border: #2C2C3B; --code: #23232F; --shadow: none;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; -webkit-font-smoothing: antialiased; }
+code { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: .85em; background: var(--code); padding: .1em .4em; border-radius: 5px; }
+a { color: var(--accent); }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+header { padding: 48px 0 8px; text-align: center; }
+.eyebrow { font-size: .78rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { font-size: clamp(2rem, 5vw, 3rem); font-weight: 800; letter-spacing: -.025em; margin-top: 6px; }
+.lede { color: var(--muted); max-width: 640px; margin: 12px auto 0; font-size: 1.08rem; }
+.badge { display: inline-block; margin-top: 14px; font-size: .78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px; }
+
+nav.views { position: sticky; top: 0; z-index: 5; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(8px); padding: 14px 0; }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; margin: 0 auto; padding: 5px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; width: fit-content; max-width: 100%; box-shadow: var(--shadow); }
+.tab { font: inherit; font-weight: 600; font-size: .92rem; color: var(--muted); background: none; border: 0; border-radius: 10px; padding: 9px 16px; cursor: pointer; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { background: var(--accent); color: #fff; }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.panel { padding: 24px 0 72px; }
+.panel[hidden] { display: none; }
+.for { text-align: center; color: var(--muted); max-width: 680px; margin: 0 auto 8px; }
+.for b { color: var(--text); }
+h2 { font-size: 1.4rem; font-weight: 750; letter-spacing: -.01em; margin: 44px 0 4px; }
+.sub { color: var(--muted); margin-bottom: 16px; font-size: .95rem; }
+h3 { font-size: 1rem; font-weight: 700; }
+
+.diagram { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: var(--shadow); overflow-x: auto; }
+.diagram .mermaid { display: flex; justify-content: center; min-height: 60px; }
+.diagram .mermaid svg { max-width: 100%; height: auto; }
+.caption { font-size: .82rem; color: var(--muted); margin-top: 10px; text-align: center; }
+
+.grid { display: grid; gap: 14px; }
+.g2 { grid-template-columns: repeat(2, 1fr); }
+.g3 { grid-template-columns: repeat(3, 1fr); }
+.g4 { grid-template-columns: repeat(4, 1fr); }
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; box-shadow: var(--shadow); }
+.card p, .card li { color: var(--muted); font-size: .9rem; }
+.card h3 { margin-bottom: 6px; }
+.card ul { padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.card.ok { border-top: 3px solid var(--ok); }
+.card.warn { border-top: 3px solid var(--warn); }
+.card.accent { border-top: 3px solid var(--accent); }
+.card.bad { border-top: 3px solid var(--bad); }
+
+table { width: 100%; border-collapse: collapse; font-size: .88rem; background: var(--card); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { font-size: .76rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); background: var(--code); }
+tr:last-child td { border-bottom: 0; }
+.tablewrap { overflow-x: auto; border-radius: 14px; }
+
+.stat { text-align: center; }
+.stat .n { font-size: 2rem; font-weight: 800; letter-spacing: -.02em; color: var(--accent); }
+.stat .l { color: var(--muted); font-size: .85rem; }
+.stat .base { font-size: .78rem; color: var(--muted); margin-top: 4px; }
+
+.pill { display: inline-block; font-size: .7rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 6px; }
+.pill.live { background: var(--ok-soft); color: var(--ok); }
+.pill.preview { background: var(--warn-soft); color: var(--warn); }
+.pill.next { background: var(--accent-soft); color: var(--accent); }
+.pill.legacy { background: var(--bad-soft); color: var(--bad); }
+
+.note { background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); border-radius: 12px; padding: 14px 18px; font-size: .9rem; margin-top: 18px; }
+.note b { color: var(--warn); }
+
+.terminal { background: #15141F; color: #E6E4F2; border-radius: 14px; padding: 18px 20px; font-family: 'JetBrains Mono', monospace; font-size: .84rem; line-height: 1.75; overflow-x: auto; }
+.terminal .p { color: #8E7DFF; } .terminal .k { color: #9A9AB0; display: inline-block; min-width: 100px; } .terminal .g { color: #3CCFBC; }
+
+.slide { background: var(--card); border: 1px solid var(--border); border-radius: 20px; padding: clamp(24px, 5vw, 48px); box-shadow: var(--shadow); margin-bottom: 18px; }
+.slide .k { font-size: .76rem; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.slide h2 { margin: 8px 0 10px; font-size: clamp(1.5rem, 3.5vw, 2.1rem); }
+.slide p.big { font-size: 1.1rem; color: var(--muted); max-width: 760px; }
+
+footer { text-align: center; color: var(--muted); font-size: .82rem; padding: 0 16px 40px; }
+
+@media (max-width: 900px) { .g3, .g4 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 600px) { .g2, .g3, .g4 { grid-template-columns: 1fr; } .tab { padding: 8px 11px; font-size: .86rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Loki Mode 10</div>
+    <h1>Issues in. Proven pull requests out.</h1>
+    <p class="lede">An autonomous coding agent that works on your repo with the AI model you choose, checks its own work with your real tests, and hands you a pull request with a signed receipt.</p>
+    <span class="badge">Describes Loki Mode 10.6.6, npm latest, October 2026</span>
+  </header>
+</div>
+
+<nav class="views" aria-label="Choose your view">
+  <div class="wrap">
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="t-users" aria-controls="p-users" aria-selected="true">Users</button>
+      <button class="tab" role="tab" id="t-engineers" aria-controls="p-engineers" aria-selected="false" tabindex="-1">Engineers</button>
+      <button class="tab" role="tab" id="t-architects" aria-controls="p-architects" aria-selected="false" tabindex="-1">Architects</button>
+      <button class="tab" role="tab" id="t-executives" aria-controls="p-executives" aria-selected="false" tabindex="-1">Executives</button>
+      <button class="tab" role="tab" id="t-pitch" aria-controls="p-pitch" aria-selected="false" tabindex="-1">Pitch</button>
+    </div>
+  </div>
+</nav>
+
+<main class="wrap">
+
+<!-- ================= USERS ================= -->
+<section class="panel" role="tabpanel" id="p-users" aria-labelledby="t-users">
+  <p class="for">For <b>developers who will use it</b>: how to start, what happens to your issue, and what you get back.</p>
+
+  <h2>Your journey</h2>
+  <p class="sub">From install to merged pull request. You touch the purple steps; Loki Mode does the rest.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+  A([Install&lt;br/&gt;npm i -g loki-mode]):::you --> B[loki doctor&lt;br/&gt;Ready]:::you
+  B --> C{What do you have?}
+  C -->|One issue| D[loki owner/repo#123]:::you
+  C -->|A plain task| E[loki 'fix the login redirect']:::you
+  C -->|A whole backlog| F[loki backlog owner/repo --all]:::you
+  D --> G[Loki Mode works&lt;br/&gt;reads, builds, tests]
+  E --> G
+  F --> G
+  G --> H[Watch: dashboard,&lt;br/&gt;Control Plane, Slack]
+  G --> I{Outcome}
+  I -->|VERIFIED| J[Pull request&lt;br/&gt;with receipt]
+  I -->|ALREADY_SATISFIED| K[Nothing to do&lt;br/&gt;no PR]
+  I -->|BLOCKED| L[Answers one&lt;br/&gt;question from you]:::you
+  L --> G
+  J --> M([You review and merge]):::you
+  classDef you fill:#553DE9,stroke:#553DE9,color:#fff
+  </pre></div>
+
+  <h2>Commands you will actually use</h2>
+  <div class="tablewrap"><table>
+    <tr><th>You want to</th><th>Run</th><th>Notes</th></tr>
+    <tr><td>Install</td><td><code>npm i -g loki-mode</code></td><td>Bun is bundled for your platform.</td></tr>
+    <tr><td>Check setup</td><td><code>loki doctor</code></td><td>Ends with one line: Ready, or what to fix.</td></tr>
+    <tr><td>Fix one issue</td><td><code>loki owner/repo#123</code></td><td>GitHub, GitLab and Jira issue links work.</td></tr>
+    <tr><td>Do a task</td><td><code>loki "add a search bar"</code></td><td>Quote it so it is read as one task.</td></tr>
+    <tr><td>Try without a PR</td><td><code>loki owner/repo#123 --no-pr</code></td><td>Builds and verifies, opens nothing.</td></tr>
+    <tr><td>Work a backlog</td><td><code>loki backlog owner/repo --all</code></td><td>One isolated run per issue, within your budget.</td></tr>
+    <tr><td>Watch runs</td><td><code>loki dashboard start</code></td><td>Or the new Control Plane: <code>LOKI_CONTROL=1 loki control serve</code> <span class="pill preview">Preview</span></td></tr>
+    <tr><td>Check a receipt</td><td><code>loki verify</code></td><td>Says VERIFIED, TAMPERED or UNCHECKED.</td></tr>
+  </table></div>
+
+  <h2>Every run ends in one clear answer</h2>
+  <div class="grid g3">
+    <div class="card ok"><h3>VERIFIED</h3><p>Your tests ran and passed. A pull request is waiting for you.</p></div>
+    <div class="card ok"><h3>ALREADY_SATISFIED</h3><p>The work is already in your code. It shows you where, and opens no PR.</p></div>
+    <div class="card warn"><h3>PARTIAL</h3><p>Progress, but something is not proven. It lists exactly what.</p></div>
+    <div class="card warn"><h3>BLOCKED</h3><p>The issue is ambiguous. It asks you one question instead of guessing.</p></div>
+    <div class="card bad"><h3>FAILED</h3><p>It could not do it, and says why. It never calls failed work done.</p></div>
+    <div class="card accent"><h3>Inside Claude Code</h3><p>Install <b>loki-seal</b>: <code>/plugin marketplace add asklokesh/loki-mode</code>, then <code>/plugin install loki-seal@loki-mode</code>. It blocks "done" while tests are red or weakened.</p></div>
+  </div>
+
+  <h2>What you see when it finishes</h2>
+  <div class="terminal">
+    <div><span class="p">$</span> loki asklokesh/augmentiq#52</div>
+    <div>Loki 10 engine</div>
+    <div><span class="k">Outcome:</span><span class="g">ALREADY_SATISFIED</span></div>
+    <div><span class="k">PR:</span>none</div>
+    <div><span class="k">Receipt:</span>sha256:375ca001f8c2...</div>
+    <div><span class="k">NOT PROVEN:</span>full suite, app boot</div>
+    <div><span class="k">Cost:</span>$0.07 (claude, 82k tokens)</div>
+    <div><span class="k">Time:</span>24s</div>
+  </div>
+  <p class="caption">A real run: the search bar the issue asked for already existed, so it said so and stopped.</p>
+
+  <div class="note"><b>Heads up:</b> in 10.6.6, <code>loki start owner/repo#N</code> still runs the older engine. Use <code>loki owner/repo#N</code> as shown above.</div>
+</section>
+
+<!-- ================= ENGINEERS ================= -->
+<section class="panel" role="tabpanel" id="p-engineers" aria-labelledby="t-engineers" hidden>
+  <p class="for">For <b>engineers working with or on Loki Mode</b>: the run state machine, what happens in each stage, and where the code lives.</p>
+
+  <h2>The run state machine</h2>
+  <p class="sub">One TypeScript state machine on Bun, <code>loki-ts/src/engine10/</code>. A run has a 15-minute cap and writes one event log.</p>
+  <div class="diagram"><pre class="mermaid">
+stateDiagram-v2
+  direction LR
+  [*] --> Intake
+  Intake --> AlreadySatisfied: feature already present
+  Intake --> Blocked: requirement ambiguous
+  Intake --> Plan: normal task
+  Intake --> Implement: small task, lean path
+  Plan --> Wall
+  Wall --> Implement
+  Implement --> Verify
+  Verify --> Fix: real failure, max 2 rounds
+  Fix --> Verify
+  Verify --> Seal: pass or out of rounds
+  Seal --> Commit
+  Commit --> PR
+  PR --> DeepVerify: --deep
+  PR --> [*]
+  DeepVerify --> [*]
+  AlreadySatisfied --> [*]
+  Blocked --> [*]
+  </pre></div>
+
+  <h2>One issue run, step by step</h2>
+  <div class="diagram"><pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant U as You
+  participant L as loki CLI
+  participant E as engine10
+  participant P as Provider session
+  participant T as Your test runner
+  participant G as GitHub
+  U->>L: loki owner/repo#123
+  L->>E: supervisor starts run, writes events.jsonl
+  E->>G: fetch issue title, body, state
+  E->>E: intake: repo map, already-done check
+  E->>P: Wall writes acceptance checks without the code
+  E->>P: implement on the cheaper model, tokens withheld
+  P-->>E: diff
+  E->>T: verify against a clean base, only the delta judged
+  alt real failure
+    E->>P: fix round, escalate model only on failure
+    P-->>E: new diff
+    E->>T: verify again
+  end
+  E->>E: seal receipt (Ed25519), commit only in-scope files
+  E->>G: open PR with receipt (Loki pushes, not the agent)
+  E-->>U: Outcome, PR, Receipt, NOT PROVEN, Cost, Time
+  </pre></div>
+
+  <h2>Where things live</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Concern</th><th>Path</th><th>What to know</th></tr>
+    <tr><td>Stages</td><td><code>loki-ts/src/engine10/stages/</code></td><td>intake, plan, wall, implement, verify, fix, seal, commit, pr, deep</td></tr>
+    <tr><td>Run control</td><td><code>supervisor.ts</code>, <code>machine.ts</code></td><td>Caps, kill handling, the state machine itself</td></tr>
+    <tr><td>Model choice</td><td><code>sizing.ts</code></td><td>Lean path for small tasks; sonnet first, escalate on a real test failure</td></tr>
+    <tr><td>Providers</td><td><code>adapters/</code></td><td>Claude Code, Codex, Cline, Aider via <code>--provider</code></td></tr>
+    <tr><td>Run records</td><td><code>.loki/runs/&lt;id&gt;/</code></td><td><code>events.jsonl</code> with a signed final line, receipt files</td></tr>
+    <tr><td>Signing key</td><td><code>~/.loki/keys/</code></td><td>Local Ed25519 key, created on first run; <code>loki keys export</code></td></tr>
+    <tr><td>Control Plane</td><td><code>packages/control-plane/</code></td><td>Bun, Hono, Drizzle; SQLite locally, Postgres when deployed <span class="pill preview">Preview</span></td></tr>
+  </table></div>
+
+  <h2>Exit codes your scripts can rely on</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Exit</th><th>Meaning</th></tr>
+    <tr><td><code>0</code></td><td>VERIFIED or ALREADY_SATISFIED</td></tr>
+    <tr><td><code>1</code></td><td>FAILED</td></tr>
+    <tr><td><code>2</code></td><td>Usage or preflight error</td></tr>
+    <tr><td><code>3</code></td><td>Cost or time cap reached</td></tr>
+    <tr><td><code>4</code></td><td>BLOCKED, needs your answer</td></tr>
+    <tr><td><code>5</code></td><td>STALLED, the same failure repeated</td></tr>
+  </table></div>
+  <p class="caption"><code>--json</code> prints one object with <code>ok</code>, <code>outcome</code>, <code>stop</code> and the run id.</p>
+</section>
+
+<!-- ================= ARCHITECTS ================= -->
+<section class="panel" role="tabpanel" id="p-architects" aria-labelledby="t-architects" hidden>
+  <p class="for">For <b>architects and platform teams</b>: components, data flow, trust boundaries, deployment and the release path.</p>
+
+  <h2>System context</h2>
+  <p class="sub">Everything runs where your code lives. Only model calls leave, to the endpoints you choose.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph Machine["Your machine, container or cluster"]
+    CLI[loki CLI] --> ENG[Loki 10 engine]
+    ENG --> REPO[(Your repo&lt;br/&gt;working tree)]
+    ENG --> LOG[(Run event log&lt;br/&gt;.loki/runs)]
+    ENG --> KEY[(Signing key&lt;br/&gt;~/.loki/keys)]
+    LOG --> DASH[Dashboard]
+    LOG -. shipper .-> CP[Control Plane&lt;br/&gt;preview]
+    CP --> DB[(SQLite or&lt;br/&gt;Postgres)]
+  end
+  subgraph Models["Model providers you pick"]
+    CC[Claude Code]
+    CX[Codex]
+    CL[Cline / Aider]
+  end
+  subgraph Forge["Git host"]
+    ISS[Issues]
+    PRS[Pull requests]
+  end
+  ENG -->|prompts, diffs| Models
+  ISS -->|issue text| ENG
+  ENG -->|PR plus receipt| PRS
+  ENG -->|notifications| SL[Slack]
+  </pre></div>
+
+  <h2>Trust boundaries</h2>
+  <p class="sub">The AI session that reads untrusted issue text never holds the credentials that can push.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart TB
+  subgraph Untrusted["Untrusted input"]
+    I[Issue and PR text]
+  end
+  subgraph Agent["Agent session: no Git credentials"]
+    S[Model writes code]
+  end
+  subgraph Deterministic["Deterministic Loki code"]
+    V[Runs real tests]
+    R[Seals signed receipt]
+    P[Commits in-scope files, pushes, opens PR]
+  end
+  I --> S --> V --> R --> P
+  T[(GH_TOKEN, credential helper, SSH agent)] --> P
+  T -. withheld .-x S
+  </pre></div>
+
+  <h2>Components</h2>
+  <div class="grid g3">
+    <div class="card accent"><h3>Engine <span class="pill live">Live</span></h3><p>TypeScript on Bun, about 5,000 lines of core. One state machine, one event log per run, 15-minute cap.</p></div>
+    <div class="card accent"><h3>Proof <span class="pill live">Live</span></h3><p>Ed25519-signed receipts. Edits read TAMPERED; unknown keys read UNCHECKED. Third parties verify offline with a public key.</p></div>
+    <div class="card accent"><h3>Scope control <span class="pill live">Live</span></h3><p>The commit contains only files the task needs. Unrelated edits are reverted and listed under NOT PROVEN.</p></div>
+    <div class="card warn"><h3>Control Plane <span class="pill preview">Preview</span></h3><p>Stateless service (Bun, Hono, Drizzle). Runs ship events to it; it serves history, live runs and stats from real events only.</p></div>
+    <div class="card warn"><h3>Deployment <span class="pill preview">Preview</span></h3><p>Docker image and Helm chart ship in <code>deploy/</code>. Team deployment of the Control Plane is being built.</p></div>
+    <div class="card bad"><h3>Legacy engine <span class="pill legacy">Legacy</span></h3><p><code>autonomy/run.sh</code> still serves <code>loki start</code> in 10.6.6. Removal is in progress.</p></div>
+  </div>
+
+  <h2>Release path</h2>
+  <p class="sub">No version reaches <code>npm latest</code> without passing a fresh-install first-run test, on machines with and without bun.</p>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  A[Small change] --> B[Change CI&lt;br/&gt;targeted suites]
+  B --> C[Release train&lt;br/&gt;full tests, security scan]
+  C -->|green| D[npm next]
+  C -->|red| X[Drop the failing change]
+  D --> E[Post-release smoke]
+  E --> F{First-run gate&lt;br/&gt;with bun and without}
+  F -->|pass| G[npm latest]
+  F -->|fail| H[Stays on next]
+  </pre></div>
+</section>
+
+<!-- ================= EXECUTIVES ================= -->
+<section class="panel" role="tabpanel" id="p-executives" aria-labelledby="t-executives" hidden>
+  <p class="for">For <b>engineering leaders</b>: what it does for your teams, what it costs, how risk is controlled, and what is ready today.</p>
+
+  <h2>What it does, in one picture</h2>
+  <div class="diagram"><pre class="mermaid">
+flowchart LR
+  A[Backlog of issues] --> B[Loki Mode works them&lt;br/&gt;in parallel, on your infrastructure]
+  B --> C[Pull requests with tests run&lt;br/&gt;and a signed receipt]
+  C --> D[Engineers review and merge]
+  D --> E[More shipped per engineer hour]
+  </pre></div>
+
+  <h2>Measured, not promised</h2>
+  <p class="sub">From our own evaluation with hidden tests on the same model. We publish losses alongside wins.</p>
+  <div class="grid g4">
+    <div class="card stat"><div class="n">27/29</div><div class="l">small tasks completed</div><div class="base">raw Claude Code: 27/29</div></div>
+    <div class="card stat"><div class="n">$0.16</div><div class="l">per completed small task</div><div class="base">raw Claude Code: $0.24</div></div>
+    <div class="card stat"><div class="n">10/14</div><div class="l">medium tasks completed</div><div class="base">raw Claude Code: 12/14, work in progress</div></div>
+    <div class="card stat"><div class="n">24s</div><div class="l">to recognize already-done work</div><div class="base">real issue, $0.07</div></div>
+  </div>
+
+  <h2>Why leaders adopt it</h2>
+  <div class="grid g3">
+    <div class="card accent"><h3>Less review burden</h3><p>Every PR says what was tested and what was not, so reviewers do not start from zero.</p></div>
+    <div class="card accent"><h3>Cost control</h3><p>Cheaper model first, stronger model only on a real failure. Per-run and daily budgets stop runaway spend.</p></div>
+    <div class="card accent"><h3>No lock-in</h3><p>Works with the AI tools you already license. Runs inside your perimeter with your keys.</p></div>
+    <div class="card ok"><h3>Risk controls</h3><p>Scoped diffs, signed receipts, credentials kept away from the AI, and an audit trail per run.</p></div>
+    <div class="card ok"><h3>Honest outcomes</h3><p>Skipped, deleted or weakened tests never count as done. Unknown is never a pass.</p></div>
+    <div class="card ok"><h3>Free to use</h3><p>No license fee and no paid tier. You pay only your own model provider.</p></div>
+  </div>
+
+  <h2>Readiness</h2>
+  <div class="tablewrap"><table>
+    <tr><th>Capability</th><th>Status</th></tr>
+    <tr><td>Issue or task to verified PR, any of four providers</td><td><span class="pill live">Live</span></td></tr>
+    <tr><td>Signed receipts, offline verification, scope control</td><td><span class="pill live">Live</span></td></tr>
+    <tr><td>Backlog runs, <code>loki.yaml</code>, Slack</td><td><span class="pill live">Live</span></td></tr>
+    <tr><td>Control Plane: history, live runs, stats for many runs</td><td><span class="pill preview">Preview</span></td></tr>
+    <tr><td>Multi-repo apps with combined endpoint testing</td><td><span class="pill next">Next</span></td></tr>
+    <tr><td>Team deployment on Kubernetes or ECS</td><td><span class="pill next">Next</span></td></tr>
+  </table></div>
+</section>
+
+<!-- ================= PITCH ================= -->
+<section class="panel" role="tabpanel" id="p-pitch" aria-labelledby="t-pitch" hidden>
+  <div class="slide">
+    <div class="k">The problem</div>
+    <h2>AI agents say "done". Engineers still have to find out if it is.</h2>
+    <p class="big">Coding agents write code fast, then hand back work nobody has checked. Some even delete or skip the failing test. Review becomes the bottleneck, and trust never builds.</p>
+  </div>
+
+  <div class="slide">
+    <div class="k">The product</div>
+    <h2>Loki Mode turns issues into pull requests that prove themselves.</h2>
+    <div class="diagram" style="margin-top:16px"><pre class="mermaid">
+flowchart LR
+  A[Issue] --> B[Acceptance checks&lt;br/&gt;written first]
+  B --> C[Any AI model&lt;br/&gt;writes the code]
+  C --> D[Real tests run]
+  D --> E[Signed receipt]
+  E --> F[Pull request]
+    </pre></div>
+  </div>
+
+  <div class="slide">
+    <div class="k">Why it wins</div>
+    <h2>Proof, any model, your infrastructure.</h2>
+    <div class="grid g3" style="margin-top:12px">
+      <div class="card accent"><h3>Proof</h3><p>A signed receipt anyone can re-check offline. It states what was proven and what was not.</p></div>
+      <div class="card accent"><h3>Any model</h3><p>Claude Code, Codex, Cline or Aider. Switch models without switching tools.</p></div>
+      <div class="card accent"><h3>Runs where code lives</h3><p>Local, container or cluster, with your own keys.</p></div>
+    </div>
+  </div>
+
+  <div class="slide">
+    <div class="k">Proof it works</div>
+    <h2>A real issue, a real answer, 24 seconds.</h2>
+    <div class="terminal" style="margin-top:12px">
+      <div><span class="p">$</span> loki asklokesh/augmentiq#52</div>
+      <div><span class="k">Outcome:</span><span class="g">ALREADY_SATISFIED</span></div>
+      <div><span class="k">Cost:</span>$0.07</div>
+      <div><span class="k">Time:</span>24s</div>
+    </div>
+    <p class="big" style="margin-top:12px">The feature was already built. Loki Mode said so instead of rewriting it. The older approach spent 18 minutes on the same issue.</p>
+  </div>
+
+  <div class="slide">
+    <div class="k">Try it</div>
+    <h2>Free. One install. One command.</h2>
+    <div class="terminal" style="margin-top:12px">
+      <div><span class="p">$</span> npm i -g loki-mode</div>
+      <div><span class="p">$</span> loki owner/repo#123</div>
+    </div>
+    <p class="big" style="margin-top:12px"><a href="https://github.com/asklokesh/loki-mode">github.com/asklokesh/loki-mode</a> &middot; <a href="https://www.autonomi.dev">autonomi.dev</a></p>
+  </div>
+</section>
+
+</main>
+
+<footer>Loki Mode by <a href="https://www.autonomi.dev">Autonomi</a>. Source-available under BUSL-1.1, free to use.</footer>
+
+<script>
+(function () {
+  var dark = document.documentElement.getAttribute('data-theme') === 'dark' ||
+    (document.documentElement.getAttribute('data-theme') !== 'light' &&
+     window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  var ready = typeof mermaid !== 'undefined';
+  if (ready) {
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: dark ? 'dark' : 'neutral',
+      fontFamily: 'Inter, sans-serif',
+      flowchart: { curve: 'basis', htmlLabels: true, padding: 14 },
+      themeVariables: { fontSize: '14px' },
+      sequence: { mirrorActors: false }
+    });
+  } else {
+    document.querySelectorAll('.mermaid').forEach(function (el) {
+      el.insertAdjacentHTML('afterend', '<p class="caption">Diagram needs an internet connection to render.</p>');
+    });
+  }
+  // ponytail: one diagram at a time; mermaid is not safe to render concurrently.
+  var queue = Promise.resolve(), seq = 0;
+  function render(panel) {
+    if (!ready) return;
+    panel.querySelectorAll('.mermaid:not([data-done])').forEach(function (el) {
+      el.setAttribute('data-done', '1');
+      var src = el.textContent;
+      queue = queue.then(function () {
+        return mermaid.render('mmd-' + (++seq), src).then(function (out) {
+          el.innerHTML = out.svg;
+        }, function () {
+          el.innerHTML = '<p class="caption">This diagram could not be drawn.</p>';
+        });
+      });
+    });
+  }
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+  function select(tab, focus) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      var p = document.getElementById(t.getAttribute('aria-controls'));
+      p.hidden = !on;
+      if (on) render(p);
+    });
+    if (focus) tab.focus();
+    try { history.replaceState(null, '', '#' + tab.id.slice(2)); } catch (e) {}
+  }
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { select(t, false); });
+    t.addEventListener('keydown', function (e) {
+      var n = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (n) { e.preventDefault(); select(tabs[(i + n + tabs.length) % tabs.length], true); }
+    });
+  });
+  var first = document.getElementById('t-' + location.hash.slice(1)) || tabs[0];
+  var fontsReady = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  // Mermaid sizes boxes from text width, so wait for Inter before the first render.
+  fontsReady.then(function () { select(first, false); }, function () { select(first, false); });
+})();
+</script>
+</body>
+</html>
