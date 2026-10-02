@@ -65,7 +65,7 @@ grep -q "^${VICTIM}$" "$REPO_ROOT/$GUARD" \
 # mutant tree obviously isolated from the working tree.
 seed_tree() {  # $1 = destination
     local d="$1"
-    mkdir -p "$d/mcp" "$d/tests" "$d/tools" "$d/docs/walkthrough" "$d/wiki" || return 1
+    mkdir -p "$d/mcp" "$d/tests" "$d/tools" "$d/wiki" || return 1
     cp "$REPO_ROOT/mcp/server.py" "$REPO_ROOT/mcp/magic_tools.py" \
        "$REPO_ROOT/mcp/managed_tools.py" "$d/mcp/" || return 1
     cp "$REPO_ROOT/$GUARD" "$d/tests/" || return 1
@@ -334,8 +334,7 @@ seed_full_tree() {  # $1 = destination dir; leaves the tree at $1/package
     cp "$REPO_ROOT/$GUARD" "$d/package/tests/" || return 1
     local f
     for f in README.md wiki/Home.md wiki/CLI-Reference.md server.json COMPONENTS.md \
-             CLAUDE.md docs/walkthrough/architecture.html \
-             docs/walkthrough/comparison.html docs/WANG-PRINCIPLES-PLAN.md; do
+             CLAUDE.md docs/WANG-PRINCIPLES-PLAN.md; do
         mkdir -p "$d/package/$(dirname "$f")" || return 1
         cp "$REPO_ROOT/$f" "$d/package/$f" || return 1
     done
