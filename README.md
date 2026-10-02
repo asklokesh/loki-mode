@@ -117,8 +117,35 @@ flowchart TD
 | implement | A provider session makes the change, under a time budget (480s default, 1800s with `--deep`). |
 | verify and fix | Runs the checks. Failures feed up to 2 fix rounds (`MAX_FIX_ROUNDS`). The same failures three verifies running end the run as STALLED. |
 | commit and seal | Commits the diff, then writes `.loki/runs/<run-id>/receipt.json` and `receipt.md`, signed by default. |
-| pr | Opened by the supervisor, not the worker (the worker never holds a GitHub token). A non-VERIFIED run opens a draft PR. |
+| pr | Opened by the supervisor, not the worker (the worker never holds a GitHub token). A non-VERIFIED run opens a draft PR. The body is written for a 60-second review: what the issue asked, what changed, how it was tested, NOT PROVEN, then the receipt digest and `loki verify`. Data the run did not record prints "not recorded". |
 | deep verify | Detached, started after the PR opens (so not with `--no-pr`): full suite, app-boot probe, council, secret scan. A check that is refused or unavailable is reported as NOT PROVEN, never as red. `--deep` is a separate flag that raises the implement and run budgets. |
+
+PR body sample (`loki-ts/src/e10ext/reviewer_body.ts`):
+
+```
+## What the issue asked
+- handles empty input
+- rejects bad tokens
+
+## What changed and why
+- Why: Fix the parser
+- src/parser.ts
+- tests/parser.test.ts
+
+## How it was tested
+- Verdict: VERIFIED
+- Checks: 2 passed, 0 failed, 0 not run, 0 flaky (4 individual tests counted)
+- Command: `bun test tests/parser.test.ts` -> pass
+- Target tests (written before the fix): parser.test.ts
+- Before the fix: 2 failing, 0 passing on base; after: pass
+
+## NOT PROVEN
+- none
+
+## Receipt
+- Digest: sha256:ab12... (signed)
+- Verify: `loki verify run-1`
+```
 
 The run cap is 900s (2700s with `--deep`, `DEFAULT_CAP_S` and `DEEP_CAP_S` in `types.ts`); commit, seal and pr still run after the cap fires. A run whose cap fired and which did not verify exits BUDGET_STOP.
 

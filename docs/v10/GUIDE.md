@@ -106,6 +106,36 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 - **PR**: the opened pull request URL, or `none` when the run used
   `--no-pr` or never got that far. A draft PR adds the draft reason in
   parentheses.
+
+The PR body is reviewable in 60 seconds. It leads with what the issue asked,
+then what changed and why, how it was tested, NOT PROVEN, and the receipt digest
+with the `loki verify` command. A field the run did not record reads "not
+recorded", never a number:
+
+```
+## What the issue asked
+- handles empty input
+- rejects bad tokens
+
+## What changed and why
+- Why: Fix the parser
+- src/parser.ts
+- tests/parser.test.ts
+
+## How it was tested
+- Verdict: VERIFIED
+- Checks: 2 passed, 0 failed, 0 not run, 0 flaky (4 individual tests counted)
+- Command: `bun test tests/parser.test.ts` -> pass
+- Target tests (written before the fix): parser.test.ts
+- Before the fix: 2 failing, 0 passing on base; after: pass
+
+## NOT PROVEN
+- none
+
+## Receipt
+- Digest: sha256:ab12... (signed)
+- Verify: `loki verify run-1`
+```
 - **Verdict**: one of VERIFIED, PARTIAL, ALREADY_SATISFIED, SPEC_CONFLICT or
   FAILED.
 - **NOT PROVEN**: everything the run did not check, comma-joined. Never
