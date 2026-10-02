@@ -179,6 +179,8 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
       // pr.ts's own (unedited) body-writer already lists every missing check.
       const writtenBody = readFileSync(join(runDir, "pr-body.md"), "utf8");
       for (const check of sealData.not_proven) expect(writtenBody).toContain(check);
+      expect(writtenBody.startsWith("## What the issue asked")).toBe(true); // INTEL-3: the real PR body leads with the contract
+      expect(writtenBody).toContain("loki verify ");
 
       expect(isDraft(sealData.verdict as "PARTIAL", result.capHit)).toBe(true);
       expect(draftReason(sealData.verdict as "PARTIAL", result.capHit)).toBe("global cap fired");
