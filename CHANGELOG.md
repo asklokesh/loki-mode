@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.7 (2026-10-02)
+
+`loki start owner/repo#N` (or an issue URL or a quoted task) now runs Loki 10, every Loki 10 run shows and enforces a cost cap ($20 default, `--max-cost`, loki.yaml `budgets.per_run`, exit 3 on BUDGET_STOP), PRs open with a reviewer-first body, the dashboard prints the port it actually bound, and the issue-to-PR Action runs Loki 10 with a nightly `loki backlog` example.
+
+### Changes
+- docs: replace docs/walkthrough with one v10 overview page
+- fix(cli): D58 loki start <issue ref|issue URL|"task"> takes the v10 path, minimal routing only
+- fix(dashboard): P0-DASH-LEAK2 never open or print a guessed port, isolate test dashboards, fail-closed registry reuse
+- feat(actions): issue-to-pr runs the Loki 10 issue entry; add nightly backlog example
+- fix(actions): run Loki 10 with --no-pr, route explicitly, render the v10 receipt
+- test(ui-bare): assert the printed URL carries the port actually bound, document bound-port behavior
+- feat(engine10): visible per-run cost cap, --max-cost and loki.yaml budgets.per_run (D60-5)
+- feat(engine10): reviewer-first PR body (INTEL-3)
+- fix(moat): port P9 injection probe to the v10 issue path, document loki start as v10
+- chore(release): optional LOKI_TC_LEAD changelog lead sentence; record the D60-5 $20 default cap
+- chore(e10ext): drop blank lines in assert_delta.ts to keep e10ext under the 1,500-line budget after D60-3 and D60-5
+- test(engine10): assert the no-dash PR body with unicode escapes so the dash guard does not fire on the test itself
+
 ## v10.6.6 (2026-10-01)
 
 A `next` release. It ships the changes prepared for v10.6.1, v10.6.3, v10.6.4 and v10.6.5, none of which was published.
