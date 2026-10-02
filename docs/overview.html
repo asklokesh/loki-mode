@@ -122,7 +122,7 @@ footer { text-align: center; color: var(--muted); font-size: .82rem; padding: 0 
     <div class="eyebrow">Loki Mode 10</div>
     <h1>Issues in. Proven pull requests out.</h1>
     <p class="lede">An autonomous coding agent that works on your repo with the AI model you choose, checks its own work with your real tests, and hands you a pull request with a signed receipt.</p>
-    <span class="badge">Describes Loki Mode 10.6.6, npm latest, October 2026</span>
+    <span class="badge">Describes Loki Mode 10.6.7, npm latest, October 2026</span>
   </header>
 </div>
 
@@ -176,6 +176,8 @@ flowchart TB
     <tr><td>Try without a PR</td><td><code>loki owner/repo#123 --no-pr</code></td><td>Builds and verifies, opens nothing.</td></tr>
     <tr><td>Work a backlog</td><td><code>loki backlog owner/repo --all</code></td><td>One isolated run per issue, within your budget.</td></tr>
     <tr><td>Watch runs</td><td><code>loki dashboard start</code></td><td>Or the new Control Plane: <code>LOKI_CONTROL=1 loki control serve</code> <span class="pill preview">Preview</span></td></tr>
+    <tr><td>Cap the cost</td><td><code>loki owner/repo#123 --max-cost 5</code></td><td>Every run shows its cap and stops at it. $20 by default, or <code>budgets.per_run</code> in <code>loki.yaml</code>.</td></tr>
+    <tr><td>Automate it</td><td>GitHub Action</td><td>Label an issue <code>loki</code> or comment <code>/loki</code>. Add a nightly <code>loki backlog</code> schedule on your own Actions minutes.</td></tr>
     <tr><td>Check a receipt</td><td><code>loki verify</code></td><td>Says VERIFIED, TAMPERED or UNCHECKED.</td></tr>
   </table></div>
 
@@ -202,7 +204,7 @@ flowchart TB
   </div>
   <p class="caption">A real run: the search bar the issue asked for already existed, so it said so and stopped.</p>
 
-  <div class="note"><b>Heads up:</b> in 10.6.6, <code>loki start owner/repo#N</code> still runs the older engine. Use <code>loki owner/repo#N</code> as shown above.</div>
+  <div class="note"><b>Good to know:</b> <code>loki start owner/repo#N</code> and <code>loki start "a task"</code> run Loki 10 too. Starting from a PRD file still uses the older engine, which is being removed.</div>
 </section>
 
 <!-- ================= ENGINEERS ================= -->
@@ -346,7 +348,7 @@ flowchart TB
     <div class="card accent"><h3>Scope control <span class="pill live">Live</span></h3><p>The commit contains only files the task needs. Unrelated edits are reverted and listed under NOT PROVEN.</p></div>
     <div class="card warn"><h3>Control Plane <span class="pill preview">Preview</span></h3><p>Stateless service (Bun, Hono, Drizzle). Runs ship events to it; it serves history, live runs and stats from real events only.</p></div>
     <div class="card warn"><h3>Deployment <span class="pill preview">Preview</span></h3><p>Docker image and Helm chart ship in <code>deploy/</code>. Team deployment of the Control Plane is being built.</p></div>
-    <div class="card bad"><h3>Legacy engine <span class="pill legacy">Legacy</span></h3><p><code>autonomy/run.sh</code> still serves <code>loki start</code> in 10.6.6. Removal is in progress.</p></div>
+    <div class="card bad"><h3>Legacy engine <span class="pill legacy">Legacy</span></h3><p><code>autonomy/run.sh</code> still serves <code>loki start ./prd.md</code> and a few other commands. Removal is in progress.</p></div>
   </div>
 
   <h2>Release path</h2>
@@ -401,6 +403,8 @@ flowchart LR
     <tr><th>Capability</th><th>Status</th></tr>
     <tr><td>Issue or task to verified PR, any of four providers</td><td><span class="pill live">Live</span></td></tr>
     <tr><td>Signed receipts, offline verification, scope control</td><td><span class="pill live">Live</span></td></tr>
+    <tr><td>Per-run cost cap, evidence-first PR descriptions</td><td><span class="pill live">Live</span></td></tr>
+    <tr><td>GitHub Action trigger and nightly backlog schedule</td><td><span class="pill live">Live</span></td></tr>
     <tr><td>Backlog runs, <code>loki.yaml</code>, Slack</td><td><span class="pill live">Live</span></td></tr>
     <tr><td>Control Plane: history, live runs, stats for many runs</td><td><span class="pill preview">Preview</span></td></tr>
     <tr><td>Multi-repo apps with combined endpoint testing</td><td><span class="pill next">Next</span></td></tr>
