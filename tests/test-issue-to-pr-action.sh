@@ -86,14 +86,14 @@ if python3 - "$ACT" "$WF" <<'PY' 2>/dev/null
 import sys, yaml
 act = yaml.safe_load(open(sys.argv[1]))
 wf = yaml.safe_load(open(sys.argv[2]))
-run = [s for s in act["runs"]["steps"] if "loki start" in str(s.get("run", ""))]
+run = [s for s in act["runs"]["steps"] if 'loki "$TASK" --no-pr' in str(s.get("run", ""))]
 assert run and all(str((s.get("env") or {}).get("LOKI_DELEGATE_PR")) == "0" for s in run)
 assert "patch" in act["outputs"]
 agent, publish = wf["jobs"]["agent"], wf["jobs"]["publish"]
 steps = lambda j: "\n".join(str(s.get("run", "")) for s in j["steps"])
-assert "loki start" in steps(agent) and "LOKI_DELEGATE_PR: '0'" in open(sys.argv[2]).read()
+assert 'loki "${GITHUB_REPOSITORY}#${ISSUE}" --no-pr' in steps(agent) and "loki start" not in steps(agent) and "LOKI_DELEGATE_PR: '0'" in open(sys.argv[2]).read()
 assert "write" not in agent["permissions"].values()
-assert publish["needs"] == "agent" and "loki start" not in steps(publish)
+assert publish["needs"] == "agent" and 'loki "' not in steps(publish)
 assert "gh pr create" in steps(publish) and publish["permissions"]["pull-requests"] == "write"
 PY
 then

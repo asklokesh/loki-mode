@@ -15,7 +15,7 @@ branding:
 # ran the agent; this one does not.
 #
 # Token co-location within THIS job: the fetch step below holds GH_TOKEN and
-# runs no agent; the agent step runs `loki start` on the pre-fetched PRD file
+# runs no agent; the agent step runs Loki 10 (`loki "<task>" --no-pr`) on the pre-fetched PRD text
 # and is given no token (GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/
 # GITHUB_ENTERPRISE_TOKEN all explicitly blanked, overriding anything the
 # caller's `uses:` step set at a level this composite's steps would otherwise
@@ -191,7 +191,8 @@ runs:
       env:
         LOKI_PROVIDER: ${{ inputs.provider }}
         LOKI_BUDGET_LIMIT: ${{ inputs.budget_limit }}
-        LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
+        LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}  # not read by engine10
+        LOKI_E10_CAP_S: '2400'
         # The agent step never pushes or opens a PR (Rule of Two).
         LOKI_DELEGATE_PR: '0'
         ISSUE_REF: ${{ steps.ref.outputs.ref }}
@@ -213,29 +214,42 @@ runs:
 
         START_SHA="$(git rev-parse HEAD)"
         RC=0
-        loki start "$PRD_FILE" || RC=$?
+        # Loki 10 engine, routed explicitly: the task is prefixed so it is always
+        # multi-word and never starts with "-" (bin/loki sends a one-word or
+        # flag-first argument to the legacy CLI or a subcommand, and a body like
+        # "status" would otherwise run that subcommand). The task goes first and
+        # --no-pr after it, because a flag-first call also stays on legacy.
+        # --no-pr: engine10 ignores LOKI_DELEGATE_PR; this step holds no token.
+        # The run commits on loki/<runId> in this checkout, so HEAD has the change.
+        TASK="Resolve ${ISSUE_REF}. Task spec follows. $(cat "$PRD_FILE")"
+        loki "$TASK" --no-pr || RC=$?
 
         OUT="$RUNNER_TEMP/loki-out"
         mkdir -p "$OUT"
         git diff --binary "$START_SHA" HEAD -- . ':(exclude).loki' > "$OUT/loki.patch"
+        # PR body: the Loki 10 receipt this run sealed under .loki/runs/e10-*/.
+        # Rendered from the run's own receipt.md; the digest comes from receipt.json.
+        RUN_DIR="$(ls -d .loki/runs/e10-* 2>/dev/null | sort | tail -n 1)"
         {
           echo "Resolves ${ISSUE_REF}."
           echo ""
-          ID="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
-          LIB="$(npm root -g)/loki-mode/autonomy/lib/proof-pr.sh"
-          if [ -n "$ID" ] && [ -f ".loki/proofs/$ID/proof.json" ] && [ -f "$LIB" ]; then
-            # shellcheck source=/dev/null
-            . "$LIB" && render_evidence_receipt_md ".loki/proofs/$ID/proof.json" "" ""
+          if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/receipt.md" ]; then
+            head -c 20000 "$RUN_DIR/receipt.md"
+            cp "$RUN_DIR/receipt.json" "$OUT/receipt.json" 2>/dev/null || true
+            SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("receipt_sha256",""))' "$RUN_DIR/receipt.json" 2>/dev/null || true)"
+            echo ""
+            echo "Receipt digest (sha256): ${SHA:-unavailable}"
+            echo "Check it: download the loki-patch artifact of this run and run \`loki verify receipt.json\`."
           else
-            echo "Evidence Receipt: unavailable for this run."
+            echo "Evidence Receipt: unavailable for this run (no receipt under .loki/runs/)."
           fi
         } > "$OUT/pr-body.md"
         echo "patch=$OUT/loki.patch" >> "$GITHUB_OUTPUT"
         echo "pr_body=$OUT/pr-body.md" >> "$GITHUB_OUTPUT"
 
         echo "::warning::This action does not open the pull request (Rule of Two). Upload outputs.patch and open the PR from a job that holds the write token and runs no agent; see .github/workflows/loki-issue-to-pr.yml in asklokesh/loki-mode."
-        if [ -d .loki/proofs ]; then
-          echo "Evidence receipts under .loki/proofs/"
+        if [ -n "$RUN_DIR" ]; then
+          echo "Loki 10 receipt under $RUN_DIR/"
         fi
 
         exit "$RC"

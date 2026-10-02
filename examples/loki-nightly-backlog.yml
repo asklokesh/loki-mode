@@ -1,0 +1,55 @@
+# Nightly backlog: Loki works every open issue labeled `loki` on your own
+# GitHub Actions minutes, no hosted service. Copy into .github/workflows/.
+#
+# REQUIRED: set ANTHROPIC_API_KEY in repository secrets.
+#
+# `loki backlog owner/repo --label loki` runs one Loki 10 issue run per open
+# issue with that label (2 in parallel by default), each on its own
+# loki/backlog-N worktree branch. Use --issues 1,2,3 for exact issues, --all
+# for every open issue, --concurrency N to change parallelism, and --dry-run
+# to list what would run without launching anything.
+#
+# Trade-off: unlike loki-issue-to-pr.yml, this job runs the agent and holds a
+# write token in one job, so only label issues you trust (labeling needs
+# triage access). Use the issue-to-PR workflow for untrusted issue text.
+name: Loki - Nightly backlog
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # every night at 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: loki-nightly-backlog
+  cancel-in-progress: false
+
+jobs:
+  backlog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Loki Mode
+        run: npm install -g loki-mode
+
+      - name: Run the labeled backlog
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          LOKI_BUDGET_LIMIT: '10.00'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          loki backlog "${GITHUB_REPOSITORY}" --label loki --concurrency 2

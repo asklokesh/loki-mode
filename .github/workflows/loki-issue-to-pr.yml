@@ -82,8 +82,10 @@ jobs:
           # to fetch the issue and withholds it from the agent session.
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
-          LOKI_BUDGET_LIMIT: '10.00'
-          LOKI_MAX_ITERATIONS: '20'
+          # engine10 reads no cost or iteration cap; its only cap is wall time.
+          LOKI_E10_CAP_S: '2400'
+          LOKI_BUDGET_LIMIT: '10.00'      # not read by engine10; kept for the legacy path
+          LOKI_MAX_ITERATIONS: '20'       # not read by engine10; kept for the legacy path
           # Never push or open a PR from here; the publish job does that.
           LOKI_DELEGATE_PR: '0'
         run: |
@@ -97,7 +99,12 @@ jobs:
           git config user.email "${GITHUB_ACTOR:-loki-mode}@users.noreply.github.com"
 
           RC=0
-          loki start "${GITHUB_REPOSITORY}#${ISSUE}" || RC=$?
+          # Loki 10 issue entry. --no-pr is required: engine10 ignores
+          # LOKI_DELEGATE_PR, and this job's read-only token cannot push, open a
+          # PR or comment (supervisor.ts main: noPr drops opts.pr and opts.comment).
+          # The run commits on branch loki/<runId> checked out in this very
+          # checkout (stages/intake.ts ensureBranch), so HEAD carries the change.
+          loki "${GITHUB_REPOSITORY}#${ISSUE}" --no-pr || RC=$?
 
           OUT="$RUNNER_TEMP/loki-out"
           mkdir -p "$OUT"
@@ -105,17 +112,21 @@ jobs:
           # this run started from. .loki/ is run state, never part of the change.
           git diff --binary "$GITHUB_SHA" HEAD -- . ':(exclude).loki' > "$OUT/loki.patch"
 
-          # PR body: the evidence receipt this run wrote, when there is one.
+          # PR body: the Loki 10 receipt this run sealed under .loki/runs/e10-*/.
+          # Rendered from the run's own receipt.md; the digest comes from receipt.json.
+          RUN_DIR="$(ls -d .loki/runs/e10-* 2>/dev/null | sort | tail -n 1)"
           {
             echo "Resolves #${ISSUE}."
             echo ""
-            ID="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
-            LIB="$(npm root -g)/loki-mode/autonomy/lib/proof-pr.sh"
-            if [ -n "$ID" ] && [ -f ".loki/proofs/$ID/proof.json" ] && [ -f "$LIB" ]; then
-              # shellcheck source=/dev/null
-              . "$LIB" && render_evidence_receipt_md ".loki/proofs/$ID/proof.json" "" ""
+            if [ -n "$RUN_DIR" ] && [ -f "$RUN_DIR/receipt.md" ]; then
+              head -c 20000 "$RUN_DIR/receipt.md"
+              cp "$RUN_DIR/receipt.json" "$OUT/receipt.json" 2>/dev/null || true
+              SHA="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("receipt_sha256",""))' "$RUN_DIR/receipt.json" 2>/dev/null || true)"
+              echo ""
+              echo "Receipt digest (sha256): ${SHA:-unavailable}"
+              echo "Check it: download the loki-patch artifact of this run and run \`loki verify receipt.json\`."
             else
-              echo "Evidence Receipt: unavailable for this run."
+              echo "Evidence Receipt: unavailable for this run (no receipt under .loki/runs/)."
             fi
           } > "$OUT/pr-body.md"
 

@@ -128,6 +128,23 @@ called by the supervisor at the end of every run, so a real `loki "<task>"`
 or `loki <issue-ref>` run prints this block on completion. The block above
 is that function's real output, not a mockup.
 
+## Triggers without a cloud
+
+Both run on your own GitHub Actions minutes; there is no hosted service.
+
+- Issue to PR: copy `.github/workflows/loki-issue-to-pr.yml` into your repository. Label an issue `loki`, or comment `/loki` as an owner, member or collaborator, and it runs `loki owner/repo#N` (the Loki 10 engine) and opens a pull request with an evidence receipt. The agent job holds a read-only token; a separate publish job opens the PR. Set `ANTHROPIC_API_KEY` in repository secrets.
+- Nightly backlog: copy `examples/loki-nightly-backlog.yml` into `.github/workflows/`. Its `schedule:` trigger runs `loki backlog owner/repo --label loki`, one Loki 10 run per labeled open issue:
+
+```yaml
+on:
+  schedule:
+    - cron: '17 3 * * *'   # nightly, 03:17 UTC
+# ...
+      - run: loki backlog "${GITHUB_REPOSITORY}" --label loki --concurrency 2
+```
+
+`loki backlog` also takes `--all`, `--issues 1,2,3` and `--dry-run`. The nightly job runs the agent and a write token together, so label only issues you trust.
+
 ## NOT PROVEN
 
 NOT PROVEN lists what a run did not verify, so a passing run is never read
