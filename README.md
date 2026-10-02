@@ -126,6 +126,23 @@ A finished run prints a short summary (see [Quiet output](#quiet-output), which 
 
 `loki status [run-id]` and `loki verify [run-id]` are built on the v10 path (bare `loki verify` follows the newest run, v10 or legacy). `loki dashboard` and `loki status` reach the v10 commands with `LOKI_ENGINE=v10`. Slack notifications are not part of the v10 engine surface yet.
 
+## Triggers without a cloud
+
+Both run on your own GitHub Actions minutes; there is no hosted service.
+
+- Issue to PR: copy `.github/workflows/loki-issue-to-pr.yml` into your repository. Label an issue `loki`, or comment `/loki` as an owner, member or collaborator, and it runs `loki owner/repo#N` (the Loki 10 engine) and opens a pull request with an evidence receipt. The agent job holds a read-only token; a separate publish job opens the PR. Set `ANTHROPIC_API_KEY` in repository secrets.
+- Nightly backlog: copy `examples/loki-nightly-backlog.yml` into `.github/workflows/`. Its `schedule:` trigger runs `loki backlog owner/repo --label loki`, one Loki 10 run per labeled open issue:
+
+```yaml
+on:
+  schedule:
+    - cron: '17 3 * * *'   # nightly, 03:17 UTC
+# ...
+      - run: loki backlog "${GITHUB_REPOSITORY}" --label loki --concurrency 2
+```
+
+`loki backlog` also takes `--all`, `--issues 1,2,3` and `--dry-run`. The nightly job runs the agent and a write token together, so label only issues you trust.
+
 ## Outcomes and exit codes
 
 A v10 run ends in exactly one outcome. The mapping is `EXIT` in `loki-ts/src/engine10/output.ts`.

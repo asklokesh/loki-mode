@@ -15,7 +15,7 @@ branding:
 # ran the agent; this one does not.
 #
 # Token co-location within THIS job: the fetch step below holds GH_TOKEN and
-# runs no agent; the agent step runs `loki start` on the pre-fetched PRD file
+# runs no agent; the agent step runs Loki 10 (`loki "<task>"`) on the pre-fetched PRD text
 # and is given no token (GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN/
 # GITHUB_ENTERPRISE_TOKEN all explicitly blanked, overriding anything the
 # caller's `uses:` step set at a level this composite's steps would otherwise
@@ -213,7 +213,8 @@ runs:
 
         START_SHA="$(git rev-parse HEAD)"
         RC=0
-        loki start "$PRD_FILE" || RC=$?
+        # Loki 10 engine: the pre-fetched issue PRD is passed as the task text.
+        loki "$(cat "$PRD_FILE")" || RC=$?
 
         OUT="$RUNNER_TEMP/loki-out"
         mkdir -p "$OUT"

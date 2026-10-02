@@ -97,7 +97,8 @@ jobs:
           git config user.email "${GITHUB_ACTOR:-loki-mode}@users.noreply.github.com"
 
           RC=0
-          loki start "${GITHUB_REPOSITORY}#${ISSUE}" || RC=$?
+          # Loki 10 issue entry (the legacy start route is not used).
+          loki "${GITHUB_REPOSITORY}#${ISSUE}" || RC=$?
 
           OUT="$RUNNER_TEMP/loki-out"
           mkdir -p "$OUT"
