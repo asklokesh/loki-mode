@@ -350,6 +350,14 @@ case "${LOKI_ENGINE:-$_loki_engine_default}" in
                     *) _e10=1; _e10_args=(--no-pr "${@:2}") ;;
                 esac
                 ;;
+            # D58: `loki start <issue ref|issue URL|"multi-word task">` takes the same v10 path as
+            # `loki <ref>`; any other start call (PRD file, flags first, one word) stays legacy.
+            start)
+                case "${2:-}" in
+                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|*" "*) _e10=1; _e10_args=("${@:2}") ;;
+                    *) _e10=0 ;;
+                esac
+                ;;
             # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
             */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) _e10=1 ;;
             *" "*) _e10=1 ;;
