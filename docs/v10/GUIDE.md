@@ -70,6 +70,14 @@ Flags, from the engine's own `--help`:
   from 480s to 1800s (`loki-ts/src/engine10/types.ts`).
 - `--provider <name>`: pick the coding provider for this run. See the
   provider table below.
+- `--max-cost <usd>`: per-run cost cap in dollars. Without the flag the cap is
+  `budgets.per_run` in the repo's `loki.yaml` (for example
+  `budgets:` then `  per_run: 5`), else the default of $20.00. The flag wins over
+  the file. The start line shows the cap in force, for example
+  `... previous engine), cap $20.00 (default)`. Once priced cost reaches the cap
+  the running stage is stopped, no later stage starts, and the run ends
+  BUDGET_STOP with exit code 3. Sessions with no provider price never count
+  toward the cap.
 
 `--no-pr`, `--deep` and `--provider` are parsed by the supervisor
 (`loki-ts/src/engine10/supervisor.ts`) and take effect on a real run.

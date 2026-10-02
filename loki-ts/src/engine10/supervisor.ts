@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
+import { capNote, resolveCap } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
@@ -91,19 +92,16 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
   private readonly log: EventLog;
   private readonly hash: Hash;
   tampered = false;
-
   constructor(readonly path: string, runId: string) {
     this.log = new EventLog(path, runId);
     this.hash = createHash("sha256"); // seed AFTER construction: EventLog may terminate a torn last line
     try { this.hash.update(readFileSync(path)); } catch { /* new file */ }
   }
-
   append(type: string, stage: StageName | null, data: Record<string, unknown>): EventEnvelope {
     const e = this.log.append(type, stage, data);
     this.hash.update(JSON.stringify(e) + "\n");
     return e;
   }
-
   ingest(line: string): EventEnvelope | null { // validates one untrusted worker stdout line; returns the appended event or null when dropped
     let x: unknown;
     try { x = JSON.parse(line); } catch { return null; }
@@ -117,14 +115,12 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     if (type === "session.ended") this.verify();
     return e;
   }
-
   sealLog(): void { // A-117: signed line after run.completed over every earlier byte, so deleting the tail or the line itself breaks `loki verify`; unsigned runs have no key and skip it
     const key = loadSigningKey(false);
     if (!key) return;
     const sha = this.hash.copy().digest("hex");
     this.append("log.sealed", null, { kid: kidOf(createPublicKey(key)), events_sha256: sha, tampered: this.tampered, sig: sign(null, Buffer.from(`${sha}:${this.tampered}`), key).toString("base64url") });
   }
-
   verify(): boolean { // re-hashes the file; on mismatch (once) emits tamper.detected; returns true when intact
     if (this.tampered) return false;
     const expected = this.hash.copy().digest("hex");
@@ -140,7 +136,6 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   if (!pid) return;
   try { process.kill(-pid, sig); } catch { /* group already gone */ }
 }
-
 // Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
 // backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 function spawnWorker(
@@ -182,7 +177,6 @@ function spawnWorker(
     });
   });
 }
-
 export async function runSupervisor(opts: SupervisorOptions): Promise<SupervisorResult> {
   const t0 = Date.now();
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
@@ -277,13 +271,14 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
     else if (a === "--deep") deep = true;
     else if (a === "--json") json = true;
     else if (a === "--verbose") verbose = true;
+    else if (a.startsWith("--max-cost")) maxCost = a.includes("=") ? a.slice(11) : args[++i] ?? "";
     else if (a === "--provider") provider = args[++i] ?? provider;
     else if (a === "--resume") { process.stderr.write("engine10: --resume was removed; start a new run\n"); return 2; }
     else words.push(a);
@@ -296,8 +291,9 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
+  const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }
   const isIssue = ISSUE_RE.test(task), model = resolveModel(provider), env: NodeJS.ProcessEnv = { ...process.env };
-  if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
+  env.LOKI_E10_MAX_COST_USD = String(cap.usd); if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
     try { fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
@@ -306,7 +302,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     }
   }
 
-  if (!json) process.stdout.write(`${START_LINE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (!json) process.stdout.write(`${START_LINE}, ${capNote(cap.usd, cap.source)}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
   const live = (e: EventEnvelope): void => {
@@ -324,13 +320,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const tailTimer = setInterval(() => {
     if (verbose && !json && existsSync(eventsPath)) { clearInterval(tailTimer); stopTail = tail(eventsPath, live, { intervalMs: 250 }); }
   }, 100);
-
   const capS = deep ? DEEP_CAP_S : Number(env.LOKI_E10_CAP_S) || DEFAULT_CAP_S;
   const res = await runSupervisor({
     runId, repoDir, env, capS,
     workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model],
     started: {
-      task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS,
+      task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, max_cost_usd: cap.usd,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
     },
     pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
