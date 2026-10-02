@@ -52,6 +52,6 @@ describe("renderReviewerBody", () => {
     expect(many).toContain("(+50 more)");
   });
   it("contains no em or en dashes", () => {
-    expect(body).not.toMatch(/[–—]/);
+    expect(body).not.toMatch(/[\u2013\u2014]/);
   });
 });
