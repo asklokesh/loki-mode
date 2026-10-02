@@ -6,7 +6,8 @@ Loki 10 is the rewritten engine (docs/v10/ENGINE.md). Since the D48 flip it
 is the default for three entry points: `loki "<task>"`, `loki owner/repo#N`
 (issue mode) and `loki quick "<task>"`. Each prints one start line,
 `Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous
-engine)`, then the summary below. Everything else (`loki start`, `loki
+engine)`, then the summary below. `loki start <issue ref | issue URL | "multi-word task">` takes the same
+v10 path as `loki <ref>`. Everything else (`loki start ./prd.md`, `loki
 status`, `loki dashboard` and the rest) is unchanged unless you set
 LOKI_ENGINE=v10 explicitly, which also routes status, verify and dashboard
 to the v10 commands. Bare `loki verify` (no LOKI_ENGINE) follows the newest
@@ -16,8 +17,10 @@ missing or LOKI_PROVIDER is unsupported, the default mode falls back to the
 legacy engine and prints one stderr line saying why. The previous engine stays one step away:
 `loki legacy <args>` and LOKI_ENGINE=legacy.
 
-`loki start owner/repo#N` still routes to the legacy engine, not Loki 10. Use
-`loki owner/repo#N` instead. The legacy engine is being removed (planned work
+`loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word
+task>"` run Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`. A PRD
+file, a flag-first call (`loki start --simple prd.md`) and a one-word start stay
+on the legacy engine. The legacy engine is being removed (planned work
 resumes 2026-10-07, see docs/v10/LEGACY-REMOVAL.md).
 
 Some pieces named in this guide are still being built. Each one below says

@@ -87,7 +87,7 @@ loki owner/repo#123
 
 The v10 engine accepts a quoted multi-word task, a GitHub, GitLab or Jira issue reference, `status`, `verify`, `dashboard`, and other subcommands. Flags (`loki-ts/src/engine10/cli.ts` USAGE): `--no-pr` builds and verifies without opening a pull request, `--deep` requests the deep verify pass and a longer implement budget, `--provider <name>` picks the coding provider (`--json` and `--verbose` are also parsed by the supervisor, see [Quiet output](#quiet-output)). The engine needs Bun; without it the command exits 1 with a message and installation instructions.
 
-**Legacy engine (being removed).** The previous engine still ships in 10.6.6 and is reachable with `LOKI_ENGINE=legacy` or `loki legacy <args>`. `loki start owner/repo#N` still routes to it, not to Loki 10. Use `loki owner/repo#N` (one issue) or `loki backlog owner/repo --all|--label X|--issues N,N` (many issues, N in parallel, each on a `loki/backlog-N` worktree branch) instead. Legacy removal is planned and resumes on 2026-10-07; see [docs/v10/LEGACY-REMOVAL.md](docs/v10/LEGACY-REMOVAL.md). Sections below marked "legacy" describe features that run only on that engine.
+**Legacy engine (being removed).** The previous engine still ships in 10.6.6 and is reachable with `LOKI_ENGINE=legacy` or `loki legacy <args>`. `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word task>"` run on Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`; `loki start ./prd.md`, a flag-first call and a one-word start stay on the legacy engine. For many issues use `loki backlog owner/repo --all|--label X|--issues N,N` (many issues, N in parallel, each on a `loki/backlog-N` worktree branch) instead. Legacy removal is planned and resumes on 2026-10-07; see [docs/v10/LEGACY-REMOVAL.md](docs/v10/LEGACY-REMOVAL.md). Sections below marked "legacy" describe features that run only on that engine.
 
 ### The state machine
 
@@ -287,13 +287,13 @@ completion claim is backed by deterministic evidence and is independently
 re-checkable; it does not claim the generated code is bug-free.
 
 <details>
-<summary><b>Setup details: providers, other models, what loki doctor checks (examples use the legacy `loki start`)</b></summary>
+<summary><b>Setup details: providers, other models, what loki doctor checks (PRD-file examples use the legacy `loki start`)</b></summary>
 
-The `loki start` examples below run on the legacy engine (being removed). For a Loki 10 run, replace them with `loki "<task>"` or `loki owner/repo#N`; the provider and model variables apply to both engines. Other spec sources on the legacy engine:
+The `loki start <file>` examples below run on the legacy engine (being removed). A `loki start` call with an issue ref, an issue URL or a quoted multi-word task runs on Loki 10; the provider and model variables apply to both engines. Other spec sources on the legacy engine:
 
 ```bash
 loki init my-app --template simple-todo-app    # scaffold a starter PRD
-loki start owner/repo#123                      # a GitHub issue (legacy route; prefer: loki owner/repo#123)
+loki start owner/repo#123                      # a GitHub issue (Loki 10; same as: loki owner/repo#123)
 loki start ./openapi.yaml                      # an OpenAPI/YAML spec
 loki demo --offline                            # replay a sample receipt, no key, no spend
 ```
@@ -432,7 +432,7 @@ See [UPGRADING.md](UPGRADING.md) and [ADR-001: Runtime Migration](docs/architect
 <details>
 <summary><strong>Supported spec formats (legacy engine, being removed)</strong></summary>
 
-Loki 10 takes a quoted task or an issue reference (GitHub, GitLab or Jira). The table below describes the legacy `loki start`, which accepts files too. A "spec" is whatever you hand `loki start`. Loki auto-detects the format and normalises it before the RARV loop. A Markdown PRD is one form of spec; the table below lists every input the CLI accepts.
+Loki 10 takes a quoted task or an issue reference (GitHub, GitLab or Jira), also through `loki start`. The table below describes the legacy `loki start`, which accepts files too; rows for an issue ref or an issue URL run on Loki 10. A "spec" is whatever you hand `loki start`. Loki auto-detects the format and normalises it before the RARV loop. A Markdown PRD is one form of spec; the table below lists every input the CLI accepts.
 
 | Format | Example | Notes |
 |--------|---------|-------|
@@ -483,7 +483,7 @@ Legacy engine, being removed (these run on the previous engine; `loki --help` st
 
 | Command | Description |
 |---------|-------------|
-| `loki start [PRD\|ISSUE-REF]` | Legacy build from a PRD file or issue ref; prefer `loki owner/repo#N` |
+| `loki start [PRD\|ISSUE-REF\|"TASK"]` | An issue ref, an issue URL or a quoted multi-word task runs on Loki 10 (same as `loki owner/repo#N`); a PRD file, a flag-first call or a one-word start runs the legacy build |
 | `loki stop`, `pause`, `resume` | Control a legacy run |
 | `loki steer "<note>"` | Nudge a legacy run (needs `LOKI_PROMPT_INJECTION=1`) |
 | `loki why`, `loki next` | Explain or continue a legacy run |
@@ -567,7 +567,7 @@ loki enterprise status
 | **Testing** | 8 automated quality gates | Test quality depends on AI assertions |
 | **Providers** | Claude, Cline, Codex, Aider and opencode | Non-Claude providers are experimental and mostly sequential |
 | **Dashboard** | Real-time single-machine monitoring | No multi-node clustering |
-| **Loki 10** | The v10 run (`loki "<task>"`, `loki owner/repo#N`, `loki quick`), `status`, `verify`, `backlog` | `loki start` still runs the legacy engine; `loki modernize <repo> --to` runs `--dry-run` only; Slack is not wired in; Control Plane v0 is a preview |
+| **Loki 10** | The v10 run (`loki "<task>"`, `loki owner/repo#N`, `loki quick`), `status`, `verify`, `backlog` | `loki start <issue ref|issue URL|"task">` runs Loki 10, `loki start <file>` stays legacy; `loki modernize <repo> --to` runs `--dry-run` only; Slack is not wired in; Control Plane v0 is a preview |
 
 > **What "autonomous" means:** the system runs RARV cycles without prompting. It does NOT access your cloud accounts, payment systems or external services unless you provide credentials. Human oversight is expected for deployment, API keys and critical decisions.
 

@@ -55,8 +55,10 @@ set -uo pipefail
 #       repo and do not count. Jobs that run no agent are out of scope.
 #   P9.injection-cannot-reach-token
 #       Hermetic: an issue whose body carries an injection payload goes through
-#       the real `loki start owner/repo#N` path (bash; the Bun route diverts
-#       issue refs to bash in bin/loki) with a gh shim, GH_TOKEN/GITHUB_TOKEN
+#       the real `loki start owner/repo#N` path (the Loki 10 engine, engine10,
+#       which bin/loki routes issue refs to; its provider session runs the
+#       stub through LOKI_E10_INVOKER=cli, and the stub answers the
+#       `claude --help` capability probe) with a gh shim, GH_TOKEN/GITHUB_TOKEN
 #       set to canary values in the parent environment, and LOKI_DELEGATE_PR=1
 #       (the default). A stub provider records its environment and, obeying the
 #       injection, tries a push and `gh pr create`; on the build prompt it also
@@ -1385,9 +1387,13 @@ PY
         printf '[ "$tok" = yes ] || [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ] || { [ -r %q ] && tok=yes; via=keyring; }\n' "$KEYRING_STORE"
         printf 'printf "%%s token=%%s via=%%s %%s\\n" "$src" "$tok" "$via" "$*" >> "$MOAT_LOG_DIR/gh.log"\n'
         printf 'case "$1 ${2:-}" in\n'
+        # engine10 preflight runs `gh --version` before `gh auth status`.
+        printf '  "--version "*) echo "gh version 2.0.0 (moat shim)"; exit 0 ;;\n'
         printf '  "auth status") [ "$tok" = yes ] && exit 0; exit 1 ;;\n'
         printf '  "issue view") [ "$tok" = yes ] || { echo "gh: not authenticated" >&2; exit 4; }; cat %q; exit 0 ;;\n' "$T/issue.json"
-        printf '  "pr create") [ "$tok" = yes ] && { echo "https://github.com/octocat/hello/pull/7"; exit 0; }; exit 1 ;;\n'
+        # engine10's trusted push step checks for an existing PR first: none exists.
+        printf '  "pr list") [ "$tok" = yes ] && exit 0; exit 1 ;;\n'
+        printf '  "pr create")[ "$tok" = yes ] && { echo "https://github.com/octocat/hello/pull/7"; exit 0; }; exit 1 ;;\n'
         # S-100: on_run_complete resolves the default branch before pushing.
         printf '  "repo view") [ "$tok" = yes ] && { echo main; exit 0; }; exit 1 ;;\n'
         # `gh auth token`: echoes back whatever GH_TOKEN/GITHUB_TOKEN currently
@@ -1429,9 +1435,11 @@ PY
     # of the property: the token still works where Loki itself needs it).
     {
         printf '#!/usr/bin/env bash\n'
+        # Capability probe: engine10 reads `claude --help` and refuses to run a session without --settings.
+        printf '[ "${1:-}" = "--help" ] && { echo "  --settings <file-or-json>  Load additional settings"; exit 0; }\n'
         printf 'env > "$MOAT_LOG_DIR/provider-env.$$"\n'
         printf 'printf "%%s\\n" "$*" > "$MOAT_LOG_DIR/provider-argv.$$"\n'
-        printf 'case "$*" in *loki_system*)\n'
+        printf 'case "$*" in *"Loki 10 implement stage"*)\n'
         printf '    printf "def greet(name):\\n    return \\"hello \\" + name\\n" > greeter.py\n'
         printf '    mkdir -p .loki/signals && echo done > .loki/signals/COMPLETION_REQUESTED\n'
         printf '    echo edited >> "$MOAT_LOG_DIR/provider-actions.log" ;;\nesac\n'
@@ -1556,6 +1564,8 @@ PY
             printf 'export LOKI_SKIP_PREREQS=true LOKI_PHASE_CODE_REVIEW=false LOKI_COUNCIL_ENABLED=false LOKI_APP_RUNNER=false\n'
             printf 'export LOKI_NO_NEW_SESSION=1 LOKI_SKIP_NET_PREFLIGHT=1 LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_RESOURCE_CHECK_INTERVAL=2 GIT_TERMINAL_PROMPT=0\n'
             printf 'unset LOKI_LEGACY_BASH LOKI_SDK_LOOP LOKI_SDK_MODE LOKI_AUTO_PR LOKI_GITHUB_PR LOKI_ALLOW_AGENT_GITHUB_TOKEN\n'
+            # engine10 invokes the provider through the claude CLI on PATH (the stub) instead of the Agent SDK.
+            printf 'export LOKI_E10_INVOKER=cli\n'
             printf '%s\n' "$2"
             printf 'cd %q || exit 41\n' "$L/work"
             printf '%s 150 %q start octocat/hello#42 >%q 2>%q\n' "$DEADLINE" "$LOKI_BIN" "$L/start.out" "$L/start.err"
@@ -1572,7 +1582,7 @@ PY
             return 1
         fi
         if ! ls "$L"/provider-env.* >/dev/null 2>&1; then
-            nok "[$1] the provider was never invoked (start rc=$(cat "$L/start.rc" 2>/dev/null); $(tail -1 "$L/start.out"))"
+            nok "[$1] the provider was never invoked (start rc=$(cat "$L/start.rc" 2>/dev/null); $(tail -1 "$L/start.out"); stderr: $(tail -c 400 "$L/start.err" | tr "\n" "~"))"
             return 1
         fi
         grep -q '^MOAT_ENV_MARKER=inherited$' "$L"/provider-env.* \
