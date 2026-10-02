@@ -1260,15 +1260,12 @@ Flags: --deep, --provider <name>, --no-pr, --max-cost <usd> (per-run cap, defaul
 import ast, copy, io, json, re, sys, tokenize
 d = json.load(sys.stdin)
 bs, hs, task = d["base"], d["head"], d["task"]
-
 def out(v, it=()):
     print(json.dumps({"verdict": v, "items": list(it)}))
     sys.exit(0)
-
 if "\r" in bs or "\r" in hs or "\t" in bs or "\t" in hs:
     out("weakened")
 bt, ht = ast.parse(bs), ast.parse(hs)
-
 # every byte outside a literal token (comments, blank lines, spacing, other code) must be identical
 def template(src):
     lines = src.split("\n")
@@ -1285,14 +1282,11 @@ def template(src):
     return "".join(r) + src[pos:]
 if template(bs) != template(hs):
     out("weakened")
-
 class Norm(ast.NodeTransformer):
     def visit_Constant(self, n):
         return ast.copy_location(ast.Constant(value="<" + type(n.value).__name__ + ">"), n)
-
 def norm(t):
     return ast.dump(Norm().visit(copy.deepcopy(t)))
-
 # only what pytest collects: module-level test functions and methods of Test* classes without __init__
 def tests(t):
     r = []
@@ -1303,23 +1297,18 @@ def tests(t):
                 and not any(isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name == "__init__" for m in n.body):
             r += [m for m in n.body if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and m.name.startswith("test")]
     return r
-
 def direct(f):
     return [a for a in f.body if isinstance(a, ast.Assert)]
-
 def tables(t):
     return [n.args[1] for n in ast.walk(t) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "parametrize"
             and len(n.args) > 1 and isinstance(n.args[1], (ast.List, ast.Tuple))]
-
 def stripped(t):
     c = copy.deepcopy(t)
     for tb in tables(c):
         tb.elts = []
     return c
-
 def consts(t):
     return [n for n in ast.walk(t) if isinstance(n, ast.Constant)]
-
 def shadowed(t):
     for scope in [t] + [n for n in t.body if isinstance(n, ast.ClassDef)]:
         names = [n.name for n in scope.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test")]
@@ -1351,7 +1340,6 @@ for f in tests(ht):
 for x, y in zip(tb, th):
     for r, q in zip(x.elts, y.elts):
         pairs += [(b, h, fh.get(id(y))) for b, h in zip(consts(r), consts(q))]
-
 def eqs(f):
     return [a.test for a in direct(f) if isinstance(a.test, ast.Compare) and len(a.test.ops) == 1 and isinstance(a.test.ops[0], ast.Eq)]
 def dups(t):
@@ -1383,7 +1371,6 @@ for f in tests(ht):
                 for i, e in enumerate(r.elts if isinstance(r, (ast.Tuple, ast.List)) else [r]):
                     if isinstance(e, ast.Constant) and i < len(cols) and cols[i] in solo:
                         exp.add(id(e))
-
 def callees(f):
     r = set()
     for c in eqs(f):
@@ -1393,11 +1380,9 @@ def callees(f):
                 if k:
                     r.add(k)
     return r
-
 def generic(v):
     return v is None or isinstance(v, (bool, bytes)) or (isinstance(v, str) and len(v) <= 3) \
         or (isinstance(v, (int, float)) and abs(v) < 10)
-
 def in_task(v, f):
     task0 = d["task"]
     t = v if isinstance(v, str) else repr(v)
@@ -1410,7 +1395,6 @@ def in_task(v, f):
         return re.search(tok, task) is not None
     # a generic value counts only right next to the identifier the test calls
     return any(re.search(r"\b" + re.escape(k) + r"\b[^\n]{0,40}?" + tok, task) for k in (callees(f) if f else ()))
-
 items = []
 for b, h, f in pairs:
     if (type(b.value), repr(b.value)) != (type(h.value), repr(h.value)):
@@ -1756,4 +1740,4 @@ Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
 `),2}case"start":{let{runStart:X}=await Promise.resolve().then(() => (Yo(),Ko));return X(Q)}case"engine10":{let{runEngine10:X}=await Promise.resolve().then(() => (Wo(),zo)),{registryLoader:J}=await Promise.resolve().then(() => (TG(),Ht));return X(Q,J)}default:return process.stderr.write(`Unknown command: ${Z}
 `),process.stderr.write(Bt),2}}lI();process.on("SIGINT",()=>process.exit(130));process.on("SIGTERM",()=>process.exit(143));var zX8=await VX8(Bun.argv.slice(2));process.exit(zX8);
 
-//# debugId=5D70C04515E527BB899A3901339DC4F2
+//# debugId=C907C6D19C07D469D1A02FAC59DB6FC0
