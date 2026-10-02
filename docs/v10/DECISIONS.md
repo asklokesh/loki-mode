@@ -488,3 +488,6 @@ Ends the D59 pause early for this sprint only. Five slices, released as soon as 
 
 ## D61: speed for users (founder via the autonomi-dev session, 2026-10-02 22:50Z)
 A product feature, not a build-process change: `loki "small task"` should finish in seconds, at or below raw Claude Code time and tokens. `loki "big task"` and `loki backlog` should decide by themselves whether the work splits, run the units in parallel worktrees on the user's machine, merge, test once and open one PR, using no more tokens than one sequential session, visible live and with no flags. Design only for now: docs/v10/D61-SPEED.md (an opus architect). Builders start after D60 and after the founder's go. Every target is measured on an eval arm and published in METRICS, losses included.
+
+## D60-5 default cost cap (2026-10-02 23:05Z)
+A Loki 10 run caps priced spend at $20.00 by default. `--max-cost N` beats loki.yaml `budgets.per_run`, which beats the default. The start line prints the cap and its source. Hitting the cap ends the run as BUDGET_STOP with exit 3. Unpriced sessions (no cost event) never count toward the cap, so a subscription or local provider never stops on it.

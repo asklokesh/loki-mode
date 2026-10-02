@@ -370,7 +370,8 @@ release_in_worktree() {
     sec="$(mktemp "${TMPDIR:-/tmp}/train-cycle-changelog.XXXXXXXX")" || return 1
     {
         # shellcheck disable=SC2016 # literal backticks
-        printf '## v%s (%s)\n\nA `next` release.\n\n### Changes\n' "$ver" "$date_s"
+        # LOKI_TC_LEAD: one sentence naming the user-visible change (D60); default unchanged
+        printf '## v%s (%s)\n\n%s\n\n### Changes\n' "$ver" "$date_s" "${LOKI_TC_LEAD:-A \`next\` release.}"
         w log --no-merges --reverse --format='%H' "${tag:+$tag..}$head" | while IFS= read -r c; do
             subj="$(w log -1 --format=%s "$c")"
             case "$subj" in "release: v"*) continue ;; esac
