@@ -128,7 +128,7 @@ describe("engine10 e2e (stub claude)", () => {
     const q = runEngine("done");
     const lines = q.out.trim().split("\n");
     expect(lines.length).toBeLessThanOrEqual(8);
-    expect(lines[0]).toBe("Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)");
+    expect(lines[0]).toBe("Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine), cap $20.00 (default)");
     expect(q.out).not.toMatch(/^\[\d\d:\d\d\]/m);
     expect(q.out).toMatch(/^Receipt:\s+sha256:[0-9a-f]{64}/m);
     expect(q.out).toContain("NOT PROVEN:");

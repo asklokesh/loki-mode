@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { GITHUB_TOKEN_VARS } from "../runner/github_token.ts";
 import { sumResultCosts } from "./cost.ts";
+import { capMeter } from "../e10ext/budget_cap.ts";
 import { FLOW, runMachine } from "./machine.ts";
 import { createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
@@ -40,13 +41,14 @@ export async function main(args: string[]): Promise<number> {
   const lokiRoot = join(repoDir, ".loki");
   const deep = mode === "deep";
   const started = new Set<string>();
-  await runWorker(async (emit) => {
+  await runWorker(async (rawEmit) => {
+    const { emit, over } = capMeter(rawEmit, process.env);
     const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot });
     const ctx: RunContext = {
       runId, repoDir, runDir: join(lokiRoot, "runs", runId), branch: `loki/${runId}`, provider, model, deep,
       baseSha: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8", env: process.env }).trim(),
       capS: deep ? DEEP_CAP_S : Number(process.env.LOKI_E10_CAP_S) || DEFAULT_CAP_S,
-      emit,
+      emit, overCap: over,
       sessions: { run: (o) => { started.add(o.iterationId); return base.run(o); } },
       tests: new RealTestMapProvider(),
       cost: {
