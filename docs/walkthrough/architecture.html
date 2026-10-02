@@ -3,800 +3,430 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Loki Mode Architecture -- Visual System Diagram</title>
+<title>Loki Mode at a Glance</title>
+<meta name="description" content="Loki Mode in three views: what you can do with it, how it is built, and how it works in plain words.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
 :root {
   --purple: #553DE9;
-  --purple-light: #7B6BF0;
-  --purple-dark: #3D2BB5;
-  --purple-glow: rgba(85, 61, 233, 0.3);
-  --bg: #FAFAFA;
-  --bg-card: #FFFFFF;
-  --text: #1A1A2E;
-  --text-muted: #6B7280;
-  --border: #E5E7EB;
-  --success: #10B981;
-  --warning: #F59E0B;
-  --accent: #EC4899;
-  --blue: #3B82F6;
-  --cyan: #06B6D4;
-  --orange: #F97316;
+  --purple-soft: rgba(85, 61, 233, 0.10);
+  --teal: #0E9F8E;
+  --teal-soft: rgba(14, 159, 142, 0.10);
+  --amber: #C27803;
+  --amber-soft: rgba(194, 120, 3, 0.10);
+  --pink: #C0367E;
+  --pink-soft: rgba(192, 54, 126, 0.10);
+  --blue: #2F6FDB;
+  --blue-soft: rgba(47, 111, 219, 0.10);
+  --bg: #FAF9F7;
+  --card: #FFFFFF;
+  --text: #1C1A2E;
+  --muted: #5F6473;
+  --border: #E6E3DD;
+  --code-bg: #F2F0EC;
+  --shadow: 0 1px 2px rgba(20, 16, 40, 0.05), 0 6px 18px rgba(20, 16, 40, 0.05);
 }
-
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0F0F11;
-    --bg-card: #1A1A2E;
-    --text: #E2E8F0;
-    --text-muted: #94A3B8;
-    --border: #2D2D44;
+  :root:not([data-theme="light"]) {
+    --purple: #8E7DFF;
+    --purple-soft: rgba(142, 125, 255, 0.14);
+    --teal: #3CCFBC;
+    --teal-soft: rgba(60, 207, 188, 0.13);
+    --amber: #F0B44C;
+    --amber-soft: rgba(240, 180, 76, 0.13);
+    --pink: #F07AB8;
+    --pink-soft: rgba(240, 122, 184, 0.13);
+    --blue: #7AA8FF;
+    --blue-soft: rgba(122, 168, 255, 0.13);
+    --bg: #111117;
+    --card: #1A1A24;
+    --text: #ECEAF4;
+    --muted: #A2A3B5;
+    --border: #2C2C3B;
+    --code-bg: #23232F;
+    --shadow: none;
   }
 }
-
+:root[data-theme="dark"] {
+  --purple: #8E7DFF; --purple-soft: rgba(142, 125, 255, 0.14);
+  --teal: #3CCFBC; --teal-soft: rgba(60, 207, 188, 0.13);
+  --amber: #F0B44C; --amber-soft: rgba(240, 180, 76, 0.13);
+  --pink: #F07AB8; --pink-soft: rgba(240, 122, 184, 0.13);
+  --blue: #7AA8FF; --blue-soft: rgba(122, 168, 255, 0.13);
+  --bg: #111117; --card: #1A1A24; --text: #ECEAF4; --muted: #A2A3B5;
+  --border: #2C2C3B; --code-bg: #23232F; --shadow: none;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.6;
-  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
 }
+code, .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 0.86em; }
+code { background: var(--code-bg); padding: 0.1em 0.4em; border-radius: 5px; }
+a { color: var(--purple); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
 
-/* Header */
-.page-header {
-  text-align: center;
-  padding: 4rem 2rem 2rem;
-  background: linear-gradient(135deg, var(--bg) 0%, rgba(85, 61, 233, 0.06) 50%, var(--bg) 100%);
+header { padding: 48px 0 24px; text-align: center; }
+.back { display: inline-block; font-size: 0.85rem; color: var(--muted); text-decoration: none; margin-bottom: 18px; }
+.back:hover { color: var(--purple); }
+h1 { font-size: clamp(1.9rem, 4.5vw, 2.8rem); font-weight: 800; letter-spacing: -0.02em; }
+h1 span { color: var(--purple); }
+.lede { color: var(--muted); max-width: 620px; margin: 12px auto 0; font-size: 1.05rem; }
+.version { display: inline-block; margin-top: 14px; font-size: 0.78rem; color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px; }
+
+.tabs { display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; margin: 28px auto 8px; padding: 5px; background: var(--card); border: 1px solid var(--border); border-radius: 14px; width: fit-content; max-width: 100%; box-shadow: var(--shadow); }
+.tab { font: inherit; font-weight: 600; font-size: 0.95rem; color: var(--muted); background: none; border: 0; border-radius: 10px; padding: 9px 18px; cursor: pointer; }
+.tab:hover { color: var(--text); }
+.tab[aria-selected="true"] { background: var(--purple); color: #fff; }
+.tab:focus-visible { outline: 2px solid var(--purple); outline-offset: 2px; }
+
+.panel { padding: 28px 0 64px; }
+.panel[hidden] { display: none; }
+.intro { text-align: center; color: var(--muted); max-width: 640px; margin: 0 auto 32px; }
+h2 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 4px; }
+h3 { font-size: 1rem; font-weight: 700; }
+.section-title { margin: 40px 0 16px; }
+.section-title p { color: var(--muted); font-size: 0.95rem; }
+
+.journey { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.stage { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 10px; }
+.stage .num { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; font-weight: 800; font-size: 0.85rem; }
+.stage .who { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
+.stage ul { list-style: none; display: flex; flex-direction: column; gap: 8px; }
+.stage li { font-size: 0.9rem; }
+.stage li > code { display: inline-block; margin-bottom: 2px; }
+.stage li small { display: block; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+.c-purple .num { background: var(--purple-soft); color: var(--purple); } .c-purple .who { color: var(--purple); }
+.c-blue .num { background: var(--blue-soft); color: var(--blue); } .c-blue .who { color: var(--blue); }
+.c-teal .num { background: var(--teal-soft); color: var(--teal); } .c-teal .who { color: var(--teal); }
+.c-pink .num { background: var(--pink-soft); color: var(--pink); } .c-pink .who { color: var(--pink); }
+
+.outcomes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+.outcome { background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--teal); border-radius: 12px; padding: 14px 16px; }
+.outcome b { font-family: 'JetBrains Mono', monospace; font-size: 0.85rem; }
+.outcome p { color: var(--muted); font-size: 0.86rem; margin-top: 4px; }
+.outcome.warn { border-left-color: var(--amber); }
+.outcome.bad { border-left-color: var(--pink); }
+
+.receipt { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; font-family: 'JetBrains Mono', monospace; font-size: 0.84rem; line-height: 1.8; box-shadow: var(--shadow); overflow-x: auto; }
+.receipt .k { color: var(--muted); display: inline-block; min-width: 96px; }
+.receipt .ok { color: var(--teal); font-weight: 600; }
+
+.note { margin-top: 28px; background: var(--amber-soft); border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent); border-radius: 12px; padding: 14px 18px; font-size: 0.9rem; }
+.note b { color: var(--amber); }
+
+.flow { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: center; }
+.node { background: var(--card); border: 1px solid var(--border); border-top: 3px solid var(--purple); border-radius: 12px; padding: 12px 14px; width: 150px; box-shadow: var(--shadow); }
+.node h3 { font-size: 0.92rem; }
+.node p { font-size: 0.8rem; color: var(--muted); line-height: 1.45; margin-top: 4px; }
+.node .mono { color: var(--muted); font-size: 0.72rem; display: block; margin-top: 6px; }
+.node.t-blue { border-top-color: var(--blue); }
+.node.t-teal { border-top-color: var(--teal); }
+.node.t-amber { border-top-color: var(--amber); }
+.node.t-pink { border-top-color: var(--pink); }
+.arrow { display: flex; align-items: center; justify-content: center; width: 28px; color: var(--muted); font-size: 1.1rem; flex-shrink: 0; }
+.loopback { text-align: center; color: var(--muted); font-size: 0.84rem; margin-top: 12px; }
+.loopback span { background: var(--pink-soft); color: var(--pink); border-radius: 999px; padding: 3px 12px; font-weight: 600; }
+
+.layers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.layer { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; box-shadow: var(--shadow); }
+.layer h3 { margin-bottom: 8px; }
+.layer ul { list-style: none; display: flex; flex-direction: column; gap: 7px; }
+.layer li { font-size: 0.86rem; color: var(--muted); }
+.layer li b { color: var(--text); font-weight: 600; }
+.tag { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; border-radius: 6px; padding: 1px 7px; margin-left: 4px; vertical-align: 1px; }
+.tag.preview { background: var(--amber-soft); color: var(--amber); }
+.tag.legacy { background: var(--pink-soft); color: var(--pink); }
+
+.pipe { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; }
+.pill { background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 8px 16px; font-size: 0.86rem; font-weight: 600; }
+.pill small { display: block; font-weight: 400; color: var(--muted); font-size: 0.74rem; text-align: center; }
+.pill.gate { border-color: var(--teal); color: var(--teal); }
+
+.story { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; counter-reset: step; }
+.scene { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 22px; box-shadow: var(--shadow); position: relative; }
+.scene::before { counter-increment: step; content: counter(step); position: absolute; top: 18px; right: 20px; font-size: 2.2rem; font-weight: 800; color: var(--purple-soft); line-height: 1; }
+.scene .icon { width: 48px; height: 48px; border-radius: 14px; display: grid; place-items: center; margin-bottom: 14px; }
+.scene .icon svg { width: 26px; height: 26px; }
+.scene h3 { font-size: 1.05rem; margin-bottom: 6px; }
+.scene p { color: var(--muted); font-size: 0.92rem; }
+.scene .real { margin-top: 12px; font-size: 0.8rem; color: var(--muted); border-top: 1px dashed var(--border); padding-top: 10px; }
+.i-purple { background: var(--purple-soft); color: var(--purple); }
+.i-blue { background: var(--blue-soft); color: var(--blue); }
+.i-teal { background: var(--teal-soft); color: var(--teal); }
+.i-amber { background: var(--amber-soft); color: var(--amber); }
+.i-pink { background: var(--pink-soft); color: var(--pink); }
+
+.why { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 8px; }
+.why div { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px; }
+.why b { display: block; margin-bottom: 4px; }
+.why p { color: var(--muted); font-size: 0.88rem; }
+
+footer { text-align: center; color: var(--muted); font-size: 0.82rem; padding: 0 16px 40px; }
+
+@media (max-width: 860px) {
+  .journey { grid-template-columns: repeat(2, 1fr); }
+  .layers, .why { grid-template-columns: 1fr; }
 }
-
-.page-header h1 {
-  font-size: clamp(2rem, 4vw, 3rem);
-  font-weight: 800;
-  margin-bottom: 0.8rem;
-  background: linear-gradient(135deg, var(--purple), var(--purple-light));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.page-header p {
-  color: var(--text-muted);
-  font-size: 1.1rem;
-  max-width: 600px;
-  margin: 0 auto;
-}
-
-/* Main diagram container */
-.diagram-container {
-  max-width: 1100px;
-  margin: 3rem auto;
-  padding: 0 2rem;
-}
-
-.diagram-wrapper {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  padding: 2.5rem;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.05);
-  overflow-x: auto;
-}
-
-/* SVG styles */
-svg.arch-diagram {
-  width: 100%;
-  height: auto;
-  min-width: 700px;
-}
-
-/* Flow animation */
-.flow-line {
-  stroke-dasharray: 8 4;
-  animation: flowDash 1.5s linear infinite;
-}
-
-@keyframes flowDash {
-  to { stroke-dashoffset: -24; }
-}
-
-.flow-line-slow {
-  stroke-dasharray: 6 3;
-  animation: flowDash 3s linear infinite;
-}
-
-/* Node hover effects */
-.arch-node {
-  cursor: pointer;
-  transition: filter 0.2s;
-}
-
-.arch-node:hover {
-  filter: brightness(1.1);
-}
-
-.arch-node:hover .node-glow {
-  opacity: 0.3;
-}
-
-.node-glow {
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-
-/* Pulse animation for active nodes */
-.pulse-ring {
-  animation: pulse 2s ease-in-out infinite;
-}
-
-@keyframes pulse {
-  0%, 100% { r: 6; opacity: 0.6; }
-  50% { r: 10; opacity: 0; }
-}
-
-/* Tooltip */
-.tooltip-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 999;
-  display: none;
-}
-
-.tooltip-overlay.active { display: block; }
-
-.tooltip {
-  position: fixed;
-  z-index: 1000;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 1.2rem 1.5rem;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
-  max-width: 320px;
-  display: none;
-  pointer-events: none;
-}
-
-.tooltip.active {
-  display: block;
-  animation: tooltipIn 0.2s ease;
-}
-
-@keyframes tooltipIn {
-  from { opacity: 0; transform: translateY(5px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.tooltip h3 {
-  font-size: 0.95rem;
-  font-weight: 700;
-  margin-bottom: 0.4rem;
-  color: var(--purple);
-}
-
-.tooltip p {
-  font-size: 0.85rem;
-  color: var(--text-muted);
-  line-height: 1.5;
-}
-
-.tooltip .tooltip-tech {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin-top: 0.6rem;
-}
-
-.tooltip .tooltip-tag {
-  padding: 0.15rem 0.5rem;
-  background: rgba(85, 61, 233, 0.1);
-  color: var(--purple);
-  border-radius: 4px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  font-family: 'JetBrains Mono', monospace;
-}
-
-/* Legend */
-.legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1.5rem;
-  justify-content: center;
-  margin-top: 2rem;
-  padding-top: 1.5rem;
-  border-top: 1px solid var(--border);
-}
-
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.legend-color {
-  width: 14px;
-  height: 14px;
-  border-radius: 4px;
-}
-
-/* Sections below diagram */
-.sections-grid {
-  max-width: 1100px;
-  margin: 3rem auto;
-  padding: 0 2rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1.5rem;
-}
-
-.section-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 1.5rem;
-  transition: all 0.3s;
-}
-
-.section-card:hover {
-  border-color: var(--purple);
-  box-shadow: 0 4px 16px var(--purple-glow);
-}
-
-.section-card-header {
-  display: flex;
-  align-items: center;
-  gap: 0.8rem;
-  margin-bottom: 0.8rem;
-}
-
-.section-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.section-card h3 {
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.section-card p {
-  color: var(--text-muted);
-  font-size: 0.88rem;
-  line-height: 1.6;
-}
-
-.section-card .tech-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  margin-top: 0.8rem;
-}
-
-.section-card .tech-tag {
-  padding: 0.2rem 0.5rem;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 0.72rem;
-  font-family: 'JetBrains Mono', monospace;
-  color: var(--text-muted);
-}
-
-footer {
-  text-align: center;
-  padding: 3rem 2rem;
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  border-top: 1px solid var(--border);
-}
-
-@media (max-width: 768px) {
-  .diagram-wrapper { padding: 1rem; }
-  .sections-grid { grid-template-columns: 1fr; }
+@media (max-width: 560px) {
+  .journey { grid-template-columns: 1fr; }
+  .flow, .pipe { flex-direction: column; align-items: stretch; }
+  .node { width: auto; }
+  .arrow { width: auto; height: 22px; transform: rotate(90deg); }
+  .pill { text-align: center; }
+  .tab { padding: 8px 12px; font-size: 0.88rem; }
 }
 </style>
 </head>
 <body>
+<div class="wrap">
+  <header>
+    <a class="back" href="hub.html">&larr; All walkthroughs</a>
+    <h1>Loki Mode <span>at a glance</span></h1>
+    <p class="lede">Hand it an issue or a task. Get back a pull request, tested, with a receipt that says exactly what was proven. Three ways to see how that works.</p>
+    <span class="version">Describes Loki Mode 10.6.6 (npm latest)</span>
+  </header>
 
-<header class="page-header">
-  <h1>Loki Mode Architecture</h1>
-  <p>An interactive visual map of how Loki Mode transforms a PRD into a deployed product. Click on any component to learn more.</p>
-</header>
+  <div class="tabs" role="tablist" aria-label="Views">
+    <button class="tab" role="tab" id="t-user" aria-controls="p-user" aria-selected="true">What you can do</button>
+    <button class="tab" role="tab" id="t-arch" aria-controls="p-arch" aria-selected="false" tabindex="-1">How it is built</button>
+    <button class="tab" role="tab" id="t-simple" aria-controls="p-simple" aria-selected="false" tabindex="-1">In plain words</button>
+  </div>
 
-<div class="diagram-container">
-  <div class="diagram-wrapper">
-    <svg class="arch-diagram" viewBox="0 0 1000 620" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="purpleGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:#553DE9"/>
-          <stop offset="100%" style="stop-color:#7B6BF0"/>
-        </linearGradient>
-        <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:#3B82F6"/>
-          <stop offset="100%" style="stop-color:#06B6D4"/>
-        </linearGradient>
-        <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:#10B981"/>
-          <stop offset="100%" style="stop-color:#34D399"/>
-        </linearGradient>
-        <linearGradient id="orangeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:#F97316"/>
-          <stop offset="100%" style="stop-color:#FBBF24"/>
-        </linearGradient>
-        <linearGradient id="pinkGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:#EC4899"/>
-          <stop offset="100%" style="stop-color:#F472B6"/>
-        </linearGradient>
-        <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" style="stop-color:#06B6D4"/>
-          <stop offset="100%" style="stop-color:#22D3EE"/>
-        </linearGradient>
+  <!-- TAB 1: USER PERSPECTIVE -->
+  <section class="panel" role="tabpanel" id="p-user" aria-labelledby="t-user">
+    <p class="intro">Everything you touch, in the order you touch it. Four steps: set up once, give it work, watch it go, and trust what comes back.</p>
 
-        <filter id="glow">
-          <feGaussianBlur stdDeviation="3" result="blur"/>
-          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
-        </filter>
-
-        <marker id="arrowPurple" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#553DE9"/>
-        </marker>
-        <marker id="arrowBlue" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#3B82F6"/>
-        </marker>
-        <marker id="arrowGreen" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#10B981"/>
-        </marker>
-        <marker id="arrowGray" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 Z" fill="#94A3B8"/>
-        </marker>
-      </defs>
-
-      <!-- Background grid -->
-      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="currentColor" stroke-width="0.3" opacity="0.1"/>
-      </pattern>
-      <rect width="1000" height="620" fill="url(#grid)"/>
-
-      <!-- Title -->
-      <text x="500" y="30" text-anchor="middle" font-family="Inter, sans-serif" font-size="14" font-weight="700" fill="currentColor" opacity="0.4">LOKI MODE SYSTEM ARCHITECTURE</text>
-
-      <!-- ===== MAIN PIPELINE FLOW ===== -->
-
-      <!-- Flow arrows: PRD -> Planning -> Build -> Quality -> Deploy -->
-      <path class="flow-line" d="M 170 110 L 290 110" stroke="#553DE9" stroke-width="2.5" fill="none" marker-end="url(#arrowPurple)"/>
-      <path class="flow-line" d="M 430 110 L 550 110" stroke="#553DE9" stroke-width="2.5" fill="none" marker-end="url(#arrowPurple)"/>
-      <path class="flow-line" d="M 690 110 L 810 110" stroke="#553DE9" stroke-width="2.5" fill="none" marker-end="url(#arrowPurple)"/>
-
-      <!-- Node 1: PRD Input -->
-      <g class="arch-node" data-tooltip="prd">
-        <rect class="node-glow" x="50" y="70" width="120" height="80" rx="14" fill="#553DE9" opacity="0"/>
-        <rect x="55" y="75" width="110" height="70" rx="12" fill="url(#purpleGrad)" stroke="#553DE9" stroke-width="1.5"/>
-        <text x="110" y="102" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="white">PRD Input</text>
-        <text x="110" y="118" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">prd.md</text>
-        <circle class="pulse-ring" cx="165" cy="110" r="6" fill="#553DE9" opacity="0.6"/>
-      </g>
-
-      <!-- Node 2: Planning Phase -->
-      <g class="arch-node" data-tooltip="planning">
-        <rect class="node-glow" x="290" y="65" width="140" height="90" rx="14" fill="#3B82F6" opacity="0"/>
-        <rect x="295" y="70" width="130" height="80" rx="12" fill="url(#blueGrad)" stroke="#3B82F6" stroke-width="1.5"/>
-        <text x="360" y="100" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="white">Planning</text>
-        <text x="360" y="116" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">Opus Model</text>
-        <text x="360" y="130" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">RARV Cycle</text>
-      </g>
-
-      <!-- Node 3: Build Phase -->
-      <g class="arch-node" data-tooltip="build">
-        <rect class="node-glow" x="550" y="65" width="140" height="90" rx="14" fill="#10B981" opacity="0"/>
-        <rect x="555" y="70" width="130" height="80" rx="12" fill="url(#greenGrad)" stroke="#10B981" stroke-width="1.5"/>
-        <text x="620" y="100" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="white">Build</text>
-        <text x="620" y="116" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">Sonnet Model</text>
-        <text x="620" y="130" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">Parallel Tasks</text>
-      </g>
-
-      <!-- Node 4: Deploy -->
-      <g class="arch-node" data-tooltip="deploy">
-        <rect class="node-glow" x="810" y="70" width="130" height="80" rx="14" fill="#F97316" opacity="0"/>
-        <rect x="815" y="75" width="120" height="70" rx="12" fill="url(#orangeGrad)" stroke="#F97316" stroke-width="1.5"/>
-        <text x="875" y="102" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="white">Deploy</text>
-        <text x="875" y="118" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">CI/CD Pipeline</text>
-      </g>
-
-      <!-- ===== QUALITY GATES (below main pipeline) ===== -->
-      <path class="flow-line" d="M 620 150 L 620 210" stroke="#EC4899" stroke-width="2" fill="none" marker-end="url(#arrowGray)"/>
-      <path class="flow-line" d="M 620 290 L 620 150" stroke="#10B981" stroke-width="2" fill="none" marker-end="url(#arrowGreen)" opacity="0.5"/>
-
-      <g class="arch-node" data-tooltip="quality">
-        <rect class="node-glow" x="540" y="210" width="160" height="80" rx="14" fill="#EC4899" opacity="0"/>
-        <rect x="545" y="215" width="150" height="70" rx="12" fill="url(#pinkGrad)" stroke="#EC4899" stroke-width="1.5"/>
-        <text x="620" y="242" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="white">Quality Gates</text>
-        <text x="620" y="258" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">8-gate pipeline</text>
-        <text x="620" y="272" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">3-reviewer system</text>
-      </g>
-
-      <!-- ===== PROVIDERS (left side) ===== -->
-      <text x="110" y="210" text-anchor="middle" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="currentColor" opacity="0.5">PROVIDERS</text>
-
-      <!-- Provider connection lines -->
-      <path class="flow-line-slow" d="M 170 240 Q 230 200 295 110" stroke="#553DE9" stroke-width="1.5" fill="none" opacity="0.4"/>
-      <path class="flow-line-slow" d="M 170 310 Q 240 240 295 120" stroke="#10B981" stroke-width="1.5" fill="none" opacity="0.4"/>
-      <path class="flow-line-slow" d="M 170 380 Q 250 280 295 130" stroke="#3B82F6" stroke-width="1.5" fill="none" opacity="0.4"/>
-
-      <!-- Claude Provider -->
-      <g class="arch-node" data-tooltip="claude">
-        <rect x="55" y="225" width="110" height="40" rx="8" fill="url(#purpleGrad)" stroke="#553DE9" stroke-width="1"/>
-        <text x="110" y="248" text-anchor="middle" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="white">Claude</text>
-        <text x="165" y="235" font-family="JetBrains Mono, monospace" font-size="7" fill="#553DE9" opacity="0.8">Tier 1</text>
-      </g>
-
-      <!-- Codex Provider -->
-      <g class="arch-node" data-tooltip="codex">
-        <rect x="55" y="290" width="110" height="40" rx="8" fill="url(#greenGrad)" stroke="#10B981" stroke-width="1"/>
-        <text x="110" y="314" text-anchor="middle" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="white">Codex</text>
-        <text x="165" y="300" font-family="JetBrains Mono, monospace" font-size="7" fill="#10B981" opacity="0.8">Tier 3</text>
-      </g>
-
-      <!-- opencode Provider -->
-      <g class="arch-node" data-tooltip="opencode">
-        <rect x="55" y="355" width="110" height="40" rx="8" fill="url(#blueGrad)" stroke="#3B82F6" stroke-width="1"/>
-        <text x="110" y="379" text-anchor="middle" font-family="Inter, sans-serif" font-size="10" font-weight="600" fill="white">opencode</text>
-        <text x="165" y="365" font-family="JetBrains Mono, monospace" font-size="7" fill="#3B82F6" opacity="0.8">Tier 3</text>
-      </g>
-
-      <!-- ===== MEMORY SYSTEM (bottom center) ===== -->
-      <path class="flow-line-slow" d="M 500 420 L 360 155" stroke="#06B6D4" stroke-width="1.5" fill="none" opacity="0.4" marker-end="url(#arrowGray)"/>
-      <path class="flow-line-slow" d="M 500 420 L 555 155" stroke="#06B6D4" stroke-width="1.5" fill="none" opacity="0.4" marker-end="url(#arrowGray)"/>
-      <path class="flow-line-slow" d="M 500 420 L 620 290" stroke="#06B6D4" stroke-width="1.5" fill="none" opacity="0.4" marker-end="url(#arrowGray)"/>
-
-      <g class="arch-node" data-tooltip="memory">
-        <rect class="node-glow" x="410" y="400" width="180" height="100" rx="14" fill="#06B6D4" opacity="0"/>
-        <rect x="415" y="405" width="170" height="90" rx="12" fill="url(#cyanGrad)" stroke="#06B6D4" stroke-width="1.5"/>
-        <text x="500" y="432" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="white">Memory System</text>
-        <text x="500" y="450" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">Episodic / Semantic</text>
-        <text x="500" y="464" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">Procedural / Vector</text>
-        <text x="500" y="478" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="white" opacity="0.8">Progressive Disclosure</text>
-      </g>
-
-      <!-- ===== DASHBOARD (bottom right) ===== -->
-      <path class="flow-line-slow" d="M 770 455 L 620 285" stroke="#94A3B8" stroke-width="1.5" fill="none" opacity="0.3"/>
-      <path class="flow-line-slow" d="M 770 440 L 870 150" stroke="#94A3B8" stroke-width="1.5" fill="none" opacity="0.3"/>
-      <path class="flow-line-slow" d="M 770 455 L 585 455" stroke="#94A3B8" stroke-width="1.5" fill="none" opacity="0.3"/>
-
-      <g class="arch-node" data-tooltip="dashboard">
-        <rect class="node-glow" x="710" y="400" width="180" height="100" rx="14" fill="#F59E0B" opacity="0"/>
-        <rect x="715" y="405" width="170" height="90" rx="12" stroke="#F59E0B" stroke-width="1.5" fill="none"/>
-        <rect x="718" y="408" width="164" height="84" rx="10" fill="var(--bg-card)" opacity="0.9"/>
-        <text x="800" y="436" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="700" fill="currentColor">Dashboard</text>
-        <text x="800" y="454" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="currentColor" opacity="0.6">FastAPI + React</text>
-        <text x="800" y="468" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="currentColor" opacity="0.6">117 API endpoints</text>
-        <text x="800" y="482" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="8" fill="currentColor" opacity="0.6">WebSocket real-time</text>
-      </g>
-
-      <!-- ===== RARV CYCLE (overlay on planning) ===== -->
-      <g class="arch-node" data-tooltip="rarv" transform="translate(320, 330)">
-        <rect class="node-glow" x="0" y="0" width="100" height="80" rx="12" fill="#553DE9" opacity="0"/>
-        <rect x="5" y="5" width="90" height="70" rx="10" fill="none" stroke="var(--border)" stroke-width="1"/>
-        <text x="50" y="26" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" font-weight="700" fill="currentColor">RARV Cycle</text>
-        <text x="50" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)">Reason</text>
-        <text x="50" y="50" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)">Act</text>
-        <text x="50" y="60" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)">Reflect</text>
-        <text x="50" y="70" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)">Verify</text>
-      </g>
-
-      <!-- ===== COMPLETION COUNCIL ===== -->
-      <g class="arch-node" data-tooltip="council" transform="translate(200, 430)">
-        <rect class="node-glow" x="0" y="0" width="120" height="60" rx="10" fill="#F59E0B" opacity="0"/>
-        <rect x="5" y="5" width="110" height="50" rx="8" fill="none" stroke="var(--border)" stroke-width="1"/>
-        <text x="60" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" font-weight="700" fill="currentColor">Completion</text>
-        <text x="60" y="38" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" font-weight="700" fill="currentColor">Council</text>
-        <text x="60" y="50" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)">3-vote system</text>
-      </g>
-
-      <!-- ===== MCP SERVER ===== -->
-      <g class="arch-node" data-tooltip="mcp" transform="translate(710, 530)">
-        <rect class="node-glow" x="0" y="0" width="120" height="55" rx="10" fill="#553DE9" opacity="0"/>
-        <rect x="5" y="5" width="110" height="45" rx="8" fill="none" stroke="var(--border)" stroke-width="1"/>
-        <text x="60" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" font-weight="700" fill="currentColor">MCP Server</text>
-        <text x="60" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)">36 tools</text>
-      </g>
-
-      <!-- ===== EVENT BUS ===== -->
-      <g class="arch-node" data-tooltip="events" transform="translate(440, 530)">
-        <rect class="node-glow" x="0" y="0" width="120" height="55" rx="10" fill="#10B981" opacity="0"/>
-        <rect x="5" y="5" width="110" height="45" rx="8" fill="none" stroke="var(--border)" stroke-width="1"/>
-        <text x="60" y="25" text-anchor="middle" font-family="Inter, sans-serif" font-size="9" font-weight="700" fill="currentColor">Event Bus</text>
-        <text x="60" y="40" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)">Python / TS / Bash</text>
-      </g>
-
-      <!-- Connection: Event bus to Memory -->
-      <path d="M 500 530 L 500 495" stroke="var(--border)" stroke-width="1" fill="none" stroke-dasharray="3 2"/>
-      <!-- Connection: MCP to Dashboard -->
-      <path d="M 770 530 L 800 495" stroke="var(--border)" stroke-width="1" fill="none" stroke-dasharray="3 2"/>
-      <!-- Connection: Council to main pipeline -->
-      <path d="M 260 430 L 360 155" stroke="var(--border)" stroke-width="1" fill="none" stroke-dasharray="3 2"/>
-
-      <!-- Labels -->
-      <text x="230" y="185" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)" opacity="0.6">run_autonomous()</text>
-      <text x="500" y="185" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)" opacity="0.6">build_prompt()</text>
-      <text x="750" y="185" font-family="JetBrains Mono, monospace" font-size="7" fill="var(--text-muted)" opacity="0.6">git push + CI</text>
-      <text x="630" y="198" font-family="JetBrains Mono, monospace" font-size="7" fill="#EC4899" opacity="0.6">run_code_review()</text>
-
-    </svg>
-
-    <!-- Legend -->
-    <div class="legend">
-      <div class="legend-item">
-        <div class="legend-color" style="background: linear-gradient(135deg, #553DE9, #7B6BF0);"></div>
-        <span>Core Pipeline</span>
+    <div class="journey">
+      <div class="stage c-purple">
+        <div class="num">1</div>
+        <div class="who">Set up once</div>
+        <ul>
+          <li><code>npm i -g loki-mode</code><small>Bun comes bundled for your platform. No extra installs.</small></li>
+          <li><code>loki doctor</code><small>Checks your setup and ends with one line: Ready, or the one thing to fix.</small></li>
+          <li><code>loki.yaml</code><small>Optional. Models, repos, budgets, Slack, in one file. Works without it.</small></li>
+        </ul>
       </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: linear-gradient(135deg, #3B82F6, #06B6D4);"></div>
-        <span>Planning</span>
+      <div class="stage c-blue">
+        <div class="num">2</div>
+        <div class="who">Give it work</div>
+        <ul>
+          <li><code>loki owner/repo#123</code><small>One GitHub issue to one pull request. GitLab and Jira issue links work too.</small></li>
+          <li><code>loki "fix the login redirect"</code><small>A plain task, no issue needed.</small></li>
+          <li><code>loki backlog owner/repo</code><small>Add <code>--all</code> for a whole backlog: one isolated run per issue, in parallel, inside your budget.</small></li>
+        </ul>
       </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: linear-gradient(135deg, #10B981, #34D399);"></div>
-        <span>Build / Events</span>
+      <div class="stage c-teal">
+        <div class="num">3</div>
+        <div class="who">Watch it go</div>
+        <ul>
+          <li><code>loki dashboard start</code><small>Your runs in the browser.</small></li>
+          <li><code>loki control serve</code> <span class="tag preview">Preview</span><small>The new Control Plane: every run, live stage and history in one place. Set <code>LOKI_CONTROL=1</code>.</small></li>
+          <li>Slack<small>A message when a PR opens, when a run needs your answer, and when it finishes.</small></li>
+        </ul>
       </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: linear-gradient(135deg, #EC4899, #F472B6);"></div>
-        <span>Quality</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: linear-gradient(135deg, #06B6D4, #22D3EE);"></div>
-        <span>Memory</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-color" style="background: linear-gradient(135deg, #F97316, #FBBF24);"></div>
-        <span>Deploy / Monitor</span>
+      <div class="stage c-pink">
+        <div class="num">4</div>
+        <div class="who">Trust what comes back</div>
+        <ul>
+          <li>A pull request<small>Only the change the task needs. Unrelated edits are left out and listed.</small></li>
+          <li><code>loki verify</code><small>Re-checks the signed receipt. Anyone can check it offline with <code>loki verify --pubkey</code>.</small></li>
+          <li>loki-seal<small>Inside Claude Code, it stops your agent from saying done while tests are red or were weakened.</small></li>
+        </ul>
       </div>
     </div>
-  </div>
+
+    <div class="section-title">
+      <h2>Every run ends with one clear answer</h2>
+      <p>No hanging, no vague "done". One outcome, and an exit code your scripts can read.</p>
+    </div>
+    <div class="outcomes">
+      <div class="outcome"><b>VERIFIED</b><p>The checks ran and passed. The PR is ready to review.</p></div>
+      <div class="outcome"><b>ALREADY_SATISFIED</b><p>It is already done in your code. No pointless PR.</p></div>
+      <div class="outcome warn"><b>PARTIAL</b><p>Progress made, but something is not proven. It tells you what.</p></div>
+      <div class="outcome warn"><b>BLOCKED</b><p>It needs one answer from you, and asks one question.</p></div>
+      <div class="outcome bad"><b>FAILED</b><p>It could not do it, and says why. It never pretends.</p></div>
+    </div>
+
+    <div class="section-title">
+      <h2>What you see at the end</h2>
+      <p>A few short lines. This one is a real run on an issue that was already done.</p>
+    </div>
+    <div class="receipt" aria-label="Example run summary">
+      <div><span class="k">Outcome</span><span class="ok">ALREADY_SATISFIED</span></div>
+      <div><span class="k">PR</span>none</div>
+      <div><span class="k">Receipt</span>sha256:375ca001f8c2...</div>
+      <div><span class="k">NOT PROVEN</span>full suite, app boot</div>
+      <div><span class="k">Cost</span>$0.07 (claude, 82k tokens)</div>
+      <div><span class="k">Time</span>24s</div>
+    </div>
+
+    <div class="note"><b>Heads up:</b> in 10.6.6, <code>loki start owner/repo#N</code> still runs the older engine. Use <code>loki owner/repo#N</code> for everything on this page. The older engine is being removed.</div>
+  </section>
+
+  <!-- TAB 2: ARCHITECTURE -->
+  <section class="panel" role="tabpanel" id="p-arch" aria-labelledby="t-arch" hidden>
+    <p class="intro">The Loki 10 engine is one small state machine in TypeScript on Bun. Every run writes one event log and ends in one signed receipt, with a 15-minute cap.</p>
+
+    <div class="section-title">
+      <h2>One run, start to finish</h2>
+      <p>Each box is a stage in <code>loki-ts/src/engine10/stages/</code>.</p>
+    </div>
+    <div class="flow">
+      <div class="node t-blue"><h3>Intake</h3><p>Reads the issue or task and maps the repo. Spots work that is already done.</p><span class="mono">intake.ts</span></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node t-blue"><h3>Plan</h3><p>The files in scope and the checks to run. Skipped for small tasks.</p><span class="mono">plan.ts</span></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node t-amber"><h3>Wall</h3><p>Writes acceptance checks from the requirement, without seeing the code.</p><span class="mono">wall.ts</span></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node"><h3>Implement</h3><p>One coding session with your provider. Cheaper model first.</p><span class="mono">implement.ts</span></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node t-teal"><h3>Verify</h3><p>Runs the real tests. Judges only what the change broke or fixed.</p><span class="mono">verify.ts</span></div>
+    </div>
+    <p class="loopback"><span>Fix, at most 2 rounds</span> if verify finds a real failure, then back to Verify</p>
+    <div class="flow" style="margin-top:14px">
+      <div class="node t-pink"><h3>Seal</h3><p>Signs the receipt: what passed, and what is not proven.</p><span class="mono">seal.ts</span></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node"><h3>Commit</h3><p>Only the files the task needs. Unrelated edits are left out.</p><span class="mono">commit.ts</span></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node"><h3>Pull request</h3><p>With the receipt and the evidence.</p><span class="mono">pr.ts</span></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="node t-teal"><h3>Deep verify</h3><p>Optional longer check after the PR, with <code>--deep</code>.</p><span class="mono">deep.ts</span></div>
+    </div>
+
+    <div class="section-title">
+      <h2>What sits around the engine</h2>
+    </div>
+    <div class="layers">
+      <div class="layer">
+        <h3>Models and providers</h3>
+        <ul>
+          <li><b>Providers:</b> Claude Code, Codex, Cline and Aider, chosen with <code>--provider</code>.</li>
+          <li><b>Model cascade:</b> starts on a cheaper model and moves up only when a real test fails.</li>
+          <li><b>Your keys:</b> runs on your machine. Only model calls leave it.</li>
+        </ul>
+      </div>
+      <div class="layer">
+        <h3>Proof and records</h3>
+        <ul>
+          <li><b>Event log:</b> one <code>events.jsonl</code> per run under <code>.loki/runs/</code>, sealed with a signed final line.</li>
+          <li><b>Receipt:</b> signed with a local Ed25519 key, created on first run. Edits show as TAMPERED.</li>
+          <li><b>Public key:</b> <code>loki keys export</code>, so others can verify offline.</li>
+        </ul>
+      </div>
+      <div class="layer">
+        <h3>Seeing your runs</h3>
+        <ul>
+          <li><b>Dashboard:</b> local web view of runs.</li>
+          <li><b>Control Plane</b> <span class="tag preview">Preview</span>: a separate service (Bun, Hono, SQLite or Postgres). Runs ship their events to it, and the UI reads only real events.</li>
+          <li><b>Slack:</b> webhook notifications.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <h2>How a release reaches you</h2>
+      <p>Every version passes the same first-run test you would do, before npm <code>latest</code> moves.</p>
+    </div>
+    <div class="pipe">
+      <div class="pill">Small change<small>its own CI</small></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="pill">Release train<small>full test suite</small></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="pill">npm <code>next</code><small>published</small></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="pill gate">First-run gate<small>with and without bun</small></div>
+      <div class="arrow" aria-hidden="true">&rarr;</div>
+      <div class="pill">npm <code>latest</code><small>what you install</small></div>
+    </div>
+
+    <div class="note"><b>Still in the code:</b> the older engine (<code>autonomy/run.sh</code>, the RARV loop and the completion council) <span class="tag legacy">Legacy</span> still ships for <code>loki start</code> and a few other commands. It is being removed, so it is not drawn here.</div>
+  </section>
+
+  <!-- TAB 3: PLAIN WORDS -->
+  <section class="panel" role="tabpanel" id="p-simple" aria-labelledby="t-simple" hidden>
+    <p class="intro">Think of Loki Mode as a careful contractor for your code. You leave a work order. It does the job, has it inspected, and leaves you a signed note. You just say yes or no.</p>
+
+    <div class="story">
+      <div class="scene">
+        <div class="icon i-blue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg></div>
+        <h3>You leave a work order</h3>
+        <p>"Add a search bar." It can be an issue on GitHub or one sentence.</p>
+        <div class="real">For real: <code>loki owner/repo#52</code></div>
+      </div>
+      <div class="scene">
+        <div class="icon i-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></div>
+        <h3>It looks around first</h3>
+        <p>It reads your project. If the search bar is already there, it tells you, and stops. No wasted work.</p>
+        <div class="real">For real: the ALREADY_SATISFIED outcome</div>
+      </div>
+      <div class="scene">
+        <div class="icon i-amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9"/></svg></div>
+        <h3>It writes the checklist before working</h3>
+        <p>Like an inspector writing the checklist before the builder starts, so the builder cannot bend the test to fit the work.</p>
+        <div class="real">For real: the Wall stage</div>
+      </div>
+      <div class="scene">
+        <div class="icon i-purple"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m14.7 6.3 3 3L8 19l-4 1 1-4z"/><path d="m13 8 3 3"/></svg></div>
+        <h3>It does the job</h3>
+        <p>An AI model you choose makes the change. It touches only what the job needs, not your other rooms.</p>
+        <div class="real">For real: Claude, Codex, Cline or Aider</div>
+      </div>
+      <div class="scene">
+        <div class="icon i-teal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg></div>
+        <h3>The inspection runs</h3>
+        <p>Your project's real tests run. If something fails, it gets up to two tries to fix it. It never just says "trust me".</p>
+        <div class="real">For real: Verify, then Fix</div>
+      </div>
+      <div class="scene">
+        <div class="icon i-pink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h3>You get a signed note</h3>
+        <p>A pull request to approve, plus a sealed receipt: what passed, what was not checked, what it cost, how long it took. Nobody can quietly change it later.</p>
+        <div class="real">For real: the receipt and <code>loki verify</code></div>
+      </div>
+    </div>
+
+    <div class="section-title">
+      <h2>Why people use it</h2>
+    </div>
+    <div class="why">
+      <div><b>Less babysitting</b><p>Give it a whole list of issues. It works through them and only comes back when it needs you.</p></div>
+      <div><b>No fake "done"</b><p>If tests were skipped, deleted or weakened, it does not call the work finished.</p></div>
+      <div><b>Your choice of AI</b><p>Use the model you already pay for. Runs on your own machine, free to use.</p></div>
+    </div>
+  </section>
 </div>
 
-<!-- Detail sections -->
-<div class="sections-grid">
-  <div class="section-card">
-    <div class="section-card-header">
-      <div class="section-icon" style="background: rgba(85, 61, 233, 0.1);">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#553DE9" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-      </div>
-      <h3>PRD-Driven Development</h3>
-    </div>
-    <p>Start with a Product Requirements Document. Loki Mode parses natural language specifications and converts them into structured development tasks automatically.</p>
-    <div class="tech-tags">
-      <span class="tech-tag">Markdown PRD</span>
-      <span class="tech-tag">13 templates</span>
-      <span class="tech-tag">Natural language</span>
-    </div>
-  </div>
-
-  <div class="section-card">
-    <div class="section-card-header">
-      <div class="section-icon" style="background: rgba(59, 130, 246, 0.1);">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#3B82F6" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-      </div>
-      <h3>RARV Iteration Cycle</h3>
-    </div>
-    <p>Every iteration follows Reason, Act, Reflect, Verify. Opus handles planning, Sonnet handles implementation, and Haiku manages unit tests and monitoring.</p>
-    <div class="tech-tags">
-      <span class="tech-tag">Opus planning</span>
-      <span class="tech-tag">Sonnet coding</span>
-      <span class="tech-tag">Haiku testing</span>
-    </div>
-  </div>
-
-  <div class="section-card">
-    <div class="section-card-header">
-      <div class="section-icon" style="background: rgba(236, 72, 153, 0.1);">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#EC4899" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-      </div>
-      <h3>8-Gate Quality System</h3>
-    </div>
-    <p>Static analysis, test suite (pass/fail), blind 3-reviewer review with severity blocking, anti-sycophancy Devil's Advocate, mock-integrity, test-mutation, documentation coverage, and Magic Modules debate.</p>
-    <div class="tech-tags">
-      <span class="tech-tag">ESLint</span>
-      <span class="tech-tag">CodeQL</span>
-      <span class="tech-tag">Playwright</span>
-      <span class="tech-tag">3 reviewers</span>
-    </div>
-  </div>
-
-  <div class="section-card">
-    <div class="section-card-header">
-      <div class="section-icon" style="background: rgba(6, 182, 212, 0.1);">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#06B6D4" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 016.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z"/></svg>
-      </div>
-      <h3>Memory System</h3>
-    </div>
-    <p>Three-layer progressive disclosure: episodic traces from individual tasks, semantic patterns generalized across projects, and procedural learned skills.</p>
-    <div class="tech-tags">
-      <span class="tech-tag">Episodic</span>
-      <span class="tech-tag">Semantic</span>
-      <span class="tech-tag">Vector search</span>
-      <span class="tech-tag">Token economics</span>
-    </div>
-  </div>
-
-  <div class="section-card">
-    <div class="section-card-header">
-      <div class="section-icon" style="background: rgba(249, 115, 22, 0.1);">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F97316" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      </div>
-      <h3>Live Dashboard</h3>
-    </div>
-    <p>Real-time monitoring with 117 API endpoints, WebSocket updates, agent status tracking, and cost analytics. Built with FastAPI and React.</p>
-    <div class="tech-tags">
-      <span class="tech-tag">FastAPI</span>
-      <span class="tech-tag">React</span>
-      <span class="tech-tag">WebSocket</span>
-      <span class="tech-tag">117 routes</span>
-    </div>
-  </div>
-
-  <div class="section-card">
-    <div class="section-card-header">
-      <div class="section-icon" style="background: rgba(16, 185, 129, 0.1);">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10B981" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-      </div>
-      <h3>Multi-Provider Support</h3>
-    </div>
-    <p>Run with Claude Code (full features), Cline, OpenAI Codex CLI, Aider, or opencode. Providers degrade gracefully with feature detection.</p>
-    <div class="tech-tags">
-      <span class="tech-tag">Claude (Tier 1)</span>
-      <span class="tech-tag">Codex (Tier 3)</span>
-      <span class="tech-tag">Cline (Tier 2)</span>
-      <span class="tech-tag">Aider (Tier 3)</span>
-      <span class="tech-tag">opencode</span>
-    </div>
-  </div>
-</div>
-
-<!-- Tooltip -->
-<div class="tooltip-overlay" id="tooltipOverlay" onclick="hideTooltip()"></div>
-<div class="tooltip" id="tooltip"></div>
-
-<footer>
-  Loki Mode by Autonomi -- Build the future, faster
-</footer>
+<footer>Loki Mode by <a href="https://www.autonomi.dev">Autonomi</a> &middot; <a href="https://github.com/asklokesh/loki-mode">github.com/asklokesh/loki-mode</a></footer>
 
 <script>
-const tooltipData = {
-  prd: {
-    title: 'PRD Input',
-    description: 'A Product Requirements Document written in Markdown. Loki Mode ships with 13 templates covering SaaS, CLI tools, Discord bots, mobile apps, and more.',
-    tags: ['prd.md', 'loki start', '13 templates']
-  },
-  planning: {
-    title: 'Planning Phase (Opus)',
-    description: 'The Opus model analyzes requirements, generates architecture, defines file structure, and creates the task queue. This is the "Reason" phase of the RARV cycle.',
-    tags: ['build_prompt()', 'detect_complexity()', 'task queue']
-  },
-  build: {
-    title: 'Build Phase (Sonnet)',
-    description: 'Sonnet generates production code across parallel streams using the Task tool. Multiple files are written simultaneously for maximum throughput.',
-    tags: ['Task tool', 'parallel streams', 'git worktrees']
-  },
-  quality: {
-    title: 'Quality Gates',
-    description: '8-gate quality pipeline: static analysis, test suite (pass/fail), blind 3-reviewer review with severity blocking, anti-sycophancy Devil\'s Advocate, mock-integrity, test-mutation, documentation coverage, and Magic Modules debate.',
-    tags: ['run_code_review()', 'loki audit', '8 gates']
-  },
-  deploy: {
-    title: 'Deployment',
-    description: 'Git push triggers CI/CD pipeline. Supports Vercel, AWS, Docker, and custom deployment targets. Post-deploy health checks verify the application.',
-    tags: ['CI/CD', 'Vercel', 'Docker', 'health check']
-  },
-  memory: {
-    title: 'Memory System',
-    description: 'Three-tier memory: episodic (specific task traces), semantic (generalized patterns), procedural (learned skills). Progressive disclosure loads context efficiently.',
-    tags: ['memory/', 'retrieval.py', 'vector search', 'ChromaDB']
-  },
-  dashboard: {
-    title: 'Live Dashboard',
-    description: 'FastAPI backend with 117 API endpoints and WebSocket real-time updates. React frontend shows agent status, cost tracking, build progress, and quality metrics.',
-    tags: ['server.py', 'React', 'WebSocket', '117 routes']
-  },
-  claude: {
-    title: 'Claude Code (Tier 1)',
-    description: 'Full-featured provider: subagents, parallel Task tool, MCP integration, and all quality gates. The default and recommended provider.',
-    tags: ['--dangerously-skip-permissions', 'Task tool', 'MCP']
-  },
-  codex: {
-    title: 'OpenAI Codex CLI (Tier 3)',
-    description: 'Degraded mode: sequential execution only, no Task tool or subagents. Uses --full-auto flag for autonomous operation.',
-    tags: ['--full-auto', 'gpt-5.3-codex', 'sequential']
-  },
-  opencode: {
-    title: 'opencode',
-    description: 'Model-agnostic provider: sequential execution, MCP support, one model per tier unless overridden.',
-    tags: ['providers/opencode.sh', 'MCP', 'sequential']
-  },
-  rarv: {
-    title: 'RARV Iteration Cycle',
-    description: 'Every iteration follows: Reason (analyze task), Act (implement), Reflect (review quality), Verify (run tests). Model tier maps to iteration number.',
-    tags: ['get_rarv_tier()', 'run_autonomous()', 'iteration loop']
-  },
-  council: {
-    title: 'Completion Council',
-    description: 'Three independent voters determine when a project is complete. Prevents premature stopping and infinite loops. Includes circuit breaker for stagnation.',
-    tags: ['council_should_stop()', '3-vote system', 'circuit breaker']
-  },
-  mcp: {
-    title: 'MCP Server',
-    description: 'Model Context Protocol server with 36 tools including ChromaDB code search, memory access, and build management. Enables IDE integration.',
-    tags: ['mcp/server.py', '36 tools', 'ChromaDB', 'IDE']
-  },
-  events: {
-    title: 'Unified Event Bus',
-    description: 'Cross-language event system with Python, TypeScript, and Bash implementations. All components communicate through structured events.',
-    tags: ['bus.py', 'bus.ts', 'emit.sh', 'structured events']
+(function () {
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+  function select(tab, focus) {
+    tabs.forEach(function (t) {
+      var on = t === tab;
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+      t.tabIndex = on ? 0 : -1;
+      document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+    });
+    if (focus) tab.focus();
+    try { history.replaceState(null, '', '#' + tab.id.slice(2)); } catch (e) {}
   }
-};
-
-const tooltip = document.getElementById('tooltip');
-const overlay = document.getElementById('tooltipOverlay');
-
-document.querySelectorAll('.arch-node').forEach(node => {
-  node.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const key = node.dataset.tooltip;
-    if (!key || !tooltipData[key]) return;
-
-    const data = tooltipData[key];
-    const rect = node.getBoundingClientRect();
-
-    tooltip.innerHTML = `
-      <h3>${data.title}</h3>
-      <p>${data.description}</p>
-      <div class="tooltip-tech">
-        ${data.tags.map(t => `<span class="tooltip-tag">${t}</span>`).join('')}
-      </div>
-    `;
-
-    let left = rect.right + 12;
-    let top = rect.top;
-
-    if (left + 320 > window.innerWidth) {
-      left = rect.left - 332;
-    }
-    if (left < 10) {
-      left = rect.left;
-      top = rect.bottom + 8;
-    }
-    if (top + 200 > window.innerHeight) {
-      top = window.innerHeight - 210;
-    }
-
-    tooltip.style.left = left + 'px';
-    tooltip.style.top = top + 'px';
-    tooltip.classList.add('active');
-    overlay.classList.add('active');
+  tabs.forEach(function (t, i) {
+    t.addEventListener('click', function () { select(t, false); });
+    t.addEventListener('keydown', function (e) {
+      var n = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (n) { e.preventDefault(); select(tabs[(i + n + tabs.length) % tabs.length], true); }
+    });
   });
-});
-
-function hideTooltip() {
-  tooltip.classList.remove('active');
-  overlay.classList.remove('active');
-}
-
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') hideTooltip();
-});
+  var start = document.getElementById('t-' + location.hash.slice(1));
+  if (start) select(start, false);
+})();
 </script>
-
 </body>
 </html>
