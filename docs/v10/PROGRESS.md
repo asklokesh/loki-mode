@@ -1905,3 +1905,4 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - train/78 (4da502a47) was red on Tier A "emoji/dash on changes" (literal dashes in reviewer_body.test.ts regex); fixed forward with unicode escapes (1917333e1). e10ext budget 1520 > 1500 fixed by trimming blank lines in assert_delta.ts (4da502a47; engine10 1032 pass, 0 fail).
 - Not done: a real end-to-end exit 3 run for the cost cap (unit-tested only); the root action.yml still uses `loki start --simple`.
 - D61 (speed, docs/v10/D61-SPEED.md): paused, governor max engineers 0 (weekly projected 167.8%). Slice 17 engineer stopped; partial work in worktree agent-ad890c5afa3648ae6.
+- 23:51Z: Post-Release Smoke and Promote success on bfce1db12; npm latest and next both 10.6.7. Sprint closed; pausing per HANDOFF-NEXT-WEEK.md.

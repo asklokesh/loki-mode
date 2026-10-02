@@ -1,8 +1,7 @@
 # Handoff to next week (D59, written 2026-10-01; resume Wednesday 2026-10-07)
 
-## On npm now
-- latest: 10.6.6 (moved by the D49 auto-promote after post-release smoke passed, seen 20:28Z; the D58 real-repo gate is not wired into promote yet).
-- next: 10.6.6 (Release run succeeded 20:12Z; npm can lag about 30 minutes, check `npm view loki-mode dist-tags`). 
+## On npm now (updated 2026-10-02T23:52Z after the D60 sprint)
+- latest and next: 10.6.7 (`npm view loki-mode dist-tags` gave latest 10.6.7, next 10.6.7 at 23:51Z; moved by the D49 auto-promote after Post-Release Smoke passed on bfce1db12; the D58 real-repo gate is still not wired into promote).
 
 ## Releases this window and their CI
 - 10.6.0 (9f9569c35, tree d922ef170): Tests, Bun Parity, Coverage, Security Audit all green on train/72 and on main. Published.
@@ -12,6 +11,13 @@
 - 10.6.4 (3a4df211c): every Tests job failed installing deps (npm 404 on baseline-browser-mapping-2.11.27.tgz, a fresh publish not yet propagated; 200 a few minutes later). Not published; content carried into 10.6.5.
 - 10.6.5 (0472f306a): Moat suite red, P9 injection-cannot-reach-token regressed by the minimal `loki start <ref>` route (b2e3afc43): the P9 probe drives `loki start <issue>` and expects a provider session; engine10 exited rc=2 first. Not published; start route reverted (621437c0a).
 - 10.6.6 (456058bae): scope control, Control Plane v0, train-cycle fix, docs. Tests, Bun Parity, Coverage, Security Audit all green; Release succeeded. Published.
+
+## D60 sprint (2026-10-02, one hour, all five slices in 10.6.7)
+- 10.6.7 (bfce1db12, train/79 1917333e1): Tests, Bun Parity, Coverage, Security Audit, First-run gate, SBOM, Release, Post-Release Smoke, Promote all success.
+- Shipped: `loki start` runs Loki 10 (moat P9 probe ported, moat rc=0); dashboard prints the bound port (LEAK3, test-ui-bare-loki rc=0); reviewer-first PR body; issue-to-PR Action on Loki 10 plus nightly `loki backlog` example; visible cost cap ($20 default, `--max-cost`, loki.yaml `budgets.per_run`, BUDGET_STOP exit 3).
+- Open: no real end-to-end exit 3 run of the cost cap yet; root action.yml still uses `loki start --simple`.
+- D61 (speed, docs/v10/D61-SPEED.md) paused by the governor; slice 17 partial work in worktree agent-ad890c5afa3648ae6. Peer GO covers slices 1, 2, 7, 8, 17 behind LOKI_SPEED=1.
+- D58 basics 1 and 2 below are superseded by 10.6.7 (now PASS on CI; still unproven on a real repo).
 
 ## D58 basics
 1. `loki start` runs v10: FAIL. Both the minimal route (b2e3afc43, a 7-line bin/loki start arm) and the full re-route regress moat P9, because tests/moat P9 drives `loki start <issue>` through the legacy path; port that probe to the v10 issue path first, then re-land b2e3afc43. The full re-route W1-ROUTE is built (branch slice-D57-W1-ROUTE, commit a8ed5461a, which is based on the old main that still has the CP-00 JWT commits, so cherry-pick it, never merge it) but turned Tests red as listed above. Its docs follow-up is f001bc0f1.
