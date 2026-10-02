@@ -26,6 +26,8 @@ The dashboard automatically syncs with Loki Mode when it's running, polling `das
 
 **Ports:** The dashboard and API run on unified port **57374** (FastAPI serves both). See [INSTALLATION.md](INSTALLATION.md#ports) for details.
 
+**Bound port:** if 57374 is held by something that is not this install's dashboard (another project, an older version, a foreign process), Loki walks to the next free port and never reuses or opens the foreign one. `loki start` and `loki dashboard` open and print the URL of the port actually bound; `loki start` publishes it to `.loki/dashboard/url`. A running dashboard is reused only when its `/health` reports the same version and install path.
+
 ---
 
 ## UI Components
