@@ -432,6 +432,55 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test 10b: section extractors must behave identically on GNU and BSD sed/grep.
+# The patterns used GNU-only \s and \| so macOS silently fell back to the
+# first-paragraph / grep heuristics. Exact output is pinned for a body with an
+# indented list, indented content under a heading, and a following heading.
+# ---------------------------------------------------------------------------
+if (
+    # shellcheck source=/dev/null
+    source "$PARSER" >/dev/null 2>&1
+    body='Intro line.
+
+### Problem
+   Indented problem text
+Second problem line
+
+## Acceptance Criteria
+  - [ ] first item
+    * [x] second item
+- [ ] third item
+
+## Technical Notes
+Uses the API
+## Closing
+tail'
+    want_problem='Indented problem text
+Second problem line
+
+Acceptance Criteria'
+    want_criteria='## Acceptance Criteria
+  - [ ] first item
+    * [x] second item
+- [ ] third item
+
+## Technical Notes'
+    want_technical='## Technical Notes
+Uses the API
+## Closing'
+    got=$(extract_problem_statement "$body")
+    [ "$got" = "$want_problem" ] || { echo "problem: $got" >&2; exit 1; }
+    got=$(extract_acceptance_criteria "$body")
+    [ "$got" = "$want_criteria" ] || { echo "criteria: $got" >&2; exit 1; }
+    got=$(extract_technical_requirements "$body")
+    [ "$got" = "$want_technical" ] || { echo "technical: $got" >&2; exit 1; }
+); then
+    log_pass "section extractors identical on GNU and BSD (no backslash-s or alternation in sed)"
+else
+    log_fail "section extractors" "problem/criteria/technical sections differ from the pinned GNU output"
+fi
+
+# ---------------------------------------------------------------------------
 # Test 11: THE REQUIRED PATH. Everything above exercises the units; this drives
 # the real CLI (`loki run <issue> --no-start`) with gh shimmed, and asserts the
 # early artifacts land.

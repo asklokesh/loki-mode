@@ -136,7 +136,7 @@ extract_problem_statement() {
 
     # Try to find explicit problem/description section
     # Match: ## Problem, ### Problem, **Problem**, Problem:
-    problem=$(echo "$body" | sed -n '/^#*\s*\*\{0,2\}[Pp]roblem\|^#*\s*\*\{0,2\}[Dd]escription\|^#*\s*\*\{0,2\}[Ss]ummary\|^#*\s*\*\{0,2\}[Bb]ackground/,/^#\|^---/p' | head -30 | tail -n +2)
+    problem=$(echo "$body" | sed -n -E '/^#*[[:space:]]*\*{0,2}([Pp]roblem|[Dd]escription|[Ss]ummary|[Bb]ackground)/,/^(#|---)/p' | head -30 | tail -n +2)
 
     # If no explicit section, use first paragraph
     if [ -z "$problem" ]; then
@@ -156,16 +156,16 @@ extract_acceptance_criteria() {
     local criteria=""
 
     # Look for Acceptance Criteria section
-    criteria=$(echo "$body" | sed -n '/^#*\s*\*\{0,2\}[Aa]cceptance [Cc]riteria\|^#*\s*\*\{0,2\}[Rr]equirements\|^#*\s*\*\{0,2\}[Dd]efinition of [Dd]one/,/^#\|^---/p' | head -30)
+    criteria=$(echo "$body" | sed -n -E '/^#*[[:space:]]*\*{0,2}([Aa]cceptance [Cc]riteria|[Rr]equirements|[Dd]efinition of [Dd]one)/,/^(#|---)/p' | head -30)
 
     # If no section found, extract all checkboxes
     if [ -z "$criteria" ]; then
-        criteria=$(echo "$body" | grep -E '^\s*[-*]\s*\[[ xX]\]' | head -20)
+        criteria=$(echo "$body" | grep -E '^[[:space:]]*[-*][[:space:]]*\[[ xX]\]' | head -20)
     fi
 
     # If still nothing, look for numbered or bulleted lists after "should" or "must"
     if [ -z "$criteria" ]; then
-        criteria=$(echo "$body" | grep -E '^\s*[-*0-9.]+\s+.*(should|must|needs to|required)' | head -20)
+        criteria=$(echo "$body" | grep -E '^[[:space:]]*[-*0-9.]+[[:space:]]+.*(should|must|needs to|required)' | head -20)
     fi
 
     echo "$criteria"
@@ -178,7 +178,7 @@ extract_technical_requirements() {
     local technical=""
 
     # Look for Technical/Implementation section
-    technical=$(echo "$body" | sed -n '/^#*\s*\*\{0,2\}[Tt]echnical\|^#*\s*\*\{0,2\}[Ii]mplementation\|^#*\s*\*\{0,2\}[Aa]rchitecture\|^#*\s*\*\{0,2\}[Tt]ech [Ss]pec/,/^#\|^---/p' | head -40)
+    technical=$(echo "$body" | sed -n -E '/^#*[[:space:]]*\*{0,2}([Tt]echnical|[Ii]mplementation|[Aa]rchitecture|[Tt]ech [Ss]pec)/,/^(#|---)/p' | head -40)
 
     # If no section, look for code-related mentions
     if [ -z "$technical" ]; then
@@ -544,7 +544,7 @@ prd:
 $(yaml_escape "$problem")
 
   goals:
-$(echo "$acceptance" | grep -E '^\s*[-*]\s*\[' | sed 's/^\s*[-*]\s*\[.\]/    -/' | head -10 || echo "    - Complete implementation as described")
+$(echo "$acceptance" | grep -E '^[[:space:]]*[-*][[:space:]]*\[' | sed 's/^[[:space:]]*[-*][[:space:]]*\[.\]/    -/' | head -10 || echo "    - Complete implementation as described")
 
   scope:
     in_scope:
@@ -554,7 +554,7 @@ $(echo "$technical" | head -5 | sed 's/^/      - /' || true)
       - Changes unrelated to this issue
 
   success_criteria:
-$(echo "$acceptance" | grep -E '^\s*[-*]\s*\[' | sed 's/^\s*[-*]\s*\[.\]/    -/' | head -10 || echo "    - Issue requirements satisfied")
+$(echo "$acceptance" | grep -E '^[[:space:]]*[-*][[:space:]]*\[' | sed 's/^[[:space:]]*[-*][[:space:]]*\[.\]/    -/' | head -10 || echo "    - Issue requirements satisfied")
     - All tests passing
     - Code review approved
 
