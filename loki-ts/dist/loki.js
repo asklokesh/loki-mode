@@ -1780,7 +1780,7 @@ except Exception as e:
 
 Usage: loki <command> [args...]
 
-Phase 2 ported (Bun-native, fast):
+Bun-native commands:
   version                Print Loki Mode version
   status [--json]        Show current orchestrator status
   stats [--json] [--efficiency]   Session statistics
@@ -1798,6 +1798,14 @@ Phase 2 ported (Bun-native, fast):
   answer [run] [--text]  Resume a BLOCKED run with an answer (--text, or the Control Plane answer file)
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
+  kpis [--json]          KPI snapshot (alias of: report kpis)
+  report kpis            Canonical KPI snapshot report
+  trust <subcmd>         Trust trajectory derived from proof-of-run history
+  crash <subcmd>         Inspect or submit scrubbed local crash reports
+  contract <spec.md>     Print the spec delivery contract and write .loki/contract.json
+  start [flags]          Run the RARV autonomous loop (Bun route, LOKI_SDK_LOOP)
+  slack serve [--port N] [--host H]   Serve the Slack inbound handler (needs SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET)
+  engine10 <subcmd>      v10 engine router (run, status, verify, keys, dashboard, modernize)
 
 All other commands fall through to the bash CLI (autonomy/loki).
 Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
@@ -1809,4 +1817,4 @@ Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
 `),2}case"start":{let{runStart:X}=await Promise.resolve().then(() => (fn(),_n));return X(Q)}case"slack":{let{runSlackCli:X}=await Promise.resolve().then(() => (Ys(),Ks));return X(Q)}case"answer":{let{runAnswerCli:X}=await Promise.resolve().then(() => (K80(),J80));return X(Q)}case"engine10":{let{runEngine10:X}=await Promise.resolve().then(() => (H80(),G80)),{registryLoader:J}=await Promise.resolve().then(() => (bH(),i00));return X(Q,J)}default:return process.stderr.write(`Unknown command: ${Z}
 `),process.stderr.write(B80),2}}KD();process.on("SIGINT",()=>process.exit(130));process.on("SIGTERM",()=>process.exit(143));var Az8=await jz8(Bun.argv.slice(2));process.exit(Az8);
 
-//# debugId=208B710A8186423005A354251BC569FB
+//# debugId=5EF862FC1645E5147D2EE5F657000585
