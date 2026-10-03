@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Loki 10 runs show their per-run cost cap on the start line (default $20.00, or `budgets.per_run` in loki.yaml, or `--max-cost`); a run that reaches the cap ends BUDGET_STOP with exit code 3 (INTEL-2).
 - `loki answer` resumes a BLOCKED run with the answer typed in the Control Plane (or `--text`).
+- `loki backlog` and dashboard starts reuse the shared worktree prep (per-repo lock, clean start point, node_modules copy) unless LOKI_WORKSPACES=0 (D51-B05, D51-B06).
 
 ### Changed
 - `loki` with no arguments now opens the Control Plane (set `LOKI_CONTROL_DEFAULT=0` for the previous dashboard).

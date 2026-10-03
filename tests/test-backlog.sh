@@ -50,6 +50,7 @@ cat > "$TMP/launcher.sh" <<'EOF'
 #!/usr/bin/env bash
 ref="$1"; n="${ref##*#}"
 echo "$n $(pwd -P) $(git branch --show-current)" >> "$MOCK_DIR/launches"
+if [ -d node_modules ]; then echo "$n" >> "$MOCK_DIR/nm"; fi
 mkdir "$MOCK_DIR/lock.$n"
 cur=$(ls -d "$MOCK_DIR"/lock.* | wc -l | tr -d ' ')
 echo "$cur" >> "$MOCK_DIR/conc"
@@ -224,6 +225,24 @@ out="$(run backlog acme/widgets --issues 1,2 --concurrency 1 2>&1)"
 [ "$(wc -l < "$TMP/launches" | tr -d ' ')" = "2" ] && pass "unmeasured cost is not counted as \$0 spend or a stop" || fail "unmeasured" "$out"
 echo "$out" | grep -qi 'unmeasured\|not measured' && pass "summary reports unmeasured cost" || fail "unmeasured text" "$out"
 rm -f loki.yaml
+
+# ---- Shared worktree prep (D51-B05) ------------------------------------------
+echo "== worktree prep"
+printf 'node_modules/\n' > "$REPO/.gitignore"
+git -C "$REPO" add .gitignore
+git -C "$REPO" -c user.name=t -c user.email=t@t commit -q -m ignore
+mkdir -p "$REPO/node_modules/pkg"; echo x > "$REPO/node_modules/pkg/index.js"
+for flag in 1 0; do
+  reset_mock; rm -f "$TMP/nm"; echo "$issues5" > "$TMP/issues.json"; echo "1:0:pr" > "$TMP/outcomes"
+  out="$(LOKI_WORKSPACES=$flag run backlog acme/widgets --issues 1 --concurrency 1 2>&1)"; rc=$?
+  if [ "$flag" = 1 ]; then
+    { [ $rc -eq 0 ] && [ -f "$TMP/nm" ]; } && pass "adopted prep: JS worktree has node_modules" || fail "adopted prep deps" "rc=$rc $out"
+  else
+    { [ $rc -eq 0 ] && [ ! -f "$TMP/nm" ]; } && pass "LOKI_WORKSPACES=0: legacy worktree (no deps copy)" || fail "legacy prep" "rc=$rc $out"
+  fi
+done
+rm -rf "$REPO/node_modules" "$REPO/.gitignore"
+git -C "$REPO" reset -q --hard HEAD~1
 
 # ---- PAT never printed -------------------------------------------------------
 echo "== PAT hygiene"

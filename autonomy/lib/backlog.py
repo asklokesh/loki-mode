@@ -36,6 +36,8 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import loki_yaml  # noqa: E402
+import workspace  # noqa: E402
+import worktree_prep  # noqa: E402
 
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -335,8 +337,18 @@ def main(argv):
         wt = os.path.join(wt_root, s["wt"])
         if os.path.exists(wt):
             git("worktree", "remove", "--force", wt, cwd=top)
-        r = git("worktree", "add", "-B", s["branch"], wt, "HEAD", cwd=top)
-        if r.returncode != 0:
+        if workspace.enabled():
+            # Shared worktree prep (D51-B05): per-base lock, clean start point, deps copied.
+            git("branch", "-D", s["branch"], cwd=top)
+            try:
+                worktree_prep.prepare_worktree(top, wt, s["branch"])
+                r = None
+            except (RuntimeError, subprocess.CalledProcessError) as e:
+                msg = getattr(e, "stderr", None) or str(e)
+                r = subprocess.CompletedProcess([], 1, "", msg)
+        else:
+            r = git("worktree", "add", "-B", s["branch"], wt, "HEAD", cwd=top)
+        if r is not None and r.returncode != 0:
             err = (r.stderr.strip().splitlines() or ["git error"])[-1]
             state[k].update(status="FAILED: worktree: " + redact(err, token), ok=False)
             say("backlog: %s %s" % (s["label"], state[k]["status"]))

@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -156,6 +157,25 @@ def _project_dir() -> str:
     return os.environ.get("LOKI_PROJECT_DIR") or os.getcwd()
 
 
+def _autonomy_lib():
+    lib = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "autonomy", "lib")
+    if lib not in sys.path:
+        sys.path.insert(0, lib)
+
+
+def _workspaces_enabled() -> bool:
+    """Same rule as `loki workspace`: on by default, LOKI_WORKSPACES=0 disables."""
+    _autonomy_lib()
+    import workspace
+    return workspace.enabled()
+
+
+def _worktree_prep():
+    _autonomy_lib()
+    import worktree_prep
+    return worktree_prep
+
+
 def _prepare_workdir(repo: str, number: int, token: str) -> str:
     """One git worktree per issue, off the repo's default branch."""
     env = dict(os.environ, GH_TOKEN=token, GIT_TERMINAL_PROMPT="0")
@@ -180,7 +200,12 @@ def _prepare_workdir(repo: str, number: int, token: str) -> str:
     stamp = time.strftime("%Y%m%d%H%M%S")
     wt = _home() / "worktrees" / slug / ("issue-%d-%s" % (number, stamp))
     wt.parent.mkdir(parents=True, exist_ok=True)
-    _git("worktree", "add", "-b", "loki/backlog-%d-%s" % (number, stamp), str(wt), start, cwd=base)
+    branch = "loki/backlog-%d-%s" % (number, stamp)
+    if _workspaces_enabled():
+        # Shared worktree prep (D51-B06): same per-base lock and dep copy as backlog and workspace runs.
+        _worktree_prep().prepare_worktree(base, str(wt), branch, base=start)
+        return str(wt)
+    _git("worktree", "add", "-b", branch, str(wt), start, cwd=base)
     return str(wt)
 
 
