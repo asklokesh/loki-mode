@@ -750,7 +750,7 @@ function importsNamed(path: string, raw: string, stems: Set<string>, importStems
   const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
   for (const py of views) {
     for (const m of py.matchAll(/(?:^|:)[ \t]*from[ \t]+([\w.]+?)(?:[ \t]+|(?<=\.)[ \t]*)import\b[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
-    for (const m of py.matchAll(/(?:^|:)[ \t]*import[ \t]+([\w.,\t ]+?)[ \t]*(?:#.*)?$/gm)) specs.push(...names(m[1]!));
+    for (const m of py.matchAll(/(?:^|:)[ \t]*import[ \t]+([^\n#;]+?)[ \t]*(?:#.*)?$/gm)) specs.push(...names(m[1]!));
   }
   // Resolve every relative specifier against the test directory (JS ./ ../ . .. and Python leading dots).
   const dir = dirOf(path);

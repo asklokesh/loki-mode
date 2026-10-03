@@ -1022,7 +1022,18 @@ describe("python import forms: comments, semicolons, compound prefixes (D77, W1-
     ["escaped quote hash then import", "x = '\\'#'; import main\n", {}],
     ["escaped dquote hash then import", 's = "\\"#\\""; import main\n', {}],
     ["escaped quote hash then from-import", "x = '\\'#'; from main import run\n", {}],
+    ["import as non-ascii alias", "import main as \u00e9\n", {}],
+    ["import as non-ascii alias with comment", "import main as \u00e9 # c\n", {}],
+    ["import list with non-ascii last", "import main, \u00e9\n", {}],
+    ["import list with non-ascii first", "import \u00e9, main\n", {}],
+    ["import as non-ascii containing alias", "import main as m\u00e9\n", {}],
+    ["import with trailing form feed", "import main\f\n", {}],
   ];
+  test("import index as non-ascii alias: test_a.py is not an example", () => {
+    const t = manifest({ ...base, "index.py": "def f():\n    return 1\n", "tests/test_a.py": "import index as \u00f1\n\ndef test_a():\n    assert True\n" }, "fix index.py");
+    expect(t).not.toContain("--- example: tests/test_a.py");
+    expect(t).toContain("--- example: tests/test_other.py");
+  });
   for (const [name, first, extra] of cases) {
     test(`${name}: test_a.py is not an example`, () => {
       const t = manifest({ ...base, ...extra, "tests/test_a.py": `${first}\ndef test_a():\n    assert True\n` }, "fix main.py");
