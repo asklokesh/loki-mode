@@ -128,6 +128,7 @@ done
 # Positive control: the same function with the config overrides zeroed runs
 # the driver, so the legs above are not vacuous.
 sed -e 's/"GIT_CONFIG_COUNT=\${n}"/"GIT_CONFIG_COUNT=0"/' \
+    -e 's/sentinel 2>\/dev\/null)" != "1"/sentinel 2>\/dev\/null)" = "never"/' \
     "$WORK/lib-real.sh" > "$WORK/lib-nofilter.sh"
 if cmp -s "$WORK/lib-real.sh" "$WORK/lib-nofilter.sh"; then
     fail "filter mutation found no GIT_CONFIG_COUNT line to zero"
@@ -213,6 +214,58 @@ case "$outl" in *MARKER=no*) pass "no core.sshCommand hook run by a partial-clon
 outlp="$(run_lazy_case "$WORK/lib-real.sh" lazy plain)"
 case "$outlp" in *MARKER=yes*) pass "control: plain git status lazy-fetches and runs the hook (fixture is live)" ;;
     *) fail "control: plain git status did not run the lazy-fetch hook" "$outlp" ;; esac
+
+# Non-UTF-8 driver name under a UTF-8 locale: the name lookup must be byte-exact.
+nu_repo="$WORK/nrepo"; nu_marker="$WORK/nmarker"
+mkdir -p "$nu_repo" && git -C "$nu_repo" init -q
+git -C "$nu_repo" config user.email t@example.invalid
+git -C "$nu_repo" config user.name t
+printf 'aa\n' > "$nu_repo/f.txt"
+git -C "$nu_repo" add f.txt && git -C "$nu_repo" commit -q -m init
+nu_name="$(printf 'z\377z')"
+git -C "$nu_repo" config "filter.${nu_name}.clean" "touch '$nu_marker'; cat"
+printf 'f.txt filter=%s\n' "$nu_name" > "$nu_repo/.git/info/attributes"
+printf 'bb\n' > "$nu_repo/f.txt"; touch -t 203001010000 "$nu_repo/f.txt"
+( cd "$nu_repo" && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 git status --porcelain >/dev/null 2>&1 )
+if [ -e "$nu_marker" ]; then
+    pass "control: plain git status runs the non-UTF-8 driver (fixture is live)"
+    rm -f "$nu_marker"
+    ( cd "$nu_repo" && . "$WORK/lib-real.sh" && LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 _loki_untracked_status "$WORK/nstatus" ) >/dev/null 2>&1
+    [ -e "$nu_marker" ] && fail "non-UTF-8 driver name ran under a UTF-8 locale" \
+        || pass "no hook run for a non-UTF-8 driver name under a UTF-8 locale"
+else
+    fail "control: plain git status did not run the non-UTF-8 driver"
+fi
+
+# A git that ignores GIT_CONFIG_COUNT (git < 2.31) must fail closed.
+real_git="$(command -v git)"
+printf '#!/bin/sh\nunset GIT_CONFIG_COUNT\nexec "%s" "$@"\n' "$real_git" > "$WORK/hidegit"
+chmod +x "$WORK/hidegit"
+rm -f "$WORK/estatus-shim" "$WORK/emarker-shim-clean-real"
+shim_out="$(
+    cd "$WORK" || exit 1
+    # shellcheck source=/dev/null
+    . "$WORK/lib-real.sh"
+    _loki_snapshot_git_tool() { printf '%s\n' "$WORK/hidegit"; }
+    repo="$WORK/erepo-shim"
+    mkdir -p "$repo" && git -C "$repo" init -q
+    git -C "$repo" config user.email t@example.invalid
+    git -C "$repo" config user.name t
+    printf 'aa\n' > "$repo/f.txt"
+    git -C "$repo" add f.txt && git -C "$repo" commit -q -m init
+    git -C "$repo" config filter.evil.clean "touch '$WORK/smarker'; cat"
+    printf 'f.txt filter=evil\n' > "$repo/.git/info/attributes"
+    printf 'bb\n' > "$repo/f.txt"; touch -t 203001010000 "$repo/f.txt"
+    cd "$repo" || exit 1
+    _loki_untracked_status "$WORK/sstatus" >/dev/null 2>&1
+    echo "RC=$?"
+    [ -e "$WORK/smarker" ] && echo "MARKER=yes" || echo "MARKER=no"
+    [ -e "$WORK/sstatus" ] && echo "OUT=yes" || echo "OUT=no"
+)"
+case "$shim_out" in *RC=0*) fail "status ran unprotected under a git that hides GIT_CONFIG_COUNT" "$shim_out" ;;
+    *MARKER=yes*) fail "driver ran under a git that hides GIT_CONFIG_COUNT" "$shim_out" ;;
+    *MARKER=no*) pass "fails closed (non-zero, no hook) when GIT_CONFIG_COUNT is not honored" ;;
+    *) fail "unexpected shim output" "$shim_out" ;; esac
 
 if [ -e "$REPO_ROOT/.loki/state/provider" ] && [ "$REPO_ROOT/.loki/state/provider" -nt "$WORK" ]; then
     fail "a .loki/state/provider appeared in the repo during this test"

@@ -10647,37 +10647,44 @@ _loki_snapshot_preexisting() {
 # entirely absent from the sealed snapshot this function ultimately feeds.
 _loki_untracked_status() {
     local top="" prefix="" gittool=""
+    local genv=() fk="" fn="" n=0
     gittool="$(_loki_snapshot_git_tool)" || return 1
-    top="$("$gittool" rev-parse --show-toplevel 2>/dev/null)" || return 1
-    prefix="$("$gittool" rev-parse --show-prefix 2>/dev/null)" || return 1
+    # Inherited GIT_DIR / GIT_WORK_TREE would repoint every call below.
+    top="$(env -u GIT_DIR -u GIT_WORK_TREE "$gittool" rev-parse --show-toplevel 2>/dev/null)" || return 1
+    prefix="$(env -u GIT_DIR -u GIT_WORK_TREE "$gittool" rev-parse --show-prefix 2>/dev/null)" || return 1
     # BACKLOG 131c: a repo-local core.fsmonitor is a command git runs on
     # status; the agent can write .git/config, so disable it (and the
     # untracked cache it could have poisoned) for this one call.
     # A filter driver named by attributes (clean/smudge/process) is also a
     # command git runs when status compares a stat-dirty tracked file, so every
-    # configured driver is blanked: clean/smudge become cat, process is empty,
-    # required is false (a blank process would otherwise be fatal).
+    # configured driver is blanked: clean/smudge/process become empty (never
+    # `cat`, which resolves from PATH) and required is false.
     # The overrides travel as GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n, never as
     # `-c key=value`: git splits -c at the first "=", so a driver named "x=y"
     # would be missed. GIT_NO_LAZY_FETCH stops a partial-clone status from
     # fetching a missing blob over an agent-written core.sshCommand. Inherited
     # GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_PARAMETERS and GIT_CONFIG_GLOBAL are
-    # dropped and GIT_CONFIG_COUNT is overwritten, never appended to.
-    local genv=() fk="" fn="" n=0
+    # dropped and GIT_CONFIG_COUNT is overwritten, never appended to. LC_ALL=C
+    # keeps the name lookup byte-exact for non-UTF-8 driver names.
     genv=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_GLOBAL
-        GIT_NO_LAZY_FETCH=1)
+        LC_ALL=C GIT_NO_LAZY_FETCH=1)
     while IFS= read -r -d '' fk; do
         fn="${fk%.*}"
-        case "$fk" in
-            *.process) genv+=("GIT_CONFIG_KEY_${n}=${fk}" "GIT_CONFIG_VALUE_${n}=") ;;
-            *) genv+=("GIT_CONFIG_KEY_${n}=${fk}" "GIT_CONFIG_VALUE_${n}=cat") ;;
-        esac
+        genv+=("GIT_CONFIG_KEY_${n}=${fk}" "GIT_CONFIG_VALUE_${n}=")
         n=$((n + 1))
         genv+=("GIT_CONFIG_KEY_${n}=${fn}.required" "GIT_CONFIG_VALUE_${n}=false")
         n=$((n + 1))
     done < <("${genv[@]}" "$gittool" -C "$top" config -z --name-only --get-regexp \
         '^filter\..*\.(clean|smudge|process)$' 2>/dev/null)
+    # git < 2.31 ignores GIT_CONFIG_COUNT and would run every driver: prove the
+    # overrides are visible with a sentinel, and refuse to run unprotected.
+    genv+=("GIT_CONFIG_KEY_${n}=loki.snapshot.sentinel" "GIT_CONFIG_VALUE_${n}=1")
+    n=$((n + 1))
     genv+=("GIT_CONFIG_COUNT=${n}")
+    if [ "$("${genv[@]}" "$gittool" -C "$top" config --get loki.snapshot.sentinel 2>/dev/null)" != "1" ]; then
+        echo "snapshot: git does not honor GIT_CONFIG_COUNT (needs git >= 2.31); refusing to run status unprotected" >&2
+        return 1
+    fi
     "${genv[@]}" "$gittool" -C "$top" -c core.fsmonitor=false -c core.untrackedCache=false \
         --no-optional-locks status --porcelain -z --no-renames -uall \
         --ignored=matching --ignore-submodules=all -- ":(exclude,literal)${prefix}.loki" \
