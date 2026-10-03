@@ -2005,3 +2005,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D77 decided (CTO): Wall gets a sealed base-tree signatures manifest, never repo access; cap 90/180s, override max 300s; W1-S1..S4 on BOARD, core-budget gated.
 - PO batch: 7 LOW/MEDIUM slices carded with reproduced evidence; 6 builders dispatched (PO-HELP-1 waits for A-121c). PO-DOC-3 done (ac8ae0425).
 - Drift audit: 1 release in the last hour against the 20 min target (MISS: train/94 held on the engine10 core budget, 5007 of 5000, until P0-CORE-BUDGET merges). Seats: 12 agents active, inside 8-16. Ready queue still mostly HIGH or core-gated.
+
+## 2026-10-03T09:02Z CoS drift audit
+- Merged to main: INTEL-1b (d64de6b5b, 794566ce6, opus HIGH r2 APPROVE, 71/0, guard 13/0); PO-TEST-1..3 (41103e5c3, 8b3fa5af4, 75953c210; suites 15/0, 7/0, 39/0; shard/registration guards green).
+- A-121c opus HIGH BLOCK: standalone autonomy/verify.sh printed UNCHECKED then VERDICT: VERIFIED rc 0 on a forged or unsigned receipt (reproduced; loki verify correctly rc 2). r2 dispatched.
+- A-04c r3 opus BLOCK: four reproduced seal false greens (chat filter drops real promises, partial red counted covered, skipped test covers, block comment or docstring assert). r4 dispatched.
+- v10.6.11 Release run still in_progress at 08:56Z; npm latest 10.6.10. Train/94 held on P0-CORE-BUDGET.
+- Drift audit: 1 release last hour (MISS, same cause). Seats: 6 agents active, below 8; ready rows are core-budget gated or HIGH/CTO-owned, DOC-INTEL-1b added.
