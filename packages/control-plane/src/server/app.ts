@@ -5,7 +5,7 @@ import { openDb } from "../db/migrate.ts";
 import { ingest } from "./ingest.ts";
 import { defaultAnswerDir, writeAnswer } from "./answer.ts";
 import { listRuns, runDetail } from "./runs.ts";
-import { authGuard } from "./auth.ts";
+import { hostGuard, tokenGuard } from "./auth.ts";
 
 const MAX_BODY = 1_000_000;
 
@@ -20,7 +20,8 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   const answerDir = opts.answerDir ?? defaultAnswerDir();
   const app = new Hono();
   // token: bearer required on /v1/*. loopbackOnly: reject a non-loopback Host (DNS rebinding). Both off by default; serve.ts sets them from env.
-  if (opts.token || opts.loopbackOnly) app.use("*", authGuard({ token: opts.token, loopbackOnly: opts.loopbackOnly }));
+  if (opts.loopbackOnly) app.use("*", hostGuard());
+  if (opts.token) app.use("/v1/*", tokenGuard(opts.token));
 
   app.get("/health", (c) => c.json({ service: "loki-control", pid: process.pid, install_path: import.meta.dir }));
   app.get("/ready", (c) => {

@@ -87,3 +87,36 @@ test("serve.ts: non-loopback host without a token exits 2 without binding", () =
   expect(r.stderr.toString()).toContain("LOKI_CONTROL_TOKEN");
   expect(r.stdout.toString()).not.toContain("listening");
 });
+
+test("percent-encoded /v1 paths cannot skip the token (route is matched on the decoded path)", async () => {
+  const app = secured();
+  const e = evs();
+  const body = JSON.stringify({ source: SRC, run_id: e[0].run, events: e });
+  for (const p of ["/%761/runs", "/v%31/runs", "/%76%31/runs", "/v1%2Fruns"]) {
+    const r = await app.request(p);
+    expect(r.status === 401 || r.status === 404).toBe(true);
+  }
+  const post = await app.request("/%761/ingest", { method: "POST", body });
+  expect(post.status).toBe(401);
+  expect((await app.request("/%761/runs", { headers: bearer(TOKEN) })).status).toBe(200);
+  expect((await app.request("/v1/runs", { method: "HEAD" })).status).toBe(401);
+  expect((await app.request("/v1/runs", { method: "OPTIONS" })).status).toBe(401);
+});
+
+test("bearer scheme is case-insensitive", () => {
+  expect(tokenMatches("bearer abc", "abc")).toBe(true);
+  expect(tokenMatches("BEARER abc", "abc")).toBe(true);
+});
+
+test("isLoopbackHost is strict: trailing junk and userinfo tricks are rejected", () => {
+  for (const h of ["[::1]evil", "localhost:80@evil", "localhost@evil", "127.0.0.1.evil.com", "localhost:", "localhost:80x"]) expect(isLoopbackHost(h)).toBe(false);
+  for (const h of ["LOCALHOST", "127.0.0.1:1", "[::1]:9"]) expect(isLoopbackHost(h)).toBe(true);
+});
+
+test("insecureBindWarning: only when the override is what permits a non-loopback bind with no token", async () => {
+  const { insecureBindWarning } = await import("../../src/server/auth.ts");
+  expect(insecureBindWarning({ LOKI_CONTROL_HOST: "0.0.0.0", LOKI_CONTROL_ALLOW_INSECURE_BIND: "1" })).toContain("0.0.0.0");
+  expect(insecureBindWarning({ LOKI_CONTROL_HOST: "0.0.0.0", LOKI_CONTROL_ALLOW_INSECURE_BIND: "1", LOKI_CONTROL_TOKEN: "tok-secret" })).toBeNull();
+  expect(insecureBindWarning({ LOKI_CONTROL_HOST: "127.0.0.1", LOKI_CONTROL_ALLOW_INSECURE_BIND: "1" })).toBeNull();
+  expect(insecureBindWarning({ LOKI_CONTROL_HOST: "0.0.0.0" })).toBeNull();
+});
