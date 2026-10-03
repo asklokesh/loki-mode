@@ -1,6 +1,7 @@
 import { existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { Hono, type Context } from "hono";
+import { cleanupLeakedFixtures } from "../db/fixture-cleanup.ts";
 import { openDb } from "../db/migrate.ts";
 import { ingest } from "./ingest.ts";
 import { defaultAnswerDir, writeAnswer } from "./answer.ts";
@@ -22,6 +23,7 @@ const defaultUiDir = () => [join(import.meta.dir, "../../ui/dist"), join(import.
 export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart }) {
   const uiDir = opts.uiDir ?? defaultUiDir();
   const { db, sqlite } = openDb(opts.dbPath);
+  cleanupLeakedFixtures(sqlite);
   recomputeLegacy(db);
   let ready = true;
   const answerDir = opts.answerDir ?? defaultAnswerDir();
