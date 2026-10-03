@@ -19,6 +19,7 @@ Before a build counts as done, a review council selects reviewers from a special
 - [Loki 10 engine](#loki-10-engine)
 - [Outcomes and exit codes](#outcomes-and-exit-codes)
 - [Signed receipts and loki verify](#signed-receipts-and-loki-verify)
+- [loki workspace](#loki-workspace)
 - [Quiet output](#quiet-output)
 - [Release channels: next and latest](#release-channels-next-and-latest)
 - [loki doctor](#loki-doctor)
@@ -234,9 +235,26 @@ loki verify
 
 A verified receipt is bound to the run's event log, so a receipt lifted out of its run, or a log edited after sealing, does not verify. Signing proves the receipt came from the key holder; it does not prove the generated code is bug-free. A receipt only claims what its checks ran, and states what they did not.
 
+### Export as a DSSE envelope
+
+`loki verify <run> --export-dsse > receipt.dsse.json` wraps a verified v10 receipt as a DSSE envelope whose payload is an in-toto Statement v1, signed with the Ed25519 receipt key. The export refuses unless the receipt verifies (exit 1 if tampered, 2 if unsigned or unchecked, 66 if no signing key is found). `loki verify receipt.dsse.json` accepts the envelope too; add `--pubkey FILE` on another machine. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
+
 ### Visual evidence (opt-in)
 
 With `LOKI_VISUAL_EVIDENCE=1`, a v10 run that changed web page files (html, jsx, tsx, vue, svelte under app/, pages/, src/ or public/) starts the repo's dev, preview or start script and screenshots each changed route with the repo's own Playwright (nothing is downloaded) into a fresh per-run directory `.loki/runs/<run_id>/evidence/<random>/` (at most 5 routes, total capture budget 25s, aborted with the seal stage). API-only repos with an openapi file get an HTTP transcript at `.loki/runs/<run_id>/evidence/<random>/http.json` (not hashed into the receipt). Each screenshot's sha256 is recorded in the receipt as `evidence_screens`, the PR body gets an Evidence section, and `loki verify` reports TAMPERED if a recorded screenshot is altered, missing or a symlink. Capture never fails the run; a skip is listed in NOT PROVEN. Off by default.
+
+## loki workspace
+
+`loki workspace` runs one issue across several repos. Define groups under the `workspaces` key in `loki.yaml` (each with `repos`, optional per-repo `path`, `setup` and `after`, and an optional `integration` command), then:
+
+```bash
+loki workspace list                        # configured workspaces
+loki workspace show <name>                 # one workspace's repos and order
+loki workspace run <name> owner/repo#N     # or a task text instead of an issue ref
+loki workspace status [<run-id>]           # recorded runs, one row per repo
+```
+
+Each repo gets its own worktree and engine run. The command exits 0 only when every repo and the integration step succeed, 3 when the only failures are budget stops, and 1 otherwise. After the integration step, a PR comment is posted on each repo's PR (when one exists) showing the integration status and every head SHA; `LOKI_WORKSPACE_COMMENT=0` turns it off. `LOKI_WORKSPACES=0` disables the whole command. Full reference: [docs/WORKSPACES.md](docs/WORKSPACES.md).
 
 ## Quiet output
 
