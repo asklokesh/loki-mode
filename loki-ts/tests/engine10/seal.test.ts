@@ -455,6 +455,20 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(events.find((e) => e.type === "receipt.sealed")?.data.verdict).toBe("SPEC_CONFLICT");
   }, 30000);
 
+  // FC-16 r5: a Go-only run (count never confirmed) is reported as unconfirmed on NOT PROVEN, never as "no tests executed".
+  test("go-only run: NOT PROVEN says the count could not be confirmed, not that no tests executed", async () => {
+    noKey();
+    const { repo, base } = makeRepo("go-unconfirmed");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      verify: { checks: [{ name: "go:a_test.go", cmd: "go test -v ./", result: "not_run", reason: "test count could not be confirmed", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    const np = receiptOf(s).not_proven.join("\n");
+    expect(np).toContain("could not be confirmed");
+    expect(np).not.toContain("no tests executed");
+  }, 30000);
+
   test("E-116: implement exits spec_conflict, verify fails through fix rounds and is still failing: seal still reports SPEC_CONFLICT", async () => {
     noKey();
     const { repo, base } = makeRepo("spec-conflict-verify-fail");

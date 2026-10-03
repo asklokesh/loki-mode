@@ -30,7 +30,7 @@ export async function runPackageSuites(
     const out = `${r.stdout}\n${r.stderr}`;
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, out, cmd: "bash", args: ["-c", tc.cmd], signal, cwd: join(repoDir, tc.cwd), ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
-    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out });
+    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...(tc.cmd.trim().split(/\s+/)[0] === "go" ? { runner: "go" as const } : {}) });
     checks.push({ name, cmd, result: cls.result, duration_s });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }

@@ -190,11 +190,11 @@ describe("FC-01 single-package repo is unchanged", () => {
 
 // FC-16 C1 + FC-02 integration: the per-package path uses the same result classifier as verify and deep.
 describe("FC-16 C1 per-package suites route through classifyCheck", () => {
-  const suite = async (stdout: string, exit = 0): Promise<{ checks: DeepCheck[]; notProven: string[] }> => {
+  const suite = async (stdout: string, exit = 0, go = false): Promise<{ checks: DeepCheck[]; notProven: string[] }> => {
     const { dir, base } = monorepo(true);
     const m = loadProjectApi(dir)!.model as ProjectModel;
     writeFileSync(join(dir, "backend", "go.out"), stdout);
-    m.packages[0]!.commands.test = cmd(`cat go.out; exit ${exit}`, "backend", "backend/package.json");
+    m.packages[0]!.commands.test = cmd(`${go ? "go test -v ./... >/dev/null 2>&1; " : ""}cat go.out; exit ${exit}`, "backend", "backend/package.json");
     writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
     const checks: DeepCheck[] = []; const notProven = new Set<string>();
     await runFullSuite(ctxFor(dir, base, []), sig(), {}, checks, notProven);
@@ -202,11 +202,11 @@ describe("FC-16 C1 per-package suites route through classifyCheck", () => {
   };
   const GO_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n--- PASS: TestB (0.00s)\nPASS\nok  \texample.com/a\t0.004s\n";
   test("go test -v output with ANSI colour is never a pass (count could not be confirmed)", async () => {
-    const r = await suite(GO_V.replace("PASS\n", "\u001b[32mPASS\u001b[0m\n").replace("ok  ", "\u001b[32mok\u001b[0m  "));
+    const r = await suite(GO_V.replace("PASS\n", "\u001b[32mPASS\u001b[0m\n").replace("ok  ", "\u001b[32mok\u001b[0m  "), 0, true);
     expect(r.checks.map((c) => [c.name, c.result])).toEqual([["full suite: backend", "not_run"]]);
   });
   test("a non-verbose go summary (exit 0, no count) is not_run, executed count unmeasured, never a pass", async () => {
-    const r = await suite("ok  \texample.com/a\t0.004s\n");
+    const r = await suite("ok  \texample.com/a\t0.004s\n", 0, true);
     expect(r.checks[0]!.result).toBe("not_run");
     expect(r.notProven.some((n) => n.startsWith("not run: full suite: backend") && n.includes("could not be confirmed"))).toBe(true);
   });

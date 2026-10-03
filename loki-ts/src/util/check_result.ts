@@ -9,6 +9,8 @@ export const NO_TESTS_REASON = "no tests executed";
 export const UNCONFIRMED_REASON = "test count could not be confirmed";
 /** Real failure evidence in a failed run: a failed test line, a go build or setup failure, a go compiler error line, or "N failed|errors". */
 const FAIL_EVIDENCE = /\[(?:build|setup) failed\]|^--- FAIL|^[\w./-]+\.go:\d+:\d+: \S|\b[1-9]\d* (?:failed|errors?)\b/m;
+/** Extra failure evidence honoured only for a Go runner under a non-zero exit: a package FAIL line (log.Fatal, init panic, timeout) or a panic. */
+const GO_FAIL_EVIDENCE = /^FAIL\t\S+\t[\d.]+s$|^panic: /m;
 export const UNMEASURED_REASON = "executed count unmeasured (Loki could not parse the runner summary, harness-owned)";
 
 /** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
@@ -106,7 +108,7 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
   return null;
 }
 
-export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string }
+export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go" }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string }
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */
 export function classifyCheck(i: ClassifyInput): Classified {
@@ -116,9 +118,9 @@ export function classifyCheck(i: ClassifyInput): Classified {
   const text = stripAnsi(i.out);
   // Go: the count comes from text a test can forge, so it is never trusted. Exit 0 is never a pass from parsing; a failed run is a
   // fail only when the output shows real failure evidence, else unconfirmed. A parse problem never fails the code and never passes.
-  if (text.split("\n").some((x) => GO_PKG_RE.test(x))) {
+  if (i.runner === "go") { // chosen from the command, never from output text a test can print
     if (i.ok) return { result: "not_run", reason: UNCONFIRMED_REASON };
-    return FAIL_EVIDENCE.test(text) ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
+    return FAIL_EVIDENCE.test(text) || GO_FAIL_EVIDENCE.test(text) ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
   }
   const n = testCount(i.out, i.path, i.ok);
   if (!i.ok && FAIL_EVIDENCE.test(text)) return { result: "fail", ...(n !== null ? { n } : {}) }; // L2: a failure is never downgraded by a zero count

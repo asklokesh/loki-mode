@@ -66,8 +66,8 @@ describe("go zero and forged cases", () => {
     expect(testCount("Test Suites: 1 passed, 1 total\nTests:       4 passed, 4 total\nSnapshots:   0 total\nTime:        1 s\nRan all test suites.\n")).toBe(4);
   });
   test("classify: go never passes from parsing (count could not be confirmed)", () => {
-    expect(classifyCheck({ kind: "test", ok: true, out: GO_MULTI_V })).toEqual({ result: "not_run", reason: "test count could not be confirmed" });
-    expect(classifyCheck({ kind: "test", ok: true, out: GO_NONV }).reason).toContain("could not be confirmed");
+    expect(classifyCheck({ kind: "test", ok: true, out: GO_MULTI_V, runner: "go" })).toEqual({ result: "not_run", reason: "test count could not be confirmed" });
+    expect(classifyCheck({ kind: "test", ok: true, out: GO_NONV, runner: "go" }).reason).toContain("could not be confirmed");
   });
 });
 
@@ -80,9 +80,13 @@ describe("classifyCheck", () => {
     }
   });
   test("exit 0 with an unparsed count is not_run, never pass", () => {
-    const c = classifyCheck({ kind: "test", ok: true, out: GO_UNPARSED });
+    const c = classifyCheck({ kind: "test", ok: true, out: GO_UNPARSED, runner: "go" });
     expect(c.result).toBe("not_run");
     expect(c.reason).toContain("could not be confirmed"); expect(c.reason).not.toContain("no tests executed");
+  });
+  test("generic runner: exit 0 with an unparseable count is not_run with the UNMEASURED reason", () => {
+    const c = classifyCheck({ kind: "test", ok: true, out: "all good, nothing countable here\n" });
+    expect(c.result).toBe("not_run"); expect(c.reason).toStartWith("executed count unmeasured");
   });
   test("real pass keeps n", () => {
     expect(classifyCheck({ kind: "test", ok: true, out: VITEST_REAL })).toEqual({ result: "pass", n: 3 });
@@ -198,7 +202,7 @@ test("go non-verbose failing package: FAIL line without === RUN still counts", (
 describe("go forgeries G2 and G3", () => {
   const G2_V = "=== RUN   TestForged\n=== RUN   TestForged\n--- PASS: TestForged (0.00s)\n    a_test.go:3: x\n--- SKIP: TestForged (0.00s)\nPASS\nok  \texample.com/g2\t0.093s\n";
   const G3_V = "--- FAIL: TestX (0.00s)\nFAIL\texample.com/g3\t0.010s\nok  \texample.com/g3\t0.095s\n";
-  const notPass = (o: string) => expect(classifyCheck({ kind: "test", ok: true, out: o }).result).not.toBe("pass");
+  const notPass = (o: string) => expect(classifyCheck({ kind: "test", ok: true, out: o, runner: "go" }).result).not.toBe("pass");
   test("G2 text: forged RUN and PASS then Skip", () => { expect(testCount(G2_V, undefined, true)).toBe(0); notPass(G2_V); });
   test("G2 text: forged PASS printed after the SKIP line still does not count", () => {
     const o = G2_V.replace("PASS\nok", "--- PASS: TestForged (0.00s)\nPASS\nok");
@@ -213,7 +217,7 @@ describe("go forgeries G2 and G3", () => {
 // FC-16 r4: Go is never trusted from parsing. Real go 1.26.3 output (go test -v).
 describe("go: exit 0 is never a pass, a fail needs evidence", () => {
   const OK_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.com/ok\t0.095s\n", RF_V = "=== RUN   TestAdd\n    a_test.go:3: add: got 3 want 4\n--- FAIL: TestAdd (0.00s)\n=== RUN   TestOk\n--- PASS: TestOk (0.00s)\nFAIL\nFAIL\texample.com/f\t0.098s\nFAIL\n", B_V = "# example.com/b [example.com/b.test]\n./a.go:2:23: undefined: undefinedVar\nFAIL\texample.com/b [build failed]\nFAIL\n", G2 = "=== RUN   TestForged\n=== RUN   TestForged\n--- PASS: TestForged (0.00s)\n    a_test.go:3: x\n--- SKIP: TestForged (0.00s)\nPASS\nok  \texample.com/g2\t0.093s\n", G3 = "--- FAIL: TestX (0.00s)\nFAIL\texample.com/g3\t0.010s\nok  \texample.com/g3\t0.095s\n";
-  const cls = (out: string, ok: boolean) => classifyCheck({ kind: "test", ok, out });
+  const cls = (out: string, ok: boolean) => classifyCheck({ kind: "test", ok, out, runner: "go" });
   test("a passing -v package is not_run: test count could not be confirmed", () => {
     const c = cls(OK_V, true); expect(c.result).toBe("not_run"); expect(c.reason).toBe("test count could not be confirmed");
   });
@@ -230,6 +234,30 @@ describe("go: exit 0 is never a pass, a fail needs evidence", () => {
     const c = cls("ok  \texample.com/x\t0.010s\n", false); expect(c.result).toBe("not_run"); expect(c.reason).toBe("test count could not be confirmed");
   });
   test("non-go: a failure is never downgraded to not_run by a zero count", () => {
-    expect(cls("0 passed, 1 failed in 0.01s\n", false).result).toBe("fail");
+    expect(classifyCheck({ kind: "test", ok: false, out: "0 passed, 1 failed in 0.01s\n" }).result).toBe("fail");
+  });
+});
+
+// FC-16 r5: the Go branch is chosen from the runner, never from output text a test can print; extra Go failure evidence.
+describe("go branch follows the runner, not the output", () => {
+  const BUN_FAIL_PRINTING_GO_OK = 'bun test v1.3.0\n\nok  \texample.com/x\t0.010s\n\na.test.ts:\n1 | test("x", () => {\n(fail) x [0.5ms]\n\n 0 pass\n 1 fail\n 1 expect() calls\nRan 1 test across 1 file.\n';
+  test("bun repro: a go-looking console.log in a failing bun test is still a fail with n", () => {
+    const c = classifyCheck({ kind: "test", ok: false, out: BUN_FAIL_PRINTING_GO_OK });
+    expect(c.result).toBe("fail"); expect(c.n).toBe(1);
+  });
+  test("log.Fatal in a test (real go 1.26.3) is a fail", () => {
+    const o = "=== RUN   TestA\n2026/10/03 22:00:00 fatal here\nFAIL\texample.com/lf\t0.090s\nFAIL\n";
+    expect(classifyCheck({ kind: "test", ok: false, out: o, runner: "go" }).result).toBe("fail");
+  });
+  test("panic in package init (real go 1.26.3) is a fail", () => {
+    const o = "panic: assignment to entry in nil map\n\ngoroutine 1 [running]:\nFAIL\texample.com/pi\t0.126s\nFAIL\n";
+    expect(classifyCheck({ kind: "test", ok: false, out: o, runner: "go" }).result).toBe("fail");
+  });
+  test("test timeout panic (real go 1.26.3) is a fail", () => {
+    const o = "=== RUN   TestSlow\npanic: test timed out after 1s\n\trunning tests:\n\t\tTestSlow (1s)\n";
+    expect(classifyCheck({ kind: "test", ok: false, out: o, runner: "go" }).result).toBe("fail");
+  });
+  test("go exit 0 stays unconfirmed even if output has panic text", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: "panic: x\nok  \tp\t0.1s\n", runner: "go" }).result).toBe("not_run");
   });
 });
