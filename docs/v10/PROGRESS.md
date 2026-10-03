@@ -1906,3 +1906,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Not done: a real end-to-end exit 3 run for the cost cap (unit-tested only); the root action.yml still uses `loki start --simple`.
 - D61 (speed, docs/v10/D61-SPEED.md): paused, governor max engineers 0 (weekly projected 167.8%). Slice 17 engineer stopped; partial work in worktree agent-ad890c5afa3648ae6.
 - 23:51Z: Post-Release Smoke and Promote success on bfce1db12; npm latest and next both 10.6.7. Sprint closed. (The pause was lifted by D62 at about 00:05Z on 2026-10-03.)
+
+## 2026-10-03T01:56Z D62 resume, D63 roadmap, D64 withdrawn; 4 builders on D63 order
+- D62 (resume now) and D63 (roadmap, docs/v10/ROADMAP-D63.md) recorded and pushed (main 49a940d81). D64 (max pace, all Vorflux rows) arrived at 00:20Z and was withdrawn at 00:25Z; recorded as WITHDRAWN, no builder started.
+- Building (sonnet, worktrees): D61-17 large eval tier, D61-01 pre-model timer, D61-08 decomposer, D62-FIX (action.yml to Loki 10 plus real BUDGET_STOP exit 3 test). Ready next: D61-02, D61-07, D62-VIS, D62-JIRA.
+- Governor: weekly projected 57.4% at 01:55Z; pace target about 0.5% of the week per hour at 4 engineers.
