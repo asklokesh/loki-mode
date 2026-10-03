@@ -41,10 +41,10 @@ Bun-native commands:
   report kpis            Canonical KPI snapshot report
   trust <subcmd>         Trust trajectory derived from proof-of-run history
   crash <subcmd>         Inspect or submit scrubbed local crash reports
-  contract <subcmd>      Spec contract operations
+  contract <spec.md>     Print the spec delivery contract and write .loki/contract.json
   start [flags]          Run the RARV autonomous loop (Bun route, LOKI_SDK_LOOP)
-  slack <subcmd>         Slack inbound integration
-  engine10 <subcmd>      Engine10 operations
+  slack serve [--port N] [--host H]   Serve the Slack inbound handler (needs SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET)
+  engine10 <subcmd>      v10 engine router (run, status, verify, keys, dashboard, modernize)
 
 All other commands fall through to the bash CLI (autonomy/loki).
 Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
