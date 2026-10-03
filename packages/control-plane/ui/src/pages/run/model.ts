@@ -1,4 +1,5 @@
 // Pure helpers for the run page. Each one reads only what the API returned; a missing value stays null and the view prints "unmeasured".
+import { effectiveVerdict, type RunRow } from "../../api";
 import type { TimelineLine } from "./timeline";
 
 export const UNMEASURED = "unmeasured";
@@ -73,4 +74,74 @@ export function stageProgress(stages: Array<{ status: string }>): { n: number; m
 export function elapsedLabel(s: number | null | undefined): string {
   if (typeof s !== "number") return UNMEASURED;
   return s >= 3600 ? `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m` : s >= 60 ? `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s` : `${s.toFixed(1)}s`;
+}
+
+export interface DiffStatLike { base: string; head: string; files: { path: string; added: number | null; removed: number | null }[]; added: number; removed: number }
+
+/** Changed files with counts. The unified diff wins; else the server's receipt-and-git numstat; else null (unmeasured). A binary file keeps null counts. */
+export function changedFilesFor(patch: string | null | undefined, stat: DiffStatLike | null | undefined): { files: { path: string; added: number | null; removed: number | null; kind: ChangedFile["kind"] }[]; source: "patch" | "git" } | null {
+  const fromPatch = patch ? parseDiffFiles(patch) : [];
+  if (fromPatch.length) return { files: fromPatch, source: "patch" };
+  if (stat && stat.files.length) return { files: stat.files.map((f) => ({ ...f, kind: "modified" as const })), source: "git" };
+  return null;
+}
+
+const evObj = (d: unknown): Record<string, unknown> => (d && typeof d === "object" ? (d as Record<string, unknown>) : {});
+const evStr = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+const clip = (s: string, n = 120): string => (s.length > n ? `${s.slice(0, n - 3)}...` : s);
+const TIME_REASON = /time ?limit|timed out|time budget|over cap/i;
+interface WhyEvent { type: string; stage: string | null; data: unknown }
+
+/** One plain-English line for a run that did not verify, built only from real events: failing checks (last result per check),
+ *  stage failure or skip reasons, and fix rounds whose session was killed at its time limit. Null when the events name no cause. */
+export function whyLine(events: WhyEvent[]): string | null {
+  const checks = new Map<string, { result: string; why: string | null }>();
+  const stageWhy: string[] = [];
+  let fixLimit = 0;
+  for (const e of events) {
+    const d = evObj(e.data);
+    if (e.type === "test.result") {
+      const name = evStr(d["name"]);
+      if (name) checks.set(name, { result: String(d["result"] ?? ""), why: evStr(d["first_error"]) ?? evStr(d["reason"]) });
+    } else if (e.type === "stage.completed" && e.stage === "fix" && d["killed"] === true) fixLimit++;
+    else if ((e.type === "stage.failed" || e.type === "stage.skipped") && e.stage) {
+      const r = evStr(d["reason"]);
+      if (r && e.stage !== "fix") stageWhy.push(`${e.stage}: ${clip(r)}`);
+      else if (r && TIME_REASON.test(r)) fixLimit++;
+    }
+  }
+  const parts: string[] = [];
+  const failing = [...checks].filter(([, c]) => c.result === "fail");
+  if (failing.length) parts.push(`verify: ${failing.slice(0, 3).map(([n, c]) => (c.why ? `${n} ${clip(c.why, 90)}` : `${n} failed`)).join("; ")}${failing.length > 3 ? `; ${failing.length - 3} more` : ""}`);
+  const notRun = [...checks].filter(([, c]) => c.result === "not_run");
+  if (!failing.length && notRun.length) parts.push(`verify: ${notRun.slice(0, 3).map(([n, c]) => (c.why ? `${n} not run (${clip(c.why, 60)})` : `${n} not run`)).join("; ")}`);
+  for (const s of stageWhy.slice(0, 2)) if (!parts.some((p) => p.includes(s))) parts.push(s);
+  if (fixLimit) parts.push(`${fixLimit} fix round${fixLimit === 1 ? "" : "s"} hit time limits`);
+  return parts.length ? parts.join("; ") : null;
+}
+
+export interface ReceiptFacts {
+  verdict: string | null; diffSha: string | null; base: string | null; head: string | null;
+  checks: { total: number; pass: number; fail: number; notRun: number } | null;
+}
+
+/** Facts from a parsed receipt.json; any field the receipt lacks is null. */
+export function receiptFacts(raw: string | null | undefined): ReceiptFacts | null {
+  if (!raw) return null;
+  let j: Record<string, unknown>;
+  try { const x = JSON.parse(raw); if (!x || typeof x !== "object") return null; j = x as Record<string, unknown>; } catch { return null; }
+  const cs = Array.isArray(j["checks"]) ? (j["checks"] as unknown[]).map(evObj) : null;
+  const n = (r: string) => (cs ?? []).filter((c) => c["result"] === r).length;
+  return {
+    verdict: evStr(j["verdict"]), diffSha: evStr(j["diff_sha256"]), base: evStr(j["base_sha"]), head: evStr(j["head_sha"]),
+    checks: cs ? { total: cs.length, pass: n("pass") + n("flaky"), fail: n("fail"), notRun: n("not_run") } : null,
+  };
+}
+
+/** The Why line for a finished run whose display verdict is not VERIFIED or ALREADY_SATISFIED; null for a good or unfinished run. A non-good run whose events name no cause says so. */
+export function whyForRun(d: RunRow, events: WhyEvent[]): string | null {
+  const ev = d.verdict ? effectiveVerdict(d) ?? d.verdict : null;
+  if (!ev || ev.startsWith("VERIFIED") || ev.startsWith("ALREADY_SATISFIED")) return null;
+  const integrity = d.integrity_reasons?.[0];
+  return ((ev === "TAMPERED" || ev === "UNVERIFIED") && integrity ? `integrity: ${integrity}` : whyLine(events)) ?? `${UNMEASURED}: the run's events name no failing check or stage reason`;
 }

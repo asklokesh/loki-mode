@@ -46,7 +46,7 @@ export interface RouteCtx {
 export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, costLedger, fleet, metrics, checkpoints, memory, sessionControl, config, providers, verify, integrations, notify, audit, mergeRisk];
 
 export function registerRoutes(ctx: RouteCtx): void {
-  mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback);
+  mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback, ctx.repoDir);
   for (const m of routeModules) m(ctx);
 }
 

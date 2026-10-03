@@ -1,7 +1,7 @@
 // CPE-08: the new run composer. One input, chips for the optional run fields, Cmd+Enter to start.
 import { useEffect, useRef, useState } from "react";
 import { Button, Chip, EmptyState, Kbd, Message, Spinner, Toast } from "../../design/primitives";
-import { fetchRepos, postRun, StartError, type RunRequest } from "./api";
+import { defaultRepoLabel, fetchRepoInfo, postRun, StartError, type RunRequest } from "./api";
 import { COMPOSER_SUBMIT_EVENT } from "../../palette/items";
 
 // Server allowlist (spawn.ts PROVIDERS). Models and budgets are validated by pattern there; these are suggestions only.
@@ -49,6 +49,7 @@ export function Composer() {
   const [text, setText] = useState("");
   const [chips, setChips] = useState<Chips>({});
   const [repos, setRepos] = useState<string[] | null>(null);
+  const [defaultRepo, setDefaultRepo] = useState<string | null>(null);
   const [wsOpen, setWsOpen] = useState(false);
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +58,7 @@ export function Composer() {
 
   useEffect(() => {
     let live = true;
-    fetchRepos().then((r) => live && setRepos(r)).catch(() => live && setRepos([]));
+    fetchRepoInfo().then((r) => { if (live) { setRepos(r.repos); setDefaultRepo(r.defaultRepo); } }).catch(() => live && setRepos([]));
     area.current?.focus();
     return () => { live = false; };
   }, []);
@@ -114,7 +115,7 @@ export function Composer() {
           style={{ width: "100%", resize: "vertical", border: 0, outline: "none", background: "transparent", color: "var(--cp-text)", font: "inherit", fontSize: "var(--cp-text-md)" }}
         />
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 8 }}>
-          <span data-testid="chip-repo"><Chip label="repo" value={chips.repo ?? "server directory"} options={opts(repos ?? [], "server directory")} onSelect={set("repo")} /></span>
+          <span data-testid="chip-repo"><Chip label="repo" value={chips.repo ?? defaultRepoLabel(defaultRepo)} options={opts(repos ?? [], defaultRepo ? `${defaultRepo} (server directory)` : "server directory")} onSelect={set("repo")} /></span>
           <span data-testid="chip-model"><Chip label="model" value={chips.model ?? "default"} options={opts(MODELS, "default")} onSelect={set("model")} /></span>
           <span data-testid="chip-provider"><Chip label="provider" value={workspace ? "set per repo" : chips.provider ?? "default"} options={workspace ? undefined : opts(PROVIDERS, "default")} onSelect={set("provider")} /></span>
           <span data-testid="chip-budget"><Chip label="budget" value={workspace ? "set per repo" : chips.budget ? `$${chips.budget}` : "none"} options={workspace ? undefined : opts(BUDGETS.map(String), "none").map((o) => ({ ...o, label: o.value ? `$${o.value}` : o.label }))} onSelect={set("budget")} /></span>

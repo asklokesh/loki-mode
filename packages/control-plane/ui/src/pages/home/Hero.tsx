@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Chip, Kbd } from "../../design/primitives";
 import { buildBody, errorText, MODELS, PROVIDERS, type Chips } from "../compose";
-import { fetchRepos, postRun } from "../compose/api";
+import { defaultRepoLabel, fetchRepoInfo, postRun } from "../compose/api";
 
 const opts = (xs: readonly string[], none: string) => [{ value: "", label: none }, ...xs.map((x) => ({ value: x, label: x }))];
 
@@ -11,6 +11,7 @@ export function Hero({ onStarted }: { onStarted?: () => void }) {
   const [text, setText] = useState("");
   const [chips, setChips] = useState<Chips>({});
   const [repos, setRepos] = useState<string[] | null>(null);
+  const [defaultRepo, setDefaultRepo] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [note, setNote] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const inflight = useRef(false);
@@ -18,7 +19,7 @@ export function Hero({ onStarted }: { onStarted?: () => void }) {
 
   useEffect(() => {
     let live = true;
-    fetchRepos().then((r) => live && setRepos(r)).catch(() => live && setRepos([]));
+    fetchRepoInfo().then((r) => { if (live) { setRepos(r.repos); setDefaultRepo(r.defaultRepo); } }).catch(() => live && setRepos([]));
     return () => { live = false; };
   }, []);
 
@@ -55,7 +56,7 @@ export function Hero({ onStarted }: { onStarted?: () => void }) {
           style={{ width: "100%", resize: "none", border: 0, outline: "none", background: "transparent", color: "var(--cp-text)", font: "inherit", fontSize: "var(--cp-text-lg, 16px)" }}
         />
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", marginTop: 8 }}>
-          <span data-testid="pick-repo"><Chip label="repo" value={chips.repo ?? "server directory"} options={opts(repos ?? [], "server directory")} onSelect={set("repo")} /></span>
+          <span data-testid="pick-repo"><Chip label="repo" value={chips.repo ?? defaultRepoLabel(defaultRepo)} options={opts(repos ?? [], defaultRepo ? `${defaultRepo} (server directory)` : "server directory")} onSelect={set("repo")} /></span>
           <span data-testid="pick-provider"><Chip label="provider" value={chips.provider ?? "default"} options={opts(PROVIDERS, "default")} onSelect={set("provider")} /></span>
           <span data-testid="pick-model"><Chip label="model" value={chips.model ?? "default"} options={opts(MODELS, "default")} onSelect={set("model")} /></span>
           <span style={{ flex: 1 }} />

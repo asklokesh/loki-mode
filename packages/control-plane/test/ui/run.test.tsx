@@ -62,7 +62,10 @@ test("fixture run: title header, terminal panel, and every section; missing data
   // changed files come from the diff
   await waitFor(() => expect(screen.getByTestId("run-diff").textContent).toContain("a.ts"));
   expect(screen.getByTestId("run-diff").textContent).toContain("+1");
-  await waitFor(() => expect(screen.getByTestId("run-receipt").textContent).toContain("Receipt body"));
+  // the raw receipt text sits behind its own Show raw toggle
+  expect(screen.queryByTestId("receipt-raw")).toBeNull();
+  fireEvent.click(screen.getByTestId("receipt-raw-toggle"));
+  await waitFor(() => expect(screen.getByTestId("receipt-raw").textContent).toContain("Receipt body"));
   expect(screen.queryByTestId("run-reply")).toBeNull();
 });
 

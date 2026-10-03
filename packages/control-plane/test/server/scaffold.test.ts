@@ -29,7 +29,7 @@ test("/v1/repos returns display names only, never a path, and keeps the loopback
   const res = await get(app);
   expect(res.status).toBe(200);
   const text = await res.text();
-  expect(JSON.parse(text)).toEqual({ repos: ["alpha-repo", "beta-repo"] });
+  expect(JSON.parse(text)).toEqual({ repos: ["alpha-repo", "beta-repo"], default_repo: "alpha-repo" });
   expect(text).not.toContain(root);
   expect(text).not.toContain("/");
   expect(db.select().from(localRepos).all().length).toBe(2); // the vanished registry path was skipped
