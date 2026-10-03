@@ -71,10 +71,22 @@ variable "dashboard_allowed_hosts" {
   default     = ""
 }
 
-variable "dashboard_port" {
-  description = "Port the control plane binds. Mirrors the Helm chart's config.dashboardPort so the two deployment paths agree."
+variable "control_port" {
+  description = "Port the Control Plane binds. Mirrors the Helm chart's config.controlPort so the two deployment paths agree."
   type        = number
-  default     = 57374
+  default     = 47821
+}
+
+variable "dashboard_port" {
+  description = "DEPRECATED alias of control_port. When non-null it overrides control_port, so existing callers keep working."
+  type        = number
+  default     = null
+}
+
+variable "control_token_secret_arn" {
+  description = "Secrets Manager or SSM ARN holding LOKI_CONTROL_TOKEN. Empty runs the Control Plane without a token (LOKI_CONTROL_ALLOW_INSECURE_BIND=1); put the service behind a private network or load balancer auth in that case."
+  type        = string
+  default     = ""
 }
 
 variable "log_retention_days" {

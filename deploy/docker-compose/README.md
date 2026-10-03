@@ -18,7 +18,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The dashboard is available at **http://localhost:57374**.
+The Control Plane UI and API are available at **http://localhost:57374**.
 
 ## Observability Mode
 
@@ -33,7 +33,7 @@ docker compose --profile observability up -d
 
 | Service        | URL                       | Purpose                  |
 |----------------|---------------------------|--------------------------|
-| Dashboard      | http://localhost:57374     | Autonomi dashboard       |
+| Dashboard      | http://localhost:57374     | Control Plane UI and API |
 | Jaeger UI      | http://localhost:16686     | Trace visualization      |
 | OTLP (gRPC)   | localhost:4317             | Trace ingestion (gRPC)   |
 | OTLP (HTTP)    | localhost:4318             | Trace ingestion (HTTP)   |
@@ -115,7 +115,7 @@ docker compose ps
 docker compose logs autonomi
 ```
 
-The health check hits `http://localhost:57374/health`. If the container shows
+The health check hits `http://localhost:47821/health` inside the container. If the container shows
 as `unhealthy`, inspect the logs for startup errors.
 
 ### Port conflict

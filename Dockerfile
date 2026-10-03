@@ -147,6 +147,17 @@ COPY --chown=loki:loki bin/ ./bin/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 
+# Control Plane (packages/control-plane): `loki control serve` runs
+# packages/control-plane/dist/server.js with the built UI at ui/dist. Both are
+# built here (the repo .dockerignore drops dist/ and node_modules/), then the
+# build-only node_modules are removed; the bundle has no runtime dependencies.
+COPY --chown=loki:loki packages/control-plane/ ./packages/control-plane/
+RUN cd packages/control-plane \
+    && bun install --frozen-lockfile \
+    && bun run build:all \
+    && rm -rf node_modules ui/node_modules \
+    && chown -R loki:loki /opt/loki-mode/packages
+
 # v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the opt-in
 # LOKI_SDK_LOOP=1 RARV loop via a DYNAMIC import in dist/loki.js, so it cannot be
 # bundled into dist (unlike the raw @anthropic-ai/sdk judge bridge, which is a
@@ -192,8 +203,9 @@ RUN mkdir -p /workspace && \
 # Set workspace as working directory
 WORKDIR /workspace
 
-# Expose dashboard/API port
-EXPOSE 57374
+# Expose Control Plane port (LOKI_CONTROL_PORT, default 47821).
+# 57374 stays exposed only for the legacy dashboard shim and `loki start --api`.
+EXPOSE 47821 57374
 
 # Security: Switch to non-root user
 USER loki

@@ -34,29 +34,25 @@ spec:
         - name: controlplane
           image: {{ include "autonomi.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # Runs the Control Plane (packages/control-plane) via `loki control
+          # serve`. Bind host comes from LOKI_CONTROL_HOST and the DB path from
+          # LOKI_CONTROL_DB (both in the ConfigMap). The explicit --port means
+          # the server never falls back to a different free port.
           command:
-            - python3
-            - "-m"
-            - uvicorn
-            - "dashboard.server:app"
-            - "--host"
-            - {{ .Values.config.dashboardHost | quote }}
-            # Honor config.dashboardPort so the documented knob actually changes
-            # the bind port. Previously this was hardcoded 57374, so setting
-            # config.dashboardPort only changed the LOKI_DASHBOARD_PORT env var
-            # (which uvicorn ignores) while uvicorn still bound 57374 -- and a
-            # probe pointed at the configured port would crash-loop the pod.
+            - loki
+            - control
+            - serve
             - "--port"
-            - {{ .Values.config.dashboardPort | quote }}
+            - {{ include "autonomi.controlPort" . | quote }}
           ports:
             - name: http
-              containerPort: {{ .Values.config.dashboardPort | int }}
+              containerPort: {{ include "autonomi.controlPort" . }}
               protocol: TCP
           readinessProbe:
             httpGet:
               path: {{ .Values.controlplane.probes.readiness.path }}
               # Default to the named container port so the probe always tracks the
-              # actual bind port (config.dashboardPort). An explicit numeric
+              # actual bind port (config.controlPort). An explicit numeric
               # probes.*.port still overrides if set. Previously this defaulted to a
               # literal 57374 that could diverge from config.dashboardPort and
               # crash-loop the pod.

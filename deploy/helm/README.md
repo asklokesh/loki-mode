@@ -248,7 +248,7 @@ This runs two test pods:
 |    Ingress       |------>|  Control Plane          |
 |  (optional TLS)  |       |  Deployment (serves      |
 +------------------+       |  traffic, HA-capable)   |
-                           |  Dashboard API : 57374  |
+                           |  Control Plane   : 57374  |
                            +-------------------------+
                                     |
                                     | (durable audit volume)
@@ -367,7 +367,7 @@ Three failures account for most cases:
 - **Readiness never passes** - the control plane is up but not answering on
   `controlplane.probes.readiness.path`. Port-forward and check by hand:
   `kubectl port-forward -n <ns> svc/<release>-autonomi-controlplane 57374:57374`
-  then `curl localhost:57374/health`.
+  then `curl localhost:57374/ready` (the Service maps 57374 to the Control Plane port).
 
 ### No builds are being picked up
 

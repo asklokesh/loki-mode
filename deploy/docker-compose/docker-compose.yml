@@ -1,6 +1,6 @@
 # Autonomi Enterprise - Single Node Evaluation
 # Usage: docker compose up -d
-# Dashboard: http://localhost:57374
+# Control Plane UI/API: http://localhost:57374 (host port, LOKI_DASHBOARD_PORT)
 #
 # Observability mode (adds OTEL collector + Jaeger):
 #   docker compose --profile observability up -d
@@ -14,8 +14,11 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
+    # Runs the Control Plane (packages/control-plane) on container port 47821.
+    # LOKI_DASHBOARD_PORT is the host port and is kept for compatibility.
+    command: ["control", "serve", "--port", "47821"]
     ports:
-      - "${LOKI_DASHBOARD_PORT:-57374}:57374"
+      - "${LOKI_DASHBOARD_PORT:-57374}:47821"
     volumes:
       - checkpoints:/workspace/.loki/state
       - audit:/workspace/.loki/audit
@@ -23,9 +26,12 @@ services:
     environment:
       # Core
       - LOKI_MODE=standalone
-      - LOKI_DASHBOARD=true
-      - LOKI_DASHBOARD_HOST=0.0.0.0
-      - LOKI_DASHBOARD_PORT=57374
+      - LOKI_CONTROL_HOST=0.0.0.0
+      # A non-loopback bind needs a token. Set LOKI_CONTROL_TOKEN in .env to
+      # require one; unset keeps the open evaluation posture of the old dashboard.
+      - LOKI_CONTROL_TOKEN=${LOKI_CONTROL_TOKEN:-}
+      - LOKI_CONTROL_ALLOW_INSECURE_BIND=${LOKI_CONTROL_ALLOW_INSECURE_BIND:-1}
+      - LOKI_CONTROL_DB=/workspace/.loki/control/control.db
       # Enterprise features (all opt-in via .env)
       - LOKI_OTEL_ENDPOINT=${LOKI_OTEL_ENDPOINT:-}
       - LOKI_AUDIT_ENABLED=${LOKI_AUDIT_ENABLED:-true}
@@ -47,7 +53,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:57374/health"]
+      test: ["CMD", "curl", "-sf", "http://localhost:47821/health"]
       interval: 30s
       timeout: 10s
       retries: 3

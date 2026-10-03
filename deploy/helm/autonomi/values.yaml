@@ -67,11 +67,11 @@ controlplane:
   podAnnotations: {}
 
   # Readiness / liveness probe overrides.
-  # port: empty = probe the named container port "http" (tracks config.dashboardPort
+  # port: empty = probe the named container port "http" (tracks config.controlPort
   # automatically). Set a numeric value only to override.
   probes:
     readiness:
-      path: /health
+      path: /ready
       port: ""
       initialDelaySeconds: 10
       periodSeconds: 15
@@ -472,9 +472,17 @@ config:
   maxWorkers: "4"
   # Provider (claude, codex, cline, aider, opencode)
   provider: "claude"
-  # Dashboard bind address
+  # Control Plane bind address (LOKI_CONTROL_HOST). Name kept for compatibility.
   dashboardHost: "0.0.0.0"
-  dashboardPort: "57374"
+  # Control Plane bind port (LOKI_CONTROL_PORT). The Service still exposes
+  # service.port (57374 by default) and forwards to this container port.
+  controlPort: "47821"
+  # DEPRECATED alias of controlPort. Empty by default; when set it overrides
+  # controlPort, so existing `--set config.dashboardPort=...` keeps working.
+  dashboardPort: ""
+  # SQLite file for the Control Plane (LOKI_CONTROL_DB). Not persisted unless
+  # you mount a volume at this path.
+  controlDb: "/home/loki/.loki/control/control.db"
   # Comma-separated Host headers the dashboard accepts besides loopback
   # (LOKI_DASHBOARD_ALLOWED_HOSTS), e.g. "loki.example.com". Needed when the
   # dashboard is bound to 0.0.0.0 WITHOUT enterprise auth; with enterprise auth
@@ -495,6 +503,11 @@ secrets:
   googleApiKey: ""
   slackBotToken: ""
   githubToken: ""
+  # Bearer token for the Control Plane /v1 API (LOKI_CONTROL_TOKEN). Empty =
+  # the chart sets LOKI_CONTROL_ALLOW_INSECURE_BIND=1 so the pod-network bind
+  # still starts (same open posture as the legacy dashboard). Set a token, or
+  # an existingSecret holding LOKI_CONTROL_TOKEN, to require auth.
+  controlToken: ""
 
 # ---------------------------------------------------------------------------
 # Observability

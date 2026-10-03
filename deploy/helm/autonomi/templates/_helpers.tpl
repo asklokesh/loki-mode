@@ -223,3 +223,11 @@ tokenSecretKey is set the clone is unauthenticated (public repos only).
       mountPath: /workspace
 {{- end }}
 {{- end }}
+
+{{/*
+Control Plane bind port. config.dashboardPort is a deprecated alias: when set
+it wins so existing overrides keep working; otherwise config.controlPort.
+*/}}
+{{- define "autonomi.controlPort" -}}
+{{- .Values.config.dashboardPort | default .Values.config.controlPort | int -}}
+{{- end }}
