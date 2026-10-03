@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { EventEnvelope } from "../engine10/types.ts";
 
+const REVERTED = "unrelated edit reverted:";
 export type StageOutputs = Partial<Record<string, Record<string, unknown>>>;
 
 export function outputsFromEvents(events: readonly EventEnvelope[]): StageOutputs {
@@ -23,6 +24,10 @@ function readText(path: string): string | null {
 /** Rebuilds stage outputs for a finished run. Never throws; an absent source stays absent so the producer prints "not recorded". */
 export function loadRunOutputs(runDir: string, events: readonly EventEnvelope[]): StageOutputs {
   const out = outputsFromEvents(events);
+  // the commit stage reverts unrelated edits (scope_notes "unrelated edit reverted: PATH"); they are not part of the change
+  const reverted = new Set(((out["commit"]?.["scope_notes"] as unknown[] | undefined) ?? []).map(String).filter((n) => n.startsWith(REVERTED)).map((n) => n.slice(REVERTED.length).trim()));
+  const verify = out["verify"];
+  if (verify && Array.isArray(verify["changed_files"]) && reverted.size > 0) out["verify"] = { ...verify, changed_files: (verify["changed_files"] as unknown[]).filter((f) => !reverted.has(String(f))) };
   const intake = { ...(out["intake"] ?? {}) };
   if (typeof intake["task"] !== "string" || !(intake["task"] as string).trim()) {
     const raw = readText(join(runDir, "issue.json"));

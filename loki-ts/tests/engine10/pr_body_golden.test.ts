@@ -20,6 +20,7 @@ describe("PR body golden: FireLater#17 recording", () => {
   const body = render(outputs);
   it("prints no 'not recorded' for any field whose source data exists", () => {
     expect(notRecorded(body)).toEqual([]);
+    expect(body).not.toMatch(/not recorded|not available|unavailable|no data|unknown|missing/i); // widened missing-field phrases
   });
   it("fills what the issue asked from the issue's acceptance criteria", () => {
     expect(body).toContain("- Create centralized Zod schema registry");
@@ -38,6 +39,21 @@ describe("PR body golden: FireLater#17 recording", () => {
     expect(String(bare.intake?.["task"])).toContain("Create Unified Request Validation");
     expect(String(bare.plan?.["plan"])).toContain("backend/src/schemas/");
     expect(render(bare)).toContain("- Why: Create Unified Request Validation and Sanitization Middleware");
+  });
+  it("labels plan files as planned, never as changed, when no diff was recorded", () => {
+    const noDiff = structuredClone(outputs) as StageOutputs;
+    noDiff["verify"] = { ...noDiff["verify"], changed_files: [] };
+    const b = render(noDiff);
+    expect(b).toContain("- Files in scope (planned, no diff recorded): ");
+    expect(b).not.toMatch(/^- backend\/src\/types\/index\.ts$/m);
+    expect(body).not.toContain("planned, no diff recorded");
+  });
+  it("does not list files the commit stage reverted as changed", () => {
+    for (const r of ["backend/src/routes/applications.ts", "backend/src/routes/assets.ts", "backend/src/routes/attachments.ts"]) {
+      expect(outputs.verify?.["changed_files"]).not.toContain(r);
+      expect(body).not.toContain(`- ${r}\n`);
+    }
+    expect(outputs.verify?.["changed_files"]).toContain("backend/src/middleware/sanitization.ts");
   });
   it("still prints 'not recorded' when the source is genuinely absent (the honest case)", () => {
     const empty = mkdtempSync(join(tmpdir(), "l7-empty-"));
