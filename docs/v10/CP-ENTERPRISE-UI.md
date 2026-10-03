@@ -314,7 +314,7 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | GET `/api/projects/{project_id}` | sdk/python/loki_mode_sdk/client.py:174, sdk/typescript/src/client.ts:131 | none | MISSING | 501 not yet supported |
 | PUT `/api/projects/{project_id}` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
 | DELETE `/api/projects/{project_id}` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
-| GET `/api/tasks` | sdk/python/loki_mode_sdk/tasks.py:30, sdk/typescript/src/client.ts:150 | none | MISSING | 501 not yet supported |
+| GET `/api/tasks` | sdk/python/loki_mode_sdk/tasks.py:30, sdk/typescript/src/client.ts:150 | /v1/tasks (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
 | POST `/api/tasks` | sdk/python/loki_mode_sdk/tasks.py:56, sdk/typescript/src/client.ts:162, vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
 | GET `/api/tasks/{task_id}` | sdk/python/loki_mode_sdk/tasks.py:38, sdk/typescript/src/client.ts:154, vscode-extension/src/views/dashboardWebview.ts:168 | none | MISSING | 501 not yet supported |
 | PUT `/api/tasks/{task_id}` | sdk/python/loki_mode_sdk/tasks.py:71, vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
@@ -334,7 +334,7 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | GET `/api/fleet/runs` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4706 (test), tests/moat/p7-no-fabricated-data.sh:4710 (test) (+1) | /v1/fleet/runs (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/fleet/summary` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4695 (test), tests/moat/p7-no-fabricated-data.sh:4696 (test) (+1) | /v1/fleet/summary (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/fleet/runs/{identifier}` | none | none | UNUSED | 410 with notice |
-| POST `/api/focus` | autonomy/run.sh:24831, web-app/server.py:2744 | none | MISSING | 501 not yet supported |
+| POST `/api/focus` | autonomy/run.sh:24831, web-app/server.py:2744 | /v1/focus (CPE24-P3) | PARTIAL (focus only to this checkout or a registered project; loopback, JSON, same-origin) | map |
 | GET `/api/focus` | none | none | UNUSED | 410 with notice |
 | DELETE `/api/focus` | none | none | UNUSED | 410 with notice |
 | GET `/api/session/model` | none | none | UNUSED | 410 with notice |
@@ -356,13 +356,13 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | GET `/api/enterprise/audit/summary` | none | none | UNUSED | 410 with notice |
 | GET `/api/compliance` | none | none | UNUSED | 410 with notice |
 | GET `/api/memory/summary` | none | none | UNUSED | 410 with notice |
-| GET `/api/memory/episodes` | vscode-extension/src/views/memoryViewProvider.ts:152 | none | MISSING | 501 not yet supported |
-| GET `/api/memory/episodes/{episode_id}` | vscode-extension/src/views/dashboardWebview.ts:204, vscode-extension/src/views/memoryViewProvider.ts:215 | none | MISSING | 501 not yet supported |
-| GET `/api/memory/patterns` | vscode-extension/src/views/memoryViewProvider.ts:151 | none | MISSING | 501 not yet supported |
-| GET `/api/memory/patterns/{pattern_id}` | vscode-extension/src/views/dashboardWebview.ts:186, vscode-extension/src/views/memoryViewProvider.ts:197 | none | MISSING | 501 not yet supported |
-| GET `/api/memory/skills` | vscode-extension/src/views/memoryViewProvider.ts:153 | none | MISSING | 501 not yet supported |
+| GET `/api/memory/episodes` | vscode-extension/src/views/memoryViewProvider.ts:152 | /v1/memory/episodes (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
+| GET `/api/memory/episodes/{episode_id}` | vscode-extension/src/views/dashboardWebview.ts:204, vscode-extension/src/views/memoryViewProvider.ts:215 | /v1/memory/episodes/{id} (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
+| GET `/api/memory/patterns` | vscode-extension/src/views/memoryViewProvider.ts:151 | /v1/memory/patterns (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
+| GET `/api/memory/patterns/{pattern_id}` | vscode-extension/src/views/dashboardWebview.ts:186, vscode-extension/src/views/memoryViewProvider.ts:197 | /v1/memory/patterns/{id} (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
+| GET `/api/memory/skills` | vscode-extension/src/views/memoryViewProvider.ts:153 | /v1/memory/skills (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
 | GET `/api/memory/skills/{skill_id}` | none | none | UNUSED | 410 with notice |
-| GET `/api/memory/economics` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4749 (test), tests/moat/p7-no-fabricated-data.sh:4750 (test) (+2) | none | MISSING | 501 not yet supported |
+| GET `/api/memory/economics` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4749 (test), tests/moat/p7-no-fabricated-data.sh:4750 (test) (+2) | /v1/memory/economics (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
 | POST `/api/memory/consolidate` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
 | POST `/api/memory/retrieve` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
 | GET `/api/memory/index` | none | none | UNUSED | 410 with notice |
@@ -396,7 +396,7 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | POST `/api/council/force-review` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
 | GET `/api/council/transcripts` | vscode-extension/media/loki-dashboard.js:12426 | none | MISSING | 501 not yet supported |
 | GET `/api/council/transcripts/{iteration_id}` | none | none | UNUSED | 410 with notice |
-| GET `/api/context` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4745 (test), tests/moat/p7-no-fabricated-data.sh:4746 (test) (+3) | none | MISSING | 501 not yet supported |
+| GET `/api/context` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4745 (test), tests/moat/p7-no-fabricated-data.sh:4746 (test) (+3) | /v1/context (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
 | GET `/api/notifications` | none | none | UNUSED | 410 with notice |
 | GET `/api/notifications/triggers` | none | none | UNUSED | 410 with notice |
 | PUT `/api/notifications/triggers` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:6802 | none | MISSING | 501 not yet supported |

@@ -69,5 +69,5 @@ test("audit helper writes the actions table and never throws", () => {
 });
 
 test("every planned route stub exists and mounts nothing harmful", () => {
-  expect(routeModules.length).toBe(16);
+  expect(routeModules.length).toBe(17);
 });
