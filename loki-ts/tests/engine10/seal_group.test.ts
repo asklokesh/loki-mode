@@ -7,8 +7,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sealedLog } from "./log_fixture.ts";
 import { renderPrBody } from "../../src/engine10/pr_body.ts";
-import { commitStage, receiptSha256, sealStage, sha256 } from "../../src/engine10/stages/seal.ts";
-import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
+import { createPublicKey } from "node:crypto";
+import { commitStage, loadSigningKey, receiptSha256, sealStage, sha256, signReceipt } from "../../src/engine10/stages/seal.ts";
+import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { capGroupVerdict, sealGroup } from "../../src/features/speed/seal_group.ts";
 import type { EventType, Receipt, RunContext, StageName, Verdict } from "../../src/engine10/types.ts";
 
@@ -37,9 +38,9 @@ function makeRepo(name: string): { repo: string; base: string } {
   return { repo, base };
 }
 
-function ctxFor(repo: string, base: string): RunContext {
+function ctxFor(repo: string, base: string, intake: Record<string, unknown> = {}): RunContext {
   const outputs: Partial<Record<StageName, Record<string, unknown>>> = {
-    intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "group task", resumed: false },
+    intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "group task", resumed: false, ...intake },
     wall: { files: [] },
     implement: { exit: "done", tests_reverted: [], duration_s: 3, iteration_id: "e10-r1-impl" },
     verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1.5 }], flaky: [], wall_passed: true, duration_s: 2 },
@@ -56,8 +57,8 @@ function ctxFor(repo: string, base: string): RunContext {
   } as unknown as RunContext;
 }
 
-interface U { id: string; verdict?: string }
-/** Writes group/manifest.json and one unsigned sub-receipt plus events per unit under runDir. */
+interface U { id: string; verdict?: string; unsigned?: boolean }
+/** Writes group/manifest.json and one signed (unless u.unsigned) sub-receipt plus events per unit under runDir. */
 function writeGroup(runDir: string, units: U[]): void {
   const g = join(runDir, "group");
   mkdirSync(join(g, "units"), { recursive: true });
@@ -69,13 +70,14 @@ function writeGroup(runDir: string, units: U[]): void {
     const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: { group_id: "g1", unit_id: u.id } }) + "\n";
     writeFileSync(join(d, "events.jsonl"), events);
     const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: u.verdict ?? "VERIFIED", head_sha: "h".repeat(40), events_sha256: sha256(events), not_proven: [] };
-    writeFileSync(join(d, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: receiptSha256(body as never), verification: { jwt: null, kid: null } }, null, 2) + "\n");
+    const h = receiptSha256(body as never), sig = u.unsigned ? { jwt: null, kid: null } : signReceipt(u.id, h);
+    writeFileSync(join(d, "receipt.json"), JSON.stringify({ ...body, receipt_sha256: h, verification: sig }, null, 2) + "\n");
   }
 }
 
-async function sealGroupRun(name: string, units: U[]): Promise<{ path: string; receipt: Receipt; runDir: string }> {
+async function sealGroupRun(name: string, units: U[], intake: Record<string, unknown> = {}): Promise<{ path: string; receipt: Receipt; runDir: string }> {
   const { repo, base } = makeRepo(name);
-  const ctx = ctxFor(repo, base);
+  const ctx = ctxFor(repo, base, intake);
   writeGroup(ctx.runDir, units);
   await commitStage.run(ctx, new AbortController().signal);
   const s = await sealStage.run(ctx, new AbortController().signal);
@@ -184,6 +186,36 @@ describe("D61-13 group seal and verify", () => {
     expect(receipt.not_proven.some((n) => n.includes("u2"))).toBe(true);
   }, 30000);
 
+  test("an already-satisfied intake with a failed unit seals PARTIAL and loki verify exits non-zero (B1)", async () => {
+    const { path, receipt } = await sealGroupRun("b1", [{ id: "u1" }, { id: "u2", verdict: "FAILED" }], { already_satisfied: true });
+    expect(receipt.verdict).toBe("PARTIAL");
+    const pub = join(root, "b1.pub.pem");
+    writeFileSync(pub, createPublicKey(loadSigningKey(false)!).export({ type: "spki", format: "pem" }));
+    expect(await verifyMain(["--pubkey", pub, path])).toBe(4); // intact receipt, run outcome not verified
+  }, 30000);
+
+  test("a signed combined receipt over an unsigned sub-receipt is UNCHECKED, never VERIFIED", async () => {
+    const { path } = await sealGroupRun("unsigned-sub", [{ id: "u1" }, { id: "u2", unsigned: true }]);
+    const v = await verifyReceipt(path);
+    expect(v.verdict).toBe("UNCHECKED");
+    expect(v.reasons.join(" ")).toContain("u2");
+  }, 30000);
+
+  test("case-colliding unit ids fail seal; dotfiles in group/units are ignored; a bare group dir is inert", async () => {
+    const { repo, base } = makeRepo("case");
+    const ctx = ctxFor(repo, base);
+    writeGroup(ctx.runDir, [{ id: "Ab" }, { id: "ab" }]);
+    expect(sealGroup(ctx.runDir, receiptSha256 as never).problems).toBeGreaterThan(0);
+    const ok = await sealGroupRun("dot", U3);
+    writeFileSync(join(ok.runDir, "group/units/.DS_Store"), "x");
+    expect((await verifyReceipt(ok.path)).verdict).toBe("VERIFIED");
+    const bare = makeRepo("bare");
+    const bctx = ctxFor(bare.repo, bare.base);
+    mkdirSync(join(bctx.runDir, "group"), { recursive: true });
+    expect(sealGroup(bctx.runDir, receiptSha256 as never).section).toBeUndefined();
+    expect(sealGroup(bctx.runDir, receiptSha256 as never).problems).toBe(0);
+  }, 60000);
+
   test("a corrupt sub-receipt at seal time fails closed, never VERIFIED", async () => {
     const { repo, base } = makeRepo("corrupt");
     const ctx = ctxFor(repo, base);
@@ -202,12 +234,14 @@ describe("D61-13 group seal and verify", () => {
       for (const bad of [{ ...ok, problems: 1 }, { ...ok, allUnitsPass: false }]) {
         const out = capGroupVerdict(v, bad);
         expect(out === "VERIFIED").toBe(false);
+        if (bad.allUnitsPass === false) expect(["VERIFIED", "ALREADY_SATISFIED"].includes(out)).toBe(false);
         if (v !== "VERIFIED") expect(["PARTIAL", "FAILED"].includes(out) || out === v).toBe(true);
       }
     }
     expect(capGroupVerdict("VERIFIED", { ...ok, allUnitsPass: false })).toBe("PARTIAL");
     expect(capGroupVerdict("VERIFIED", { ...ok, problems: 1 })).toBe("FAILED");
     expect(capGroupVerdict("FAILED", { ...ok, allUnitsPass: false })).toBe("FAILED");
+    expect(capGroupVerdict("ALREADY_SATISFIED", { ...ok, allUnitsPass: false })).toBe("PARTIAL");
   });
 });
 

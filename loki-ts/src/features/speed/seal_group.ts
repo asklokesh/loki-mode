@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Verdict } from "../../engine10/types.ts";
+import type { VerifyDeps } from "../../engine10/verify_cmd.ts";
 
 export interface GroupUnit {
   index: number;
@@ -31,7 +32,7 @@ export interface ReceiptGroup { group_id: string; units: GroupUnit[] }
 export interface GroupSeal { section: ReceiptGroup | undefined; notProven: string[]; problems: number; allUnitsPass: boolean }
 /** Same hash the receipt uses (seal.ts receiptSha256), injected so this module never imports seal.ts or verify_cmd.ts. */
 type RecHash = (r: Record<string, unknown>) => string;
-type VerifyOne = (receiptPath: string) => Promise<{ verdict: string; reasons: string[] }>;
+type VerifyOne = (receiptPath: string, deps?: VerifyDeps) => Promise<{ verdict: string; reasons: string[] }>;
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const PASSING = new Set(["VERIFIED", "ALREADY_SATISFIED"]);
@@ -41,12 +42,12 @@ const text = (v: unknown, cap: number): string => (typeof v === "string" ? v.rep
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : 0);
 const unitsDir = (runDir: string): string => join(runDir, "group", "units");
 const readJson = (p: string): unknown => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return undefined; } };
-const dirNames = (d: string): string[] | null => { try { return readdirSync(d).sort(); } catch { return null; } };
+const dirNames = (d: string): string[] | null => { try { return readdirSync(d).filter((n) => !n.startsWith(".")).sort(); } catch { return null; } }; // dotfiles (.DS_Store) are not units
 
 /** Reads the group directory under runDir. No group/manifest.json means a single run: inert, so the receipt is byte-identical to today. */
 export function sealGroup(runDir: string, rh: RecHash): GroupSeal {
   const manifestPath = join(runDir, "group", "manifest.json");
-  if (!existsSync(join(runDir, "group"))) return { section: undefined, notProven: [], problems: 0, allUnitsPass: true };
+  if (!existsSync(manifestPath)) return { section: undefined, notProven: [], problems: 0, allUnitsPass: true };
   const notProven: string[] = [];
   let problems = 0;
   const fail = (m: string): void => { problems++; notProven.push(`group: ${m}`); };
@@ -57,13 +58,13 @@ export function sealGroup(runDir: string, rh: RecHash): GroupSeal {
     return { section: undefined, notProven, problems, allUnitsPass: false };
   }
   const units: GroupUnit[] = [];
-  const seen = new Set<string>();
+  const seen = new Set<string>(), seenLower = new Set<string>();
   let allUnitsPass = true;
   list.forEach((raw, index) => {
     const u = isObj(raw) ? raw : {};
     const id = String(u["unit_id"] ?? "");
-    if (!ID_RE.test(id) || seen.has(id)) return fail(`unit ${index} has an invalid or duplicate id`);
-    seen.add(id);
+    if (!ID_RE.test(id) || seen.has(id) || seenLower.has(id.toLowerCase())) return fail(`unit ${index} has an invalid, duplicate or case-colliding id`);
+    seen.add(id); seenLower.add(id.toLowerCase());
     const dir = join(unitsDir(runDir), id), rp = join(dir, "receipt.json"), ep = join(dir, "events.jsonl");
     let bytes: Buffer;
     try { bytes = readFileSync(rp); } catch { return fail(`unit ${id} sub-receipt missing`); }
@@ -84,19 +85,20 @@ export function sealGroup(runDir: string, rh: RecHash): GroupSeal {
 /** Only ever lowers: a sub-receipt problem is FAILED, a non-passing unit caps VERIFIED at PARTIAL. Never raises anything to VERIFIED. */
 export function capGroupVerdict(v: Verdict, g: GroupSeal): Verdict {
   if (g.problems > 0) return v === "SPEC_CONFLICT" ? v : "FAILED";
-  return !g.allUnitsPass && v === "VERIFIED" ? "PARTIAL" : v;
+  return !g.allUnitsPass && (v === "VERIFIED" || v === "ALREADY_SATISFIED") ? "PARTIAL" : v;
 }
 
 /** Verify side. Null means the group section checks out (or the receipt is a single run with no group directory). */
-export async function verifyGroup(receiptPath: string, receipt: Record<string, unknown>, rh: RecHash, verifyOne: VerifyOne): Promise<{ verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null> {
+export async function verifyGroup(receiptPath: string, receipt: Record<string, unknown>, rh: RecHash, verifyOne: VerifyOne, deps: VerifyDeps = {}): Promise<{ verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null> {
   const runDir = dirname(receiptPath);
+  const signed = isObj(receipt["verification"]) && typeof receipt["verification"]["jwt"] === "string"; // a signed combined receipt needs signed sub-receipts (enforced here: signing is decided after Seal reads the group, and D71 caps core hook lines)
   const bad = (reason: string): { verdict: "TAMPERED"; reason: string } => ({ verdict: "TAMPERED", reason: `group: ${reason}` });
   const g = receipt["group"];
-  if (g === undefined) return existsSync(join(runDir, "group")) ? bad("group directory present but the receipt has no group section") : null;
+  if (g === undefined) return existsSync(join(runDir, "group", "manifest.json")) ? bad("group directory present but the receipt has no group section") : null;
   if (!isObj(g) || !ID_RE.test(String(g["group_id"] ?? "")) || !Array.isArray(g["units"]) || g["units"].length === 0) return bad("group section malformed");
   const entries = g["units"] as unknown[];
   const ids = entries.map((e) => (isObj(e) ? String(e["unit_id"] ?? "") : ""));
-  if (ids.some((id) => !ID_RE.test(id)) || new Set(ids).size !== ids.length) return bad("unit ids invalid or duplicated");
+  if (ids.some((id) => !ID_RE.test(id)) || new Set(ids.map((i) => i.toLowerCase())).size !== ids.length) return bad("unit ids invalid, duplicated or case-colliding");
   const onDisk = dirNames(unitsDir(runDir));
   if (onDisk === null || onDisk.join("\0") !== [...ids].sort().join("\0")) return bad("unit directories do not match the receipt (missing or extra unit)");
   let unchecked: string | null = null;
@@ -111,7 +113,8 @@ export async function verifyGroup(receiptPath: string, receipt: Record<string, u
     const sub = readJson(rp);
     if (!isObj(sub) || sub["receipt_sha256"] !== e["receipt_sha256"] || rh(sub) !== e["receipt_sha256"]) return bad(`unit ${id} sub-receipt hash does not recompute`);
     if (String(sub["verdict"] ?? "") !== e["verdict"]) return bad(`unit ${id} verdict differs from the combined receipt`);
-    const r = await verifyOne(rp);
+    const r = await verifyOne(rp, deps);
+    if (r.verdict === "UNSIGNED" && signed) unchecked ??= `unit ${id} sub-receipt is unsigned under a signed combined receipt`;
     if (r.verdict === "TAMPERED") return bad(`unit ${id} sub-receipt failed verify: ${r.reasons.join("; ")}`);
     if (r.verdict === "UNCHECKED") unchecked ??= `unit ${id} sub-receipt not checked: ${r.reasons.join("; ")}`;
   }

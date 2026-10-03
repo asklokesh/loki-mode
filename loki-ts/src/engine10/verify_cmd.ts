@@ -84,7 +84,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   }
   const logProblem = checkEventLog(receiptPath, receipt);
   if (logProblem) return { verdict: "TAMPERED", reasons: [logProblem] };
-  const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt); if (gp) return { verdict: gp.verdict, reasons: [gp.reason] }; // D61-13
+  const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt, deps); if (gp) return { verdict: gp.verdict, reasons: [gp.reason] }; // D61-13
   const shot = receiptScreensProblem(receiptPath, receipt); if (shot) return { verdict: "TAMPERED", reasons: [shot] };
   const verification = (receipt["verification"] ?? {}) as { jwt?: string | null };
   const jwt = verification.jwt ?? null;
