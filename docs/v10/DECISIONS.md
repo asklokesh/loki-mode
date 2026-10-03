@@ -572,3 +572,13 @@ The $20.00 default per-run cap stays. It is a hard stop on priced sessions only;
 - Why: anyone can mint a token with a foreign kid, so rc 0 is a downgrade forgery path. Moat order puts Seal accuracy above convenience, and D48 row 2 gives honest cross-machine verification an explicit path (`loki verify --pubkey`).
 - Also in scope: a missing .loki/state/last-proof-id.txt must not skip the receipt check silently; it reports not verified (A-134 class).
 - Users who relied on rc 0 for foreign tokens must pass `--pubkey`; the error message names that flag. CHANGELOG and docs say so. HIGH tier, unanimous opus review.
+
+## D77 (CTO, reversible; amends the D50-W1 ruling): the Wall gets a sealed base-tree manifest, never the repo; its cap scales with task size
+1. Rejected: read-only repo access for the Wall. A read-only mount still exposes function bodies to Read and Grep, and that cannot be blocked the same way across five provider CLIs, so "never bodies" would be unenforceable.
+2. Rejected on its own: a longer cap. The two 90s kills came from blind exploration; more time alone buys more blind tests.
+3. Adopted: core code builds wall_manifest.txt from the intake base tree before the Wall session starts and places it in the empty temp cwd next to task.md and repomap.txt. It holds only the detected runner and its config file, the test directory layout, at most 2 existing test files as style examples, and the public signatures and exports of the modules the task names. Capped at 400 lines; its sha256 is emitted on wall.sealed and listed in the receipt.
+4. The Wall never sees function or method bodies, the run diff or implement-worktree content, plan output, the implement transcript, git history, any .loki/ run directory, or prior Wall files. A style-example test must not import a module the task names (keeps D53-Q1 sound).
+5. Ordering is unchanged from D42(2): manifest from the base tree only, Wall sealed and red-on-base before implement runs.
+6. Cap: 90s small, 180s normal, LOKI_E10_WALL_LIMIT_S may override up to 300s, fixed before the session. A Wall timeout stays not_run, never red or already_satisfied, and Seal discloses it.
+7. Ships behind LOKI_E10_WALL_MANIFEST with a lift row (augmentiq#52 plus 2 brownfield tasks, manifest off versus on). Lower lift drops the change. Slices W1-S1..W1-S4 on BOARD; S1 to S3 touch the engine10 core and wait for core budget room.
+
