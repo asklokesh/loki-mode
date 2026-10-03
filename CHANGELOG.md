@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+- Completion council TODO marker count now matches plurals (TODOs, FIXMEs, HACKs, XXXs) at all three sites in autonomy/completion-council.sh, still rejecting identifiers such as TODOs_count, TODOS_LIST, XXXL and HACKATHON.
 - Docs honesty for issue #200: skills/healing.md and docs/dev/architecture-reference.md no longer claim failure-modes.json is written or that the healing snapshot/revert pairing is enforced, because hook_pre_healing_modify and hook_post_healing_modify have no production caller; tests/test-heal-docs-honesty.sh fails if a caller appears while the docs still say so.
 
 ### Added

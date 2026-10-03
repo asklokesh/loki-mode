@@ -3606,7 +3606,7 @@ print(1 if runner not in ('none', '', 'None') and p is True else 0)
         devils_advocate)
             # Check for TODO/FIXME
             local todo_count
-            todo_count=$(grep -rlEw "TODO|FIXME|HACK|XXX" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.loki --exclude-dir=dist --exclude-dir=build --exclude-dir=vendor . --include="*.ts" --include="*.js" --include="*.py" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+            todo_count=$(grep -rlE "\b(TODO|FIXME|HACK|XXX)s?\b" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.loki --exclude-dir=dist --exclude-dir=build --exclude-dir=vendor . --include="*.ts" --include="*.js" --include="*.py" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
             if [ "$todo_count" -gt 5 ]; then
                 ((issues++))
             fi
@@ -3883,7 +3883,7 @@ print(len(d.get('tasks', d) if isinstance(d, dict) else d))" 2>/dev/null)
             # count is a hard "not done"; a missing/absent test base means no
             # positive evidence even when TODOs are low.
             local todo_count
-            todo_count=$(grep -rlEw "TODO|FIXME|HACK|XXX" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.loki --exclude-dir=dist --exclude-dir=build --exclude-dir=vendor . --include="*.ts" --include="*.js" --include="*.py" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+            todo_count=$(grep -rlE "\b(TODO|FIXME|HACK|XXX)s?\b" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.loki --exclude-dir=dist --exclude-dir=build --exclude-dir=vendor . --include="*.ts" --include="*.js" --include="*.py" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
             if [ "$todo_count" -gt 5 ]; then
                 blocked="true"
                 reasons="${reasons}$todo_count files with TODO/FIXME markers; "
@@ -4149,7 +4149,7 @@ else:
 
     # Skeptical check 3: TODO/FIXME/HACK density
     local todo_count
-    todo_count=$(grep -rlEw "TODO|FIXME|HACK|XXX" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.loki --exclude-dir=dist --exclude-dir=build --exclude-dir=vendor . --include="*.ts" --include="*.js" --include="*.py" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
+    todo_count=$(grep -rlE "\b(TODO|FIXME|HACK|XXX)s?\b" --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.loki --exclude-dir=dist --exclude-dir=build --exclude-dir=vendor . --include="*.ts" --include="*.js" --include="*.py" --include="*.sh" 2>/dev/null | wc -l | tr -d ' ')
     if [ "$todo_count" -gt 3 ]; then
         ((issues_found++))
         issue_details="${issue_details}$todo_count files still contain TODO/FIXME markers; "

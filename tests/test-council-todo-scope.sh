@@ -79,8 +79,34 @@ mkdir -p "$REAL/src"
 i=1
 while [ $i -le 6 ]; do printf '// TODO: real work %s\n' "$i" > "$REAL/src/f$i.ts"; i=$((i + 1)); done
 
+# Plurals: TODOs/FIXMEs are markers too (six files each).
+PLT="$SCRATCH/plural-todo"
+PLF="$SCRATCH/plural-fixme"
+mkdir -p "$PLT/src" "$PLF/src"
+i=1
+while [ $i -le 6 ]; do
+    printf '// 2 TODOs left here %s\n' "$i" > "$PLT/src/f$i.ts"
+    printf '# open FIXMEs %s\n' "$i" > "$PLF/src/f$i.py"
+    i=$((i + 1))
+done
+
+# Negative control: plural words inside identifiers must not count.
+PLN="$SCRATCH/plural-neg"
+mkdir -p "$PLN/src"
+i=1
+while [ $i -le 6 ]; do
+    printf 'const TODOs_count = 1; let myTODOs = 2; const TODOS_LIST = 3; // HACKATHON FIXMEs_x\n' > "$PLN/src/f$i.ts"
+    i=$((i + 1))
+done
+
 idx=1
 while [ $idx -le 3 ]; do
+    c="$(run_count "$PLT" $idx)"
+    if [ "$c" = "6" ]; then ok "site $idx: TODOs plural counted"; else bad "site $idx TODOs plural" "count=$c want 6"; fi
+    c="$(run_count "$PLF" $idx)"
+    if [ "$c" = "6" ]; then ok "site $idx: FIXMEs plural counted"; else bad "site $idx FIXMEs plural" "count=$c want 6"; fi
+    c="$(run_count "$PLN" $idx)"
+    if [ "$c" = "0" ]; then ok "site $idx: TODOs_count/myTODOs/TODOS_LIST identifiers not counted"; else bad "site $idx plural negative" "count=$c want 0"; fi
     c="$(run_count "$NM" $idx)"
     if [ "$c" = "0" ]; then ok "site $idx: node_modules TODOs not counted"; else bad "site $idx node_modules" "count=$c want 0"; fi
     c="$(run_count "$EX" $idx)"
