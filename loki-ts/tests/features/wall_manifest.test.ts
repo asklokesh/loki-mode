@@ -286,3 +286,95 @@ describe("round 2 review findings (B1-B7)", () => {
     expect(out).not.toMatch(/= [12]/);
   });
 });
+
+const SECRETS = /LEAK_|SECRET|TOKEN_SECRET/;
+const R3_INPUTS: [string, string][] = [
+  ["m.tsx", "export class V {\n  render() { return <div><p>{a} / {b} {c && <b>ok</b>}</p></div>; }\n  track() { analytics.track(SECRET_EVENT_KEY); }\n}\n"],
+  ["m.tsx", "export class V {\n  render() { return <p>{a} isn't {b && <i>it's</i>}</p>; sendToken(TOKEN_SECRET); }\n}\n"],
+  ["m.ts", "export class K {\n  m() { let y = i++ / 2; if (y) { /* c */ } SECRET_DIV(); return 1 }\n  ok(): void {}\n}\n"],
+  ["m.ts", "export class K {\n  render() { return 1 }\n  analytics.track(SECRET_EVENT_KEY);\n  ok(): void {}\n}\n"],
+  ["m.ts", "export class K {\n  doIt() { return 1 }\n  track(SECRET_CALL);\n}\n"],
+  ["m.py", 'def quote(sep="\\""):\n    return "SECRET_P1"\n\ndef after():\n    pass\n'],
+  ["m.py", 'def quote(sep=r"\\""):\n    return "SECRET_P2"\n'],
+  ["m.py", 'def m(s="""a:\nb"""):\n    return "SECRET_P3"\n'],
+  ["m.py", 'def broken(a, b\n    return "SECRET_P4"\n'],
+  ["m.ts", "export function h<T = () => void>(cb: T, n: number): Promise<T> { return SECRET_H(); }\n"],
+];
+
+describe("round 3 review findings", () => {
+  test("B1: } and postfix ++ never start a regex; JSX text and division leak nothing", () => {
+    for (const [p, src] of R3_INPUTS.slice(0, 3)) expect(ts(src, p)).not.toMatch(SECRETS);
+    expect(ts(R3_INPUTS[2]![1], "m.ts")).toContain("ok(): void");
+  });
+
+  test("B1: a lexer desync that slips through is caught by the member grammar", () => {
+    const out = ts(R3_INPUTS[3]![1], "m.ts");
+    expect(out).not.toMatch(SECRETS);
+    expect(out).toContain("export class K {");
+    expect(ts(R3_INPUTS[4]![1], "m.ts")).not.toMatch(SECRETS);
+  });
+
+  test("fail closed: tsx and jsx emit no class members, only the head", () => {
+    const out = ts("export class V {\n  render(): void { return 1 }\n}\nexport function f(a: number): number { return a }\n", "m.tsx");
+    expect(out).toContain("export class V {");
+    expect(out).not.toContain("render");
+    expect(out).toContain("export function f(a: number): number");
+  });
+
+  test("fail closed: one non-signature member drops every member of the class", () => {
+    const out = ts("export class K {\n  a(): void {}\n  b(): void {}\n  foo.bar(1);\n}\n");
+    expect(out).toContain("export class K {");
+    expect(out).not.toContain("a(): void");
+  });
+
+  test("a well-formed class keeps its members, including plain property initializers", () => {
+    const out = ts("export class K {\n  static readonly n = 1;\n  async go<T>(x: T): Promise<T> { return x }\n  get v(): number { return 1 }\n  #p = 1;\n  [Symbol.iterator](): void {}\n}\n");
+    for (const m of ["static readonly n", "async go<T>(x: T): Promise<T>", "get v(): number"]) expect(out).toContain(m);
+  });
+
+  test("B2: Python escaped quotes, raw quotes and triple-quoted defaults", () => {
+    const a = ts(R3_INPUTS[5]![1], "m.py");
+    expect(a).not.toMatch(SECRETS);
+    expect(a).toContain('def quote(sep="\\""):');
+    expect(a).toContain("def after():");
+    expect(ts(R3_INPUTS[6]![1], "m.py")).not.toMatch(SECRETS);
+    const t = ts(R3_INPUTS[7]![1], "m.py");
+    expect(t).not.toMatch(SECRETS);
+    expect(t).toContain('def m(s="""a:\nb"""):');
+  });
+
+  test("B2: an unclosed Python header emits nothing", () => {
+    const out = ts(R3_INPUTS[8]![1], "m.py");
+    expect(out).not.toMatch(SECRETS);
+    expect(out).not.toContain("def broken");
+  });
+
+  test("B3: generic defaults containing => keep the whole signature", () => {
+    const out = ts("export function h<T = () => void>(cb: T, n: number): Promise<T> { return SECRET_H(); }\nexport class K {\n  m<T = (a: number) => string>(x: T): T { return x }\n}\n");
+    expect(out).toContain("export function h<T = () => void>(cb: T, n: number): Promise<T>");
+    expect(out).toContain("m<T = (a: number) => string>(x: T): T");
+    expect(out).not.toMatch(SECRETS);
+  });
+
+  test("advisories: export type { T } from keeps its from clause; backslash and template imports count", () => {
+    expect(ts('export type { T } from "./t"\nconst z = 1\n')).toContain('export type { T } from "./t"');
+    const base = [{ path: "pkg/widget.py", content: "X = 1\n" }, { path: "src/widget.ts", content: "export const a = 1;" }];
+    const cases: [string, string][] = [
+      ["tests/test_bs.py", "from pkg import other, \\\n    widget\n"],
+      ["tests/tpl.test.ts", "await import(`../src/widget`);"],
+    ];
+    for (const [path, content] of cases) {
+      const out = buildWallManifest([...base, { path, content }], ["pkg/widget.py", "src/widget.ts"]);
+      expect(out.slice(out.indexOf("## style examples"))).not.toContain(`--- example: ${path}`);
+    }
+  });
+
+  test("a deeply nested template does not throw", () => {
+    const src = "export const a = 1;\nexport const b = " + "`${".repeat(20000) + "1" + "}`".repeat(20000) + ";\n";
+    expect(() => ts(src)).not.toThrow();
+  });
+
+  test("every SECRET and LEAK input from both reviews leaks nothing", () => {
+    for (const [p, src] of R3_INPUTS) expect(ts(src, p)).not.toMatch(SECRETS);
+  });
+});

@@ -16,7 +16,7 @@ const byPath = (a: ManifestFile, b: ManifestFile): number =>
 
 interface Item { head: string; raw: string; end: string; body: string | null; balanced: boolean }
 
-const REGEX_PREV = "(,=:[!&|?{};+-*%~^";
+const REGEX_PREV = "(,=:[!&|?{;+-*%~^";
 const isComment = (s: string, i: number): boolean => s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*");
 
 // Template literal starting at i (a backtick); handles nested `${ ... }` holding strings and templates.
@@ -44,6 +44,7 @@ function templateEnd(s: string, i: number): number {
 function regexEnd(s: string, i: number): number {
   let p = i - 1;
   while (p >= 0 && /\s/.test(s[p]!)) p--;
+  if (p >= 1 && (s[p] === "+" || s[p] === "-") && s[p - 1] === s[p]) return i;
   if (p >= 0 && !REGEX_PREV.includes(s[p]!) && !/\b(return|typeof|case|in|of|void|delete|throw)$/.test(s.slice(Math.max(0, p - 7), p + 1))) return i;
   let inClass = false;
   for (let j = i + 1; j < s.length; j++) {
@@ -116,7 +117,7 @@ function items(src: string): Item[] {
       if (declaration || h === "" || /^export(\s+type)?$/.test(h) || /[:|&]$/.test(h)) {
         head += src.slice(i, close + 1);
         i = close + 1;
-        if (declaration && !h.startsWith("type") && !h.includes("= ")) push("", null, i);
+        if (declaration && !/^(export\s+)?(declare\s+)?type\b/.test(h)) push("", null, i);
         continue;
       }
       const body = src.slice(i + 1, close);
@@ -186,12 +187,14 @@ function arrowHeadLen(s: string): number {
 // Cuts an initializer off a declaration head, keeping arrow and function-expression headers.
 function memberSig(h: string): string | null {
   if (!h || /^(private|protected|#)/.test(h)) return null;
-  let depth = 0;
+  let depth = 0, angle = 0;
   for (let i = 0; i < h.length; i++) {
     const c = h[i]!;
     if ("([{".includes(c)) depth++;
     else if (")]}".includes(c)) depth--;
-    else if (c === "=" && depth === 0 && !"=!<".includes(h[i - 1] ?? " ") && h[i + 1] !== "=" && h[i + 1] !== ">") {
+    else if (depth === 0 && c === "<") angle++;
+    else if (depth === 0 && c === ">" && h[i - 1] !== "=" && angle > 0) angle--;
+    else if (c === "=" && depth === 0 && angle === 0 && !"=!<".includes(h[i - 1] ?? " ") && h[i + 1] !== "=" && h[i + 1] !== ">") {
       const rhs = h.slice(i + 1).trim();
       if (rhs.endsWith("=>") || /^(async\s+)?function\b/.test(rhs)) return h;
       const len = arrowHeadLen(rhs);
@@ -225,80 +228,120 @@ function splitDeclarators(h: string): string[] {
   return parts;
 }
 
-// The export's own head: stops at `;`, or at a line break once the statement is complete.
+// The export's own head: stops at `;`, or at a line break once the statement is complete. Linear: each
+// line break looks only at the last non-blank character region and the next non-blank character.
 function exportHead(h: string, end: string): string {
-  let depth = 0;
+  let depth = 0, last = -1, nn = -1;
+  const star = /^export\s*(type\s*)?\*/.test(h.slice(0, 40));
   for (let i = 0; i < h.length; ) {
     const k = skipLiteral(h, i);
-    if (k !== i) { i = k; continue; }
+    if (k !== i) { last = k - 1; i = k; continue; }
     const c = h[i]!;
     if ("([{".includes(c)) depth++;
     else if (")]}".includes(c)) depth--;
     else if (depth === 0 && c === ";") return h.slice(0, i + 1);
-    else if (depth === 0 && c === "\n") {
-      const pre = h.slice(0, i).trimEnd();
-      const next = h.slice(i).trimStart();
-      const star = /^export\s*(type\s*)?\*/.test(pre);
-      const open = /[=|&,<(:?.+\-*/]$|=>$|\b(from|as|extends|keyof|typeof|type)$/.test(pre) || /^(from\b|extends\b|as\b|[|&?:.,=])/.test(next);
-      if (pre && !open && (!star || /\bfrom\s*(["'])/.test(pre))) return pre;
+    else if (depth === 0 && c === "\n" && last >= 0) {
+      if (nn < i) { nn = i; while (nn < h.length && /\s/.test(h[nn]!)) nn++; }
+      const tail = h.slice(Math.max(0, last - 300), last + 1);
+      const next = h.slice(nn, nn + 12);
+      const open = /[=|&,<(:?.+\-*/]$|=>$|\b(from|as|extends|keyof|typeof|type)$/.test(tail) || /^(from\b|extends\b|as\b|[|&?:.,=])/.test(next);
+      if (!open && (!star || /\bfrom\s*(["'])[^"']*\1$/.test(tail))) return h.slice(0, last + 1);
     }
+    if (!/\s/.test(c)) last = i;
     i++;
   }
   return h.trimEnd() + (end === ";" ? ";" : "");
 }
 
-const MEMBER_START = /^(@|\[|#|[A-Za-z_$])/;
+// True when a `;` at bracket depth 0 is followed by more text: a sign the statement scan desynced.
+function hasTopSemi(line: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < line.length; ) {
+    const k = skipLiteral(line, i);
+    if (k !== i) { i = k; continue; }
+    const c = line[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === ";" && depth <= 0 && line.slice(i + 1).trim()) return true;
+    i++;
+  }
+  return false;
+}
+
+const MODS = "(?:(?:public|private|protected|static|readonly|abstract|async|get|set|declare|override)\\s+)*";
+const MEMBER_GRAMMAR = new RegExp(`^(?:@[\\w$.]+(?:\\([^)]*\\))?\\s*)*${MODS}\\*?\\s*(?:[A-Za-z_$][\\w$]*|#[A-Za-z_$][\\w$]*|\\[[^\\]]*\\])\\s*[?!]?\\s*(?:[(<:=]|$)`);
 const NOT_MEMBER = /^(return|const|let|var|if|else|for|while|do|switch|case|default|throw|try|catch|finally|new|await|yield|break|continue|import|export|function|delete|typeof|void)\b/;
 
-function tsSignatures(src: string): string[] {
+// Strict, fail-closed class member check on the member's own head. A call statement such as `track(X);`
+// has parentheses, no body and no return type, so it is rejected.
+function strictMember(m: Item): boolean {
+  const h = m.head.trim();
+  if (!MEMBER_GRAMMAR.test(h) || NOT_MEMBER.test(h)) return false;
+  if (m.end !== "{" && /^[^=:<]*\(/.test(h) && !/^(?:(?:public|protected|private)\s+)?constructor\b/.test(h) && !/\)\s*:/.test(h)) return false;
+  return true;
+}
+
+function tsSignatures(src: string, jsx: boolean): string[] {
   const out: string[] = [];
   for (const it of items(src)) {
     const h = it.head.trim();
     if (!/^export\b/.test(h)) continue;
+    const lines: string[] = [];
     if (/^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]/.test(h)) {
-      out.push(exportHead(h, it.end));
+      lines.push(exportHead(h, it.end));
     } else if (/^export\s+(default\s+)?(abstract\s+)?class\b/.test(h)) {
-      const members = it.balanced
-        ? items(it.body ?? "").map((m) => m.head.trim()).filter((m) => MEMBER_START.test(m) && !NOT_MEMBER.test(m))
-          .map(memberSig).filter((m): m is string => !!m)
-        : [];
-      out.push(`${exportHead(h, "")} {`, ...members.map((m) => `  ${m};`), "}");
+      const ms = jsx || !it.balanced ? [] : items(it.body ?? "");
+      const sigs = ms.map((m) => (strictMember(m) ? memberSig(m.head.trim()) : null));
+      const dropped = ms.some((m) => !strictMember(m)) || sigs.some((m) => m !== null && (hasTopSemi(m) || NOT_MEMBER.test(m)));
+      const keep = dropped ? [] : sigs.filter((m): m is string => !!m);
+      lines.push(`${exportHead(h, "")} {`, ...keep.map((m) => `  ${m};`), "}");
     } else if (/^export\s+default\s/.test(h)) {
       const rest = h.replace(/^export\s+default\s+/, "");
       const len = arrowHeadLen(rest);
-      if (len > 0) out.push(`export default ${rest.slice(0, len)}`);
-      else if (/^(async\s+)?function\b/.test(rest)) out.push(memberSig(h) ?? h);
-      else out.push(/^[\w$.]+$/.test(rest) ? h : "export default ...");
+      if (len > 0) lines.push(`export default ${rest.slice(0, len)}`);
+      else if (/^(async\s+)?function\b/.test(rest)) lines.push(memberSig(h) ?? h);
+      else lines.push(/^[\w$.]+$/.test(rest) ? h : "export default ...");
     } else if (/^export\s+(const|let|var)\b/.test(h)) {
-      const parts = splitDeclarators(h).map((p) => memberSig(p.trim()) ?? p.trim());
-      out.push(parts.join(", "));
+      lines.push(splitDeclarators(h).map((p) => memberSig(p.trim()) ?? p.trim()).join(", "));
     } else {
-      out.push(memberSig(h) ?? h);
+      lines.push(memberSig(h) ?? h);
     }
+    if (!lines.some(hasTopSemi)) out.push(...lines);
   }
   return out;
 }
 
-// Reads one Python signature starting at lines[i]; returns text cut at the colon closing the header.
-function pyHeader(lines: string[], i: number): { text: string; next: number } {
-  let text = "", depth = 0;
-  for (let n = i; n < lines.length; n++) {
-    const line = lines[n]!;
-    for (let k = 0; k < line.length; k++) {
-      const c = line[k]!;
-      if (c === '"' || c === "'") {
-        const close = line.indexOf(c, k + 1);
-        k = close < 0 ? line.length : close;
-        continue;
+const PY_HEADER_MAX_LINES = 50;
+
+// Reads one Python signature starting at lines[i]; returns text cut at the colon closing the header, or
+// null (fail closed) when strings or brackets do not close within the header or 50 lines.
+function pyHeader(lines: string[], i: number): { text: string; next: number } | null {
+  const src = lines.slice(i, i + PY_HEADER_MAX_LINES).join("\n");
+  let depth = 0;
+  for (let k = 0; k < src.length; k++) {
+    const c = src[k]!;
+    if (c === '"' || c === "'") {
+      const q = src.startsWith(c.repeat(3), k) ? c.repeat(3) : c;
+      let j = k + q.length;
+      for (; j < src.length; j++) {
+        if (src[j] === "\\") j++;
+        else if (src.startsWith(q, j)) break;
+        else if (q.length === 1 && src[j] === "\n") return null;
       }
-      if (c === "#") break;
-      if ("([{".includes(c)) depth++;
-      else if (")]}".includes(c)) depth--;
-      else if (c === ":" && depth === 0) return { text: text + line.slice(0, k + 1).trimEnd(), next: n + 1 };
+      if (j >= src.length) return null;
+      k = j + q.length - 1;
+      continue;
     }
-    text += line.trimEnd() + "\n";
+    if (c === "#") { while (k < src.length && src[k] !== "\n") k++; k--; continue; }
+    if (c === "\\" && src[k + 1] === "\n") { k++; continue; }
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === ":" && depth === 0) {
+      const raw = src.slice(0, k + 1);
+      return { text: raw.split("\n").map((l) => l.trimEnd()).join("\n"), next: i + raw.split("\n").length };
+    } else if (c === "\n" && depth <= 0) return null;
   }
-  return { text: text.trimEnd(), next: lines.length };
+  return null;
 }
 
 function pySignatures(src: string): string[] {
@@ -317,7 +360,9 @@ function pySignatures(src: string): string[] {
     if ((top || member) && line.trim().startsWith("@")) { pending.push(line.trimEnd()); i++; continue; }
     const m = /^\s*(?:async\s+)?(def|class)\s+(\w+)/.exec(line);
     if ((top || member) && m) {
-      const { text, next } = pyHeader(lines, i);
+      const hdr = pyHeader(lines, i);
+      if (!hdr) { pending = []; i++; continue; }
+      const { text, next } = hdr;
       const name = m[2]!;
       const isPublic: boolean = !name.startsWith("_") || (m[1] === "def" && member && /^__\w+__$/.test(name));
       if (isPublic) out.push(...pending, text);
@@ -374,14 +419,19 @@ function runnerSection(files: ManifestFile[]): string[] {
 }
 
 // True when a test file imports a module whose stem matches one the task names.
-function importsNamed(path: string, content: string, stems: Set<string>): boolean {
+function importsNamed(path: string, raw: string, stems: Set<string>): boolean {
+  const content = raw.replace(/\\\n[ \t]*/g, " ");
   if ([...stems].some((s) => stemOf(path).split(/[._-]/).includes(s))) return true;
   const specs: string[] = [];
-  for (const m of content.matchAll(/\b(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g)) specs.push(m[1]!);
+  for (const m of content.matchAll(/\b(?:from|import|require)\s*\(?\s*["'`]([^"'`]+)["'`]/g)) specs.push(m[1]!);
   const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
   for (const m of content.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
   for (const m of content.matchAll(/^[ \t]*import[ \t]+([\w.,\t ]+)$/gm)) specs.push(...names(m[1]!));
   return specs.some((s) => s.trim().replace(/\.(ts|js|py)$/, "").split(/[./\\]/).some((seg) => stems.has(seg)));
+}
+
+function safeTs(content: string, path: string): string[] {
+  try { return tsSignatures(content, /\.[jt]sx$/.test(path)); } catch { return []; }
 }
 
 export function buildWallManifest(files: readonly ManifestFile[], taskModules: readonly string[]): string {
@@ -395,7 +445,7 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
   for (const path of mods) {
     const f = all.find((x) => x.path === path);
     if (!f) continue;
-    out.push("", `## signatures: ${path}`, ...(path.endsWith(".py") ? pySignatures(f.content) : tsSignatures(f.content)));
+    out.push("", `## signatures: ${path}`, ...(path.endsWith(".py") ? pySignatures(f.content) : safeTs(f.content, path)));
   }
   out.push("", "## style examples");
   for (const f of tests.filter((t) => !importsNamed(t.path, t.content, stems)).slice(0, MAX_EXAMPLES)) {
