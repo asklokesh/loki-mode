@@ -437,14 +437,18 @@ group_leave() {
 group_started() {
     GROUP_LIST="$GROUP_LIST $1:$2"
     GROUP_PIDS="$GROUP_PIDS $2"
-    # Concurrency only where every budget was scaled for contention: the
-    # sharded run (run_review_case's default also keys on LOKI_TEST_SHARD) at
-    # a scale above 1. Otherwise groups run one at a time, as before: measured
-    # at load ~21 on 14 cores, concurrent groups at scale 1 went red on three
-    # timing bounds while the serial suite passed 46/0 under the same load.
-    if [ -z "${LOKI_TEST_SHARD:-}" ] || ! [ "$REVIEW_TIMEOUT_SCALE" -gt 1 ] 2>/dev/null; then
-        wait "$2" 2>/dev/null || true
-    fi
+    # Bounded concurrency: at most LOKI_TEST_JOBS groups in flight (default 3;
+    # 1 restores the serial order). Budgets are unchanged in every mode.
+    local jobs="${LOKI_TEST_JOBS:-3}" live pid
+    case "$jobs" in '' | *[!0-9]* | 0) jobs=1 ;; esac
+    while :; do
+        live=0
+        for pid in $GROUP_PIDS; do
+            kill -0 "$pid" 2>/dev/null && live=$((live + 1))
+        done
+        [ "$live" -le "$jobs" ] && break
+        sleep 0.2
+    done
 }
 group_collect() {
     local entry name pid counts group_pass group_fail
@@ -1634,6 +1638,9 @@ group_started g08-da "$!"
 # Large immutable contracts are split into one balanced physical wave while
 # preserving one logical requirements vote. The fake provider holds each shard
 # until all four have started, so this also proves launch-before-wait behavior.
+# The semantic shard case has a tight wall bound; it runs alone, after every
+# earlier group has finished.
+for _gp in $GROUP_PIDS; do wait "$_gp" 2>/dev/null || true; done
 ( group_enter g09-shards
 SHARD_SPEC="$TMPROOT/sharded-spec.md"
 : > "$SHARD_SPEC"
@@ -1924,6 +1931,7 @@ unset REVIEW_TEST_REQUIREMENTS_ONLY REVIEW_TEST_DA REVIEW_TEST_SHARD_EXPECTED
 unset REVIEW_TEST_SHARD_STATE
 group_leave ) > "$TMPROOT/g09-shards.log" 2>&1 &
 group_started g09-shards "$!"
+wait "$!" 2>/dev/null || true
 
 # A unanimous council cannot turn an empty DA response into a fabricated pass.
 ( group_enter g10-general
