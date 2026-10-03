@@ -1,10 +1,11 @@
 // loki-ts/src/project_model/gather.ts -- EL-W1-01 (L0): the harness only GATHERS candidate file
 // contents for the discovery prompt, by a bounded generic walk. It never decides which file is a
 // manifest or what a repo is: files are ranked by depth and size alone, and the model reads the rest.
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { closeSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { listRepoFiles } from "../engine10/repomap.ts";
+import { checkFingerprint } from "./schema.ts";
 
 export const GATHER_CAPS = {
   maxListFiles: 20_000, // tracked files considered at all
@@ -19,10 +20,19 @@ export const GATHER_CAPS = {
 export interface Gathered {
   tree: string[];
   files: { path: string; text: string }[];
-  dirs: string[]; // every directory (within maxDepth) holding a tracked file, sorted
 }
 
 const depthOf = (p: string): number => p.split("/").length;
+
+/** Tracked paths within maxDepth (NUL-separated, so no path is ever quoted or split), never throws. */
+function listShallow(repoDir: string): string[] {
+  try {
+    const out = execFileSync("git", ["ls-files", "-z"], { cwd: repoDir, encoding: "utf8", env: process.env, maxBuffer: 256 * 1024 * 1024 });
+    return out.split("\0").filter((p) => p !== "").slice(0, GATHER_CAPS.maxListFiles).filter((p) => depthOf(p) <= GATHER_CAPS.maxDepth);
+  } catch {
+    return [];
+  }
+}
 
 function looksText(abs: string): boolean {
   let fd = -1;
@@ -39,11 +49,11 @@ function looksText(abs: string): boolean {
 }
 
 export function gather(repoDir: string): Gathered {
-  const shallow = listRepoFiles(repoDir, GATHER_CAPS.maxListFiles).files.filter((p) => depthOf(p) <= GATHER_CAPS.maxDepth);
+  const shallow = listShallow(repoDir);
   const sized: { path: string; size: number }[] = [];
   for (const path of shallow) {
     try {
-      const st = statSync(join(repoDir, path));
+      const st = lstatSync(join(repoDir, path)); // lstat: a symlink is never inlined, so no out-of-repo content reaches the prompt
       if (st.isFile() && st.size <= GATHER_CAPS.maxFileBytes) sized.push({ path, size: st.size });
     } catch { /* unreadable: skip */ }
   }
@@ -56,19 +66,27 @@ export function gather(repoDir: string): Gathered {
     files.push({ path, text: readFileSync(join(repoDir, path), "utf8") });
     total += size;
   }
-  const dirs = [...new Set(shallow.map((p) => dirname(p)))].sort();
-  return { tree: [...shallow].sort((a, b) => depthOf(a) - depthOf(b) || a.localeCompare(b)).slice(0, GATHER_CAPS.maxTreeLines), files, dirs };
+  return { tree: [...shallow].sort((a, b) => depthOf(a) - depthOf(b) || a.localeCompare(b)).slice(0, GATHER_CAPS.maxTreeLines), files };
 }
 
-/** Cache key: the content of the model-named manifest and lockfiles, plus the set of directories
- *  (a new package arrives as a new directory). Any edit to a fingerprint file changes it. */
+/** Directories (within maxDepth) holding a tracked file; a new package arrives as a new directory. */
+export function shallowDirs(repoDir: string): string[] {
+  return [...new Set(listShallow(repoDir).map((p) => dirname(p)))].sort();
+}
+
+/** Cache key: the content of the fingerprint files plus the shallow directory set. A fingerprint
+ *  that is not a regular file inside the repo is never opened (no FIFO or device can block a read). */
 export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: string[]): string {
   const h = createHash("sha256");
   for (const f of [...fingerprintFiles].sort()) {
     h.update(`file:${f}\n`);
     try {
-      const abs = join(repoDir, f);
-      h.update(statSync(abs).size <= GATHER_CAPS.maxHashBytes ? readFileSync(abs) : `too-large:${statSync(abs).size}`);
+      if (checkFingerprint(repoDir, f) !== null) h.update("invalid");
+      else {
+        const abs = join(repoDir, f);
+        const size = lstatSync(abs).size;
+        h.update(size <= GATHER_CAPS.maxHashBytes ? readFileSync(abs) : `too-large:${size}`);
+      }
     } catch {
       h.update("missing");
     }
@@ -76,10 +94,4 @@ export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: st
   }
   for (const d of dirs) h.update(`dir:${d}\n`);
   return h.digest("hex");
-}
-
-/** Directories (within maxDepth) holding a tracked file; the cheap half of gather(), for cache checks. */
-export function shallowDirs(repoDir: string): string[] {
-  const shallow = listRepoFiles(repoDir, GATHER_CAPS.maxListFiles).files.filter((p) => depthOf(p) <= GATHER_CAPS.maxDepth);
-  return [...new Set(shallow.map((p) => dirname(p)))].sort();
 }

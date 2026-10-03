@@ -101,7 +101,7 @@ describe("discovery", () => {
     expect(api.hasUI()).toBe(true);
     expect(api.uiBoot()!.pkg.root).toBe("frontend");
     expect(existsSync(join(d, PROJECT_FILE))).toBe(true);
-    expect(m.briefs[0]).toContain("=== backend/package.json ===");
+    expect(m.briefs[0]).toContain('<file path="backend/package.json">');
   });
 
   test("one retry carries the errors, then a good answer is accepted", async () => {
@@ -126,7 +126,7 @@ describe("discovery", () => {
     expect(out.model.status).toBe("unknown");
     expect(out.model.packages).toEqual([]);
     expect(out.model.reason).toContain("rejected twice");
-    expect(existsSync(join(d, PROJECT_FILE))).toBe(false);
+    expect(out.owner).toBe("model");
     const api = projectApi(out.model);
     expect(api.known()).toBe(false);
     expect(api.packageRootOf("backend/x.test.ts")).toBeNull();
@@ -176,8 +176,10 @@ describe("intake wiring", () => {
       expect(pm.cached).toBe(false);
       expect(pm.key).toBe(loadCached(d)!.key);
       expect(((await runIntake(ctx, sig, { taskText: "do a thing" })).data as any).project_model.cached).toBe(true);
-      process.env["LOKI_E10_PROJECT_MODEL"] = "0";
+      delete process.env["LOKI_E10_PROJECT_MODEL"]; // default OFF until a consumer exists
+      const before = m.briefs.length;
       expect((await runIntake(ctx, sig, { taskText: "do a thing" })).data).not.toHaveProperty("project_model");
+      expect(m.briefs.length).toBe(before);
     } finally { if (prev === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = prev; }
   });
 });

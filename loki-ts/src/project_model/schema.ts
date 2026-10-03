@@ -1,7 +1,7 @@
 // loki-ts/src/project_model/schema.ts -- EL-W1-01 (L0, L4): the Project Model schema. The MODEL
 // answers what the repo is; this file only checks the answer's shape and that every claim cites a
 // file that exists. It holds no knowledge about any language, framework or layout.
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, realpathSync, statSync } from "node:fs";
 import { isAbsolute, join, normalize, sep } from "node:path";
 
 export const PROJECT_MODEL_SCHEMA = "loki.v10.project/1";
@@ -35,6 +35,7 @@ export interface ProjectModel {
   packages: ModelPackage[];
   fingerprintFiles: string[]; // manifests and lockfiles the model says define this repo
   reason?: string; // set when status is "unknown"
+  expiresAt?: number; // epoch ms; a cached "unknown" is only honored until then
 }
 
 type Rec = Record<string, unknown>;
@@ -65,6 +66,20 @@ export function checkCitation(repoDir: string, raw: unknown): string | null {
   if (rel === null) return `citation "${raw}" is not a repo-relative path`;
   const abs = join(repoDir, rel);
   if (!existsSync(abs) || !statSync(abs).isFile() || !insideRepo(repoDir, rel)) return `citation "${raw}" names a file that does not exist`;
+  return null;
+}
+
+/** A fingerprint file is READ by the harness (hashed), so it is held to a stricter rule than a
+ *  citation: a regular file (lstat, so no symlink, FIFO, device or socket) inside the repo. */
+export function checkFingerprint(repoDir: string, raw: unknown): string | null {
+  if (!isStr(raw)) return "fingerprint entry is not a non-empty string";
+  const rel = safeRel(raw.replace(/:\d+(?:-\d+)?$/, ""));
+  if (rel === null) return `fingerprint "${raw}" is not a repo-relative path`;
+  try {
+    if (!lstatSync(join(repoDir, rel)).isFile() || !insideRepo(repoDir, rel)) return `fingerprint "${raw}" is not a regular file inside the repo`;
+  } catch {
+    return `fingerprint "${raw}" names a file that does not exist`;
+  }
   return null;
 }
 
@@ -136,7 +151,7 @@ export function validateAnswer(repoDir: string, raw: unknown): { ok: true; model
   }
   if (!Array.isArray(raw.fingerprintFiles)) errs.push("fingerprintFiles: required array of the manifest and lockfile paths");
   const fingerprintFiles = (Array.isArray(raw.fingerprintFiles) ? raw.fingerprintFiles : []).filter((f) => {
-    const e = checkCitation(repoDir, f);
+    const e = checkFingerprint(repoDir, f);
     if (e) errs.push(`fingerprintFiles: ${e}`);
     return e === null;
   }).map((f) => String(f).replace(/:\d+(?:-\d+)?$/, ""));
@@ -145,11 +160,16 @@ export function validateAnswer(repoDir: string, raw: unknown): { ok: true; model
 }
 
 /** The typed "I could not learn this repo" model. Consumers must treat it as no knowledge. */
-export function unknownModel(key: string, reason: string): ProjectModel {
-  return { schema: PROJECT_MODEL_SCHEMA, status: "unknown", key, workspaceKind: "unknown", workspaceCite: [], packages: [], fingerprintFiles: [], reason };
+export function unknownModel(key: string, reason: string, expiresAt?: number): ProjectModel {
+  return { schema: PROJECT_MODEL_SCHEMA, status: "unknown", key, workspaceKind: "unknown", workspaceCite: [], packages: [], fingerprintFiles: [], reason, ...(expiresAt === undefined ? {} : { expiresAt }) };
 }
 
-/** Shape check for a cached file (no filesystem checks: the user may edit it). */
-export function isProjectModel(v: unknown): v is ProjectModel {
-  return isRec(v) && v.schema === PROJECT_MODEL_SCHEMA && (v.status === "ok" || v.status === "unknown") && typeof v.key === "string" && Array.isArray(v.packages) && Array.isArray(v.fingerprintFiles);
+/** Cached-file check: an "ok" file is re-validated like a fresh answer (user edits are allowed,
+ *  unchecked claims are not); an "unknown" file is only a typed no-knowledge marker with a TTL. */
+export function parseCached(repoDir: string, raw: unknown, now: number): ProjectModel | null {
+  if (!isRec(raw) || raw.schema !== PROJECT_MODEL_SCHEMA || typeof raw.key !== "string") return null;
+  if (raw.status === "unknown") return typeof raw.expiresAt === "number" && raw.expiresAt > now ? unknownModel(raw.key, typeof raw.reason === "string" ? raw.reason : "cached unknown", raw.expiresAt) : null;
+  if (raw.status !== "ok") return null;
+  const v = validateAnswer(repoDir, raw);
+  return v.ok ? { ...v.model, key: raw.key } : null;
 }

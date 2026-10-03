@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { RunContext, Stage, StageResult } from "../types.ts";
+import { STAGE_BUDGETS, type RunContext, type Stage, type StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
@@ -64,7 +64,7 @@ function isAlreadyDone(issue: IssueFields): boolean {
   return issue.state === "closed" || issue.closed_by_merged_pr === true;
 }
 export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: IntakeOptions = {}): Promise<StageResult> {
-  if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before intake started" };
+  const t0 = Date.now(); if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before intake started" };
   const { blocking: dirty, preexisting } = splitDirty(ctx.repoDir, dirtyTrackedFiles(ctx.repoDir));
   if (dirty.length > 0) {
     return { status: "failed", data: {}, reason: `dirty tracked tree: ${dirty.join(", ")}` };
@@ -121,15 +121,14 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
     const commentArgv = source === "issue" && issueRef ? buildAlreadyDoneCommentArgv(ctx.runId, issueRef, bodyFile) : undefined;
     return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
-  const base = { ...common, ...(await intakeProjectModel(ctx, signal)), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch };
+  const base = { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch };
   if (already) return { status: "completed", data: { ...base, ...alreadyData(already) } };
-  const data = { ...base, repomap_ref: repomapRef, testmap, already_satisfied: false };
+  const data = { ...base, ...(await intakeProjectModel(ctx, signal, t0)), repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }
 export const stage: Stage = {
   name: "intake",
-  targetS: 15,
-  limitS: 270, // two Project Model discovery sessions (120s each) fit inside it
+  ...STAGE_BUDGETS.intake, // one table (types.ts); discovery gets what remains of its limit
   run: (ctx, signal) => runIntake(ctx, signal),
 };

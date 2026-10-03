@@ -20,13 +20,17 @@ export interface ProjectApi {
   uiBoot(): { pkg: ModelPackage; boot: ModelCommand } | null;
 }
 
-const clean = (p: string): string => posix.normalize(p.replace(/\\/g, "/")).replace(/^\.\//, "");
+const clean = (p: unknown): string => (typeof p === "string" ? posix.normalize(p.replace(/\\/g, "/")).replace(/^\.\//, "") : "");
+const isRec = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+// Every accessor is total: a malformed package (a hand-edited or corrupt model) is skipped, never thrown on.
+const wellFormed = (p: unknown): p is ModelPackage => isRec(p) && typeof p.root === "string" && typeof p.name === "string";
 
 export function projectApi(model: ProjectModel): ProjectApi {
-  const known = model.status === "ok";
-  const packages = known ? model.packages : [];
+  const known = isRec(model) && model.status === "ok";
+  const packages = known && Array.isArray(model.packages) ? model.packages.filter(wellFormed) : [];
   const packageOf = (file: string): ModelPackage | null => {
     const f = clean(file);
+    if (f === "") return null;
     let best: ModelPackage | null = null;
     for (const p of packages) {
       const hit = p.root === "." || f === p.root || f.startsWith(`${p.root}/`);
@@ -38,17 +42,17 @@ export function projectApi(model: ProjectModel): ProjectApi {
     model,
     known: () => known,
     packages: () => packages,
-    workspaceKind: () => model.workspaceKind,
+    workspaceKind: () => (isRec(model) && typeof model.workspaceKind === "string" ? model.workspaceKind : "unknown"),
     packageRootOf: (file) => packageOf(file)?.root ?? null,
     packageOf,
     relativeToRoot: (file) => {
       const p = packageOf(file);
       return p ? (p.root === "." ? clean(file) : clean(file).slice(p.root.length + 1)) : null;
     },
-    commandFor: (pkg, kind) => (packages.find((p) => p.root === clean(pkg) || p.name === pkg) ?? null)?.commands[kind] ?? null,
-    hasUI: () => packages.some((p) => p.ui.present),
+    commandFor: (pkg, kind) => (packages.find((p) => p.root === clean(pkg) || p.name === pkg) ?? null)?.commands?.[kind] ?? null,
+    hasUI: () => packages.some((p) => isRec(p.ui) && p.ui.present === true),
     uiBoot: () => {
-      for (const p of packages) if (p.ui.present && p.ui.boot) return { pkg: p, boot: p.ui.boot };
+      for (const p of packages) if (isRec(p.ui) && p.ui.present === true && isRec(p.ui.boot)) return { pkg: p, boot: p.ui.boot };
       return null;
     },
   };
