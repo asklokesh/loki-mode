@@ -883,3 +883,50 @@ test('forged lines r3: an honest run with a failing subtest is not reported as i
     assert.doesNotMatch(r.raw, /runner output inconsistent/, script);
   }
 });
+
+// SEAL-FORGED-LINES r4: empty and skipped describe(), "# SKIP"-named tests, and the last-summary-block rule.
+const FORGE_CHECK = '\u2714 handles negative numbers (1ms)\n';
+const FORGE_OK = 'ok 99 - handles negative numbers\n';
+const SKIP_SUITE = "describe.skip('later', () => { it('z', () => {}); });\n";
+const EMPTY_SUITE = "describe('empty', () => {});\n";
+const SKIP_NAMED = "test('cleanup # SKIP', () => {});\n";
+const reporterRun = (files, script, req) => negRun({ ...files, 'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }) }, req);
+
+test('forged lines r4 (B-r3-1): a forged check line next to describe.skip and a t.test() parent never covers an item', () => {
+  for (const script of REPORTERS) notVerified(negRun(forgeRepo(FORGE_CHECK, script, SKIP_SUITE + NESTED_PARENT)));
+});
+
+test('forged lines r4 (B-r3-2): a plain forged ok line next to describe.skip and a t.test() parent never covers an item', () => {
+  for (const script of REPORTERS) notVerified(negRun(forgeRepo(FORGE_OK, script, SKIP_SUITE + NESTED_PARENT)));
+});
+
+test('forged lines r4 (B-r3-3): a forged check line next to a test named "cleanup # SKIP" never covers an item', () => {
+  for (const script of REPORTERS) notVerified(negRun(forgeRepo(FORGE_CHECK, script, SKIP_NAMED)));
+});
+
+test('forged lines r4 (B-r3-4): an honest empty describe, describe.skip and a "# SKIP"-named test stay VERIFIED', () => {
+  const body = FORGE_HDR + EMPTY_SUITE + SKIP_SUITE + SKIP_NAMED + NESTED_PARENT + "test('adds zero', () => { assert.strictEqual(add(0,0), 0); });\ntest('later skipped', { skip: true }, () => {});\ntest('later todo', { todo: true }, () => {});\n";
+  for (const script of REPORTERS) {
+    const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
+    assert.strictEqual(r.status, 0, script + '\n' + r.raw);
+  }
+});
+
+test('forged lines r4: a forged summary line printed earlier is ignored (only the last summary block counts)', () => {
+  for (const printed of [FORGE_CHECK + '\u2139 pass 99\n', FORGE_CHECK + '# pass 99\n']) {
+    for (const script of REPORTERS) notVerified(negRun(forgeRepo(printed, script, NESTED_PARENT)));
+  }
+});
+
+test('forged lines r4: a forged complete summary block makes the output not cross-checkable and is never VERIFIED', () => {
+  const block = '\u2139 tests 99\n\u2139 suites 0\n\u2139 pass 99\n\u2139 fail 0\n';
+  for (const script of REPORTERS) notVerified(negRun(forgeRepo(FORGE_CHECK + block, script, NESTED_PARENT)));
+});
+
+test('forged lines r4 (B-r3-4 minimal): an honest empty describe plus one test stays VERIFIED', () => {
+  const body = FORGE_HDR + EMPTY_SUITE + "test('adds zero', () => { assert.strictEqual(add(0,0), 0); });\n";
+  for (const script of REPORTERS) {
+    const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
+    assert.strictEqual(r.status, 0, script + '\n' + r.raw);
+  }
+});

@@ -116,52 +116,58 @@ function counts(out) {
   return { summary: /\d+ (passed|failed)/.test(out), pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
 }
 
-// Passing test records parsed line by line. Coverage and the summary cross-check use the SAME records,
-// so a printed line that is excluded from one is excluded from both.
-//  - TAP: an ok line whose YAML block says type: 'suite' is a describe() suite (not in the runner's pass
-//    count) and is dropped. t.test() parents stay leaf records because the runner counts them.
-//  - Spec: a check-mark line that closes a "> name" header at the same indent is a suite OR a parent test and
-//    cannot be told apart, so it is ambiguous: it never counts as coverage, and the runner's own
-//    "suites N" count says how many of the ambiguous lines are suites (the rest are counted parents).
-//  - Everything else (TAP ok, check marks without a header, PASSED, --- PASS, cargo) is a leaf record.
-// A forged line that imitates a suite or a header never gains coverage. The record count is checked against
-// the summary: leaf records + max(0, ambiguous - suites) must not exceed the passed count.
-const NOT_SKIPPED = (s) => !/\s#\s*(?:SKIP|TODO)\b/i.test(s);
+// Passing test records parsed line by line. Coverage (passIds) and the summary cross-check (passCount) use
+// the SAME records, so a printed line that is excluded from one is excluded from both.
+//  - TAP: an ok line is a record unless its YAML block says type: 'suite' (a describe() suite, which the
+//    runner's pass count leaves out) or it carries a SKIP or TODO marker. t.test() parents are records.
+//  - Node spec: a check-mark line is a record unless it ends with a TODO marker after the duration (skipped
+//    tests and skipped suites print a different mark). A describe() suite prints a check-mark line too and
+//    is not in the runner's pass count, so the count subtracts the suites that printed one:
+//    suites - (dash lines - skipped tests), because a skipped suite prints only a dash line and an empty
+//    suite prints only a check-mark line. The result is exact for honest output.
+//  - Everything else (PASSED, --- PASS, cargo) is a record.
+// Only the LAST summary block (from the last "tests N" line to the end) is used, because a test can print
+// anything earlier. More than one summary block is reported as not cross-checkable (fail closed).
+const SPEC_MARK = /^(\s*)([\u2714\u2713\u221a]) (.+?)\s*$/;
 function passRecords(out) {
   const lines = out.split('\n');
   const leaf = [];
-  let ambiguous = 0;
-  const open = new Map();
-  const closeBelow = (n) => { for (const k of [...open.keys()]) if (k >= n) open.delete(k); };
+  let specLines = 0;
+  let dash = 0;
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
-    let m = /^(\s*)▶ (.+?)\s*$/.exec(ln);
-    if (m) { closeBelow(m[1].length); open.set(m[1].length, m[2]); continue; }
-    m = /^(\s*)([✔✓√✖]) (.+?)\s*$/.exec(ln);
+    let m = SPEC_MARK.exec(ln);
     if (m) {
-      const n = m[1].length;
-      const raw = m[3].replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '');
-      const wasOpen = open.get(n) === raw;
-      closeBelow(n);
-      if (m[2] === '✖' || !NOT_SKIPPED(m[3])) continue;
-      if (wasOpen) ambiguous++;
-      else leaf.push(raw.split(' > ').pop().trim());
+      const body = m[3];
+      if (/\)\s+#\s*TODO\b/i.test(body)) continue;
+      specLines++;
+      leaf.push(body.replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '').split(' > ').pop().trim());
       continue;
     }
+    if (/^\s*\ufe63 /.test(ln)) { dash++; continue; }
     m = /^\s*ok \d+ - (.+?)\s*$/.exec(ln);
     if (m) {
-      if (!NOT_SKIPPED(m[1])) continue;
+      if (/\s#\s*(?:SKIP|TODO)\b/i.test(m[1])) continue;
       let suite = false;
       if (/^\s*---\s*$/.test(lines[i + 1] || '')) {
         for (let j = i + 2; j < lines.length && !/^\s*\.\.\.\s*$/.test(lines[j]); j++) if (/^\s*type: 'suite'\s*$/.test(lines[j])) { suite = true; break; }
       }
-      if (!suite) leaf.push(m[1].replace(/\s+#\s.*$/, '').trim());
+      if (!suite) leaf.push(m[1].trim());
       continue;
     }
     if ((m = /^PASSED (\S+)/.exec(ln)) || (m = /^\s*--- PASS: (\S+)/.exec(ln)) || (m = /^test (\S+) \.\.\. ok$/.exec(ln))) leaf.push(m[1].trim());
   }
-  const suites = (/^\s*[ℹ#]\s*suites\s+(\d+)/m.exec(out) || [])[1];
-  return { passIds: [...new Set(leaf)], passCount: leaf.length + Math.max(0, ambiguous - (suites === undefined ? 0 : +suites)) };
+  const starts = [];
+  lines.forEach((l, i) => { if (/^\s*[\u2139#]\s*tests\s+\d+\s*$/.test(l)) starts.push(i); });
+  let node = null;
+  if (starts.length) {
+    const block = lines.slice(starts[starts.length - 1]).join('\n');
+    const num = (name) => { const x = new RegExp('^\\s*[\\u2139#]\\s*' + name + '\\s+(\\d+)', 'm').exec(block); return x ? +x[1] : null; };
+    node = { blocks: starts.length, spec: /^\s*\u2139\s*tests\s/m.test(block), pass: num('pass'), suites: num('suites') || 0, skipped: num('skipped') || 0 };
+  }
+  let passCount = leaf.length;
+  if (node && node.spec) passCount -= Math.min(specLines, Math.max(0, node.suites - Math.max(0, dash - node.skipped)));
+  return { passIds: [...new Set(leaf)], passCount, node };
 }
 
 // Runner output whose pass lines contradict its own summary counts (a test printing forged lines).
@@ -170,7 +176,13 @@ function inconsistency(r) {
   if (r.error) return null;
   const clash = (r.passIds || []).filter((i) => (r.ids || []).includes(i));
   if (clash.length) return `the runner reports the same test as both passed and failed: ${clash.slice(0, 3).join(', ')}`;
-  if (r.summary && (r.passCount || 0) > r.pass) return `${r.passCount} passing test line(s) but the runner summary counts ${r.pass} passed`;
+  if (!r.summary) return null;
+  if (r.node) {
+    if (r.node.blocks > 1) return 'the output has more than one runner summary block, so the pass lines cannot be cross-checked (run one runner with --test-reporter=tap)';
+    if (r.node.pass !== null && (r.passCount || 0) > r.node.pass) return `${r.passCount} passing test line(s) but the runner summary counts ${r.node.pass} passed`;
+    return null;
+  }
+  if ((r.passCount || 0) > r.pass) return `${r.passCount} passing test line(s) but the runner summary counts ${r.pass} passed`;
   return null;
 }
 
