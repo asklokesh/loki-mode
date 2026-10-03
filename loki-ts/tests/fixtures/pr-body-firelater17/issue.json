@@ -1,0 +1,15 @@
+{
+ "provider": "github",
+ "number": 17,
+ "title": "Create Unified Request Validation and Sanitization Middleware",
+ "body": "## Problem\n\nRequest validation is currently handled inconsistently across routes:\n- Multiple routes manually validate input using different patterns\n- No centralized sanitization of user input\n- Limited protection against common attacks (XSS, injection, etc.)\n- Difficult to maintain consistent validation schemas\n\n## Solution\n\nCreate a comprehensive validation and sanitization middleware:\n\n1. **Zod Schema Registry**: Centralized schema definitions for all endpoints\n2. **Automatic Validation**: Middleware that validates request body, params, and query\n3. **Input Sanitization**: Remove/escape malicious content from all user inputs\n4. **Type Safety**: Generate TypeScript types from validation schemas\n5. **Error Handling**: Consistent error responses with helpful validation messages\n6. **Rate Limiting**: Built-in support for per-route rate limiting\n\n## Implementation Details\n\n- Define Zod schemas in `backend/src/schemas/` directory\n- Create Fastify decorator for route validation\n- Integrate DOMPurify or similar for XSS prevention\n- Add request logging middleware for security auditing\n- Create validation error formatting utility\n\n## Acceptance Criteria\n\n- [ ] Create centralized Zod schema registry\n- [ ] Implement validation middleware for all routes\n- [ ] Add input sanitization for common attack vectors\n- [ ] Migrate existing routes to use new validation\n- [ ] Add comprehensive tests for validation scenarios\n- [ ] Document schema patterns and conventions\n- [ ] Achieve 100% route coverage for validation",
+ "labels": [
+  "enhancement"
+ ],
+ "author": "asklokesh",
+ "url": "https://github.com/asklokesh/FireLater/issues/17",
+ "created_at": "2026-07-16T18:57:31Z",
+ "repo": "asklokesh/FireLater",
+ "state": "open",
+ "closed_by_merged_pr": false
+}
