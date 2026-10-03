@@ -97,5 +97,21 @@ expect "missing --version is a setup error (exit 2)" 2 'version'
 run_gate pass "$AQ"
 if git -C "$T/remote/owner/ok" status --porcelain | grep -q .; then bad "stub remote was modified"; else ok "stub remote untouched"; fi
 
+# LOKI_E2E_ENV_FILE: refuse 0644, load 0600, never leak the dummy value
+DUMMY="dummy-secret-value-$$-zzz"
+printf 'ANTHROPIC_API_KEY=%s\n' "$DUMMY" > "$T/e2e.env"
+chmod 644 "$T/e2e.env"
+run_gate pass "$AQ" LOKI_E2E_ENV_FILE="$T/e2e.env"
+expect "env file with mode 0644 is refused (exit 2)" 2 'must have mode 0600'
+if printf '%s' "$OUT" | grep -q -F "$DUMMY"; then bad "dummy leaked on refusal"; else ok "no leak on refusal"; fi
+chmod 600 "$T/e2e.env"
+run_gate pass "$AQ" LOKI_E2E_ENV_FILE="$T/e2e.env"
+expect "env file with mode 0600 loads and the gate passes" 0 'GATE PASS'
+if printf '%s' "$OUT" | grep -q -F "$DUMMY" || grep -rqF -- "$DUMMY" "$T/res" 2>/dev/null; then bad "dummy leaked in output or logs"; else ok "dummy absent from output and logs"; fi
+run_gate pass "$AQ" LOKI_E2E_ENV_FILE="$T/nonexistent.env"
+expect "missing env file is a setup error (exit 2)" 2 'not a regular file'
+run_gate pass "$AQ"
+expect "unset LOKI_E2E_ENV_FILE keeps current behaviour" 0 'GATE PASS'
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
