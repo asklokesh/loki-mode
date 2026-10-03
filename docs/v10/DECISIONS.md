@@ -678,3 +678,32 @@ Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14
 1. train/102 Tests failed on registration and pin defects only: acp missing from help and completions, merge missing from zsh completion, `loki web --port` skipping the port validator after CP-LEGACY, a ProcessEnv type lost in CP-INGEST watch.ts, and the E-123 gitleaks baseline count after the reviewed Sentry fixture fingerprint.
 2. Dropping ACP, merge, CP-LEGACY and CP-INGEST would remove four headline 10.7.0 features and needs four reverts plus a dist rebuild, which is slower and riskier than five one-line registration fixes. The peer's "drop, do not fix forward" rule targets behaviour regressions; these are wiring gaps. Fixed in d9704dfc4 and every failing suite was rerun locally green before train/103.
 3. `loki web` routes to the Control Plane only in its bare form (optionally --no-open); any other flag reaches the classic validator.
+
+## D86 (2026-10-03 17:00Z, founder via the steering session, CoS records): Engine Laws are the engine constitution
+1. Merges the steering session's earlier "D76" message (harness never worse than raw) with its later "ENGINE LAWS" directive. The label clashed with our D76, so both are recorded here under one number.
+2. Trigger: FireLater#17. Plain claude took about 2 min; Loki took 11 min and $2.66 and ended in a FAILED draft. Root causes are classes, not one-offs:
+   - testmap runs fixed commands from repoDir;
+   - scope.ts reverts edits on keyword overlap;
+   - sizing.ts cascade pins implement to sonnet;
+   - verify has no ERROR versus FAIL split;
+   - pr_body prints "not recorded" over real data;
+   - there is no terminal-state invariant across sinks.
+3. docs/v10/ENGINE-LAWS.md (L1 to L7) is binding for every stage, present and future:
+   - L1 never below raw;
+   - L2 fail closed on trust, fail open on work;
+   - L3 the authority ladder;
+   - L4 the Project Model;
+   - L5 every failure has an owner;
+   - L6 every run terminates everywhere;
+   - L7 outputs are contracts.
+4. Steering rule, added to OPERATING-MODEL.md: no bug becomes a fix slice until it has a row in docs/v10/FAILURE-CLASSES.md. Each row answers what the user saw against raw, the law broken, a sibling sweep, the one shared mechanism, and a regression fixture. Reviewers reject stage-only patches when siblings exist.
+5. Sequencing:
+   - Wave 0 ships in 10.7.1, with five builders in flight plus a cascade-off builder and a PR-body golden builder:
+     - scope becomes advisory;
+     - the cascade is off and escalation goes up only;
+     - a load error or zero tests collected becomes harness ERROR, with no fix rounds and a ready PR;
+     - a golden PR body;
+     - run.completed ingest plus a reconciler.
+   - Waves 1 and 2 go to the next train. Wave 1 covers the Project Model, the result classifier, the authority ladder in seal, a lifecycle e2e and static checks. Wave 2 covers the Repo Shape Matrix and the Parity Gate against raw `claude -p`, gating latest.
+   - An opus Architect is checking the plan against the code and slicing it into EL-W0/W1/W2 rows.
+6. Acceptance: a FireLater#17 rerun ends VERIFIED with a ready PR, the route edits kept, within raw plus 30s and at most 1.2x raw cost. The real-model legs stay parked until the founder provides keys (FOUNDER-QUEUE 15/16). The parity leg runs once keys exist; until then, recorded replays gate.

@@ -42,6 +42,7 @@ The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The compa
 
 ## Discipline
 - Evidence or it did not happen: every claim cites a command plus its exit code or output line.
+- Engine Laws (D86): docs/v10/ENGINE-LAWS.md binds every stage. No bug becomes a fix slice until its row is in docs/v10/FAILURE-CLASSES.md (user-visible vs raw, law broken, sibling sweep, one shared mechanism, regression fixture); reviewers reject stage-only patches when siblings exist.
 - Every incident becomes a guard with a test (docs/v10/GUARDS.md, D26).
 - The pulse block (scripts/v10-pulse.sh) is injected every turn. Act on the top VIOLATION first.
 - Never kill by name or pattern, force-push, git add -A, or bypass branch protection.
