@@ -641,6 +641,7 @@ run_test "v8 SDK voter-agents council (Epic C, finding schema)" "$SCRIPT_DIR/tes
 run_test "v8 SDK-loop start routing (LOKI_SDK_LOOP gate, default-off)" "$SCRIPT_DIR/test-sdk-loop-routing.sh"
 run_test "D65 shim routing (slack, answer, jira, linear)" "$SCRIPT_DIR/test-d65-routing.sh"
 run_test "SDK version sync (root package.json/lockfile/Dockerfile vs loki-ts, E-106)" "$SCRIPT_DIR/test-sdk-version-sync.sh"
+run_test "Pricing parity across six tables (MW-1)" "timeout -k 10 120 $SCRIPT_DIR/test-pricing-parity.sh"
 run_test "v8 Structured Review Self-Copy Asset Resolution" "$SCRIPT_DIR/test-code-review-self-copy.sh"
 run_test "Review deadline, requirements, and speculative assurance tail" "$SCRIPT_DIR/test-review-assurance-tail.sh"
 

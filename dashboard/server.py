@@ -7752,7 +7752,7 @@ _DEFAULT_PRICING = {
     "fable":  {"input": 10.00, "output": 50.00},
     "claude-fable-5": {"input": 10.00, "output": 50.00},
     "opus":   {"input": 5.00, "output": 25.00},
-    "sonnet": {"input": 3.00, "output": 15.00},
+    "sonnet": {"input": 2.00, "output": 10.00},
     "haiku":  {"input": 1.00, "output": 5.00},
     # OpenAI Codex
     "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
@@ -8587,18 +8587,16 @@ _PROVIDER_LABELS = {
 }
 
 # Display-only pricing notes, keyed by model. These annotate the pricing table in
-# the UI WITHOUT changing any computed cost number. The Sonnet 5 launch carries an
-# intro price ($2/$10 per MTok through Aug 31 2026), but the cost estimator keeps
-# quoting the standard $3/$15 rate: over-estimating the display is the safe
-# direction (a bill can only come in lower than quoted, never higher). This note
-# tells the user why the quote is conservative during the intro window.
+# the UI WITHOUT changing any computed cost number. The Sonnet 5 intro price
+# ($2/$10 per MTok) became the standard price, so the 2026-09-01 increase to
+# $3/$15 will not occur (platform.claude.com pricing page, read 2026-10-03).
 _UNVERIFIED_RATE_NOTE = (
     "Unverified placeholder rate, scaled from gpt-5.3; not from OpenAI's pricing page."
 )
 _MODEL_PRICING_NOTES = {
     "sonnet": (
-        "Intro pricing: $2 / $10 per MTok through Aug 31 2026. "
-        "Estimates use the standard $3 / $15 rate (conservative)."
+        "Standard pricing: $2 / $10 per MTok. "
+        "The intro price became the standard price; no increase to $3 / $15."
     ),
     # See the UNVERIFIED RATES comment on the pricing table: shown, not hidden.
     "gpt-5.6-sol": _UNVERIFIED_RATE_NOTE,

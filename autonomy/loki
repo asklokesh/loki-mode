@@ -21331,7 +21331,7 @@ tokens_per_tier = {
 pricing = {
     'Fable':  {'input': 10.00, 'output': 50.00},
     'Opus':   {'input': 5.00, 'output': 25.00},
-    'Sonnet': {'input': 3.00, 'output': 15.00},
+    'Sonnet': {'input': 2.00, 'output': 10.00},
     'Haiku':  {'input': 1.00, 'output': 5.00},
 }
 

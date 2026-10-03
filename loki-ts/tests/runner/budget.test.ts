@@ -45,6 +45,13 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     expect(cost).toBe(12);
   });
 
+  it("pins claude-sonnet-5-5 and claude-sonnet-5 to the sonnet price (2/10 per 1M, MW-1)", () => {
+    for (const model of ["claude-sonnet-5-5", "claude-sonnet-5", "sonnet"]) {
+      const cost = calculateCostFromRecords([{ model, input_tokens: 1_000_000, output_tokens: 1_000_000 }]);
+      expect(cost).toBe(12);
+    }
+  });
+
   it("computes haiku pricing (1/5 per 1M)", () => {
     const cost = calculateCostFromRecords([{ model: "haiku", input_tokens: 1_000_000, output_tokens: 1_000_000 }]);
     expect(cost).toBe(6);
