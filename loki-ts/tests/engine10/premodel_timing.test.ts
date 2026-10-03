@@ -33,10 +33,11 @@ describe("preModelTiming", () => {
 describe("LOKI_SPEED gate", () => {
   const summary = { pr: null, verdict: "VERIFIED", notProven: [], flaky: [], cost: { usd: 1, provider: "claude", tokens: 1 }, wallS: 5, stages: [] } as never;
   const withPm = [...journal(), ev(5100, "run.completed", null, { pre_model: preModelTiming(journal(), T0) })];
-  test("flag off: output identical to a run without the field", () => {
-    delete process.env.LOKI_SPEED;
-    expect(renderMainOutput(withPm, summary)).toBe(renderMainOutput(journal(), summary));
-    expect(formatPreModelLine(preModelTiming(journal(), T0), {})).toBe("");
+  test("flag off (LOKI_SPEED=0): output identical to a run without the field", () => {
+    process.env.LOKI_SPEED = "0";
+    try { expect(renderMainOutput(withPm, summary)).toBe(renderMainOutput(journal(), summary)); } finally { delete process.env.LOKI_SPEED; }
+    expect(formatPreModelLine(preModelTiming(journal(), T0), { LOKI_SPEED: "0" })).toBe("");
+    expect(formatPreModelLine(preModelTiming(journal(), T0), {})).not.toBe("");
   });
   test("flag on: pre-model line printed", () => {
     process.env.LOKI_SPEED = "1";

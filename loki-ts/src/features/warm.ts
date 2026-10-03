@@ -1,6 +1,6 @@
 // loki-ts/src/engine10/warm.ts -- D61 slice 5: warm engine. In-memory repo map, test map and
 // intake results keyed by (repoDir, HEAD^{tree}, dirty-file hash), served over a unix socket (never
-// a TCP port). Behind LOKI_SPEED=1. The cold path stays the reference: a miss or a dead daemon never changes a result, it only costs time.
+// a TCP port). On by default; LOKI_SPEED=0 turns it off. The cold path stays the reference: a miss or a dead daemon never changes a result, it only costs time.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
@@ -12,7 +12,7 @@ import { buildTestMap } from "../engine10/testmap.ts";
 import type { TestMap } from "../engine10/types.ts";
 
 export function speedEnabled(): boolean {
-  return process.env["LOKI_SPEED"] === "1";
+  return process.env["LOKI_SPEED"] !== "0";
 }
 /** LOKI_WARM_SOCK overrides (tests use a temp dir); default ~/.loki/run/engine.sock. */
 export function warmSocketPath(): string {

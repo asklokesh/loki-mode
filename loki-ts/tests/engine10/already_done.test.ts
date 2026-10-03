@@ -405,7 +405,9 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
   const runImpl = (ctx: RunContext) =>
     ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i-impl", limitS: 60, signal: new AbortController().signal });
 
-  test("LOKI_SPEED unset: confirmation stays inline on the critical path, sessions untouched", async () => {
+  test("LOKI_SPEED=0: confirmation stays inline on the critical path, sessions untouched", async () => {
+    const prevSpeed = process.env["LOKI_SPEED"]; process.env["LOKI_SPEED"] = "0";
+    try {
     const dir = freshRepo();
     const r = rig(CITE);
     r.release();
@@ -413,6 +415,7 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
     expect(res.data.already_satisfied).toBe(true);
     expect(ctx.sessions).toBe(r.sessions);
     rmSync(dir, { recursive: true, force: true });
+    } finally { if (prevSpeed === undefined) delete process.env["LOKI_SPEED"]; else process.env["LOKI_SPEED"] = prevSpeed; }
   });
 
   describe("with LOKI_SPEED=1", () => {

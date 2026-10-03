@@ -25,7 +25,7 @@ describe("warm client", () => {
   });
 
   test("flag off never connects", async () => {
-    delete process.env["LOKI_SPEED"];
+    process.env["LOKI_SPEED"] = "0";
     expect(await tryWarm("/nonexistent", { path: "/nonexistent.sock" })).toBeNull();
   });
 

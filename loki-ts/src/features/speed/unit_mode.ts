@@ -48,7 +48,7 @@ const memo = new Map<string, UnitSpec | null>();
 /** The active unit spec, or null (speed off, no spec, unreadable or invalid: fail-safe to the ordinary run). Parsed once per path per process. */
 export function unitSpec(env: NodeJS.ProcessEnv = process.env): UnitSpec | null {
   const path = env["LOKI_UNIT_SPEC"], frozen = env["LOKI_UNIT_SPEC_FROZEN"];
-  if (env["LOKI_SPEED"] !== "1" || !path) return null;
+  if (env["LOKI_SPEED"] === "0" || !path) return null;
   if (frozen !== undefined) return frozen.length <= MAX_SPEC_BYTES ? parseText(frozen) : null; // frozen at intake: the file is never consulted again
   if (!memo.has(path)) memo.set(path, parseSpec(path));
   return memo.get(path) ?? null;
@@ -98,7 +98,7 @@ export const DEFAULT_UNIT_USD_PER_MTOK = 15;
  *  applied over the run's existing cap (never loosened). */
 export function unitIntake(env: NodeJS.ProcessEnv, repoDir: string, existingCapUsd?: number): { ok: true; env: Record<string, string> } | { ok: false; note: string } | null {
   const path = env["LOKI_UNIT_SPEC"];
-  if (env["LOKI_SPEED"] !== "1" || !path) return null;
+  if (env["LOKI_SPEED"] === "0" || !path) return null;
   const bad = (why: string) => ({ ok: false as const, note: UNIT_NOT_PROVEN(why) });
   let txt: string | null;
   try {

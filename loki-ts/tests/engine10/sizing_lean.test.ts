@@ -15,8 +15,8 @@ const saved = process.env["LOKI_SPEED"];
 afterEach(() => { if (saved === undefined) delete process.env["LOKI_SPEED"]; else process.env["LOKI_SPEED"] = saved; });
 
 describe("D61-03 lean eligibility without a named file", () => {
-  it("flag unset: unnamed task stays wall (byte-identical)", () => {
-    delete process.env["LOKI_SPEED"];
+  it("LOKI_SPEED=0: unnamed task stays wall (byte-identical)", () => {
+    process.env["LOKI_SPEED"] = "0";
     expect(hasRelevantTests(task, map, TM, one)).toBe(false);
   });
   it("flag on: unnamed small task with impacted tests goes lean", () => {

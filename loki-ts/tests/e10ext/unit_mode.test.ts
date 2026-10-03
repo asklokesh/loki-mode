@@ -26,7 +26,8 @@ const on = (p: string): NodeJS.ProcessEnv => ({ LOKI_SPEED: "1", LOKI_UNIT_SPEC:
 describe("unitSpec", () => {
   test("off without LOKI_SPEED=1, without a spec path, or with an invalid spec", () => {
     const p = specFile("good.json", good);
-    expect(unitSpec({ LOKI_UNIT_SPEC: p })).toBeNull();
+    expect(unitSpec({ LOKI_SPEED: "0", LOKI_UNIT_SPEC: p })).toBeNull();
+    expect(unitSpec({ LOKI_UNIT_SPEC: p })?.id).toBe("u1");
     expect(unitSpec({ LOKI_SPEED: "1" })).toBeNull();
     expect(unitSpec(on(join(tmp, "missing.json")))).toBeNull();
     expect(unitSpec(on(specFile("bad1.json", "{not json")))).toBeNull();
@@ -234,7 +235,7 @@ describe("unitIntake", () => {
     }
     expect(UNIT_NOT_PROVEN("x")).toContain("no unfenced run");
     expect(unitIntake({}, repo, 20)).toBeNull();
-    expect(unitIntake({ LOKI_UNIT_SPEC: "/x" }, repo, 20)).toBeNull();
+    expect(unitIntake({ LOKI_SPEED: "0", LOKI_UNIT_SPEC: "/x" }, repo, 20)).toBeNull();
   });
   test("a spec inside the worktree is rejected", () => {
     const p = join(repo, "spec.json"); writeFileSync(p, JSON.stringify(good));

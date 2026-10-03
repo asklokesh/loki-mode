@@ -4,6 +4,6 @@ import type { RepoMap } from "../../engine10/repomap.ts";
 import { selectRelevantFiles } from "../../engine10/relevant_files.ts";
 
 export function speedLikelyFiles(task: string, map: RepoMap | null, env: NodeJS.ProcessEnv = process.env): string[] {
-  if (env["LOKI_SPEED"] !== "1" || !map) return [];
+  if (env["LOKI_SPEED"] === "0" || !map) return [];
   try { return selectRelevantFiles(task, map); } catch { return []; }
 }

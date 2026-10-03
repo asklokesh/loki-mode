@@ -85,3 +85,7 @@ With `LOKI_SPEED=1` (default off), the implement, fix, wall and plan stage promp
 ## Slice 4 status: already-done check off the critical path (LOKI_SPEED=1)
 
 With `LOKI_SPEED=1` (default off), intake no longer waits on the cheap-model already-done check. Implement starts at once; the check runs only when deterministic hits exist, and its confirmation session runs in a pinned copy of the base tree extracted to a temporary directory outside the repo (`git archive -o` then `tar -x`, each exit code checked), so in-flight edits cannot satisfy it. A run stops as ALREADY_SATISFIED only when that session cites files unchanged since base; a bad base SHA or any extract failure fails closed (no session, not satisfied). Code: `loki-ts/src/features/speed/already_done_async.ts`, tests in `loki-ts/tests/engine10/already_done.test.ts`. Known follow-up (D61-04-F): the temporary copy can outlive a SIGTERM exit, and four race tests leave one copy each.
+
+## D82-FLAGS status: default on
+
+Per the D82 founder directive, `LOKI_SPEED` is on unless set to `0` (decomposer routing, warm engine on a unix socket, stage prefix, deferred already-done check, lean keyword fallback, unit mode when `LOKI_UNIT_SPEC` is set). `LOKI_SPEED=0` restores the previous behaviour byte for byte. The other D82 opt-outs are `LOKI_VISUAL_EVIDENCE=0`, `LOKI_CONTRACT=0`, `LOKI_SLACK_INBOUND=0` (Slack stays inert until its credential is configured), `LOKI_CONTROL=0` and `LOKI_WORKSPACES=0`. Test: `loki-ts/tests/features/d82_default_on.test.ts`.

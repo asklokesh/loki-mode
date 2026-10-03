@@ -8,7 +8,7 @@ export const LEAN_PREFIX =
   "Make the smallest correct change, run the tests it names, and report only " +
   "what you did.";
 
-// D61-02: LOKI_SPEED=1 (default off) starts every stage brief with this one constant (over 200 bytes, no interpolation) so stage prompts share a
+// D61-02: LOKI_SPEED (default on; =0 off) starts every stage brief with this one constant (over 200 bytes, no interpolation) so stage prompts share a
 // byte-identical leading block for the provider prompt cache.
 export const STAGE_PREFIX =
   "You are Loki, an autonomous coding agent working one stage of a larger run. " +
@@ -16,4 +16,4 @@ export const STAGE_PREFIX =
   "the files the stage names, run only the tests it names, and report only what you did. " +
   "Stage-specific instructions and the task follow this block.";
 export const withStagePrefix = (brief: string): string =>
-  process.env["LOKI_SPEED"] === "1" ? `${STAGE_PREFIX}\n\n${brief}` : brief;
+  process.env["LOKI_SPEED"] !== "0" ? `${STAGE_PREFIX}\n\n${brief}` : brief;

@@ -33,8 +33,8 @@ describe("stage prompt prefix identity", () => {
     expect(heads.size).toBe(1);
   });
 
-  test("flag off: briefs carry no prefix and flag on only prepends it", () => {
-    delete process.env["LOKI_SPEED"];
+  test("LOKI_SPEED=0: briefs carry no prefix and the default only prepends it", () => {
+    process.env["LOKI_SPEED"] = "0";
     const off = briefs("fix the bug");
     for (const b of Object.values(off)) expect(b.startsWith(STAGE_PREFIX)).toBe(false);
     process.env["LOKI_SPEED"] = "1";
