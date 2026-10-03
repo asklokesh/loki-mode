@@ -1,0 +1,2 @@
+# Warning-level shellcheck count ratchet for extensionless scripts. Columns: path<TAB>baseline. Counts may only shrink.
+autonomy/loki	89

@@ -82,6 +82,23 @@ _sc_jobs="${LOKI_SHELLCHECK_JOBS:-$( { command -v nproc >/dev/null 2>&1 && nproc
 case "$_sc_jobs" in ''|*[!0-9]*) _sc_jobs=4 ;; esac
 [ "$_sc_jobs" -lt 1 ] && _sc_jobs=1
 
+# COUNT RATCHET for extensionless scripts the *.sh scan above never lints
+# (autonomy/loki). Counts warning-level findings against the per-file baseline
+# in tests/shellcheck-baselines.tsv: more than baseline fails, fewer prints a
+# hint to lower the baseline. Started first so the largest file runs in
+# parallel with the rest and total wall time does not grow.
+# LOKI_SHELLCHECK_RATCHET_ROOT lets a test point at a scratch copy.
+_sc_ratchet_root="${LOKI_SHELLCHECK_RATCHET_ROOT:-.}"
+_sc_ratchet_dir="$_sc_results/ratchet"
+mkdir -p "$_sc_ratchet_dir"
+while IFS=$'\t' read -r _rpath _rbase; do
+    case "$_rpath" in ''|'#'*) continue ;; esac
+    (
+        _rcount=$(shellcheck -S warning -e "$GLOBAL_EXCLUDES" -f gcc "$_sc_ratchet_root/$_rpath" 2>/dev/null | grep -c ': \(warning\|error\): ')
+        printf '%s\n' "$_rcount" > "$_sc_ratchet_dir/$(printf '%s' "$_rpath" | tr '/.' '__')"
+    ) &
+done < "$(dirname "${BASH_SOURCE[0]}")/shellcheck-baselines.tsv"
+
 for file in $FILES; do
     # Determine exclusions based on file type
     local_excludes="$GLOBAL_EXCLUDES"
@@ -138,6 +155,20 @@ for file in $FILES; do
         *)    tail -n +2 "$_rf"; log_fail "Issues found in $file" ;;
     esac
 done
+while IFS=$'\t' read -r _rpath _rbase; do
+    case "$_rpath" in ''|'#'*) continue ;; esac
+    _rf="$_sc_ratchet_dir/$(printf '%s' "$_rpath" | tr '/.' '__')"
+    _rcount=$(cat "$_rf" 2>/dev/null)
+    case "$_rcount" in ''|*[!0-9]*) log_fail "$_rpath ratchet count unreadable"; continue ;; esac
+    if [ "$_rcount" -gt "$_rbase" ]; then
+        log_fail "$_rpath warnings $_rcount > baseline $_rbase"
+    else
+        log_pass "$_rpath warnings $_rcount (baseline $_rbase)"
+        if [ "$_rcount" -lt "$_rbase" ]; then
+            log_info "$_rpath warnings fell below baseline: lower it to $_rcount in tests/shellcheck-baselines.tsv"
+        fi
+    fi
+done < "$(dirname "${BASH_SOURCE[0]}")/shellcheck-baselines.tsv"
 rm -rf "$_sc_results"
 
 echo ""
