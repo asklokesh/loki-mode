@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { cascadeDowngrade, cascadeEnabled, escalationModel, modelRank } from "../../src/engine10/sizing.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
 import { fixStage } from "../../src/engine10/stages/fix.ts";
+import { createSessionRunner } from "../../src/engine10/session.ts";
 import type { RunContext, SessionRunOptions } from "../../src/engine10/types.ts";
 
 const SRC = join(import.meta.dir, "../../src/engine10");
@@ -72,6 +73,20 @@ describe("L1 behavior", () => {
     }
   });
 
+  it("the real session runner captures the agent's final message and the escalated brief carries it", async () => {
+    const stub = join(import.meta.dir, "fixtures", "session", "stub_final.sh");
+    const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", [stub]] });
+    const res = await runner.run({ stage: "implement", brief: "b", tier: "development", iterationId: "e10-l1-sum", limitS: 30, signal: new AbortController().signal });
+    expect(res.summary).toContain("DIAGNOSIS: the off-by-one is in parse()");
+    const g = [{ signature: "bun:a.test.ts", count: 1, sample: "FULL OUTPUT" }];
+    const calls: SessionRunOptions[] = [];
+    const first = await fixStage.run({ ...ctxFor("claude-opus-5-5", calls, () => ({ intake: { task: "t" }, verify: { failures_grouped: g } })), sessions: runner }, new AbortController().signal);
+    expect(first.data.diagnosis).toContain("DIAGNOSIS: the off-by-one is in parse()");
+    const second = await fixStage.run(ctxFor("claude-sonnet-5", calls, () => ({ intake: { task: "t" }, verify: { failures_grouped: g }, fix: { round: 1, signatures: first.data.signatures, diagnosis: first.data.diagnosis } })), new AbortController().signal);
+    expect(second.data.cascade).toBe(true);
+    expect(calls[calls.length - 1]!.brief).toContain("DIAGNOSIS: the off-by-one is in parse()");
+  }, 15_000);
+
   it("a fix round on a first failure never picks a lower model than the run model", async () => {
     const calls: SessionRunOptions[] = [];
     await fixStage.run(ctxFor("claude-opus-5-5", calls, () => ({ intake: { task: "t" }, verify: { failures_grouped: [{ signature: "bun:a", count: 1, sample: "s" }] } })), new AbortController().signal);
@@ -107,6 +122,8 @@ export function guardViolations(files: Record<string, string>): string[] {
       if (!ok || !ok.test(expr)) v.push(`${path}:${i + 1}: unvetted session model pin: ${line.trim()}`);
     });
   }
+  const fixSrc = files["stages/fix.ts"] ?? "";
+  if (!fixSrc.includes("const pinnedModel = repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;")) v.push("fix.ts: pinnedModel is not computed from escalationModel/downgrade only");
   const impl = files["stages/implement.ts"] ?? "";
   if (!impl.includes("cascadeDowngrade(ctx.model)")) v.push("implement.ts: pin does not come from cascadeDowngrade");
   const fix = files["stages/fix.ts"] ?? "";
@@ -137,6 +154,14 @@ describe("L1 static guard", () => {
   it("mutation: flipping the default to on makes the guard fail", () => {
     const f = loadFiles();
     f["sizing.ts"] = f["sizing.ts"]!.replace('knob(env.LOKI_E10_CASCADE, ["1", "on", "true"])', '!knob(env.LOKI_E10_CASCADE, ["0", "off", "false"])');
+    expect(guardViolations(f).length).toBeGreaterThan(0);
+  });
+
+  it("mutation M5: pinning a non-test fix round to haiku without opt-in makes the guard fail", () => {
+    const f = loadFiles();
+    const before = f["stages/fix.ts"]!;
+    f["stages/fix.ts"] = before.replace("downgrade && testFailures.length === 0 ? downgrade.to : undefined", 'testFailures.length === 0 ? "claude-haiku-4-5" : undefined');
+    expect(f["stages/fix.ts"]).not.toBe(before);
     expect(guardViolations(f).length).toBeGreaterThan(0);
   });
 
