@@ -773,8 +773,33 @@ line_of = lambda s, i: s.count('\n', 0, i) + 1
 # on a global-ish receiver (`window[sinkName](rows)`, `this[key](rows)`) as a
 # sink. Receiver-restricted (window/globalThis/self/this) so an ordinary
 # `handlers[kind](x)` or `items[i](x)` call is not swept in.
-BRACKET_SINK = r'(?:window|globalThis|self|this)\s*\[[^\]\n]+\]'
-SETTER = re.compile(r'\b(set[A-Z]\w*|useState|' + BRACKET_SINK + r')\s*(?=[(<])')
+# PO-P7-SINKS-1 (E-138): OPT_CALL lets every sink head accept an optional call
+# (`setRows?.([...])`, `window[k]?.(rows)`) and an optional receiver access
+# (`globalThis?.[k]`), which a bare `\s*(?=[(<])` lookahead never matched.
+OPT_CALL = r'(?:\?\.\s*)?'
+BRACKET_SINK = r'(?:window|globalThis|self|this)\s*' + OPT_CALL + r'\[[^\]\n]+\]'
+# One-hop sink aliases (`const push = setRows; push(rows)`, `const emit =
+# window[k]; emit(rows)`): SINK_ALIAS_DECL finds a plain rename of a sink, and
+# the sink regexes are rebuilt per file with the alias names appended (see
+# alias_alt/whole_file_findings). One hop only: an alias of an alias is not
+# followed. File-wide by name, like every other flow check here, so an alias
+# name reused for something else elsewhere in the same file is also treated as
+# the sink (over-flag only when that other use is fed literal rows).
+SINK_ALIAS_DECL = re.compile(r'\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*(?::[^=;{}]*)?=(?![=>])\s*'
+                             r'(set[A-Z]\w*|useState|' + BRACKET_SINK + r')\s*(?=[;\n,)}]|$)')
+def sink_alias_alt(s):
+    """Regex alternation (leading `|`, or empty) matching the names bound by a
+    one-hop rename of a sink in s. A timer (`const later = setTimeout`) is not a
+    data sink and is never aliased."""
+    names = sorted({m.group(1) for m in SINK_ALIAS_DECL.finditer(s)
+                    if not TIMER_RENAME.match(m.group(2))})
+    if not names:
+        return ''
+    return r'|(?<![\w$.])(?:' + '|'.join(re.escape(n) for n in names) + r')\b'
+TIMER_RENAME = re.compile(r'^(?:setTimeout|setInterval|setImmediate|setAttribute|setItem|setProperty)$')
+def make_setter(alias_alt):
+    return re.compile(r'\b(set[A-Z]\w*|useState|' + BRACKET_SINK + alias_alt + r')\s*' + OPT_CALL + r'(?=[(<])')
+SETTER = make_setter('')
 CATCH = re.compile(r'\bcatch\s*(?:\([^()]*\))?\s*\{|\.catch\s*\(')
 ARRAY_CTX = re.compile(r'(?:[=(,:?\[|&]|\breturn)\s*$')
 def expr_end(s):
@@ -1065,8 +1090,10 @@ def is_block_open(s, i):
     while j >= 0 and s[j].isspace():
         j -= 1
     return j >= 0 and s[j] in ')>'
-FLOWS_TO_STATE_TMPL = (r'\b(?:set[A-Z]\w*|useState|' + BRACKET_SINK + r')\s*(?:<[^()]*?>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?'
-                       r'{name}\s*[,)]|\bthis\.\w+\s*=\s*{name}\b')
+def make_flows_tmpl(alias_alt):
+    return (r'\b(?:set[A-Z]\w*|useState|' + BRACKET_SINK + alias_alt + r')\s*' + OPT_CALL + r'(?:<[^()]*?>)?\s*\(\s*(?:\(\s*\)\s*=>\s*)?'
+            r'{name}\s*[,)]|\bthis\.\w+\s*=\s*{name}\b')
+FLOWS_TO_STATE_TMPL = make_flows_tmpl('')
 # Rule 6, function-return extension (BACKLOG 125 B-7): `function getRows(d){
 # if(!d) return [{...}]; return d; } setRows(getRows(d))` has no literal array
 # at the call site, so every arm above (which all look at the call site)
@@ -1170,7 +1197,50 @@ NESTED_FN_HEAD = re.compile(r'\bfunction\b[^{}();]*\([^()]*\)\s*\{'
 # exclude a spread's three dots (`[...getRows(...)]`): `(?:(?<![\w$.])|
 # (?<=\.\.\.))` reads as "not preceded by a word char or a single dot, UNLESS
 # the three characters immediately before are exactly '...'".
-HELPER_CALL_SINK_HEAD = re.compile(r'\b(?:set[A-Z]\w*|useState|' + BRACKET_SINK + r')\s*(?:<[^()]*?>)?\s*\(')
+def make_helper_sink_head(alias_alt):
+    return re.compile(r'\b(?:set[A-Z]\w*|useState|' + BRACKET_SINK + alias_alt + r')\s*' + OPT_CALL + r'(?:<[^()]*?>)?\s*\(')
+HELPER_CALL_SINK_HEAD = make_helper_sink_head('')
+# PO-P7-SINKS-1 (E-138): a local that FORWARDS a fabricator's result rather
+# than binding the bare call: `const rows = useMemo(() => normalize(getRows(d)),
+# deps)`, `const rows = [...getRows(d)]`, `const all = getRows(d).slice()`.
+# local_init_end isolates the initializer expression; the fabricator call must
+# appear in it and not only as a scalar read (`getRows(d).length`, `[0]`,
+# `.find(...)`), which carries no rows forward.
+LOCAL_INIT_DECL = re.compile(r'\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=;{}]*)?=(?![=>])\s*')
+SCALAR_READ = re.compile(r'\s*(?:\?\.|\.)\s*(?:length|size|find|findIndex|some|every|includes|indexOf|join|at|reduce)\b|\s*\[')
+NEXT_NONSPACE = re.compile(r'\s*(\S)')
+def local_init_end(s, a):
+    """Index one past the initializer expression starting at s[a]: up to the
+    first top-level `,`, `;` or unmatched closer, or a newline that does not
+    continue the expression (an ASI-style statement end)."""
+    j = a
+    while j < len(s):
+        c = s[j]
+        if c in '\'"`':
+            j = skip_quoted(s, j)
+        elif c in OPEN:
+            k = close_of(s, j)
+            if k < 0:
+                return j
+            j = k
+        elif c in ')]},;':
+            return j
+        elif c == '\n':
+            nx = NEXT_NONSPACE.match(s, j + 1)
+            prev = s[a:j].rstrip()[-1:]
+            if not (nx and (nx.group(1) in '.?:|&' or prev == '' or prev in '=?:|&(>+,')):
+                return j
+        j += 1
+    return j
+def forwards_call(init, call_re):
+    """True when init contains a call matching call_re (its `(` is the match's
+    last char) that is not just a scalar read of the result."""
+    for m in re.finditer(call_re, init):
+        close = close_of(init, m.end() - 1)
+        tail = init[close + 1:close + 40] if close >= 0 else ''
+        if not SCALAR_READ.match(tail):
+            return True
+    return False
 HELPER_CALL_IN_SPAN_TMPL = r'{pre}{name}\s*\('
 # useState's lazy-initializer form passes the bare function reference, never
 # calling it at the sink at all (`useState(getRows)`, React calls it once on
@@ -1229,6 +1299,13 @@ def obj_pairs(o):
 def whole_file_findings(s):
     """(line, message) for rules 6-9; nested arrays inside a hit are not re-reported."""
     out, spans = [], []
+    # PO-P7-SINKS-1 (E-138): rebind the three sink regexes for this file so a
+    # one-hop sink alias (`const push = setRows`) is a sink everywhere they are
+    # used below.
+    alias_alt = sink_alias_alt(s)
+    SETTER = make_setter(alias_alt)
+    FLOWS_TO_STATE_TMPL = make_flows_tmpl(alias_alt)
+    HELPER_CALL_SINK_HEAD = make_helper_sink_head(alias_alt)
     # Built once, up front, so the FALLBACK_ARR/TERNARY inline-array checks
     # below (not only the later module-table-fallback block) can resolve a
     # `[...NAME]` spread element back to a known column-0 table's own
@@ -2209,6 +2286,15 @@ def whole_file_findings(s):
             for lm in re.finditer(HELPER_LOCAL_DECL_TMPL.format(pre=pre, name=name_re), s):
                 local = lm.group(1)
                 if re.search(FLOWS_TO_STATE_TMPL.format(name=re.escape(local)), s):
+                    hit = lm
+                    break
+        if not hit:
+            call_re = HELPER_CALL_IN_SPAN_TMPL.format(pre=pre, name=name_re)
+            for lm in LOCAL_INIT_DECL.finditer(s):
+                local = lm.group(1)
+                init = s[lm.end():local_init_end(s, lm.end())]
+                if forwards_call(init, call_re) \
+                        and re.search(FLOWS_TO_STATE_TMPL.format(name=re.escape(local)), s):
                     hit = lm
                     break
         if hit:
@@ -3281,6 +3367,182 @@ export function BSN({ sinkName, data }) {
   return first;
 }
 TSX
+    # PO-P7-SINKS-1 (E-138): optional-call sinks and one-hop aliases. The three
+    # sink heads (SETTER, FLOWS_TO_STATE_TMPL, HELPER_CALL_SINK_HEAD) required a
+    # bare `(` after the sink name, so `setRows?.([...])` and
+    # `window[k]?.(rows)` reached no arm, and a one-hop rename of a sink
+    # (`const push = setRows; push([...])`) was invisible. Each form has a red
+    # fixture (must be flagged exactly once) and a green look-alike (must stay
+    # clean).
+    cat > "$d/src/components/OptCallSinkFabricated.tsx" <<'TSX'
+export function OCF({ setRows }) {
+  setRows?.([{ id: 1, name: 'Sample User', action: 'Deployed' }]);
+  return null;
+}
+TSX
+    cat > "$d/src/components/OptCallSinkHelperFabricated.tsx" <<'TSX'
+export function OCH({ d, setRows }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  setRows?.(getRows(d));
+  return null;
+}
+TSX
+    cat > "$d/src/components/OptCallSinkLocalFabricated.tsx" <<'TSX'
+export function OCL({ setRows }) {
+  const rows = [{ id: 1, name: 'Sample User', action: 'Deployed' }];
+  setRows?.(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/OptCallSinkHonest.tsx" <<'TSX'
+export function OCN({ data, setRows, onPick }) {
+  setRows?.(data.rows);
+  setRows?.([]);
+  const rows = data.items;
+  setRows?.(rows);
+  const first = data.rows?.[0];
+  onPick?.([{ id: 1, name: 'Sample User' }]);
+  return first;
+}
+TSX
+    cat > "$d/src/components/BracketOptSinkFabricated.tsx" <<'TSX'
+export function BOF({ sinkName }) {
+  window[sinkName]?.([{ id: 1, name: 'Sample User', action: 'Deployed' }]);
+  return null;
+}
+TSX
+    cat > "$d/src/components/BracketOptSinkLocalFabricated.tsx" <<'TSX'
+export function BOL({ sinkName }) {
+  const rows = [{ id: 1, name: 'Sample User', action: 'Deployed' }];
+  globalThis?.[sinkName]?.(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/BracketOptSinkHonest.tsx" <<'TSX'
+export function BON({ sinkName, data }) {
+  window[sinkName]?.(data.rows);
+  window[sinkName]?.([]);
+  const rows = data.items;
+  this[sinkName]?.(rows);
+  const first = window[sinkName]?.name;
+  const handlers = { a: 1 };
+  handlers[sinkName]?.([{ id: 1, name: 'Sample User' }]);
+  return first;
+}
+TSX
+    cat > "$d/src/components/AliasSinkFabricated.tsx" <<'TSX'
+export function ASF() {
+  const push = setRows;
+  push([{ id: 1, name: 'Sample User', action: 'Deployed' }]);
+  return null;
+}
+TSX
+    cat > "$d/src/components/AliasSinkOptCallFabricated.tsx" <<'TSX'
+export function ASO({ setRows }) {
+  const push = setRows;
+  push?.([{ id: 1, name: 'Sample User', action: 'Deployed' }]);
+  return null;
+}
+TSX
+    cat > "$d/src/components/AliasSinkLocalFabricated.tsx" <<'TSX'
+export function ASL() {
+  const rows = [{ id: 1, name: 'Sample User', action: 'Deployed' }];
+  const push = setRows;
+  push(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/AliasBracketSinkFabricated.tsx" <<'TSX'
+export function ABF({ sinkName }) {
+  const emit = window[sinkName];
+  emit([{ id: 1, name: 'Sample User', action: 'Deployed' }]);
+  return null;
+}
+TSX
+    cat > "$d/src/components/AliasSinkHelperFabricated.tsx" <<'TSX'
+export function ASH({ d }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const push = setRows;
+  push(getRows(d));
+  return null;
+}
+TSX
+    cat > "$d/src/components/AliasSinkHonest.tsx" <<'TSX'
+export function ASN({ data, sinkName }) {
+  const push = setRows;
+  push(data.rows);
+  push([]);
+  const emit = window[sinkName];
+  emit(data.items);
+  const later = setTimeout;
+  later(() => [{ id: 1, name: 'tick' }], 5);
+  const fmt = formatRows;
+  fmt([{ id: 1, name: 'Sample User' }]);
+  return null;
+}
+TSX
+    cat > "$d/src/components/MemoForwardNestedFabricated.tsx" <<'TSX'
+export function MFN({ d, deps }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const rows = useMemo(() => normalize(getRows(d)), [deps]);
+  setRows(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/MemoForwardChainFabricated.tsx" <<'TSX'
+export function MFC({ d, deps }) {
+  const getRows = (d) => {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  };
+  const rows = React.useMemo(() => {
+    const all = getRows(d).slice();
+    return all;
+  }, [deps]);
+  setRows?.(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/LocalForwardSpreadFabricated.tsx" <<'TSX'
+export function LFS({ d }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const rows = [...getRows(d)];
+  setRows(rows);
+  return null;
+}
+TSX
+    cat > "$d/src/components/MemoForwardHonest.tsx" <<'TSX'
+export function MFH({ d, deps }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  function loadRows(d) {
+    if (!d) return [];
+    return d.rows;
+  }
+  const real = useMemo(() => normalize(loadRows(d)), [deps]);
+  setRows(real);
+  const copy = [...loadRows(d)];
+  setRows(copy);
+  const count = useMemo(() => getRows(d).length, [deps]);
+  const label = count > 1 ? 'many' : 'few';
+  const shown = useMemo(() => normalize(getRows(d)), [deps]);
+  return shown.map((r) => <i key={r.id}>{label}</i>);
+}
+TSX
     # Honest look-alikes for the same arm: an empty-array fallback (a genuine
     # "nothing yet" default), a real config/enum object return, a helper whose
     # fabricated return never reaches a sink (render-only .map() - this is
@@ -3984,6 +4246,13 @@ EOF
         UseMemoCallsFabricatorRenderOnly.tsx:0 \
         BracketSinkFabricated.tsx:1 BracketSinkLocalFabricated.tsx:1 BracketSinkHelperFabricated.tsx:1 \
         BracketSinkHonest.tsx:0 \
+        OptCallSinkFabricated.tsx:1 OptCallSinkHelperFabricated.tsx:1 OptCallSinkLocalFabricated.tsx:1 \
+        OptCallSinkHonest.tsx:0 \
+        BracketOptSinkFabricated.tsx:1 BracketOptSinkLocalFabricated.tsx:1 BracketOptSinkHonest.tsx:0 \
+        AliasSinkFabricated.tsx:1 AliasSinkOptCallFabricated.tsx:1 AliasSinkLocalFabricated.tsx:1 \
+        AliasBracketSinkFabricated.tsx:1 AliasSinkHelperFabricated.tsx:1 AliasSinkHonest.tsx:0 \
+        MemoForwardNestedFabricated.tsx:1 MemoForwardChainFabricated.tsx:1 LocalForwardSpreadFabricated.tsx:1 \
+        MemoForwardHonest.tsx:0 \
         HelperReturnEmptyHonest.tsx:0 HelperReturnRenderOnlyHonest.tsx:0 HelperReturnNestedCallbackHonest.tsx:0 \
         HelperReturnSinkSpreadHonest.tsx:0 HelperReturnSinkNestedCallHonest.tsx:0 \
         HelperReturnSinkTrailingCallHonest.tsx:0 HelperReturnUseCallbackHonest.tsx:0 \
