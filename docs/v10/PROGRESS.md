@@ -1955,3 +1955,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - P0-CONTROL-LINUX opus APPROVE: root cause reproduced in oven/bun:1.3.13 (repo-root node_modules disables bun auto-install, hono missing); npm tarball uses bundled dist/server.js so no runtime fetch. Cherry-picked 2d6e4a77d, dist 377871c88, dist guard 13/0.
 - Train 86 now waits only on P0-CORE-BUDGET TL verdict. In flight: P0-VERIFY-ARG r3 opus, D61-04 r5 fix, D61-11 test fix, P1-DISCARD-PROTO build (HIGH), D50-F4b build.
 - Deferred cleanup adds: scratchpad rev-d61-04-r4, rev-d61-12-r8.
+
+## 2026-10-03T05:27Z tick (CoS)
+- Merged to local main since 04:57Z: P0-VERIFY-ARG (dist 7bfa73a64), P1-DISCARD-PROTO (dist 4d8d1db59), D50-F4b (dist 159abf6d6), D61-04 off-path already-done check under LOKI_SPEED=1 (dist 588658b36, main bun test 1338/0 on rerun after one load flake). Core budget now passes on main, so train 86 no longer waits on P0-CORE-BUDGET.
+- Train 86 first push failed: gitleaks github-pat on the synthetic token fixture tests/workspace/80-comment.sh:7 (D51-B11). Fingerprint baselined with a reason line in .gitleaksignore (acb4ee58f). Rerun: TRAIN_PUSHED train/86 at acb4ee58f, 05:25:53Z; CI pending.
+- In flight: P0-CORE-BUDGET TL r2, D61-11 test fix, D61-04-F leak fixes (MEDIUM, new BOARD row).
+- Carry-forward reviewer notes: P0-CONTROL-LINUX wants a frozen-lockfile install for packages/control-plane in CI; D50-F4b invalid-base reason unreachable in supervisor; D61-04 child env carries OLDPWD (informational).
