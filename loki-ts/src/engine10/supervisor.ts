@@ -11,6 +11,7 @@ import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
 import { capNote, parseCapUsd, resolveCap, SUBSCRIPTION_NOTE } from "../e10ext/budget_cap.ts";
+import { writeRunPid } from "./run_pid.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { LiveLine, formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
@@ -185,6 +186,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   await assertPreflight({ repoDir: opts.repoDir, provider: typeof startedProvider === "string" ? startedProvider : "claude", pr: opts.pr !== undefined, env });
   writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
   const origin = readOriginUrl(opts.repoDir); // pinned once, before any provider runs
+  const rmRunPid = writeRunPid(join(opts.repoDir, ".loki", "runs", opts.runId), opts.runId); process.once("exit", rmRunPid); // CPE-09: run.pid for Control Plane Stop; removed on every exit path
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
   if (env.LOKI_CONTROL !== "0") void import("../e10ext/ship_hook.ts").then((m) => m.startShip(opts.repoDir, log.path, env)).catch(() => {}); // CP-02: D56 shipper, off with LOKI_CONTROL=0
   log.append("run.started", null, { ...opts.started, origin_repo: githubRepoFromUrl(origin) });
@@ -251,6 +253,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     pc = partialCost(allEvents, log.tampered),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: [] as string[], wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: allEvents.some((e) => e.type === "cost") ? folded.cost.inputTokens + folded.cost.outputTokens : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s` }); // D51-A4, replaces E-48 adapters/slack.ts call
+  rmRunPid(); process.off("exit", rmRunPid);
   return { verdict, outcome, stop, receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
 /** E-66: a text run confirmed already-done has no issue to comment on (no comment_argv, intake.ts);

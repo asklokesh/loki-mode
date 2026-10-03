@@ -90,7 +90,7 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   });
   // Local discovery fills local_repos (never /v1/ingest). GET /v1/repos (names only, loopback guard) is mounted by routes/index.ts.
   syncLocalRepos(db, repoDir);
-  registerRoutes({ app, act, db, repoDir, peerIsLoopback, local, startBin: opts.startBin, spawnImpl: opts.spawnImpl });
+  registerRoutes({ app, act, db, repoDir, peerIsLoopback, local, startBin: opts.startBin, spawnImpl: opts.spawnImpl, answerDir });
   // :id is `source:run` (run ids never contain a colon)
   app.get("/v1/runs/:id", (c) => {
     const id = c.req.param("id");

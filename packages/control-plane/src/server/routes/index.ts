@@ -29,6 +29,8 @@ export interface RouteCtx {
   /** Binary for spawned runs (default `loki`) and a spawn seam for tests. */
   startBin?: string;
   spawnImpl?: typeof spawnStart;
+  /** Where BLOCKED answers are written (createApp answerDir). */
+  answerDir?: string;
 }
 
 export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, config, providers, verify, integrations, notify, audit];
