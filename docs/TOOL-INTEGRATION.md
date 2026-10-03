@@ -75,7 +75,7 @@ loki memory retrieve "authentication"
 loki api start --port 57374
 loki api start
 
-# View dashboard (web UI)
+# View the Control Plane UI
 loki dashboard open
 ```
 

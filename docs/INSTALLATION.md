@@ -294,7 +294,7 @@ trade-offs.
 ## VS Code Extension (Deprecated)
 
 > **DEPRECATED as of v7.2.0.** The Loki Mode VS Code extension is no longer
-> maintained. Use the dashboard at `loki dashboard start` instead.
+> maintained. Use the Control Plane (`loki dashboard`) instead.
 >
 > The marketplace listing remains for users on v7.2.0 and earlier but will
 > not receive further updates. The `vscode-extension/` source remains in the
@@ -305,8 +305,8 @@ trade-offs.
 ### Recommended replacement: the dashboard
 
 ```bash
-loki dashboard start
-# Then open http://localhost:57374 in your browser.
+loki dashboard
+# Opens the Control Plane (default http://127.0.0.1:47821).
 ```
 
 The dashboard provides session monitoring, task views, the completion
@@ -450,7 +450,7 @@ behave exactly like the local `loki` CLI. Auth is auto-detected:
 (Max/Pro subscribers need no API key), else an honest error with guidance. It
 also forwards `~/.gitconfig` and `~/.config/gh` (read-only) plus
 `GITHUB_TOKEN`/`GH_TOKEN` if set, so commits and PRs work like local, and
-exposes the dashboard on port 57374. Use `--image IMG` to override the image.
+exposes the API on port 57374. Use `--image IMG` to override the image.
 
 `loki docker` is a thin host wrapper around the image; it requires loki and
 Docker installed on the host.
@@ -459,7 +459,7 @@ Multi-repo + unified dashboard: you can run `loki docker start` in several
 different repos at once, exactly like the host CLI. Each repo gets its own
 container (deterministic name `loki-<hash-of-path>`) and its own bind-mounted
 `.loki/` state. Every `loki docker` project registers with the host dashboard,
-so running `loki dashboard` on the host shows ALL your projects in one unified
+so running `loki dashboard` on the host (the Control Plane) shows ALL your projects in one unified
 view, whether they run via local `loki start` or via `loki docker start`. Builds
 run with the dashboard off by default (so concurrent runs do not collide on port
 57374); use the host `loki dashboard`, or `loki docker start --api` for a single
@@ -775,11 +775,12 @@ Loki Mode uses two network ports for different services:
 
 | Port | Service | Description |
 |------|---------|-------------|
-| **57374** | Dashboard + API (FastAPI) | Unified server serving both the web dashboard UI (real-time monitoring, task board, Completion Council, memory browser, log streaming) and the REST API (used by CLI tools, programmatic access, and the deprecated VS Code extension). Served by `dashboard/server.py`. |
+| **47821** | Control Plane UI + API | The only UI, plus the `/v1/*` API. Started by `loki control serve` or `loki dashboard`. See [control-plane-migration.md](control-plane-migration.md). |
+| **57374** | Legacy API (FastAPI) | The classic dashboard UI is removed in 10.8; this port no longer serves a UI. |
 
 ### When to Use Which Port
 
-- **Browser access** (dashboard, monitoring): Use port **57374** -- `http://localhost:57374`
+- **Browser access** (UI, monitoring): Use the Control Plane, port **47821** -- `http://127.0.0.1:47821`
 - **API calls** (REST, programmatic): Use port **57374** -- `http://localhost:57374`
 - **VS Code extension** (deprecated as of v7.2.0): Connects to API on port **57374** automatically (configurable via `loki.apiPort` setting). No new releases will be published; see the deprecation notice above.
 - The server is started automatically when you run `loki start` or `./autonomy/run.sh`. No manual configuration is needed.
@@ -787,8 +788,8 @@ Loki Mode uses two network ports for different services:
 ### Port Configuration
 
 ```bash
-# Dashboard port (default: 57374)
-LOKI_DASHBOARD_PORT=57374 loki dashboard start
+# Control Plane port (default: 47821)
+loki control serve --port 47821
 
 # API port (default: 57374)
 loki api start --port 57374   # was: loki serve
@@ -796,7 +797,7 @@ loki api start --port 57374   # was: loki serve
 
 ### CORS Configuration
 
-For remote or cross-origin access to the dashboard, configure allowed origins via the `LOKI_DASHBOARD_CORS` environment variable:
+The Control Plane has no CORS setting and requires a loopback Host header unless it is bound to a non-loopback address with `LOKI_CONTROL_TOKEN` set (see [control-plane-migration.md](control-plane-migration.md)). The `LOKI_DASHBOARD_CORS` variable below applies only to the legacy API server:
 
 ```bash
 # Allow specific origins

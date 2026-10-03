@@ -1,5 +1,7 @@
 # Loki Mode Enterprise Security
 
+> **Control Plane migration:** the classic dashboard UI and port 57374 are removed in Loki Mode 10.8; the UI is the Control Plane (`loki dashboard`, default port 47821). Examples below that use port 57374 or `/api/*` describe the legacy API server. See [control-plane-migration.md](../control-plane-migration.md) for the `/v1/*` mapping and what is not yet available.
+
 ## Overview
 
 Loki Mode's security model follows a defense-in-depth approach. All security features are opt-in via environment variables, with sensible defaults that prioritize safety. When enterprise auth is not configured, the system operates in local-only mode with no network exposure.

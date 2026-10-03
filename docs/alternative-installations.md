@@ -121,7 +121,7 @@ mv loki-mode-8.0.0 ~/.claude/skills/loki-mode
 
 > **DEPRECATED as of v7.2.0.** The Loki Mode VS Code extension is no longer
 > maintained and is no longer published to the VS Code Marketplace. Use the
-> dashboard instead (`loki dashboard start`, then open http://localhost:57374).
+> Control Plane instead (`loki dashboard`).
 > The `vscode-extension/` source remains in the repository for contributors who
 > want to build it locally. See
 > [INSTALLATION.md](INSTALLATION.md#vs-code-extension-deprecated) for details.

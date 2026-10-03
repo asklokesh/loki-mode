@@ -1,5 +1,7 @@
 # Loki Cockpit (rec #6) - build spec
 
+> **Historical:** this describes the classic dashboard, removed in Loki Mode 10.8. The Control Plane is the only UI; see [control-plane-migration.md](control-plane-migration.md).
+
 Status: IN BUILD (v7.126.0 target). Design approved via mockup
 (scratchpad/loki-cockpit.html). Grounded in real engine state + Autonomi identity.
 

@@ -1,5 +1,7 @@
 # Loki Mode Dashboard V2 - Implementation Checklist
 
+> **Historical:** this describes the classic dashboard, removed in Loki Mode 10.8. The Control Plane is the only UI; see [control-plane-migration.md](control-plane-migration.md).
+
 ## Overview
 Enterprise-grade Kanban dashboard with FastAPI backend, cross-project support, and CLI integration.
 
