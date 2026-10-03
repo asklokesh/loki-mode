@@ -68,9 +68,27 @@ test("evidence section lists screens from the receipt, empty otherwise", () => {
   expect(evidenceSection(undefined)).toBe("");
 });
 
-test("sealEvidence is a no-op when the flag is off", async () => {
+test("sealEvidence is a no-op when LOKI_VISUAL_EVIDENCE=0", async () => {
+  process.env["LOKI_VISUAL_EVIDENCE"] = "0";
+  try {
+    const np = new Set<string>();
+    expect(await sealEvidence(root, join(root, "runs", "r1"), {}, np)).toEqual({});
+    expect(np.size).toBe(0);
+  } finally { delete process.env["LOKI_VISUAL_EVIDENCE"]; }
+});
+
+test("unset flag is on: a repo with no web pages spawns nothing, creates no evidence dir, records one NOT PROVEN line", async () => {
   delete process.env["LOKI_VISUAL_EVIDENCE"];
-  expect(await sealEvidence(root, join(root, "runs", "r1"), {}, new Set())).toEqual({});
+  const repo = join(root, "plain");
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { dev: "touch spawned.marker" } }));
+  const run = join(root, "runs", "r2");
+  mkdirSync(run, { recursive: true });
+  const np = new Set<string>();
+  expect(await sealEvidence(repo, run, { verify: { changed_files: ["lib/util.ts"] } }, np)).toEqual({});
+  expect(np.size).toBe(1);
+  expect(existsSync(join(run, "evidence"))).toBe(false);
+  expect(existsSync(join(repo, "spawned.marker"))).toBe(false);
 });
 
 function slowRepo(): string {
@@ -150,3 +168,36 @@ test("capture refuses a symlinked evidence dir", async () => {
     expect(readdirSync(outsideDir)).toEqual([]);
   } finally { delete process.env["LOKI_VISUAL_EVIDENCE"]; }
 });
+
+test("verify returns a verdict, never throws, for a directory evidence path", async () => {
+  for (const path of [".", "evidence", "evidence/screens"]) {
+    const r = await verifyReceipt(writeReceipt([{ path, sha256: "0".repeat(64) }]));
+    expect(r.verdict).toBe("TAMPERED");
+    expect(r.reasons[0]).toContain("regular file");
+  }
+});
+
+test("a SIGTERM-ignoring dev server is dead after capture (recorded pid and group only)", async () => {
+  const repo = join(root, "stubborn");
+  mkdirSync(repo, { recursive: true });
+  const pidFile = join(root, "server.pid");
+  writeFileSync(join(repo, "server.js"), [
+    "process.on('SIGTERM', () => {});",
+    `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+    "require('http').createServer((q, r) => r.end('ok')).listen(Number(process.env.PORT), '127.0.0.1');",
+  ].join("\n"));
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { dev: "node server.js" } }));
+  writeFileSync(join(repo, "openapi.json"), JSON.stringify({ paths: { "/a": {} } }));
+  const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  let pid = 0;
+  try {
+    const ev = await captureVisualEvidence(repo, RUN, [], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1", LOKI_NO_BROWSER: "1" } });
+    expect(ev.http).toBe(true);
+    pid = Number(readFileSync(pidFile, "utf8"));
+    expect(pid).toBeGreaterThan(1);
+    for (let i = 0; i < 20 && alive(pid); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(alive(pid)).toBe(false);
+  } finally {
+    if (pid > 1 && alive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
+  }
+}, 20000);

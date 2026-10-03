@@ -1,4 +1,4 @@
-// D62-VIS: optional visual evidence for PRs, behind LOKI_VISUAL_EVIDENCE=1 (off by default).
+// D62-VIS: visual evidence for PRs, on by default (LOKI_VISUAL_EVIDENCE=0 turns it off).
 // Screenshots of changed pages (Playwright CLI already installed in the repo, never downloaded)
 // or an HTTP transcript for API repos. Capture never throws and never fails a run: a skip is recorded.
 // Each screenshot's sha256 goes into receipt.evidence_screens; `loki verify` rechecks it when present.
@@ -11,7 +11,7 @@ import { dirname, isAbsolute, join, normalize, sep } from "node:path";
 export interface EvidenceScreen { path: string; sha256: string } // path is relative to the run dir
 export interface EvidenceResult { screens: EvidenceScreen[]; http: boolean; skipped: string | null }
 
-export const visualEvidenceEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_EVIDENCE"] === "1";
+export const visualEvidenceEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_EVIDENCE"] !== "0"; // D70: on unless set to 0
 
 const PAGE_RE = /^(?:.*\/)?(?:app|pages|src|public)\/.*\.(?:html|jsx|tsx|vue|svelte)$/;
 export const isPageFile = (p: string): boolean => PAGE_RE.test(p);
@@ -43,7 +43,10 @@ export function checkScreens(runDir: string, screens: unknown): string | null {
     let cur = runDir;
     for (const seg of normalize(s.path).split(sep)) { cur = join(cur, seg); if (isSymlink(cur)) return `evidence screenshot path is a symlink: ${s.path}`; }
     if (!existsSync(file)) return `evidence screenshot is missing: ${s.path}`;
-    if (sha256File(file) !== s.sha256) return `evidence screenshot was altered: ${s.path}`;
+    if (!isRegularFile(file)) return `evidence screenshot is not a regular file: ${s.path}`;
+    let digest: string;
+    try { digest = sha256File(file); } catch { return `evidence screenshot is not readable as a regular file: ${s.path}`; }
+    if (digest !== s.sha256) return `evidence screenshot was altered: ${s.path}`;
   }
   return null;
 }
@@ -104,14 +107,29 @@ function shoot(pw: string, args: string[], cwd: string, ms: number, signal?: Abo
 }
 
 const isSymlink = (p: string): boolean => { try { return lstatSync(p).isSymbolicLink(); } catch { return false; } };
+const isRegularFile = (p: string): boolean => { try { return lstatSync(p).isFile(); } catch { return false; } };
+const groupAlive = (pid: number): boolean => { try { process.kill(-pid, 0); return true; } catch { return false; } };
+const SHUTDOWN_GRACE_MS = 2000;
+
+/** SIGTERM the recorded process group, wait a bounded grace, then SIGKILL it if any member survives. Never throws. */
+async function stopServer(c: ReturnType<typeof spawn> | null, graceMs: number, signal?: AbortSignal): Promise<void> {
+  const pid = c?.pid;
+  if (!c || !pid) return;
+  try { process.kill(-pid, "SIGTERM"); } catch { try { c.kill("SIGTERM"); } catch { /* already gone */ } }
+  const until = Date.now() + Math.max(0, graceMs);
+  while (groupAlive(pid) && !signal?.aborted && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  if (groupAlive(pid)) { try { process.kill(-pid, "SIGKILL"); } catch { try { c.kill("SIGKILL"); } catch { /* gone */ } } }
+  for (let i = 0; i < 10 && groupAlive(pid); i++) await new Promise((r) => setTimeout(r, 50)); // let the kernel reap
+}
 
 /** Never throws. runDir is the run directory; evidence goes to a fresh dir under it. changed is repo-relative paths. */
 export async function captureVisualEvidence(repoDir: string, runDir: string, changed: string[], opts: CaptureOpts = {}): Promise<EvidenceResult> {
   const skip = (why: string): EvidenceResult => ({ screens: [], http: false, skipped: why });
   const signal = opts.signal;
   let child: ReturnType<typeof spawn> | null = null;
+  const startedAt = Date.now(), budgetMs = opts.budgetMs ?? DEFAULT_BUDGET_MS;
   try {
-    if (!visualEvidenceEnabled(opts.env)) return skip("LOKI_VISUAL_EVIDENCE is not 1");
+    if (!visualEvidenceEnabled(opts.env)) return skip("LOKI_VISUAL_EVIDENCE is 0");
     const pkgPath = join(repoDir, "package.json");
     if (!existsSync(pkgPath)) return skip("no package.json");
     const script = pickScript(JSON.parse(readFileSync(pkgPath, "utf8")));
@@ -157,7 +175,7 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
   } catch (e) {
     return skip(`capture failed: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
   } finally {
-    try { if (child?.pid) process.kill(-child.pid, "SIGTERM"); } catch { try { child?.kill("SIGTERM"); } catch { /* already gone */ } }
+    await stopServer(child, Math.min(SHUTDOWN_GRACE_MS, Math.max(250, startedAt + budgetMs - Date.now())), signal);
   }
 }
 
