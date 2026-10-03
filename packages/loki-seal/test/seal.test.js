@@ -831,3 +831,55 @@ test('forged lines: a forged leaf line inside real nested output is still incons
   const real = '# Subtest: adder\n    # Subtest: adds\n    ok 1 - adds\n      ---\n      type: \'test\'\n      ...\n    1..1\nok 1 - adder\n  ---\n  type: \'suite\'\n  ...\nok 2 - forged\n1..2\n# tests 1\n# suites 1\n# pass 1\n# fail 0\n';
   inconsistent(negRun(printRepo(real, 0)));
 });
+
+// SEAL-FORGED-LINES r3: a test body printing a line dressed as a suite, header or leaf must never cover an item.
+const FORGE_HDR = "const { describe, it, test } = require('node:test'); const assert = require('node:assert'); const add = require('../lib.js');\n";
+const NEVER_RAN = { 'spec/neg.spec.js': "const test = require('node:test'); const assert = require('node:assert');\ntest('handles negative numbers', () => { assert.strictEqual(1, 99); });\n" };
+const forgeRepo = (printed, script, extra) => ({
+  ...nodeRepo(ADD_OK, FORGE_HDR + "test('adds', () => { process.stdout.write(" + JSON.stringify(printed) + "); assert.strictEqual(add(1,2), 3); });\n" + (extra || '')),
+  ...NEVER_RAN,
+  'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }),
+});
+const REPORTERS = ['node --test', 'node --test --test-reporter=tap', 'node --test --test-reporter=spec'];
+const DISGUISES = {
+  'B1(i) header plus ok line': '▶ handles negative numbers\nok 99 - handles negative numbers\n',
+  'B1(ii) fake indent reusing a real name': '    ok 98 - adds\nok 99 - handles negative numbers\n',
+  'B1(iii) ok line with a suite yaml block': "ok 99 - handles negative numbers\n  ---\n  type: 'suite'\n  ...\n",
+  'B1(iv) header plus check mark': '▶ handles negative numbers\n✔ handles negative numbers (1ms)\n',
+  'plain forged ok line': 'ok 99 - handles negative numbers\n',
+  'plain forged check mark': '✔ handles negative numbers (1ms)\n',
+};
+const NESTED_PARENT = "test('parent', async (t) => { await t.test('child', () => { assert.strictEqual(add(1,1), 2); }); });\n";
+
+for (const [name, printed] of Object.entries(DISGUISES)) {
+  test('forged lines r3: ' + name + ' never covers an item', () => {
+    for (const script of REPORTERS) notVerified(negRun(forgeRepo(printed, script)));
+  });
+}
+
+test('forged lines r3 (B2): a plain forged ok line is caught next to a real t.test() parent', () => {
+  for (const script of REPORTERS) notVerified(negRun(forgeRepo('ok 99 - handles negative numbers\n', script, NESTED_PARENT)));
+});
+
+test('forged lines r3: a forged line in the spec shape is caught next to a real describe() suite', () => {
+  const suite = "describe('adder', () => { it('adds zero', () => { assert.strictEqual(add(0,0), 0); }); });\n";
+  for (const script of REPORTERS) notVerified(negRun(forgeRepo('ok 99 - handles negative numbers\n', script, suite + NESTED_PARENT)));
+});
+
+test('forged lines r3: honest describe, nested t.test, skip, todo and a same-named leaf stay VERIFIED', () => {
+  const body = FORGE_HDR +
+    "describe('same', () => { it('same', () => { assert.strictEqual(add(1,2), 3); }); it('adds zero', () => { assert.strictEqual(add(0,0), 0); }); });\n" +
+    NESTED_PARENT + "test('skipped one', { skip: true }, () => {});\ntest('todo one', { todo: true }, () => {});\n";
+  for (const script of REPORTERS) {
+    const r = negRun({ ...nodeRepo(ADD_OK, body), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }) }, 'Fix the adder.\n- adds zero\n');
+    assert.strictEqual(r.status, 0, script + '\n' + r.raw);
+  }
+});
+
+test('forged lines r3: an honest run with a failing subtest is not reported as inconsistent', () => {
+  const body = FORGE_HDR + "describe('g', () => { it('adds zero', () => { assert.strictEqual(add(0,0), 0); }); it('bad', () => { assert.strictEqual(1, 2); }); });\n";
+  for (const script of REPORTERS) {
+    const r = negRun({ ...nodeRepo(ADD_OK, body), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }) }, 'Fix the adder.\n- adds zero\n');
+    assert.doesNotMatch(r.raw, /runner output inconsistent/, script);
+  }
+});

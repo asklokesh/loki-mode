@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP loki run now returns the exit code and log tail when loki exits before a run starts.
 - loki-seal: forged runner pass lines that contradict the runner summary now give NOT VERIFIED.
 - loki-seal: forged runner pass lines that contradict the runner summary (counted over leaf tests, so honest node:test describe() and nested t.test() stay VERIFIED) now give NOT VERIFIED; a forged summary line or a runner with no summary line is not covered.
+- loki-seal: forged runner pass lines that contradict the runner summary now give NOT VERIFIED; suite and header-shaped lines never cover an item and t.test() parents stay counted; a forged summary line (for example "# pass 99") or a runner with no summary line is not covered.
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 ### Fixed
 - Dashboard runs view reports unreadable or corrupt run records instead of claiming none were recorded.

@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
-const { deriveContract, mapContract, passing, ASSERT } = require('./contract.js');
+const { deriveContract, mapContract, ASSERT } = require('./contract.js');
 
 const mode = process.argv[2];
 let ctx = { input: {}, root: process.cwd() };
@@ -116,34 +116,52 @@ function counts(out) {
   return { summary: /\d+ (passed|failed)/.test(out), pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
 }
 
-// Names of pass lines that are containers, not leaf tests: node:test suites and parent tests do not
-// appear as leaves in the runner's pass count, so they must not feed the cross-check. TAP: an ok line with
-// deeper-indented subtest lines before it, or a YAML block with type: 'suite'. Spec: a name printed as a
-// "> name" header (suite or parent) also gets a matching check-mark line. Over-excluding only weakens the check.
-function containerNames(out) {
-  const names = new Set();
+// Passing test records parsed line by line. Coverage and the summary cross-check use the SAME records,
+// so a printed line that is excluded from one is excluded from both.
+//  - TAP: an ok line whose YAML block says type: 'suite' is a describe() suite (not in the runner's pass
+//    count) and is dropped. t.test() parents stay leaf records because the runner counts them.
+//  - Spec: a check-mark line that closes a "> name" header at the same indent is a suite OR a parent test and
+//    cannot be told apart, so it is ambiguous: it never counts as coverage, and the runner's own
+//    "suites N" count says how many of the ambiguous lines are suites (the rest are counted parents).
+//  - Everything else (TAP ok, check marks without a header, PASSED, --- PASS, cargo) is a leaf record.
+// A forged line that imitates a suite or a header never gains coverage. The record count is checked against
+// the summary: leaf records + max(0, ambiguous - suites) must not exceed the passed count.
+const NOT_SKIPPED = (s) => !/\s#\s*(?:SKIP|TODO)\b/i.test(s);
+function passRecords(out) {
   const lines = out.split('\n');
-  const deeper = new Set();
+  const leaf = [];
+  let ambiguous = 0;
+  const open = new Map();
+  const closeBelow = (n) => { for (const k of [...open.keys()]) if (k >= n) open.delete(k); };
   for (let i = 0; i < lines.length; i++) {
-    const h = /^\s*\u25b6 (.+?)\s*$/.exec(lines[i]);
-    if (h) names.add(h[1]);
-    const m = /^(\s*)(?:not )?ok \d+ - (.+?)\s*$/.exec(lines[i]);
-    if (!m) continue;
-    const n = m[1].length;
-    let container = [...deeper].some((d) => d > n);
-    for (const d of [...deeper]) if (d > n) deeper.delete(d);
-    deeper.add(n);
-    if (!container && /^\s*---\s*$/.test(lines[i + 1] || '')) {
-      for (let j = i + 2; j < lines.length && !/^\s*\.\.\.\s*$/.test(lines[j]); j++) if (/^\s*type: 'suite'\s*$/.test(lines[j])) { container = true; break; }
+    const ln = lines[i];
+    let m = /^(\s*)▶ (.+?)\s*$/.exec(ln);
+    if (m) { closeBelow(m[1].length); open.set(m[1].length, m[2]); continue; }
+    m = /^(\s*)([✔✓√✖]) (.+?)\s*$/.exec(ln);
+    if (m) {
+      const n = m[1].length;
+      const raw = m[3].replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '');
+      const wasOpen = open.get(n) === raw;
+      closeBelow(n);
+      if (m[2] === '✖' || !NOT_SKIPPED(m[3])) continue;
+      if (wasOpen) ambiguous++;
+      else leaf.push(raw.split(' > ').pop().trim());
+      continue;
     }
-    if (container) names.add(m[2].replace(/\s+#\s.*$/, ''));
+    m = /^\s*ok \d+ - (.+?)\s*$/.exec(ln);
+    if (m) {
+      if (!NOT_SKIPPED(m[1])) continue;
+      let suite = false;
+      if (/^\s*---\s*$/.test(lines[i + 1] || '')) {
+        for (let j = i + 2; j < lines.length && !/^\s*\.\.\.\s*$/.test(lines[j]); j++) if (/^\s*type: 'suite'\s*$/.test(lines[j])) { suite = true; break; }
+      }
+      if (!suite) leaf.push(m[1].replace(/\s+#\s.*$/, '').trim());
+      continue;
+    }
+    if ((m = /^PASSED (\S+)/.exec(ln)) || (m = /^\s*--- PASS: (\S+)/.exec(ln)) || (m = /^test (\S+) \.\.\. ok$/.exec(ln))) leaf.push(m[1].trim());
   }
-  return names;
-}
-
-function leafPassing(out) {
-  const skip = containerNames(out);
-  return passing(out).filter((i) => !skip.has(i));
+  const suites = (/^\s*[ℹ#]\s*suites\s+(\d+)/m.exec(out) || [])[1];
+  return { passIds: [...new Set(leaf)], passCount: leaf.length + Math.max(0, ambiguous - (suites === undefined ? 0 : +suites)) };
 }
 
 // Runner output whose pass lines contradict its own summary counts (a test printing forged lines).
@@ -152,7 +170,7 @@ function inconsistency(r) {
   if (r.error) return null;
   const clash = (r.passIds || []).filter((i) => (r.ids || []).includes(i));
   if (clash.length) return `the runner reports the same test as both passed and failed: ${clash.slice(0, 3).join(', ')}`;
-  if (r.summary && (r.leafIds || []).length > r.pass) return `${r.leafIds.length} passing test line(s) but the runner summary counts ${r.pass} passed`;
+  if (r.summary && (r.passCount || 0) > r.pass) return `${r.passCount} passing test line(s) but the runner summary counts ${r.pass} passed`;
   return null;
 }
 
@@ -205,7 +223,7 @@ function runSuite(root, runner, timeout) {
     const finish = (status, error) => {
       if (done) return;
       done = true; clearTimeout(timer);
-      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), passIds: passing(out), leafIds: leafPassing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
+      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), ...passRecords(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
     };
     child.on('error', (e) => finish(null, e));
     child.on('close', (code) => finish(code));
