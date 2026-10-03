@@ -1,0 +1,56 @@
+{
+  "id": "spd-seq-ledger",
+  "kind": "public",
+  "prompt": "Build a double-entry ledger pipeline in four new modules of the more_itertools package. Each stage consumes the previous stage's output, so build them in order and keep the data shapes below exactly.\n\nOrder matters: requirement N imports and builds on requirement N-1.\n1. more_itertools/spd_ledger_parse.py: parse_entries(text) returns a list of (date, account, cents) tuples from lines 'YYYY-MM-DD,account,amount' where amount is a decimal with at most 2 fraction digits, possibly negative, converted to integer cents exactly (no floats). Blank lines are skipped; a malformed date, a wrong field count, an empty account or a bad amount raises ValueError.\n2. more_itertools/spd_ledger_bal.py: balances(entries) takes the tuples from spd_ledger_parse.parse_entries and returns a dict account -> total cents. Accounts that net to zero are kept (value 0).\n3. more_itertools/spd_ledger_report.py: report(bal) takes the dict from spd_ledger_bal.balances and returns the list of lines 'account: D.CC' (cents formatted with a minus sign when negative, e.g. -1050 -> '-10.50') sorted by account, followed by a final line 'total: D.CC' for the sum of all balances.\n4. more_itertools/spd_ledger_cli.py: run(text, require_balanced=True) = report(balances(parse_entries(text))) joined with newlines plus a trailing newline, built by importing the three earlier modules (do not re-implement them). With require_balanced, if the grand total is not zero raise ValueError('unbalanced') BEFORE producing any report.\n\nAll functions are plain Python with no third-party dependencies. Do not modify existing modules or tests.\nCommit your work on a new branch and push it.",
+  "issue_ref": null,
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "5d946b3590bfe92f1465c1b9b9830dd434745c84"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_spd_seq_ledger.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_spd_seq_ledger.py",
+    "provenance": {
+      "tests/test_spd_seq_ledger.py": "authored"
+    },
+    "sha256": {
+      "tests/test_spd_seq_ledger.py": "a219d5aa59f65ff1c13ab5beb8c60c4889a98e2361f66d986f3dabfbc9ef116b"
+    },
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "more_itertools/spd_ledger_parse.py",
+        "tests": [
+          "tests/test_spd_seq_ledger.py::TestLedgerParse"
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "more_itertools/spd_ledger_bal.py",
+        "tests": [
+          "tests/test_spd_seq_ledger.py::TestLedgerBal"
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "more_itertools/spd_ledger_report.py",
+        "tests": [
+          "tests/test_spd_seq_ledger.py::TestLedgerReport"
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "more_itertools/spd_ledger_cli.py",
+        "tests": [
+          "tests/test_spd_seq_ledger.py::TestLedgerCli"
+        ]
+      }
+    ]
+  },
+  "timeout_s": 2400,
+  "tier": "speed",
+  "decomposable": false
+}

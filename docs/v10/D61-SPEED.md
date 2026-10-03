@@ -61,16 +61,17 @@ Architect design, 2026-10-02, base fbbd31299, v10.6.6. Design only; nothing belo
 | 14 | Group events and terminal unit table (TTY repaint 2s, plain lines otherwise) | engine10/events.ts, engine10/output.ts, tests output_group.test.ts | snapshot tests for TTY and non-TTY; validateEnvelope accepts group fields | 30m | MEDIUM |
 | 15 | Live grid: dashboard /g/<group> and Control Plane group_id column | engine10/dashboard/page.ts, packages/control-plane/src/server/runs.ts, packages/control-plane/src/db/, tests | ingesting a 3-unit fixture shows 3 rows with stage and elapsed; missing data says "no data ingested" | 30m | MEDIUM |
 | 16 | Route `loki "<task>"` and `loki <file>` through decomposer behind LOKI_SPEED | engine10/cli.ts (route only), engine10/supervisor.ts (group entry), tests route_group.test.ts | flag off: byte-identical behaviour; flag on: small task never decomposes | 30m | HIGH |
-| 17 | Large eval tier: 8 lg- tasks (4 decomposable, 4 sequential by design), arms v10-parallel, v10-seq, raw-claude, tokens per completed for every arm | eval/loki10/tasks/lg-*, eval/loki10/harness.py, eval/loki10/summarize, eval/loki10/test-harness.sh | D38 provenance check passes; summarize prints wall, completion, tokens per arm; a capped arm is never completed | 30m x2 (tasks, harness) | MEDIUM |
+| 17 | Speed eval tier: 8 spd- tasks (4 decomposable, 4 sequential by design), arms v10-parallel, v10-seq, raw-claude, tokens per completed for every arm | eval/loki10/tasks/spd-*, eval/loki10/harness.py, eval/loki10/summarize, eval/loki10/test-harness.sh | D38 provenance check passes; summarize prints wall, completion, tokens per arm; a capped arm is never completed | 30m x2 (tasks, harness) | MEDIUM |
 | 18 | METRICS D61 section and the flag flip decision | docs/v10/METRICS.md | rows cite results.jsonl paths; losses shown; flip only if section 5 targets hold | 15m | LOW |
 
 Order: 1, 2, 7, 8 start now (disjoint files); 3-6 and 9-11 next; 12-16 after 8-11; 17 in parallel from the start; 18 last. HIGH slices get opus reviewers (D12).
 
 ## 5. Targets (measured on the eval, never claimed)
 - A. Small tier (29 tasks): Loki p50 time to PR at or below raw `claude -p` (39s baseline, METRICS gate report) on the same model; tokens per completed at or below raw; pre-model overhead p50 under 2s warm. Losses published, including the D50 sonnet loss.
-- B. Large tier: on decomposable tasks, parallel wall time at most 0.5x sequential with completion not lower; on sequential-by-design tasks the check must choose sequential (a parallel run there counts as a loss).
+- B. Speed tier (authored spd- tasks, D67): on decomposable tasks, parallel wall time at most 0.5x sequential with completion not lower; on sequential-by-design tasks the check must choose sequential (a parallel run there counts as a loss).
 - C. Parallel total tokens at or below v10-seq on the same task; report tokens per completed task for all three arms.
 - D. Every slice adds its METRICS row (what changed, command, result file, exit code). Nothing flips to default on a fixture result alone (feedback: fixture-green is not verification).
+- E. The `LOKI_SPEED` default flips only if 5 B and 5 C hold on the speed tier AND, on the real medium pub- tasks (plus any D34 large tasks on main), `LOKI_SPEED=1` shows completion not lower and p50 wall and tokens per completed not worse than `LOKI_SPEED=0`, at 2 runs per arm.
 
 ## 6. Risks and non-goals
 - Research section 4: parallel lost 39-70% on sequential work and multi-agent runs cost about 15x tokens. Defence: conservative check, no transcript sharing, single writer per file, one central integrator.

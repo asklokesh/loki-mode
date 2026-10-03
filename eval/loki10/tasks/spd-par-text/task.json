@@ -1,0 +1,56 @@
+{
+  "id": "spd-par-text",
+  "kind": "public",
+  "prompt": "Add four independent text utility modules to the more_itertools package. They share no code and no symbols; each lives in its own new file.\n\n1. more_itertools/spd_slug.py: slugify(text) lowercases, replaces every run of non-alphanumeric ASCII characters with a single hyphen, and strips leading and trailing hyphens. slugify('') is ''.\n2. more_itertools/spd_rle.py: encode(s) run-length encodes a string as count followed by the character (aaab -> 3a1b); decode(s) reverses it. Characters are never digits. encode('') and decode('') are ''. decode raises ValueError on a trailing count with no character.\n3. more_itertools/spd_roman.py: to_roman(n) for 1..3999 returns the standard subtractive roman numeral, ValueError outside the range; from_roman(s) is the inverse, accepts upper case only, ValueError on anything that is not the canonical form of some number.\n4. more_itertools/spd_wordfreq.py: word_freq(text, top=None) counts case-insensitive words (maximal runs of ASCII letters and apostrophes) and returns a list of (word, count) sorted by count descending then word ascending; with top=N only the first N entries.\n\nAll functions are plain Python with no third-party dependencies. Do not modify existing modules or tests.\nCommit your work on a new branch and push it.",
+  "issue_ref": null,
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "5d946b3590bfe92f1465c1b9b9830dd434745c84"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_spd_par_text.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_spd_par_text.py",
+    "provenance": {
+      "tests/test_spd_par_text.py": "authored"
+    },
+    "sha256": {
+      "tests/test_spd_par_text.py": "c54e80226651cdf314789864c8191648e7b565dd6458e400b1e7a2acb9c75c11"
+    },
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "more_itertools/spd_slug.py",
+        "tests": [
+          "tests/test_spd_par_text.py::TestSlug"
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "more_itertools/spd_rle.py",
+        "tests": [
+          "tests/test_spd_par_text.py::TestRle"
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "more_itertools/spd_roman.py",
+        "tests": [
+          "tests/test_spd_par_text.py::TestRoman"
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "more_itertools/spd_wordfreq.py",
+        "tests": [
+          "tests/test_spd_par_text.py::TestWordFreq"
+        ]
+      }
+    ]
+  },
+  "timeout_s": 2400,
+  "tier": "speed",
+  "decomposable": true
+}

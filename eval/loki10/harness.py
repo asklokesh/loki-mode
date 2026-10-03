@@ -3,7 +3,7 @@
 
 Subcommands (run.sh and summarize are thin wrappers around these):
   validate <task_dir>...
-  run --arm <v10|raw-claude|legacy|v10-parallel|v10-seq> (--task ID | --tasks A,B | --all) [--tier small|medium|large] [--parallel N] [--out DIR] [--tasks-dir DIR]
+  run --arm <v10|raw-claude|legacy|v10-parallel|v10-seq> (--task ID | --tasks A,B | --all) [--tier small|medium|large|speed] [--parallel N] [--out DIR] [--tasks-dir DIR]
   summarize <results.jsonl> [--markdown]
 
 Honesty rules (the v10.0.0 release gate depends on them):
@@ -49,7 +49,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
 ARMS = ("v10", "raw-claude", "legacy", "v10-parallel", "v10-seq")
-# D61 slice 17: the large tier compares three arms. Every v10* arm runs the
+# D61 slice 17: the speed tier (D67) compares three arms. Every v10* arm runs the
 # same v10 engine (same marker, events and token accounting); only LOKI_SPEED
 # differs. v10-parallel is a STUB until the decomposer (D61 slices 8-16) lands:
 # today LOKI_SPEED=1 on the v10 engine is the whole arm, and every surface that
@@ -58,8 +58,9 @@ V10_ARMS = ("v10", "v10-parallel", "v10-seq")
 ARM_SPEED = {"v10-parallel": "1", "v10-seq": "0"}
 ARM_STUB_NOTE = {"v10-parallel": "STUB: v10 with LOKI_SPEED=1; the D61 decomposer is not built, "
                                  "so this is not yet a parallel measurement"}
+SPEED_HEADING = "speed tier (authored, D67; not a large-tier result)"
 KINDS = ("augmentiq", "public", "quickstart")
-TIERS = ("small", "medium", "large")
+TIERS = ("small", "medium", "large", "speed")
 DEFAULT_TIER = "small"
 TASK_KEYS = {"id", "kind", "prompt", "issue_ref", "repo", "setup", "hidden", "timeout_s",
              "expected_outcome", "tier", "decomposable"}
@@ -242,7 +243,17 @@ def validate_task(task_dir):
         is_lg = os.path.basename(os.path.normpath(task_dir)).startswith("lg-")
         if is_lg and t.get("tier") != "large":
             errs.append('lg- tasks must declare "tier": "large" (D38)')
-        if is_lg or t.get("tier") == "large":
+        # D67: the authored speed tier is anchored both ways by name: an spd- task
+        # must declare tier speed and a boolean decomposable, and tier speed is
+        # only legal on an spd- task. Speed tasks still get the D38 hidden-test checks.
+        is_spd = os.path.basename(os.path.normpath(task_dir)).startswith("spd-")
+        if is_spd and t.get("tier") != "speed":
+            errs.append('spd- tasks must declare "tier": "speed" (D67)')
+        if t.get("tier") == "speed" and not is_spd:
+            errs.append('tier "speed" is only valid on an spd- task (D67)')
+        if is_spd and not isinstance(t.get("decomposable"), bool):
+            errs.append('spd- tasks must declare a boolean "decomposable" (D67)')
+        if is_lg or is_spd or t.get("tier") in ("large", "speed"):
             errs.extend(_validate_large_hidden(task_dir, hidden, files if isinstance(files, list) else []))
     ts = t.get("timeout_s", DEFAULT_TIMEOUT_S)
     if isinstance(ts, bool) or not isinstance(ts, int) or ts <= 0:
@@ -1772,12 +1783,21 @@ def summarize_rows(rows):
             if r.get("status") == "task_invalid":
                 invalid.setdefault(r["task"], r.get("invalid_reason") or "task_invalid")
         live = [r for r in rs if r["task"] not in invalid]
+        # D67: authored speed-tier rows are reported apart; they are never a
+        # large-tier result and never mix into the main per-arm numbers.
+        main = [r for r in live if r.get("tier") != "speed"]
+        spd = [r for r in live if r.get("tier") == "speed"]
+
+        def block(part):
+            return {"arms": {a: arm_stats([r for r in part if r["arm"] == a]) for a in sorted({r["arm"] for r in part})},
+                    "misses": [{"task": r["task"], "arm": r["arm"], "reason": miss_reason(r)}
+                               for r in part if not is_done(r)]}
+        m = block(main)
         out.append({
             "model": model, "harness_sha": sha,
             "invalid_tasks": [{"task": t, "reason": invalid[t]} for t in sorted(invalid)],
-            "arms": {a: arm_stats([r for r in live if r["arm"] == a]) for a in sorted({r["arm"] for r in rs})},
-            "misses": [{"task": r["task"], "arm": r["arm"], "reason": miss_reason(r)}
-                       for r in live if not is_done(r)],
+            "arms": m["arms"], "misses": m["misses"],
+            "speed_tier": dict(block(spd), heading=SPEED_HEADING) if spd else None,
         })
     return out
 
@@ -1818,6 +1838,38 @@ def fmt(v, suffix=""):
     return "n/a" if v is None else "%s%s" % (v, suffix)
 
 
+def _print_arms_text(arms):
+    for arm, a in arms.items():
+        print("  %s: completion %s (%d/%d evaluated), p50 ttPR %s, p90 ttPR %s, cost/completed %s "
+              "(cost measured %d/%d), capped %d, unavailable %d, infra/interrupted %d" % (
+                  arm, fmt(a["completion_rate"]), a["completed"], a["evaluated"],
+                  fmt(a["p50_time_to_pr_s"], "s"), fmt(a["p90_time_to_pr_s"], "s"),
+                  fmt(a["cost_per_completed_usd"]), a["cost_measured_runs"], a["evaluated"],
+                  a["capped"], a["unavailable"], a["infra_or_interrupted"]))
+        print("    wall p50 %s, completion %s, tokens/completed %s (tokens measured %d/%d), "
+              "budget-stopped %d" % (
+                  fmt(a["p50_wall_s"], "s"), fmt(a["completion_rate"]),
+                  fmt(a["tokens_per_completed"]), a["tokens_measured_runs"], a["completed"],
+                  a["budget_stopped"]))
+        if a["note"]:
+            print("    note: %s" % a["note"])
+
+
+def _print_arms_markdown(arms):
+    print("| Arm | Completed | Rate | p50 time to PR | p90 time to PR | p50 wall | Tokens per completed "
+          "| Cost per completed | Cost measured | Capped | Budget-stopped | Unavailable | Infra/interrupted |")
+    print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for arm, a in arms.items():
+        rate = "n/a" if a["completion_rate"] is None else "%.1f%%" % (100 * a["completion_rate"])
+        cost = "n/a" if a["cost_per_completed_usd"] is None else "$%.4f" % a["cost_per_completed_usd"]
+        label = arm + (" (%s)" % a["note"] if a["note"] else "")
+        print("| %s | %d/%d | %s | %s | %s | %s | %s | %s | %d/%d | %d | %d | %d | %d |" % (
+            label, a["completed"], a["evaluated"], rate, fmt(a["p50_time_to_pr_s"], "s"),
+            fmt(a["p90_time_to_pr_s"], "s"), fmt(a["p50_wall_s"], "s"), fmt(a["tokens_per_completed"]),
+            cost, a["cost_measured_runs"], a["evaluated"],
+            a["capped"], a["budget_stopped"], a["unavailable"], a["infra_or_interrupted"]))
+
+
 def cmd_summarize(args):
     with open(args.results, encoding="utf-8") as f:
         rows = [json.loads(ln) for ln in f if ln.strip()]
@@ -1828,20 +1880,11 @@ def cmd_summarize(args):
     if not args.markdown:
         for g in groups:
             print("model %s, harness %s" % (g["model"], g["harness_sha"]))
-            for arm, a in g["arms"].items():
-                print("  %s: completion %s (%d/%d evaluated), p50 ttPR %s, p90 ttPR %s, cost/completed %s "
-                      "(cost measured %d/%d), capped %d, unavailable %d, infra/interrupted %d" % (
-                          arm, fmt(a["completion_rate"]), a["completed"], a["evaluated"],
-                          fmt(a["p50_time_to_pr_s"], "s"), fmt(a["p90_time_to_pr_s"], "s"),
-                          fmt(a["cost_per_completed_usd"]), a["cost_measured_runs"], a["evaluated"],
-                          a["capped"], a["unavailable"], a["infra_or_interrupted"]))
-                print("    wall p50 %s, completion %s, tokens/completed %s (tokens measured %d/%d), "
-                      "budget-stopped %d" % (
-                          fmt(a["p50_wall_s"], "s"), fmt(a["completion_rate"]),
-                          fmt(a["tokens_per_completed"]), a["tokens_measured_runs"], a["completed"],
-                          a["budget_stopped"]))
-                if a["note"]:
-                    print("    note: %s" % a["note"])
+            _print_arms_text(g["arms"])
+            sp = g["speed_tier"]
+            if sp:
+                print("  %s" % sp["heading"])
+                _print_arms_text(sp["arms"])
             for t in g["invalid_tasks"]:
                 print("  invalid task %s: %s" % (t["task"], t["reason"]))
         return 0
@@ -1856,18 +1899,7 @@ def cmd_summarize(args):
           "when any evaluated run lacks a figure.\n")
     for g in groups:
         print("#### model %s, harness %s\n" % (g["model"], g["harness_sha"]))
-        print("| Arm | Completed | Rate | p50 time to PR | p90 time to PR | p50 wall | Tokens per completed "
-              "| Cost per completed | Cost measured | Capped | Budget-stopped | Unavailable | Infra/interrupted |")
-        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
-        for arm, a in g["arms"].items():
-            rate = "n/a" if a["completion_rate"] is None else "%.1f%%" % (100 * a["completion_rate"])
-            cost = "n/a" if a["cost_per_completed_usd"] is None else "$%.4f" % a["cost_per_completed_usd"]
-            label = arm + (" (%s)" % a["note"] if a["note"] else "")
-            print("| %s | %d/%d | %s | %s | %s | %s | %s | %s | %d/%d | %d | %d | %d | %d |" % (
-                label, a["completed"], a["evaluated"], rate, fmt(a["p50_time_to_pr_s"], "s"),
-                fmt(a["p90_time_to_pr_s"], "s"), fmt(a["p50_wall_s"], "s"), fmt(a["tokens_per_completed"]),
-                cost, a["cost_measured_runs"], a["evaluated"],
-                a["capped"], a["budget_stopped"], a["unavailable"], a["infra_or_interrupted"]))
+        _print_arms_markdown(g["arms"])
         if g["invalid_tasks"]:
             print("\nInvalid tasks (excluded from every arm):\n")
             for t in g["invalid_tasks"]:
@@ -1875,6 +1907,13 @@ def cmd_summarize(args):
         print("\nMisses (%d):\n" % len(g["misses"]))
         for m in g["misses"]:
             print("- %s / %s: %s" % (m["task"], m["arm"], m["reason"]))
+        sp = g["speed_tier"]
+        if sp:
+            print("\n##### %s\n" % sp["heading"])
+            _print_arms_markdown(sp["arms"])
+            print("\nMisses (%d):\n" % len(sp["misses"]))
+            for m in sp["misses"]:
+                print("- %s / %s: %s" % (m["task"], m["arm"], m["reason"]))
         print("")
     return 0
 

@@ -1,0 +1,56 @@
+{
+  "id": "spd-par-num",
+  "kind": "public",
+  "prompt": "Add four independent numeric utility modules to the more_itertools package. They share no code and no symbols; each lives in its own new file.\n\n1. more_itertools/spd_primes.py: is_prime(n) (False for n < 2); primes_upto(n) returns the sorted list of primes <= n ([] for n < 2).\n2. more_itertools/spd_gcdlcm.py: gcd_all(*nums) and lcm_all(*nums) over one or more positive integers; ValueError when called with no arguments or any value < 1.\n3. more_itertools/spd_stats.py: mean(xs), median(xs) (average of the middle two for even length) and mode(xs) (smallest value among the most frequent) over a non-empty list of numbers; ValueError on an empty list.\n4. more_itertools/spd_baseconv.py: to_base(n, base) for n >= 0 and 2 <= base <= 36 returns lower-case digits (0-9a-z), '0' for 0; from_base(s, base) is the inverse and accepts upper or lower case; ValueError on a bad base, negative n, an empty string, or a digit not valid in the base.\n\nAll functions are plain Python with no third-party dependencies. Do not modify existing modules or tests.\nCommit your work on a new branch and push it.",
+  "issue_ref": null,
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "5d946b3590bfe92f1465c1b9b9830dd434745c84"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_spd_par_num.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_spd_par_num.py",
+    "provenance": {
+      "tests/test_spd_par_num.py": "authored"
+    },
+    "sha256": {
+      "tests/test_spd_par_num.py": "a8bb5c94a17d99057468b54a4d10ef47a512e93ca9237a66ae9fe8d8c2dca1ca"
+    },
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "more_itertools/spd_primes.py",
+        "tests": [
+          "tests/test_spd_par_num.py::TestPrimes"
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "more_itertools/spd_gcdlcm.py",
+        "tests": [
+          "tests/test_spd_par_num.py::TestGcdLcm"
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "more_itertools/spd_stats.py",
+        "tests": [
+          "tests/test_spd_par_num.py::TestStats"
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "more_itertools/spd_baseconv.py",
+        "tests": [
+          "tests/test_spd_par_num.py::TestBaseConv"
+        ]
+      }
+    ]
+  },
+  "timeout_s": 2400,
+  "tier": "speed",
+  "decomposable": true
+}

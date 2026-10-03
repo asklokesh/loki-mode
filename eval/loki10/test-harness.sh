@@ -98,13 +98,17 @@
 #      4 hermetic local-git fixtures prove the checker itself: a full-pass
 #      shortcut, a collection-only "RED", a patch that will not apply, and a
 #      genuine shortcut left red
-#  21. (D61 slice 17) large tier: 8 real tasks/lg-* (4 decomposable, 4
-#      sequential by design) pass the D38 validator; the v10-parallel and
-#      v10-seq arms pin LOKI_SPEED (operator value never leaks), the
-#      parallel stub says so on stderr and in the row; summarize prints wall,
-#      completion and tokens per completed for every arm; a capped or
+#  21. (D61 slice 17, D67) speed tier: 8 authored tasks/spd-* (4
+#      decomposable, 4 sequential by design), tier "speed", validate with the
+#      D38 hidden-test checks; two-way name/tier anchor with negative controls
+#      (spd- with tier large, tier speed on a non-spd name, spd- without a
+#      boolean decomposable); measure-size runs over the unfiltered tasks dir
+#      and a temp lg- task with no refdiff still makes it exit 1; the
+#      v10-parallel and v10-seq arms pin LOKI_SPEED (operator value never
+#      leaks), the parallel stub says so on stderr and in the row; summarize
+#      prints wall, completion and tokens per completed for every arm under a
+#      "speed tier" heading in text, JSON and Markdown; a capped or
 #      budget-stopped run is never completed; missing tokens read n/a
-#      (the D34 real-task size pass skips lg-*: authored, not upstream fixes)
 #===============================================================================
 set -u
 
@@ -894,16 +898,7 @@ rc=$?
 # ---- 18. (D34) measure-size.py: real-task offline pass + negative controls
 MS="$REPO_ROOT/eval/loki10/measure-size.py"
 
-# D61 slice 17: the authored lg-* tasks are not upstream fix commits and cannot
-# meet D34's "above the largest medium" size bar; the gate is run over every
-# other real task (a view without lg-*). Flagged to the CTO in the slice report.
-mkdir -p "$T/ms-real-tasks"
-for d in "$HERE"/tasks/*/; do
-    b="$(basename "$d")"
-    case "$b" in lg-*) continue ;; esac
-    ln -s "${d%/}" "$T/ms-real-tasks/$b"
-done
-python3 "$MS" --tasks-dir "$T/ms-real-tasks" >"$T/ms-real.out" 2>&1
+python3 "$MS" >"$T/ms-real.out" 2>&1
 rc=$?
 [ "$rc" = 0 ] && pass "D34: measure-size.py offline passes on the real tiered tasks" \
     || fail "D34: measure-size.py offline rc=$rc: $(cat "$T/ms-real.out")"
@@ -1434,20 +1429,47 @@ PY
 [ "$hs_out" = "['a.py'] None None" ] && pass "D38: hidden_subset lists verbatim files; None without provenance" \
     || fail "D38: hidden_subset got: $hs_out"
 
-# ---- 21. (D61 slice 17) large eval tier
-# (A) the 8 authored lg- tasks: 4 decomposable, 4 sequential, all valid (D38).
-lg_dirs=("$HERE"/tasks/lg-*)
-lg_n="${#lg_dirs[@]}"
-lg_dec="$(python3 -c '
+# ---- 21. (D61 slice 17) speed eval tier (authored spd- tasks, D67)
+# (A) the 8 authored spd- tasks: 4 decomposable, 4 sequential, all valid (D38).
+spd_dirs=("$HERE"/tasks/spd-*)
+spd_n="${#spd_dirs[@]}"
+spd_dec="$(python3 -c '
 import json,sys
 print(sum(1 for d in sys.argv[1:] if json.load(open(d + "/task.json")).get("decomposable") is True),
-      sum(1 for d in sys.argv[1:] if json.load(open(d + "/task.json")).get("decomposable") is False))' "${lg_dirs[@]}" 2>/dev/null)"
-[ "$lg_n" = 8 ] && [ "$lg_dec" = "4 4" ] && pass "D61-17: 8 lg- tasks, 4 decomposable and 4 sequential" \
-    || fail "D61-17: lg- tasks n=$lg_n decomposable/sequential='$lg_dec'"
-lg_out="$(H validate "${lg_dirs[@]}" 2>&1)"; rc=$?
-[ "$rc" = 0 ] && pass "D61-17: every lg- task passes the D38 validator" || fail "D61-17: lg- validate rc=$rc: $lg_out"
-bad_case lgbool "t['decomposable']='yes'"
-bad_case lgbool2 "t['decomposable']=1"
+      sum(1 for d in sys.argv[1:] if json.load(open(d + "/task.json")).get("decomposable") is False))' "${spd_dirs[@]}" 2>/dev/null)"
+[ "$spd_n" = 8 ] && [ "$spd_dec" = "4 4" ] && pass "D61-17: 8 spd- tasks, 4 decomposable and 4 sequential" \
+    || fail "D61-17: spd- tasks n=$spd_n decomposable/sequential='$spd_dec'"
+spd_out="$(H validate "${spd_dirs[@]}" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && pass "D61-17: every spd- task passes the validator (speed tier keeps the D38 hidden-test checks)" || fail "D61-17: spd- validate rc=$rc: $spd_out"
+bad_case decbool "t['decomposable']='yes'"
+bad_case decbool2 "t['decomposable']=1"
+
+# Two-way name/tier anchor (D67): each control copies a real spd- task and breaks one thing.
+spd_neg() {
+    local dirname="$1" expr="$2" want="$3" d="$T/spdneg/$1" out
+    rm -rf "$d"; mkdir -p "$T/spdneg"
+    cp -R "$HERE/tasks/spd-par-text" "$d"
+    python3 -c "import json,sys; t=json.load(open(sys.argv[1])); t['id']=sys.argv[3]; $expr; json.dump(t, open(sys.argv[1],'w'))" \
+        "$d/task.json" "" "$dirname"
+    out="$(H validate "$d" 2>&1)"; rc=$?
+    if [ "$rc" != 0 ] && printf '%s' "$out" | grep -qF "$want"; then pass "D67: validate rejects $dirname ($want)"; else fail "D67: $dirname rc=$rc out=$out"; fi
+}
+spd_neg spd-badtier "t['tier']='large'" 'must declare "tier": "speed"'
+spd_neg zz-speedname "t['tier']='speed'" 'only valid on an spd- task'
+spd_neg spd-nodec "t.pop('decomposable')" 'boolean "decomposable"'
+spd_neg spd-noprov "t['hidden'].pop('provenance')" 'hidden.provenance is required'
+spd_neg spd-badsha "t['hidden']['sha256'][t['hidden']['files'][0]]='0'*64" 'sha256'
+
+# measure-size: a real lg- (D34 large) task with no refdiff still fails the gate
+# over the unfiltered tasks dir; tier speed is skipped by it.
+mkdir -p "$T/ms-lgx/tasks/lg-x" "$T/ms-lgx/refdiff"
+python3 -c "import json,sys; t=json.load(open(sys.argv[1])); t['id']='lg-x'; t['tier']='large'; json.dump(t, open(sys.argv[2],'w'))" \
+    "$TASKS/fx-greet/task.json" "$T/ms-lgx/tasks/lg-x/task.json"
+python3 "$HERE/measure-size.py" --tasks-dir "$T/ms-lgx/tasks" --refdiff-dir "$T/ms-lgx/refdiff" >"$T/ms-lgx.out" 2>&1; rc=$?
+[ "$rc" = 1 ] && grep -q "missing refdiff" "$T/ms-lgx.out" \
+    && pass "D67: a temp lg- large task with no refdiff makes measure-size exit 1" \
+    || fail "D67: measure-size lg-x rc=$rc: $(cat "$T/ms-lgx.out")"
+if grep -q "^spd-" "$T/ms-real.out"; then fail "D67: measure-size reported a speed-tier task"; else pass "D67: measure-size skips the speed tier"; fi
 
 # (B) arm table and env pinning.
 arms_out="$(python3 - "$HERE" <<'PY'
@@ -1508,28 +1530,28 @@ python3 - "$L_IN" <<'PY'
 import json, sys
 TOK = lambda n: {"input": n, "output": n, "cache_read": 0, "cache_write": 0}
 def r(task, arm, **kw):
-    d = {"run_id": task + arm, "task": task, "arm": arm, "status": "ok", "model": "m1", "harness_sha": "L1",
+    d = {"run_id": task + arm, "task": task, "arm": arm, "status": "ok", "model": "m1", "harness_sha": "L1", "tier": "speed",
          "ended": "2026-01-01T00:00:01", "completed": True, "pr_opened": True, "hidden_pass": True,
          "capped": False, "budget_stopped": False, "cost_usd": None, "time_to_pr_s": 10,
          "wall_s": 100, "tokens": TOK(500)}
     d.update(kw)
     return d
 rows = [
-    r("lg-par-text", "v10-parallel", wall_s=40, tokens=TOK(400), arm_note="STUB: decomposer not built"),
-    r("lg-par-num", "v10-parallel", wall_s=60, tokens=TOK(600), arm_note="STUB: decomposer not built"),
-    r("lg-par-text", "v10-seq", wall_s=100, tokens=TOK(500)),
-    r("lg-par-num", "v10-seq", wall_s=200, tokens=TOK(500)),
-    r("lg-par-seq", "v10-seq", wall_s=999, completed=True, capped=True),
-    r("lg-par-str", "v10-seq", wall_s=999, completed=True, budget_stopped=True),
-    r("lg-par-text", "raw-claude", wall_s=300, tokens=None),
-    r("lg-par-num", "raw-claude", wall_s=500, tokens=TOK(1000)),
+    r("spd-par-text", "v10-parallel", wall_s=40, tokens=TOK(400), arm_note="STUB: decomposer not built"),
+    r("spd-par-num", "v10-parallel", wall_s=60, tokens=TOK(600), arm_note="STUB: decomposer not built"),
+    r("spd-par-text", "v10-seq", wall_s=100, tokens=TOK(500)),
+    r("spd-par-num", "v10-seq", wall_s=200, tokens=TOK(500)),
+    r("spd-par-seq", "v10-seq", wall_s=999, completed=True, capped=True),
+    r("spd-par-str", "v10-seq", wall_s=999, completed=True, budget_stopped=True),
+    r("spd-par-text", "raw-claude", wall_s=300, tokens=None),
+    r("spd-par-num", "raw-claude", wall_s=500, tokens=TOK(1000)),
 ]
 with open(sys.argv[1], "w") as f:
     for x in rows:
         f.write(json.dumps(x) + "\n")
 PY
 LS="$(bash "$HERE/summarize" "$L_IN" --json)"
-lchk() { python3 -c "import json,sys; s=json.loads(sys.argv[1]); a=s[0]['arms']; m=s[0]['misses']; assert $2, s" "$LS" 2>/dev/null && pass "$1" || fail "$1: $LS"; }
+lchk() { python3 -c "import json,sys; s=json.loads(sys.argv[1]); a=s[0]['speed_tier']['arms']; m=s[0]['speed_tier']['misses']; assert $2, s" "$LS" 2>/dev/null && pass "$1" || fail "$1: $LS"; }
 lchk "D61-17: every arm reports wall, completion and tokens per completed" \
     "all(k in a[x] for x in ('v10-parallel','v10-seq','raw-claude') for k in ('p50_wall_s','completion_rate','tokens_per_completed')) and a['v10-parallel']['p50_wall_s'] == 40 and a['v10-parallel']['tokens_per_completed'] == 1000 and a['v10-parallel']['completion_rate'] == 1.0"
 lchk "D61-17: a capped row that claims completed is not completed" \
@@ -1537,7 +1559,7 @@ lchk "D61-17: a capped row that claims completed is not completed" \
 lchk "D61-17: a budget-stopped row that claims completed is not completed and is counted" \
     "a['v10-seq']['budget_stopped'] == 1 and a['v10-seq']['completion_rate'] == 0.5"
 lchk "D61-17: capped and budget-stopped runs are listed as misses with their reason" \
-    "{(x['task'], x['reason']) for x in m} >= {('lg-par-seq', 'capped at wall limit'), ('lg-par-str', 'stopped by its budget')}"
+    "{(x['task'], x['reason']) for x in m} >= {('spd-par-seq', 'capped at wall limit'), ('spd-par-str', 'stopped by its budget')}"
 lchk "D61-17: the capped run's wall time is excluded from the wall p50" "a['v10-seq']['p50_wall_s'] == 100"
 lchk "D61-17: tokens per completed is n/a when a completed run has no token record" \
     "a['raw-claude']['tokens_per_completed'] is None and a['raw-claude']['tokens_measured_runs'] == 1"
@@ -1559,5 +1581,13 @@ else
     fail "D61-17: markdown: $lmd"
 fi
 
+HEAD_TXT="speed tier (authored, D67; not a large-tier result)"
+lchk "D67: JSON puts tier speed rows under speed_tier with the heading, not in the main arms" \
+    "s[0]['speed_tier']['heading'] == '$HEAD_TXT' and s[0]['arms'] == {}"
+if printf '%s' "$ltxt" | grep -qF "  $HEAD_TXT" && printf '%s' "$lmd" | grep -qF "##### $HEAD_TXT"; then
+    pass "D67: text and Markdown summaries show the speed tier heading"
+else
+    fail "D67: speed tier heading missing: $ltxt $lmd"
+fi
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
