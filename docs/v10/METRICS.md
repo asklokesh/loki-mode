@@ -579,3 +579,9 @@ Raw rows: ~/loki-ci-logs/d50-{raw-haiku,raw-sonnet,v10-haiku,v10-sonnet}/results
 | pub-humanize-174 | 0/3 | 2/3 |
 | aiq-52-searchbar (no_change_needed) | 0/3 | 2/3 |
 Two of the four baseline losses were noise; two are real. Internal measurement, not for publication until the fixes are re-measured.
+
+## Cost rate re-baseline (MW-1)
+| Date | Model | Input $/MTok | Output $/MTok | Cache read | Cache write 5m | Context | Source |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-10-03 | claude-sonnet-5-5 (and claude-sonnet-5, now the standard price) | 2 (was 3 in loki-ts/data/model-pricing.json) | 10 (was 15) | 0.20 | 2.50 | 1M, standard pricing | platform.claude.com/docs/en/about-claude/pricing, read 2026-10-03 |
+Cost per completed task for sonnet arms measured before this date used the old 3/15 table; they overstate by 1.5x and are not comparable without rescaling.

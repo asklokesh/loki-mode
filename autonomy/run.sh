@@ -7581,7 +7581,7 @@ _write_pricing_json() {
     "fable":           {"input": 10.00, "output": 50.00, "label": "Fable 5 (top, 2x Opus)", "provider": "claude"},
     "claude-fable-5":  {"input": 10.00, "output": 50.00, "label": "Fable 5 (top, 2x Opus)", "provider": "claude"},
     "opus":            {"input": 5.00,  "output": 25.00, "label": "Opus (latest)",   "provider": "claude"},
-    "sonnet":          {"input": 3.00,  "output": 15.00, "label": "Sonnet (latest)", "provider": "claude"},
+    "sonnet":          {"input": 2.00,  "output": 10.00, "label": "Sonnet (latest)", "provider": "claude"},
     "haiku":           {"input": 1.00,  "output": 5.00,  "label": "Haiku (latest)",  "provider": "claude"},
     "gpt-5.3-codex":   {"input": 1.75,  "output": 14.00, "label": "GPT-5.3 Codex", "provider": "codex"}
   }
@@ -20250,7 +20250,7 @@ pricing = {
     'fable': {'input': 10.00, 'output': 50.00},
     'claude-fable-5': {'input': 10.00, 'output': 50.00},
     'opus': {'input': 5.00, 'output': 25.00},
-    'sonnet': {'input': 3.00, 'output': 15.00},
+    'sonnet': {'input': 2.00, 'output': 10.00},
     'haiku': {'input': 1.00, 'output': 5.00},
     'gpt-5.3-codex': {'input': 1.75, 'output': 14.00},
     'gpt-5.6-sol': {'input': 2.50, 'output': 20.00},
