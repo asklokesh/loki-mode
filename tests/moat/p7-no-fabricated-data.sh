@@ -15,6 +15,15 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 #                                     falls back to hardcoded or generated sample
 #                                     data, no Math.random() feeds a metric, and
 #                                     no metric prop is fed a hardcoded number
+#   P7.cp-unmeasured-never-fabricated the Control Plane (loki control serve) never
+#                                     invents spend or run data: see the CP leg
+#                                     block (case_cp_unmeasured) for the route map
+#
+# LEGACY-LEG(CPE24-L5): case_dashboard_routes, the dashboard-ui parts of
+# case_sample_panels and case_cost_zero, and cost_server_leg drive the legacy
+# dashboard (dashboard/server.py, port 57374). The delete slice removes those;
+# case_cp_unmeasured proves the property on the Control Plane and stays.
+#
 #   P7.unmeasured-cost-never-zero     no cost rendering path turns an unmeasured
 #                                     (null/undefined) cost into 0 or "$0.00",
 #                                     and the budget, cost-timeline and fleet
@@ -61,6 +70,7 @@ MOAT_MAIN_PID=$$
 moat_cleanup() {
     # Only the top-level shell removes the directory, never a subshell.
     [ "${BASHPID:-$$}" = "$MOAT_MAIN_PID" ] || return 0
+    cp_stop
     rm -rf -- "$MOAT_TMP"
 }
 trap moat_cleanup EXIT
@@ -4893,6 +4903,146 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Control Plane leg (CPE24-L5): P7.cp-unmeasured-never-fabricated
+#
+# The same property as P7.unmeasured-cost-never-zero, proven on the Control Plane
+# (packages/control-plane, `loki control serve`) that replaces the legacy
+# dashboard. The CP has no cost, budget, fleet, context, token-economics,
+# learning or gate routes of its own; its whole data surface is the run
+# projection, so the route mapping is:
+#   legacy /api/cost, /api/budget, /api/cost/timeline, /api/fleet/runs,
+#   /api/fleet/summary (spend per run and in total)
+#       -> CP GET /v1/runs and GET /v1/runs/:source/:run: cost_usd, partial_usd,
+#          measured_sessions, total_sessions, input_tokens, output_tokens
+#   legacy "no run data yet" (an empty fleet, no cost files)
+#       -> CP GET /v1/runs on an empty database: {runs: [], total: 0}
+#   legacy honest-null metadata (model, wall time, verdict not yet known)
+#       -> the same CP rows: origin_repo, provider, model, wall_s, verdict,
+#          effective_verdict are null when no event carried them
+# NO CP EQUIVALENT today (blockers for the legacy delete slice, never faked here):
+#   /metrics, /api/audit, /api/context, /api/memory/economics,
+#   /api/learning/metrics, /api/council/gate, /api/session/status|memory,
+#   /api/fleet/summary totals (the CP exposes a run count, no spend total).
+# Scenarios mirror the legacy leg: unmeasured (no cost event, and a cost event
+# with no usd), measured, measured-zero (the control that a real 0 is not nulled)
+# and mixed (a lower bound that must not read as a total). A fix that nulls
+# every zero, or reads a lower bound as a total, fails.
+# Server: a real `loki control serve` with a run-owned HOME, a free port and
+# LOKI_NO_BROWSER=1; only the recorded PID is stopped (pid file, so the EXIT
+# trap can reap it even when the case subshell died).
+cp_free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
+cp_stop() { # stops only the PID recorded in $MOAT_TMP/cp.pid, then waits for it
+    local pid
+    pid="$(cat "$MOAT_TMP/cp.pid" 2>/dev/null || true)"
+    [ -n "$pid" ] || return 0
+    kill "$pid" 2>/dev/null || true
+    local i=0
+    while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    if kill -0 "$pid" 2>/dev/null; then kill -9 "$pid" 2>/dev/null || true; fi
+    rm -f "$MOAT_TMP/cp.pid"
+}
+cp_p7_script() {
+    cat <<'EOF'
+const [base] = process.argv.slice(2);
+const SRC = "abcdef0123456789";
+const ev = (run: string, seq: number, type: string, data: object, stage: string | null = null) => ({ v: 1, seq, ts: `2026-10-03T00:00:${String(seq).padStart(2, "0")}.000Z`, run, type, stage, data });
+const mk = (run: string, cost: object[], done = true) => {
+  const evs: any[] = [ev(run, 0, "run.started", {})];
+  for (const c of cost) evs.push(ev(run, evs.length, "cost", c, "build"));
+  if (done) evs.push(ev(run, evs.length, "run.completed", { verdict: "FAILED", not_proven: [] }));
+  return evs;
+};
+const runs: Record<string, any[]> = {
+  "c-nocost": mk("c-nocost", []),
+  "c-unpriced": mk("c-unpriced", [{ model: "x" }]),
+  "c-measured": mk("c-measured", [{ usd: 2.5, input_tokens: 1000, output_tokens: 500 }]),
+  "c-zero": mk("c-zero", [{ usd: 0, input_tokens: 9412, output_tokens: 11008 }]),
+  "c-mixed": mk("c-mixed", [{ usd: 2.5, input_tokens: 1000, output_tokens: 500 }, { model: "x" }]),
+  "c-running": mk("c-running", [], false),
+};
+// scenario -> [cost_usd, partial_usd, measured_sessions, total_sessions, input_tokens, output_tokens]
+const WANT: Record<string, (number | null)[]> = {
+  "c-nocost": [null, 0, 0, 0, 0, 0],
+  "c-unpriced": [null, 0, 0, 1, 0, 0],
+  "c-measured": [2.5, 2.5, 1, 1, 1000, 500],
+  "c-zero": [0, 0, 1, 1, 9412, 11008],
+  "c-mixed": [null, 2.5, 1, 2, 1000, 500],
+  "c-running": [null, 0, 0, 0, 0, 0],
+};
+const bad: string[] = [];
+const get = async (p: string) => { const r = await fetch(base + p); return { status: r.status, body: (await r.json()) as any }; };
+const e0 = await get("/v1/runs");
+console.log("EMPTY " + JSON.stringify(e0.body));
+if (e0.status !== 200 || !Array.isArray(e0.body.runs) || e0.body.runs.length !== 0 || e0.body.total !== 0 || e0.body.next_cursor !== null) bad.push(`empty database: /v1/runs = ${JSON.stringify(e0.body)}, want {runs: [], total: 0, next_cursor: null}`);
+const e1 = await get(`/v1/runs/${SRC}/nothing`);
+if (e1.status !== 404) bad.push(`empty database: an unknown run answered HTTP ${e1.status}, want 404 (no invented row)`);
+for (const [n, evs] of Object.entries(runs)) {
+  const r = await fetch(base + "/v1/ingest", { method: "POST", body: JSON.stringify({ source: SRC, run_id: n, events: evs }) });
+  if (r.status !== 200) bad.push(`ingest ${n} -> HTTP ${r.status}`);
+}
+const list = await get("/v1/runs?limit=200");
+if (list.body.total !== Object.keys(runs).length) bad.push(`/v1/runs total = ${list.body.total}, want ${Object.keys(runs).length}`);
+const KEYS = ["cost_usd", "partial_usd", "measured_sessions", "total_sessions", "input_tokens", "output_tokens"];
+const NULLS = ["origin_repo", "issue_ref", "task_source", "group_id", "unit_id", "provider", "model", "pr_url", "pr_draft", "wall_s"];
+for (const n of Object.keys(runs)) {
+  const d = (await get(`/v1/runs/${SRC}/${n}`)).body, l = list.body.runs?.find((x: any) => x.run_id === n);
+  console.log(`ROW ${n} ` + JSON.stringify(KEYS.map((k) => d[k])));
+  for (const [where, row] of [["detail", d], ["list", l]] as const) {
+    if (!row) { bad.push(`${n}: missing from ${where}`); continue; }
+    KEYS.forEach((k, i) => { if (row[k] !== WANT[n]![i]) bad.push(`${n} ${where} ${k} = ${JSON.stringify(row[k])}, want ${JSON.stringify(WANT[n]![i])}`); });
+    for (const k of NULLS) if (row[k] !== null) bad.push(`${n} ${where} ${k} = ${JSON.stringify(row[k])}, want null (no event carried it)`);
+    // internal consistency: a number is never a claim the counts do not back
+    if (row.cost_usd !== null && !(row.measured_sessions > 0 && row.measured_sessions === row.total_sessions)) bad.push(`${n} ${where}: cost_usd ${row.cost_usd} without every session measured`);
+    if (row.measured_sessions === 0 && (row.partial_usd !== 0 || row.cost_usd !== null)) bad.push(`${n} ${where}: nothing measured but spend is ${row.cost_usd}/${row.partial_usd}`);
+    if (row.partial_usd > 0 && !(row.measured_sessions > 0)) bad.push(`${n} ${where}: partial_usd ${row.partial_usd} with no measured session`);
+  }
+}
+const run = (await get(`/v1/runs/${SRC}/c-running`)).body;
+for (const k of ["ended_at", "verdict", "effective_verdict"]) if (run[k] !== null) bad.push(`c-running ${k} = ${JSON.stringify(run[k])}, want null (not finished)`);
+if (run.status !== "running") bad.push(`c-running status = ${run.status}`);
+for (const b of bad) console.log("BAD " + b);
+console.log("CHECKED");
+process.exit(bad.length ? 1 : 0);
+EOF
+}
+case_cp_unmeasured() {
+    if ! command -v bun >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then echo "FAIL|prerequisite missing: bun and curl"; return 0; fi
+    [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ] || { echo "FAIL|prerequisite missing: loki-ts/dist/loki.js (cd loki-ts && bun run build)"; return 0; }
+    if [ ! -d "$REPO_ROOT/packages/control-plane/node_modules/hono" ] && [ ! -f "$REPO_ROOT/packages/control-plane/dist/server.js" ]; then
+        echo "FAIL|prerequisite missing: packages/control-plane node_modules (cd packages/control-plane && bun install --frozen-lockfile)"; return 0
+    fi
+    local d="$MOAT_TMP/cp" port pid i out rc
+    mkdir -p "$d/home" "$d/cwd"
+    cp_p7_script > "$d/cp-p7.ts"
+    port="$(cp_free_port)"
+    (cd "$d/cwd" && exec env -u LOKI_CONTROL HOME="$d/home" LOKI_NO_BROWSER=1 LOKI_CONTROL_AUTOINGEST=0 \
+        bun "$REPO_ROOT/loki-ts/dist/loki.js" control serve --port "$port" > "$d/serve.out" 2> "$d/serve.err") &
+    pid=$!
+    printf '%s\n' "$pid" > "$MOAT_TMP/cp.pid"
+    i=0
+    while [ "$i" -lt 150 ]; do
+        curl -fsS "http://127.0.0.1:$port/ready" >/dev/null 2>&1 && break
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 0.2; i=$((i + 1))
+    done
+    if ! curl -fsS "http://127.0.0.1:$port/ready" >/dev/null 2>&1; then
+        cp_stop
+        echo "FAIL|control plane did not become ready: $(tail -c 200 "$d/serve.err" "$d/serve.out" 2>/dev/null | tr '\n' ' ')"; return 0
+    fi
+    rc=0
+    out="$(bun "$d/cp-p7.ts" "http://127.0.0.1:$port" 2> "$d/probe.err")" || rc=$?
+    cp_stop
+    printf '%s\n' "$out" | sed 's/^/  cp[unmeasured] /' >&2
+    if ! grep -qx 'CHECKED' <<<"$out"; then
+        echo "FAIL|probe did not run (rc=$rc): $(tail -c 200 "$d/probe.err" | tr '\n' ' ')"; return 0
+    fi
+    if [ "$rc" != 0 ]; then
+        echo "FAIL|$(grep '^BAD ' <<<"$out" | head -6 | sed 's/^BAD //' | tr '\n' ';')"; return 0
+    fi
+    echo "PASS|empty database answers an empty list and total 0 (an unknown run is 404); unmeasured runs read cost_usd null with 0 measured sessions, measured-zero reads 0 (not null), measured reads the number, mixed reads cost_usd null with a measured lower bound (1 of 2 sessions), absent metadata and an unfinished run's verdict are null; no CP route exists for /metrics, /api/audit, context, token economics, learning or gate rows (blockers for the legacy delete)"
+}
+
+# ---------------------------------------------------------------------------
 # Runner: exactly one CASE line per case, even when a case function dies.
 # ---------------------------------------------------------------------------
 EMITTED=""
@@ -4922,8 +5072,9 @@ START_S=$SECONDS
 run_case P7.webapp-client-routes-exist "web-app client paths resolve to real web-app/server.py routes" case_webapp_routes
 run_case P7.no-sample-data-panels "no production page reaches sample, random or hardcoded-metric data panels" case_sample_panels
 run_case P7.unmeasured-cost-never-zero "no cost path, client or server, turns unmeasured cost into 0 or \$0.00" case_cost_zero
+run_case P7.cp-unmeasured-never-fabricated "Control Plane (loki control serve): an empty database and unmeasured runs read null, 0 with zero measured sessions or an empty list, never an invented number; measured-zero stays 0 and a mixed run is a lower bound, not a total" case_cp_unmeasured
 
-for id in P7.webapp-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero; do
+for id in P7.webapp-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero P7.cp-unmeasured-never-fabricated; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac
 done
 diag "runtime $((SECONDS - START_S))s"

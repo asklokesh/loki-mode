@@ -31,7 +31,7 @@ T_START="$(date +%s)"
 
 RUN="$(mktemp -d "${TMPDIR:-/tmp}/moat-p2.XXXXXX")" || { echo "moat-p2: cannot create temp dir" >&2; exit 1; }
 RUN="$(cd "$RUN" && pwd -P)"
-trap 'rm -rf "$RUN"' EXIT
+trap 'cp_stop; rm -rf "$RUN"' EXIT
 mkdir -p "$RUN/home" "$RUN/tmp" "$RUN/stub"
 # Read before HOME moves: a user-site fastapi (the console-verdict case drives
 # the real dashboard app) stays importable through PYTHONUSERBASE.
@@ -1131,6 +1131,11 @@ case_checklist_not_shadowed() {
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
 
+# LEGACY-LEG(CPE24-L5): case_console_verdict and its run_case line drive the legacy
+# dashboard (dashboard/server.py, /api/proofs/<id>, /api/v2/audit/verify) and the
+# legacy dashboard-ui audit viewer. The delete slice removes that case (and the
+# cv_old_* helpers); case_cp_verdict further down proves the same property on the
+# Control Plane and stays.
 # P2.console-verdict-needs-computed-result (BACKLOG 113). A console verdict
 # word (verified, valid, proven, tampered) must have a result the server
 # COMPUTED behind it. Four legs, every failure collected, each with controls:
@@ -1374,6 +1379,183 @@ EOF
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
 
+# --- Control Plane leg (CPE24-L5) ----------------------------------------------
+# P2.cp-verdict-honest-never-upgraded: the same property as the console-verdict
+# case, proven on the Control Plane (packages/control-plane, `loki control serve`)
+# that replaces the legacy dashboard. Route mapping:
+#   legacy GET /api/proofs/<id> integrity_check.status  ->  CP GET /v1/runs/:source/:run
+#                                                           and /v1/runs/:source:run
+#                                                           effective_verdict (FC-08)
+#   legacy GET /api/v2/audit/verify verified/status     ->  CP GET /v1/runs rows and the
+#                                                           ?verdict= filter (a log that fails
+#                                                           integrity reads TAMPERED; no seal
+#                                                           reads UNVERIFIED)
+# The CP never sees receipt.json, only the ingested event log, so a "tampered
+# receipt" here is a log whose receipt.sealed / log.sealed lines were edited
+# after sealing. FC-08 effectiveVerdict is the rule under test: plain VERIFIED
+# only for an attested run whose seal a configured key checked.
+# Runs are ingested over POST /v1/ingest into a real server booted with a
+# run-owned HOME, a free port and LOKI_NO_BROWSER=1; only the recorded PID is
+# stopped. Controls: an honest signed run reads VERIFIED (so the probe can see a
+# pass), an honest FAILED run stays FAILED, a server with no key reads
+# "(signature not checked)", and ?verdict=VERIFIED lists exactly the honest run.
+cp_free_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()'; }
+CP_PID=""
+cp_stop() { # stops only the recorded PID, then waits for it
+    [ -n "$CP_PID" ] || return 0
+    kill "$CP_PID" 2>/dev/null || true
+    local i=0
+    while kill -0 "$CP_PID" 2>/dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+    if kill -0 "$CP_PID" 2>/dev/null; then kill -9 "$CP_PID" 2>/dev/null || true; fi
+    wait "$CP_PID" 2>/dev/null || true
+    CP_PID=""
+}
+# cp_boot <dir> <port> [VAR=value...] ; sets CP_PID, returns 1 when /ready never answered
+cp_boot() {
+    local dir="$1" port="$2"; shift 2
+    mkdir -p "$dir/home" "$dir/cwd"
+    (cd "$dir/cwd" && exec env -u LOKI_CONTROL HOME="$dir/home" LOKI_NO_BROWSER=1 LOKI_CONTROL_AUTOINGEST=0 "$@" \
+        bun "$REPO_ROOT/loki-ts/dist/loki.js" control serve --port "$port" > "$dir/serve.out" 2> "$dir/serve.err") &
+    CP_PID=$!
+    local i=0
+    while [ "$i" -lt 150 ]; do
+        curl -fsS "http://127.0.0.1:$port/ready" >/dev/null 2>&1 && return 0
+        kill -0 "$CP_PID" 2>/dev/null || break
+        sleep 0.2; i=$((i + 1))
+    done
+    return 1
+}
+cp_p2_script() {
+    cat <<'EOF'
+import { createHash, createPrivateKey, createPublicKey, sign } from "node:crypto";
+import { writeFileSync } from "node:fs";
+const [mode, base, pemPath] = process.argv.slice(2);
+const SRC = "abcdef0123456789";
+const seeded = (tag: string) => { const privateKey = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), createHash("sha256").update(tag).digest()]), format: "der", type: "pkcs8" }); return { privateKey, publicKey: createPublicKey(privateKey) }; };
+const trusted = seeded("cp-main"), attacker = seeded("cp-attacker");
+const kidOf = (pub: any) => createHash("sha256").update(`{"crv":"Ed25519","kty":"OKP","x":"${pub.export({ format: "jwk" }).x}"}`).digest("base64url");
+if (mode === "pem") { writeFileSync(pemPath!, trusted.publicKey.export({ type: "spki", format: "pem" })); process.exit(0); }
+const ev = (run: string, seq: number, type: string, data: object, stage: string | null = null) => ({ v: 1, seq, ts: `2026-10-03T00:00:${String(seq).padStart(2, "0")}.000Z`, run, type, stage, data });
+const lineOf = (e: any) => JSON.stringify({ v: e.v, seq: e.seq, ts: e.ts, run: e.run, type: e.type, stage: e.stage, data: e.data });
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
+// An honest signed run exactly as the engine writes it: run.started, receipt.sealed, run.completed, signed log.sealed.
+function signed(run: string, verdict: string, key = trusted) {
+  const kid = kidOf(key.publicKey);
+  const start = ev(run, 0, "run.started", { task_source: "text" });
+  const sealed = ev(run, 1, "receipt.sealed", { path: "/x/receipt.json", receipt_sha256: sha(run + verdict), signed: true, kid, verdict }, "seal");
+  const done = ev(run, 2, "run.completed", { verdict, not_proven: [] });
+  const logSha = sha([start, sealed, done].map(lineOf).join("\n") + "\n");
+  const ls = ev(run, 3, "log.sealed", { kid, events_sha256: logSha, tampered: false, sig: sign(null, Buffer.from(`${logSha}:false`), key.privateKey).toString("base64url") });
+  return [start, sealed, done, ls];
+}
+function unsigned(run: string, verdict: string, withReceipt = true) {
+  const evs = [ev(run, 0, "run.started", { task_source: "text" })];
+  if (withReceipt) evs.push(ev(run, evs.length, "receipt.sealed", { path: "/x/receipt.json", receipt_sha256: sha(run), signed: false, verdict }, "seal"));
+  evs.push(ev(run, evs.length, "run.completed", { verdict, not_proven: [] }));
+  return evs;
+}
+const runs: Record<string, any[]> = {};
+runs["p2-honest"] = signed("p2-honest", "VERIFIED");
+runs["p2-honest-failed"] = signed("p2-honest-failed", "FAILED");
+runs["p2-unsigned"] = unsigned("p2-unsigned", "VERIFIED");
+runs["p2-unsigned-lower"] = unsigned("p2-unsigned-lower", "verified");
+runs["p2-unsigned-satisfied"] = unsigned("p2-unsigned-satisfied", "ALREADY_SATISFIED");
+runs["p2-no-receipt"] = unsigned("p2-no-receipt", "VERIFIED", false);
+{ // receipt.sealed edited after the log was sealed
+  const e = signed("p2-edited-receipt", "VERIFIED");
+  e[1] = { ...e[1], data: { ...e[1].data, receipt_sha256: sha("swapped") } };
+  runs["p2-edited-receipt"] = e;
+}
+runs["p2-forged-key"] = signed("p2-forged-key", "VERIFIED", attacker); // sealed with a key nobody configured
+{ // the supervisor saw events.jsonl modified
+  const e = unsigned("p2-tamper-detected", "VERIFIED");
+  e.splice(1, 0, ev("p2-tamper-detected", 1, "tamper.detected", {}));
+  e.forEach((x, i) => { x.seq = i; x.ts = `2026-10-03T00:00:${String(i).padStart(2, "0")}.000Z`; });
+  runs["p2-tamper-detected"] = e;
+}
+{ // a FAILED run with a VERIFIED verdict appended after the seal
+  const e = signed("p2-appended", "FAILED");
+  e.push(ev("p2-appended", 4, "run.completed", { verdict: "VERIFIED", not_proven: [] }));
+  runs["p2-appended"] = e;
+}
+runs["p2-running"] = [ev("p2-running", 0, "run.started", { task_source: "text" })];
+
+const bad: string[] = [];
+const get = async (p: string) => { const r = await fetch(base + p); return { status: r.status, body: (await r.json()) as any }; };
+for (const [name, evs] of Object.entries(runs)) {
+  const r = await fetch(base + "/v1/ingest", { method: "POST", body: JSON.stringify({ source: SRC, run_id: name, events: evs }) });
+  if (r.status !== 200) bad.push(`ingest ${name} -> HTTP ${r.status}`);
+}
+const eff: Record<string, string | null> = {};
+for (const name of Object.keys(runs)) {
+  const a = await get(`/v1/runs/${SRC}/${name}`), b = await get(`/v1/runs/${SRC}:${name}`);
+  eff[name] = a.body?.effective_verdict ?? null;
+  console.log(`RUN ${name} effective=${JSON.stringify(eff[name])} raw=${JSON.stringify(a.body?.verdict)} tampered=${a.body?.tampered} attested=${a.body?.attested} sig_checked=${a.body?.sig_checked}`);
+  if (a.status !== 200 || b.status !== 200) bad.push(`${name}: detail routes answered ${a.status}/${b.status}`);
+  else if (b.body.effective_verdict !== eff[name]) bad.push(`${name}: /v1/runs/:id says ${b.body.effective_verdict}, /v1/runs/:source/:run says ${eff[name]}`);
+}
+const list = (await get("/v1/runs?limit=200")).body;
+const inList = (n: string) => list.runs?.find((x: any) => x.run_id === n)?.effective_verdict;
+for (const name of Object.keys(runs)) if (inList(name) !== eff[name]) bad.push(`${name}: list row says ${JSON.stringify(inList(name))}, detail says ${JSON.stringify(eff[name])}`);
+const filt = async (v: string) => ((await get(`/v1/runs?limit=200&verdict=${encodeURIComponent(v)}`)).body.runs ?? []).map((x: any) => x.run_id).sort();
+
+if (mode === "keyed") {
+  const want: Record<string, string | null> = {
+    "p2-honest": "VERIFIED", // positive control: the probe can see a pass
+    "p2-honest-failed": "FAILED", // never upgraded
+    "p2-unsigned": "UNVERIFIED", "p2-unsigned-lower": "UNVERIFIED", "p2-unsigned-satisfied": "UNVERIFIED",
+    "p2-no-receipt": "TAMPERED", "p2-edited-receipt": "TAMPERED", "p2-forged-key": "TAMPERED",
+    "p2-tamper-detected": "TAMPERED", "p2-appended": "TAMPERED",
+    "p2-running": null,
+  };
+  for (const [n, w] of Object.entries(want)) if (eff[n] !== w) bad.push(`${n}: effective_verdict ${JSON.stringify(eff[n])}, want ${JSON.stringify(w)}`);
+  for (const [n, v] of Object.entries(eff)) if (n !== "p2-honest" && typeof v === "string" && /^(verified|already_satisfied)/i.test(v)) bad.push(`${n} shows ${v}, a success word without an attested, signature-checked seal`);
+  const ver = await filt("VERIFIED"), tam = await filt("TAMPERED"), unv = await filt("UNVERIFIED");
+  if (JSON.stringify(ver) !== JSON.stringify(["p2-honest"])) bad.push(`?verdict=VERIFIED lists ${JSON.stringify(ver)}, want only p2-honest`);
+  const wantT = ["p2-appended", "p2-edited-receipt", "p2-forged-key", "p2-no-receipt", "p2-tamper-detected"];
+  if (JSON.stringify(tam) !== JSON.stringify(wantT)) bad.push(`?verdict=TAMPERED lists ${JSON.stringify(tam)}, want ${JSON.stringify(wantT)}`);
+  const wantU = ["p2-unsigned", "p2-unsigned-lower", "p2-unsigned-satisfied"];
+  if (JSON.stringify(unv) !== JSON.stringify(wantU)) bad.push(`?verdict=UNVERIFIED lists ${JSON.stringify(unv)}, want ${JSON.stringify(wantU)}`);
+  const miss = await get(`/v1/runs/${SRC}/no-such-run`);
+  if (miss.status !== 404 || miss.body?.effective_verdict !== undefined) bad.push(`an unknown run answered HTTP ${miss.status} with a verdict`);
+} else { // "nokey": no public key configured, so no signature can be checked
+  if (eff["p2-honest"] === "VERIFIED") bad.push("no key configured: p2-honest reads plain VERIFIED, a signature nobody checked");
+  if (eff["p2-honest"] !== "VERIFIED (signature not checked)") bad.push(`no key configured: p2-honest reads ${JSON.stringify(eff["p2-honest"])}, want "VERIFIED (signature not checked)"`);
+  if (JSON.stringify(await filt("VERIFIED")) !== "[]") bad.push("no key configured: ?verdict=VERIFIED is not empty");
+  for (const n of ["p2-unsigned", "p2-unsigned-lower", "p2-unsigned-satisfied"]) if (eff[n] !== "UNVERIFIED") bad.push(`no key configured: ${n} reads ${JSON.stringify(eff[n])}, want UNVERIFIED`);
+  for (const n of ["p2-no-receipt", "p2-edited-receipt", "p2-tamper-detected", "p2-appended"]) if (eff[n] !== "TAMPERED") bad.push(`no key configured: ${n} reads ${JSON.stringify(eff[n])}, want TAMPERED`);
+}
+for (const b of bad) console.log("BAD " + b);
+console.log("CHECKED " + mode);
+process.exit(bad.length ? 1 : 0);
+EOF
+}
+case_cp_verdict() {
+    need bun curl python3 || return
+    [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ] || { _why="prerequisite missing: loki-ts/dist/loki.js (cd loki-ts && bun run build)"; return; }
+    if [ ! -d "$REPO_ROOT/packages/control-plane/node_modules/hono" ] && [ ! -f "$REPO_ROOT/packages/control-plane/dist/server.js" ]; then
+        _why="prerequisite missing: packages/control-plane node_modules (cd packages/control-plane && bun install --frozen-lockfile)"; return
+    fi
+    local d="$RUN/cp" bad="" mode port out rc line
+    mkdir -p "$d"
+    cp_p2_script > "$d/cp-p2.ts"
+    bun "$d/cp-p2.ts" pem "" "$d/pub.pem" || { _why="could not write the test public key"; return; }
+    for mode in keyed nokey; do
+        port="$(cp_free_port)"
+        if ! cp_boot "$d/$mode" "$port" "LOKI_CP_RECEIPT_PUBKEYS=$([ "$mode" = keyed ] && echo "$d/pub.pem")"; then
+            bad="$bad [$mode: control plane did not become ready: $(tail -c 200 "$d/$mode/serve.err" "$d/$mode/serve.out" 2>/dev/null | tr '\n' ' ')]"; cp_stop; continue
+        fi
+        rc=0
+        out="$(bun "$d/cp-p2.ts" "$mode" "http://127.0.0.1:$port" "" 2> "$d/$mode.err")" || rc=$?
+        printf '%s\n' "$out" | sed "s/^/  cp-verdict[$mode]: /" >&2
+        cp_stop
+        printf '%s\n' "$out" | grep -qx "CHECKED $mode" || bad="$bad [$mode: probe did not run (rc=$rc): $(tail -c 200 "$d/$mode.err" | tr '\n' ' ')]"
+        while IFS= read -r line; do bad="$bad [$mode: ${line#BAD }]"; done < <(printf '%s\n' "$out" | grep '^BAD ')
+        if [ "$rc" != 0 ] && [ -z "$bad" ]; then bad="$bad [$mode: probe exited $rc]"; fi
+    done
+    if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
+}
+
 # --- run ----------------------------------------------------------------------
 run_case P2.advisory-only-never-verified "advisory/model-only gate passes never yield a VERIFIED headline (generator + verifier)" case_advisory_only
 run_case P2.unknown-gate-fails-closed "an unrecognized gate name or status cannot read green (generator + verifier)" case_unknown_gate
@@ -1391,6 +1573,8 @@ run_case P2.council-readers-no-user-site-pth "a .pth planted in user site-packag
 run_case P2.checklist-verify-not-shadowed "a json.py/sitecustomize.py in the agent's repo (hostile PYTHONPATH) cannot turn failing PRD checklist checks green (checklist-verify.py, summary, council evidence, hard gate)" case_checklist_not_shadowed
 run_case P2.exit-zero-with-failures-not-pass "a runner that exits 0 while its own summary reports failures (jest 'Tests: 1 failed') is recorded pass:false with no unit-tests.pass, and the council blocks it (bash); a recorded failed_count > 0 (or legacy failed > 0) with pass:true fails the council evidence gate and the Bun test gate alike, while 0, null and a missing count still pass on both" case_exit_zero_with_failures
 run_case P2.console-verdict-needs-computed-result "a console verdict word needs a computed result: the receipt route carries the verifier's integrity_check (tampered, not_verified, verified on a real generator receipt), the audit verify route says nothing_checked for zero files, and the receipt panel never affirms without a server-verified result; the client probe flags the verbatim pre-fix lines" case_console_verdict
+
+run_case P2.cp-verdict-honest-never-upgraded "Control Plane (loki control serve): effective_verdict reads plain VERIFIED only for an attested, signature-checked seal; a tampered log (edited receipt.sealed, forged key, supervisor tamper flag, appended verdict, no receipt) reads TAMPERED, an unsigned run reads UNVERIFIED (also lowercase and ALREADY_SATISFIED), a FAILED run is never upgraded, no configured key reads signature-not-checked, and ?verdict=VERIFIED lists only the honest run" case_cp_verdict
 
 printf 'moat-p2: finished in %ss\n' "$(( $(date +%s) - T_START ))" >&2
 exit 0
