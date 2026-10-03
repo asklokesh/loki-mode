@@ -11,14 +11,14 @@ export const UNMEASURED_REASON = "executed count unmeasured (Loki could not pars
 /** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
  *  line, cargo "test result:", go "[no test"), never test names or captured stdout above it; null = no summary. 0 = empty or
  *  all skipped, never a pass (A-111). Node counts a testless file as one pseudo-test named after the file: discounted only when its name is the path under test (A-111b). */
-export function ran(raw: string, path?: string): number | null {
+export function ran(raw: string, path?: string, ok?: boolean): number | null {
   const out = stripAnsi(raw);
   const n = (s: string, re: RegExp): number => +(s.match(re)?.[1] ?? 0);
   const blk = out.trimEnd().match(/(?:^|\n)((?:(?:#|\u2139) \w+ [\d.]+(?:\n|$)){5,})$/)?.[1];
   if (blk) { const c = n(blk, /(?:#|\u2139) pass (\d+)/) + n(blk, /(?:#|\u2139) fail (\d+)/); const nm = out.match(/^(?:ok \d+ - |\u2714 )(\S+\.[cm]?[jt]s)(?: \(|$)/m)?.[1]; return c === 1 && nm && (!path || basename(nm) === basename(path)) ? 0 : c; }
   const cg = cargoTrailer(out);
   if (cg.length) return cg.reduce((t, l) => t + n(l, /(\d+) passed/) + n(l, /(\d+) failed/), 0);
-  const g = goCount(out);
+  const g = goCount(out, ok);
   if (g !== undefined) return g;
   const tail = tailLines(out);
   const l = tail.filter((x) => /^(?:=+ )?(?:\d+ \w+.*|no tests ran) in [\d.]+s|^\s*Tests?:?\s+\d|^No tests found/.test(x) && (!/^\s*Tests?:?\s+\d/.test(x) || tail.some((y) => /^\s*Test (?:Files|Suites):?\s+\d/.test(y)))).pop(); // forge guard: a bare "Tests: 5 passed" needs its "Test Files|Suites" sibling in the trailer
@@ -58,18 +58,40 @@ function unittestCount(out: string): number | null {
   if (!r || !/^(?:OK|FAILED)\b/.test(v)) return null;
   return Math.max(0, +r[1]! - +(v.match(/skipped=(\d+)/)?.[1] ?? 0) - +(v.match(/expected failures=(\d+)/)?.[1] ?? 0));
 }
+/** go test -json: every stdout line is one JSON event, so printed text cannot forge a result. Counts top-level tests with a "run" event
+ *  and a final pass or fail; a test that ever skipped never counts. null = not -json output; a fail event under exit 0 is unmeasured (null). */
+function goJsonCount(out: string, ok?: boolean): number | null | undefined {
+  const ls = out.split("\n").filter((x) => x.trim());
+  if (!ls.length || !ls.every((x) => x.startsWith("{"))) return undefined;
+  const ev: { Action?: string; Test?: string; Package?: string }[] = [];
+  try { for (const l of ls) ev.push(JSON.parse(l)); } catch { return undefined; }
+  if (!ev.every((e) => typeof e.Action === "string") || !ev.some((e) => e.Package)) return undefined;
+  const ran = new Set<string>(), skip = new Set<string>(), st = new Map<string, string>();
+  for (const e of ev) {
+    if (!e.Test || e.Test.includes("/")) continue;
+    const k = `${e.Package}\0${e.Test}`;
+    if (e.Action === "run") ran.add(k);
+    else if (e.Action === "skip") skip.add(k);
+    else if ((e.Action === "pass" || e.Action === "fail") && ran.has(k)) st.set(k, e.Action);
+  }
+  for (const k of skip) st.delete(k);
+  if (ok === true && [...st.values()].includes("fail")) return null;
+  return st.size;
+}
 const GO_PKG_RE = /^(?:ok|FAIL|\?)\s+\S+\s+(?:\(cached\)|[\d.]+s\b|\[(?:no test files|build failed|setup failed)\])/;
 /** go test (-v): executed tests = top-level "--- PASS|FAIL" across every package. "[no test files]" is 0 only when no package ran tests.
  *  Non-verbose "ok pkg 0.1s" carries no count: null (unmeasured). undefined = not go output. */
-function goCount(out: string): number | null | undefined {
+function goCount(out: string, ok?: boolean): number | null | undefined {
   const lines = out.split("\n");
   if (!lines.some((x) => GO_PKG_RE.test(x))) return undefined;
-  // a result line counts only after its own "=== RUN name", and only the LAST status for a name (a forged PASS then t.Skip ends as SKIP)
-  const last = new Map<string, string>(), seen = new Set<string>(), failPkg = lines.some((x) => /^FAIL\s+\S+\s+[\d.]+s\b/.test(x));
+  // a result line counts only after its own "=== RUN name"; a name that ever reports SKIP never counts (a forged PASS then t.Skip); the LAST status wins
+  const last = new Map<string, string>(), seen = new Set<string>(), skip = new Set<string>(), failPkg = ok !== true && lines.some((x) => /^FAIL\s+\S+\s+[\d.]+s\b/.test(x));
   for (const x of lines) {
     const r = x.match(/^=== RUN\s+(\S+)/), m = x.match(/^--- (PASS|FAIL|SKIP): (\S+)/);
-    if (r) seen.add(r[1]!); else if (m && (seen.has(m[2]!) || (m[1] === "FAIL" && failPkg))) last.set(m[2]!, m[1]!); // non-verbose go prints a FAIL line without "=== RUN"; a failing package line vouches for it
+    if (r) seen.add(r[1]!); else if (m && (seen.has(m[2]!) || (m[1] === "FAIL" && failPkg))) { last.set(m[2]!, m[1]!); if (m[1] === "SKIP") skip.add(m[2]!); } // non-verbose go prints a FAIL line without "=== RUN"; a failing package line vouches for it, only when the run failed
   }
+  for (const k of skip) last.set(k, "SKIP");
+  if (ok === true && [...last.values()].includes("FAIL")) return null; // a FAIL line contradicts exit 0: forged (TestMain os.Exit(0)), unmeasured
   const t = [...last.values()].filter((v) => v !== "SKIP").length;
   if (t > 0) return t;
   if (lines.some((x) => /^(?:=== RUN|PASS$|FAIL$|testing: warning: no tests to run)/.test(x))) return 0;
@@ -84,13 +106,15 @@ export function skipped(raw: string): number {
 
 /** Count for the runners we support: vitest, jest, bun test ("N pass"), pytest, go test (-v; non-verbose is unmeasured), unittest, playwright, cargo test, node --test, mocha.
  *  null = unknown (never a pass). A vitest run with no files and no "Tests" summary is a real 0. */
-export function testCount(raw: string, path?: string): number | null {
+export function testCount(raw: string, path?: string, ok?: boolean): number | null {
   const out = stripAnsi(raw);
+  const gj = goJsonCount(out, ok);
+  if (gj !== undefined) return gj;
   const bu = bunCount(out), ut = unittestCount(out);
   if (bu !== null) return bu;
   if (ut !== null) return ut;
   if (/^\s*(?:Test Files\s+0\b|No test files found)/m.test(out) && !/^\s*Tests?\s+\d/m.test(out)) return 0;
-  const r = ran(out, path);
+  const r = ran(out, path, ok);
   if (r !== null) return r;
   const tl = tailLines(out);
   const pw = tl.filter((x) => /^\s*\d+ (?:passed|failed|flaky)\b/.test(x)); // Playwright: "N passed (2s)" trailer
@@ -108,7 +132,7 @@ export function classifyCheck(i: ClassifyInput): Classified {
   if (i.missing) return { result: "not_run", reason: "tool not found on PATH" };
   if (i.cut) return { result: "not_run", reason: "timed out or aborted" };
   if (i.kind === "static") return { result: i.ok ? "pass" : "fail" };
-  const n = testCount(i.out, i.path);
+  const n = testCount(i.out, i.path, i.ok);
   if (n === 0) return { result: "not_run", n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
   if (!i.ok) return { result: "fail", ...(n !== null ? { n } : {}) };
   if (n === null) return { result: "not_run", reason: UNMEASURED_REASON };

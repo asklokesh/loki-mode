@@ -193,3 +193,29 @@ test("go non-verbose failing package: FAIL line without === RUN still counts", (
   expect(testCount("--- FAIL: TestA (0.00s)\nFAIL\nFAIL\texample.com/a\t0.004s\n")).toBe(1);
   expect(testCount("--- FAIL: TestForged (0.00s)\nPASS\nok  \tp/a\t0.010s\n")).toBe(0);
 });
+
+// FC-16 r2: Go forgeries G2 (forged RUN and PASS then t.Skip) and G3 (TestMain forges FAIL lines, os.Exit(0)). Real go 1.26.3 output, text and -json.
+describe("go forgeries G2 and G3", () => {
+  const G2_V = "=== RUN   TestForged\n=== RUN   TestForged\n--- PASS: TestForged (0.00s)\n    a_test.go:3: x\n--- SKIP: TestForged (0.00s)\nPASS\nok  \texample.com/g2\t0.093s\n";
+  const G3_V = "--- FAIL: TestX (0.00s)\nFAIL\texample.com/g3\t0.010s\nok  \texample.com/g3\t0.095s\n";
+  const G2_J = "{\"Time\":\"2026-10-03T17:50:27.68851-04:00\",\"Action\":\"start\",\"Package\":\"example.com/g2\"}\n{\"Time\":\"2026-10-03T17:50:27.760724-04:00\",\"Action\":\"run\",\"Package\":\"example.com/g2\",\"Test\":\"TestForged\"}\n{\"Time\":\"2026-10-03T17:50:27.760787-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g2\",\"Test\":\"TestForged\",\"Output\":\"=== RUN   TestForged\\n\"}\n{\"Time\":\"2026-10-03T17:50:27.760808-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g2\",\"Test\":\"TestForged\",\"Output\":\"=== RUN   TestForged\\n\"}\n{\"Time\":\"2026-10-03T17:50:27.760816-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g2\",\"Test\":\"TestForged\",\"Output\":\"--- PASS: TestForged (0.00s)\\n\"}\n{\"Time\":\"2026-10-03T17:50:27.760827-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g2\",\"Test\":\"TestForged\",\"Output\":\"    a_test.go:3: x\\n\"}\n{\"Time\":\"2026-10-03T17:50:27.760849-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g2\",\"Test\":\"TestForged\",\"Output\":\"--- SKIP: TestForged (0.00s)\\n\"}\n{\"Time\":\"2026-10-03T17:50:27.760857-04:00\",\"Action\":\"skip\",\"Package\":\"example.com/g2\",\"Test\":\"TestForged\",\"Elapsed\":0}\n{\"Time\":\"2026-10-03T17:50:27.760864-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g2\",\"Output\":\"PASS\\n\"}\n{\"Time\":\"2026-10-03T17:50:27.761239-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g2\",\"Output\":\"ok  \\texample.com/g2\\t0.072s\\n\"}\n{\"Time\":\"2026-10-03T17:50:27.762109-04:00\",\"Action\":\"pass\",\"Package\":\"example.com/g2\",\"Elapsed\":0.074}\n";
+  const G3_J = "{\"Time\":\"2026-10-03T17:50:28.205174-04:00\",\"Action\":\"start\",\"Package\":\"example.com/g3\"}\n{\"Time\":\"2026-10-03T17:50:28.266871-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g3\",\"Test\":\"TestX\",\"Output\":\"--- FAIL: TestX (0.00s)\\n\"}\n{\"Time\":\"2026-10-03T17:50:28.26692-04:00\",\"Action\":\"fail\",\"Package\":\"example.com/g3\",\"Test\":\"TestX\",\"Elapsed\":0}\n{\"Time\":\"2026-10-03T17:50:28.266937-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g3\",\"Output\":\"FAIL\\texample.com/g3\\t0.010s\\n\"}\n{\"Time\":\"2026-10-03T17:50:28.267206-04:00\",\"Action\":\"output\",\"Package\":\"example.com/g3\",\"Output\":\"ok  \\texample.com/g3\\t0.062s\\n\"}\n{\"Time\":\"2026-10-03T17:50:28.267251-04:00\",\"Action\":\"pass\",\"Package\":\"example.com/g3\",\"Elapsed\":0.062}\n";
+  const notPass = (o: string) => expect(classifyCheck({ kind: "test", ok: true, out: o }).result).not.toBe("pass");
+  test("G2 text: forged RUN and PASS then Skip", () => { expect(testCount(G2_V, undefined, true)).toBe(0); notPass(G2_V); });
+  test("G2 text: forged PASS printed after the SKIP line still does not count", () => {
+    const o = G2_V.replace("PASS\nok", "--- PASS: TestForged (0.00s)\nPASS\nok");
+    expect(testCount(o, undefined, true)).toBe(0); notPass(o);
+  });
+  test("G3 text: forged FAIL under exit 0 is unmeasured", () => { expect(testCount(G3_V, undefined, true)).toBeNull(); notPass(G3_V); });
+  test("G2 json: skip event", () => { expect(testCount(G2_J, undefined, true)).toBe(0); notPass(G2_J); });
+  test("G3 json: forged fail event has no run event", () => { expect(testCount(G3_J, undefined, true)).toBe(0); notPass(G3_J); });
+  test("json: a real pass and a real fail count; fail under exit 0 is unmeasured", () => {
+    const ev = (a: Record<string, unknown>) => JSON.stringify({ Package: "p", ...a });
+    const o = [ev({ Action: "run", Test: "TestA" }), ev({ Action: "pass", Test: "TestA" }), ev({ Action: "run", Test: "TestB" }), ev({ Action: "fail", Test: "TestB" }), ev({ Action: "fail" })].join("\n") + "\n";
+    expect(testCount(o, undefined, false)).toBe(2);
+    expect(testCount(o, undefined, true)).toBeNull();
+  });
+  test("text -v run that failed keeps counting a FAIL line without RUN", () => {
+    expect(testCount("--- FAIL: TestA (0.00s)\nFAIL\nFAIL\texample.com/a\t0.004s\n", undefined, false)).toBe(1);
+  });
+});
