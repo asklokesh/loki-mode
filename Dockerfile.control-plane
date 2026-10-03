@@ -1,7 +1,8 @@
 # Loki Control Plane container (server + built UI only).
 # Build: docker build -f Dockerfile.control-plane -t loki-control-plane .
-# Run:   docker run -p 47821:47821 -v loki-control:/data loki-control-plane
-# The server has no authentication of its own; publish it only behind a trusted network or proxy.
+# Run:   docker run -p 47821:47821 -e LOKI_CONTROL_TOKEN -v loki-control:/data loki-control-plane
+# The image binds 0.0.0.0, so LOKI_CONTROL_TOKEN is REQUIRED at run time: without it the
+# server refuses to start (exit 2). Supply it from a secret store; it is never baked in.
 
 ARG BUN_VERSION=1.4.2
 

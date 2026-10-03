@@ -486,3 +486,11 @@ docker push registry.internal.example.com/autonomi/loki-mode:8.5.2
 
 Pin a tag or digest rather than `latest`: during an incident "which build is
 running" has to be answerable, and `latest` makes rollback unreasonable.
+
+## Control Plane chart token
+
+`deploy/helm/control-plane` binds 0.0.0.0, so it requires a token Secret.
+`helm template` fails with a clear message unless `controlToken.existingSecret`
+names a Secret holding `LOKI_CONTROL_TOKEN` (key configurable via
+`controlToken.key`). Set `allowInsecureBind=true` only on a trusted private
+network; it sets `LOKI_CONTROL_ALLOW_INSECURE_BIND=1` and omits the token.

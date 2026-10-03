@@ -11,7 +11,14 @@ service:
   type: ClusterIP
   port: 47821
 
-# The server has no auth of its own. Enable only behind an authenticating proxy.
+# The pod binds 0.0.0.0, so the server requires LOKI_CONTROL_TOKEN or it exits 2.
+# Create the Secret yourself: kubectl create secret generic loki-control-token --from-literal=LOKI_CONTROL_TOKEN=...
+controlToken:
+  existingSecret: ""           # required unless allowInsecureBind is true
+  key: LOKI_CONTROL_TOKEN
+# Opt-out only for a trusted private network: sets LOKI_CONTROL_ALLOW_INSECURE_BIND=1 and drops the token.
+allowInsecureBind: false
+
 ingress:
   enabled: false
   className: ""
@@ -26,9 +33,9 @@ persistence:
   existingClaim: ""
 
 # Optional: reference an existing Secret (for example the autonomi chart's
-# secrets.existingSecret) to expose provider keys or LOKI_CONTROL_TOKEN as env.
+# secrets.existingSecret) to expose provider keys as env.
 existingSecret: ""
-secretKeys: []       # e.g. [ANTHROPIC_API_KEY, LOKI_CONTROL_TOKEN]
+secretKeys: []       # e.g. [ANTHROPIC_API_KEY]; the token is wired via controlToken
 
 extraEnv: []
 

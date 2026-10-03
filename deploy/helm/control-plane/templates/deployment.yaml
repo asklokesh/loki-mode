@@ -36,6 +36,16 @@ spec:
               value: "0.0.0.0"
             - name: LOKI_CONTROL_DB
               value: /data/control.db
+            {{- if .Values.allowInsecureBind }}
+            - name: LOKI_CONTROL_ALLOW_INSECURE_BIND
+              value: "1"
+            {{- else }}
+            - name: LOKI_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "controlToken.existingSecret is required: set it to a Secret holding LOKI_CONTROL_TOKEN, or set allowInsecureBind=true to accept an unauthenticated bind" .Values.controlToken.existingSecret }}
+                  key: {{ .Values.controlToken.key }}
+            {{- end }}
             {{- if .Values.existingSecret }}
             {{- range .Values.secretKeys }}
             - name: {{ . }}

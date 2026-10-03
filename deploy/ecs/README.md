@@ -10,6 +10,7 @@ from Secrets Manager at start.
    `/data`; run exactly one task, as the database is single-writer).
 3. Register the task: `aws ecs register-task-definition --cli-input-json file://deploy/ecs/control-plane-task.json`
 4. Create a service with desired count 1 and put it behind a private load
-   balancer or an authenticating proxy. The server has no authentication of its own.
+   balancer. The task maps `LOKI_CONTROL_TOKEN` from Secrets Manager (`loki/control-token`);
+   the server exits 2 on its 0.0.0.0 bind without it, so create that secret first.
 
 Docs: `docs/control-plane-container.md`.
