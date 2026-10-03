@@ -1131,11 +1131,10 @@ case_checklist_not_shadowed() {
     if [ -z "$bad" ]; then _st="PASS"; else _why="${bad# }"; fi
 }
 
-# LEGACY-LEG(CPE24-L5): case_console_verdict and its run_case line drive the legacy
-# dashboard (dashboard/server.py, /api/proofs/<id>, /api/v2/audit/verify) and the
-# legacy dashboard-ui audit viewer. The delete slice removes that case (and the
-# cv_old_* helpers); case_cp_verdict further down proves the same property on the
-# Control Plane and stays.
+# case_console_verdict drives the dashboard server (dashboard/server.py,
+# /api/proofs/<id>, /api/v2/audit/verify, which still serves /api/*) and the
+# web-app receipt panel; case_cp_verdict further down proves the same property
+# on the Control Plane.
 # P2.console-verdict-needs-computed-result (BACKLOG 113). A console verdict
 # word (verified, valid, proven, tampered) must have a result the server
 # COMPUTED behind it. Four legs, every failure collected, each with controls:

@@ -52,6 +52,7 @@ P6.change-landed-in-place
 P6.proof-produced-and-verifies
 P6.untracked-not-swept
 P7.webapp-client-routes-exist
+P7.dashboard-client-routes-exist
 P7.no-sample-data-panels
 P7.unmeasured-cost-never-zero
 P8.ablation-runtime-change-load-bearing

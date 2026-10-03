@@ -11,6 +11,9 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 # Cases (IDs are permanent):
 #   P7.webapp-client-routes-exist     every web-app client path resolves to a
 #                                     real route in web-app/server.py
+#   P7.dashboard-client-routes-exist  every /v1 path the Control Plane UI source
+#                                     (packages/control-plane/ui/src) calls resolves
+#                                     to a real route on the createApp() Hono app
 #   P7.no-sample-data-panels          no production page reaches a panel that
 #                                     falls back to hardcoded or generated sample
 #                                     data, no Math.random() feeds a metric, and
@@ -19,10 +22,8 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 #                                     invents spend or run data: see the CP leg
 #                                     block (case_cp_unmeasured) for the route map
 #
-# LEGACY-LEG(CPE24-L5): case_dashboard_routes, the dashboard-ui parts of
-# case_sample_panels and case_cost_zero, and cost_server_leg drive the legacy
-# dashboard (dashboard/server.py, port 57374). The delete slice removes those;
-# case_cp_unmeasured proves the property on the Control Plane and stays.
+# cost_server_leg still drives dashboard/server.py (port 57374), which keeps
+# serving /api/*; case_cp_unmeasured proves the property on the Control Plane.
 #
 #   P7.unmeasured-cost-never-zero     no cost rendering path turns an unmeasured
 #                                     (null/undefined) cost into 0 or "$0.00",
@@ -510,6 +511,178 @@ case_webapp_routes() {
     python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import moatlib; print("\n".join(moatlib.walk(sys.argv[2], (".ts", ".tsx"))))' \
         "$MOAT_TMP" "$REPO_ROOT/web-app/src" > "$MOAT_TMP/webapp.files"
     extract_and_match webapp-literals webapp "$MOAT_TMP/webapp.files"
+}
+
+# ---------------------------------------------------------------------------
+# P7.dashboard-client-routes-exist (retargeted at the Control Plane UI, CPE24-L6)
+#
+# The ID is permanent (case IDs only grow). The legacy dashboard UI it once
+# measured is deleted; the same property now holds for the Control Plane UI:
+# every /v1 path the UI source (packages/control-plane/ui/src, never ui/dist)
+# calls must reach a real route on the Hono app createApp() builds. The probe
+# extracts call paths with the TypeScript AST (a literal that is an argument of
+# a call, never an Error message or a comment) and asks the app's OWN router
+# (app.router.match) whether a non-wildcard route answers that method and path;
+# it does not grep route strings. The app is built loopback-only so the act
+# routes (/v1/start, /v1/import, ...) are registered, as on `loki control serve`.
+# Controls: a known-good path resolves, a wrong verb on a real path and a made-up
+# path are flagged, a planted client file with a bogus path is flagged by the
+# same pipeline, and the extractor must read exact paths from a known fixture.
+# ---------------------------------------------------------------------------
+cp_routes_probe_script() { cat <<'EOF'
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
+const [tsPath, repo, srcDir] = process.argv.slice(2);
+const ts = createRequire(import.meta.url)(tsPath);
+const { createApp } = await import(path.join(repo, "packages/control-plane/src/server/app.ts"));
+
+const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => {
+  const p = path.join(d, e.name);
+  if (e.isDirectory()) return e.name === "node_modules" || e.name === "dist" ? [] : walk(p);
+  return /\.(ts|tsx)$/.test(e.name) && !/\.d\.ts$/.test(e.name) ? [p] : [];
+});
+
+const PATH_OK = /^\/v1\/[A-Za-z0-9_\-{}\/.:%]*$/;
+const NOT_CALL = new Set(["Error", "TypeError", "RangeError"]);
+function extract(file, text) {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, file.endsWith("x") ? ts.ScriptKind.TSX : ts.ScriptKind.TS);
+  const calls = [], unresolved = [];
+  const where = (n) => `${path.relative(repo, file)}:${sf.getLineAndCharacterOfPosition(n.getStart()).line + 1}`;
+  const enclosingCall = (n) => { for (let p = n.parent; p; p = p.parent) if (ts.isCallExpression(p) || ts.isNewExpression(p)) return p; return null; };
+  const methodOf = (n) => {
+    const c = enclosingCall(n);
+    if (!c) return "GET";
+    const callee = c.expression.getText(sf);
+    for (const a of c.arguments ?? []) if (ts.isObjectLiteralExpression(a)) for (const pr of a.properties)
+      if (ts.isPropertyAssignment(pr) && pr.name.getText(sf) === "method" && ts.isStringLiteralLike(pr.initializer)) return pr.initializer.text.toUpperCase();
+    return /^postJson$/.test(callee) ? "POST" : "GET";
+  };
+  // The members of a same-file string-literal union type that an identifier parameter is declared with, else null.
+  const unionOf = (e) => {
+    if (!ts.isIdentifier(e)) return null;
+    for (let f = e.parent; f; f = f.parent) {
+      if (!ts.isFunctionLike(f)) continue;
+      const prm = f.parameters.find((x) => x.name.getText(sf) === e.text);
+      if (!prm) continue;
+      if (!prm.type || !ts.isTypeReferenceNode(prm.type)) return null;
+      const alias = sf.statements.find((x) => ts.isTypeAliasDeclaration(x) && x.name.text === prm.type.typeName.getText(sf));
+      const members = alias && ts.isUnionTypeNode(alias.type) ? alias.type.types : null;
+      return members && members.every((t) => ts.isLiteralTypeNode(t) && ts.isStringLiteral(t.literal)) ? members.map((t) => t.literal.text) : null;
+    }
+    return null;
+  };
+  const visit = (n) => {
+    let parts = null; // [{text}|{expr}]
+    if (ts.isStringLiteral(n) || ts.isNoSubstitutionTemplateLiteral(n)) parts = [{ text: n.text }];
+    else if (ts.isTemplateExpression(n)) parts = [{ text: n.head.text }, ...n.templateSpans.flatMap((s) => [{ expr: s.expression.getText(sf), node: s.expression }, { text: s.literal.text }])];
+    if (parts) {
+      const c = enclosingCall(n);
+      const errish = c && NOT_CALL.has(c.expression.getText(sf));
+      // drop leading base expressions (`${base()}`), then the path must start at /v1/
+      let i = 0;
+      while (i < parts.length && (parts[i].expr !== undefined || !parts[i].text) && !(parts[i].text ?? "").startsWith("/v1/") && i < parts.length - 1) i++;
+      const first = parts[i]?.text ?? "";
+      if (!errish && first.startsWith("/v1/")) {
+        let outs = [""], bad = null, cut = false;
+        const add = (t) => { outs = outs.map((o) => o + t); };
+        for (let k = i; k < parts.length && !cut && !bad; k++) {
+          const p = parts[k];
+          const here = outs[0];
+          if (p.text !== undefined) {
+            const q = p.text.indexOf("?");
+            if (q >= 0) { add(p.text.slice(0, q)); cut = true; } else add(p.text);
+          } else if (here.endsWith("/")) {
+            const nxt = parts[k + 1]?.text ?? "";
+            if (!(nxt === "" || nxt.startsWith("/") || nxt.startsWith("?"))) bad = "interpolation glued to a segment";
+            else {
+              const u = unionOf(p.node); // a param typed as a string-literal union is every member, not a wildcard
+              if (u) outs = outs.flatMap((o) => u.map((v) => o + v)); else add("{p}");
+            }
+          } else if (/[`'"]\?/.test(p.expr)) { cut = true; } // `${s ? `?${s}` : ""}`: a query suffix, not a path part
+          else bad = "interpolation glued to a segment";
+        }
+        for (const out of outs) {
+          let b = bad;
+          if (!b && !PATH_OK.test(out)) b = `unparseable path ${JSON.stringify(out)}`;
+          if (b) unresolved.push(`${where(n)} ${b}`); else calls.push({ where: where(n), path: out, method: methodOf(n) });
+        }
+      }
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(sf);
+  return { calls, unresolved };
+}
+
+const { app, close } = createApp({ dbPath: ":memory:", loopbackOnly: true, uiDir: "/nonexistent-ui-dir", repoDir: repo });
+const real = app.routes.filter((r) => !/\*/.test(r.path) && r.method !== "ALL");
+// router.match yields [[handler, route], params] entries; middleware and the SPA fallback are '*' or ALL routes and never vouch for a path.
+const reach = (method, p) => {
+  const concrete = p.replace(/\{p\}/g, "1");
+  const m = method === "HEAD" ? "GET" : method;
+  const [hs] = app.router.match(m, concrete);
+  return (hs ?? []).some((h) => { const r = h[0]?.[1]; return !!r?.path && !/\*/.test(r.path) && r.method !== "ALL"; });
+};
+const bad = [];
+
+// Controls (a probe that cannot see a bug proves nothing).
+if (real.length < 5) bad.push(`control: only ${real.length} concrete routes on the app`);
+if (!reach("GET", "/v1/runs")) bad.push("control: known-good GET /v1/runs did not resolve");
+if (!reach("GET", "/v1/runs/{p}/{p}")) bad.push("control: known-good GET /v1/runs/:source/:run did not resolve");
+if (reach("GET", "/v1/moat-made-up-route-7f3a")) bad.push("control: a made-up path resolved");
+if (reach("PATCH", "/v1/runs")) bad.push("control: a wrong verb on a real path resolved");
+if (reach("GET", "/health-not-v1/x/y")) bad.push("control: an unrelated path resolved");
+const fx = extract("fixture.tsx", [
+  'const base = () => ""; const postJson = (p, b) => fetch(p);',
+  'get(`/v1/runs${s ? `?${s}` : ""}`);',
+  'get(`/v1/runs/${encodeURIComponent(a)}/${encodeURIComponent(b)}`);',
+  'fetch(`${base()}/v1/runs/${a}/${b}`, { method: "DELETE" });',
+  'postJson("/v1/import", {});',
+  'throw new Error(`/v1/keys: HTTP ${r.status}`);',
+  '// get("/v1/in-a-comment")',
+  'get(`/v1/x${glued}`);',
+  'type K = "stop" | "go"; export function f(k: K) { return fetch(`/v1/runs/${a}/${k}`, { method: "POST" }); }',
+].join("\n"));
+const got = fx.calls.map((c) => `${c.method}:${c.path}`).join(" ");
+if (got !== "GET:/v1/runs GET:/v1/runs/{p}/{p} DELETE:/v1/runs/{p}/{p} POST:/v1/import POST:/v1/runs/{p}/stop POST:/v1/runs/{p}/go" || fx.unresolved.length !== 1)
+  bad.push(`control: extractor fixture mismatch: '${got}' unresolved=${fx.unresolved.length}`);
+const planted = extract("planted.ts", 'get("/v1/moat-planted-bogus-path-9c1d");');
+if (planted.calls.length !== 1 || reach(planted.calls[0].method, planted.calls[0].path)) bad.push("control: a planted bogus client path was not flagged");
+
+const files = walk(srcDir);
+let n = 0;
+for (const f of files) {
+  const r = extract(f, fs.readFileSync(f, "utf8"));
+  for (const u of r.unresolved) bad.push(`UNRESOLVED ${u}`);
+  for (const c of r.calls) { n++; if (!reach(c.method, c.path)) bad.push(`NO ROUTE ${c.where} ${c.method} ${c.path}`); }
+}
+if (n === 0) bad.push(`zero /v1 calls captured from ${files.length} files; the check would be vacuous`);
+console.log(`ROUTES ${real.length} CALLS ${n} FILES ${files.length}`);
+for (const b of bad) console.log("BAD " + b);
+console.log("CHECKED");
+close();
+process.exit(bad.length ? 1 : 0);
+EOF
+}
+case_dashboard_routes() {
+    local ts d="$MOAT_TMP/cproutes" out rc
+    command -v bun >/dev/null 2>&1 || { echo "FAIL|prerequisite missing: bun"; return 0; }
+    ts="$(find_typescript)" || { echo "FAIL|prerequisite missing: typescript (npm ci in web-app of this checkout)"; return 0; }
+    [ -d "$REPO_ROOT/packages/control-plane/node_modules/hono" ] \
+        || { echo "FAIL|prerequisite missing: packages/control-plane node_modules (cd packages/control-plane && bun install --frozen-lockfile)"; return 0; }
+    [ -f "$REPO_ROOT/packages/control-plane/ui/src/api.ts" ] \
+        || { echo "FAIL|packages/control-plane/ui/src/api.ts missing; nothing to measure"; return 0; }
+    mkdir -p "$d"
+    cp_routes_probe_script > "$d/probe.ts"
+    rc=0
+    out="$(cd "$d" && HOME="$MOAT_TMP/home" LOKI_NO_BROWSER=1 LOKI_CONTROL_AUTOINGEST=0 bun "$d/probe.ts" "$ts" "$REPO_ROOT" "$REPO_ROOT/packages/control-plane/ui/src" 2> "$d/probe.err")" || rc=$?
+    printf '%s\n' "$out" | sed 's/^/  cp[routes] /' >&2
+    grep -qx 'CHECKED' <<<"$out" || { echo "FAIL|probe did not run (rc=$rc): $(tail -c 240 "$d/probe.err" | tr '\n' ' ')"; return 0; }
+    if [ "$rc" != 0 ]; then
+        echo "FAIL|$(grep -c '^BAD ' <<<"$out") problem(s): $(grep '^BAD ' <<<"$out" | head -4 | sed 's/^BAD //' | tr '\n' ';')"; return 0
+    fi
+    echo "PASS|$(grep '^ROUTES' <<<"$out" | sed 's/ROUTES \([0-9]*\) CALLS \([0-9]*\) FILES \([0-9]*\)/\2 UI client calls in \3 files resolve to \1 real CP routes/')"
 }
 
 # ---------------------------------------------------------------------------
@@ -5070,11 +5243,12 @@ run_case() {
 
 START_S=$SECONDS
 run_case P7.webapp-client-routes-exist "web-app client paths resolve to real web-app/server.py routes" case_webapp_routes
+run_case P7.dashboard-client-routes-exist "Control Plane UI /v1 paths resolve to real createApp() routes" case_dashboard_routes
 run_case P7.no-sample-data-panels "no production page reaches sample, random or hardcoded-metric data panels" case_sample_panels
 run_case P7.unmeasured-cost-never-zero "no cost path, client or server, turns unmeasured cost into 0 or \$0.00" case_cost_zero
 run_case P7.cp-unmeasured-never-fabricated "Control Plane (loki control serve): an empty database and unmeasured runs read null, 0 with zero measured sessions or an empty list, never an invented number; measured-zero stays 0 and a mixed run is a lower bound, not a total" case_cp_unmeasured
 
-for id in P7.webapp-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero P7.cp-unmeasured-never-fabricated; do
+for id in P7.webapp-client-routes-exist P7.dashboard-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero P7.cp-unmeasured-never-fabricated; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac
 done
 diag "runtime $((SECONDS - START_S))s"
