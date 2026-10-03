@@ -1,7 +1,8 @@
 // Traceability matrix logic (CPE-17): requirement -> plan step -> files changed -> evidence. Pure functions, no I/O.
-// Honesty rule: a row is "proven" only when a passing check is linked to it AND the receipt verdict is VERIFIED.
+// Honesty rule: a row is "proven" only when a passing check is linked to it AND the run's EFFECTIVE verdict is VERIFIED
+// (tamper, attestation and signature state applied, same helper as the badges); the raw receipt.json verdict never drives green.
 // Everything else (no receipt, no linked check, partial receipt) reads "not proven"; a linked failing check reads "failed".
-import { isVerified } from "../../design/primitives";
+import { effectiveVerdict, VERDICT, type VerdictSource } from "../../design/primitives";
 
 export type RowStatus = "proven" | "failed" | "not proven";
 export interface Check { name: string; cmd?: string; result: string }
@@ -66,11 +67,20 @@ export function diffFiles(patch: string | null): string[] {
   return [...set];
 }
 
-export function buildMatrix(input: { issue: unknown; plan: unknown; receipt: Receipt | null; changedFiles: string[] }): Matrix {
+/** The verdict shown beside the matrix: effective, never the raw receipt text. */
+export function matrixVerdict(run: VerdictSource | null, receipt: Receipt | null): string | null {
+  return run ? effectiveVerdict({ ...run, verdict: run.verdict ?? receipt?.verdict ?? null }) : null;
+}
+
+export function buildMatrix(input: { issue: unknown; plan: unknown; receipt: Receipt | null; changedFiles: string[]; run: VerdictSource | null }): Matrix {
   const { list, source } = criteriaOf(input.issue);
   const steps = stepsOf(input.plan);
   const checks = input.receipt?.checks ?? [];
-  const verified = isVerified(input.receipt);
+  // The run row carries tampered/attested/sig_checked; without it the verdict cannot be vouched for.
+  const effective = input.run ? effectiveVerdict({ ...input.run, verdict: input.run.verdict ?? input.receipt?.verdict ?? null }) : null;
+  // A receipt that itself says anything but VERIFIED can only lower the result, never raise it.
+  const receiptSays = input.receipt?.verdict;
+  const verified = effective === VERDICT.VERIFIED && (receiptSays == null || receiptSays === VERDICT.VERIFIED);
   const changed = [...new Set([...input.changedFiles, ...(input.receipt?.wall?.files ?? [])])];
   const used = new Set<string>();
 
@@ -101,7 +111,7 @@ export function buildMatrix(input: { issue: unknown; plan: unknown; receipt: Rec
     else if (evidence.some((c) => c.result === "fail")) { status = "failed"; note = "a linked check failed"; }
     else if (evidence.length === 0) note = inferred.length ? "link inferred" : "no check linked to this criterion";
     else if (!evidence.every((c) => c.result === "pass")) note = "a linked check did not run";
-    else if (!verified) note = `receipt verdict is ${input.receipt.verdict ?? "unknown"}`;
+    else if (!verified) note = `verdict is ${effective !== VERDICT.VERIFIED ? effective ?? "unknown (run record unavailable)" : receiptSays}`;
     else status = "proven";
     return { criterion, steps: mine.map((s) => s.text), files: fileList, evidence, inferred, status, note };
   });

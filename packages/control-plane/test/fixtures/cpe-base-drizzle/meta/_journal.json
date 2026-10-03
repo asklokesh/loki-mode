@@ -19,22 +19,8 @@
     {
       "idx": 2,
       "version": "6",
-      "when": 1791046012148,
-      "tag": "0002_tiresome_fixer",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1791049000000,
-      "tag": "0003_integrity",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1791050000000,
-      "tag": "0004_cpe03_local_repos_actions",
+      "when": 1791041220225,
+      "tag": "0002_cpe03_local_repos_actions",
       "breakpoints": true
     }
   ]

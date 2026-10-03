@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS `actions` (
+CREATE TABLE `actions` (
 	`id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
 	`ts` text NOT NULL,
 	`actor` text NOT NULL,
@@ -8,8 +8,8 @@ CREATE TABLE IF NOT EXISTS `actions` (
 	`detail` text
 );
 --> statement-breakpoint
-CREATE INDEX IF NOT EXISTS `actions_ts` ON `actions` (`ts`);--> statement-breakpoint
-CREATE TABLE IF NOT EXISTS `local_repos` (
+CREATE INDEX `actions_ts` ON `actions` (`ts`);--> statement-breakpoint
+CREATE TABLE `local_repos` (
 	`source_id` text PRIMARY KEY NOT NULL,
 	`realpath` text NOT NULL,
 	`name` text NOT NULL,

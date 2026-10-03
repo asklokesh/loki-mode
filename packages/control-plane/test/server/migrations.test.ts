@@ -66,3 +66,25 @@ test("advisory: boot recomputes legacy rows (attested IS NULL) from their stored
   const row = ((await (await b.app.request("/v1/runs")).json()) as any).runs[0];
   expect([row.attested, row.tampered, row.effective_verdict]).toEqual([true, false, "VERIFIED (signature not checked)"]);
 });
+
+test("journal: every `when` strictly increases and is not later than now (a future stamp makes drizzle skip later migrations)", () => {
+  const now = Date.now();
+  for (let i = 0; i < journal.entries.length; i++) {
+    const e = journal.entries[i]!;
+    expect([e.tag, e.when <= now]).toEqual([e.tag, true]);
+    if (i > 0) expect([e.tag, e.when > journal.entries[i - 1]!.when]).toEqual([e.tag, true]);
+  }
+});
+
+test("upgrade: a cpe-base database (0002_cpe03 already created actions and local_repos) migrates to current and keeps its rows", () => {
+  const dbPath = join(tmp, "cpe-base.db");
+  const sqlite = new Database(dbPath, { create: true });
+  migrate(drizzle(sqlite), { migrationsFolder: join(import.meta.dir, "../fixtures/cpe-base-drizzle") });
+  sqlite.run("INSERT INTO actions (ts, actor, kind, target, result, detail) VALUES ('2026-10-01T00:00:00Z', 'ui', 'start', 'r1', 'ok', 'kept')");
+  sqlite.run("INSERT INTO local_repos (source_id, realpath, name, discovered_at) VALUES ('s1', '/x/y', 'y', '2026-10-01T00:00:00Z')");
+  migrate(drizzle(sqlite), { migrationsFolder: DRIZZLE });
+  expect(sqlite.query("SELECT detail FROM actions").all()).toEqual([{ detail: "kept" }]);
+  expect(sqlite.query("SELECT name FROM local_repos").all()).toEqual([{ name: "y" }]);
+  expect(sqlite.query("SELECT 1 FROM pragma_table_info('runs') WHERE name = 'attested'").all().length).toBe(1);
+  sqlite.close();
+});

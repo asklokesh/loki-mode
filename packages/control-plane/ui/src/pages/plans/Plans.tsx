@@ -41,7 +41,7 @@ function MatrixView({ source, run }: { source: string; run: string }) {
     setData(null);
     (async () => {
       const detail = await getRun(source, run).catch(() => null);
-      return loadPlan(source, run, detail?.stages ?? null);
+      return loadPlan(source, run, detail?.stages ?? null, detail);
     })().then((d) => live && setData(d), (e: Error) => live && setError(e.message));
     return () => { live = false; };
   }, [source, run]);
@@ -58,7 +58,7 @@ function MatrixView({ source, run }: { source: string; run: string }) {
         <div style={{ fontFamily: "var(--cp-font-mono)" }}>{run}</div>
         <div data-testid="plans-summary" style={{ color: "var(--cp-text-2)" }}>
           {matrix.rows.length ? `${proven} of ${matrix.rows.length} criteria proven` : "not measured: no criteria"}
-          {data.verdict ? ` - receipt ${data.verdict}` : " - no receipt"}
+          {data.verdict ? ` - verdict ${data.verdict}` : have.receipt ? " - verdict unavailable" : " - no receipt"}
         </div>
         {missing.length ? <div data-testid="plans-missing" style={{ color: "var(--cp-text-2)" }}>not available: {missing.map((m) => `${m}.json`).join(", ")}</div> : null}
       </Card>

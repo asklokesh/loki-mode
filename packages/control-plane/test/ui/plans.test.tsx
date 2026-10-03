@@ -11,6 +11,7 @@ const { buildMatrix, criteriaOf, diffFiles } = await import("../../ui/src/pages/
 const ISSUE = { title: "Calc", body: "Intro\n## Acceptance criteria\n- add returns the sum\n- divide rejects zero\n" };
 const PLAN = { steps: ["Implement add in calc.ts", "Guard divide in calc.ts"] };
 const DIFF = "diff --git a/src/calc.ts b/src/calc.ts\n--- a/src/calc.ts\n+++ b/src/calc.ts\n@@\n+x\n";
+const OK_RUN = { verdict: "VERIFIED", tampered: false, attested: true, sig_checked: true };
 const RECEIPT = { verdict: "VERIFIED", checks: [{ name: "add returns the sum", cmd: "bun test", result: "pass" }], wall: { files: [] } };
 
 function serve(over: Record<string, string | null> = {}) {
@@ -41,18 +42,18 @@ test("criteria parse from an acceptance section, falling back to the title", () 
 });
 
 test("proven only with a passing linked check; a criterion without evidence is not proven", () => {
-  const m = buildMatrix({ issue: ISSUE, plan: PLAN, receipt: RECEIPT, changedFiles: ["src/calc.ts"] });
+  const m = buildMatrix({ issue: ISSUE, plan: PLAN, receipt: RECEIPT, changedFiles: ["src/calc.ts"], run: OK_RUN });
   expect(m.rows.map((r) => r.status)).toEqual(["proven", "not proven"]);
   expect(m.rows[1]!.note).toContain("no check linked");
 });
 
 test("a passing check matched by keyword only stays NOT PROVEN (link inferred)", async () => {
   const receipt = { verdict: "VERIFIED", checks: [{ name: "returns suite", cmd: "bun test sum", result: "pass" }] };
-  const m = buildMatrix({ issue: ISSUE, plan: PLAN, receipt, changedFiles: [] });
+  const m = buildMatrix({ issue: ISSUE, plan: PLAN, receipt, changedFiles: [], run: OK_RUN });
   expect(m.rows[0]!.status).toBe("not proven");
   expect(m.rows[0]!.note).toBe("link inferred");
   expect(m.rows[0]!.inferred.length).toBe(1);
-  const named = buildMatrix({ issue: ISSUE, plan: { steps: [{ title: "Implement returns", checks: ["returns suite"] }] }, receipt, changedFiles: [] });
+  const named = buildMatrix({ issue: ISSUE, plan: { steps: [{ title: "Implement returns", checks: ["returns suite"] }] }, receipt, changedFiles: [], run: OK_RUN });
   expect(named.rows[0]!.status).toBe("proven");
   serve({ "receipt.json": JSON.stringify(receipt) });
   render(<Plans params={{ source: "s1", run: "r1" }} />);
@@ -61,10 +62,23 @@ test("a passing check matched by keyword only stays NOT PROVEN (link inferred)",
 });
 
 test("a non-VERIFIED receipt never yields proven, and no receipt is all not proven", () => {
-  expect(buildMatrix({ issue: ISSUE, plan: PLAN, receipt: { ...RECEIPT, verdict: "PARTIAL" }, changedFiles: [] }).rows[0]!.status).toBe("not proven");
-  expect(buildMatrix({ issue: ISSUE, plan: PLAN, receipt: null, changedFiles: [] }).rows.every((r) => r.status === "not proven")).toBe(true);
-  const failed = buildMatrix({ issue: ISSUE, plan: PLAN, receipt: { verdict: "FAILED", checks: [{ name: "divide rejects zero", result: "fail" }] }, changedFiles: [] });
+  expect(buildMatrix({ issue: ISSUE, plan: PLAN, receipt: { ...RECEIPT, verdict: "PARTIAL" }, changedFiles: [], run: OK_RUN }).rows[0]!.status).toBe("not proven");
+  expect(buildMatrix({ issue: ISSUE, plan: PLAN, receipt: null, changedFiles: [], run: OK_RUN }).rows.every((r) => r.status === "not proven")).toBe(true);
+  const failed = buildMatrix({ issue: ISSUE, plan: PLAN, receipt: { verdict: "FAILED", checks: [{ name: "divide rejects zero", result: "fail" }] }, changedFiles: [], run: OK_RUN });
   expect(failed.rows[1]!.status).toBe("failed");
+});
+
+test("effective verdict gates proven: tampered, unsigned and unattested runs never read proven", () => {
+  const m = (run: Parameters<typeof buildMatrix>[0]["run"]) => buildMatrix({ issue: ISSUE, plan: PLAN, receipt: RECEIPT, changedFiles: ["src/calc.ts"], run }).rows[0]!;
+  expect(m({ ...OK_RUN, tampered: true }).status).toBe("not proven");
+  expect(m({ ...OK_RUN, tampered: true }).note).toContain("TAMPERED");
+  expect(m({ ...OK_RUN, sig_checked: false }).status).toBe("not proven");
+  expect(m({ ...OK_RUN, sig_checked: false }).note).toContain("signature not checked");
+  expect(m({ ...OK_RUN, attested: false }).status).toBe("not proven");
+  expect(m(null).status).toBe("not proven");
+  expect(m(OK_RUN).status).toBe("proven");
+  const tampered = buildMatrix({ issue: ISSUE, plan: PLAN, receipt: RECEIPT, changedFiles: ["src/calc.ts"], run: { ...OK_RUN, tampered: true } });
+  expect(tampered.rows.filter((r) => r.status === "proven").length).toBe(0);
 });
 
 test("renders the matrix with NOT PROVEN rows highlighted", async () => {
