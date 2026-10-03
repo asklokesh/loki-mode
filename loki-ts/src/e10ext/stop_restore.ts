@@ -1,6 +1,5 @@
 // D50-F1c: on SIGINT/SIGTERM the supervisor puts the user's checkout back on the branch they started on.
 import { execFileSync } from "node:child_process";
-
 export function currentBranch(repoDir: string): string | null {
   try {
     const b = execFileSync("git", ["symbolic-ref", "--short", "-q", "HEAD"], { cwd: repoDir, env: process.env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();

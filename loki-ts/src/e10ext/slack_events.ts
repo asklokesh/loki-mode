@@ -1,6 +1,5 @@
 // D51-A4: Slack notifications for the v10 engine (PR opened, BLOCKED, finished). One entry point.
-// Payload shape mirrors autonomy/notify.sh _notify_slack (attachment: color, "Loki Mode: <title>", fields, footer).
-// Webhook URL comes from the env var named by LOKI_SLACK_WEBHOOK_ENV (default LOKI_SLACK_WEBHOOK_URL); it is never logged.
+// Payload mirrors autonomy/notify.sh _notify_slack. The webhook URL comes from the env var named by LOKI_SLACK_WEBHOOK_ENV (default LOKI_SLACK_WEBHOOK_URL) and is never logged.
 export type SlackEvent = "pr_opened" | "blocked" | "finished";
 export interface SlackFields { repo?: string; issue?: string; prUrl?: string; outcome?: string; question?: string; cost?: string; time?: string; summary?: string }
 const COLORS: Record<SlackEvent, string> = { finished: "#36a64f", pr_opened: "#2eb886", blocked: "#ff9800" };
