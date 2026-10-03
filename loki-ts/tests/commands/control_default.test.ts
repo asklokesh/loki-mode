@@ -73,7 +73,7 @@ describe("startShip discovery", () => {
       writeInst({ pid: process.pid, port: srv.port, url: `http://127.0.0.1:${srv.port}` });
       const runDir = join(home, "repo", ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
       const log = new SupervisorLog(join(runDir, "events.jsonl"), "r1"); log.append("run.started", null, {});
-      await startShip(join(home, "repo"), log.path, env());
+      await startShip(join(home, "repo"), log.path, env({ LOKI_CONTROL_ALLOW_TMP: "1" })); // the repo is under the temp dir: opt in to discovery
       for (let i = 0; i < 40 && !existsSync(join(runDir, "ship.json")); i++) await Bun.sleep(100);
       expect(existsSync(join(runDir, "ship.json"))).toBe(true);
       expect(posts).toBeGreaterThan(0);

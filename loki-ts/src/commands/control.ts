@@ -7,6 +7,8 @@ import { dirname, join, resolve } from "node:path";
 import { instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { ingestAndWatch } from "../../../packages/control-plane/src/shipper/watch.ts";
 import { backfill } from "../../../packages/control-plane/src/shipper/backfill.ts";
+import { openDb } from "../../../packages/control-plane/src/db/migrate.ts";
+import { openReadOnly, parseBefore, pruneRuns, type PruneFilter } from "../../../packages/control-plane/src/db/prune.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 
 export const DEFAULT_PORT = 47821;
@@ -17,6 +19,8 @@ const HELP = `Usage: loki control <command> [options]   (on by default; LOKI_CON
 Commands:
   serve [--port N] [--db PATH]   Run the control plane + UI on 127.0.0.1 (default port ${DEFAULT_PORT}, 0 = any free port)
   backfill [DIR]                 Ship DIR/.loki/runs (default: current directory) to the control plane
+  prune --repo OWNER/NAME | --before ISO_DATE [--dry-run] [--db PATH]
+                                 Delete matching runs, their events and orphaned sources (works with the server up or down)
   status                         Show whether the control plane is reachable and how many runs it holds
 
 The control plane URL comes from LOKI_CONTROL_URL, else http://127.0.0.1:\${LOKI_CONTROL_PORT:-${DEFAULT_PORT}}.
@@ -101,6 +105,42 @@ async function status(env: NodeJS.ProcessEnv): Promise<number> {
   }
 }
 
+// prune opens the SQLite file directly (WAL, 5 s busy timeout, one BEGIN IMMEDIATE transaction) instead of calling the server:
+// it works with the server stopped, and a running server only ever waits on this short write lock, never sees a half-delete.
+function prune(args: string[], env: NodeJS.ProcessEnv): number {
+  const err = (m: string): number => { process.stderr.write(`loki control prune: ${m}\n`); return 2; };
+  const known = new Set(["--repo", "--before", "--db", "--dry-run"]);
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (!known.has(a)) return err(`unknown argument '${a}'`);
+    if (a !== "--dry-run") { if (args[i + 1] === undefined || args[i + 1]!.startsWith("--")) return err(`${a} needs a value`); i++; }
+  }
+  const f: PruneFilter = {};
+  const repo = flag(args, "--repo"), beforeRaw = flag(args, "--before");
+  if (repo !== undefined) { if (!/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(repo)) return err(`--repo must be owner/name, got '${repo}'`); f.repo = repo; }
+  if (beforeRaw !== undefined) {
+    const b = parseBefore(beforeRaw);
+    if (b === null) return err(`--before '${beforeRaw}' is not a valid ISO 8601 date (use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ)`);
+    f.before = b;
+  }
+  if (f.repo === undefined && f.before === undefined) return err("a filter is required: --repo OWNER/NAME and/or --before ISO_DATE");
+  const dry = args.includes("--dry-run");
+  const db = resolve(flag(args, "--db") ?? env.LOKI_CONTROL_DB ?? join(env.HOME || homedir(), ".loki", "control", "control.db"));
+  if (!existsSync(db)) { process.stdout.write(`loki control: no control database at ${db}, nothing to ${dry ? "remove" : "prune"}\n`); return 0; }
+  let sqlite: ReturnType<typeof openDb>["sqlite"] | undefined;
+  try {
+    // a dry run is strictly read-only: no migrations, no WAL change, no audit row
+    sqlite = dry ? openReadOnly(db) : openDb(db).sqlite;
+    const c = pruneRuns(sqlite, f, { dryRun: dry, actor: "cli" });
+    process.stdout.write(`loki control: ${dry ? "would remove" : "removed"} ${c.runs} runs, ${c.events} events, ${c.sources} orphaned sources${dry ? " (dry run, nothing changed)" : ""}\n`);
+    return 0;
+  } catch (e) {
+    const m = (e as Error).message;
+    process.stderr.write(`loki control prune: nothing was ${dry ? "counted" : "removed"}: ${/no such table/.test(m) ? `this database has an older schema than this version (${m}); run 'loki control serve' once to migrate it` : m}\n`);
+    return 1;
+  } finally { sqlite?.close(); }
+}
+
 export async function runControl(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") { process.stdout.write(HELP); return 0; }
@@ -108,6 +148,7 @@ export async function runControl(args: string[], env: NodeJS.ProcessEnv = proces
   switch (sub) {
     case "serve": return serve(rest, env);
     case "status": return status(env);
+    case "prune": return prune(rest, env);
     case "backfill": {
       const dir = resolve(flag(rest, "--repo") ?? rest.find((a) => !a.startsWith("-")) ?? process.cwd());
       const r = await backfill({ repoDir: dir, env: { ...env, LOKI_CONTROL_URL: baseUrl(env) } });

@@ -50,7 +50,7 @@ test("kid derivation matches the engine", () => {
 });
 
 test("UI effectiveVerdict matches the server helper on every combination", () => {
-  for (const verdict of ["VERIFIED", "FAILED", null]) for (const tampered of [true, false]) for (const attested of [true, false, undefined]) {
-    expect(uiEffective({ verdict, tampered, attested })).toBe(effectiveVerdict({ verdict, tampered, attested }));
+  for (const verdict of ["VERIFIED", "verified", " Verified ", "FAILED", null]) for (const tampered of [true, false]) for (const attested of [true, false, undefined]) for (const sig_checked of [true, false, undefined]) {
+    expect(uiEffective({ verdict, tampered, attested, sig_checked })).toBe(effectiveVerdict({ verdict, tampered, attested, sig_checked }));
   }
 });

@@ -106,6 +106,8 @@ No fix slice starts until its row exists (OPERATING-MODEL.md, Engine Laws line).
   - `loki status`.
 - Mechanism: one verdict-display function that returns TAMPERED whenever the run is tampered or its seal is invalid (CPE-27).
 - Fixture: an ingested run with tamper.detected never shows VERIFIED in any surface.
+- Sibling follow-up (EL-FC08b): redact at source in the engine before hashing. Today the shipper (redactEvent) and the server (redactSecrets) rewrite event data before the CP can hash it, so an honest signed run holding a token reads UNVERIFIED ("log redacted before ingest; seal not checkable"), never TAMPERED and never VERIFIED. Redacting before the engine hashes and signs would make such runs checkable end to end.
+- Sibling follow-up: the Slack summary, PR status and `loki status` do not yet read the CP effective_verdict.
 
 ## FC-09 A test-config edit outside scope can make broken code VERIFIED
 - User saw: nothing yet (reproduced by the D12 scope review with a stub provider). The agent broke `add`, edited bunfig.toml to preload a new setup.ts that mocks the module, and the verdict was VERIFIED. This happens at ffb58278b and at HEAD.

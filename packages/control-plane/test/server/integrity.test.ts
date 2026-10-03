@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { validateEnvelope } from "../../../../loki-ts/src/engine10/events.ts";
 import { createApp } from "../../src/server/app.ts";
-import { effectiveVerdict, verifyRunIntegrity } from "../../src/server/integrity.ts";
+import { effectiveVerdict, UNCHECKED_SIG, verifyRunIntegrity } from "../../src/server/integrity.ts";
 
 const FIX = join(import.meta.dir, "../fixtures/runs");
 const load = (n: string): any[] => readFileSync(join(FIX, n, "events.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((e) => validateEnvelope(e) === null);
@@ -38,7 +38,7 @@ test("forged receipt.sealed (sha deadbeef) + run.completed VERIFIED is TAMPERED,
 test("genuine engine runs stay VERIFIED; the tamper.detected run stays TAMPERED", async () => {
   for (const n of ["verified", "verified-pr"]) {
     const { detail } = await ingestAndRead(load(n));
-    expect([n, detail.tampered, detail.attested, detail.effective_verdict]).toEqual([n, false, true, "VERIFIED"]);
+    expect([n, detail.tampered, detail.attested, detail.effective_verdict]).toEqual([n, false, true, UNCHECKED_SIG]); // corpus runs are structurally attested; no key is configured, so the signature is not checked
   }
   expect((await ingestAndRead(load("tampered"))).detail.effective_verdict).toBe("TAMPERED");
   for (const n of ["failed", "partial", "blocked", "cap-hit", "unpriced"]) expect([n, (await ingestAndRead(load(n))).detail.tampered]).toEqual([n, false]);
@@ -106,6 +106,7 @@ test("effectiveVerdict never returns VERIFIED for a tampered or unattested run",
   expect(effectiveVerdict({ verdict: "VERIFIED", tampered: true })).toBe("TAMPERED");
   expect(effectiveVerdict({ verdict: "VERIFIED", tampered: false, attested: false })).toBe("UNVERIFIED");
   expect(effectiveVerdict({ verdict: "VERIFIED", tampered: false, attested: true })).toBe("VERIFIED");
+  expect(effectiveVerdict({ verdict: "VERIFIED", tampered: false, attested: true, sig_checked: false })).toBe(UNCHECKED_SIG);
   expect(effectiveVerdict({ verdict: "FAILED", tampered: false, attested: false })).toBe("FAILED");
   expect(effectiveVerdict({ verdict: null, tampered: false })).toBeNull();
 });

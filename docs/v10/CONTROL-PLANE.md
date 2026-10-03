@@ -46,6 +46,7 @@ Architect design, 2026-10-01, base 1dfc87103. Design only. Flag: `LOKI_CONTROL=1
 - events.jsonl is the spool. The shipper never writes to it (the supervisor treats outside writes as tamper). Its acked cursor lives in `.loki/runs/<id>/ship.json {acked_seq, url}`, written atomically.
 - Started by the supervisor next to the log (one hook line, skipped when `LOKI_CONTROL=0`; the url comes from `LOKI_CONTROL_URL` or local discovery, section 6), it uses `tail()` (events.ts:155), batches up to 200 events or 1 s, and POSTs. Backoff 1, 2, 4 ... 60 s with jitter. It never blocks or fails the run: on supervisor exit it flushes for at most 5 s, then leaves the rest for replay.
 - Every string in `data` goes through `redactSecrets` before sending.
+- Cleanup: `loki control prune --repo OWNER/NAME` and/or `--before ISO_DATE` (`--dry-run` previews) deletes matching runs, their events and orphaned sources in one transaction, direct on the SQLite file (WAL, 5 s busy timeout), so it works with the server up or down. `DELETE /v1/runs/:source/:run` (JSON content type, same-host Origin, bearer when a token is set) removes one run and writes an `audit` row first; the UI Run detail page has a Remove button with a confirm step.
 - Replay: `loki control backfill [--repo DIR]` and every `loki` start ship each run whose ship.json acked_seq is below its last seq. Backfill of old .loki/runs uses the same code path.
 
 ## 6. Local discovery (on by default)
@@ -111,3 +112,9 @@ A run blocked on a spec conflict shows its question in the run view with an answ
 `loki answer [<run-id>] [--text "..."]` reads the run's task and question from `.loki/runs/<run>/events.jsonl` and the answer from `--text` or the answer file above, then launches `bin/loki "<task>\n\nClarification answering \"<question>\": <answer>"` and prints the new run id. The default run is the newest BLOCKED run in the current repo. The child env drops every `SLACK_*` variable and `LOKI_CONTROL_TOKEN` and sets `LOKI_NO_BROWSER=1`. A run that is not BLOCKED, or has no answer, exits 2 with the reason.
 
 `LOKI_CONTROL_DEFAULT=1` (off by default) makes `loki dashboard` open the Control Plane.
+
+### Integrity and the display verdict (D86, FC-08)
+
+Ingest runs a pure verifier (`src/server/integrity.ts`) over every stored run and persists `tampered`, `attested`, `sig_checked` and `integrity_reasons`. Only the sealed prefix (events through `log.sealed`) supplies the verdict; a second `run.completed`, or any verdict-bearing event after `log.sealed`, is TAMPERED. The `log.sealed` kid must equal the signed receipt kid, and with keys configured an unknown kid is TAMPERED.
+
+Display verdicts (`effective_verdict`, mirrored by `ui/src/api.ts`): TAMPERED; UNVERIFIED (a VERIFIED claim that is not attested, or a log redacted before ingest); "VERIFIED (signature not checked)" (attested, but no key in `LOKI_CP_RECEIPT_PUBKEYS` checked the seal signature); VERIFIED (attested and signature-checked). With no keys configured nothing can be plain VERIFIED. Choice for the list filter: `?verdict=VERIFIED` lists signature-checked runs only; `?verdict=VERIFIED (signature not checked)` lists the rest. Legacy rows (attested NULL) are recomputed at boot.

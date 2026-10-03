@@ -12,8 +12,12 @@ export function openDb(path: string) {
   const sqlite = new Database(path, { create: true });
   sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
   const db = drizzle(sqlite, { schema });
-  // src/db/ (source) and dist/ (bundled server) sit at different depths under packages/control-plane
-  const migrationsFolder = [join(import.meta.dir, "../../drizzle"), join(import.meta.dir, "../drizzle")].find((d) => existsSync(join(d, "meta/_journal.json")));
+  // source, the bundled server and the bundled CLI sit at different depths
+  const migrationsFolder = [
+    join(import.meta.dir, "../../drizzle"), // src/db (source checkout)
+    join(import.meta.dir, "../drizzle"), // packages/control-plane/dist (bundled server)
+    join(import.meta.dir, "../../packages/control-plane/drizzle"), // loki-ts/dist (bundled CLI; also an installed npm package)
+  ].find((d) => existsSync(join(d, "meta/_journal.json")));
   if (!migrationsFolder) throw new Error("drizzle migrations folder not found");
   migrate(db, { migrationsFolder });
   return { db, sqlite };

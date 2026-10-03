@@ -1,8 +1,12 @@
 // The only file that talks to the control service. Shapes mirror packages/control-plane/src/server/runs.ts (parseRun, listRuns, runDetail).
 
-/** FC-08: the one display verdict. Mirrors src/server/integrity.ts effectiveVerdict (parity-tested). Never VERIFIED for a tampered or unattested run. */
-export const effectiveVerdict = (r: { verdict: string | null; tampered: boolean; attested?: boolean }): string | null =>
-  r.tampered ? "TAMPERED" : r.verdict === "VERIFIED" && r.attested === false ? "UNVERIFIED" : r.verdict;
+/** FC-08: the one display verdict. Mirrors src/server/integrity.ts effectiveVerdict (parity-tested). Plain VERIFIED only for an attested, signature-checked run. */
+export const UNCHECKED_SIG = "VERIFIED (signature not checked)";
+export const effectiveVerdict = (r: { verdict: string | null; tampered: boolean; attested?: boolean; sig_checked?: boolean }): string | null => {
+  if (r.tampered) return "TAMPERED";
+  if (typeof r.verdict === "string" && r.verdict.trim().toUpperCase() === "VERIFIED") return r.attested === false ? "UNVERIFIED" : r.sig_checked === false ? UNCHECKED_SIG : "VERIFIED";
+  return r.verdict;
+};
 
 export type Verdict = "VERIFIED" | "PARTIAL" | "FAILED" | "SPEC_CONFLICT" | string;
 
@@ -32,6 +36,7 @@ export interface RunRow {
   conflict: boolean;
   // EL-FC08b: integrity verified at ingest. Optional so older captures still type-check; absent attested reads as the raw verdict.
   attested?: boolean;
+  sig_checked?: boolean;
   integrity_reasons?: string[];
   effective_verdict?: string | null;
   // Live view: status is "running" until run.completed arrives. Optional so older captures still type-check.
@@ -118,3 +123,11 @@ export const importRuns = (): Promise<{ runs: number; sent: number; failed: stri
 export const listRepos = (): Promise<{ repos: string[] }> => get("/v1/repos");
 /** Start a run: target is owner/repo#N or a plain task. */
 export const startRun = (target: string, repo: string): Promise<{ ok: true; pid: number; command: string }> => postJson("/v1/start", { target, repo });
+
+/** Remove one run and its events. Resolves with what the server says was removed; rejects with the server's own error text. */
+export async function deleteRun(source: string, run: string): Promise<{ ok: true; removed: { runs: number; events: number; sources: number }; remaining_runs: number }> {
+  const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`, { method: "DELETE", headers: authHeaders({ "content-type": "application/json" }) });
+  const j = (await res.json().catch(() => ({}))) as { error?: string; removed?: { runs: number; events: number; sources: number }; remaining_runs?: number };
+  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  return { ok: true, removed: j.removed ?? { runs: 0, events: 0, sources: 0 }, remaining_runs: j.remaining_runs ?? 0 };
+}

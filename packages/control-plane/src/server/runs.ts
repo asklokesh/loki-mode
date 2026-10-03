@@ -4,7 +4,7 @@ import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 import type { Db } from "../db/migrate.ts";
 import { events, runs } from "../db/schema.ts";
 import { blockedQuestion } from "./answer.ts";
-import { effectiveVerdict, pubkeysFromEnv, verifyRunIntegrity } from "./integrity.ts";
+import { effectiveVerdict, pubkeysFromEnv, sealedPrefix, UNCHECKED_SIG, verifyRunIntegrity } from "./integrity.ts";
 
 const str = (x: unknown): string | null => (typeof x === "string" ? x : null);
 
@@ -17,7 +17,7 @@ export function loadEvents(db: Db, sourceId: string, runId: string): EventEnvelo
 export function rebuildRun(db: Db, sourceId: string, runId: string): void {
   const evs = loadEvents(db, sourceId, runId);
   if (evs.length === 0) return;
-  const f = fold(evs);
+  const f = fold(sealedPrefix(evs)); // the verdict comes from the authenticated prefix; lines after the sealing line are unauthenticated
   const integ = verifyRunIntegrity(evs, { pubkeyFor: pubkeysFromEnv() }); // EL-FC08b: tampered is the supervisor flag OR any ingest-side integrity failure
   const tampered = f.run.tampered || integ.tampered;
   const pc = partialCost(evs, tampered);
@@ -35,7 +35,7 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
     inputTokens: f.cost.inputTokens, outputTokens: f.cost.outputTokens,
     wallS: typeof done.wall_s === "number" ? done.wall_s : null,
     lastSeq: f.lastSeq, lastEventAt: evs[evs.length - 1]?.ts ?? null, tampered: Number(tampered),
-    attested: Number(integ.attested), integrityReasons: JSON.stringify(integ.reasons),
+    attested: Number(integ.attested), sigChecked: Number(integ.sig_checked), integrityReasons: JSON.stringify(integ.reasons),
   };
   // conflict is owned by ingest, so it is left out of the update set and survives a rebuild
   db.insert(runs).values(row).onConflictDoUpdate({ target: [runs.sourceId, runs.runId], set: row }).run();
@@ -50,8 +50,8 @@ const parseRun = (r: typeof runs.$inferSelect) => ({
   cost_usd: r.costUsd, partial_usd: r.partialUsd, measured_sessions: r.measuredSessions, total_sessions: r.totalSessions,
   input_tokens: r.inputTokens, output_tokens: r.outputTokens, wall_s: r.wallS, last_seq: r.lastSeq,
   last_event_at: r.lastEventAt, tampered: r.tampered === 1, conflict: r.conflict === 1,
-  attested: r.attested === 1, integrity_reasons: reasonsOf(r.integrityReasons),
-  effective_verdict: effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1 }),
+  attested: r.attested === 1, sig_checked: r.sigChecked === 1, integrity_reasons: reasonsOf(r.integrityReasons),
+  effective_verdict: effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 }),
   status: r.endedAt ? "completed" : "running", elapsed_s: elapsedS(r),
 });
 // A run with no run.completed yet is running: add its live fields (stage, files) from the stored events.
@@ -83,14 +83,30 @@ const elapsedS = (r: typeof runs.$inferSelect): number | null => {
   return Math.max(0, (end - Date.parse(r.startedAt)) / 1000);
 };
 
+/** FC-08: filters match the DISPLAY verdict. Plain VERIFIED lists only signature-checked, attested runs; "VERIFIED (signature not checked)" the attested rest. */
+const verdictFilter = (v: string | undefined) => {
+  if (!v) return undefined;
+  if (v === "TAMPERED") return eq(runs.tampered, 1);
+  if (v === "UNVERIFIED") return and(eq(runs.verdict, "VERIFIED"), eq(runs.tampered, 0), sql`coalesce(${runs.attested}, 0) != 1`);
+  if (v === "VERIFIED") return and(eq(runs.verdict, "VERIFIED"), eq(runs.tampered, 0), eq(runs.attested, 1), eq(runs.sigChecked, 1));
+  if (v === UNCHECKED_SIG) return and(eq(runs.verdict, "VERIFIED"), eq(runs.tampered, 0), eq(runs.attested, 1), sql`coalesce(${runs.sigChecked}, 0) != 1`);
+  return and(eq(runs.verdict, v), eq(runs.tampered, 0));
+};
+
+/** Boot-time recompute for legacy rows whose integrity was never evaluated (attested IS NULL); they read as unattested until then. */
+export function recomputeLegacy(db: Db): number {
+  const rows = db.select({ s: runs.sourceId, r: runs.runId }).from(runs).where(sql`${runs.attested} is null`).all();
+  for (const x of rows) rebuildRun(db, x.s, x.r);
+  return rows.length;
+}
+
 export interface ListQuery { verdict?: string; repo?: string; since?: string; until?: string; group_id?: string; limit?: number; cursor?: string }
 
 export function listRuns(db: Db, q: ListQuery) {
   const limit = Math.min(Math.max(q.limit ?? 50, 1), 200);
   const offset = Math.max(Number.parseInt(q.cursor ?? "0", 10) || 0, 0); // ponytail: cursor is an opaque offset, keyset when write rate makes pages shift
   const where = and(
-    q.verdict ? eq(runs.verdict, q.verdict) : undefined,
-    q.verdict === "VERIFIED" ? and(eq(runs.tampered, 0), eq(runs.attested, 1)) : undefined, // FC-08: the VERIFIED filter never lists a tampered or unattested run
+    verdictFilter(q.verdict),
     q.repo ? eq(runs.originRepo, q.repo) : undefined,
     q.group_id ? eq(runs.groupId, q.group_id) : undefined,
     q.since ? gte(runs.startedAt, q.since) : undefined,
