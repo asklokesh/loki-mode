@@ -5,6 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync }
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
+import { ingestAndWatch } from "../../../packages/control-plane/src/shipper/watch.ts";
 import { backfill } from "../../../packages/control-plane/src/shipper/backfill.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 
@@ -67,6 +68,10 @@ async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
     writeFileSync(inst, `${JSON.stringify({ pid: process.pid, port: Number(m[2]), url: m[1], version, install_path: REPO_ROOT, db })}\n`, { mode: 0o600 });
     chmodSync(inst, 0o600); // an existing file keeps its old mode through writeFileSync
     buf = "";
+    // CP-INGEST: backfill this repo and every registered project, then tail .loki/runs so live runs appear with no setup
+    if (env.LOKI_CONTROL_AUTOINGEST !== "0") {
+      void ingestAndWatch({ repoDir: process.cwd(), url: m[1]!, env }).then((w) => { process.on("exit", () => w.stop()); }).catch(() => { /* ingest is best effort */ });
+    }
   }
   const code = await child.exited;
   rmInst();
