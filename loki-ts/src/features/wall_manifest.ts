@@ -14,6 +14,10 @@ const MAX_EXAMPLES = 2;
 const EXAMPLE_LINES = 40;
 const MAX_LAYOUT = 60;
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
+// A style example needs a test FILENAME and a parseable source extension; a test directory alone never qualifies (W1-S2 r3).
+const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
+const EXAMPLE_EXT = /\.(py|go|[cm]?[jt]sx?)$/;
+const baseOf = (p: string): string => p.split("/").pop() ?? p;
 const norm = (s: string): string => s.replace(/\r\n?/g, "\n");
 const stemOf = (p: string): string => (p.split("/").pop() ?? p).replace(/\.[^.]*$/, "");
 const byPath = (a: ManifestFile, b: ManifestFile): number =>
@@ -732,7 +736,9 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
     out.push("", `## signatures: ${path}`, ...(path.endsWith(".py") ? pySignatures(f.content) : safeTs(f.content, path)));
   }
   out.push("", "## style examples");
-  for (const f of tests.filter((t) => !importsNamed(t.path, t.content, stems)).slice(0, MAX_EXAMPLES)) {
+  const named = new Set(mods.flatMap((m) => [baseOf(m), stemOf(m)]));
+  const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path)) && !named.has(stemOf(t.path)) && !importsNamed(t.path, t.content, stems);
+  for (const f of tests.filter(eligible).slice(0, MAX_EXAMPLES)) {
     out.push(`--- example: ${f.path}`, ...f.content.split("\n").slice(0, EXAMPLE_LINES));
   }
   const lines = out.join("\n").split("\n");

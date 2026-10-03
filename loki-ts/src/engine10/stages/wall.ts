@@ -96,7 +96,7 @@ export const WALL_MAP_MAX_LINES = 200;
 export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false): string {
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
-    `You cannot see the repository. This directory holds only task.md and repomap.txt${hasManifest ? " and wall_manifest.txt (public signatures only)" : ""}.`,
+    `You cannot see the repository. This directory holds only task.md and repomap.txt${hasManifest ? " and wall_manifest.txt (signatures, runner config, test layout and test-style examples)" : ""}.`,
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     ...taskBlock(task),
     "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded.",

@@ -635,3 +635,48 @@ describe("wallManifestFor base-tree reader (D77, W1-S2 r2)", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+// D77 / W1-S2 r3: a test DIRECTORY never makes a file a style example; only a test filename with a source extension does.
+describe("style examples need a test filename (D77, W1-S2 r3)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function repo() {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r3-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    g("init", "-q");
+    const put = (p: string, c: string): void => { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); };
+    put("package.json", '{"scripts":{"test":"bun test"}}');
+    put("src/spec/aaa_engine.ts", 'export function secretAlgo(n: number): number {\n  return n * 31337; // BODY_SPEC_1\n}\n');
+    put("tests/fixtures/impl_copy.py", "def copy_algo(n):\n    return n * 4242  # BODY_FIX_2\n");
+    put("tests/engine.test.ts", 'import { test } from "bun:test";\ntest("engine", () => { const x = 99; /* BODY_NAMED_3 */ });\n');
+    put("tests/data.json", '{"k": "BODY_JSON_4"}');
+    put("tests/.env", "TOKEN=BODY_ENV_5\n");
+    put("tests/z.test.ts", 'import { test } from "bun:test";\ntest("z_style", () => {});\n');
+    g("commit", "-q", "-m", "base");
+    return { dir, tree: g("rev-parse", "HEAD^{tree}") };
+  }
+  function manifest(task: string): string {
+    const { dir, tree } = repo();
+    try { return wallManifestFor(dir, tree, task, ON)!.text; } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+
+  test("a src/spec/ module and a tests/fixtures/ impl copy never print as examples, named or not", () => {
+    for (const task of ["add a feature", "fix secretAlgo in src/spec/aaa_engine.ts", "see tests/fixtures/impl_copy.py"]) {
+      const t = manifest(task);
+      expect(t).not.toContain("BODY_SPEC_1");
+      expect(t).not.toContain("BODY_FIX_2");
+    }
+  });
+
+  test("a task-named file under a test directory is never a style example; a real test file still is", () => {
+    const t = manifest("update engine.test.ts");
+    expect(t).not.toContain("BODY_NAMED_3");
+    expect(t).toContain('test("z_style"');
+  });
+
+  test("non-source files under tests/ are listed by name only, never with content", () => {
+    const t = manifest("add a feature");
+    expect(t).not.toContain("BODY_JSON_4");
+    expect(t).not.toContain("BODY_ENV_5");
+    expect(t).toContain("tests/data.json");
+  });
+});
