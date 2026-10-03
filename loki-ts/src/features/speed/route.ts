@@ -49,7 +49,7 @@ function readSpec(task: string, repoDir: string, cwd: string): SpecRead {
   if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) return { kind: "reject", reason: `spec path escapes the repo: ${task}` };
   let fd = -1;
   try {
-    fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW); // a swap to a symlink after realpath fails here
+    fd = openSync(real, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); // symlink swap fails here; O_NONBLOCK keeps a FIFO from blocking open, fstat then rejects it
     const st = fstatSync(fd);
     if (!st.isFile()) return { kind: "text" };
     if (st.size > MAX_SPEC_BYTES) return { kind: "reject", reason: `spec file over ${MAX_SPEC_BYTES} bytes` };
@@ -64,7 +64,11 @@ function readSpec(task: string, repoDir: string, cwd: string): SpecRead {
 export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.ProcessEnv, deps: RouteDeps = {}): Promise<RouteResult> {
   if (env.LOKI_SPEED !== "1") return { code: null, task };
   const say = deps.stderr ?? ((s: string): void => { process.stderr.write(s); });
-  const seq = (t: string): string => (Buffer.byteLength(t) <= MAX_SEQ_TASK_BYTES ? t : task);
+  const seq = (t: string): string => {
+    if (Buffer.byteLength(t) <= MAX_SEQ_TASK_BYTES) return t;
+    if (t !== task) say("loki: spec over 64 KB, passing the path\n");
+    return task;
+  };
   const fb = (t: string, reason: string): RouteResult => { say(`loki: sequential (reason: ${reason})\n`); return { code: null, task: seq(t) }; };
   let spec = task, specPath: string | null = null, dag: Dag;
   try {

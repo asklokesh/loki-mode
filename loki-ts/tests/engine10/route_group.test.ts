@@ -1,5 +1,6 @@
 // D61-16: LOKI_SPEED routing of `loki "<task>"` / `loki <file>` through the decomposer.
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -170,5 +171,27 @@ describe("flag on", () => {
   });
   test("default selection uses engine10 selectRelevantFiles, not a local copy", () => {
     expect(readFileSync(join(import.meta.dir, "../../src/features/speed/route.ts"), "utf8")).toContain('from "../../engine10/relevant_files.ts"');
+  });
+  test("a FIFO spec returns promptly with the literal path (open must not block)", async () => {
+    await withDir(async (d) => {
+      const p = join(d, "spec.md");
+      if (spawnSync("mkfifo", [p]).status !== 0) return; // mkfifo missing: skip
+      // A blocking open freezes the whole event loop, so probe in a child with a hard timeout.
+      const code = `import { maybeRunGroup } from ${JSON.stringify(join(import.meta.dir, "../../src/features/speed/route.ts"))};
+        const r = await maybeRunGroup(${JSON.stringify(p)}, ${JSON.stringify(d)}, { LOKI_SPEED: "1" }, { stderr: () => {}, cwd: ${JSON.stringify(d)} });
+        process.exit(r.code === null && r.task === ${JSON.stringify(p)} ? 0 : 3);`;
+      const res = spawnSync(process.execPath, ["-e", code], { timeout: 5000, killSignal: "SIGKILL" });
+      expect(res.error).toBeUndefined();
+      expect(res.status).toBe(0);
+    });
+  });
+  test("a readable spec over 64 KB falls back to the path with a stderr note", async () => {
+    await withDir(async (d) => {
+      const p = join(d, "big.md");
+      writeFileSync(p, "- item a\n- item b\n" + "x".repeat(MAX_SEQ_TASK_BYTES + 10) + "\n");
+      const { task, err } = await run(p, ON, undefined, d, d);
+      expect(task).toBe(p);
+      expect(err).toContain("spec over 64 KB, passing the path");
+    });
   });
 });
