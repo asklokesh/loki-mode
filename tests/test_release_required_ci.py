@@ -444,13 +444,32 @@ def _required_ci_full_script():
     return "\n".join(l[strip:] if len(l) >= strip else l for l in body)
 
 
-def _make_stub_bin(tmp_dir, fixtures):
-    """fixtures: {sha: [(name, status, conclusion[, event[, created_at]]), ...]}.
+_SCHED_RUN_URL = "https://github.com/o/r/actions/runs/1"
+_SCHED_GREEN = {"newest": {"total_count": 1, "workflow_runs": [
+    {"event": "schedule", "head_branch": "main", "status": "completed",
+     "conclusion": "success", "html_url": _SCHED_RUN_URL,
+     "created_at": "2026-01-01T00:00:00Z"}]}}
+
+
+def _sched_run(conclusion, created="2026-01-01T00:00:00Z"):
+    return {"event": "schedule", "head_branch": "main", "status": "completed",
+            "conclusion": conclusion, "html_url": _SCHED_RUN_URL, "created_at": created}
+
+
+def _make_stub_bin(tmp_dir, fixtures, sched=None):
+    """fixtures: {sha: [(name, status, conclusion[, event[, created_at[, head_branch]]]), ...]}.
     The stub `gh` serves those runs as the real API JSON and applies the
     script's REAL --jq filter with jq, so the event filter is exercised for
     real (event defaults to push; created_at defaults to a fixed stamp, with
     the row order as the tiebreak being irrelevant to the script). The stub
-    `sleep` exits 99 immediately instead of actually sleeping."""
+    `sleep` exits 99 immediately instead of actually sleeping.
+
+    sched (D75/D75b): the scheduled Security Audit gate's two API queries.
+    None means a green newest scheduled run on main. Otherwise a dict with
+    "newest" (JSON for the event=schedule query), "successes" (JSON for the
+    status=success&created>= query) or "error": True (both queries exit 1)."""
+    if sched is None:
+        sched = _SCHED_GREEN
     binp = pathlib.Path(tmp_dir, "bin")
     binp.mkdir()
     fixdir = pathlib.Path(tmp_dir, "fixtures")
@@ -461,13 +480,21 @@ def _make_stub_bin(tmp_dir, fixtures):
             n, s, c = row[:3]
             ev = row[3] if len(row) > 3 else "push"
             ts = row[4] if len(row) > 4 else "2026-01-01T00:00:00Z"
+            br = row[5] if len(row) > 5 else "main"
             wr.append({"name": n, "status": s, "conclusion": None if c == "null" else c,
-                       "event": ev, "created_at": ts})
+                       "event": ev, "created_at": ts, "head_branch": br})
         (fixdir / f"{sha}.json").write_text(json.dumps({"workflow_runs": wr}))
+    (fixdir / "sched-newest.json").write_text(json.dumps(sched.get("newest", {"total_count": 0, "workflow_runs": []})))
+    (fixdir / "sched-successes.json").write_text(json.dumps(sched.get("successes", {"total_count": 0, "workflow_runs": []})))
     gh = binp / "gh"
     gh.write_text(
         "#!/bin/bash\n"
         'url="$2"; filter="$4"\n'
+        + ('exit 1\n' if sched.get("error") else "")
+        + 'case "$url" in\n'
+        f'  *security-audit.yml/runs?event=schedule*) jq -r "$filter" "{fixdir}/sched-newest.json"; exit $? ;;\n'
+        f'  *security-audit.yml/runs?branch=main*status=success*) jq -r "$filter" "{fixdir}/sched-successes.json"; exit $? ;;\n'
+        'esac\n'
         'sha="${url#*head_sha=}"; sha="${sha%%&*}"\n'
         f'f="{fixdir}/$sha.json"\n'
         '[ -f "$f" ] && jq -r "$filter" "$f" || true\n'
@@ -504,10 +531,10 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         self.sha = subprocess.run(["git", "-C", self.repo, "rev-parse", "HEAD"],
                                    capture_output=True, text=True).stdout.strip()
 
-    def _run(self, fixtures, timeout=15):
+    def _run(self, fixtures, timeout=15, sched=None):
         script = _required_ci_full_script()
         self.assertIsNotNone(script, "could not extract the required-ci run script")
-        bindir = _make_stub_bin(self.tmp, fixtures)
+        bindir = _make_stub_bin(self.tmp, fixtures, sched)
         env = dict(os.environ)
         env.update({"SHA": self.sha, "REPO": "o/r", "EVENT_NAME": "push", "GH_TOKEN": "x",
                     "GITHUB_WORKSPACE": str(_ROOT),
@@ -799,6 +826,70 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         rc, out = self._run(self._audit_fixture(
             [("Security Audit", "completed", "success", "pull_request")]))
         self.assertEqual(rc, 99, out)
+
+    # D75/D75b: the scheduled Security Audit gate, exercised through the real script.
+    def _sched_fixture(self):
+        return self._audit_fixture([("Security Audit", "completed", "success")])
+
+    def test_d75_green_newest_scheduled_run_passes(self):
+        rc, out = self._run(self._sched_fixture())
+        self.assertEqual(rc, 0, out)
+        self.assertIn("newest scheduled run succeeded", out)
+
+    def test_d75_no_scheduled_run_passes_only_on_total_count_zero(self):
+        rc, out = self._run(self._sched_fixture(),
+                            sched={"newest": {"total_count": 0, "workflow_runs": []}})
+        self.assertEqual(rc, 0, out)
+
+    def _red_blocks(self, concl):
+        rc, out = self._run(self._sched_fixture(), sched={
+            "newest": {"total_count": 1, "workflow_runs": [_sched_run(concl)]},
+            "successes": {"total_count": 0, "workflow_runs": []}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("the daily scheduled Security Audit is not green", out)
+
+    def test_d75_red_failure_scheduled_run_without_newer_main_success_blocks(self):
+        self._red_blocks("failure")
+
+    def test_d75_red_cancelled_scheduled_run_without_newer_main_success_blocks(self):
+        self._red_blocks("cancelled")
+
+    def test_d75_red_timed_out_scheduled_run_without_newer_main_success_blocks(self):
+        self._red_blocks("timed_out")
+
+    def test_d75_red_scheduled_run_cleared_by_newer_main_push_success_passes(self):
+        newer = {"event": "push", "head_branch": "main", "conclusion": "success",
+                 "created_at": "2026-01-02T00:00:00Z"}
+        rc, out = self._run(self._sched_fixture(), sched={
+            "newest": {"total_count": 1, "workflow_runs": [_sched_run("failure")]},
+            "successes": {"total_count": 1, "workflow_runs": [newer]}})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("supersedes it", out)
+
+    def test_d75_newer_success_on_a_train_branch_does_not_clear(self):
+        newer = {"event": "push", "head_branch": "train/92", "conclusion": "success",
+                 "created_at": "2026-01-02T00:00:00Z"}
+        rc, out = self._run(self._sched_fixture(), sched={
+            "newest": {"total_count": 1, "workflow_runs": [_sched_run("failure")]},
+            "successes": {"total_count": 1, "workflow_runs": [newer]}})
+        self.assertEqual(rc, 1, out)
+
+    def test_d75b_truncated_success_page_is_indeterminate_and_blocks(self):
+        rc, out = self._run(self._sched_fixture(), sched={
+            "newest": {"total_count": 1, "workflow_runs": [_sched_run("failure")]},
+            "successes": {"total_count": 250, "workflow_runs": []}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("indeterminate", out)
+
+    def test_d75_train_branch_security_audit_success_does_not_count_at_release_sha(self):
+        rc, out = self._run(self._audit_fixture([
+            ("Security Audit", "completed", "success", "push", "2026-01-01T00:00:00Z", "train/92")]))
+        self.assertEqual(rc, 99, out)
+
+    def test_d75_api_error_fails_closed(self):
+        rc, out = self._run(self._sched_fixture(), sched={"error": True})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("cannot read scheduled Security Audit runs", out)
 
 
 class OneEachOfTheRemainingRound3Checks(unittest.TestCase):

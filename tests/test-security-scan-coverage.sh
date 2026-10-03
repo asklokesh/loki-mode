@@ -119,7 +119,7 @@ _PY_SCAN_STEP="$_PY_REQ_SCAN_STEP
 $_PY_SDK_SCAN_STEP"
 _PY_ASSERT_STEP="$(_step python-audit 'Assert the audit actually produced')"
 _SECRET_INSTALL_STEP="$(_step secret-scan 'Install gitleaks')"
-_SECRET_SCAN_STEP_RAW="$(_step secret-scan 'gitleaks scan')"
+_SECRET_SCAN_STEP_RAW="$(_step secret-scan 'gitleaks scan (all reachable history)')"
 if printf '%s' "$_SECRET_SCAN_STEP_RAW" | grep -q 'security-audit-gitleaks.sh'; then
   _SECRET_SCAN_STEP="$_SECRET_SCAN_STEP_RAW
 $(_gitleaks_script_body)"
