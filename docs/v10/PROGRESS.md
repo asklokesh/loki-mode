@@ -1941,3 +1941,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - C12 dropped (D72). D61-12 round 6 BLOCK; round 7 fix running. Opus round 2 reviews running for D61-04, D61-13, C6, D61-11.
 - Deferred cleanup (no compound rm mid-window): review scratch dirs rev-d61-16-f-r3, rev-d61-12-r6, and 12 git-home dirs leaked by the D61-12 tests (reviewer removed 2 it owned).
 
+
+## 2026-10-03T04:40Z CoS tick
+- Train 85 Tests red twice in full (run 37095579466): control_default "serve needs no flag; instance.json is 0600" times out on ubuntu only (passes on macOS 13/0). Real cause, so P0-CONTROL-LINUX dispatched (D68). Train 85 will not promote; train 86 supersedes it once green.
+- Merged to local main: C1, C10, INTEL-2, C6, C6-F (TL APPROVE e8837ffa4), D61-13 (opus r3 APPROVE a2c3d9cb2); dist 7ad4a44e9.
+- Core engine10 at 5001 after D61-13 (budget.test needs < 5000): P0-CORE-BUDGET dispatched. Train 86 waits on it and on P0-CONTROL-LINUX.
+- D61-04 r3 BLOCK (live-tree read), r4 fix 9d2bbf4b9 in opus review. D61-12 r7 BLOCK, r8 fix 35a7b0c32 in opus review (final round, else drop). P0-VERIFY-ARG r2 BLOCK (core budget, unguarded unknown-option check, autonomy/loki routes --pubkey= to legacy), r3 fix running. D61-11 r3 fix running.
+- Deferred cleanup adds: scratchpad rev-d61-04-r3, rev-d61-12-r7, rev-d61-13-r3; 13 pre-existing loki-run.git-home-* dirs in TMPDIR (record exact list at end-of-window pass).
