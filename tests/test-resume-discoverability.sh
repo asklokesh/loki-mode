@@ -113,18 +113,6 @@ else
 fi
 
 # ===========================================
-# Test 2: interrupted run -> status surfaces the same hint
-# ===========================================
-log_test "loki status on an interrupted run surfaces the resume hint"
-out="$(run_loki "$proj" status)"
-
-if grep -qi "interrupted run found" <<< "$out" && grep -q "$DISTINCT_ITER" <<< "$out"; then
-    log_pass "status surfaces the interrupted run and its iteration"
-else
-    log_fail "status did not surface the interrupted run. Got: $out"
-fi
-
-# ===========================================
 # Test 3 (FALSE-POSITIVE DIRECTION): a TERMINAL run gets no resume hint.
 # This is the case that matters. An empty .loki is the easy negative; a
 # finished run is the one where a bogus hint would point at nothing, because

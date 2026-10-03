@@ -386,7 +386,6 @@ Prd Reuse Bash W4	1
 Proof Forgery Defense	1
 Provider Degraded Reasons Honesty	0
 Provider Flags	0
-Provider Source Cli	1
 Rarv Tier Mapping	0
 Rate Limit Octal	0
 Ratelimit Debug Clean	0
@@ -562,7 +561,6 @@ Start handoff	0
 State notifications	0
 Static analysis iteration baseline	6
 Static analysis tsconfig	2
-Status CLI/provider parity	0
 Status --explain heal injection (wave 8)	1
 Supervised dependency setup	1
 Supervised disclosure scope	0
@@ -703,7 +701,6 @@ Refused resume warning names the blocking ignored file and the recorded branch (
 PR receipt renderer ignores cwd json.py (-I -S, S-215)	1
 corrupt or denied proofs and memory files give 503 or an error row, never empty (HONEST-READ-1)	2
 Stats unmeasured cost reads unmeasured (S-226r)	6
-Status budget unmeasured reads unmeasured (S-226r)	6
 verify readers ignore a planted json.py in the reviewed tree (-I -S, S-216)	2
 Dashboard api_runs unreadable reads (HONEST-READ-2)	5
 Untracked status ignores core.fsmonitor (S-218r)	1

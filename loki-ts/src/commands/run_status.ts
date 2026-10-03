@@ -91,15 +91,22 @@ export function render(s: ModernStatus): string {
 
 export async function runModernStatus(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   let json = false;
+  let wanted: string | null = null;
   for (const a of argv) {
     if (a === "--json") json = true;
-    else if (a === "--help" || a === "-h") { process.stdout.write("Usage: loki status [--json]\n  Shows the current or latest Loki 10 run.\n"); return 0; }
+    else if (!a.startsWith("-") && wanted === null) wanted = a;
+    else if (a === "--help" || a === "-h") { process.stdout.write("Usage: loki status [run-id] [--json]\n  Shows the current or latest Loki 10 run.\n"); return 0; }
     else { process.stderr.write(`loki status: unknown flag ${a}\nUsage: loki status [--json]\n`); return 1; }
   }
   const repoDir = env.LOKI_E10_REPO_DIR ?? process.cwd();
   const root = runsRoot(env, repoDir);
   const now = Date.now();
-  const hit = pickRun(root, now);
+  let hit = pickRun(root, now);
+  if (wanted !== null) {
+    const events = readEvents(join(root, wanted, "events.jsonl"));
+    if (events.length === 0) { process.stderr.write(`loki status: no events for run ${wanted}\n`); return 1; }
+    hit = { id: wanted, events };
+  }
   let cp: string | null = null;
   try { cp = await discoverControlUrl(env); } catch { cp = null; }
   if (!hit) {

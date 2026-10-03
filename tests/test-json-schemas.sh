@@ -85,7 +85,7 @@ PY
 
 # known-bad samples must fail
 echo '{"state":{"status":5},"completion":{}}' > "$T/bad-why.json"
-echo '{"version":"1","status":"x","iteration":"zero","provider":"claude","task_counts":{}}' > "$T/bad-status.json"
+echo '{"engine":"legacy","run_id":5,"ref":null,"stage":null,"elapsed_s":-1,"cost_usd":null,"outcome":null,"pr_url":null,"receipt_path":null,"control_plane_url":null}' > "$T/bad-status.json"
 python3 "$T/val.py" "$REPO_ROOT/schemas/why-result.schema.json" "$T/bad-why.json" >/dev/null && bad "bad why sample passed" || ok "bad why sample rejected"
 python3 "$T/val.py" "$REPO_ROOT/schemas/status-result.schema.json" "$T/bad-status.json" >/dev/null && bad "bad status sample passed" || ok "bad status sample rejected"
 

@@ -2,29 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://autonomi.dev/loki-mode/schemas/status-result.schema.json",
   "title": "loki status --json",
-  "description": "Output of `loki status --json`. Exits 0 with this document, including when no run is active (status inactive). Validated against real output by tests/test-json-schemas.sh.",
+  "description": "Output of `loki status --json`: the current or latest Loki 10 run. Exits 0 with this document, including when there is no run (run_id null, hint set). Validated against real output by tests/test-json-schemas.sh and loki-ts/tests/commands/run_status.test.ts.",
   "type": "object",
-  "required": ["version", "status", "iteration", "provider", "task_counts"],
+  "required": ["engine", "run_id", "ref", "stage", "elapsed_s", "cost_usd", "outcome", "pr_url", "receipt_path", "control_plane_url"],
   "properties": {
-    "version": { "type": "string" },
-    "status": { "type": "string" },
-    "phase": { "type": ["string", "null"] },
-    "iteration": { "type": "integer", "minimum": 0 },
-    "provider": { "type": "string" },
-    "provider_source": { "type": "string" },
-    "dashboard_url": { "type": ["string", "null"] },
-    "pid": { "type": ["integer", "null"] },
-    "elapsed_time": { "type": "number", "minimum": 0 },
-    "task_counts": {
-      "type": "object",
-      "required": ["total", "completed", "failed", "pending"],
-      "properties": {
-        "total": { "type": "integer", "minimum": 0 },
-        "completed": { "type": "integer", "minimum": 0 },
-        "failed": { "type": "integer", "minimum": 0 },
-        "pending": { "type": "integer", "minimum": 0 }
-      }
-    },
-    "phase1": { "type": "object" }
+    "engine": { "const": "loki10" },
+    "run_id": { "type": ["string", "null"] },
+    "ref": { "type": ["string", "null"] },
+    "stage": { "type": ["string", "null"] },
+    "elapsed_s": { "type": ["number", "null"], "minimum": 0 },
+    "cost_usd": { "type": ["number", "null"], "minimum": 0 },
+    "outcome": { "type": ["string", "null"] },
+    "pr_url": { "type": ["string", "null"] },
+    "receipt_path": { "type": ["string", "null"] },
+    "control_plane_url": { "type": ["string", "null"] },
+    "hint": { "type": "string" }
   }
 }

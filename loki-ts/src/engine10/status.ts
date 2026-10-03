@@ -84,19 +84,7 @@ export function renderStatus(view: StatusView): string {
   const clock = `Elapsed:    ${formatClock(view.elapsedS)}`;
   return [header, state, clock, ...view.lines].join("\n");
 }
-/** Called by cli.ts's router (section 11): `loki status [run-id]`. */
+/** Called by cli.ts router (section 11): `loki status [run-id]`. CLI-MODERN-2: one renderer, shared with the default `loki status`. */
 export async function main(args: string[]): Promise<number> {
-  const repoDir = process.env.LOKI_E10_REPO_DIR ?? process.cwd();
-  const runId = args[0] ?? findLatestRun(repoDir) ?? undefined;
-  if (!runId) {
-    process.stderr.write("loki status: no runs found\n");
-    return 1;
-  }
-  const events = readEvents(eventsPath(repoDir, runId));
-  if (events.length === 0) {
-    process.stderr.write(`loki status: no events for run ${runId}\n`);
-    return 1;
-  }
-  process.stdout.write(renderStatus(buildStatus(runId, events, fold(events), Date.now())) + "\n");
-  return 0;
+  return (await import("../commands/run_status.ts")).runModernStatus(args);
 }

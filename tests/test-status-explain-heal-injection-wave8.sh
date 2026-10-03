@@ -4,12 +4,8 @@
 #
 # Three findings, all in autonomy/loki:
 #
-# loki-F2 (cmd_status_json): the JSON output is produced by a bare
-#   `python3 -c "..."` call. Under `set -euo pipefail` a non-zero python exit
-#   aborts the function immediately, so the post-call `if [ $? -ne 0 ]`
-#   fallback was DEAD code -- a missing/broken python3 crashed
-#   `loki status --json` with no honest error object. The fix guards the call
-#   with `if ! python3 ...; then <fallback>; fi`.
+# (The loki-F2 cmd_status_json cases were removed with the legacy status box,
+#  CLI-MODERN-2: `loki status` is now the Loki 10 run view.)
 #
 # loki-est (cmd_explain --json + pkg_meta reader, cmd_heal progress-write +
 #   prev_phase read): raw bash values were interpolated into a `python3 -c`
@@ -62,39 +58,6 @@ log_fail() {
     FAIL=$((FAIL+1))
     echo -e "  ${RED}FAIL${NC}: $1"
 }
-
-#-------------------------------------------------------------------------------
-# loki-F2: status --json with a failing python3 must emit the honest error
-# object (not abort silently). We shim python3 to exit non-zero on PATH.
-#-------------------------------------------------------------------------------
-log_test "loki-F2: status --json degrades to honest error when python3 fails"
-cat > "$SHIM_DIR/python3" <<'SH'
-#!/usr/bin/env bash
-exit 1
-SH
-chmod +x "$SHIM_DIR/python3"
-F2_WORK="$WORK_DIR/f2"
-mkdir -p "$F2_WORK"
-out=$(cd "$F2_WORK" && PATH="$SHIM_DIR:$PATH" "$LOKI" status --json 2>&1)
-rc=$?
-# Must NOT crash silently: an error object must be emitted, and exit must be
-# non-zero (honest failure), not 0.
-if echo "$out" | grep -q '"error"' && [ "$rc" -ne 0 ]; then
-    log_pass "honest error object emitted (rc=$rc), fallback no longer dead"
-else
-    log_fail "no honest error object / wrong rc (rc=$rc): $out"
-fi
-
-#-------------------------------------------------------------------------------
-# loki-F2: status --json on a normal repo still produces valid JSON.
-#-------------------------------------------------------------------------------
-log_test "loki-F2: status --json still emits valid JSON on a normal repo"
-out=$(cd "$F2_WORK" && "$LOKI" status --json 2>/dev/null)
-if echo "$out" | python3 -m json.tool >/dev/null 2>&1; then
-    log_pass "valid JSON on normal path"
-else
-    log_fail "status --json is not valid JSON: $out"
-fi
 
 #-------------------------------------------------------------------------------
 # loki-est: explain --json in a directory whose NAME contains an apostrophe

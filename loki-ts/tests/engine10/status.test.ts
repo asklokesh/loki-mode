@@ -132,10 +132,10 @@ describe("buildStatus (pure, folded events only)", () => {
 });
 
 describe("main (cli.ts calls this with `args`, section 11)", () => {
-  test("no runs found: exit 1, message on stderr", async () => {
-    const { code, out } = await capture("stderr", () => main([]));
-    expect(code).toBe(1);
-    expect(out).toContain("no runs found");
+  test("no runs found: exit 0, one hint line on stdout", async () => {
+    const { code, out } = await capture("stdout", () => main([]));
+    expect(code).toBe(0);
+    expect(out).toContain("No Loki 10 runs here yet");
   });
 
   test("an explicit unknown run id: exit 1", async () => {
@@ -145,7 +145,9 @@ describe("main (cli.ts calls this with `args`, section 11)", () => {
   });
 
   test("defaults to the latest run and prints its status on stdout", async () => {
-    writeRun("e10-20260927T220000Z-aaaa").append("run.started", null, {});
+    const log1 = writeRun("e10-20260927T220000Z-aaaa");
+    log1.append("run.started", null, {});
+    log1.append("run.completed", null, { verdict: "PARTIAL" });
     const log2 = writeRun("e10-20260927T230000Z-bbbb");
     log2.append("run.started", null, {});
     log2.append("stage.started", "intake", {});
@@ -155,7 +157,7 @@ describe("main (cli.ts calls this with `args`, section 11)", () => {
     const { code, out } = await capture("stdout", () => main([]));
     expect(code).toBe(0);
     expect(out).toContain("e10-20260927T230000Z-bbbb");
-    expect(out).toContain("Verdict:    VERIFIED");
+    expect(out).toContain("VERIFIED");
   });
 
   test("an explicit run id overrides the latest", async () => {

@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog } from "../../src/engine10/events.ts";
-import { NO_RUN_HINT, runModernStatus } from "../../src/e10ext/status_modern.ts";
+import { NO_RUN_HINT, runModernStatus } from "../../src/commands/run_status.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "e10-modern-status-")); });

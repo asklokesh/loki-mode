@@ -103,7 +103,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
 
     case "status": {
       // CLI-MODERN-2: `loki status` shows Loki 10 runs only; the legacy box is gone from this path.
-      const { runModernStatus } = await import("./e10ext/status_modern.ts");
+      const { runModernStatus } = await import("./commands/run_status.ts");
       return runModernStatus(rest);
     }
 
