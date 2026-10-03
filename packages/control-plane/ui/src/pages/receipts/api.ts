@@ -1,7 +1,7 @@
 // Receipts page data: the run list comes from the shared api, verify and key from the CPE-16 routes.
 import { authToken } from "../../api";
 
-export interface VerifyResult { run: string; verdict: "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED"; reasons: string[]; receipt_sha256: string | null; verified_at: string }
+export interface VerifyResult { run: string; verdict: "VERIFIED" | "NOT_VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED"; integrity?: string; outcome?: string; reasons: string[]; receipt_sha256: string | null; verified_at: string }
 export interface PublicKey { kty: string; crv: string; x: string; kid: string; alg: string; use: string }
 
 const base = (): string => (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";

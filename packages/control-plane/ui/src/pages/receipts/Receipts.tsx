@@ -4,7 +4,7 @@ import { listRuns, type RunRow } from "../../api";
 import { Badge, Button, Card, EmptyState, KpiTile, Spinner, Table, type Tone } from "../../design/primitives";
 import { getPublicKey, verifiedTrend, verifyRun, type PublicKey, type VerifyResult } from "./api";
 
-const VERDICT_TONE: Record<VerifyResult["verdict"], Tone> = { VERIFIED: "success", UNSIGNED: "warning", UNCHECKED: "warning", TAMPERED: "error" };
+const VERDICT_TONE: Record<VerifyResult["verdict"], Tone> = { VERIFIED: "success", UNSIGNED: "warning", NOT_VERIFIED: "warning", UNCHECKED: "warning", TAMPERED: "error" };
 const key = (r: RunRow) => `${r.source_id}/${r.run_id}`;
 
 export function Receipts() {
@@ -35,7 +35,7 @@ export function Receipts() {
   return (
     <div data-testid="receipts" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
-        <KpiTile label="Verified rate" value={overall === null ? "not measured" : `${overall}%`} series={trend.map((t) => t.rate)} trend={trend.length > 1 ? `${trend.length} days` : undefined} />
+        <KpiTile label={`Verified rate (${finished.length} finished run${finished.length === 1 ? "" : "s"}, by run outcome)`} value={overall === null ? "not measured" : `${overall}%`} series={trend.map((t) => t.rate)} trend={trend.length > 1 ? `${trend.length} days` : undefined} />
         <Card style={{ padding: "14px 16px" }} data-testid="public-key">
           <div style={{ fontSize: "var(--cp-text-sm)", color: "var(--cp-text-2)" }}>Public key (Ed25519)</div>
           {pub === undefined ? <Spinner size={12} /> : pub === null ? (

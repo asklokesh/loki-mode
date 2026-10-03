@@ -1,7 +1,7 @@
 // CPE-16: in-process receipt verify and the public key. A signed receipt verifies; a one-field edit fails; the key route never leaks private bytes.
 import { afterAll, expect, test } from "bun:test";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
@@ -38,10 +38,11 @@ const get = (path: string, env: unknown = peer("127.0.0.1")) =>
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
 /** A receipt the real verifier accepts: hash recomputed, EdDSA jwt over it, no log binding (those need a full run dir). */
-function signed(runId: string): Record<string, unknown> {
+function signed(runId: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
   const r = JSON.parse(readFileSync(join(FIX, "verified", "receipt.json"), "utf8")) as Record<string, unknown>;
   for (const k of ["events_sha256", "log_seal", "group", "screens"]) delete r[k];
   r["run_id"] = runId;
+  Object.assign(r, patch);
   const hash = computeReceiptHash(r);
   const head = b64({ alg: "EdDSA", kid: kidOf(createPublicKey(kp.privateKey)) }), body = b64({ receipt_sha256: hash });
   const sig = sign(null, Buffer.from(`${head}.${body}`), createPrivateKey(pem)).toString("base64url");
@@ -59,6 +60,7 @@ async function seedRun(runId: string, receipt: Record<string, unknown> | null) {
   }
   return ingest(runId);
 }
+const rows = () => db.select().from(actions).all();
 const verify = (run: string) => post(`/v1/runs/${SRC}/${run}/verify`);
 
 test("a good signed receipt verifies", async () => {
@@ -85,7 +87,7 @@ test("the committed tampered fixture is not VERIFIED, and verify wrote an audit 
   await seedRun("fix-t", f);
   const j = (await (await verify("fix-t")).json()) as { verdict: string };
   expect(j.verdict).not.toBe("VERIFIED");
-  expect(db.select().from(actions).all().some((a) => a.kind === "receipt.verify")).toBe(true);
+  expect(rows().filter((a) => a.target === `${SRC}/fix-t`)).toEqual([expect.objectContaining({ kind: "receipt.verify", result: "tampered" })]);
 });
 
 test("verify is guarded: non-loopback peer, non-JSON, unknown run, missing receipt", async () => {
@@ -106,4 +108,64 @@ test("GET /v1/keys returns the public JWK only, loopback only", async () => {
   expect(j["d"]).toBeUndefined();
   expect(text).not.toContain("PRIVATE");
   expect((await get("/v1/keys", peer("10.0.0.5"))).status).toBe(403);
+});
+
+const body = async (r: Response) => (await r.json()) as { verdict: string; integrity: string; outcome: string; reasons: string[] };
+
+test("a correctly signed receipt of a FAILED run is NOT_VERIFIED, never VERIFIED", async () => {
+  await seedRun("failed-1", signed("failed-1", { verdict: "FAILED" }));
+  const j = await body(await verify("failed-1"));
+  expect(j.verdict).toBe("NOT_VERIFIED");
+  expect(j.integrity).toBe("VERIFIED");
+  expect(j.outcome).toBe("FAILED");
+  expect(j.reasons[0]).toContain("run outcome FAILED");
+});
+
+test("a DSSE envelope copied from another run reads TAMPERED (runIdGuard)", async () => {
+  const payload = Buffer.from(JSON.stringify({ predicate: { run_id: "good-e", verdict: "VERIFIED" } })).toString("base64");
+  await seedRun("env-b", { payloadType: "application/vnd.in-toto+json", payload, signatures: [{ keyid: "k", sig: "AAAA" }] });
+  const j = await body(await verify("env-b"));
+  expect(j.verdict).toBe("TAMPERED");
+  expect(j.reasons[0]).toContain("does not match run id");
+});
+
+test("a verifier that throws yields UNCHECKED, never VERIFIED or a 500", async () => {
+  await seedRun("null-1", {});
+  writeFileSync(join(repo, ".loki", "runs", "null-1", "receipt.json"), "null");
+  const before = rows().length;
+  const r = await verify("null-1");
+  expect(r.status).toBe(200);
+  const j = await body(r);
+  expect(j.verdict).toBe("UNCHECKED");
+  expect(j.reasons[0]).toContain("verifier error");
+  expect(rows().length).toBe(before + 1);
+});
+
+test("every response writes exactly one audit row with its result", async () => {
+  const count = async (fn: () => Promise<Response>, status: number, result: string, kind = "receipt.verify") => {
+    const n = rows().length;
+    expect((await fn()).status).toBe(status);
+    const all = rows();
+    expect(all.length).toBe(n + 1);
+    expect(all[all.length - 1]).toEqual(expect.objectContaining({ kind, result }));
+  };
+  await count(() => verify("good-1"), 200, "verified");
+  await count(() => verify("nope"), 404, "not_found");
+  await count(() => post(`/v1/runs/${SRC}/good-1/verify`, peer("10.0.0.5")), 403, "refused");
+  await count(() => get("/v1/keys"), 200, "ok", "keys.read");
+  await count(() => get("/v1/keys", peer("10.0.0.5")), 403, "refused", "keys.read");
+});
+
+test("containment: a receipt.json symlinked outside the run dir, and a symlinked run dir, both 404", async () => {
+  const outside = join(root, "outside");
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(join(outside, "receipt.json"), JSON.stringify(signed("esc-1")));
+  const dir = join(repo, ".loki", "runs", "esc-1");
+  mkdirSync(dir, { recursive: true });
+  symlinkSync(join(outside, "receipt.json"), join(dir, "receipt.json"));
+  await ingest("esc-1");
+  expect((await verify("esc-1")).status).toBe(404);
+  symlinkSync(outside, join(repo, ".loki", "runs", "esc-2"));
+  await ingest("esc-2");
+  expect((await verify("esc-2")).status).toBe(404);
 });
