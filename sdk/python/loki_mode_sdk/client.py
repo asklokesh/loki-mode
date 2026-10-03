@@ -44,10 +44,25 @@ class NotFoundError(AutonomiError):
     pass
 
 
+class NotAvailableOnControlPlaneError(AutonomiError):
+    """Raised on 501 or 410: the Control Plane does not serve this legacy route.
+
+    The legacy dashboard (port 57374) is being replaced by the Control Plane.
+    The shim answers 501 for a feature it cannot back yet and 410 for a retired
+    one. No data is fabricated; callers should treat the feature as unavailable.
+    """
+
+    pass
+
+
+DEFAULT_BASE_URL = "http://localhost:57374"
+
 _STATUS_ERROR_MAP = {
     401: AuthenticationError,
     403: ForbiddenError,
     404: NotFoundError,
+    410: NotAvailableOnControlPlaneError,
+    501: NotAvailableOnControlPlaneError,
 }
 
 
@@ -67,7 +82,7 @@ class AutonomiClient:
 
     def __init__(
         self,
-        base_url: str = "http://localhost:57374",
+        base_url: str = DEFAULT_BASE_URL,
         token: Optional[str] = None,
         timeout: int = 30,
     ) -> None:
@@ -121,11 +136,15 @@ class AutonomiClient:
 
             error_cls = _STATUS_ERROR_MAP.get(exc.code, AutonomiError)
             message = f"HTTP {exc.code}: {exc.reason}"
+            if error_cls is NotAvailableOnControlPlaneError:
+                message = f"HTTP {exc.code}: not available on the Control Plane ({method} {path})"
 
             # Try to extract a message from the JSON body
             try:
                 err_data = json.loads(response_body)
-                if "detail" in err_data:
+                if error_cls is NotAvailableOnControlPlaneError:
+                    pass
+                elif "detail" in err_data:
                     message = f"HTTP {exc.code}: {err_data['detail']}"
                 elif "message" in err_data:
                     message = f"HTTP {exc.code}: {err_data['message']}"

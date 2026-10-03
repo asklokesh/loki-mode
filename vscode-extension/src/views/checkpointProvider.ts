@@ -11,6 +11,7 @@
 import * as vscode from 'vscode';
 import { logger } from '../utils/logger';
 import { Config } from '../utils/config';
+import { isNotAvailableStatus, isNotAvailableError, createNotAvailableError } from '../api/availability';
 
 /**
  * Checkpoint data returned by the API
@@ -110,8 +111,14 @@ export class CheckpointProvider implements vscode.TreeDataProvider<CheckpointIte
                 this.checkpoints = data.map(cp => new CheckpointItem(cp));
             }
         } catch (error) {
-            logger.debug('Failed to fetch checkpoints', error);
-            // Keep existing data on failure so the view does not flash empty
+            if (isNotAvailableError(error)) {
+                // Honest degrade: the Control Plane has no checkpoint API. Show nothing, never stale or invented data.
+                this.checkpoints = [];
+                logger.info(`Checkpoints ${error.message}`);
+            } else {
+                logger.debug('Failed to fetch checkpoints', error);
+                // Keep existing data on failure so the view does not flash empty
+            }
         }
         this._onDidChangeTreeData.fire();
     }
@@ -205,6 +212,9 @@ export class CheckpointProvider implements vscode.TreeDataProvider<CheckpointIte
             headers: { 'Content-Type': 'application/json' },
         });
 
+        if (isNotAvailableStatus(response.status)) {
+            throw createNotAvailableError(`Checkpoints (${endpoint})`, response.status);
+        }
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
@@ -227,6 +237,9 @@ export class CheckpointProvider implements vscode.TreeDataProvider<CheckpointIte
 
         const response = await fetch(url, options);
 
+        if (isNotAvailableStatus(response.status)) {
+            throw createNotAvailableError(`Checkpoints (${endpoint})`, response.status);
+        }
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }

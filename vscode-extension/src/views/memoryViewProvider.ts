@@ -10,6 +10,7 @@
 import * as vscode from 'vscode';
 import { LokiApiClient } from '../api/client';
 import { logger } from '../utils/logger';
+import { isNotAvailableStatus, NOT_AVAILABLE_TEXT } from '../api/availability';
 import { getNonce } from '../utils/webview';
 
 interface MemoryPattern {
@@ -48,6 +49,7 @@ interface MemoryData {
     skills: MemorySkill[];
     tokenStats: TokenStats;
     lastUpdated: Date;
+    unavailable?: string;
 }
 
 /**
@@ -153,6 +155,20 @@ export class MemoryViewProvider implements vscode.WebviewViewProvider, vscode.Di
                 fetch(`${baseUrl}/api/memory/skills`),
                 fetch(`${baseUrl}/api/memory/economics`)
             ]);
+
+            const results = [patternsRes, episodesRes, skillsRes, economicsRes];
+            const unavailable = results.every(r => r.status === 'fulfilled' && isNotAvailableStatus(r.value.status));
+            if (unavailable) {
+                // Honest degrade: the Control Plane serves no memory API. Show no data rather than stale or invented data.
+                this._memoryData.patterns = [];
+                this._memoryData.episodes = [];
+                this._memoryData.skills = [];
+                this._memoryData.unavailable = `Memory is ${NOT_AVAILABLE_TEXT}`;
+                this._memoryData.lastUpdated = new Date();
+                this._updateWebview();
+                return;
+            }
+            this._memoryData.unavailable = undefined;
 
             if (patternsRes.status === 'fulfilled' && patternsRes.value.ok) {
                 const data = await patternsRes.value.json() as { patterns?: MemoryPattern[] };
@@ -288,7 +304,7 @@ export class MemoryViewProvider implements vscode.WebviewViewProvider, vscode.Di
             document.getElementById('skillCount').textContent = data.skills.length;
             const skillsEl = document.getElementById('skills');
             skillsEl.innerHTML = data.skills.length === 0 ? '<div class="empty-state">No skills learned</div>' : data.skills.map(s => '<div class="card"><div class="card-title"><span>' + escapeHtml(s.name) + '</span><span class="confidence">' + (s.success_rate * 100).toFixed(0) + '%</span></div><div class="card-meta">' + escapeHtml(truncate(s.description, 60)) + '</div></div>').join('');
-            document.getElementById('lastUpdated').textContent = 'Updated: ' + new Date(data.lastUpdated).toLocaleTimeString();
+            document.getElementById('lastUpdated').textContent = data.unavailable ? data.unavailable : 'Updated: ' + new Date(data.lastUpdated).toLocaleTimeString();
         }
         function viewPattern(id) { vscode.postMessage({ type: 'viewPattern', id: id }); }
         function viewEpisode(id) { vscode.postMessage({ type: 'viewEpisode', id: id }); }
