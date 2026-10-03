@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs honesty for issue #200: skills/healing.md and docs/dev/architecture-reference.md no longer claim failure-modes.json is written or that the healing snapshot/revert pairing is enforced, because hook_pre_healing_modify and hook_post_healing_modify have no production caller; tests/test-heal-docs-honesty.sh fails if a caller appears while the docs still say so.
 
 ### Added
+- `TRUST_CORE_PROBE_MODE=anchors` for tests/test-trust-core-tests-detect.sh checks in about 0.1s that every probe_case find-string still matches its file, naming each stale anchor, and local-ci fast tier now runs it (issue #214 option 3).
 - Signatures-only Wall manifest builder for engine10 (D77, W1-S1): turns a base tree into exported names and signatures with every body, default value and decorator argument masked, and omits any file or class it cannot mask with certainty. It is a library only in this release; nothing calls it until the LOKI_E10_WALL_MANIFEST flag is wired in a later slice.
 - Read-only workspace runs API: GET /api/operator/workspaces/runs and /workspaces/runs/{ws}/{run_id} list integration.json evidence, show unreadable files as rows, and report per-repo stale heads (D51-B13r).
 ### Fixed

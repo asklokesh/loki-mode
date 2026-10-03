@@ -173,6 +173,8 @@ declare -a _FAST_KEEP=(
   # the gate cannot catch what it does not run.
   "tests/test-doctor-optional-skill-not-blocking.sh"
   "tests/test-multi-repo-orchestrates.sh"
+  # Issue #214 option 3: stale mutation-probe anchors exit 65 only in CI; this is the 0.1s pre-check.
+  "tests/test-trust-core-tests-detect.sh (probe anchors)"
   # Guards the founder-reported quickstart defect: typing a brief in an EMPTY
   # directory and answering "none" produced a spec asserting "This is an
   # EXISTING codebase... Do NOT scaffold a new project" -- telling the build not
@@ -1755,6 +1757,7 @@ run_check "tests/test-verify-client-routes.sh (web-app client paths resolve to r
 # Both added this session and run by CI but not by this gate, which is how two
 # releases reached CI carrying a failure never executed locally.
 run_check "tests/test-doctor-optional-skill-not-blocking.sh (optional-provider skill severity)" "bash tests/test-doctor-optional-skill-not-blocking.sh 2>&1 | tail -4"
+run_check "tests/test-trust-core-tests-detect.sh (probe anchors)" "TRUST_CORE_PROBE_MODE=anchors bash tests/test-trust-core-tests-detect.sh 2>&1 | tail -6"
 # tail -40, not -4: this suite prints 10 per-assertion lines plus a summary, so
 # a 4-line window holds the last two PASSes and the count -- it can only ever
 # contain the `FAIL:` line when the failure is among the final assertions. It
