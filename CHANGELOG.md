@@ -40,6 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.10 (2026-10-03)
+
+Loki 10.6.10 ships the loki.yaml schema in the npm package so loki workspace run works from an install, fixes the Control Plane container build, and makes help text agree on one UI command: loki opens the Control Plane.
+
+### Changes
+- test(e2e): D63-C11b legs 5-9 and the stub E2E results doc
+- fix(control-plane): copy the loki-ts files ingest.ts imports so the container image builds (D65-BUG6)
+- fix(package): ship schemas/ so loki workspace run works from an installed package (D65-BUG5)
+- test(control-plane): guard Dockerfile COPYs of loki-ts/src value imports (D65-BUG6-G)
+- fix(train-cycle): promote a green train before superseding it (P0-TC-SUPERSEDE)
+- docs(cli): point loki serve help and docs at the Control Plane UI command (D65-UI-NAMING)
+- fix(control): help and bash fallback say the Control Plane is on by default (D65-UI-NAMING-2)
+- ci(security): gitleaks full-history scan timeout 15 -> 30 min (D74)
+
 ## v10.6.9 (2026-10-03)
 
 Loki 10 makes the Control Plane the default, adds per-run cost caps, signed-receipt verification by key, workspace PR comments, and an off-path already-done check under LOKI_SPEED=1.
