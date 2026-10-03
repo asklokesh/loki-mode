@@ -113,3 +113,5 @@ ff2f4719c34fa391ad1dd664c217d7337d6e5fac:loki-ts/dist/loki.js:generic-api-key:12
 21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:generic-api-key:35
 21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:aws-access-token:75
 21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:aws-access-token:88
+# D51-B11 test fixture: ghp_FAKEtokenVALUE... is a synthetic token the test asserts never leaks into run output; not a credential.
+c09dfd1eb6f2f2cc1f81b2be0d7ddee717141d66:tests/workspace/80-comment.sh:github-pat:7
