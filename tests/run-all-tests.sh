@@ -1628,6 +1628,7 @@ run_test "loki modernize always routes to engine10 (M-08)" "$SCRIPT_DIR/test-mod
 run_test "Dependency inventory Latest/Bump self-consistency (DEP-01)" "$SCRIPT_DIR/test-dep-inventory.sh"
 run_test "Usage governor calibration and dedup (G-01)" "$SCRIPT_DIR/test-usage-governor.sh"
 run_test "Usage governor statusLine logger (G-01)" "$SCRIPT_DIR/test-usage-statusline-logger.sh"
+run_test "cloud-dispatch dry-run refuses on overlap, governor max, not-ready (G-04)" "timeout -k 10 120 $SCRIPT_DIR/test-cloud-dispatch.sh"
 run_test "CI security scanners wired, fail-closed (E-123)" "$SCRIPT_DIR/test-security-scan-coverage.sh"
 run_test "Heredoc dollar-digit footgun checker (D44)" "$SCRIPT_DIR/test-check-heredoc-dollar-digit.sh"
 run_test "Inline script syntax gate parses dashboard HTML" "timeout -k 10 60 $SCRIPT_DIR/test-check-inline-scripts.sh"

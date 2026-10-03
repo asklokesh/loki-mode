@@ -204,6 +204,29 @@ queue. Never unpublishes or deletes a version.
 6. Flaky tests: rerun once, record it in `BACKLOG.md`, open a slice. Never
    pass a flake silently (BACKLOG 93).
 
+## Cloud dispatch (G-04)
+
+`scripts/cloud-dispatch.sh SLICE-ID` fans one ready slice out to a Claude
+Code cloud session that works on `cloud/<slice-id>` and opens its own PR; the
+Release Manager still merges only PRs whose checks concluded success.
+
+- Default is `--dry-run`: it prints the exact `claude --cloud "<description>"`
+  command and the exact BOARD row it would write (status `building`, a
+  dispatch note with the session id), and changes nothing. Only an explicit
+  `--live` dispatches. `--live` has never been run; the first live use is a
+  founder-run probe.
+- Refusals, each non-zero with a message: not ready or dependency-blocked
+  (exit 12); file set overlaps a building, review or review-blocked row
+  (11); the G-01 governor max is reached, unknown or unreadable (10; same
+  `usage-governor.py --json` source as the pulse); `--live` with no
+  `--cloud` option in the installed CLI (13).
+- Verified CLI surface (claude 2.1.288): only the top-level option
+  `--cloud [description|session_id|url]` exists. `--help` documents no repo,
+  branch, PR or non-interactive flag for it, so the branch and the PR
+  instruction travel in the description text, and `--live` refuses to write
+  the BOARD row unless the output contains a session id or claude.ai/code
+  URL (exit 14).
+
 ## Guardrails (restated; speed pressure erodes them first)
 
 - Priority when goals conflict: moat > Seal accuracy > delivered accuracy >
