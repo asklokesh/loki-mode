@@ -355,6 +355,16 @@ describe("handlePause", () => {
     });
   }
 
+  it("PAUSED.md default wording follows stdin TTY (bash [ -t 0 ])", async () => {
+    touch(join(dir, "PAUSE"));
+    const promise = handlePause({ lokiDirOverride: dir, pollIntervalMs: 20, maxWaitMs: 500 });
+    await new Promise((r) => setTimeout(r, 40));
+    const body = readFileSync(join(dir, "PAUSED.md"), "utf8");
+    expect(body.includes("Press Enter")).toBe(process.stdin.isTTY === true);
+    rmSync(join(dir, "PAUSE"));
+    await promise;
+  });
+
   it("respects maxWaitMs ceiling and reports timeout", async () => {
     touch(join(dir, "PAUSE"));
     const r = await handlePause({

@@ -346,7 +346,7 @@ export interface HandlePauseOptions {
   maxWaitMs?: number;
   // Override the PAUSED.md body (defaults to the bash heredoc text).
   pausedMdBody?: string;
-  // Override TTY detection for the default PAUSED.md wording (defaults to stdout).
+  // Override TTY detection for the default PAUSED.md wording (defaults to stdin, matching bash `[ -t 0 ]`).
   isTTY?: boolean;
 }
 
@@ -393,7 +393,7 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
   const interval = opts.pollIntervalMs ?? 1000;
   const ceiling = opts.maxWaitMs;
   const startMs = Date.now();
-  const body = opts.pausedMdBody ?? defaultPausedMd(opts.isTTY ?? process.stdout.isTTY === true);
+  const body = opts.pausedMdBody ?? defaultPausedMd(opts.isTTY ?? process.stdin.isTTY === true);
 
   try {
     mkdirSync(dir, { recursive: true });
