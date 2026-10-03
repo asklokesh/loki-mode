@@ -129,7 +129,9 @@ t "guard goes red when a real COPY line is deleted" "guard stayed green with a C
 step "install control-plane (frozen)" 120 bash -c "cd '$REPO/packages/control-plane' && bun install --frozen-lockfile"
 step "install control-plane ui (frozen)" 120 bash -c "cd '$REPO/packages/control-plane/ui' && bun install --frozen-lockfile"
 step "install loki-ts (frozen)" 120 bash -c "cd '$REPO/loki-ts' && bun install --frozen-lockfile"
-step "control-plane tests pass as one bun process" 180 bash -c "cd '$REPO' && LOKI_NO_BROWSER=1 bun test ./packages/control-plane/test/"
+# Run from the package so its bunfig.toml applies (it ignores the Playwright
+# specs under test/e2e; from the repo root bun loads them and they throw).
+step "control-plane tests pass as one bun process" 180 bash -c "cd '$REPO/packages/control-plane' && LOKI_NO_BROWSER=1 bun test ./test/"
 step "ui typecheck + build and server bundle" 180 bash -c "cd '$REPO/packages/control-plane' && bun run build:all"
 
 t "ui/dist/index.html built" "ui/dist/index.html missing" [ -f "$REPO/packages/control-plane/ui/dist/index.html" ]
