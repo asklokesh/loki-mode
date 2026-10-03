@@ -153,7 +153,7 @@ The run cap is 900s (2700s with `--deep`, `DEFAULT_CAP_S` and `DEEP_CAP_S` in `t
 
 A finished run prints a short summary (see [Quiet output](#quiet-output), which also shows an example) whose `NOT PROVEN` line is never empty by omission: deep checks deferred to the deep-verify pass are always listed there.
 
-`loki status [run-id]` and `loki verify [run-id]` are built on the v10 path (bare `loki verify` follows the newest run, v10 or legacy). `loki dashboard` and `loki status` reach the v10 commands with `LOKI_ENGINE=v10`. Slack notifications are not part of the v10 engine surface yet.
+`loki status [run-id]` and `loki verify [run-id]` are built on the v10 path (bare `loki verify` follows the newest run, v10 or legacy). `loki dashboard` and `loki status` reach the v10 commands with `LOKI_ENGINE=v10`. Two-way Slack (`loki slack serve`) is on by default and documented in [docs/slack.md](docs/slack.md); outbound notifications use `LOKI_SLACK_WEBHOOK_URL`.
 
 ## Run from Jira or Linear
 
@@ -646,7 +646,7 @@ loki enterprise status
 | **Testing** | 8 automated quality gates | Test quality depends on AI assertions |
 | **Providers** | Claude, Cline, Codex, Aider and opencode | Non-Claude providers are experimental and mostly sequential |
 | **Dashboard** | Real-time single-machine monitoring | No multi-node clustering |
-| **Loki 10** | The v10 run (`loki "<task>"`, `loki owner/repo#N`, `loki quick`), `status`, `verify`, `backlog` | `loki start <issue ref|issue URL|"task">` runs Loki 10, `loki start <file>` stays legacy; `loki modernize <repo> --to` runs `--dry-run` only; Slack is not wired in; Control Plane v0 is a preview |
+| **Loki 10** | The v10 run (`loki "<task>"`, `loki owner/repo#N`, `loki quick`), `status`, `verify`, `backlog` | `loki start <issue ref|issue URL|"task">` runs Loki 10, `loki start <file>` stays legacy; `loki modernize <repo> --to` runs `--dry-run` only; two-way Slack is on by default (`loki slack serve`, `LOKI_SLACK_INBOUND=0` disables); Control Plane v0 is a preview |
 
 > **What "autonomous" means:** the system runs RARV cycles without prompting. It does NOT access your cloud accounts, payment systems or external services unless you provide credentials. Human oversight is expected for deployment, API keys and critical decisions.
 
