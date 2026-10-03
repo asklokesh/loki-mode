@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { computeReceiptHash, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
-import { captureVisualEvidence, evidenceSection, hashScreens, isPageFile, routeFor, sealEvidence } from "../../src/features/visual_evidence.ts";
+import { captureVisualEvidence, e2eSpecSource, evidenceSection, playwrightTestPkg, hashScreens, isPageFile, routeFor, sealEvidence } from "../../src/features/visual_evidence.ts";
 
 let root = "";
 let RUN = "";
@@ -259,4 +259,14 @@ test("verify fails closed on a FIFO evidence path and does not hang", async () =
 test("seal.ts still passes ctx.emit to sealEvidence so the dev server group is announced (D62-VIS-F1 A1)", () => {
   const src = readFileSync(join(import.meta.dir, "../../src/engine10/stages/seal.ts"), "utf8");
   expect(src).toMatch(/sealEvidence\([^)]*ctx\.emit\)/);
+});
+
+test("e2e video and trace: spec encodes routes safely, PR section labels media, absent Playwright test lib is a clean skip", () => {
+  const src = e2eSpecSource("/x/@playwright/test", "http://127.0.0.1:1", ['/a"b']);
+  expect(src).toContain('["/a\\"b"]');
+  expect(playwrightTestPkg(root)).toBeNull();
+  const p = writeReceipt([{ path: "evidence/ab/e2e/out/v.webm", sha256: "a".repeat(64) }, { path: "evidence/ab/e2e/out/trace.zip", sha256: "b".repeat(64) }]);
+  const sec = evidenceSection(p);
+  expect(sec).toContain("- video: evidence/ab/e2e/out/v.webm");
+  expect(sec).toContain("- trace: evidence/ab/e2e/out/trace.zip");
 });

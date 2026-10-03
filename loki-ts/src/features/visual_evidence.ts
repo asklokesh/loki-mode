@@ -3,12 +3,12 @@
 // Each screenshot's sha256 goes into receipt.evidence_screens; `loki verify` rechecks it when present.
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { dirname, isAbsolute, join, normalize, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 
 export interface EvidenceScreen { path: string; sha256: string } // path is relative to the run dir
-export interface EvidenceResult { screens: EvidenceScreen[]; http: boolean; skipped: string | null }
+export interface EvidenceResult { screens: EvidenceScreen[]; http: boolean; skipped: string | null; e2eSkipped?: string | null }
 
 export const visualEvidenceEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_EVIDENCE"] !== "0"; // D70: on unless set to 0
 const PAGE_RE = /^(?:.*\/)?(?:app|pages|src|public)\/.*\.(?:html|jsx|tsx|vue|svelte)$/;
@@ -82,6 +82,37 @@ function openapiPaths(repoDir: string): string[] {
   return [];
 }
 
+/** Playwright test library resolvable in the repo (never downloaded). */
+export const playwrightTestPkg = (repoDir: string): string | null => {
+  const d = join(repoDir, "node_modules", "@playwright", "test");
+  return existsSync(join(d, "package.json")) ? d : null;
+};
+/** Spec source: visit each route, record a video and a trace (config use.video and use.trace are on). Routes are JSON-encoded, never interpolated raw. */
+export const e2eSpecSource = (pkgDir: string, base: string, routes: string[]): string =>
+  `const { test } = require(${JSON.stringify(pkgDir)});\ntest("loki e2e walkthrough", async ({ page }) => {\n  for (const r of ${JSON.stringify(routes)}) { await page.goto(${JSON.stringify(base)} + r); await page.waitForLoadState("load"); }\n});\n`;
+/** Record a Playwright video and trace for the routes. Never throws. rels are run-dir relative. A skip is a clear one-line reason. */
+async function recordE2eMedia(repoDir: string, runDir: string, relDir: string, base: string, routes: string[], ms: number, signal?: AbortSignal): Promise<{ rels: string[]; skipped: string | null }> {
+  const pw = playwrightBin(repoDir), pkg = playwrightTestPkg(repoDir);
+  if (!pw || !pkg) return { rels: [], skipped: "playwright e2e video and trace skipped: @playwright/test is not installed in the repo" };
+  try {
+    const dir = join(runDir, relDir, "e2e");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "walk.spec.cjs"), e2eSpecSource(pkg, base, routes));
+    writeFileSync(join(dir, "playwright.config.cjs"), `module.exports = { testDir: ".", testMatch: "walk.spec.cjs", outputDir: "./out", reporter: "null", use: { video: "on", trace: "on" } };\n`);
+    if (!(await shoot(pw, ["test", "--config", join(dir, "playwright.config.cjs")], repoDir, ms, signal))) return { rels: [], skipped: "playwright e2e video and trace skipped: the run failed or timed out" };
+    const rels: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const full = join(d, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.isFile() && /\.(webm|zip)$/.test(e.name)) rels.push(join(relDir, "e2e", relative(dir, full)));
+      }
+    };
+    walk(join(dir, "out"));
+    return rels.length > 0 ? { rels, skipped: null } : { rels, skipped: "playwright e2e video and trace skipped: no video or trace was produced" };
+  } catch (e) { return { rels: [], skipped: `playwright e2e video and trace skipped: ${String((e as Error)?.message ?? e).slice(0, 120)}` }; }
+}
+
 export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; onServer?: (pgid: number) => void } // onServer: the dev server's own process group, so a supervisor can reap it on a hard kill
 const DEFAULT_BUDGET_MS = 25_000; // well under the 60s seal stage limit
 const MAX_ROUTES = 5;
@@ -152,8 +183,11 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
         if (ok && !aborted() && !isSymlink(join(runDir, rel)) && existsSync(join(runDir, rel))) rels.push(rel);
       }
       if (aborted()) return skip("aborted");
-      const screens = hashScreens(runDir, rels);
-      return screens.length > 0 ? { screens, http: false, skipped: null } : skip(left() <= 0 ? `screenshots did not finish within ${Math.round(budget / 1000)}s` : "screenshots failed");
+      const routes = [...new Set(pages.map(routeFor))].slice(0, opts.maxRoutes ?? MAX_ROUTES);
+      const media = rels.length > 0 && left() > 0 ? await recordE2eMedia(repoDir, runDir, rel0, base, routes, left(), signal) : { rels: [] as string[], skipped: null };
+      if (aborted()) return skip("aborted");
+      const screens = hashScreens(runDir, [...rels, ...media.rels]); // video and trace are hashed like screenshots so `loki verify` rechecks them
+      return screens.length > 0 ? { screens, http: false, skipped: null, e2eSkipped: media.skipped } : skip(left() <= 0 ? `screenshots did not finish within ${Math.round(budget / 1000)}s` : "screenshots failed");
     }
     const rows: unknown[] = [];
     for (const p of apiPaths) {
@@ -178,6 +212,7 @@ export async function sealEvidence(repoDir: string, runDir: string, o: { verify?
   const ev = await captureVisualEvidence(repoDir, runDir, cf, { signal, onServer: (pgid) => emit?.("session.started", "seal", { session_id: "visual-evidence", provider: "visual-evidence", model: null, pgid }) }); // the supervisor reaps announced groups on a hard kill
   if (signal?.aborted) throw new Error("seal aborted: visual evidence discarded");
   if (ev.skipped) notProven.add(`visual evidence skipped: ${ev.skipped}`);
+  if (ev.e2eSkipped) notProven.add(ev.e2eSkipped);
   return ev.screens.length > 0 ? { evidence_screens: ev.screens } : {};
 }
 /** Verify hook: null when the receipt has no evidence_screens or all still match, else a message. */
@@ -189,6 +224,6 @@ export function evidenceSection(receiptPath: string | undefined | null): string 
   try {
     const r = JSON.parse(readFileSync(receiptPath ?? "", "utf8")) as { evidence_screens?: EvidenceScreen[] };
     if (!Array.isArray(r.evidence_screens) || r.evidence_screens.length === 0) return "";
-    return `\n## Evidence\n${r.evidence_screens.map((s) => `- ${s.path} (sha256:${s.sha256})`).join("\n")}\n`;
+    return `\n## Evidence\n${r.evidence_screens.map((s) => `- ${/\.webm$/.test(s.path) ? "video: " : /\.zip$/.test(s.path) ? "trace: " : ""}${s.path} (sha256:${s.sha256})`).join("\n")}\n`;
   } catch { return ""; }
 }

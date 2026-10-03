@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cost cap defaults: subscription runs (no API key in the environment) get no dollar cap and print "subscription: no dollar cap; usage counts against your plan limits"; runs with an API key default to $100. `--max-cost` and `budgets.per_run` in loki.yaml override both, and a cap hit still ends the run BUDGET_STOP (exit 3).
 ### Changed
 - On by default now: the D61 speed path (decomposer routing, warm engine, stage prefix, deferred already-done check) joins visual evidence, spec-to-contract, two-way Slack (inert until a Slack credential is set), the Control Plane and workspaces. Opt out per feature with LOKI_SPEED=0, LOKI_VISUAL_EVIDENCE=0, LOKI_CONTRACT=0, LOKI_SLACK_INBOUND=0, LOKI_CONTROL=0 or LOKI_WORKSPACES=0.
+### Added
+- When a build has a web UI and Playwright (`@playwright/test`) is installed in the repo, visual evidence now also records a video and a trace of the changed pages; both are hashed into the receipt and listed as "video:" and "trace:" lines in the PR body Evidence section. When it is absent the run records "playwright e2e video and trace skipped: ..." under NOT PROVEN and continues (docs/visual-evidence.md).
 
 ### Fixed
 - tests/test-cloud-dispatch.sh: the G-04 duplicated-row hook no longer appends with `grep ROW >> SAME_FILE`, which GNU grep refuses ("input file is also the output", rc 2, nothing appended), so the writer saw an unduplicated row on Linux and the R2-3 duplicate-refusal check failed; the hook now copies through a side file. The writer in scripts/cloud-dispatch.sh was already fail-closed (T101-G04-DUPROW).
