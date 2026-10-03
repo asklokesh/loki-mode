@@ -111,9 +111,19 @@ function detect(root, files) {
 
 function counts(out) {
   const sum = (rx, one) => [...out.matchAll(rx)].reduce((a, m) => a + (one ? 1 : +m[1]), 0);
-  if (/^\s*[\u2139#]\s*pass\s+\d+/m.test(out)) return { pass: sum(/^\s*[\u2139#]\s*pass\s+(\d+)/gm), fail: sum(/^\s*[\u2139#]\s*fail\s+(\d+)/gm) };
-  if (/^\s*--- (PASS|FAIL)/m.test(out)) return { pass: sum(/^\s*--- (PASS)/gm, 1), fail: sum(/^\s*--- (FAIL)/gm, 1) };
-  return { pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
+  if (/^\s*[\u2139#]\s*pass\s+\d+/m.test(out)) return { summary: true, pass: sum(/^\s*[\u2139#]\s*pass\s+(\d+)/gm), fail: sum(/^\s*[\u2139#]\s*fail\s+(\d+)/gm) };
+  if (/^\s*--- (PASS|FAIL)/m.test(out)) return { summary: false, pass: sum(/^\s*--- (PASS)/gm, 1), fail: sum(/^\s*--- (FAIL)/gm, 1) };
+  return { summary: /\d+ (passed|failed)/.test(out), pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
+}
+
+// Runner output whose pass lines contradict its own summary counts (a test printing forged lines).
+// With no summary line there is nothing to cross-check and this returns null.
+function inconsistency(r) {
+  if (r.error) return null;
+  const clash = (r.passIds || []).filter((i) => (r.ids || []).includes(i));
+  if (clash.length) return `the runner reports the same test as both passed and failed: ${clash.slice(0, 3).join(', ')}`;
+  if (r.summary && (r.passIds || []).length > r.pass) return `${r.passIds.length} passing test line(s) but the runner summary counts ${r.pass} passed`;
+  return null;
 }
 
 function stateDir() {
@@ -211,6 +221,8 @@ async function main() {
   if (runner) {
     const total = c.pass + c.fail;
     const baseTotal = suite0 ? suite0.pass + suite0.fail : 0;
+    const clash = r.error ? null : inconsistency(r);
+    if (clash) problems.push(`NOT VERIFIED: runner output inconsistent: ${clash}`);
     if (r.error) problems.push(`test run did not complete: ${r.error.code || r.error.message}`);
     else if (r.status !== 0 && total === 0) problems.push(`test run crashed or ran nothing (exit ${r.status}, 0 tests)`);
     else if (r.status !== 0) {

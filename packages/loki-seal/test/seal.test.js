@@ -775,3 +775,30 @@ test('R5-N7: a real passing test still covers the item (node, pytest)', { skip: 
   assert.strictEqual(p.status, 0, p.raw);
   assert.match(p.out.systemMessage, /1 item\(s\), 1 covered by passing tests/);
 });
+
+// SEAL-FORGED-LINES: a runner whose own summary counts contradict the pass lines it printed is never VERIFIED.
+const printRepo = (text, code) => ({
+  'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node run.js' } }),
+  'run.js': `process.stdout.write(${JSON.stringify(text)}); process.exit(${code});\n`,
+});
+const inconsistent = (r) => { notVerified(r); assert.match(r.out.reason, /runner output inconsistent/); };
+
+test('forged lines (a): TAP ok line printed by a test body with summary pass 0 / fail 1 is inconsistent', () => {
+  inconsistent(negRun(printRepo('ok 1 - x\n# tests 1\n# pass 0\n# fail 1\n', 1)));
+});
+
+test('forged lines (b): pytest PASSED line with "1 failed, 0 passed" is inconsistent', () => {
+  inconsistent(negRun(printRepo('PASSED test_x.py::test_x\n1 failed, 0 passed in 0.01s\n', 1)));
+});
+
+test('forged lines (c): an id reported both passed and failed is inconsistent', () => {
+  inconsistent(negRun(printRepo('ok 1 - x\nnot ok 2 - x\n# tests 2\n# pass 1\n# fail 1\n', 1)));
+});
+
+test('forged lines: a consistent runner summary and a runner with no summary line are unchanged', () => {
+  const ok = negRun(printRepo('ok 1 - adds\nok 2 - adds zero\n# tests 2\n# pass 2\n# fail 0\n', 0));
+  assert.doesNotMatch(ok.raw, /runner output inconsistent/);
+  assert.match(ok.raw, /2 passed, 0 failed/);
+  const none = negRun(printRepo('ok 1 - adds zero\n', 0));
+  assert.doesNotMatch(none.raw, /runner output inconsistent/);
+});

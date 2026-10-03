@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki --help` on the Bun route now lists every routed command (kpis, report, trust, crash, contract, start, slack, engine10) and the stale "8 highest-traffic" header is gone, guarded by cli_help_routes.test.ts.
 - `loki quickstart` no longer reports simple-todo-app as the "top match" for briefs that match no template (for example "a URL shortener with click stats"): it prints the match score, adds url, shortener and stats keywords, and falls back to a plain-spec build from the brief when nothing matches (#217).
 - MCP loki run now returns the exit code and log tail when loki exits before a run starts.
+- loki-seal: forged runner pass lines that contradict the runner summary now give NOT VERIFIED.
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 ### Fixed
 - Dashboard runs view reports unreadable or corrupt run records instead of claiming none were recorded.
