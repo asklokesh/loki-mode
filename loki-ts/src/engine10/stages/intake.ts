@@ -1,18 +1,18 @@
 // loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic:
 // dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map /
-// test map build. No LLM call, no PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or
+// test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or
 // issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo,
 // resumed for later stages.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { RunContext, Stage, StageResult } from "../types.ts";
+import { STAGE_BUDGETS, type RunContext, type Stage, type StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
-import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 export interface IntakeOptions {
   taskText?: string;
   issueJsonPath?: string;
@@ -64,7 +64,7 @@ function isAlreadyDone(issue: IssueFields): boolean {
   return issue.state === "closed" || issue.closed_by_merged_pr === true;
 }
 export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: IntakeOptions = {}): Promise<StageResult> {
-  if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before intake started" };
+  const t0 = Date.now(); if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before intake started" };
   const { blocking: dirty, preexisting } = splitDirty(ctx.repoDir, dirtyTrackedFiles(ctx.repoDir));
   if (dirty.length > 0) {
     return { status: "failed", data: {}, reason: `dirty tracked tree: ${dirty.join(", ")}` };
@@ -123,13 +123,12 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   };
   const base = { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch };
   if (already) return { status: "completed", data: { ...base, ...alreadyData(already) } };
-  const data = { ...base, repomap_ref: repomapRef, testmap, already_satisfied: false };
+  const data = { ...base, ...(await intakeProjectModel(ctx, signal, t0)), repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }
 export const stage: Stage = {
   name: "intake",
-  targetS: 15,
-  limitS: 60,
+  ...STAGE_BUDGETS.intake, // one table (types.ts); discovery gets what remains of its limit
   run: (ctx, signal) => runIntake(ctx, signal),
 };

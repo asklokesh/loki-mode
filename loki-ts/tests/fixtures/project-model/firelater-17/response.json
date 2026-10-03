@@ -1,0 +1,27 @@
+{
+  "workspaceKind": "multi-root",
+  "workspaceCite": ["README.md", ".github/workflows/ci.yml"],
+  "fingerprintFiles": ["backend/package.json", "backend/package-lock.json", "frontend/package.json", "frontend/package-lock.json"],
+  "packages": [
+    {
+      "name": "backend", "root": "backend", "runner": "vitest", "cite": ["backend/package.json", "README.md"],
+      "commands": {
+        "test": { "cmd": "npm test", "cwd": "backend", "cite": ["backend/package.json", ".github/workflows/ci.yml"] },
+        "lint": { "cmd": "npm run lint", "cwd": "backend", "cite": ["backend/package.json"] },
+        "build": { "cmd": "npm run build", "cwd": "backend", "cite": ["backend/package.json"] },
+        "start": { "cmd": "npm start", "cwd": "backend", "cite": ["backend/package.json"] }
+      },
+      "ui": { "present": false, "boot": null, "cite": ["backend/package.json"] }
+    },
+    {
+      "name": "frontend", "root": "frontend", "runner": "vitest", "cite": ["frontend/package.json"],
+      "commands": {
+        "test": { "cmd": "npm test", "cwd": "frontend", "cite": ["frontend/package.json"] },
+        "lint": { "cmd": "npm run lint", "cwd": "frontend", "cite": ["frontend/package.json"] },
+        "build": { "cmd": "npm run build", "cwd": "frontend", "cite": ["frontend/package.json"] },
+        "start": null
+      },
+      "ui": { "present": true, "boot": { "cmd": "npm run dev", "cwd": "frontend", "cite": ["frontend/package.json"] }, "cite": ["frontend/package.json"] }
+    }
+  ]
+}
