@@ -32,8 +32,8 @@ export function alreadySatisfied(o: Partial<Record<string, Obj>>): boolean {
  *  (except .loki/ and pre-existing dirt in `keep`) and resets HEAD and index to base; any git failure is a failed stage. */
 export async function discardIfSatisfied(git: Git, base: string, o: Partial<Record<string, Obj>>, staged: { st: string; f: string }[], keep: Set<string>, repoDir: string): Promise<StageResult | null> {
   if (!alreadySatisfied(o)) return null;
-  const pre = (o.intake?.preexisting_dirty ?? {}) as Record<string, string>, own = new Set([...(Array.isArray(o.intake?.preexisting_untracked) ? o.intake.preexisting_untracked : []) as string[], ...Object.keys((o.intake?.preexisting_untracked_blobs ?? {}) as object)]); // r2: user files from intake are never touched
-  const gone = staged.filter(({ f }) => !keep.has(f) && !own.has(f) && !(f in pre) && !f.startsWith(".loki/")), lit = ["--literal-pathspecs"];
+  const pre = Object.assign(Object.create(null), o.intake?.preexisting_dirty ?? {}) as Record<string, string>, own = new Set([...(Array.isArray(o.intake?.preexisting_untracked) ? o.intake.preexisting_untracked : []) as string[], ...Object.keys((o.intake?.preexisting_untracked_blobs ?? {}) as object)]); // r2: user files from intake are never touched
+  const gone = staged.filter(({ f }) => !keep.has(f) && !own.has(f) && !Object.hasOwn(pre, f) && !f.startsWith(".loki/")), lit = ["--literal-pathspecs"];
   const del = gone.filter(({ st }) => st === "A").map(({ f }) => f), back = gone.filter(({ st }) => st !== "A").map(({ f }) => f);
   if ((del.length > 0 && (await git([...lit, "rm", "-q", "-f", "--", ...del])).code !== 0) || (back.length > 0 && (await git([...lit, "restore", `--source=${base}`, "--staged", "--worktree", "--", ...back])).code !== 0) || (await git(["reset", "-q", base])).code !== 0) return { status: "failed", data: {}, reason: "already-satisfied discard failed" };
   const notProven: string[] = []; // r3: every intake-untracked file goes back byte for byte from its blob

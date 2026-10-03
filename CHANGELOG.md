@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Two-way Slack: `LOKI_SLACK_ALLOWED_USERS` (comma-separated Slack user IDs) restricts who can start a run, and `loki slack serve` warns at startup when it is unset (D63-C6-F).
 - Two-way Slack caps task text at 64 KB ("task too long", no spawn) and no longer posts spawn errors, which can hold local paths, back to the thread; the detail goes to stderr. `loki slack serve --port ""` now exits 2 instead of binding port 0 (D63-C6-F).
+- Fixed: an already-satisfied run no longer leaves files named like object prototype members (constructor, toString, valueOf, hasOwnProperty, __proto__) behind in the working tree (P1-DISCARD-PROTO).
 
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
