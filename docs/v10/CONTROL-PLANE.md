@@ -103,4 +103,10 @@ Dependencies to add (none present today; web-app/package.json pins react 19, vit
 
 ## BLOCKED answer and default entry (D65)
 
-A run blocked on a spec conflict shows its question in the run view with an answer box. The answer is POSTed to `/v1/runs/<source>/<run>/answer` (application/json, `answer` up to 4000 chars, the run must be blocked, ids are validated, the server binds 127.0.0.1) and written to `$LOKI_CONTROL_ANSWER_DIR` (default `~/.loki/control/answers`) as `<source>/<run>.answer.txt`, mode 0600. The engine has no in-place resume reader, so resuming is manual: `loki "$(cat <file>)"`. `LOKI_CONTROL_DEFAULT=1` (off by default) makes `loki dashboard` open the Control Plane.
+A run blocked on a spec conflict shows its question in the run view with an answer box. The answer is POSTed to `/v1/runs/<source>/<run>/answer` (application/json, `answer` up to 4000 chars, the run must be blocked, ids are validated, the server binds 127.0.0.1) and written to `$LOKI_CONTROL_ANSWER_DIR` (default `~/.loki/control/answers`) as `<source>/<run>.answer.txt`, mode 0600. The engine has no in-place resume reader, so resuming starts a fresh run with the answer as task context: `loki answer <run>`.
+
+### Answering a BLOCKED run
+
+`loki answer [<run-id>] [--text "..."]` reads the run's task and question from `.loki/runs/<run>/events.jsonl` and the answer from `--text` or the answer file above, then launches `bin/loki "<task>\n\nClarification answering \"<question>\": <answer>"` and prints the new run id. The default run is the newest BLOCKED run in the current repo. The child env drops every `SLACK_*` variable and `LOKI_CONTROL_TOKEN` and sets `LOKI_NO_BROWSER=1`. A run that is not BLOCKED, or has no answer, exits 2 with the reason.
+
+`LOKI_CONTROL_DEFAULT=1` (off by default) makes `loki dashboard` open the Control Plane.

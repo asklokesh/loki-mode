@@ -29,5 +29,5 @@ export function writeAnswer(dir: string, source: string, run: string, answer: un
   const path = join(d, `${run}.answer.txt`);
   writeFileSync(path, `${answer.trim()}\n`, { mode: 0o600 });
   chmodSync(path, 0o600);
-  return { status: 200, body: { ok: true, path, resume: `loki "$(cat '${path}')"  # re-run the task with the answer, or paste it into the issue` } };
+  return { status: 200, body: { ok: true, path, resume: `loki answer ${run}` } };
 }

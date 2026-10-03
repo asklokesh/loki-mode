@@ -289,7 +289,7 @@ LOKI_CONTROL=1 loki control status       # reachable? how many runs held?
 
 The URL comes from `LOKI_CONTROL_URL`, else `http://127.0.0.1:${LOKI_CONTROL_PORT:-47821}`. Set `LOKI_CONTROL_URL` on a run to ship it live. See [docs/v10/CONTROL-PLANE.md](docs/v10/CONTROL-PLANE.md).
 
-Answering a BLOCKED run: when a run stops on a spec conflict, its run page shows the question and an answer box. Submitting posts to `POST /v1/runs/<source>/<run>/answer` (JSON `{"answer": "..."}`, up to 4000 characters, loopback only) and writes `~/.loki/control/answers/<source>/<run>.answer.txt` (override the directory with `LOKI_CONTROL_ANSWER_DIR`). The page prints the resume command, which re-runs the task with that file's text.
+Answering a BLOCKED run: when a run stops on a spec conflict, its run page shows the question and an answer box. Submitting posts to `POST /v1/runs/<source>/<run>/answer` (JSON `{"answer": "..."}`, up to 4000 characters, loopback only) and writes `~/.loki/control/answers/<source>/<run>.answer.txt` (override the directory with `LOKI_CONTROL_ANSWER_DIR`). The page prints the resume command, `loki answer <run>`, which starts a fresh run carrying the task, the question and that file's text (or pass `--text "..."` yourself; with no run id it picks the newest BLOCKED run). A run that is not BLOCKED exits 2.
 
 Set `LOKI_CONTROL_DEFAULT=1` (off by default) to make `loki dashboard`, `loki dashboard start` and `loki dashboard open` start the Control Plane instead of the old dashboard. The old dashboard is unchanged when the flag is unset.
 

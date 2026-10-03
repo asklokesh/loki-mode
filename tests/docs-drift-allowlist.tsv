@@ -44,5 +44,4 @@ docs/certification/certification-exam.md	--max-cost	wrong-answer distractor in t
 docs/v10/D51-PHASE-B.md	loki workspace	planned D51 Phase B command (slice B12, behind LOKI_WORKSPACES); design doc, not yet on main
 docs/v10/CONTROL-PLANE.md	loki control	planned D56 command (CP-04, behind LOKI_CONTROL=1); design doc, not yet on main
 docs/v10/LEGACY-REMOVAL.md	loki control	planned D56 command referenced by the D57 inventory; not yet on main
-docs/v10/D63-CARDS.md	loki answer	D63 card C4 spec for the planned BLOCKED-answer command; planning doc, not yet on main
 docs/v10/D63-CARDS.md	loki foo	D63 card C5 routing example of an unknown one-word arg, not a command

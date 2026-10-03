@@ -24,6 +24,7 @@ test("blocked run exposes its question and an answer is written to a file", asyn
   expect(r.status).toBe(200);
   const j = (await r.json()) as any;
   expect(j.path).toBe(join(dir, SRC, `${run}.answer.txt`));
+  expect(j.resume).toBe(`loki answer ${run}`);
   expect(readFileSync(j.path, "utf8")).toBe("keep add pure; use a parameter\n");
 });
 

@@ -34,6 +34,7 @@ Phase 2 ported (Bun-native, fast):
                          (subcmds: list | show <id> | open <id> | share <id>)
   wiki <subcmd>          Auto-generated, cited codebase wiki + Q&A
                          (subcmds: generate | show [section] | ask "<question>")
+  answer [run] [--text]  Resume a BLOCKED run with an answer (--text, or the Control Plane answer file)
   control <subcmd>       Control plane (preview, needs LOKI_CONTROL=1)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
 
@@ -318,6 +319,11 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "slack": {
       const { runSlackCli } = await import("./features/slack_inbound.ts");
       return runSlackCli(rest);
+    }
+
+    case "answer": {
+      const { runAnswerCli } = await import("./features/blocked_answer.ts");
+      return runAnswerCli(rest);
     }
 
     case "engine10": {
