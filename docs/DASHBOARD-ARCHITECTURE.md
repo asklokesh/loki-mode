@@ -1,5 +1,7 @@
 # Dashboard Architecture: Real-Data, Near-Realtime
 
+> **Historical:** this describes the classic dashboard, removed in Loki Mode 10.8. The Control Plane is the only UI; see [control-plane-migration.md](control-plane-migration.md).
+
 Design only. No implementation in this document.
 
 Status: proposal. Measured against the worktree at

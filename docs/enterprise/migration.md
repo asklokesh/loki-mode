@@ -226,7 +226,7 @@ npm install loki-mode-sdk
 #### 5. Test Enterprise Features
 
 ```bash
-# Start dashboard
+# Open the Control Plane (the classic /api/* routes are replaced by /v1/*, see docs/control-plane-migration.md)
 loki dashboard
 
 # Test API

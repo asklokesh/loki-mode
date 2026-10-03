@@ -310,7 +310,7 @@ The URL comes from `LOKI_CONTROL_URL`, else `http://127.0.0.1:${LOKI_CONTROL_POR
 
 Answering a BLOCKED run: when a run stops on a spec conflict, its run page shows the question and an answer box. Submitting posts to `POST /v1/runs/<source>/<run>/answer` (JSON `{"answer": "..."}`, up to 4000 characters, loopback only) and writes `~/.loki/control/answers/<source>/<run>.answer.txt` (override the directory with `LOKI_CONTROL_ANSWER_DIR`). The page prints the resume command, `loki answer <run>`, which starts a fresh run carrying the task, the question and that file's text (or pass `--text "..."` yourself; with no run id it picks the newest BLOCKED run). A run that is not BLOCKED exits 2.
 
-Set `LOKI_CONTROL_DEFAULT=1` (off by default) to make `loki dashboard`, `loki dashboard start` and `loki dashboard open` start the Control Plane instead of the old dashboard. The old dashboard is unchanged when the flag is unset.
+The Control Plane is the only UI. `loki dashboard`, `loki dashboard start` and `loki dashboard open` open it (starting `loki control serve` if none is running). The classic dashboard UI and its port 57374 are removed in 10.8; see [docs/control-plane-migration.md](docs/control-plane-migration.md) for the route mapping and what is not yet available.
 
 Container, Helm and ECS deployment: [docs/control-plane-container.md](docs/control-plane-container.md).
 
@@ -588,7 +588,7 @@ Legacy engine, being removed (these run on the previous engine; `loki --help` st
 | `loki stop`, `pause`, `resume` | Control a legacy run |
 | `loki steer "<note>"` | Nudge a legacy run (needs `LOKI_PROMPT_INJECTION=1`) |
 | `loki why`, `loki next` | Explain or continue a legacy run |
-| `loki dashboard` | Operations UI server (`start\|stop\|status\|url\|open`) |
+| `loki dashboard` | Open the Control Plane UI (see [docs/control-plane-migration.md](docs/control-plane-migration.md)) |
 | `loki review`, `loki test`, `loki analyze`, `loki memory`, `loki failover`, `loki enterprise`, `loki import`, `loki ci` | Review, test generation, codebase analysis, memory, failover, enterprise, issue import, CI gate |
 | `loki modernize heal <path>` | Legacy system healing |
 

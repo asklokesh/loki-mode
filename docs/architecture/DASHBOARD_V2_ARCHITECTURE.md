@@ -1,5 +1,7 @@
 # Loki Mode Dashboard V2 Architecture
 
+> **Historical:** this describes the classic dashboard, removed in Loki Mode 10.8. The Control Plane is the only UI; see [control-plane-migration.md](../control-plane-migration.md).
+
 **Status:** Design Phase
 **Version:** 0.1.0 (Draft)
 **Date:** 2026-02-01

@@ -1,5 +1,7 @@
 # Loki Mode Dashboard v5.40.0
 
+> **Control Plane migration:** the classic dashboard UI and its port 57374 are removed in Loki Mode 10.8. The Control Plane (`loki control serve`, default port 47821) is the only UI. See [control-plane-migration.md](control-plane-migration.md) for startup, the `/api/*` to `/v1/*` route mapping and what is not yet available.
+
 A production-ready realtime dashboard for monitoring and managing Loki Mode autonomous operations. Features a dark Vercel/Linear-inspired theme with purple accents, sidebar navigation, and overview cards.
 
 ## Overview
@@ -15,16 +17,13 @@ The Loki Mode Dashboard provides a visual interface to:
 ## Quick Start
 
 ```bash
-# Start the dashboard (default port: 57374)
-loki dashboard start
-
-# Open in browser
-open http://localhost:57374
+# Open the Control Plane (starts `loki control serve` on 127.0.0.1:47821 if none is running)
+loki dashboard
 ```
 
 The dashboard automatically syncs with Loki Mode when it's running, polling `dashboard-state.json` every 2 seconds.
 
-**Ports:** The dashboard and API run on unified port **57374** (FastAPI serves both). See [INSTALLATION.md](INSTALLATION.md#ports) for details.
+**Ports:** the Control Plane serves the UI and `/v1/*` API on port **47821** by default. See [INSTALLATION.md](INSTALLATION.md#ports) for details.
 
 **Bound port:** if 57374 is held by something that is not this install's dashboard (another project, an older version, a foreign process), Loki walks to the next free port and never reuses or opens the foreign one. `loki start` and `loki dashboard` open and print the URL of the port actually bound; `loki start` publishes it to `.loki/dashboard/url`. A running dashboard is reused only when its `/health` reports the same version and install path.
 
@@ -485,4 +484,4 @@ Useful for:
 
 ## Control Plane by default
 
-Bare `loki` and `loki dashboard` (also `start` or `open` with no other flags) open the Control Plane. If `~/.loki/control/instance.json` names a live loopback server whose `/health` reports `service=loki-control`, that URL is reused; otherwise `loki control serve` is started detached and its PID is recorded in `~/.loki/control/serve.pid`. With `LOKI_HEADLESS=1`, `LOKI_NO_BROWSER=1` or `--no-open` the URL is printed and no browser is opened. Without bun, Loki prints one line naming bun and uses the classic dashboard. Set `LOKI_CONTROL_DEFAULT=0` to always use the classic dashboard. Multi-repo `loki workspace` is on by default; `LOKI_WORKSPACES=0` disables it.
+Bare `loki` and `loki dashboard` (also `start` or `open` with no other flags) open the Control Plane. If `~/.loki/control/instance.json` names a live loopback server whose `/health` reports `service=loki-control`, that URL is reused; otherwise `loki control serve` is started detached and its PID is recorded in `~/.loki/control/serve.pid`. With `LOKI_HEADLESS=1`, `LOKI_NO_BROWSER=1` or `--no-open` the URL is printed and no browser is opened. Without bun, Loki prints one line naming bun and does not start a server (the classic dashboard is removed in 10.8). Multi-repo `loki workspace` is on by default; `LOKI_WORKSPACES=0` disables it.
