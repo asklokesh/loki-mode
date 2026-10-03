@@ -24,24 +24,31 @@ async function boot(runsResponse) {
 }
 const ok = (j) => () => ({ ok: true, status: 200, json: async () => j });
 
+// Row shape copied from dashboard/api_workspaces.py _row (D51-B13r).
+const run = (o) => ({ workspace: 'w', run_id: 'r1', state: 'ok', status: 'passed', exit_code: 0, error: null, outcomes: {}, repos: [], ...o });
+const repo = (name, o) => ({ repo: name, head: 'abc', current_head: 'abc', stale: false, reason: null, ...o });
+
 test('two runs render with per-repo rows and an integration row', async () => {
   const body = await boot(ok({ runs: [
-    { ws: 'w', run_id: 'r1', repos: [{ slug: 'lib', status: 'done', stale: false }, { slug: 'app', status: 'failed', stale: true }], integration: { status: 'passed' } },
-    { ws: 'w', run_id: 'r2', repos: [{ slug: 'lib', status: 'running', stale: null, reason: 'worktree missing' }], integration: { status: 'running' } },
-  ] }));
+    run({ status: 'passed', outcomes: { 'o/lib': 'ok', 'o/app': 'FAILED: exit 1' }, repos: [repo('o/lib'), repo('o/app', { stale: true })] }),
+    run({ run_id: 'r2', status: 'failed', exit_code: 1, outcomes: { 'o/lib': 'ok' }, repos: [repo('o/lib', { stale: null, current_head: null, reason: 'worktree missing' })] }),
+  ], reason: null }));
   assert.equal(body.querySelectorAll('tbody tr').length, 5);
   assert.match(body.textContent, /integration/);
   assert.match(body.textContent, /passed/);
+  assert.match(body.textContent, /failed/);
+  assert.match(body.textContent, /FAILED: exit 1/);
   assert.match(body.textContent, /worktree missing/);
+  assert.match(body.textContent, /w\/r1/);
 });
 
 test('stale badge appears only when stale is true', async () => {
-  const body = await boot(ok({ runs: [{ ws: 'w', run_id: 'r1', repos: [{ slug: 'a', status: 'done', stale: false }, { slug: 'b', status: 'done', stale: true }], integration: { status: 'passed' } }] }));
+  const body = await boot(ok({ runs: [run({ repos: [repo('o/a'), repo('o/b', { stale: true })] })] }));
   assert.equal((body.textContent.match(/stale/g) || []).length, 1);
 });
 
 test('an unreadable run shows its error text', async () => {
-  const body = await boot(ok({ runs: [{ ws: 'w', run_id: 'bad', state: 'unreadable', error: 'corrupt integration.json' }] }));
+  const body = await boot(ok({ runs: [run({ run_id: 'bad', state: 'unreadable', status: null, exit_code: null, error: 'corrupt integration.json' })] }));
   assert.match(body.textContent, /corrupt integration\.json/);
   assert.doesNotMatch(body.textContent, /No runs/);
 });

@@ -100,18 +100,20 @@ async function loadWorkspaceRuns(){
   t.appendChild(el('thead')).appendChild(el('tr')).append(el('th','Run'),el('th','Repo'),el('th','Status'),el('th','Freshness'));
   const tb=el('tbody');
   runs.forEach(run=>{
-    const id=(run.ws||run.workspace||'?')+'/'+(run.run_id||'?');
+    const id=(run.workspace||'?')+'/'+(run.run_id||'?');
     if(run.state==='unreadable'){
       const tr=el('tr');tr.appendChild(el('td',id));
       const td=el('td','Unreadable run: '+(run.error||'unknown error'),'bad');td.colSpan=3;tr.appendChild(td);tb.appendChild(tr);return}
+    const oc=run.outcomes&&typeof run.outcomes==='object'?run.outcomes:{};
     (run.repos||[]).forEach(rp=>{
-      const tr=el('tr');tr.appendChild(el('td',id));tr.appendChild(el('td',rp.slug||rp.repo||'?'));
-      tr.appendChild(el('td',rp.status||'-','st '+(rp.status||'')));
+      const rs=oc[rp.repo]==null?'':String(oc[rp.repo]);
+      const tr=el('tr');tr.appendChild(el('td',id));tr.appendChild(el('td',rp.repo||'?'));
+      tr.appendChild(el('td',rs||'-','st '+(rs.startsWith('ok')?'ok':rs?'bad':'')));
       const f=el('td');
       if(rp.stale===true)f.appendChild(el('span','stale','tag bad'));
       else if(rp.stale==null&&rp.reason)f.appendChild(el('span',rp.reason,'mut'));
       tr.appendChild(f);tb.appendChild(tr)});
-    const ig=run.integration&&typeof run.integration==='object'?run.integration.status:run.integration;
+    const ig=run.status==null?'':String(run.status);
     const tr=el('tr');tr.appendChild(el('td',id));tr.appendChild(el('td','integration','mut'));
     const sc=el('td');sc.appendChild(el('span',ig||'-','st '+(ig||'')));tr.appendChild(sc);tr.appendChild(el('td'));tb.appendChild(tr)});
   t.appendChild(tb);b.replaceChildren(t)}
