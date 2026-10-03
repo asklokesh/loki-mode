@@ -105,3 +105,15 @@ test("search and filter narrow the grid", () => {
   expect(screen.getByTestId("cards-empty").textContent).toBe("No sessions match.");
   expect(matches(run("a"), "", "FAILED")).toBe(false);
 });
+
+test("receipt badge shows Receipt signed only when the signature was checked", () => {
+  const text = (extra: Record<string, unknown>) => {
+    const { unmount } = render(<CardsView runs={[run("s", extra)]} blocked={[]} now={NOW} />);
+    const out = screen.getByTestId("badge-receipt").textContent;
+    unmount();
+    return out;
+  };
+  expect(text({ attested: true, sig_checked: true })).toBe("Receipt signed");
+  expect(text({ attested: true, sig_checked: false })).toBe("Receipt unchecked");
+  expect(text({ attested: true, sig_checked: undefined })).toBe("receipt unmeasured");
+});

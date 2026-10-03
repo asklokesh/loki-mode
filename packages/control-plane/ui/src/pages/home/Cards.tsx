@@ -15,7 +15,8 @@ const CLAMP2 = { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "v
 
 function receiptBadge(r: RunRow) {
   if (r.verdict === null) return null;
-  if (r.attested === true) return <Badge tone={r.sig_checked === false ? "warning" : "success"} data-testid="badge-receipt">{r.sig_checked === false ? "Receipt unchecked" : "Receipt signed"}</Badge>;
+  if (r.attested === true && r.sig_checked === true) return <Badge tone="success" data-testid="badge-receipt">Receipt signed</Badge>;
+  if (r.attested === true && r.sig_checked === false) return <Badge tone="warning" data-testid="badge-receipt">Receipt unchecked</Badge>;
   if (r.attested === false) return <Badge tone="warning" data-testid="badge-receipt">No attested receipt</Badge>;
   return <span data-testid="badge-receipt" style={{ fontSize: "var(--cp-text-sm)", color: "var(--cp-text-muted)" }}>receipt {UNMEASURED}</span>;
 }
