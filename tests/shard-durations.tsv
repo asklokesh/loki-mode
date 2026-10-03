@@ -752,3 +752,9 @@ loki start/run unified dispatch (cli)	3
 non-standard suite registration guard (cli, dashboard, integration)	1
 install-hooks.sh --help and unknown args never write git config (PO5)	1
 measure-run and guard-changed help is read-only (PO5)	1
+# 10.7.0 train (2026-10-03): five suites registered after the measured run, timed locally.
+Acp Agent	1
+Dashboard /api/v1/runs REST API	1
+Project memory persists across runs and injects a bounded summary	1
+loki merge queue: green-only serial merge, rebase next, dry-run	1
+mobile emulator tests: NOT VERIFIED without a device	1
