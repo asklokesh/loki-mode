@@ -23,6 +23,9 @@
 #
 # Env: LOKI_RELEASE_WORKTREE (required for phase C), LOKI_TC_REPO (main
 # checkout, default: this script's repo), LOKI_TC_REMOTE (default origin).
+# LOKI_TC_NPM_WAIT_MIN (default 45): minutes after the previous release commit
+# before a still-missing npm version is logged PREV_NOT_ON_NPM_STALE (the
+# release stays refused either way). LOKI_TC_NPM_PKG (default loki-mode).
 # Test seams: LOKI_TC_BUMP_CMD, LOKI_TC_INSTALL_CMD, LOKI_TC_NET_TIMEOUT.
 #
 # Shell options: deliberately no `set -e` (it kills post-command handling) and
@@ -288,6 +291,63 @@ EOF
     return 0
 }
 
+# prev_release <ref>: "<ver> <commit-epoch>" of the newest `release: vX`
+# commit on that ref, or empty when none exists.
+prev_release() {
+    local lines line ct subj
+    lines="$(g log --grep='^release: v[0-9]' --format='%H %ct %s' "$1" 2>/dev/null)" || return 0
+    while IFS= read -r line; do
+        line="${line#* }"; ct="${line%% *}"; subj="${line#* }"
+        case "$subj" in "release: v"[0-9]*) printf '%s %s\n' "${subj#release: v}" "$ct"; return 0 ;; esac
+    done <<EOF
+$lines
+EOF
+    return 0
+}
+
+# npm_has_version <ver>: 0 visible, 1 not visible (404 or empty), 2 npm error.
+# Always queries the registry (--prefer-online); an error is never "visible".
+npm_has_version() {
+    local pkg="${LOKI_TC_NPM_PKG:-loki-mode}" out rc
+    out="$(cd "$REPO" && net npm view "$pkg@$1" version --prefer-online 2>&1)"; rc=$?
+    if [ "$rc" != 0 ]; then
+        case "$out" in *E404*|*"404 Not Found"*) return 1 ;; esac
+        return 2
+    fi
+    [ "$(printf '%s' "$out" | tr -d '[:space:]')" = "$1" ] && return 0
+    return 1
+}
+
+# sync_local_main: bring local main up to origin/main after a release push.
+# Fast-forward when possible, else a plain merge (never forced); skipped, with
+# a log line, when the main checkout is not on a clean main.
+sync_local_main() {
+    local cur
+    net git -C "$REPO" fetch --quiet "$REMOTE" main 2>/dev/null || { log C "" "SYNC_FETCH_FAIL local main not updated"; return 0; }
+    if is_ancestor "$REMOTE/main" refs/heads/main; then return 0; fi
+    cur="$(g symbolic-ref --short -q HEAD 2>/dev/null)"
+    if is_ancestor refs/heads/main "$REMOTE/main"; then
+        if [ "$cur" = main ]; then
+            if g merge --ff-only --quiet "$REMOTE/main" >/dev/null 2>&1; then log C "$(g rev-parse HEAD)" "LOCAL_MAIN_FF"; else log C "" "LOCAL_MAIN_SYNC_FAIL ff"; fi
+        elif g fetch --quiet . "$REMOTE/main:refs/heads/main" 2>/dev/null; then
+            log C "$(g rev-parse refs/heads/main)" "LOCAL_MAIN_FF"
+        else
+            log C "" "LOCAL_MAIN_SYNC_FAIL ff"
+        fi
+        return 0
+    fi
+    if [ "$cur" != main ] || [ -n "$(g status --porcelain --untracked-files=no 2>/dev/null)" ]; then
+        log C "" "LOCAL_MAIN_SYNC_SKIP main not checked out clean"; return 0
+    fi
+    if g -c user.name=asklokesh -c user.email=lokeshmure@live.com merge --no-edit --quiet "$REMOTE/main" >/dev/null 2>&1; then
+        log C "$(g rev-parse HEAD)" "LOCAL_MAIN_MERGED"
+    else
+        g merge --abort >/dev/null 2>&1
+        log C "" "LOCAL_MAIN_SYNC_FAIL merge conflict, aborted"
+    fi
+    return 0
+}
+
 # ---- Phase C: release --------------------------------------------------------
 phase_c() {
     local head subj tag files runs name c rel concl wt
@@ -310,6 +370,26 @@ phase_c() {
         c="$(check_state "$runs" "$name")"
         if [ "$c" != "success" ]; then log C "$head" "WAIT $name=$c"; return 0; fi
     done
+
+    # Never cut release N+1 while release N is not yet on npm. Waiting is not a
+    # failure (exit 0); an unreachable registry fails closed with its own reason.
+    local pr pver pct npm_rc age wait_min reason
+    pr="$(prev_release "$REMOTE/main")"
+    if [ -n "$pr" ]; then
+        pver="${pr%% *}"; pct="${pr##* }"
+        npm_has_version "$pver"; npm_rc=$?
+        if [ "$npm_rc" != 0 ]; then
+            reason=""; [ "$npm_rc" = 2 ] && reason=" reason=NPM_UNREACHABLE"
+            wait_min="${LOKI_TC_NPM_WAIT_MIN:-45}"
+            age=$(( $(date +%s) - pct ))
+            if [ "$age" -ge $(( wait_min * 60 )) ]; then
+                log C "$head" "PREV_NOT_ON_NPM_STALE $pver age=$((age / 60))m wait=${wait_min}m$reason refusing release, needs a human"
+            else
+                log C "$head" "PREV_NOT_ON_NPM $pver$reason"
+            fi
+            return 0
+        fi
+    fi
 
     rel="$(cd "$REPO" && net gh run list --workflow Release --limit 5 --json status,conclusion 2>/dev/null)" \
         || { log C "$head" "GH_FAIL release-runs wait"; return 0; }
@@ -412,6 +492,7 @@ release_in_worktree() {
     if (cd "$wt" && LOKI_RELEASE_MANAGER=1 net git push --quiet "$REMOTE" "HEAD:refs/heads/main" 2>/dev/null); then
         state_set last_release_sha "$(w rev-parse HEAD)"
         log C "$(w rev-parse HEAD)" "RELEASED v$ver"
+        sync_local_main
     else
         log C "$(w rev-parse HEAD)" "RELEASE_PUSH_FAIL v$ver"
         return 1

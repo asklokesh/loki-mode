@@ -47,6 +47,20 @@ case "$2" in
 esac
 STUB
 chmod +x "$RUN_TMP/bin/gh"
+# stub npm: `npm view <pkg>@<ver> version` answers from $NPM_MODE
+#   listed (default): echoes the version; missing: empty, rc 0; e404: E404, rc 1; error: network error, rc 1
+cat >"$RUN_TMP/bin/npm" <<'STUB'
+#!/usr/bin/env bash
+echo "$*" >>"${GH_FIX:-/dev/null}/npm.log"
+spec="$2"; ver="${spec##*@}"
+case "${NPM_MODE:-listed}" in
+    listed) echo "$ver" ;;
+    missing) ;;
+    e404) echo "npm error code E404" >&2; exit 1 ;;
+    *) echo "npm error code ENOTFOUND network" >&2; exit 1 ;;
+esac
+STUB
+chmod +x "$RUN_TMP/bin/npm"
 export PATH="$RUN_TMP/bin:$PATH"
 
 # runs <sha> "Name:status:conclusion" ... -> runs-<sha>.json
@@ -258,6 +272,41 @@ commit_file "$REPO" "feat: r2" src/r2.txt
 WT_ENV="" tc
 check "$(trains)" "train/1 train/2 " "red train/1 superseded by train/2"
 hasnt "$(LOG)" "HOLD train/1 green" "no green hold for a red train"
+
+echo "T13 -- release refused while the previous release is not on npm"
+mkfix t13
+commit_file "$SEED" "feat: n" src/n.txt; gitc "$SEED" push -q origin main 2>/dev/null
+H13="$(omain)"; all_green "$H13"
+echo '[{"status":"completed","conclusion":"success"}]' >"$GH_FIX/release.json"
+NPM_MODE=missing tc
+check "$RC" "0" "waiting on npm is not a failure"
+check "$(omain)" "$H13" "release not cut while v1.0.0 is missing from npm"
+has "$(LOG)" "PREV_NOT_ON_NPM 1.0.0$" "PREV_NOT_ON_NPM logged"
+hasnt "$(LOG)" "STALE" "not stale inside the wait window"
+check "$(grep -c 'PREV_NOT_ON_NPM' "$(LOG)")" "1" "exactly one log line"
+has "$GH_FIX/npm.log" "view loki-mode@1.0.0 version --prefer-online" "npm queried uncached for the previous version"
+NPM_MODE=e404 tc
+check "$(omain)" "$H13" "404 also refuses"
+
+echo "T14 -- stale wait still refuses with PREV_NOT_ON_NPM_STALE"
+LOKI_TC_NPM_WAIT_MIN=0 NPM_MODE=missing tc
+check "$RC" "0" "stale is not a failure exit"
+has "$(LOG)" "PREV_NOT_ON_NPM_STALE 1.0.0" "stale logged"
+check "$(omain)" "$H13" "still refused when stale"
+
+echo "T15 -- npm error fails closed with a distinct reason"
+NPM_MODE=error tc
+check "$RC" "0" "npm error is not a failure exit"
+has "$(LOG)" "PREV_NOT_ON_NPM 1.0.0 reason=NPM_UNREACHABLE" "distinct reason logged"
+check "$(omain)" "$H13" "npm error does not release"
+
+echo "T16 -- previous release listed on npm lets the release proceed; local main follows"
+NPM_MODE=listed tc
+check "$RC" "0" "cycle exits 0"
+check "$(git -C "$ORIGIN" log -1 --format=%s "$(omain)")" "release: v1.0.1" "release cut once npm lists v1.0.0"
+check "$(git -C "$REPO" rev-parse refs/heads/main)" "$(omain)" "local main fast-forwarded to the release commit"
+has "$(LOG)" "LOCAL_MAIN_FF" "LOCAL_MAIN_FF logged"
+check "$(git -C "$REPO" rev-parse HEAD)" "$(omain)" "checked-out main updated too"
 
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
