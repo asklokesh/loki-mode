@@ -2,7 +2,7 @@ import { Activity, Briefcase, DollarSign, ExternalLink, Settings, Moon, Sun, Tri
 import { useEffect, useState, type ReactNode } from "react";
 import { Landing } from "./Live";
 import { CostPage, EmptyState, SettingsPage, StartRun, WorkPage } from "./Shell";
-import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
+import { getRun, listRuns, postAnswer, deleteRun, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
 
@@ -171,6 +171,34 @@ function AnswerBox({ source, run, question }: { source: string; run: string; que
   );
 }
 
+function RemoveRun({ source, run }: { source: string; run: string }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async () => {
+    setBusy(true); setErr(null);
+    try { await deleteRun(source, run); location.hash = "#/runs"; }
+    catch (e) { setErr((e as Error).message); setBusy(false); }
+  };
+  const btn = "min-h-11 rounded px-4 py-2 text-sm md:min-h-0 md:px-3 md:py-1";
+  return (
+    <Card title="Remove run">
+      {!confirming ? (
+        <button type="button" data-testid="remove-run" onClick={() => setConfirming(true)} className={`${btn} border border-red-500/50 text-red-600`}>Remove</button>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <p data-testid="remove-confirm-text">Permanently delete this run and its events from the local control database? This cannot be undone.</p>
+          <div className="flex gap-2">
+            <button type="button" data-testid="remove-confirm" disabled={busy} onClick={go} className={`${btn} bg-red-600 text-white disabled:opacity-50`}>{busy ? "Removing" : "Yes, remove"}</button>
+            <button type="button" data-testid="remove-cancel" disabled={busy} onClick={() => { setConfirming(false); setErr(null); }} className={`${btn} border border-slate-300 dark:border-slate-700`}>Cancel</button>
+          </div>
+        </div>
+      )}
+      {err && <p role="alert" data-testid="remove-error" className="mt-2 break-all text-sm text-red-600">Could not remove run: {err}</p>}
+    </Card>
+  );
+}
+
 export function RunDetail({ source, run }: { source: string; run: string }) {
   const { data, error } = useLoad<RunDetailResponse>(() => getRun(source, run), [source, run], isRunning);
   if (error) return <p role="alert" className="text-red-600">Could not load run: {error}</p>;
@@ -216,6 +244,7 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
           </div>
         </div>
       </Card>
+      <RemoveRun source={source} run={run} />
     </section>
   );
 }

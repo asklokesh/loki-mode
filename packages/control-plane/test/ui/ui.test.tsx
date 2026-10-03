@@ -128,3 +128,41 @@ test("mobile layout: shell stacks, wide columns collapse, no fixed-width nav bel
   expect(heads.length).toBe(2);
   for (const h of heads) expect(h.className).toContain("hidden");
 });
+
+test("remove run: confirm step, DELETE call, then back to the runs list", async () => {
+  const d = load("detail-verified.json");
+  const path = `/v1/runs/${d.source_id}/${d.run_id}`;
+  const calls: string[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (String(url) !== path) return new Response("nope", { status: 404 });
+    calls.push(init?.method ?? "GET");
+    return init?.method === "DELETE" ? new Response(JSON.stringify({ ok: true, removed: { runs: 1, events: 3, sources: 0 }, remaining_runs: 0 })) : new Response(JSON.stringify(d));
+  }) as unknown as typeof fetch;
+  const { fireEvent } = await import("@testing-library/react");
+  render(<RunDetail source={d.source_id} run={d.run_id} />);
+  fireEvent.click(await screen.findByTestId("remove-run"));
+  expect(calls).not.toContain("DELETE"); // the first click only asks
+  expect(screen.getByTestId("remove-confirm-text").textContent).toContain("cannot be undone");
+  fireEvent.click(screen.getByTestId("remove-confirm"));
+  await waitFor(() => expect(calls).toContain("DELETE"));
+  await waitFor(() => expect(location.hash).toBe("#/runs"));
+});
+
+test("remove run: a failure is shown, not swallowed, and the run stays", async () => {
+  const d = load("detail-verified.json");
+  const path = `/v1/runs/${d.source_id}/${d.run_id}`;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (String(url) !== path) return new Response("nope", { status: 404 });
+    return init?.method === "DELETE" ? new Response(JSON.stringify({ error: "origin not allowed" }), { status: 403 }) : new Response(JSON.stringify(d));
+  }) as unknown as typeof fetch;
+  const { fireEvent } = await import("@testing-library/react");
+  location.hash = "";
+  render(<RunDetail source={d.source_id} run={d.run_id} />);
+  fireEvent.click(await screen.findByTestId("remove-run"));
+  fireEvent.click(screen.getByTestId("remove-confirm"));
+  const e = await screen.findByTestId("remove-error");
+  expect(e.textContent).toContain("origin not allowed");
+  expect(location.hash).toBe("");
+  fireEvent.click(screen.getByTestId("remove-cancel"));
+  expect(screen.queryByTestId("remove-error")).toBeNull();
+});

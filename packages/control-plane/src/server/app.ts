@@ -7,6 +7,7 @@ import { defaultAnswerDir, writeAnswer } from "./answer.ts";
 import { listRuns, runDetail } from "./runs.ts";
 import { hostGuard, isLoopbackHost, tokenGuard } from "./auth.ts";
 import { backfill } from "../shipper/backfill.ts";
+import { removeRun } from "../db/prune.ts";
 import { planStart, registryRepos, spawnStart } from "./actions.ts";
 
 const MAX_BODY = 1_000_000;
@@ -67,6 +68,22 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     if (!d.blocked_question) return c.json({ error: "run is not blocked on a question" }, 409);
     const r = writeAnswer(answerDir, source, run, body?.answer);
     return c.json(r.body, r.status);
+  });
+  // Remove one run (and its events). hostGuard/tokenGuard above already cover Host and bearer. JSON content type blocks cross-site form posts;
+  // a browser Origin must match the host this server is served on. Absent Origin (curl, the CLI) is allowed. The audit row is written inside the delete transaction, before the rows go.
+  app.delete("/v1/runs/:source/:run", async (c) => {
+    if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) return c.json({ error: "content-type must be application/json" }, 400);
+    const origin = c.req.header("origin");
+    if (origin !== undefined) {
+      let oh = "";
+      try { oh = new URL(origin).host.toLowerCase(); } catch { /* refused below */ }
+      if (!oh || oh !== (c.req.header("host") ?? "").toLowerCase()) return c.json({ error: "origin not allowed" }, 403);
+    }
+    const source = c.req.param("source"), run = c.req.param("run");
+    const r = removeRun(sqlite, source, run);
+    if (!r) return c.json({ error: "run not found" }, 404);
+    const left = (sqlite.query("select count(*) n from runs").get() as { n: number }).n;
+    return c.json({ ok: true, removed: r, remaining_runs: left });
   });
   // Machine-touching actions exist ONLY on a loopback-bound server (otherwise they are never registered: 404).
   // Each request must also come from a loopback peer (the real socket address, not the spoofable Host header; unknown peer fails closed) and carry JSON (blocks cross-site form posts).

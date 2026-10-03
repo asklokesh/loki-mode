@@ -46,6 +46,7 @@ Architect design, 2026-10-01, base 1dfc87103. Design only. Flag: `LOKI_CONTROL=1
 - events.jsonl is the spool. The shipper never writes to it (the supervisor treats outside writes as tamper). Its acked cursor lives in `.loki/runs/<id>/ship.json {acked_seq, url}`, written atomically.
 - Started by the supervisor next to the log (one hook line, skipped when `LOKI_CONTROL=0`; the url comes from `LOKI_CONTROL_URL` or local discovery, section 6), it uses `tail()` (events.ts:155), batches up to 200 events or 1 s, and POSTs. Backoff 1, 2, 4 ... 60 s with jitter. It never blocks or fails the run: on supervisor exit it flushes for at most 5 s, then leaves the rest for replay.
 - Every string in `data` goes through `redactSecrets` before sending.
+- Cleanup: `loki control prune --repo OWNER/NAME` and/or `--before ISO_DATE` (`--dry-run` previews) deletes matching runs, their events and orphaned sources in one transaction, direct on the SQLite file (WAL, 5 s busy timeout), so it works with the server up or down. `DELETE /v1/runs/:source/:run` (JSON content type, same-host Origin, bearer when a token is set) removes one run and writes an `audit` row first; the UI Run detail page has a Remove button with a confirm step.
 - Replay: `loki control backfill [--repo DIR]` and every `loki` start ship each run whose ship.json acked_seq is below its last seq. Backfill of old .loki/runs uses the same code path.
 
 ## 6. Local discovery (on by default)
