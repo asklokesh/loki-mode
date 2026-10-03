@@ -189,6 +189,17 @@ PY
     fi
 fi
 
+# --- the loki.yaml schema must ship (D65-BUG5) -------------------------------
+# autonomy/lib/loki_yaml.py reads schemas/loki-yaml.schema.json at runtime and
+# dashboard/migration_engine.py reads schemas/*.schema.json. With no schemas/
+# entry, `loki workspace run` failed rc=2 from an installed package.
+if command -v npm >/dev/null 2>&1 && [ "${_pack_lines:-0}" -ge 50 ]; then
+    case "$pack_out" in
+        *" schemas/loki-yaml.schema.json"*) ok "schemas/loki-yaml.schema.json is in the real npm tarball" ;;
+        *) bad "schemas/loki-yaml.schema.json missing from the tarball (loki workspace run fails when installed)" ;;
+    esac
+fi
+
 echo ""
 echo "  Passed:     $PASS"
 echo "  Failed:     $FAIL"

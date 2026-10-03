@@ -79,6 +79,7 @@
     "skills/",
     "references/",
     "docs/**/*.md",
+    "schemas/",
     "bin/",
     "bin/loki",
     "loki-ts/dist/",
