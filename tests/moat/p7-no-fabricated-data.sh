@@ -3543,6 +3543,97 @@ export function MFH({ d, deps }) {
   return shown.map((r) => <i key={r.id}>{label}</i>);
 }
 TSX
+    # P7-SCALAR-PIN: pin forwards_call's SCALAR_READ exclusion. HELPER_LOCAL_DECL
+    # flags any `const x = getRows(` regardless of the tail, so each fixture
+    # keeps the call off the `=` (`0 + call`, `pick || call`) to reach only
+    # forwards_call, then feeds the local, a scalar, to a sink. Each fixture
+    # binds the fabricator's result through an intermediate local and feeds
+    # only a SCALAR to a sink, so the sole arm that can see it is the
+    # `if not SCALAR_READ.match(tail): return True` branch (direct-sink forms
+    # such as setFirst(getRows(d)[0]) are flagged by other arms, so they would
+    # not isolate the line). Honest: .length, [0], .find( and ?.length carry
+    # no rows forward. A SCALAR_READ that stops matching flips these to 1.
+    cat > "$d/src/components/ScalarPinLengthHonest.tsx" <<'TSX'
+export function SPL({ d, pick }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const n = 0 + getRows(d).length;
+  setCount(n);
+  return null;
+}
+TSX
+    cat > "$d/src/components/ScalarPinIndexHonest.tsx" <<'TSX'
+export function SPI({ d, pick }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const first = pick || getRows(d)[0];
+  setFirst(first);
+  return null;
+}
+TSX
+    cat > "$d/src/components/ScalarPinFindHonest.tsx" <<'TSX'
+export function SPF({ d, pick }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const hit = pick || getRows(d).find((r) => r.id === 1);
+  setHit(hit);
+  return null;
+}
+TSX
+    cat > "$d/src/components/ScalarPinOptLengthHonest.tsx" <<'TSX'
+export function SPO({ d, pick }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const n = 0 + getRows(d)?.length;
+  setCount(n);
+  return null;
+}
+TSX
+    # P7-SCALAR-PIN negatives: the same intermediate-local path, but the tail
+    # after the call is NOT a scalar read, so the array is forwarded to a
+    # sink and must be flagged. A SCALAR_READ widened to match anything (or to
+    # include array-returning methods) turns these to 0.
+    cat > "$d/src/components/ScalarPinFilterFabricated.tsx" <<'TSX'
+export function SPFF({ d, pick }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const kept = pick || getRows(d).filter((r) => r.id);
+  setRows(kept);
+  return null;
+}
+TSX
+    cat > "$d/src/components/ScalarPinMapFabricated.tsx" <<'TSX'
+export function SPMF({ d, pick }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const mapped = pick || getRows(d).map((r) => r);
+  setRows(mapped);
+  return null;
+}
+TSX
+    cat > "$d/src/components/ScalarPinWrapFabricated.tsx" <<'TSX'
+export function SPWF({ d, pick }) {
+  function getRows(d) {
+    if (!d) return [{ id: 1, action: 'Deployed', user: 'Admin', timestamp: 'now' }];
+    return d;
+  }
+  const wrapped = normalize(getRows(d));
+  setRows(wrapped);
+  return null;
+}
+TSX
     # Honest look-alikes for the same arm: an empty-array fallback (a genuine
     # "nothing yet" default), a real config/enum object return, a helper whose
     # fabricated return never reaches a sink (render-only .map() - this is
@@ -4253,6 +4344,8 @@ EOF
         AliasBracketSinkFabricated.tsx:1 AliasSinkHelperFabricated.tsx:1 AliasSinkHonest.tsx:0 \
         MemoForwardNestedFabricated.tsx:1 MemoForwardChainFabricated.tsx:1 LocalForwardSpreadFabricated.tsx:1 \
         MemoForwardHonest.tsx:0 \
+        ScalarPinLengthHonest.tsx:0 ScalarPinIndexHonest.tsx:0 ScalarPinFindHonest.tsx:0 ScalarPinOptLengthHonest.tsx:0 \
+        ScalarPinFilterFabricated.tsx:1 ScalarPinMapFabricated.tsx:1 ScalarPinWrapFabricated.tsx:1 \
         HelperReturnEmptyHonest.tsx:0 HelperReturnRenderOnlyHonest.tsx:0 HelperReturnNestedCallbackHonest.tsx:0 \
         HelperReturnSinkSpreadHonest.tsx:0 HelperReturnSinkNestedCallHonest.tsx:0 \
         HelperReturnSinkTrailingCallHonest.tsx:0 HelperReturnUseCallbackHonest.tsx:0 \
