@@ -1040,6 +1040,13 @@ describe("python import forms: comments, semicolons, compound prefixes (D77, W1-
     ["fullwidth import name with alias", "import \uff4d\uff41\uff49\uff4e as m\n", {}],
     ["fullwidth from-import module", "from \uff4d\uff41\uff49\uff4e import run\n", {}],
     ["math bold import name", "import \u{1D426}ain\n", {}],
+    ["BOM then import", "\uFEFFimport main\n", {}],
+    ["BOM then from-import", "\uFEFFfrom main import run\n", {}],
+    ["BOM then import list", "\uFEFFimport os, main\n", {}],
+    ["BOM with CRLF import", "\uFEFFimport main\r\nx = 1\r\n", {}],
+    ["BOM with CRLF from-import", "\uFEFFfrom main import run\r\n", {}],
+    ["utf-7 coding cookie", "# coding: utf-7\nimport +AG0-ain\n", {}],
+    ["utf-7 cookie on second line", "#!/usr/bin/python\n# -*- coding: UTF_7 -*-\nx = 1\n", {}],
   ];
   test("import index as non-ascii alias: test_a.py is not an example", () => {
     const t = manifest({ ...base, "index.py": "def f():\n    return 1\n", "tests/test_a.py": "import index as \u00f1\n\ndef test_a():\n    assert True\n" }, "fix index.py");
@@ -1053,6 +1060,13 @@ describe("python import forms: comments, semicolons, compound prefixes (D77, W1-
       expect(t).toContain("--- example: tests/test_other.py");
     });
   }
+
+  test("control: utf-8 and latin_1 cookies without a main import stay examples", () => {
+    for (const cookie of ["# -*- coding: utf-8 -*-", "# coding=Latin_1", "\uFEFF# vim: set fileencoding=ascii :"]) {
+      const t = manifest({ ...base, "tests/test_a.py": `${cookie}\nimport os\n\ndef test_a():\n    assert True\n` }, "fix main.py");
+      expect(t).toContain("--- example: tests/test_a.py");
+    }
+  });
 
   test("negative control: an unrelated test is still an example", () => {
     const t = manifest({ ...base, "tests/test_a.py": "import os  # main\nx = 'a; import main'\n\ndef test_a():\n    assert True\n" }, "fix main.py");

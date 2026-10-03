@@ -728,11 +728,18 @@ function runnerSection(files: ManifestFile[]): string[] {
 
 // True when a test file imports a module whose stem matches one the task names.
 function importsNamed(path: string, raw: string, stems: Set<string>, importStems: Set<string> = stems, hits: (resolved: string) => boolean = () => false): boolean {
-  const content = raw.replace(/\\\n[ \t]*/g, " ");
+  const content = raw.replace(/^\uFEFF/, "").replace(/\\\n[ \t]*/g, " "); // one leading UTF-8 BOM is dropped (W1-S2 r14)
   // Whole-stem naming (W1-S2 r5): the test stem minus a .test/.spec suffix or a test_/_test affix equals a target stem or
   // extends it after a dot, so dotted and dashed stems (user.service, my-parser) match. Compared case-insensitively.
   const ts = stemOf(path).toLowerCase(), core = normStem(ts.replace(/[._-]?(test|spec)$/, "").replace(/^test[._-]/, ""));
   if ([...stems].some((s) => core === s || core.startsWith(`${s}.`) || ts.split(/[._-]/).includes(s))) return true;
+  // PEP 263 (W1-S2 r14): a python file whose first two lines declare a non-ascii-compatible coding cannot be read as text here, so fail closed and treat it as importing the target.
+  if (/\.py$/i.test(path)) {
+    for (const line of content.split("\n", 2)) {
+      const cookie = /^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)/.exec(line);
+      if (cookie && !["utf-8", "utf8", "ascii", "latin-1", "iso-8859-1"].includes(cookie[1]!.toLowerCase().replace(/_/g, "-"))) return true;
+    }
+  }
   const specs: string[] = [];
   for (const m of content.matchAll(/\b(?:from|import|require)\s*\(?\s*["'`]([^"'`]+)["'`]/g)) specs.push(m[1]!);
   for (const m of content.matchAll(/\.(?:mock|doMock|unmock|importActual|requireActual|importMock|requireMock)\s*(?:<[^>]*>)?\s*\(\s*["'`]([^"'`]+)["'`]/g)) specs.push(m[1]!);
