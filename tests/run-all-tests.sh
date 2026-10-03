@@ -1167,6 +1167,7 @@ run_test "Apprunner Dockerfile Exec Wave8" "$SCRIPT_DIR/test-apprunner-dockerfil
 run_test "Assumption Gate Brief Mode" "$SCRIPT_DIR/test-assumption-gate-brief-mode.sh"
 run_test "Auto Wiki" "$SCRIPT_DIR/test-auto-wiki.sh"
 run_test "Backlog (loki backlog + loki.yaml)" "$SCRIPT_DIR/test-backlog.sh"
+run_test "Backlog units (loki backlog --dag, D61)" "$SCRIPT_DIR/test-backlog-units.sh"
 run_test "Backend Floor" "$SCRIPT_DIR/test-backend-floor.sh"
 run_test "Backend Floor port scoping (kill by recorded PID, never by port)" "$SCRIPT_DIR/test-backend-floor-port-scoping.sh"
 run_test "cmd_web_stop/start use a real process identity check (D14/D15 class)" "$SCRIPT_DIR/test-web-stop-scoping.sh"

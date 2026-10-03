@@ -10,6 +10,15 @@ ladder: 0 VERIFIED, 1 FAILED, 3 BUDGET_STOP, 4 BLOCKED, 5 STALLED). A draft PR
 from a failed run is still FAILED. Exit: 0 all ok, 3 only budget stops, 1 other
 failures, 2 usage/config error.
 
+Unit mode (D61 slice 10): --dag FILE [--group G] also runs the units of a
+decomposer DAG (engine10 Dag JSON: units[] with id, items, writeSet, optional
+deps; edges[] {from,to} mean "to" waits for "from"). Unit n runs on branch
+loki/unit-<group>-<n> in worktree unit-<group>-<n>, shares the one slot pool
+with issues, starts only after every parent passed, and is SKIPPED when a
+parent did not. The launcher gets the unit task text plus --no-pr, and the env
+LOKI_GROUP_ID, LOKI_UNIT_ID, LOKI_UNIT_N, LOKI_UNIT_DEPS, LOKI_UNIT_WRITE_SET.
+Passing unit branches are kept for the integrator; issue mode is unchanged.
+
 Test seam: LOKI_BACKLOG_LAUNCHER replaces the real launcher (called with the
 issue ref, cwd = the issue worktree).
 """
@@ -110,6 +119,53 @@ def parse_result(rc, text):
     return False, "FAILED: " + (reason or "exit %d" % rc), usd
 
 
+def load_dag(path, group):
+    """-> (group, units) where units = [{n, id, task, deps(list of ids), write_set}] or raises ValueError."""
+    try:
+        with open(path) as f:
+            dag = json.load(f)
+    except (OSError, ValueError) as e:
+        raise ValueError("cannot read DAG %s: %s" % (path, e))
+    raw = dag.get("units") if isinstance(dag, dict) else None
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("DAG has no units")
+    group = group or str(dag.get("group") or "g1")
+    if not re.match(r"^[A-Za-z0-9_.-]+$", group):
+        raise ValueError("group must match [A-Za-z0-9_.-]+, got %r" % group)
+    ids = []
+    for u in raw:
+        uid = str(u.get("id", "")) if isinstance(u, dict) else ""
+        if not uid or uid in ids:
+            raise ValueError("DAG unit ids must be present and unique (got %r)" % uid)
+        ids.append(uid)
+    deps = {i: [] for i in ids}
+    for u in raw:
+        for d in u.get("deps") or []:
+            deps[str(u["id"])].append(str(d))
+    for e in (dag.get("edges") or []):
+        if str(e.get("from")) in deps and str(e.get("to")) in deps:
+            if str(e["from"]) not in deps[str(e["to"])]:
+                deps[str(e["to"])].append(str(e["from"]))
+    for i, ds in deps.items():
+        for d in ds:
+            if d not in deps or d == i:
+                raise ValueError("unit %s depends on unknown or itself: %s" % (i, d))
+    left = dict(deps)
+    while left:
+        free = [i for i, ds in left.items() if not [d for d in ds if d in left]]
+        if not free:
+            raise ValueError("DAG has a dependency cycle among: " + ", ".join(sorted(left)))
+        for i in free:
+            del left[i]
+    units = []
+    for n, u in enumerate(raw, 1):
+        uid = str(u["id"])
+        items = u.get("items") or []
+        units.append({"n": n, "id": uid, "deps": deps[uid], "write_set": list(u.get("writeSet") or []),
+                      "task": "\n".join(str(x) for x in items) or str(u.get("task") or uid)})
+    return group, units
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="loki backlog", add_help=True)
     ap.add_argument("repo")
@@ -119,12 +175,20 @@ def main(argv):
     sel.add_argument("--issues")
     ap.add_argument("--concurrency", type=int)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--dag", help="decomposer DAG JSON; its units run on loki/unit-<group>-<n>")
+    ap.add_argument("--group", help="unit group id (default: the DAG's group, else g1)")
     a = ap.parse_args(argv)
 
     if not REPO_RE.match(a.repo):
         return die("repo must be owner/repo, got %r" % a.repo)
-    if not (a.all or a.label or a.issues):
-        return die("choose one of --all, --label X, --issues 1,2,3")
+    if not (a.all or a.label or a.issues or a.dag):
+        return die("choose one of --all, --label X, --issues 1,2,3, --dag FILE")
+    group, dag_units = None, []
+    if a.dag:
+        try:
+            group, dag_units = load_dag(a.dag, a.group)
+        except ValueError as e:
+            return die(str(e))
     numbers = None
     if a.issues:
         if not re.match(r"^\d+(,\d+)*$", a.issues):
@@ -162,16 +226,19 @@ def main(argv):
 
     try:
         issues = ([{"number": n, "title": ""} for n in numbers] if numbers
-                  else list_issues(a.repo, a.label, env))
+                  else list_issues(a.repo, a.label, env) if (a.all or a.label) else [])
     except RuntimeError as e:
         return die(redact(str(e), token), 1)
 
-    say("backlog: %s concurrency %d, %d issue(s)" % (a.repo, conc, len(issues)))
+    say("backlog: %s concurrency %d, %d issue(s)" % (a.repo, conc, len(issues))
+        + (", %d unit(s) in group %s" % (len(dag_units), group) if dag_units else ""))
     if a.dry_run:
         for i in issues:
             say("backlog: would run #%d %s" % (i["number"], i["title"]))
+        for u in dag_units:
+            say("backlog: would run unit %s-%d (%s) after: %s" % (group, u["n"], u["id"], ", ".join(u["deps"]) or "nothing"))
         return 0
-    if not issues:
+    if not issues and not dag_units:
         say("backlog: nothing to do")
         return 0
 
@@ -191,11 +258,25 @@ def main(argv):
         child_env["LOKI_BUDGET_LIMIT"] = str(cfg["budgets"]["per_run_usd"])
     day_cap = cfg.get("budgets", {}).get("per_day_usd")
 
-    state = {i["number"]: {"status": "queued", "ok": None, "cost": None, "ran": False} for i in issues}
-    for n in state:
-        say("backlog: #%d queued" % n)
-    pending = [i["number"] for i in issues]
-    running = {}  # n -> (Popen, log path, worktree)
+    # One job table for issues and units: they share one slot pool.
+    spec = {}
+    for i in issues:
+        n = i["number"]
+        spec[n] = {"label": "#%d" % n, "branch": "loki/backlog-%d" % n, "wt": "issue-%d" % n,
+                   "cmd": [launcher, "%s#%d" % (a.repo, n)], "env": {}, "deps": [], "unit": False}
+    key_of = {u["id"]: "unit-%s-%d" % (group, u["n"]) for u in dag_units}
+    for u in dag_units:
+        k = key_of[u["id"]]
+        spec[k] = {"label": k, "branch": "loki/" + k, "wt": k, "unit": True,
+                   "cmd": [launcher, u["task"], "--no-pr"],
+                   "deps": [key_of[d] for d in u["deps"]],
+                   "env": {"LOKI_GROUP_ID": group, "LOKI_UNIT_ID": u["id"], "LOKI_UNIT_N": str(u["n"]),
+                           "LOKI_UNIT_DEPS": ",".join(u["deps"]), "LOKI_UNIT_WRITE_SET": "\n".join(u["write_set"])}}
+    state = {k: {"status": "queued", "ok": None, "cost": None, "ran": False} for k in spec}
+    for k in state:
+        say("backlog: %s queued" % spec[k]["label"])
+    pending = list(spec)
+    running = {}  # key -> (Popen, log path, worktree)
     unmeasured = 0
 
     def stop_children(*_):
@@ -208,9 +289,9 @@ def main(argv):
     signal.signal(signal.SIGTERM, stop_children)
     signal.signal(signal.SIGINT, stop_children)
 
-    def finish(n):
+    def finish(k):
         nonlocal unmeasured
-        p, log, wt = running.pop(n)
+        p, log, wt = running.pop(k)
         try:
             with open(log, errors="replace") as f:
                 text = redact(f.read(), token)
@@ -223,42 +304,61 @@ def main(argv):
             unmeasured += 1
         else:
             add_spend(usd)
-        state[n].update(status=status, ok=ok, cost=usd)
-        say("backlog: #%d %s" % (n, status))
+        state[k].update(status=status, ok=ok, cost=usd)
+        say("backlog: %s %s" % (spec[k]["label"], status))
         if ok:
             git("worktree", "remove", "--force", wt, cwd=top)
-            git("branch", "-D", "loki/backlog-%d" % n, cwd=top)
+            if not spec[k]["unit"]:  # a passing unit branch is kept for the integrator
+                git("branch", "-D", spec[k]["branch"], cwd=top)
 
-    def launch(n):
-        wt = os.path.join(wt_root, "issue-%d" % n)
+    def launch(k):
+        s = spec[k]
+        wt = os.path.join(wt_root, s["wt"])
         if os.path.exists(wt):
             git("worktree", "remove", "--force", wt, cwd=top)
-        r = git("worktree", "add", "-B", "loki/backlog-%d" % n, wt, "HEAD", cwd=top)
+        r = git("worktree", "add", "-B", s["branch"], wt, "HEAD", cwd=top)
         if r.returncode != 0:
             err = (r.stderr.strip().splitlines() or ["git error"])[-1]
-            state[n].update(status="FAILED: worktree: " + redact(err, token), ok=False)
-            say("backlog: #%d %s" % (n, state[n]["status"]))
+            state[k].update(status="FAILED: worktree: " + redact(err, token), ok=False)
+            say("backlog: %s %s" % (s["label"], state[k]["status"]))
             return
-        log = os.path.join(wt_root, "logs", "issue-%d.log" % n)
-        cmd = [launcher, "%s#%d" % (a.repo, n)]
+        log = os.path.join(wt_root, "logs", s["wt"] + ".log")
         with open(log, "w") as lf:
-            p = subprocess.Popen(cmd, cwd=wt, env=child_env, stdout=lf, stderr=subprocess.STDOUT,
-                                 stdin=subprocess.DEVNULL, start_new_session=True)
-        running[n] = (p, log, wt)
-        state[n].update(status="running", ran=True)
-        say("backlog: #%d running" % n)
+            p = subprocess.Popen(s["cmd"], cwd=wt, env=dict(child_env, **s["env"]), stdout=lf,
+                                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+        running[k] = (p, log, wt)
+        state[k].update(status="running", ran=True)
+        say("backlog: %s running" % s["label"])
+
+    def next_ready():
+        """First pending job whose parents all passed; skip jobs whose parent did not."""
+        for k in list(pending):
+            ds = spec[k]["deps"]
+            bad = [d for d in ds if state[d]["ok"] is False]
+            if bad:
+                pending.remove(k)
+                state[k].update(status="SKIPPED: dependency %s did not pass" % spec[bad[0]]["label"], ok=False)
+                say("backlog: %s %s" % (spec[k]["label"], state[k]["status"]))
+                return next_ready()
+            if all(state[d]["ok"] is True for d in ds):
+                pending.remove(k)
+                return k
+        return None
 
     while pending or running:
-        for n in [n for n, (p, _l, _w) in running.items() if p.poll() is not None]:
-            finish(n)
+        for k in [k for k, (p, _l, _w) in running.items() if p.poll() is not None]:
+            finish(k)
         while pending and len(running) < conc:
             if day_cap and spent_today() >= day_cap:
-                for n in pending:
-                    state[n].update(status="BUDGET_STOP: daily budget $%.2f reached ($%.2f spent)" % (day_cap, spent_today()), ok=False)
-                    say("backlog: #%d %s" % (n, state[n]["status"]))
+                for k in pending:
+                    state[k].update(status="BUDGET_STOP: daily budget $%.2f reached ($%.2f spent)" % (day_cap, spent_today()), ok=False)
+                    say("backlog: %s %s" % (spec[k]["label"], state[k]["status"]))
                 pending = []
                 break
-            launch(pending.pop(0))
+            k = next_ready()
+            if k is None:
+                break
+            launch(k)
         if running:
             time.sleep(0.2)
 
@@ -267,7 +367,7 @@ def main(argv):
     say("Summary: %s" % a.repo)
     say("%-8s %-8s %s" % ("ISSUE", "COST", "RESULT"))
     for n, s in state.items():
-        say("%-8s %-8s %s" % ("#%d" % n, ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"), s["status"]))
+        say("%-8s %-8s %s" % (spec[n]["label"], ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"), s["status"]))
     measured = sum(s["cost"] or 0 for s in state.values())
     say("Total measured cost: $%.2f%s" % (measured, " (%d run(s) unmeasured, not counted as $0)" % unmeasured if unmeasured else ""))
     bad = [s for s in state.values() if not s["ok"]]
