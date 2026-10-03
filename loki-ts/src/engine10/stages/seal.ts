@@ -202,9 +202,13 @@ export const sealStage: Stage = {
     const weakTests: string[] = [];
     for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
-    const verdict = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase), grp);
+    // D82-WALL0: a Wall that ran but sealed zero files proves nothing; never a clean VERIFIED.
+    const wallO = o.wall as Obj | undefined;
+    const wallNoChecks = typeof wallO?.no_checks_reason === "string" ? wallO.no_checks_reason : wallO && Array.isArray(wallO.files) && wallO.files.length === 0 && typeof wallO.base_run === "object" ? "no acceptance checks written" : null;
+    const verdict = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0 || wallNoChecks !== null, wallGreenOnBase), grp);
 
     const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...grp.notProven]);
+    if (wallNoChecks !== null) notProven.add(wallNoChecks);
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     if (wallNotRun > 0) { // A-103b: wall.ts keeps each sealed copy under runDir/wall; a copy absent from wall.files was discarded (class not_run: no real base result)
       try { const kept = new Set((Array.isArray(o.wall?.files) ? (o.wall!.files as Obj[]) : []).map((f) => basename(String(f.path)))); for (const n of readdirSync(join(ctx.runDir, "wall")).sort()) if (!kept.has(n)) notProven.add(`wall test discarded: ${n} (not_run)`); } catch { /* no sealed wall dir: count line only */ }

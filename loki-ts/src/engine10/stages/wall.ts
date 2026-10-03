@@ -131,6 +131,26 @@ function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null
   return (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null;
 }
 
+const WALL_INPUTS = new Set(["task.md", "repomap.txt", "wall_manifest.txt"]);
+/** D82-WALL0: the session may write into a subdirectory of its cwd (e.g. backend/tests/ in a monorepo, mirroring repomap.txt paths). Collect prefixed files at any depth (flattened by basename, first wins); anything else it wrote is reported, never sealed. */
+function collectWallFiles(cwd: string): { generated: { name: string; abs: string }[]; ignored: string[] } {
+  const generated: { name: string; abs: string }[] = [], ignored: string[] = [], seen = new Set<string>();
+  const stack = [cwd];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const abs = join(dir, e.name);
+      if (e.isDirectory()) { stack.push(abs); continue; }
+      if (!e.isFile()) continue;
+      if (e.name.startsWith(WALL_PREFIX)) { if (!seen.has(e.name)) { seen.add(e.name); generated.push({ name: e.name, abs }); } }
+      else if (dir !== cwd || !WALL_INPUTS.has(e.name)) ignored.push(relative(cwd, abs));
+    }
+  }
+  generated.sort((a, b) => a.name.localeCompare(b.name));
+  return { generated, ignored: ignored.sort() };
+}
+export const NO_CHECKS_REASON = "no acceptance checks written";
+
 export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before wall started" };
   if (!wallEnabled()) return { status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" };
@@ -171,23 +191,24 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   });
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return { status: "failed", data: {}, reason: "wall session aborted, killed, or timed out", killed: true }; } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
 
-  const generated = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX));
-  const targetDir = wallTargetDir(ctx.repoDir, existingTests);
-  const sealedDir = join(ctx.runDir, "wall");
-  if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); mkdirSync(sealedDir, { recursive: true }); }
+  let ignored: string[] = [], generated: string[] = [];
+  const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
+  try { // temp dir is always removed, even when a subdirectory is unreadable
+    const col = collectWallFiles(cwd), found = col.generated;
+    ignored = col.ignored; generated = found.map((f) => f.name);
+    const srcOf = new Map(found.map((f) => [f.name, f.abs]));
+    const targetDir = wallTargetDir(ctx.repoDir, existingTests);
+    const sealedDir = join(ctx.runDir, "wall");
+    if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); mkdirSync(sealedDir, { recursive: true }); }
 
-  const sealedFiles: WallSealedFile[] = [];
-  const readOnlyFiles: ReadOnlyFile[] = [];
-  const wallTests: TestRef[] = [];
-
-  for (const name of generated) {
-    const content = readFileSync(join(cwd, name), "utf8"), dest = join(targetDir, name), runner = guessRunner(name, runners);
-    writeFileSync(dest, content, "utf8"); writeFileSync(join(sealedDir, name), content, "utf8");
-    sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
-    if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
-  }
-  rmSync(cwd, { recursive: true, force: true });
-  ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(wm ? { manifest_sha256: wm.sha256 } : {}) });
+    for (const name of generated) {
+      const content = readFileSync(srcOf.get(name)!, "utf8"), dest = join(targetDir, name), runner = guessRunner(name, runners);
+      writeFileSync(dest, content, "utf8"); writeFileSync(join(sealedDir, name), content, "utf8");
+      sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
+      if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
+    }
+  } finally { rmSync(cwd, { recursive: true, force: true }); }
+  ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(ignored.length ? { ignored_unprefixed: ignored } : {}), ...(generated.length === 0 ? { reason: NO_CHECKS_REASON } : {}), ...(wm ? { manifest_sha256: wm.sha256 } : {}) });
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: 0 }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
   for (const t of wallTests) {
     const r = baseRunner.run(ctx.repoDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
@@ -205,6 +226,8 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
       base_run: baseRun,
       iteration_ids: [`${ctx.runId}-wall`],
       already_satisfied: alreadySatisfied,
+      ...(generated.length === 0 ? { no_checks_reason: NO_CHECKS_REASON } : {}),
+      ...(ignored.length ? { ignored_unprefixed: ignored } : {}),
     },
   };
 }

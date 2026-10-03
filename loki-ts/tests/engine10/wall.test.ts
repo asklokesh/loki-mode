@@ -16,6 +16,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { cpSync } from "node:fs";
+import { buildTestMap } from "../../src/engine10/testmap.ts";
 import {
   buildWallBrief,
   classify,
@@ -227,7 +229,7 @@ describe("engine10 wall stage", () => {
   });
 
   test("a sealed file whose runner cannot be guessed never counts toward already_satisfied, even if every executed test passes", async () => {
-    const { repoDir, runDir, testmap: tm } = setup({ runners: [], tests: [] });
+    const { repoDir, runDir, testmap: tm } = setup({ runners: ["pytest"], tests: [] });
     const events: string[] = [];
     const sessions = new FakeSessionRunner((opts) => {
       // .py always resolves to pytest regardless of the detected runners;
@@ -712,5 +714,62 @@ describe("engine10 wall manifest wiring, D77", () => {
     finally { delete process.env.LOKI_E10_WALL_MANIFEST; }
     expect(listing).toEqual(["repomap.txt", "task.md"]);
     rmSync(s.repoDir, { recursive: true, force: true });
+  });
+});
+
+describe("engine10 wall D82-WALL0 (TS backend+frontend monorepo)", () => {
+  const MONO = join(FIX, "..", "monorepo-ts");
+  const monoMap = () => buildTestMap(MONO);
+
+  test("runner detection: vitest in the backend subpackage is found, the frontend adds none", () => {
+    const m = monoMap();
+    expect(m.runners).toContain("vitest");
+    expect(m.runners).not.toContain("jest");
+    expect(m.evidence.vitest).toBe("backend/package.json");
+    expect(m.tests).toEqual([{ runner: "vitest", path: "backend/tests/tickets.test.ts" }]);
+  });
+
+  test("a Wall file written into a subdirectory of the session cwd is still sealed, never silently lost", async () => {
+    const { repoDir, runDir } = setup({ runners: [], tests: [] });
+    cpSync(MONO, repoDir, { recursive: true });
+    const tm = monoMap();
+    const events: string[] = [];
+    const sessions = new FakeSessionRunner((opts) => {
+      mkdirSync(join(opts.cwd!, "backend", "tests"), { recursive: true });
+      writeFileSync(join(opts.cwd!, "backend", "tests", "loki_wall_open.test.ts"), SAMPLE, "utf8");
+      writeFileSync(join(opts.cwd!, "backend", "tests", "stray.test.ts"), SAMPLE, "utf8");
+    });
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task: "count open", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
+    const result = await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 0, fail: 1 }) });
+    const files = result.data.files as { path: string }[];
+    expect(files.map((f) => f.path)).toEqual([join(repoDir, "backend", "tests", "loki_wall_open.test.ts")]);
+    expect(result.data.no_checks_reason).toBeUndefined();
+    expect(result.data.ignored_unprefixed).toEqual(["backend/tests/stray.test.ts"]);
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("0 sealed files is recorded as NOT PROVEN 'no acceptance checks written', never as passing", async () => {
+    const { repoDir, runDir } = setup({ runners: [], tests: [] });
+    const tm = monoMap();
+    const events: string[] = [];
+    const ctx = fakeCtx(repoDir, runDir, new FakeSessionRunner(), { intake: { task: "count open", testmap: tm, repomap_ref: join(runDir, "repomap.json") } }, events);
+    const result = await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 0, fail: 0 }) });
+    expect(result.status).toBe("completed");
+    expect(result.data.files).toEqual([]);
+    expect(result.data.no_checks_reason).toBe("no acceptance checks written");
+    expect(result.data.already_satisfied).toBe(false);
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+
+  test("no runner detected: the Wall is still attempted (a .py Wall file maps to pytest by extension)", async () => {
+    const { repoDir, runDir } = setup({ runners: [], tests: [] });
+    const sessions = new FakeSessionRunner((opts) => { writeFileSync(join(opts.cwd!, "loki_wall_ranker.py"), "def test_a(): assert True", "utf8"); });
+    const events: string[] = [];
+    const ctx = fakeCtx(repoDir, runDir, sessions, { intake: { task: "fix ranker", testmap: { runners: [], tests: [] }, repomap_ref: join(runDir, "repomap.json") } }, events);
+    const result = await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 0, fail: 1 }) });
+    expect(sessions.lastOpts).not.toBeNull();
+    expect((result.data.files as unknown[]).length).toBe(1);
+    expect(result.data.no_checks_reason).toBeUndefined();
+    rmSync(repoDir, { recursive: true, force: true });
   });
 });
