@@ -19,7 +19,7 @@ export function unrelatedEdits(o: Partial<Record<string, Obj>>, staged: Staged[]
   const plan = typeof o.plan?.plan === "string" ? o.plan.plan : "";
   if (rel.length === 0 && plan.trim() === "") return null;
   const text = `${plan}\n${typeof o.intake?.task === "string" ? o.intake.task : ""}`, pre = (o.intake?.preexisting_dirty ?? {}) as Record<string, string>;
-  return staged.filter(({ st, f }) => st !== "A" && !isTestFile(f) && !(f in pre) && !rel.includes(f) && !mentions(text, f) && !mentions(text, basename(f))).map(({ f }) => f);
+  return staged.filter(({ st, f }) => st !== "A" && !isTestFile(f) && !Object.hasOwn(pre, f) && !rel.includes(f) && !mentions(text, f) && !mentions(text, basename(f))).map(({ f }) => f);
 }
 
 /** Reverts out-of-scope edits to base (index and disk, literal pathspecs). Returns the NOT PROVEN notes; null = restore failed. */

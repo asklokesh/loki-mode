@@ -50,6 +50,8 @@ describe("unitSpec", () => {
     expect(capOk(unitCapEnv(sp(1e30), 15, 7), 7)).toBe(7);
     for (const rate of [NaN, Infinity, 0, -1]) expect(unitCapEnv(sp(5000), rate, 3)).toEqual({ LOKI_E10_MAX_COST_USD: "3" });
     expect(unitCapEnv(sp(5000), NaN, 1e-7)).toEqual({ LOKI_E10_MAX_COST_USD: "0.000001" });
+    expect(unitCapEnv(sp(1e7), 15, 1.0000001)).toEqual({ LOKI_E10_MAX_COST_USD: "1.0000001" });
+    expect(unitCapEnv(sp(5000), NaN, 1.0000001)).toEqual({ LOKI_E10_MAX_COST_USD: "1.0000001" });
     expect(unitCapEnv(sp(1e7), 15, 1)).toEqual({ LOKI_E10_MAX_COST_USD: "1" });
     expect(unitCapEnv(sp(1e9), 1e300, 1e30).LOKI_E10_MAX_COST_USD).not.toMatch(/e/i);
   });
@@ -147,6 +149,22 @@ describe("write-set scope fence (real git)", () => {
     const notes = await run(dir, base, ["src/a.ts"], true); // lib/b.ts is in the write set but not in the plan
     expect(notes).toContain(unrelatedNote("lib/b.ts"));
     expect(readFileSync(join(dir, "lib/b.ts"), "utf8")).toBe("base\n");
+  });
+
+  test("prototype-named new root files outside the write set are reverted and unstaged", async () => {
+    const { dir, base } = repo();
+    const names = ["constructor", "toString", "__proto__", "valueOf", "hasOwnProperty"];
+    for (const n of names) writeFileSync(join(dir, n), "x\n");
+    writeFileSync(join(dir, "src/a.ts"), "edited\n");
+    sh(dir, "add", "-A");
+    const staged = parseStaged(sh(dir, "diff", "--cached", "--name-status", "--no-renames", "-z", base));
+    process.env["LOKI_SPEED"] = "1"; process.env["LOKI_UNIT_SPEC"] = specFile("f-proto.json", good);
+    try {
+      const o = { plan: { relevant_files: ["src/a.ts"], plan: "x" }, intake: { task: "t" } };
+      const notes = await revertUnrelated(async (a) => ({ code: Bun.spawnSync(["git", ...a], { cwd: dir, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }).exitCode }), base, o, staged);
+      for (const n of names) { expect(notes).toContain(unitOutsideNote(n)); expect(existsSync(join(dir, n))).toBe(false); }
+      expect(sh(dir, "diff", "--cached", "--name-only", base).split("\n").filter(Boolean)).toEqual(["src/a.ts"]);
+    } finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
   });
 
   test("spec unset: D58 behaviour unchanged (settings.py reverted, new files kept, no unit notes)", async () => {

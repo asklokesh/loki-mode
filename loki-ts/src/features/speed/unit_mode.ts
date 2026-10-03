@@ -41,6 +41,7 @@ function parseSpec(path: string): UnitSpec | null {
   } catch { return null; }
 }
 
+// Process-lifetime cache keyed by path: a spec (including a null from an invalid or missing one) is never re-read, so a fixed file needs a new process.
 const memo = new Map<string, UnitSpec | null>();
 /** The active unit spec, or null (speed off, no spec, unreadable or invalid: fail-safe to the ordinary run). Parsed once per path per process. */
 export function unitSpec(env: NodeJS.ProcessEnv = process.env): UnitSpec | null {
@@ -66,7 +67,7 @@ export function unitBrief(env: NodeJS.ProcessEnv = process.env): string | null {
 export async function unitFence(git: Git, base: string, staged: Staged[], env: NodeJS.ProcessEnv = process.env, pre: Record<string, string> = {}): Promise<{ ok: boolean; kept: Staged[]; notes: string[] } | null> {
   const s = unitSpec(env);
   if (!s) return null;
-  const out = staged.filter(({ f }) => !inWriteSet(s, f) && !(f in pre)), kept = staged.filter(({ f }) => inWriteSet(s, f) || f in pre);
+  const out = staged.filter(({ f }) => !inWriteSet(s, f) && !Object.hasOwn(pre, f)), kept = staged.filter(({ f }) => inWriteSet(s, f) || Object.hasOwn(pre, f));
   const edits = out.filter(({ st }) => st !== "A").map(({ f }) => f), adds = out.filter(({ st }) => st === "A").map(({ f }) => f);
   const rs = edits.length ? await git(["--literal-pathspecs", "restore", `--source=${base}`, "--staged", "--worktree", "--", ...edits]) : { code: 0 };
   const rm = adds.length ? await git(["--literal-pathspecs", "rm", "-f", "-q", "--", ...adds]) : { code: 0 };
@@ -78,8 +79,9 @@ export async function unitFence(git: Git, base: string, staged: Staged[], env: N
 export function unitCapEnv(s: UnitSpec, usdPerMillionTokens: number, existingCapUsd?: number): Record<string, string> {
   const ex = typeof existingCapUsd === "number" && Number.isFinite(existingCapUsd) && existingCapUsd > 0 ? existingCapUsd : null;
   const fmt = (n: number): string => (Math.ceil(Math.min(n, 1e15) * 1e6) / 1e6).toFixed(6).replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "");
+  const keep = (e: number): string => (/^\d+(\.\d+)?$/.test(String(e)) ? String(e) : fmt(e)); // the existing cap, unchanged when plain
   const cost = (s.tokenBudget * usdPerMillionTokens) / 1e6;
-  if (!Number.isFinite(usdPerMillionTokens) || !(usdPerMillionTokens > 0) || !Number.isFinite(cost)) return ex === null ? {} : { LOKI_E10_MAX_COST_USD: fmt(Math.min(ex, 1e15)) };
+  if (!Number.isFinite(usdPerMillionTokens) || !(usdPerMillionTokens > 0) || !Number.isFinite(cost)) return ex === null ? {} : { LOKI_E10_MAX_COST_USD: ex > 1e15 ? fmt(ex) : keep(ex) };
   const v = Math.max(0.01, cost);
-  return { LOKI_E10_MAX_COST_USD: fmt(ex === null ? v : Math.min(ex, v)) };
+  return { LOKI_E10_MAX_COST_USD: ex !== null && ex <= v && ex <= 1e15 ? keep(ex) : fmt(ex === null ? v : Math.min(ex, v)) };
 }
