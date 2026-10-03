@@ -167,6 +167,20 @@ describe("write-set scope fence (real git)", () => {
     } finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
   });
 
+  test("D58 (unit mode off): tracked root edits named like Object.prototype keys are reverted as unrelated", async () => {
+    const { dir, base: b0 } = repo();
+    for (const n of ["constructor", "toString"]) writeFileSync(join(dir, n), "base\n");
+    sh(dir, "add", "constructor", "toString"); sh(dir, "commit", "-q", "-m", "proto names");
+    const base = sh(dir, "rev-parse", "HEAD").trim();
+    expect(base).not.toBe(b0);
+    for (const n of ["constructor", "toString"]) writeFileSync(join(dir, n), "edited\n");
+    sh(dir, "add", "-A");
+    const staged = parseStaged(sh(dir, "diff", "--cached", "--name-status", "--no-renames", "-z", base));
+    const o = { plan: { relevant_files: ["src.ts"], plan: "do it" }, intake: { task: "t" } };
+    const notes = await revertUnrelated(async (a) => ({ code: Bun.spawnSync(["git", ...a], { cwd: dir, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }).exitCode }), base, o, staged);
+    for (const n of ["constructor", "toString"]) { expect(notes).toContain(unrelatedNote(n)); expect(readFileSync(join(dir, n), "utf8")).toBe("base\n"); }
+  });
+
   test("spec unset: D58 behaviour unchanged (settings.py reverted, new files kept, no unit notes)", async () => {
     const { dir, base } = repo();
     const notes = await run(dir, base, ["src/a.ts", "lib/b.ts", "src/c.ts"], false);
