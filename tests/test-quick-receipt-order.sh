@@ -246,5 +246,37 @@ STUB_SKIP=reason run_quick "$SVFIX" "$T/svout.log" LOKI_VERBOSE=1
 SVRC=$?
 [ "$SVRC" -eq 3 ] && ok "verbose run that adds a skip exits 3" || bad "verbose skip run rc=$SVRC (want 3)"
 
+# A-121c round 2 / D76: standalone `bash autonomy/verify.sh` (no _deploy_receipt_verdict) must
+# never print VERDICT: VERIFIED for a forged-kid or unsigned proof.
+mk_sa() { # mk_sa <dir> <forged|unsigned|none>
+    local d="$1" mode="$2"
+    mk_fix "$d"
+    git -C "$d" branch -M main; git -C "$d" checkout -qb feat
+    sed -i.bak 's/i = 1/i = 0/' "$d/sum.js"; rm -f "$d/sum.js.bak"  # passing tests, so only the attestation decides
+    printf 'module.exports=1;\n' > "$d/x.js"; git -C "$d" add x.js sum.js; git -C "$d" commit -qm f
+    [ "$mode" = none ] && return 0
+    mkdir -p "$d/.loki/proofs/p1" "$d/.loki/state"; echo p1 > "$d/.loki/state/last-proof-id.txt"
+    python3 - "$d/.loki/proofs/p1/proof.json" "$REPO_ROOT/autonomy/lib" "$mode" <<'PY'
+import sys, json, hashlib, base64, importlib.util
+sp = importlib.util.spec_from_file_location('pv', sys.argv[2] + '/proof-verify.py')
+m = importlib.util.module_from_spec(sp); sp.loader.exec_module(m)
+b = lambda o: base64.urlsafe_b64encode(json.dumps(o).encode()).decode().rstrip("=")
+p = {"facts": {}, "iterations": 1}
+v = {"hash": hashlib.sha256(m._canonical(p).encode()).hexdigest()}
+if sys.argv[3] == "forged":
+    v["attestation"] = b({"alg": "EdDSA", "kid": "attacker"}) + "." + b({"x": 1}) + ".c2ln"
+p["verification"] = v
+json.dump(p, open(sys.argv[1], "w"))
+PY
+}
+for SAMODE in forged unsigned; do
+    SA="$T/sa-$SAMODE"; mk_sa "$SA" "$SAMODE"
+    ( cd "$SA" && HOME="$T/home" LOKI_NO_BROWSER=1 bash "$REPO_ROOT/autonomy/verify.sh" < /dev/null > "$T/sa-$SAMODE.log" 2>&1 ); SARC=$?
+    sed 's/\x1b\[[0-9;]*m//g' "$T/sa-$SAMODE.log" > "$T/sa-$SAMODE.plain"
+    { [ "$SARC" -ne 0 ] && ! grep -q 'VERDICT: VERIFIED' "$T/sa-$SAMODE.plain"; } \
+        && ok "standalone verify.sh on a $SAMODE proof is not VERIFIED (rc=$SARC)" \
+        || bad "standalone verify.sh on a $SAMODE proof" "rc=$SARC $(grep -E 'VERDICT|attestation' "$T/sa-$SAMODE.plain" | tr '\n' '|')"
+done
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]
