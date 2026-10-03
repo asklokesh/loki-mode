@@ -1601,6 +1601,14 @@ PY
         grep -qF -- "$GITHUB_CANARY" "$L"/provider-env.* "$L"/provider-argv.* 2>/dev/null && out="${out:+$out,}GITHUB_TOKEN"
         printf '%s' "$out"
     }
+    # inj_diag <scenario>: start rc plus a tail of start.out/start.err, so a
+    # post-session step that never ran says why in the failure message.
+    inj_diag() {
+        local L="$T/$1"
+        printf 'start rc=%s; stdout: %s; stderr: %s' "$(cat "$L/start.rc" 2>/dev/null)" \
+            "$(tail -c 600 "$L/start.out" 2>/dev/null | tr '\n' '~')" \
+            "$(tail -c 400 "$L/start.err" 2>/dev/null | tr '\n' '~')"
+    }
     local OPT_WARN='LOKI_ALLOW_AGENT_GITHUB_TOKEN=1: the agent session holds the GitHub token'
 
     scn_default() {
@@ -1617,9 +1625,9 @@ PY
             && nok "[default] gh pr create from the provider session ran with a valid token"
         # Withheld, not destroyed: the trusted post-session step keeps it.
         grep -qx 'loki accepted' "$T/default/push.log" \
-            || nok "[default] Loki's own post-session push did not carry the token (push log: $(tr '\n' ',' < "$T/default/push.log"))"
+            || nok "[default] Loki's own post-session push did not carry the token (push log: $(tr '\n' ',' < "$T/default/push.log"); $(inj_diag default))"
         grep -q '^loki token=yes via=[a-z]* pr create' "$T/default/gh.log" \
-            || nok "[default] Loki's own post-session gh pr create did not carry the token"
+            || nok "[default] Loki's own post-session gh pr create did not carry the token (gh log: $(tr '\n' ',' < "$T/default/gh.log" 2>/dev/null); $(inj_diag default))"
         grep -qF "$OPT_WARN" "$T/default/start.err" "$T/default/start.out" \
             && nok "[default] printed the opt-out exposure warning without the opt-out"
         # BACKLOG 149: the provider session's own gh resolution must not reach
@@ -1799,9 +1807,9 @@ PY
         [ -n "${SSH_AGENT_SOCK:-}" ] && grep -qF "sock=$SSH_AGENT_SOCK" "$PLOG" \
             && nok "[planted] a plant in the agent's repo config ran holding the real SSH agent socket"
         grep -qx 'loki accepted' "$T/planted/push.log" \
-            || nok "[planted] Loki's own push did not reach the real remote with the credential (push log: $(tr '\n' ',' < "$T/planted/push.log"))"
+            || nok "[planted] Loki's own push did not reach the real remote with the credential (push log: $(tr '\n' ',' < "$T/planted/push.log"); $(inj_diag planted))"
         grep -q '^loki token=yes via=[a-z]* pr create' "$T/planted/gh.log" \
-            || nok "[planted] Loki's own gh pr create did not carry the token"
+            || nok "[planted] Loki's own gh pr create did not carry the token (gh log: $(tr '\n' ',' < "$T/planted/gh.log" 2>/dev/null); $(inj_diag planted))"
     fi
     }
 

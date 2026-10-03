@@ -34,7 +34,10 @@ _e10_region="$(awk '
     END { if (!done) exit 3 }
 ' "$_e10_run_sh")" || die "run.sh trusted-push anchors not found; refusing to push" 3
 for _e10_fn in _loki_trusted_push _loki_with_github_tokens _loki_run_neutral _loki_github_repo_from_url; do
-    printf '%s\n' "$_e10_region" | grep -q "^${_e10_fn}() {\$" \
+    # No pipe into grep -q: under pipefail, grep exiting on its first match
+    # SIGPIPEs the still-writing printf (rc 141), which read as "missing"
+    # intermittently under CPU load and silently skipped the push.
+    [[ $'\n'"$_e10_region"$'\n' == *$'\n'"${_e10_fn}() {"$'\n'* ]] \
         || die "run.sh region lacks ${_e10_fn}; refusing to push" 3
 done
 eval "$_e10_region" || die "run.sh region failed to load" 3
