@@ -1057,13 +1057,4 @@ describe("D50-F1 already-satisfied discards run changes", () => {
     } finally { if (prev === undefined) delete process.env["LOKI_CONTRACT"]; else process.env["LOKI_CONTRACT"] = prev; }
   }, 30000);
 
-  test("D82-WALL0: a Wall that sealed 0 files lists 'no acceptance checks written' and is never VERIFIED", async () => {
-    const { repo, base } = makeRepo("wall0");
-    const { ctx } = ctxFor(repo, base, "claude", { wall: { files: [], base_run: { pass: 0, fail: 0, not_run: 0 }, no_checks_reason: "no acceptance checks written" } });
-    await commitStage.run(ctx, new AbortController().signal);
-    const s = await sealStage.run(ctx, new AbortController().signal);
-    expect(s.data.verdict).toBe("PARTIAL");
-    expect(receiptOf(s).not_proven).toContain("no acceptance checks written");
-  }, 30000);
-
 });

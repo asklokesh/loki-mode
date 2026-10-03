@@ -1,1 +1,0 @@
-{ "name": "frontend", "scripts": { "dev": "vite", "build": "vite build" }, "devDependencies": { "vite": "^5.0.0" } }
