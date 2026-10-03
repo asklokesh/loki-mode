@@ -235,6 +235,24 @@ function flattenFiles(nodes: FileNode[], prefix = ''): { path: string; name: str
   return result;
 }
 
+// S-229: a failed preview-info fetch must not read as still detecting.
+function previewDetectText(error: string | null): string {
+  return error === null ? 'Detecting project type...' : `Could not detect project type: ${error}`;
+}
+
+// S-230: a finished session must reach 'complete' (Replay Build), and a phase
+// string we do not recognize must not be labelled 'building'.
+function deriveBuildPhase(isBuilding: boolean, rawStatus: string): string {
+  const status = rawStatus.toLowerCase();
+  if (status.includes('complete') || status.includes('fulfilled')) return 'complete';
+  if (!isBuilding) return 'idle';
+  if (status.includes('starting') || status.includes('plan') || status.includes('bootstrap')) return 'planning';
+  if (status.includes('review') || status.includes('council')) return 'reviewing';
+  if (status.includes('test') || status.includes('verify')) return 'testing';
+  if (status === '' || status === 'idle' || status.includes('build') || status.includes('running')) return 'building';
+  return 'idle';
+}
+
 type WorkspaceTab = 'code' | 'preview' | 'config' | 'secrets' | 'prd' | 'dashboard' | 'deploy' | 'git' | 'cicd' | 'insights' | 'docs';
 
 // S-162: a failed fetch must not read as a genuine empty. The server returns
@@ -834,9 +852,13 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
     port: number | null;
     description: string;
   } | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
-    api.getPreviewInfo(sessionData.id).then(setPreviewInfo).catch(() => {});
+    setPreviewError(null);
+    api.getPreviewInfo(sessionData.id).then(setPreviewInfo).catch((e) => {
+      setPreviewError(e instanceof Error ? e.message : String(e));
+    });
   }, [sessionData.id]);
 
   // Dev server state
@@ -1398,16 +1420,10 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
   ], [setActiveWorkspaceTab, toggleZenMode, handlePreviewChanges]);
 
   // Derive build phase from session status for the progress bar
-  const buildPhase = useMemo(() => {
-    if (!isBuilding) return 'idle';
-    const status = (buildStatus.phase || sessionData.status || '').toLowerCase();
-    if (status.includes('starting')) return 'planning';
-    if (status.includes('plan') || status.includes('bootstrap')) return 'planning';
-    if (status.includes('review') || status.includes('council')) return 'reviewing';
-    if (status.includes('test') || status.includes('verify')) return 'testing';
-    if (status.includes('complete') || status.includes('fulfilled')) return 'complete';
-    return 'building';
-  }, [isBuilding, buildStatus.phase, sessionData.status]);
+  const buildPhase = useMemo(
+    () => deriveBuildPhase(isBuilding, buildStatus.phase || sessionData.status || ''),
+    [isBuilding, buildStatus.phase, sessionData.status],
+  );
 
   return (
     <div className="flex flex-col h-full relative">
@@ -1874,7 +1890,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                             </div>
                           ) : (
                             <div className="flex-1 flex items-center text-sm text-muted">
-                              Detecting project type...
+                              {previewDetectText(previewError)}
                             </div>
                           )}
                         </div>
@@ -2090,7 +2106,7 @@ export function ProjectWorkspace({ session, onClose }: ProjectWorkspaceProps) {
                           </div>
                         ) : (
                           <div className="flex-1 flex items-center justify-center text-muted text-sm">
-                            Detecting project type...
+                            {previewDetectText(previewError)}
                           </div>
                         )}
                       </div>
