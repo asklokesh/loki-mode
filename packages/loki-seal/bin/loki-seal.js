@@ -147,6 +147,7 @@ function counts(out) {
 const PASS_PREFIX = /^\s*[✔✓√]/;
 const SPEC_MARK = /^(\s*)([✔✓√]) ([^]+?)\s*$/;
 const CTRL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
+const ANY_MARK = /[✔✓√✖﹣▶]/;
 function passRecords(out) {
   const lines = out.split('\n');
   const leaf = [];
@@ -158,13 +159,17 @@ function passRecords(out) {
   const odd = [];
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
+    // Unterminated output before the runner's own line pushes its mark off the line start ("X✔ name"), so a
+    // result mark anywhere but first after the indent makes the line ambiguous, pass and fail marks alike.
+    const lead = ln.search(/\S/);
+    if (lead >= 0 && ANY_MARK.test(ln) && !ANY_MARK.test(ln[lead])) odd.push('a result mark that is not first on its line');
     if (/^\s*[✔✓√✖﹣]\s*$/.test(ln)) { odd.push('a result line with an empty name'); continue; }
     if (/^\s*\u2716/.test(ln)) { if (i < sumAt) cross++; continue; }
     let m = SPEC_MARK.exec(ln);
     if (!m && PASS_PREFIX.test(ln)) { odd.push('a result line that does not parse'); continue; }
     if (m) {
       const body = m[3];
-      if (CTRL.test(body)) odd.push('a result line whose name has a control or line-separator character');
+      if (CTRL.test(ln)) odd.push('a result line whose name has a control or line-separator character');
       const name = body.replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '').trim();
       if (!name || /^\(?\d[\d.]*\s?ms\)?$/.test(name)) odd.push('a result line with an empty name');
       if (/\)\s+#/.test(body)) odd.push('a result line carrying a # directive');

@@ -1007,3 +1007,31 @@ test('forged lines r6: honest plain, skip, empty describe and describe.skip runs
     assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
   }
 });
+
+// SEAL-FORGED-LINES r7 (D69): unterminated output before the runner's own mark pushes the mark off the line start.
+// A result mark anywhere but first on a spec line is ambiguous (NOT VERIFIED), for pass and fail marks alike.
+const R7_SCRIPTS = ['node --test', 'node --test --test-reporter=spec', 'node --test --test-concurrency=4', 'node --test --test-isolation=none'];
+test('forged lines r7 (B1): a forged check line plus an unterminated character is NOT VERIFIED, never PASS', () => {
+  for (const script of R7_SCRIPTS) {
+    const r = negRun(forgeRepo('✔ handles negative numbers (1ms)\nX', script));
+    notVerified(r);
+    assert.notStrictEqual(r.status, 0, script);
+  }
+});
+
+test('forged lines r7 (B2): an unterminated prefix hiding a failing cross line in a failing describe never covers an item', () => {
+  const extra = "describe('bad', () => { it('a', () => {}); it('boom', async () => { await new Promise((r) => setTimeout(r, 100)); process.stdout.write('Y'); assert.strictEqual(1, 2); }); });\n";
+  for (const script of R7_SCRIPTS) {
+    const r = negRun(forgeRepo('✔ handles negative numbers (1ms)\n', script, extra));
+    notVerified(r);
+    assert.notStrictEqual(r.status, 0, script);
+  }
+});
+
+test('forged lines r7: an honest test writing stdout with no newline is never BLOCKED', () => {
+  const body = FORGE_HDR + "test('adds zero', () => { process.stdout.write('partial'); assert.strictEqual(add(0,0), 0); });\n";
+  for (const script of R7_SCRIPTS) {
+    const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
+    assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
+  }
+});
