@@ -231,6 +231,34 @@ tc
 check "$(omain)" "$H10" "bad map not released"
 has "$(LOG)" "MAP_BAD" "MAP_BAD logged"
 
+echo "T11 -- a green unpromoted train is promoted before it is superseded"
+mkfix t11
+commit_file "$REPO" "feat: g1" src/g1.txt
+G1="$(git -C "$REPO" rev-parse main)"
+WT_ENV="" tc
+check "$(trains)" "train/1 " "train/1 pushed"
+all_green "$G1"
+commit_file "$REPO" "feat: g2" src/g2.txt
+G2="$(git -C "$REPO" rev-parse main)"
+WT_ENV="" tc
+check "$(trains)" "train/1 " "green unpromoted train/1 is not superseded"
+has "$(LOG)" "HOLD train/1 green, awaiting promote" "HOLD green logged"
+check "$(omain)" "$G1" "phase B promoted train/1 in the same run"
+WT_ENV="" tc
+check "$(trains)" "train/1 train/2 " "next run pushes train/2 once train/1 is promoted"
+check "$(git -C "$ORIGIN" rev-parse refs/heads/train/2)" "$G2" "train/2 carries the newer main"
+
+echo "T12 -- a red newest train is still superseded"
+mkfix t12
+commit_file "$REPO" "feat: r1" src/r1.txt
+R1="$(git -C "$REPO" rev-parse main)"
+WT_ENV="" tc
+runs "$R1" "Tests:completed:failure" "Bun Parity:completed:success" "Coverage (baseline):completed:success" "Security Audit:completed:success"
+commit_file "$REPO" "feat: r2" src/r2.txt
+WT_ENV="" tc
+check "$(trains)" "train/1 train/2 " "red train/1 superseded by train/2"
+hasnt "$(LOG)" "HOLD train/1 green" "no green hold for a red train"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
