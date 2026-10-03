@@ -28,7 +28,10 @@ bad() { FAIL=$((FAIL + 1)); echo "FAIL: $1"; }
 
 # The script needs bash 4+ (mapfile).
 B4=""
-for c in "$(command -v bash)" /opt/homebrew/bin/bash /usr/local/bin/bash; do
+# Search every PATH entry, not just the first bash, without hardcoding paths.
+IFS=: read -r -a _path_dirs <<<"$PATH"
+for _d in "${_path_dirs[@]}"; do
+    c="${_d}/bash"
     [ -x "$c" ] || continue
     # shellcheck disable=SC2016
     if "$c" -c '[ "${BASH_VERSINFO[0]}" -ge 4 ]' 2>/dev/null; then B4="$c"; break; fi
