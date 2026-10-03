@@ -564,11 +564,49 @@ test('minor: red-item matching is exact, not substring', () => {
   assert.doesNotMatch(r.out.reason, /is failing/); // but the item's own passing test is not called failing
 });
 
-test('minor: a test already failing at session start is not blamed by the contract', () => {
+test('F1: an item whose only test was red at session start and is still red blocks (never PASS)', () => {
   const bad = T2 + "test('handles negative numbers', () => { assert.strictEqual(add(-1, -2), 99); });\n";
   const d = repo(nodeRepo(ADD_OK, bad));
   seal('start', d);
   const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
-  assert.strictEqual(r.status, 0, r.raw);
-  assert.doesNotMatch(r.raw, /is failing/);
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /^loki-seal: NOT VERIFIED/);
+  assert.match(r.out.reason, /every test for request item .* is failing \(already failing at session start, still not fixed\)/);
+  assert.match(r.out.reason, /contract: 1 item\(s\), 0 covered by passing tests/);
+  assert.doesNotMatch(r.raw, /Verified by Loki https/);
+});
+
+test('F2: ordinary chat with modal words yields no contract', () => {
+  const chat = [
+    'I have to leave soon, can you refactor the parser?',
+    'I cannot get the build to pass on my laptop, please take a look.',
+    'Node 20 is required for this repo; bump the eslint config.',
+    'It needs to be done before the release meeting.',
+  ];
+  for (const req of chat) {
+    const d = repo(nodeRepo(ADD_OK, T2));
+    seal('start', d);
+    const r = seal('stop', d, { transcript_path: transcript(d, req) });
+    assert.strictEqual(r.status, 0, req + '\n' + r.raw);
+    assert.match(r.out.systemMessage.split('\n')[0], /^loki-seal: NOT VERIFIED: no contract$/, req);
+  }
+});
+
+test('F2: a behavior sentence with a modal is still an item', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, 'The parser must reject empty input.') });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /request item: "The parser must reject empty input\."/);
+});
+
+test('assertion scan: commented-out and quoted asserts do not count; testify, pytest.raises, chai should do', () => {
+  const { testNames } = require('../bin/contract.js');
+  const asserts = (src) => testNames({ 'x.test.js': src })[0].asserts;
+  assert.strictEqual(asserts("test('a b', () => {\n  // assert.ok(true)\n});\n"), false);
+  assert.strictEqual(asserts("test('a b', () => {\n  const s = 'assert.ok(1)';\n});\n"), false);
+  assert.strictEqual(asserts("test('a b', () => { x.should.equal(1); });\n"), true);
+  assert.strictEqual(testNames({ 'x_test.go': 'func TestA(t *testing.T) {\n\trequire.Equal(t, 1, 1)\n}\n' })[0].asserts, true);
+  assert.strictEqual(testNames({ 't.py': 'def test_a():\n    # assert x\n    pass\n' })[0].asserts, false);
+  assert.strictEqual(testNames({ 't.py': 'def test_a():\n    with pytest.raises(ValueError):\n        f()\n' })[0].asserts, true);
 });

@@ -239,13 +239,16 @@ async function main() {
     contractNote = 'NOT VERIFIED: no contract';
   } else {
     const m = mapContract(contract.items, cur);
-    // Exact test-id match (runner ids may be "file::name"). An item is red only when every test for it
-    // fails now and at least one of them was not already failing at session start (baseline-aware).
+    // Exact test-id match (runner ids may be "file::name"). An item is red whenever every test for it
+    // fails NOW, whatever the start state: a delivery cannot be verified by a test that is still red.
+    // Failing at session start only changes the wording.
     const idOf = (i) => i.split('::').pop();
     const failingNow = (t) => !!(r && r.ids && r.ids.some((i) => i === t || idOf(i) === t));
     const failedAtStart = (t) => !!(suite0 && suite0.ids.some((i) => i === t || idOf(i) === t));
-    const red = m.matched.filter((x) => x.tests.every(failingNow) && !x.tests.every(failedAtStart)).map((x) => x.item);
-    const bad = [...m.unmatched.map((i) => `no test matches request item: "${i}"`), ...red.map((i) => `every test for request item "${i}" is failing`)];
+    const redX = m.matched.filter((x) => x.tests.every(failingNow));
+    const red = redX.map((x) => x.item);
+    const bad = [...m.unmatched.map((i) => `no test matches request item: "${i}"`),
+      ...redX.map((x) => `every test for request item "${x.item}" is failing${x.tests.every(failedAtStart) ? ' (already failing at session start, still not fixed)' : ''}`)];
     contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '');
     if (runner) cproblems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
     else if (bad.length) contractNote = `NOT VERIFIED: ${bad[0]}`;

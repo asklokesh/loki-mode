@@ -45,7 +45,13 @@ const PASTED = /(?:^|\s)(?:modified|deleted|new file|renamed|untracked|error|war
 const MIN_KEYWORDS = 2;
 // A bare file mention is never a spec. The request must mark it: "spec: x.md", "per x.md", "implement x.md".
 const SPEC_MARK = "(?:\\bspec(?:ification)?s?\\s*[:=]\\s*|\\b(?:per|implement|implements|implementing|according\\s+to|as\\s+specified\\s+in)\\s+(?:the\\s+)?(?:spec\\s+(?:in\\s+|at\\s+)?)?)[`\"']?";
-const ASSERT = /\bassert\w*\s*[.(]|^\s*assert\s|\bexpect\s*\(|\bself\.assert\w+|\bt\.(?:Error|Fatal|Fail)\w*\(|\bassert\w*!\s*\(/m;
+const ASSERT = /\bassert\w*\s*[.(]|^\s*assert\s|\bexpect\s*\(|\bself\.assert\w+|\bt\.(?:Error|Fatal|Fail)\w*\(|\bassert\w*!\s*\(|\brequire\.[A-Z]\w*\(|\bpytest\.raises\s*\(|\.should\b/m;
+// Comments and string literals are removed before the assertion scan so a commented-out or quoted
+// "assert(" never counts.
+const stripNoise = (s) => s.replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '""').replace(/\/\/.*$/gm, '').replace(/(^|\s)#.*$/gm, '$1');
+// Prose that is chat, not a requirement on the system: first/second person, deadlines, environment talk,
+// or a status ("needs to be done"). A modal sentence must be about the code's behavior.
+const CHAT = /\b(?:i|i'm|i've|we|we've|my|our|me|you|your)\b|\b(?:before|by|soon|today|tomorrow|tonight|meeting|release|deadline|asap|eod|later|until)\b|\b(?:node(?:js)?|npm|yarn|pnpm|python\d*|pip|java|jdk|ruby|golang|cargo|laptop|machine|computer|ci|docker|version|eslint|prettier|webpack)\b|\b(?:be|get)\s+(?:done|finished|ready|merged|fixed)\b|\bplease\b/i;
 const STOP = new Set(('a an the and or but if then else of to in on at by for with from as is are was were be been being it its this that these those ' +
   'must should shall need needs has have had do does did not no can cannot will would could may might make sure ensure require required requires ' +
   'please also just so too very any all each every some there their they them we you i me my our your when where which who what how than into ' +
@@ -80,7 +86,10 @@ function extractItems(text) {
     if (b) { if (!PASTED.test(b[1]) && b[1].length <= 160) items.push(b[1].trim()); continue; }
     if (PASTED.test(raw)) continue;
     // Prose: split into sentences and keep those with a modal verb.
-    for (const s of raw.split(/(?<=[.!?])\s+/)) if (MODAL.test(s) && s.trim().length > 3) items.push(s.trim());
+    for (const s0 of raw.split(/(?<=[.!?])\s+|;\s+|,\s+(?=(?:and\s+)?(?:please|can|could|would)\b)/i)) {
+      const s = s0.trim();
+      if (MODAL.test(s) && s.length > 3 && !CHAT.test(s)) items.push(s);
+    }
   }
   const seen = new Set();
   const out = [];
@@ -182,7 +191,7 @@ function testNames(files) {
     decls.sort((a, b) => a.pos - b.pos);
     // A test body runs from its declaration to the next declaration. A test without an assertion proves nothing.
     decls.forEach((d, k) => {
-      if (d.real) out.push({ name: d.name, file: p, base, asserts: ASSERT.test(src.slice(d.pos, k + 1 < decls.length ? decls[k + 1].pos : src.length)) });
+      if (d.real) out.push({ name: d.name, file: p, base, asserts: ASSERT.test(stripNoise(src.slice(d.pos, k + 1 < decls.length ? decls[k + 1].pos : src.length))) });
     });
   }
   return out;
