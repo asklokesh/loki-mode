@@ -17,6 +17,10 @@ export LOKI_NO_BROWSER=1
 unset VERIFY_NO_LLM LOKI_APP_COMMAND LOKI_APP_PORT
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+# A provider file left by an earlier local run is not this suite's doing;
+# only a file that appears during the run counts as a leak.
+PROVIDER_PREEXISTED=0
+[ -e "$ROOT/.loki/state/provider" ] && PROVIDER_PREEXISTED=1
 VERIFY_SH="${VERIFY_SH:-$ROOT/autonomy/verify.sh}"
 SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/loki-verify-shadow.XXXXXX")" || exit 1
 trap 'rm -rf "$SCRATCH" "$ISOLATED_GIT_HOME"' EXIT
@@ -212,7 +216,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # The repo itself must stay clean of provider state from sourcing verify.sh.
-if [ -e "$ROOT/.loki/state/provider" ]; then
+if [ "$PROVIDER_PREEXISTED" = 0 ] && [ -e "$ROOT/.loki/state/provider" ]; then
     echo "  FAIL: $ROOT/.loki/state/provider appeared"
     FAIL=$((FAIL + 1))
 fi
