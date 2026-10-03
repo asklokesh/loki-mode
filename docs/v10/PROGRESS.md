@@ -1919,3 +1919,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Five non-blocking should-fixes filed as D65-SPEC-F1, D65-SPEC-F2 (HIGH, design) and D62-VIS-F1.
 - LOKI_CONTRACT and LOKI_VISUAL_EVIDENCE stay default off; flipping them is a separate decision.
 - Reviewer incident: a failed cd ran `loki contract` in the main checkout and wrote .loki/contract.json (gitignored); the reviewer removed it, confirmed absent at 03:04Z.
+
+## 2026-10-03T03:20Z train/83 red, P0-D66-FENCE
+- train/83 (1a63ad156) Coverage (baseline) failure: run 37092508809, `features size and import budget (D66)` fails on "speed/lean_select.ts imports ../../engine10/stages/plan.ts without a whole-statement 'import type'" (local repro: `bun test tests/engine10/budget.test.ts` 26 pass 1 fail).
+- Cause: D61-03 (999ea6af3) value-imports selectRelevantFiles from stages/plan.ts. Fix-forward slice P0-D66-FENCE dispatched (dependency injection, test untouched). Train 83 will not release; train 84 carries the fix.
+- Guard gap: the D61-03 engineer and TL did not run budget.test.ts. Every features/ slice prompt now names it as a required command.
+- Dispatched D63 cards C1 (HIGH), C2, C5, C8, C9, C12 and D61-10-F1; reviews: D61-04 (opus), D61-12 re-review (opus).
