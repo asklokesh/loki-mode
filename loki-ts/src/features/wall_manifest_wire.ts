@@ -46,8 +46,8 @@ export function wallManifestFor(repoDir: string, tree: string | undefined, task:
     // set takes EVERY match before any cap; only the signature list is capped, exact basename or path matches first.
     const token = (n: string): boolean => new RegExp(`(?<![A-Za-z0-9_])${n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`).test(low);
     const matched = all.filter((e) => SOURCE.test(e.path) && (token(basename(e.path)) || token(e.path) || token(basename(e.path).replace(/\.[^.]*$/, ""))));
-    const exact = (e: Entry): boolean => token(e.path) || token(basename(e.path));
-    const named = [...matched.filter(exact), ...matched.filter((e) => !exact(e))].slice(0, MAX_NAMED);
+    const byPath = matched.filter((e) => token(e.path)), byBase = matched.filter((e) => !byPath.includes(e) && token(basename(e.path)));
+    const named = [...byPath, ...byBase, ...matched.filter((e) => !byPath.includes(e) && !byBase.includes(e))].slice(0, MAX_NAMED); // path, then basename, then stem-only
     const tests = all.filter((e) => TESTISH.test(e.path)).slice(0, MAX_FILES), listed = tests.filter((e) => !SOURCE.test(e.path));
     const want = [...new Set([...all.filter((e) => CONFIG.test(e.path)), ...tests.filter((e) => SOURCE.test(e.path)), ...named])];
     const cat = git(repoDir, ["cat-file", "--batch"], want.map((e) => e.sha).join("\n") + "\n");

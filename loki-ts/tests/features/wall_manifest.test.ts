@@ -724,3 +724,50 @@ describe("named-file cap never weakens the example exclusion (D77, W1-S2 r4)", (
     expect(t).toContain("BODY_TOKEN_STYLE");
   });
 });
+
+// D77 / W1-S2 r5: whole-stem naming (dotted and dashed stems), exact-path ranking, case-insensitive matching.
+describe("whole-stem naming and path ranking (D77, W1-S2 r5)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function manifest(files: Record<string, string>, task: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r5-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    try {
+      g("init", "-q");
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); }
+      g("commit", "-q", "-m", "base");
+      return wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), task, ON)!.text;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const T = (body: string, imp = ""): string => `import { test } from "bun:test";\n${imp}test("t", () => { /* ${body} */ });\n`;
+  const other = { "tests/other.test.ts": T("other_style") };
+
+  test("B5a: a dotted stem (user.service) excludes its spec files, with or without an import", () => {
+    const files = { "src/user.service.ts": "export function getUser(id: string): string {\n  return id;\n}\n", "src/user.service.spec.ts": T("BODY_B5A_SPEC"), "tests/format.test.ts": T("BODY_B5A_IMPORTER", 'import { getUser } from "../src/user.service";\n'), ...other };
+    const t = manifest(files, "Fix getUser in src/user.service.ts so it trims the id");
+    expect(t).not.toContain("BODY_B5A_SPEC");
+    expect(t).not.toContain("BODY_B5A_IMPORTER");
+    expect(t).toContain("export function getUser(id: string): string");
+    expect(t).toContain("other_style");
+    expect(manifest(files, "Fix src/user.service.ts")).not.toContain("BODY_B5A_SPEC");
+  });
+
+  test("B5b: a dashed stem (my-parser) excludes a test that never imports it", () => {
+    const t = manifest({ "src/my-parser.ts": "export function p(): void {}\n", "tests/my-parser.test.ts": T("BODY_B5B_CLI", 'import { execSync } from "node:child_process";\n'), ...other }, "Fix p in src/my-parser.ts");
+    expect(t).not.toContain("BODY_B5B_CLI");
+    expect(t).toContain("other_style");
+  });
+
+  test("B6: an exact-path target keeps its signatures when six modules share the basename", () => {
+    const files: Record<string, string> = { ...other, "packages/web/src/index.ts": "export function webTarget(n: number): number {\n  return n;\n}\n" };
+    for (const n of ["a", "b", "c", "d", "e", "f"]) files[`packages/${n}/src/index.ts`] = `export const ${n} = 1;\n`;
+    const t = manifest(files, "Fix the bug in packages/web/src/index.ts: webTarget must double n");
+    expect(t).toContain("export function webTarget(n: number): number");
+  });
+
+  test("names and imports compare case-insensitively", () => {
+    const t = manifest({ "src/Widget.ts": "export const w = 1;\n", "tests/widget.test.ts": T("BODY_CASE_NAMED"), "tests/use.test.ts": T("BODY_CASE_IMPORT", 'import { w } from "../src/WIDGET";\n'), ...other }, "fix Widget.ts");
+    expect(t).not.toContain("BODY_CASE_NAMED");
+    expect(t).not.toContain("BODY_CASE_IMPORT");
+    expect(t).toContain("other_style");
+  });
+});
