@@ -618,3 +618,12 @@ That amendment is NOT ratified. It is replaced by this rule, which the CoS adopt
 4. jest, vitest and any other runner resolved from the project (node_modules/.bin, or reporters and setup files defined in config) does not grant coverage. It gives NOT VERIFIED with a stated reason, and its red/green result still counts. Over-refusing is accepted (fail closed).
 5. The exit/abort/kill scan stays as defense in depth; it is not the trust boundary. The truncation check keeps its own unit test.
 6. Every case in 1 to 4 has a negative test that asserts its specific reason. That includes the six reproduced forges above.
+
+## D81 (2026-10-03T14:43Z, CoS per D68/D69): train/101 red is fixed forward with a revert deadline
+- train/101 (e14834e53) Tests run 37129766523 failed on two reproducible, deterministic causes. Neither is the P9 flake.
+  - Shard 2: seal.test.js:1031 runs `node --test-isolation=none`, which the CI Node rejects ("bad option").
+  - Shard 3: cloud-dispatch R2-3. On GNU the writer overwrote a duplicated BOARD row (rc 0, want 15).
+- Decision: two sonnet builders fix them forward on main, with a deadline of about 15:05Z.
+  - Any slice not fixed and TL-approved by then is reverted for train/102, and the rest ships as v10.6.15. This is the D68 rule "drop red slices".
+  - A failed rerun is not attempted, because both failures are deterministic.
+- Each fix must keep fail-closed semantics: no skip, no weakened assertion, and nothing added to tests/moat/pending.txt.
