@@ -4,7 +4,7 @@ import {
   readEfficiencyDir,
   PRICING,
 } from "../src/runner/budget.ts";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -17,6 +17,18 @@ import { tmpdir } from "node:os";
 //
 // This only bites when cost_usd is absent, which is exactly the degraded path
 // where a runaway is most likely and the breaker matters most.
+// Expected rates come from the pricing FILE, never from literals: a rate
+// change (MW-1 moved sonnet 3/15 to 2/10) must not break arithmetic tests,
+// and reading the file instead of PRICING keeps the loader under test.
+const FILE_SONNET = JSON.parse(
+  readFileSync(join(import.meta.dir, "../data/model-pricing.json"), "utf-8"),
+).pricing.sonnet as {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+};
+
 const MEASURED = {
   model: "sonnet",
   input_tokens: 10272,
@@ -24,6 +36,17 @@ const MEASURED = {
   cache_read_tokens: 797496,
   cache_creation_tokens: 79769,
 };
+
+// The measured record priced straight from the file's four sonnet tiers.
+function expectedMeasured(): number {
+  return (
+    (MEASURED.input_tokens * FILE_SONNET.input +
+      MEASURED.output_tokens * FILE_SONNET.output +
+      MEASURED.cache_read_tokens * FILE_SONNET.cache_read +
+      MEASURED.cache_creation_tokens * FILE_SONNET.cache_write) /
+    1e6
+  );
+}
 
 describe("budget: cache token pricing", () => {
   test("cache tokens are not free", () => {
@@ -34,9 +57,7 @@ describe("budget: cache token pricing", () => {
 
     // The whole point: counting them must cost materially more than not.
     expect(withCache).toBeGreaterThan(ignored * 4);
-    // sonnet: 3/M input, 15/M output, 0.3/M cache read, 3.75/M cache write.
-    //   10272*3 + 6164*15 + 797496*0.3 + 79769*3.75, all /1e6
-    expect(withCache).toBeCloseTo(0.6617, 3);
+    expect(withCache).toBeCloseTo(expectedMeasured(), 4);
   });
 
   test("a record with no cache fields is unchanged", () => {
@@ -46,7 +67,7 @@ describe("budget: cache token pricing", () => {
       calculateCostFromRecords([
         { model: "sonnet", input_tokens: 1_000_000, output_tokens: 0 },
       ]),
-    ).toBeCloseTo(3.0, 6);
+    ).toBeCloseTo(FILE_SONNET.input, 6);
   });
 
   test("an explicit cost_usd still wins over token math", () => {
@@ -87,7 +108,10 @@ describe("budget: cache token pricing", () => {
       const records = readEfficiencyDir(dir);
       expect(records).toHaveLength(1);
       expect(records[0]!.cache_read_tokens).toBe(MEASURED.cache_read_tokens);
-      expect(calculateCostFromRecords(records)).toBeCloseTo(0.6617, 3);
+      expect(calculateCostFromRecords(records)).toBeCloseTo(
+        expectedMeasured(),
+        4,
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -95,9 +119,12 @@ describe("budget: cache token pricing", () => {
 
   test("cache-heavy traffic is priced above a naive input-only estimate", () => {
     // Guards the specific regression: someone re-deriving cost from
-    // input_tokens alone would report 0.1233 for the measured iteration.
+    // input_tokens and output_tokens alone, cache tokens ignored.
     const real = calculateCostFromRecords([MEASURED]);
-    expect(real).toBeGreaterThan(0.5);
+    const naive =
+      (MEASURED.input_tokens / 1e6) * FILE_SONNET.input +
+      (MEASURED.output_tokens / 1e6) * FILE_SONNET.output;
+    expect(real).toBeGreaterThan(naive * 4);
   });
 
   test("the pricing table's cache tiers survive loading", () => {
@@ -110,8 +137,8 @@ describe("budget: cache token pricing", () => {
     // Asserting the loaded table (not the JSON file) is what catches it: the
     // file was always correct.
     const sonnet = PRICING["sonnet"]!;
-    expect(sonnet.cache_read).toBe(0.3);
-    expect(sonnet.cache_write).toBe(3.75);
+    expect(sonnet.cache_read).toBe(FILE_SONNET.cache_read);
+    expect(sonnet.cache_write).toBe(FILE_SONNET.cache_write);
     // A cache read must never cost the same as fresh input.
     expect(sonnet.cache_read).toBeLessThan(sonnet.input);
   });
