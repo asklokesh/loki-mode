@@ -1820,7 +1820,7 @@ show_help() {
     echo "  issue keys kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
-    echo "  resume review rollback run sandbox secrets secure self-update sentrux"
+    echo "  merge resume review rollback run sandbox secrets secure self-update sentrux"
     echo "  serve setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
     echo "  ultracode update verify version voice watch watchdog web welcome why"
@@ -21764,7 +21764,7 @@ ultracode council demo dogfood heal modernize import issue github init template 
 status stop pause resume monitor watch watchdog dashboard web open preview share \
 memory context ctx checkpoint state report kpis cost metrics stats logs otel \
 syslog telemetry crash config provider doctor setup-skill onboard quickstart \
-welcome update self-update rollback failover cluster enterprise remote deploy docker \
+welcome update self-update rollback merge failover cluster enterprise remote deploy docker \
 sandbox api mcp magic compound assets export wiki control docs explain why audit compliance \
 secrets analyze optimize bench ci reset cleanup notify trigger voice sentrux \
 worktree wt projects cp rc trust-metrics serve agent code self_update test help version"
@@ -22096,6 +22096,9 @@ main() {
             ;;
         rollback)
             cmd_rollback "$@"
+            ;;
+        merge)
+            cmd_merge "$@"
             ;;
         council)
             cmd_council "$@"
@@ -26290,6 +26293,93 @@ SHOW_EOF
             echo -e "${RED}Unknown checkpoint command: $subcommand${NC}"
             echo "Run 'loki checkpoint help' for usage."
             return 1
+            ;;
+    esac
+}
+
+# loki merge: serial PR merge queue. Queue lives in .loki/merge-queue (one PR
+# number per line). A PR merges only when `gh pr checks` exits 0 (all green);
+# after each merge the next PR is rebased onto the new base (gh pr update-branch
+# --rebase) and must go green again before it merges. Never forces anything.
+cmd_merge() {
+    local sub="${1:-help}"
+    shift 2>/dev/null || true
+    local qfile=".loki/merge-queue"
+    case "$sub" in
+        add)
+            [ $# -gt 0 ] || { echo "Usage: loki merge add <pr-number>..." >&2; return 2; }
+            mkdir -p .loki || return 1
+            local n
+            for n in "$@"; do
+                case "$n" in ''|*[!0-9]*) echo "Invalid PR number: $n" >&2; return 2 ;; esac
+                if [ -f "$qfile" ] && grep -qx "$n" "$qfile"; then
+                    echo "PR #$n already queued"
+                else
+                    echo "$n" >> "$qfile"
+                    echo "Queued PR #$n"
+                fi
+            done
+            ;;
+        list|ls)
+            if [ -s "$qfile" ]; then cat "$qfile" | sed 's/^/#/'; else echo "Merge queue is empty"; fi
+            ;;
+        clear)
+            rm -f "$qfile"; echo "Merge queue cleared"
+            ;;
+        run)
+            local dry=false
+            [ "${1:-}" = "--dry-run" ] && dry=true
+            if [ ! -s "$qfile" ]; then echo "Merge queue is empty"; return 0; fi
+            command -v gh >/dev/null 2>&1 || { echo "gh CLI is required" >&2; return 1; }
+            local poll="${LOKI_MERGE_POLL_S:-20}" tries="${LOKI_MERGE_MAX_POLLS:-90}"
+            local first=true n rc i remaining="" merged=0 blocked=0
+            while IFS= read -r n; do
+                [ -n "$n" ] || continue
+                if $dry; then
+                    rc=0; gh pr checks "$n" >/dev/null 2>&1 || rc=$?
+                    case "$rc" in
+                        0) echo "#$n: checks green, would merge (squash)" ;;
+                        8) echo "#$n: checks pending, would wait" ;;
+                        *) echo "#$n: checks not green, would skip" ;;
+                    esac
+                    $first || echo "#$n: would rebase onto new base first"
+                    first=false
+                    continue
+                fi
+                if ! $first; then
+                    gh pr update-branch "$n" --rebase >/dev/null 2>&1 \
+                        || { echo "#$n: rebase onto new base failed, left in queue"; remaining="$remaining$n"$'\n'; blocked=$((blocked+1)); continue; }
+                    echo "#$n: rebased onto new base"
+                fi
+                rc=8; i=0
+                while [ "$rc" = "8" ] && [ "$i" -lt "$tries" ]; do
+                    rc=0; gh pr checks "$n" >/dev/null 2>&1 || rc=$?
+                    [ "$rc" = "8" ] && { sleep "$poll"; i=$((i+1)); }
+                done
+                if [ "$rc" != "0" ]; then
+                    echo "#$n: checks not green (rc=$rc), left in queue, not merged"
+                    remaining="$remaining$n"$'\n'; blocked=$((blocked+1)); continue
+                fi
+                if gh pr merge "$n" --squash >/dev/null 2>&1; then
+                    echo "#$n: merged"; merged=$((merged+1)); first=false
+                else
+                    echo "#$n: merge failed, left in queue"
+                    remaining="$remaining$n"$'\n'; blocked=$((blocked+1))
+                fi
+            done < "$qfile"
+            if $dry; then echo "Dry run: nothing changed"; return 0; fi
+            printf '%s' "$remaining" > "$qfile"
+            echo "Merged: $merged, left in queue: $blocked"
+            [ "$blocked" -eq 0 ]
+            ;;
+        help|--help|-h|*)
+            echo "Usage: loki merge <add|list|run|clear>"
+            echo "  add <pr>...        Queue pull requests"
+            echo "  list               Show the queue"
+            echo "  run [--dry-run]    Merge one at a time, only when checks are green;"
+            echo "                     each next PR is rebased onto the new base first."
+            echo "                     --dry-run lists what would happen, changes nothing."
+            [ "$sub" = "help" ] || [ "$sub" = "--help" ] || [ "$sub" = "-h" ] || return 2
             ;;
     esac
 }

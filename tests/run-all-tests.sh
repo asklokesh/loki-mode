@@ -631,6 +631,7 @@ run_test "Worktree Auto-Flags Tests" "$SCRIPT_DIR/test-worktree-auto-flags.sh"
 run_test "Worktree install cache keyed on lockfile hash (E-130)" "$SCRIPT_DIR/test-worktree-install-cache.sh"
 run_test "WhatsNew CURRENT_VERSION matches VERSION (E-129)" "$SCRIPT_DIR/test-whatsnew-version-sync.sh"
 run_test "Merge-queue log-once + nested-agent parallel guard (client parallel-issue fix)" "$SCRIPT_DIR/test-merge-queue-log-once.sh"
+run_test "loki merge queue: green-only serial merge, rebase next, dry-run" "timeout -k 10 120 $SCRIPT_DIR/test-loki-merge-queue.sh"
 
 # v8: raw-SDK judge/text bridges (fail-closed, opt-in, binary-free ordering)
 run_test "v8 SDK judge bridge (done-recognition + council-v2)" "$SCRIPT_DIR/test-sdk-done-recog-bridge.sh"
