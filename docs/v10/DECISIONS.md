@@ -547,3 +547,10 @@ The D61 decomposer (125 lines) does not fit: engine10 core is at 4,993 of its 5,
 
 ## D60-5 addendum: INTEL-2 closed (visible cost cap)
 The $20.00 default per-run cap stays. It is a hard stop on priced sessions only; lower it with one line in loki.yaml (`budgets.per_run`) or `--max-cost`. Every v10 start line shows the cap and its source (`--max-cost`, `loki.yaml` or `default`). A run that reaches it ends BUDGET_STOP with exit 3. Unpriced sessions (subscription or local providers) never count, so the cap never fires on a guess. Proven end to end through the CLI for the flag, the yaml key and flag-over-yaml precedence (loki-ts/tests/engine10/budget_stop_e2e.test.ts, commit 0cc189106). The typical cost of a fast run has not been measured yet; the default is not justified by a run-cost figure.
+
+## D73: drop D61-12 (integrator) from the 10-03 window (CoS with CTO, 04:47Z 2026-10-03, under D68 and D69)
+- Round 8 opus review of 35a7b0c32 reproduced four cases (C1-C4) and one regression (S3) where a unit's change is missing from HEAD while the group reports merged and ready, plus a false failure on a mode-only change (E6). Probe: scratchpad rev-d61-12-r8/r8.test.ts.
+- Round 8 was declared final. Eight rounds on a HIGH Seal-adjacent surface without convergence means the per-path containment design needs rework, not another patch.
+- D61-12 is parked. D61 ships without an integrator: parallel units stay behind their flag and the integrator is not in the shipped feature set. Named in the handoff as not shipped.
+- Next window: redesign around per-resolution-commit containment (B at R^1, X at R, H at HEAD) and a revert guard for covered units, as the reviewer proposed.
+
