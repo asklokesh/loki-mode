@@ -1468,7 +1468,7 @@ cp_stop() { # stops only the recorded PID, then waits for it
 cp_boot() {
     local dir="$1" port="$2"; shift 2
     mkdir -p "$dir/home" "$dir/cwd"
-    (cd "$dir/cwd" && exec env HOME="$dir/home" LOKI_NO_BROWSER=1 LOKI_CONTROL_AUTOINGEST=0 "$@" \
+    (cd "$dir/cwd" && exec env -u LOKI_CONTROL HOME="$dir/home" LOKI_NO_BROWSER=1 LOKI_CONTROL_AUTOINGEST=0 "$@" \
         bun "$REPO_ROOT/loki-ts/dist/loki.js" control serve --port "$port" > "$dir/serve.out" 2> "$dir/serve.err") &
     CP_PID=$!
     local i=0
@@ -1597,7 +1597,7 @@ case_cp_verdict() {
     for mode in keyed nokey; do
         port="$(cp_free_port)"
         if ! cp_boot "$d/$mode" "$port" "LOKI_CP_RECEIPT_PUBKEYS=$([ "$mode" = keyed ] && echo "$d/pub.pem")"; then
-            bad="$bad [$mode: control plane did not become ready: $(tail -c 200 "$d/$mode/serve.err" | tr '\n' ' ')]"; cp_stop; continue
+            bad="$bad [$mode: control plane did not become ready: $(tail -c 200 "$d/$mode/serve.err" "$d/$mode/serve.out" 2>/dev/null | tr '\n' ' ')]"; cp_stop; continue
         fi
         rc=0
         out="$(bun "$d/cp-p2.ts" "$mode" "http://127.0.0.1:$port" "" 2> "$d/$mode.err")" || rc=$?

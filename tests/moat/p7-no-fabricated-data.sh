@@ -5046,7 +5046,7 @@ case_cp_unmeasured() {
     mkdir -p "$d/home" "$d/cwd"
     cp_p7_script > "$d/cp-p7.ts"
     port="$(cp_free_port)"
-    (cd "$d/cwd" && exec env HOME="$d/home" LOKI_NO_BROWSER=1 LOKI_CONTROL_AUTOINGEST=0 \
+    (cd "$d/cwd" && exec env -u LOKI_CONTROL HOME="$d/home" LOKI_NO_BROWSER=1 LOKI_CONTROL_AUTOINGEST=0 \
         bun "$REPO_ROOT/loki-ts/dist/loki.js" control serve --port "$port" > "$d/serve.out" 2> "$d/serve.err") &
     pid=$!
     printf '%s\n' "$pid" > "$MOAT_TMP/cp.pid"
@@ -5058,7 +5058,7 @@ case_cp_unmeasured() {
     done
     if ! curl -fsS "http://127.0.0.1:$port/ready" >/dev/null 2>&1; then
         cp_stop
-        echo "FAIL|control plane did not become ready: $(tail -c 200 "$d/serve.err" | tr '\n' ' ')"; return 0
+        echo "FAIL|control plane did not become ready: $(tail -c 200 "$d/serve.err" "$d/serve.out" 2>/dev/null | tr '\n' ' ')"; return 0
     fi
     rc=0
     out="$(bun "$d/cp-p7.ts" "http://127.0.0.1:$port" 2> "$d/probe.err")" || rc=$?
