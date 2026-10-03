@@ -1,0 +1,10 @@
+1. Create backend/src/schemas/ directory with per-domain Zod schema files, export via index.ts registry.
+2. Add backend/src/middleware/validation.ts exporting a validateRequest(schema) Fastify preHandler for body/params/query.
+3. Extend existing backend/src/middleware/sanitization.ts with safer HTML-escaping logic (keep existing hook, no DOMPurify dependency bloat).
+4. Add backend/src/utils/validationErrors.ts to format ZodError into consistent AppError-based responses using existing errors.ts.
+5. Derive TypeScript types from schemas via z.infer, re-exported from backend/src/types/index.ts.
+6. Migrate 2-3 representative existing routes to use validateRequest as a proof of pattern, not all routes.
+7. Add rate-limit option hook using existing fastify-rate-limit if present, otherwise skip (avoid new dependency).
+8. Add tests under backend/tests/ for schema validation and sanitization edge cases (XSS, injection payloads).
+9. Document schema/middleware conventions in backend/src/schemas/README.md.
+10. Keep scope to backend only; no frontend or tenantValidation.ts changes required.

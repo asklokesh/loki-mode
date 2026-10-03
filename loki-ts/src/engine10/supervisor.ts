@@ -347,12 +347,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
     },
     pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
-      const { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
+      const { loadRunOutputs } = await import("../util/run_outputs.ts"), { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
       const events = readEvents(eventsPath);
       const sealed: Record<string, unknown> = { ...((events.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: notProven }; // notProven (backstop/tamper included): a killed worker never sealed a receipt; explicit Record annotation keeps sealed.path typed instead of narrowing to the {} branch of the ?? union (TS2339, E-67 round 5 REJECT finding 2)
       const r = await runPr({
         runId, repoDir, runDir, branch: `loki/${runId}`, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN,
-        outputs: () => ({ seal: { ...sealed, verdict, receipt_path: sealed.path } }),
+        outputs: () => ({ ...loadRunOutputs(runDir, events), seal: { ...sealed, verdict, receipt_path: sealed.path } }), // L7: the PR body reads recorded intake, plan and verify data, not only seal
         capHit: () => events.some((e) => e.type === "cap.hit"),
         emit: () => {}, // pr.opened is appended by runSupervisor from the outcome
       } as unknown as PrContext, new AbortController().signal);
