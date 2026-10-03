@@ -2,6 +2,7 @@
 // `app` serves everywhere; `act` is the loopback-only router (the same Hono as `app` on a loopback bind, a detached one otherwise, so its routes are never registered).
 import type { Context, Hono } from "hono";
 import type { Db } from "../../db/migrate.ts";
+import type { spawnStart } from "../spawn.ts";
 import { mountRepos } from "../repos.ts";
 import { mount as artifacts } from "./artifacts.ts";
 import { mount as audit } from "./audit.ts";
@@ -25,6 +26,9 @@ export interface RouteCtx {
   peerIsLoopback: (c: Context) => boolean;
   /** peerIsLoopback plus a loopback Host plus a JSON content type: the guard for state-changing actions. */
   local: (c: Context) => boolean;
+  /** Binary for spawned runs (default `loki`) and a spawn seam for tests. */
+  startBin?: string;
+  spawnImpl?: typeof spawnStart;
 }
 
 export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, config, providers, verify, integrations, notify, audit];

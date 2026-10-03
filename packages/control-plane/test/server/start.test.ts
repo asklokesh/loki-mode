@@ -1,6 +1,6 @@
 // CP-UI-SHELL: POST /v1/start validates strictly, exists only on a loopback bind, requires a loopback peer, allows one start per repo and strips server secrets from the child env.
 import { expect, test } from "bun:test";
-import { childEnv, planStart } from "../../src/server/actions.ts";
+import { childEnv, planStart } from "../../src/server/spawn.ts";
 import { createApp } from "../../src/server/app.ts";
 
 const calls: string[][] = [];
@@ -70,4 +70,78 @@ test("child env has no server secrets or bind config", () => {
 test("planStart builds argv with the injected binary and no shell string", () => {
   const p = planStart({ target: "a/b#3" }, [], "/bin/loki");
   expect(p.ok && p.argv).toEqual(["/bin/loki", "start", "a/b#3"]);
+});
+
+// CPE-07: POST /v1/runs with optional fields, token, Origin and audit.
+const envs: Record<string, string>[] = [];
+const mkTok = (token?: string) => createApp({ dbPath: ":memory:", loopbackOnly: true, token, spawnImpl: async (argv, _cwd, _exit, env) => { calls.push(argv); envs.push(env ?? {}); return { pid: 7 }; } });
+const runs = (app: ReturnType<typeof mk>["app"], body: unknown, h: Record<string, string> = {}) =>
+  app.fetch(new Request("http://127.0.0.1:1234/v1/runs", { method: "POST", headers: { "content-type": "application/json", host: "127.0.0.1:1234", ...h }, body: JSON.stringify(body) }), peer("127.0.0.1"));
+
+test("POST /v1/runs: exact argv for each optional field", async () => {
+  const cases: Array<[Record<string, unknown>, string[], Record<string, string>]> = [
+    [{ target: "a/b#1", provider: "codex" }, ["start", "a/b#1", "--provider", "codex"], {}],
+    [{ target: "a/b#1", budget: "5.00" }, ["start", "a/b#1", "--budget", "5.00"], {}],
+    [{ target: "a/b#1", budget: 12 }, ["start", "a/b#1", "--budget", "12"], {}],
+    [{ target: "a/b#1", model: "claude-sonnet-4-5" }, ["start", "a/b#1"], { LOKI_SESSION_MODEL: "claude-sonnet-4-5" }],
+    [{ target: "Fix login", provider: "claude", budget: "3" }, ["start", "--brief", "Fix login", "--provider", "claude", "--budget", "3"], {}],
+    [{ target: "a/b#9", workspace: "shop" }, ["workspace", "run", "shop", "a/b#9"], {}],
+  ];
+  for (const [body, argv, env] of cases) {
+    const { app, close } = mkTok();
+    calls.length = 0; envs.length = 0;
+    expect((await runs(app, body)).status).toBe(200);
+    expect(calls.map((a) => a.slice(1))).toEqual([argv]);
+    expect(envs[0]).toEqual(env);
+    close();
+  }
+});
+
+test("POST /v1/runs: unknown or malformed optional values are refused without spawning", async () => {
+  const { app, close } = mkTok();
+  calls.length = 0;
+  for (const extra of [{ provider: "gemini" }, { provider: "codex; id" }, { provider: 5 }, { model: "--x" }, { model: "a b" }, { model: "a$(id)" }, { budget: "0" }, { budget: "-1" }, { budget: "1e9" }, { budget: "5 --x" }, { workspace: "../x" }, { workspace: "-rf" }, { workspace: "a", budget: "1" }]) {
+    expect((await runs(app, { target: "a/b#1", ...extra })).status).toBe(400);
+  }
+  expect(calls.length).toBe(0);
+  close();
+});
+
+test("POST /v1/runs: a missing or wrong token is 401 when a token is set; the right token passes", async () => {
+  const { app, close } = mkTok("s3cret");
+  calls.length = 0;
+  expect((await runs(app, { target: "a/b#1" })).status).toBe(401);
+  expect((await runs(app, { target: "a/b#1" }, { authorization: "Bearer nope" })).status).toBe(401);
+  expect(calls.length).toBe(0);
+  expect((await runs(app, { target: "a/b#1" }, { authorization: "Bearer s3cret" })).status).toBe(200);
+  close();
+});
+
+test("POST /v1/runs: a bad Origin is refused, a loopback Origin passes", async () => {
+  const { app, close } = mkTok();
+  calls.length = 0;
+  for (const o of ["https://evil.example.com", "http://127.0.0.1.evil.com", "null", "http://localhost:1234@evil.com", "file://x"]) {
+    expect((await runs(app, { target: "a/b#1" }, { origin: o })).status).toBe(403);
+  }
+  expect(calls.length).toBe(0);
+  expect((await runs(app, { target: "a/b#1" }, { origin: "http://127.0.0.1:1234" })).status).toBe(200);
+  close();
+});
+
+test("POST /v1/runs: every start outcome is audited and the row holds no secret", async () => {
+  const { app, db, close } = createApp({ dbPath: ":memory:", loopbackOnly: true, token: "s3cret", spawnImpl: async () => ({ pid: 9 }) });
+  const h = { authorization: "Bearer s3cret" };
+  await runs(app, { target: "a/b#1" }, h);
+  await runs(app, { target: "--help" }, h);
+  const { actions } = await import("../../src/db/schema.ts");
+  const rows = db.select().from(actions).all();
+  expect(rows.map((r) => [r.kind, r.result])).toEqual([["run.start", "started"], ["run.start", "refused"]]);
+  expect(JSON.stringify(rows)).not.toContain("s3cret");
+  close();
+});
+
+test("POST /v1/runs is not registered on a non-loopback bind", async () => {
+  const { app, close } = mk(undefined, false);
+  expect((await runs(app, { target: "a/b#1" })).status).toBe(404);
+  close();
 });
