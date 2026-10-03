@@ -978,4 +978,37 @@ describe("D50-F1 already-satisfied discards run changes", () => {
       } finally { if (prev === undefined) delete process.env.LOKI_E10_SNAPSHOT_MAX; else process.env.LOKI_E10_SNAPSHOT_MAX = prev; }
     }, 30000);
   });
+  test("D65-SPEC: LOKI_CONTRACT lines reach receipt not_proven and event, verdict unchanged, malformed contract never throws, flag off is inert", async () => {
+    noKey();
+    const wc = (repo: string, json: string) => { mkdirSync(join(repo, ".loki"), { recursive: true }); writeFileSync(join(repo, ".loki/contract.json"), json); };
+    const goodContract = JSON.stringify({ source: "s", criteria: [{ id: "AC-1", text: "Zebra <b> migration works", source_line: 1 }] });
+    const prev = process.env["LOKI_CONTRACT"];
+    try {
+      delete process.env["LOKI_CONTRACT"];
+      const a = makeRepo("contract-off-a"); const b = makeRepo("contract-off-b");
+      wc(b.repo, goodContract);
+      const ra = receiptOf(await sealStage.run(ctxFor(a.repo, a.base).ctx, new AbortController().signal));
+      const rb = receiptOf(await sealStage.run(ctxFor(b.repo, b.base).ctx, new AbortController().signal));
+      expect((rb as unknown as { contract?: unknown }).contract).toBeUndefined();
+      expect(rb.not_proven).toEqual(ra.not_proven);
+      expect(rb.verdict).toBe(ra.verdict);
+
+      process.env["LOKI_CONTRACT"] = "1";
+      const c = makeRepo("contract-on"); wc(c.repo, goodContract);
+      const cc = ctxFor(c.repo, c.base);
+      const sc = await sealStage.run(cc.ctx, new AbortController().signal);
+      const rc = receiptOf(sc);
+      expect(rc.verdict).toBe(ra.verdict);
+      const line = rc.not_proven.find((n) => n.startsWith("contract AC-1 untraced"));
+      expect(line).toContain("Zebra &lt;b&gt; migration works");
+      expect(readFileSync(join(c.repo, ".loki/runs/r1/receipt.md"), "utf8")).toContain("contract AC-1 untraced");
+      expect(cc.events.find((e) => e.type === "receipt.sealed")!.data.not_proven as string[]).toContain(line!);
+
+      const d = makeRepo("contract-bad"); wc(d.repo, '{"source":"x","criteria":[{"id":"AC-1"}]}');
+      const rd = receiptOf(await sealStage.run(ctxFor(d.repo, d.base).ctx, new AbortController().signal));
+      expect(rd.verdict).toBe(ra.verdict);
+      expect(existsSync(join(d.repo, ".loki/runs/r1/receipt.json"))).toBe(true);
+    } finally { if (prev === undefined) delete process.env["LOKI_CONTRACT"]; else process.env["LOKI_CONTRACT"] = prev; }
+  }, 30000);
+
 });

@@ -45,9 +45,9 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   if (!pinnedOrigin) {
     return { status: "failed", data: {}, reason: "no pinned origin: refusing to push (Rule of Two)" };
   }
-  const seal = (ctx.outputs().seal ?? {}) as { verdict?: Verdict; not_proven?: string[]; receipt_path?: string; receipt_sha256?: string; signed?: boolean; contract_untraced?: string[] };
+  const seal = (ctx.outputs().seal ?? {}) as { verdict?: Verdict; not_proven?: string[]; receipt_path?: string; receipt_sha256?: string; signed?: boolean };
   const verdict = seal.verdict ?? "PARTIAL"; // fail-safe: an unknown verdict is never treated as VERIFIED
-  const notProven = [...(seal.not_proven ?? []), ...(Array.isArray(seal.contract_untraced) ? seal.contract_untraced : [])];
+  const notProven = [...(seal.not_proven ?? [])];
   const capHit = ctx.capHit?.() ?? false;
   const draft = verdict !== "VERIFIED" || capHit;
   mkdirSync(ctx.runDir, { recursive: true });

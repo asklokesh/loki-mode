@@ -275,7 +275,7 @@ export const sealStage: Stage = {
       log_seal: true,
     };
 
-    const contractUntraced = sealContract(ctx.repoDir, body, rawDiff, checks); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only
+    for (const l of sealContract(ctx.repoDir, body, rawDiff, checks)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only
     // Sign first so a failed key lands in NOT PROVEN before hashing.
     body.not_proven = [...notProven];
     let hash = receiptSha256(body);
@@ -292,7 +292,7 @@ export const sealStage: Stage = {
     writeFileSync(join(ctx.runDir, "receipt.md"), renderReceiptMd(receipt));
 
     const signed = sig.jwt !== null;
-    const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(contractUntraced.length ? { contract_untraced: contractUntraced } : {}) };
+    const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven };
     ctx.emit("receipt.sealed", "seal", { path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven });
     return { status: "completed", data: { ...data, summary: `${verdict} receipt ${hash.slice(0, 12)} ${signed ? `SIGNED kid ${sig.kid}` : "UNSIGNED"}` } };
   },
