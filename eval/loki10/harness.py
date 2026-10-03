@@ -745,7 +745,14 @@ def find_pr(remote, base_sha):
 def _started_ids(events):
     """session_ids of every session.started event (emitted only after spawn)."""
     return {(e.get("data") or {}).get("session_id") for e in events
-            if e.get("type") == "session.started" and isinstance(e.get("data"), dict)}
+            if e.get("type") == "session.started" and isinstance(e.get("data"), dict)
+            and not _is_group_announcement(e["data"])}
+
+
+def _is_group_announcement(data):
+    """A visual-evidence dev-server pgid announcement is not a provider session: it never gets a cost record."""
+    return data.get("provider") == "visual-evidence" or data.get("session_id") == "visual-evidence" \
+        or ("pgid" in data and not data.get("session_id"))
 
 
 def provider_cost(arm, stdout_path, work, events=()):

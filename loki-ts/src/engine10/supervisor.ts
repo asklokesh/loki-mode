@@ -140,7 +140,7 @@ function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
 // Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
 // backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 function spawnWorker(
-  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void, onStopped: () => void = () => {},
+  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void, onStopped: (stopped: boolean) => void = () => {},
 ): Promise<{ code: number | null; killed: boolean }> {
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
@@ -151,7 +151,7 @@ function spawnWorker(
     let killed = false;
     let settled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); onStopped(); process.exit(sig === "SIGINT" ? 130 : 143); }; // the worker no longer shares the terminal's group, so forward a stop to it
+    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); onStopped(true); process.exit(sig === "SIGINT" ? 130 : 143); }; // the worker no longer shares the terminal's group, so forward a stop to it
     process.once("SIGINT", onStop);
     process.once("SIGTERM", onStop);
     const finish = (code: number | null) => {
@@ -162,7 +162,7 @@ function spawnWorker(
       for (const t of timers) clearTimeout(t);
       rl.close();
       child.stdout?.destroy();
-      killGroup(child.pid, "SIGKILL"); // reap anything the worker left in its group
+      killGroup(child.pid, "SIGKILL"); onStopped(false); // reap anything the worker left in its group, and every announced session group (backstop and worker-exit paths too)
       resolve({ code, killed });
     };
     timers.push(setTimeout(() => {
@@ -198,7 +198,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") sealed = e.data;
-  }, () => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); restoreBranch(opts.repoDir, origBranch); });
+  }, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); if (stopped) restoreBranch(opts.repoDir, origBranch); });
   const workerExit = worker.killed ? null : worker.code;
   const sealedData = sealed as Record<string, unknown> | null;
   const v = sealedData?.verdict;

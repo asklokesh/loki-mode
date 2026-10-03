@@ -255,3 +255,8 @@ test("verify fails closed on a FIFO evidence path and does not hang", async () =
   expect(r.verdict).toBe("TAMPERED");
   expect(r.reasons[0]).toContain("not a regular file");
 });
+
+test("seal.ts still passes ctx.emit to sealEvidence so the dev server group is announced (D62-VIS-F1 A1)", () => {
+  const src = readFileSync(join(import.meta.dir, "../../src/engine10/stages/seal.ts"), "utf8");
+  expect(src).toMatch(/sealEvidence\([^)]*ctx\.emit\)/);
+});

@@ -45,6 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki serve --help` and the docs now point to `loki` or `loki control serve` for the UI; `loki serve` stays a deprecated alias of `loki api start` (the dashboard API, not the Control Plane) (D65-UI-NAMING).
 - `loki control` help and the bash fallback now match the bun route: the Control Plane is on by default, `LOKI_CONTROL=0` turns it off, and the fallback names bun as required instead of demanding `LOKI_CONTROL=1` (D65-UI-NAMING-2).
 - `loki` with no arguments now opens the Control Plane (set `LOKI_CONTROL_DEFAULT=0` for the previous dashboard).
+- PRs now include screenshots of changed pages, hashed into the receipt so `loki verify` catches an altered image (needs Playwright and changed pages; set LOKI_VISUAL_EVIDENCE=0 to turn off; the API HTTP transcript for openapi repos needs an explicit LOKI_VISUAL_EVIDENCE=1).
 
 ### Fixed
 - `python3 dashboard/audit.py verify <dir>` now exits 2 (status `nothing_checked`) when it checked no files, instead of exiting 0 like a verified chain; a valid chain still exits 0, a tampered one 1, and `tip` is unchanged (PO-AUDIT-CLI-1).
@@ -57,7 +58,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 - Fixed: an already-satisfied run no longer leaves files named like object prototype members (constructor, toString, valueOf, hasOwnProperty, __proto__) behind in the working tree (P1-DISCARD-PROTO).
-- PRs now include screenshots of changed pages, hashed into the receipt so `loki verify` catches an altered image (needs Playwright and changed pages; set LOKI_VISUAL_EVIDENCE=0 to turn off; the API HTTP transcript for openapi repos needs an explicit LOKI_VISUAL_EVIDENCE=1).
 
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).

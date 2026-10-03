@@ -1589,5 +1589,23 @@ if printf '%s' "$ltxt" | grep -qF "  $HEAD_TXT" && printf '%s' "$lmd" | grep -qF
 else
     fail "D67: speed tier heading missing: $ltxt $lmd"
 fi
+# ---- D62-VIS-F1 F2: a visual-evidence pgid announcement is not a provider session needing a cost record
+if python3 - "$HERE/harness.py" <<'PY'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("harness", sys.argv[1])
+h = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(h)
+cost = {"type": "cost", "data": {"session_id": "s1", "input_tokens": 5, "output_tokens": 7, "cache_read_tokens": 0, "cache_creation_tokens": 0}}
+real = {"type": "session.started", "stage": "implement", "data": {"session_id": "s1", "provider": "claude", "model": "m"}}
+ann = {"type": "session.started", "stage": "seal", "data": {"session_id": "visual-evidence", "provider": "visual-evidence", "model": None, "pgid": 4242}}
+bare = {"type": "session.started", "stage": "seal", "data": {"pgid": 4243}}
+tok, _ = h._v10_tokens([real, cost, ann, bare])
+assert tok is not None and tok["input"] == 5, ("tokens lost to a group announcement", tok)
+assert h._started_ids([real, ann, bare]) == {"s1"}, h._started_ids([real, ann, bare])
+tok, _ = h._v10_tokens([real, ann])
+assert tok is None, "a real session with no cost record must still be unknown"
+PY
+then pass "D62-VIS-F1 F2: visual-evidence pgid announcements are ignored when matching sessions to cost records"
+else fail "D62-VIS-F1 F2: group announcement counted as a provider session"; fi
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
