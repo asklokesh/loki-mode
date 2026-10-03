@@ -785,6 +785,8 @@ if command -v python3 >/dev/null 2>&1 && python3 -c "import pytest" >/dev/null 2
         "$SCRIPT_DIR/dashboard/run_quality_architecture_tests.sh"
     run_test "Episode Load Resilience (Dev7 pytest)" \
         "$SCRIPT_DIR/memory/run_episode_load_resilience_tests.sh"
+    run_test "Council Transcripts Endpoint (pytest)" \
+        "$SCRIPT_DIR/dashboard/run_council_transcripts_tests.sh"
 fi
 
 # Crash Reporting Phase 0 (local-only, zero egress) -- bash CLI/helper tests.
@@ -1670,6 +1672,10 @@ run_test "loki start repo directory routes as repository target (PO4)" "timeout 
 run_test "loki wiki command (build, ask, grounded citation)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-wiki-command.sh"
 run_test "issue-to-PR flow (--prepare-pr, issue-mode)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-issue-to-pr.sh"
 run_test "dogfood-stats honest labeling and flags (PO5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-dogfood-stats.sh"
+run_test "loki status empty state files (cli)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test_status_empty_state.sh"
+run_test "loki start stale PID cleanup (cli)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test_stale_pid_cleanup.sh"
+run_test "loki start/run unified dispatch (cli)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test_start_run_unified.sh"
+run_test "non-standard suite registration guard (cli, dashboard, integration)" "timeout -k 10 120 bash $SCRIPT_DIR/test-registration-nonstandard.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary

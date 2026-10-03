@@ -32,6 +32,7 @@ TESTS=(
     "test_failure_memory_loop.sh"
     "test_start_run_unified.sh"
     "test_dashboard_api_smoke.sh"
+    "test_sigint_propagation.sh"
 )
 
 passed=0
