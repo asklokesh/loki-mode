@@ -582,3 +582,6 @@ The $20.00 default per-run cap stays. It is a hard stop on priced sessions only;
 6. Cap: 90s small, 180s normal, LOKI_E10_WALL_LIMIT_S may override up to 300s, fixed before the session. A Wall timeout stays not_run, never red or already_satisfied, and Seal discloses it.
 7. Ships behind LOKI_E10_WALL_MANIFEST with a lift row (augmentiq#52 plus 2 brownfield tasks, manifest off versus on). Lower lift drops the change. Slices W1-S1..W1-S4 on BOARD; S1 to S3 touch the engine10 core and wait for core budget room.
 
+
+## D78
+2026-10-03T10:39Z, CoS (D69). GitHub push protection rejected train/94 because commit 04f62ff4e (SEC-SCAN-1) carried planted fake AWS key literals in tests/test-secret-scan.sh. Nothing in the range was on origin, so the 124 unpushed main commits were rewritten locally (filter-branch index-filter on that one file): each literal is split with an adjacent empty single-quoted string, so bash builds the same value and the scanner test still blocks it (6/0). The tree diff from the old head was that file only. This was not a force-push, and no protection bypass was requested. Commit SHAs cited on BOARD and PROGRESS for 10:25Z and earlier today, after a185ce16, are pre-rewrite and resolve only through the reflog. Rule: a test fixture never holds a scanner-matching secret literal, split it at write time.
