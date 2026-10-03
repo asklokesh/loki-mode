@@ -68,6 +68,46 @@ VERIFY_EXIT_BLOCKED=2
 VERIFY_EXIT_ERROR=3
 VERIFY_SCHEMA_VERSION="1.0"
 
+# S-216: verify runs from the tree under review (tree="."), and a bare
+# `python3 -c` / `python3 -` puts that cwd first on sys.path, so a planted
+# json.py in the reviewed tree replaced the stdlib module and forged recorded
+# gates (a dependency_audit with high CVEs read as pass). The inline readers
+# run through _verify_py, which resolves the interpreter with
+# _loki_snapshot_py_tool and runs it -I -S. When none resolves it exits 127
+# with no output, exactly as a missing python3 did, so no reader reads as pass.
+# This module does not source run.sh, so it carries a guarded copy; run.sh is
+# the source of truth: keep it byte-identical. Pinned by
+# tests/test-verify-no-cwd-shadow.sh and tests/test-council-py-tool-identity.sh.
+# The unittest and py_compile runs stay on bare python3: they run the user's
+# own code on purpose.
+declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
+_loki_snapshot_py_tool() {
+    local c
+    for c in /usr/bin/python3 /bin/python3; do
+        [ -x "$c" ] && [ ! -d "$c" ] && "$c" -I -S -c '' >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+    done
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            /*) ;;
+            *) continue ;;
+        esac
+        if [ -x "$dir/python3" ] && [ ! -d "$dir/python3" ] \
+           && "$dir/python3" -I -S -c '' >/dev/null 2>&1; then
+            printf '%s\n' "$dir/python3"
+            return 0
+        fi
+    done
+    return 1
+}
+
+_verify_py() {
+    local py
+    py="$(_loki_snapshot_py_tool)" || return 127
+    "$py" -I -S "$@"
+}
+
 # Resolve tool version from the VERSION file shipped alongside the repo.
 # ---------------------------------------------------------------------------
 # LLM review stage (v9.26.0). Phase 2 of the spec; the deterministic MVP shipped
@@ -187,7 +227,7 @@ SCHEMA
 
     # Parse defensively: a malformed payload is "unavailable", never a pass.
     local parsed
-    parsed="$(printf '%s' "$out" | python3 -c '
+    parsed="$(printf '%s' "$out" | _verify_py -c '
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -588,7 +628,7 @@ ZT_MATCHES_EOF
 _verify_pkg_test_script() {
     local tree="$1"
     [ -f "$tree/package.json" ] || return 0
-    python3 -c '
+    _verify_py -c '
 import json,sys
 try:
     with open(sys.argv[1]) as fh:
@@ -1266,9 +1306,9 @@ verify_gate_dependency_audit() {
             out="$(cd "$tree" && npm audit --json 2>/dev/null)" || rc=$?
             # npm audit exits nonzero when vulns are found; rc alone is not an
             # error. Distinguish "ran and found vulns" from "could not run".
-            if printf '%s' "$out" | python3 -c "import sys,json; json.load(sys.stdin)" >/dev/null 2>&1; then
+            if printf '%s' "$out" | _verify_py -c "import sys,json; json.load(sys.stdin)" >/dev/null 2>&1; then
                 local sev
-                sev="$(printf '%s' "$out" | python3 -c '
+                sev="$(printf '%s' "$out" | _verify_py -c '
 import sys, json
 d = json.load(sys.stdin)
 v = d.get("metadata", {}).get("vulnerabilities", {})
@@ -1292,7 +1332,7 @@ print("%d %d %d %d" % (crit, high, mod, low))
                     # count different dependency graphs, so arithmetic on the
                     # totals would not be sound.
                     local _prod_hc=""
-                    _prod_hc="$(cd "$tree" && npm audit --omit=dev --json 2>/dev/null | python3 -c '
+                    _prod_hc="$(cd "$tree" && npm audit --omit=dev --json 2>/dev/null | _verify_py -c '
 import sys, json
 try:
     v = json.load(sys.stdin).get("metadata", {}).get("vulnerabilities", {})
@@ -1334,9 +1374,9 @@ print(v.get("critical", 0) + v.get("high", 0))
         if command -v pip-audit >/dev/null 2>&1; then
             local out rc=0
             out="$(cd "$tree" && pip-audit --format json 2>/dev/null)" || rc=$?
-            if printf '%s' "$out" | python3 -c "import sys,json; json.load(sys.stdin)" >/dev/null 2>&1; then
+            if printf '%s' "$out" | _verify_py -c "import sys,json; json.load(sys.stdin)" >/dev/null 2>&1; then
                 local count
-                count="$(printf '%s' "$out" | python3 -c '
+                count="$(printf '%s' "$out" | _verify_py -c '
 import sys, json
 d = json.load(sys.stdin)
 deps = d.get("dependencies", d if isinstance(d, list) else [])
@@ -1438,7 +1478,7 @@ _verify_runtime_detect() {
     # 0b. Rank 9 setup recipe (opportunistic; NOT yet built -- absence is normal).
     if [ -z "$method" ] && [ -f "$dir/.loki/setup-recipe.json" ] && command -v python3 >/dev/null 2>&1; then
         local recipe
-        recipe="$(python3 - "$dir/.loki/setup-recipe.json" <<'PYEOF' 2>/dev/null || true
+        recipe="$(_verify_py - "$dir/.loki/setup-recipe.json" <<'PYEOF' 2>/dev/null || true
 import json, sys
 try:
     with open(sys.argv[1]) as f:

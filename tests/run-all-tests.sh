@@ -1657,6 +1657,7 @@ run_test "notification triggers panel unreadable vs empty (node --test, PO-DASH-
 run_test "corrupt or denied proofs and memory files give 503 or an error row, never empty (HONEST-READ-1)" "timeout -k 10 120 python3 -m pytest -q -p no:cacheprovider $SCRIPT_DIR/dashboard/test_unreadable_not_empty.py"
 run_test "Stats unmeasured cost reads unmeasured (S-226r)" "timeout -k 10 120 bash $SCRIPT_DIR/test-stats-unmeasured-cost.sh"
 run_test "Status budget unmeasured reads unmeasured (S-226r)" "timeout -k 10 120 bash $SCRIPT_DIR/test-status-budget-unmeasured.sh"
+run_test "verify readers ignore a planted json.py in the reviewed tree (-I -S, S-216)" "timeout -k 10 120 bash $SCRIPT_DIR/test-verify-no-cwd-shadow.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary

@@ -731,3 +731,4 @@ PR receipt renderer ignores cwd json.py (-I -S, S-215)	1
 corrupt or denied proofs and memory files give 503 or an error row, never empty (HONEST-READ-1)	2
 Stats unmeasured cost reads unmeasured (S-226r)	6
 Status budget unmeasured reads unmeasured (S-226r)	6
+verify readers ignore a planted json.py in the reviewed tree (-I -S, S-216)	2

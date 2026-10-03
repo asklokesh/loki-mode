@@ -84,7 +84,10 @@ fi
 _helper_src="$(mktemp "${TMPDIR:-/tmp}/loki-helper-XXXXXX.sh")" || _helper_src=""
 _helper_out=""
 if [ -n "$_helper_src" ]; then
-  sed -n '/^_verify_pkg_test_script()/,/^}/p' "$SRC" > "$_helper_src"
+  # S-216: the helper reads through _verify_py (-I -S), so extract it and the
+  # interpreter resolver it calls alongside.
+  sed -n -e '/^_loki_snapshot_py_tool()/,/^}/p' -e '/^_verify_py()/,/^}/p' \
+    -e '/^_verify_pkg_test_script()/,/^}/p' "$SRC" > "$_helper_src"
   _helper_out="$(
     set +u
     # shellcheck disable=SC1090
