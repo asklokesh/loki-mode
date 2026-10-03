@@ -209,6 +209,36 @@ describe("verifyReceipt: signed (E-22 green: verifies against the JWKS)", () => 
     }
   });
 
+  test("a forged verification.kid on a signed receipt is TAMPERED, not VERIFIED", async () => {
+    if (!CRYPTO_PY) {
+      console.log("SKIP: no python3 has cryptography importable under -I -- attestation not measured here");
+      return;
+    }
+    const dir = tmpDir();
+    const runId = "e10-forged-kid-1";
+    const savedKey = process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    try {
+      const fields = baseReceiptFields();
+      fields["run_id"] = runId;
+      const hash = computeReceiptHash(fields);
+      const { pem, jwt } = signWithFreshKey(hash, runId);
+      const receipt = { ...fields, receipt_sha256: hash, verification: { jwt, kid: "attacker-kid" } };
+      const runDir = join(dir, "runs", runId);
+      mkdirSync(runDir, { recursive: true });
+      const path = join(runDir, "receipt.json");
+      writeFileSync(path, JSON.stringify(receipt, null, 2));
+      process.env["LOKI_RECEIPT_SIGNING_KEY"] = pem;
+      sealedLog(runDir, hash, runId);
+      const result = await verifyReceipt(path);
+      expect(result.verdict).toBe("TAMPERED");
+      expect(result.reasons[0]).toContain("verification.kid differs");
+    } finally {
+      if (savedKey === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
+      else process.env["LOKI_RECEIPT_SIGNING_KEY"] = savedKey;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a validly-signed JWT bound to a different receipt's hash is TAMPERED, not VERIFIED", async () => {
     // The replay this check exists to catch: same signer (kid present in the
     // JWKS, signature verifies), but the token's own receipt_sha256 claim

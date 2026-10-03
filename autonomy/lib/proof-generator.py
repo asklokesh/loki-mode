@@ -2406,6 +2406,7 @@ def generate(args):
                 job_id=str(redacted.get("run_id") or ""),
                 run_id=str(redacted.get("run_id") or ""),
                 receipt_hash=digest,
+                verification=verification,
             )
             if _tok:
                 verification["attestation"] = _tok
