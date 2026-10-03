@@ -103,7 +103,7 @@ export function unitIntake(env: NodeJS.ProcessEnv, repoDir: string, existingCapU
   let txt: string | null;
   try {
     const real = realpathSync(resolve(path)), root = realpathSync(repoDir), rel = relative(root, real);
-    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return bad("its spec file is inside the worktree where the agent could edit it");
+    if (!(rel === ".." || rel.startsWith("../") || isAbsolute(rel))) return bad("its spec file is inside the worktree where the agent could edit it");
     txt = readBounded(real);
   } catch { return bad("its spec file is missing or unreadable"); }
   const spec = txt === null ? null : parseText(txt);

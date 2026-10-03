@@ -242,6 +242,13 @@ describe("unitIntake", () => {
     expect(r?.ok).toBe(false);
     expect((r as { note: string }).note).toContain("inside the worktree");
   });
+  test("a spec under a ..-prefixed directory inside the repo is rejected", () => {
+    mkdirSync(join(repo, "..units"), { recursive: true });
+    const p = join(repo, "..units", "s.json"); writeFileSync(p, JSON.stringify(good));
+    const r = unitIntake(on(p), repo, 5);
+    expect(r?.ok).toBe(false);
+    expect((r as { note: string }).note).toContain("inside the worktree");
+  });
   test("the spec is frozen at intake: later edits to the file do not change the active spec", () => {
     const p = specFile("i4.json", good);
     const r = unitIntake(on(p), repo, 20) as { env: Record<string, string> };
