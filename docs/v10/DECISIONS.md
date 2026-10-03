@@ -599,3 +599,22 @@ The r9 reviewer amended D80 and the CoS adopts the amendment as binding. The rea
 - The exit/abort/kill scan remains as defense in depth and is not the trust boundary.
 - The truncation check keeps its own unit test.
 The CTO ratifies this in the r10 HIGH review.
+
+## D80 amendment 2 (2026-10-03T13:26Z, CoS per D69, from the SEAL r10 opus HIGH review)
+The r10 reviewer reproduced four forged PASS results ("Verified by Loki" on a repo with broken code) under the 13:14Z amendment. Each one used an npm test script that passed the allowlist:
+- a node_modules/.bin/node shim
+- `--test-reporter=<the package's own name>`
+- a reporter in node_modules
+- npm_config_node_options, a user ~/.npmrc, or a quoted .npmrc key
+That amendment is NOT ratified. It is replaced by this rule, which the CoS adopts as binding:
+1. Coverage is granted only from a runner that loki-seal launches itself. The npm test script must be exactly `node --test` plus allowlisted flags and plain relative file paths. loki-seal then does NOT run `npm test`. It spawns `process.execPath` (an absolute path, no PATH lookup) with those exact arguments, with cwd set to the project root and NODE_OPTIONS, NODE_PATH, NODE_TEST_CONTEXT and every `npm_*` variable removed from the environment. No npm config file (project, user or global) is consulted.
+2. Allowlisted flags:
+   - `--test-reporter=` one of spec, tap, dot, junit or lcov (built-ins only, so a bare package name gives NOT VERIFIED)
+   - `--test-reporter-destination=stdout`
+   - `--test-isolation=process`
+   - `--test-concurrency=<n>`
+   - `--test-timeout=<n>`
+3. A pretest or posttest script, any other token, or any shell metacharacter gives NOT VERIFIED, with a stated reason.
+4. jest, vitest and any other runner resolved from the project (node_modules/.bin, or reporters and setup files defined in config) does not grant coverage. It gives NOT VERIFIED with a stated reason, and its red/green result still counts. Over-refusing is accepted (fail closed).
+5. The exit/abort/kill scan stays as defense in depth; it is not the trust boundary. The truncation check keeps its own unit test.
+6. Every case in 1 to 4 has a negative test that asserts its specific reason. That includes the six reproduced forges above.
