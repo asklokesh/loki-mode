@@ -78,7 +78,11 @@ grep -q 'Dashboard:${NC}  ${_bg_dash_line}' "$RUN" && ! grep -q 'Dashboard:${NC}
     && ok "bg banner prints the published URL, not the requested port" || bad "bg banner still prints the guessed port"
 sed 's/#.*//' "$LOKI" | grep -E 'loki_open_url +"\$_du"|_du="http://127.0.0.1:\$\{LOKI_DASHBOARD_PORT' >/dev/null \
     && bad "loki start opens the guessed default port" || ok "loki start opener no longer guesses the default port"
-grep -q '.loki/dashboard/url' "$LOKI" && ok "loki start opener reads the published URL" || bad "opener does not read the published URL"
+# The UI opener is the Control Plane: it opens only the URL that the live instance
+# published in ~/.loki/control/instance.json (never a guessed port).
+sed -n '/^_loki_control_ui() {$/,/^}$/p' "$LOKI" | grep -q 'loki_open_url "\$url"' \
+    && sed -n '/^_loki_control_live_url() {$/,/^}$/p' "$LOKI" | grep -q 'control/instance.json' \
+    && ok "loki UI opener opens the Control Plane's published URL" || bad "opener does not read the published URL"
 
 # --- 3. engine-running entry points isolate the dashboard port ---
 grep -q 'LOKI_DASHBOARD=false' "$ROOT/scripts/first-run-gate.sh" \

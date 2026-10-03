@@ -224,11 +224,24 @@ setup_clone() {
     git -C "$dir" update-ref refs/remotes/origin/main HEAD
 }
 
+# The hook finds the pinned binary under $HOME. Under run-all-tests HOME is a
+# hermetic scratch dir with no pinned install, so cases that need the real
+# scanner would see "not installed" while REAL_GITLEAKS (read via LOKI_REAL_HOME)
+# said it was present. Default the hook's HOME to the real one unless the case
+# passes its own HOME=; the caller's HOME is restored afterwards.
+_with_hook_home() { # prints the extra env arg to append, or nothing
+    local a
+    for a in "$@"; do case "$a" in HOME=*) return 0 ;; esac; done
+    printf '%s\n' "HOME=${LOKI_REAL_HOME:-$HOME}"
+}
+
 # Runs the hook the way git actually invokes it, with an arbitrary stdin line.
 # Extra env vars (KEY=VALUE ...) are exported for the duration of the call, so
 # a case can override HOME without leaking it to the rest of this test.
 run_hook_raw() {
     local dir="$1" stdin_line="$2"; shift 2
+    local _prev_home="$HOME" _dh
+    _dh="$(_with_hook_home "$@")"; [[ -n "$_dh" ]] && set -- "$@" "$_dh"
     cd "$dir" || return 1
     # shellcheck disable=SC2163
     [[ $# -gt 0 ]] && export "$@"
@@ -237,6 +250,7 @@ run_hook_raw() {
               >"$dir/hook.out" 2>&1
     local rc=$?
     for kv in "$@"; do unset "${kv%%=*}"; done
+    export HOME="$_prev_home"
     echo "RC=$rc"
 }
 
@@ -325,6 +339,8 @@ real_push() {
     while [[ $# -gt 0 && "$1" != "--" ]]; do extra_env+=("$1"); shift; done
     [[ "${1:-}" == "--" ]] && shift
     local -a push_args=("$@")
+    local _prev_home="$HOME" _dh
+    _dh="$(_with_hook_home ${extra_env[@]+"${extra_env[@]}"})"; [[ -n "$_dh" ]] && extra_env+=("$_dh")
     cd "$dir" || return 1
     # shellcheck disable=SC2163
     # bash 3.2 (macOS's /bin/bash): "${arr[@]}" on a genuinely empty array is
@@ -335,6 +351,7 @@ real_push() {
         >"$dir/push.out" 2>&1
     local rc=$?
     for kv in ${extra_env[@]+"${extra_env[@]}"}; do unset "${kv%%=*}"; done
+    export HOME="$_prev_home"
     echo "RC=$rc"
 }
 
@@ -582,7 +599,7 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
         printf '%s\n' "$_task_json_secret" > "$B/eval/loki10/tasks/fake-task/task.json"
         git -C "$B" add eval/loki10/tasks/fake-task/task.json >/dev/null 2>&1
         git -C "$B" commit -q -m "force-pushed secret-shaped fixture" --no-verify >/dev/null 2>&1
-        (cd "$B" && PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 git push -q --force origin feature:main) \
+        (cd "$B" && HOME="${LOKI_REAL_HOME:-$HOME}" GIT_CONFIG_GLOBAL=/dev/null PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 git push -q --force origin feature:main) \
             >"$B/push.out" 2>&1
         rc="RC=$?"
         if [[ "$rc" == "RC=0" ]]; then
@@ -1073,7 +1090,7 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     _root_sha="$(g "$D" rev-parse --short=12 HEAD)"
     git remote add origin "$BARE" >/dev/null 2>&1
     rc=0
-    PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 git push origin orph >"$D/push.out" 2>&1 || rc=$?
+    HOME="${LOKI_REAL_HOME:-$HOME}" GIT_CONFIG_GLOBAL=/dev/null PRE_PUSH_NO_CI_CHECK=1 LOKI_RELEASE_MANAGER=1 git push origin orph >"$D/push.out" 2>&1 || rc=$?
     if [[ "$rc" == "0" ]]; then
         ko "a ROOT commit with a secret is refused (B1)" "push succeeded (fail-open); out: $(cat "$D/push.out")"
     elif grep -q "sourcegraph-access-token" "$D/push.out" && grep -q "possible secret" "$D/push.out" \

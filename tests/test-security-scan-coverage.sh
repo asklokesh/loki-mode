@@ -371,48 +371,84 @@ else
   bad "gitleaks findings are non-blocking or the exact baseline is not selected"
 fi
 
-# Override only a disposable copy when mutation-verifying the baseline shape.
-# 53 50 36 17 0: commit 6358e0a6 allowlisted 3 more commit-qualified
-# historical fingerprints (bbe83c7ad70132cfd77635eb019fd68db244ff13:
-# tests/test-eval-archive.sh, rules generic-api-key:35, aws-access-token:75,
-# aws-access-token:88 -- synthetic E-101 fixtures) without updating this
-# expectation, so it was red on main (14 -> 17 historical, 50 -> 53 total)
-# from that commit onward; not related to E-114.
-# 56 56 36 20 0: commit 363c20ea added 3 more commit-qualified historical
-# fingerprints (generic-api-key false positives on the key FILE NAME
-# receipt-ed25519.pem, no key material), 17 -> 20 historical, 53 -> 56 total.
-# 59 59 36 23 0: commit 3ce73a36 added 3 more exact fingerprints for the same
-# false positive (the key FILE NAME receipt-ed25519.pem in tests/conftest.py:48
-# and the rebuilt dist), 20 -> 23 historical, 56 -> 59 total.
-# 60 60 36 24 0: commit d4dc9b8a added 1 more exact fingerprint for the same
-# file-name false positive in the train/14 dist rebuild, 23 -> 24, 59 -> 60.
-# 61 61 36 25 0: commit eb4e2155 (a dist rebuild before E-156 removed the
-# literal at the source), 24 -> 25, 60 -> 61. E-156 ends this churn.
-# 73 73 36 37 0: E-159 added `--diff-merges=first-parent` to the scan, which re-reports
-# already-baselined content under the MERGE commit SHA; 12 exact merge-SHA fingerprints
-# (v10.5.13..v10.5.14 history), 25 -> 37, 61 -> 73. Measured: 12 findings, all merges.
-# 74 74 36 38 0: commit acb4ee58 added 1 exact fingerprint for the synthetic
-# ghp_FAKE token in the D51-B11 fixture tests/workspace/80-comment.sh:7, 37 -> 38, 73 -> 74.
-# 75 75 36 39 0: commit cf5be902 added 1 exact fingerprint for the fake Sentry token in
-# tests/test-issue-providers.sh:294 (commit 00d12afe), 38 -> 39, 74 -> 75.
-_ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
-_ignore_shape="$(python3 - "$_ignore" <<'PY'
-import re, sys
-entries = [line.strip() for line in open(sys.argv[1])
+# The baseline shape is DERIVED from .gitleaksignore itself (FC-18: no pinned
+# counts, so every legitimate new fingerprint no longer turns this red). What is
+# asserted is what a real drift looks like:
+#   - every entry is either a current "path:rule:line" or a commit-qualified
+#     "sha40:path:rule:line" fingerprint (no malformed line)
+#   - no duplicate entry
+#   - every CURRENT entry names a file that exists in this tree and a line
+#     number within that file (a stale entry would silently stop matching)
+# The counts are printed for the log only. Override only a disposable copy when
+# mutation-verifying the baseline shape (LOKI_GITLEAKS_IGNORE).
+_baseline_shape_check() {
+  python3 - "$1" "$2" <<'PY'
+import os, re, sys
+path, root = sys.argv[1], sys.argv[2]
+entries = [line.strip() for line in open(path)
            if line.strip() and not line.lstrip().startswith('#')]
-current = re.compile(r'^[^:]+:[a-z0-9-]+:[1-9][0-9]*$')
+current = re.compile(r'^([^:]+):[a-z0-9-]+:([1-9][0-9]*)$')
 historical = re.compile(r'^[0-9a-f]{40}:[^:]+:[a-z0-9-]+:[1-9][0-9]*$')
-print(len(entries), len(set(entries)),
-      sum(bool(current.fullmatch(e)) for e in entries),
-      sum(bool(historical.fullmatch(e)) for e in entries),
-      sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
+problems = []
+seen = set()
+n_cur = n_hist = 0
+for e in entries:
+    if e in seen:
+        problems.append("duplicate entry: " + e)
+    seen.add(e)
+    m = current.fullmatch(e)
+    if m:
+        n_cur += 1
+        f = os.path.join(root, m.group(1))
+        if not os.path.isfile(f):
+            problems.append("current entry names a missing file: " + e)
+        else:
+            with open(f, errors="replace") as fh:
+                nlines = sum(1 for _ in fh)
+            if nlines < int(m.group(2)):
+                problems.append("current entry line is past end of file (%d lines): %s" % (nlines, e))
+    elif historical.fullmatch(e):
+        n_hist += 1
+    else:
+        problems.append("malformed entry: " + e)
+print("%d entries (%d current, %d commit-qualified historical)" % (len(entries), n_cur, n_hist))
+for p in problems:
+    print("PROBLEM " + p)
+sys.exit(1 if problems else 0)
 PY
-)"
-if [ "$_ignore_shape" = "75 75 36 39 0" ]; then
-  ok "gitleaks baseline contains 36 current and 39 commit-qualified historical fingerprints"
+}
+_ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
+if _ignore_shape="$(_baseline_shape_check "$_ignore" "$REPO_ROOT")"; then
+  ok "gitleaks baseline is well-formed, duplicate-free and every current fingerprint resolves ($_ignore_shape)"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 75 75 36 39 0)"
+  bad "gitleaks baseline shape drifted ($(printf '%s' "$_ignore_shape" | tr '\n' ';'))"
 fi
+
+# Mutation proof: each drift class must be caught on a disposable copy, and the
+# unmodified copy must pass (so a red is the mutation, not the harness).
+_shape_mut="$(mktemp -d "${TMPDIR:-/tmp}/loki-gitleaks-shape.XXXXXX")"
+cp "$REPO_ROOT/.gitleaksignore" "$_shape_mut/base"
+_shape_first_current="$(grep -vE '^[[:space:]]*(#|$)' "$_shape_mut/base" | grep -E '^[^:]+:[a-z0-9-]+:[1-9][0-9]*$' | head -1)"
+_shape_expect() { # name, file, must_fail(1|0)
+  local rc=0
+  _baseline_shape_check "$2" "$REPO_ROOT" >/dev/null 2>&1 || rc=$?
+  if [ "$3" = 1 ] && [ "$rc" -ne 0 ]; then ok "baseline shape check catches: $1"
+  elif [ "$3" = 0 ] && [ "$rc" -eq 0 ]; then ok "baseline shape check accepts: $1"
+  else bad "baseline shape check wrong verdict for: $1 (rc=$rc)"; fi
+}
+_shape_expect "the unmodified baseline (control)" "$_shape_mut/base" 0
+cp "$_shape_mut/base" "$_shape_mut/dup"; printf '%s\n' "$_shape_first_current" >>"$_shape_mut/dup"
+_shape_expect "a duplicated entry" "$_shape_mut/dup" 1
+cp "$_shape_mut/base" "$_shape_mut/missing"; printf '%s\n' "no/such/file.txt:generic-api-key:3" >>"$_shape_mut/missing"
+_shape_expect "a current entry whose file does not exist" "$_shape_mut/missing" 1
+cp "$_shape_mut/base" "$_shape_mut/past"; printf '%s\n' "VERSION:generic-api-key:99999" >>"$_shape_mut/past"
+_shape_expect "a current entry past the end of its file" "$_shape_mut/past" 1
+cp "$_shape_mut/base" "$_shape_mut/malformed"; printf '%s\n' "not-a-fingerprint" >>"$_shape_mut/malformed"
+_shape_expect "a malformed line" "$_shape_mut/malformed" 1
+cp "$_shape_mut/base" "$_shape_mut/added"; printf '%s\n' "VERSION:generic-api-key:1" >>"$_shape_mut/added"
+_shape_expect "a legitimately added fingerprint (no pinned count to trip)" "$_shape_mut/added" 0
+rm -f "$_shape_mut/base" "$_shape_mut/dup" "$_shape_mut/missing" "$_shape_mut/past" "$_shape_mut/malformed" "$_shape_mut/added"
+rmdir "$_shape_mut"
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned
 # v8.30.0 binary as the workflow. Ordinary repository tests retain their static

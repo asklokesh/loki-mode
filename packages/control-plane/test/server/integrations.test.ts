@@ -15,7 +15,8 @@ beforeEach(() => {
   for (const k of KEYS) { saved[k] = process.env[k]; if (k !== "PATH") delete process.env[k]; }
   dir = mkdtempSync(join(tmpdir(), "cpe20-repo-"));
   bins = mkdtempSync(join(tmpdir(), "cpe20-bin-"));
-  process.env.PATH = `${bins}:/usr/bin:/bin`;
+  // Hermetic PATH: a runner image shipping a system gh must not leak into the gh-absent cases.
+  process.env.PATH = bins;
 });
 afterEach(() => {
   for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
