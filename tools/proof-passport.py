@@ -129,7 +129,7 @@ def render_markdown(passport):
         for item in passport["limitations"])
     return (
         "## Autonomi Proof Passport\n\n"
-        f"**{marker}: {verdict}** — {summary}\n\n"
+        f"**{marker}: {verdict}** - {summary}\n\n"
         "| Evidence | Value |\n"
         "| --- | --- |\n"
         f"| Outcome contract | `{safe(passport['contract']['id'])}` |\n"

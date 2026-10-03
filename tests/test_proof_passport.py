@@ -113,6 +113,8 @@ class ProofPassportTests(unittest.TestCase):
         self.assertIn("| Passport signature | `unsigned` |", summary)
         self.assertNotIn(str(self.path), summary)
         self.assertNotIn(str(self.path.resolve()), summary)
+        self.assertNotIn("\u2014", summary)
+        self.assertNotIn("\u2013", summary)
 
     def test_cli_writes_markdown_summary(self):
         output = self.path / "passport.json"

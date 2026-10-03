@@ -213,10 +213,10 @@ verbatim:
 MCP server, https://docs.replit.com/platforms/mcp-server (accessed 2026-08-08).
 This is the programmatic trigger. Documented tools:
 
-- `create_app_from_prompt` — "Create a new Replit App from a natural language
+- `create_app_from_prompt` - "Create a new Replit App from a natural language
   description. Replit Agent immediately starts building the app."
-- `update_app_using_prompt` — "Make changes to an existing Replit App."
-- `ask_question` — "Ask Replit Agent about the current app."
+- `update_app_using_prompt` - "Make changes to an existing Replit App."
+- `ask_question` - "Ask Replit Agent about the current app."
 
 An Enterprise Admin API exists
 (https://docs.replit.com/teams/admin-api) but is scoped to account usage,

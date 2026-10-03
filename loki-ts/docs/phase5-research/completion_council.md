@@ -9,29 +9,29 @@
 
 | Function | Line Range | Purpose |
 |----------|-----------|---------|
-| `council_augment_from_managed_memory()` | 84–105 | Retrieve prior completion verdicts from managed memory store for context augmentation |
-| `council_init()` | 111–145 | Initialize council state directory, JSON state file, and tracking variables |
-| `council_track_iteration()` | 151–240 | Track code convergence (git diff hash), agent done signals, and populate convergence.log |
-| `council_circuit_breaker_triggered()` | 246–264 | Detect stagnation (no changes >= limit) or repeated done signals (>= 2) |
-| `council_vote()` | 270–477 | Orchestrate voting of all COUNCIL_SIZE members (v1 path); invoke severity budget; anti-sycophancy check |
-| `council_gather_evidence()` | 483–622 | Compile markdown evidence file: PRD, git status, test results, queue status, build state, checklist verification |
-| `council_reverify_checklist()` | 629–634 | Re-run checklist verification before evaluation (calls checklist_verify if available) |
-| `council_checklist_gate()` | 642–732 | Hard gate: block completion if critical checklist items failing (reads verification-results.json, waivers.json) |
-| `council_member_review()` | 738–860 | Invoke AI provider (claude -p, codex, gemini, cline, aider) with role-specific prompt; strip convergence data if LOKI_BLIND_VALIDATION=true |
-| `council_devils_advocate()` | 866–944 | Anti-sycophancy voter: invoked when unanimous APPROVE detected; intentionally finds reasons to reject |
-| `council_heuristic_review()` | 950–1013 | Fallback evaluation when no AI provider available; checks test results, PRD, TODO density |
-| `council_evaluate_member()` | 1028–1124 | Core heuristic evaluation: check test failures, code convergence, error logs, role-specific checks; returns COMPLETE or CONTINUE |
-| `council_aggregate_votes()` | 1137–1221 | Poll all COUNCIL_SIZE members via council_evaluate_member(); compute 2/3 ceiling threshold; write round-N.json |
-| `council_devils_advocate_review()` | 1236–1327 | Skeptical re-evaluation when unanimous COMPLETE: check test logs, failed queue, TODO density, uncommitted changes, error events |
-| `council_evaluate()` | 1340–1385 | Unified pipeline: reverify checklist → hard gate check → aggregate votes → if unanimous, run devil's advocate → return verdict |
-| `council_managed_should_stop()` | 1405–1599 | v7.0.0 Phase 4: invoke providers.managed.run_completion_council multiagent session; project AgentVerdicts to legacy verdict files |
-| `council_should_stop()` | 1605–1708 | Main entry point: check enabled/min iterations → circuit breaker → scheduling → council_evaluate → write COMPLETED marker → write report |
-| `council_write_report()` | 1714–1752 | Write final markdown report to council/report.md with convergence data, config, vote history |
-| `council_get_dashboard_state()` | 1758–1771 | Return JSON fragment for dashboard-state.json exposing council enabled/size/threshold/signals |
+| `council_augment_from_managed_memory()` | 84-105 | Retrieve prior completion verdicts from managed memory store for context augmentation |
+| `council_init()` | 111-145 | Initialize council state directory, JSON state file, and tracking variables |
+| `council_track_iteration()` | 151-240 | Track code convergence (git diff hash), agent done signals, and populate convergence.log |
+| `council_circuit_breaker_triggered()` | 246-264 | Detect stagnation (no changes >= limit) or repeated done signals (>= 2) |
+| `council_vote()` | 270-477 | Orchestrate voting of all COUNCIL_SIZE members (v1 path); invoke severity budget; anti-sycophancy check |
+| `council_gather_evidence()` | 483-622 | Compile markdown evidence file: PRD, git status, test results, queue status, build state, checklist verification |
+| `council_reverify_checklist()` | 629-634 | Re-run checklist verification before evaluation (calls checklist_verify if available) |
+| `council_checklist_gate()` | 642-732 | Hard gate: block completion if critical checklist items failing (reads verification-results.json, waivers.json) |
+| `council_member_review()` | 738-860 | Invoke AI provider (claude -p, codex, gemini, cline, aider) with role-specific prompt; strip convergence data if LOKI_BLIND_VALIDATION=true |
+| `council_devils_advocate()` | 866-944 | Anti-sycophancy voter: invoked when unanimous APPROVE detected; intentionally finds reasons to reject |
+| `council_heuristic_review()` | 950-1013 | Fallback evaluation when no AI provider available; checks test results, PRD, TODO density |
+| `council_evaluate_member()` | 1028-1124 | Core heuristic evaluation: check test failures, code convergence, error logs, role-specific checks; returns COMPLETE or CONTINUE |
+| `council_aggregate_votes()` | 1137-1221 | Poll all COUNCIL_SIZE members via council_evaluate_member(); compute 2/3 ceiling threshold; write round-N.json |
+| `council_devils_advocate_review()` | 1236-1327 | Skeptical re-evaluation when unanimous COMPLETE: check test logs, failed queue, TODO density, uncommitted changes, error events |
+| `council_evaluate()` | 1340-1385 | Unified pipeline: reverify checklist → hard gate check → aggregate votes → if unanimous, run devil's advocate → return verdict |
+| `council_managed_should_stop()` | 1405-1599 | v7.0.0 Phase 4: invoke providers.managed.run_completion_council multiagent session; project AgentVerdicts to legacy verdict files |
+| `council_should_stop()` | 1605-1708 | Main entry point: check enabled/min iterations → circuit breaker → scheduling → council_evaluate → write COMPLETED marker → write report |
+| `council_write_report()` | 1714-1752 | Write final markdown report to council/report.md with convergence data, config, vote history |
+| `council_get_dashboard_state()` | 1758-1771 | Return JSON fragment for dashboard-state.json exposing council enabled/size/threshold/signals |
 
 ## 2. The Completion-Decision Pipeline
 
-**Order of function calls from `council_should_stop()` (lines 1605–1708):**
+**Order of function calls from `council_should_stop()` (lines 1605-1708):**
 
 ```
 council_should_stop() [line 1605]
@@ -67,7 +67,7 @@ council_should_stop() [line 1605]
 # Model: PROVIDER_MODEL_FAST (default: haiku)
 # Call: echo "$prompt" | claude --model "$council_model" -p 2>/dev/null
 ```
-**Prompt Template (lines 774–775):**
+**Prompt Template (lines 774-775):**
 ```
 "You are the REQUIREMENTS VERIFIER. Check if every requirement from the PRD has been 
 implemented. Look for missing features, incomplete implementations, and unmet acceptance 
@@ -84,7 +84,7 @@ criteria. Be thorough - check code structure, not just claims."
 # Model: PROVIDER_MODEL_FAST (default: haiku)
 # Call: echo "$prompt" | claude --model "$council_model" -p 2>/dev/null
 ```
-**Prompt Template (lines 777–778):**
+**Prompt Template (lines 777-778):**
 ```
 "You are the TEST AUDITOR. Verify that adequate tests exist and pass. Check test 
 coverage, edge cases, error handling. Look at test results and build output. A project 
@@ -103,7 +103,7 @@ without passing tests is NOT complete."
 # Model: PROVIDER_MODEL_FAST (default: haiku)
 # Call: echo "$prompt" | claude --model "$council_model" -p 2>/dev/null
 ```
-**Prompt Template (lines 885–904):**
+**Prompt Template (lines 885-904):**
 ```
 "ANTI-SYCOPHANCY CHECK: All council members unanimously APPROVED this project.
 Your job is to be the CONTRARIAN. Find ANY reason this should NOT be approved.
@@ -121,13 +121,13 @@ inadequate docs, untested edge cases. Output VOTE:APPROVE or VOTE:REJECT"
 
 ## 4. Severity Budget: Computation and Thresholds
 
-**Where computed:** `council_vote()`, lines 332–383 (per-member severity filtering).
+**Where computed:** `council_vote()`, lines 332-383 (per-member severity filtering).
 
 **Thresholds and Budget Variables:**
 - `COUNCIL_SEVERITY_THRESHOLD` (env var): "critical", "high", "medium", or "low" (line 354)
-- `COUNCIL_ERROR_BUDGET` (env var, float 0.0–1.0): ratio of non-blocking issues tolerated (line 366)
+- `COUNCIL_ERROR_BUDGET` (env var, float 0.0-1.0): ratio of non-blocking issues tolerated (line 366)
 
-**Computation Logic (lines 326–383):**
+**Computation Logic (lines 326-383):**
 ```bash
 if [ "$vote_result" = "REJECT" ] && [ "$COUNCIL_SEVERITY_THRESHOLD" != "low" ]; then
   # For each issue line in member_issues:
@@ -155,7 +155,7 @@ if [ "$vote_result" = "REJECT" ] && [ "$COUNCIL_SEVERITY_THRESHOLD" != "low" ]; 
 
 ## 5. Unanimous + Devil's Advocate Override Logic
 
-**Source:** `council_vote()` lines 406–422 (v1 anti-sycophancy) and `council_evaluate()` lines 1369–1377 (v7 managed).
+**Source:** `council_vote()` lines 406-422 (v1 anti-sycophancy) and `council_evaluate()` lines 1369-1377 (v7 managed).
 
 **Pseudo-code:**
 
@@ -240,15 +240,15 @@ FUNCTION council_evaluate():
 | `.loki/queue/failed.json` | `council_devils_advocate_review()` | 1263 | Failed task count (for skeptical re-evaluation) |
 | `.loki/verification/playwright-results.json` | `council_gather_evidence()` | 597 | Playwright smoke test results (passed, checks, errors) |
 | `.loki/quality/test-results.json` | `council_managed_should_stop()` | 1428 | Test summary for managed council context |
-| `package.json` / `requirements.txt` / `Cargo.toml` / `go.mod` | `council_gather_evidence()` | 563–577 | Project type detection (Node, Python, Rust, Go) |
-| `git status`, `git diff`, `git log` | Multiple | 507–514, 165–173 | Git repository state, diffs, history |
+| `package.json` / `requirements.txt` / `Cargo.toml` / `go.mod` | `council_gather_evidence()` | 563-577 | Project type detection (Node, Python, Rust, Go) |
+| `git status`, `git diff`, `git log` | Multiple | 507-514, 165-173 | Git repository state, diffs, history |
 | `.loki/events.jsonl` | `council_devils_advocate_review()` | 1289 | Recent error events (tail -50, grep error count) |
 
 ## 8. Background Jobs and Parallel Dispatch
 
 **Background jobs spawned with `&`:**
 
-1. **Managed memory shadow-write (council_should_stop, lines 1673–1680):**
+1. **Managed memory shadow-write (council_should_stop, lines 1673-1680):**
    ```bash
    (
      cd "${PROJECT_DIR:-.}" && \
@@ -272,14 +272,14 @@ FUNCTION council_evaluate():
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ PREPARING (lines 1606–1613)                                  │
+│ PREPARING (lines 1606-1613)                                  │
 │ ├─ Check: COUNCIL_ENABLED == true                            │
 │ ├─ Check: ITERATION_COUNT >= COUNCIL_MIN_ITERATIONS          │
 │ └─ State: If either check fails → return 1 (CONTINUE)        │
 └──────────────────────────────────────────────────────────────┘
                            ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ DISPATCHING (lines 1621–1648)                                │
+│ DISPATCHING (lines 1621-1648)                                │
 │ ├─ Call: council_managed_should_stop() if flag enabled       │
 │ │  └─ Fallback silently on ManagedUnavailable                │
 │ ├─ Call: council_augment_from_managed_memory()               │
@@ -300,14 +300,14 @@ FUNCTION council_evaluate():
 └──────────────────────────────────────────────────────────────┘
                            ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ AGGREGATING (lines 1358–1367 in council_evaluate)            │
+│ AGGREGATING (lines 1358-1367 in council_evaluate)            │
 │ ├─ Extract: complete_count from round-N.json                 │
 │ ├─ Threshold: ceiling(COUNCIL_SIZE * 2 / 3)                 │
 │ └─ Verdict: COMPLETE if complete_count >= threshold else ... │
 └──────────────────────────────────────────────────────────────┘
                            ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ DECIDING (lines 1369–1384 in council_evaluate)               │
+│ DECIDING (lines 1369-1384 in council_evaluate)               │
 │ ├─ If verdict != COMPLETE:                                   │
 │ │  └─ Return 1 (CONTINUE) → loop again                       │
 │ ├─ If verdict == COMPLETE AND unanimous:                     │
@@ -319,7 +319,7 @@ FUNCTION council_evaluate():
 └──────────────────────────────────────────────────────────────┘
                            ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ WRITING (lines 1652–1681)                                    │
+│ WRITING (lines 1652-1681)                                    │
 │ ├─ Write: .loki/COMPLETED marker                             │
 │ ├─ Call: council_write_report()                              │
 │ │  └─ Writes: .loki/council/report.md                        │
@@ -329,7 +329,7 @@ FUNCTION council_evaluate():
                            ↓
                     Return 0 (STOP)
 
-      OR (Safety valve, lines 1687–1707)
+      OR (Safety valve, lines 1687-1707)
 
                     Return 0 (FORCE STOP) if:
                     - Circuit breaker triggered AND
@@ -338,17 +338,17 @@ FUNCTION council_evaluate():
 ```
 
 **State Variables Updated Throughout:**
-- Line 178–182: `COUNCIL_CONSECUTIVE_NO_CHANGE` (convergence tracking)
-- Line 195–200: `COUNCIL_DONE_SIGNALS` (agent completion claims)
-- Line 232–238: `state.json` (persistent council state)
+- Line 178-182: `COUNCIL_CONSECUTIVE_NO_CHANGE` (convergence tracking)
+- Line 195-200: `COUNCIL_DONE_SIGNALS` (agent completion claims)
+- Line 232-238: `state.json` (persistent council state)
 
 ---
 
-**Blind Validation:** If `LOKI_BLIND_VALIDATION=true` (default), evidence passed to voters strips convergence/iteration context (lines 763–767) to prevent bias.
+**Blind Validation:** If `LOKI_BLIND_VALIDATION=true` (default), evidence passed to voters strips convergence/iteration context (lines 763-767) to prevent bias.
 
-**Hard Gate:** Blocks completion regardless of votes if critical checklist items fail (lines 1350–1354), unless waived (lines 668–674).
+**Hard Gate:** Blocks completion regardless of votes if critical checklist items fail (lines 1350-1354), unless waived (lines 668-674).
 
-**Safety Valves:** Two circuit breakers prevent infinite loops (lines 1691–1705):
+**Safety Valves:** Two circuit breakers prevent infinite loops (lines 1691-1705):
 1. If stagnation exceeds 2x limit → force stop
 2. If done signals exceed limit → force stop
 

@@ -81,9 +81,9 @@ User constraint: "people use npm, I want to keep it the same way."
 | **Bash** (today) | `package.json` `bin` field points to shell script | Trivial; current state |
 | **Bun runtime** | `npm install -g loki-mode` ships TS, requires Bun installed via `npm install -g bun` (peer) OR Bun standalone in postinstall | Medium; peer dependency convention |
 | **Bun compiled binary** | `bun build --compile` → 60 MB binary per platform; npm postinstall downloads correct binary (esbuild model) | Medium; per-platform binaries |
-| **Go binary** | Same model as Bun compiled — npm postinstall downloads platform binary (esbuild, biome, vite-rust, swc all use this) | Medium; mature pattern |
-| **Python** | npm postinstall would shell out to `pip install` or bundle Python — fragile, two package managers | High; do not recommend |
-| **Node.js** | Native — no postinstall needed | Trivial; but Node is 10x slower than bash on cold start |
+| **Go binary** | Same model as Bun compiled - npm postinstall downloads platform binary (esbuild, biome, vite-rust, swc all use this) | Medium; mature pattern |
+| **Python** | npm postinstall would shell out to `pip install` or bundle Python - fragile, two package managers | High; do not recommend |
+| **Node.js** | Native - no postinstall needed | Trivial; but Node is 10x slower than bash on cold start |
 
 All three viable options (Bun runtime, Bun compiled, Go binary) keep the `npm install -g loki-mode` UX. Users see no change.
 
@@ -104,17 +104,17 @@ All three viable options (Bun runtime, Bun compiled, Go binary) keep the `npm in
 - Rewriting 33,000+ lines of bash to idiomatic Go is a 3-6 month effort.
 - Goroutines/channels are different mental model than bash + Python orchestration.
 
-**Distribution via npm:** Same pattern as esbuild — npm postinstall downloads the right platform binary. Mature, ~5 MB compressed per arch.
+**Distribution via npm:** Same pattern as esbuild - npm postinstall downloads the right platform binary. Mature, ~5 MB compressed per arch.
 
 ### Option B: Bun runtime + TypeScript
 
 **Pro:**
 - **Anthropic owns Bun.** Strategic alignment with the company that owns the model we depend on.
-- Native shell built in (`Bun.$\`echo hello\``) — minimal friction porting bash idioms.
-- Bun's `npm install` is 20-40x faster than npm — every CI run faster.
+- Native shell built in (`Bun.$\`echo hello\``) - minimal friction porting bash idioms.
+- Bun's `npm install` is 20-40x faster than npm - every CI run faster.
 - TypeScript: types catch bugs bash can't.
 - Anthropic-funded development means Bun improvements specifically target AI agent workloads.
-- 98% Node.js compatibility — npm packages work directly.
+- 98% Node.js compatibility - npm packages work directly.
 
 **Con:**
 - **1.7x SLOWER than bash on trivial cold-start** (7.6 ms vs 4.5 ms). The user explicitly said "no speed compromise". This is a genuine compromise, even if 3 ms is humanly invisible.
@@ -127,20 +127,20 @@ All three viable options (Bun runtime, Bun compiled, Go binary) keep the `npm in
 
 **Pro:**
 - Keep tiny scripts in bash (where it wins by 3 ms): `loki version`, `loki status`, anything <100 LOC.
-- Migrate the 11k-line orchestrator (`run.sh`) and 22k-line CLI (`autonomy/loki`) to Bun TypeScript — where compiled+typed wins.
-- Keep `memory/`, `providers/`, `mcp/` in Python — they're already mature, no reason to rewrite.
+- Migrate the 11k-line orchestrator (`run.sh`) and 22k-line CLI (`autonomy/loki`) to Bun TypeScript - where compiled+typed wins.
+- Keep `memory/`, `providers/`, `mcp/` in Python - they're already mature, no reason to rewrite.
 - Anthropic alignment via Bun for the parts that matter.
 - No speed regression for trivial commands; large gains for orchestrator.
 
 **Con:**
-- Three runtimes in the codebase (bash + Bun + Python) — operational complexity.
+- Three runtimes in the codebase (bash + Bun + Python) - operational complexity.
 - Cross-runtime debugging harder than monorepo.
 
 **Distribution:** Bun shipped via npm postinstall as compiled binary; bash remains as-is; Python unchanged.
 
 ## Recommendation
 
-**Option B (Bun runtime + TypeScript) — full migration, not hybrid.**
+**Option B (Bun runtime + TypeScript) - full migration, not hybrid.**
 
 Reasons:
 
@@ -148,7 +148,7 @@ Reasons:
 2. **Anthropic strategic alignment.** Anthropic owns Bun. Loki uses Claude. Aligning runtime and model owner reduces dependency-versioning friction over time.
 3. **TypeScript pays the maintainability dividend** that 33k lines of bash will never deliver. Type checking catches whole classes of bugs (the kind we hit in v6.81-v7.2 cycles).
 4. **Hybrid is now harder to justify.** When bash loses by 8.6x on the actual workload, keeping it for 3 ms theoretical wins on hello-world is bad engineering.
-5. **Go would still be 2-4x faster than Bun** in absolute cold-start, but: zero existing Go in the codebase, no Anthropic alignment, larger rewrite cost, no JS ecosystem reuse. Unless Loki specifically targets the sub-millisecond CLI category (which it doesn't — every command runs in a multi-second/minute autonomous loop), the absolute speed delta doesn't justify the strategic cost.
+5. **Go would still be 2-4x faster than Bun** in absolute cold-start, but: zero existing Go in the codebase, no Anthropic alignment, larger rewrite cost, no JS ecosystem reuse. Unless Loki specifically targets the sub-millisecond CLI category (which it doesn't - every command runs in a multi-second/minute autonomous loop), the absolute speed delta doesn't justify the strategic cost.
 
 **If user explicitly wants the absolute fastest:** Go (Option A) is 2.5x faster than Bun. But for orchestrator-heavy work where most time is spent waiting on Claude API calls, the difference is invisible.
 
@@ -214,7 +214,7 @@ Reasons:
 2. Port `cmd_version` to `loki-ts/src/commands/version.ts` (proof of concept)
 3. Add `bun-test.yml` GitHub workflow alongside existing `test.yml`
 4. Set acceptance criteria: every Phase 2+ command must benchmark within 2x of bash cold-start AND be type-checked via `bun typecheck`
-5. Ship Phase 1 as v8.0.0-alpha.1 (pre-release, opt-in) — does not affect default users
+5. Ship Phase 1 as v8.0.0-alpha.1 (pre-release, opt-in) - does not affect default users
 
 ---
 

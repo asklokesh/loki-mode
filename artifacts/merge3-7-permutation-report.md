@@ -63,7 +63,7 @@ Tested against the live `loki` binary installed via `bun install -g loki-mode@7.
 - Real-browser iframe interaction across sections (headless Chrome navigates direct URLs but not the JS click that lazy-loads the iframe). The iframe code path is verified by the screenshot of the lab section in the dashboard, but the click-to-load JS path remains unverified by automated test. Manual test recommended pre-Merge-5.
 - WebSocket upgrade through the dashboard mount: Starlette's Mount documentation asserts WS scope preservation but no live `wscat` or browser WS handshake was executed against `/lab/ws`.
 - Cross-mount session sharing (Merge-5 scope): `start_session()` exists in both `dashboard/control.py:367` and `web-app/server.py:2606`. Both spawn the same `run.sh`. Concurrent calls could double-spawn. Merge-5 unifies via the documented dedup map.
-- `loki nonexistent-cmd` exits 0 instead of non-zero — pre-existing bug, not a Merge regression. Filed as future follow-up.
+- `loki nonexistent-cmd` exits 0 instead of non-zero - pre-existing bug, not a Merge regression. Filed as future follow-up.
 - Mobile / tablet viewport screenshots (only 1600x1000 captured).
 
 ## Cleanup verified

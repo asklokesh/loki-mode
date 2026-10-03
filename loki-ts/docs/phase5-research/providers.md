@@ -89,7 +89,7 @@ Upon successful load, each provider defines these PROVIDER_* variables (validate
 - **Haiku mode**: Disabled by default; enable with `LOKI_ALLOW_HAIKU=true`
 - **Resolution order**: `LOKI_CLAUDE_MODEL_* > LOKI_MODEL_* > default`
 
-**Degradation Status**: `PROVIDER_DEGRADED=false` (line 99) — Full tier 1 support
+**Degradation Status**: `PROVIDER_DEGRADED=false` (line 99) - Full tier 1 support
 
 **Capabilities**:
 - Subagents: true
@@ -129,7 +129,7 @@ Upon successful load, each provider defines these PROVIDER_* variables (validate
 - No tier-specific reasoning effort available
 - maxTier ignored (line 125)
 
-**Degradation Status**: `PROVIDER_DEGRADED=false` (line 91) — Tier 2 (near-full)
+**Degradation Status**: `PROVIDER_DEGRADED=false` (line 91) - Tier 2 (near-full)
 
 **Capabilities**:
 - Subagents: true
@@ -170,7 +170,7 @@ Upon successful load, each provider defines these PROVIDER_* variables (validate
 - Model validation filters generic LOKI_MODEL_* for gpt-/o1-/o3- prefixes (line 55-70)
 - All tiers use same model, effort differentiates (line 73-75)
 
-**Degradation Status**: `PROVIDER_DEGRADED=true` (line 100) — Tier 3
+**Degradation Status**: `PROVIDER_DEGRADED=true` (line 100) - Tier 3
 
 **Degradation Reasons** (lines 101-104):
 - No Task tool subagent support (sequential only)
@@ -217,7 +217,7 @@ Upon successful load, each provider defines these PROVIDER_* variables (validate
 - Model validation (line 61-72) filters for gemini- or models/gemini- prefixes
 - Thinking levels control reasoning depth (lines 91-93)
 
-**Degradation Status**: `PROVIDER_DEGRADED=true` (line 115) — Tier 3
+**Degradation Status**: `PROVIDER_DEGRADED=true` (line 115) - Tier 3
 
 **Degradation Reasons** (lines 116-121):
 - No Task tool subagent support (sequential only)
@@ -266,7 +266,7 @@ Upon successful load, each provider defines these PROVIDER_* variables (validate
 - No tier-specific differentiation
 - maxTier ignored
 
-**Degradation Status**: `PROVIDER_DEGRADED=true` (line 89) — Tier 3
+**Degradation Status**: `PROVIDER_DEGRADED=true` (line 89) - Tier 3
 
 **Degradation Reasons** (lines 90-94):
 - No subagent support (sequential only)
@@ -294,13 +294,13 @@ Upon successful load, each provider defines these PROVIDER_* variables (validate
 ### Sourcing Locations
 
 **autonomy/run.sh**:
-- Line 7577: `source "$provider_dir/$provider.sh"` — Failover provider switch (load new config mid-run)
-- Line 7639: `source "$provider_dir/$primary.sh"` — Recovery to primary provider
+- Line 7577: `source "$provider_dir/$provider.sh"` - Failover provider switch (load new config mid-run)
+- Line 7639: `source "$provider_dir/$primary.sh"` - Recovery to primary provider
 
 **autonomy/loki** (CLI):
-- Line 2863-2939: `bash -c "source '$provider_file'; echo \$PROVIDER_*"` — Query model/effort/thinking params
-- Line 4595: `source "$issue_providers_script"` — Issue-specific provider config
-- Line 10799: `source "$script_dir/../providers/loader.sh"` — Health check initialization
+- Line 2863-2939: `bash -c "source '$provider_file'; echo \$PROVIDER_*"` - Query model/effort/thinking params
+- Line 4595: `source "$issue_providers_script"` - Issue-specific provider config
+- Line 10799: `source "$script_dir/../providers/loader.sh"` - Health check initialization
 
 **Pattern Summary**:
 1. Scripts source **providers/loader.sh** for validation utilities
@@ -308,7 +308,7 @@ Upon successful load, each provider defines these PROVIDER_* variables (validate
    - Failover requires provider switch (line 7577)
    - Health recovery to primary (line 7639)
    - CLI needs to query provider metadata (line 2863)
-3. **No direct bash invocation** in loop—provider_invoke() functions called via shell metacalls
+3. **No direct bash invocation** in loop-provider_invoke() functions called via shell metacalls
 
 ### Typical Invocation Flow
 

@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Bun route's `.loki/PAUSED.md` no longer says "Press Enter in terminal" when stdin is not a TTY; it now uses the bash no-TTY wording "(no TTY: keypress resume unavailable)" (issue #212).
 - `loki memory index rebuild` now calls MemoryEngine.rebuild_index, prints the real count of indexed memories, and exits nonzero with the error on failure instead of emptying the index and printing "Index rebuilt" (#204).
 - The completion council now counts only real TODO/FIXME/HACK/XXX marker words in project source, skipping node_modules, .git, .loki, dist, build and vendor, so dependency content and identifiers like XXXLarge no longer trigger a false block while real project TODOs still block.
+- Removed em and en dashes from the Proof Passport Markdown summary and six tracked docs (PO4-DASH-SWEEP); a test now pins the passport output as dash-free.
 - MCP loki run now returns the exit code and log tail when loki exits before a run starts.
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 ### Fixed

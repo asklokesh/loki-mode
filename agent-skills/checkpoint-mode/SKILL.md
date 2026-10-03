@@ -19,7 +19,7 @@ Implements **selective autonomy** - shorter bursts of autonomous work with feedb
 ## Philosophy
 
 > "More than 90% of code should be written by agents, but iteratively design systems with shorter bursts of autonomy with feedback loops."
-> — Tim Dettmers, 2026
+> - Tim Dettmers, 2026
 
 **Problem with Perpetual Autonomy:**
 - Can waste resources on wrong approach
