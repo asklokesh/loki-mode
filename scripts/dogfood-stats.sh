@@ -3,7 +3,10 @@
 # Loki Mode - Dogfooding Statistics
 # Calculates what percentage of loki-mode code was written by loki-mode itself
 #
-# Usage: ./scripts/dogfood-stats.sh [--json]
+# Usage: ./scripts/dogfood-stats.sh [--json] [-h|--help]
+#
+# The autonomous figure is a keyword match over commit subjects, not a
+# measurement of who wrote the code.
 #===============================================================================
 
 set -euo pipefail
@@ -15,10 +18,28 @@ GREEN='\033[0;32m'
 DIM='\033[2m'
 NC='\033[0m'
 
+usage() {
+    cat << 'USAGEEOF'
+Usage: dogfood-stats.sh [--json] [-h|--help]
+
+Reports the share of commits and changed lines whose subject matches a fixed
+keyword list. This is a keyword match over commit subjects, not a measurement
+of authorship.
+
+Options:
+  --json      Emit JSON instead of the text report
+  -h, --help  Show this help and exit
+USAGEEOF
+}
+
 JSON_MODE=false
-if [[ "${1:-}" == "--json" ]]; then
-    JSON_MODE=true
-fi
+for arg in "$@"; do
+    case "$arg" in
+        --json) JSON_MODE=true ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Error: unknown option: $arg" >&2; usage >&2; exit 2 ;;
+    esac
+done
 
 # Find repo root
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
@@ -97,6 +118,7 @@ if [ "$JSON_MODE" = true ]; then
     "total": $total_lines_removed,
     "autonomous": $auto_lines_removed
   },
+  "method": "commit-subject keyword match",
   "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
 JSONEOF
@@ -105,18 +127,18 @@ else
     echo ""
     echo -e "${CYAN}Commits${NC}"
     echo -e "  Total commits:      $total_commits"
-    echo -e "  Autonomous commits: $auto_commits"
-    echo -e "  ${GREEN}Autonomous:         ${commit_pct}%${NC}"
+    echo -e "  Keyword-matched commits: $auto_commits"
+    echo -e "  ${GREEN}Autonomous (keyword-matched): ${commit_pct}%${NC}"
     echo ""
     echo -e "${CYAN}Lines Changed${NC}"
     echo -e "  Total:              $total_lines"
-    echo -e "  Autonomous:         $auto_lines"
-    echo -e "  ${GREEN}Autonomous:         ${lines_pct}%${NC}"
+    echo -e "  Keyword-matched:    $auto_lines"
+    echo -e "  ${GREEN}Autonomous (keyword-matched): ${lines_pct}%${NC}"
     echo ""
     echo -e "${CYAN}Breakdown${NC}"
     echo -e "  Lines added (auto): $auto_lines_added / $total_lines_added"
     echo -e "  Lines removed (auto): $auto_lines_removed / $total_lines_removed"
     echo ""
-    echo -e "${DIM}Note: 'Autonomous' includes commits from loki-mode sessions,${NC}"
-    echo -e "${DIM}multi-agent parallel runs, council reviews, and automated fixes.${NC}"
+    echo -e "${DIM}Note: this is a keyword match over commit subjects (release:, autonomous,${NC}"
+    echo -e "${DIM}multi-agent, council review, audit fix, ...), not a measurement of authorship.${NC}"
 fi

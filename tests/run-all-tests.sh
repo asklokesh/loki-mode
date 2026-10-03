@@ -1668,6 +1668,7 @@ run_test "loki hub install (manifest fetch and verify)" "timeout -k 10 120 bash 
 run_test "loki start repo directory routes as repository target (PO4)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-start-repo-directory.sh"
 run_test "loki wiki command (build, ask, grounded citation)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-wiki-command.sh"
 run_test "issue-to-PR flow (--prepare-pr, issue-mode)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-issue-to-pr.sh"
+run_test "dogfood-stats honest labeling and flags (PO5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-dogfood-stats.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary
