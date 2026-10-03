@@ -1,6 +1,6 @@
 // Lean shell (CPE-02): left sidebar (brand, New run, grouped sessions, Settings) plus one router outlet.
 // Everything visual is a --cp-* token or a CPE-01 primitive. Pages come from pages/registry.ts.
-import { Menu, Moon, Plus, Settings as Cog, Sun } from "lucide-react";
+import { Menu, Moon, Settings as Cog, Sun } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { listRuns, watchRuns, type RunRow } from "../api";
 import { Button, Drawer, EmptyState, GroupHead, NavItem, Spinner, StatusDot, VerdictBadge, VERDICT, effectiveVerdict, type DotState } from "../design/primitives";
@@ -96,9 +96,6 @@ function SidebarBody({ hash, onNavigate }: { hash: string; onNavigate?: () => vo
         <Mascot active={Boolean(runs?.some((r) => r.status === "running"))} />
         <span style={{ fontFamily: t("font-serif"), fontSize: t("text-2xl") }}>Loki Mode</span>
       </a>
-      <div style={{ padding: "0 8px 12px" }}>
-        <Button size="md" data-testid="new-run" onClick={() => { location.hash = "#/new"; onNavigate?.(); }} style={{ width: "100%", justifyContent: "center", gap: 6, display: "inline-flex", alignItems: "center" }}><Plus size={14} aria-hidden="true" />New run</Button>
-      </div>
       <div style={{ flex: 1, overflowY: "auto", padding: "0 8px" }}>
         <SessionList runs={runs} error={error} now={Date.now()} activeHash={hash} onNavigate={onNavigate} />
       </div>

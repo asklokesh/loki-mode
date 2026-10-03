@@ -133,13 +133,12 @@ test("empty state: no runs shows the import-repo state and an empty session list
   expect((await screen.findByTestId("sessions-empty")).textContent).toContain("No sessions yet");
 });
 
-test("New run navigates to the start form; Cmd+K calls the reserved hook only when set", async () => {
+test("home is composer-first and the sidebar has no lone New run button; Cmd+K calls the reserved hook only when set", async () => {
   serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
   render(<AppShell />);
-  fireEvent.click(screen.getByTestId("new-run"));
-  await waitFor(() => expect(location.hash).toBe("#/new"));
-  expect(await screen.findByTestId("composer")).toBeTruthy(); // CPE-08 composer replaces the built-in start form
-  expect(screen.getByTestId("composer-input")).toBeTruthy();
+  expect(screen.queryByTestId("new-run")).toBeNull();
+  expect(await screen.findByTestId("hero")).toBeTruthy();
+  expect(screen.getByText("What should Loki build?")).toBeTruthy();
   const press = () => { const e = new KeyboardEvent("keydown", { key: "k", metaKey: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
   expect(press()).toBe(false);
   let n = 0;

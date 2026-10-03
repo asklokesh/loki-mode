@@ -251,7 +251,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
   const canRetry = !running && !!d.issue_ref;
   const doRetry = async () => {
     setRetry({ busy: true });
-    try { await postRun({ target: d.issue_ref!,}); setRetry({ busy: false, msg: "Started a new run." }); }
+    try { await postRun({ target: d.issue_ref! }); setRetry({ busy: false, msg: "Started a new run." }); }
     catch (e) { setRetry({ busy: false, msg: (e as Error).message, error: true }); }
   };
   return (
@@ -265,7 +265,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
         <span data-testid="run-elapsed" style={{ fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>{elapsedLabel(d.elapsed_s ?? d.wall_s)}</span>
         <span data-testid="run-cost" style={{ fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>{costLabel(d)}</span>
         <span data-testid="run-header-slot" style={{ display: "inline-flex", gap: 8 }}>{slot}{renderSlot ? renderSlot(d, load) : null}</span>
-        <Button variant="secondary" size="sm" data-testid="run-retry" disabled={!canRetry || retry.busy} title={running ? "The run is still in progress" : d.issue_ref ? "Start this issue again" : `No issue reference recorded ${UNMEASURED}`} onClick={() => void doRetry()}><RotateCcw size={13} aria-hidden="true" /> Retry</Button>
+        {renderSlot ? null : <Button variant="secondary" size="sm" data-testid="run-retry" disabled={!canRetry || retry.busy} title={running ? "The run is still in progress" : d.issue_ref ? "Start this issue again" : `No issue reference recorded ${UNMEASURED}`} onClick={() => void doRetry()}><RotateCcw size={13} aria-hidden="true" /> Retry</Button>}
         {retry.msg ? <span role={retry.error ? "alert" : "status"} data-testid="run-retry-msg" style={{ color: retry.error ? "var(--cp-error-ink)" : "var(--cp-text-2)", fontSize: "var(--cp-text-base)" }}>{retry.msg}</span> : null}
       </header>
 
