@@ -195,6 +195,16 @@ This protocol governs **skill module** loading -- task-scoped instruction files 
 
 ---
 
+## Command list
+
+<!-- generated:commands -->
+Commands (generated from `loki-ts/src/cli/registry.ts`; full reference in `docs/CLI-REFERENCE.md`):
+
+`version`, `status`, `doctor`, `provider`, `memory`, `rollback`, `proof`, `wiki`, `control`, `kpis`, `report`, `trust`, `crash`, `contract`, `start`, `slack`, `answer`, `engine10`, `help`, `quick`, `quickstart`, `init`, `template`, `verify`, `keys`, `review`, `dashboard`, `config`, `mcp`, `acp`, `stop`, `pause`, `resume`, `why`, `next`, `logs`, `ship`, `deploy`, `import`, `github`, `issue`, `ci`, `modernize`, `share`, `assets`, `export`, `notify`, `tour`, `welcome`, `onboard`, `setup-skill`, `self-update`, `remote`, `cockpit`, `code`, `context`, `secrets`, `api`, `sandbox`, `docker`, `web`, `preview`, `telemetry`, `syslog`, `explain`, `docs`, `test`, `bench`, `voice`, `own`, `secure`, `compliance`, `enterprise`, `projects`, `audit`, `cost`, `metrics`, `sentrux`, `magic`
+<!-- /generated -->
+
+---
+
 ## Invocation
 
 **Legacy entry point (v6.84.0, being removed; for Loki 10 use `loki "<task>"` or `loki owner/repo#N`):** `loki start [SPEC|ISSUE-REF]` auto-detects whether the input is a PRD file, an issue URL, an issue number, or another spec format (e.g. OpenAPI). No need to pick between `loki start` and `loki run` -- the single command handles all cases.

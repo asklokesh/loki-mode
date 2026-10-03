@@ -352,12 +352,16 @@ bump_all_version_files() {
         "s/^(const CURRENT_VERSION = ')${digits}(';)\$/\\1${new}\\2/" \
         "^const CURRENT_VERSION = '${new}';\$" \
         "WhatsNew.tsx CURRENT_VERSION"
+
+    # STALE-ZERO SZ-01: regenerate README facts, SKILL.md command list, Helm
+    # appVersion and the CLI reference from VERSION and the command registry.
+    "$SCRIPT_DIR/generate-stale-zero.sh"
 }
 
 # Files staged into the release commit. Kept as its own list, sourced from
 # the same set bump_all_version_files touches, so the commit can never ship
 # a partially-bumped tree (some files updated on disk but left unstaged).
-RELEASE_COMMIT_FILES="VERSION package.json SKILL.md Dockerfile Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx CHANGELOG.md"
+RELEASE_COMMIT_FILES="VERSION package.json SKILL.md Dockerfile Dockerfile.sandbox plugins/loki-mode/.claude-plugin/plugin.json server.json CLAUDE.md dashboard/__init__.py mcp/__init__.py docs/INSTALLATION.md wiki/Home.md wiki/_Sidebar.md wiki/API-Reference.md web-app/src/components/Footer.tsx web-app/src/components/WhatsNew.tsx README.md helm/loki-mode/Chart.yaml deploy/helm/autonomi/Chart.yaml deploy/helm/control-plane/Chart.yaml docs/CLI-REFERENCE.md docs/v10/CLI-MODERN.md CHANGELOG.md"
 
 # --- Release gate (RELEASE_ON_RED, S-108) --------------------------------
 # Founder P0: a release is a lookup of an already-verified commit. Refuses
