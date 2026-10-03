@@ -71,6 +71,7 @@ export interface SessionRunOptions {
   cwd?: string;
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
+  resumeSessionId?: string; // MW-2: provider session to resume (LOKI_E10_FIX_RESUME); unset starts fresh
 }
 export interface SessionResult {
   exit: number | null; // null when killed before exiting

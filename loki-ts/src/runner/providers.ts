@@ -20,8 +20,8 @@
 // discoverable "STUB: Phase 5" marker so failures surface loudly instead
 // of silently degrading (BUG-22 stub-discipline rule).
 
-import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { mkdirSync, existsSync, readFileSync, realpathSync, appendFileSync, writeFileSync } from "node:fs";
+import { delimiter, dirname, join, isAbsolute, relative, resolve, sep } from "node:path";
 import { run as shellRun } from "../util/shell.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import {
@@ -665,9 +665,13 @@ export function sdkQueryProvider(): ProviderInvoker {
         // to the system prompt and conversation history internally. Explicit
         // per-block cache_control is only wired on the raw-SDK judge path
         // (sdk_invoker.ts) where messages.create accepts content blocks.
+        // MW-2: LOKI_E10_RESUME_SESSION is set only by engine10 session.ts (opt-in LOKI_E10_FIX_RESUME) and
+        // read from process.env here, before the LOKI_E10_* strip above applies to the child's env.
+        const resumeId = process.env["LOKI_E10_RESUME_SESSION"] || undefined;
         const q = query({
           prompt: call.prompt,
           options: {
+            ...(resumeId ? { resume: resumeId } : {}),
             model,
             cwd: call.cwd,
             // fully autonomous, like --dangerously-skip-permissions. bypassPermissions
@@ -727,6 +731,13 @@ export function sdkQueryProvider(): ProviderInvoker {
           write: (s) => process.stdout.write(s),
         });
         captured = res.capturedText;
+        // MW-2: engine10 reads this id to resume the session later. Best-effort; a miss only means a fresh fix session.
+        if (res.sessionId && process.env["LOKI_E10_STAGE"]) {
+          try {
+            mkdirSync(join(call.cwd, ".loki"), { recursive: true });
+            writeFileSync(join(call.cwd, ".loki", `e10-session-${process.env["LOKI_ITERATION"] ?? "0"}.json`), JSON.stringify({ session_id: res.sessionId }));
+          } catch { /* best-effort */ }
+        }
         // Fail-closed: a stream that never produced a terminal result is a
         // failed iteration, never counted as success.
         exitCode = res.sawResult ? res.exitCode : 1;

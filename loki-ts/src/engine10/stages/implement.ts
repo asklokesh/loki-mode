@@ -6,6 +6,7 @@ import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts"
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { runnerCmd } from "./verify.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
+import { readSessionId } from "../../runner/session_resume.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
 
@@ -101,7 +102,7 @@ export const implementStage: Stage = {
       impacted_tests: impacted,
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),
-      iteration_ids: [iterationId],
+      iteration_ids: [iterationId], model: downgrade?.to ?? ctx.model, session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS,
     };
 

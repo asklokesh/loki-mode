@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - Fix (D86, FC-10, L7): the quiet-mode live status line no longer truncates to about 20 columns on a pty with no size (script -q, CI, tmux before a resize, IDE terminals). One terminalWidth() helper (columns >= 40, else $COLUMNS, else 80) now backs the live line, the cockpit and autonomy/tui.sh, and a guard test fails on any raw terminal width read in loki-ts/src.
+- Opt-in `LOKI_E10_FIX_RESUME=1` (default off): in the Loki 10 engine on the Agent SDK, a fix round resumes the previous session (implement, then each fix round) with the failure output and prior diagnosis as the new turn, keeping the agent's context and prompt cache. It resumes only on the same model; escalation (Engine Law L1), a missing session id, a non-SDK provider or the CLI invoker, or a resume error starts a fresh session as before and records `fix_resume: fresh|fallback (<reason>)`. The stage data and the receipt cost block record `fix_rounds` with per-round `fix_resume` and cache-read tokens for the Parity Gate A/B. Verdicts are unchanged: seal reads only execution evidence and the engine-recorded mode, never the resumed transcript.
 
 ## v10.9.0 (2026-10-03)
 
