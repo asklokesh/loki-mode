@@ -49,7 +49,7 @@ mk_bugrepo "$T/repo"
 BASE=$(git -C "$T/repo" rev-parse HEAD)
 
 # Throwaway HOME first: npm must not read ~/.npmrc or ~/.npm.
-ORIG_HOME="$HOME"
+ORIG_HOME="${LOKI_REAL_HOME:-$HOME}" # FC-07: under the hermetic test HOME the real dashboard venv is still read (read-only)
 # Ports are machine-global: the legacy runs below start run.sh's dashboard, which would bind the
 # user's REAL default 57374 and outlive the gate (P0-DASH-LEAK2). Disable it and, belt and braces,
 # point any dashboard at a free high port.

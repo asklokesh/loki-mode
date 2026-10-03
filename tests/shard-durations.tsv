@@ -759,3 +759,4 @@ Dashboard /api/v1/runs REST API	1
 Project memory persists across runs and injects a bounded summary	1
 loki merge queue: green-only serial merge, rebase next, dry-run	1
 mobile emulator tests: NOT VERIFIED without a device	1
+hermetic HOME: no test touches the real ~/.loki (FC-07, D86)	1

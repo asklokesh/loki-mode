@@ -43,6 +43,16 @@ export LOKI_CONTROL="${LOKI_CONTROL:-0}" # tests never ship to a developer's liv
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
+# FC-07 / D86: the whole gate runs under a run-owned hermetic HOME (real HOME is
+# kept as LOKI_REAL_HOME; toolchain homes are pinned). Not LOKI_RUN_TMP: that
+# name stays free for every suite's own loki_run_tmp_create (E-154).
+# shellcheck source=../eval/loki10/lib-tmp.sh
+. "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+# shellcheck source=../tests/lib/hermetic-home.sh
+. "$REPO_ROOT/tests/lib/hermetic-home.sh"
+loki_hermetic_home_enter || { echo "local-ci: cannot create the hermetic HOME" >&2; exit 2; }
+_lci_hh_owner="$$"
+
 FAST=0
 VERBOSE=0
 # LOCAL_CI_SERIAL=1 forces the fully-serial path (the pre-parallelization
@@ -112,8 +122,10 @@ if [ "${LOCAL_CI_ALLOW_CONCURRENT:-0}" != "1" ]; then
     # child test deleted the parent's lock, after which the next invocation saw
     # no lock and started concurrently. Observed live: lock held 33475 while a
     # second parent (70402) was running anyway.
-    trap '[ "$$" = "$_lci_owner" ] && rm -f "$_lci_lock" 2>/dev/null || true' EXIT
 fi
+# One EXIT trap: release the lock (if this process took it) and remove the
+# hermetic HOME (only the process that created it).
+trap 'if [ "$$" = "$_lci_hh_owner" ]; then [ "${_lci_owner:-}" = "$$" ] && rm -f "$_lci_lock" 2>/dev/null; loki_hermetic_home_leave; fi' EXIT
 
 # ---------------------------------------------------------------------------
 # FAST-tier KEEP list (allowlist)
@@ -2154,7 +2166,7 @@ _DASH_PY=""
 command -v python3.12 >/dev/null 2>&1 && _DASH_PY=python3.12
 if [ -n "$_DASH_PY" ] && command -v node >/dev/null 2>&1 \
    && [ -d dashboard-ui/node_modules/playwright ] \
-   && { [ -d "$HOME/Library/Caches/ms-playwright" ] || [ -d "$HOME/.cache/ms-playwright" ]; }; then
+   && { [ -d "${LOKI_REAL_HOME:-$HOME}/Library/Caches/ms-playwright" ] || [ -d "${LOKI_REAL_HOME:-$HOME}/.cache/ms-playwright" ]; }; then
   run_check "dashboard fresh-repo integrated UX harness" 'bash scripts/run-dashboard-fresh-repo-harness.sh'
   # Inverse fixture: the cold harness above would pass against panels that
   # never render anything at all. This one seeds receipts + learnings and

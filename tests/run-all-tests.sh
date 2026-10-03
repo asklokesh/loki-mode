@@ -12,7 +12,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # E-154 begin: no test run may write the real ~/.loki/keys. Default the signing
 # key file to a run-owned temp dir unless the caller already chose one.
 _e154_real_keys="${HOME:-/nonexistent}/.loki/keys"
-_e154_keys_before="$(ls -A "$_e154_real_keys" 2>/dev/null || true)"
+# Names alone miss truncating an existing key: fingerprint name, size and mtime (stat only).
+_e154_keys_fp() {
+    local f
+    [ -d "$_e154_real_keys" ] || return 0
+    for f in "$_e154_real_keys"/* "$_e154_real_keys"/.[!.]*; do
+        [ -e "$f" ] || continue
+        printf '%s %s\n' "$f" "$(stat -c '%s %Y' -- "$f" 2>/dev/null || stat -f '%z %m' -- "$f" 2>/dev/null)"
+    done
+}
+_e154_keys_before="$(_e154_keys_fp)"
 if [ -z "${LOKI_TEST_LIST:-}" ] && [ -z "${LOKI_RECEIPT_SIGNING_KEY_FILE:-}" ]; then
     # shellcheck source=../eval/loki10/lib-tmp.sh
     . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
@@ -25,6 +34,25 @@ if [ -z "${LOKI_TEST_LIST:-}" ] && [ -z "${LOKI_RECEIPT_SIGNING_KEY_FILE:-}" ]; 
     fi
 fi
 # E-154 end
+
+# FC-07 / D86: every suite runs under a run-owned hermetic HOME so no test can
+# write the real ~/.loki (control, dashboard registry, keys, answers) or
+# ~/.gitconfig. The real HOME stays readable as LOKI_REAL_HOME for guards.
+# Listing mode (LOKI_TEST_LIST) runs no suite and needs no isolation.
+if [ -z "${LOKI_TEST_LIST:-}" ]; then
+    if [ ! -f "$REPO_ROOT/tests/lib/hermetic-home.sh" ]; then
+        echo "run-all-tests: tests/lib/hermetic-home.sh missing; refusing to run tests against the real HOME" >&2
+        exit 2
+    fi
+    # shellcheck source=lib/hermetic-home.sh
+    . "$REPO_ROOT/tests/lib/hermetic-home.sh"
+    if ! type loki_run_tmp_create >/dev/null 2>&1; then
+        # shellcheck source=../eval/loki10/lib-tmp.sh
+        . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+    fi
+    loki_hermetic_home_enter || { echo "run-all-tests: cannot create the hermetic HOME" >&2; exit 2; }
+    trap 'loki_hermetic_home_leave; loki_run_tmp_cleanup || true' EXIT
+fi
 TOTAL_PASSED=0
 TOTAL_FAILED=0
 TESTS_RUN=0
@@ -530,7 +558,7 @@ run_test() {
         echo -e "${RED}$(printf '\342\234\227') ${test_name} FAILED: it changed the parent checkout HEAD (E-155): ${_e155_ref_before:-detached}@${_e155_sha_before:0:8} -> ${_e155_ref_after:-detached}@${_e155_sha_after:0:8}${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
     fi
-    _e154_keys_after="$(ls -A "$_e154_real_keys" 2>/dev/null || true)"
+    _e154_keys_after="$(_e154_keys_fp)"
     if [ "$_e154_keys_after" != "$_e154_keys_before" ]; then
         echo -e "${RED}$(printf '\342\234\227') ${test_name} FAILED: it changed the real ${_e154_real_keys} (E-154)${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
@@ -694,6 +722,7 @@ run_test "Evidence Receipt run-level baseline (signed diff stat)" "$SCRIPT_DIR/t
 run_test "no hardcoded home-directory paths in tests" "$SCRIPT_DIR/test-no-hardcoded-paths.sh"
 run_test "run-all-tests guards: real key dir + parent HEAD (E-154, E-155)" "$SCRIPT_DIR/test-e154-e155-guards.sh"
 run_test "no ambient gitconfig writes without top-level isolation" "$SCRIPT_DIR/test-no-ambient-gitconfig-writes.sh"
+run_test "hermetic HOME: no test touches the real ~/.loki (FC-07, D86)" "$SCRIPT_DIR/test-hermetic-home.sh"
 run_test "loki why honest reporting (gate named, diff re-derived)" "$SCRIPT_DIR/test-why-honest-report.sh"
 run_test "status surfaces agree (STATUS.txt vs COMPLETION.txt, --json staleness)" "$SCRIPT_DIR/test-status-surface-agrees.sh"
 run_test "emit.sh append lock never hangs (telemetry must not outlive the run)" "$SCRIPT_DIR/test-emit-lock-no-hang.sh"

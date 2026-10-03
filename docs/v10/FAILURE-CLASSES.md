@@ -153,3 +153,14 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - the codex and gpt rows drift between run.sh and budget.ts (rv-mw1 follow-up), which is the same file-is-the-source rule.
 - Mechanism: arithmetic tests derive expectations from the single pricing source (loki-ts/data/model-pricing.json) and assert the loaded table equals the file; only the fixture token counts are literal. Pricing-table changes run the full bun test in main before the train (FC-11 mechanism).
 - Fixture: loki-ts/test/budget_cache_pricing.test.ts at 0de0838e1, 8 pass 0 fail; "cache tiers survive loading" compares the loaded PRICING with the file (loader mutation not yet run; follow-up).
+
+## FC-14 A nested sandbox trusts an inherited pointer to the real environment
+- User saw: running the test runner truncated the founder real ~/.loki/keys/receipt-ed25519.pem. A fixture wrote through an inherited LOKI_REAL_HOME that still named the real home while HOME was a stand-in.
+- Law: L2 (trust fails closed).
+- Siblings:
+  - loki_hermetic_home_enter (tests/lib/hermetic-home.sh) took LOKI_REAL_HOME from the environment;
+  - loki-ts/tests/preload.ts used LOKI_REAL_HOME ?? HOME;
+  - run_runner in tests/test-e154-e155-guards.sh kept the exported LOKI_REAL_HOME;
+  - the outer E-154 key check compared names only, so truncating an existing key was invisible.
+- Mechanism: derive the real path from the current HOME, never from an inherited variable (enter unsets LOKI_REAL_HOME, preload reads HOME); the key check fingerprints name, size and mtime.
+- Fixture: tests/test-e154-e155-guards.sh (run_runner strips the pointers; t-keys writes only the runner-derived stand-in). A decoy-pointer probe and a bun HOME probe are owed after Oct 7 (B3, phase D vacuity).
