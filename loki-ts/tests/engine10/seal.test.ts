@@ -984,7 +984,7 @@ describe("D50-F1 already-satisfied discards run changes", () => {
     const goodContract = JSON.stringify({ source: "s", criteria: [{ id: "AC-1", text: "Zebra <b> migration works", source_line: 1 }] });
     const prev = process.env["LOKI_CONTRACT"];
     try {
-      delete process.env["LOKI_CONTRACT"];
+      process.env["LOKI_CONTRACT"] = "0";
       const a = makeRepo("contract-off-a"); const b = makeRepo("contract-off-b");
       wc(b.repo, goodContract);
       const ra = receiptOf(await sealStage.run(ctxFor(a.repo, a.base).ctx, new AbortController().signal));

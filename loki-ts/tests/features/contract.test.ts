@@ -63,7 +63,7 @@ describe("sealContract", () => {
     writeFileSync(join(dir, ".loki", "contract.json"), JSON.stringify(parseContract(SPEC)));
     const raw = ["M", "src/export/csv.ts"];
     const off: Record<string, unknown> = {};
-    expect(sealContract(dir, off, raw, [], {})).toEqual([]);
+    expect(sealContract(dir, off, raw, [], { LOKI_CONTRACT: "0" })).toEqual([]);
     expect(off["contract"]).toBeUndefined();
     const on: Record<string, unknown> = {};
     const lines = sealContract(dir, on, raw, [], { LOKI_CONTRACT: "1" });
@@ -158,10 +158,21 @@ console.log(JSON.stringify(sealContract(${JSON.stringify(dir)}, {}, [], [], { LO
     expect(lines).toEqual(["contract: 3 malformed criteria dropped"]);
     expect((body["contract"] as { criteria: unknown[] }).criteria.length).toBe(1);
   });
-  test("flag off returns [] without touching the filesystem", () => {
+  test("LOKI_CONTRACT=0 returns [] without touching the filesystem", () => {
     const d = mkdirLoki();
     writeFileSync(join(d, ".loki", "contract.json"), "{not json");
-    expect(sealContract(d, {}, [], [], {})).toEqual([]);
+    const body: Record<string, unknown> = {};
+    expect(sealContract(d, body, [], [], { LOKI_CONTRACT: "0" })).toEqual([]);
+    expect(body).toEqual({});
     expect(sealContract("/nonexistent-dir-xyz", {}, [], [], { LOKI_CONTRACT: "0" })).toEqual([]);
+  });
+  test("unset is on by default but a missing contract.json gives no lines", () => {
+    const d = mkdirLoki();
+    const body: Record<string, unknown> = {};
+    expect(sealContract(d, body, ["M", "a.ts"], [], {})).toEqual([]);
+    expect(body).toEqual({});
+    expect(sealContract("/nonexistent-dir-xyz", {}, [], [], {})).toEqual([]);
+    writeFileSync(join(d, ".loki", "contract.json"), "{not json");
+    expect(sealContract(d, {}, [], [], {})).toEqual(["contract unreadable: invalid JSON"]);
   });
 });

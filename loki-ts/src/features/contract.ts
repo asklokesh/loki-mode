@@ -1,4 +1,4 @@
-// D65-SPEC (ROADMAP-D63 pillar 6): spec to delivery contract. Behind LOKI_CONTRACT=1 (off by default).
+// D65-SPEC (ROADMAP-D63 pillar 6): spec to delivery contract. On by default; LOKI_CONTRACT=0 turns it off.
 // parseContract turns a spec/PRD markdown into acceptance criteria; traceContract maps each criterion
 // to changed files and checks by keyword overlap. The `loki contract <spec.md>` subcommand prints the
 // contract and writes .loki/contract.json. The receipt field is strictly additive (seal.ts).
@@ -19,7 +19,7 @@ const CHECKLIST = /^\s*[-*+]\s+\[[ xX]\]\s+(.+)$/;
 const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+(.+)$/;
 
 export function contractEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env["LOKI_CONTRACT"] === "1";
+  return env["LOKI_CONTRACT"] !== "0";
 }
 
 function clean(s: string): string {
@@ -147,9 +147,9 @@ export function repoRoot(cwd: string): string {
 
 export function main(args: string[]): number {
   const file = args[0];
-  if (!contractEnabled()) { process.stderr.write("contract: set LOKI_CONTRACT=1 to use spec to contract (off by default)\n"); return 2; }
+  if (!contractEnabled()) { process.stderr.write("contract: disabled by LOKI_CONTRACT=0\n"); return 2; }
   if (!file || file === "--help" || file === "-h") {
-    process.stderr.write("Usage: loki contract <spec.md>   print the delivery contract and write .loki/contract.json (trace at run end with LOKI_CONTRACT=1)\n");
+    process.stderr.write("Usage: loki contract <spec.md>   print the delivery contract and write .loki/contract.json (traced at run end unless LOKI_CONTRACT=0)\n");
     return file ? 0 : 2;
   }
   if (!existsSync(file)) { process.stderr.write(`contract: no such file: ${file}\n`); return 2; }
@@ -161,7 +161,7 @@ export function main(args: string[]): number {
   return 0;
 }
 
-/** Seal hook: when LOKI_CONTRACT=1 and .loki/contract.json exists, attach the optional `contract` field
+/** Seal hook: unless LOKI_CONTRACT=0, and when .loki/contract.json exists, attach the optional `contract` field
  *  to the receipt body (additive) and return the untraced lines, which seal adds to the receipt NOT PROVEN list (advisory, never changes the verdict). */
 export function sealContract(repoDir: string, body: object, rawDiff: string[], checks: { name: string }[], env: NodeJS.ProcessEnv = process.env): string[] {
   if (!contractEnabled(env)) return [];
