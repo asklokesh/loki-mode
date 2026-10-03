@@ -177,3 +177,34 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - the outer E-154 key check compared names only, so truncating an existing key was invisible.
 - Mechanism: derive the real path from the current HOME, never from an inherited variable (enter unsets LOKI_REAL_HOME, preload reads HOME); the key check fingerprints name, size and mtime.
 - Fixture: tests/test-e154-e155-guards.sh (run_runner strips the pointers; t-keys writes only the runner-derived stand-in). A decoy-pointer probe and a bun HOME probe are owed after Oct 7 (B3, phase D vacuity).
+
+## FC-15 A run judges "already done" against Loki's own unmerged work
+- User saw: FireLater#17 rerun on 10.7.1 (e10-20261003T185853Z-2d44) reported ALREADY_SATISFIED in 2m07s for $0.52. That was false. The run branched from the checked-out loki/e10-20261003T150744Z-59b1 (eda184e). That branch was the earlier FAILED run's unmerged draft PR #25, which also lacks the route edits the old scope control reverted.
+- Law: L4 (the base is a contract), L2 (trust fails closed).
+- Founder rule (2026-10-03):
+  - Base precedence: an explicit CLI flag (add `--base` if none exists), then the loki.yaml base_branch setting (a branch name, `current` or `default`), then the user's checked-out branch.
+  - The repo default branch is used only when it is configured as `default`. Never hardcode "main" (L0).
+  - The start line prints `base: <branch> (<flag, config or checkout>)`.
+  - The PR target is the configured target, else the repo default branch, and the PR body names it.
+- Siblings: every outcome that compares against the base (ALREADY_SATISFIED, the Wall base run, the scope diff, the receipt delta).
+- Mechanism:
+  - Detect Loki's own unmerged work on the base from its run records (the loki/e10-* branch plus the run receipt), not from a branch-name regex.
+  - Report "this branch already has run <id>'s unmerged work (PR #N, <state>); resume or review it", never ALREADY_SATISFIED.
+  - A dirty or foreign checkout is noted in the output.
+- Fixture: owed. A repo whose checkout is a prior run's branch with a receipt must yield the unmerged-work outcome.
+
+## FC-16 ALREADY_SATISFIED with zero Loki-executed checks
+- User saw: the same run had verify "checks": [] and changed_files []. The verdict rested only on the implement agent's self-report ("10/10 named impacted tests pass ... via npx vitest run").
+- Law: L0 and L3 (the model never grades its own work), L5; Seal accuracy.
+- Siblings: every outcome that is reachable with an empty checks list.
+- Mechanism:
+  - A success-class outcome requires harness-executed evidence against the target base: the impacted tests run through the Project Model commands, plus each acceptance point of the issue checked.
+  - With zero executed checks the outcome is NOT VERIFIED.
+- Fixture: owed. A verify with checks [] and a self-reported pass must yield NOT VERIFIED.
+
+## FC-17 The Wall spends time and money and writes nothing
+- User saw: the same run's Wall produced "files": [] in 1m42s, with base_run 0/0/0. This is the D82-WALL0 class again.
+- Law: L5 (no work without evidence), cost.
+- Siblings: D82-WALL0 and any stage that can finish with zero artifacts and still bill.
+- Mechanism: if the Wall cannot write a check, it skips in under 10s with a NOT PROVEN note and never runs a model session to an empty result.
+- Fixture: owed. A repo with no runnable test command yields a Wall skip under 10s with NOT PROVEN.
