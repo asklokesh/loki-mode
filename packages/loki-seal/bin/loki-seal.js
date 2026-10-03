@@ -91,6 +91,24 @@ function treeHash(files) {
   return h.digest('hex').slice(0, 16);
 }
 
+// D80: runner output is trusted for coverage only from `node --test` with process isolation (the default), where
+// a test cannot print or exit its way to a complete fake summary. Isolation none, a direct `node file` script or
+// any script that is not positively classified gives NOT VERIFIED with a reason, as does a node test file that
+// calls process.exit, reallyExit, abort or kill. Only node --test and unclassified scripts are held to this;
+// jest, vitest, pytest, go and cargo are classified runners with their own output.
+function coverageBlock(root, files, script, kind) {
+  if (kind === 'jest' || kind === 'vitest') return null;
+  if (kind === 'script') return `the npm test script ("${script.trim().slice(0, 80)}") is not positively classified as node --test with process isolation`;
+  if (/--(?:experimental-)?test-isolation(?:=|\s+)none\b/.test(script)) return 'node --test runs with --test-isolation=none, so a test shares the runner process and can print a complete fake summary';
+  if (/--(?:experimental-)?test-isolation(?:=|\s+)(?!process\b)\S/.test(script)) return 'node --test runs with an isolation mode other than process';
+  for (const p of Object.keys(files).filter((f) => isTest(f) && /\.[cm]?[jt]sx?$/.test(f))) {
+    let c = '';
+    try { c = fs.readFileSync(path.join(root, p), 'utf8'); } catch { continue; }
+    if (/\bprocess\s*(?:\.\s*(?:exit|reallyExit|abort|kill)\b|\[)/.test(c)) return `${p} calls process.exit, reallyExit, abort or kill (or indexes process dynamically), an integrity finding`;
+  }
+  return null;
+}
+
 function detect(root, files) {
   const has = (f) => fs.existsSync(path.join(root, f));
   if (has('package.json')) {
@@ -98,7 +116,7 @@ function detect(root, files) {
     try { s = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts.test || ''; } catch { /* no script */ }
     if (s && !/no test specified/.test(s)) {
       const kind = /vitest/.test(s) ? 'vitest' : /jest/.test(s) ? 'jest' : /node\s+--test/.test(s) ? 'node --test' : 'script';
-      return { name: `npm test (${kind})`, cmd: ['npm', 'test', '--silent'] };
+      return { name: `npm test (${kind})`, cmd: ['npm', 'test', '--silent'], coverageBlock: coverageBlock(root, files, s, kind) };
     }
   }
   if (has('go.mod')) return { name: 'go test', cmd: ['go', 'test', './...', '-v'] };
@@ -228,7 +246,7 @@ function passRecords(out, truncated) {
 // BLOCKED here: ambiguity withholds coverage instead (see passRecords).
 function inconsistency(r) {
   if (r.error) return null;
-  const clash = (r.passIds || []).filter((i) => (r.ids || []).includes(i));
+  const clash = (r.rawPassIds || r.passIds || []).filter((i) => (r.ids || []).includes(i));
   if (clash.length) return `the runner reports the same test as both passed and failed: ${clash.slice(0, 3).join(', ')}`;
   if (!r.summary) return null;
   if (r.node) {
@@ -289,7 +307,9 @@ function runSuite(root, runner, timeout) {
     const finish = (status, error) => {
       if (done) return;
       done = true; clearTimeout(timer);
-      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), ...passRecords(out, truncated), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
+      const pr = passRecords(out, truncated);
+      if (runner.coverageBlock) { pr.rawPassIds = pr.passIds; pr.passIds = []; pr.specUnverified = runner.coverageBlock; }
+      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), ...pr, ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
     };
     child.on('error', (e) => finish(null, e));
     child.on('close', (code) => finish(code));
@@ -384,7 +404,7 @@ async function main() {
       ...redX.map((x) => x.tests.every(failingNow)
         ? `every test for request item "${x.item}" is failing${x.tests.every(failedAtStart) ? ' (already failing at session start, still not fixed)' : ''}`
         : `a test for request item "${x.item}" is failing: ${[...new Set(x.tests.filter(failingNow))].join(', ')}`),
-      ...unpassed.map((x) => `no test for request item "${x.item}" was reported as passed by the runner (not run, skipped, or not listed)${r && r.specUnverified ? `; the spec reporter output could not be reconciled with its summary (${r.specUnverified}), so coverage was withheld: rerun with --test-reporter=tap` : ''}: ${x.tests.slice(0, 3).join(', ')}`)];
+      ...unpassed.map((x) => `no test for request item "${x.item}" was reported as passed by the runner (not run, skipped, or not listed)${r && r.specUnverified ? `; the runner output could not be trusted (${r.specUnverified}), so coverage was withheld; use node --test with its default process isolation (and --test-reporter=tap for the exact check)` : ''}: ${x.tests.slice(0, 3).join(', ')}`)];
     contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length - unpassed.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '') + chatNote;
     if (runner) cproblems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
     else if (bad.length) contractNote = `NOT VERIFIED: ${bad[0]}`;
@@ -447,7 +467,8 @@ function countHookError() {
   } finally { fs.closeSync(fd); }
 }
 
-main().catch((e) => {
+module.exports = { passRecords };
+if (require.main === module) main().catch((e) => {
   const m = (e && e.message) || String(e);
   if (mode === 'start') {
     process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: `loki-seal: baseline unavailable (${m})` } }));

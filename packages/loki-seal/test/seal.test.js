@@ -1075,7 +1075,47 @@ test('forged lines r8: honest describe, subtests and console.log runs still pass
   const body = "describe('suite', () => { it('adds zero', () => { console.log('# not a summary'); assert.strictEqual(add(0,0), 0); }); });\ntest('p', async (t) => { await t.test('c', () => { console.log('hello'); }); });\n";
   for (const script of R7_SCRIPTS) {
     const r = reporterRun(nodeRepo(ADD_OK, FORGE_HDR + body), script, 'Fix the adder.\n- adds zero\n');
+    if (/isolation=none/.test(script)) { notVerified(r); continue; } // D80: never trusted
     assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
     assert.strictEqual(r.status, 0, script + '\n' + r.raw);
   }
+});
+
+// SEAL-FORGED-LINES r9 (D80): coverage only from node --test with process isolation; process.exit in a test file
+// is an integrity finding; the truncation check stands on its own.
+const FAKE_SPEC = '✔ adds (1ms)\\n✔ handles negative numbers (1ms)\\nℹ tests 2\\nℹ suites 0\\nℹ pass 2\\nℹ fail 0\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 5\\n';
+const r9Repo = (script, extraTop = '') => ({
+  ...nodeRepo(ADD_OK, FORGE_HDR + extraTop + "test('adds', () => { assert.strictEqual(add(1,2), 3); require('fs').writeSync(1, '" + FAKE_SPEC + "'); process.exit(0); });\ntest('handles negative numbers', () => { assert.strictEqual(add(-1,-2), 99); });\n"),
+  'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }),
+});
+const R9_SCRIPTS = ['node --test --test-isolation=none', 'node --test --test-isolation=none --test-reporter=tap', 'node --test --test-reporter=spec --test-isolation=none', 'node test/a.test.js'];
+test('forged lines r9 (D80-1): isolation none or a direct node script is NOT VERIFIED, never PASS', () => {
+  for (const script of R9_SCRIPTS) {
+    const r = negRun(r9Repo(script));
+    notVerified(r);
+    assert.notStrictEqual(r.status, 0, script);
+  }
+});
+test('forged lines r9 (D80-1b): isolation none with no process.exit is still NOT VERIFIED with a stated reason', () => {
+  const r = negRun({ ...nodeRepo(ADD_OK, T2), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node --test --test-isolation=none' } }) }, 'Fix the adder.\n- adds zero\n');
+  notVerified(r);
+  assert.match(r.raw, /test-isolation=none/);
+});
+test('forged lines r9 (D80-2): a test file calling process.exit, reallyExit, abort or kill is NOT VERIFIED under default isolation', () => {
+  for (const call of ['process.exit(0)', 'process.reallyExit(0)', 'process.kill(process.pid, 0)', 'process.abort']) {
+    const files = nodeRepo(ADD_OK, FORGE_HDR + "test('handles negative numbers', () => { assert.strictEqual(add(-1,-2), -3); });\nfunction leave() { " + call + "; }\n");
+    const r = negRun(files);
+    notVerified(r);
+    assert.match(r.raw, /process\.exit, reallyExit, abort or kill/, call);
+  }
+});
+test('forged lines r9 (D80-3): truncated output is never trusted, with no dependence on the end-of-output rule', () => {
+  const { passRecords } = require('../bin/loki-seal.js');
+  const ok = '✔ handles negative numbers (1ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 5\n';
+  const clean = passRecords(ok, false);
+  assert.deepStrictEqual(clean.passIds, ['handles negative numbers']);
+  assert.strictEqual(clean.specUnverified, null);
+  const cut = passRecords(ok, true);
+  assert.deepStrictEqual(cut.passIds, []);
+  assert.match(cut.specUnverified, /capture limit/);
 });
