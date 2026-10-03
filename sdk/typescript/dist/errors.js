@@ -5,7 +5,7 @@
  * Typed error hierarchy for API error handling.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.NotFoundError = exports.ForbiddenError = exports.AuthenticationError = exports.AutonomiError = void 0;
+exports.NotAvailableOnControlPlaneError = exports.NotFoundError = exports.ForbiddenError = exports.AuthenticationError = exports.AutonomiError = void 0;
 class AutonomiError extends Error {
     statusCode;
     responseBody;
@@ -38,4 +38,15 @@ class NotFoundError extends AutonomiError {
     }
 }
 exports.NotFoundError = NotFoundError;
+/**
+ * Raised on 501 or 410: the Control Plane does not serve this legacy route
+ * (501 = not backed yet, 410 = retired). No data is fabricated.
+ */
+class NotAvailableOnControlPlaneError extends AutonomiError {
+    constructor(statusCode, route, responseBody) {
+        super(`HTTP ${statusCode}: not available on the Control Plane (${route})`, statusCode, responseBody);
+        this.name = 'NotAvailableOnControlPlaneError';
+    }
+}
+exports.NotAvailableOnControlPlaneError = NotAvailableOnControlPlaneError;
 //# sourceMappingURL=errors.js.map

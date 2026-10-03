@@ -23,6 +23,7 @@ import {
   AuthenticationError,
   ForbiddenError,
   NotFoundError,
+  NotAvailableOnControlPlaneError,
 } from './errors.js';
 
 export class AutonomiClient {
@@ -99,6 +100,9 @@ export class AutonomiClient {
           throw new ForbiddenError(message, responseText);
         case 404:
           throw new NotFoundError(message, responseText);
+        case 410:
+        case 501:
+          throw new NotAvailableOnControlPlaneError(statusCode, `${method} ${path}`, responseText);
         default:
           throw new AutonomiError(message, statusCode, responseText);
       }

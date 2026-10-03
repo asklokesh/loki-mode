@@ -10,6 +10,7 @@ import { MemoryViewProvider } from './views/memoryViewProvider';
 import { DashboardWebviewProvider } from './views/dashboardWebview';
 import { CheckpointProvider } from './views/checkpointProvider';
 import { LokiApiClient } from './api/client';
+import { isNotAvailableStatus, createNotAvailableError } from './api/availability';
 import { parseStatusResponse, isValidTaskStatus } from './api/validators';
 import { LokiEvent, Disposable } from './api/types';
 import { getLearningCollector, disposeLearningCollector, LearningCollector, Outcome } from './services/learning-collector';
@@ -269,6 +270,9 @@ async function apiRequest(endpoint: string, method: string = 'GET', body?: unkno
 
         const response = await fetch(url, options);
 
+        if (isNotAvailableStatus(response.status)) {
+            throw createNotAvailableError(`${method} ${endpoint}`, response.status);
+        }
         if (!response.ok) {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }

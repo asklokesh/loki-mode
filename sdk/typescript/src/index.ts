@@ -32,4 +32,5 @@ export {
   AuthenticationError,
   ForbiddenError,
   NotFoundError,
+  NotAvailableOnControlPlaneError,
 } from './errors.js';

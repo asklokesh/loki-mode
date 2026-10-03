@@ -510,5 +510,32 @@ class TestApiKeys(unittest.TestCase):
         self.assertEqual(body["grace_period_hours"], 48)
 
 
+class TestNotAvailableOnControlPlane(unittest.TestCase):
+    def setUp(self):
+        from loki_mode_sdk.client import NotAvailableOnControlPlaneError
+        self.exc = NotAvailableOnControlPlaneError
+        self.client = AutonomiClient(token="loki_test")
+
+    @patch("loki_mode_sdk.client.urllib.request.urlopen")
+    def test_501_raises_not_available(self, mock_urlopen):
+        mock_urlopen.side_effect = _mock_http_error(501, "Not Implemented", '{"detail": "not yet supported by the Control Plane"}')
+        with self.assertRaises(self.exc) as ctx:
+            self.client.list_projects()
+        self.assertEqual(ctx.exception.status_code, 501)
+        self.assertIn("not available on the Control Plane", str(ctx.exception))
+
+    @patch("loki_mode_sdk.client.urllib.request.urlopen")
+    def test_410_raises_not_available(self, mock_urlopen):
+        mock_urlopen.side_effect = _mock_http_error(410, "Gone")
+        with self.assertRaises(self.exc):
+            self.client.list_tenants()
+
+    @patch("loki_mode_sdk.client.urllib.request.urlopen")
+    def test_404_stays_not_found(self, mock_urlopen):
+        mock_urlopen.side_effect = _mock_http_error(404, "Not Found")
+        with self.assertRaises(NotFoundError):
+            self.client.get_project("x")
+
+
 if __name__ == "__main__":
     unittest.main()

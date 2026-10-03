@@ -21,6 +21,7 @@ import {
     StatusResponse,
     StopResponse,
 } from './types';
+import { isNotAvailableStatus, createNotAvailableError } from './availability';
 import { DEFAULT_API_BASE_URL, DEFAULT_POLLING_INTERVAL_MS } from '../utils/constants';
 
 /**
@@ -140,6 +141,11 @@ export class LokiApiClient {
 
                 clearTimeout(timeoutId);
 
+                if (isNotAvailableStatus(response.status)) {
+                    // 501/410 are final, never retried: the Control Plane does not serve this route.
+                    throw createNotAvailableError(`${method} ${path}`, response.status);
+                }
+
                 if (!response.ok) {
                     const errorBody = await response.text();
                     let errorData: { error?: string; message?: string; code?: string } = {};
@@ -169,6 +175,11 @@ export class LokiApiClient {
 
                 // Don't retry on client errors (4xx)
                 if ((error as ApiError).statusCode && (error as ApiError).statusCode! >= 400 && (error as ApiError).statusCode! < 500) {
+                    throw error;
+                }
+
+                // Not-available (501/410) is final
+                if (isNotAvailableStatus((error as ApiError).statusCode)) {
                     throw error;
                 }
 

@@ -9,6 +9,7 @@
 
 import * as vscode from 'vscode';
 import { LokiApiClient } from '../api/client';
+import { isNotAvailableStatus, NOT_AVAILABLE_TEXT } from '../api/availability';
 import { logger } from '../utils/logger';
 import { getNonce } from '../utils/webview';
 
@@ -166,6 +167,10 @@ export class DashboardWebviewProvider implements vscode.WebviewViewProvider, vsc
         try {
             const baseUrl = this._apiClient.baseUrl;
             const response = await fetch(`${baseUrl}/api/tasks/${taskId}`);
+            if (isNotAvailableStatus(response.status)) {
+                vscode.window.showInformationMessage(`Task details are ${NOT_AVAILABLE_TEXT}`);
+                return;
+            }
             if (response.ok) {
                 const task = await response.json();
                 const content = JSON.stringify(task, null, 2);
@@ -184,6 +189,10 @@ export class DashboardWebviewProvider implements vscode.WebviewViewProvider, vsc
         try {
             const baseUrl = this._apiClient.baseUrl;
             const response = await fetch(`${baseUrl}/api/memory/patterns/${patternId}`);
+            if (isNotAvailableStatus(response.status)) {
+                vscode.window.showInformationMessage(`Pattern details are ${NOT_AVAILABLE_TEXT}`);
+                return;
+            }
             if (response.ok) {
                 const pattern = await response.json();
                 const content = JSON.stringify(pattern, null, 2);
@@ -202,6 +211,10 @@ export class DashboardWebviewProvider implements vscode.WebviewViewProvider, vsc
         try {
             const baseUrl = this._apiClient.baseUrl;
             const response = await fetch(`${baseUrl}/api/memory/episodes/${episodeId}`);
+            if (isNotAvailableStatus(response.status)) {
+                vscode.window.showInformationMessage(`Episode details are ${NOT_AVAILABLE_TEXT}`);
+                return;
+            }
             if (response.ok) {
                 const episode = await response.json();
                 const content = JSON.stringify(episode, null, 2);

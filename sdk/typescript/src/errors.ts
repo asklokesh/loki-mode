@@ -36,3 +36,14 @@ export class NotFoundError extends AutonomiError {
     this.name = 'NotFoundError';
   }
 }
+
+/**
+ * Raised on 501 or 410: the Control Plane does not serve this legacy route
+ * (501 = not backed yet, 410 = retired). No data is fabricated.
+ */
+export class NotAvailableOnControlPlaneError extends AutonomiError {
+  constructor(statusCode: number, route: string, responseBody?: string) {
+    super(`HTTP ${statusCode}: not available on the Control Plane (${route})`, statusCode, responseBody);
+    this.name = 'NotAvailableOnControlPlaneError';
+  }
+}

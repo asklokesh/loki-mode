@@ -90,6 +90,30 @@ else
     [ "$n" = "1" ] && pass "mutation (guard removed) fails the false leg" || fail "mutation expected 1 POST, got $n"
 fi
 
+# CPE-24: a Control Plane 501 must be reported honestly, and a 200 must stay silent.
+mkdir -p "$WORK/bin501"
+cat > "$WORK/bin501/curl" <<'SHIM'
+#!/usr/bin/env bash
+printf '%s' "${FAKE_CODE:-501}"
+exit 0
+SHIM
+chmod +x "$WORK/bin501/curl"
+run_code() {
+    (
+        cd "$WORK/proj" || exit 1
+        PATH="$WORK/bin501:$PATH" FAKE_CODE="$1" ENABLE_DASHBOARD=true DASHBOARD_PORT=57374 "$BASH_BIN" -c \
+            "log_debug() { echo \"DEBUG: \$*\"; }
+_s195() {
+$(cat "$BLOCK_SRC")
+}
+_s195" 2>&1
+    )
+}
+out="$(run_code 501)"
+case "$out" in *"not available on the Control Plane"*) pass "501 reported as not available on the Control Plane" ;; *) fail "501 not reported: $out" ;; esac
+out="$(run_code 200)"
+[ -z "$out" ] && pass "200 stays silent" || fail "200 produced output: $out"
+
 if [ "$provider_before" = "0" ] && [ -e "$REPO_ROOT/.loki/state/provider" ]; then
     fail "test created .loki/state/provider in the repo"
 fi

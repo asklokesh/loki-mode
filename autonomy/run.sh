@@ -24828,10 +24828,14 @@ except Exception:
     if [[ "${ENABLE_DASHBOARD:-true}" == "true" ]] && command -v curl &>/dev/null; then
         local project_cwd
         project_cwd="$(pwd)"
-        curl -sf -X POST "http://127.0.0.1:${DASHBOARD_PORT}/api/focus" \
+        # CPE-24: the Control Plane answers 501 (no focus API). Best-effort; say so
+        # honestly in debug output rather than treating the miss as an error.
+        _focus_code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:${DASHBOARD_PORT}/api/focus" \
             -H "Content-Type: application/json" \
-            -d "{\"project_dir\": \"${project_cwd}\"}" \
-            >/dev/null 2>&1 || true
+            -d "{\"project_dir\": \"${project_cwd}\"}" 2>/dev/null || true)"
+        case "$_focus_code" in
+            501|410) type log_debug >/dev/null 2>&1 && log_debug "project focus: not available on the Control Plane (HTTP ${_focus_code})" ;;
+        esac
     fi
 
     # Initialize Cross-Provider Failover (v6.19.0)

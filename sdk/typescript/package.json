@@ -14,7 +14,7 @@
     "build": "tsc",
     "prepack": "node scripts/normalize-package-permissions.mjs .",
     "prepublishOnly": "npm run build",
-    "test": "node --test tests/client.test.js"
+    "test": "node --test tests/client.test.js tests/not-available.test.js"
   },
   "keywords": [
     "loki-mode", "autonomous", "ai-agents", "multi-agent",

@@ -69,6 +69,9 @@ class AutonomiClient {
                     throw new errors_js_1.ForbiddenError(message, responseText);
                 case 404:
                     throw new errors_js_1.NotFoundError(message, responseText);
+                case 410:
+                case 501:
+                    throw new errors_js_1.NotAvailableOnControlPlaneError(statusCode, `${method} ${path}`, responseText);
                 default:
                     throw new errors_js_1.AutonomiError(message, statusCode, responseText);
             }

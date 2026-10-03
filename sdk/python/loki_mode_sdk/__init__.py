@@ -2,7 +2,7 @@
 
 __version__ = "0.1.0"
 
-from .client import AutonomiClient, AutonomiError, AuthenticationError, ForbiddenError, NotFoundError
+from .client import AutonomiClient, AutonomiError, AuthenticationError, ForbiddenError, NotFoundError, NotAvailableOnControlPlaneError
 from .types import (
     ApiKey,
     AuditEntry,
@@ -28,6 +28,7 @@ __all__ = [
     "AuthenticationError",
     "ForbiddenError",
     "NotFoundError",
+    "NotAvailableOnControlPlaneError",
     "TokenAuth",
     "SessionManager",
     "TaskManager",
