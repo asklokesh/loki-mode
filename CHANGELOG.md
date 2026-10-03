@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Worktree prep now fails with "lock contention" after 120s instead of waiting forever on the repo lock, and refuses dependency copies with relative symlinks that escape the dep dir or bin scripts whose shebang names the source path (WS-PREP-BOUND).
 - The PR body Evidence Receipt renderer now runs an isolated Python (`-I -S`), so a `json.py` committed in the repo being built can no longer make a NOT VERIFIED proof render as "Headline: VERIFIED".
 - The dashboard no longer shows an empty list when a file is corrupt or denied: `/api/proofs` returns an error row for a bad proof.json and a 503 for an unreadable proofs directory, and the memory patterns, episodes, skills and index endpoints return 503 instead of `[]` (HONEST-READ-1).
+- `loki verify --fast` no longer exits 0 when it cannot give a verdict: nothing scanned (INCONCLUSIVE) exits 3, an unknown flag exits 64, and a missing root directory exits 2 (P2-FV-EXIT).
 - When `loki start` refuses to resume the recorded agent branch because checking it out would overwrite one of your gitignored files, the warning now names that file and the branch where the earlier commits stay, instead of only saying the branch "could not be checked out" (S-233).
 - The standalone dashboard receipts list now shows a partly priced run's cost as "at least $X.XX" (only when `/api/proofs` reports `cost_partial: true`) instead of presenting a lower bound as a complete total (PO-STANDALONE-COST-1).
 

@@ -144,7 +144,7 @@ severity-rises-with-the-code rule that every other command follows.
 
 ### Known gaps until v10.0.0
 
-The table above is the target. On the current release, four inputs do not
+The table above is the target. On the current release, three inputs do not
 return what it implies. Measured on this checkout:
 
 | Input | Command | Exit today | Target |
@@ -152,16 +152,19 @@ return what it implies. Measured on this checkout:
 | Empty diff (a git repo with no changes vs base) | `loki verify` | 1 (CONCERNS) | 3 |
 | Not a git directory | `loki verify` | 1 (CONCERNS) | 2 |
 | Unknown flag | `loki verify --no-such-flag` | 3 | 64 |
-| `--fast` with nothing scanned (0 files) | `loki verify --fast <empty-dir> --no-cache` | 0 | nonzero |
 
-`loki verify --fast` (`autonomy/lib/fast_verify.py`) also exits 0 for a
-nonexistent root and silently ignores unknown flags. Until v10.0.0, do not
-trust exit 0 from `--fast` alone: check stdout for `INCONCLUSIVE`, which it
-prints when nothing was scanned.
+The gap is tracked as the pending moat case P2.verify-exit-contract,
+milestone v10.0.0, in `tests/moat/pending.txt`.
 
-Both gaps are tracked as pending moat cases, milestone v10.0.0, in
-`tests/moat/pending.txt`: P2.verify-exit-contract (the first three rows)
-and P2.fast-verify-inconclusive-not-zero (the `--fast` row).
+### `loki verify --fast`
+
+| Code | Meaning |
+|---|---|
+| 0 | PASS: files were scanned and nothing blocking was found |
+| 1 | FAIL: a blocking finding |
+| 2 | The root directory does not exist |
+| 3 | INCONCLUSIVE: nothing was scanned (0 files) |
+| 64 | Unknown flag |
 
 ## `loki proof verify <id>`
 

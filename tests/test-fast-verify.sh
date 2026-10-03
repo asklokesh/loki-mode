@@ -155,6 +155,17 @@ else
     bad "no cache hits on the second run -- caching is not working"
 fi
 
+# ---- EXIT CODES: INCONCLUSIVE=3, unknown flag=64, missing root=2 ----------
+E="$TMP/empty"; mkdir -p "$E"
+rc=0; python3 "$FV" "$E" --no-cache >/dev/null 2>&1 || rc=$?
+if [ "$rc" = "3" ]; then ok "nothing scanned (INCONCLUSIVE) exits 3"; else bad "INCONCLUSIVE exited $rc, expected 3"; fi
+rc=0; python3 "$FV" "$E" --no-cache --no-such-flag >/dev/null 2>&1 || rc=$?
+if [ "$rc" = "64" ]; then ok "unknown flag exits 64"; else bad "unknown flag exited $rc, expected 64"; fi
+rc=0; python3 "$FV" "$TMP/absent-root" --no-cache >/dev/null 2>&1 || rc=$?
+if [ "$rc" = "2" ]; then ok "missing root exits 2"; else bad "missing root exited $rc, expected 2"; fi
+rc=0; (cd "$W" && python3 "$FV" . --no-cache >/dev/null 2>&1) || rc=$?
+if [ "$rc" = "1" ]; then ok "FAIL still exits 1 (control)"; else bad "FAIL exited $rc, expected 1"; fi
+
 # ---- EXOGENOUS: no model, no network -------------------------------------
 if grep -qE "anthropic|openai|requests\.|urllib\.request|httpx|provider_invoke" "$FV"; then
     bad "fast path references a model/network call -- it must be purely deterministic"
