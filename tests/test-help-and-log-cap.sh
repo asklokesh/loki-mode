@@ -44,7 +44,15 @@ for cmd in proof verify doctor status start stop update; do
     # And it must be the SAME help the --help spelling prints, not merely
     # different output.
     direct="$(bash "$LOKI" "$cmd" --help 2>&1)"
-    if [[ "$out" == "$direct" ]]; then
+    # PO-HELP-1: `loki help verify` deliberately appends the v10 DSSE export
+    # section after the delegated `loki verify --help` text, so for verify the
+    # direct help must be an exact prefix and the appended section must be the
+    # DSSE block, never anything else.
+    _dsse_re=$'^\n+DSSE EXPORT \\(v10 engine\\):'
+    if [[ "$cmd" == "verify" && "$out" == "$direct"* \
+          && "${out#"$direct"}" =~ $_dsse_re ]]; then
+        ok "loki help $cmd matches loki $cmd --help"
+    elif [[ "$out" == "$direct" ]]; then
         ok "loki help $cmd matches loki $cmd --help"
     else
         ko "loki help $cmd matches loki $cmd --help" \

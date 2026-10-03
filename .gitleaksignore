@@ -115,7 +115,3 @@ ff2f4719c34fa391ad1dd664c217d7337d6e5fac:loki-ts/dist/loki.js:generic-api-key:12
 21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:aws-access-token:88
 # D51-B11 test fixture: ghp_FAKEtokenVALUE... is a synthetic token the test asserts never leaks into run output; not a credential.
 c09dfd1eb6f2f2cc1f81b2be0d7ddee717141d66:tests/workspace/80-comment.sh:github-pat:7
-# SEC-SCAN-1: deliberately planted fake AKIA-format key in the secret-scan test
-# fixture (the test asserts the scanner BLOCKS it); not a live credential.
-04f62ff4ecc0b6903e7fa9df90ec13f39f49ac58:tests/test-secret-scan.sh:aws-access-token:117
-tests/test-secret-scan.sh:aws-access-token:117

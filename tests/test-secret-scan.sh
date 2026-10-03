@@ -113,8 +113,11 @@ fi
 # -------------------------------------------------------------------------
 S1="$TMP_ROOT/s1-aws"
 init_repo "$S1"
-commit_file "$S1" "config.py" '# planted test value, not a live credential
-AWS_ACCESS_KEY_ID = "AKIAQYLP''MN5HHHFPZAM2"'
+# Assembled from two halves so no scanner-matching literal sits in this file (D78).
+_s1_key='AKIAQYLP'
+_s1_key="${_s1_key}MN5HHHFPZAM2"
+commit_file "$S1" "config.py" "# planted test value, not a live credential
+AWS_ACCESS_KEY_ID = \"${_s1_key}\""
 run_verify "$S1" main
 if [ "$RC" -eq 2 ] && [ "$VERDICT" = "BLOCKED" ] && [ "$SECRET_STATUS" = "fail" ]; then
     _ok "real AWS key -> secret_scan=fail, BLOCKED (exit 2)"
