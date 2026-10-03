@@ -1911,3 +1911,11 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D62 (resume now) and D63 (roadmap, docs/v10/ROADMAP-D63.md) recorded and pushed (main 49a940d81). D64 (max pace, all Vorflux rows) arrived at 00:20Z and was withdrawn at 00:25Z; recorded as WITHDRAWN, no builder started.
 - Building (sonnet, worktrees): D61-17 large eval tier, D61-01 pre-model timer, D61-08 decomposer, D62-FIX (action.yml to Loki 10 plus real BUDGET_STOP exit 3 test). Ready next: D61-02, D61-07, D62-VIS, D62-JIRA.
 - Governor: weekly projected 57.4% at 01:55Z; pace target about 0.5% of the week per hour at 4 engineers.
+
+## 2026-10-03T03:04Z Train 82 in CI; HIGH re-review APPROVES contract and visual evidence
+- Train 82 (e072e47a9) carries every D61, D62 and D65 slice from trains 80 and 81 plus fixes: CI fixes dc1fa634f, contract spawn env 32b9db508, visual evidence B1-B3 e035e9929, P9 diagnostic capture e3b353e7a. Local gates: bun test 2905 pass 0 fail, dist guard 13/0, moat rc=0.
+- CI on train/82 so far: Bun Parity, First-run gate, Tier A, Coverage (baseline) success; Tests and Security Audit running.
+- HIGH re-review (opus, af6ddde5): APPROVE both. C1 and B1-B3 each reproduced on the pre-fix parent and shown fixed. Its release-gate item (stale dist) is already met: e072e47a9 dist contains "seal aborted", "keyword_match", "contract trace failed" (1 each) and no "untraced: " line.
+- Five non-blocking should-fixes filed as D65-SPEC-F1, D65-SPEC-F2 (HIGH, design) and D62-VIS-F1.
+- LOKI_CONTRACT and LOKI_VISUAL_EVIDENCE stay default off; flipping them is a separate decision.
+- Reviewer incident: a failed cd ran `loki contract` in the main checkout and wrote .loki/contract.json (gitignored); the reviewer removed it, confirmed absent at 03:04Z.
