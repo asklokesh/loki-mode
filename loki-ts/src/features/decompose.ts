@@ -1,6 +1,5 @@
 // D61 slice 8: deterministic decomposer. Splits a spec into requirement items, maps each to a write set,
-// unions units whose write sets overlap, and serializes shared files. Pure: no I/O, no model calls, same
-// input gives a byte-identical DAG. Not wired into any route yet.
+// unions units whose write sets overlap, and serializes shared files. Pure: no I/O, no model calls, same input gives a byte-identical DAG. Not wired into any route yet.
 import type { RepoMap } from "../engine10/repomap.ts";
 
 export interface DecomposeOpts {
@@ -20,7 +19,6 @@ export interface Unit {
 }
 export interface Edge { from: string; to: string; via: string }
 export interface Dag { units: Unit[]; sharedFiles: string[]; edges: Edge[] }
-
 const SHARED_BASENAME = /^(package\.json|package-lock\.json|bun\.lockb?|yarn\.lock|pnpm-lock\.yaml|Cargo\.toml|Cargo\.lock|go\.mod|go\.sum|poetry\.lock|Pipfile\.lock|requirements\.txt|pyproject\.toml|CHANGELOG(\.md)?|index\.(ts|tsx|js|jsx|mjs)|__init__\.py|mod\.rs)$/i;
 const LIST_RE = /^\s*(?:\d+[.)]|[-*+])\s+(?:\[[ xX]\]\s+)?(\S.*)$/;
 const HEAD_RE = /^\s{0,3}#{1,6}\s+(\S.*?)\s*#*\s*$/;
@@ -29,7 +27,6 @@ export function isSharedFile(path: string): boolean {
   const base = path.slice(path.lastIndexOf("/") + 1);
   return SHARED_BASENAME.test(base);
 }
-
 /** Requirement items: list lines if any, else headings, else the whole spec as one item. */
 export function parseItems(spec: string): string[] {
   const list: string[] = [];
@@ -52,7 +49,6 @@ export function moduleOf(path: string, workspaces: string[]): string {
   const i = path.indexOf("/");
   return i < 0 ? "." : path.slice(0, i);
 }
-
 const uniqSorted = (a: string[]): string[] => [...new Set(a)].sort();
 
 function mentioned(item: string, known: Set<string>): string[] {
@@ -118,7 +114,6 @@ export function decompose(spec: string, map: RepoMap, o: DecomposeOpts): Dag {
   edges.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   return { units, sharedFiles, edges };
 }
-
 /** Canonical byte-stable serialization. */
 export function dagJson(d: Dag): string {
   return JSON.stringify(d, null, 2);

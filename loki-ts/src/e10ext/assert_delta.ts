@@ -1,7 +1,5 @@
-// D50-F2-S1: classify a pytest test-file edit as a pure literal "value-change" or "weakened".
-// Pure and fail closed: anything unparsed, non-pytest, structural or doubtful is "weakened".
-// Structure (decorators, parametrize row counts, assert counts, everything else) must be
-// identical once every literal is normalised to its Python type, and the run and skip counts
+// D50-F2-S1: classify a pytest test-file edit as a pure literal "value-change" or "weakened". Pure and fail closed: anything unparsed, non-pytest, structural or doubtful is "weakened".
+// Structure (decorators, parametrize row counts, assert counts, everything else) must be identical once every literal is normalised to its Python type, and the run and skip counts
 // must be exactly equal to base. Never keyed on collected test ids (parametrize ids move).
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";

@@ -1,7 +1,6 @@
 // loki-ts/src/engine10/warm.ts -- D61 slice 5: warm engine. In-memory repo map, test map and
 // intake results keyed by (repoDir, HEAD^{tree}, dirty-file hash), served over a unix socket (never
-// a TCP port). Behind LOKI_SPEED=1. The cold path stays the reference: a miss or a dead daemon
-// never changes a result, it only costs time.
+// a TCP port). Behind LOKI_SPEED=1. The cold path stays the reference: a miss or a dead daemon never changes a result, it only costs time.
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
@@ -15,7 +14,6 @@ import type { TestMap } from "../engine10/types.ts";
 export function speedEnabled(): boolean {
   return process.env["LOKI_SPEED"] === "1";
 }
-
 /** LOKI_WARM_SOCK overrides (tests use a temp dir); default ~/.loki/run/engine.sock. */
 export function warmSocketPath(): string {
   const o = process.env["LOKI_WARM_SOCK"];
@@ -26,9 +24,7 @@ function git(repoDir: string, args: string[]): string | null {
   const r = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf8", env: process.env });
   return r.status === 0 ? r.stdout : null;
 }
-
 const MAX_HASHED_BYTES = 1_000_000;
-
 /** sha256 over the sorted `git status --porcelain` lines plus the content of each dirty file, so
  *  an edit that keeps the same status line still changes the hash. "" for a clean tree. */
 export function dirtyHash(repoDir: string): string {
@@ -73,7 +69,6 @@ interface Entry {
 export class WarmEngine {
   private entries = new Map<string, Entry>();
   constructor(private readonly maxEntries = 8) {}
-
   /** Maps for the repo's current key; builds on a miss. A changed key (new tree or dirty edit)
    *  is simply a different entry, so a stale map is never served. */
   get(repoDir: string): WarmReply {
@@ -88,7 +83,6 @@ export class WarmEngine {
     }
     return { ok: true, key, hit, repomap: e.repomap, testmap: e.testmap, intake: e.intake };
   }
-
   /** Stores an intake result under the repo's current key. */
   putIntake(repoDir: string, intake: unknown): WarmReply {
     const key = warmKey(repoDir);
@@ -96,12 +90,10 @@ export class WarmEngine {
     this.entries.set(key, { ...this.entries.get(key), intake });
     return { ok: true, key };
   }
-
   size(): number {
     return this.entries.size;
   }
 }
-
 /** Dashboard hook: starts the warm socket only under LOKI_SPEED=1; never throws. */
 export function startWarmIfEnabled(): WarmServer | null {
   if (!speedEnabled()) return null;
@@ -116,7 +108,6 @@ export interface WarmServer {
   path: string;
   stop(): void;
 }
-
 /** Serves newline-delimited JSON requests ({op:"get"|"put_intake"|"ping", repoDir, intake?}) on a
  *  unix socket. Removes a stale socket file first. */
 export function startWarmServer(path: string = warmSocketPath(), engine: WarmEngine = new WarmEngine()): WarmServer {

@@ -1,5 +1,4 @@
-// D61-16: LOKI_SPEED group entry. Called from engine10/supervisor.ts main() for free-text tasks and
-// spec files only (never issue refs).
+// D61-16: LOKI_SPEED group entry. Called from engine10/supervisor.ts main() for free-text tasks and spec files only (never issue refs).
 //
 // Spec files: a task is read as a file ONLY when it is explicitly a path (contains "/" or ends in
 // .md .txt .yaml .yml .json, no whitespace). A relative path resolves against process.cwd(). The real path

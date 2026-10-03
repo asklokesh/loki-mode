@@ -7,13 +7,11 @@ import type { NormalizedIssue } from "../engine10/fetch_issue.ts";
 export type TrackerRef = { source: "jira"; key: string; site?: string } | { source: "linear"; key: string };
 export type TrackerIssue = NormalizedIssue & { source: "jira" | "linear" };
 export type FetchFn = (url: string, init?: RequestInit) => Promise<Response>;
-
 const JIRA_KEY = "[A-Z][A-Z0-9_]*-\\d+";
 const JIRA_REF = new RegExp(`^jira:(${JIRA_KEY})$`);
 const JIRA_URL = new RegExp(`^https://([\\w-]+(?:\\.[\\w-]+)*\\.atlassian\\.net)/browse/(${JIRA_KEY})/?(?:[?#]\\S*)?$`);
 const LINEAR_REF = /^linear:([A-Za-z][A-Za-z0-9]*-\d+)$/;
 const LINEAR_URL = /^https:\/\/linear\.app\/[\w-]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)(?:\/\S*)?$/;
-
 const SELF_URL = new RegExp(`^(https?://[^/\\s?#]+)/browse/(${JIRA_KEY})/?(?:[?#]\\S*)?$`);
 
 // Self-hosted Jira: a browse URL parses only when its origin equals JIRA_BASE_URL's origin.
@@ -26,7 +24,6 @@ function selfHostedSite(s: string, env: NodeJS.ProcessEnv): TrackerRef | null {
   } catch { return null; }
   return { source: "jira", key: m[2]!, site: new URL(m[1]!).origin };
 }
-
 /** Returns the parsed tracker ref, or null for anything else (GitHub refs, free text). */
 export function parseTrackerRef(ref: string, env: NodeJS.ProcessEnv = process.env): TrackerRef | null {
   if (env.LOKI_TRACKER_INTAKE === "0") return null;
@@ -43,7 +40,6 @@ export function parseTrackerRef(ref: string, env: NodeJS.ProcessEnv = process.en
 }
 
 interface AdfNode { type?: string; text?: string; content?: AdfNode[] }
-
 /** Converts an Atlassian Document Format tree (or a plain string) to plain text. */
 export function adfToText(doc: unknown): string {
   if (typeof doc === "string") return doc;
@@ -117,7 +113,6 @@ async function fetchLinear(ref: Extract<TrackerRef, { source: "linear" }>, f: Fe
     url: is.url ?? "", created_at: "", repo: is.identifier ?? ref.key, state: null, closed_by_merged_pr: false,
   };
 }
-
 /** Fetches and normalizes a Jira or Linear issue. Throws on missing env vars (naming the variable) or HTTP errors. */
 export async function fetchTrackerIssue(ref: TrackerRef, f: FetchFn = fetch, env: NodeJS.ProcessEnv = process.env): Promise<TrackerIssue> {
   return ref.source === "jira" ? fetchJira(ref, f, env) : fetchLinear(ref, f, env);

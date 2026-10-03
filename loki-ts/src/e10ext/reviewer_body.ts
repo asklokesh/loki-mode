@@ -1,5 +1,4 @@
-// INTEL-3: reviewer-first PR body, pure rendering from data the engine already holds.
-// Order: what was asked, what changed, how it was tested, NOT PROVEN, receipt. Absent data
+// INTEL-3: reviewer-first PR body, pure rendering from data the engine already holds. Order: what was asked, what changed, how it was tested, NOT PROVEN, receipt. Absent data
 // prints "not recorded", never a number. Task text is untrusted: truncated, never executed.
 export interface ReviewerBodyInput {
   verdict: string; draftReason: string | null; notProven: string[];

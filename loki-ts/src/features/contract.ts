@@ -59,7 +59,6 @@ export function parseContract(markdown: string, source = ""): Contract {
   });
   return { source, criteria: found.map((f, n) => ({ id: `AC-${n + 1}`, text: f.text, source_line: f.line })) };
 }
-
 const STOP = new Set(["the", "and", "for", "with", "that", "this", "must", "should", "shall", "when", "then", "are", "was", "all", "any", "can", "not", "has", "have", "from", "into", "each", "user", "users"]);
 function words(s: string): string[] {
   return [...new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3 && !STOP.has(w)))];
@@ -68,7 +67,6 @@ function overlaps(criterionWords: string[], target: string): boolean {
   const tw = new Set(words(target));
   return criterionWords.some((w) => tw.has(w) || (w.length > 4 && w.endsWith("s") && tw.has(w.slice(0, -1))));
 }
-
 /** Simple keyword overlap between criterion text and changed file paths / check names. */
 export function traceContract(contract: Contract, changedFiles: string[], checkNames: string[]): ContractTrace {
   return {
@@ -82,7 +80,6 @@ export function traceContract(contract: Contract, changedFiles: string[], checkN
     }),
   };
 }
-
 /** Criterion text is spec-derived and lands in the receipt and PR body: collapse control chars, escape
  *  <, > and #, strip backticks, cap length (same shape as seal.ts sanitizeReason, E-120). */
 export function sanitizeCriterion(s: string): string {
@@ -104,7 +101,6 @@ export const MAX_CONTRACT_BYTES = 1024 * 1024;
 export interface ContractRead { contract: Contract | null; notes: string[]; sha256: string | null }
 /** The contract as intake saw it (D65-SPEC-F2): sha256 of the raw file bytes (null when no readable file), the parsed contract, and read notes. */
 export type ContractSnapshot = ContractRead
-
 /** Read .loki/contract.json safely: lstat first so a FIFO, directory, symlink or device is never opened
  *  (a FIFO would block the event loop forever), cap the size, and report why a contract is unusable. */
 export function readContract(repoDir: string): ContractRead {
@@ -134,7 +130,6 @@ export function readContract(repoDir: string): ContractRead {
   const notes = malformed > 0 ? [`contract: ${malformed} malformed criteria dropped`] : [];
   return { contract: { source: typeof j.source === "string" ? j.source : "", criteria }, notes, sha256 };
 }
-
 /** Intake hook (D65-SPEC-F2): freeze the contract before the implement session can edit it. undefined when LOKI_CONTRACT=0. */
 export function snapshotContract(repoDir: string, env: NodeJS.ProcessEnv = process.env): ContractSnapshot | undefined {
   if (!contractEnabled(env)) return undefined;
@@ -149,7 +144,6 @@ export function renderContract(c: Contract): string {
   if (c.criteria.length === 0) return "No acceptance criteria found.\n";
   return `${c.criteria.map((x) => `${x.id}  ${x.text}  (line ${x.source_line})`).join("\n")}\n`;
 }
-
 /** seal reads ctx.repoDir/.loki/contract.json, so write to the repo root, not the bare cwd. */
 export function repoRoot(cwd: string): string {
   const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", env: process.env });
@@ -172,7 +166,6 @@ export function main(args: string[]): number {
   process.stdout.write(renderContract(contract));
   return 0;
 }
-
 /** Seal hook: unless LOKI_CONTRACT=0, trace the contract frozen at intake (never the live file, D65-SPEC-F2), attach the optional
  *  `contract` field to the receipt body (additive) and return NOT PROVEN lines: untraced criteria plus any change made to the file
  *  after intake. Advisory only, never changes the verdict. */

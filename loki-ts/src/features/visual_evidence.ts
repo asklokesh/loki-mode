@@ -1,5 +1,4 @@
-// D62-VIS: visual evidence for PRs, on by default (LOKI_VISUAL_EVIDENCE=0 turns it off).
-// Screenshots of changed pages (Playwright CLI already installed in the repo, never downloaded)
+// D62-VIS: visual evidence for PRs, on by default (LOKI_VISUAL_EVIDENCE=0 turns it off). Screenshots of changed pages (Playwright CLI already installed in the repo, never downloaded)
 // or an HTTP transcript for API repos. Capture never throws and never fails a run: a skip is recorded.
 // Each screenshot's sha256 goes into receipt.evidence_screens; `loki verify` rechecks it when present.
 import { spawn } from "node:child_process";
@@ -12,10 +11,8 @@ export interface EvidenceScreen { path: string; sha256: string } // path is rela
 export interface EvidenceResult { screens: EvidenceScreen[]; http: boolean; skipped: string | null }
 
 export const visualEvidenceEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_VISUAL_EVIDENCE"] !== "0"; // D70: on unless set to 0
-
 const PAGE_RE = /^(?:.*\/)?(?:app|pages|src|public)\/.*\.(?:html|jsx|tsx|vue|svelte)$/;
 export const isPageFile = (p: string): boolean => PAGE_RE.test(p);
-
 /** Best-effort route for a changed page file (Next, Nuxt, SvelteKit and plain html layouts). */
 export function routeFor(file: string): string {
   let r = file.replace(/^(?:.*?\/)?(?:app|pages|src|public)\//, "").replace(/^(?:routes|pages)\//, "");
@@ -25,14 +22,12 @@ export function routeFor(file: string): string {
 export const screenName = (route: string): string => (route === "/" ? "index" : route.slice(1).replace(/[^A-Za-z0-9._-]+/g, "_")) || "index";
 
 export const sha256File = (p: string): string => createHash("sha256").update(readFileSync(p)).digest("hex");
-
 /** Hash files (paths relative to runDir) into the receipt shape; unreadable files are dropped. */
 export function hashScreens(runDir: string, rels: string[]): EvidenceScreen[] {
   const out: EvidenceScreen[] = [];
   for (const rel of rels) { try { out.push({ path: rel, sha256: sha256File(join(runDir, rel)) }); } catch { /* skipped */ } }
   return out;
 }
-
 /** Verify side: null when every recorded screen still hashes to its recorded value, else a clear message. */
 export function checkScreens(runDir: string, screens: unknown): string | null {
   if (!Array.isArray(screens)) return "evidence_screens is not a list";
@@ -90,7 +85,6 @@ function openapiPaths(repoDir: string): string[] {
 export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; onServer?: (pgid: number) => void } // onServer: the dev server's own process group, so a supervisor can reap it on a hard kill
 const DEFAULT_BUDGET_MS = 25_000; // well under the 60s seal stage limit
 const MAX_ROUTES = 5;
-
 /** Async screenshot with a hard timeout and kill; resolves true on exit 0. Honors the abort signal. */
 function shoot(pw: string, args: string[], cwd: string, ms: number, signal?: AbortSignal): Promise<boolean> {
   return new Promise((res) => {
@@ -105,12 +99,10 @@ function shoot(pw: string, args: string[], cwd: string, ms: number, signal?: Abo
     c.on("exit", (code) => done(code === 0));
   });
 }
-
 const isSymlink = (p: string): boolean => { try { return lstatSync(p).isSymbolicLink(); } catch { return false; } };
 const isRegularFile = (p: string): boolean => { try { return lstatSync(p).isFile(); } catch { return false; } };
 const groupAlive = (pid: number): boolean => { try { process.kill(-pid, 0); return true; } catch { return false; } };
 const SHUTDOWN_GRACE_MS = 2000;
-
 /** SIGTERM the recorded process group, wait a bounded grace, then SIGKILL it if any member survives. Never throws. */
 async function stopServer(c: ReturnType<typeof spawn> | null, graceMs: number, signal?: AbortSignal): Promise<void> {
   const pid = c?.pid;
@@ -121,7 +113,6 @@ async function stopServer(c: ReturnType<typeof spawn> | null, graceMs: number, s
   if (groupAlive(pid)) { try { process.kill(-pid, "SIGKILL"); } catch { try { c.kill("SIGKILL"); } catch { /* gone */ } } }
   for (let i = 0; i < 10 && groupAlive(pid); i++) await new Promise((r) => setTimeout(r, 50)); // let the kernel reap
 }
-
 /** Never throws. runDir is the run directory; evidence goes to a fresh dir under it. changed is repo-relative paths. */
 export async function captureVisualEvidence(repoDir: string, runDir: string, changed: string[], opts: CaptureOpts = {}): Promise<EvidenceResult> {
   const skip = (why: string): EvidenceResult => ({ screens: [], http: false, skipped: why });
@@ -180,7 +171,6 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
     await stopServer(child, Math.min(SHUTDOWN_GRACE_MS, Math.max(250, startedAt + budgetMs - Date.now())), signal);
   }
 }
-
 /** Seal hook: returns `{ evidence_screens }` to spread into the receipt body, or `{}`. Records a skip in notProven. Throws only if the stage was aborted, so nothing is written after a limit kill. */
 export async function sealEvidence(repoDir: string, runDir: string, o: { verify?: Record<string, unknown> }, notProven: Set<string>, signal?: AbortSignal, emit?: (type: "session.started", stage: "seal", data: Record<string, unknown>) => void): Promise<{ evidence_screens?: EvidenceScreen[] }> {
   if (!visualEvidenceEnabled()) return {};
@@ -190,12 +180,10 @@ export async function sealEvidence(repoDir: string, runDir: string, o: { verify?
   if (ev.skipped) notProven.add(`visual evidence skipped: ${ev.skipped}`);
   return ev.screens.length > 0 ? { evidence_screens: ev.screens } : {};
 }
-
 /** Verify hook: null when the receipt has no evidence_screens or all still match, else a message. */
 export function receiptScreensProblem(receiptPath: string, receipt: Record<string, unknown>): string | null {
   return receipt["evidence_screens"] === undefined ? null : checkScreens(dirname(receiptPath), receipt["evidence_screens"]);
 }
-
 /** PR hook: an "Evidence" markdown section read from the sealed receipt, or "" when there are no screens. */
 export function evidenceSection(receiptPath: string | undefined | null): string {
   try {

@@ -1,5 +1,4 @@
-// E-127 (D41 item 5): list open issues for a label or milestone as pure data. Data only (D42):
-// no stages/, Seal, verify or Wall imports. Reuses fetch_issue.ts's Execer; args go as an array,
+// E-127 (D41 item 5): list open issues for a label or milestone as pure data. Data only (D42): no stages/, Seal, verify or Wall imports. Reuses fetch_issue.ts's Execer; args go as an array,
 // never through a shell string, so label text cannot inject.
 import { defaultExec, type Execer } from "../engine10/fetch_issue.ts";
 

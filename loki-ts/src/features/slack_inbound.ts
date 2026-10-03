@@ -19,7 +19,6 @@ export function slackInboundEnabled(env: NodeJS.ProcessEnv): boolean {
 export function signSlackBody(secret: string, timestamp: string, body: string): string {
   return "v0=" + createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex");
 }
-
 /** HMAC sha256 over `v0:<timestamp>:<body>`; rejects timestamps more than 5 minutes off; constant-time compare. */
 export function verifySlackSignature(secret: string, timestamp: string, body: string, signature: string, nowS: number = Math.floor(Date.now() / 1000)): boolean {
   if (!secret || !timestamp || !signature || !/^\d+$/.test(timestamp)) return false;
@@ -28,7 +27,6 @@ export function verifySlackSignature(secret: string, timestamp: string, body: st
   const got = Buffer.from(signature);
   return got.length === want.length && timingSafeEqual(got, want);
 }
-
 /** `<@U123> fix owner/repo#12` -> `fix owner/repo#12`; null when nothing is left after removing mentions. */
 export function parseMention(text: string): string | null {
   const t = (text ?? "").replace(/<@[A-Z0-9]+(\|[^>]*)?>/g, " ").replace(/<(https?:[^|>]+)(\|[^>]*)?>/g, "$1").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
@@ -46,13 +44,11 @@ export interface InboundDeps {
 }
 export interface InboundState { threads: Map<string, ThreadRun>; seen: Set<string>; allowedUsers?: Set<string> }
 export const newInboundState = (): InboundState => ({ threads: new Map(), seen: new Set() });
-
 /** Task text cap in bytes; a larger argv entry risks E2BIG when spawning. */
 export const MAX_TASK_BYTES = 64 * 1024;
 export const TASK_TOO_LONG = "task too long";
 export const NOT_ALLOWED = "You are not allowed to start runs from Slack.";
 export const START_FAILED = "Could not start a run (see the server log).";
-
 /** `LOKI_SLACK_ALLOWED_USERS` (comma-separated Slack user IDs) -> a set, or undefined when unset or blank. */
 export function parseAllowedUsers(raw: string | undefined): Set<string> | undefined {
   const ids = (raw ?? "").split(",").map((x) => x.trim()).filter(Boolean);
@@ -76,7 +72,6 @@ export async function launchInThread(state: InboundState, deps: InboundDeps, cha
     else { rec.state = "done"; await deps.post(channel, threadTs, `Run ${h.runId} finished (exit ${r.code}).`); }
   }).catch(() => { rec.state = "done"; });
 }
-
 /** Handles one verified Slack Events API payload. Returns the HTTP response; work continues in the background. */
 export async function handleSlackEvent(state: InboundState, deps: InboundDeps, payload: any, botUserId?: string): Promise<{ status: number; body: string }> {
   if (payload?.type === "url_verification") return { status: 200, body: String(payload.challenge ?? "") };
@@ -120,7 +115,6 @@ function blockedQuestion(repoDir: string, runId: string): string | undefined {
     return typeof why === "string" ? why.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500) : undefined;
   } catch { return undefined; }
 }
-
 /** Walks up from this module (src/features or the bundled dist) until bin/loki exists. */
 export function findRepoRoot(startDir: string = dirname(fileURLToPath(import.meta.url))): string {
   let d = startDir;
@@ -140,7 +134,6 @@ export function isValidTaskText(text: string): boolean {
   return !text.startsWith("-") && /\s/.test(text.trim());
 }
 export const SLACK_SECRET_VARS = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] as const;
-
 /** Child env for a spawned run: both Slack secrets stripped, browser opening disabled. */
 export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env, LOKI_NO_BROWSER: "1" };
@@ -149,7 +142,6 @@ export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 type SpawnFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; stdio: "ignore" }) => ReturnType<typeof spawn>;
-
 /** Default run launcher: spawns REPO_ROOT/bin/loki "<task>" (never argv[1]) and discovers the run dir it creates. */
 export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: string = join(REPO_ROOT, "bin", "loki"), spawnFn: SpawnFn = spawn as SpawnFn): Pick<InboundDeps, "startRun"> {
   const runsDir = join(repoDir, ".loki", "runs");
@@ -184,7 +176,6 @@ export function slackPoster(token: string, fetchFn: typeof fetch = fetch, log: (
     } catch (e) { fail(String((e as Error)?.message ?? "network error")); }
   };
 }
-
 /** The verified HTTP handler: POST only, raw body signature check, then the event router. */
 export function makeSlackFetch(secret: string, state: InboundState, deps: InboundDeps): (req: Request) => Promise<Response> {
   return async (req) => {
@@ -199,7 +190,6 @@ export function makeSlackFetch(secret: string, state: InboundState, deps: Inboun
 }
 
 export interface SlackCliOpts { serve?: (o: { hostname: string; port: number; fetch: (req: Request) => Promise<Response> }) => { port: number }; deps?: Partial<InboundDeps>; wait?: boolean }
-
 /** `loki slack serve [--port N] [--host H]`; host defaults to 127.0.0.1. */
 export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = process.env, opts: SlackCliOpts = {}): Promise<number> {
   if (args[0] !== "serve") { process.stderr.write("usage: loki slack serve [--port N] [--host H]\n"); return 2; }

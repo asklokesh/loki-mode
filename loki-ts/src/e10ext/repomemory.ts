@@ -1,8 +1,6 @@
 // E-126 / D41 item 3: per-repo memory, data only (D42). Stores the verified build and test command;
-// flaky tests and failure causes are delegated to engine10/cache.ts (recordFlaky, topFailures).
-// Lives in the same per-repo dir as the rest of the cache. No verdict logic: the caller decides
-// what counts as a trusted result. Reads never throw; a missing or corrupt file is a cold read.
-// Mined conventions are deliberately absent: nothing in engine10 mines them today.
+// flaky tests and failure causes are delegated to engine10/cache.ts (recordFlaky, topFailures). Lives in the same per-repo dir as the rest of the cache. No verdict logic: the caller decides
+// what counts as a trusted result. Reads never throw; a missing or corrupt file is a cold read. Mined conventions are deliberately absent: nothing in engine10 mines them today.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { type FailureSignature, readFlaky, recordFailures, recordFlaky, repoCacheDir, topFailures } from "../engine10/cache.ts";

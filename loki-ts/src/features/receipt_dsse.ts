@@ -7,13 +7,11 @@ export const DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json";
 export const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
 export const PREDICATE_TYPE = "https://autonomi.dev/loki/receipt/v10";
 export interface DsseEnvelope { payloadType: string; payload: string; signatures: { keyid: string; sig: string }[] }
-
 /** DSSE v1 pre-authentication encoding: "DSSEv1" SP len(type) SP type SP len(body) SP body (lengths in bytes, decimal). */
 export function pae(payloadType: string, body: Buffer): Buffer {
   const t = Buffer.from(payloadType, "utf8");
   return Buffer.concat([Buffer.from(`DSSEv1 ${t.length} `), t, Buffer.from(` ${body.length} `), body]);
 }
-
 /** Statement v1: subject is the commit and tree the receipt covers, predicate is the receipt body unchanged. */
 export function buildStatement(receipt: Record<string, unknown>): Record<string, unknown> {
   const head = receipt["head_sha"], tree = receipt["tree"];
@@ -35,7 +33,6 @@ export function signEnvelope(receipt: Record<string, unknown>, priv: KeyObject, 
 export const isEnvelope = (x: unknown): x is DsseEnvelope => !!x && typeof x === "object" && typeof (x as DsseEnvelope).payloadType === "string" && typeof (x as DsseEnvelope).payload === "string" && Array.isArray((x as DsseEnvelope).signatures);
 
 export type EnvelopeCheck = { ok: true; receipt: Record<string, unknown>; kid: string } | { ok: false; unchecked?: boolean; reason: string };
-
 /** Checks the signature over PAE (key chosen by keyid; threshold of one: any one good signature verifies; when no signature has a known keyid the result is UNCHECKED, never tried against other keys; a known key with a bad signature is TAMPERED), then the statement shape and subject binding. */
 export function verifyEnvelope(env: DsseEnvelope, pubFor: (kid: string) => KeyObject | undefined): EnvelopeCheck {
   if (env.payloadType !== DSSE_PAYLOAD_TYPE) return { ok: false, reason: `unexpected payloadType: ${env.payloadType}` };
@@ -59,7 +56,6 @@ export function verifyEnvelope(env: DsseEnvelope, pubFor: (kid: string) => KeyOb
   if (dig["gitCommit"] !== receipt["head_sha"] || (dig["gitTree"] !== undefined && dig["gitTree"] !== receipt["tree"])) return { ok: false, reason: "subject digest does not match the receipt head_sha/tree" };
   return { ok: true, receipt, kid };
 }
-
 /** The run outcome of a parsed receipt or DSSE envelope; "UNREADABLE" when it cannot be read. */
 export function outcomeOf(j: Record<string, unknown>): string {
   try { return String(isEnvelope(j) ? (JSON.parse(Buffer.from(j.payload, "base64").toString()) as { predicate: { verdict: unknown } }).predicate.verdict : j["verdict"]); } catch { return "UNREADABLE"; }
@@ -87,7 +83,6 @@ export function verifyDsseReceipt(env: DsseEnvelope, d: DsseVerifyDeps): { verdi
   if (o.status !== "verified") return { verdict: o.status === "tampered" ? "TAMPERED" : "UNCHECKED", reasons: [o.reason ?? "attestation invalid"] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }
-
 /** run-id path guard: the problem string when the file under a run id is an envelope for another run, else null (unreadable files are left to the verifier). */
 export function runIdGuard(receiptPath: string, runId: string): string | null {
   try { return envelopeRunIdProblem(JSON.parse(readFileSync(receiptPath, "utf8")), runId); } catch { return null; }

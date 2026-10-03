@@ -1,15 +1,12 @@
 // D61 slice 14: group events and the terminal unit table. Pure rendering plus a small renderer: on a TTY the
 // table repaints in place every 2s, otherwise one plain line is printed per unit status change. Single-run
-// output never touches this module. Group events: group.started {group_id, units:[{unit_id, deps}]} and
-// group.unit {group_id, unit_id, status, stage, elapsed_s}.
+// output never touches this module. Group events: group.started {group_id, units:[{unit_id, deps}]} and group.unit {group_id, unit_id, status, stage, elapsed_s}.
 import type { EventEnvelope } from "../../engine10/types.ts";
 import { formatDuration } from "../../engine10/output.ts";
 
 export type UnitStatus = "pending" | "running" | "done" | "failed" | "blocked";
 export interface UnitRow { id: string; deps: string[]; status: UnitStatus; stage: string; elapsedS: number }
-
 const strs = (x: unknown): string[] => (Array.isArray(x) ? x.filter((d): d is string => typeof d === "string") : []);
-
 /** Folds group.started and group.unit events into one row per unit (declared order, then first-seen order). */
 export function foldGroup(events: EventEnvelope[]): UnitRow[] {
   const rows = new Map<string, UnitRow>();
@@ -30,10 +27,8 @@ export function foldGroup(events: EventEnvelope[]): UnitRow[] {
   }
   return [...rows.values()];
 }
-
 /** `unit u1 done seal 2m05s` */
 export const formatUnitLine = (u: UnitRow): string => `unit ${u.id} ${u.status} ${u.stage} ${formatDuration(u.elapsedS)}`;
-
 /** Fixed-column table, no trailing newline. Column width is the longest cell plus 2, never below the minimum. */
 export function formatUnitTable(units: UnitRow[]): string {
   const cells = [["UNIT", "STATUS", "STAGE", "TIME", "DEPS"], ...units.map((u) => [u.id, u.status, u.stage, formatDuration(u.elapsedS), u.deps.join(",") || "-"])];

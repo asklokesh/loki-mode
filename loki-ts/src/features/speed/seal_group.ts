@@ -33,7 +33,6 @@ export interface GroupSeal { section: ReceiptGroup | undefined; notProven: strin
 /** Same hash the receipt uses (seal.ts receiptSha256), injected so this module never imports seal.ts or verify_cmd.ts. */
 type RecHash = (r: Record<string, unknown>) => string;
 type VerifyOne = (receiptPath: string, deps?: VerifyDeps) => Promise<{ verdict: string; reasons: string[] }>;
-
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const PASSING = new Set(["VERIFIED", "ALREADY_SATISFIED"]);
 const sha = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
@@ -43,7 +42,6 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
 const unitsDir = (runDir: string): string => join(runDir, "group", "units");
 const readJson = (p: string): unknown => { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return undefined; } };
 const dirNames = (d: string): string[] | null => { try { return readdirSync(d).filter((n) => !n.startsWith(".")).sort(); } catch { return null; } }; // dotfiles (.DS_Store) are not units
-
 /** Reads the group directory under runDir. No group/manifest.json means a single run: inert, so the receipt is byte-identical to today. */
 export function sealGroup(runDir: string, rh: RecHash): GroupSeal {
   const manifestPath = join(runDir, "group", "manifest.json");
@@ -81,13 +79,11 @@ export function sealGroup(runDir: string, rh: RecHash): GroupSeal {
   for (const n of extra) fail(`unit directory ${text(n, 64)} is not in the manifest`);
   return { section: problems === 0 ? { group_id: String((m as Record<string, unknown>)["group_id"]), units } : undefined, notProven, problems, allUnitsPass: allUnitsPass && problems === 0 };
 }
-
 /** Only ever lowers: a sub-receipt problem is FAILED, a non-passing unit caps VERIFIED at PARTIAL. Never raises anything to VERIFIED. */
 export function capGroupVerdict(v: Verdict, g: GroupSeal): Verdict {
   if (g.problems > 0) return v === "SPEC_CONFLICT" ? v : "FAILED";
   return !g.allUnitsPass && (v === "VERIFIED" || v === "ALREADY_SATISFIED") ? "PARTIAL" : v;
 }
-
 /** Verify side. Null means the group section checks out (or the receipt is a single run with no group directory). */
 export async function verifyGroup(receiptPath: string, receipt: Record<string, unknown>, rh: RecHash, verifyOne: VerifyOne, deps: VerifyDeps = {}): Promise<{ verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null> {
   const runDir = dirname(receiptPath);
@@ -120,7 +116,6 @@ export async function verifyGroup(receiptPath: string, receipt: Record<string, u
   }
   return unchecked ? { verdict: "UNCHECKED", reason: `group: ${unchecked}` } : null;
 }
-
 const cell = (s: string): string => s.replace(/[\x00-\x1f\x7f|]+/g, " ").trim();
 /** Markdown unit table for the PR body. */
 export function unitTableLines(g: ReceiptGroup): string[] {

@@ -22,10 +22,8 @@ export interface CheckResult {
   dag: Dag;
   confirmed: "none" | "model" | "invalid";
 }
-
 const unitFiles = (u: Unit): string[] => [...u.writeSet, ...u.serialized];
 const uniq = (a: string[]): string[] => [...new Set(a)].sort();
-
 /** Share of distinct files that appear in more than one unit (write set or serialized shared file). */
 export function overlapRatio(dag: Dag): number {
   const seen = new Map<string, number>();
@@ -33,7 +31,6 @@ export function overlapRatio(dag: Dag): number {
   if (!seen.size) return 0;
   return [...seen.values()].filter((n) => n > 1).length / seen.size;
 }
-
 /** First "reader unit names a symbol another unit's write set exports" pair, or null. */
 function crossSymbol(dag: Dag, map: RepoMap | null): string | null {
   if (!map) return null;
@@ -62,7 +59,6 @@ export function checkDag(dag: Dag, o: CheckOpts): { mode: "parallel" | "sequenti
   }
   return { mode: "parallel", reason: `${dag.units.length} units, overlap ${ratio.toFixed(2)}, no cross-unit symbol reads` };
 }
-
 /** Strict schema: {"verdict":"confirm"} or {"verdict":"merge","merges":[["u1","u2"],...]}; nothing else. */
 export function parseConfirm(raw: string, dag: Dag): string[][] | null {
   let v: unknown;

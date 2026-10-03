@@ -1,6 +1,5 @@
 // D77 (W1-S2): wires the Wall manifest to a git base tree. Reads only blobs of the intake tree (never the
-// worktree, diff or .loki/), builds wall_manifest.txt, and returns its sha256. Any failure or misalignment
-// returns null so the Wall behaves as if the flag were off (fail closed).
+// worktree, diff or .loki/), builds wall_manifest.txt, and returns its sha256. Any failure or misalignment returns null so the Wall behaves as if the flag were off (fail closed).
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { basename, dirname } from "node:path";

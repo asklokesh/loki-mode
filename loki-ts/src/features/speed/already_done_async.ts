@@ -13,7 +13,6 @@ import type { RunContext, SessionResult, TestMap } from "../../engine10/types.ts
 import { speedEnabled } from "../warm.ts";
 
 export { speedEnabled };
-
 /** True only when every path the model was shown exists at baseSha and the live tree still equals it (no edit,
  *  no deletion, no untracked stand-in). The model reads every hit file from the live tree implement is editing,
  *  so a change to ANY hit file, cited or not, means the verdict describes work in flight, not the base. Fails
@@ -27,7 +26,6 @@ export function hitsUnchangedFromBase(repoDir: string, baseSha: string, paths: s
     return true;
   } catch { return false; }
 }
-
 /** Live roots from mkdtempSync only. SIGTERM maps to process.exit, which skips every finally, so one lazily
  *  registered exit handler removes whatever is still recorded. */
 const liveRoots = new Set<string>();
@@ -44,7 +42,6 @@ function dropRoot(root: string): void {
   liveRoots.delete(root);
   try { rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
 }
-
 /** Extracts baseSha into a fresh temp dir OUTSIDE the repo (runDir sits inside the live work tree, so a tree
  *  there would let git discovery or `..` reach implement's edits). Resolves to the exact root created (the tree
  *  is <root>/tree), or null when the archive or extract fails or is aborted; the caller then runs no session. */
@@ -65,7 +62,6 @@ function pinBaseTree(ctx: RunContext, signal: AbortSignal): Promise<string | nul
     return root;
   })();
 }
-
 /** Starts the background check. `apply` merges a confirmed result into the intake data (the same object the
  *  machine stored). Wraps ctx.sessions so the implement session is linked to the check's verdict. */
 export function deferAlreadyDone(

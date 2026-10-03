@@ -1,9 +1,6 @@
-// S41-05 attempt-selection rule (docs/v10/SCORECARD-PLAN.md section 4 "Attempt selection (two
-// attempts)", docs/v10/DECISIONS.md D42 (1)). Pure function: it reads results core already
-// computed by scoring each attempt's diff against the shared set S in the primary tree, and
-// returns a choice only. It never runs a test, never decides pass/fail for Seal, and never
-// touches stages/ at runtime (D42 (1); the import-graph guard lives in tests/engine10/budget.test.ts
-// next to the modernize cap). Core re-runs verify and Seal on whichever tree this picks.
+// S41-05 attempt-selection rule (docs/v10/SCORECARD-PLAN.md section 4 "Attempt selection (two attempts)", docs/v10/DECISIONS.md D42 (1)). Pure function: it reads results core already
+// computed by scoring each attempt's diff against the shared set S in the primary tree, and returns a choice only. It never runs a test, never decides pass/fail for Seal, and never
+// touches stages/ at runtime (D42 (1); the import-graph guard lives in tests/engine10/budget.test.ts next to the modernize cap). Core re-runs verify and Seal on whichever tree this picks.
 import type { TestRef } from "../engine10/types.ts";
 // D42 (1): seal.ts/verify.ts/wall.ts/verify_cmd.ts may be referenced only as `import type`.
 import type { VerifyCheck } from "../engine10/stages/verify.ts";
@@ -89,15 +86,12 @@ function rankTuple(a: AttemptCandidate, sNames: Set<string>, wallNames: Set<stri
   let lintFails = 0;
   for (const c of a.checks) {
     if (c.name.startsWith("lint:") && c.result === "fail") lintFails++;
-    // wallPasses (key 1) reads `wall` directly, independent of S: a sealed Wall file is written
-    // after baseSha and left uncommitted (wall.ts), so S's "exists at baseSha" filter can drop a
-    // Wall test out of S while it still must count at key 1 -- an attempt that fails the Wall
-    // must never win because the caller happened to build S without it (R1, reproduced: with the
+    // wallPasses (key 1) reads `wall` directly, independent of S: a sealed Wall file is written after baseSha and left uncommitted (wall.ts), so S's "exists at baseSha" filter can drop a
+    // Wall test out of S while it still must count at key 1 -- an attempt that fails the Wall must never win because the caller happened to build S without it (R1, reproduced: with the
     // Wall test outside S, a Wall failure used to be invisible everywhere).
     const inWall = wallNames.has(c.name);
     if (inWall && c.result === "pass") wallPasses++;
-    // Every count below this line is an S-based count (keys 2-4): a check outside S -- whether
-    // attempt-authored or a Wall test the caller left out of S -- never feeds them; only wallPasses
+    // Every count below this line is an S-based count (keys 2-4): a check outside S -- whether attempt-authored or a Wall test the caller left out of S -- never feeds them; only wallPasses
     // above sees it. This line is the sole S gate; do not also gate wallPasses on it.
     if (!sNames.has(c.name)) continue;
     if (c.result === "pass" && c.interpreter === "project") passesInS++;

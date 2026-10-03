@@ -14,9 +14,7 @@ export interface AnswerDeps {
   launch(argv: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; runId: string }>;
   out(line: string): void; err(line: string): void;
 }
-
 const clean = (s: string): string => s.replace(/[\x00-\x1f\x7f]+/g, " ").trim();
-
 /** Child env: caller env minus chat/control secrets, headless. */
 export function answerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const e: NodeJS.ProcessEnv = {};
@@ -26,7 +24,6 @@ export function answerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 }
 
 export interface BlockedRun { runId: string; task: string; question: string }
-
 /** Reads a run's task and question; returns the reason it cannot be resumed otherwise. */
 const MAX_ANSWER = 4000; // matches the control-plane write cap
 const validId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && !id.includes("..");
@@ -49,7 +46,6 @@ export function newestBlocked(repoDir: string): string | null {
   for (let i = ids.length - 1; i >= 0; i--) if (typeof readBlocked(repoDir, ids[i]!) !== "string") return ids[i]!;
   return null;
 }
-
 /** First <answerDir>/<source>/<run>.answer.txt found, or null. */
 export function readAnswerFile(answerDir: string, runId: string): string | null {
   if (!validId(runId) || !existsSync(answerDir)) return null;
@@ -80,7 +76,6 @@ export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> 
   d.out(`new run ${r.runId} (exit ${r.code})`);
   return r.code;
 }
-
 /** Real launcher: spawns bin/loki and discovers the run dir it creates. */
 function realLaunch(argv: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; runId: string }> {
   const before = new Set(listRunIds(cwd));

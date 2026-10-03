@@ -1,6 +1,5 @@
 // E-164: a task's own setup step (npm install) can rewrite a tracked lockfile before the run starts.
-// Lockfile-only modifications are allowed at intake and recorded as pre-existing; any other dirty
-// tracked file still refuses. Lives outside engine10 core to keep it under its line cap.
+// Lockfile-only modifications are allowed at intake and recorded as pre-existing; any other dirty tracked file still refuses. Lives outside engine10 core to keep it under its line cap.
 import { execFileSync } from "node:child_process"; import { lstatSync } from "node:fs"; import { join } from "node:path";
 
 const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;

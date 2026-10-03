@@ -1,20 +1,13 @@
 // loki-ts/src/e10ext/treeswap.ts
 //
-// Tree swap helper (docs/v10/SCORECARD-PLAN.md S41-12, docs/v10/DECISIONS.md
-// D42(1)). Pure file-tree mechanics for merging a chosen parallel-attempt
-// tree into the run's primary working tree so core verify and Seal run on
-// the final tree. Returns/performs data moves only: no test runs, no
+// Tree swap helper (docs/v10/SCORECARD-PLAN.md S41-12, docs/v10/DECISIONS.md D42(1)). Pure file-tree mechanics for merging a chosen parallel-attempt
+// tree into the run's primary working tree so core verify and Seal run on the final tree. Returns/performs data moves only: no test runs, no
 // pass/fail, no Wall or Seal writes, no verdict logic.
 //
-// D42(1) binds this module: it may not import stages/, seal.ts, verify.ts,
-// wall.ts or verify_cmd.ts (except `import type`), and it never computes a
-// verdict.
+// D42(1) binds this module: it may not import stages/, seal.ts, verify.ts, wall.ts or verify_cmd.ts (except `import type`), and it never computes a verdict.
 //
-// Base is a git commit (the primary's HEAD before attempts started), not a
-// filesystem snapshot: "clean" is defined by `git status`, and diffing
-// against a real commit is the only way to tell tracked-changed from
-// ignored. Snapshots stay in memory; this module never uses `git stash`
-// (the stash stack is shared across worktrees, D42).
+// Base is a git commit (the primary's HEAD before attempts started), not a filesystem snapshot: "clean" is defined by `git status`, and diffing
+// against a real commit is the only way to tell tracked-changed from ignored. Snapshots stay in memory; this module never uses `git stash` (the stash stack is shared across worktrees, D42).
 
 import { execFileSync } from "node:child_process";
 import {
@@ -75,8 +68,7 @@ interface StatusEntry {
   path: string;
 }
 
-// git diff --name-status against `base`, -z so paths with spaces are exact
-// and unambiguous. --no-renames keeps every record a single status+path pair.
+// git diff --name-status against `base`, -z so paths with spaces are exact and unambiguous. --no-renames keeps every record a single status+path pair.
 function diffAgainstBase(root: string, base: string, excludes: string[]): StatusEntry[] {
   const raw = execFileSync(
     "git",
@@ -105,15 +97,11 @@ function untrackedFiles(root: string, excludes: string[]): string[] {
 
 // ---- safe filesystem access ----------------------------------------------
 //
-// Every read, write and delete goes through safeJoin: it rejects absolute
-// and `..` paths, and refuses any ancestor directory component that is a
-// symlink, so a path can never be walked out of `root` on disk. A symlink
-// *entry's* own target is checked separately (below), because that is data,
-// not a filesystem path to open.
+// Every read, write and delete goes through safeJoin: it rejects absolute and `..` paths, and refuses any ancestor directory component that is a
+// symlink, so a path can never be walked out of `root` on disk. A symlink *entry's* own target is checked separately (below), because that is data, not a filesystem path to open.
 
 function isExcluded(relPath: string, excludes: string[]): boolean {
-  // Excludes are top-level names only, matching the git pathspecs above;
-  // a nested src/venv/ is ordinary content. .git is excluded at any depth.
+  // Excludes are top-level names only, matching the git pathspecs above; a nested src/venv/ is ordinary content. .git is excluded at any depth.
   const segments = relPath.split("/");
   if (segments.includes(".git")) return true;
   return segments[0] !== undefined && excludes.includes(segments[0]);
@@ -121,9 +109,7 @@ function isExcluded(relPath: string, excludes: string[]): boolean {
 
 function safeJoin(root: string, relPath: string): string {
   const segments = relPath.split("/").filter((s) => s.length > 0);
-  if (relPath.startsWith("/") || segments.includes("..") || segments.includes(".") || segments.length === 0) {
-    throw new TreeSwapUnsafePathError(`unsafe path ${relPath}`);
-  }
+  if (relPath.startsWith("/") || segments.includes("..") || segments.includes(".") || segments.length === 0) throw new TreeSwapUnsafePathError(`unsafe path ${relPath}`);
   const rootAbs = resolve(root);
   let cur = rootAbs;
   for (let i = 0; i < segments.length; i++) {
@@ -137,32 +123,25 @@ function safeJoin(root: string, relPath: string): string {
       } catch {
         continue; // does not exist yet; a later mkdir creates a plain dir
       }
-      if (st.isSymbolicLink()) {
-        throw new TreeSwapUnsafePathError(`ancestor of ${relPath} is a symlink`);
-      }
+      if (st.isSymbolicLink()) throw new TreeSwapUnsafePathError(`ancestor of ${relPath} is a symlink`);
     }
   }
   return cur;
 }
 
-// A symlink's target must resolve to somewhere inside `root` once read
-// relative to its own containing directory. Absolute targets are always
+// A symlink's target must resolve to somewhere inside `root` once read relative to its own containing directory. Absolute targets are always
 // refused: they carry no tree-relative meaning and cannot be validated.
 const PROTECTED_TARGETS = [".git", ".loki", "attempts"];
 
 function assertSymlinkWithinRoot(root: string, relPath: string, target: string): void {
-  if (isAbsolute(target)) {
-    throw new TreeSwapUnsafePathError(`symlink ${relPath} has an absolute target`);
-  }
+  if (isAbsolute(target)) throw new TreeSwapUnsafePathError(`symlink ${relPath} has an absolute target`);
   const resolvedTarget = resolve(dirname(join(resolve(root), relPath)), target);
   const rel = relative(resolve(root), resolvedTarget);
   if (rel === ".." || rel.startsWith(`..${"/"}`) || isAbsolute(rel)) {
     throw new TreeSwapUnsafePathError(`symlink ${relPath} escapes tree root`);
   }
   const top = rel.split(sep)[0];
-  if (top !== undefined && PROTECTED_TARGETS.includes(top)) {
-    throw new TreeSwapUnsafePathError(`symlink ${relPath} targets protected path ${top}`);
-  }
+  if (top !== undefined && PROTECTED_TARGETS.includes(top)) throw new TreeSwapUnsafePathError(`symlink ${relPath} targets protected path ${top}`);
 }
 
 interface Entry {
@@ -218,10 +197,8 @@ function writeEntry(root: string, relPath: string, entry: Entry): void {
 
 // ---- public API -----------------------------------------------------------
 
-// Captures the chosen attempt's (or the primary's) departure from `base` as
-// a flat diff: tracked changes plus untracked files, read straight off disk.
-// Ignored files are never read (git ls-files --others --exclude-standard
-// skips them), so applyDiff can never write or delete one.
+// Captures the chosen attempt's (or the primary's) departure from `base` as a flat diff: tracked changes plus untracked files, read straight off disk.
+// Ignored files are never read (git ls-files --others --exclude-standard skips them), so applyDiff can never write or delete one.
 export function snapshotDiff(root: string, base: string, excludes: string[] = DEFAULT_EXCLUDES): DiffEntry[] {
   const diff: DiffEntry[] = [];
   for (const { status, path } of diffAgainstBase(root, base, excludes)) {
@@ -241,10 +218,8 @@ export function snapshotDiff(root: string, base: string, excludes: string[] = DE
   return diff;
 }
 
-// Restores `root`'s tracked files (outside `excludes`) to exactly `base`,
-// and, unless keepUntracked, removes untracked files. The untracked listing
-// is taken BEFORE any checkout so the pre-reset .gitignore decides what is
-// ignored: a file the current tree ignores is never deleted. `.loki/`,
+// Restores `root`'s tracked files (outside `excludes`) to exactly `base`, and, unless keepUntracked, removes untracked files. The untracked listing
+// is taken BEFORE any checkout so the pre-reset .gitignore decides what is ignored: a file the current tree ignores is never deleted. `.loki/`,
 // `.venv/`, `venv/` and the attempts dir are never touched.
 export function resetToBase(
   root: string,
@@ -270,16 +245,12 @@ export function resetToBase(
   for (const path of untracked) removeEntry(root, path);
 }
 
-// Applies a captured diff onto `root`. Deletes run first, deepest path
-// first, before any write - so a diff can never delete through a symlink a
-// later entry in the same diff creates. Every entry is re-validated against
-// `root` (not just the tree the diff was captured from): a hand-built diff
+// Applies a captured diff onto `root`. Deletes run first, deepest path first, before any write - so a diff can never delete through a symlink a
+// later entry in the same diff creates. Every entry is re-validated against `root` (not just the tree the diff was captured from): a hand-built diff
 // gets the same guarantees as one from snapshotDiff.
 export function applyDiff(root: string, diff: DiffEntry[], excludes: string[] = DEFAULT_EXCLUDES): void {
   for (const entry of diff) {
-    if (isExcluded(entry.path, excludes)) {
-      throw new TreeSwapUnsafePathError(`refusing to touch excluded path ${entry.path}`);
-    }
+    if (isExcluded(entry.path, excludes)) throw new TreeSwapUnsafePathError(`refusing to touch excluded path ${entry.path}`);
   }
   const deletes = diff
     .filter((e) => e.kind === "delete")
@@ -292,8 +263,7 @@ export function applyDiff(root: string, diff: DiffEntry[], excludes: string[] = 
   }
 }
 
-// Tracked-file changes (staged, unstaged or unmerged) in the primary, as
-// `git status --porcelain=v1 -z` sees them. Untracked (??) and ignored (!!)
+// Tracked-file changes (staged, unstaged or unmerged) in the primary, as `git status --porcelain=v1 -z` sees them. Untracked (??) and ignored (!!)
 // entries are not tracked changes and stay protected by the undo record.
 function trackedChanges(root: string, excludes: string[]): string[] {
   const parts = git(root, ["status", "--porcelain=v1", "-z", "--", ...pathspecs(excludes)])
@@ -314,16 +284,11 @@ function gitPath(root: string, name: string): string {
   return resolve(root, git(root, ["rev-parse", "--git-path", name]).trim());
 }
 
-// Merges attemptRoot's departure from `base` into primaryRoot. The primary
-// must have no staged, unstaged or unmerged change to a tracked file
-// (refused otherwise, so the index and tracked edits never need restoring).
-// An exclusive lock file under the git dir serialises swaps into one
-// primary. Reads happen first: any failure there throws before primaryRoot
-// is touched. Before any write, an undo record is created (O_EXCL, 0600) at
-// <runDir>/treeswap-undo.json holding the primary's untracked files and its
-// current content at EVERY path the winner will write (ignored or not). If
-// the write phase fails, restoreFromUndo rolls primaryRoot back from that
-// record (a compensating action, not filesystem atomicity); the record is
+// Merges attemptRoot's departure from `base` into primaryRoot. The primary must have no staged, unstaged or unmerged change to a tracked file
+// (refused otherwise, so the index and tracked edits never need restoring). An exclusive lock file under the git dir serialises swaps into one
+// primary. Reads happen first: any failure there throws before primaryRoot is touched. Before any write, an undo record is created (O_EXCL, 0600) at
+// <runDir>/treeswap-undo.json holding the primary's untracked files and its current content at EVERY path the winner will write (ignored or not). If
+// the write phase fails, restoreFromUndo rolls primaryRoot back from that record (a compensating action, not filesystem atomicity); the record is
 // deleted after a success or a clean rollback, and kept if rollback fails.
 export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
   const excludes = opts.excludes ?? DEFAULT_EXCLUDES;
@@ -332,9 +297,7 @@ export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
   try {
     lockFd = openSync(lockPath, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | fsc.O_NOFOLLOW, 0o600);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(`treeswap: another swap holds ${lockPath}; remove it if no swap is running`);
-    }
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`treeswap: another swap holds ${lockPath}; remove it if no swap is running`);
     throw err;
   }
   try {
@@ -348,9 +311,7 @@ export function swapAttemptIntoWorkingTree(opts: SwapOptions): void {
 
 function swapLocked(opts: SwapOptions, excludes: string[]): void {
   const dirty = trackedChanges(opts.primaryRoot, excludes);
-  if (dirty.length > 0) {
-    throw new Error(`treeswap: primary has uncommitted tracked changes; commit or stash them first: ${dirty.join(", ")}`);
-  }
+  if (dirty.length > 0) throw new Error(`treeswap: primary has uncommitted tracked changes; commit or stash them first: ${dirty.join(", ")}`);
   const winner = snapshotDiff(opts.attemptRoot, opts.base, excludes);
   const undo = snapshotDiff(opts.primaryRoot, opts.base, excludes);
   const owned = new Set(winner.map((e) => e.path));
@@ -378,9 +339,7 @@ function swapLocked(opts: SwapOptions, excludes: string[]): void {
   try {
     fd = openSync(undoPath, fsc.O_WRONLY | fsc.O_CREAT | fsc.O_EXCL | fsc.O_NOFOLLOW, 0o600);
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(`treeswap: stale undo record ${undoPath}; restore from it or remove it first`);
-    }
+    if ((err as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`treeswap: stale undo record ${undoPath}; restore from it or remove it first`);
     throw err;
   }
   try {
@@ -415,8 +374,7 @@ function removeLenient(root: string, relPath: string): void {
   }
 }
 
-// Rolls primaryRoot back to the state recorded in <runDir>/treeswap-undo.json.
-// Every step runs even if an earlier one fails (the user's snapshot is applied
+// Rolls primaryRoot back to the state recorded in <runDir>/treeswap-undo.json. Every step runs even if an earlier one fails (the user's snapshot is applied
 // last and must never be skipped); errors are collected and thrown together.
 export function restoreFromUndo(primaryRoot: string, runDir: string, excludes: string[] = DEFAULT_EXCLUDES): void {
   const rec = JSON.parse(readFileSync(join(runDir, UNDO_FILE), "utf8")) as {
@@ -443,15 +401,11 @@ export function restoreFromUndo(primaryRoot: string, runDir: string, excludes: s
   if (errors.length > 0) throw new AggregateError(errors, "treeswap: rollback incomplete");
 }
 
-// Removes a losing attempt's tree by exact path only (no glob). Refuses
-// anything that is not a direct child of <runDir>/attempts, a symlink, or
-// owned by another user. If the attempt is a linked git worktree (has a
-// .git file, not directory), it is removed with `git worktree remove` so
-// its registration under primaryRoot's .git/worktrees/ does not leak;
-// otherwise it is a plain recursive delete.
+// Removes a losing attempt's tree by exact path only (no glob). Refuses anything that is not a direct child of <runDir>/attempts, a symlink, or
+// owned by another user. If the attempt is a linked git worktree (has a .git file, not directory), it is removed with `git worktree remove` so
+// its registration under primaryRoot's .git/worktrees/ does not leak; otherwise it is a plain recursive delete.
 export function cleanupAttempt(primaryRoot: string, runDir: string, attemptDir: string): void {
-  // realpath only the run dir; the attempts dir and the attempt itself are
-  // lstat'ed UNRESOLVED, since lstat on a realpath can never see a symlink.
+  // realpath only the run dir; the attempts dir and the attempt itself are lstat'ed UNRESOLVED, since lstat on a realpath can never see a symlink.
   const attemptsRoot = join(realpathSync(resolve(runDir)), "attempts");
   let attemptsLst;
   try {
@@ -465,9 +419,7 @@ export function cleanupAttempt(primaryRoot: string, runDir: string, attemptDir: 
   }
   const realPrimary = realpathSync(resolve(primaryRoot));
   const isPrimaryOrAncestor = (p: string) => p === realPrimary || realPrimary.startsWith(p + sep);
-  if (isPrimaryOrAncestor(realpathSync(attemptsRoot))) {
-    throw new TreeSwapUnsafePathError(`attempts dir ${attemptsRoot} resolves to the primary tree`);
-  }
+  if (isPrimaryOrAncestor(realpathSync(attemptsRoot))) throw new TreeSwapUnsafePathError(`attempts dir ${attemptsRoot} resolves to the primary tree`);
   const lexical = resolve(attemptDir);
   const parent = dirname(lexical);
   let real: string;
@@ -478,22 +430,12 @@ export function cleanupAttempt(primaryRoot: string, runDir: string, attemptDir: 
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return; // already gone
     throw err;
   }
-  if (dirname(real) !== attemptsRoot) {
-    throw new TreeSwapUnsafePathError(`${attemptDir} is not a direct child of ${attemptsRoot}`);
-  }
-  if (isPrimaryOrAncestor(real)) {
-    throw new TreeSwapUnsafePathError(`${attemptDir} is or contains the primary tree`);
-  }
+  if (dirname(real) !== attemptsRoot) throw new TreeSwapUnsafePathError(`${attemptDir} is not a direct child of ${attemptsRoot}`);
+  if (isPrimaryOrAncestor(real)) throw new TreeSwapUnsafePathError(`${attemptDir} is or contains the primary tree`);
   const lst = lstatSync(real);
-  if (lst.isSymbolicLink()) {
-    throw new TreeSwapUnsafePathError(`refusing a symlinked attempt dir: ${attemptDir}`);
-  }
-  if (!lst.isDirectory()) {
-    throw new TreeSwapUnsafePathError(`${attemptDir} is not a directory`);
-  }
-  if (process.getuid && lst.uid !== process.getuid()) {
-    throw new TreeSwapUnsafePathError(`refusing to remove ${attemptDir}: not owned by the current user`);
-  }
+  if (lst.isSymbolicLink()) throw new TreeSwapUnsafePathError(`refusing a symlinked attempt dir: ${attemptDir}`);
+  if (!lst.isDirectory()) throw new TreeSwapUnsafePathError(`${attemptDir} is not a directory`);
+  if (process.getuid && lst.uid !== process.getuid()) throw new TreeSwapUnsafePathError(`refusing to remove ${attemptDir}: not owned by the current user`);
 
   const gitFile = join(real, ".git");
   let isLinkedWorktree = false;

@@ -1,12 +1,10 @@
 // loki-ts/src/engine10/warm_client.ts -- D61 slice 6: CLI side of the warm engine. Tries the unix
-// socket for a short deadline and returns null on any problem (no daemon, timeout, bad reply), in
-// which case the caller runs the cold path exactly as before. Behind LOKI_SPEED=1.
+// socket for a short deadline and returns null on any problem (no daemon, timeout, bad reply), in which case the caller runs the cold path exactly as before. Behind LOKI_SPEED=1.
 import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { speedEnabled, warmSocketPath, type WarmReply } from "./warm.ts";
 
 export const WARM_TRY_MS = 50;
-
 /** One request/response over the socket within `timeoutMs`; null on every failure. */
 export function warmRequest(
   req: Record<string, unknown>,
@@ -42,7 +40,6 @@ export function warmRequest(
     });
   });
 }
-
 /** CLI hook: best-effort warm try that never throws and never blocks the run. */
 export async function tryWarmSafe(repoDir: string): Promise<void> {
   try {
@@ -51,12 +48,10 @@ export async function tryWarmSafe(repoDir: string): Promise<void> {
     // never load-bearing
   }
 }
-
 /** Formats the user-facing line, e.g. "warm in 0.1s". */
 export function warmLine(seconds: number): string {
   return `warm in ${seconds.toFixed(1)}s`;
 }
-
 /** Cheap liveness probe within the deadline, then (if alive) the maps request with a longer
  *  budget since a first build can take seconds. Returns null when the flag is off or no daemon
  *  answers within WARM_TRY_MS; the caller then proceeds cold with identical events. */

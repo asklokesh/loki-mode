@@ -15,8 +15,7 @@ export interface ContextDeps {
 }
 
 // S41-10b: the implement/fix brief's leading block. A plain constant, no task text or interpolation, so
-// every brief starts with the same bytes (cache-stable prefix). Per-task context is appended after it.
-// E-150: repeated verbatim as the brief's last line (recency); same bytes every task.
+// every brief starts with the same bytes (cache-stable prefix). Per-task context is appended after it. E-150: repeated verbatim as the brief's last line (recency); same bytes every task.
 export const FINISH_LINE = "Finish with exactly one line: LOKI_DONE, or LOKI_ALREADY_DONE: <file:line evidence>, or LOKI_SPEC_CONFLICT: <reason>.";
 export const FIXED_RULES = [
   "You are the Loki 10 implement stage.",

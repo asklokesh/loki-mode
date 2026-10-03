@@ -1,7 +1,6 @@
 // loki-ts/src/features/speed/group_grid.ts
 //
-// D61 slice 15 (design section 3D): the live unit grid for one group, served
-// by the engine10 dashboard at /g/<group>. Folds .loki/runs/*/events.jsonl and
+// D61 slice 15 (design section 3D): the live unit grid for one group, served by the engine10 dashboard at /g/<group>. Folds .loki/runs/*/events.jsonl and
 // keeps the runs whose run.started carries group_id. No server, no state.
 import { fold, readEvents } from "../../engine10/events.ts";
 import { eventsPath, listRunIds } from "../../engine10/status.ts";
@@ -31,7 +30,6 @@ export function groupGrid(repoDir: string, group: string, now: number = Date.now
   }
   return rows.sort((a, b) => a.unitId.localeCompare(b.unitId));
 }
-
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => (c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : "&quot;"));
 
 export function renderGroupPage(group: string, rows: GridRow[]): string {

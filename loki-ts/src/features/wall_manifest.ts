@@ -3,8 +3,7 @@
 // signatures-only text out. It holds the detected runner and config, the test layout, at most two style
 // examples that import no module the task names, and public signatures of the named modules. Function
 // and method bodies never enter the output. TS/JS: only text before a body's opening brace, and a file whose
-// lexing is undecidable emits nothing. Python: heads come from the stdlib ast in an isolated interpreter.
-// Parameter and field defaults are always masked as `= ...`.
+// lexing is undecidable emits nothing. Python: heads come from the stdlib ast in an isolated interpreter. Parameter and field defaults are always masked as `= ...`.
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,14 +20,12 @@ const EXAMPLE_EXT = /\.(py|[cm]?[jt]sx?)$/;
 const baseOf = (p: string): string => p.split("/").pop() ?? p;
 // One comparison form for stems (W1-S2 r6): lowercase, and "." "-" "_" runs collapse to one ".", so user-service equals user.service.
 const normStem = (s: string): string => s.toLowerCase().replace(/[._-]+/g, ".").replace(/^\.|\.$/g, "");
-// A directory module (index, __init__, mod, main) is also named by its parent directory.
 // Content backstop (W1-S2 r7): any example whose text holds a non-generic target stem as a whole token is excluded.
 const GENERIC_STEMS = ["index", "init", "mod", "main"];
 const mentionsStem = (content: string, stems: string[]): boolean => {
   const c = content.toLowerCase().replace(/[._-]+/g, ".");
   return stems.some((s) => new RegExp(`(?<![a-z0-9])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`).test(c));
 };
-// Relative specifier resolution (W1-S2 r8).
 const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
 const resolveRel = (dir: string, spec: string): string => {
   const out = dir ? dir.split("/") : [];
@@ -45,11 +42,9 @@ const byPath = (a: ManifestFile, b: ManifestFile): number =>
   a.path < b.path ? -1 : a.path > b.path ? 1 : a.content < b.content ? -1 : a.content > b.content ? 1 : 0;
 
 interface Item { head: string; raw: string; end: string; body: string | null; balanced: boolean }
-
 const REGEX_PREV = "(,=:[!&|?{;+-*%~^";
 const isComment = (s: string, i: number): boolean => s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*");
 
-// Template literal starting at i (a backtick); handles nested `${ ... }` holding strings and templates.
 function templateEnd(s: string, i: number): number {
   for (let j = i + 1; j < s.length; ) {
     const c = s[j];
@@ -70,8 +65,7 @@ function templateEnd(s: string, i: number): number {
   return s.length;
 }
 
-// True when the previous significant token before i is a comment (block, or any line holding a `//`).
-// Shared by the pre-pass and regexEnd so a regex after a comment is ambiguous in both.
+// True when the previous significant token before i is a comment (block, or any line holding a `//`). Shared by the pre-pass and regexEnd so a regex after a comment is ambiguous in both.
 function commentBefore(s: string, i: number): boolean {
   let p = i - 1;
   while (p >= 0 && /\s/.test(s[p]!)) p--;
@@ -80,7 +74,6 @@ function commentBefore(s: string, i: number): boolean {
   return s.slice(s.lastIndexOf("\n", p) + 1, p + 1).includes("//");
 }
 
-// Regex literal starting at i when the previous significant character allows one; else i.
 function regexEnd(s: string, i: number): number {
   if (commentBefore(s, i)) return i;
   let p = i - 1;
@@ -103,7 +96,6 @@ function regexEnd(s: string, i: number): number {
   return i;
 }
 
-// Removes comments (keeping line breaks) without interpreting regex literals.
 function stripComments(t: string): string {
   let out = "";
   for (let i = 0; i < t.length; ) {
@@ -244,7 +236,6 @@ function arrowHeadLen(s: string): number {
   return -1;
 }
 
-// Cuts an initializer off a declaration head, keeping arrow and function-expression headers.
 function memberSig(h: string): string | null {
   if (!h || /^(private|protected|#)/.test(h)) return null;
   let depth = 0, angle = 0;
@@ -264,7 +255,6 @@ function memberSig(h: string): string | null {
   return h;
 }
 
-// Splits `export let a = 1, b = 2` into its declarators at top-level commas.
 function splitDeclarators(h: string): string[] {
   const parts: string[] = [];
   let depth = 0, angle = 0, init = false, from = 0;
@@ -313,7 +303,6 @@ function exportHead(h: string, end: string): string {
   return h.trimEnd() + (end === ";" ? ";" : "");
 }
 
-// True when a `;` at bracket depth 0 is followed by more text: a sign the statement scan desynced.
 function hasTopSemi(line: string): boolean {
   let depth = 0;
   for (let i = 0; i < line.length; ) {
@@ -327,13 +316,11 @@ function hasTopSemi(line: string): boolean {
   }
   return false;
 }
-
 const MODS = "(?:(?:public|private|protected|static|readonly|abstract|async|get|set|declare|override)\\s+)*";
 const MEMBER_GRAMMAR = new RegExp(`^(?:@[\\w$.]+(?:\\([^)]*\\))?\\s*)*${MODS}\\*?\\s*(?:[A-Za-z_$][\\w$]*|#[A-Za-z_$][\\w$]*|\\[[^\\]]*\\])\\s*[?!]?\\s*(?:[(<:=]|$)`);
 const NOT_MEMBER = /^(return|const|let|var|if|else|for|while|do|switch|case|default|throw|try|catch|finally|new|await|yield|break|continue|import|export|function|delete|typeof|void)\b/;
 
-// Strict, fail-closed class member check on the member's own head. A call statement such as `track(X);`
-// has parentheses, no body and no return type, so it is rejected.
+// Strict, fail-closed class member check on the member's own head. A call statement such as `track(X);` has parentheses, no body and no return type, so it is rejected.
 function strictMember(m: Item): boolean {
   const h = m.head.trim();
   if (!MEMBER_GRAMMAR.test(h) || NOT_MEMBER.test(h)) return false;
@@ -343,8 +330,7 @@ function strictMember(m: Item): boolean {
 
 // Whole-file fail-closed pre-pass. True when the file cannot be lexed with certainty: a `/` that is not a
 // comment and whose previous token is `)`, `]`, `}`, a word, a quote, `++`/`--` or anything else that is not a
-// clear regex prefix; any backtick in jsx/tsx; an unterminated string, template, regex or comment; or
-// brackets that do not balance. Iterative, so deep nesting cannot overflow the stack.
+// clear regex prefix; any backtick in jsx/tsx; an unterminated string, template, regex or comment; or brackets that do not balance. Iterative, so deep nesting cannot overflow the stack.
 function tsAmbiguous(s: string, jsx: boolean): boolean {
   const n = s.length, stack: string[] = [];
   const tpl = (from: number): number => {
@@ -410,7 +396,6 @@ function tsAmbiguous(s: string, jsx: boolean): boolean {
   return stack.length > 0;
 }
 
-// Replaces every default value inside a parameter list with `= ...`; generic type defaults are untouched.
 function maskDefaults(sig: string): string {
   let out = "", pd = 0;
   for (let i = 0; i < sig.length; ) {
@@ -443,8 +428,7 @@ function maskDefaults(sig: string): string {
 }
 
 // `@Name` / `@a.b` stays; `@Name(args)` (no gap before the paren) becomes `@Name(...)`. After the name or the
-// group the next non-space character must not be `(`, `<`, `?`, `!`, `[` or `.`. Any other shape returns null
-// so the caller omits the whole class or declaration.
+// group the next non-space character must not be `(`, `<`, `?`, `!`, `[` or `.`. Any other shape returns null so the caller omits the whole class or declaration.
 // A reserved statement or expression keyword right after a decorator is invalid TS: fail closed (W1-S2).
 const RESERVED_AFTER_DECORATOR = /^(?:if|else|for|while|do|switch|case|try|catch|finally|return|throw|with|var|let|const|function|new|delete|typeof|void|yield|await|break|continue|import|debugger|instanceof|this|super|null|true|false)(?![\w$])/;
 function maskDecorators(sig: string): string | null {
@@ -465,7 +449,6 @@ function maskDecorators(sig: string): string | null {
   return out;
 }
 
-// Index after the bracket group opening at i; the end of s when it never closes.
 function skipBalanced(s: string, i: number): number {
   let d = 0;
   while (i < s.length) {
@@ -478,7 +461,6 @@ function skipBalanced(s: string, i: number): number {
   return s.length;
 }
 
-// Keeps `extends Dotted.Name<TypeArgs>` only; any other heritage expression becomes `extends ...`.
 function maskExtends(head: string): string {
   let angle = 0, depth = 0;
   for (let i = 0; i < head.length; ) {
@@ -503,7 +485,6 @@ function maskExtends(head: string): string {
   return head;
 }
 
-// `export enum E { A = "x", B }` becomes `export enum E { A, B }`: member names only.
 function enumSig(h: string): string | null {
   const open = h.indexOf("{");
   if (open < 0) return null;
@@ -565,7 +546,6 @@ function tsSignatures(src: string, jsx: boolean): string[] {
   }
   return out;
 }
-
 const PY_TIMEOUT_MS = 5000;
 const PY_SCRIPT = `
 import ast, sys, json, re
