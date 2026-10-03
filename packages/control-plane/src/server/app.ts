@@ -11,6 +11,7 @@ import { removeRun } from "../db/prune.ts";
 import type { spawnStart } from "./spawn.ts";
 import { syncLocalRepos } from "./repos.ts";
 import { registerRoutes } from "./routes/index.ts";
+import { legacyShim } from "./legacy/shim.ts";
 
 const MAX_BODY = 1_000_000;
 
@@ -112,6 +113,9 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     const i = id.indexOf(":");
     return i < 0 ? c.json({ error: "id must be source:run" }, 404) : detail(c, id.slice(0, i), id.slice(i + 1));
   });
+
+  // Legacy dashboard paths (CPE-24) are answered by the shim; mounted before the SPA fallback so index.html never shadows them.
+  app.route("/", legacyShim({ db, token: opts.token }));
 
   // Static UI with SPA fallback. Registered last so /v1, /health and /ready always win.
   app.get("*", (c) => {

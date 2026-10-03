@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- The Control Plane server now mounts the legacy dashboard shim ahead of its SPA fallback, so old dashboard paths on the Control Plane port get the shim's 308, 501 or 410 answer (or a mapped response) instead of the single-page app.
 - Agent SDK 0.3.288 (Claude Code 2.1.288) with Sonnet 5.5 cost rates of $2 input and $10 output per MTok, and CLAUDE_CODE_DISABLE_STRUCTURED_OUTPUTS now verified to reach SDK sessions.
 - Deploy hardening for the Control Plane: Helm now generates a stable random token (or reads `secrets.controlTokenKey` from your `existingSecret`), compose requires `LOKI_CONTROL_TOKEN` and publishes on 127.0.0.1, and the ECS module requires `control_token_secret_arn` unless `allow_insecure_bind` is set, so no deploy path runs the Control Plane open; the image now builds the Control Plane in its own stage and ships only the bundle, UI and migrations, workers ship to it with the same token, and `persistence.controlDb.enabled` keeps its database across restarts.
 - The Helm chart, the docker-compose stack and the AWS ECS module now run the Control Plane (`loki control serve`, probed on /health and /ready) instead of the legacy dashboard; the Service and compose host port stay 57374, `config.dashboardPort` and `dashboard_port` remain as deprecated aliases of the new `config.controlPort` and `control_port`.
