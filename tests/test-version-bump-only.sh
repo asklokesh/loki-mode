@@ -243,8 +243,8 @@ for name in names[1:]:
         fails.append(f"{name}: if does not require skip != 'true' ({j.get('if')!r})")
     if "!cancelled()" not in cond:
         fails.append(f"{name}: if lacks !cancelled(), so a failed gate would skip the suite")
-if len(names) < 9:
-    fails.append(f"only {len(names)} jobs parsed; expected the gate plus the 8+ heavy jobs")
+if len(names) < 7:
+    fails.append(f"only {len(names)} jobs parsed; expected the gate plus the 6+ heavy jobs (test.yml was pruned in fc5181184)")
 for f in fails:
     print("    " + f)
 sys.exit(1 if fails else 0)

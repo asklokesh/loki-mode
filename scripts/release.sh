@@ -355,7 +355,11 @@ bump_all_version_files() {
 
     # STALE-ZERO SZ-01: regenerate README facts, SKILL.md command list, Helm
     # appVersion and the CLI reference from VERSION and the command registry.
-    "$SCRIPT_DIR/generate-stale-zero.sh"
+    if [ -x "$ROOT_DIR/scripts/generate-stale-zero.sh" ]; then
+        (cd "$ROOT_DIR" && "$ROOT_DIR/scripts/generate-stale-zero.sh")
+    else
+        log_warn "scripts/generate-stale-zero.sh not found under $ROOT_DIR; skipping generated facts"
+    fi
 }
 
 # Files staged into the release commit. Kept as its own list, sourced from
