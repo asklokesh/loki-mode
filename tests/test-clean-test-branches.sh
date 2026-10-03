@@ -135,5 +135,19 @@ if [ "$rc" -eq 0 ] && has "$CO" case9 && ! has "$CO" case10; then
     ok "T2e checked-out debris-named branch survives, sibling debris deleted"
 else bad "T2e checked-out branch handling wrong (rc=$rc)"; fi
 
+# --help / -h: usage on stdout, exit 0, no git state change.
+HP="$T/helprepo"
+mkrepo "$HP"
+git -C "$HP" branch case77
+before="$(git -C "$HP" for-each-ref)"
+for hf in --help -h; do
+    out="$("$B4" "$TOOL" "$hf" 2>&1)"; rc=$?
+    case "$out" in *"<repo-path>"*--apply*) m=1 ;; *) m=0 ;; esac
+    if [ "$rc" -eq 0 ] && [ "$m" -eq 1 ]; then ok "T4 $hf prints usage and exits 0"; else bad "T4 $hf wrong (rc=$rc): $out"; fi
+done
+"$B4" "$TOOL" --help "$HP" >/dev/null 2>&1; rc=$?
+after="$(git -C "$HP" for-each-ref)"
+if [ "$rc" -eq 0 ] && [ "$before" = "$after" ]; then ok "T4 --help changes no git state"; else bad "T4 --help altered state (rc=$rc)"; fi
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

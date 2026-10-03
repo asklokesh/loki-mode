@@ -52,6 +52,14 @@ PROTECTED_PATTERNS=(
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+case "${1:-}" in
+    -h|--help)
+        echo "usage: $0 <repo-path> [--apply]"
+        echo "  Dry run by default; --apply actually deletes the allowlisted debris branches."
+        exit 0
+        ;;
+esac
+
 REPO="${1:-}"
 MODE="${2:-}"
 [ -n "$REPO" ] || die "usage: $0 <repo-path> [--apply]"

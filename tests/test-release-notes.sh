@@ -752,6 +752,20 @@ else
     bad "fallback did not work; push refused though VERSION never changed (rc=$rc_fb): $(cat "$WORK/fb1.log")"
 fi
 
+# --help / -h: usage on stdout, exit 0, no side effects; unknown flags still exit 1.
+HELP_DIR="$WORK/help-empty"; mkdir -p "$HELP_DIR"
+for hf in --help -h; do
+    h_out="$(cd "$HELP_DIR" && bash "$SCRIPT" "$hf" 2>"$WORK/help.err")"; h_rc=$?
+    case "$h_out" in usage:*--file*--include*) h_ok=1 ;; *) h_ok=0 ;; esac
+    if [ "$h_rc" -eq 0 ] && [ "$h_ok" -eq 1 ] && [ ! -s "$WORK/help.err" ]; then
+        ok "release-notes.sh $hf prints usage on stdout and exits 0"
+    else
+        bad "release-notes.sh $hf wrong (rc=$h_rc): $h_out $(cat "$WORK/help.err")"
+    fi
+done
+( cd "$HELP_DIR" && bash "$SCRIPT" 1.0.0 --bogus >/dev/null 2>&1 ); h_rc=$?
+if [ "$h_rc" -eq 1 ]; then ok "release-notes.sh unknown flag still exits 1"; else bad "unknown flag rc=$h_rc"; fi
+
 echo
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

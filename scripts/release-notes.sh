@@ -25,9 +25,14 @@
 # Usage: release-notes.sh <version> [--file CHANGELOG.md] [--include v1,v2,...]
 set -uo pipefail
 
+USAGE="usage: release-notes.sh <version> [--file CHANGELOG.md] [--include v1,v2,...]"
+case "${1:-}" in
+    -h|--help) echo "$USAGE"; exit 0 ;;
+esac
+
 VERSION="${1:-}"
 if [ -z "$VERSION" ]; then
-    echo "usage: release-notes.sh <version> [--file CHANGELOG.md] [--include v1,v2,...]" >&2
+    echo "$USAGE" >&2
     exit 1
 fi
 shift
