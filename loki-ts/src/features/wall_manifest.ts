@@ -1,4 +1,4 @@
-// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, a tsconfig alias whose name shares no token with the target, string-concatenated specifiers, and import.meta.glob. Relative specifiers are resolved against the test directory, tests inside a target directory are excluded by location, and literal dynamic forms are caught by the content backstop only when they contain a target stem.
+// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, a tsconfig alias whose name shares no token with the target, string-concatenated specifiers, and import.meta.glob. Relative specifiers are resolved against the test directory, tests inside a target directory are excluded by location, literal dynamic forms are caught by the content backstop only when they contain a target stem, and a specifier resolving to an ancestor directory of a target is treated as naming it. Also not handled: workspace package-name imports (import from "p5") are not resolved; generic stems (index, main, app) get no content backstop, so a literal dynamic reference such as subprocess.run([..., 'main.py']) is not caught; CommonJS module.exports = function yields an empty signatures section.
 // D77 (W1-S1): the sealed base-tree manifest the Wall reads instead of the repo. Pure: a file list in,
 // signatures-only text out. It holds the detected runner and config, the test layout, at most two style
 // examples that import no module the task names, and public signatures of the named modules. Function
@@ -777,11 +777,11 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
   const named = new Set(excl.flatMap((m) => [baseOf(m).toLowerCase(), ...stemsOfTarget(m)]));
   // A directory module is named by its parent in specifiers; a bare "./index" alone does not name an unrelated target.
   const importStems = new Set(excl.flatMap((m) => { const s = stemsOfTarget(m); return s.length > 1 ? s.slice(1) : s; }));
-  // Resolved-path and location checks (W1-S2 r8): a resolved import equal to a target minus extension, or to a directory module's directory, names it.
+  // Resolved-path and location checks (W1-S2 r8, r9): a resolved import equal to a target minus extension, to a directory module's directory, or to any ancestor directory of a target (including the repo root) names it; over-exclusion is accepted.
   const info = excl.map((m) => ({ noext: m.replace(/\.[^./]*$/, "").toLowerCase(), dir: dirOf(m).toLowerCase(), mod: !!dirOf(m) && ["index", "__init__", "mod", "main"].includes(stemOf(m).toLowerCase()), src: !TEST_FILE.test(m) }));
   const hits = (r: string): boolean => {
     const low = r.toLowerCase().replace(/\.(?:[cm]?[jt]sx?|py)$/, "");
-    return [low, low.replace(/\/(?:index|__init__|mod|main)$/, "")].some((v) => info.some((t) => v === t.noext || (t.mod && v === t.dir)));
+    return [low, low.replace(/\/(?:index|__init__|mod|main)$/, "")].some((v) => info.some((t) => v === t.noext || (t.mod && v === t.dir) || v === "" || t.noext.startsWith(`${v}/`)));
   };
   // Location backstop: inside a directory-module target's subtree, or beside a source-file target, is never an example (a task-named test file does not condemn its siblings).
   const inTargetArea = (p: string): boolean => { const d = dirOf(p).toLowerCase(); return info.some((t) => t.src && (d === t.dir || (t.mod && d.startsWith(`${t.dir}/`)))); };

@@ -953,3 +953,45 @@ describe("relative resolution, location and absolute paths (D77, W1-S2 r8)", () 
     expect(manifest(files, "Fix a.ts b.ts c.ts and /work/packages/p5/src/index.ts: sigP5 must double n")).toContain("export function sigP5(n: number)");
   });
 });
+
+describe("ancestor-directory specifiers (D77, W1-S2 r9)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function manifest(files: Record<string, string>, task: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r9-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    try {
+      g("init", "-q");
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); }
+      g("commit", "-q", "-m", "base");
+      return wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), task, ON)!.text;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const T = (body: string, imp: string): string => `import { test } from "bun:test";\n${imp}\ntest("t", () => { /* ${body} */ });\n`;
+  const other = { "tests/other.test.ts": T("other_style_r9", "") };
+  const rootJs = { "index.js": "module.exports = function slugify(s) { return s; };\n", ...other };
+
+  for (const spec of ["..", "../"]) {
+    test(`root index.js: require('${spec}') from test/ is excluded`, () => {
+      const t = manifest({ ...rootJs, "test/slug.test.js": `const slugify = require('${spec}');\n// BODY_R9_ROOTJS\n` }, "fix the bug in index.js");
+      expect(t).not.toContain("BODY_R9_ROOTJS");
+      expect(t).toContain("other_style_r9");
+    });
+  }
+
+  test("root index.ts: import from '..' in tests/ is excluded", () => {
+    const t = manifest({ "index.ts": "export function f(n: number): number {\n  return n;\n}\n", "tests/api.test.ts": T("BODY_R9_ROOTTS", 'import { f } from "..";'), ...other }, "fix the bug in index.ts");
+    expect(t).not.toContain("BODY_R9_ROOTTS");
+    expect(t).toContain("other_style_r9");
+  });
+
+  test("package-root target: import from '..' in the package test dir is excluded", () => {
+    const t = manifest({ "packages/p5/package.json": '{"main":"src/index.ts"}\n', "packages/p5/src/index.ts": "export function f(n: number): number {\n  return n;\n}\n", "packages/p5/test/api.test.ts": T("BODY_R9_PKG", 'import { f } from "..";'), ...other }, "fix packages/p5/src/index.ts");
+    expect(t).not.toContain("BODY_R9_PKG");
+    expect(t).toContain("other_style_r9");
+  });
+
+  test("negative control: a sibling package's '..' import (non-ancestor of the target) stays an example", () => {
+    const t = manifest({ "packages/p5/src/index.ts": "export function f(n: number): number {\n  return n;\n}\n", "packages/p6/src/lib.ts": "export const g = 1;\n", "packages/p6/test/api.test.ts": T("BODY_R9_SIBLING", 'import { g } from "..";'), ...other }, "fix packages/p5/src/index.ts");
+    expect(t).toContain("BODY_R9_SIBLING");
+  });
+});
