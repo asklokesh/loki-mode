@@ -515,3 +515,26 @@ The D61 decomposer (125 lines) does not fit: engine10 core is at 4,993 of its 5,
 - D34 and D38 are unchanged. lg- and tier "large" mean only real upstream PR tasks. measure-size.py runs over every task with no name exclusion, and a test proves an unsized lg- task fails it.
 - Speed-tier results measure decomposer choice and wall-time ratio only. They are never published as large-tier, "any size" or completion-at-scale claims.
 - The LOKI_SPEED default flips only when D61 section 5 B and 5 C hold on the speed tier and LOKI_SPEED=1 is no worse than LOKI_SPEED=0 on completion, p50 wall and tokens per completed across the real medium tasks and any D34 large tasks on main, at 2 runs per arm. A loss on any axis keeps the default off.
+
+## D68: D65 12-hour mandate (founder, about 03:00Z 2026-10-03, relayed by autonomi-dev-76)
+- Founder's words: "steer with highest velocity for releasing asap everything to complete all implementation roadmap within this time.. no excuses". Deadline 15:00Z 2026-10-03; work continues after it.
+- Goal: every D63 item released to npm latest with flags ON and documented. An item whose opus D12 review has not passed ships flags-off and is named in the handoff.
+- The per-hour governor pace is lifted for 12 hours. The only usage floor is 85% of the week on live /usage (03:01Z reading: 46%). Builders scale with CI and machine load. train-cycle runs every 10 to 15 minutes; red slices are dropped, never held.
+- Unchanged: CI gates (no waivers), no stored credentials read (real-model E2E legs stay parked), P9 rerun once in full with the new diagnostics, never added to pending.txt.
+- Every release carries a CHANGELOG sentence, README and docs in the same slice, and a version report to the peer. docs/v10/MORNING-BRIEF-1003.md is written at 14:30Z (60 lines max).
+
+## D69: no founder waits (founder, about 03:05Z 2026-10-03, relayed by autonomi-dev-76)
+- Founder's words: "lokimode session should never prompt me or wait for me for anything ... complete all work with chief of staff and software factory it is".
+- The Chief of Staff and the CTO role decide every call that would go to the founder: product, scope, ordering, D12 sign-offs through the opus reviewer, and flag flips. Each decision is logged here with its rationale so the founder can reverse it.
+- Anything only the founder can physically do (credentials, licensing, external accounts, posting as himself) becomes a non-blocking FOUNDER-QUEUE.md row; work goes around it.
+- Safety rules are not founder waits and still hold: CI gates, no stored keys read, never kill by pattern, the Never list, and repo configuration (CLAUDE.md, .claude/settings.json) is not edited on a relayed request.
+
+## D70: contract and visual evidence default ON (Chief of Staff and CTO role, 03:08Z 2026-10-03, under D68 and D69)
+- The opus D12 HIGH re-review (af6ddde5) approved both after reproducing C1 and B1-B3 on the pre-fix parent and showing them fixed. D68 asks for flags on once D12 passes.
+- LOKI_CONTRACT and LOKI_VISUAL_EVIDENCE default to on; `=0` turns each off. Contract only acts when .loki/contract.json exists. Visual evidence only acts when Playwright is present and pages changed, inside its 25s budget, and otherwise writes a NOT PROVEN line, never a failure.
+- Rationale: both fail closed or advisory (neither can raise a verdict to VERIFIED); the remaining should-fixes (D65-SPEC-F1, D62-VIS-F1, D65-SPEC-F2) are non-blocking and build in parallel. Reverse by setting the defaults back to off.
+
+## D71: D61 parallel-units code lives under loki-ts/src/features/speed (CTO role, 03:08Z 2026-10-03)
+- Core engine10 measures 4936 lines against the 5000 cap (D29, D33, D42), so 64 lines remain. The cap is a gate and is not raised.
+- New D61 modules (decompose check, unit mode, integrator, group seal helpers, group output) go under loki-ts/src/features/speed/ (features budget 3000, 993 used). Each slice may add at most 10 lines of hook code to core engine10; the wave's total stays under 60, and structural-checks.sh must pass on every merge.
+- engine10/decompose.ts (slice 8) stays where it is.
