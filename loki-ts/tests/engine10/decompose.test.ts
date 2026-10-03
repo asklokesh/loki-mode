@@ -1,6 +1,6 @@
 // D61 slice 8 wall check: six fixture specs and a determinism test for the deterministic decomposer.
 import { describe, expect, it } from "bun:test";
-import { dagJson, decompose, isSharedFile, parseItems } from "../../src/engine10/decompose.ts";
+import { dagJson, decompose, isSharedFile, parseItems } from "../../src/features/decompose.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 
 const FILES = [

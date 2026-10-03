@@ -1,7 +1,7 @@
 // D61 slice 8: deterministic decomposer. Splits a spec into requirement items, maps each to a write set,
 // unions units whose write sets overlap, and serializes shared files. Pure: no I/O, no model calls, same
 // input gives a byte-identical DAG. Not wired into any route yet.
-import type { RepoMap } from "./repomap.ts";
+import type { RepoMap } from "../engine10/repomap.ts";
 
 export interface DecomposeOpts {
   /** Keyword selection over the repo map (context.ts selectRelevantFiles shape). */

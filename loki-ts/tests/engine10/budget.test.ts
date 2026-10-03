@@ -234,3 +234,42 @@ describe("e10ext import fence: findImports catches every import form (D42 (1) B3
     expect(importViolations("f.ts", `const m = await import("./other.ts");\n`)).toEqual([]);
   });
 });
+
+// D66: features/ is the home for new modules, with its own 3,000-line cap. It may not import
+// stages/ or seal/verify/wall/verify_cmd except as a whole-statement `import type`.
+const FEATURES_ROOT = join(import.meta.dir, "..", "..", "src", "features");
+
+function featuresFiles(): string[] {
+  try {
+    return (readdirSync(FEATURES_ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
+  } catch {
+    return [];
+  }
+}
+
+function featuresViolations(file: string, src: string): string[] {
+  const out: string[] = [];
+  for (const { path, typeOnly } of findImports(src)) {
+    const s = stem(path);
+    const banned = path.includes("/stages/") || ["seal", "verify", "wall", "verify_cmd"].includes(s);
+    if (banned && !typeOnly) out.push(`${file} imports ${path} without a whole-statement 'import type'`);
+  }
+  return [...new Set(out)];
+}
+
+describe("features size and import budget (D66)", () => {
+  it("features stays under 3,000 lines", () => {
+    expect(count(featuresFiles(), FEATURES_ROOT)).toBeLessThan(3000);
+  });
+
+  it("never imports stages/ or seal/verify/wall/verify_cmd except whole-statement `import type`", () => {
+    for (const f of featuresFiles()) {
+      expect(featuresViolations(f, readFileSync(join(FEATURES_ROOT, f), "utf8"))).toEqual([]);
+    }
+  });
+
+  it("the fence flags a value import and allows an import type", () => {
+    expect(featuresViolations("x.ts", 'import { a } from "../engine10/stages/verify.ts";\n').length).toBe(1);
+    expect(featuresViolations("x.ts", 'import type { A } from "../engine10/verify_cmd.ts";\n')).toEqual([]);
+  });
+});
