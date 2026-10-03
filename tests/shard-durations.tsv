@@ -710,3 +710,4 @@ train verdict reuse on main push (E-160, D55)	10
 real-repo acceptance gate logic (D58-GATE)	6
 Loki control plane wiring: serve, backfill, UI (CP-04)	60
 Dashboard leak2: fail-closed reuse and bound-port URL	5
+D65 shim routing (slack, answer, jira, linear)	3

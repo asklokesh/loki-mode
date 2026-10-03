@@ -354,12 +354,12 @@ case "${LOKI_ENGINE:-$_loki_engine_default}" in
             # `loki <ref>`; any other start call (PRD file, flags first, one word) stays legacy.
             start)
                 case "${2:-}" in
-                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|*" "*) _e10=1; _e10_args=("${@:2}") ;;
+                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*) _e10=1; _e10_args=("${@:2}") ;;
                     *) _e10=0 ;;
                 esac
                 ;;
             # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
-            */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) _e10=1 ;;
+            */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*) _e10=1 ;;
             *" "*) _e10=1 ;;
             # ponytail: a one-word argument stays on the legacy CLI. The telemetry
             # allowlist is not a command registry (estimate, intent, outcomes are
@@ -567,7 +567,7 @@ fi
 # Two-token routes (provider show/list, memory list/index) match on the first
 # token only; the Bun dispatcher handles subcommand routing internally.
 case "${1:-}" in
-    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|receipt|wiki|crash|control|contract)
+    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|receipt|wiki|crash|control|contract|slack|answer)
         # v7.5.2: rollback added (wires loki-ts/src/commands/rollback.ts).
         # v7.5.3: internal added for autonomy/run.sh phase1-hooks calls.
         # v7.5.28: kpis added (Phase K MVP: read-only KPI snapshot).

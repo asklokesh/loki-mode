@@ -638,6 +638,7 @@ run_test "v8 SDK text bridge (grill + prd-enrich)" "$SCRIPT_DIR/test-sdk-text-br
 run_test "v8 SDK council VOTE (member + contrarian, trust core)" "$SCRIPT_DIR/test-sdk-council-vote.sh"
 run_test "v8 SDK voter-agents council (Epic C, finding schema)" "$SCRIPT_DIR/test-sdk-voter-agents.sh"
 run_test "v8 SDK-loop start routing (LOKI_SDK_LOOP gate, default-off)" "$SCRIPT_DIR/test-sdk-loop-routing.sh"
+run_test "D65 shim routing (slack, answer, jira, linear)" "$SCRIPT_DIR/test-d65-routing.sh"
 run_test "SDK version sync (root package.json/lockfile/Dockerfile vs loki-ts, E-106)" "$SCRIPT_DIR/test-sdk-version-sync.sh"
 run_test "v8 Structured Review Self-Copy Asset Resolution" "$SCRIPT_DIR/test-code-review-self-copy.sh"
 run_test "Review deadline, requirements, and speculative assurance tail" "$SCRIPT_DIR/test-review-assurance-tail.sh"
