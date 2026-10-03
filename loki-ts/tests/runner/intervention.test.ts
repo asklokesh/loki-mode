@@ -336,6 +336,25 @@ describe("handlePause", () => {
     await promise;
   });
 
+  for (const [tty, wantEnter] of [[false, false], [true, true]] as const) {
+    it(`PAUSED.md resume wording with isTTY=${tty}`, async () => {
+      touch(join(dir, "PAUSE"));
+      const promise = handlePause({
+        lokiDirOverride: dir,
+        pollIntervalMs: 20,
+        maxWaitMs: 500,
+        isTTY: tty,
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      const body = readFileSync(join(dir, "PAUSED.md"), "utf8");
+      expect(body.includes("Press Enter")).toBe(wantEnter);
+      expect(body.includes("(no TTY: keypress resume unavailable)")).toBe(!wantEnter);
+      expect(body).toContain("`rm .loki/PAUSE`");
+      rmSync(join(dir, "PAUSE"));
+      await promise;
+    });
+  }
+
   it("respects maxWaitMs ceiling and reports timeout", async () => {
     touch(join(dir, "PAUSE"));
     const r = await handlePause({

@@ -346,6 +346,8 @@ export interface HandlePauseOptions {
   maxWaitMs?: number;
   // Override the PAUSED.md body (defaults to the bash heredoc text).
   pausedMdBody?: string;
+  // Override TTY detection for the default PAUSED.md wording (defaults to stdout).
+  isTTY?: boolean;
 }
 
 export interface HandlePauseResult {
@@ -355,12 +357,23 @@ export interface HandlePauseResult {
   timedOut: boolean;
 }
 
-// Default contents of .loki/PAUSED.md, byte-equivalent to run.sh:11280-11293.
-const DEFAULT_PAUSED_MD = `# Loki Mode - Paused
+// Default contents of .loki/PAUSED.md. Mirrors the bash writer in
+// autonomy/run.sh (~28272-28275): Press-Enter wording on a TTY, otherwise the
+// no-TTY wording shared with the console banner (~28252), so a --bg / CI
+// operator is never promised a keypress.
+function defaultPausedMd(isTTY: boolean): string {
+  const resumeLine = isTTY
+    ? "1. **Resume**: Press Enter in terminal or `rm .loki/PAUSE`"
+    : "1. **Resume**: `rm .loki/PAUSE`  (no TTY: keypress resume unavailable)";
+  return PAUSED_MD_HEAD + resumeLine + PAUSED_MD_TAIL;
+}
+
+const PAUSED_MD_HEAD = `# Loki Mode - Paused
 
 Execution is currently paused. Options:
 
-1. **Resume**: Press Enter in terminal or \`rm .loki/PAUSE\`
+`;
+const PAUSED_MD_TAIL = `
 2. **Add Instructions**: \`echo "Focus on fixing the login bug" > .loki/HUMAN_INPUT.md\`
 3. **Stop**: \`touch .loki/STOP\`
 
@@ -380,7 +393,7 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
   const interval = opts.pollIntervalMs ?? 1000;
   const ceiling = opts.maxWaitMs;
   const startMs = Date.now();
-  const body = opts.pausedMdBody ?? DEFAULT_PAUSED_MD;
+  const body = opts.pausedMdBody ?? defaultPausedMd(opts.isTTY ?? process.stdout.isTTY === true);
 
   try {
     mkdirSync(dir, { recursive: true });
