@@ -140,7 +140,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (capHit) return true;
     if (!r) return false;
     if (r.status === "failed") return name !== "plan" && name !== "wall" && name !== "verify" && name !== "fix";
-    return r.status === "completed" && earlyExit(r.data);
+    return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
   try {
     let jumped = false, stopped: string | null = null;

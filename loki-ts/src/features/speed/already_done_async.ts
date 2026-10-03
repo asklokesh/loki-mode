@@ -3,12 +3,25 @@
 // confirmation concurrently with the implement session and, once confirmed, stops that session and reports
 // the run as already done. The check's result only counts while implement is in flight: a check that is
 // cancelled, late or unconfirmed never changes the verdict, so the cold path stays the reference.
-import { checkAlreadyDone, findEvidence, type AlreadyDoneResult } from "../../engine10/already_done.ts";
+import { execFileSync } from "node:child_process";
+import { checkAlreadyDone, citedHitPaths, findEvidence, type AlreadyDoneResult } from "../../engine10/already_done.ts";
 import type { RepoMap } from "../../engine10/repomap.ts";
 import type { RunContext, SessionResult, TestMap } from "../../engine10/types.ts";
 import { speedEnabled } from "../warm.ts";
 
 export { speedEnabled };
+
+/** True only when every cited file exists at baseSha and the live tree still equals it (no edit, no untracked
+ *  stand-in). The check runs while implement edits this tree, so a hit on a file implement touched describes
+ *  the work in flight, not the base, and must never be reported as already done. */
+function citedUnchangedFromBase(repoDir: string, baseSha: string, paths: string[]): boolean {
+  if (paths.length === 0 || !baseSha) return false;
+  try {
+    for (const p of paths) execFileSync("git", ["cat-file", "-e", `${baseSha}:${p}`], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["diff", "--quiet", baseSha, "--", ...paths], { cwd: repoDir, stdio: "pipe" });
+    return true;
+  } catch { return false; }
+}
 
 /** Starts the background check. `apply` merges a confirmed result into the intake data (the same object the
  *  machine stored). Wraps ctx.sessions so the implement session is linked to the check's verdict. */
@@ -16,11 +29,21 @@ export function deferAlreadyDone(
   ctx: RunContext, signal: AbortSignal, task: string, repoMap: RepoMap, testMap: TestMap,
   apply: (r: AlreadyDoneResult) => void,
 ): void {
-  if (signal.aborted || findEvidence(task, repoMap, testMap, ctx.repoDir).length === 0) return;
+  const hits = findEvidence(task, repoMap, testMap, ctx.repoDir);
+  if (signal.aborted || hits.length === 0) return;
   const inner = ctx.sessions;
   const check = new AbortController(), impl = new AbortController();
+  signal.addEventListener("abort", () => check.abort(), { once: true });
   let phase: "pre" | "run" | "done" = "pre", hit: AlreadyDoneResult | null = null, fired = false;
-  const fire = (): void => { if (hit && !fired) { fired = true; apply(hit); impl.abort(); } };
+  const fire = (): void => {
+    if (!hit || fired) return;
+    const h = hit;
+    if (!citedUnchangedFromBase(ctx.repoDir, ctx.baseSha, citedHitPaths(h.evidence[0] ?? "", hits, ctx.repoDir))) { hit = null; return; }
+    try { apply(h); } catch { hit = null; return; }
+    fired = true;
+    ctx.emit("already.satisfied", "intake", { evidence: h.evidence, deferred: true });
+    impl.abort();
+  };
   ctx.sessions = {
     run: async (o) => {
       if (o.stage !== "implement") return inner.run(o);

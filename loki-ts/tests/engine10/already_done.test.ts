@@ -2,7 +2,7 @@
 // deterministic evidence search and its confirmation gate.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -396,6 +396,7 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
   async function intakeWith(r: ReturnType<typeof rig>, task: string, dir: string) {
     const ctx = ctxWith(r.sessions, dir);
     ctx.runDir = mkdtempSync(join(tmpdir(), "e10-already-done-run-"));
+    ctx.baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
     const res = await runIntake(ctx, new AbortController().signal, { taskText: task });
     return { ctx, res };
   }
@@ -492,6 +493,65 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
       expect(res.data.already_satisfied).toBe(false);
       expect(res.data.evidence).toBeUndefined();
       rmSync(dir, { recursive: true, force: true });
+    });
+
+    // D61-04 round 2 (Opus B1): the check reads the live tree implement is editing; an honest "feature present"
+    // that rests on a file implement already changed must never become ALREADY_SATISFIED.
+    describe("race with implement's own edits", () => {
+      const SENTINEL = "// FEATURE_IMPLEMENTED_BY_THIS_RUN";
+      const cited = "src/search-command.ts";
+      const impl = (ctx: RunContext, edit: (() => void) | null) => ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i-impl", limitS: 60, signal: new AbortController().signal, cwd: ctx.repoDir });
+      function raceRig(dir: string, edit: () => void) {
+        const target = join(dir, cited);
+        let wrote: () => void = () => {};
+        const w = new Promise<void>((r) => { wrote = r; });
+        const sessions: SessionRunner = {
+          run: async (o: Opts) => {
+            if (o.stage === "intake") {
+              await w;
+              const done = readFileSync(target, "utf8").includes(SENTINEL);
+              return ok(done ? `${cited}:1 feature present` : null);
+            }
+            edit(); wrote();
+            await new Promise<void>((res) => { o.signal.addEventListener("abort", () => res(), { once: true }); setTimeout(res, 300); });
+            return o.signal.aborted ? killed : ok(null);
+          },
+        };
+        return sessions;
+      }
+      test("cited file edited by implement: hit discarded, implement not aborted, verdict untouched", async () => {
+        const dir = freshRepo();
+        const target = join(dir, cited);
+        const { ctx, res } = await intakeWith(rig(null), TASK, dir);
+        ctx.sessions = raceRig(dir, () => appendFileSync(target, `\n${SENTINEL}\n`));
+        // re-arm the deferral on the race sessions
+        const events: string[] = [];
+        ctx.emit = (t) => { events.push(t); };
+        const res2 = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+        const out = await impl(ctx, null);
+        expect(res2.data.already_satisfied).toBe(false);
+        expect(out.killed).toBe(false);
+        expect(out.markers.alreadyDone).toBeNull();
+        expect(events).not.toContain("already.satisfied");
+        expect(res.data.already_satisfied).toBe(false);
+        rmSync(dir, { recursive: true, force: true });
+      });
+      test("cited file untouched at base: confirmed hit fires and emits already.satisfied", async () => {
+        const dir = freshRepo();
+        const target = join(dir, cited);
+        appendFileSync(target, `\n${SENTINEL}\n`);
+        git(dir, ["commit", "-q", "-am", "feature at base"]);
+        const { ctx } = await intakeWith(rig(null), TASK, dir);
+        ctx.sessions = raceRig(dir, () => {});
+        const events: string[] = [];
+        ctx.emit = (t) => { events.push(t); };
+        const res2 = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+        const out = await impl(ctx, null);
+        expect(out.markers.alreadyDone).toBe(`${cited}:1 feature present`);
+        expect(res2.data.already_satisfied).toBe(true);
+        expect(events).toContain("already.satisfied");
+        rmSync(dir, { recursive: true, force: true });
+      });
     });
   });
 });
