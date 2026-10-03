@@ -269,6 +269,7 @@ export const sealStage: Stage = {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
         measured_sessions: cost.measuredCount ?? 0, total_sessions: cost.totalCount ?? 0, partial_usd: cost.partialUsd ?? 0,
         ...(cost.unmetered ? { source: "cli-invoker-unmetered" } : {}),
+        ...(Array.isArray(o.fix?.fix_rounds) ? { fix_rounds: o.fix.fix_rounds } : {}), // MW-2: engine-recorded per-round fix_resume + cache_read_tokens, never read from a transcript
       },
       time: { wall_s: Object.values(stages).reduce((a, b) => a + (b ?? 0), 0), stages },
       provider: ctx.provider,
