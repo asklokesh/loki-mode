@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki quickstart` no longer reports simple-todo-app as the "top match" for briefs that match no template (for example "a URL shortener with click stats"): it prints the match score, adds url, shortener and stats keywords, and falls back to a plain-spec build from the brief when nothing matches (#217).
 - MCP loki run now returns the exit code and log tail when loki exits before a run starts.
 - loki-seal: forged runner pass lines that contradict the runner summary now give NOT VERIFIED.
+- loki-seal: forged runner pass lines that contradict the runner summary (counted over leaf tests, so honest node:test describe() and nested t.test() stay VERIFIED) now give NOT VERIFIED; a forged summary line or a runner with no summary line is not covered.
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 ### Fixed
 - Dashboard runs view reports unreadable or corrupt run records instead of claiming none were recorded.

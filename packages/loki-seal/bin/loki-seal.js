@@ -116,13 +116,43 @@ function counts(out) {
   return { summary: /\d+ (passed|failed)/.test(out), pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
 }
 
+// Names of pass lines that are containers, not leaf tests: node:test suites and parent tests do not
+// appear as leaves in the runner's pass count, so they must not feed the cross-check. TAP: an ok line with
+// deeper-indented subtest lines before it, or a YAML block with type: 'suite'. Spec: a name printed as a
+// "> name" header (suite or parent) also gets a matching check-mark line. Over-excluding only weakens the check.
+function containerNames(out) {
+  const names = new Set();
+  const lines = out.split('\n');
+  const deeper = new Set();
+  for (let i = 0; i < lines.length; i++) {
+    const h = /^\s*\u25b6 (.+?)\s*$/.exec(lines[i]);
+    if (h) names.add(h[1]);
+    const m = /^(\s*)(?:not )?ok \d+ - (.+?)\s*$/.exec(lines[i]);
+    if (!m) continue;
+    const n = m[1].length;
+    let container = [...deeper].some((d) => d > n);
+    for (const d of [...deeper]) if (d > n) deeper.delete(d);
+    deeper.add(n);
+    if (!container && /^\s*---\s*$/.test(lines[i + 1] || '')) {
+      for (let j = i + 2; j < lines.length && !/^\s*\.\.\.\s*$/.test(lines[j]); j++) if (/^\s*type: 'suite'\s*$/.test(lines[j])) { container = true; break; }
+    }
+    if (container) names.add(m[2].replace(/\s+#\s.*$/, ''));
+  }
+  return names;
+}
+
+function leafPassing(out) {
+  const skip = containerNames(out);
+  return passing(out).filter((i) => !skip.has(i));
+}
+
 // Runner output whose pass lines contradict its own summary counts (a test printing forged lines).
 // With no summary line there is nothing to cross-check and this returns null.
 function inconsistency(r) {
   if (r.error) return null;
   const clash = (r.passIds || []).filter((i) => (r.ids || []).includes(i));
   if (clash.length) return `the runner reports the same test as both passed and failed: ${clash.slice(0, 3).join(', ')}`;
-  if (r.summary && (r.passIds || []).length > r.pass) return `${r.passIds.length} passing test line(s) but the runner summary counts ${r.pass} passed`;
+  if (r.summary && (r.leafIds || []).length > r.pass) return `${r.leafIds.length} passing test line(s) but the runner summary counts ${r.pass} passed`;
   return null;
 }
 
@@ -175,7 +205,7 @@ function runSuite(root, runner, timeout) {
     const finish = (status, error) => {
       if (done) return;
       done = true; clearTimeout(timer);
-      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), passIds: passing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
+      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), passIds: passing(out), leafIds: leafPassing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
     };
     child.on('error', (e) => finish(null, e));
     child.on('close', (code) => finish(code));

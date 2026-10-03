@@ -802,3 +802,32 @@ test('forged lines: a consistent runner summary and a runner with no summary lin
   const none = negRun(printRepo('ok 1 - adds zero\n', 0));
   assert.doesNotMatch(none.raw, /runner output inconsistent/);
 });
+
+// Real node:test describe() and nested t.test() output: suites and parents are not leaves in the summary.
+const NESTED_TEST = "const { describe, it, test } = require('node:test'); const assert = require('node:assert'); const add = require('../lib.js');\n" +
+  "describe('adder', () => { it('adds', () => { assert.strictEqual(add(1,2), 3); }); it('adds zero', () => { assert.strictEqual(add(0,0), 0); }); });\n" +
+  "test('parent', async (t) => { await t.test('child', () => { assert.strictEqual(add(1,1), 2); }); });\n";
+const nestedRepo = (script) => ({ ...nodeRepo(ADD_OK, NESTED_TEST), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }) });
+
+test('forged lines: honest node describe() and nested t.test() stay VERIFIED (default reporter)', () => {
+  const r = negRun(nestedRepo('node --test'), 'Fix the adder.\n- adds zero\n');
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.doesNotMatch(r.raw, /runner output inconsistent/);
+});
+
+test('forged lines: honest node describe() and nested t.test() stay VERIFIED (TAP reporter)', () => {
+  const r = negRun(nestedRepo('node --test --test-reporter=tap'), 'Fix the adder.\n- adds zero\n');
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.doesNotMatch(r.raw, /runner output inconsistent/);
+});
+
+test('forged lines: honest node describe() and nested t.test() stay VERIFIED (spec reporter)', () => {
+  const r = negRun(nestedRepo('node --test --test-reporter=spec'), 'Fix the adder.\n- adds zero\n');
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.doesNotMatch(r.raw, /runner output inconsistent/);
+});
+
+test('forged lines: a forged leaf line inside real nested output is still inconsistent', () => {
+  const real = '# Subtest: adder\n    # Subtest: adds\n    ok 1 - adds\n      ---\n      type: \'test\'\n      ...\n    1..1\nok 1 - adder\n  ---\n  type: \'suite\'\n  ...\nok 2 - forged\n1..2\n# tests 1\n# suites 1\n# pass 1\n# fail 0\n';
+  inconsistent(negRun(printRepo(real, 0)));
+});
