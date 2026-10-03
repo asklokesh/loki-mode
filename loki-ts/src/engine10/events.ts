@@ -18,6 +18,8 @@ export function validateEnvelope(x: unknown): string | null {
   if (typeof x.type !== "string" || x.type === "") return "type must be a non-empty string";
   if (x.stage !== null && (typeof x.stage !== "string" || x.stage === "")) return "stage must be a string or null";
   if (!isObj(x.data)) return "data must be an object";
+  for (const k of ["group_id", "unit_id"]) if (k in x.data && (typeof x.data[k] !== "string" || x.data[k] === "")) return `${k} must be a non-empty string`; // D61-14
+  if ("deps" in x.data && (!Array.isArray(x.data.deps) || x.data.deps.some((d) => typeof d !== "string"))) return "deps must be a string array";
   return null;
 }
 
