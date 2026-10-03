@@ -866,10 +866,10 @@ test('forged lines r3: a forged line in the spec shape is caught next to a real 
   for (const script of REPORTERS) notVerified(negRun(forgeRepo('ok 99 - handles negative numbers\n', script, suite + NESTED_PARENT)));
 });
 
-test('forged lines r3: honest describe, nested t.test, skip, todo and a same-named leaf stay VERIFIED', () => {
+test('forged lines r3: honest describe, nested t.test, skip, todo and a same-named leaf stay VERIFIED (todo is covered by the r5 tests)', () => {
   const body = FORGE_HDR +
     "describe('same', () => { it('same', () => { assert.strictEqual(add(1,2), 3); }); it('adds zero', () => { assert.strictEqual(add(0,0), 0); }); });\n" +
-    NESTED_PARENT + "test('skipped one', { skip: true }, () => {});\ntest('todo one', { todo: true }, () => {});\n";
+    NESTED_PARENT + "test('skipped one', { skip: true }, () => {});\n";
   for (const script of REPORTERS) {
     const r = negRun({ ...nodeRepo(ADD_OK, body), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }) }, 'Fix the adder.\n- adds zero\n');
     assert.strictEqual(r.status, 0, script + '\n' + r.raw);
@@ -905,7 +905,7 @@ test('forged lines r4 (B-r3-3): a forged check line next to a test named "cleanu
 });
 
 test('forged lines r4 (B-r3-4): an honest empty describe, describe.skip and a "# SKIP"-named test stay VERIFIED', () => {
-  const body = FORGE_HDR + EMPTY_SUITE + SKIP_SUITE + SKIP_NAMED + NESTED_PARENT + "test('adds zero', () => { assert.strictEqual(add(0,0), 0); });\ntest('later skipped', { skip: true }, () => {});\ntest('later todo', { todo: true }, () => {});\n";
+  const body = FORGE_HDR + EMPTY_SUITE + SKIP_SUITE + SKIP_NAMED + NESTED_PARENT + "test('adds zero', () => { assert.strictEqual(add(0,0), 0); });\ntest('later skipped', { skip: true }, () => {});\n";
   for (const script of REPORTERS) {
     const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
     assert.strictEqual(r.status, 0, script + '\n' + r.raw);
@@ -928,5 +928,55 @@ test('forged lines r4 (B-r3-4 minimal): an honest empty describe plus one test s
   for (const script of REPORTERS) {
     const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
     assert.strictEqual(r.status, 0, script + '\n' + r.raw);
+  }
+});
+
+// SEAL-FORGED-LINES r5 (D69): the spec/default path fails closed on ambiguity; counts() trusts the last summary block only.
+const R5_TODO_NAME = "test('cleanup (old) # TODO later', () => {});\n";
+const R5_FAIL_DESCRIBE = "describe('bad', () => { it('boom', () => { assert.strictEqual(1, 2); }); });\n";
+const notCovered = (r, script) => {
+  assert.notStrictEqual(r.status, 0, script + '\n' + r.raw);
+  assert.doesNotMatch(r.raw, /1 item\(s\), 1 covered by passing tests/, script);
+};
+
+test('forged lines r5 (1): a test named "cleanup (old) # TODO later" next to a forged line never covers an item', () => {
+  for (const script of REPORTERS) for (const p of [FORGE_CHECK, FORGE_OK]) notCovered(negRun(forgeRepo(p, script, R5_TODO_NAME)), script);
+});
+
+test('forged lines r5 (2): a test name starting with a newline next to a forged line never covers an item', () => {
+  for (const script of REPORTERS) notCovered(negRun(forgeRepo(FORGE_CHECK, script, "test('\\nx', () => {});\n")), script);
+});
+
+test('forged lines r5 (3): describe.todo next to a forged line never covers an item', () => {
+  for (const script of REPORTERS) notCovered(negRun(forgeRepo(FORGE_CHECK, script, "describe.todo('later', () => { it('z', () => {}); });\n")), script);
+});
+
+test('forged lines r5 (4): a failing describe next to a forged line never covers an item', () => {
+  for (const script of REPORTERS) for (const p of [FORGE_CHECK, FORGE_OK]) notCovered(negRun(forgeRepo(p, script, R5_FAIL_DESCRIBE)), script);
+});
+
+test('forged lines r5 (5): honest todo tests are never BLOCKED or reported as inconsistent', () => {
+  const body = FORGE_HDR + "test('adds zero', () => { assert.strictEqual(add(0,0), 0); });\ntest('t1', { todo: 'why' }, () => {});\ntest('t2', (t) => { t.todo('later'); });\n";
+  for (const script of REPORTERS) {
+    const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
+    assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
+    assert.doesNotMatch(r.raw, /runner output inconsistent/, script);
+  }
+});
+
+test('forged lines r5 (6): a narrowed test script plus a printed pass count cannot hide a dropped test count', () => {
+  for (const printed of ['\u2139 pass 2\n', '# pass 2\n']) {
+    const d = repo({
+      'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node --test' } }),
+      'lib.js': ADD_OK,
+      'test/a.test.js': FORGE_HDR + "test('adds', () => { process.stdout.write(" + JSON.stringify(printed) + "); assert.strictEqual(add(1,2), 3); });\n",
+      'test/b.test.js': FORGE_HDR + "test('b', () => {});\n",
+      'test/c.test.js': FORGE_HDR + "test('c', () => {});\n",
+    });
+    seal('start', d);
+    put(d, { 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node --test test/a.test.js' } }) });
+    const r = seal('stop', d, { transcript_path: transcript(d, 'Fix the adder.\n- adds\n') });
+    assert.notStrictEqual(r.status, 0, r.raw);
+    assert.match(r.raw, /test count dropped from 3 to 1/, r.raw);
   }
 });

@@ -109,9 +109,23 @@ function detect(root, files) {
   return null;
 }
 
+// The last runner summary block (from the last "tests N" line to the end), or null. A test can print anything
+// earlier, so only this block is trusted. blocks > 1 is reported and fails closed in passRecords().
+function nodeBlock(out) {
+  const lines = out.split('\n');
+  const starts = [];
+  lines.forEach((l, i) => { if (/^\s*[ℹ#]\s*tests\s+\d+\s*$/.test(l)) starts.push(i); });
+  if (!starts.length) return null;
+  const block = lines.slice(starts[starts.length - 1]).join('\n');
+  const num = (name) => { const x = new RegExp('^\\s*[\\u2139#]\\s*' + name + '\\s+(\\d+)', 'm').exec(block); return x ? +x[1] : null; };
+  return { blocks: starts.length, spec: /^\s*ℹ\s*tests\s/m.test(block), tests: num('tests'), pass: num('pass'), fail: num('fail'), suites: num('suites'), skipped: num('skipped'), todo: num('todo'), cancelled: num('cancelled') };
+}
+
 function counts(out) {
   const sum = (rx, one) => [...out.matchAll(rx)].reduce((a, m) => a + (one ? 1 : +m[1]), 0);
-  if (/^\s*[\u2139#]\s*pass\s+\d+/m.test(out)) return { summary: true, pass: sum(/^\s*[\u2139#]\s*pass\s+(\d+)/gm), fail: sum(/^\s*[\u2139#]\s*fail\s+(\d+)/gm) };
+  const nb = nodeBlock(out);
+  if (nb && nb.pass !== null) return { summary: true, pass: nb.pass, fail: nb.fail || 0 };
+  if (/^\s*[ℹ#]\s*pass\s+\d+/m.test(out)) return { summary: true, pass: sum(/^\s*[ℹ#]\s*pass\s+(\d+)/gm), fail: sum(/^\s*[ℹ#]\s*fail\s+(\d+)/gm) };
   if (/^\s*--- (PASS|FAIL)/m.test(out)) return { summary: false, pass: sum(/^\s*--- (PASS)/gm, 1), fail: sum(/^\s*--- (FAIL)/gm, 1) };
   return { summary: /\d+ (passed|failed)/.test(out), pass: sum(/(\d+) passed/g), fail: sum(/(\d+) failed/g) };
 }
@@ -120,31 +134,38 @@ function counts(out) {
 // the SAME records, so a printed line that is excluded from one is excluded from both.
 //  - TAP: an ok line is a record unless its YAML block says type: 'suite' (a describe() suite, which the
 //    runner's pass count leaves out) or it carries a SKIP or TODO marker. t.test() parents are records.
-//  - Node spec: a check-mark line is a record unless it ends with a TODO marker after the duration (skipped
-//    tests and skipped suites print a different mark). A describe() suite prints a check-mark line too and
-//    is not in the runner's pass count, so the count subtracts the suites that printed one:
-//    suites - (dash lines - skipped tests), because a skipped suite prints only a dash line and an empty
-//    suite prints only a check-mark line. The result is exact for honest output.
+//    More passing lines than the summary counts is a contradiction (BLOCKED).
+//  - Node spec (the default reporter in a terminal): a describe() suite prints a check-mark line that is not
+//    in the runner's pass count, and the shapes around it (todo, cancelled, failing, empty names, directives
+//    after the duration, skipped suites) are too ambiguous to reconcile by arithmetic. So the spec path fails
+//    closed: unless the output is free of every ambiguous shape AND check lines minus attributable suites
+//    (suites - (dash lines - skipped tests)) equal the summary pass exactly, NO coverage is granted from it
+//    (specUnverified), which gives NOT VERIFIED and never BLOCKED. TAP is sound; use --test-reporter=tap.
 //  - Everything else (PASSED, --- PASS, cargo) is a record.
-// Only the LAST summary block (from the last "tests N" line to the end) is used, because a test can print
-// anything earlier. More than one summary block is reported as not cross-checkable (fail closed).
-const SPEC_MARK = /^(\s*)([\u2714\u2713\u221a]) (.+?)\s*$/;
+const SPEC_MARK = /^(\s*)([✔✓√]) (.+?)\s*$/;
 function passRecords(out) {
   const lines = out.split('\n');
   const leaf = [];
   let specLines = 0;
   let dash = 0;
+  let cross = 0;
+  const sumAt = lines.findLastIndex((l) => /^\s*[\u2139#]\s*tests\s+\d+\s*$/.test(l)) < 0 ? lines.length : lines.findLastIndex((l) => /^\s*[\u2139#]\s*tests\s+\d+\s*$/.test(l));
+  const odd = [];
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
+    if (/^\s*[✔✓√✖﹣]\s*$/.test(ln)) { odd.push('a result line with an empty name'); continue; }
+    if (/^\s*\u2716/.test(ln)) { if (i < sumAt) cross++; continue; }
     let m = SPEC_MARK.exec(ln);
     if (m) {
       const body = m[3];
-      if (/\)\s+#\s*TODO\b/i.test(body)) continue;
+      const name = body.replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '').trim();
+      if (!name || /^\(?\d[\d.]*\s?ms\)?$/.test(name)) odd.push('a result line with an empty name');
+      if (/\)\s+#/.test(body)) odd.push('a result line carrying a # directive');
       specLines++;
-      leaf.push(body.replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '').split(' > ').pop().trim());
+      leaf.push(name.split(' > ').pop().trim());
       continue;
     }
-    if (/^\s*\ufe63 /.test(ln)) { dash++; continue; }
+    if (/^\s*﹣ /.test(ln)) { dash++; continue; }
     m = /^\s*ok \d+ - (.+?)\s*$/.exec(ln);
     if (m) {
       if (/\s#\s*(?:SKIP|TODO)\b/i.test(m[1])) continue;
@@ -157,28 +178,37 @@ function passRecords(out) {
     }
     if ((m = /^PASSED (\S+)/.exec(ln)) || (m = /^\s*--- PASS: (\S+)/.exec(ln)) || (m = /^test (\S+) \.\.\. ok$/.exec(ln))) leaf.push(m[1].trim());
   }
-  const starts = [];
-  lines.forEach((l, i) => { if (/^\s*[\u2139#]\s*tests\s+\d+\s*$/.test(l)) starts.push(i); });
-  let node = null;
-  if (starts.length) {
-    const block = lines.slice(starts[starts.length - 1]).join('\n');
-    const num = (name) => { const x = new RegExp('^\\s*[\\u2139#]\\s*' + name + '\\s+(\\d+)', 'm').exec(block); return x ? +x[1] : null; };
-    node = { blocks: starts.length, spec: /^\s*\u2139\s*tests\s/m.test(block), pass: num('pass'), suites: num('suites') || 0, skipped: num('skipped') || 0 };
-  }
+  const node = nodeBlock(out);
   let passCount = leaf.length;
-  if (node && node.spec) passCount -= Math.min(specLines, Math.max(0, node.suites - Math.max(0, dash - node.skipped)));
-  return { passIds: [...new Set(leaf)], passCount, node };
+  let unverified = null;
+  if (node && node.blocks > 1) unverified = 'the output has more than one runner summary block';
+  else if (node && node.spec) {
+    const n0 = (v) => v || 0;
+    const skippedSuites = dash - n0(node.skipped);
+    const sp = n0(node.suites) - skippedSuites;
+    if (node.pass === null) unverified = 'the summary has no pass count';
+    else if (odd.length) unverified = odd[0];
+    else if (cross !== n0(node.fail)) unverified = `${cross} failing (cross-mark) line(s) do not equal the ${n0(node.fail)} failed in the summary`;
+    else if (n0(node.todo) || n0(node.cancelled)) unverified = 'the summary has todo or cancelled tests';
+    else if (node.tests !== node.pass + n0(node.fail) + n0(node.skipped) + n0(node.todo) + n0(node.cancelled)) unverified = 'the summary counts do not add up';
+    else if (leaf.length !== specLines) unverified = 'pass lines in another shape (ok N, PASSED, --- PASS) appear in spec output';
+    else if (skippedSuites < 0 || sp < 0 || sp > specLines) unverified = 'the suite count cannot be attributed to output lines';
+    else if (specLines - sp !== node.pass) unverified = `${specLines - sp} passing line(s) do not equal the ${node.pass} passed in the summary`;
+    passCount = specLines - sp + (leaf.length - specLines);
+  }
+  return { passIds: unverified ? [] : [...new Set(leaf)], passCount, node, specUnverified: unverified };
 }
 
 // Runner output whose pass lines contradict its own summary counts (a test printing forged lines).
-// With no summary line there is nothing to cross-check and this returns null.
+// With no summary line there is nothing to cross-check and this returns null. Spec output is never
+// BLOCKED here: ambiguity withholds coverage instead (see passRecords).
 function inconsistency(r) {
   if (r.error) return null;
   const clash = (r.passIds || []).filter((i) => (r.ids || []).includes(i));
   if (clash.length) return `the runner reports the same test as both passed and failed: ${clash.slice(0, 3).join(', ')}`;
   if (!r.summary) return null;
   if (r.node) {
-    if (r.node.blocks > 1) return 'the output has more than one runner summary block, so the pass lines cannot be cross-checked (run one runner with --test-reporter=tap)';
+    if (r.node.spec || r.node.blocks > 1) return null;
     if (r.node.pass !== null && (r.passCount || 0) > r.node.pass) return `${r.passCount} passing test line(s) but the runner summary counts ${r.node.pass} passed`;
     return null;
   }
@@ -330,7 +360,7 @@ async function main() {
       ...redX.map((x) => x.tests.every(failingNow)
         ? `every test for request item "${x.item}" is failing${x.tests.every(failedAtStart) ? ' (already failing at session start, still not fixed)' : ''}`
         : `a test for request item "${x.item}" is failing: ${[...new Set(x.tests.filter(failingNow))].join(', ')}`),
-      ...unpassed.map((x) => `no test for request item "${x.item}" was reported as passed by the runner (not run, skipped, or not listed): ${x.tests.slice(0, 3).join(', ')}`)];
+      ...unpassed.map((x) => `no test for request item "${x.item}" was reported as passed by the runner (not run, skipped, or not listed)${r && r.specUnverified ? `; the spec reporter output could not be reconciled with its summary (${r.specUnverified}), so coverage was withheld: rerun with --test-reporter=tap` : ''}: ${x.tests.slice(0, 3).join(', ')}`)];
     contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length - unpassed.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '') + chatNote;
     if (runner) cproblems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
     else if (bad.length) contractNote = `NOT VERIFIED: ${bad[0]}`;
