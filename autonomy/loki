@@ -2085,6 +2085,18 @@ detect_arg_type() {
         return 0
     fi
 
+    # Sentry intake: an https Sentry issue URL, or an exported Sentry JSON file
+    # on disk, is an issue (checked before the .json -> prd rule below).
+    if [[ "$arg" =~ ^https://[^/]*sentry[^/]*/.*issues/[0-9]+ ]]; then
+        echo "issue"
+        return 0
+    fi
+    if [[ "$arg" == *.json ]] && [ -f "$arg" ] \
+        && head -c 2000000 "$arg" 2>/dev/null | grep -Eq '"(shortId|culprit)"[[:space:]]*:|"exception"[[:space:]]*:|"type"[[:space:]]*:[[:space:]]*"exception"'; then
+        echo "issue"
+        return 0
+    fi
+
     # Known PRD extensions - treat as PRD first (highest priority).
     # This handles edge case where a file is literally named "123.md" or
     # sits in a dir that matches another pattern.

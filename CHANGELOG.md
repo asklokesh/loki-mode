@@ -50,6 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Docs honesty for issue #200: skills/healing.md and docs/dev/architecture-reference.md no longer claim failure-modes.json is written or that the healing snapshot/revert pairing is enforced, because hook_pre_healing_modify and hook_post_healing_modify have no production caller; tests/test-heal-docs-honesty.sh fails if a caller appears while the docs still say so.
 
 ### Added
+- `loki start` accepts a Sentry issue: an exported Sentry JSON file (works offline) or a Sentry issue URL becomes a task spec with the error, stack trace and breadcrumbs. The API is contacted only when SENTRY_AUTH_TOKEN is set, and the token is never printed (docs/sentry-intake.md).
 - tests/test-no-dashes-tree.sh: whole-tree guard that no tracked text file contains U+2013, U+2014 or emoji codepoints (explicit exclusion list with reasons); fixed the two em dashes in benchmarks/magic-ab/README.md.
 - scripts/install-hooks.sh now supports -h/--help (usage, exit 0) and rejects unknown arguments with exit 2; neither writes core.hooksPath (previously every argument was ignored and git config was always mutated).
 - `TRUST_CORE_PROBE_MODE=anchors` for tests/test-trust-core-tests-detect.sh checks in about 0.1s that every probe_case find-string still matches its file, naming each stale anchor, and local-ci fast tier now runs it (issue #214 option 3).

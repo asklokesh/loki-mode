@@ -274,6 +274,26 @@ for prov in github gitlab jira azure_devops; do
     if [ "$rc" -ge 0 ]; then ok "check_issue_provider_cli($prov) returns cleanly"; else bad "cli probe $prov crashed"; fi
 done
 
+# --- 6. Sentry intake: offline export -> task spec; token never printed ----
+SJ="$LOKI_RUN_TMP/sentry-issue.json"
+cat > "$SJ" <<'JSON'
+{"shortId":"WEB-1A","id":"4001","title":"TypeError: x is undefined","culprit":"app/cart.js in total","permalink":"https://sentry.io/organizations/o/issues/4001/","firstSeen":"2026-10-01T00:00:00Z","level":"error",
+ "latestEvent":{"entries":[
+  {"type":"exception","data":{"values":[{"type":"TypeError","value":"x is undefined","stacktrace":{"frames":[{"filename":"app/main.js","function":"boot","lineNo":3},{"filename":"app/cart.js","function":"total","lineNo":42}]}}]}},
+  {"type":"breadcrumbs","data":{"values":[{"timestamp":"t1","category":"ui.click","level":"info","message":"clicked checkout"}]}}]}}
+JSON
+[ "$(det "$SJ")" = "sentry" ] && ok "detect sentry export file" || bad "detect sentry file"
+[ "$(det 'https://sentry.io/organizations/o/issues/4001/')" = "sentry" ] && ok "detect sentry URL" || bad "detect sentry URL"
+parse_issue_reference "$SJ"
+SOUT="$(fetch_issue "$SJ" 2>/dev/null)"
+printf '%s' "$SOUT" | grep -q '"provider": "sentry"' && printf '%s' "$SOUT" | grep -q 'app/cart.js:42' \
+    && printf '%s' "$SOUT" | grep -q 'clicked checkout' && printf '%s' "$SOUT" | grep -q 'TypeError' \
+    && ok "sentry export -> error, stack, breadcrumbs (offline)" || bad "sentry normalize" "$SOUT"
+SERR="$(unset SENTRY_AUTH_TOKEN; fetch_sentry_url 'https://sentry.io/organizations/o/issues/4001/' 2>&1)"
+printf '%s' "$SERR" | grep -q 'SENTRY_AUTH_TOKEN is not set' && ok "sentry URL without token does not fetch" || bad "sentry no-token" "$SERR"
+SERR="$(SENTRY_AUTH_TOKEN=sntrys_SECRET123 fetch_sentry_url 'https://localhost.invalid.sentry.invalid/x/issues/9/' 2>&1)"
+printf '%s' "$SERR" | grep -q 'SECRET123' && bad "token leaked in output" || ok "token never printed"
+
 echo ""
 echo "=== results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

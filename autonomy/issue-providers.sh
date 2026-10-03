@@ -35,7 +35,9 @@ ISSUE_PROVIDERS=("github" "gitlab" "jira" "azure_devops")
 detect_issue_provider() {
     local ref="$1"
 
-    if [[ "$ref" =~ github\.com ]]; then
+    if sentry_ref_is_sentry "$ref"; then
+        echo "sentry"
+    elif [[ "$ref" =~ github\.com ]]; then
         echo "github"
     elif [[ "$ref" =~ gitlab\.com ]] || [[ "$ref" =~ gitlab\. ]]; then
         echo "gitlab"
@@ -57,6 +59,150 @@ detect_issue_provider() {
     fi
 }
 
+# Sentry intake. A ref is Sentry when it is an https Sentry issue URL
+# (sentry.io, <org>.sentry.io or a self-hosted .../issues/<id>/ with "sentry" in
+# the host) or an exported Sentry JSON file on disk (works fully offline).
+sentry_file_looks_like_export() {
+    local f="$1"
+    [ -f "$f" ] || return 1
+    case "$f" in *.json) ;; *) return 1 ;; esac
+    head -c 2000000 "$f" 2>/dev/null | grep -Eq '"(shortId|culprit)"[[:space:]]*:|"exception"[[:space:]]*:|"type"[[:space:]]*:[[:space:]]*"exception"'
+}
+
+sentry_ref_is_sentry() {
+    local ref="$1"
+    if [[ "$ref" =~ ^https://[^/]*sentry[^/]*/.*issues/[0-9]+ ]]; then
+        return 0
+    fi
+    sentry_file_looks_like_export "$ref"
+}
+
+# Normalize a Sentry issue/event JSON (stdin) to the common issue shape.
+# Accepts an issue export, an event, {issue:..., event:...}, or an SDK payload.
+# Env: _LOKI_SENTRY_URL (optional permalink fallback).
+normalize_sentry_json() {
+    python3 -c "
+import json, os, sys
+raw = json.loads(sys.stdin.read())
+if isinstance(raw, list) and raw:
+    raw = raw[0]
+issue = raw.get('issue') if isinstance(raw.get('issue'), dict) else raw
+ev = None
+for k in ('latestEvent', 'event'):
+    if isinstance(raw.get(k), dict):
+        ev = raw[k]
+        break
+if ev is None:
+    ev = raw
+entries = {}
+for e in ev.get('entries') or []:
+    if isinstance(e, dict) and e.get('type'):
+        entries[e['type']] = e.get('data') or {}
+exc = entries.get('exception') or ev.get('exception') or {}
+crumbs = entries.get('breadcrumbs') or ev.get('breadcrumbs') or {}
+values = exc.get('values') or []
+meta = issue.get('metadata') or {}
+etype = (values[-1].get('type') if values else '') or meta.get('type') or ''
+evalue = (values[-1].get('value') if values else '') or meta.get('value') or ''
+title = issue.get('title') or ev.get('title') or (etype + ': ' + evalue).strip(': ') or 'Sentry issue'
+number = str(issue.get('shortId') or issue.get('id') or ev.get('eventID') or ev.get('id') or 'sentry')
+url = issue.get('permalink') or os.environ.get('_LOKI_SENTRY_URL', '')
+lines = []
+lines.append('## Error')
+lines.append('')
+lines.append('- Type: ' + (etype or 'unknown'))
+lines.append('- Message: ' + (evalue or title))
+if issue.get('culprit'):
+    lines.append('- Culprit: ' + str(issue['culprit']))
+for k, label in (('level', 'Level'), ('status', 'Status'), ('count', 'Events'), ('firstSeen', 'First seen'), ('lastSeen', 'Last seen')):
+    if issue.get(k) not in (None, ''):
+        lines.append('- ' + label + ': ' + str(issue[k]))
+lines.append('')
+lines.append('## Stack trace')
+lines.append('')
+n_frames = 0
+for v in values:
+    frames = (v.get('stacktrace') or {}).get('frames') or []
+    lines.append(str(v.get('type', '')) + ': ' + str(v.get('value', '')))
+    for f in reversed(frames[-30:]):
+        where = str(f.get('filename') or f.get('absPath') or f.get('module') or '?')
+        if f.get('lineNo') is not None:
+            where += ':' + str(f['lineNo'])
+        mark = '' if f.get('inApp', True) else ' (library)'
+        lines.append('  at ' + str(f.get('function') or '?') + ' (' + where + ')' + mark)
+        for ln in (f.get('context') or []):
+            if isinstance(ln, list) and len(ln) == 2 and ln[0] == f.get('lineNo'):
+                lines.append('      > ' + str(ln[1]).strip())
+        n_frames += 1
+if n_frames == 0:
+    lines.append('(no stack trace in the export)')
+lines.append('')
+lines.append('## Breadcrumbs (oldest first, last 20)')
+lines.append('')
+cv = (crumbs.get('values') or [])[-20:]
+for c in cv:
+    msg = c.get('message') or json.dumps(c.get('data') or {}, sort_keys=True)[:200]
+    lines.append('- ' + str(c.get('timestamp', '')) + ' [' + str(c.get('category', '')) + '/' + str(c.get('level', '')) + '] ' + str(msg))
+if not cv:
+    lines.append('(no breadcrumbs in the export)')
+lines.append('')
+lines.append('## Acceptance criteria')
+lines.append('')
+lines.append('- [ ] The error above no longer occurs for the triggering input')
+lines.append('- [ ] A regression test reproduces the failure and passes after the fix')
+tags = [str(t.get('key')) + ':' + str(t.get('value')) for t in (ev.get('tags') or []) if isinstance(t, dict)][:10]
+proj = issue.get('project')
+slug = proj.get('slug', '') if isinstance(proj, dict) else ''
+lbl = [x for x in [str(issue.get('level') or ''), str(slug)] if x] + tags
+print(json.dumps({
+    'provider': 'sentry', 'number': number, 'title': title,
+    'body': chr(10).join(lines), 'labels': lbl, 'author': '',
+    'url': url, 'created_at': str(issue.get('firstSeen') or ev.get('dateCreated') or ''),
+    'repo': ''
+}))
+"
+}
+
+# Sentry API fetch (only when SENTRY_AUTH_TOKEN is set). The token travels in a
+# curl config on stdin, never on argv, and is never echoed.
+fetch_sentry_url() {
+    local ref="$1" host id base
+    if [ -z "${SENTRY_AUTH_TOKEN:-}" ]; then
+        echo -e "${RED}Error: SENTRY_AUTH_TOKEN is not set, so the Sentry API is not contacted.${NC}" >&2
+        echo "Export the issue as JSON and run: loki start ./issue.json" >&2
+        return 1
+    fi
+    if [[ "$ref" =~ ^https://([^/]+)/.*issues/([0-9]+) ]]; then
+        host="${BASH_REMATCH[1]}"; id="${BASH_REMATCH[2]}"
+    else
+        echo -e "${RED}Error: not a Sentry issue URL${NC}" >&2
+        return 1
+    fi
+    case "$host" in *.sentry.io) host="sentry.io" ;; esac
+    base="https://${host}/api/0/issues/${id}"
+    local issue ev
+    issue=$(printf 'header = "Authorization: Bearer %s"\n' "$SENTRY_AUTH_TOKEN" \
+        | curl -sS --fail --max-time 30 -K - "${base}/" 2>/dev/null) || {
+        echo -e "${RED}Error fetching Sentry issue ${id} (check SENTRY_AUTH_TOKEN scope and URL)${NC}" >&2
+        return 1
+    }
+    ev=$(printf 'header = "Authorization: Bearer %s"\n' "$SENTRY_AUTH_TOKEN" \
+        | curl -sS --fail --max-time 30 -K - "${base}/events/latest/" 2>/dev/null) || ev='{}'
+    printf '{"issue":%s,"event":%s}' "$issue" "$ev" | _LOKI_SENTRY_URL="$ref" normalize_sentry_json
+}
+
+fetch_sentry_issue() {
+    local ref="$ISSUE_SENTRY_SRC"
+    if [ -f "$ref" ]; then
+        normalize_sentry_json < "$ref" || {
+            echo -e "${RED}Error: could not parse Sentry export: $ref${NC}" >&2
+            return 1
+        }
+    else
+        fetch_sentry_url "$ref"
+    fi
+}
+
 # Check if required CLI tools are available for a provider
 check_issue_provider_cli() {
     local provider="$1"
@@ -71,6 +217,9 @@ check_issue_provider_cli() {
                 echo -e "${RED}Error: gh CLI not authenticated. Run: gh auth login${NC}" >&2
                 return 1
             fi
+            ;;
+        sentry)
+            # Offline from an exported JSON; the API path checks its own token.
             ;;
         gitlab)
             if ! command -v glab &>/dev/null; then
@@ -118,6 +267,14 @@ parse_issue_reference() {
     ISSUE_ORG=""
 
     case "$ISSUE_PROVIDER" in
+        sentry)
+            ISSUE_SENTRY_SRC="$ref"
+            if [[ "$ref" =~ issues/([0-9]+) ]]; then
+                ISSUE_NUMBER="${BASH_REMATCH[1]}"
+            else
+                ISSUE_NUMBER="$(basename "$ref" .json)"
+            fi
+            ;;
         github)
             if [[ "$ref" =~ ^https?://github\.com/([^/]+)/([^/]+)/issues/([0-9]+) ]]; then
                 ISSUE_OWNER="${BASH_REMATCH[1]}"
@@ -424,6 +581,7 @@ fetch_issue() {
     check_issue_provider_cli "$ISSUE_PROVIDER" || return 1
 
     case "$ISSUE_PROVIDER" in
+        sentry)       fetch_sentry_issue ;;
         github)       fetch_github_issue ;;
         gitlab)       fetch_gitlab_issue ;;
         jira)         fetch_jira_issue ;;
