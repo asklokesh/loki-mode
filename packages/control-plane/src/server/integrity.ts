@@ -5,6 +5,8 @@
 // TAMPERED means positive evidence of forgery. A log the CP cannot check (redacted before ingest) is UNVERIFIED, never TAMPERED and never VERIFIED.
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 
 export interface RunIntegrity {
@@ -36,11 +38,25 @@ const normVerdict = (v: string | null | undefined): string | null => (typeof v =
 /** Same derivation as loki-ts/src/engine10/stages/seal.ts kidOf (parity-tested). */
 export const kidOf = (pub: KeyObject): string => createHash("sha256").update(`{"crv":"Ed25519","kty":"OKP","x":"${pub.export({ format: "jwk" }).x}"}`).digest("base64url");
 
-/** Public keys from LOKI_CP_RECEIPT_PUBKEYS (colon-separated PEM files, like `loki verify` retired keys), by kid. Unreadable files are skipped. */
+/** The local signer's PUBLIC half, found where `loki verify` finds it: LOKI_RECEIPT_SIGNING_KEY_FILE, else $HOME/.loki/keys/receipt-ed25519.pem.
+ *  There is no separate public file on disk, so the public KeyObject is derived in memory (createPublicKey) and only that derived object is kept:
+ *  the private key is never retained, logged, copied or returned, and no key is ever generated here. Absent, unreadable or non-Ed25519 means no key. */
+export function localPublicKey(env: Record<string, string | undefined> = process.env): KeyObject | undefined {
+  try {
+    const file = env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim() || join(env["HOME"] || homedir(), ".loki", "keys", "receipt-ed25519.pem");
+    const pub = createPublicKey(readFileSync(file));
+    return pub.asymmetricKeyType === "ed25519" ? pub : undefined;
+  } catch { return undefined; }
+}
+
+/** Verification keys by kid: the local signer's public half (automatic, no setup) merged with public PEM files from LOKI_CP_RECEIPT_PUBKEYS
+ *  (colon-separated, for remote/team keys, like `loki verify` retired keys). Unreadable files are skipped. */
 export function pubkeysFromEnv(env: Record<string, string | undefined> = process.env): KeyResolver {
-  const keys = (env["LOKI_CP_RECEIPT_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
+  const local = localPublicKey(env);
+  const listed = (env["LOKI_CP_RECEIPT_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
     try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
   });
+  const keys = [...(local ? [local] : []), ...listed];
   const fn: KeyResolver = (kid) => keys.find((k) => kidOf(k) === kid);
   fn.configured = keys.length > 0;
   fn.fingerprint = createHash("sha256").update(keys.map(kidOf).sort().join(",")).digest("hex").slice(0, 16); // identifies the key set a row was judged under
