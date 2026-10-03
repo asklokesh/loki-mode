@@ -1988,3 +1988,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D75-GITLEAKS-RANGE: opus r1 BLOCK B1 (a red daily scan did not halt releases). The r2 fix b11872776 adds a scheduled-run check in release.yml required-ci (47/0, W9 plus 2 mutations go red). The opus r2 re-review is running and also judges the fail-open path on an API error.
 - v10.6.10: the release workflow (a5a4f0c95) is still in_progress. npm shows latest=next=10.6.9. No push until it completes; the peer has not been told.
 - Drift audit (last 6h): 3 releases against the 18 that the 20 min cadence target implies (MISS; the main cause was Security Audit timeouts on trains 86-90, fixed by D74). 175 commits on local main. Ready rows: 25, of which 14 are dependency-blocked and most of the rest are eval, real-model or CTO-owned. Active builders: 3 (D65-SPEC-F2, D61-11 r3, and the D75 review), against a target of 6. Pulse budget projection: weekly 115.8%, max engineers 2. The D68 mandate floor (85% of live /usage) overrides this; live usage was 52% at 07:43 according to the peer, so it is within the floor.
+
+## 2026-10-03T08:31Z CoS
+- Train/93 (01b5753bb, target 10.6.11): Tier A, Bun Parity, First-run gate and Security Audit green; Tests and Coverage in progress (gh run list --branch train/93).
+- INTEL-3 r2 (d46385cf3) and A-103b (7b7931d7a) built; TL re-review and opus HIGH review dispatched. INTEL-1 opus review, A-04c r2, D61-11 r3 and P0-CORE-BUDGET TL r2 still running.
+- Pulse BUDGET_BURN (weekly 268.6% projected, max 0 engineers) stays overridden by the founder D68 mandate; the floor is 85% of the week on live /usage.
