@@ -71,21 +71,34 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-// Reading the provider secret is granted ONLY when a secret is configured, and
-// scoped to that one ARN rather than secretsmanager:* -- a wildcard here would
-// let the control plane read every secret in the account.
+// Secret reads are granted ONLY for the secrets that are configured (the
+// provider key and the Control Plane token), each scoped to its exact ARN rather
+// than secretsmanager:* -- a wildcard here would let the control plane read
+// every secret in the account. The execution role resolves valueFrom at launch,
+// so a secret referenced in the task definition but missing here fails the task.
+locals {
+  execution_secret_arns = compact([var.provider_secret_arn, var.control_token_secret_arn])
+}
+
 resource "aws_iam_role_policy" "execution_secrets" {
-  count = var.provider_secret_arn == "" ? 0 : 1
-  name  = "${local.name}-read-provider-secret"
+  count = length(local.execution_secret_arns) == 0 ? 0 : 1
+  name  = "${local.name}-read-secrets"
   role  = aws_iam_role.execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [var.provider_secret_arn]
-    }]
+    Statement = concat(
+      [{
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = local.execution_secret_arns
+      }],
+      var.secrets_kms_key_arn == "" ? [] : [{
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.secrets_kms_key_arn]
+      }]
+    )
   })
 }
 

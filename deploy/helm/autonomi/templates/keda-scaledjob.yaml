@@ -66,6 +66,9 @@ spec:
               - secretRef:
                   name: {{ include "autonomi.secretName" . }}
             env:
+              - name: LOKI_CONTROL_URL
+                value: "http://{{ include "autonomi.fullname" . }}-controlplane:{{ .Values.service.port }}"
+              {{- include "autonomi.controlTokenEnv" . | nindent 14 }}
               # Serverless ScaledJob = ONE work item per Job. Force the reference
               # consumer into one-shot mode so it pulls a single item and exits,
               # instead of draining the whole queue in a single Job (which would

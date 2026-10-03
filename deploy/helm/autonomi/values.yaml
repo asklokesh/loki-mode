@@ -526,6 +526,10 @@ secrets:
   # Key inside the Secret that holds the token. With existingSecret, that Secret
   # MUST contain this key or the controlplane pod fails to start.
   controlTokenKey: "LOKI_CONTROL_TOKEN"
+  # With existingSecret, the chart still owns a <fullname>-control-token Secret
+  # for the token unless this is true. Set true only if existingSecret already
+  # holds controlTokenKey.
+  controlTokenFromExistingSecret: false
 
 # ---------------------------------------------------------------------------
 # Observability

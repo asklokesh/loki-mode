@@ -84,7 +84,18 @@ variable "dashboard_port" {
 }
 
 variable "control_token_secret_arn" {
-  description = "Secrets Manager or SSM ARN holding LOKI_CONTROL_TOKEN. Required unless allow_insecure_bind is true."
+  description = "Secrets Manager ARN holding LOKI_CONTROL_TOKEN. Required unless allow_insecure_bind is true. SSM parameter ARNs are not supported (the execution role is granted secretsmanager:GetSecretValue only)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.control_token_secret_arn == "" || can(regex("^arn:[^:]+:secretsmanager:", var.control_token_secret_arn))
+    error_message = "control_token_secret_arn must be a Secrets Manager secret ARN (arn:aws:secretsmanager:...)."
+  }
+}
+
+variable "secrets_kms_key_arn" {
+  description = "ARN of the customer-managed KMS key that encrypts the secrets above. Grants the execution role kms:Decrypt on that key only. Leave empty when the secrets use the default aws/secretsmanager key."
   type        = string
   default     = ""
 }

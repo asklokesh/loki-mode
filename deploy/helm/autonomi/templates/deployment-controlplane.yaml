@@ -7,7 +7,14 @@ metadata:
     {{- include "autonomi.labels" . | nindent 4 }}
     app.kubernetes.io/component: controlplane
 spec:
+  {{- if and .Values.persistence.controlDb.enabled (gt (int .Values.controlplane.replicas) 1) }}
+  {{- fail "controlplane.replicas must be 1 when persistence.controlDb.enabled (the control DB is a single-writer ReadWriteOnce volume)" }}
+  {{- end }}
   replicas: {{ .Values.controlplane.replicas }}
+  {{- if .Values.persistence.controlDb.enabled }}
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       {{- include "autonomi.controlplane.selectorLabels" . | nindent 6 }}

@@ -73,10 +73,22 @@ runs without a bearer token:
   `helm install` prints the `kubectl get secret ... | base64 -d` command in
   NOTES.txt; open the UI with `#token=<token>` appended to the URL.
 - `secrets.controlToken=<value>` sets your own token.
-- `secrets.existingSecret=<name>`: that Secret MUST contain the key named by
-  `secrets.controlTokenKey` (default `LOKI_CONTROL_TOKEN`), or the pod fails to
+- `secrets.existingSecret=<name>`: provider keys come from that Secret. The
+  token still lives in a chart-owned `<release>-autonomi-control-token` Secret
+  (generated or from `secrets.controlToken`), so upgrading an existing
+  deployment never leaves workers in CreateContainerConfigError. To read the
+  token from your own Secret instead, set
+  `secrets.controlTokenFromExistingSecret=true`; it MUST then contain
+  `secrets.controlTokenKey` (default `LOKI_CONTROL_TOKEN`) or the pods fail to
   start. Add it with
   `kubectl create secret generic <name> --from-literal=LOKI_CONTROL_TOKEN=$(openssl rand -hex 24)`.
+- GitOps and `helm template`: there is no cluster to look up, so a generated
+  token changes on every render and rotates on every sync. Under Argo CD, Flux
+  or `helm template | kubectl apply`, always set `secrets.controlToken` or use
+  `secrets.existingSecret` with `secrets.controlTokenFromExistingSecret=true`.
+  The token Secrets carry `helm.sh/resource-policy: keep`.
+- `controlplane.replicas` must be 1 when `persistence.controlDb.enabled=true`
+  (the render fails otherwise); that Deployment uses the Recreate strategy.
 - Workers get `LOKI_CONTROL_URL` (the in-release controlplane Service) and the
   same token, so they ship runs to the Control Plane automatically. Workers do
   not inherit `LOKI_CONTROL_HOST`; it is set on the controlplane container only.

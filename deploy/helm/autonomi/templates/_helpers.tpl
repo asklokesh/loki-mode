@@ -241,6 +241,20 @@ the user's existingSecret, which must hold the key secrets.controlTokenKey.
 - name: LOKI_CONTROL_TOKEN
   valueFrom:
     secretKeyRef:
-      name: {{ include "autonomi.secretName" . }}
+      name: {{ include "autonomi.controlTokenSecretName" . }}
       key: {{ .Values.secrets.controlTokenKey | default "LOKI_CONTROL_TOKEN" | quote }}
+{{- end }}
+
+{{/*
+Secret that holds the Control Plane token. With existingSecret the user's Secret
+is not guaranteed to carry the key (an upgrade from a chart that predates the
+token would leave every worker in CreateContainerConfigError), so the chart owns
+<fullname>-control-token unless secrets.controlTokenFromExistingSecret opts in.
+*/}}
+{{- define "autonomi.controlTokenSecretName" -}}
+{{- if and .Values.secrets.existingSecret (not .Values.secrets.controlTokenFromExistingSecret) }}
+{{- printf "%s-control-token" (include "autonomi.fullname" .) }}
+{{- else }}
+{{- include "autonomi.secretName" . }}
+{{- end }}
 {{- end }}
