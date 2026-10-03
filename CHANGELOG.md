@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.8 (2026-10-03)
+
+Loki 10 adds opt-in visual evidence in receipts and PR bodies (LOKI_VISUAL_EVIDENCE=1), Jira and Linear issue intake, two-way Slack and multi-repo workspaces behind flags, spec-to-contract (LOKI_CONTRACT=1), MCP run/status/verify tools, a Control Plane container with Helm and ECS examples, and the root GitHub Action now runs Loki 10.
+
+### Changes
+- feat(speed): D61-02 byte-identical stage prefix behind LOKI_SPEED=1
+- feat(worktree): add shared worktree_prep substrate (D61-07)
+- build(loki-ts): rebuild dist for D61 slice 2 lean prefix
+- feat(intake): Jira and Linear issue refs as the same v10 run (D62-JIRA)
+- feat(engine10): warm engine socket and CLI client behind LOKI_SPEED=1 (D61 slices 5 and 6)
+- refactor(features): move warm engine and client to src/features per D66; 2-line hooks in engine10
+- feat(control-plane): BLOCKED answer box and LOKI_CONTROL_DEFAULT entry (D65-CP)
+- feat(slack): two-way Slack inbound handler behind LOKI_SLACK_INBOUND=1
+- feat(engine10): deterministic decomposer for D61 slice 8
+- refactor(features): move decomposer to src/features per D66; add features budget fence
+- feat(v10): opt-in visual evidence in receipts and PR bodies (LOKI_VISUAL_EVIDENCE=1)
+- feat(control-plane): container image, Helm chart and ECS example (D65-CONT)
+- feat(workspaces): multi-repo loki workspace run behind LOKI_WORKSPACES=1 (D65-MULTI)
+- feat(contract): spec to delivery contract behind LOKI_CONTRACT=1 (D65-SPEC)
+- feat(mcp): add loki_v10_run, loki_v10_status, loki_v10_verify tools (39 tools)
+- fix(action): route root action.yml to Loki 10; add budget stop e2e (D62-FIX)
+- feat(gate): opt-in LOKI_E2E_ENV_FILE loading and D65 phase 2 e2e plan with stub-leg results
+- fix(loki-ts): move lean_prefix to features, trim engine10 lines, silent warm client
+- feat(v10): D61-1 pre-model stage timer in run.completed, shown under LOKI_SPEED=1
+- fix(gate): run corpus rows through Loki 10 routing; classify "Not logged in" as auth (D65 BUG-1, BUG-3)
+- fix(loki-ts): pass explicit env to warm git and visual_evidence screenshot spawns
+- build(dist): rebuild loki-ts dist for train 81
+- fix(contract): harden LOKI_CONTRACT per D12 review (C1 malformed contract, receipt NOT PROVEN, sanitize, repo root)
+- feat(eval): large tier with 8 lg tasks and v10-parallel/v10-seq arms (D61 slice 17)
+- refactor(eval): move the authored large tasks to a separate speed tier (D67)
+- fix(visual-evidence): bound capture, per-run screens dir, refuse symlinks (D12 B1-B3)
+- fix(contract): pass explicit env to the repoRoot git spawn
+- fix(ci): completions for new commands, MCP count docs, MCP event balance, DEPS control-plane rows
+- test(moat): print start rc, stdout and stderr in P9 auto-pr failure messages
+- build(dist): rebuild loki-ts dist for train 82
+
 ## v10.6.7 (2026-10-02)
 
 `loki start owner/repo#N` (or an issue URL or a quoted task) now runs Loki 10, every Loki 10 run shows and enforces a cost cap ($20 default, `--max-cost`, loki.yaml `budgets.per_run`, exit 3 on BUDGET_STOP), PRs open with a reviewer-first body, the dashboard prints the port it actually bound, and the issue-to-PR Action runs Loki 10 with a nightly `loki backlog` example.
