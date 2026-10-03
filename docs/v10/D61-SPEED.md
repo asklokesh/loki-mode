@@ -76,3 +76,7 @@ Order: 1, 2, 7, 8 start now (disjoint files); 3-6 and 9-11 next; 12-16 after 8-1
 - Research section 4: parallel lost 39-70% on sequential work and multi-agent runs cost about 15x tokens. Defence: conservative check, no transcript sharing, single writer per file, one central integrator.
 - Warm daemon must never be load-bearing: cold path stays the reference; slice 6 asserts identical events.
 - Not in v1: stacked PRs, cross-repo groups (D51 Phase B), remote runners.
+
+## Slice 2 status: stage prefix (LOKI_SPEED=1)
+
+With `LOKI_SPEED=1` (default off), the implement, fix, wall and plan stage prompts all begin with the same fixed block (`STAGE_PREFIX` in `loki-ts/src/e10ext/lean_prefix.ts`), so the provider prompt cache can reuse it across stages. With the flag off, prompts are unchanged byte for byte. `loki-ts/tests/e10ext/prefix_identity.test.ts` asserts the first 200 bytes match across stages and that flag-off output is unprefixed.

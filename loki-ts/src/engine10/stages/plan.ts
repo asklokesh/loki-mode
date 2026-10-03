@@ -5,6 +5,7 @@ import type { RepoMap } from "../repomap.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
+import { withStagePrefix } from "../../e10ext/lean_prefix.ts";
 import { taskBlock } from "../types.ts";
 import { loadTaskText } from "./wall.ts";
 
@@ -44,7 +45,7 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
 }
 
 export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string): string {
-  return [
+  return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
     relevantFiles.length
@@ -52,7 +53,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
       : "No relevant files were found by keyword overlap; use your own judgement.",
     `Write a plan of at most ${MAX_PLAN_LINES} short lines, no other prose, to this exact file path: ${outputPath}`,
     "Do not edit any other file. Do not run tests. Do not commit.",
-  ].join("\n\n");
+  ].join("\n\n"));
 }
 
 export const planStage: Stage = {

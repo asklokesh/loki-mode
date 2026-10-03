@@ -9,6 +9,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
+import { withStagePrefix } from "../../e10ext/lean_prefix.ts";
 import { RUNNER_HINT } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import { sha256 } from "./seal.ts";
@@ -93,7 +94,7 @@ export interface WallOptions { baseRunner?: BaseTestRunner; }
 export const WALL_MAP_MAX_LINES = 200;
 
 export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = []): string {
-  return [
+  return withStagePrefix([
     "You are the Loki 10 Wall author.",
     "You cannot see the repository. This directory holds only task.md and repomap.txt.",
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
@@ -101,7 +102,7 @@ export function buildWallBrief(task: string, repomapText = "", runners: RunnerNa
     "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded.",
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
     `Name every file you write starting with "${WALL_PREFIX}". Write nothing else.`,
-  ].join("\n\n");
+  ].join("\n\n"));
 }
 
 /** RunContext carries no task text; read it as intake.ts does: prior.intake.task, else issue.json title+body, else LOKI_E10_TASK_TEXT. */
