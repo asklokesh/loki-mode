@@ -303,6 +303,7 @@ A local control plane and UI for many runs, on by default. Turn it off with `LOK
 loki control serve                       # 127.0.0.1, default port 47821 (--port N, --db PATH)
 loki control backfill .                  # ship ./.loki/runs to the control plane
 loki control status                      # reachable? how many runs held?
+loki control prune --repo acme/widget    # remove those runs from the local control DB (--before DATE, --dry-run)
 ```
 
 The URL comes from `LOKI_CONTROL_URL`, else `http://127.0.0.1:${LOKI_CONTROL_PORT:-47821}`. While `loki control serve` is running, runs on this machine ship to it automatically (it publishes `~/.loki/control/instance.json`, mode 0600, removed on exit); a run never starts the server. Set `LOKI_CONTROL_URL` to ship elsewhere. See [docs/v10/CONTROL-PLANE.md](docs/v10/CONTROL-PLANE.md).

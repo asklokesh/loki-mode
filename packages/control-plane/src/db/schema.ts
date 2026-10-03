@@ -55,3 +55,12 @@ export const runs = sqliteTable("runs", {
   index("runs_verdict").on(t.verdict),
   index("runs_group").on(t.groupId),
 ]);
+
+// Append-only record of destructive operator actions (run removal, prune). Written before the delete runs.
+export const audit = sqliteTable("audit", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ts: text("ts").notNull(),
+  action: text("action").notNull(),
+  actor: text("actor").notNull(),
+  detail: text("detail", { mode: "json" }).notNull(),
+});

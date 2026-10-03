@@ -110,3 +110,11 @@ export const importRuns = (): Promise<{ runs: number; sent: number; failed: stri
 export const listRepos = (): Promise<{ repos: string[] }> => get("/v1/repos");
 /** Start a run: target is owner/repo#N or a plain task. */
 export const startRun = (target: string, repo: string): Promise<{ ok: true; pid: number; command: string }> => postJson("/v1/start", { target, repo });
+
+/** Remove one run and its events. Resolves with what the server says was removed; rejects with the server's own error text. */
+export async function deleteRun(source: string, run: string): Promise<{ ok: true; removed: { runs: number; events: number; sources: number }; remaining_runs: number }> {
+  const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`, { method: "DELETE", headers: authHeaders({ "content-type": "application/json" }) });
+  const j = (await res.json().catch(() => ({}))) as { error?: string; removed?: { runs: number; events: number; sources: number }; remaining_runs?: number };
+  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  return { ok: true, removed: j.removed ?? { runs: 0, events: 0, sources: 0 }, remaining_runs: j.remaining_runs ?? 0 };
+}
