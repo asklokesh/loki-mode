@@ -1052,6 +1052,7 @@ run_test "a gate that scanned nothing is not a pass" "$SCRIPT_DIR/test-static-an
 # printed a result (set -e killed it on its first pass()). Each passes now.
 run_test "Cluster workflow templates and swarm classes" "$SCRIPT_DIR/test-cluster-workflow.sh"
 run_test "Cross-project learning surface" "$SCRIPT_DIR/test-cross-project-learning.sh"
+run_test "Project memory persists across runs and injects a bounded summary" "timeout -k 10 120 $SCRIPT_DIR/test-project-memory.sh"
 run_test "Cross-provider auto-failover" "$SCRIPT_DIR/test-failover.sh"
 
 # Config-map no-yq YAML fallback: regression for same-last-segment key collision

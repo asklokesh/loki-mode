@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki merge add <pr>...`, `loki merge run [--dry-run]`, `list`, `clear`: a serial PR merge queue that merges a PR only when `gh pr checks` is green, rebases the next PR onto the new base (`gh pr update-branch --rebase`) and re-checks it before merging; red or unrebasable PRs stay queued and the exit code is nonzero. `--dry-run` lists what would happen and changes nothing (docs/merge-queue.md).
 ### Added
 - `loki review --risk` (or `loki review <pr-number> --risk`) prints a deterministic 0-100 diff risk score with a per-factor breakdown (files touched, sensitive paths, size, test delta, deleted tests); `--json` for machine output. Same diff always gives the same score.
+### Added
+- Project memory across runs: learnings and architecture decisions a run records in CONTINUITY.md are now also saved per project (.loki/memory/learnings/project-*.jsonl), and the next run in that project gets a bounded newest-first summary (15 entries, 2000 chars, LOKI_PROJECT_MEMORY_MAX_CHARS) under project_memory in .loki/state/relevant-learnings.json. Disable with LOKI_PROJECT_MEMORY=0.
 
 ### Fixed
 - tests/test-cloud-dispatch.sh: the G-04 duplicated-row hook no longer appends with `grep ROW >> SAME_FILE`, which GNU grep refuses ("input file is also the output", rc 2, nothing appended), so the writer saw an unduplicated row on Linux and the R2-3 duplicate-refusal check failed; the hook now copies through a side file. The writer in scripts/cloud-dispatch.sh was already fail-closed (T101-G04-DUPROW).

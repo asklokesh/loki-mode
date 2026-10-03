@@ -11804,6 +11804,26 @@ result = {
     "successes": filter_relevant(successes, context)
 }
 
+# Project memory: learnings and decisions persisted by earlier runs in THIS
+# project, newest first, bounded by entry count and total characters.
+if os.environ.get("LOKI_PROJECT_MEMORY", "1") != "0":
+    try:
+        max_chars = int(os.environ.get("LOKI_PROJECT_MEMORY_MAX_CHARS", "2000"))
+    except ValueError:
+        max_chars = 2000
+    mem, used = [], 0
+    for kind in ("mistakes", "patterns", "successes"):
+        for e in reversed(load_jsonl(f".loki/memory/learnings/project-{kind}.jsonl")):
+            d = e.get("description", "").strip()[:300]
+            if not d or used + len(d) > max_chars:
+                continue
+            used += len(d)
+            mem.append({"kind": kind[:-1] if kind != "successes" else "success", "description": d})
+            if len(mem) >= 15:
+                break
+    if mem:
+        result["project_memory"] = mem
+
 with open(".loki/state/relevant-learnings.json", 'w') as f:
     json.dump(result, f, indent=2)
 LEARNINGS_SCRIPT
@@ -11863,7 +11883,23 @@ def get_existing_hashes(filepath):
     return hashes
 
 def save_entries(filepath, entries, category):
-    """Save entries avoiding duplicates (case-insensitive)"""
+    """Save entries avoiding duplicates (case-insensitive).
+
+    Also mirrors into the project-scoped memory (.loki/memory/learnings/
+    project-<kind>.jsonl) so the next run in this project reads them back.
+    """
+    if os.environ.get("LOKI_PROJECT_MEMORY", "1") != "0":
+        try:
+            pdir = ".loki/memory/learnings"
+            os.makedirs(pdir, exist_ok=True)
+            pfile = os.path.join(pdir, "project-" + os.path.basename(filepath))
+            if pfile != filepath:
+                save_entries_to(pfile, entries, category)
+        except Exception:
+            pass
+    return save_entries_to(filepath, entries, category)
+
+def save_entries_to(filepath, entries, category):
     existing = get_existing_hashes(filepath)
     saved = 0
     with open(filepath, 'a') as f:
