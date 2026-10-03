@@ -2025,3 +2025,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Incident: scratchpad strip.py ignored its argument and rewrote CHANGELOG.md only, so shard-durations.tsv kept conflict markers (drift test 4/2). Fixed in 8106e6a72, script now takes argv; drift test now 6/0.
 - In review: A-04c r5 06638f484 (opus), PO-SESSION-COMMIT-1 187ed849e, P0-CORE-BUDGET r2, D62-VIS-F1 (opus). Rework: PO-COUNCIL-LABEL-TEST-1 (missing shard row). Building: D61-11 r3, PO-P7-SINKS-1, S-233, DEP-02.
 - Train/94 held on P0-CORE-BUDGET: engine10 budget.test.ts fails on main until it lands.
+
+## 2026-10-03T10:05Z CoS
+- Merged since 09:30Z: PO-COUNCIL-LABEL-TEST-1 c331cde1a, PO-SESSION-COMMIT-1 939e23126, A-04c (5 rounds, CHANGELOG deduped b3f162d61), S-233 1731c5e14, PO-P7-SINKS-1 b2b592b29, A-04d aa4770f57, seal fixture emoji escape a2ef80a49 (structural-checks green). E-160 found already shipped in v10.6.0.
+- Architect refill (1b9f50011): 11 slices built in workflow wf_8e664533-e5c, all red-then-green evidenced, now in D12 review (wtt8kgawz; opus on P2-FV-EXIT, S-215r, S-216r, S-218r).
+- Blocked and in rework: W1-S1 r1 (opus, 7 body-leak and hang blockers) r2 d88fe5281 in opus re-review; D62-VIS-F1 r2 (dev-server group not reaped on backstop, harness cost nulled) r3 building with supervisor.ts (net-zero core) and eval harness in scope.
+- Train/94 still held on P0-CORE-BUDGET TL r2. Next Architect refill (arch-refill-1010) in progress.
