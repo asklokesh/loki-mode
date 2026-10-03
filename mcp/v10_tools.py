@@ -8,6 +8,7 @@ validator before use.
 
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -20,10 +21,13 @@ V10_VERIFY_TIMEOUT_S = 120
 _TERMINAL = {"stage.completed", "stage.failed", "stage.skipped"}
 
 
+_DROPPED_ENV = ("LOKI_CONTROL_TOKEN", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "SLACK_WEBHOOK_URL")
+
+
 def _env() -> Dict[str, str]:
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if k not in _DROPPED_ENV}
     env["LOKI_ENGINE"] = "v10"
-    env["LOKI_NO_BROWSER"] = env.get("LOKI_NO_BROWSER", "1")
+    env["LOKI_NO_BROWSER"] = "1"
     return env
 
 
@@ -110,6 +114,7 @@ def v10_status(run_id: str, repo_path: str, validate: Callable[[str], str]) -> d
     events = _read_events(events_path)
     open_stages: Dict[str, bool] = {}
     verdict = None
+    question = None
     done = False
     usd = 0.0
     saw_cost = False
@@ -122,6 +127,8 @@ def v10_status(run_id: str, repo_path: str, validate: Callable[[str], str]) -> d
                 open_stages[stage] = True
             elif t in _TERMINAL:
                 open_stages.pop(stage, None)
+        if t == "stage.completed" and stage == "implement" and isinstance(data.get("spec_conflict_reason"), str):
+            question = re.sub(r"[\x00-\x1f\x7f]+", " ", data["spec_conflict_reason"])[:500]
         if t == "run.completed":
             done = True
             verdict = data.get("verdict") if isinstance(data.get("verdict"), str) else None
@@ -132,7 +139,7 @@ def v10_status(run_id: str, repo_path: str, validate: Callable[[str], str]) -> d
             else:
                 unmeasured = True
     phase = "done" if done else ("+".join(sorted(open_stages)) or "starting")
-    return {
+    result = {
         "run_id": run_id,
         "phase": phase,
         "done": done,
@@ -140,6 +147,9 @@ def v10_status(run_id: str, repo_path: str, validate: Callable[[str], str]) -> d
         "cost_usd": usd if saw_cost and not unmeasured else None,
         "events": len(events),
     }
+    if verdict == "BLOCKED":
+        result["blocked_question"] = question or "see the receipt"
+    return result
 
 
 def v10_verify(receipt_path: str, repo_path: str, validate: Callable[[str], str]) -> dict:

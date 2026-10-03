@@ -201,6 +201,21 @@ test_server_prompts() {
     fi
 }
 
+# Test 13: v10 tool helpers (mcp/tests/test_v10_tools.py), counted so a skipped or empty run fails
+test_v10_tools() {
+    log_test "v10 MCP tools unit tests (run, status, verify)"
+    local out rc ran
+    out=$(cd "$PROJECT_ROOT" && LOKI_NO_BROWSER=1 python3 -m unittest mcp.tests.test_v10_tools 2>&1)
+    rc=$?
+    ran=$(printf '%s\n' "$out" | sed -n 's/^Ran \([0-9][0-9]*\) tests\{0,1\} .*/\1/p' | tail -1)
+    if [ "$rc" -eq 0 ] && [ "${ran:-0}" -ge 10 ]; then
+        pass "v10 tools tests passed ($ran ran)"
+    else
+        printf '%s\n' "$out" | tail -15
+        fail "v10 tools tests failed or too few ran (rc=$rc, ran=${ran:-0})"
+    fi
+}
+
 # Run tests
 setup
 test_mcp_import
@@ -215,6 +230,7 @@ test_requirements
 test_server_tools
 test_server_resources
 test_server_prompts
+test_v10_tools
 
 # Summary
 echo ""

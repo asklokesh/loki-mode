@@ -61,7 +61,63 @@ class RunTests(unittest.TestCase):
             self.assertTrue(r["log_path"].startswith(os.path.realpath(repo)))
 
 
+class EnvTests(unittest.TestCase):
+    def test_env_forces_headless_and_drops_secrets(self):
+        secrets = {"LOKI_CONTROL_TOKEN": "t", "SLACK_BOT_TOKEN": "xoxb-1", "SLACK_SIGNING_SECRET": "s",
+                   "SLACK_WEBHOOK_URL": "https://hooks.slack.com/x", "LOKI_NO_BROWSER": "0"}
+        with mock.patch.dict(os.environ, secrets):
+            env = v10_tools._env()
+        self.assertEqual(env["LOKI_NO_BROWSER"], "1")
+        self.assertEqual(env["LOKI_ENGINE"], "v10")
+        for k in ("LOKI_CONTROL_TOKEN", "SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET", "SLACK_WEBHOOK_URL"):
+            self.assertNotIn(k, env)
+
+    def test_run_child_env_has_no_secrets(self):
+        with tempfile.TemporaryDirectory() as repo, \
+                mock.patch.dict(os.environ, {"SLACK_BOT_TOKEN": "xoxb-1"}), \
+                mock.patch.object(v10_tools, "V10_RUN_ID_WAIT_S", 0), \
+                mock.patch("subprocess.Popen") as popen:
+            popen.return_value.pid = 1
+            v10_tools.v10_run("fix it", repo, _ok)
+            self.assertNotIn("SLACK_BOT_TOKEN", popen.call_args[1]["env"])
+
+
+class RefPassThroughTests(unittest.TestCase):
+    def test_jira_and_linear_refs_pass_through(self):
+        for ref in ("jira:PROJ-123", "linear:ENG-45"):
+            with tempfile.TemporaryDirectory() as repo, \
+                    mock.patch.object(v10_tools, "V10_RUN_ID_WAIT_S", 0), \
+                    mock.patch("subprocess.Popen") as popen:
+                popen.return_value.pid = 7
+                r = v10_tools.v10_run(ref, repo, _ok)
+                self.assertNotIn("error", r)
+                self.assertEqual(popen.call_args[0][0][1], ref)
+
+    def test_leading_dash_still_rejected(self):
+        with mock.patch("subprocess.Popen") as popen:
+            self.assertIn("error", v10_tools.v10_run("-jira:X", "/x", _ok))
+            popen.assert_not_called()
+
+
 class StatusTests(unittest.TestCase):
+    def test_blocked_returns_question(self):
+        ev = [
+            {"seq": 0, "type": "stage.completed", "stage": "implement",
+             "data": {"spec_conflict_reason": "spec says A\nbut tests say B"}},
+            {"seq": 1, "type": "run.completed", "stage": None, "data": {"verdict": "BLOCKED"}},
+        ]
+        with tempfile.TemporaryDirectory() as repo:
+            _write_events(repo, "e10-blk", ev)
+            r = v10_tools.v10_status("e10-blk", repo, _ok)
+        self.assertEqual(r["verdict"], "BLOCKED")
+        self.assertEqual(r["blocked_question"], "spec says A but tests say B")
+
+    def test_verified_has_no_blocked_question(self):
+        ev = [{"seq": 0, "type": "run.completed", "stage": None, "data": {"verdict": "VERIFIED"}}]
+        with tempfile.TemporaryDirectory() as repo:
+            _write_events(repo, "e10-ok", ev)
+            self.assertNotIn("blocked_question", v10_tools.v10_status("e10-ok", repo, _ok))
+
     def test_done_run(self):
         ev = [
             {"seq": 0, "type": "run.started", "stage": None, "data": {}},
