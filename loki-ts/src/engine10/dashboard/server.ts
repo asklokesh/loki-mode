@@ -137,12 +137,7 @@ export function startServer(repoDir: string, port: number = DEFAULT_PORT): Dashb
   // A TCP server (never a unix socket, per HOSTNAME above) always has both.
   const boundPort = server.port ?? port;
   const boundHost = server.hostname ?? HOSTNAME;
-  return {
-    port: boundPort,
-    hostname: boundHost,
-    url: `http://${boundHost}:${boundPort}/`,
-    stop: () => server.stop(true),
-  };
+  return { port: boundPort, hostname: boundHost, url: `http://${boundHost}:${boundPort}/`, stop: () => server.stop(true) };
 }
 /** E-70: the "loki that launched it" version, passed in by the CLI shim (not
  *  set by this process). null when unset -- rendered as "unknown", never
@@ -183,11 +178,7 @@ async function probeOccupant(port: number): Promise<Occupant> {
     if (r.ok) {
       const body = (await r.json()) as { dashboard?: string; version?: string; pid?: number };
       if (body.dashboard === DASHBOARD_IDENT) {
-        return {
-          isLokiDashboard: true,
-          version: typeof body.version === "string" ? body.version : null,
-          pid: Number.isInteger(body.pid) ? (body.pid as number) : null,
-        };
+        return { isLokiDashboard: true, version: typeof body.version === "string" ? body.version : null, pid: Number.isInteger(body.pid) ? (body.pid as number) : null };
       }
     }
   } catch {

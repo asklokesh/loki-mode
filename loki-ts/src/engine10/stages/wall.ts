@@ -9,7 +9,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
-import { withStagePrefix } from "../../e10ext/lean_prefix.ts";
+import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import { sha256 } from "./seal.ts";

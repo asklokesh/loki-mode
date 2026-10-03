@@ -1,7 +1,7 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { withStagePrefix } from "../../e10ext/lean_prefix.ts";
+import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { runnerCmd } from "./verify.ts";

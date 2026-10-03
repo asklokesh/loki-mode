@@ -262,10 +262,7 @@ export async function runDeep(ctx: DeepContext, signal: AbortSignal, opts: DeepO
   const pushNotProven = await postResults(ctx, opts, checks, notProvenList, statusState);
   const allNotProven = [...notProvenList, ...pushNotProven];
   ctx.emit("deep.completed", "deep", { checks, status_state: statusState, addendum_sha256: addendumSha256 });
-  return {
-    status: "completed",
-    data: { checks, addendum_sha256: addendumSha256, status_state: statusState, not_proven: allNotProven },
-  };
+  return { status: "completed", data: { checks, addendum_sha256: addendumSha256, status_state: statusState, not_proven: allNotProven } };
 }
 export const deepStage: Stage = {
   name: "deep",

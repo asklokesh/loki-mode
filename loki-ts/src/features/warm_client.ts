@@ -1,6 +1,7 @@
 // loki-ts/src/engine10/warm_client.ts -- D61 slice 6: CLI side of the warm engine. Tries the unix
 // socket for a short deadline and returns null on any problem (no daemon, timeout, bad reply), in
 // which case the caller runs the cold path exactly as before. Behind LOKI_SPEED=1.
+import { existsSync } from "node:fs";
 import { createConnection } from "node:net";
 import { speedEnabled, warmSocketPath, type WarmReply } from "./warm.ts";
 
@@ -12,6 +13,8 @@ export function warmRequest(
   timeoutMs: number = WARM_TRY_MS,
   path: string = warmSocketPath(),
 ): Promise<WarmReply | null> {
+  // No socket file means no daemon: skip connecting so no ENOENT is ever raised.
+  if (!existsSync(path)) return Promise.resolve(null);
   return new Promise((done) => {
     let settled = false;
     let buf = "";

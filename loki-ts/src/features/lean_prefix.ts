@@ -4,7 +4,7 @@
 // -- so every stage prompt shares a byte-identical leading block and the
 // provider's prompt cache hits. Per-task content is the caller's own prompt,
 // appended after this block by the SDK, never here.
-// e10ext returns data only (D42): this file is a string, no imports, no
+// Data only: this file is a string, no imports, no
 // verdict logic, nothing engine10/stages/ needs to import back.
 export const LEAN_PREFIX =
   "You are Loki, an autonomous coding agent. Follow the task prompt exactly. " +

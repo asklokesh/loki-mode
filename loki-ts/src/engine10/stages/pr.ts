@@ -59,11 +59,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const env = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
   const pushResult = spawnSync("bash", [scriptPath, ...pushShellArgs], { env, encoding: "utf8" });
   if (pushResult.status !== 0) {
-    return {
-      status: "failed",
-      data: {},
-      reason: `engine10-push.sh push-pr failed (exit ${pushResult.status}): ${(pushResult.stderr ?? "").trim()}`,
-    };
+    return { status: "failed", data: {}, reason: `engine10-push.sh push-pr failed (exit ${pushResult.status}): ${(pushResult.stderr ?? "").trim()}` };
   }
   const url = lastNonEmptyLine(pushResult.stdout ?? "");
   // E-41: for a local bare origin (the eval harness) push-pr prints exactly
@@ -88,10 +84,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   } else {
     notProvenOut.push("commit status loki/deep-verify not set (HEAD sha not resolvable)");
   }
-  return {
-    status: "completed",
-    data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) },
-  };
+  return { status: "completed", data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };
 }
 export const stage: Stage = {
   name: "pr",

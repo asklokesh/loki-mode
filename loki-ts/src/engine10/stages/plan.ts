@@ -5,7 +5,7 @@ import type { RepoMap } from "../repomap.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
-import { withStagePrefix } from "../../e10ext/lean_prefix.ts";
+import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { taskBlock } from "../types.ts";
 import { loadTaskText } from "./wall.ts";
 
@@ -99,11 +99,7 @@ export const planStage: Stage = {
       mkdirSync(ctx.runDir, { recursive: true });
       const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`);
       writeFileSync(stderrPath, stderrTail, "utf8");
-      return {
-        status: "failed",
-        reason: classifyExitCause(session.exit, false),
-        data: { iteration_ids: [iterationId], duration_s: session.durationS, stderr_path: stderrPath },
-      };
+      return { status: "failed", reason: classifyExitCause(session.exit, false), data: { iteration_ids: [iterationId], duration_s: session.durationS, stderr_path: stderrPath } };
     }
 
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";

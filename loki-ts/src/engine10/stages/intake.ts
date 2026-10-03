@@ -50,10 +50,7 @@ function excludeLokiDir(repoDir: string): void {
 }
 function loadIssue(path: string): IssueFields {
   const raw = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-  return {
-    state: typeof raw.state === "string" ? raw.state.toLowerCase() : null,
-    closed_by_merged_pr: raw.closed_by_merged_pr === true,
-  };
+  return { state: typeof raw.state === "string" ? raw.state.toLowerCase() : null, closed_by_merged_pr: raw.closed_by_merged_pr === true };
 }
 /** True only on a deterministic, positive signal: a false negative (state
  *  unknown) must never claim already-done. */
@@ -96,10 +93,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   const common = { task, title: task.split("\n")[0]!.slice(0, 72), repo: githubRepoFromUrl(origin) ?? origin, resumed: false, preexisting_untracked: untrackedAtIntake(ctx.repoDir), preexisting_untracked_blobs: snapshotUntracked(ctx.repoDir), ...(Object.keys(preexisting).length > 0 ? { preexisting_dirty: preexisting } : {}) };
   if (alreadySatisfied) {
     // Deterministic exit: no repo/test map needed, and never a session/LLM call.
-    return {
-      status: "completed",
-      data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true },
-    };
+    return { status: "completed", data: { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch, already_satisfied: true } };
   }
   mkdirSync(ctx.runDir, { recursive: true });
   const repomapRef = join(ctx.runDir, "repomap.json");

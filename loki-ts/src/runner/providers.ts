@@ -40,7 +40,7 @@ import {
   tierRouteModel,
 } from "../providers/claude_flags.ts";
 import { mcpConfigPath } from "../providers/mcp_config.ts";
-import { LEAN_PREFIX } from "../e10ext/lean_prefix.ts";
+import { LEAN_PREFIX } from "../features/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
 import { createTrimHook } from "./trim.ts";
 import type {

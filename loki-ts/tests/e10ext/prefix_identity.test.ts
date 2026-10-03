@@ -1,6 +1,6 @@
 // D61-02: LOKI_SPEED=1 gives every stage brief an identical cache-stable lead.
 import { afterEach, describe, expect, test } from "bun:test";
-import { STAGE_PREFIX } from "../../src/e10ext/lean_prefix.ts";
+import { STAGE_PREFIX } from "../../src/features/lean_prefix.ts";
 import { buildFixBrief } from "../../src/engine10/stages/fix.ts";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
 import { buildPlanBrief } from "../../src/engine10/stages/plan.ts";

@@ -2,7 +2,7 @@
 // S41-09: LOKI_E10_PREFIX=lean gives engine10 sessions a fixed-string systemPrompt (D41 item 2, D42 item 1).
 import { afterEach, describe, expect, it } from "bun:test";
 import { buildSdkLoopOptions, resolveSystemPrompt } from "../../src/runner/providers.ts";
-import { LEAN_PREFIX } from "../../src/e10ext/lean_prefix.ts";
+import { LEAN_PREFIX } from "../../src/features/lean_prefix.ts";
 
 const args = { tier: "development", model: "claude-sonnet-5", cwd: "/nonexistent-e65" };
 const savedStage = process.env["LOKI_E10_STAGE"];

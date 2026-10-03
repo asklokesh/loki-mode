@@ -66,11 +66,7 @@ function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.
   const doneMatch = /^\W*LOKI_ALREADY_DONE:\s*(.+)$/m.exec(stdout);
   const conflictMatch = /^\W*LOKI_SPEC_CONFLICT:\s*(.+)$/m.exec(stdout);
-  return {
-    done: !doneMatch && !conflictMatch,
-    alreadyDone: doneMatch ? doneMatch[1]!.trim() : null,
-    specConflict: conflictMatch ? conflictMatch[1]!.trim() : null,
-  };
+  return { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null };
 }
 function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers): ImplementExit | "error" {
   if (killed) return "killed";

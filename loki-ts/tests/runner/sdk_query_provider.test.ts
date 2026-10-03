@@ -146,7 +146,7 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     try {
       stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
       const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
-      const { LEAN_PREFIX } = await import("../../src/e10ext/lean_prefix.ts");
+      const { LEAN_PREFIX } = await import("../../src/features/lean_prefix.ts");
       await sdkQueryProvider().invoke(call());
       const opts = lastQueryArgs?.options ?? {};
       expect(typeof opts["systemPrompt"]).toBe("string");
