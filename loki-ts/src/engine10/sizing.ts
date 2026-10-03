@@ -53,8 +53,8 @@ export const planMode = (env = process.env): "auto" | "always" | "never" =>
 export const wallEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_WALL, ["0", "off", "false"]);
 /** W1-S3: Wall session cap, 90s small / 180s normal; LOKI_E10_WALL_LIMIT_S overrides (clamped to 300; garbage, zero or negative falls back). */
 export const wallLimitS = (size: "small" | "normal", env = process.env): number => { const n = Number(env.LOKI_E10_WALL_LIMIT_S); return Number.isFinite(n) && n > 0 ? Math.min(300, n) : size === "small" ? 90 : 180; };
-/** LOKI_E10_CASCADE=0/off/false: implement (and any fix round) stays on the run's configured model, as before E-64. */
-export const cascadeEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_CASCADE, ["0", "off", "false"]);
+/** Engine Law L1 (supersedes D31's sonnet-first default): the cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in. Off means implement and fix run on the run's own model, as a raw session would. */
+export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export function resolveModelAlias(want: string): string {
   try { return JSON.parse(readFileSync(join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers?.claude?.cli_aliases?.[want] ?? want; } catch { return want; }
@@ -63,3 +63,13 @@ export function resolveModelAlias(want: string): string {
 export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
+
+/** L1: relative strength of a model id or alias; unknown ids rank top so they are never treated as weaker than the run model. */
+export const modelRank = (m: string): number => { const id = resolveModelAlias(m).toLowerCase(); return ["haiku", "sonnet", "opus", "fable"].findIndex((t) => id.includes(t)) + (id.match(/haiku|sonnet|opus|fable/) ? 0 : 5); };
+/** L1: the strongest model the provider offers by default (catalog opus alias; fable stays opt-in for cost); an escalated round is never below the run model. */
+export const escalationModel = (runModel: string): string => (modelRank(runModel) > modelRank("opus") ? runModel : resolveModelAlias("opus"));
+/** L1: with the opt-in cascade on, the downgrade target; null when it would not be weaker than the run model (nothing is pinned). */
+export function cascadeDowngrade(runModel: string, env = process.env): { from: string; to: string; note: string } | null {
+  const to = cascadeImplementModel(env);
+  return cascadeEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by cascade: ${runModel} -> ${to} (opt-in)` } : null;
+}
