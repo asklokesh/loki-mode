@@ -16,7 +16,7 @@ inputs:
     required: false
     default: 'claude'
   budget_limit:
-    description: 'Max cost in USD before stopping (maps to --budget CLI flag)'
+    description: 'Max cost in USD before stopping (maps to the Loki 10 --max-cost flag)'
     required: false
     default: '5.00'
   budget:
@@ -35,7 +35,7 @@ inputs:
     required: false
     default: '20'
   prd_file:
-    description: 'Path to PRD file relative to repo root (optional, used as positional arg to loki start)'
+    description: 'Path to PRD file relative to repo root (optional, folded into the task text passed to loki start)'
     required: false
     default: ''
   auto_confirm:
@@ -245,6 +245,7 @@ runs:
         LOKI_PROVIDER: ${{ inputs.provider }}
         LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
         LOKI_DASHBOARD: 'false'
+        LOKI_ENGINE: 'v10'
         LOKI_COMPLEXITY: 'simple'
         LOKI_BUDGET_LIMIT: ${{ inputs.budget || inputs.budget_limit }}
         LOKI_COUNCIL_ENABLED: 'false'
@@ -266,16 +267,18 @@ runs:
 
         echo "--- Running loki review (provider: $LOKI_PROVIDER, max_iterations: $LOKI_MAX_ITERATIONS) ---"
 
-        # Build args array to handle paths with spaces safely
-        ARGS=(--simple --no-dashboard --provider "$LOKI_PROVIDER")
+        # Loki 10 engine (same path as `loki start owner/repo#N`): the task is
+        # always multi-word and never flag-first, so bin/loki routes it to v10.
+        # --no-pr: this step holds no token (Rule of Two).
+        ARGS=(--no-pr --provider "$LOKI_PROVIDER")
         if [ -n "$LOKI_BUDGET_LIMIT" ]; then
-          ARGS+=(--budget "$LOKI_BUDGET_LIMIT")
+          ARGS+=(--max-cost "$LOKI_BUDGET_LIMIT")
         fi
-        ARGS+=("$PRD_FILE")
+        TASK="Review this pull request. Task spec follows. $(cat "$PRD_FILE")"
 
         # Run loki and capture output; do not fail the action on non-zero exit
         # (loki may exit non-zero on timeout, which is acceptable)
-        loki start "${ARGS[@]}" \
+        loki start "$TASK" "${ARGS[@]}" \
           2>&1 | tee "$OUTPUT_FILE" || true
 
         echo "--- Loki review completed ---"
@@ -289,6 +292,7 @@ runs:
         LOKI_PROVIDER: ${{ inputs.provider }}
         LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
         LOKI_DASHBOARD: 'false'
+        LOKI_ENGINE: 'v10'
         LOKI_COMPLEXITY: 'simple'
         LOKI_BUDGET_LIMIT: ${{ inputs.budget || inputs.budget_limit }}
         LOKI_COUNCIL_ENABLED: 'false'
@@ -310,16 +314,20 @@ runs:
 
         echo "--- Running loki in fix mode (provider: $LOKI_PROVIDER) ---"
 
-        # Build args array to handle paths with spaces safely
-        ARGS=(--simple --no-dashboard --provider "$LOKI_PROVIDER")
+        # Loki 10 engine (same path as `loki start owner/repo#N`): the task is
+        # always multi-word and never flag-first, so bin/loki routes it to v10.
+        # --no-pr: this step holds no token (Rule of Two).
+        ARGS=(--no-pr --provider "$LOKI_PROVIDER")
         if [ -n "$LOKI_BUDGET_LIMIT" ]; then
-          ARGS+=(--budget "$LOKI_BUDGET_LIMIT")
+          ARGS+=(--max-cost "$LOKI_BUDGET_LIMIT")
         fi
-        if [ -n "$PRD_FILE" ]; then
-          ARGS+=("$PRD_FILE")
+        if [ -n "$PRD_FILE" ] && [ -f "$PRD_FILE" ]; then
+          TASK="Fix the issues described. Task spec follows. $(cat "$PRD_FILE")"
+        else
+          TASK="Fix the failing tests and obvious defects in this repository."
         fi
 
-        loki start "${ARGS[@]}" \
+        loki start "$TASK" "${ARGS[@]}" \
           2>&1 | tee "$OUTPUT_FILE" || true
 
         echo "output_file=${OUTPUT_FILE}" >> "$GITHUB_OUTPUT"
@@ -332,6 +340,7 @@ runs:
         LOKI_PROVIDER: ${{ inputs.provider }}
         LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
         LOKI_DASHBOARD: 'false'
+        LOKI_ENGINE: 'v10'
         LOKI_COMPLEXITY: 'simple'
         LOKI_BUDGET_LIMIT: ${{ inputs.budget || inputs.budget_limit }}
         LOKI_COUNCIL_ENABLED: 'false'
@@ -353,16 +362,20 @@ runs:
 
         echo "--- Running loki in test mode (provider: $LOKI_PROVIDER) ---"
 
-        # Build args array to handle paths with spaces safely
-        ARGS=(--simple --no-dashboard --provider "$LOKI_PROVIDER")
+        # Loki 10 engine (same path as `loki start owner/repo#N`): the task is
+        # always multi-word and never flag-first, so bin/loki routes it to v10.
+        # --no-pr: this step holds no token (Rule of Two).
+        ARGS=(--no-pr --provider "$LOKI_PROVIDER")
         if [ -n "$LOKI_BUDGET_LIMIT" ]; then
-          ARGS+=(--budget "$LOKI_BUDGET_LIMIT")
+          ARGS+=(--max-cost "$LOKI_BUDGET_LIMIT")
         fi
-        if [ -n "$PRD_FILE" ]; then
-          ARGS+=("$PRD_FILE")
+        if [ -n "$PRD_FILE" ] && [ -f "$PRD_FILE" ]; then
+          TASK="Run and extend the tests. Task spec follows. $(cat "$PRD_FILE")"
+        else
+          TASK="Run the test suite and add tests for untested behavior in this repository."
         fi
 
-        loki start "${ARGS[@]}" \
+        loki start "$TASK" "${ARGS[@]}" \
           2>&1 | tee "$OUTPUT_FILE" || true
 
         echo "output_file=${OUTPUT_FILE}" >> "$GITHUB_OUTPUT"

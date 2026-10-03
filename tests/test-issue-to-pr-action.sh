@@ -110,5 +110,14 @@ else
     fail "nothing writes pr-url.txt; the action would always report empty"
 fi
 
+# 9. The published root action must run Loki 10, never the legacy --simple path.
+if ! grep -q -e '--simple' action.yml && ! grep -q -e '--budget' action.yml \
+    && [ "$(grep -c 'loki start "[$]TASK"' action.yml)" -eq 3 ] \
+    && [ "$(grep -c "LOKI_ENGINE: 'v10'" action.yml)" -eq 3 ]; then
+    pass "root action.yml routes all three modes to Loki 10 (no --simple, no --budget)"
+else
+    fail "root action.yml still calls the legacy --simple/--budget path or is not pinned to LOKI_ENGINE v10"
+fi
+
 echo "  $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
