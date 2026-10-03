@@ -180,7 +180,7 @@ export function renderReceiptMd(r: Receipt): string {
 export const sealStage: Stage = {
   name: "seal",
   ...STAGE_BUDGETS.seal,
-  async run(ctx: RunContext): Promise<StageResult> {
+  async run(ctx: RunContext, signal?: AbortSignal): Promise<StageResult> {
     const o = ctx.outputs();
     const head = (await git(ctx, ["rev-parse", "HEAD"])).out.trim();
     const tree = (await git(ctx, ["rev-parse", "HEAD^{tree}"])).out.trim();
@@ -271,7 +271,7 @@ export const sealStage: Stage = {
       model: ctx.model,
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
-      ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven)),
+      ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal)),
       log_seal: true,
     };
 
