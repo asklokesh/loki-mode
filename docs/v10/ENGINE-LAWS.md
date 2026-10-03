@@ -22,6 +22,12 @@ Each class has a law. Each law has one mechanism, plus one enforcement check tha
 
 ## 2. The Engine Laws (constitution for every stage, present and future)
 
+### L0. The model decides, the harness proves (above L1 to L7; founder directive 2026-10-03, permanent)
+- The model owns all knowledge and judgment about the user's repo and task: layout and package roots, the runner, command and cwd, whether there is a UI and how to boot it, files in scope, impacted tests, task size, failure ownership, and what the issue asks.
+- The harness owns only mechanism: running what the model proposed and recording cwd, exit code, output and counts; sandboxing, budgets and process control; signing, receipts and integrity; terminal I/O; deterministic tamper checks, because the model never grades its own work.
+- When execution contradicts the model, the output goes back to the model once. The verdict comes from execution evidence plus a separate reviewer call, never from the author.
+- Review rule: reject any change that adds an `if` or a regex about the user's repo shape, language, framework or task wording. The fix is a prompt or schema change plus an execution check. Hardcoded tables are deleted once the model path is green on the Repo Shape Matrix. Slices: docs/v10/L0-WAVE1.md.
+
 ### L1. Never below raw
 A Loki run never gives the user less intelligence, a worse result or a meaningfully slower one than the same provider run raw.
 - The default implement model and effort are the provider's best default for the user's account (what bare `claude` would use), or higher. Cheap models are only for mechanical sub-steps (repo map summaries, PR body prose, docs).
@@ -43,7 +49,7 @@ A Loki run never gives the user less intelligence, a worse result or a meaningfu
 A lower rung may never override a higher one. A keyword heuristic cannot revert what a passing test run supports. A Loki check that ERRORED (not failed) yields to the agent's successful run of the same suite.
 
 ### L4. Know the repo before judging it (Project Model)
-At intake, build one Project Model that every stage consumes. No stage may re-derive repo shape on its own.
+At intake, one model discovery session reads the repo like a senior engineer and returns a schema-checked Project Model that cites the files behind each answer (L0). Every stage consumes it. No stage may re-derive repo shape on its own, and no harness table or probe is authoritative; the items below are what the model reads, not code the harness runs.
 - Packages: every package root (package.json, pyproject, go.mod, Cargo.toml, pom or gradle, composer, Gemfile), its runner, and its exact test, lint, build and start commands.
 - Workspace kind: single, npm/pnpm/yarn workspaces, turbo, nx, multi-root with no root manifest (FireLater), polyglot.
 - Sources of truth, in order:

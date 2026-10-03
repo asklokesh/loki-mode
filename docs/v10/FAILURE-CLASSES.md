@@ -9,6 +9,8 @@ Each row answers five things:
 
 No fix slice starts until its row exists (OPERATING-MODEL.md, Engine Laws line). Slice ids refer to the EL plan (Architect, 2026-10-03).
 
+L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the user's repo shape, language, framework or task wording is rejected. The mechanism column names a model judgment (a prompt or schema) plus an execution check. Tamper checks, terminal I/O and Loki's own files are the only exceptions. Wave 1 slices: docs/v10/L0-WAVE1.md.
+
 ## FC-01 Verify ran from the repo root in a multi-root monorepo (FireLater#17)
 - User saw: "Failed Suites 1" three times on backend/tests/unit/validation.test.ts. Raw claude ran the suite from backend/ and passed 43/43 in about 2 min.
 - Law: L4.
@@ -34,6 +36,7 @@ No fix slice starts until its row exists (OPERATING-MODEL.md, Engine Laws line).
   - deep.ts.
 - Mechanism: a result classifier with an owner (EL-W1-05). Only a FAIL owned by code drives fix and stall. Interim: EL-W0-02.
 - Fixture: tests/fixtures/runner-outputs/vitest/load-error.txt (from seq 56), plus siblings for each runner.
+- Sibling (2026-10-03): a change-introduced load error is a code fault. Base reproduction is necessary but not sufficient. The base rerun must be hermetic (an inherited editable install imports head code), and a check the task targets is never env-owned (7ad4a18b6, blocked in round 2). Superseded by L0-WAVE1 EL-W1-06: the harness gathers evidence and a separate reviewer call assigns the owner.
 
 ## FC-03 Scope control reverted in-scope route edits
 - User saw: the PR without the fix (routes/applications.ts, assets.ts and attachments.ts reverted).
@@ -119,3 +122,13 @@ No fix slice starts until its row exists (OPERATING-MODEL.md, Engine Laws line).
   - the equivalents for other runners: vitest.config setupFiles, jest setupFiles and moduleNameMapper, pytest conftest.py, and go test flags in Makefiles.
 - Mechanism: one runner-config registry for each runner. Any added or changed file that it names (configs, preloads, setup files, conftest) caps the verdict below VERIFIED, with NOT PROVEN naming the file.
 - Fixture: a stub-provider repro for each runner (bun preload, vitest setupFiles, jest moduleNameMapper, pytest conftest).
+
+## FC-11 Repo-wide structural guards went red after slices passed narrowed reviews
+- User saw: nothing yet; the 10.7.1 train was blocked on main 51e02b229 (2 failures in the full loki-ts bun test).
+- Law: L7 (the release is a contract), and the D44 gate.
+- Siblings:
+  - spawn_env_guard (e10ext/ship_hook.ts:10 missing env);
+  - the e10ext line budget (1509 of 1500), plus budgets that add up across slices (FC-10 +1, EL-W0-06 moved helpers to stay under the 5000 engine10 cap);
+  - local-ci fast tier timing out at 600s while bun test alone takes about 434s.
+- Mechanism: every builder and reviewer brief names the structural guard set, and the full bun test runs in main after each merge batch, before the train.
+- Fixture: tests/engine10/budget.test.ts and tests/runner/spawn_env_guard.test.ts on the merged tree.
