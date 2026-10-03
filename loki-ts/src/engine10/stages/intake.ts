@@ -9,7 +9,8 @@ import { dirname, join } from "node:path";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
-import { buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
+import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
+import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 export interface IntakeOptions {
   taskText?: string;
@@ -103,8 +104,8 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over
   // repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files;
   // no candidate evidence means no session call (checkAlreadyDone's own gate).
-  const already = await checkAlreadyDone(ctx, signal, task, repoMap, testmap);
-  if (already) {
+  const already = speedEnabled() ? null : await checkAlreadyDone(ctx, signal, task, repoMap, testmap); // D61-04: LOKI_SPEED=1 defers it past intake
+  const alreadyData = (already: AlreadyDoneResult): Record<string, unknown> => {
     // The comment always exists (there is always something to tell the operator once evidence
     // confirms no change is needed); only an issue run has somewhere to post it, so only that case
     // gets an argv. A text run gets the same body, but printed by the CLI (main(), below) instead --
@@ -113,30 +114,13 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
     const bodyFile = join(ctx.runDir, "already-done-comment.md");
     writeFileSync(bodyFile, comment, "utf8");
     const commentArgv = source === "issue" && issueRef ? buildAlreadyDoneCommentArgv(ctx.runId, issueRef, bodyFile) : undefined;
-    return {
-      status: "completed",
-      data: {
-        ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch,
-        already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`],
-        comment,
-        ...(commentArgv ? { comment_argv: commentArgv } : {}),
-      },
-    };
-  }
-  return {
-    status: "completed",
-    data: {
-      ...common,
-      task_sha256: taskSha256,
-      source,
-      base_sha: baseSha,
-      tree,
-      branch: ctx.branch,
-      repomap_ref: repomapRef,
-      testmap,
-      already_satisfied: false,
-    },
+    return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
+  const base = { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch };
+  if (already) return { status: "completed", data: { ...base, ...alreadyData(already) } };
+  const data = { ...base, repomap_ref: repomapRef, testmap, already_satisfied: false };
+  if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { Object.assign(data, alreadyData(a)); });
+  return { status: "completed", data };
 }
 export const intakeStage: Stage = {
   name: "intake",

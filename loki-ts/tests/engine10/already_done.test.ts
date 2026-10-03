@@ -1,6 +1,6 @@
 // loki-ts/tests/engine10/already_done.test.ts -- E-66 unit + mutation-proof tests for the
 // deterministic evidence search and its confirmation gate.
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +12,7 @@ import {
   findEvidence,
   renderAlreadyDoneComment,
 } from "../../src/engine10/already_done.ts";
+import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { buildRepoMap, listRepoFiles } from "../../src/engine10/repomap.ts";
 import { buildTestMap, isTestFile } from "../../src/engine10/testmap.ts";
 import type { CostReader, RunContext, SessionRunner, TestMap } from "../../src/engine10/types.ts";
@@ -363,5 +364,134 @@ describe("comment building (no PR)", () => {
   test("buildAlreadyDoneCommentArgv is deterministic argv, not a shell string", () => {
     const argv = buildAlreadyDoneCommentArgv("e10-run-1", "acme/widgets#303", "/tmp/body.md");
     expect(argv).toEqual(["comment", "e10-run-1", "acme/widgets#303", "/tmp/body.md"]);
+  });
+});
+
+// D61-04: LOKI_SPEED=1 moves the confirmation off the critical path (src/features/speed/already_done_async.ts).
+describe("deferred already-done check (LOKI_SPEED=1)", () => {
+  const CITE = "search-command.ts:1 already implemented";
+  type Opts = Parameters<SessionRunner["run"]>[0];
+  const ok = (alreadyDone: string | null) => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: alreadyDone === null, alreadyDone, specConflict: null } });
+  const killed = { exit: null, durationS: 0, killed: true, markers: { done: false, alreadyDone: null, specConflict: null } };
+  /** Fake sessions: the intake confirmation resolves via release(); implement resolves via finishImpl() or when aborted. */
+  function rig(confirm: string | null) {
+    const calls: { stage: string; aborted: boolean }[] = [];
+    let release: () => void = () => {};
+    let finishImpl: () => void = () => {};
+    let implSignal: AbortSignal | null = null;
+    const gate = new Promise<void>((r) => { release = r; });
+    const sessions: SessionRunner = {
+      run: async (o: Opts) => {
+        calls.push({ stage: o.stage, aborted: o.signal.aborted });
+        if (o.stage === "intake") { await gate; return ok(confirm); }
+        implSignal = o.signal;
+        if (o.signal.aborted) return killed;
+        await new Promise<void>((res) => { finishImpl = res; o.signal.addEventListener("abort", () => res(), { once: true }); });
+        return o.signal.aborted ? killed : ok(null);
+      },
+    };
+    return { sessions, calls, release: () => release(), finishImpl: () => finishImpl(), implAborted: () => implSignal?.aborted === true };
+  }
+  const tick = () => new Promise<void>((r) => setTimeout(r, 20));
+  async function intakeWith(r: ReturnType<typeof rig>, task: string, dir: string) {
+    const ctx = ctxWith(r.sessions, dir);
+    ctx.runDir = mkdtempSync(join(tmpdir(), "e10-already-done-run-"));
+    const res = await runIntake(ctx, new AbortController().signal, { taskText: task });
+    return { ctx, res };
+  }
+  const runImpl = (ctx: RunContext) =>
+    ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i-impl", limitS: 60, signal: new AbortController().signal });
+
+  test("LOKI_SPEED unset: confirmation stays inline on the critical path, sessions untouched", async () => {
+    const dir = freshRepo();
+    const r = rig(CITE);
+    r.release();
+    const { ctx, res } = await intakeWith(r, TASK, dir);
+    expect(res.data.already_satisfied).toBe(true);
+    expect(ctx.sessions).toBe(r.sessions);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  describe("with LOKI_SPEED=1", () => {
+    const prev = process.env["LOKI_SPEED"];
+    beforeEach(() => { process.env["LOKI_SPEED"] = "1"; });
+    afterEach(() => { if (prev === undefined) delete process.env["LOKI_SPEED"]; else process.env["LOKI_SPEED"] = prev; });
+
+    test("no deterministic hit: zero cheap-model calls, sessions not wrapped", async () => {
+      const dir = freshRepo();
+      const r = rig(CITE);
+      const { ctx, res } = await intakeWith(r, "unrelated zebra migration", dir);
+      expect(res.data.already_satisfied).toBe(false);
+      expect(r.calls).toEqual([]);
+      expect(ctx.sessions).toBe(r.sessions);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("hit: intake returns without waiting for the model; confirmation lands during implement and stops it", async () => {
+      const dir = freshRepo();
+      const r = rig(CITE);
+      const { ctx, res } = await intakeWith(r, TASK, dir); // gate still closed: intake did not await the check
+      expect(res.data.already_satisfied).toBe(false);
+      expect(res.data.repomap_ref).toBeDefined();
+      const impl = runImpl(ctx);
+      await tick();
+      expect(r.calls.map((c) => c.stage)).toEqual(["intake", "implement"]); // concurrent
+      r.release();
+      const out = await impl;
+      expect(r.implAborted()).toBe(true);
+      expect(out.markers.alreadyDone).toBe(CITE);
+      expect(out.killed).toBe(false);
+      expect(res.data.already_satisfied).toBe(true);
+      expect((res.data.evidence as string[])[0]).toBe(CITE);
+      expect(typeof res.data.comment).toBe("string");
+      expect(res.data.iteration_ids).toEqual(["e10-already-done-run-already-done"]);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("confirmed before implement starts: implement is never spawned live and still reports already done", async () => {
+      const dir = freshRepo();
+      const r = rig(CITE);
+      const { ctx, res } = await intakeWith(r, TASK, dir);
+      r.release();
+      await tick();
+      expect(res.data.already_satisfied).toBe(false); // nothing changes until implement is in flight
+      const out = await runImpl(ctx);
+      expect(r.calls[1]).toEqual({ stage: "implement", aborted: true });
+      expect(out.markers.alreadyDone).toBe(CITE);
+      expect(res.data.already_satisfied).toBe(true);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("not confirmed: implement runs to completion, verdict untouched", async () => {
+      const dir = freshRepo();
+      const r = rig(null);
+      const { ctx, res } = await intakeWith(r, TASK, dir);
+      const impl = runImpl(ctx);
+      r.release();
+      await tick();
+      r.finishImpl();
+      const out = await impl;
+      expect(out.exit).toBe(0);
+      expect(out.markers.alreadyDone).toBeNull();
+      expect(r.implAborted()).toBe(false);
+      expect(res.data.already_satisfied).toBe(false);
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("cancelled check (implement finished first) never changes the verdict", async () => {
+      const dir = freshRepo();
+      const r = rig(CITE);
+      const { ctx, res } = await intakeWith(r, TASK, dir);
+      const impl = runImpl(ctx);
+      await tick();
+      r.finishImpl();
+      const out = await impl;
+      expect(out.markers.alreadyDone).toBeNull();
+      r.release(); // the check answers after implement is done: late, discarded
+      await tick();
+      expect(res.data.already_satisfied).toBe(false);
+      expect(res.data.evidence).toBeUndefined();
+      rmSync(dir, { recursive: true, force: true });
+    });
   });
 });

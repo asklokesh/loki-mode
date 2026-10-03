@@ -1,0 +1,41 @@
+// loki-ts/src/features/speed/already_done_async.ts -- D61-04: the already-done model check moves off the
+// critical path behind LOKI_SPEED=1. Deterministic hits gate it (no hit, no cheap-model call); a hit runs the
+// confirmation concurrently with the implement session and, once confirmed, stops that session and reports
+// the run as already done. The check's result only counts while implement is in flight: a check that is
+// cancelled, late or unconfirmed never changes the verdict, so the cold path stays the reference.
+import { checkAlreadyDone, findEvidence, type AlreadyDoneResult } from "../../engine10/already_done.ts";
+import type { RepoMap } from "../../engine10/repomap.ts";
+import type { RunContext, SessionResult, TestMap } from "../../engine10/types.ts";
+import { speedEnabled } from "../warm.ts";
+
+export { speedEnabled };
+
+/** Starts the background check. `apply` merges a confirmed result into the intake data (the same object the
+ *  machine stored). Wraps ctx.sessions so the implement session is linked to the check's verdict. */
+export function deferAlreadyDone(
+  ctx: RunContext, signal: AbortSignal, task: string, repoMap: RepoMap, testMap: TestMap,
+  apply: (r: AlreadyDoneResult) => void,
+): void {
+  if (signal.aborted || findEvidence(task, repoMap, testMap, ctx.repoDir).length === 0) return;
+  const inner = ctx.sessions;
+  const check = new AbortController(), impl = new AbortController();
+  let phase: "pre" | "run" | "done" = "pre", hit: AlreadyDoneResult | null = null, fired = false;
+  const fire = (): void => { if (hit && !fired) { fired = true; apply(hit); impl.abort(); } };
+  ctx.sessions = {
+    run: async (o) => {
+      if (o.stage !== "implement") return inner.run(o);
+      phase = "run";
+      if (o.signal.aborted) impl.abort(); else o.signal.addEventListener("abort", () => impl.abort(), { once: true });
+      fire();
+      const res = await inner.run({ ...o, signal: impl.signal });
+      phase = "done";
+      check.abort();
+      if (!fired || !hit) return res;
+      return { ...res, exit: 0, killed: false, markers: { ...res.markers, alreadyDone: hit.evidence[0] ?? "" } } as SessionResult;
+    },
+  };
+  checkAlreadyDone({ ...ctx, sessions: inner }, check.signal, task, repoMap, testMap).then(
+    (r) => { if (r && phase !== "done" && !check.signal.aborted) { hit = r; if (phase === "run") fire(); } },
+    () => {},
+  );
+}
