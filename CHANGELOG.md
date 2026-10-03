@@ -5,7 +5,9 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v10.10.4 (2026-10-03)
+
+Engine honesty train for the FireLater#17 gate: three failure classes (FC-15, FC-16, FC-21) plus FC-02 ship together. A success verdict now needs at least one Loki-executed test with a confirmed count, a run is never refused for its starting branch, and an implement time limit no longer skips verify. Behavior change: runs that previously ended VERIFIED or ALREADY_SATISFIED on unconfirmed test output (for example any Go run that exits 0, since go test output cannot be confirmed) now end PARTIAL with "test count could not be confirmed" in NOT PROVEN, and the CLI `--json` outcome reads PARTIAL where it read FAILED for a PARTIAL receipt (exit code stays 1).
 
 ### Changed
 - engine10 (D86, FC-15, L4/L2): a run is never refused for starting on a branch with commits that are not on the PR target; the guard moved from the run to the ALREADY_SATISFIED claim. The claim is checked against the PR target (LOKI_E10_BASE or the origin default branch): evidence that exists only in commits not on the target voids it and the run implements. When those commits are really Loki's (a "Loki-Run:" commit trailer, or a local receipt with commits of its own) the note "work exists on <branch>, not on <target>; open or resume it" is printed on stderr, in the run summary and in the PR body, and recorded as unmerged_loki_work in the intake data. The start line now prints the PR target and the base.
