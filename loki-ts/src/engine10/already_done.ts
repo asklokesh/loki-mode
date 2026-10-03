@@ -163,11 +163,6 @@ function citesRealHit(text: string, hit: EvidenceHit, repoDir: string): boolean 
   return (citesToken(text, hit.path) || citesToken(text, basename(hit.path))) && existsSync(join(repoDir, hit.path));
 }
 
-/** Paths of the code/test hits that `text` cites and that exist live: the files a confirmation actually rests on. */
-export function citedHitPaths(text: string, hits: EvidenceHit[], repoDir: string): string[] {
-  return [...new Set(hits.filter((h) => citesRealHit(text, h, repoDir)).map((h) => h.path))];
-}
-
 /** Runs the deterministic search, then, only on a candidate, one short confirmation session
  *  (fast tier pinned to wallModel(), the same cheap-model pin E-45 uses for Wall). No candidate,
  *  no session call: findEvidence's own gate is what keeps this off the hot path. */

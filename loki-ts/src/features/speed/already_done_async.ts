@@ -3,7 +3,9 @@
 // confirmation concurrently with the implement session and, once confirmed, stops that session and reports
 // the run as already done. The check's result only counts while implement is in flight: a check that is
 // cancelled, late or unconfirmed never changes the verdict, so the cold path stays the reference.
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { checkAlreadyDone, findEvidence, type AlreadyDoneResult } from "../../engine10/already_done.ts";
 import type { RepoMap } from "../../engine10/repomap.ts";
 import type { RunContext, SessionResult, TestMap } from "../../engine10/types.ts";
@@ -23,6 +25,16 @@ export function hitsUnchangedFromBase(repoDir: string, baseSha: string, paths: s
     run(["diff", "--quiet", baseSha, "--", ...paths]);
     return true;
   } catch { return false; }
+}
+
+/** Extracts baseSha into a run-owned dir so the confirmation session never reads the live tree implement is
+ *  editing. Resolves to the exact path created, or null on any failure (the caller then fails closed). */
+function pinBaseTree(ctx: RunContext): Promise<string | null> {
+  const dest = join(ctx.runDir, "already-done-base");
+  try { rmSync(dest, { recursive: true, force: true }); mkdirSync(dest, { recursive: true }); } catch { return Promise.resolve(null); }
+  return new Promise((res) => {
+    execFile("sh", ["-c", 'git -C "$1" archive "$2" | tar -x -C "$3"', "sh", ctx.repoDir, ctx.baseSha, dest], { env: process.env }, (err) => res(err ? null : dest));
+  });
 }
 
 /** Starts the background check. `apply` merges a confirmed result into the intake data (the same object the
@@ -59,8 +71,14 @@ export function deferAlreadyDone(
       return { ...res, exit: 0, killed: false, markers: { ...res.markers, alreadyDone: hit.evidence[0] ?? "" } } as SessionResult;
     },
   };
-  checkAlreadyDone({ ...ctx, sessions: inner }, check.signal, task, repoMap, testMap).then(
-    (r) => { if (r && phase !== "done" && !check.signal.aborted) { hit = r; if (phase === "run") fire(); } },
-    () => {},
-  );
+  void (async () => {
+    if (!ctx.baseSha) return;
+    const pinned = await pinBaseTree(ctx);
+    if (!pinned) { rmSync(join(ctx.runDir, "already-done-base"), { recursive: true, force: true }); return; }
+    try {
+      const r = await checkAlreadyDone({ ...ctx, repoDir: pinned, sessions: inner }, check.signal, task, repoMap, testMap);
+      const ph = phase as string;
+      if (r && ph !== "done" && !check.signal.aborted) { hit = r; if (ph === "run") fire(); }
+    } catch { /* fail closed */ } finally { rmSync(pinned, { recursive: true, force: true }); }
+  })();
 }

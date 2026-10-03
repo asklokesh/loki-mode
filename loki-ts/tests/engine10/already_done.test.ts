@@ -2,7 +2,7 @@
 // deterministic evidence search and its confirmation gate.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -437,8 +437,8 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
       expect(res.data.already_satisfied).toBe(false);
       expect(res.data.repomap_ref).toBeDefined();
       const impl = runImpl(ctx);
-      await tick();
-      expect(r.calls.map((c) => c.stage)).toEqual(["intake", "implement"]); // concurrent
+      await tick(); await tick();
+      expect(r.calls.map((c) => c.stage).sort()).toEqual(["implement", "intake"]); // concurrent (the pinned tree is built first)
       r.release();
       const out = await impl;
       expect(r.implAborted()).toBe(true);
@@ -631,5 +631,59 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
         rmSync(dir, { recursive: true, force: true });
       });
     });
+  });
+});
+
+// D61-04 round 3 B2: the deferred confirmation runs in a tree pinned at baseSha, never the live tree implement edits.
+describe("deferred confirmation reads a base-pinned tree (D61-04 r3 B2)", () => {
+  const TASK = "Add global search (Cmd+K)";
+  const gitOut = (d: string, a: string[]) => execFileSync("git", ["-C", d, ...a], { encoding: "utf8" });
+  function baseRepo(): string {
+    const dir = freshRepo();
+    writeFileSync(join(dir, "src/search-command.ts"), `import { runQuery } from "./engine";\nexport function search(query: string): string[] {\n  return runQuery(query);\n}\n`);
+    writeFileSync(join(dir, "src/engine.ts"), `export function runQuery(q: string): string[] { throw new Error("TODO"); }\n`);
+    git(dir, ["add", "."]); git(dir, ["commit", "-q", "-m", "base"]);
+    return dir;
+  }
+  const okRes = (a: string | null) => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: a === null, alreadyDone: a, specConflict: null } });
+  const killedRes = { exit: null, durationS: 0, killed: true, markers: { done: false, alreadyDone: null, specConflict: null } };
+  async function scenario(edit: (d: string) => void, model: (cwd: string) => string | null) {
+    process.env.LOKI_SPEED = "1";
+    const dir = baseRepo();
+    let wrote: () => void = () => {};
+    const w = new Promise<void>((r) => { wrote = r; });
+    let cwdSeen = "";
+    const sessions = { run: async (o: any) => {
+      if (o.stage === "intake") { await w; cwdSeen = o.cwd; return okRes(model(o.cwd)); }
+      edit(dir); wrote();
+      await new Promise<void>((res) => { o.signal.addEventListener("abort", () => res(), { once: true }); setTimeout(res, 300); });
+      return o.signal.aborted ? killedRes : okRes(null);
+    } };
+    const runDir = mkdtempSync(join(tmpdir(), "e10-already-done-run-"));
+    const ctx: any = { repoDir: dir, runDir, runId: "r", branch: "loki/r", sessions, baseSha: gitOut(dir, ["rev-parse", "HEAD"]).trim(),
+      emit: () => {}, tests: { detect: async (d: string) => buildTestMap(d) }, outputs: () => ({}) };
+    const res: any = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+    await ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i", limitS: 60, signal: new AbortController().signal, cwd: dir });
+    await new Promise((r) => setTimeout(r, 100));
+    const out = { already: res.data.already_satisfied, cwdSeen, dir, leftover: existsSync(join(runDir, "already-done-base")) };
+    rmSync(dir, { recursive: true, force: true }); rmSync(runDir, { recursive: true, force: true });
+    delete process.env.LOKI_SPEED;
+    return out;
+  }
+  test("C: an in-flight edit to a NON-hit import cannot satisfy the check", async () => {
+    const r = await scenario(
+      (d) => writeFileSync(join(d, "src/engine.ts"), `export function runQuery(q: string): string[] { return [q]; } // REAL IMPL\n`),
+      (cwd) => readFileSync(join(cwd, "src/engine.ts"), "utf8").includes("REAL IMPL") ? "src/search-command.ts:1 global search implemented" : null,
+    );
+    expect(r.already).toBe(false);
+    expect(r.cwdSeen).not.toBe(r.dir);
+    expect(r.leftover).toBe(false);
+  });
+  test("D: an in-flight UNTRACKED new file cannot satisfy the check", async () => {
+    const r = await scenario(
+      (d) => writeFileSync(join(d, "src/global-search-palette.ts"), `export const cmdK = true;\n`),
+      (cwd) => existsSync(join(cwd, "src/global-search-palette.ts")) ? "src/search-command.ts:1 and Cmd+K palette present" : null,
+    );
+    expect(r.already).toBe(false);
   });
 });
