@@ -58,14 +58,13 @@ elif kind == "jq":
     m = re.findall(r"--jq '(\.workflow_runs\[\][^\n]*)' 2>/dev/null", rel)
     assert len(m) == 1, "expected exactly one fetch_runs jq filter"
     open(out, "w").write(m[0])
-elif kind == "sjq":
-    m = re.findall(r"--jq '(\[\.workflow_runs\[\][^\n]*)' 2>/dev/null", rel)
-    assert len(m) == 1, "expected exactly one scheduled-run jq filter"
-    open(out, "w").write(m[0])
 elif kind == "sfn":
-    m = re.findall(r"^ +(sched_audit_ok\(\) \{\n.*?\n) {10}\}\n", rel, re.S | re.M)
-    assert len(m) == 1, "expected exactly one sched_audit_ok"
-    open(out, "w").write("sched_audit_ok() {\n" + m[0].split("\n", 1)[1] + "}\n")
+    out_s = ""
+    for fn in ("sched_audit_fetch", "sched_audit_ok", "sched_audit_gate"):
+        m = re.findall(r"^ {10}" + fn + r"\(\) \{\n(.*?\n) {10}\}\n", rel, re.S | re.M)
+        assert len(m) == 1, "expected exactly one " + fn
+        out_s += fn + "() {\n" + m[0] + "}\n"
+    open(out, "w").write(out_s)
 elif kind == "awk":
     m = re.findall(r"'(\$1==\"Security Audit\"[^\n]*END\{print c\})'", rel)
     assert len(m) == 1, "expected exactly one audit_verdict awk program"
@@ -115,61 +114,105 @@ else
   bad "W7: jq is required for this test"
 fi
 
-# W9: a red daily scheduled scan halts releases (release.yml required-ci).
+# W9: a red daily scheduled scan halts releases unless a newer successful main run
+# supersedes it; an API error blocks (release.yml required-ci).
 if command -v jq >/dev/null 2>&1; then
-  _extract sjq "$TMP_ROOT/sched.jq" && _extract sfn "$TMP_ROOT/sched.fn.sh"
-  _sched_run() { # _sched_run <fn-file> <runs-json> -> prints "<rc>|<reason>"
-    local line reason rc=0
-    line="$(printf '%s' "$2" | jq -r "$(cat "$TMP_ROOT/sched.jq")")"
-    reason="$(bash -c 'source "$1"; sched_audit_ok "$2"' _ "$1" "$line")" || rc=$?
-    printf '%s|%s' "$rc" "$reason"
+  _extract sfn "$TMP_ROOT/sched.fn.sh"
+  _sched_run() { # _sched_run <fn-file> <runs-json | FAIL> -> prints "<rc>|<output>"
+    local out rc=0
+    out="$(BLOB="$2" bash -c '
+      source "$1"; REPO=x/y; sleep() { :; }
+      if [ "$BLOB" = FAIL ]; then gh() { return 1; }
+      else gh() {
+        local p=""; while [ $# -gt 0 ]; do [ "$1" = --jq ] && p="$2"; shift; done
+        if [ -n "${W9_FLAKY:-}" ]; then
+          n="$(cat "$W9_FLAKY" 2>/dev/null || echo 0)"; echo $((n + 1)) > "$W9_FLAKY"
+          [ "$n" -ge 2 ] || return 1
+        fi
+        printf "%s" "$BLOB" | jq -r "$p"
+      }; fi
+      sched_audit_gate' _ "$1" 2>&1)" || rc=$?
+    printf '%s|%s' "$rc" "$out"
   }
-  _r() { # name event conclusion created branch
-    printf '{"name":"Security Audit","status":"completed","conclusion":"%s","created_at":"%s","event":"%s","head_branch":"%s","html_url":"https://example.invalid/runs/%s"}' "$3" "$4" "$2" "${5:-main}" "$1"
+  _r() { # name event conclusion created [branch]
+    local c="\"$3\""
+    [ "$3" = null ] && c=null
+    printf '{"name":"Security Audit","status":"completed","conclusion":%s,"created_at":"%s","event":"%s","head_branch":"%s","html_url":"https://example.invalid/runs/%s"}' "$c" "$4" "$2" "${5:-main}" "$1"
   }
-  _w9() { # _w9 <fn-file> ; 0 = all five cases behave per D75
+  _blob() { local IFS=,; printf '{"total_count":%s,"workflow_runs":[%s]}' "$#" "$*"; }  # API order: newest first
+  _expect() { # _expect <fn> <rc> <substring> <runs-json|FAIL>
     local o
-    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r p push success 2026-10-03T07:00:00Z),$(_r s schedule failure 2026-10-03T08:00:00Z)]}")"
-    [ "${o%%|*}" = "1" ] && case "$o" in *"runs/s"*) true ;; *) false ;; esac || return 1
-    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r s1 schedule failure 2026-10-02T08:00:00Z),$(_r s2 schedule success 2026-10-03T08:00:00Z)]}")"
+    o="$(_sched_run "$1" "$4")"
+    [ "${o%%|*}" = "$2" ] && case "$o" in *"$3"*) true ;; *) false ;; esac
+  }
+  _w9() { # _w9 <fn-file> ; 0 = every case behaves per D75
+    local f="$1"
+    # scheduled failure newer than the only main push success blocks
+    _expect "$f" 1 "runs/s" "$(_blob "$(_r s schedule failure 2026-10-03T08:00:00Z)" "$(_r p push success 2026-10-03T07:00:00Z)")" || return 1
+    # cancelled, timed_out and null-conclusion scheduled runs block
+    _expect "$f" 1 "'cancelled'" "$(_blob "$(_r c schedule cancelled 2026-10-03T08:00:00Z)")" || return 1
+    _expect "$f" 1 "'timed_out'" "$(_blob "$(_r t schedule timed_out 2026-10-03T08:00:00Z)")" || return 1
+    _expect "$f" 1 "'null'" "$(_blob "$(_r n schedule null 2026-10-03T08:00:00Z)")" || return 1
+    # old scheduled failure plus a newer main push success passes (cleared)
+    _expect "$f" 0 "supersedes" "$(_blob "$(_r p push success 2026-10-03T07:00:00Z)" "$(_r s schedule failure 2026-09-28T07:00:00Z)")" || return 1
+    # a newer successful workflow_dispatch on main also clears it
+    _expect "$f" 0 "supersedes" "$(_blob "$(_r d workflow_dispatch success 2026-10-03T07:00:00Z)" "$(_r s schedule failure 2026-09-28T07:00:00Z)")" || return 1
+    # a newer success on a train/** branch does NOT clear it
+    _expect "$f" 1 "runs/s" "$(_blob "$(_r tr push success 2026-10-03T09:00:00Z train/x)" "$(_r s schedule failure 2026-10-03T08:00:00Z)" "$(_r p push success 2026-10-03T07:00:00Z)")" || return 1
+    # a success OLDER than the scheduled failure does not clear it
+    _expect "$f" 1 "runs/s" "$(_blob "$(_r s schedule failure 2026-10-03T08:00:00Z)" "$(_r p push success 2026-10-02T07:00:00Z)")" || return 1
+    # scheduled success passes
+    _expect "$f" 0 "succeeded" "$(_blob "$(_r s schedule success 2026-10-03T08:00:00Z)")" || return 1
+    # two scheduled runs, API order newest first: newest success beats the older failure (needs sort_by)
+    _expect "$f" 0 "succeeded" "$(_blob "$(_r s2 schedule success 2026-10-03T08:00:00Z)" "$(_r s1 schedule failure 2026-10-02T08:00:00Z)")" || return 1
+    # two scheduled runs, API order newest first: newest failure blocks even with an older success
+    _expect "$f" 1 "runs/s2" "$(_blob "$(_r s2 schedule failure 2026-10-03T08:00:00Z)" "$(_r s1 schedule success 2026-10-02T08:00:00Z)")" || return 1
+    # a non-main scheduled failure (newer) is ignored when the main scheduled run succeeded
+    _expect "$f" 0 "succeeded" "$(_blob "$(_r x schedule failure 2026-10-03T09:00:00Z feature)" "$(_r s schedule success 2026-10-03T08:00:00Z)")" || return 1
+    # no scheduled run among existing runs passes with a reason
+    _expect "$f" 0 "no completed scheduled run" "$(_blob "$(_r p push success 2026-10-03T07:00:00Z)")" || return 1
+    # zero runs on a successful response passes with a reason
+    _expect "$f" 0 "zero completed runs" '{"total_count":0,"workflow_runs":[]}' || return 1
+    # two transient gh errors then success: the retry reads the verdict (pass)
+    : > "$TMP_ROOT/w9.flaky"
+    o="$(W9_FLAKY="$TMP_ROOT/w9.flaky" _sched_run "$f" "$(_blob "$(_r s schedule success 2026-10-03T08:00:00Z)")")"
     [ "${o%%|*}" = "0" ] || return 1
-    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r p push success 2026-10-03T07:00:00Z)]}")"
-    [ "${o%%|*}" = "0" ] && case "$o" in *"no completed scheduled run yet"*) true ;; *) false ;; esac || return 1
-    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r c schedule cancelled 2026-10-03T08:00:00Z)]}")"
-    [ "${o%%|*}" = "1" ] || return 1
-    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r t schedule timed_out 2026-10-03T08:00:00Z)]}")"
-    [ "${o%%|*}" = "1" ]
+    # a failing gh (404, outage) blocks after retries
+    _expect "$f" 1 "cannot read scheduled Security Audit runs (API error)" FAIL
   }
   if _w9 "$TMP_ROOT/sched.fn.sh"; then
-    ok "W9: a newer scheduled failure, cancelled or timed-out run blocks; a scheduled success passes; no scheduled run passes with a logged reason"
+    ok "W9: scheduled failure/cancelled/timed_out/null block unless a newer main push or dispatch success supersedes it; train success does not; success, no schedule and zero runs pass with a reason; a gh error blocks"
   else
     bad "W9: scheduled-audit gate does not match D75"
   fi
-  # mutation: the check no longer blocks on a non-success conclusion
-  _mutate_file_early() {
-    python3 - "$1" "$2" <<'PYEOF'
+  _w9_mut() { # _w9_mut <name> <old> <new>
+    python3 - "$TMP_ROOT/sched.fn.sh" "$TMP_ROOT/sched.fn.$1.sh" "$2" "$3" <<'PYEOF'
 import sys
 s = open(sys.argv[1]).read()
-a = "review it before releasing\"; return 1"
-assert a in s
-open(sys.argv[2], "w").write(s.replace(a, "review it before releasing\"; return 0"))
+assert s.count(sys.argv[3]) == 1, sys.argv[3]
+open(sys.argv[2], "w").write(s.replace(sys.argv[3], sys.argv[4]))
 PYEOF
+    if _w9 "$TMP_ROOT/sched.fn.$1.sh"; then bad "W9 mutation ($1) stayed green"; else ok "W9 mutation ($1) goes red"; fi
   }
-  _mutate_file_early "$TMP_ROOT/sched.fn.sh" "$TMP_ROOT/sched.fn.mut.sh"
-  if _w9 "$TMP_ROOT/sched.fn.mut.sh"; then
-    bad "W9 mutation (schedule check no longer blocks) stayed green"
-  else
-    ok "W9 mutation (schedule check no longer blocks) goes red"
-  fi
+  _w9_mut noblock 'review it before releasing"; return 1' 'review it before releasing"; return 0'
+  _w9_mut nosort '| sort_by(.created_at) | last)' '| last)'
+  _w9_mut nobranch 'select(.event=="schedule" and .head_branch=="main")' 'select(.event=="schedule")'
+  _w9_mut anybranch 'and .head_branch=="main" and .created_at >' 'and .created_at >'
+  _w9_mut noclear 'elif ([$runs[]' 'elif false and ([$runs[]'
+  _w9_mut oldsuccess 'and .created_at > $s.created_at' 'and .created_at > "0"'
+  _w9_mut failopen '(API error)"
+              return 1' '(API error)"
+              return 0'
+  _w9_mut noretry 'for i in 1 2 3; do' 'for i in 1; do'
   # the gate must actually be called from required-ci and must fail the job
-  if grep -qF 'sched_reason="$(sched_audit_ok "$(sched_audit_line)")"' "$REL_YML" \
+  if grep -qF 'sched_reason="$(sched_audit_gate)"' "$REL_YML" \
      && grep -qF 'FAIL: the daily scheduled Security Audit is not green' "$REL_YML"; then
     ok "W9: required-ci calls the scheduled-audit gate and exits 1 when it blocks"
   else
     bad "W9: required-ci does not call the scheduled-audit gate"
   fi
-  grep -vF 'sched_reason="$(sched_audit_ok' "$REL_YML" > "$TMP_ROOT/release.nocall.yml"
-  if grep -qF 'sched_reason="$(sched_audit_ok "$(sched_audit_line)")"' "$TMP_ROOT/release.nocall.yml"; then
+  grep -vF 'sched_reason="$(sched_audit_gate)"' "$REL_YML" > "$TMP_ROOT/release.nocall.yml"
+  if grep -qF 'sched_reason="$(sched_audit_gate)"' "$TMP_ROOT/release.nocall.yml"; then
     bad "W9 mutation (call dropped) stayed green"
   else
     ok "W9 mutation (call dropped) goes red"
