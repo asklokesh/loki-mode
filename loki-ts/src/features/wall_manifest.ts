@@ -9,22 +9,71 @@ const MAX_EXAMPLES = 2;
 const EXAMPLE_LINES = 40;
 const MAX_LAYOUT = 60;
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
-const ARROW_HEAD = /^(async\s+)?(<[^>]*>\s*)?(\([^)]*\)|\w+)\s*(:\s*[^=]+?)?\s*=>/;
 const norm = (s: string): string => s.replace(/\r\n?/g, "\n");
 const stemOf = (p: string): string => (p.split("/").pop() ?? p).replace(/\.[^.]*$/, "");
-const byPath = (a: ManifestFile, b: ManifestFile): number => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+const byPath = (a: ManifestFile, b: ManifestFile): number =>
+  a.path < b.path ? -1 : a.path > b.path ? 1 : a.content < b.content ? -1 : a.content > b.content ? 1 : 0;
 
-interface Item { head: string; raw: string; end: string; body: string | null }
+interface Item { head: string; raw: string; end: string; body: string | null; balanced: boolean }
 
-// Skips one string, template, or comment starting at i; returns the index after it, or i when none starts here.
+const REGEX_PREV = "(,=:[!&|?{};+-*%~^";
+const isComment = (s: string, i: number): boolean => s[i] === "/" && (s[i + 1] === "/" || s[i + 1] === "*");
+
+// Template literal starting at i (a backtick); handles nested `${ ... }` holding strings and templates.
+function templateEnd(s: string, i: number): number {
+  for (let j = i + 1; j < s.length; ) {
+    const c = s[j];
+    if (c === "\\") j += 2;
+    else if (c === "`") return j + 1;
+    else if (c === "$" && s[j + 1] === "{") {
+      let depth = 1;
+      j += 2;
+      while (j < s.length && depth > 0) {
+        const k = skipLiteral(s, j);
+        if (k !== j) { j = k; continue; }
+        if (s[j] === "{") depth++;
+        else if (s[j] === "}") depth--;
+        j++;
+      }
+    } else j++;
+  }
+  return s.length;
+}
+
+// Regex literal starting at i when the previous significant character allows one; else i.
+function regexEnd(s: string, i: number): number {
+  let p = i - 1;
+  while (p >= 0 && /\s/.test(s[p]!)) p--;
+  if (p >= 0 && !REGEX_PREV.includes(s[p]!) && !/\b(return|typeof|case|in|of|void|delete|throw)$/.test(s.slice(Math.max(0, p - 7), p + 1))) return i;
+  let inClass = false;
+  for (let j = i + 1; j < s.length; j++) {
+    const c = s[j]!;
+    if (c === "\n") return i;
+    if (c === "\\") j++;
+    else if (c === "[") inClass = true;
+    else if (c === "]") inClass = false;
+    else if (c === "/" && !inClass) {
+      j++;
+      while (j < s.length && /[a-z]/i.test(s[j]!)) j++;
+      return j;
+    }
+  }
+  return i;
+}
+
+// Skips one string, template, regex, or comment starting at i; returns the index after it, or i when none starts here.
+// A quote that finds no closing quote before a line break (JSX text such as Don't) is not a string.
 function skipLiteral(s: string, i: number): number {
   const c = s[i];
   if (c === "/" && s[i + 1] === "/") { const n = s.indexOf("\n", i); return n < 0 ? s.length : n; }
   if (c === "/" && s[i + 1] === "*") { const n = s.indexOf("*/", i + 2); return n < 0 ? s.length : n + 2; }
-  if (c !== '"' && c !== "'" && c !== "`") return i;
+  if (c === "/") return regexEnd(s, i);
+  if (c === "`") return templateEnd(s, i);
+  if (c !== '"' && c !== "'") return i;
   for (let j = i + 1; j < s.length; j++) {
     if (s[j] === "\\") j++;
     else if (s[j] === c) return j + 1;
+    else if (s[j] === "\n") return i;
   }
   return s.length;
 }
@@ -46,14 +95,14 @@ function matchingBrace(s: string, open: number): number {
 function items(src: string): Item[] {
   const out: Item[] = [];
   let start = 0, head = "", p = 0, i = 0;
-  const push = (end: string, body: string | null, stop: number): void => {
-    if (head.trim()) out.push({ head, raw: src.slice(start, stop).trim(), end, body });
+  const push = (end: string, body: string | null, stop: number, balanced = true): void => {
+    if (head.trim()) out.push({ head, raw: src.slice(start, stop).trim(), end, body, balanced });
     head = ""; p = 0; start = stop;
   };
   while (i < src.length) {
     const j = skipLiteral(src, i);
     if (j !== i) {
-      if (src[i] !== "/") head += src.slice(i, j);
+      if (!isComment(src, i)) head += src.slice(i, j);
       i = j;
       continue;
     }
@@ -64,16 +113,17 @@ function items(src: string): Item[] {
       const close = matchingBrace(src, i);
       const h = head.trim();
       const declaration = /^(export\s+)?(declare\s+)?(type|interface|enum)\b/.test(h);
-      if (declaration || h === "" || /^export(\s+type)?$/.test(h)) {
+      if (declaration || h === "" || /^export(\s+type)?$/.test(h) || /[:|&]$/.test(h)) {
         head += src.slice(i, close + 1);
         i = close + 1;
         if (declaration && !h.startsWith("type") && !h.includes("= ")) push("", null, i);
         continue;
       }
       const body = src.slice(i + 1, close);
+      const balanced = close < src.length;
       i = close + 1;
       if (src[i] === ";") i++;
-      push("{", body, i);
+      push("{", body, i, balanced);
       continue;
     }
     if (c === ";" && p === 0) { i++; push(";", null, i); continue; }
@@ -85,6 +135,54 @@ function items(src: string): Item[] {
   return out;
 }
 
+// Length of an arrow-function head (through `=>`) at the start of s, or -1. One forward pass, no backtracking.
+function arrowHeadLen(s: string): number {
+  const n = s.length;
+  let i = 0;
+  const ws = (): void => { while (i < n && /\s/.test(s[i]!)) i++; };
+  if (/^async\s/.test(s)) { i = 5; ws(); }
+  if (s[i] === "<") {
+    let d = 0;
+    for (; i < n; i++) {
+      if (s[i] === "=" && s[i + 1] === ">") i++;
+      else if (s[i] === "<") d++;
+      else if (s[i] === ">" && --d === 0) { i++; break; }
+    }
+    if (d !== 0) return -1;
+    ws();
+  }
+  if (s[i] === "(") {
+    let d = 0;
+    for (; i < n; ) {
+      const k = skipLiteral(s, i);
+      if (k !== i) { i = k; continue; }
+      if (s[i] === "(") d++;
+      else if (s[i] === ")" && --d === 0) { i++; break; }
+      i++;
+    }
+    if (d !== 0) return -1;
+  } else {
+    const st = i;
+    while (i < n && /[\w$]/.test(s[i]!)) i++;
+    if (i === st) return -1;
+  }
+  ws();
+  if (s[i] === "=" && s[i + 1] === ">") return i + 2;
+  if (s[i] !== ":") return -1;
+  let d = 0;
+  for (i++; i < n; ) {
+    const k = skipLiteral(s, i);
+    if (k !== i) { i = k; continue; }
+    const c = s[i]!;
+    if ("([{".includes(c)) d++;
+    else if (")]}".includes(c)) d--;
+    else if (d === 0 && c === "=") return s[i + 1] === ">" ? i + 2 : -1;
+    else if (d === 0 && c === ";") return -1;
+    i++;
+  }
+  return -1;
+}
+
 // Cuts an initializer off a declaration head, keeping arrow and function-expression headers.
 function memberSig(h: string): string | null {
   if (!h || /^(private|protected|#)/.test(h)) return null;
@@ -93,15 +191,64 @@ function memberSig(h: string): string | null {
     const c = h[i]!;
     if ("([{".includes(c)) depth++;
     else if (")]}".includes(c)) depth--;
-    else if (c === "=" && depth === 0 && !"=!<>".includes(h[i - 1] ?? " ") && h[i + 1] !== "=" && h[i + 1] !== ">") {
+    else if (c === "=" && depth === 0 && !"=!<".includes(h[i - 1] ?? " ") && h[i + 1] !== "=" && h[i + 1] !== ">") {
       const rhs = h.slice(i + 1).trim();
       if (rhs.endsWith("=>") || /^(async\s+)?function\b/.test(rhs)) return h;
-      const arrow = ARROW_HEAD.exec(rhs);
-      return `${h.slice(0, i).trim()}${arrow ? ` = ${arrow[0]}` : ""}`;
+      const len = arrowHeadLen(rhs);
+      return `${h.slice(0, i).trim()}${len > 0 ? ` = ${rhs.slice(0, len)}` : ""}`;
     }
   }
   return h;
 }
+
+// Splits `export let a = 1, b = 2` into its declarators at top-level commas.
+function splitDeclarators(h: string): string[] {
+  const parts: string[] = [];
+  let depth = 0, angle = 0, init = false, from = 0;
+  for (let i = 0; i < h.length; ) {
+    const k = skipLiteral(h, i);
+    if (k !== i) { i = k; continue; }
+    const c = h[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (depth === 0 && !init && c === "<") angle++;
+    else if (depth === 0 && !init && c === ">" && h[i - 1] !== "=") angle = Math.max(0, angle - 1);
+    else if (depth === 0 && angle === 0 && !init && c === "=" && h[i + 1] !== "=" && h[i + 1] !== ">" && !"=!<".includes(h[i - 1] ?? " ")) {
+      init = true;
+      const rest = h.slice(i + 1);
+      const len = arrowHeadLen(rest.trimStart());
+      if (len > 0) { i += 1 + (rest.length - rest.trimStart().length) + len; continue; }
+    } else if (depth === 0 && angle === 0 && c === ",") { parts.push(h.slice(from, i)); from = i + 1; init = false; }
+    i++;
+  }
+  parts.push(h.slice(from));
+  return parts;
+}
+
+// The export's own head: stops at `;`, or at a line break once the statement is complete.
+function exportHead(h: string, end: string): string {
+  let depth = 0;
+  for (let i = 0; i < h.length; ) {
+    const k = skipLiteral(h, i);
+    if (k !== i) { i = k; continue; }
+    const c = h[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (depth === 0 && c === ";") return h.slice(0, i + 1);
+    else if (depth === 0 && c === "\n") {
+      const pre = h.slice(0, i).trimEnd();
+      const next = h.slice(i).trimStart();
+      const star = /^export\s*(type\s*)?\*/.test(pre);
+      const open = /[=|&,<(:?.+\-*/]$|=>$|\b(from|as|extends|keyof|typeof|type)$/.test(pre) || /^(from\b|extends\b|as\b|[|&?:.,=])/.test(next);
+      if (pre && !open && (!star || /\bfrom\s*(["'])/.test(pre))) return pre;
+    }
+    i++;
+  }
+  return h.trimEnd() + (end === ";" ? ";" : "");
+}
+
+const MEMBER_START = /^(@|\[|#|[A-Za-z_$])/;
+const NOT_MEMBER = /^(return|const|let|var|if|else|for|while|do|switch|case|default|throw|try|catch|finally|new|await|yield|break|continue|import|export|function|delete|typeof|void)\b/;
 
 function tsSignatures(src: string): string[] {
   const out: string[] = [];
@@ -109,10 +256,22 @@ function tsSignatures(src: string): string[] {
     const h = it.head.trim();
     if (!/^export\b/.test(h)) continue;
     if (/^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]/.test(h)) {
-      out.push(it.raw);
+      out.push(exportHead(h, it.end));
     } else if (/^export\s+(default\s+)?(abstract\s+)?class\b/.test(h)) {
-      const members = items(it.body ?? "").map((m) => memberSig(m.head.trim())).filter((m): m is string => !!m);
-      out.push(`${h} {`, ...members.map((m) => `  ${m};`), "}");
+      const members = it.balanced
+        ? items(it.body ?? "").map((m) => m.head.trim()).filter((m) => MEMBER_START.test(m) && !NOT_MEMBER.test(m))
+          .map(memberSig).filter((m): m is string => !!m)
+        : [];
+      out.push(`${exportHead(h, "")} {`, ...members.map((m) => `  ${m};`), "}");
+    } else if (/^export\s+default\s/.test(h)) {
+      const rest = h.replace(/^export\s+default\s+/, "");
+      const len = arrowHeadLen(rest);
+      if (len > 0) out.push(`export default ${rest.slice(0, len)}`);
+      else if (/^(async\s+)?function\b/.test(rest)) out.push(memberSig(h) ?? h);
+      else out.push(/^[\w$.]+$/.test(rest) ? h : "export default ...");
+    } else if (/^export\s+(const|let|var)\b/.test(h)) {
+      const parts = splitDeclarators(h).map((p) => memberSig(p.trim()) ?? p.trim());
+      out.push(parts.join(", "));
     } else {
       out.push(memberSig(h) ?? h);
     }
@@ -127,6 +286,12 @@ function pyHeader(lines: string[], i: number): { text: string; next: number } {
     const line = lines[n]!;
     for (let k = 0; k < line.length; k++) {
       const c = line[k]!;
+      if (c === '"' || c === "'") {
+        const close = line.indexOf(c, k + 1);
+        k = close < 0 ? line.length : close;
+        continue;
+      }
+      if (c === "#") break;
       if ("([{".includes(c)) depth++;
       else if (")]}".includes(c)) depth--;
       else if (c === ":" && depth === 0) return { text: text + line.slice(0, k + 1).trimEnd(), next: n + 1 };
@@ -212,9 +377,10 @@ function runnerSection(files: ManifestFile[]): string[] {
 function importsNamed(path: string, content: string, stems: Set<string>): boolean {
   if ([...stems].some((s) => stemOf(path).split(/[._-]/).includes(s))) return true;
   const specs: string[] = [];
-  for (const m of content.matchAll(/(?:from|import|require\()\s*["']([^"']+)["']/g)) specs.push(m[1]!);
-  for (const m of content.matchAll(/^\s*from\s+([\w.]+)\s+import\b/gm)) specs.push(m[1]!);
-  for (const m of content.matchAll(/^\s*import\s+([\w.,\s]+)$/gm)) specs.push(...m[1]!.split(","));
+  for (const m of content.matchAll(/\b(?:from|import|require)\s*\(?\s*["']([^"']+)["']/g)) specs.push(m[1]!);
+  const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
+  for (const m of content.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
+  for (const m of content.matchAll(/^[ \t]*import[ \t]+([\w.,\t ]+)$/gm)) specs.push(...names(m[1]!));
   return specs.some((s) => s.trim().replace(/\.(ts|js|py)$/, "").split(/[./\\]/).some((seg) => stems.has(seg)));
 }
 

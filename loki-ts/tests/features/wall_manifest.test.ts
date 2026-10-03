@@ -186,3 +186,103 @@ describe("buildWallManifest (D77)", () => {
     expect(out).not.toContain("BODY_CANARY");
   });
 });
+
+const ts = (content: string, path = "m.ts"): string => buildWallManifest([{ path, content }], [path]);
+const MARKERS = /LEAK_/;
+
+describe("round 2 review findings (B1-B7)", () => {
+  test("B1: export default arrow expression bodies are cut", () => {
+    const out = ts("export default (x: number) => x * LEAK_1;\n");
+    expect(out).toContain("export default (x: number) =>");
+    expect(out).not.toMatch(MARKERS);
+    const obj = ts("export default () => ({ k: LEAK_12 });\n");
+    expect(obj).toContain("export default () =>");
+    expect(obj).not.toMatch(MARKERS);
+  });
+
+  test("B2: no-semicolon export-from, star and type alias do not pull in the next line", () => {
+    for (const src of [
+      'export { a } from "./a"\nfunction helper() { return "LEAK_3" }',
+      'export * from "./a"\nfunction helper() { return "LEAK_4" }',
+      'export type T = Base & { a: 1 }\nfunction helper() { return "LEAK_a" }',
+      'export type ID = string\nconst secret = "LEAK_5"',
+    ]) expect(ts(src)).not.toMatch(MARKERS);
+    expect(ts('export { a } from "./a"\nfunction h() {}')).toContain('export { a } from "./a"');
+    expect(ts("export type ID = string\nconst s = 1")).toContain("export type ID = string");
+    expect(ts("export type U =\n  | A\n  | B\nconst s = 1")).toContain("| B");
+  });
+
+  test("B3: brace desync inside a class emits no body fragments", () => {
+    for (const body of [
+      "foo(): { a: number } { return { a: LEAK_6 }; }",
+      'm() { const r = /\\}/; return "LEAK_7"; }',
+      "m(c) { return `a${c ? `}` : ''}b` + 'LEAK_10'; }",
+    ]) expect(ts(`export class K {\n  ${body}\n  ok(): void {}\n}\n`)).not.toMatch(MARKERS);
+    expect(ts("export class K {\n  foo(): { a: number } { return 1; }\n}\n")).toContain("foo(): { a: number }");
+    expect(ts('export class K {\n  m() { return "}" ; }\n  ok(): void {}\n}\n')).toContain("ok(): void");
+    expect(ts('export class K {\n  m() { return "LEAK_u"; \n')).not.toMatch(MARKERS);
+  });
+
+  test("B4: >= with no space before an initializer is cut", () => {
+    expect(ts("export class K {\n  x: Array<number>= [LEAK_8];\n}\n")).not.toMatch(MARKERS);
+    const out = ts("export const x: Record<string, number>= mk(LEAK_9);\n");
+    expect(out).not.toMatch(MARKERS);
+    expect(out).toContain("export const x: Record<string, number>");
+  });
+
+  test("B5: Python header brackets inside strings are ignored", () => {
+    const a = ts('def f(x="("):\n    return "LEAK_p1"\n\ndef g():\n    pass\n', "m.py");
+    expect(a).not.toMatch(MARKERS);
+    expect(a).toContain("def g():");
+    const b = ts('def f(sep=")"):\n    return "LEAK_p2"\n', "m.py");
+    expect(b).not.toMatch(MARKERS);
+    expect(b).toContain('def f(sep=")"):');
+  });
+
+  test("B6: style examples never import a named module in any form", () => {
+    const base = [{ path: "src/calc.ts", content: "export const a = 1;" }, { path: "pkg/calc.py", content: "X = 1\n" }];
+    const cases: [string, string][] = [
+      ["tests/a_dyn.test.ts", 'test("a", async () => { await import("../src/calc"); });'],
+      ["tests/b_req.test.ts", 'const c = require("../src/calc");'],
+      ["tests/test_b.py", "from pkg import calc\n"],
+      ["tests/test_c.py", "import pkg.calc as c\n"],
+      ["tests/test_d.py", "from pkg import (\n    other,\n    calc,\n)\n"],
+      ["tests/test_e.py", "from pkg import other, calc as c\n"],
+    ];
+    for (const [path, content] of cases) {
+      const out = buildWallManifest([...base, { path, content }], ["src/calc.ts", "pkg/calc.py"]);
+      expect(out.slice(out.indexOf("## style examples"))).not.toContain(`--- example: ${path}`);
+    }
+    const ok = buildWallManifest([...base, { path: "tests/test_ok.py", content: "from pkg import other\n" }], ["pkg/calc.py"]);
+    expect(ok).toContain("--- example: tests/test_ok.py");
+  });
+
+  test("B7: a pathological arrow head finishes in linear time", () => {
+    const t0 = performance.now();
+    const out = ts(`export const f = (a): ${" ".repeat(50000)}x;\n`);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(out).toContain("export const f");
+    const arrow = ts("export const g = async <T,>(a: T): Promise<T> => a;\n");
+    expect(arrow).toContain("export const g = async <T,>(a: T): Promise<T> =>");
+  });
+
+  test("no output line carries a LEAK_ marker across every repro", () => {
+    const src = [
+      "export default (x: number) => x * LEAK_1;",
+      'export { a } from "./a"\nfunction helper() { return "LEAK_3" }',
+      "export type ID = string\nconst secret = \"LEAK_5\"",
+      "export class K {\n  foo(): { a: number } { return { a: LEAK_6 }; }\n  x: Array<number>= [LEAK_8];\n}",
+      "export const y: Record<string, number>= mk(LEAK_9);",
+    ].join("\n");
+    for (const line of ts(src).split("\n")) expect(line).not.toMatch(MARKERS);
+  });
+
+  test("A5/A6: duplicate paths sort by content; multi-declarator exports keep every name", () => {
+    const a = { path: "m.ts", content: "export const a = 1;" };
+    const b = { path: "m.ts", content: "export const b = 2;" };
+    expect(buildWallManifest([a, b], ["m.ts"])).toBe(buildWallManifest([b, a], ["m.ts"]));
+    const out = ts("export let a = 1, b = 2;\n");
+    expect(out).toContain("export let a, b");
+    expect(out).not.toMatch(/= [12]/);
+  });
+});
