@@ -2181,3 +2181,7 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Merged cascade (Engine Law L1 never below raw) as 1b1fc67c6; CHANGELOG kept both bullet sets; dist rebuilt in main, dist guard 13/0.
 - 10.7.1 still blocked on guard fix-forward (ad368f08d5bd98594): spawn env guard (ship_hook.ts:10) and e10ext budget (1509/1500). Builder told to land at 1498 or fewer so FC-10 (+1 line) fits.
 - Governor: pulse shows weekly burn projected 528.5% and max engineers next hour 0 (D39). No new dispatch this hour; FC-10 TL review deferred. In-flight agents (FC-07, FC-09, monorepo, W0-06, FC-02 r2, FC-08 r3, guards) finish and are not replaced.
+
+## 2026-10-03 17:45Z (CoS)
+- FC-02 runner-load (7ad4a18b6) round 2 opus D12: BLOCK. Two reproduced findings: (B1) the base rerun inherits the head Python env (an editable install), so the agent's own top-level raise is base-confirmed as harness_error and opens a ready PR; (B2) a test already broken on base, which the task asks the agent to fix, is base-confirmed as harness_error. Fix needed: hermetic base env plus traceback-path check; never confirm checks in relevant, wallTests or changedTestFiles. Rework queued behind the governor hold.
+- FC-09 runner-config rework done (f4eccfeac): engine10 1214/0, features 3098/3100, dist guard 13/0. Re-review queued behind the governor hold.
