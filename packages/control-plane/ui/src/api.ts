@@ -1,5 +1,17 @@
 // The only file that talks to the control service. Shapes mirror packages/control-plane/src/server/runs.ts (parseRun, listRuns, runDetail).
 
+/** FC-08: the one display verdict. Mirrors src/server/integrity.ts effectiveVerdict (parity-tested). Plain VERIFIED only for an attested, signature-checked run. */
+export const UNCHECKED_SIG = "VERIFIED (signature not checked)";
+const SUCCESS = new Set(["VERIFIED", "ALREADY_SATISFIED"]);
+export const effectiveVerdict = (r: { verdict: string | null; tampered: boolean; attested?: boolean; sig_checked?: boolean }): string | null => {
+  if (r.tampered) return "TAMPERED";
+  if (typeof r.verdict !== "string") return r.verdict;
+  const v = r.verdict.trim().toUpperCase();
+  if (r.attested === false) return SUCCESS.has(v) ? "UNVERIFIED" : `${r.verdict} (unattested)`;
+  if (SUCCESS.has(v)) return r.sig_checked === false ? `${v} (signature not checked)` : v;
+  return r.verdict;
+};
+
 export type Verdict = "VERIFIED" | "PARTIAL" | "FAILED" | "SPEC_CONFLICT" | string;
 
 export interface RunRow {
@@ -26,6 +38,11 @@ export interface RunRow {
   last_event_at: string | null;
   tampered: boolean;
   conflict: boolean;
+  // EL-FC08b: integrity verified at ingest. Optional so older captures still type-check; absent attested reads as the raw verdict.
+  attested?: boolean;
+  sig_checked?: boolean;
+  integrity_reasons?: string[];
+  effective_verdict?: string | null;
   // Live view: status is "running" until run.completed arrives. Optional so older captures still type-check.
   status?: "running" | "completed";
   elapsed_s?: number | null;

@@ -87,7 +87,9 @@ test("changed line with the same key returns 409, flags the run, never overwrite
 
 test("list filters and pagination", async () => {
   const v = await json(await app.request("/v1/runs?verdict=VERIFIED"));
-  expect(v.total).toBe(expected.verdict_counts.VERIFIED);
+  expect(v.total).toBe(0); // no keys configured: nothing is signature-checked, so plain VERIFIED lists nothing (FC-08 B3)
+  const u = await json(await app.request(`/v1/runs?verdict=${encodeURIComponent("VERIFIED (signature not checked)")}`));
+  expect(u.total).toBe(expected.verdict_counts.VERIFIED - 1); // the tampered corpus run claims VERIFIED but is excluded (FC-08)
   const p1 = await json(await app.request("/v1/runs?limit=3"));
   expect(p1.runs.length).toBe(3);
   const p2 = await json(await app.request(`/v1/runs?limit=3&cursor=${p1.next_cursor}`));

@@ -2,7 +2,7 @@ import { Activity, Briefcase, DollarSign, ExternalLink, Settings, Moon, Sun, Tri
 import { useEffect, useState, type ReactNode } from "react";
 import { Landing } from "./Live";
 import { CostPage, EmptyState, SettingsPage, StartRun, WorkPage } from "./Shell";
-import { getRun, listRuns, postAnswer, deleteRun, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
+import { deleteRun, effectiveVerdict, getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
 
@@ -25,6 +25,8 @@ const VERDICT_CLASS: Record<string, string> = {
   PARTIAL: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
   FAILED: "bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30",
   TAMPERED: "bg-red-600/20 text-red-700 dark:text-red-300 ring-red-600/50",
+  "VERIFIED (signature not checked)": "bg-sky-500/15 text-sky-700 dark:text-sky-300 ring-sky-500/30",
+  UNVERIFIED: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
   SPEC_CONFLICT: "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-violet-500/30",
 };
 
@@ -98,7 +100,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
         <label className="flex flex-col gap-1">Verdict
           <select aria-label="Verdict" className={inp} value={verdict} onChange={(e) => setVerdict(e.target.value)}>
             <option value="">All</option>
-            {["VERIFIED", "PARTIAL", "FAILED", "SPEC_CONFLICT"].map((v) => <option key={v}>{v}</option>)}
+            {["VERIFIED", "VERIFIED (signature not checked)", "UNVERIFIED", "TAMPERED", "PARTIAL", "FAILED", "SPEC_CONFLICT"].map((v) => <option key={v}>{v}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">Repo
@@ -120,7 +122,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
             <tbody>
               {data.runs.map((r) => (
                 <tr key={`${r.source_id}/${r.run_id}`} data-testid="run-row" className="border-t border-slate-200 dark:border-slate-800">
-                  <td className="p-2"><VerdictBadge verdict={r.verdict} tampered={r.tampered} /></td>
+                  <td className="p-2"><VerdictBadge verdict={effectiveVerdict(r)} tampered={r.tampered} /></td>
                   <td className="p-2 font-mono text-xs">
                     <a href={`#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} onClick={() => onOpen?.(r)} className="inline-block break-all py-2 text-sky-600 hover:underline md:py-0 dark:text-sky-400">{r.run_id}</a>
                   </td>
@@ -212,7 +214,7 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
       <a href="#/runs" className="text-sm text-sky-600 hover:underline dark:text-sky-400">Back to runs</a>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="font-mono text-lg font-semibold">{r.run_id}</h1>
-        <VerdictBadge verdict={r.verdict} tampered={r.tampered} />
+        <VerdictBadge verdict={effectiveVerdict(r)} tampered={r.tampered} />
         {r.tampered && <span className="inline-flex items-center gap-1 text-sm text-red-600"><TriangleAlert size={14} />event log tampered</span>}
         {r.conflict && <span className="inline-flex items-center gap-1 text-sm text-amber-600"><TriangleAlert size={14} />conflicting events ingested</span>}
       </div>
@@ -237,7 +239,7 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
       <Card title="Receipt">
         <div className="space-y-3 text-sm">
           {data.receipt ? (
-            <p>Receipt verdict: <VerdictBadge verdict={data.receipt.verdict} tampered={r.tampered} /> <span className="ml-2 font-mono text-xs text-slate-500">{data.receipt.sha256}</span></p>
+            <p>Receipt verdict: <VerdictBadge verdict={effectiveVerdict({ verdict: data.receipt.verdict, tampered: r.tampered, attested: r.attested, sig_checked: r.sig_checked })} tampered={r.tampered} /> <span className="ml-2 font-mono text-xs text-slate-500">{data.receipt.sha256}</span></p>
           ) : <p className="text-slate-500">No receipt ingested for this run.</p>}
           <div>
             <h3 className="font-medium">NOT PROVEN</h3>

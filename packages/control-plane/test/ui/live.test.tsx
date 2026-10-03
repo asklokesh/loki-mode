@@ -85,6 +85,19 @@ test("overview: counts, honest cost, unmeasured merged PRs, last 10", () => {
   expect(screen.getAllByTestId("ov-run").length).toBe(10);
 });
 
+test("overview (FC-08): a no-key forgery adds 0 to the VERIFIED tile and 1 to the signature-not-checked tile; unattested and tampered runs add to neither", () => {
+  const runs = [
+    row({ run_id: "ok", verdict: "VERIFIED", attested: true, sig_checked: true }),
+    row({ run_id: "forged", verdict: "VERIFIED", attested: true, sig_checked: false }),
+    row({ run_id: "unatt", verdict: "VERIFIED", attested: false, sig_checked: false }),
+    row({ run_id: "bad", verdict: "VERIFIED", tampered: true }),
+    row({ run_id: "p", verdict: "PARTIAL", attested: false }),
+  ] as never;
+  render(<Overview runs={runs} now={NOW} />);
+  const t = (id: string) => screen.getByTestId(id).textContent;
+  expect([t("ov-verified"), t("ov-unchecked"), t("ov-partial")]).toEqual(["1", "1", "0"]);
+});
+
 test("landing: live view when a run is active, overview otherwise", async () => {
   serve({
     "/v1/runs": { runs: [row({ status: "running" })], total: 1, next_cursor: null },

@@ -1,6 +1,6 @@
 // App shell pieces: empty-state import, start-a-run form, and the Work, Cost and Settings pages.
 import { useEffect, useState } from "react";
-import { importRuns, listRepos, listRuns, startRun, type RunRow } from "./api";
+import { importRuns, listRepos, effectiveVerdict, listRuns, startRun, type RunRow } from "./api";
 
 const btn = "min-h-11 rounded bg-sky-600 px-4 py-2 text-sm text-white disabled:opacity-50 md:min-h-0 md:px-3 md:py-1";
 const inp = "rounded border border-slate-300 bg-white px-2 py-2 text-sm md:py-1 dark:border-slate-700 dark:bg-slate-900";
@@ -85,7 +85,7 @@ export function WorkPage() {
         {rows.map((r) => (
           <li key={`${r.source_id}/${r.run_id}`} data-testid="work-row" className="flex flex-wrap items-center gap-3 rounded border border-slate-200 p-3 dark:border-slate-800">
             <span className="font-mono">{r.issue_ref}</span>
-            <span className="text-slate-500">{r.tampered ? "TAMPERED" : (r.verdict ?? "in progress")}</span>
+            <span className="text-slate-500">{effectiveVerdict(r) ?? "in progress"}</span>
             {r.pr_url ? <a className="text-sky-600 hover:underline dark:text-sky-400" href={r.pr_url} target="_blank" rel="noreferrer">PR</a> : <span className="text-slate-500">no PR yet</span>}
           </li>
         ))}

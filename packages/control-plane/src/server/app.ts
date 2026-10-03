@@ -4,7 +4,7 @@ import { Hono, type Context } from "hono";
 import { openDb } from "../db/migrate.ts";
 import { ingest } from "./ingest.ts";
 import { defaultAnswerDir, writeAnswer } from "./answer.ts";
-import { listRuns, runDetail } from "./runs.ts";
+import { listRuns, recomputeLegacy, runDetail } from "./runs.ts";
 import { hostGuard, isLoopbackHost, tokenGuard } from "./auth.ts";
 import { backfill } from "../shipper/backfill.ts";
 import { removeRun } from "../db/prune.ts";
@@ -19,6 +19,7 @@ const defaultUiDir = () => [join(import.meta.dir, "../../ui/dist"), join(import.
 export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart }) {
   const uiDir = opts.uiDir ?? defaultUiDir();
   const { db, sqlite } = openDb(opts.dbPath);
+  recomputeLegacy(db);
   let ready = true;
   const answerDir = opts.answerDir ?? defaultAnswerDir();
   const app = new Hono();
