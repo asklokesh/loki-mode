@@ -115,3 +115,5 @@ ff2f4719c34fa391ad1dd664c217d7337d6e5fac:loki-ts/dist/loki.js:generic-api-key:12
 21df7d4a26b6bceff654c6686cd1beca47e3927f:tests/test-eval-archive.sh:aws-access-token:88
 # D51-B11 test fixture: ghp_FAKEtokenVALUE... is a synthetic token the test asserts never leaks into run output; not a credential.
 c09dfd1eb6f2f2cc1f81b2be0d7ddee717141d66:tests/workspace/80-comment.sh:github-pat:7
+# Reviewed fake fixture token (Sentry intake test asserts it is never printed); not a credential.
+00d12afea485ed91ff77ef0a2d8a91b408377bf3:tests/test-issue-providers.sh:generic-api-key:294
