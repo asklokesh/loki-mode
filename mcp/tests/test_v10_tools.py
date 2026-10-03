@@ -61,6 +61,47 @@ class RunTests(unittest.TestCase):
             self.assertTrue(r["log_path"].startswith(os.path.realpath(repo)))
 
 
+class EarlyExitTests(unittest.TestCase):
+    def _stub(self, d, body):
+        path = os.path.join(d, "loki-stub")
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(path, 0o755)
+        return path
+
+    def test_early_crash_reports_exit_code_and_log_tail(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as bindir:
+            stub = self._stub(bindir, "echo boom\nexit 2")
+            with mock.patch.object(v10_tools, "LOKI_BIN", stub), \
+                    mock.patch.object(v10_tools, "V10_RUN_ID_WAIT_S", 3):
+                r = v10_tools.v10_run("fix it", repo, _ok)
+        self.assertIn("exited 2", r.get("error", ""))
+        self.assertIn("boom", r["error"])
+        self.assertIsNone(r.get("run_id"))
+
+    def test_log_tail_is_last_20_lines(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as bindir:
+            stub = self._stub(bindir, "i=1; while [ $i -le 30 ]; do echo line$i; i=$((i+1)); done; exit 3")
+            with mock.patch.object(v10_tools, "LOKI_BIN", stub), \
+                    mock.patch.object(v10_tools, "V10_RUN_ID_WAIT_S", 3):
+                r = v10_tools.v10_run("fix it", repo, _ok)
+        self.assertIn("exited 3", r["error"])
+        self.assertIn("line30", r["error"])
+        self.assertIn("line11", r["error"])
+        self.assertNotIn("line10\n", r["error"] + "\n")
+
+    def test_still_running_without_run_id_keeps_shape(self):
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as bindir:
+            stub = self._stub(bindir, "sleep 2")
+            with mock.patch.object(v10_tools, "LOKI_BIN", stub), \
+                    mock.patch.object(v10_tools, "V10_RUN_ID_WAIT_S", 0.3):
+                r = v10_tools.v10_run("fix it", repo, _ok)
+        self.assertNotIn("error", r)
+        self.assertIsNone(r["run_id"])
+        self.assertIn("pid", r)
+        self.assertIn("log_path", r)
+
+
 class EnvTests(unittest.TestCase):
     def test_env_forces_headless_and_drops_secrets(self):
         secrets = {"LOKI_CONTROL_TOKEN": "t", "SLACK_BOT_TOKEN": "xoxb-1", "SLACK_SIGNING_SECRET": "s",

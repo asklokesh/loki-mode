@@ -38,6 +38,15 @@ def _run_ids(repo: str) -> List[str]:
     return sorted(n for n in os.listdir(d) if os.path.isdir(os.path.join(d, n)))
 
 
+def _log_tail(path: str, lines: int = 20) -> str:
+    try:
+        with open(path, "rb") as f:
+            data = f.read()[-65536:]
+    except OSError as e:
+        return f"(log unreadable: {e})"
+    return "\n".join(data.decode("utf-8", "replace").splitlines()[-lines:])
+
+
 def v10_run(ref: str, repo_path: str, validate: Callable[[str], str]) -> dict:
     if not isinstance(ref, str) or not ref.strip() or ref.startswith("-") or "\x00" in ref:
         return {"error": "invalid ref: must be a non-empty task or issue reference that does not start with '-'"}
@@ -71,6 +80,10 @@ def v10_run(ref: str, repo_path: str, validate: Callable[[str], str]) -> dict:
         if new:
             run_id = new[-1]
             break
+        rc = proc.poll()
+        if isinstance(rc, int):
+            return {"error": f"loki exited {rc} before a run started. Log tail:\n{_log_tail(log_path)}",
+                    "run_id": None, "pid": proc.pid, "log_path": log_path}
         if time.time() >= deadline:
             break
         time.sleep(0.1)
