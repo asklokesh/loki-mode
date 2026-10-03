@@ -289,6 +289,32 @@ NOUP
     exit 0
 ) && pass || fail "expected honest degrade with no ultrareview call"
 
+run_test "review --risk is deterministic with factor breakdown"
+(
+    set -euo pipefail
+    rd="$TEST_DIR/risk-repo"
+    mkdir -p "$rd/src" "$rd/tests"
+    cd "$rd"
+    git init -q .
+    git config user.email t@example.com
+    git config user.name t
+    printf 'a\nb\n' > src/auth.sh
+    printf 't1\nt2\nt3\n' > tests/test-a.sh
+    git add src/auth.sh tests/test-a.sh
+    git commit -q -m base
+    printf 'a\nb\nc\nd\n' > src/auth.sh
+    git rm -q -f tests/test-a.sh; git add src/auth.sh
+    j1=$("$LOKI" review --risk --staged --json)
+    j2=$("$LOKI" review --risk --staged --json)
+    [ "$j1" = "$j2" ] || { echo "non-deterministic" >&2; exit 1; }
+    python3 -c 'import json,sys
+d=json.loads(sys.argv[1]); f={x["factor"]:x["points"] for x in d["factors"]}
+assert 0 < d["score"] <= 100, d
+assert f["sensitive_paths"] == 10 and f["deleted_tests"] >= 5 and f["test_delta"] == 15, f' "$j1"
+    "$LOKI" review --risk --staged | grep -q "Risk score:" || { echo "no text output" >&2; exit 1; }
+    exit 0
+) && pass || fail "risk score"
+
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed, $TOTAL total ==="
 

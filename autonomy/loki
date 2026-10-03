@@ -22712,6 +22712,7 @@ cmd_review() {
     local review_ultra=false
     local review_assume_yes=false
     local review_timeout=""
+    local review_risk=false
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -22739,6 +22740,10 @@ cmd_review() {
                 echo "                       skip the prompt. Optional [file-or-dir] is"
                 echo "                       passed as the ultrareview target (branch / PR"
                 echo "                       number / base branch)."
+                echo "  --risk               Deterministic 0-100 diff risk score with per-factor"
+                echo "                       breakdown (files, sensitive paths, size, test delta,"
+                echo "                       deleted tests). Works with --pr/--staged/--since;"
+                echo "                       'loki review <pr-number> --risk' also works. Use --json"
                 echo "  --yes, -y            Skip the --ultra confirmation prompt"
                 echo "  --timeout <minutes>  --ultra: max minutes to wait (default 30)"
                 echo "  --help, -h           Show this help"
@@ -22762,6 +22767,8 @@ cmd_review() {
                 return 0
                 ;;
             --ultra) review_ultra=true; shift ;;
+            --risk) review_risk=true; shift ;;
+            --json) review_format="json"; shift ;;
             --yes|-y) review_assume_yes=true; shift ;;
             --timeout)
                 shift
@@ -22814,6 +22821,29 @@ cmd_review() {
     # augments the local static analysis.
     if [ "$review_ultra" = true ]; then
         _review_ultra "$review_format" "$review_assume_yes" "$review_timeout" "$review_target"
+        return $?
+    fi
+
+    if [ "$review_risk" = true ]; then
+        if [ -z "$review_pr" ] && [ -z "$review_since" ] && [[ "$review_target" =~ ^[0-9]+$ ]] && [ ! -e "$review_target" ]; then
+            review_pr="$review_target"
+        fi
+        local risk_diff risk_src="uncommitted changes"
+        if [ -n "$review_pr" ]; then
+            command -v gh &>/dev/null || { echo "Error: gh CLI required for PR risk" >&2; return 1; }
+            risk_diff=$(gh pr diff "$review_pr" 2>&1) || { echo "Error: Could not fetch PR #${review_pr}: $risk_diff" >&2; return 1; }
+            risk_src="PR #${review_pr}"
+        elif [ -n "$review_since" ]; then
+            risk_diff=$(git diff "$review_since" 2>&1) || { echo "Error: Invalid commit reference: $review_since" >&2; return 1; }
+            risk_src="changes since $review_since"
+        elif [ "$review_staged" = true ]; then
+            risk_diff=$(git diff --cached 2>/dev/null); risk_src="staged changes"
+        else
+            risk_diff=$(git diff 2>/dev/null)
+        fi
+        local risk_args=()
+        [ "$review_format" = "json" ] && risk_args+=(--json)
+        printf '%s\n' "$risk_diff" | python3 "$_LOKI_SCRIPT_DIR/lib/review_risk.py" ${risk_args[@]+"${risk_args[@]}"} "$risk_src"
         return $?
     fi
 
