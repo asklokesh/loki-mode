@@ -101,18 +101,18 @@ export function LiveRun({ source, run }: { source: string; run: string }) {
 }
 
 export interface OverviewStats {
-  today: number; week: number; verified: number; partial: number; failed: number; other: number; running: number;
+  today: number; week: number; verified: number; unchecked: number; partial: number; failed: number; other: number; running: number;
   costUsd: number; unmeasuredRuns: number; prsOpened: number; last: RunRow[];
 }
 
 export function summarize(runs: RunRow[], now: number): OverviewStats {
   const day = new Date(now); day.setUTCHours(0, 0, 0, 0);
   const t0 = day.getTime();
-  const s: OverviewStats = { today: 0, week: 0, verified: 0, partial: 0, failed: 0, other: 0, running: 0, costUsd: 0, unmeasuredRuns: 0, prsOpened: 0, last: [] };
+  const s: OverviewStats = { today: 0, week: 0, verified: 0, unchecked: 0, partial: 0, failed: 0, other: 0, running: 0, costUsd: 0, unmeasuredRuns: 0, prsOpened: 0, last: [] };
   for (const r of runs) {
     const t = r.started_at ? Date.parse(r.started_at) : NaN;
     if (!Number.isNaN(t)) { if (t >= t0) s.today++; if (t >= t0 - 6 * 86400000) s.week++; }
-    const ev = effectiveVerdict(r); if (ev?.startsWith("VERIFIED")) s.verified++; else if (ev === "PARTIAL") s.partial++; else if (ev === "FAILED") s.failed++; else if (ev) s.other++; else s.running++;
+    const ev = effectiveVerdict(r); if (ev === "VERIFIED") s.verified++; else if (ev?.endsWith("(signature not checked)")) s.unchecked++; else if (ev === "PARTIAL") s.partial++; else if (ev === "FAILED") s.failed++; else if (ev) s.other++; else s.running++;
     if (r.cost_usd !== null && r.cost_usd !== undefined) s.costUsd += r.cost_usd; else { s.unmeasuredRuns++; s.costUsd += r.partial_usd ?? 0; }
     if (r.pr_url) s.prsOpened++;
   }
@@ -134,6 +134,7 @@ export function Overview({ runs, now = Date.now() }: { runs: RunRow[]; now?: num
         <Stat id="ov-today" label="Runs today" value={String(s.today)} />
         <Stat id="ov-week" label="Runs, last 7 days" value={String(s.week)} />
         <Stat id="ov-verified" label="VERIFIED" value={String(s.verified)} />
+        <Stat id="ov-unchecked" label="Signature not checked" value={String(s.unchecked)} />
         <Stat id="ov-partial" label="PARTIAL" value={String(s.partial)} />
         <Stat id="ov-failed" label="FAILED" value={String(s.failed)} />
         <Stat id="ov-cost" label="Total cost" value={cost} />

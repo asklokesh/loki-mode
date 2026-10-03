@@ -1,7 +1,7 @@
 // EL-FC08b round 2 (D86, FC-08, L2): the signed-path blocks from the D12 review, each red-then-green.
 // B1 appended verdict, B2 unknown/mismatched kid, B3 no keys, S5 redaction, plus signed parity against the engine's verifyReceipt.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { createHash, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, sign, type KeyObject } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +12,9 @@ import { effectiveVerdict, kidOf, REDACTED_NOTE, UNCHECKED_SIG, verifyRunIntegri
 
 const tmp = mkdtempSync(join(tmpdir(), "cp-integrity-signed-"));
 const SRC = "abcdef0123456789";
-const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+// Seeded keys: random keys occasionally contain a base64url run that the secret redactor rewrites, which made these tests flaky.
+const seeded = (tag: string) => { const privateKey = createPrivateKey({ key: Buffer.concat([Buffer.from("302e020100300506032b657004220420", "hex"), createHash("sha256").update(tag).digest()]), format: "der", type: "pkcs8" }); return { privateKey, publicKey: createPublicKey(privateKey) }; };
+const { publicKey, privateKey } = seeded("cp-main");
 const KID_ACTIVE = engineKidOf(publicKey);
 const KID = KID_ACTIVE;
 const pemPath = join(tmp, "pub.pem");
@@ -86,7 +88,7 @@ test("signed parity (B1): a verdict appended after log.sealed; the engine authen
 });
 
 test("signed parity (B2): a forged signature is TAMPERED in both", async () => {
-  const other = generateKeyPairSync("ed25519");
+  const other = seeded("cp-other");
   const b = honest("e10-sp4", "VERIFIED", { signer: other.privateKey });
   expect((await engineVerdict(b, b.events)).verdict).toBe("TAMPERED");
   expect(verifyRunIntegrity(b.events, { pubkeyFor: keys }).tampered).toBe(true);
@@ -118,7 +120,7 @@ test("B1: a receipt.sealed carrying a verdict after log.sealed is TAMPERED", () 
 
 // --- B2 unknown kid ---
 test("B2: an unknown kid with keys configured is TAMPERED; the same log under the right key is VERIFIED", async () => {
-  const stranger = generateKeyPairSync("ed25519");
+  const stranger = seeded("cp-stranger");
   const b = honest("e10-b2", "VERIFIED");
   // a forger holds their own key: a fully self-consistent signed log whose kid the CP has no key for
   const evs = honest("e10-b2", "VERIFIED", { signer: stranger.privateKey, kid: kidOf(createPublicKey(stranger.privateKey)) }).events;
@@ -184,4 +186,71 @@ test("a non-canonical verdict case cannot dodge the checks", () => {
   expect(effectiveVerdict({ verdict: " Verified ", tampered: false, attested: true, sig_checked: false })).toBe(UNCHECKED_SIG);
   const evs = [env("e10-case", 0, "run.started", {}), env("e10-case", 1, "run.completed", { verdict: "verified" })] as any[];
   expect(verifyRunIntegrity(evs).tampered).toBe(true); // claims VERIFIED with no receipt.sealed
+});
+
+// --- round 3: ALREADY_SATISFIED, markers, boot recompute ---
+test("ALREADY_SATISFIED needs a seal exactly like VERIFIED: a bare two-line log is TAMPERED, an unsigned seal is UNVERIFIED", async () => {
+  const run = "e10-as";
+  const bare = [env(run, 0, "run.started", {}), env(run, 1, "run.completed", { verdict: "ALREADY_SATISFIED", not_proven: [] })];
+  const r = verifyRunIntegrity(bare as any[]);
+  expect([r.tampered, r.attested]).toEqual([true, false]);
+  expect((await viaApi(bare, false)).detail.effective_verdict).toBe("TAMPERED");
+  const unsigned = [env(run, 0, "run.started", {}), env(run, 1, "receipt.sealed", { path: "/x", receipt_sha256: "a".repeat(64), signed: false, verdict: "ALREADY_SATISFIED" }, "seal"), env(run, 2, "run.completed", { verdict: "ALREADY_SATISFIED" })];
+  expect((await viaApi(unsigned, false)).detail.effective_verdict).toBe("UNVERIFIED");
+  const genuine = await viaApi(honest("e10-as2", "ALREADY_SATISFIED").events, true);
+  expect([genuine.detail.tampered, genuine.detail.effective_verdict, await genuine.filt("ALREADY_SATISFIED")]).toEqual([false, "ALREADY_SATISFIED", 1]);
+  const nokey = await viaApi(honest("e10-as-nokey", "ALREADY_SATISFIED").events, false);
+  expect(nokey.detail.effective_verdict).toBe("ALREADY_SATISFIED (signature not checked)");
+});
+
+test("an unattested non-success verdict carries a marker: a redacted FAILED or PARTIAL log never reads as plain FAILED or PARTIAL", async () => {
+  for (const v of ["FAILED", "PARTIAL"]) {
+    const b = honest(`e10-m-${v}`, v, { startData: { task_source: "text", note: "key sk-abcdefghijklmnopqrstuvwxyz0123456789" } });
+    const { detail, filt } = await viaApi(b.events, true);
+    expect([v, detail.tampered, detail.effective_verdict]).toEqual([v, false, `${v} (unattested)`]);
+    expect(await filt(v)).toBe(0);
+    expect(await filt("UNVERIFIED")).toBe(1);
+  }
+  expect(effectiveVerdict({ verdict: "PARTIAL", tampered: false, attested: false })).toBe("PARTIAL (unattested)");
+  expect(effectiveVerdict({ verdict: null, tampered: false, attested: false })).toBeNull();
+});
+
+test("boot recompute: a changed key set re-judges stored rows; a row with missing events is marked once and not retried; large sets are chunked", async () => {
+  const dbPath = join(tmp, "boot.db");
+  delete process.env["LOKI_CP_RECEIPT_PUBKEYS"];
+  const a = createApp({ dbPath });
+  const b = honest("e10-boot", "VERIFIED");
+  await a.app.request("/v1/ingest", { method: "POST", body: JSON.stringify({ source: SRC, run_id: "e10-boot", events: b.events }) });
+  const read = async (app: any) => ((await (await app.request("/v1/runs")).json()) as any).runs.find((r: any) => r.run_id === "e10-boot");
+  expect((await read(a.app)).effective_verdict).toBe(UNCHECKED_SIG);
+  process.env["LOKI_CP_RECEIPT_PUBKEYS"] = pemPath; // operator configures the key; stored rows must be re-judged
+  const a2 = createApp({ dbPath });
+  expect([(await read(a2.app)).sig_checked, (await read(a2.app)).effective_verdict]).toEqual([true, "VERIFIED"]);
+  const { openDb } = await import("../../src/db/migrate.ts");
+  const { recomputeLegacy } = await import("../../src/server/runs.ts");
+  const { db, sqlite } = openDb(dbPath);
+  expect(recomputeLegacy(db)).toBe(0); // same key set: nothing to do
+  sqlite.exec("begin");
+  const ins = sqlite.prepare("insert into runs (source_id, run_id, verdict, partial_usd, measured_sessions, total_sessions, input_tokens, output_tokens, last_seq, tampered) values (?, ?, 'VERIFIED', 0, 0, 0, 0, 0, 0, 0)");
+  for (let i = 0; i < 450; i++) ins.run(SRC, `orphan-${i}`);
+  sqlite.exec("end");
+  expect(recomputeLegacy(db)).toBe(450);
+  expect(recomputeLegacy(db)).toBe(0); // marked, not retried
+  const row = sqlite.query("select attested, integrity_reasons from runs where run_id = 'orphan-7'").get() as any;
+  expect(row.attested).toBe(0);
+  expect(row.integrity_reasons).toContain("events are missing");
+  delete process.env["LOKI_CP_RECEIPT_PUBKEYS"];
+  expect(recomputeLegacy(db)).toBe(451); // key set changed back: every row is re-judged under the new fingerprint
+  sqlite.close();
+});
+
+test("a seal field rewritten by redaction (a base64url signature matching a key pattern) is UNVERIFIED, never TAMPERED and never VERIFIED", async () => {
+  const b = honest("e10-redsig", "VERIFIED");
+  b.events[3].data.sig = "[REDACTED:GOOGLE_KEY]";
+  const { detail } = await viaApi(b.events, true);
+  expect([detail.tampered, detail.effective_verdict]).toEqual([false, "UNVERIFIED"]);
+  const t = honest("e10-redtamper", "VERIFIED");
+  t.events[3].data.sig = "[REDACTED:GOOGLE_KEY]";
+  t.events[3].data.tampered = true;
+  expect((await viaApi(t.events, true)).detail.effective_verdict).toBe("TAMPERED");
 });

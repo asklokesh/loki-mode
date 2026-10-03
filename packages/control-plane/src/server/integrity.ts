@@ -16,7 +16,7 @@ export interface RunIntegrity {
   sig_checked: boolean;
   reasons: string[];
 }
-export type KeyResolver = ((kid: string) => KeyObject | undefined) & { configured?: boolean };
+export type KeyResolver = ((kid: string) => KeyObject | undefined) & { configured?: boolean; fingerprint?: string };
 export interface IntegrityOpts {
   pubkeyFor?: KeyResolver;
   /** At least one key is configured: an unknown kid is then TAMPERED, as in the engine's checkLogSeal. Defaults to pubkeyFor.configured. */
@@ -28,6 +28,10 @@ const SEAL_LINE = "log.sealed";
 const REDACTED = /\[REDACTED(?::[A-Z_]+)?\]/;
 export const REDACTED_NOTE = "log redacted before ingest; seal not checkable";
 export const UNCHECKED_SIG = "VERIFIED (signature not checked)";
+export const UNATTESTED_SUFFIX = " (unattested)";
+/** Outcomes that claim success: each needs a signed seal, exactly like VERIFIED. */
+export const SUCCESS_VERDICTS: ReadonlySet<string> = new Set(["VERIFIED", "ALREADY_SATISFIED"]);
+const normVerdict = (v: string | null | undefined): string | null => (typeof v === "string" ? v.trim().toUpperCase() : null);
 
 /** Same derivation as loki-ts/src/engine10/stages/seal.ts kidOf (parity-tested). */
 export const kidOf = (pub: KeyObject): string => createHash("sha256").update(`{"crv":"Ed25519","kty":"OKP","x":"${pub.export({ format: "jwk" }).x}"}`).digest("base64url");
@@ -39,6 +43,7 @@ export function pubkeysFromEnv(env: Record<string, string | undefined> = process
   });
   const fn: KeyResolver = (kid) => keys.find((k) => kidOf(k) === kid);
   fn.configured = keys.length > 0;
+  fn.fingerprint = createHash("sha256").update(keys.map(kidOf).sort().join(",")).digest("hex").slice(0, 16); // identifies the key set a row was judged under
   return fn;
 }
 
@@ -72,11 +77,11 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
 
   // Hash problems are tamper evidence unless a redaction placeholder explains the changed bytes.
   const hashBad: string[] = [];
-  const redacted = REDACTED.test(JSON.stringify(doneAt >= 0 ? evs.slice(0, doneAt + 1).map((e) => e.data) : evs.map((e) => e.data)));
+  const redacted = REDACTED.test(JSON.stringify(doneAt >= 0 ? evs.slice(0, doneAt + 2).map((e) => e.data) : evs.map((e) => e.data)));
 
   for (const i of sealedAt) {
     const d = evs[i]!.data;
-    if (typeof d["receipt_sha256"] !== "string" || !SHA.test(d["receipt_sha256"])) bad.push(`receipt.sealed at seq ${evs[i]!.seq} has no valid receipt_sha256`);
+    if (typeof d["receipt_sha256"] !== "string" || !SHA.test(d["receipt_sha256"])) hashBad.push(`receipt.sealed at seq ${evs[i]!.seq} has no valid receipt_sha256`);
     const bound = d["events_sha256"]; // optional on the event: the engine keeps it in receipt.json, which the CP never sees
     if (typeof bound === "string") {
       const h = createHash("sha256");
@@ -96,9 +101,10 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
     const sha = createHash("sha256").update(lines.slice(0, doneAt + 1).join("\n") + "\n").digest("hex");
     const sig = typeof ls["sig"] === "string" ? Buffer.from(ls["sig"], "base64url") : null;
     const kid = ls["kid"];
-    if (typeof kid !== "string" || ls["tampered"] !== false || !sig || sig.length !== 64) bad.push(`${SEAL_LINE} line is malformed or records a tamper`);
+    if (ls["tampered"] !== false) bad.push(`${SEAL_LINE} line records a tamper or is malformed`);
+    else if (typeof kid !== "string" || !sig || sig.length !== 64) hashBad.push(`${SEAL_LINE} line is malformed or records a tamper`);
     else {
-      if (signedSeals.some((d) => typeof d["kid"] === "string" && d["kid"] !== kid)) bad.push(`${SEAL_LINE} kid differs from the receipt kid`);
+      if (signedSeals.some((d) => typeof d["kid"] === "string" && d["kid"] !== kid)) hashBad.push(`${SEAL_LINE} kid differs from the receipt kid`);
       if (ls["events_sha256"] !== sha) hashBad.push(`${SEAL_LINE} events_sha256 does not match the ingested log`);
       else {
         const pub = opts.pubkeyFor?.(kid);
@@ -115,11 +121,12 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
 
   // A VERIFIED claim (first run.completed only) needs a receipt sealed before it, for the same verdict.
   let claimsVerified = false;
-  if (doneAt >= 0 && verdictOf(evs[doneAt]) === "VERIFIED") {
+  const claimed = doneAt >= 0 ? verdictOf(evs[doneAt]) : null;
+  if (claimed !== null && SUCCESS_VERDICTS.has(claimed)) {
     claimsVerified = true;
     const before = sealedAt.filter((i) => i < doneAt);
-    if (before.length === 0) bad.push("run.completed claims VERIFIED but no receipt.sealed precedes it");
-    else if (!before.some((i) => verdictOf(evs[i]) === "VERIFIED")) bad.push("run.completed claims VERIFIED but the sealed receipt does not");
+    if (before.length === 0) bad.push(`run.completed claims ${claimed} but no receipt.sealed precedes it`);
+    else if (!before.some((i) => verdictOf(evs[i]) === claimed)) bad.push(`run.completed claims ${claimed} but the sealed receipt does not`);
   }
 
   const tampered = bad.length > 0;
@@ -127,13 +134,14 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
   return { tampered, attested, sig_checked: sigChecked && !tampered, reasons: [...bad, ...notes] };
 }
 
-/** The one display verdict (FC-08). TAMPERED when the log failed integrity; UNVERIFIED when a VERIFIED claim is not attested; "VERIFIED (signature not checked)" when
- *  it is attested but no key checked the seal signature; plain VERIFIED only for a signature-checked run. sig_checked undefined (older captures) reads as checked. */
+/** The one display verdict (FC-08). TAMPERED when the log failed integrity. When it is not attested, a success claim shows UNVERIFIED and any other verdict carries an
+ *  "(unattested)" marker. An attested success whose seal no key checked shows "<verdict> (signature not checked)"; plain VERIFIED only for a signature-checked run.
+ *  sig_checked undefined (older captures) reads as checked. */
 export function effectiveVerdict(r: { verdict: string | null; tampered: boolean; attested?: boolean; sig_checked?: boolean }): string | null {
   if (r.tampered) return "TAMPERED";
-  if (typeof r.verdict === "string" && r.verdict.trim().toUpperCase() === "VERIFIED") {
-    if (r.attested === false) return "UNVERIFIED";
-    return r.sig_checked === false ? UNCHECKED_SIG : "VERIFIED";
-  }
+  const v = normVerdict(r.verdict);
+  if (v === null) return r.verdict;
+  if (r.attested === false) return SUCCESS_VERDICTS.has(v) ? "UNVERIFIED" : `${r.verdict}${UNATTESTED_SUFFIX}`;
+  if (SUCCESS_VERDICTS.has(v)) return r.sig_checked === false ? `${v} (signature not checked)` : v;
   return r.verdict;
 }

@@ -51,6 +51,7 @@ export const runs = sqliteTable("runs", {
   unitId: text("unit_id"),
   attested: integer("attested"), // EL-FC08b: null = never evaluated (reads as unattested)
   sigChecked: integer("sig_checked"), // log seal signature verified against a configured key
+  integrityKeyFp: text("integrity_key_fp"), // key-set fingerprint the integrity result was computed under; a change triggers a boot recompute
   integrityReasons: text("integrity_reasons"), // JSON string[]
 }, (t) => [
   primaryKey({ columns: [t.sourceId, t.runId] }),

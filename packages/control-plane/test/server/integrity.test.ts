@@ -107,6 +107,6 @@ test("effectiveVerdict never returns VERIFIED for a tampered or unattested run",
   expect(effectiveVerdict({ verdict: "VERIFIED", tampered: false, attested: false })).toBe("UNVERIFIED");
   expect(effectiveVerdict({ verdict: "VERIFIED", tampered: false, attested: true })).toBe("VERIFIED");
   expect(effectiveVerdict({ verdict: "VERIFIED", tampered: false, attested: true, sig_checked: false })).toBe(UNCHECKED_SIG);
-  expect(effectiveVerdict({ verdict: "FAILED", tampered: false, attested: false })).toBe("FAILED");
+  expect(effectiveVerdict({ verdict: "FAILED", tampered: false, attested: false })).toBe("FAILED (unattested)");
   expect(effectiveVerdict({ verdict: null, tampered: false })).toBeNull();
 });

@@ -347,6 +347,13 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "integrity_key_fp": {
+          "name": "integrity_key_fp",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {

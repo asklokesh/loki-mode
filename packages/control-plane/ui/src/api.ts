@@ -2,9 +2,13 @@
 
 /** FC-08: the one display verdict. Mirrors src/server/integrity.ts effectiveVerdict (parity-tested). Plain VERIFIED only for an attested, signature-checked run. */
 export const UNCHECKED_SIG = "VERIFIED (signature not checked)";
+const SUCCESS = new Set(["VERIFIED", "ALREADY_SATISFIED"]);
 export const effectiveVerdict = (r: { verdict: string | null; tampered: boolean; attested?: boolean; sig_checked?: boolean }): string | null => {
   if (r.tampered) return "TAMPERED";
-  if (typeof r.verdict === "string" && r.verdict.trim().toUpperCase() === "VERIFIED") return r.attested === false ? "UNVERIFIED" : r.sig_checked === false ? UNCHECKED_SIG : "VERIFIED";
+  if (typeof r.verdict !== "string") return r.verdict;
+  const v = r.verdict.trim().toUpperCase();
+  if (r.attested === false) return SUCCESS.has(v) ? "UNVERIFIED" : `${r.verdict} (unattested)`;
+  if (SUCCESS.has(v)) return r.sig_checked === false ? `${v} (signature not checked)` : v;
   return r.verdict;
 };
 

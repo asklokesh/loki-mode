@@ -107,6 +107,7 @@ No fix slice starts until its row exists (OPERATING-MODEL.md, Engine Laws line).
 - Mechanism: one verdict-display function that returns TAMPERED whenever the run is tampered or its seal is invalid (CPE-27).
 - Fixture: an ingested run with tamper.detected never shows VERIFIED in any surface.
 - Sibling follow-up (EL-FC08b): redact at source in the engine before hashing. Today the shipper (redactEvent) and the server (redactSecrets) rewrite event data before the CP can hash it, so an honest signed run holding a token reads UNVERIFIED ("log redacted before ingest; seal not checkable"), never TAMPERED and never VERIFIED. Redacting before the engine hashes and signs would make such runs checkable end to end.
+- Sibling follow-up (deferred, not built in EL-FC08b): the shipper should send the sha256 of each line before redaction (alongside the redacted line). The CP could then check the seal over the original hashes and tell a genuine redaction from a downgrade (a FAILED log edited to PARTIAL plus a planted [REDACTED]); today such a log can only read "<verdict> (unattested)" or UNVERIFIED. This is the lasting fix for placeholder downgrades.
 - Sibling follow-up: the Slack summary, PR status and `loki status` do not yet read the CP effective_verdict.
 
 ## FC-09 A test-config edit outside scope can make broken code VERIFIED
