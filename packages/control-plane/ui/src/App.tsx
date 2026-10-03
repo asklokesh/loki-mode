@@ -98,11 +98,11 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
   const [since, setSince] = useState("");
   const { data, error } = useLoad(() => listRuns({ verdict, repo, since: since ? `${since}T00:00:00Z` : "" }), [verdict, repo, since], (d) => d.runs.some(isRunning));
   const filtered = Boolean(verdict || repo || since);
-  const inp = "rounded border border-slate-300 bg-white px-2 py-1 text-sm dark:border-slate-700 dark:bg-slate-900";
+  const inp = "rounded border border-slate-300 bg-white px-2 py-2 text-sm md:py-1 dark:border-slate-700 dark:bg-slate-900";
   return (
     <section>
       <h1 className="mb-4 text-xl font-semibold">Runs</h1>
-      <div className="mb-4 flex flex-wrap items-end gap-3 text-sm">
+      <div className="mb-4 grid grid-cols-1 gap-3 text-sm sm:flex sm:flex-wrap sm:items-end">
         <label className="flex flex-col gap-1">Verdict
           <select aria-label="Verdict" className={inp} value={verdict} onChange={(e) => setVerdict(e.target.value)}>
             <option value="">All</option>
@@ -123,17 +123,17 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
         <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-100 text-xs uppercase text-slate-500 dark:bg-slate-900">
-              <tr><th className="p-2">Verdict</th><th className="p-2">Run</th><th className="p-2">Repo</th><th className="p-2">Started</th><th className="p-2">Progress</th><th className="p-2">Cost</th><th className="p-2">PR</th></tr>
+              <tr><th className="p-2">Verdict</th><th className="p-2">Run</th><th className="hidden p-2 md:table-cell">Repo</th><th className="hidden p-2 md:table-cell">Started</th><th className="p-2">Progress</th><th className="p-2">Cost</th><th className="p-2">PR</th></tr>
             </thead>
             <tbody>
               {data.runs.map((r) => (
                 <tr key={`${r.source_id}/${r.run_id}`} data-testid="run-row" className="border-t border-slate-200 dark:border-slate-800">
                   <td className="p-2"><VerdictBadge verdict={r.verdict} />{r.tampered && <span className="ml-1 text-xs text-red-600">tampered</span>}</td>
                   <td className="p-2 font-mono text-xs">
-                    <a href={`#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} onClick={() => onOpen?.(r)} className="text-sky-600 hover:underline dark:text-sky-400">{r.run_id}</a>
+                    <a href={`#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} onClick={() => onOpen?.(r)} className="inline-block break-all py-2 text-sky-600 hover:underline md:py-0 dark:text-sky-400">{r.run_id}</a>
                   </td>
-                  <td className="p-2">{r.origin_repo ?? MISSING}</td>
-                  <td className="p-2">{fmtTime(r.started_at)}</td>
+                  <td className="hidden p-2 md:table-cell">{r.origin_repo ?? MISSING}</td>
+                  <td className="hidden p-2 md:table-cell">{fmtTime(r.started_at)}</td>
                   <td className="p-2 text-xs" data-testid="progress">{isRunning(r) ? <>{r.current_stage ?? "starting"}, <Elapsed run={r} />, {(r.files_touched ?? []).length} files</> : ""}</td>
                   <td className="p-2" data-testid="cost">{fmtCost(r)}</td>
                   <td className="p-2"><PrLink url={r.pr_url} /></td>
@@ -176,7 +176,7 @@ function AnswerBox({ source, run, question }: { source: string; run: string; que
     <Card title="Blocked: your answer is needed">
       <p data-testid="blocked-question" className="mb-2 text-sm">{question}</p>
       <textarea data-testid="answer-input" aria-label="Answer" maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} className="w-full rounded border border-slate-300 p-2 text-sm dark:border-slate-700 dark:bg-slate-900" rows={3} />
-      <button type="button" data-testid="answer-submit" disabled={text.trim() === ""} onClick={submit} className="mt-2 rounded bg-sky-600 px-3 py-1 text-sm text-white disabled:opacity-50">Submit answer</button>
+      <button type="button" data-testid="answer-submit" disabled={text.trim() === ""} onClick={submit} className="mt-2 min-h-11 rounded bg-sky-600 px-4 py-2 text-sm md:min-h-0 md:px-3 md:py-1 text-white disabled:opacity-50">Submit answer</button>
       {msg && <p role={msg.ok ? "status" : "alert"} className={`mt-2 break-all text-sm ${msg.ok ? "text-emerald-600" : "text-red-600"}`}>{msg.text}</p>}
     </Card>
   );
@@ -246,15 +246,15 @@ export function App() {
   }, [dark]);
   const r = route(hash);
   return (
-    <div className="flex min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <nav className="w-48 shrink-0 border-r border-slate-200 p-4 dark:border-slate-800">
-        <div className="mb-6 font-semibold">Loki Control</div>
-        <a href="#/runs" className="flex items-center gap-2 rounded bg-slate-100 px-2 py-1 text-sm dark:bg-slate-900"><Activity size={14} />Runs</a>
-        <button type="button" onClick={() => setDark(!dark)} aria-label="Toggle theme" className="mt-6 flex items-center gap-2 text-sm text-slate-500">
+    <div className="flex min-h-screen flex-col bg-white md:flex-row text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+      <nav data-testid="nav" className="flex w-full shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 p-3 md:block md:w-48 md:border-b-0 md:border-r md:p-4 dark:border-slate-800">
+        <div className="font-semibold md:mb-6">Loki Control</div>
+        <a href="#/runs" className="flex min-h-11 items-center gap-2 rounded bg-slate-100 px-3 text-sm md:min-h-0 md:px-2 md:py-1 dark:bg-slate-900"><Activity size={14} />Runs</a>
+        <button type="button" onClick={() => setDark(!dark)} aria-label="Toggle theme" className="ml-auto flex min-h-11 items-center gap-2 text-sm text-slate-500 md:ml-0 md:mt-6 md:min-h-0">
           {dark ? <Sun size={14} /> : <Moon size={14} />}{dark ? "Light theme" : "Dark theme"}
         </button>
       </nav>
-      <main className="flex-1 overflow-x-auto p-6">{r ? <RunDetail source={r.source} run={r.run} /> : <RunsList />}</main>
+      <main className="min-w-0 flex-1 overflow-x-auto p-3 md:p-6">{r ? <RunDetail source={r.source} run={r.run} /> : <RunsList />}</main>
     </div>
   );
 }

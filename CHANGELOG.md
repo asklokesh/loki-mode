@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki review --risk` (or `loki review <pr-number> --risk`) prints a deterministic 0-100 diff risk score with a per-factor breakdown (files touched, sensitive paths, size, test delta, deleted tests); `--json` for machine output. Same diff always gives the same score.
 ### Added
 - Project memory across runs: learnings and architecture decisions a run records in CONTINUITY.md are now also saved per project (.loki/memory/learnings/project-*.jsonl), and the next run in that project gets a bounded newest-first summary (15 entries, 2000 chars, LOKI_PROJECT_MEMORY_MAX_CHARS) under project_memory in .loki/state/relevant-learnings.json. Disable with LOKI_PROJECT_MEMORY=0.
+### Added
+- Control Plane UI is now usable at 375px: the sidebar becomes a top bar, filters and panels stack, the runs table drops its Repo and Started columns below the md breakpoint so the page never scrolls sideways, and buttons, links and inputs have 44px tap targets. Layout only; auth is untouched.
 
 ### Fixed
 - tests/test-cloud-dispatch.sh: the G-04 duplicated-row hook no longer appends with `grep ROW >> SAME_FILE`, which GNU grep refuses ("input file is also the output", rc 2, nothing appended), so the writer saw an unduplicated row on Linux and the R2-3 duplicate-refusal check failed; the hook now copies through a side file. The writer in scripts/cloud-dispatch.sh was already fail-closed (T101-G04-DUPROW).

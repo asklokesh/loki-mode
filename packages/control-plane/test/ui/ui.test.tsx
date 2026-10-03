@@ -101,3 +101,17 @@ test("live run: list shows stage, elapsed and files; detail polls until complete
   await waitFor(() => expect(screen.getAllByTestId("verdict")[0]!.textContent).toBe("VERIFIED"), { timeout: 6000 });
   expect(n).toBeGreaterThanOrEqual(2);
 }, 12000);
+
+test("mobile layout: shell stacks, wide columns collapse, no fixed-width nav below md", async () => {
+  serve({ "/v1/runs": load("runs.json") });
+  const { App } = await import("../../ui/src/App");
+  const { container } = render(<App />);
+  await screen.findAllByTestId("run-row");
+  const nav = within(container as HTMLElement).getByTestId("nav");
+  expect(nav.className).toContain("w-full");
+  expect(nav.className).toContain("md:w-48");
+  expect((container.firstElementChild as HTMLElement).className).toContain("flex-col");
+  const heads = Array.from(container.querySelectorAll("th")).filter((h) => h.textContent === "Repo" || h.textContent === "Started");
+  expect(heads.length).toBe(2);
+  for (const h of heads) expect(h.className).toContain("hidden");
+});
