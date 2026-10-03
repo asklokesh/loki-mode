@@ -1232,6 +1232,7 @@ run_test "Council Force Stop Wave7" "$SCRIPT_DIR/test-council-force-stop-wave7.s
 run_test "Council Healing Audit Fixes" "$SCRIPT_DIR/test-council-healing-audit-fixes.sh"
 run_test "Council Member Timeout Wave10" "$SCRIPT_DIR/test-council-member-timeout-wave10.sh"
 run_test "Council Scope Honesty" "$SCRIPT_DIR/test-council-scope-honesty.sh"
+run_test "Council TODO marker scope (PO3-COUNCIL-TODO)" "$SCRIPT_DIR/test-council-todo-scope.sh"
 run_test "Council Transcripts Api" "$SCRIPT_DIR/test-council-transcripts-api.sh"
 run_test "Council V2 Quorum" "$SCRIPT_DIR/test-council-v2-quorum.sh"
 run_test "council-v2 readers run -I -S and challenge an unmeasured score (S-201)" "$SCRIPT_DIR/test-council-v2-no-user-site-pth.sh"
