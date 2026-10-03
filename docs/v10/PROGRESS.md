@@ -2152,3 +2152,13 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - D83 recorded (e6d6c362f, addendum 29c367a91): enterprise Control Plane UI on the legacy design, lean conversation layout, full CLI parity; opus architect writing docs/v10/CP-ENTERPRISE-UI.md for 10.8.0.
 - D82-FIXREDS (9 loki-ts reds after the speed flip) still running; if a red is a real speed regression, the flip is reverted for 10.7.0.
 - Drift audit (turn 2280): reviews were D12 opus for HIGH; no product code by CoS; BOARD not yet written this window (due at the freeze, separate call); opus share 9.3%.
+
+## 2026-10-03 16:14Z (CoS): 10.7.0 re-cut, CPE integration
+- 10.7.0 missed the 15:55Z cut. Re-cut per D68/D82 "drop failing slices":
+  - Kept the speed flip with the D82-FIXREDS fix (ee6b62383 as 0110fe76f).
+  - Moved LiveLine to e10ext (94bec912f) so the D29 core budget holds.
+  - Reverted D82-WALL0 (280566464): it fails the engine e2e done run with the stub; moves to 10.7.1.
+  - loki-ts `bun test` 3317 pass / 0 fail; test-release-dist-guard 13/0.
+- train/102 (cf5be9026): first push blocked by pre-push gitleaks on a fake Sentry fixture token, allowlisted by fingerprint (cf5be9026). Tier A red on shard-durations drift (5 new suites); rows added (9bbfcf920), drift 6/0, structural 11/0. train/103 queued behind train/102 Tests.
+- cpe-base: CPE-16 fix (opus r2 APPROVE), CPE-17 plans plus honesty follow-up, CPE-23 Playwright a11y and parity (33/33), plans wiring; suite 214/0, tsc 0. CPE-14 fixes (b568de7c9) in opus r2 review. CPE-27 (receipts tone test, real-envelope test, AA contrast fixes) building.
+- Drift audit (turn 2322): HIGH reviews opus D12; CoS edits limited to integration wiring, a test-budget refactor move, a revert and CI registration rows; BOARD and commit in separate calls; no main-checkout edits while train-cycle ran.
