@@ -12,7 +12,7 @@ import {
   findEvidence,
   renderAlreadyDoneComment,
 } from "../../src/engine10/already_done.ts";
-import { runIntake, intakeStage } from "../../src/engine10/stages/intake.ts";
+import { runIntake, stage as intakeStage } from "../../src/engine10/stages/intake.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { hitsUnchangedFromBase } from "../../src/features/speed/already_done_async.ts";
 import { buildRepoMap, listRepoFiles } from "../../src/engine10/repomap.ts";

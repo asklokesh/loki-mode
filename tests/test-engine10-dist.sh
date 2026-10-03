@@ -37,7 +37,8 @@ else
 fi
 
 # 3. Every stage module is inside the bundle (the non-literal loader bundled none).
-for id in intakeStage planStage wallStage implementStage verifyStage fixStage sealStage prStage deepStage; do
+# intake and pr export a plain `stage`, so their run functions mark them.
+for id in runIntake planStage wallStage implementStage verifyStage fixStage sealStage runPr deepStage; do
     grep -q "$id" "$B" && ok "bundle contains $id" || bad "bundle contains $id"
 done
 
