@@ -6,9 +6,9 @@ import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts"
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
-import { harnessBlock } from "../../util/harness_scope_guard.ts";
+import { resumeAfterConflict } from "../../util/conflict_resume.ts";
 import { readSessionId } from "../../runner/session_resume.ts";
-import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
+import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
@@ -68,7 +68,7 @@ export const implementStage: Stage = {
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
     const repoMap = briefCtx(ctx); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
-    const session = await ctx.sessions.run({
+    const first: SessionRunOptions = {
       stage: "implement",
       brief: buildImplementBrief(task, plan, impacted, repoMap),
       tier: "development",
@@ -77,10 +77,13 @@ export const implementStage: Stage = {
       signal,
       cwd: ctx.repoDir,
       ...(downgrade ? { model: downgrade.to } : {}),
-    });
+    };
+    let session = await ctx.sessions.run(first);
+    const ids = [first.iterationId];
+    if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, first); session = r.session; ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
 
     const testsReverted = restoreReadOnly(readOnly);
-    const iterationId = `${ctx.runId}-impl`;
+    const iterationId = ids[ids.length - 1]!;
     // E-68 classifies exit codes; a non-killed, marker-less non-zero exit is an error, never "done".
     let exit: ImplementExit | "error";
     if (session.killed) {
@@ -95,17 +98,15 @@ export const implementStage: Stage = {
       exit = "done";
     }
 
-    const hb = exit === "spec_conflict" ? harnessBlock(session.markers.specConflict) : null; if (hb) exit = "error"; // FC-19: the model blocked on Loki's own limits, not on the spec
     const data: Record<string, unknown> = {
       exit,
       already_done_evidence: session.markers.alreadyDone,
-      spec_conflict_reason: hb ? null : session.markers.specConflict,
-      ...(hb ? hb.data : {}),
+      spec_conflict_reason: session.markers.specConflict,
       tests_reverted: testsReverted,
       impacted_tests: impacted,
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),
-      iteration_ids: [iterationId], model: downgrade?.to ?? ctx.model, session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
+      iteration_ids: ids, model: downgrade?.to ?? ctx.model, session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS,
     };
 
@@ -114,7 +115,7 @@ export const implementStage: Stage = {
     const stderrTail = (session as unknown as { stderrTail?: string }).stderrTail ?? ""; mkdirSync(ctx.runDir, { recursive: true }); const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`); writeFileSync(stderrPath, stderrTail, "utf8");
     data.stderr_path = stderrPath;
 
-    return { status: "failed", reason: hb ? hb.reason : classifyExitCause(session.exit, false), data };
+    return { status: "failed", reason: classifyExitCause(session.exit, false), data };
   },
 };
 export const stage = implementStage;

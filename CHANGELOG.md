@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- Fix (D86, FC-19, L0, L1): the implement stage does the full job. The implement brief (FIXED_RULES) no longer limits the model to named files or impacted tests and allows the full suite; STAGE_PREFIX and LEAN_PREFIX are role-neutral so the plan and Wall briefs keep their roles; the implement limit comes from the run budget instead of a fixed 480s. A LOKI_SPEC_CONFLICT from implement now gets one resume with a correction (Loki imposes no limits) before it is believed; a persisting conflict is the normal BLOCKED with its question. Side effect: deep-mode implement now gets its 1800s session limit (session.ts used to kill it at 480s).
+
 ## v10.10.2 (2026-10-03)
 
 ### Added
