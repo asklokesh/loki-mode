@@ -2031,3 +2031,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Architect refill (1b9f50011): 11 slices built in workflow wf_8e664533-e5c, all red-then-green evidenced, now in D12 review (wtt8kgawz; opus on P2-FV-EXIT, S-215r, S-216r, S-218r).
 - Blocked and in rework: W1-S1 r1 (opus, 7 body-leak and hang blockers) r2 d88fe5281 in opus re-review; D62-VIS-F1 r2 (dev-server group not reaped on backstop, harness cost nulled) r3 building with supervisor.ts (net-zero core) and eval harness in scope.
 - Train/94 still held on P0-CORE-BUDGET TL r2. Next Architect refill (arch-refill-1010) in progress.
+
+## 2026-10-03T10:25Z CoS
+- Merged since 10:05Z: D62-VIS-F1 (r3, dist 0ab093f25), P2-FV-EXIT (r2), S-216r (r3, opus APPROVE; cwd-shadow 20/0, test-verify 25/0 on main; provider-file leg now measures only files created during the run, 6185c5249).
+- In rework: S-218r r3 e35f56e42 (GIT_CONFIG_COUNT overrides, GIT_NO_LAZY_FETCH) in opus re-review; W1-S1 r4 7ab0e37dd (ast-based python, fail-closed TS/JS) in opus re-review; D61-11 r3 building; 13 refill slices building in wf_9c739ca7-858.
+- Train/94 still held on the P0-CORE-BUDGET TL verdict (over budget, final demand sent 10:24Z); 115 commits unreleased since v10.6.11.
