@@ -100,7 +100,7 @@ describe("S41-10b static-first brief", () => {
     expect(b.endsWith(finish)).toBe(true);
     const none = buildImplementBrief("t", null, []);
     expect(none.endsWith(finish)).toBe(true);
-    expect(none).toContain("Impacted tests: none known; run the project's full test command.");
+    expect(none).toContain("Impacted tests: none known; run the project's full test command (a starting hint, not a limit).");
     expect(none).not.toContain("(none known)");
   });
   test("plan paths with drive letters, ~ and backslash traversal are dropped", () => {

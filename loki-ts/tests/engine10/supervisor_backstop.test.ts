@@ -113,6 +113,21 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
   }, 10_000);
 
+  test("FC-19: an implement stage that failed as a harness block never opens a draft PR, even with a diff", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    const code = `
+      ${intakeLine(baseSha)}
+      ${COMMIT_A_CHANGE}
+      console.log(JSON.stringify({ type: "stage.failed", stage: "implement", data: { harness_failure: true, reason: "harness failure: stage rules" } }));
+      process.exit(1);
+    `;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-fc19", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step });
+    expect(r.verdict).toBe("FAILED");
+    expect(pr.calls.length).toBe(0);
+    expect(r.prUrl).toBeNull();
+  }, 15_000);
+
   test("hung worker with no diff, on an issue run: posts an issue comment with the exact reason", async () => {
     const { dir } = repoWithCommit(); // no extra commit: base_sha stays HEAD, so there is no diff
     const code = `setInterval(() => {}, 1000);`;

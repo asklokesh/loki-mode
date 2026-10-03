@@ -6,6 +6,7 @@ import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts"
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
+import { harnessBlock } from "../../util/harness_scope_guard.ts";
 import { readSessionId } from "../../runner/session_resume.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
@@ -33,7 +34,7 @@ export function buildImplementBrief(task: string, plan: string | null, impactedT
     ...taskBlock(task),
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     ...(repoMap ? [repoMap] : []),
-    impactedTests.length ? `Impacted tests to run: ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the project's full test command.",
+    impactedTests.length ? `Impacted tests (a starting hint, not a limit): ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the project's full test command (a starting hint, not a limit).",
     FINISH_LINE,
   ].join("\n\n"));
 }
@@ -94,10 +95,12 @@ export const implementStage: Stage = {
       exit = "done";
     }
 
+    const hb = exit === "spec_conflict" ? harnessBlock(session.markers.specConflict) : null; if (hb) exit = "error"; // FC-19: the model blocked on Loki's own limits, not on the spec
     const data: Record<string, unknown> = {
       exit,
       already_done_evidence: session.markers.alreadyDone,
-      spec_conflict_reason: session.markers.specConflict,
+      spec_conflict_reason: hb ? null : session.markers.specConflict,
+      ...(hb ? hb.data : {}),
       tests_reverted: testsReverted,
       impacted_tests: impacted,
       cascade,
@@ -108,13 +111,10 @@ export const implementStage: Stage = {
 
     if (exit !== "error") return { status: "completed", data };
 
-    const stderrTail = (session as unknown as { stderrTail?: string }).stderrTail ?? "";
-    mkdirSync(ctx.runDir, { recursive: true });
-    const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`);
-    writeFileSync(stderrPath, stderrTail, "utf8");
+    const stderrTail = (session as unknown as { stderrTail?: string }).stderrTail ?? ""; mkdirSync(ctx.runDir, { recursive: true }); const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`); writeFileSync(stderrPath, stderrTail, "utf8");
     data.stderr_path = stderrPath;
 
-    return { status: "failed", reason: classifyExitCause(session.exit, false), data };
+    return { status: "failed", reason: hb ? hb.reason : classifyExitCause(session.exit, false), data };
   },
 };
 export const stage = implementStage;
