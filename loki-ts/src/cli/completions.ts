@@ -291,7 +291,7 @@ export function completeKind(kind: string, opts: { home?: string; cwd?: string }
       } catch { return []; }
     }
     case "branches": {
-      const r = spawnSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"], { cwd, encoding: "utf8", timeout: 150 });
+      const r = spawnSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"], { cwd, env: process.env, encoding: "utf8", timeout: 150 });
       return r.status === 0 ? lines(r.stdout) : [];
     }
     case "runs": {
@@ -326,7 +326,7 @@ function refreshIssuesInBackground(file: string, cwd: string): void {
   try {
     mkdirSync(join(file, ".."), { recursive: true });
     const script = `gh issue list --limit 50 --json number,title --jq '.[] | "#\\(.number)"' > ${JSON.stringify(file + ".tmp")} 2>/dev/null && mv ${JSON.stringify(file + ".tmp")} ${JSON.stringify(file)}`;
-    const child = spawn("sh", ["-c", script], { cwd, detached: true, stdio: "ignore" });
+    const child = spawn("sh", ["-c", script], { cwd, env: process.env, detached: true, stdio: "ignore" });
     child.unref();
   } catch { /* cache refresh is best effort */ }
 }
