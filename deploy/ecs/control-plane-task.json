@@ -1,0 +1,52 @@
+{
+  "family": "loki-control-plane",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/loki-control-plane-execution",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/loki-control-plane-task",
+  "containerDefinitions": [
+    {
+      "name": "control-plane",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/loki-control-plane:10.6.7",
+      "essential": true,
+      "user": "10001:10001",
+      "portMappings": [{ "containerPort": 47821, "protocol": "tcp" }],
+      "environment": [
+        { "name": "PORT", "value": "47821" },
+        { "name": "LOKI_CONTROL_HOST", "value": "0.0.0.0" },
+        { "name": "LOKI_CONTROL_DB", "value": "/data/control.db" }
+      ],
+      "secrets": [
+        { "name": "ANTHROPIC_API_KEY", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:loki/anthropic-api-key" },
+        { "name": "LOKI_CONTROL_TOKEN", "valueFrom": "arn:aws:secretsmanager:REGION:ACCOUNT_ID:secret:loki/control-token" }
+      ],
+      "mountPoints": [{ "sourceVolume": "control-data", "containerPath": "/data" }],
+      "healthCheck": {
+        "command": ["CMD", "bun", "-e", "fetch('http://127.0.0.1:47821/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/loki-control-plane",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "control-plane"
+        }
+      }
+    }
+  ],
+  "volumes": [
+    {
+      "name": "control-data",
+      "efsVolumeConfiguration": {
+        "fileSystemId": "fs-PLACEHOLDER",
+        "transitEncryption": "ENABLED"
+      }
+    }
+  ]
+}

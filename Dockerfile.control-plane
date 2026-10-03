@@ -1,0 +1,37 @@
+# Loki Control Plane container (server + built UI only).
+# Build: docker build -f Dockerfile.control-plane -t loki-control-plane .
+# Run:   docker run -p 47821:47821 -v loki-control:/data loki-control-plane
+# The server has no authentication of its own; publish it only behind a trusted network or proxy.
+
+ARG BUN_VERSION=1.4.2
+
+FROM oven/bun:${BUN_VERSION} AS build
+WORKDIR /src/packages/control-plane
+COPY packages/control-plane/package.json packages/control-plane/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY packages/control-plane/ ./
+RUN bun run build:all
+
+FROM oven/bun:${BUN_VERSION}-slim AS runtime
+LABEL org.opencontainers.image.title="loki-control-plane"
+LABEL org.opencontainers.image.source="https://github.com/asklokesh/loki-mode"
+LABEL url="https://www.autonomi.dev/"
+RUN groupadd --system --gid 10001 loki \
+    && useradd --system --uid 10001 --gid loki --home-dir /data --shell /usr/sbin/nologin loki \
+    && mkdir -p /app/dist /data \
+    && chown loki:loki /data
+WORKDIR /app
+# server.js resolves ../drizzle and ../ui/dist relative to dist/
+COPY --from=build /src/packages/control-plane/dist/server.js ./dist/server.js
+COPY --from=build /src/packages/control-plane/drizzle ./drizzle
+COPY --from=build /src/packages/control-plane/ui/dist ./ui/dist
+
+ENV PORT=47821 \
+    LOKI_CONTROL_HOST=0.0.0.0 \
+    LOKI_CONTROL_DB=/data/control.db
+VOLUME ["/data"]
+USER loki
+EXPOSE 47821
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||47821)+'/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+CMD ["bun", "/app/dist/server.js"]

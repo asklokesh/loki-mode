@@ -1,0 +1,62 @@
+# Loki Control Plane chart. Build the image from Dockerfile.control-plane.
+image:
+  repository: asklokesh/loki-control-plane
+  tag: ""            # empty = Chart appVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+replicas: 1          # SQLite on one volume: keep at 1
+
+service:
+  type: ClusterIP
+  port: 47821
+
+# The server has no auth of its own. Enable only behind an authenticating proxy.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: loki-control.example.com
+  tls: []
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  existingClaim: ""
+
+# Optional: reference an existing Secret (for example the autonomi chart's
+# secrets.existingSecret) to expose provider keys or LOKI_CONTROL_TOKEN as env.
+existingSecret: ""
+secretKeys: []       # e.g. [ANTHROPIC_API_KEY, LOKI_CONTROL_TOKEN]
+
+extraEnv: []
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+probes:
+  readiness:
+    path: /ready
+  liveness:
+    path: /health
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

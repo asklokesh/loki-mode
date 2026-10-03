@@ -288,6 +288,8 @@ Answering a BLOCKED run: when a run stops on a spec conflict, its run page shows
 
 Set `LOKI_CONTROL_DEFAULT=1` (off by default) to make `loki dashboard`, `loki dashboard start` and `loki dashboard open` start the Control Plane instead of the old dashboard. The old dashboard is unchanged when the flag is unset.
 
+Container, Helm and ECS deployment: [docs/control-plane-container.md](docs/control-plane-container.md).
+
 ## Providers
 
 Loki's autonomy and quality loop are the product; the coding CLI is swappable. With `LOKI_PROVIDER` unset, Loki auto-detects the first installed provider in this order (`providers/loader.sh`): claude, cline, codex, aider, opencode. An explicit choice always wins and is never silently substituted. Gemini CLI is deprecated: `LOKI_PROVIDER=gemini` exits with a migration message.
