@@ -715,3 +715,4 @@ D65 shim routing (slack, answer, jira, linear)	3
 loki verify --pubkey=FILE routes to v10 through bin/loki (P0-VERIFY-ARG)	10
 metrics-usage-append arg parsing, block format, repeat append (PO-TEST-1)	5
 clean-test-branches.sh refuses own repo, spares protected branches, deletes only debris	2
+audit.py verify exits 2 when it checked nothing (PO-AUDIT-CLI-1)	3

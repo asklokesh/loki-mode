@@ -304,6 +304,19 @@ if not result['valid']:
     print(f"First tampered line: {result['first_tampered_line']}")
 ```
 
+You can also verify a whole audit directory from the command line:
+
+```bash
+python3 dashboard/audit.py verify ~/.loki/dashboard/audit
+```
+
+It prints one JSON object and exits 0 for a verified chain, 1 for a tampered
+chain, and 2 on a usage error or when it checked nothing (a missing or empty
+directory, or only files with no integrity hashes; the JSON then carries
+`"status": "nothing_checked"`). Nothing checked is not a verified chain.
+`python3 dashboard/audit.py tip <dir>` is unchanged and still exits 0 on an
+empty chain.
+
 ### Disabling Chain Hashing
 
 ```bash

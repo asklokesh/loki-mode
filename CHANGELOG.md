@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki` with no arguments now opens the Control Plane (set `LOKI_CONTROL_DEFAULT=0` for the previous dashboard).
 
 ### Fixed
+- `python3 dashboard/audit.py verify <dir>` now exits 2 (status `nothing_checked`) when it checked no files, instead of exiting 0 like a verified chain; a valid chain still exits 0, a tampered one 1, and `tip` is unchanged (PO-AUDIT-CLI-1).
 - The Control Plane container image now builds from the repo Dockerfile.control-plane (it copies the loki-ts files ingest.ts imports; `docker build` no longer fails with Could not resolve).
 - The supervisor commit backstop validates the worker-written base as a full object id (40-64 hex) before any git call, and is skipped (recorded as not proven) when the event log fails verification.
 

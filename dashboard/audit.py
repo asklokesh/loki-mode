@@ -862,7 +862,10 @@ def _unified_cli() -> int:
         python3 dashboard/audit.py verify <audit_dir>
 
     Prints a single JSON object to stdout. Returns process exit code 0
-    on a valid chain, 1 on an invalid chain, 2 on usage error.
+    on a valid chain, 1 on an invalid chain, 2 on usage error. `verify`
+    also exits 2 when it checked zero files (missing dir, empty dir, or
+    only pre-integrity files): nothing checked is not a verified chain.
+    `tip` keeps exiting 0 on an empty chain (src/audit/crosslink.js reads it).
     """
     argv = sys.argv[1:]
     if len(argv) < 2 or argv[0] not in ("tip", "verify", "prefix"):
@@ -889,7 +892,10 @@ def _unified_cli() -> int:
         return 0 if out.get("found", False) else 1
     out = verify_all_logs_in_dir(audit_dir)
     print(json.dumps(out))
-    return 0 if out.get("valid", False) else 1
+    if not out.get("valid", False):
+        return 1
+    # `valid` stays True for an empty chain; checking nothing is not a pass.
+    return 0 if out.get("files_checked", 0) > 0 else 2
 
 
 if __name__ == "__main__":
