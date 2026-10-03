@@ -14,7 +14,7 @@ Point the Slack Events API request URL at this server through a tunnel or revers
 
 ## What it does
 
-- `@loki <issue ref or task text>` in a channel starts a Loki 10 run (the same entry as `loki "<task>"`) and replies in the thread with the run id.
+- `@loki <issue ref or task text>` in a channel starts a Loki 10 run (it launches `bin/loki "<task>"`; the text must be at least two words and must not start with `-`, otherwise the bot replies asking you to describe the task, so a lone word like `reset` can never reach a legacy subcommand) and replies in the thread with the run id.
 - When the run ends BLOCKED, the question is posted in the same thread. A reply in that thread starts a follow-up run with your answer added to the original task (v10 has no in-place resume, BLOCKED is terminal).
 - Runs are launched through the repo `bin/loki` with the two Slack secrets removed from the child environment and `LOKI_NO_BROWSER=1` set. A failed Slack post logs one redacted line to stderr.
 - Every request is verified with the Slack signature (HMAC sha256 over `v0:timestamp:body`, constant-time compare, timestamps older than 5 minutes are rejected). Retried events are deduplicated.

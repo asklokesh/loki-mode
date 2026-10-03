@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { childEnv, handleSlackEvent, makeSlackFetch, runSlackCli, slackPoster, spawnRunDeps, newInboundState, parseMention, signSlackBody, slackInboundEnabled, threadKey, verifySlackSignature, type InboundDeps } from "../../src/features/slack_inbound.ts";
+import { existsSync } from "node:fs";
+import { childEnv, findRepoRoot, REPO_ROOT, TASK_HINT, handleSlackEvent, makeSlackFetch, runSlackCli, slackPoster, spawnRunDeps, newInboundState, parseMention, signSlackBody, slackInboundEnabled, threadKey, verifySlackSignature, type InboundDeps } from "../../src/features/slack_inbound.ts";
 
 const SECRET = "test-signing-secret", NOW = 1_700_000_000, BODY = '{"type":"event_callback"}';
 
@@ -151,5 +152,54 @@ describe("launcher and poster", () => {
     await post2("C1", "1.1", "hi");
     expect(lines.length).toBe(2);
     expect(lines[1]).not.toContain("xoxb-fake-token");
+  });
+});
+
+describe("round 2 (D63-C6)", () => {
+  test("default repo root and cliPath exist (src layout)", () => {
+    expect(existsSync(`${REPO_ROOT}/bin/loki`)).toBe(true);
+  });
+  test("findRepoRoot resolves from a bundled dist directory", () => {
+    expect(findRepoRoot(`${REPO_ROOT}/loki-ts/dist`)).toBe(REPO_ROOT);
+  });
+  test.each(["reset", "share", "-x", "--help", "status"])("single-token or flag mention %p is rejected with a hint and never starts a run", async (t) => {
+    const st = newInboundState(), f = fake(0);
+    expect((await handleSlackEvent(st, f.deps, mention(`R-${t}`, `<@UB> ${t}`, "300.1"))).body).toBe("rejected");
+    expect(f.tasks).toEqual([]);
+    expect(f.posts).toEqual([TASK_HINT]);
+  });
+  test("normal multi-word task still starts", async () => {
+    const st = newInboundState(), f = fake(0);
+    expect((await handleSlackEvent(st, f.deps, mention("R-ok", "<@UB> fix the login bug", "300.2"))).body).toBe("started");
+    await tick();
+    expect(f.tasks).toEqual(["fix the login bug"]);
+  });
+  test("port 0 is accepted and the bound port is printed", async () => {
+    let out = "";
+    const orig = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: string) => { out += c; return true; }) as typeof process.stdout.write;
+    try {
+      const code = await runSlackCli(["serve", "--port", "0"], { SLACK_BOT_TOKEN: "xoxb-fake", SLACK_SIGNING_SECRET: "s" }, { wait: false, serve: () => ({ port: 41234 }) });
+      expect(code).toBe(0);
+    } finally { process.stdout.write = orig; }
+    expect(out).toContain("http://127.0.0.1:41234");
+  });
+  test("poster treats HTTP 200 with ok:false as an error", async () => {
+    const lines: string[] = [];
+    const post = slackPoster("xoxb-fake-token", (async () => new Response(JSON.stringify({ ok: false, error: "channel_not_found" }), { status: 200 })) as never, (l) => lines.push(l));
+    await post("C1", "1.1", "hi");
+    expect(lines).toEqual(["slack: post failed (slack error: channel_not_found)"]);
+  });
+  test("spawn failure throws instead of reporting pid-undefined, and the thread gets an error post", async () => {
+    const fakeSpawn = (() => ({ pid: undefined, on(ev: string, cb: (e: Error) => void) { if (ev === "error") cb(new Error("ENOENT")); } })) as never;
+    const d = spawnRunDeps("/nonexistent-repo", {}, "/nope/bin/loki", fakeSpawn);
+    await expect(d.startRun("fix the thing")).rejects.toThrow("could not launch");
+    const posts: string[] = [];
+    const st = newInboundState();
+    await handleSlackEvent(st, { ...d, post: async (_c, _t, x) => { posts.push(x); } }, mention("R-sf", "<@UB> fix the thing", "300.3"));
+    await tick();
+    expect(posts.length).toBe(1);
+    expect(posts[0]).toContain("Could not start a run");
+    expect(posts.join()).not.toContain("pid-undefined");
   });
 });

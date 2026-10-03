@@ -6,7 +6,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readEvents } from "../engine10/events.ts";
 
@@ -81,6 +81,7 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
   }
   if (ev.type === "app_mention" && text) {
     if (existing?.state === "running") { await deps.post(channel, threadTs, `Run ${existing.runId} is still running in this thread.`); return { status: 200, body: "busy" }; }
+    if (!isValidTaskText(text)) { await deps.post(channel, threadTs, TASK_HINT); return { status: 200, body: "rejected" }; }
     void launchInThread(state, deps, channel, threadTs, text);
     return { status: 200, body: "started" };
   }
@@ -94,7 +95,24 @@ function blockedQuestion(repoDir: string, runId: string): string | undefined {
   } catch { return undefined; }
 }
 
-export const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+/** Walks up from this module (src/features or the bundled dist) until bin/loki exists. */
+export function findRepoRoot(startDir: string = dirname(fileURLToPath(import.meta.url))): string {
+  let d = startDir;
+  for (let i = 0; i < 12; i++) {
+    if (existsSync(join(d, "bin", "loki"))) return d;
+    const up = dirname(d);
+    if (up === d) break;
+    d = up;
+  }
+  return join(startDir, "..", "..", "..");
+}
+export const REPO_ROOT = findRepoRoot();
+
+export const TASK_HINT = "Please describe the task in a few words (for example: fix owner/repo#12 login bug).";
+/** A task must be 2+ words and not start with "-"; a lone token like `reset` or `share` would reach a legacy subcommand via bin/loki. */
+export function isValidTaskText(text: string): boolean {
+  return !text.startsWith("-") && /\s/.test(text.trim());
+}
 export const SLACK_SECRET_VARS = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] as const;
 
 /** Child env for a spawned run: both Slack secrets stripped, browser opening disabled. */
@@ -114,14 +132,15 @@ export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: s
     async startRun(task) {
       const before = new Set(list());
       const child = spawnFn(cliPath, [task], { cwd: repoDir, env: childEnv(env), stdio: "ignore" });
-      let exited = false;
-      const done = new Promise<number>((res) => { child.on("exit", (c) => { exited = true; res(c ?? 1); }); child.on("error", () => { exited = true; res(1); }); });
+      let exited = false, spawnErr: Error | undefined;
+      const done = new Promise<number>((res) => { child.on("exit", (c) => { exited = true; res(c ?? 1); }); child.on("error", (e) => { exited = true; spawnErr = e; res(1); }); });
       let runId = "";
       for (let i = 0; i < 100 && !runId; i++) {
         runId = list().find((d) => !before.has(d) && d.startsWith("e10-")) ?? "";
         if (!runId && exited) break;
         if (!runId) await new Promise((r) => setTimeout(r, 100));
       }
+      if (!runId && (spawnErr || child.pid === undefined)) throw new Error(`could not launch the CLI (${spawnErr?.message ?? "spawn failed"})`);
       if (!runId) runId = `pid-${child.pid}`;
       return { runId, done: done.then((code) => ({ code, question: code === 4 ? blockedQuestion(repoDir, runId) : undefined })) };
     },
@@ -133,7 +152,9 @@ export function slackPoster(token: string, fetchFn: typeof fetch = fetch, log: (
   return async (channel, threadTs, text) => {
     try {
       const r = await fetchFn("https://slack.com/api/chat.postMessage", { method: "POST", headers: { "content-type": "application/json; charset=utf-8", authorization: `Bearer ${token}` }, body: JSON.stringify({ channel, thread_ts: threadTs, text }) });
-      if (!r.ok) fail(`HTTP ${r.status}`);
+      if (!r.ok) { fail(`HTTP ${r.status}`); return; }
+      const j = await r.json().catch(() => undefined) as { ok?: boolean; error?: string } | undefined;
+      if (j && j.ok === false) fail(`slack error: ${j.error ?? "unknown"}`);
     } catch (e) { fail(String((e as Error)?.message ?? "network error")); }
   };
 }
@@ -164,7 +185,7 @@ export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = proce
     if (args[i] === "--port") port = Number(args[++i]);
     else if (args[i] === "--host") host = args[++i] ?? host;
   }
-  if (!Number.isInteger(port) || port < 1 || port > 65535) { process.stderr.write("slack: invalid --port\n"); return 2; }
+  if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write("slack: invalid --port\n"); return 2; }
   const state = newInboundState(), deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token), ...opts.deps };
   const serve = opts.serve ?? ((o) => Bun.serve(o));
   const server = serve({ hostname: host, port, fetch: makeSlackFetch(secret, state, deps) });
