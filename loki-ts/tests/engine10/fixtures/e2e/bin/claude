@@ -9,9 +9,9 @@ if [ "${1:-}" = "--help" ]; then
   echo "  --dangerously-skip-permissions --model <m> --settings <json> -p, --print"
   exit 0
 fi
-prompt=""
+prompt=""; flags=""
 while [ $# -gt 0 ]; do
-  if [ "$1" = "-p" ]; then prompt="${2:-}"; shift; fi
+  if [ "$1" = "-p" ]; then prompt="${2:-}"; shift; else flags="$flags $1"; fi
   shift
 done
 case "$prompt" in
@@ -19,6 +19,7 @@ case "$prompt" in
   *"Loki 10 implement stage"*) stage=implement ;;
   *) stage=other ;;
 esac
+if [ -n "${E2E_STUB_ARGV_LOG:-}" ]; then echo "$stage$flags" >> "$E2E_STUB_ARGV_LOG"; fi
 if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-}" >> "$E2E_STUB_ENV_LOG"; fi

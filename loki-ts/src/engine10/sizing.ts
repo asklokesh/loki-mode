@@ -53,8 +53,8 @@ export const planMode = (env = process.env): "auto" | "always" | "never" =>
 export const wallEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_WALL, ["0", "off", "false"]);
 /** W1-S3: Wall session cap, 90s small / 180s normal; LOKI_E10_WALL_LIMIT_S overrides (clamped to 300; garbage, zero or negative falls back). */
 export const wallLimitS = (size: "small" | "normal", env = process.env): number => { const n = Number(env.LOKI_E10_WALL_LIMIT_S); return Number.isFinite(n) && n > 0 ? Math.min(300, n) : size === "small" ? 90 : 180; };
-/** LOKI_E10_CASCADE=0/off/false: implement (and any fix round) stays on the run's configured model, as before E-64. */
-export const cascadeEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_CASCADE, ["0", "off", "false"]);
+/** Engine Law L1 (supersedes D31's sonnet-first default): the cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in. Off means implement and fix run on the run's own model, as a raw session would. */
+export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export function resolveModelAlias(want: string): string {
   try { return JSON.parse(readFileSync(join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers?.claude?.cli_aliases?.[want] ?? want; } catch { return want; }
@@ -63,3 +63,5 @@ export function resolveModelAlias(want: string): string {
 export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
+
+export { modelRank, escalationModel, cascadeDowngrade } from "../runner/model_rank.ts"; // L1 model ordering lives outside the engine10 line budget

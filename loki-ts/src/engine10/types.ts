@@ -79,6 +79,8 @@ export interface SessionResult {
   markers: SessionMarkers;
   durationS: number;
   killed: boolean;
+  /** Optional tail of the agent's own final message (its diagnosis), fed to an escalated fix round. */
+  summary?: string;
 }
 export interface SessionRunner { // implemented by session.ts (E-07)
   run(opts: SessionRunOptions): Promise<SessionResult>;
