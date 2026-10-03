@@ -212,6 +212,7 @@ dashboard panels render unmeasured as unknown (node --test)	0
 dashboard UI component utilities match shipped code (node --test)	0
 dashboard overview issue-to-PR journey (node --test)	1
 dashboard overview proof card wording (node --test)	0
+dashboard static content council vote label (node --test)	1
 dashboard log stream shows an unreachable API, not a quiet log (node --test)	0
 shipped agent roles reach the review pool	0
 policy present but unevaluable refuses fail-closed	0
