@@ -1993,3 +1993,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Train/93 (01b5753bb, target 10.6.11): Tier A, Bun Parity, First-run gate and Security Audit green; Tests and Coverage in progress (gh run list --branch train/93).
 - INTEL-3 r2 (d46385cf3) and A-103b (7b7931d7a) built; TL re-review and opus HIGH review dispatched. INTEL-1 opus review, A-04c r2, D61-11 r3 and P0-CORE-BUDGET TL r2 still running.
 - Pulse BUDGET_BURN (weekly 268.6% projected, max 0 engineers) stays overridden by the founder D68 mandate; the floor is 85% of the week on live /usage.
+
+## 2026-10-03T08:36Z CoS
+- INTEL-3 merged (0bab386c2, d4865ed9e; TL r2 APPROVE). INTEL-1 merged (c3031c9aa; opus APPROVE, 14 probes); dist rebuilt both times, guard 13/0. INTEL-1b opened for the 5 non-blocking findings (FAILED-run export, run_id binding, single read, all-unknown keyid, rotation keyid); builder dispatched.
+- D76 decided (A-121c): legacy unknown-kid verify exits rc 2; builder dispatched. EV-12D blocked: main has 0 large tasks (measure-size rc=0, validate rc=0).
+- Drift audit: 182 commits on main in 6h; 1 release in the last hour against the 20 min cadence target (MISS, train/93 Tests and Coverage still in progress). Seats: 6 agents active against the 8-16 target; 6 unblocked ready rows remain, most HIGH or CTO-owned (G-04, S41-06, S41-13, EV-9, D50-W1, E-160).
