@@ -1380,9 +1380,17 @@ async def loki_v10_run(ref: str, repo_path: str) -> str:
     Returns:
         JSON with run_id (null if not yet created), pid and log_path. Never blocks.
     """
-    from mcp import v10_tools
-    return json.dumps(await asyncio.to_thread(
-        v10_tools.v10_run, ref, repo_path, lambda p: validate_path(p, allowed_dirs=['.'])))
+    _emit_tool_event_async('loki_v10_run', 'start', parameters={'repo_path': repo_path})
+    try:
+        from mcp import v10_tools
+        result = await asyncio.to_thread(
+            v10_tools.v10_run, ref, repo_path, lambda p: validate_path(p, allowed_dirs=['.']))
+        _emit_tool_event_async('loki_v10_run', 'complete', result_status='error' if isinstance(result, dict) and result.get('error') else 'success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_v10_run failed: {e}")
+        _emit_tool_event_async('loki_v10_run', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
 
 
 @mcp.tool()
@@ -1397,9 +1405,17 @@ async def loki_v10_status(repo_path: str, run_id: str = "") -> str:
     Returns:
         JSON with phase, done, verdict (once done) and cost_usd (null if unmeasured)
     """
-    from mcp import v10_tools
-    return json.dumps(v10_tools.v10_status(
-        run_id, repo_path, lambda p: validate_path(p, allowed_dirs=['.'])))
+    _emit_tool_event_async('loki_v10_status', 'start', parameters={'repo_path': repo_path, 'run_id': run_id})
+    try:
+        from mcp import v10_tools
+        result = v10_tools.v10_status(
+            run_id, repo_path, lambda p: validate_path(p, allowed_dirs=['.']))
+        _emit_tool_event_async('loki_v10_status', 'complete', result_status='error' if isinstance(result, dict) and result.get('error') else 'success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_v10_status failed: {e}")
+        _emit_tool_event_async('loki_v10_status', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
 
 
 @mcp.tool()
@@ -1414,10 +1430,18 @@ async def loki_v10_verify(receipt_path: str = "", repo_path: str = "") -> str:
     Returns:
         JSON with exit_code, verified and an output summary
     """
-    from mcp import v10_tools
-    return json.dumps(await asyncio.to_thread(
-        v10_tools.v10_verify, receipt_path, repo_path,
-        lambda p: validate_path(p, allowed_dirs=['.'])))
+    _emit_tool_event_async('loki_v10_verify', 'start', parameters={'receipt_path': receipt_path, 'repo_path': repo_path})
+    try:
+        from mcp import v10_tools
+        result = await asyncio.to_thread(
+            v10_tools.v10_verify, receipt_path, repo_path,
+            lambda p: validate_path(p, allowed_dirs=['.']))
+        _emit_tool_event_async('loki_v10_verify', 'complete', result_status='error' if isinstance(result, dict) and result.get('error') else 'success')
+        return json.dumps(result)
+    except Exception as e:
+        logger.error(f"loki_v10_verify failed: {e}")
+        _emit_tool_event_async('loki_v10_verify', 'complete', result_status='error', error=str(e))
+        return json.dumps({"error": str(e)})
 
 
 @mcp.tool()

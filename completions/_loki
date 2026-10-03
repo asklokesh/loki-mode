@@ -207,6 +207,7 @@ function _loki_commands {
         'otel:OpenTelemetry management'
         'wiki:Wiki commands'
         'control:Control plane (preview, LOKI_CONTROL=1)'
+        'workspace:Multi-project workspaces (preview, LOKI_WORKSPACES=1)'
         'backlog:Run every matching open issue, N in parallel'
         'explain:Explain Loki concepts'
         'optimize:Optimization commands'

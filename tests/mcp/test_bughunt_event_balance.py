@@ -158,6 +158,11 @@ _FRESH_REPO_CALLS = {
     "loki_findings": dict(),
     "loki_learnings": dict(),  # no learnings file -> early return
     "loki_counter_evidence_template": dict(iteration=0),
+    # v10 tools: each invalid input takes the early-error path, which must still
+    # emit a balanced start/complete pair. None of these spawns a run.
+    "loki_v10_run": dict(ref="", repo_path="."),
+    "loki_v10_status": dict(repo_path=""),
+    "loki_v10_verify": dict(receipt_path="/nonexistent-receipt.json"),
 }
 
 

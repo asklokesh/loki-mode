@@ -261,6 +261,8 @@ Node.js current stable: 26.10.0 (cycle 26); Python current stable: 3.14.7 (cycle
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
 | `Dockerfile` | `ubuntu:24.04` | `ubuntu:24.04` | `24.04.5 (newest line 26.04.1)` | MAJOR | EOL 2029-05-31 (not yet); patch in line; MAJOR to newest line |
+| `Dockerfile.control-plane` | `oven/bun:1.4.2` | `oven/bun:1.4.2` | `-` | unknown | floating/arbitrary registry tag, see Docker section for endoflife-mapped images |
+| `Dockerfile.control-plane` | `oven/bun:1.4.2-slim` | `oven/bun:1.4.2-slim` | `-` | unknown | floating/arbitrary registry tag, see Docker section for endoflife-mapped images |
 | `Dockerfile.purplelab-test` | `node:22-slim` | `node:22-slim` | `22.23.3 (newest line 26.10.0)` | MAJOR | EOL 2027-04-30 (not yet); minor in line; MAJOR to newest line |
 | `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
 | `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
@@ -293,6 +295,8 @@ Node.js current stable: 26.10.0 (cycle 26); Python current stable: 3.14.7 (cycle
 | `deploy/helm/autonomi/tests/test-health.yaml` | `curlimages/curl:8.5.0` | `curlimages/curl:8.5.0` | `-` | unknown | floating/arbitrary registry tag, see Docker section for endoflife-mapped images |
 | `deploy/helm/autonomi/values.yaml` | `alpine/git:latest` | `alpine/git:latest` | `-` | unknown | floating/arbitrary registry tag, see Docker section for endoflife-mapped images |
 | `deploy/helm/autonomi/values.yaml` | `image.repository` | `asklokesh/loki-mode:(defaults to appVersion)` | `-` | n/a | own product image, tracked via VERSION not a third-party dep |
+| `deploy/helm/control-plane/Chart.yaml` | `appVersion` | `10.6.7` | `10.6.7` | up-to-date | repo VERSION file is 10.6.7 |
+| `deploy/helm/control-plane/Chart.yaml` | `chart dependencies` | `(none declared)` | `-` | n/a |  |
 | `helm/loki-mode/Chart.yaml` | `appVersion` | `9.19.1` | `10.2.1` | drifted | DRIFTED: chart appVersion does not track the product VERSION file (10.2.1) |
 | `helm/loki-mode/Chart.yaml` | `chart dependencies` | `(none declared)` | `-` | n/a |  |
 | `helm/loki-mode/values.yaml` | `redis:7-alpine` | `redis:7-alpine` | `-` | unknown | floating/arbitrary registry tag, see Docker section for endoflife-mapped images |
@@ -372,8 +376,8 @@ Counts are all from the single `Bump` column (current line vs newest line in the
 | Python (pyproject) | 0 | 1 | 1 | 1 | 0 | 0 | 1 | 0 | 0 |
 | GitHub Actions | 1 | 0 | 0 | 75 | 0 | 0 | 2 | 13 | 2 |
 | Runtimes | 0 | 5 | 0 | 2 | 1 | 0 | 1 | 0 | 0 |
-| Docker/Compose | 0 | 3 | 0 | 8 | 1 | 0 | 8 | 0 | 1 |
-| Helm | 0 | 0 | 0 | 0 | 0 | 2 | 5 | 0 | 34 |
+| Docker/Compose | 0 | 3 | 0 | 8 | 1 | 0 | 10 | 0 | 1 |
+| Helm | 0 | 0 | 0 | 0 | 0 | 2 | 5 | 1 | 35 |
 | Terraform | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 0 | 15 |
 | Homebrew | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 1 | 0 |
 
