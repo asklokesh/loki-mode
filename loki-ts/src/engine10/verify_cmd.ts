@@ -117,9 +117,6 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const pk = takePubkey(args);
   if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   args = pk.args;
-  const stray = args.find((a) => a.startsWith("-"));
-  if (stray !== undefined) return (process.stderr.write(`loki verify: unknown option ${stray}\n`), 2);
-  if (args.length > 1) return (process.stderr.write(`loki verify: expected at most one run-id or receipt path, got ${args.length}\n`), 2);
   if (pk.pubkey) deps = { ...deps, pubkey: pk.pubkey };
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
   const runId = args[0] ?? latestRunId(runsRoot) ?? undefined;

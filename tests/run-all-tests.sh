@@ -1594,6 +1594,7 @@ run_test "Loki 10 eval harness runner and scorer (EV-1)" "$SCRIPT_DIR/../eval/lo
 run_test "Loki 10 gate report generator (E-33)" "$SCRIPT_DIR/../eval/loki10/test-gate-report.sh"
 run_test "Loki 10 engine trusted push and PR (E-11)" "$SCRIPT_DIR/test-engine10-push.sh"
 run_test "Loki 10 engine dispatch hook (E-12)" "$SCRIPT_DIR/test-engine10-dispatch.sh"
+run_test "loki verify --pubkey=FILE routes to v10 through bin/loki (P0-VERIFY-ARG)" "$SCRIPT_DIR/test-verify-pubkey-cli.sh"
 run_test "Loki 10 legacy route contract golden rows (E-30)" "$SCRIPT_DIR/test-engine10-legacy-contract.sh"
 run_test "Loki 10 live PR smoke on a sandbox repo (E-40)" "$SCRIPT_DIR/test-engine10-live-pr.sh"
 run_test "Loki control plane wiring: serve, backfill, UI (CP-04)" "$SCRIPT_DIR/test-control-plane.sh"

@@ -1,32 +1,19 @@
 // D48 row 2b: `loki keys export` prints the receipt signer's PUBLIC JWK (with kid); `loki verify --pubkey FILE` reads a JWK or PEM. Never private bytes.
 import { readFileSync } from "node:fs";
+import { parseArgs } from "node:util";
 import { createPublicKey, type KeyObject } from "node:crypto";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
-function parsePubkey(t: string): KeyObject {
-  const key = createPublicKey(t.trim().startsWith("{") ? { key: JSON.parse(t), format: "jwk" } : t);
-  if (key.asymmetricKeyType !== "ed25519") throw new Error("not an Ed25519 key");
-  return key;
-}
-/** Strips `--pubkey <file>` or `--pubkey=<file>`; an unreadable or invalid key, an empty value or a repeated flag is an error (caller exits 2). */
+/** Strips `--pubkey <file>` or `--pubkey=<file>`; an unknown option, a missing, empty, unreadable or repeated key, or more than one run-id is an error (caller exits 2). */
 export function takePubkey(args: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string } {
-  const rest: string[] = [], files: string[] = [];
-  let missing = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (a === "--pubkey") {
-      const v = args[i + 1];
-      if (v === undefined || v.startsWith("--")) { missing = true; continue; }
-      files.push(v); i++;
-    } else if (a.startsWith("--pubkey=")) {
-      const v = a.slice("--pubkey=".length);
-      if (v === "") missing = true; else files.push(v);
-    } else rest.push(a);
-  }
-  if (files.length + (missing ? 1 : 0) > 1) return { args: rest, error: "--pubkey may be given only once" };
-  if (missing) return { args: rest, error: "--pubkey requires a file argument" };
-  const file = files[0];
-  if (file === undefined) return { args: rest }; // absent: leave every arg (including the run-id) untouched
-  try { return { args: rest, pubkey: parsePubkey(readFileSync(file, "utf8")) }; } catch { return { args: rest, error: `cannot read an Ed25519 public key from ${file}` }; }
+  let file = "";
+  try {
+    const { values: { pubkey = [] }, positionals: rest } = parseArgs({ args: [...args], options: { pubkey: { type: "string", multiple: true } }, allowPositionals: true });
+    if (pubkey.length > 1 || rest.length > 1) throw new Error(pubkey.length > 1 ? "--pubkey may be given only once" : `expected at most one run-id or receipt path, got ${rest.length}`);
+    if (!pubkey.length) return { args: rest };
+    if (!(file = pubkey[0]!)) throw new Error("--pubkey requires a file argument");
+    const t = readFileSync(file, "utf8"), key = createPublicKey(t.trim().startsWith("{") ? { key: JSON.parse(t), format: "jwk" } : t);
+    return key.asymmetricKeyType === "ed25519" ? { args: rest, pubkey: key } : { args: rest, error: `cannot read an Ed25519 public key from ${file}` };
+  } catch (e) { return { args: [], error: file ? `cannot read an Ed25519 public key from ${file}` : (e as Error).message.replace(/^./, (c) => c.toLowerCase()) }; }
 }
 export async function main(args: readonly string[]): Promise<number> {
   const priv = args[0] === "export" ? loadSigningKey(false) : null;

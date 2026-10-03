@@ -447,9 +447,14 @@ describe("main() argument shape fails closed (P0-VERIFY-ARG)", () => {
     expect(await code(["sg1", `--pubkey=${localJwk}`, `--pubkey=${localJwk}`])).toBe(2);
     expect(await code(["sg1", "--pubkey", localJwk, `--pubkey=${localJwk}`])).toBe(2);
   });
-  test("an unknown -x flag exits 2", async () => {
-    expect(await code(["sg1", "-x"])).toBe(2);
-    expect(await code(["sg1", "--bogus"])).toBe(2);
+  test("an unknown option exits 2 and is named as unknown (not as an extra positional)", async () => {
+    const w = process.stderr.write.bind(process.stderr);
+    for (const args of [["sg1", "-x"], ["sg1", "--bogus"], ["--bogus"]]) {
+      const err: string[] = [];
+      process.stderr.write = ((c: string) => { err.push(String(c)); return true; }) as typeof process.stderr.write;
+      try { expect(await code(args)).toBe(2); } finally { process.stderr.write = w; }
+      expect(err.join("")).toContain("unknown option");
+    }
   });
   test("two positionals exit 2", async () => {
     expect(await code(["sg1", "us1"])).toBe(2);
