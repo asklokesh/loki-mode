@@ -300,7 +300,8 @@ describe("W1-S3 size-tied Wall time cap", () => {
     for (const g of ["abc", "-5", "", "0", "NaN"]) expect(wallLimitS("small", { LOKI_E10_WALL_LIMIT_S: g })).toBe(90);
   });
 
-  it("the Wall session gets the size cap and a timed-out session copies nothing and is never already_satisfied", async () => {
+  const LONG = "refactor the module layout and keep behavior identical. ".repeat(12); // 660 chars: sizes normal
+  async function wallRun(task: string) {
     const dir = mkdtempSync(join(tmpdir(), "loki-w1s3-")); dirs.push(dir);
     const ref = join(dir, "repomap.json"); writeFileSync(ref, JSON.stringify({ files: Array.from({ length: 30 }, (_, i) => `src/m${i}.ts`), entries: [], truncated: false }));
     const seen: SessionRunOptions[] = [];
@@ -309,12 +310,23 @@ describe("W1-S3 size-tied Wall time cap", () => {
       emit: () => {},
       sessions: { run: async (o) => { seen.push(o); writeFileSync(join(o.cwd!, "loki_wall_x.test.ts"), "x"); return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true }; } },
       tests: { detect: async () => TM, impacted: () => [] }, cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
-      clock: { now: () => Date.now() }, outputs: () => ({ intake: { task: "refactor mod1.ts mod2.ts mod3.ts mod4.ts mod5.ts across everything", repomap_ref: ref, testmap: TM } }),
+      clock: { now: () => Date.now() }, outputs: () => ({ intake: { task, repomap_ref: ref, testmap: TM } }),
     };
     const r = await wallStage.run(ctx, new AbortController().signal);
-    expect(seen[0]!.limitS).toBe(wallLimitS(sizeTask("refactor mod1.ts mod2.ts mod3.ts mod4.ts mod5.ts across everything", loadRepoMap(ref), TM).size));
+    return { r, seen, dir, size: sizeTask(task, loadRepoMap(ref), TM).size };
+  }
+
+  it("a normal task reaches the Wall session with limitS 180; a timed-out session copies nothing and is never already_satisfied", async () => {
+    const { r, seen, dir, size } = await wallRun(LONG);
+    expect(size).toBe("normal");
+    expect(seen[0]!.limitS).toBe(180);
     expect(r.status).toBe("failed");
     expect(r.data.already_satisfied).toBeUndefined();
     expect(existsSync(join(dir, "tests", "loki_wall_x.test.ts"))).toBe(false);
+  });
+
+  it("LOKI_E10_WALL_LIMIT_S=240 reaches the Wall session as 240", async () => {
+    process.env.LOKI_E10_WALL_LIMIT_S = "240";
+    expect((await wallRun(LONG)).seen[0]!.limitS).toBe(240);
   });
 });
