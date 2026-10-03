@@ -1,3 +1,5 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font-family: var(--cp-font-sans); }

@@ -29,6 +29,13 @@
       "when": 1791132412148,
       "tag": "0003_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1791218812148,
+      "tag": "0004_cpe03_local_repos_actions",
+      "breakpoints": true
     }
   ]
 }
