@@ -89,8 +89,8 @@ variable "control_token_secret_arn" {
   default     = ""
 
   validation {
-    condition     = var.control_token_secret_arn == "" || can(regex("^arn:[^:]+:secretsmanager:", var.control_token_secret_arn))
-    error_message = "control_token_secret_arn must be a Secrets Manager secret ARN (arn:aws:secretsmanager:...)."
+    condition     = var.control_token_secret_arn == "" || can(regex("^arn:[^:]+:secretsmanager:[^:]+:[0-9]+:secret:[^:]+$", var.control_token_secret_arn))
+    error_message = "control_token_secret_arn must be a plain Secrets Manager secret ARN (arn:aws:secretsmanager:region:account:secret:name). Do not append a JSON key suffix such as :KEY::; the token must be the whole secret value."
   }
 }
 

@@ -246,13 +246,12 @@ the user's existingSecret, which must hold the key secrets.controlTokenKey.
 {{- end }}
 
 {{/*
-Secret that holds the Control Plane token. With existingSecret the user's Secret
-is not guaranteed to carry the key (an upgrade from a chart that predates the
-token would leave every worker in CreateContainerConfigError), so the chart owns
-<fullname>-control-token unless secrets.controlTokenFromExistingSecret opts in.
+Secret that holds the Control Plane token: always the chart-owned
+<fullname>-control-token, unless secrets.controlTokenFromExistingSecret opts in
+to reading the key from the user's existingSecret.
 */}}
 {{- define "autonomi.controlTokenSecretName" -}}
-{{- if and .Values.secrets.existingSecret (not .Values.secrets.controlTokenFromExistingSecret) }}
+{{- if not (and .Values.secrets.existingSecret .Values.secrets.controlTokenFromExistingSecret) }}
 {{- printf "%s-control-token" (include "autonomi.fullname" .) }}
 {{- else }}
 {{- include "autonomi.secretName" . }}

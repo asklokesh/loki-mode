@@ -523,11 +523,12 @@ secrets:
   # across upgrades (lookup of the existing Secret). Retrieve it with the
   # command printed in NOTES.txt; the UI accepts it as #token=<value>.
   controlToken: ""
-  # Key inside the Secret that holds the token. With existingSecret, that Secret
-  # MUST contain this key or the controlplane pod fails to start.
+  # Key inside the token Secret (<fullname>-control-token). With
+  # controlTokenFromExistingSecret=true, existingSecret MUST contain this key or
+  # the controlplane pod fails to start.
   controlTokenKey: "LOKI_CONTROL_TOKEN"
-  # With existingSecret, the chart still owns a <fullname>-control-token Secret
-  # for the token unless this is true. Set true only if existingSecret already
+  # The chart always owns a <fullname>-control-token Secret for the token unless
+  # existingSecret is set AND this is true. Set true only if existingSecret already
   # holds controlTokenKey.
   controlTokenFromExistingSecret: false
 

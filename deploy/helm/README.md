@@ -68,25 +68,27 @@ helm install autonomi ./deploy/helm/autonomi \
 The control-plane pod runs the Control Plane (`loki control serve`) and never
 runs without a bearer token:
 
-- Default: the chart generates a random 32 character token into the release
-  Secret and keeps it stable across upgrades (lookup of the existing Secret).
+- The token always lives in the chart-owned `<release>-autonomi-control-token`
+  Secret, in every mode (including `secrets.existingSecret`, so upgrading an
+  existing deployment never leaves workers in CreateContainerConfigError).
+  Default: the chart generates a random 32 character token and keeps it stable
+  across upgrades (lookup of that Secret, then of the legacy location, the main
+  release Secret, which is how an upgrade from an older chart keeps its token).
   `helm install` prints the `kubectl get secret ... | base64 -d` command in
   NOTES.txt; open the UI with `#token=<token>` appended to the URL.
 - `secrets.controlToken=<value>` sets your own token.
-- `secrets.existingSecret=<name>`: provider keys come from that Secret. The
-  token still lives in a chart-owned `<release>-autonomi-control-token` Secret
-  (generated or from `secrets.controlToken`), so upgrading an existing
-  deployment never leaves workers in CreateContainerConfigError. To read the
-  token from your own Secret instead, set
-  `secrets.controlTokenFromExistingSecret=true`; it MUST then contain
+- `secrets.controlTokenFromExistingSecret=true` (with `secrets.existingSecret`)
+  reads the token from your Secret instead: it MUST contain
   `secrets.controlTokenKey` (default `LOKI_CONTROL_TOKEN`) or the pods fail to
   start. Add it with
   `kubectl create secret generic <name> --from-literal=LOKI_CONTROL_TOKEN=$(openssl rand -hex 24)`.
 - GitOps and `helm template`: there is no cluster to look up, so a generated
   token changes on every render and rotates on every sync. Under Argo CD, Flux
   or `helm template | kubectl apply`, always set `secrets.controlToken` or use
-  `secrets.existingSecret` with `secrets.controlTokenFromExistingSecret=true`.
-  The token Secrets carry `helm.sh/resource-policy: keep`.
+  `secrets.controlTokenFromExistingSecret=true`. The token Secret carries
+  `helm.sh/resource-policy: keep` (survives `helm uninstall`) and
+  `argocd.argoproj.io/sync-options: Prune=false` (survives an Argo CD prune);
+  the provider-key Secret carries neither.
 - `controlplane.replicas` must be 1 when `persistence.controlDb.enabled=true`
   (the render fails otherwise); that Deployment uses the Recreate strategy.
 - Workers get `LOKI_CONTROL_URL` (the in-release controlplane Service) and the
