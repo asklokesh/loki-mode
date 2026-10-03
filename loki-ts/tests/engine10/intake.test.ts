@@ -433,4 +433,58 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     expect(result.data.already_satisfied).toBe(false);
     rmSync(root, { recursive: true, force: true });
   });
+
+  /** clone on feature/search carrying one USER commit (the fix), nothing from Loki. */
+  function userFeatureClone(): { root: string; clone: string; tip: string } {
+    const { root, clone } = originAndClone();
+    git(clone, ["checkout", "-q", "-b", "feature/search", "main"]);
+    cpSync(join(FIX, "already-done-repo"), clone, { recursive: true });
+    git(clone, ["add", "-A"]); git(clone, ["commit", "-q", "-m", "user: search"]);
+    return { root, clone, tip: execFileSync("git", ["rev-parse", "HEAD"], { cwd: clone, encoding: "utf8" }).trim() };
+  }
+  async function intakeOn(clone: string): Promise<{ status: string; reason?: string }> {
+    const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+    ctx.sessions = fakeConfirmSession({ markers: { done: true, alreadyDone: null, specConflict: null } }).runner;
+    return runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" });
+  }
+
+  test("A: a prior run with no commits sealed head_sha = the user's own tip: not Loki's work", async () => {
+    const { root, clone, tip } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    mkdirSync(join(clone, ".loki", "runs", "e10-old"), { recursive: true });
+    writeFileSync(join(clone, ".loki", "runs", "e10-old", "receipt.json"), JSON.stringify({ head_sha: tip, base_sha: tip }));
+    const r = await intakeOn(clone);
+    expect(r.reason ?? "").not.toContain("unmerged work");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("B: loki/* branch created from the user's branch with zero Loki commits: not Loki's work", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-x"]);
+    const r = await intakeOn(clone);
+    expect(r.reason ?? "").not.toContain("unmerged work");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("B2: the same loki/* branch with a real Loki commit is still refused", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-x"]);
+    writeFileSync(join(clone, "loki.txt"), "x"); git(clone, ["add", "loki.txt"]); git(clone, ["commit", "-q", "-m", "loki: work"]);
+    const r = await intakeOn(clone);
+    expect(r.reason ?? "").toContain("unmerged work");
+    expect(r.reason ?? "").not.toContain("check out origin");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("C: LOKI_E10_BASE=feature/search makes the loki/* branch allowed", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1"; process.env.LOKI_E10_BASE = "feature/search";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-x"]);
+    const r = await intakeOn(clone);
+    delete process.env.LOKI_E10_BASE;
+    expect(r.reason ?? "").not.toContain("unmerged work");
+    rmSync(root, { recursive: true, force: true });
+  });
 });
