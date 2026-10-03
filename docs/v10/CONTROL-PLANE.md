@@ -40,7 +40,7 @@ Architect design, 2026-10-01, base 1dfc87103. Design only. Flag: `LOKI_CONTROL=1
 - `PUT /v1/runs/:source/:run/receipt`: receipt.json; 400 unless its receipt_sha256 matches a received `receipt.sealed` event.
 - Reads: `GET /v1/runs?repo=&verdict=&provider=&since=&cursor=`, `/v1/runs/:source/:run` (summary + timeline), `/v1/runs/:source/:run/events?after_seq=`, `/v1/stats`, `/v1/costs?group=day|repo|model`, `/v1/compare?ids=`, `/v1/work`, `/v1/backlog`.
 - `GET /health` (process up; `{service:"loki-control", version, install_path, pid}`, the P0-DASH-STATIC identity); `GET /ready` (DB reachable and migrations at head, else 503).
-- Auth: binds 127.0.0.1 by default with no token. A non-loopback bind refuses to start unless `LOKI_CONTROL_TOKEN` is set; then every /v1 call needs `Authorization: Bearer`. Ingest and read share the token in v1.
+- Auth (enforced in `src/server/auth.ts`): binds 127.0.0.1 by default. With `LOKI_CONTROL_TOKEN` set, every `/v1/*` call (ingest, reads, answer) needs `Authorization: Bearer <token>`, compared in constant time; missing or wrong gives 401. `/health` and `/ready` need no token. A non-loopback `LOKI_CONTROL_HOST` with no token exits 2 naming `LOKI_CONTROL_TOKEN` before binding; `LOKI_CONTROL_ALLOW_INSECURE_BIND=1` overrides. On a loopback bind a request whose Host is not `127.0.0.1`, `localhost` or `[::1]` (any port) gets 403, which blocks DNS rebinding. The UI takes `#token=<token>` once, keeps it in sessionStorage and sends it on every call. Ingest and read share the token in v1.
 
 ## 5. Shipper and spool
 - events.jsonl is the spool. The shipper never writes to it (the supervisor treats outside writes as tamper). Its acked cursor lives in `.loki/runs/<id>/ship.json {acked_seq, url}`, written atomically.

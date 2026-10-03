@@ -52,8 +52,29 @@ export interface RunFilters { verdict?: string; repo?: string; since?: string }
 
 const base = (): string => (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";
 
+const TOKEN_KEY = "loki-control-token";
+
+/** Token for the Authorization header. A `#token=` URL fragment is taken once, stored in sessionStorage and stripped from the address bar. */
+export function authToken(): string | null {
+  try {
+    const m = /[#&]token=([^&]+)/.exec(globalThis.location?.hash ?? "");
+    if (m?.[1]) {
+      sessionStorage.setItem(TOKEN_KEY, decodeURIComponent(m[1]));
+      globalThis.history?.replaceState(null, "", globalThis.location.pathname + globalThis.location.search);
+    }
+    return sessionStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+const authHeaders = (extra: Record<string, string> = {}): Record<string, string> => {
+  const t = authToken();
+  return t ? { ...extra, authorization: `Bearer ${t}` } : extra;
+};
+
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${base()}${path}`);
+  const res = await fetch(`${base()}${path}`, { headers: authHeaders() });
   if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
   return (await res.json()) as T;
 }
@@ -71,7 +92,7 @@ export function getRun(source: string, run: string): Promise<RunDetailResponse> 
 
 /** POST the answer to a BLOCKED run; resolves with the file it was written to. */
 export async function postAnswer(source: string, run: string, answer: string): Promise<{ path: string; resume: string }> {
-  const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}/answer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ answer }) });
+  const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}/answer`, { method: "POST", headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify({ answer }) });
   const j = (await res.json()) as { error?: string; path?: string; resume?: string };
   if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
   return { path: j.path ?? "", resume: j.resume ?? "" };

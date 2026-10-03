@@ -5,6 +5,7 @@ import { openDb } from "../db/migrate.ts";
 import { ingest } from "./ingest.ts";
 import { defaultAnswerDir, writeAnswer } from "./answer.ts";
 import { listRuns, runDetail } from "./runs.ts";
+import { authGuard } from "./auth.ts";
 
 const MAX_BODY = 1_000_000;
 
@@ -12,12 +13,14 @@ const MAX_BODY = 1_000_000;
 const defaultUiDir = () => [join(import.meta.dir, "../../ui/dist"), join(import.meta.dir, "../ui/dist")].find((d) => existsSync(join(d, "index.html")));
 
 /** dbPath ":memory:" for tests. Migrations run here, so /ready is true as soon as this returns. uiDir overrides the built-UI location. */
-export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string }) {
+export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean }) {
   const uiDir = opts.uiDir ?? defaultUiDir();
   const { db, sqlite } = openDb(opts.dbPath);
   let ready = true;
   const answerDir = opts.answerDir ?? defaultAnswerDir();
   const app = new Hono();
+  // token: bearer required on /v1/*. loopbackOnly: reject a non-loopback Host (DNS rebinding). Both off by default; serve.ts sets them from env.
+  if (opts.token || opts.loopbackOnly) app.use("*", authGuard({ token: opts.token, loopbackOnly: opts.loopbackOnly }));
 
   app.get("/health", (c) => c.json({ service: "loki-control", pid: process.pid, install_path: import.meta.dir }));
   app.get("/ready", (c) => {
