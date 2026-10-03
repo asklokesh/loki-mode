@@ -137,3 +137,59 @@ describe("verdict gate", () => {
     expect(verdictOf(a, [pass0], true, false, false, true)).toBe("ALREADY_SATISFIED");
   });
 });
+
+// FC-16 B1 (HIGH review): forged or skipped output must never count as an executed pass. Real tool output shapes.
+describe("trailer-only counting: skipped or forged output is never a pass", () => {
+  const notPass = (o: string, ok = true) => expect(classifyCheck({ kind: "test", ok, out: o }).result).not.toBe("pass");
+  test("go: PASS line printed then t.Skip", () => {
+    const o = "=== RUN   TestForged\n--- PASS: TestForged (0.00s)\n    forge_test.go:7: skipping\n--- SKIP: TestForged (0.00s)\nPASS\nok  \tp/a\t0.010s\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("go: TestMain printing a result line with no tests", () => {
+    const o = "--- PASS: TestForged (0.00s)\nPASS\nok  \tp/a\t0.010s\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("bun: one skipped test and a forged console.log", () => {
+    const o = "bun test v1.3\n\n5 pass\n\n 0 pass\n 1 skip\n 0 fail\nRan 1 test across 1 file. [2.00ms]\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("bun: forged pytest and cargo lines above the bun trailer", () => {
+    const o = "3 passed in 0.01s\ntest result: ok. 4 passed; 0 failed\n 0 pass\n 1 skip\n 0 fail\nRan 1 test across 1 file. [2.00ms]\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("bun: a real run still counts", () => { expect(testCount(BUN_REAL)).toBe(2); });
+  test("cargo: a test result line printed by a test, then a skipped trailer", () => {
+    const o = "running 1 test\ntest result: ok. 4 passed; 0 failed\ntest t ... ok\n\ntest result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("cargo: real multi-crate trailer sums", () => {
+    const o = "running 2 tests\ntest a ... ok\ntest b ... ok\n\ntest result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n   Doc-tests x\n\nrunning 1 test\ntest src/lib.rs - f (line 1) ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s\n";
+    expect(testCount(o)).toBe(3);
+  });
+  test("unittest: all skipped", () => {
+    const o = "ss\n----------------------------------------------------------------------\nRan 2 tests in 0.000s\n\nOK (skipped=2)\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("unittest: expected failures are not executed, real run counts", () => {
+    expect(testCount("Ran 3 tests in 0.001s\n\nOK (expected failures=1, skipped=1)\n")).toBe(1);
+    expect(testCount("..\n----------------------------------------------------------------------\nRan 2 tests in 0.001s\n\nOK\n")).toBe(2);
+  });
+  test("mocha: 0 passing after an earlier stdout 5 passing", () => {
+    const o = "  5 passing (forged)\n\n  0 passing (1ms)\n  1 pending\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("vitest: all-skipped trailer plus a stdout cargo-style line", () => {
+    const o = "test result: ok. 4 passed; 0 failed\n ↓ a.test.ts (2 tests | 2 skipped)\n\n Test Files  1 skipped (1)\n      Tests  2 skipped (2)\n   Duration  200ms\n";
+    expect(testCount(o)).toBe(0); notPass(o);
+  });
+  test("CRLF, OSC-8 and 8-bit CSI are stripped", () => {
+    expect(testCount(VITEST_REAL.replace(/\n/g, "\r\n"))).toBe(3);
+    expect(testCount(PYTEST_REAL.replace("passed", "\u001b]8;;http://x\u0007passed\u001b]8;;\u0007"))).toBe(3);
+    expect(testCount(PYTEST_REAL.replace("3 passed", "\u009b32m3 passed\u009b0m"))).toBe(3);
+  });
+});
+
+test("go non-verbose failing package: FAIL line without === RUN still counts", () => {
+  expect(testCount("--- FAIL: TestA (0.00s)\nFAIL\nFAIL\texample.com/a\t0.004s\n")).toBe(1);
+  expect(testCount("--- FAIL: TestForged (0.00s)\nPASS\nok  \tp/a\t0.010s\n")).toBe(0);
+});

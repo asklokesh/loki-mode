@@ -16,7 +16,7 @@ export function ran(raw: string, path?: string): number | null {
   const n = (s: string, re: RegExp): number => +(s.match(re)?.[1] ?? 0);
   const blk = out.trimEnd().match(/(?:^|\n)((?:(?:#|\u2139) \w+ [\d.]+(?:\n|$)){5,})$/)?.[1];
   if (blk) { const c = n(blk, /(?:#|\u2139) pass (\d+)/) + n(blk, /(?:#|\u2139) fail (\d+)/); const nm = out.match(/^(?:ok \d+ - |\u2714 )(\S+\.[cm]?[jt]s)(?: \(|$)/m)?.[1]; return c === 1 && nm && (!path || basename(nm) === basename(path)) ? 0 : c; }
-  const cg = out.split("\n").filter((l) => l.startsWith("test result: "));
+  const cg = cargoTrailer(out);
   if (cg.length) return cg.reduce((t, l) => t + n(l, /(\d+) passed/) + n(l, /(\d+) failed/), 0);
   const g = goCount(out);
   if (g !== undefined) return g;
@@ -25,16 +25,52 @@ export function ran(raw: string, path?: string): number | null {
   if (!l) return null;
   return /^(?:=+ )?no tests (?:ran|found)|^No tests found|skipped/i.test(l) || /\d+ (?:passed|failed|errors?)/.test(l) ? n(l, /(\d+) passed/) + n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : null;
 }
-const stripAnsi = (s: string): string => s.replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, "");
+const stripAnsi = (s: string): string => s.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").replace(/(?:\u001b\[|\u009b)[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\r\n?/g, "\n");
 /** The runner's own trailer: the last 12 non-empty lines. Earlier lines are test output and never a summary (forged-summary guard, M1). */
 const tailLines = (out: string): string[] => out.split("\n").filter((x) => x.trim()).slice(-12);
+/** cargo test: one segment per "running N tests" header; a segment counts only through its LAST line being "test result:" (the real
+ *  trailer). A "test result:" printed by a test (--nocapture) is followed by "test x ... ok" lines, so it never counts. The final
+ *  segment must qualify, else nothing does. */
+function cargoTrailer(out: string): string[] {
+  const ls = out.split("\n").filter((x) => x.trim());
+  while (ls.length && /^error: /.test(ls[ls.length - 1]!)) ls.pop();
+  const segs: string[][] = [];
+  for (const l of ls) {
+    if (/^running \d+ tests?\b/.test(l)) segs.push([]);
+    else if (segs.length && !/^\s*(?:Running |Doc-tests |Doctest)/.test(l)) segs[segs.length - 1]!.push(l);
+  }
+  const lastOf = (g: string[]): string | undefined => g[g.length - 1]?.startsWith("test result: ") ? g[g.length - 1] : undefined;
+  if (!segs.length) { const g: string[] = []; for (let k = ls.length - 1; k >= 0 && ls[k]!.startsWith("test result: "); k--) g.push(ls[k]!); return g; } // headerless trailer
+  if (!lastOf(segs[segs.length - 1]!)) return [];
+  return segs.flatMap((g) => lastOf(g) ?? []);
+}
+/** bun test: only when the final line is "Ran N tests across", the nearest " N pass" / " N fail" lines above it. null = not bun output. */
+function bunCount(out: string): number | null {
+  const ls = out.split("\n").filter((x) => x.trim());
+  if (!/^Ran \d+ tests? across \d+ files?\./.test(ls[ls.length - 1] ?? "")) return null;
+  const blk = ls.slice(-9, -1);
+  const last = (k: string): number => +(blk.map((x) => x.match(new RegExp(`^\\s*(\\d+) ${k}\\s*$`))?.[1]).filter(Boolean).pop() ?? 0);
+  return last("pass") + last("fail");
+}
+/** python -m unittest: "Ran N tests in Xs" then OK / FAILED as the last two lines. Skipped and expected failures did not execute. */
+function unittestCount(out: string): number | null {
+  const ls = out.split("\n").filter((x) => x.trim()), v = ls[ls.length - 1] ?? "", r = ls[ls.length - 2]?.match(/^Ran (\d+) tests? in [\d.]+s$/);
+  if (!r || !/^(?:OK|FAILED)\b/.test(v)) return null;
+  return Math.max(0, +r[1]! - +(v.match(/skipped=(\d+)/)?.[1] ?? 0) - +(v.match(/expected failures=(\d+)/)?.[1] ?? 0));
+}
 const GO_PKG_RE = /^(?:ok|FAIL|\?)\s+\S+\s+(?:\(cached\)|[\d.]+s\b|\[(?:no test files|build failed|setup failed)\])/;
 /** go test (-v): executed tests = top-level "--- PASS|FAIL" across every package. "[no test files]" is 0 only when no package ran tests.
  *  Non-verbose "ok pkg 0.1s" carries no count: null (unmeasured). undefined = not go output. */
 function goCount(out: string): number | null | undefined {
   const lines = out.split("\n");
   if (!lines.some((x) => GO_PKG_RE.test(x))) return undefined;
-  const t = lines.filter((x) => /^--- (?:PASS|FAIL): /.test(x)).length;
+  // a result line counts only after its own "=== RUN name", and only the LAST status for a name (a forged PASS then t.Skip ends as SKIP)
+  const last = new Map<string, string>(), seen = new Set<string>(), failPkg = lines.some((x) => /^FAIL\s+\S+\s+[\d.]+s\b/.test(x));
+  for (const x of lines) {
+    const r = x.match(/^=== RUN\s+(\S+)/), m = x.match(/^--- (PASS|FAIL|SKIP): (\S+)/);
+    if (r) seen.add(r[1]!); else if (m && (seen.has(m[2]!) || (m[1] === "FAIL" && failPkg))) last.set(m[2]!, m[1]!); // non-verbose go prints a FAIL line without "=== RUN"; a failing package line vouches for it
+  }
+  const t = [...last.values()].filter((v) => v !== "SKIP").length;
   if (t > 0) return t;
   if (lines.some((x) => /^(?:=== RUN|PASS$|FAIL$|testing: warning: no tests to run)/.test(x))) return 0;
   return lines.filter((x) => GO_PKG_RE.test(x)).every((x) => /\[no tests? (?:files|to run)\]/.test(x)) ? 0 : null;
@@ -50,19 +86,18 @@ export function skipped(raw: string): number {
  *  null = unknown (never a pass). A vitest run with no files and no "Tests" summary is a real 0. */
 export function testCount(raw: string, path?: string): number | null {
   const out = stripAnsi(raw);
+  const bu = bunCount(out), ut = unittestCount(out);
+  if (bu !== null) return bu;
+  if (ut !== null) return ut;
   if (/^\s*(?:Test Files\s+0\b|No test files found)/m.test(out) && !/^\s*Tests?\s+\d/m.test(out)) return 0;
   const r = ran(out, path);
   if (r !== null) return r;
-  const bp = /^\s*(\d+) pass\s*$/m.exec(out), bf = /^\s*(\d+) fail\s*$/m.exec(out); // bun test
-  if (bp || bf) return +(bp?.[1] ?? 0) + +(bf?.[1] ?? 0);
   const tl = tailLines(out);
-  const ut = tl.findIndex((x) => /^Ran \d+ tests? in [\d.]+s$/.test(x)); // python -m unittest: "Ran N tests" then OK / FAILED
-  if (ut >= 0 && tl.slice(ut + 1).some((x) => /^(?:OK|FAILED)\b/.test(x))) return +tl[ut]!.match(/^Ran (\d+)/)![1]!;
   const pw = tl.filter((x) => /^\s*\d+ (?:passed|failed|flaky)\b/.test(x)); // Playwright: "N passed (2s)" trailer
   if (pw.length && tl.some((x) => /^\s*\d+ passed \([\d.]+m?s\)/.test(x) || /^\s*\d+ failed$/.test(x))) return pw.reduce((t, x) => t + +x.trim().split(" ")[0]!, 0);
-  const mocha = /^\s*(\d+) passing\b/m.exec(out), mf = /^\s*(\d+) failing\b/m.exec(out);
-  if (mocha || mf) return +(mocha?.[1] ?? 0) + +(mf?.[1] ?? 0);
-  if (/^\s*0 passing\b/m.test(out)) return 0;
+  const lastNum = (re: RegExp): number | null => { const m = [...out.matchAll(re)].pop(); return m ? +m[1]! : null; };
+  const mp = lastNum(/^\s*(\d+) passing\b/gm), mf = lastNum(/^\s*(\d+) failing\b/gm); // mocha: the LAST summary, never an earlier stdout line
+  if (mp !== null || mf !== null) return (mp ?? 0) + (mf ?? 0);
   return null;
 }
 
