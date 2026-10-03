@@ -113,6 +113,22 @@ describe("E-67 rework: supervisor backstop", () => {
     expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
   }, 10_000);
 
+  test("FC-19: a sealed PARTIAL after a failed implement stage, with a diff, still opens the PR (never vanishes)", async () => {
+    const { dir, baseSha } = repoWithCommit();
+    const code = `
+      ${intakeLine(baseSha)}
+      ${COMMIT_A_CHANGE}
+      console.log(JSON.stringify({ type: "stage.failed", stage: "implement", data: { reason: "limit" } }));
+      console.log(JSON.stringify({ type: "receipt.sealed", stage: "seal", data: { verdict: "PARTIAL", not_proven: ["implement failed"] } }));
+      process.exit(0);
+    `;
+    const pr = prSpy();
+    const r = await runSupervisor({ runId: "e10-fc19", repoDir: dir, env: ENV, workerArgv: worker(code), capS: 20, graceS: 5, pr: pr.step, started: { task_source: "issue", issue_ref: "acme/widget#42" }, comment: commentSpy().step });
+    expect(r.verdict).toBe("PARTIAL");
+    expect(pr.calls.length).toBe(1);
+    expect(r.prUrl).toBe("https://github.com/acme/widget/pull/1");
+  }, 15_000);
+
   test("hung worker with no diff, on an issue run: posts an issue comment with the exact reason", async () => {
     const { dir } = repoWithCommit(); // no extra commit: base_sha stays HEAD, so there is no diff
     const code = `setInterval(() => {}, 1000);`;

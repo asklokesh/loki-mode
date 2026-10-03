@@ -229,3 +229,16 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: D82-WALL0 and any stage that can finish with zero artifacts and still bill.
 - Mechanism: if the Wall cannot write a check, it skips in under 10s with a NOT PROVEN note and never runs a model session to an empty result.
 - Fixture: owed. A repo with no runnable test command yields a Wall skip under 10s with NOT PROVEN.
+
+## FC-19 Loki's own stage rules talk a capable model out of doing the job
+- User saw: FireLater#17 run e10-20261003T200907Z-fea1 on 10.9.1 ended BLOCKED in 6m58s with a draft PR. The model's reason: "spec conflict: the task asks for all 37 route files to be migrated, validated and covered 100%, but the stage rules limit me to the named files and a few tests". Raw Claude Code finishes the same task in about 2 minutes. The user was told their spec conflicted; it was Loki's brief.
+- Law: L1 (never below raw), L0 (the harness may not shrink the model's job), L5 (a harness failure is reported as one, never as the user's spec conflict).
+- Siblings (limiting language swept, kept only where the stage is a read-only role or a trust rule):
+  - Fixed: loki-ts/src/features/lean_prefix.ts STAGE_PREFIX and LEAN_PREFIX, now role-neutral (they also prefix the read-only plan brief and the Wall author brief, so no full-job text lives there).
+  - Fixed: loki-ts/src/e10ext/context.ts FIXED_RULES, the implement brief only ("Run only the impacted tests named below", "Never run the full test suite, an E2E suite, or a long-lived server" removed; the full job is stated here).
+  - Fixed: loki-ts/src/engine10/stages/implement.ts brief ("Impacted tests: none known" wording) and its fixed 480s implement limit (now derived from the run budget in machine.ts; deep mode now also gets its 1800s session limit, where session.ts used to kill it at 480s).
+  - Kept, role-defining read-only stages: stages/plan.ts and engine10/already_done.ts ("do not edit any file", "do not run tests"); they never implement.
+  - Kept, deliberate parallel fence: features/speed/unit_mode.ts (a decomposer-set write set, off unless LOKI_UNIT_SPEC).
+  - Fix briefs reuse buildImplementBrief, so they inherit the same fix.
+- Mechanism: one shared constant brief (full job, trust rules only) plus one resume. No code inspects the model's wording (L0): on any LOKI_SPEC_CONFLICT from implement, util/conflict_resume.ts resumes the session exactly once with a correction ("Loki imposes no file or test limits; if your conflict is only about Loki's own rules, finish the task. If the task itself conflicts, restate the conflict."). If the model still declares a conflict the outcome is the normal BLOCKED with its one question (A-110). User work always keeps its PR or draft PR (E-67, L6).
+- Fixture: tests/engine10/conflict_resume.test.ts (a conflict that clears continues; one that persists stays BLOCKED with its question), tests/e10ext/full_job_brief.test.ts (limiting phrases gone, trust rules present, plan and Wall briefs carry no full-job wording), tests/engine10/machine.test.ts (deep implement session gets 1800s), tests/engine10/supervisor_backstop.test.ts (a PARTIAL seal after a failed implement stage still opens its PR).

@@ -269,6 +269,25 @@ describe("engine10 machine", () => {
     expect(events.find((e) => e.type === "stage.started" && e.stage === "implement")?.data.limit_s).toBe(1800);
   });
 
+  it("FC-19: deep-mode implement session gets the 1800s limit, not the stage's 480s", async () => {
+    const { ctx } = fakeCtx();
+    ctx.deep = true;
+    const seen: number[] = [];
+    ctx.sessions = { run: async (o) => { seen.push(o.limitS); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
+    const impl: Stage = { name: "implement", targetS: 180, limitS: 480, run: async (c, _s) => { await c.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i", limitS: 480, signal: new AbortController().signal }); return { status: "completed", data: {} }; } };
+    await runMachine(ctx, { load: loaderOf(all({ implement: impl })) });
+    expect(seen).toEqual([1800]);
+  });
+
+  it("FC-19: implement limit comes from the run budget, not a fixed 480s", async () => {
+    const { ctx, events } = fakeCtx();
+    ctx.capS = 900;
+    await runMachine(ctx, { load: loaderOf(all({ implement: { name: "implement", targetS: 180, limitS: 480, run: async () => ({ status: "completed", data: {} }) } })) });
+    const lim = events.find((e) => e.type === "stage.started" && e.stage === "implement")?.data.limit_s as number;
+    expect(lim).toBeGreaterThan(480);
+    expect(lim).toBeLessThan(900);
+  });
+
   it("already satisfied jumps to commit and seal", async () => {
     const { ctx, events } = fakeCtx();
     await runMachine(ctx, { load: loaderOf(all({ intake: stage("intake", async () => ({ status: "completed", data: { already_satisfied: true } })) })) });

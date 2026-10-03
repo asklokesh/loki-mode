@@ -80,13 +80,13 @@ const doneResult: SessionResult = {
 };
 
 describe("engine10 implement brief", () => {
-  test("forbids the full suite, kills, and docs; requires the exit markers", () => {
+  test("allows the full suite (FC-19), forbids kills and docs; requires the exit markers", () => {
     const brief = buildImplementBrief("fix the bug", "1. patch X", ["tests/x.test.ts"]);
     expect(brief).toContain("fix the bug");
     expect(brief).toContain("1. patch X");
     expect(brief).toContain("tests/x.test.ts");
     expect(brief.toLowerCase()).toContain("read-only");
-    expect(brief.toLowerCase()).toContain("never run the full");
+    expect(brief.toLowerCase()).not.toContain("never run the full");
     expect(brief.toLowerCase()).toContain("never kill");
     expect(brief.toLowerCase()).toContain("no documentation");
     expect(brief).toContain("LOKI_DONE");
@@ -270,7 +270,7 @@ describe("engine10 implement stage", () => {
     expect(asked).toEqual(["calc.ts"]);
     expect(r.data.impacted_tests).toEqual(["calc.test.ts"]);
     expect(r.data.iteration_ids).toEqual(["e10-test-1-impl"]);
-    expect(sessions.lastOpts?.brief).toContain("Impacted tests to run: calc.test.ts.");
+    expect(sessions.lastOpts?.brief).toContain("Impacted tests (a starting hint, not a limit): calc.test.ts.");
   });
 
   test("E-98c: an empty relevant_files (not missing) still falls back to the task's named files", async () => {
