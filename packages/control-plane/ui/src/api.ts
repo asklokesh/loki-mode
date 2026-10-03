@@ -1,5 +1,9 @@
 // The only file that talks to the control service. Shapes mirror packages/control-plane/src/server/runs.ts (parseRun, listRuns, runDetail).
 
+/** FC-08: the one display verdict. Mirrors src/server/integrity.ts effectiveVerdict (parity-tested). Never VERIFIED for a tampered or unattested run. */
+export const effectiveVerdict = (r: { verdict: string | null; tampered: boolean; attested?: boolean }): string | null =>
+  r.tampered ? "TAMPERED" : r.verdict === "VERIFIED" && r.attested === false ? "UNVERIFIED" : r.verdict;
+
 export type Verdict = "VERIFIED" | "PARTIAL" | "FAILED" | "SPEC_CONFLICT" | string;
 
 export interface RunRow {
@@ -26,6 +30,10 @@ export interface RunRow {
   last_event_at: string | null;
   tampered: boolean;
   conflict: boolean;
+  // EL-FC08b: integrity verified at ingest. Optional so older captures still type-check; absent attested reads as the raw verdict.
+  attested?: boolean;
+  integrity_reasons?: string[];
+  effective_verdict?: string | null;
   // Live view: status is "running" until run.completed arrives. Optional so older captures still type-check.
   status?: "running" | "completed";
   elapsed_s?: number | null;

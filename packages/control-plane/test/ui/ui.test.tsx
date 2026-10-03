@@ -33,7 +33,8 @@ test("runs list: row count and verdict badges equal EXPECTED.json", async () => 
   const rows = await screen.findAllByTestId("run-row");
   expect(rows.length).toBe(expected.run_count);
   const shown = rows.map((r) => within(r).getByTestId("verdict").textContent).sort();
-  expect(shown).toEqual(Object.values(expected.runs).map((r) => r.verdict).sort());
+  // FC-08: a tampered run claims VERIFIED in the corpus but must display TAMPERED
+  expect(shown).toEqual(Object.values(expected.runs).map((r: any) => (r.tampered ? "TAMPERED" : r.verdict)).sort());
 });
 
 test("runs list: unpriced run shows 'unpriced', never $0", async () => {

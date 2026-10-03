@@ -49,6 +49,8 @@ export const runs = sqliteTable("runs", {
   conflict: integer("conflict").notNull().default(0),
   groupId: text("group_id"),
   unitId: text("unit_id"),
+  attested: integer("attested"), // EL-FC08b: null = never evaluated (reads as unattested)
+  integrityReasons: text("integrity_reasons"), // JSON string[]
 }, (t) => [
   primaryKey({ columns: [t.sourceId, t.runId] }),
   index("runs_started").on(t.startedAt),

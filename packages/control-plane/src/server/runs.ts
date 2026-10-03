@@ -4,6 +4,7 @@ import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 import type { Db } from "../db/migrate.ts";
 import { events, runs } from "../db/schema.ts";
 import { blockedQuestion } from "./answer.ts";
+import { effectiveVerdict, pubkeysFromEnv, verifyRunIntegrity } from "./integrity.ts";
 
 const str = (x: unknown): string | null => (typeof x === "string" ? x : null);
 
@@ -17,7 +18,9 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
   const evs = loadEvents(db, sourceId, runId);
   if (evs.length === 0) return;
   const f = fold(evs);
-  const pc = partialCost(evs, f.run.tampered);
+  const integ = verifyRunIntegrity(evs, { pubkeyFor: pubkeysFromEnv() }); // EL-FC08b: tampered is the supervisor flag OR any ingest-side integrity failure
+  const tampered = f.run.tampered || integ.tampered;
+  const pc = partialCost(evs, tampered);
   const sd = f.run.started?.data ?? {};
   const done = f.run.completed?.data ?? {};
   const pr = evs.find((e) => e.type === "pr.opened")?.data;
@@ -31,11 +34,14 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
     costUsd: f.cost.usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total,
     inputTokens: f.cost.inputTokens, outputTokens: f.cost.outputTokens,
     wallS: typeof done.wall_s === "number" ? done.wall_s : null,
-    lastSeq: f.lastSeq, lastEventAt: evs[evs.length - 1]?.ts ?? null, tampered: Number(f.run.tampered),
+    lastSeq: f.lastSeq, lastEventAt: evs[evs.length - 1]?.ts ?? null, tampered: Number(tampered),
+    attested: Number(integ.attested), integrityReasons: JSON.stringify(integ.reasons),
   };
   // conflict is owned by ingest, so it is left out of the update set and survives a rebuild
   db.insert(runs).values(row).onConflictDoUpdate({ target: [runs.sourceId, runs.runId], set: row }).run();
 }
+
+const reasonsOf = (j: string | null): string[] => { try { const x = JSON.parse(j ?? "[]"); return Array.isArray(x) ? x.filter((s): s is string => typeof s === "string") : []; } catch { return []; } };
 
 const parseRun = (r: typeof runs.$inferSelect) => ({
   source_id: r.sourceId, run_id: r.runId, origin_repo: r.originRepo, issue_ref: r.issueRef, task_source: r.taskSource,
@@ -44,6 +50,8 @@ const parseRun = (r: typeof runs.$inferSelect) => ({
   cost_usd: r.costUsd, partial_usd: r.partialUsd, measured_sessions: r.measuredSessions, total_sessions: r.totalSessions,
   input_tokens: r.inputTokens, output_tokens: r.outputTokens, wall_s: r.wallS, last_seq: r.lastSeq,
   last_event_at: r.lastEventAt, tampered: r.tampered === 1, conflict: r.conflict === 1,
+  attested: r.attested === 1, integrity_reasons: reasonsOf(r.integrityReasons),
+  effective_verdict: effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1 }),
   status: r.endedAt ? "completed" : "running", elapsed_s: elapsedS(r),
 });
 // A run with no run.completed yet is running: add its live fields (stage, files) from the stored events.
@@ -82,6 +90,7 @@ export function listRuns(db: Db, q: ListQuery) {
   const offset = Math.max(Number.parseInt(q.cursor ?? "0", 10) || 0, 0); // ponytail: cursor is an opaque offset, keyset when write rate makes pages shift
   const where = and(
     q.verdict ? eq(runs.verdict, q.verdict) : undefined,
+    q.verdict === "VERIFIED" ? and(eq(runs.tampered, 0), eq(runs.attested, 1)) : undefined, // FC-08: the VERIFIED filter never lists a tampered or unattested run
     q.repo ? eq(runs.originRepo, q.repo) : undefined,
     q.group_id ? eq(runs.groupId, q.group_id) : undefined,
     q.since ? gte(runs.startedAt, q.since) : undefined,

@@ -15,6 +15,13 @@
       "when": 1790956800000,
       "tag": "0001_group_id",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791043200000,
+      "tag": "0002_integrity",
+      "breakpoints": true
     }
   ]
 }
