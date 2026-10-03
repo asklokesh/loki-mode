@@ -34,7 +34,9 @@ const seeded = () => {
   ]).run();
   return m;
 };
-const get = (app: Hono, path: string, headers: Record<string, string> = {}, method = "GET") => app.request(path, { method, headers, redirect: "manual" });
+const peer = (address: string) => ({ requestIP: () => ({ address }) });
+const LOOP = peer("127.0.0.1");
+const get = (app: Hono, path: string, headers: Record<string, string> = {}, method = "GET", env: object | null = LOOP) => app.request(path, { method, headers, redirect: "manual" }, env ?? undefined);
 const fill = (p: string) => p.replace(/\{[A-Za-z_]+:path\}/g, "a/b").replace(/\{[A-Za-z_]+\}/g, "x");
 
 beforeEach(() => resetLegacyLog());
@@ -195,7 +197,7 @@ test("auth parity: a CP token is required on every legacy-guarded route, open ro
   sqlite.close();
 });
 
-test("auth parity: legacy enterprise auth or OIDC on with no CP token fails closed; both off stays open like legacy", async () => {
+test("auth parity: legacy enterprise auth or OIDC on with no CP token fails closed; both off serves loopback peers only like legacy", async () => {
   for (const env of [{ LOKI_ENTERPRISE_AUTH: "true" }, { LOKI_ENTERPRISE_AUTH: "1" }, { LOKI_ENTERPRISE_AUTH: "YES" }, { LOKI_OIDC_ISSUER: "https://idp.test", LOKI_OIDC_CLIENT_ID: "cid" }]) {
     const { app, sqlite } = mk({ env });
     for (const [m, p] of [["GET", "/api/status"], ["GET", "/api/v2/runs"], ["GET", "/api/v2/audit"], ["POST", "/api/control/pause"], ["GET", "/api/cost"], ["GET", "/start"]] as const) {
@@ -211,6 +213,53 @@ test("auth parity: legacy enterprise auth or OIDC on with no CP token fails clos
     expect((await get(app, "/api/control/pause", {}, "POST")).status).toBe(501);
     sqlite.close();
   }
+});
+
+test("no token and legacy auth off: a non-loopback or unknown socket peer is 403 on every guarded route, whatever Host says", async () => {
+  const { app, sqlite } = seeded();
+  const spoof = { host: "127.0.0.1:1" };
+  for (const p of ["/api/status", "/api/v2/runs", "/api/v2/audit", "/v1/audit", "/api/control/pause", "/lab/api/x", "/api/nope"]) {
+    expect([p, "lan", (await get(app, p, spoof, "GET", peer("10.0.0.5"))).status]).toEqual([p, "lan", 403]);
+    expect([p, "none", (await get(app, p, spoof, "GET", {})).status]).toEqual([p, "none", 403]);
+    expect([p, "noenv", (await get(app, p, spoof, "GET", null)).status]).toEqual([p, "noenv", 403]);
+  }
+  expect((await get(app, "/api/control/pause", spoof, "POST", peer("10.0.0.5"))).status).toBe(403);
+  for (const ip of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
+    expect([ip, (await get(app, "/api/status", {}, "GET", peer(ip))).status]).toEqual([ip, 200]);
+    expect([ip, (await get(app, "/v1/audit", {}, "GET", peer(ip))).status]).toEqual([ip, 200]);
+  }
+  // open routes stay open to any peer, as in legacy
+  expect((await get(app, "/.well-known/agent.json", {}, "GET", peer("10.0.0.5"))).status).toBe(200);
+  sqlite.close();
+});
+
+test("/v1/audit carries its own guard: legacy auth on with no token is 401 even without the /v1 middleware", async () => {
+  const { app, sqlite } = mk({ env: { LOKI_ENTERPRISE_AUTH: "true" } });
+  expect((await get(app, "/v1/audit")).status).toBe(401);
+  expect((await get(app, "/v1/audit", { authorization: "Bearer x" })).status).toBe(401);
+  sqlite.close();
+});
+
+test("/lab/api/* is 501 JSON on every method (not a 308); /lab pages still 308", async () => {
+  const { app, sqlite } = mk();
+  for (const m of ["GET", "POST", "PUT", "DELETE"]) {
+    const r = await get(app, "/lab/api/anything/deep", {}, m);
+    expect([m, r.status, r.headers.get("location")]).toEqual([m, 501, null]);
+    expect(((await r.json()) as any).error).toContain("not yet supported");
+  }
+  expect((await get(app, "/lab/page")).status).toBe(308);
+  sqlite.close();
+});
+
+test("unknown /api/* is a JSON 404 and a trailing slash on a mapped route is served like legacy", async () => {
+  const { app, sqlite } = mk();
+  const r = await get(app, "/api/does/not/exist");
+  expect(r.status).toBe(404);
+  expect(await r.json()).toEqual({ detail: "Not Found" });
+  expect((await get(app, "/api/status/")).status).toBe(200);
+  expect((await get(app, "/api/v2/runs/")).status).toBe(200);
+  expect((await get(app, "/api/control/pause/", {}, "POST")).status).toBe(501);
+  sqlite.close();
 });
 
 test("legacy enterprise auth on AND a CP token: the token is the gate", async () => {

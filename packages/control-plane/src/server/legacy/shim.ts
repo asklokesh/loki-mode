@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { Hono, type Context } from "hono";
 import type { Db } from "../../db/migrate.ts";
 import { audit, runs } from "../../db/schema.ts";
-import { tokenMatches } from "../auth.ts";
+import { peerIsLoopback, tokenMatches } from "../auth.ts";
 import { liveInfo, listRuns, loadEvents, runDetail } from "../runs.ts";
 import { LEGACY_ROUTES, type LegacyRoute } from "./routes.ts";
 
@@ -68,11 +68,11 @@ export function legacyShim(opts: LegacyShimOpts) {
   const authOn = legacyAuthEnabled(env);
   const app = new Hono();
 
-  /** Never looser than legacy: a CP token, when set, is always required; with none set, legacy enterprise auth or OIDC being on fails closed (the CP cannot check loki_* tokens); with neither, open like legacy. */
+  /** Never looser than legacy: a CP token, when set, is always required; with none set, legacy enterprise auth or OIDC being on fails closed (the CP cannot check loki_* tokens); with neither, only a loopback socket peer is served (legacy 403s any other peer, whatever Host says; unknown peer fails closed). */
   const denied = (c: Context): Response | null => {
     if (opts.token) return tokenMatches(c.req.header("authorization"), opts.token) ? null : c.json({ detail: "Not authenticated" }, 401, { "www-authenticate": "Bearer" });
     if (authOn) return c.json({ detail: "Not authenticated" }, 401, { "www-authenticate": "Bearer" });
-    return null;
+    return peerIsLoopback(c) ? null : c.json({ detail: "Forbidden" }, 403);
   };
   const once = (r: Pick<LegacyRoute, "method" | "path" | "action" | "migrate">) => {
     const key = `${r.method} ${r.path}`;
@@ -150,6 +150,13 @@ export function legacyShim(opts: LegacyShimOpts) {
     "GET /api/v2/audit": (c) => { const r = auditList(c); return r.err ?? c.json(r.rows); },
   };
 
+  // /lab/api/* is data, not a page: 501 JSON on every method (a 308 to the SPA would hand a client HTML). Registered before the /lab mount.
+  app.all("/lab/api/*", (c) => {
+    const d = denied(c);
+    if (d) return d;
+    return c.json({ error: NOT_SUPPORTED, detail: "The legacy dashboard route exists, but the Control Plane has no data or mechanism for it yet.", legacy_route: "/lab/api/*", method: c.req.method }, 501);
+  });
+
   for (const r of LEGACY_ROUTES) {
     // On the CP app itself "/" is the UI already; redirecting it would loop. Only a separately mounted shim (uiBase set) redirects it.
     if (r.action === "308" && uiBase === "" && r.path === "/") continue;
@@ -165,6 +172,7 @@ export function legacyShim(opts: LegacyShimOpts) {
     };
     const m = r.method === "WS" || r.method === "MOUNT" ? "GET" : r.method;
     app.on(m, hp, handle);
+    if (hp !== "/" && !hp.endsWith("}")) app.on(m, `${hp}/`, handle); // legacy stripped a trailing slash
     if (r.method === "MOUNT") app.on(m, `${hp}/*`, handle);
   }
 
@@ -175,6 +183,9 @@ export function legacyShim(opts: LegacyShimOpts) {
     const r = auditList(c);
     return r.err ?? c.json({ entries: r.rows, limit: r.limit, offset: r.offset });
   });
+
+  // Unknown /api/* is a JSON 404 like legacy, never the SPA shell.
+  app.all("/api/*", (c) => { const d = denied(c); return d ?? c.json({ detail: "Not Found" }, 404); });
 
   return app;
 }

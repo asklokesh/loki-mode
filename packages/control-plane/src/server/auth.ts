@@ -1,12 +1,18 @@
 // Control Plane auth: bearer token on /v1, Host allowlist on loopback (DNS rebinding), bind refusal without a token.
 import { createHash, timingSafeEqual } from "node:crypto";
-import type { MiddlewareHandler } from "hono";
+import type { Context, MiddlewareHandler } from "hono";
 
 const LOOPBACK_BINDS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 /** True when a Host header value (optional port) names this machine's loopback. Strict: nothing may follow the name or port. */
 export function isLoopbackHost(host: string | undefined | null): boolean {
   return !!host && /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i.test(host);
+}
+
+/** True when the real socket peer (not the spoofable Host header) is loopback. An unknown peer fails closed. */
+export function peerIsLoopback(c: Context): boolean {
+  const ip = (c.env as { requestIP?: (r: Request) => { address?: string } | null } | undefined)?.requestIP?.(c.req.raw)?.address;
+  return typeof ip === "string" && /^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/.test(ip);
 }
 
 /** Constant-time check of an Authorization header against the token. Hashing first makes the compare length-safe. */
