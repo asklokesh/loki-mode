@@ -17,6 +17,8 @@ import { page as plans, pickerPage as plansPicker } from "./plans";
 import { page as merge } from "./merge";
 import { page as risk } from "./risk";
 import { page as config } from "./settings";
+import { page as workspaces } from "./workspaces";
+import { page as integrations } from "./integrations";
 
 // The run thread takes source/run props; the registry passes route params.
 const RunPage = runPage.component;
@@ -40,5 +42,5 @@ export function wirePages(): void {
   // Plans reads route params itself, so it registers as-is.
   registerPage(plans);
   registerPage(plansPicker);
-  for (const p of [cost, work, receipts, runs, models, compose, merge, risk, config]) registerPage(adapt(p));
+  for (const p of [cost, work, receipts, runs, models, compose, merge, risk, config, workspaces, integrations]) registerPage(adapt(p));
 }
