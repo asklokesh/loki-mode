@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
-import { cascadeEnabled, cascadeImplementModel, loadRepoMap, namedFiles } from "../sizing.ts";
+import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { runnerCmd } from "./verify.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
@@ -61,7 +61,9 @@ export const implementStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
-    const cascade = cascadeEnabled(); // E-64: pins this attempt to sonnet (the Wall's E-45 alias); =0 leaves the configured model
+    const downgrade = cascadeDowngrade(ctx.model);
+    const cascade = downgrade !== null;
+    if (downgrade) process.stderr.write(`${downgrade.note}\n`);
     const repoMap = briefCtx(ctx); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
     const session = await ctx.sessions.run({
@@ -72,7 +74,7 @@ export const implementStage: Stage = {
       limitS: implementStage.limitS,
       signal,
       cwd: ctx.repoDir,
-      ...(cascade ? { model: cascadeImplementModel() } : {}),
+      ...(downgrade ? { model: downgrade.to } : {}),
     });
 
     const testsReverted = restoreReadOnly(readOnly);
@@ -98,6 +100,7 @@ export const implementStage: Stage = {
       tests_reverted: testsReverted,
       impacted_tests: impacted,
       cascade,
+      ...(downgrade ? { model_downgrade: downgrade.note } : {}),
       iteration_ids: [iterationId],
       duration_s: session.durationS,
     };

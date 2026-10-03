@@ -39,8 +39,10 @@ loki "fix the login redirect loop" --no-pr
 `loki quick "<task>"` is the small-task entry. It runs the same engine
 without opening a pull request (the legacy quick never opened one), and the
 engine's own sizing picks the lean path for a small task: Plan and Wall are
-skipped and implement starts on sonnet, escalating to the top model only
-on a real test failure (E-64; `LOKI_E10_CASCADE=0` turns the cascade off).
+skipped and implement runs on your run's own model, like a raw session.
+`LOKI_E10_CASCADE=1` opts in to the cheaper sonnet start (it prints and
+records the downgrade); a repeated test failure always escalates up, never
+down (Engine Law L1).
 `loki quick --help` and a flag-first `loki quick -v "<task>"` stay on the
 legacy quick.
 
