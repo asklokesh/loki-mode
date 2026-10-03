@@ -678,6 +678,7 @@ CI security scanners wired, fail-closed (E-123)	1
 Worktree install cache keyed on lockfile hash (E-130)	1
 WhatsNew CURRENT_VERSION matches VERSION (E-129)	1
 Heredoc dollar-digit footgun checker (D44)	2
+Inline script syntax gate parses dashboard HTML	1
 CI cache scope (D44)	2
 Engine10 push GitLab (D44)	5
 gh withhold nested (D44)	2

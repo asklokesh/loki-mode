@@ -1614,6 +1614,7 @@ run_test "Usage governor calibration and dedup (G-01)" "$SCRIPT_DIR/test-usage-g
 run_test "Usage governor statusLine logger (G-01)" "$SCRIPT_DIR/test-usage-statusline-logger.sh"
 run_test "CI security scanners wired, fail-closed (E-123)" "$SCRIPT_DIR/test-security-scan-coverage.sh"
 run_test "Heredoc dollar-digit footgun checker (D44)" "$SCRIPT_DIR/test-check-heredoc-dollar-digit.sh"
+run_test "Inline script syntax gate parses dashboard HTML" "timeout -k 10 60 $SCRIPT_DIR/test-check-inline-scripts.sh"
 run_test "CI cache scope (D44)" "$SCRIPT_DIR/test-ci-cache-scope.sh"
 run_test "Engine10 push GitLab (D44)" "$SCRIPT_DIR/test-engine10-push-gitlab.sh"
 run_test "gh withhold nested (D44)" "$SCRIPT_DIR/test-gh-withhold-nested.sh"
