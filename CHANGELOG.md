@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The dashboard no longer shows an empty list when a file is corrupt or denied: `/api/proofs` returns an error row for a bad proof.json and a 503 for an unreadable proofs directory, and the memory patterns, episodes, skills and index endpoints return 503 instead of `[]` (HONEST-READ-1).
 - `loki verify --fast` no longer exits 0 when it cannot give a verdict: nothing scanned (INCONCLUSIVE) exits 3, an unknown flag exits 64, and a missing root directory exits 2 (P2-FV-EXIT).
 - `loki verify` no longer lets a planted `json.py` in the reviewed tree forge its recorded gates (a dependency audit with high CVEs could read as pass); its inline Python readers now run isolated (-I -S) (S-216r).
+- `loki verify` no longer lets a planted `json.py` in the reviewed tree forge its recorded gates (a dependency audit with high CVEs could read as pass); every inline Python call site, including the evidence.json and report.md emitter, now runs isolated (-I -S) (S-216r).
 - When `loki start` refuses to resume the recorded agent branch because checking it out would overwrite one of your gitignored files, the warning now names that file and the branch where the earlier commits stay, instead of only saying the branch "could not be checked out" (S-233).
 - The standalone dashboard receipts list now shows a partly priced run's cost as "at least $X.XX" (only when `/api/proofs` reports `cost_partial: true`) instead of presenting a lower bound as a complete total (PO-STANDALONE-COST-1).
 

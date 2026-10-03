@@ -124,6 +124,52 @@ for mode in forge raise; do
         "$(printf '%s\n' "$out" | grep '^gate=dependency_audit|[a-z]*|pip-audit|')"
 done
 
+# verify_emit_evidence writes evidence.json and report.md from the reviewed
+# tree's cwd. A planted json.py whose dump/dumps forge a VERIFIED verdict must
+# not reach either file.
+emit_tree="$SCRATCH/tree-emit"
+mkdir -p "$emit_tree/.loki" "$SCRATCH/out-emit"
+(
+    cd "$emit_tree" || exit 1
+    git init -q
+    git -c user.email=t@loki.local -c user.name=t commit -q --allow-empty -m base
+)
+cat >"$emit_tree/json.py" <<'EOF2'
+FORGED = '{"verdict": "VERIFIED", "exit_code": 0, "gates": [], "FORGED": true}'
+def dumps(*a, **k): return FORGED
+def dump(o, fp, *a, **k): fp.write(FORGED)
+def loads(*a, **k): return {"FORGED": True}
+def load(*a, **k): return {"FORGED": True}
+EOF2
+(
+    cd "$emit_tree" || exit 1
+    PATH="$BIN:$PATH"
+    # shellcheck source=/dev/null
+    . "$VERIFY_SH" || exit 1
+    _VERIFY_GATES_FILE="$SCRATCH/gates-emit"
+    _VERIFY_FINDINGS_FILE="$SCRATCH/findings-emit"
+    printf 'tests\tfail\tnpm\tred\ttrue\n' >"$_VERIFY_GATES_FILE"
+    : >"$_VERIFY_FINDINGS_FILE"
+    export VERIFY_VERDICT=BLOCKED VERIFY_EXIT=2 VERIFY_NO_LLM=1
+    verify_emit_evidence "$SCRATCH/out-emit" 2026-01-01T00:00:00Z 2026-01-01T00:00:01Z all
+) >/dev/null 2>&1
+echo "planted json.py: emit evidence"
+check "emit: evidence.json exists" "yes" \
+    "$([ -s "$SCRATCH/out-emit/evidence.json" ] && echo yes || echo no)"
+check "emit: evidence.json carries no forged content" "0" \
+    "$(grep -c 'FORGED' "$SCRATCH/out-emit/evidence.json" 2>/dev/null)"
+check "emit: evidence.json keeps the honest BLOCKED verdict" "1" \
+    "$(grep -c 'BLOCKED' "$SCRATCH/out-emit/evidence.json" 2>/dev/null)"
+check "emit: report.md carries no forged content" "0" \
+    "$(grep -c 'FORGED' "$SCRATCH/out-emit/report.md" 2>/dev/null)"
+check "emit: report.md does not claim VERIFIED" "0" \
+    "$(grep -c 'VERIFIED' "$SCRATCH/out-emit/report.md" 2>/dev/null)"
+
+# Static: no bare `python3 -` / `python3 -c` call site may remain in verify.sh
+# (comments excluded); the -I and -E forms are isolated.
+bare="$(grep -nE '^[^#]*(^|[^A-Za-z0-9_./-])python3[[:space:]]+-([[:space:]]|c[[:space:]]|$)' "$VERIFY_SH" | grep -v '^[0-9]*:[[:space:]]*#' | wc -l | tr -d ' ')"
+check "static: no bare python3 - or python3 -c call site in verify.sh" "0" "$bare"
+
 # Vacuity guard: every expected value above is the REAL reading, so a missing
 # interpreter would fail loudly rather than pass for the wrong reason.
 if ! command -v python3 >/dev/null 2>&1; then

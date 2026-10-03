@@ -1651,7 +1651,7 @@ _verify_write_setup_recipe() {
     _SR_DIR="$tree/.loki" _SR_INSTALL="$install" _SR_SEED="$seed" \
     _SR_START="$start" _SR_HEALTH="$health_path" _SR_PORT="$port" \
     _SR_ENVSRC="$env_src" \
-    python3 - <<'PYEOF' 2>/dev/null || return 0
+    _verify_py - <<'PYEOF' 2>/dev/null || return 0
 import json, os, re
 
 out_dir = os.environ["_SR_DIR"]
@@ -1855,7 +1855,7 @@ verify_gate_runtime() {
     # reproducible (command + url + status + artifact are all captured).
     _VR_DIR="$artifact_dir" _VR_METHOD="$method" _VR_URL="$url" \
     _VR_STATUS="$http_status" _VR_ART="$artifact_field" _VR_TO="$boot_timeout" \
-    python3 - <<'PYEOF' 2>/dev/null || true
+    _verify_py - <<'PYEOF' 2>/dev/null || true
 import json, os
 rec = {
     "start_command": os.environ.get("_VR_METHOD", ""),
@@ -2253,7 +2253,7 @@ verify_emit_evidence() {
     _V_SCOPE_SOFT_NET="${VERIFY_SCOPE_SOFT_NET_LINES:-}" \
     _V_SCOPE_MAX_FILES="${VERIFY_SCOPE_MAX_FILES:-}" \
     _V_SCOPE_MAX_NET="${VERIFY_SCOPE_MAX_NET_LINES:-}" \
-    python3 - <<'PYEOF'
+    _verify_py - <<'PYEOF'
 import json, os, hashlib, sys
 
 out_dir = os.environ["_VERIFY_OUT_DIR"]
@@ -2711,7 +2711,7 @@ verify_expectation_ledger_gate() {
         _LK_ITER="$iter" \
         _LK_OBSERVED="$observed_file" \
         _LK_MOD="$mod" \
-        python3 - <<'PYEOF' 2>/dev/null
+        _verify_py - <<'PYEOF' 2>/dev/null
 import importlib.util, json, os, sys
 
 mod_path = os.environ["_LK_MOD"]
@@ -2896,7 +2896,7 @@ verify_hosted_enrich() {
 
     # Fold the engine payload into evidence.json under "hosted". A parse failure
     # at any step leaves the file byte-for-byte unchanged.
-    _V_EV="$ev_path" _V_ENGINE="$engine_out" python3 - <<'PYEOF' || {
+    _V_EV="$ev_path" _V_ENGINE="$engine_out" _verify_py - <<'PYEOF' || {
 import json, os, sys
 
 ev_path = os.environ["_V_EV"]
@@ -2946,7 +2946,7 @@ PYEOF
     # Built from the engine payload via python3 (already a precondition above);
     # any parse hiccup leaves the summary empty and the banner simply omits the
     # line -- never a fabricated summary.
-    VERIFY_HOSTED_SUMMARY="$(_V_ENGINE="$engine_out" _V_VERDICT="${VERIFY_VERDICT:-}" python3 - <<'PYEOF' 2>/dev/null || true
+    VERIFY_HOSTED_SUMMARY="$(_V_ENGINE="$engine_out" _V_VERDICT="${VERIFY_VERDICT:-}" _verify_py - <<'PYEOF' 2>/dev/null || true
 import json, os
 try:
     e = json.loads(os.environ["_V_ENGINE"])
@@ -3042,7 +3042,7 @@ _verify_check_fresh() {
     # Parse the graded head_sha out of the evidence document. python3 is the same
     # dependency the emitter uses; a parse failure is fail-closed (ERROR).
     local graded_head parse_rc
-    graded_head="$(_VF_EV="$ev_path" python3 - <<'PYEOF' 2>/dev/null
+    graded_head="$(_VF_EV="$ev_path" _verify_py - <<'PYEOF' 2>/dev/null
 import json, os, sys
 try:
     doc = json.load(open(os.environ["_VF_EV"]))
