@@ -5,6 +5,7 @@
 // lexing is undecidable emits nothing. Python: heads come from the stdlib ast in an isolated interpreter.
 // Parameter and field defaults are always masked as `= ...`.
 import { spawnSync } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 export interface ManifestFile { path: string; content: string }
 
@@ -44,8 +45,19 @@ function templateEnd(s: string, i: number): number {
   return s.length;
 }
 
+// True when the previous significant token before i is a comment (block, or any line holding a `//`).
+// Shared by the pre-pass and regexEnd so a regex after a comment is ambiguous in both.
+function commentBefore(s: string, i: number): boolean {
+  let p = i - 1;
+  while (p >= 0 && /\s/.test(s[p]!)) p--;
+  if (p < 1) return false;
+  if (s[p] === "/" && s[p - 1] === "*") return true;
+  return s.slice(s.lastIndexOf("\n", p) + 1, p + 1).includes("//");
+}
+
 // Regex literal starting at i when the previous significant character allows one; else i.
 function regexEnd(s: string, i: number): number {
+  if (commentBefore(s, i)) return i;
   let p = i - 1;
   while (p >= 0 && /\s/.test(s[p]!)) p--;
   if (p >= 1 && (s[p] === "+" || s[p] === "-") && s[p - 1] === s[p]) return i;
@@ -64,6 +76,25 @@ function regexEnd(s: string, i: number): number {
     }
   }
   return i;
+}
+
+// Removes comments (keeping line breaks) without interpreting regex literals.
+function stripComments(t: string): string {
+  let out = "";
+  for (let i = 0; i < t.length; ) {
+    if (isComment(t, i)) {
+      const e = t[i + 1] === "/" ? (t.indexOf("\n", i) < 0 ? t.length : t.indexOf("\n", i)) : (t.indexOf("*/", i + 2) < 0 ? t.length : t.indexOf("*/", i + 2) + 2);
+      out += t[i + 1] === "/" ? "" : " ";
+      i = e;
+      continue;
+    }
+    const c = t[i]!;
+    const k = c === '"' || c === "'" || c === "`" ? skipLiteral(t, i) : i;
+    if (k !== i) { out += t.slice(i, k); i = k; continue; }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 // Skips one string, template, regex, or comment starting at i; returns the index after it, or i when none starts here.
@@ -119,7 +150,7 @@ function items(src: string): Item[] {
       const h = head.trim();
       const declaration = /^(export\s+)?(declare\s+)?(type|interface|enum)\b/.test(h);
       if (declaration || h === "" || /^export(\s+type)?$/.test(h) || /[:|&]$/.test(h)) {
-        head += src.slice(i, close + 1);
+        head += stripComments(src.slice(i, close + 1));
         i = close + 1;
         if (declaration && !/^(export\s+)?(declare\s+)?type\b/.test(h)) push("", null, i);
         continue;
@@ -325,6 +356,7 @@ function tsAmbiguous(s: string, jsx: boolean): boolean {
     }
     if (c === "/") {
       if (jsx && prev === "<") { i++; set("/"); continue; }
+      if (commentBefore(s, i)) return true;
       if (prev && !"(,=:[!&|?{;+-*%~^".includes(prev)) return true;
       if ((prev === "+" || prev === "-") && prev2 === prev) return true;
       let j = i + 1, cls = false, closed = false;
@@ -362,7 +394,7 @@ function maskDefaults(sig: string): string {
     const c = sig[i]!;
     if (c === "(") pd++;
     else if (c === ")") pd--;
-    else if (c === "=" && pd > 0 && sig[i + 1] !== "=" && sig[i + 1] !== ">" && !"=!<>".includes(sig[i - 1] ?? " ")) {
+    else if (c === "=" && pd > 0 && sig[i + 1] !== "=" && sig[i + 1] !== ">" && !"=!<".includes(sig[i - 1] ?? " ")) {
       out = out.trimEnd() + " = ...";
       let d = 0, angle = 0, j = i + 1;
       for (; j < sig.length; ) {
@@ -383,6 +415,65 @@ function maskDefaults(sig: string): string {
     i++;
   }
   return out;
+}
+
+// `@Name` stays; `@Name(args)` becomes `@Name(...)`; anything else after `@` becomes `@...`.
+function maskDecorators(sig: string): string {
+  let out = "";
+  for (let i = 0; i < sig.length; ) {
+    const k = skipLiteral(sig, i);
+    if (k !== i) { out += sig.slice(i, k); i = k; continue; }
+    if (sig[i] !== "@") { out += sig[i]; i++; continue; }
+    const m = /^@[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/.exec(sig.slice(i, i + 200));
+    if (!m) {
+      out += "@...";
+      i++;
+      if (sig[i] === "(") i = skipBalanced(sig, i);
+      continue;
+    }
+    out += m[0];
+    i += m[0].length;
+    if (sig[i] === "(") { out += "(...)"; i = skipBalanced(sig, i); }
+  }
+  return out;
+}
+
+// Index after the bracket group opening at i; the end of s when it never closes.
+function skipBalanced(s: string, i: number): number {
+  let d = 0;
+  while (i < s.length) {
+    const k = skipLiteral(s, i);
+    if (k !== i) { i = k; continue; }
+    if ("([{".includes(s[i]!)) d++;
+    else if (")]}".includes(s[i]!) && --d === 0) return i + 1;
+    i++;
+  }
+  return s.length;
+}
+
+// Keeps `extends Dotted.Name<TypeArgs>` only; any other heritage expression becomes `extends ...`.
+function maskExtends(head: string): string {
+  let angle = 0, depth = 0;
+  for (let i = 0; i < head.length; ) {
+    const k = skipLiteral(head, i);
+    if (k !== i) { i = k; continue; }
+    const c = head[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === "<") angle++;
+    else if (c === ">" && head[i - 1] !== "=") angle = Math.max(0, angle - 1);
+    else if (depth === 0 && angle === 0 && /^extends\s/.test(head.slice(i)) && /\W/.test(head[i - 1] ?? " ")) {
+      const from = i + 7;
+      const im = /\simplements\s/.exec(head.slice(from));
+      const end = im ? from + im.index : head.length;
+      const expr = head.slice(from, end).trim();
+      const ok = /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:<[^()]*>)?$/.test(expr);
+      const tail = head.slice(end).trim();
+      return `${head.slice(0, i)}extends ${ok ? expr : "..."}${tail ? ` ${tail}` : ""}`;
+    }
+    i++;
+  }
+  return head;
 }
 
 // `export enum E { A = "x", B }` becomes `export enum E { A, B }`: member names only.
@@ -422,7 +513,9 @@ function tsSignatures(src: string, jsx: boolean): string[] {
       const sigs = ms.map((m) => (strictMember(m) ? memberSig(m.head.trim()) : null)).map((m) => (m === null ? null : maskDefaults(m)));
       const dropped = ms.some((m) => !strictMember(m)) || sigs.some((m) => m !== null && (hasTopSemi(m) || NOT_MEMBER.test(m)));
       const keep = dropped ? [] : sigs.filter((m): m is string => !!m);
-      lines.push(`${exportHead(h, "")} {`, ...keep.map((m) => `  ${m};`), "}");
+      lines.push(`${maskExtends(maskDecorators(exportHead(h, "")))} {`, ...keep.map((m) => `  ${maskDecorators(m)};`), "}");
+    } else if (/^export\s+(default\s+)?@/.test(h)) {
+      lines.push(maskExtends(maskDecorators(h)));
     } else if (/^export\s+default\s/.test(h)) {
       const rest = h.replace(/^export\s+default\s+/, "");
       const len = arrowHeadLen(rest);
@@ -434,7 +527,7 @@ function tsSignatures(src: string, jsx: boolean): string[] {
     } else {
       lines.push(memberSig(h) ?? h);
     }
-    const masked = /^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]|^export\s+(default\s+)?(abstract\s+)?class\b/.test(h) ? lines : lines.map(maskDefaults);
+    const masked = /^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]|^export\s+(default\s+)?(abstract\s+)?class\b/.test(h) ? lines : lines.map((l) => maskDefaults(maskDecorators(l)));
     if (!masked.some(hasTopSemi)) out.push(...masked);
   }
   return out;
@@ -444,11 +537,59 @@ const PY_TIMEOUT_MS = 5000;
 const PY_SCRIPT = `
 import ast, sys, json, re
 def u(n): return ast.unparse(n)
-def deco(d): return "@" + (u(d.func) + "(...)" if isinstance(d, ast.Call) else u(d))
-def clean(n): return "..." if any(isinstance(x, ast.Constant) for x in ast.walk(n)) else u(n)
+def chain(n):
+    if isinstance(n, ast.Name): return n.id
+    if isinstance(n, ast.Attribute):
+        c = chain(n.value)
+        return None if c is None else c + "." + n.attr
+    return None
+def deco(d):
+    if isinstance(d, ast.Call):
+        c = chain(d.func)
+        return "@" + c + "(...)" if c else "@..."
+    c = chain(d)
+    return "@" + c if c else "@..."
+def lit(n):
+    if isinstance(n, ast.Constant): return u(n)
+    if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub) and isinstance(n.operand, ast.Constant): return u(n)
+    if isinstance(n, ast.Tuple):
+        p = [lit(e) for e in n.elts]
+        return None if None in p else ", ".join(p)
+    return chain(n)
+def ann(n):
+    if isinstance(n, (ast.Name, ast.Attribute)): return chain(n)
+    if isinstance(n, ast.Constant): return u(n) if (n.value is None or n.value is Ellipsis) else None
+    if isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr):
+        l, r = ann(n.left), ann(n.right)
+        return None if l is None or r is None else l + " | " + r
+    if isinstance(n, ast.List):
+        p = [ann(e) for e in n.elts]
+        return None if None in p else "[" + ", ".join(p) + "]"
+    if isinstance(n, ast.Tuple):
+        p = [ann(e) for e in n.elts]
+        return None if None in p else ", ".join(p)
+    if isinstance(n, ast.Subscript):
+        v = chain(n.value)
+        if v is None: return None
+        last = v.split(".")[-1]
+        if last == "Literal":
+            s = lit(n.slice)
+            return None if s is None else v + "[" + s + "]"
+        if last == "Annotated" and isinstance(n.slice, ast.Tuple) and n.slice.elts:
+            first = ann(n.slice.elts[0])
+            return None if first is None else v + "[" + first + ", ...]"
+        s = ann(n.slice)
+        return None if s is None else v + "[" + s + "]"
+    return None
+def a_or_dots(n):
+    r = ann(n)
+    return "..." if r is None else r
+def clean(n):
+    r = ann(n)
+    return "..." if r is None else r
 def arg(a, has_default):
     t = a.arg
-    if a.annotation is not None: t += ": " + u(a.annotation)
+    if a.annotation is not None: t += ": " + a_or_dots(a.annotation)
     if has_default: t += " = ..." if a.annotation is not None else "=..."
     return t
 def args(a):
@@ -466,7 +607,7 @@ def args(a):
 def fn(n, ind):
     r = [ind + deco(d) for d in n.decorator_list]
     h = ind + ("async def " if isinstance(n, ast.AsyncFunctionDef) else "def ") + n.name + "(" + args(n.args) + ")"
-    if n.returns is not None: h += " -> " + u(n.returns)
+    if n.returns is not None: h += " -> " + a_or_dots(n.returns)
     return r + [h + ":"]
 def cls(n):
     r = [deco(d) for d in n.decorator_list]
@@ -490,9 +631,20 @@ print(json.dumps(out))
 
 // Python signatures from the stdlib ast, run in an isolated interpreter (-I -S) from a neutral cwd with the
 // source on stdin. Any parse error, missing python3, or timeout yields no signatures for the file.
+function resolvePython3(): string | null {
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    if (!dir || !dir.startsWith("/")) continue;
+    const cand = `${dir}/python3`;
+    try { accessSync(cand, constants.X_OK); if (statSync(cand).isFile()) return cand; } catch { /* next */ }
+  }
+  return null;
+}
+
 function pySignatures(src: string): string[] {
   try {
-    const r = spawnSync("python3", ["-I", "-S", "-c", PY_SCRIPT], {
+    const py = resolvePython3();
+    if (!py) return [];
+    const r = spawnSync(py, ["-I", "-S", "-c", PY_SCRIPT], {
       input: norm(src), cwd: tmpdir(), timeout: PY_TIMEOUT_MS, encoding: "utf8",
       env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, maxBuffer: 8 * 1024 * 1024, stdio: ["pipe", "pipe", "ignore"],
     });

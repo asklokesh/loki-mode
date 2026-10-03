@@ -427,3 +427,70 @@ describe("round 4 review findings (X1-X6) and fail-closed extraction", () => {
     for (const [p, src] of [...R3_INPUTS, ...X_INPUTS]) expect(ts(src, p)).not.toMatch(SECRETS);
   });
 });
+
+const R5_INPUTS: [string, string][] = [
+  ["m.ts", "export function f() {}\nconst r = /* c */ /}`/;\nconst t = `\nexport function leaked(k = \"SECRET_B1a\") {}\n`;\n"],
+  ["m.ts", "export function f() {}\nconst r = // c\n  /}`/;\nconst t = `\nexport function leaked(k = \"SECRET_B1b\") {}\n`;\n"],
+  ["m.ts", 'export function f(a: Array<string>= ["SECRET_B2a"], m: Map<string, Set<number>>= mk("SECRET_B2b")): void {}\nexport class K {\n  m(a: Array<string>= ["SECRET_B2c"]): void {}\n}\n'],
+  ["m.ts", 'export class S {\n  constructor(@Inject("SECRET_B3a") private c: Cfg) {}\n  @HostListener("SECRET_B3b") on(): void {}\n}\n'],
+  ["m.ts", 'export @Component({ selector: "SECRET_B3c" }) class C { m(): void {} }\n'],
+  ["m.ts", 'export class D extends mixin(Base, "SECRET_B3d") { m(): void {} }\n'],
+  ["m.py", '@app.route("SECRET_B4a")\ndef f(): pass\n@d["SECRET_B4b"]\ndef g(): pass\n@d("x")("SECRET_B4c")\ndef h(): pass\n@(lambda f: f("SECRET_B4d"))\ndef i(): pass\n@pkg.mod\ndef j(): pass\n'],
+  ["m.py", 'def f(a: Annotated[int, "SECRET_B5a"], b: "SECRET_B5b", c: Literal["ok"], d: foo("SECRET_B5c") = 1) -> Annotated[str, make("SECRET_B5d")]:\n    pass\nclass K(make("SECRET_B5e"), Base[int]): pass\n'],
+  ["m.ts", "export interface I {\n  // SECRET_A1a\n  a: number; /* SECRET_A1b */\n}\nexport enum E {\n  A, // SECRET_A1c\n  /* SECRET_A1d */ B,\n}\n"],
+];
+
+describe("round 5 review findings", () => {
+  test("every round-5 input leaks no SECRET marker", () => {
+    for (const [p, src] of R5_INPUTS) expect(ts(src, p)).not.toMatch(SECRETS);
+  });
+
+  test("B1: a comment before a slash makes the file ambiguous", () => {
+    expect(ts(R5_INPUTS[0]![1])).not.toContain("export function f");
+    expect(ts(R5_INPUTS[1]![1])).not.toContain("export function f");
+  });
+
+  test("B2: >= defaults are masked", () => {
+    const out = ts(R5_INPUTS[2]![1]);
+    expect(out).toContain("a: Array<string> = ...");
+    expect(out).toContain("m: Map<string, Set<number>> = ...");
+    expect(out).toContain("m(a: Array<string> = ...): void");
+  });
+
+  test("B3: decorator arguments and non-trivial extends clauses are dropped", () => {
+    const a = ts(R5_INPUTS[3]![1]);
+    expect(a).toContain("@Inject(...) private c: Cfg");
+    expect(a).toContain("@HostListener(...) on(): void");
+    expect(ts(R5_INPUTS[4]![1])).toContain("@Component(...)");
+    expect(ts(R5_INPUTS[5]![1])).toContain("extends ...");
+    expect(ts("export class E extends Base<T> implements I { m(): void {} }\n")).toContain("extends Base<T> implements I");
+    expect(ts("@Bare\nexport class Z { @Input x: number; }\n")).not.toMatch(SECRETS);
+  });
+
+  test("B4: Python decorators keep only dotted names", () => {
+    const out = ts(R5_INPUTS[6]![1], "m.py");
+    for (const d of ["@app.route(...)", "@...", "@pkg.mod"]) expect(out).toContain(d);
+  });
+
+  test("B5: Python annotations are whitelisted; calls and metadata become ...", () => {
+    const out = ts(R5_INPUTS[7]![1], "m.py");
+    expect(out).toContain('def f(a: Annotated[int, ...], b: ..., c: Literal[\'ok\'], d: ... = ...) -> Annotated[str, ...]:');
+    expect(out).toContain("class K(..., Base[int]):");
+    expect(ts("def g(a: Dict[str, List[int]], b: int | None, c: Callable[[int], str]) -> Optional[Foo.Bar]:\n    pass\n", "m.py"))
+      .toContain("def g(a: Dict[str, List[int]], b: int | None, c: Callable[[int], str]) -> Optional[Foo.Bar]:");
+  });
+
+  test("A1: comments inside interface and enum bodies are stripped", () => {
+    const out = ts(R5_INPUTS[8]![1]);
+    expect(out).not.toMatch(SECRETS);
+    expect(out).toContain("export enum E { A, B }");
+  });
+
+  test("A2: python is resolved from absolute PATH entries only", () => {
+    const saved = process.env.PATH;
+    process.env.PATH = ":relative/bin:" + (saved ?? "");
+    try { expect(ts("def a(): pass\n", "m.py")).toContain("def a():"); } finally { process.env.PATH = saved; }
+    process.env.PATH = ":relative/bin";
+    try { expect(ts("def a(): pass\n", "m.py")).not.toContain("def a"); } finally { process.env.PATH = saved; }
+  });
+});
