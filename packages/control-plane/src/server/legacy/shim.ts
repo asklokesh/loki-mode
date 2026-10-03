@@ -177,7 +177,7 @@ export function legacyShim(opts: LegacyShimOpts) {
       const body = { legacy_route: r.path, method: r.method };
       if (r.action === "map") return (mapped[`${r.method} ${r.path}`] as (c: Context) => Response | Promise<Response>)(c);
       if (r.action === "308") return c.redirect(`${uiBase}/`, 308);
-      if (r.action === "410") return c.json({ error: "gone", detail: "This legacy dashboard route was retired; nothing consumes it.", ...body }, 410);
+      if (r.action === "410") return c.json({ error: "gone", detail: "This legacy dashboard route was retired; nothing consumes it.", ...(r.migrate ? { replacement: r.migrate } : {}), ...body }, 410);
       return c.json({ error: NOT_SUPPORTED, detail: "The legacy dashboard route exists, but the Control Plane has no data or mechanism for it yet.", ...body }, 501);
     };
     const m = r.method === "WS" || r.method === "MOUNT" ? "GET" : r.method;

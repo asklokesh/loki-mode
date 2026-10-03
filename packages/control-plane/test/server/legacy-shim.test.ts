@@ -49,7 +49,7 @@ test("the route table and the doc table agree (method, path, action) and the cou
   const expected = rows.filter((r) => code(r.shim) !== "none").map((r) => `${r.method} ${r.path} ${code(r.shim)}`);
   expect(LEGACY_ROUTES.map((r) => `${r.method} ${r.path} ${r.action}`)).toEqual(expected);
   const count = (a: string) => LEGACY_ROUTES.filter((r) => r.action === a).length;
-  expect([count("map"), count("308"), count("410"), count("501")]).toEqual([6, 5, 142, 77]);
+  expect([count("map"), count("308"), count("410"), count("501")]).toEqual([35, 5, 169, 21]);
 });
 
 test("GET /.well-known/agent.json: 200, open, A2A card without capabilities the CP cannot back", async () => {
@@ -162,19 +162,23 @@ test("every USED-but-unbacked route answers an explicit 501, every unused one 41
     expect(b).toMatchObject({ legacy_route: r.path, method: r.method });
     if (r.action === "501") { n501++; expect(b.error).toBe("not yet supported by the Control Plane"); } else { n410++; expect(b.error).toBe("gone"); }
   }
-  expect([n501, n410]).toEqual([55, 135]);
+  expect([n501, n410]).toEqual([21, 169]);
   sqlite.close();
 });
 
-test("the named MISSING routes (pause, resume, api-keys, tenants, audit verify, replay, /ws, cancel) are 501", async () => {
+test("the named MISSING routes (start, audit verify, replay, cancel) are 501 and the dropped ones (api-keys, tenants, /ws) are 410 naming a replacement", async () => {
   const { app, sqlite } = mk();
   const cases: [string, string][] = [
     ["POST", "/api/control/start"],
-    ["GET", "/api/v2/api-keys"], ["POST", "/api/v2/api-keys"], ["DELETE", "/api/v2/api-keys/k1"], ["POST", "/api/v2/api-keys/k1/rotate"],
-    ["GET", "/api/v2/tenants"], ["POST", "/api/v2/tenants"], ["GET", "/api/v2/audit/verify"],
-    ["POST", "/api/v2/runs/1/replay"], ["POST", "/api/v2/runs/1/cancel"], ["GET", "/ws"],
+    ["GET", "/api/v2/audit/verify"], ["POST", "/api/v2/runs/1/replay"], ["POST", "/api/v2/runs/1/cancel"],
   ];
   for (const [m, p] of cases) expect([m, p, (await get(app, p, {}, m)).status]).toEqual([m, p, 501]);
+  const dropped: [string, string][] = [["GET", "/api/v2/api-keys"], ["POST", "/api/v2/api-keys"], ["DELETE", "/api/v2/api-keys/k1"], ["POST", "/api/v2/api-keys/k1/rotate"], ["GET", "/api/v2/tenants"], ["POST", "/api/v2/tenants"], ["GET", "/ws"]];
+  for (const [m, p] of dropped) {
+    const r = await get(app, p, {}, m);
+    expect([m, p, r.status]).toEqual([m, p, 410]);
+    expect(typeof ((await r.json()) as any).replacement).toBe("string");
+  }
   sqlite.close();
 });
 
