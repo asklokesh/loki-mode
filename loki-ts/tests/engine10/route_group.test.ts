@@ -1,19 +1,24 @@
 // D61-16: LOKI_SPEED routing of `loki "<task>"` / `loki <file>` through the decomposer.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../../src/engine10/cli.ts";
-import { maybeRunGroup, type GroupRunner } from "../../src/features/speed/route.ts";
+import { maybeRunGroup, MAX_SPEC_BYTES, type GroupCtx, type GroupRunner } from "../../src/features/speed/route.ts";
 
 const SPEC = "- update src/a.ts to add alpha\n- update src/b.ts to add beta\n- update src/c.ts to add gamma\n";
 const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
 const sel = (t: string): string[] => files.filter((f) => t.includes(f));
-const run = async (task: string, env: Record<string, string | undefined>, group?: GroupRunner, repo = "/x") => {
+const run = async (task: string, env: Record<string, string | undefined>, group?: GroupRunner, repo = "/x", cwd?: string) => {
   let err = "";
-  const r = await maybeRunGroup(task, repo, env as NodeJS.ProcessEnv, { group, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
-  return { r, err };
+  const res = await maybeRunGroup(task, repo, env as NodeJS.ProcessEnv, { group, listFiles: () => files, select: sel, stderr: (s) => { err += s; }, cwd });
+  return { r: res.code, task: res.task, err };
 };
+const withDir = async (fn: (d: string) => Promise<void>): Promise<void> => {
+  const d = mkdtempSync(join(tmpdir(), "loki-route-group-"));
+  try { await fn(d); } finally { rmSync(d, { recursive: true, force: true }); }
+};
+const ON = { LOKI_SPEED: "1" };
 
 describe("flag off is byte-identical", () => {
   test("route result and no group call for flag unset, LOKI_SPEED=0 and empty", async () => {
@@ -53,7 +58,7 @@ describe("flag on", () => {
     expect(err).toBe("");
   });
   test("group machinery unavailable falls back and says so on stderr", async () => {
-    const { r, err } = await run(SPEC, { LOKI_SPEED: "1" }, undefined);
+    const { r, err } = await run(SPEC, ON, undefined);
     expect(r).toBeNull();
     expect(err).toContain("loki: sequential (reason: group machinery unavailable)");
   });
@@ -65,20 +70,78 @@ describe("flag on", () => {
     expect(calls).toBe(0);
     expect(err).toContain("loki: sequential (reason: decomposer returned 1 unit)");
   });
-  test("a group that throws falls back to the single run", async () => {
-    const { r, err } = await run(SPEC, { LOKI_SPEED: "1" }, async () => { throw new Error("boom"); });
-    expect(r).toBeNull();
-    expect(err).toContain("loki: sequential (reason: group run failed to start");
+  test("a group that throws returns non-zero and never falls back", async () => {
+    let calls = 0;
+    const { r, err } = await run(SPEC, ON, async () => { calls++; throw new Error("boom"); });
+    expect(r).toBe(1);
+    expect(calls).toBe(1);
+    expect(err).toContain("loki: group run failed: boom");
+    expect(err).not.toContain("sequential");
   });
-  test("loki <file> reads the spec from the file", async () => {
-    const d = mkdtempSync(join(tmpdir(), "loki-route-group-"));
-    try {
-      const p = join(d, "spec.md");
-      writeFileSync(p, SPEC);
-      let units = 0;
-      const { r } = await run(p, { LOKI_SPEED: "1" }, async (g) => { units = g.units.length; return 7; }, d);
-      expect(units).toBe(3);
-      expect(r).toBe(7);
-    } finally { rmSync(d, { recursive: true, force: true }); }
+  test("loki <file> reads the spec, passes contents and path, announces it", () => withDir(async (d) => {
+    const p = join(d, "spec.md");
+    writeFileSync(p, SPEC);
+    let ctx: GroupCtx | null = null;
+    const { r, err } = await run(p, ON, async (_g, c) => { ctx = c; return 7; }, d, d);
+    expect(r).toBe(7);
+    expect(ctx!.spec).toBe(SPEC);
+    expect(ctx!.specPath!.endsWith("spec.md")).toBe(true);
+    expect(err).toContain("loki: reading spec from ");
+  }));
+  test("relative spec path resolves against cwd, not the repo root", () => withDir(async (d) => {
+    mkdirSync(join(d, "sub"));
+    writeFileSync(join(d, "sub", "spec.md"), SPEC);
+    writeFileSync(join(d, "spec.md"), "- one\n");
+    let units = 0;
+    const { r } = await run("spec.md", ON, async (g) => { units = g.units.length; return 5; }, d, join(d, "sub"));
+    expect(r).toBe(5);
+    expect(units).toBe(3);
+  }));
+  test("a one-word existing file never shadows a literal task", () => withDir(async (d) => {
+    writeFileSync(join(d, "TODO"), SPEC);
+    writeFileSync(join(d, "-x"), SPEC);
+    for (const w of ["TODO", "-x"]) {
+      let calls = 0;
+      const { r, task, err } = await run(w, ON, async () => { calls++; return 0; }, d, d);
+      expect(r).toBeNull();
+      expect(task).toBe(w);
+      expect(calls).toBe(0);
+      expect(err).toBe("");
+    }
+  }));
+  test("a symlink escaping the repo is rejected and the task stays literal", () => withDir(async (d) => {
+    const repo = join(d, "repo"), out = join(d, "outside");
+    mkdirSync(repo); mkdirSync(out);
+    writeFileSync(join(out, "secret.md"), SPEC);
+    symlinkSync(join(out, "secret.md"), join(repo, "spec.md"));
+    let calls = 0;
+    const { r, task, err } = await run("spec.md", ON, async () => { calls++; return 0; }, repo, repo);
+    expect(r).toBeNull();
+    expect(task).toBe("spec.md");
+    expect(calls).toBe(0);
+    expect(err).toContain("escapes the repo");
+    expect(err).toContain("loki: sequential");
+  }));
+  test("a spec over 1 MB falls back sequential with the reason", () => withDir(async (d) => {
+    writeFileSync(join(d, "big.md"), SPEC + "x".repeat(MAX_SPEC_BYTES));
+    const { r, task, err } = await run("big.md", ON, async () => 0, d, d);
+    expect(r).toBeNull();
+    expect(task).toBe("big.md");
+    expect(err).toContain("loki: sequential (reason: spec file over");
+  }));
+  test("a spec containing NUL falls back sequential with the reason", () => withDir(async (d) => {
+    writeFileSync(join(d, "nul.md"), Buffer.concat([Buffer.from(SPEC), Buffer.from([0])]));
+    const { r, err } = await run("nul.md", ON, async () => 0, d, d);
+    expect(r).toBeNull();
+    expect(err).toContain("spec file contains NUL bytes");
+  }));
+  test("fallback after a file read hands the sequential run the spec contents", () => withDir(async (d) => {
+    writeFileSync(join(d, "one.md"), "- change src/a.ts\n- also touch src/a.ts again\n");
+    const { r, task } = await run("one.md", ON, async () => 0, d, d);
+    expect(r).toBeNull();
+    expect(task).toContain("change src/a.ts");
+  }));
+  test("default selection uses engine10 selectRelevantFiles, not a local copy", () => {
+    expect(readFileSync(join(import.meta.dir, "../../src/features/speed/route.ts"), "utf8")).toContain('from "../../engine10/relevant_files.ts"');
   });
 });
