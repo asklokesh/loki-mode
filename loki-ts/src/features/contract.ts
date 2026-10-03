@@ -188,7 +188,7 @@ export function sealContract(repoDir: string, body: object, rawDiff: string[], c
       const short = (h: string | null): string => (h === null ? "unreadable" : h.slice(0, 12));
       if (!exists) drift.push("contract removed after intake; traced the intake copy");
       else if (live.sha256 !== snap.sha256) drift.push(`contract changed after intake (sha ${short(snap.sha256)} -> ${short(live.sha256)}); traced the intake copy`);
-    } else if (exists && snap.notes.length === 0) drift.push("contract created after intake; ignored");
+    } else if (exists && (snap.notes.length === 0 || live.sha256 !== null)) drift.push("contract created after intake; ignored");
     const ct = snap.contract;
     if (!ct) return [...snap.notes, ...drift];
     const trace = traceContract(ct, rawDiff.filter((_, i) => i % 2 === 1), checks.map((c) => c.name));

@@ -261,4 +261,15 @@ describe("contract frozen at intake (D65-SPEC-F2)", () => {
     expect(snap.sha256).toBeNull();
     expect(sealContract(d, {}, raw, [], ON, snap)).toEqual(["contract unreadable: not a regular file"]);
   });
+  test("unreadable at intake, replaced by a regular file later: flagged as created and ignored", () => {
+    const d = mk();
+    expect(spawnSync("mkfifo", [f(d)]).status).toBe(0);
+    const snap = snapshotContract(d, ON);
+    rmSync(f(d));
+    writeFileSync(f(d), two);
+    const body: Record<string, unknown> = {};
+    const lines = sealContract(d, body, raw, [], ON, snap);
+    expect(body["contract"]).toBeUndefined();
+    expect(lines).toContain("contract created after intake; ignored");
+  });
 });
