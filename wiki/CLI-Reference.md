@@ -177,13 +177,20 @@ loki demo --dry-run   # estimate only, never spends
 
 ### `loki mcp` (v7.30.0)
 
-Launch the Loki Mode MCP server (36 tools) over stdio from any project
+Launch the Loki Mode MCP server (39 tools) over stdio from any project
 directory. Checks python3 and the MCP SDK; when dependencies are missing it
 offers a consent-gated bootstrap into the project-local `.loki/mcp-venv`
 (interactive terminals only: non-TTY and CI runs never install, printing the
 manual command and exiting 2; opt out with `LOKI_NO_INSTALL_OFFER=1`;
 relocate the venv with `LOKI_MCP_VENV`). The server resolves the project's
 `.loki` from your current directory.
+
+Engine tools for v10 runs: `loki_v10_run(ref, repo_path)` starts a Loki 10 run in the
+background and returns `run_id`, `pid` and `log_path` without blocking;
+`loki_v10_status(repo_path, run_id?)` reports the run's phase, verdict (once
+done) and cost from `.loki/runs/<run-id>/events.jsonl`;
+`loki_v10_verify(receipt_path | repo_path)` runs `loki verify` and returns its
+exit code and output summary. Paths must be inside the project root.
 
 MCP clients (Claude Desktop and similar) spawn the server non-interactively
 over piped stdio, so the same non-TTY gate that protects CI also stops a

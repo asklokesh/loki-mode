@@ -143,7 +143,7 @@ loki_run_tmp_cleanup() {
 <!-- END LOKI_RUN_TMP_HELPERS -->
 
 ## Read when needed
-- `docs/dev/project-structure.md` - directory map, codebase knowledge graph, key functions, critical data flow, the MCP server (`mcp/server.py`, 36 tools); and `docs/dev/research-foundation.md` - the labs and papers this system is built on.
+- `docs/dev/project-structure.md` - directory map, codebase knowledge graph, key functions, critical data flow, the MCP server (`mcp/server.py`, 39 tools); and `docs/dev/research-foundation.md` - the labs and papers this system is built on.
 - `docs/dev/architecture-reference.md` - the 8 quality gates, legacy healing, memory system, metrics, v8 harness knobs, RARV-C closure env vars.
 - `docs/dev/release-checklist.md` - full version-bump file list, dashboard build, pre-publish validation, distribution channels, local CI details.
 - `skills/sdlc-fleet.md` - six-role standing fleet pattern for non-trivial changes; its roles are superseded by `docs/v10/OPERATING-MODEL.md`, its review rules by D12/D13, and its "ask the founder" step by the standing autonomous mandate in `docs/LOKI-10-BUILD-PROMPT.md`.

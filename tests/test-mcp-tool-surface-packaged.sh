@@ -93,6 +93,9 @@ loki_state_get
 loki_task_queue_add
 loki_task_queue_list
 loki_task_queue_update
+loki_v10_run
+loki_v10_status
+loki_v10_verify
 loki_verify_fast
 mem_get
 mem_search

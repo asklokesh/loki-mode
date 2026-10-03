@@ -1369,6 +1369,58 @@ async def get_pending_tasks() -> str:
 # ============================================================
 
 @mcp.tool()
+async def loki_v10_run(ref: str, repo_path: str) -> str:
+    """
+    Start a Loki 10 run in the background (same engine as `loki <ref>`).
+
+    Args:
+        ref: Task text or issue reference (owner/repo#N or issue URL)
+        repo_path: Repository directory (must be inside the project root)
+
+    Returns:
+        JSON with run_id (null if not yet created), pid and log_path. Never blocks.
+    """
+    from mcp import v10_tools
+    return json.dumps(await asyncio.to_thread(
+        v10_tools.v10_run, ref, repo_path, lambda p: validate_path(p, allowed_dirs=['.'])))
+
+
+@mcp.tool()
+async def loki_v10_status(repo_path: str, run_id: str = "") -> str:
+    """
+    Read the state of a Loki 10 run from its events log.
+
+    Args:
+        repo_path: Repository directory containing .loki/runs
+        run_id: Run id (e10-...); defaults to the newest run
+
+    Returns:
+        JSON with phase, done, verdict (once done) and cost_usd (null if unmeasured)
+    """
+    from mcp import v10_tools
+    return json.dumps(v10_tools.v10_status(
+        run_id, repo_path, lambda p: validate_path(p, allowed_dirs=['.'])))
+
+
+@mcp.tool()
+async def loki_v10_verify(receipt_path: str = "", repo_path: str = "") -> str:
+    """
+    Run `loki verify` on a receipt (or the newest run of a repo).
+
+    Args:
+        receipt_path: Path to a receipt.json (takes priority)
+        repo_path: Repository directory; verifies its newest run
+
+    Returns:
+        JSON with exit_code, verified and an output summary
+    """
+    from mcp import v10_tools
+    return json.dumps(await asyncio.to_thread(
+        v10_tools.v10_verify, receipt_path, repo_path,
+        lambda p: validate_path(p, allowed_dirs=['.'])))
+
+
+@mcp.tool()
 async def loki_start_project(prd_content: str = "", prd_path: str = "") -> str:
     """
     Start a new Loki Mode project from a PRD.
