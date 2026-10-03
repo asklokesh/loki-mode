@@ -37,7 +37,6 @@ from . import auth
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["start"])
 
-START_HTML = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "start.html")
 _LOKI_BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "loki")
 _REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{10,255}$")

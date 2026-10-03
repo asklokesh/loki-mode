@@ -15,8 +15,6 @@ const DESIGN = join(import.meta.dir, "../../ui/src/design");
 const REPO = join(import.meta.dir, "../../../..");
 const css = readFileSync(join(DESIGN, "tokens.css"), "utf8");
 const spec = readFileSync(join(REPO, "docs/v10/CP-ENTERPRISE-UI.md"), "utf8");
-const legacy = ["dashboard-ui/scripts/build-standalone.js", "dashboard-ui/core/loki-unified-styles.js", "dashboard-ui/core/loki-theme.js"]
-  .map((f) => readFileSync(join(REPO, f), "utf8").toLowerCase()).join("\n");
 
 function vars(block: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -60,12 +58,9 @@ test("every spec 2.1 token is present in both themes with the spec value", () =>
   }
 });
 
-test("every hex color matches a cited legacy source", () => {
-  // only spec tokens are checked against the legacy sources; the additive -ink and -subtle AA companions are not legacy values
+test("the spec carries a full hex palette", () => {
   const hexes = new Set([...Object.values(specLight), ...Object.values(specDark)].flatMap((v) => v.match(/#[0-9a-fA-F]{6}\b/g) ?? []));
   expect(hexes.size).toBeGreaterThan(30);
-  // #ffffff is the inverse text token, not a legacy brand value
-  for (const h of hexes) if (h.toLowerCase() !== "#ffffff") expect(legacy.includes(h.toLowerCase()), h).toBe(true);
   expect(light["--cp-bg"]).toBe("#F1F2F6");
   expect(light["--cp-accent"]).toBe("#553DE9");
   expect(dark["--cp-bg"]).toBe("#17161C");

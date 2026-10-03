@@ -11,8 +11,6 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 # Cases (IDs are permanent):
 #   P7.webapp-client-routes-exist     every web-app client path resolves to a
 #                                     real route in web-app/server.py
-#   P7.dashboard-client-routes-exist  every /api/ path in dashboard-ui source
-#                                     resolves to a real route in dashboard/server.py
 #   P7.no-sample-data-panels          no production page reaches a panel that
 #                                     falls back to hardcoded or generated sample
 #                                     data, no Math.random() feeds a metric, and
@@ -37,8 +35,8 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 # The cost case's server leg starts the real dashboard app in-process
 # (fastapi TestClient, which needs httpx; requirements-test.txt has both).
 #
-# SOURCE, NEVER THE BUNDLE. dashboard/static/index.html is the built bundle and
-# is never scanned: a bundle scan measures the last build, not the code.
+# SOURCE, NEVER THE BUNDLE. Only source is scanned: a bundle scan measures the
+# last build, not the code.
 #
 # ROUTES ARE MATCHED, NOT GREPPED. Both route cases import the real FastAPI
 # app and ask its own router whether each client path reaches a route, the same
@@ -48,7 +46,7 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 # with a line regex.
 #
 # Prerequisites: python3 with fastapi (the route tables), node, and
-# web-app/node_modules/typescript or dashboard-ui/node_modules/typescript
+# web-app/node_modules/typescript
 # inside THIS checkout (npm ci in web-app provides it). The two static-scan
 # cases need only python3.
 set -uo pipefail
@@ -370,7 +368,7 @@ PY
 # Resolve the typescript module from THIS checkout only (never a sibling tree).
 find_typescript() {
     local d
-    for d in web-app dashboard-ui; do
+    for d in web-app; do
         if [ -f "$REPO_ROOT/$d/node_modules/typescript/lib/typescript.js" ]; then
             printf '%s\n' "$REPO_ROOT/$d/node_modules/typescript/lib/typescript.js"
             return 0
@@ -384,7 +382,7 @@ route_prereqs() {
     command -v node >/dev/null 2>&1 || { echo "prerequisite missing: node"; return 1; }
     command -v python3 >/dev/null 2>&1 || { echo "prerequisite missing: python3"; return 1; }
     py_server -c 'import fastapi' >/dev/null 2>&1 || { echo "prerequisite missing: python fastapi"; return 1; }
-    find_typescript >/dev/null || { echo "prerequisite missing: typescript (npm ci in web-app or dashboard-ui of this checkout)"; return 1; }
+    find_typescript >/dev/null || { echo "prerequisite missing: typescript (npm ci in web-app of this checkout)"; return 1; }
     return 0
 }
 
@@ -505,24 +503,6 @@ case_webapp_routes() {
 }
 
 # ---------------------------------------------------------------------------
-# P7.dashboard-client-routes-exist
-# ---------------------------------------------------------------------------
-case_dashboard_routes() {
-    local why
-    why="$(route_prereqs)" || { echo "FAIL|$why"; return 0; }
-    [ -f "$REPO_ROOT/dashboard-ui/core/loki-api-client.js" ] \
-        || { echo "FAIL|dashboard-ui/core/loki-api-client.js missing; nothing to measure"; return 0; }
-    why="$(route_control dashboard /api/status)" || { echo "FAIL|positive control failed: $why"; return 0; }
-    python3 -c '
-import sys; sys.path.insert(0, sys.argv[1]); import moatlib
-fs = moatlib.walk(sys.argv[2], (".js", ".mjs")) + moatlib.walk(sys.argv[3], (".js", ".mjs"))
-print("\n".join(fs))' "$MOAT_TMP" "$REPO_ROOT/dashboard-ui/core" "$REPO_ROOT/dashboard-ui/components" > "$MOAT_TMP/dashboard.files"
-    grep -q 'dashboard-ui/core/loki-api-client.js$' "$MOAT_TMP/dashboard.files" \
-        || { echo "FAIL|loki-api-client.js was not in the scanned file list; the check would miss the main client"; return 0; }
-    extract_and_match dashboard dashboard "$MOAT_TMP/dashboard.files"
-}
-
-# ---------------------------------------------------------------------------
 # P7.no-sample-data-panels
 # ---------------------------------------------------------------------------
 # Five rules, all on comment-stripped source:
@@ -553,7 +533,7 @@ print("\n".join(fs))' "$MOAT_TMP" "$REPO_ROOT/dashboard-ui/core" "$REPO_ROOT/das
 #      so the mount graph cannot see it.
 # Rules 6-9 read the WHOLE file with a bracket matcher, never one line at a
 # time: every fabrication they target spans lines. Like rules 3 and 5 they apply
-# to every web-app source file and every dashboard-ui file, reachable or not.
+# to every web-app source file, reachable or not.
 #   6. No array of literal rows is passed to a set*() setter or useState()
 #      (anywhere in the argument list, not only as the first argument), or
 #      appears anywhere in a catch body (`catch {`, `.catch(() => {...})`), or
@@ -599,8 +579,6 @@ print("\n".join(fs))' "$MOAT_TMP" "$REPO_ROOT/dashboard-ui/core" "$REPO_ROOT/das
 #      `(x ?? 0).toLocaleString()`, `(x || 0).toFixed(1)`,
 #      `x?.toLocaleString() || 0`, `formatPercent(x || 0)`. That renders an
 #      unmeasured value as a measured 0; the fix renders "--" for null.
-# dashboard-ui web components are all shipped in the bundle, so rules 1, 3 and
-# 5-9 apply to every dashboard-ui component file directly.
 cat > "$MOAT_TMP/sample-panels.py" <<'PY'
 import os, re, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -3189,8 +3167,8 @@ export function HST({ records }) {
 TSX
     # CONCERN fix, head side (3): a bare single-param arrow with no parens, a
     # `let` declaration (not `const`), and a `useCallback`-wrapped arrow (the
-    # highest-value gap: a mainstream React idiom, and both dashboard-ui and
-    # web-app use hooks extensively).
+    # highest-value gap: a mainstream React idiom, and
+    # web-app uses hooks extensively).
     cat > "$d/src/components/HelperReturnBareParamArrow.tsx" <<'TSX'
 export function HBP({ records }) {
   const buildRowsY = records => {
@@ -4483,11 +4461,7 @@ JS
         || { echo "FAIL|positive control: the old waterfall catch-block demo fallback was not flagged exactly once (rc=$rc): $(grep '^FINDING' <<<"$out" | tr '\n' ' ' | head -c 200)"; return 0; }
 
     rc=0
-    # The shell of the shipped dashboard (its inline script lives in
-    # build-standalone.js) and the standalone cost/proofs/trust pages ship too.
-    python3 "$MOAT_TMP/sample-panels.py" "$REPO_ROOT/web-app/src" \
-        "$REPO_ROOT/dashboard-ui/components" "$REPO_ROOT/dashboard-ui/core" \
-        "$REPO_ROOT/dashboard-ui/scripts/build-standalone.js" "$REPO_ROOT/dashboard/static" > "$MOAT_TMP/sample.txt" 2>&1 || rc=$?
+    python3 "$MOAT_TMP/sample-panels.py" "$REPO_ROOT/web-app/src" > "$MOAT_TMP/sample.txt" 2>&1 || rc=$?
     grep -v '^REACH ' "$MOAT_TMP/sample.txt" | sed 's/^/  /' >&2
     # The workspace is where rule 4's defect lived; a scan that never reached it
     # would pass without looking.
@@ -4900,20 +4874,15 @@ PY
         [ "$rc" = 0 ] || { echo "FAIL|known-correct formatter $f $fn flagged (probe too broad): $(grep '^HIT' <<<"$out" | head -1)"; return 0; }
         good=$((good + 1))
     done <<'EOF'
-dashboard-ui/components/loki-context-tracker.js|_formatUSD\(amount\)|toFixed\(
-dashboard-ui/components/loki-cost-dashboard.js|^  constructor\(\)|estimated_cost_usd: null
-dashboard/static/cost.html|function fmtUsd\(|toFixed\(
 web-app/src/pages/MetricsPage.tsx|function formatUsd\(|toFixed\(
-dashboard-ui/core/loki-unified-styles.js|export function formatUSD\(|toFixed\(
 EOF
-    [ "$good" = 5 ] || { echo "FAIL|only $good of 5 known-correct formatters were checked"; return 0; }
+    [ "$good" = 1 ] || { echo "FAIL|only $good of 1 known-correct formatters were checked"; return 0; }
 
     local srv="" srv_fail=""
     srv="$(cost_server_leg)" || srv_fail="${srv:-server leg failed with no reason}"
 
     rc=0
-    python3 "$MOAT_TMP/cost-zero.py" "$REPO_ROOT/dashboard-ui/components" "$REPO_ROOT/dashboard-ui/core" \
-        "$REPO_ROOT/web-app/src" "$REPO_ROOT/dashboard/static" > "$MOAT_TMP/cost.txt" 2>&1 || rc=$?
+    python3 "$MOAT_TMP/cost-zero.py" "$REPO_ROOT/web-app/src" > "$MOAT_TMP/cost.txt" 2>&1 || rc=$?
     sed "s#$REPO_ROOT/##; s/^/  /" "$MOAT_TMP/cost.txt" >&2
     case "$rc" in
         0) if [ -n "$srv_fail" ]; then echo "FAIL|$srv_fail"
@@ -4951,11 +4920,10 @@ run_case() {
 
 START_S=$SECONDS
 run_case P7.webapp-client-routes-exist "web-app client paths resolve to real web-app/server.py routes" case_webapp_routes
-run_case P7.dashboard-client-routes-exist "dashboard-ui /api paths resolve to real dashboard/server.py routes" case_dashboard_routes
 run_case P7.no-sample-data-panels "no production page reaches sample, random or hardcoded-metric data panels" case_sample_panels
 run_case P7.unmeasured-cost-never-zero "no cost path, client or server, turns unmeasured cost into 0 or \$0.00" case_cost_zero
 
-for id in P7.webapp-client-routes-exist P7.dashboard-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero; do
+for id in P7.webapp-client-routes-exist P7.no-sample-data-panels P7.unmeasured-cost-never-zero; do
     case " $EMITTED " in *" $id "*) ;; *) printf 'CASE %s FAIL runner did not emit this case\n' "$id" ;; esac
 done
 diag "runtime $((SECONDS - START_S))s"

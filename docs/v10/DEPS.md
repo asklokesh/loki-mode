@@ -8,11 +8,11 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `dashboard-ui/package.json` | `@playwright/test` | `^1.58.1` | `1.63.0` | minor |  |
-| `dashboard-ui/package.json` | `esbuild` | `^0.24.0` | `0.28.2` | 0.x breaking |  |
-| `dashboard-ui/package.json` | `jest` | `^29.7.0` | `30.5.2` | MAJOR |  |
-| `dashboard-ui/package.json` | `jest-environment-jsdom` | `^29.7.0` | `30.5.2` | MAJOR |  |
-| `dashboard-ui/package.json` | `jsdom` | `^24.0.0` | `30.1.1` | MAJOR |  |
+| `legacy-ui/package.json` | `@playwright/test` | `^1.58.1` | `1.63.0` | minor |  |
+| `legacy-ui/package.json` | `esbuild` | `^0.24.0` | `0.28.2` | 0.x breaking |  |
+| `legacy-ui/package.json` | `jest` | `^29.7.0` | `30.5.2` | MAJOR |  |
+| `legacy-ui/package.json` | `jest-environment-jsdom` | `^29.7.0` | `30.5.2` | MAJOR |  |
+| `legacy-ui/package.json` | `jsdom` | `^24.0.0` | `30.1.1` | MAJOR |  |
 | `loki-ts/package.json` | `@anthropic-ai/claude-agent-sdk` | `0.3.283` | `0.3.283` | up-to-date |  |
 | `loki-ts/package.json` | `@anthropic-ai/sdk` | `^0.124.0` | `0.128.0` | 0.x breaking |  |
 | `loki-ts/package.json` | `@resvg/resvg-wasm` | `^2.6.2` | `2.6.2` | up-to-date |  |
@@ -384,7 +384,7 @@ Counts are all from the single `Bump` column (current line vs newest line in the
 ## Proposed slice list (D35)
 
 - **LOW - npm/bun patch+minor batch** (one slice for the whole ecosystem, touching every file below; lockfiles regenerated and committed):
-  - `dashboard-ui/package.json`: @playwright/test ^1.58.1->1.63.0
+  - `legacy-ui/package.json`: @playwright/test ^1.58.1->1.63.0
   - `vscode-extension/package.json`: @types/vscode ^1.85.0->1.138.0
   - `web-app/package.json`: @playwright/test ^1.58.2->1.63.0, @types/react ^19.0.10->19.3.0, @types/react-dom ^19.0.4->19.3.0, autoprefixer ^10.4.20->10.6.1, postcss ^8.5.3->8.5.28, react ^19.0.0->19.3.0, react-dom ^19.0.0->19.3.0, react-resizable-panels ^4.7.3->4.14.1, react-router-dom ^7.13.1->7.18.4, typescript-eslint ^8.24.1->8.70.1
 - **LOW - Python patch+minor batch** (one slice for the whole ecosystem, touching every file below; lockfiles regenerated and committed):
@@ -404,16 +404,16 @@ Counts are all from the single `Bump` column (current line vs newest line in the
   - `anthropic` -> `1.8.0` (MAJOR): mcp/requirements.txt
   - `asyncpg` -> `0.31.0` (0.x breaking): web-app/requirements.txt
   - `cryptography` -> `50.0.1` (MAJOR): requirements-test.txt, web-app/requirements.txt
-  - `esbuild` -> `0.28.2` (0.x breaking): dashboard-ui/package.json, vscode-extension/package.json
+  - `esbuild` -> `0.28.2` (0.x breaking): legacy-ui/package.json, vscode-extension/package.json
   - `eslint` -> `10.11.0` (MAJOR): vscode-extension/package.json, web-app/package.json
   - `eslint-plugin-react-hooks` -> `7.1.1` (MAJOR): web-app/package.json
   - `eslint-plugin-react-refresh` -> `0.5.7` (0.x breaking): web-app/package.json
   - `fastapi` -> `0.141.1` (0.x breaking): dashboard/requirements.txt, web-app/requirements.txt
   - `globals` -> `17.12.0` (MAJOR): web-app/package.json
   - `httpx` -> `0.28.1` (0.x breaking): sdk/python/pyproject.toml, web-app/requirements-test.txt, web-app/requirements.txt
-  - `jest` -> `30.5.2` (MAJOR): dashboard-ui/package.json, package.json
-  - `jest-environment-jsdom` -> `30.5.2` (MAJOR): dashboard-ui/package.json
-  - `jsdom` -> `30.1.1` (MAJOR): dashboard-ui/package.json, package.json
+  - `jest` -> `30.5.2` (MAJOR): legacy-ui/package.json, package.json
+  - `jest-environment-jsdom` -> `30.5.2` (MAJOR): legacy-ui/package.json
+  - `jsdom` -> `30.1.1` (MAJOR): legacy-ui/package.json, package.json
   - `lucide-react` -> `1.48.0` (MAJOR): web-app/package.json
   - `mcp` -> `2.2.0` (MAJOR): mcp/requirements.txt, requirements-test.txt
   - `pytest` -> `9.1.1` (MAJOR): web-app/requirements-test.txt

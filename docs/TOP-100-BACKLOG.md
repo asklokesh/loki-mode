@@ -87,7 +87,7 @@ Generated 2026-07-01 by the top100-backlog-enumeration ultracode workflow (7 age
 | 65 | medium | M | founder-gated | adoption | MCP registry submission + Glama claim + awesome-list PRs |
 | 66 | medium | M | autonomous | saas | autonomi-saas UI/UX pass: build-watching pane + finished cues from trust verdict |
 | 67 | medium | XL | autonomous | dashboard | Server.py route modularization (~10K-line monolith, no domain separation) |
-| 68 | medium | L | autonomous | dashboard | Large dashboard-ui components modularization (5 files 1K-1.9K lines) |
+| 68 | medium | L | autonomous | dashboard | Large legacy-ui components modularization (5 files 1K-1.9K lines) |
 | 69 | medium | L | founder-gated | engine | Wave-13 deferred trust fixes + PRD-reuse spurious-update design fix |
 | 70 | medium | M | community | dashboard | Dashboard dark-toggle iframe theme not following SPA (harness/product parity) |
 | 71 | medium | M | community | ci | Sonnet-5 calibration follow-ups: test-verify --hosted + gate missing-tool handling |

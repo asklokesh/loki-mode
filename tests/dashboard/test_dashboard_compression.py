@@ -1,12 +1,8 @@
-"""The dashboard bundle must not ship uncompressed.
+"""Large dashboard API responses must not ship uncompressed.
 
-WHAT THIS CAUGHT. dashboard/static/index.html is 779,725 bytes. Only CORS and
-the collab WebSocket auth middleware were registered on the app, so every
-dashboard load transferred the full 780KB. Compressed it is 150,341 bytes --
-an 81% reduction, or roughly 630KB of avoidable transfer on first paint.
-
-That is the most plausible mechanical cause of "the dashboard feels slow": not
-rendering, not the component layer, but the wire. It costs one middleware.
+WHAT THIS CAUGHT. Only CORS and the collab WebSocket auth middleware were
+registered on the app, so every large response went out uncompressed. It costs
+one middleware to fix.
 
 WHY A TEST RATHER THAN A COMMENT. Middleware registration is a single line in a
 12,000-line module and is exactly the kind of thing a later refactor drops
@@ -26,8 +22,7 @@ WHAT IS ASSERTED, and why each matters:
   4. Small responses stay uncompressed, so tiny JSON does not pay a CPU
      round-trip for a few bytes.
 
-The real bundle is used as the fixture when present, because a synthetic
-string would not prove anything about the artifact that actually ships.
+A large synthetic body is the fixture (the legacy UI bundle was removed).
 """
 
 import os
@@ -38,18 +33,10 @@ import unittest
 sys.dont_write_bytecode = True
 
 _ROOT = pathlib.Path(__file__).resolve().parents[2]
-_BUNDLE = _ROOT / "dashboard" / "static" / "index.html"
 
 
 def _load_body():
-    """The shipped bundle when it exists, else a large synthetic stand-in.
-
-    A fresh clone may not have built dashboard/static yet. Falling back keeps
-    the middleware assertions runnable there; the size assertion below is
-    skipped rather than faked when the real artifact is absent.
-    """
-    if _BUNDLE.is_file():
-        return _BUNDLE.read_text(encoding="utf-8", errors="replace"), True
+    """A large synthetic HTML body; the second value is kept for call sites."""
     return ("<html><body>" + ("x" * 200_000) + "</body></html>", False)
 
 

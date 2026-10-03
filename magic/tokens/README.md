@@ -56,9 +56,7 @@ observed = tokens.extract_from_codebase(save=True)
 The extractor scans (relative to the project root):
 
 - `web-app/src/index.css` and any other `web-app/src/**/*.css`
-- `dashboard-ui/**/*.css` and `dashboard-ui/loki-unified-styles.js`
-- `dashboard/static/**/*.css`
-- `.tsx` and `.jsx` files under `web-app/src/` and `dashboard-ui/` for
+- `.tsx` and `.jsx` files under `web-app/src/` for
   Tailwind spacing classes and inline hex colors
 
 ## How generated components use tokens

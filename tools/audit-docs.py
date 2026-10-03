@@ -96,7 +96,7 @@ _ROOT = os.path.dirname(_HERE)
 # evidence some runtime reads it. Counting it can only turn a finding into
 # UNCHECKABLE, never the reverse.
 SOURCE_DIRS = ("autonomy", "loki-ts/src", "loki-ts/test", "loki-ts/tests",
-               "src", "tools", "dashboard", "dashboard-ui/src", "mcp",
+               "src", "tools", "dashboard", "mcp",
                "memory", "events", "bin", "providers", "scripts", "deploy",
                "tests", "benchmarks", "web-app/src", ".github")
 

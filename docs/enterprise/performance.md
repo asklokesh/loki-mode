@@ -238,7 +238,7 @@ Rate limits are built into the API layer (10 requests/min on control endpoints,
 
 ### Static Asset Caching
 
-The dashboard frontend (`dashboard/static/index.html`) is a single-page application built as an IIFE bundle. Configure your reverse proxy to cache static assets:
+The dashboard frontend (`legacy-ui-static/index.html`) is a single-page application built as an IIFE bundle. Configure your reverse proxy to cache static assets:
 
 ```nginx
 location /static/ {

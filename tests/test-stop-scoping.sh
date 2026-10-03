@@ -8,7 +8,6 @@ export LOKI_DASHBOARD_ALLOWED_HOSTS=testserver,test  # TestClient Host; keeps de
 #   - the shared dashboard kill is gated (CLEAR/KEEP) not unconditional
 #   - POST /api/running-projects/stop stops a chosen project gracefully
 #   - registry.mark_project_stopped sets status/pid, is idempotent
-#   - the dashboard UI ships the per-project Stop control
 #   - the Bun route does NOT intercept `stop` (folder-scoping inherited)
 set -u
 PY=$(command -v python3.12 || command -v python3)
@@ -261,22 +260,6 @@ PYEOF
 )
 [ "$T4" = "DASH_OK" ] && ok "shared-dashboard CLEAR/KEEP gate (KEEP while another project lives)" || bad "CLEAR/KEEP: $T4"
 
-# --- T5 dashboard switcher Stop UI shipped ---------------------------------
-grep -q 'project-stop-list' "$REPO_ROOT/dashboard/static/index.html" \
-  && grep -q 'running-projects/stop' "$REPO_ROOT/dashboard/static/index.html" \
-  && ok "built dashboard ships the per-project Stop control" \
-  || bad "Stop control missing from built dashboard/static/index.html"
-grep -q 'project-stop-list' "$REPO_ROOT/dashboard-ui/scripts/build-standalone.js" \
-  && grep -q 'running-projects/stop' "$REPO_ROOT/dashboard-ui/scripts/build-standalone.js" \
-  && ok "build-standalone.js (source of truth) has the Stop control" \
-  || bad "Stop control missing from build-standalone.js"
-# the new stop-list code must build rows with textContent, not innerHTML
-if awk '/function buildStopList/{f=1} f{print} /^    }/{if(f)exit}' "$REPO_ROOT/dashboard-ui/scripts/build-standalone.js" | grep -q 'innerHTML'; then
-    bad "buildStopList uses innerHTML (XSS risk)"
-else
-    ok "buildStopList uses textContent only (no innerHTML)"
-fi
-
 # --- T6 Bun parity: stop must fall through to bash -------------------------
 if grep -qE 'case "stop"|=== ?"stop"|cmd === .stop.' "$REPO_ROOT/loki-ts/src/cli.ts"; then
     bad "loki-ts/src/cli.ts intercepts 'stop' (must fall through to bash for parity)"
@@ -287,7 +270,6 @@ fi
 # --- T7 hygiene: no em dashes in changed files -----------------------------
 if grep -lP '\xe2\x80\x94' "$LOKI" "$REPO_ROOT/autonomy/run.sh" \
      "$REPO_ROOT/dashboard/server.py" "$REPO_ROOT/dashboard/registry.py" \
-     "$REPO_ROOT/dashboard-ui/scripts/build-standalone.js" \
      "$REPO_ROOT/CHANGELOG.md" \
      "$SCRIPT_DIR/test-stop-scoping.sh" >/dev/null 2>&1; then
     bad "em dash found in changed files"

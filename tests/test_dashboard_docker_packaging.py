@@ -53,7 +53,6 @@ def _materialize_declared_package(destination: Path) -> set[str]:
         target = words[-1]
         if target not in {
             "./dashboard/",
-            "./dashboard/static/",
             "./autonomy/lib/",
         }:
             continue
@@ -92,18 +91,6 @@ def _tracked_files(pathspec: str) -> set[str]:
         for path in result.stdout.split(b"\0")
         if path
     }
-
-
-def _assert_complete_static_custody(layout: Path) -> None:
-    expected = _tracked_files("dashboard/static/**")
-    actual = {
-        str(path.relative_to(layout))
-        for path in (layout / "dashboard" / "static").rglob("*")
-        if path.is_file()
-    }
-    assert expected
-    assert "dashboard/static/index.html" in expected
-    assert actual == expected
 
 
 def _import_from_layout(layout: Path) -> subprocess.CompletedProcess[str]:
@@ -152,7 +139,6 @@ def test_declared_layout_has_complete_module_custody_and_imports(tmp_path: Path)
     assert "app_secrets.py" in copied_dashboard_modules
     assert "secrets.py" not in copied_dashboard_modules
     assert "autonomy/lib/deadline.py" in copied
-    _assert_complete_static_custody(tmp_path)
 
     result = _import_from_layout(tmp_path)
     assert result.returncode == 0, result.stderr
@@ -177,18 +163,6 @@ def test_declared_layout_missing_deadline_mutation_is_red(tmp_path: Path) -> Non
     result = _import_from_layout(tmp_path)
     assert result.returncode != 0
     assert "autonomy" in result.stderr
-
-
-def test_declared_layout_missing_static_mutation_is_red(tmp_path: Path) -> None:
-    _materialize_declared_package(tmp_path)
-    (tmp_path / "dashboard" / "static" / "index.html").unlink()
-
-    try:
-        _assert_complete_static_custody(tmp_path)
-    except AssertionError:
-        pass
-    else:
-        raise AssertionError("static custody oracle accepted a missing index")
 
 
 def test_standalone_command_targets_the_packaged_asgi_app() -> None:
@@ -217,10 +191,10 @@ def test_standalone_command_targets_the_packaged_asgi_app() -> None:
     assert "http://localhost:57374/health" in healthchecks[0]
 
 
-def test_static_frontend_requirements_and_compose_share_the_root_context() -> None:
+def test_requirements_and_compose_share_the_root_context() -> None:
     lines = set(_logical_dockerfile_lines())
     assert "COPY dashboard/requirements.txt ./" in lines
-    assert "COPY dashboard/static/ ./dashboard/static/" in lines
+    assert not any("dashboard/" + "static" in line for line in lines)
     assert not any("dashboard/frontend" in line for line in lines)
 
     compose = COMPOSE_FILE.read_text(encoding="utf-8")

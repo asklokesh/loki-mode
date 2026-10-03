@@ -43,7 +43,7 @@ Last updated: 2026-05-18
 - [x] F-2.25 Semantic layer: buckets, functions, gateway routes surfaced
 - [x] F-2.26 Council review hook (migrate_apply emits review records to .loki/quality/forge-migrations/; council read-side consumes from that path)
 - [x] F-2.27 Dashboard router /api/forge/* (state, db, storage, functions, gateway)
-- [~] F-2.28 Dashboard UI: deferred to dedicated dashboard-ui work (router is in place; UI panes are CSS/TSX work that will land in a separate PR)
+- [~] F-2.28 Dashboard UI: deferred to dedicated legacy-ui work (router is in place; UI panes are CSS/TSX work that will land in a separate PR)
 - [x] F-2.29 CHANGELOG entry for F-2
 - [x] F-2.30 Commit + push F-2
 
@@ -196,7 +196,7 @@ Last updated: 2026-05-18
 ## Status
 
 Phase F-1..F-5 + X-11..X-26 + X-28..X-34 complete on
-claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (dashboard-ui).
+claude/compare-litellm-loki-Y8Ke1. Remaining: X-27 (legacy-ui).
 
 ## More tasks discovered (next wave)
 

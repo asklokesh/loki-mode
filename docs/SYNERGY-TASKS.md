@@ -60,7 +60,7 @@ This document tracks all implementation tasks to achieve tool synergy and compet
 
 | Task ID | Task | Status | Priority | Notes |
 |---------|------|--------|----------|-------|
-| SYN-025 | Extract dashboard as reusable web components | Done | High | dashboard-ui/ - ARIA, keyboard nav, focus mgmt - peer reviewed |
+| SYN-025 | Extract dashboard as reusable web components | Done | High | legacy-ui/ - ARIA, keyboard nav, focus mgmt - peer reviewed |
 | SYN-026 | Create VS Code webview integration | Pending | High | Embed dashboard in VS Code |
 | SYN-027 | Unify styling and behavior | Pending | Medium | Consistent UX |
 | SYN-028 | Add dashboard feature parity check | Pending | Low | Ensure all features available |

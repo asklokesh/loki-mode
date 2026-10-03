@@ -33,7 +33,7 @@ dashboard `GET /api/checkpoints` normalizes them).
 
 ### Dashboard
 - `GET /api/checkpoints`, `GET /api/checkpoints/{id}`, `POST /api/checkpoints` exist.
-- The UI component `dashboard-ui/components/loki-checkpoint-viewer.js` (601 lines) ALREADY
+- The UI component `legacy-ui/components/loki-checkpoint-viewer.js` (601 lines) ALREADY
   renders list + create + rollback-with-two-step-confirm and POSTs to
   `POST /api/checkpoints/{id}/rollback` -- but that endpoint **did not exist**. The
   dashboard rollback button was DEAD.

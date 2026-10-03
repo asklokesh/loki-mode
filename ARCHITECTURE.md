@@ -91,7 +91,7 @@ runner (`loki-ts/src/runner/`) is the default; the Bash engine
                    |     Orchestration Engine  |   |    Dashboard      |
                    |                           |   | (dashboard/       |
                    |  default: loki-ts/runner  |   |  server.py +      |
-                   |  legacy:  autonomy/run.sh |   |  dashboard-ui/)   |
+                   |  legacy:  autonomy/run.sh |   |  API only)         |
                    |                           |   +---------+---------+
                    |  RARV-C loop:             |             |
                    |   build_prompt -> provider|             |
@@ -224,8 +224,7 @@ dashboard/                 FastAPI control-plane backend
   server.py                100+ endpoints, WebSocket event stream
   control.py / auth.py     Run control and authentication
   database.py / audit.py   Persistence and audit logging
-dashboard-ui/              Dashboard frontend (esbuild + Playwright tests)
-  dist/ -> dashboard/static/  Built bundle served by the backend
+packages/control-plane/    Control Plane: browser UI and service (Bun)
 
 web-app/                   Web surface (FastAPI + built dist) for browser PRD input
 
@@ -320,7 +319,7 @@ Dockerfile* / docker-compose.yml   Container distribution
   (Pydantic schemas, optional sentence-transformers embeddings, FastAPI).
 - **FastAPI** for the dashboard control plane and web surface, with a WebSocket
   event stream for live run telemetry.
-- **esbuild + Playwright** for the dashboard frontend (`dashboard-ui/`): a
+- **Vite + Playwright** for the Control Plane UI (`packages/control-plane/ui`): a
   lightweight build and end-to-end browser tests.
 - **Model Context Protocol (MCP)** as a first-class integration surface
   (`mcp/server.py`): tools, resources, and prompts, plus an LSP proxy for

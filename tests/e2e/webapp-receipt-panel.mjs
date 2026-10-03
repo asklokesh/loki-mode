@@ -32,7 +32,7 @@ import { dirname, resolve } from 'path';
 const __dir = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 const pwPath = process.env.LOKI_PLAYWRIGHT_PATH ||
-  resolve(__dir, '..', '..', 'dashboard-ui', 'node_modules', 'playwright');
+  resolve(__dir, '..', '..', 'web-app', 'node_modules', 'playwright-core');
 
 let chromium;
 try {

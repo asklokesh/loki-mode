@@ -3,7 +3,7 @@
 THE BUGS (cycle-4 council):
 
   - /api/cost/timeline summed proof costs with null counted as 0 and sent
-    "project_total_usd": 0.0, so dashboard/static/cost.html showed
+    "project_total_usd": 0.0, so the legacy cost page showed
     PROJECT TOTAL $0.00 for two runs that each read "not recorded".
   - dashboard/registry.py seeded every fleet run with cost_usd 0.0, so
     /api/fleet/runs said $0.00 per project and /api/fleet/summary summed a

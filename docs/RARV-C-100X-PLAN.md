@@ -211,9 +211,9 @@ Every commit proven on BOTH routes (`bin/loki` + `LOKI_LEGACY_BASH=1 bin/loki`).
 - **FIX in v8 - release-notes bug** (`release.yml:179/231`): awk expects bracketed `## [VERSION]` but
   CHANGELOG uses unbracketed `## vVERSION`, so release notes have silently been generic. Fix the awk or
   the header format (one PR, verify the extracted body is non-empty).
-- **Dashboard frontend rebuilt** (`cd dashboard-ui && npm ci && npm run build:all`) - writes both
-  `dashboard-ui/dist/` and `dashboard/static/`.
-- **Pre-publish validation** (CLAUDE.md 3a): `npm pack --dry-run` contains web-app/dist + dashboard/static;
+- **Dashboard frontend rebuilt** (`cd legacy-ui && npm ci && npm run build:all`) - writes both
+  `legacy-ui/dist/` and `legacy-ui-static/`.
+- **Pre-publish validation** (CLAUDE.md 3a): `npm pack --dry-run` contains web-app/dist + legacy-ui-static;
   fresh global install serves web app + API.
 - **Per-job release verification**: `gh run view <id> --json jobs` per channel (npm/Docker/Homebrew/Release),
   not just "workflow green".

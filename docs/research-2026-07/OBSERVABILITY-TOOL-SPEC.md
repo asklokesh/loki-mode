@@ -56,7 +56,7 @@ Dockerizable and offline-safe. A daily/refresh fetch keeps the numbers current.
 
 ## Design language (Autonomi)
 Match the shipped Autonomi look. Reference files: `artifacts/whitepaper/Autonomi-Whitepaper.html`
-and `dashboard/static/trust.html`. Palette: dark bg (#0F0B1A / #0d1117), Autonomi purple accent
+and `legacy-ui-static/trust.html`. Palette: dark bg (#0F0B1A / #0d1117), Autonomi purple accent
 (#553DE9 / #7B6BF0), verified teal (#2ED8B6 / #1AAF95), dim ink (#B8B0C8 / #8A857C), warning amber
 (#C4922E), reject red (#C04848). Semantic status colors: verified=teal, reported/pending=amber,
 mistake/reverted=red, roadmap=purple. Clean, calm, founder-readable; big numbers, short labels,

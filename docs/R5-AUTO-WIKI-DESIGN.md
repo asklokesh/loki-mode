@@ -21,7 +21,7 @@ the codebase has not changed (reuses the R1 codebase-signature idea).
 | Org knowledge graph | `memory/knowledge_graph.py` (`OrganizationKnowledgeGraph`) | Token-overlap scoring idea reused (`_tokenize` / `query_patterns`). NOT a codebase index -- it aggregates `.loki/memory/semantic/*.json` patterns across projects, keyed on `~/.loki/knowledge`. See "Honest reuse" below. |
 | Memory retrieval | `memory/retrieval.py` (`MemoryRetrieval`) | Inspected. It retrieves memory entries (episodic/semantic/procedural), NOT source code. Not a code indexer. Not reused for code retrieval. |
 | Dashboard read-API + traversal-safety | `dashboard/server.py:7191` (`_safe_proof_run_dir`) | Pattern reused for the wiki section/path param (`_safe_wiki_section`). |
-| Dashboard web components | `dashboard-ui/components/*.js` (Web Components) | New `loki-wiki-browser.js` follows the same `LokiElement` convention; registered in `index.js`. |
+| Dashboard web components | `legacy-ui/components/*.js` (Web Components) | New `loki-wiki-browser.js` follows the same `LokiElement` convention; registered in `index.js`. |
 
 ### Honest reuse statement
 

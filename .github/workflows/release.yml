@@ -1055,16 +1055,6 @@ jobs:
           # never restores a cache an issue-triggered job could have written.
           no-cache: true
 
-      - name: Build dashboard frontend
-        working-directory: dashboard-ui
-        run: |
-          npm ci
-          npm run build:all
-
-      - name: Verify dashboard static exists
-        run: |
-          test -f dashboard/static/index.html || { echo "FATAL: dashboard/static/index.html not found after build"; exit 1; }
-
       - name: Verify the PACKED tarball carries a fresh dist
         run: |
           # WHY PACK AND NOT THE WORKTREE. package.json's prepack rebuilds
@@ -1247,16 +1237,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-
-      - name: Build dashboard frontend
-        working-directory: dashboard-ui
-        run: |
-          npm ci
-          npm run build:all
-
-      - name: Verify dashboard static exists
-        run: |
-          test -f dashboard/static/index.html || { echo "FATAL: dashboard/static/index.html not found after build"; exit 1; }
 
       - name: Setup Bun (for loki-ts build before docker context)
         uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2

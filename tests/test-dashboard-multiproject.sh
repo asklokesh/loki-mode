@@ -70,12 +70,6 @@ grep -q 'loki_register_running_project running' "$REPO_ROOT/autonomy/run.sh" \
   && ok "run.sh auto-registers the running project" \
   || bad "run.sh does not auto-register"
 
-# dashboard UI switcher shipped
-grep -q 'project-switcher' "$REPO_ROOT/dashboard/static/index.html" \
-  && grep -q 'running-projects' "$REPO_ROOT/dashboard/static/index.html" \
-  && ok "dashboard UI ships the project switcher" \
-  || bad "project switcher missing from built dashboard"
-
 # --- syntax ---------------------------------------------------------------
 bash -n "$LOKI" && ok "autonomy/loki passes bash -n" || bad "autonomy/loki syntax error"
 bash -n "$REPO_ROOT/autonomy/run.sh" && ok "autonomy/run.sh passes bash -n" || bad "run.sh syntax error"

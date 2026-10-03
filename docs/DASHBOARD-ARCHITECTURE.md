@@ -41,7 +41,7 @@ brief's number and my measurement disagree, both are shown.
 
 One correction against myself: my first pass reported `0` aria attributes in the
 built artifact and I nearly wrote that up as a shipped accessibility regression.
-It was a measurement error. `dashboard/static/index.html` has lines long enough
+It was a measurement error. `legacy-ui-static/index.html` has lines long enough
 (577 chars plus minified runs) that `grep` treated the file as binary and
 suppressed output. With `grep -a` the brief's numbers are confirmed. This is the
 `grep-absence false-green` failure mode: an empty result was an absent
@@ -178,7 +178,7 @@ machine-checkable instead of a naming habit.
   `/api/health/processes`.
 
 Built artifact realtime constructs: 9
-(`grep -oaE "new WebSocket|EventSource|setInterval" dashboard/static/index.html | wc -l`).
+(`grep -oaE "new WebSocket|EventSource|setInterval" legacy-ui-static/index.html | wc -l`).
 The brief's "34 realtime constructs" is not reproducible by any pattern I tried;
 I mark that figure **not independently verified** rather than repeat it.
 
@@ -234,8 +234,8 @@ The bundle is 779,725 bytes raw, 150,341 gzipped
 gzip stays; nothing in this design touches it.
 
 **Progressive disclosure here cannot mean code-splitting.**
-`dashboard-ui/scripts/build-standalone.js` produces a single self-contained
-file with zero runtime dependencies, written to both `dashboard/static/` and
+`legacy-ui/scripts/build-standalone.js` produces a single self-contained
+file with zero runtime dependencies, written to both `legacy-ui-static/` and
 `dist/`. That property is why the dashboard works offline and inside Docker
 without a CDN. Splitting the bundle would trade a real capability for a
 transfer-size win that gzip has already mostly taken (5.2x). So disclosure is
@@ -265,12 +265,12 @@ Measured on the shipped artifact with `grep -a`:
 
 | Property | Count | Command |
 |---|---|---|
-| Custom elements registered | 39 | `grep -oa "customElements.define" dashboard/static/index.html \| wc -l` |
+| Custom elements registered | 39 | `grep -oa "customElements.define" legacy-ui-static/index.html \| wc -l` |
 | `aria-*` attributes | 100 | `grep -oa "aria-[a-z]*=" ... \| wc -l` |
 | `aria-` occurrences | 113 | `grep -oa "aria-" ... \| wc -l` |
 | `role="` | 38 | `grep -oa 'role="' ... \| wc -l` |
 | `@media` breakpoints | 13 | `grep -oa "@media" ... \| wc -l` |
-| Component source files | 43 | `ls dashboard-ui/components \| grep -v vendor \| wc -l` |
+| Component source files | 43 | `ls legacy-ui/components \| grep -v vendor \| wc -l` |
 | Registrations in source | 44 | `grep -roha "customElements.define" components core \| wc -l` |
 
 The brief's 113 aria and 41 role are consistent with mine within pattern choice
@@ -278,7 +278,7 @@ The brief's 113 aria and 41 role are consistent with mine within pattern choice
 figure is 43 files carrying 44 registrations, not 46.
 
 **One gap worth noting:** source registers 44 custom elements, the shipped
-artifact registers 39. Five components exist in `dashboard-ui/` and do not reach
+artifact registers 39. Five components exist in `legacy-ui/` and do not reach
 the browser. This is out of scope for this document and I did not chase it, but
 it is recorded here because it means the source tree is not a reliable proxy for
 what ships. All acceptance criteria in section 5 therefore measure the **built
@@ -369,10 +369,10 @@ Every row is measurable by a command. No aspirational entries.
 |---|---|---|---|
 | A1 | No route regression | `grep -cE '^@app\.(get\|post\|put\|delete\|patch\|websocket)' dashboard/server.py` | >= 165 |
 | A2 | api_v2 routes intact | `grep -cE '@router\.(get\|post\|put\|delete)' dashboard/api_v2.py` | >= 24 |
-| A3 | Accessibility not regressed | `grep -oa "aria-" dashboard/static/index.html \| wc -l` | >= 113 |
-| A4 | Roles not regressed | `grep -oa 'role="' dashboard/static/index.html \| wc -l` | >= 38 |
-| A5 | Custom elements not regressed | `grep -oa "customElements.define" dashboard/static/index.html \| wc -l` | >= 39 |
-| A6 | Breakpoints not regressed | `grep -oa "@media" dashboard/static/index.html \| wc -l` | >= 13 |
+| A3 | Accessibility not regressed | `grep -oa "aria-" legacy-ui-static/index.html \| wc -l` | >= 113 |
+| A4 | Roles not regressed | `grep -oa 'role="' legacy-ui-static/index.html \| wc -l` | >= 38 |
+| A5 | Custom elements not regressed | `grep -oa "customElements.define" legacy-ui-static/index.html \| wc -l` | >= 39 |
+| A6 | Breakpoints not regressed | `grep -oa "@media" legacy-ui-static/index.html \| wc -l` | >= 13 |
 | A7 | gzip still active | `grep -c "GZipMiddleware" dashboard/server.py` | >= 1 |
 | A8 | Zero runtime dependencies | Built artifact contains no external script/CDN src | 0 external hosts |
 | A9 | Runs store is written by the engine | Drive the lifecycle writer directly (source `run.sh`, call the phase-boundary function), then `GET /api/v2/runs`. No provider call, no spend | Returns >= 1 record with a real run id |

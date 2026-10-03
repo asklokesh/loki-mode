@@ -111,7 +111,7 @@ All files under `.loki/magic/generated/` carry a `LOKI-MAGIC-HASH: <sha>` header
 
 ## Design Tokens
 
-All generated components use design tokens (colors, spacing, typography, motion) so they match Loki Mode's design language. Defaults come from observing existing components in `web-app/src/` and `dashboard-ui/`. Override with:
+All generated components use design tokens (colors, spacing, typography, motion) so they match Loki Mode's design language. Defaults come from observing existing components in `web-app/src/` and `legacy-ui/`. Override with:
 
 - `loki magic tokens extract` -- scan the codebase, update `.loki/magic/tokens.json`
 - Manual edit of `.loki/magic/tokens.json` -- takes precedence over extraction

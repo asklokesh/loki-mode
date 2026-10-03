@@ -59,7 +59,7 @@ No chafa / no headless Chrome hard dependency. Pipeline:
 - S3 (render pipeline): SVG-from-state builder + SVG->PNG + terminal-image
   encoder + capability detection + fallback. Tests (encoder byte-shape, detection).
 - S4 (dashboard identity redesign): apply logo/purple/fonts/multi-repo switcher to
-  dashboard-ui; rebuild dist. Lightweight gate.
+  legacy-ui; rebuild dist. Lightweight gate.
 - S5 (docs + wiki + release): help text, README, wiki, CHANGELOG, 14 version files.
 
 ## Constraints

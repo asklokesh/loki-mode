@@ -50,22 +50,6 @@ PYEOF
 )
 if [ "$RESULT" = "HOOK_OK" ]; then ok "endpoint returns only claude_hook_ events under hook_events"; else bad "hook endpoint: $RESULT"; fi
 
-# Test 2: the built dashboard UI fetches type_prefix and reads hook_events.
-if grep -q "type_prefix=claude_hook_" dashboard/static/index.html \
-   && grep -q "hook_events" dashboard/static/index.html \
-   && grep -q "Live Tool Activity" dashboard/static/index.html; then
-    ok "built dashboard UI wires the Live Tool Activity hook-events panel"
-else
-    bad "built dashboard UI missing hook-events wiring (rebuild dashboard-ui?)"
-fi
-
-# Test 3: the source component reads hook_events (not the wrong key).
-if grep -q "hooks.hook_events" dashboard-ui/components/loki-council-transcripts.js \
-   && grep -q "_hookEventsHtml" dashboard-ui/components/loki-council-transcripts.js; then
-    ok "council-transcripts component reads hook_events + renders the panel"
-else
-    bad "council-transcripts component not wired to hook_events"
-fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

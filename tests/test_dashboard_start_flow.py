@@ -198,11 +198,11 @@ def test_run_requires_setup(env):
     assert client.post("/api/backlog/run", json={"all": True}).status_code == 409
 
 
-def test_page_served_and_wired_into_server():
+def test_router_wired_into_server_and_legacy_page_gone():
     from dashboard import api_start
-    assert os.path.isfile(api_start.START_HTML)
+    assert not hasattr(api_start, "START_HTML")
     src = open(os.path.join(os.path.dirname(api_start.__file__), "server.py")).read()
-    assert "api_start" in src and '"/start"' in src
+    assert "api_start" in src and '"/start"' not in src
 
 
 def test_real_launcher_argv_cwd_and_no_pat_in_argv(tmp_path, monkeypatch):

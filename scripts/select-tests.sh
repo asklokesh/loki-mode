@@ -120,7 +120,7 @@ done
 # here means the selector genuinely does not know what kind of thing changed.
 is_recognized_shape() {
     case "$1" in
-        tests/* | loki-ts/* | dashboard/* | dashboard-ui/* | web-app/* | skills/* | autonomy/* \
+        tests/* | loki-ts/* | dashboard/* | web-app/* | skills/* | autonomy/* \
             | providers/* | memory/* | mcp/* | events/* | docs/* | scripts/* \
             | references/* | templates/* | benchmarks/* | wiki/* | plugins/* \
             | vscode-extension/* | SKILL.md | CLAUDE.md | README.md | CHANGELOG.md)
@@ -173,8 +173,7 @@ fi
 TEST_FILES_CACHE=""
 all_test_files() {
     if [ -z "$TEST_FILES_CACHE" ]; then
-        TEST_FILES_CACHE="$(find tests -type f \( -name '*.sh' -o -name '*.py' \) 2>/dev/null
-            find dashboard-ui/tests -type f \( -name '*.js' -o -name '*.mjs' \) 2>/dev/null)"
+        TEST_FILES_CACHE="$(find tests -type f \( -name '*.sh' -o -name '*.py' \) 2>/dev/null)"
     fi
     printf '%s\n' "$TEST_FILES_CACHE"
 }
@@ -296,8 +295,7 @@ mark_seen() { SEEN="${SEEN}|$1|"; }
 
 # A "shell_test" kind (the default the callers below pass) is corrected
 # per-match to how the matched file is actually run: py_test for a .py match
-# (tests/**/*.py mixes both), node_test for a .js/.mjs match (dashboard-ui's
-# collector mixes those in too) -- never invoked with `bash`.
+# (tests/**/*.py mixes both), node_test for a .js/.mjs match -- never invoked with `bash`.
 match_kind() {
     local kind="$1" match="$2" basename
     basename="$(basename "$match")"
@@ -405,21 +403,6 @@ for f in "${CHANGED[@]}"; do
                 # lint/build); lint is the closest node-side check today.
                 # Add a real test script and select it here when one exists.
                 emit R5 node_lint "web-app"
-            fi
-            ;;
-        dashboard-ui/*)
-            # Mirror run-all-tests.sh exactly: it registers only 4 of the ~20
-            # files under dashboard-ui/tests/ as real `node --test` suites
-            # (the rest are Playwright e2e specs or unregistered/orphaned --
-            # a pre-existing gap outside this slice). Extract the registered
-            # set from run-all-tests.sh itself so this stays in sync rather
-            # than hardcoding a list that drifts.
-            if ! already_seen "r5area:dashboard-ui" && command -v node >/dev/null 2>&1; then
-                mark_seen "r5area:dashboard-ui"
-                while IFS= read -r uitest; do
-                    [ -n "$uitest" ] || continue
-                    emit R5 node_test "$uitest"
-                done < <(grep -oE 'dashboard-ui/tests/[A-Za-z0-9_.-]+\.(js|mjs)' tests/run-all-tests.sh | sort -u)
             fi
             ;;
     esac

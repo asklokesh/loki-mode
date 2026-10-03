@@ -54,7 +54,6 @@ wiki-repo/
 !tests/fixtures/**/.loki/app.json
 
 # Runtime state in subdirectories
-dashboard-ui/.loki/
 vscode-extension/.loki/
 
 # Hermetic test fixtures under loki-ts/ are intentionally tracked

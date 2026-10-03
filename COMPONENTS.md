@@ -17,7 +17,7 @@ gates. It is provider-agnostic (Claude Code, OpenAI Codex CLI, Cline, Aider).
 | `memory/` | Python | Episodic/semantic/procedural memory with vector search |
 | `providers/` | Bash + Python | Multi-provider config and model registry |
 | `dashboard/` | Python (FastAPI) | Web dashboard API and control plane |
-| `dashboard-ui/` | JavaScript | Dashboard frontend (built to `dashboard/static/`) |
+| `packages/control-plane/` | TypeScript | Control Plane (browser UI and service) |
 | `web-app/` | Python + JS | Purple Lab web app (deprecated v7.44.0) |
 | `mcp/` | Python | MCP server (tools, resources, prompts) |
 | `api/` | TypeScript (Deno) | REST API surface and services |
@@ -212,29 +212,12 @@ runs, plus auth, tenancy, telemetry, and migration tooling.
 - `memory/` for memory views.
 - `events/` for live event streaming.
 - `.loki/` state from `autonomy/` runs.
-- `dashboard-ui/` produces the bundled `static/index.html`.
 
 ---
 
-## dashboard-ui/
+## Removed: legacy dashboard UI
 
-The dashboard frontend source. Built with esbuild and committed into
-`dashboard/static/` for distribution.
-
-**Purpose:** Browser UI for the dashboard control plane.
-
-**Key files:**
-- `index.js`, `index.html`, `components/`, `core/`, `assets/` - UI source.
-- `esbuild.config.cjs`, `build-standalone.js` (in `scripts/`) - Build, writing
-  to both `dashboard-ui/dist/` and `dashboard/static/`.
-- `playwright.config.js`, `tests/` - E2E tests.
-- `STYLE-GUIDE.md`, `FEATURE-MATRIX.md` - UI conventions and feature coverage.
-
-**Public interface:**
-- `npm run build:all` produces the served bundle.
-
-**Dependencies:**
-- Consumes `dashboard/` HTTP/WebSocket API.
+The legacy browser UI source and its bundle were deleted in CPE-24. The browser UI is the Control Plane (`packages/control-plane`); `dashboard/server.py` serves the `/api/*` routes only.
 
 ---
 

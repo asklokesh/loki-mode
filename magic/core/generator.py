@@ -97,7 +97,7 @@ class ComponentGenerator:
         """Generate a Web Component (loki-* custom element) from a spec.
 
         The component:
-            - Extends the LokiElement base class used by dashboard-ui.
+            - Extends the LokiElement base class used by the Loki web components.
             - Uses Shadow DOM with scoped styles.
             - Consumes CSS custom properties sourced from design tokens.
             - Starts with a SHA256 hash header for freshness checking.
@@ -300,7 +300,7 @@ class ComponentGenerator:
         )
         return (
             "You are an expert Web Components author working in the Loki\n"
-            "Mode dashboard-ui codebase.\n"
+            "Mode web component codebase.\n"
             "\n"
             "Hard rules (must all hold):\n"
             "  - Output pure JavaScript source for a single custom element\n"

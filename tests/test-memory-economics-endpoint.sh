@@ -82,15 +82,6 @@ if grep -q '"hit_rate"' dashboard/server.py && grep -q '"top_patterns"' dashboar
     ok "endpoint emits normalized hit_rate + top_patterns + total_tokens"
 fi
 
-# Test 4: dashboard tile present in built static HTML
-if grep -q "memory-economics-tile" dashboard/static/index.html \
-   && grep -q "econ-hit-rate" dashboard/static/index.html \
-   && grep -q "loadEconomics" dashboard/static/index.html; then
-    ok "dashboard token-economics tile present in built index.html"
-else
-    bad "economics tile not found in built dashboard"
-fi
-
 # Test 5: AST clean on server.py
 if $PY -c "import ast; ast.parse(open('dashboard/server.py').read())" 2>/dev/null; then
     ok "dashboard/server.py AST clean"
@@ -110,14 +101,6 @@ if grep -q "followlinks=False" dashboard/server.py && grep -q "commonpath" dashb
     ok "scan uses os.walk(followlinks=False) + realpath containment (no symlink traversal)"
 else
     bad "scan missing symlink-safe walk or containment check"
-fi
-
-# Test 8 (council fix Opus 1): tile builds DOM via textContent (no innerHTML injection)
-if grep -q "removeChild" dashboard/static/index.html \
-   && grep -q "row.textContent" dashboard/static/index.html; then
-    ok "tile builds top-patterns via textContent (XSS-safe)"
-else
-    bad "tile still uses innerHTML single-char escape (XSS risk)"
 fi
 
 # Test 9 (council fix Opus 2): symlink to outside mem_root is NOT followed

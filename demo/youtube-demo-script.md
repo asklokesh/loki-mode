@@ -93,8 +93,8 @@ Each row was confirmed against source. Only verified items are scripted.
 | RARV loop with quality gates | dashboard | autonomy/run.sh run_autonomous |
 | 12-factor docker-compose for multi-service (RUN_CONTRACT v7.26.0) | files / terminal | run.sh:10474 compose_instruction |
 | App runner picks primary web service, health-aware status | dashboard | CHANGELOG 7.26.0 |
-| Live App panel embeds running app in iframe (v7.24.0) | dashboard | dashboard-ui loki-app-preview |
-| On-screen "Running locally - <url>" with status badge "Running" | dashboard | dashboard-ui dist transport line |
+| Live App panel embeds running app in iframe (v7.24.0) | dashboard | legacy-ui loki-app-preview |
+| On-screen "Running locally - <url>" with status badge "Running" | dashboard | legacy-ui dist transport line |
 | `loki preview` / `loki open` prints URL and opens browser (v7.24.0) | terminal | autonomy/loki cmd_preview:4757 |
 | .loki/COMPLETION.txt with live-app line + diff stats | terminal | run.sh:2481-2520 |
 | Verified-completion evidence gate (blocks empty diff / red tests) | terminal / receipts | run.sh:13005-13010 |

@@ -12,7 +12,6 @@ docs/CONFIG-FILE-PLAN.md:generic-api-key:362
 # Reviewed synthetic test and fixture values. Each is deliberately secret-shaped
 # so the corresponding scanner, redaction, policy, or lifecycle test is
 # non-vacuous. Exact fingerprints ensure a changed line is reviewed again.
-dashboard-ui/tests/ui-components.test.js:stripe-access-token:322
 loki-ts/tests/runner/quality_gates.test.ts:aws-access-token:1213
 tests/fixtures/project-graph/acme/ui/.loki/state/project-graph.json:generic-api-key:2
 tests/crash/test_crash_redact.py:jwt:58

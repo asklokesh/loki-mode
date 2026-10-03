@@ -94,7 +94,7 @@ decide nosuchfile; expect "missing runs file" false
 runs_file big 101 "$S"; decide big; expect "total_count 101" false
 
 echo "== lockfile / compare cases =="
-KEYS="loki-ts/bun.lock requirements-test.txt dashboard-ui/package-lock.json"
+KEYS="loki-ts/bun.lock requirements-test.txt"
 B1=1111111111111111111111111111111111111111
 printf '{"files":[{"filename":"README.md"}]}\n' > "$WORK/cmp-clean.json"
 printf '{"files":[{"filename":"README.md"},{"filename":"loki-ts/bun.lock"}]}\n' > "$WORK/cmp-lock.json"

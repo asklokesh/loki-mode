@@ -98,7 +98,7 @@ Failure modes:
 | B11 | PR comment with the integration result, via the existing gh token path (no LLM in the step) | autonomy/lib/workspace_comment.py, tests/workspace/80-comment.sh | stub gh receives one comment per PR; the token appears in no log or argv | MEDIUM |
 | B12 | CLI `loki workspace` subcommand (list, show, run, status, clean) | autonomy/loki, tests/workspace/90-cli.sh | flag off: the command says it is disabled; `clean` never removes a worktree whose branch has an open PR | MEDIUM |
 | B13 | Dashboard endpoints reading group.json; run launches a detached runner | dashboard/api_workspaces.py, dashboard/server.py, tests/dashboard/test_api_workspaces.py | the group survives an app restart; non-loopback Host gets 403; control scope required for run | HIGH |
-| B14 | Dashboard group card (per-repo rows, integration row, stale-evidence badge) | dashboard/static/start.html | Playwright: a fixture group renders 2 repo rows plus integration; a mismatched head SHA shows stale | LOW |
+| B14 | Dashboard group card (per-repo rows, integration row, stale-evidence badge) | legacy-ui-static/start.html | Playwright: a fixture group renders 2 repo rows plus integration; a mismatched head SHA shows stale | LOW |
 | B15 | 10x metric: PRs per wall-clock hour and per attention minute from group.json timestamps | autonomy/lib/workspace_metrics.py, tests/workspace/95-metrics.sh | a fixture group gives the hand-computed rate; unmeasured runs are reported, not counted as zero | LOW |
 | B16 | Docs plus flag flip after the whole-feature Wall: a 2-repo fixture (lib and app) ends with 2 PRs and integration passed | docs/WORKSPACES.md, tests/workspace/99-e2e.sh | the e2e part passes on CI with the stub provider; one real run is recorded in METRICS.md | MEDIUM |
 

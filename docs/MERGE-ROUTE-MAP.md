@@ -30,7 +30,7 @@ This document is the source-of-truth route-collision analysis for the Purple Lab
 | Method | Path | Dashboard purpose | Purple Lab purpose | Resolution |
 |---|---|---|---|---|
 | `GET` | `/health` | Dashboard health check | Purple Lab health check | Single `/health` on Dashboard wins. Lab's becomes `/lab/health`. |
-| `GET` | `/{full_path:path}` | Dashboard SPA catch-all (serves `dashboard/static/index.html`) | Purple Lab SPA catch-all (serves `web-app/dist/index.html`) | Dashboard catch-all wins at root. Lab's becomes `/lab/{full_path:path}` -- triggered only inside the mount. |
+| `GET` | `/{full_path:path}` | Dashboard SPA catch-all (serves `legacy-ui-static/index.html`) | Purple Lab SPA catch-all (serves `web-app/dist/index.html`) | Dashboard catch-all wins at root. Lab's becomes `/lab/{full_path:path}` -- triggered only inside the mount. |
 | `WS` | `/ws` | Dashboard WebSocket bus | Purple Lab WebSocket bus | Dashboard `/ws` wins. Lab's becomes `/lab/ws`. Long term: unify into a single bus (Phase Merge-5). |
 
 All three collisions resolve automatically when Lab's FastAPI app is mounted at `/lab` via Starlette `app.mount("/lab", purple_lab_app)`. No code dedup needed in Merge-1 -- the mount provides path isolation.

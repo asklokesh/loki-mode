@@ -2072,7 +2072,7 @@ run_check "npm pack tarball contents" '
   # only because files[] happens to hold a broad "autonomy/" entry; narrowing it
   # would drop them silently, surfacing as a receipt that cannot be verified
   # rather than as an error.
-  for _f in loki-ts/dist/loki.js bin/loki dashboard/static/index.html \
+  for _f in loki-ts/dist/loki.js bin/loki \
             web-app/dist/index.html autonomy/provider-offer.sh \
             autonomy/quickstart.sh autonomy/lib/proof-verify.py \
             autonomy/lib/efficiency_cost.py autonomy/lib/cost-summary.py; do
@@ -2108,65 +2108,21 @@ run_check_bg "web-app dist baked with /lab/ base" 'test -f web-app/dist/index.ht
 run_check_bg "no hardcoded /api/ or /ws literals in web-app/src/" '! grep -rnE "['"'"'\"]/(api|ws|proxy)/" web-app/src/ --include="*.ts" --include="*.tsx" 2>/dev/null | grep -v "\.test\." | grep -q .'
 
 # ---------------------------------------------------------------------------
-# 10c. Dashboard SPA inline JavaScript must PARSE (no SyntaxError)
+# 10d. web-app honesty harnesses (real browser)
 # ---------------------------------------------------------------------------
-# A prior build regression (build-standalone.js corrupting backslash escapes)
-# shipped a dashboard/static/index.html whose inline <script> blocks threw a
-# SyntaxError in the browser. The file still served HTTP 200 and contained the
-# expected markers, so every existing presence/compose check passed while the
-# SPA was dead. This gate extracts each INLINE <script> block (skips src=,
-# importmap/json data islands) and parses it via Node's vm. FAIL on any
-# SyntaxError. Proven to FAIL on the old broken build and PASS on the fixed one.
-if command -v node >/dev/null 2>&1; then
-  run_check_bg "dashboard SPA inline scripts parse (node)" "node scripts/check-inline-scripts.js dashboard/static/index.html"
-else
-  skip_check "dashboard SPA inline scripts parse" "node not installed"
-fi
-
-# ---------------------------------------------------------------------------
-# 10c2. Moat P7 at the pixel: an unmeasured cost never renders as $0.00
-# ---------------------------------------------------------------------------
-# dashboard-ui/tests/loki-unmeasured-cost-never-zero.node.test.mjs drives the
-# real cost components and cost.html's own functions. It was registered in no
-# runner, so its waterfall mocks drifted to a response shape the component no
-# longer reads and 2 of 11 cases failed with nobody seeing it. Node is REQUIRED
-# here, not skipped (as in tests/test-audit-js-suites.sh): a missing runtime is
-# an unmeasured result, never a pass. Needs no npm install (relative imports).
-run_check "dashboard unmeasured cost never renders as zero (node --test)" \
-  'command -v node >/dev/null 2>&1 || { echo "node not installed: the suite did not run (unmeasured, not clean)"; exit 1; }; node --test dashboard-ui/tests/loki-unmeasured-cost-never-zero.node.test.mjs 2>&1 | tail -12'
-# The rest of the shipped panels (context tracker, learning, memory, analytics,
-# overview, fleet, council, gates, notifications ...): unmeasured renders as
-# unknown, a failed read as an error, a measured zero as 0.
-run_check "dashboard panels render unmeasured as unknown (node --test)" \
-  'command -v node >/dev/null 2>&1 || { echo "node not installed: the suite did not run (unmeasured, not clean)"; exit 1; }; node --test dashboard-ui/tests/loki-unmeasured-panels-honesty.node.test.mjs 2>&1 | tail -12'
-
-# ---------------------------------------------------------------------------
-# 10d. Dashboard fresh-repo integrated UX harness (v7.18.0)
-# ---------------------------------------------------------------------------
-# The v7.17.x verification ran the dashboard SEEDED + in isolation and shipped a
-# cold-repo 404 flood, an early-abort timeout, and iframe theme clashes. This
-# harness boots the server against a FRESH repo (no .loki) and drives the real
-# browser: asserts no cold-load console 404s/AbortErrors and that the trust
-# iframe matches the SPA theme in light AND after the Dark toggle. Requires
-# python3.12 (fastapi) + the dashboard-ui playwright + chromium; skips cleanly
-# when absent so the gate never blocks an environment that lacks them.
+# Drives the web-app Evidence Receipt panel and Admin console in a real
+# browser. Requires python3.12 (fastapi) + web-app's playwright-core + chromium;
+# skips cleanly when absent so the gate never blocks an environment without them.
 _DASH_PY=""
 command -v python3.12 >/dev/null 2>&1 && _DASH_PY=python3.12
 if [ -n "$_DASH_PY" ] && command -v node >/dev/null 2>&1 \
-   && [ -d dashboard-ui/node_modules/playwright ] \
+   && [ -d web-app/node_modules/playwright-core ] \
    && { [ -d "$HOME/Library/Caches/ms-playwright" ] || [ -d "$HOME/.cache/ms-playwright" ]; }; then
-  run_check "dashboard fresh-repo integrated UX harness" 'bash scripts/run-dashboard-fresh-repo-harness.sh'
-  # Inverse fixture: the cold harness above would pass against panels that
-  # never render anything at all. This one seeds receipts + learnings and
-  # asserts they reach the pixel WITHOUT fabricating an unmeasured cost.
-  run_check "dashboard evidence panels render honestly" 'bash scripts/run-dashboard-evidence-panels-harness.sh'
   run_check "webapp receipt panel renders honestly" 'bash scripts/run-webapp-receipt-panel.sh'
   run_check "webapp admin console renders honestly" 'bash scripts/run-webapp-admin-honesty.sh'
 else
-  skip_check "dashboard fresh-repo integrated UX harness" "needs python3.12 + dashboard-ui playwright + chromium"
-  skip_check "dashboard evidence panels render honestly" "needs python3.12 + dashboard-ui playwright + chromium"
-  skip_check "webapp receipt panel renders honestly" "needs python3.12 + dashboard-ui playwright + chromium"
-  skip_check "webapp admin console renders honestly" "needs python3.12 + dashboard-ui playwright + chromium"
+  skip_check "webapp receipt panel renders honestly" "needs python3.12 + web-app playwright-core + chromium"
+  skip_check "webapp admin console renders honestly" "needs python3.12 + web-app playwright-core + chromium"
 fi
 
 # ---------------------------------------------------------------------------

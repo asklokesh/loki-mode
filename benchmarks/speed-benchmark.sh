@@ -87,7 +87,7 @@ fi
 # minus heavy/irrelevant dirs.
 ( cd "$REPO_ROOT" && \
   rsync -a --exclude '.git' --exclude 'node_modules' --exclude 'benchmarks/results' \
-        --exclude '.loki' --exclude 'dashboard-ui/node_modules' --exclude 'web-app/node_modules' \
+        --exclude '.loki' --exclude 'web-app/node_modules' \
         ./ "$ENGINE/" 2>/dev/null ) || cp -R "$REPO_ROOT/." "$ENGINE/"
 
 RUN_SH="$ENGINE/autonomy/run.sh"
