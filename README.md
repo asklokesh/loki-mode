@@ -544,6 +544,7 @@ Loki 10 engine:
 | `loki owner/repo#N` | Same, from a GitHub, GitLab or Jira issue |
 | `loki quick "<task>"` | Small task, lean path, no PR |
 | `loki backlog owner/repo --all\|--label X\|--issues N,N` | Run every matching open issue, N in parallel (`--concurrency N`, `--dry-run`) |
+| `loki workspace list \| run <name> <ref>` | Experimental (`LOKI_WORKSPACES=1`): run one issue across the repos of a `loki.yaml` workspace; see [docs/WORKSPACES.md](docs/WORKSPACES.md) |
 | `loki status [--json]` | Current status |
 | `loki verify [run-id]` | Re-check a sealed receipt (exit codes above) |
 | `loki doctor [--json] [--airgap]` | Check environment and providers |

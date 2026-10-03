@@ -1630,6 +1630,7 @@ show_help() {
     echo "  start [SPEC]     Start a build (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
     echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
     echo "  backlog <owner/repo> --all|--label X|--issues N,N   Run every matching open issue, N in parallel"
+    echo "  workspace list | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=1)"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
@@ -12920,6 +12921,16 @@ cmd_config_schema() {
     loki_config_generate_schema
 }
 
+# D65: multi-repo workspaces (D51 Phase B). Gated by LOKI_WORKSPACES=1.
+cmd_workspace() {
+    if [ "${LOKI_WORKSPACES:-}" != "1" ]; then
+        echo -e "${RED}loki workspace is disabled.${NC} Set LOKI_WORKSPACES=1 to use it." >&2
+        return 2
+    fi
+    command -v python3 >/dev/null 2>&1 || { echo -e "${RED}loki workspace: python3 is required${NC}" >&2; return 2; }
+    python3 "$_LOKI_SCRIPT_DIR/lib/workspace.py" "$@"
+}
+
 # D51: headless backlog runner. One v10 issue-mode run per open issue, each in
 # its own worktree and branch, at most N in parallel (loki.yaml concurrency).
 cmd_backlog() {
@@ -21932,6 +21943,9 @@ main() {
             ;;
         backlog)
             cmd_backlog "$@"
+            ;;
+        workspace)
+            cmd_workspace "$@"
             ;;
         config)
             cmd_config "$@"

@@ -75,6 +75,38 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "workspaces": {
+      "description": "Named groups of repos for cross-repo runs (`loki workspace run`). Accepted unconditionally; runtime behavior is gated by LOKI_WORKSPACES=1.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "repos": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "repo": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+                "path": { "type": "string", "minLength": 1 },
+                "setup": { "type": "string", "minLength": 1 },
+                "after": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          },
+          "integration": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "command": { "type": "string", "minLength": 1 },
+              "timeout_s": { "type": "integer", "minimum": 1 }
+            }
+          },
+          "integration_files": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
     "notifications": {
       "type": "object",
       "additionalProperties": false,
