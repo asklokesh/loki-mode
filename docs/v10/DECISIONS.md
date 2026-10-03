@@ -707,3 +707,10 @@ Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14
    - Waves 1 and 2 go to the next train. Wave 1 covers the Project Model, the result classifier, the authority ladder in seal, a lifecycle e2e and static checks. Wave 2 covers the Repo Shape Matrix and the Parity Gate against raw `claude -p`, gating latest.
    - An opus Architect is checking the plan against the code and slicing it into EL-W0/W1/W2 rows.
 6. Acceptance: a FireLater#17 rerun ends VERIFIED with a ready PR, the route edits kept, within raw plus 30s and at most 1.2x raw cost. The real-model legs stay parked until the founder provides keys (FOUNDER-QUEUE 15/16). The parity leg runs once keys exist; until then, recorded replays gate.
+
+## D87 (2026-10-03 19:00Z, founder via the steering session, CoS records): parallel lanes today, usage stop raised to 95%
+1. For today this supersedes the one-lane governor, the 81% weekly stop and the 85% floor. Up to 4 sonnet builders run in separate worktrees, and opus D12 reviews only HIGH slices.
+2. Hard stop: no new dispatch at 95% of the weekly limit. The last 5% is reserved for releases, smoke checks and steering, because 100% stops everything, this session included, until Oct 7 12:59 ET.
+3. Never hold completed work. Every green slice ships on the next train, and nobody pushes during a running release.
+4. Usage readings are logged hourly in usage-readings.tsv from direct /usage readings. The pulse weekly projection is not used as a governor input while it reads 450%+.
+5. Order: 10.7.1, then 10.8.0 (UI, CPE-24 if green, else 10.8.1), then MW-1 to MW-3, which replace mods M0 to M3 per the research in autonomi-dev/research/2026-10-03-claude-mods, then EL-W1.

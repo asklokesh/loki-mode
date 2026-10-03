@@ -21,7 +21,8 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - verify.ts:224 tsconfig only at the root;
   - visual_evidence.ts:155-168;
   - deep.ts;
-  - the brief's impacted commands.
+  - the brief's impacted commands;
+  - deferred by the FC-01 stopgap (de12ad0cb): deep.ts:84 full suite at the repo root, verify.ts:228 tsconfig root-only, verify.ts:231 ESLINT_CONFIGS root-only.
 - Mechanism: Project Model packageRootOf/commandFor (EL-W1-01, EL-W1-04a/b). Interim: EL-W0-03.
 - Fixture: tests/fixtures/firelater-17 plus the shape fixtures in benchmarks/tasks/shapes.
 
@@ -33,7 +34,8 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - fix.ts:12-13;
   - machine.ts:171 stall;
   - wall.ts classify(), which already separates not_run (reuse it);
-  - deep.ts.
+  - deep.ts;
+  - vitest "No test files found, exiting with code 0" counts as a pass with n=0, when it should be not_run (EL-W1-06).
 - Mechanism: a result classifier with an owner (EL-W1-05). Only a FAIL owned by code drives fix and stall. Interim: EL-W0-02.
 - Fixture: tests/fixtures/runner-outputs/vitest/load-error.txt (from seq 56), plus siblings for each runner.
 - Sibling (2026-10-03): a change-introduced load error is a code fault. Base reproduction is necessary but not sufficient. The base rerun must be hermetic (an inherited editable install imports head code), and a check the task targets is never env-owned (7ad4a18b6, blocked in round 2). Superseded by L0-WAVE1 EL-W1-06: the harness gathers evidence and a separate reviewer call assigns the owner.
@@ -132,3 +134,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - local-ci fast tier timing out at 600s while bun test alone takes about 434s.
 - Mechanism: every builder and reviewer brief names the structural guard set, and the full bun test runs in main after each merge batch, before the train.
 - Fixture: tests/engine10/budget.test.ts and tests/runner/spawn_env_guard.test.ts on the merged tree.
+
+## FC-12 loki-ts bundles sibling-package code whose dependencies CI never installs
+- User saw: nothing yet; Bun Parity on train/104 (17ece536b) failed with `Could not resolve: "drizzle-orm/bun-sqlite"`. `loki control prune` (2c81d9603, 203d38544) imports packages/control-plane/src/db/migrate.ts, and Bun resolves a bare import from the importing file's directory, not from loki-ts/node_modules. The main checkout built cleanly only because packages/control-plane/node_modules happened to exist.
+- Law: L7 (the release is a contract: the build must reproduce from a clean checkout).
+- Siblings:
+  - every workflow that runs `bun install` in loki-ts (test.yml, bun-parity.yml, coverage.yml, tier-a.yml, security-audit.yml, release.yml including its Docker `--production` job, nightly, parity-drift and mutation-testing);
+  - the shipper imports in e10ext/ship_hook.ts and commands/control.ts, which have no external deps today but share the same path.
+- Mechanism: one `postinstall` in loki-ts/package.json installs packages/control-plane from its frozen lockfile, so every loki-ts install (CI, Docker, local) gets the sibling's deps. No per-workflow steps.
+- Fixture: a clean `git worktree add` at HEAD, then `bun install --frozen-lockfile && bun run build` in loki-ts, and again with `--production`. Both exit 0 and the dist is byte-identical to the committed one; without the postinstall the build exits 1 with the error above.

@@ -42,7 +42,7 @@ const _FALLBACK_PRICING: PricingMap = {
   // rate for cache reads, a 10x overcharge on the dominant term.
   fable: { input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5 },
   opus: { input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25 },
-  sonnet: { input: 3.0, output: 15.0, cache_read: 0.3, cache_write: 3.75 },
+  sonnet: { input: 2.0, output: 10.0, cache_read: 0.2, cache_write: 2.5 },
   haiku: { input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25 },
   "gpt-5.3-codex": { input: 1.5, output: 12.0, cache_read: 0.15, cache_write: 1.875 },
 };

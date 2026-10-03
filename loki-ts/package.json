@@ -10,6 +10,7 @@
   },
   "scripts": {
     "version": "bun src/cli.ts version",
+    "postinstall": "cd ../packages/control-plane && bun install --frozen-lockfile",
     "typecheck": "bun run --bun tsc --noEmit",
     "test": "LOKI_NO_BROWSER=1 bun test",
     "bench": "bun run scripts/bench.ts",
@@ -21,7 +22,7 @@
     "typescript": "^5.6.0"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.283",
+    "@anthropic-ai/claude-agent-sdk": "0.3.288",
     "@anthropic-ai/sdk": "^0.124.0",
     "@resvg/resvg-wasm": "^2.6.2"
   },

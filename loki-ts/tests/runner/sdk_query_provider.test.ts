@@ -113,6 +113,29 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     expect(env!["PATH"]).toBe(process.env["PATH"]); // not stripped
   });
 
+  // MW-1: CLAUDE_CODE_DISABLE_STRUCTURED_OUTPUTS (Claude Code 2.1.288 / SDK 0.3.288) must reach the session env.
+  it("CLAUDE_CODE_DISABLE_STRUCTURED_OUTPUTS passes through to query() env when set, absent when unset", async () => {
+    const key = "CLAUDE_CODE_DISABLE_STRUCTURED_OUTPUTS";
+    const prev = process.env[key];
+    try {
+      const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
+      process.env[key] = "1";
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      await sdkQueryProvider().invoke(call());
+      const setEnv = lastQueryArgs?.options?.["env"] as Record<string, string>;
+      expect(setEnv[key]).toBe("1");
+
+      delete process.env[key];
+      stubQuery([{ type: "result", is_error: false, total_cost_usd: 0.01, usage: {} }]);
+      await sdkQueryProvider().invoke(call());
+      const unsetEnv = lastQueryArgs?.options?.["env"] as Record<string, string>;
+      expect(key in unsetEnv).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env[key];
+      else process.env[key] = prev;
+    }
+  });
+
   // E-65: what actually reaches query() for an engine10 session, not just what buildSdkLoopOptions returns.
   it("engine10 session: query() gets the 6 engine tools, the bare preset, and no LOKI_E10_* in the session env", async () => {
     const prev = { stage: process.env["LOKI_E10_STAGE"], brief: process.env["LOKI_E10_BRIEF"] };
