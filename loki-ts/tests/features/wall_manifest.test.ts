@@ -1,8 +1,8 @@
 // D77 / W1-S1: the Wall manifest is signatures only, never bodies, never a named module import.
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { buildWallManifest, MANIFEST_MAX_LINES, type ManifestFile } from "../../src/features/wall_manifest.ts";
 
 const CANARY = "BODY_CANARY_7f3a";
@@ -524,16 +524,34 @@ describe("round 6 review findings", () => {
     expect(out).toContain("@Inject(...) private c: Cfg");
   });
 
+  test("round 7: a tagged template after a decorator omits the class (Q1-Q4)", () => {
+    const Q = [
+      "export class S {\n  constructor(@Inject`SECRET_Q1` c: Cfg) {}\n}\n",
+      'export class S {\n  constructor(@Inject("a")`SECRET_Q2` c: Cfg) {}\n}\n',
+      "export @Component`SECRET_Q3` class C {\n}\n",
+      "export @Component `SECRET_Q4` class C {\n}\n",
+    ];
+    for (const q of Q) {
+      const out = ts(q, "m.ts");
+      expect(out).not.toMatch(SECRETS);
+      expect(out).not.toContain("class ");
+    }
+  });
+
   test("a relative PATH entry holding python3 is never executed", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-run.wm-"));
+    const marker = join(dir, "ran.marker");
     const savedPath = process.env.PATH, savedCwd = process.cwd();
     try {
       mkdirSync(join(dir, "fakebin"));
-      writeFileSync(join(dir, "fakebin", "python3"), '#!/bin/sh\necho \'["def SECRET_FAKE():"]\'\n');
+      writeFileSync(join(dir, "fakebin", "python3"), `#!/bin/sh\ntouch '${marker}'\necho '["def SECRET_FAKE():"]'\n`);
       chmodSync(join(dir, "fakebin", "python3"), 0o755);
-      process.chdir(dir);
-      process.env.PATH = "fakebin";
+      // The relative entry resolves identically from the test cwd and from the
+      // child cwd (tmpdir()), so only the absolute-entry rule keeps it from running.
+      process.chdir(tmpdir());
+      process.env.PATH = `${basename(dir)}/fakebin`;
       expect(ts("def a(): pass\n", "m.py")).not.toMatch(SECRETS);
+      expect(existsSync(marker)).toBe(false);
     } finally {
       process.chdir(savedCwd);
       process.env.PATH = savedPath;

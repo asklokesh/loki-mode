@@ -422,7 +422,8 @@ function maskDefaults(sig: string): string {
 // so the caller omits the whole class or declaration.
 function maskDecorators(sig: string): string | null {
   let out = "";
-  const badNext = (at: number): boolean => /[(<?![.]/.test(sig.slice(at).trimStart()[0] ?? "");
+  // Allowlist: after a decorator only an identifier start or another @ may follow.
+  const badNext = (at: number): boolean => !/[A-Za-z_$@]/.test(sig.slice(at).trimStart()[0] ?? "");
   for (let i = 0; i < sig.length; ) {
     const k = skipLiteral(sig, i);
     if (k !== i) { out += sig.slice(i, k); i = k; continue; }
