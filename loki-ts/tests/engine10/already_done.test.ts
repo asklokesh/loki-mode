@@ -500,6 +500,8 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
     // D61-04 round 2 (Opus B1): the check reads the live tree implement is editing; an honest "feature present"
     // that rests on a file implement already changed must never become ALREADY_SATISFIED.
     describe("race with implement's own edits", () => {
+      /** Releases the intake gate the deferred check waits on so its finally removes the pinned tree copy. */
+      const settle = async (g: ReturnType<typeof rig>) => { g.release(); await new Promise<void>((r) => setTimeout(r, 300)); };
       const SENTINEL = "// FEATURE_IMPLEMENTED_BY_THIS_RUN";
       const cited = "src/search-command.ts";
       const impl = (ctx: RunContext) => ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i-impl", limitS: 60, signal: new AbortController().signal, cwd: ctx.repoDir });
@@ -524,7 +526,8 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
       test("cited file edited by implement: hit discarded, implement not aborted, verdict untouched", async () => {
         const dir = freshRepo();
         const target = join(dir, cited);
-        const { ctx, res } = await intakeWith(rig(null), TASK, dir);
+        const gated = rig(null);
+        const { ctx, res } = await intakeWith(gated, TASK, dir);
         ctx.sessions = raceRig(dir, () => appendFileSync(target, `\n${SENTINEL}\n`));
         // re-arm the deferral on the race sessions
         const events: string[] = [];
@@ -536,6 +539,7 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
         expect(out.markers.alreadyDone).toBeNull();
         expect(events).not.toContain("already.satisfied");
         expect(res.data.already_satisfied).toBe(false);
+        await settle(gated);
         rmSync(dir, { recursive: true, force: true });
       });
       /** Race rig where the model cites `cite(dir)` after implement ran `edit`. */
@@ -551,12 +555,14 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
             return o.signal.aborted ? killed : ok(null);
           },
         };
-        const { ctx } = await intakeWith(rig(null), TASK, dir);
+        const gated = rig(null);
+        const { ctx } = await intakeWith(gated, TASK, dir);
         ctx.sessions = sessions;
         const events: string[] = [];
         ctx.emit = (t) => { events.push(t); };
         const res2 = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
         const out = await impl(ctx);
+        await settle(gated);
         rmSync(dir, { recursive: true, force: true });
         return { res2, out, events };
       }
@@ -619,7 +625,8 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
         const target = join(dir, cited);
         appendFileSync(target, `\n${SENTINEL}\n`);
         git(dir, ["commit", "-q", "-am", "feature at base"]);
-        const { ctx } = await intakeWith(rig(null), TASK, dir);
+        const gated = rig(null);
+        const { ctx } = await intakeWith(gated, TASK, dir);
         ctx.sessions = raceRig(dir, () => {});
         const events: string[] = [];
         ctx.emit = (t) => { events.push(t); };
@@ -628,6 +635,7 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
         expect(out.markers.alreadyDone).toBe(`${cited}:1 feature present`);
         expect(res2.data.already_satisfied).toBe(true);
         expect(events).toContain("already.satisfied");
+        await settle(gated);
         rmSync(dir, { recursive: true, force: true });
       });
     });

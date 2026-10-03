@@ -28,19 +28,38 @@ export function hitsUnchangedFromBase(repoDir: string, baseSha: string, paths: s
   } catch { return false; }
 }
 
+/** Live roots from mkdtempSync only. SIGTERM maps to process.exit, which skips every finally, so one lazily
+ *  registered exit handler removes whatever is still recorded. */
+const liveRoots = new Set<string>();
+let exitHookRegistered = false;
+function trackRoot(root: string): void {
+  liveRoots.add(root);
+  if (exitHookRegistered) return;
+  exitHookRegistered = true;
+  process.on("exit", () => {
+    for (const r of liveRoots) { try { rmSync(r, { recursive: true, force: true }); } catch { /* best effort */ } }
+  });
+}
+function dropRoot(root: string): void {
+  liveRoots.delete(root);
+  try { rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+}
+
 /** Extracts baseSha into a fresh temp dir OUTSIDE the repo (runDir sits inside the live work tree, so a tree
  *  there would let git discovery or `..` reach implement's edits). Resolves to the exact root created (the tree
  *  is <root>/tree), or null when the archive or extract fails or is aborted; the caller then runs no session. */
 function pinBaseTree(ctx: RunContext, signal: AbortSignal): Promise<string | null> {
   let root: string;
-  try { root = mkdtempSync(join(tmpdir(), "loki-already-done-")); mkdirSync(join(root, "tree")); } catch { return Promise.resolve(null); }
+  try { root = mkdtempSync(join(tmpdir(), "loki-already-done-")); } catch { return Promise.resolve(null); }
+  trackRoot(root);
+  try { mkdirSync(join(root, "tree")); } catch { dropRoot(root); return Promise.resolve(null); }
   const tarball = join(root, "base.tar"), opts = { env: process.env, signal };
   const step = (cmd: string, args: string[], cwd: string): Promise<boolean> =>
     new Promise((res) => { execFile(cmd, args, { ...opts, cwd }, (err) => res(!err)); });
   return (async () => {
     if (!ctx.baseSha || !(await step("git", ["archive", "-o", tarball, ctx.baseSha], ctx.repoDir))
       || !(await step("tar", ["-x", "-f", tarball, "-C", join(root, "tree")], root))) {
-      try { rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ }
+      dropRoot(root);
       return null;
     }
     return root;
@@ -89,6 +108,6 @@ export function deferAlreadyDone(
       const r = await checkAlreadyDone({ ...ctx, repoDir: join(root, "tree"), sessions: inner }, check.signal, task, repoMap, testMap);
       const ph = phase as string;
       if (r && ph !== "done" && !check.signal.aborted) { hit = r; if (ph === "run") fire(); }
-    } catch { /* fail closed */ } finally { try { rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ } }
+    } catch { /* fail closed */ } finally { dropRoot(root); }
   })();
 }
