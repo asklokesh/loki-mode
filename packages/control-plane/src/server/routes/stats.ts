@@ -21,6 +21,8 @@ export interface Stats {
   verified_unchecked: number;
   /** At least one receipt verification key is configured (the local signer key or LOKI_CP_RECEIPT_PUBKEYS). */
   keys_configured: boolean;
+  /** Present when a named local signing key could not be used (unreadable, malformed, not Ed25519); keys_configured then reflects the remaining keys. */
+  keys_reason?: string;
   cost: {
     /** Sum over runs whose cost is fully measured; null when no run in the window is. */
     measured_usd: number | null;
@@ -67,7 +69,7 @@ export function computeStats(db: Db, since: string | null): Stats {
   return {
     since, runs_total: all.length, runs_finished: finished, runs_running: running, by_verdict: by, blocked_waiting: blocked,
     verified_rate: verified + unchecked + failed ? verified / (verified + unchecked + failed) : null,
-    breakdown: { verified, failed, already_satisfied: satisfied, other }, verified_unchecked: unchecked, keys_configured: pubkeysFromEnv().configured === true,
+    breakdown: { verified, failed, already_satisfied: satisfied, other }, verified_unchecked: unchecked, keys_configured: pubkeysFromEnv().configured === true, ...(pubkeysFromEnv().reason ? { keys_reason: pubkeysFromEnv().reason } : {}),
     cost: {
       measured_usd: mRuns ? r6(mUsd) : null, measured_runs: mRuns, partial_usd: pRuns ? r6(pUsd) : null, partial_runs: pRuns,
       label: pRuns ? "partial" : mRuns ? "measured" : "not measured",
