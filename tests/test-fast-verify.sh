@@ -166,6 +166,13 @@ if [ "$rc" = "2" ]; then ok "missing root exits 2"; else bad "missing root exite
 rc=0; (cd "$W" && python3 "$FV" . --no-cache >/dev/null 2>&1) || rc=$?
 if [ "$rc" = "1" ]; then ok "FAIL still exits 1 (control)"; else bad "FAIL exited $rc, expected 1"; fi
 
+rc=0; python3 "$FV" --path "$E" --no-cache >/dev/null 2>&1 || rc=$?
+if [ "$rc" = "3" ]; then ok "--path DIR is accepted as the root (INCONCLUSIVE exits 3)"; else bad "--path exited $rc, expected 3"; fi
+rc=0; python3 "$FV" --path "$TMP/absent-root" >/dev/null 2>&1 || rc=$?
+if [ "$rc" = "2" ]; then ok "--path to a missing dir exits 2"; else bad "--path missing exited $rc, expected 2"; fi
+rc=0; hout="$(python3 "$FV" --help 2>/dev/null)" || rc=$?
+if [ "$rc" = "0" ] && printf '%s' "$hout" | grep -q "usage:"; then ok "--help exits 0 with usage on stdout"; else bad "--help exited $rc"; fi
+
 # ---- EXOGENOUS: no model, no network -------------------------------------
 if grep -qE "anthropic|openai|requests\.|urllib\.request|httpx|provider_invoke" "$FV"; then
     bad "fast path references a model/network call -- it must be purely deterministic"

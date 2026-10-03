@@ -164,7 +164,7 @@ milestone v10.0.0, in `tests/moat/pending.txt`.
 | 1 | FAIL: a blocking finding |
 | 2 | The root directory does not exist |
 | 3 | INCONCLUSIVE: nothing was scanned (0 files) |
-| 64 | Unknown flag |
+| 64 | Unknown option (`--path DIR` and `--help` are supported; `--help` exits 0) |
 
 ## `loki proof verify <id>`
 
