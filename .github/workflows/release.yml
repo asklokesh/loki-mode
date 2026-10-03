@@ -228,8 +228,36 @@ jobs:
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
           EVENT_NAME: ${{ github.event_name }}
+          WAIVER_FROM: ${{ vars.LOKI_CI_WAIVER_FROM }}
+          WAIVER_COUNT: ${{ vars.LOKI_CI_WAIVER_COUNT }}
         run: |
           set -euo pipefail
+
+          # D88 CI waiver (founder, 2026-10-03: "skip all CIs for next 10
+          # releases"). Active only while both repo variables are set: the
+          # release does not wait for Tests / Bun Parity / Security Audit when
+          # fewer than WAIVER_COUNT release tags exist above WAIVER_FROM. It
+          # expires by itself after WAIVER_COUNT releases; unset the variables
+          # to end it early.
+          if [ -n "${WAIVER_FROM:-}" ] && [ -n "${WAIVER_COUNT:-}" ]; then
+            CUR="$(tr -d '[:space:]' < VERSION)"
+            if [ "$CUR" != "$WAIVER_FROM" ] && [ "$(printf '%s\n%s\n' "$WAIVER_FROM" "$CUR" | sort -V | tail -1)" = "$CUR" ]; then
+              USED=0
+              for t in $(git tag --list 'v[0-9]*'); do
+                v="${t#v}"
+                [ "$v" = "$WAIVER_FROM" ] && continue
+                [ "$v" = "$CUR" ] && continue
+                [ "$(printf '%s\n%s\n' "$WAIVER_FROM" "$v" | sort -V | tail -1)" = "$v" ] || continue
+                [ "$(printf '%s\n%s\n' "$v" "$CUR" | sort -V | tail -1)" = "$CUR" ] || continue
+                USED=$((USED + 1))
+              done
+              if [ "$USED" -lt "$WAIVER_COUNT" ]; then
+                echo "D88 CI WAIVER: v$CUR is waived release $((USED + 1)) of $WAIVER_COUNT after v$WAIVER_FROM; not waiting for Tests / Bun Parity / Security Audit."
+                exit 0
+              fi
+              echo "D88 CI waiver exhausted ($USED of $WAIVER_COUNT used); full required-ci applies."
+            fi
+          fi
 
           # -------------------------------------------------------------------
           # STEP 1: is this a version-bump-only diff against the immediate
