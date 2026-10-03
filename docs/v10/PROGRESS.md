@@ -2185,3 +2185,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 ## 2026-10-03 17:45Z (CoS)
 - FC-02 runner-load (7ad4a18b6) round 2 opus D12: BLOCK. Two reproduced findings: (B1) the base rerun inherits the head Python env (an editable install), so the agent's own top-level raise is base-confirmed as harness_error and opens a ready PR; (B2) a test already broken on base, which the task asks the agent to fix, is base-confirmed as harness_error. Fix needed: hermetic base env plus traceback-path check; never confirm checks in relevant, wallTests or changedTestFiles. Rework queued behind the governor hold.
 - FC-09 runner-config rework done (f4eccfeac): engine10 1214/0, features 3098/3100, dist guard 13/0. Re-review queued behind the governor hold.
+
+## 2026-10-03 17:44Z (CoS)
+- Usage reading relayed by Loki steering (`claude -p "/usage"`, peer-stamped about 18:10Z, recorded at 17:43Z local clock): session 28%, week 71%, resets Oct 7 12:59 ET. The pulse's 518% projection extrapolates today's burst rate; recalibrated from this reading.
+- Governor plan until Oct 7: ONE lane (sonnet builder, opus review only on trust paths), stop at 81% weekly (4% reserve below the 85% floor). Order: (1) 10.7.1 guard fix-forward and release, (2) EL-W1-01 Project Model, (3) EL-W1-06 failure ownership (absorbs FC-02), (4) EL-W1-00 static L0 guard. In-flight agents finish; no other dispatch. Pending reviews (FC-09, EL-W0-06, FC-10) wait for the reset.
+- Main 08bf593f2: L0 recorded (ENGINE-LAWS, L0-WAVE1.md, FC-11). Full bun test after merges: 3353 pass, 2 fail (the two known guards only).
