@@ -9,6 +9,10 @@ import { STAGE_BUDGETS, type RunContext } from "../engine10/types.ts";
 import { computeKey, gather, shallowDirs, type Gathered } from "./gather.ts";
 import { parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
 
+/** Default ON; LOKI_E10_PROJECT_MODEL=0 is the opt-out (discovery is skipped and consumers see no model). */
+export function projectModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env["LOKI_E10_PROJECT_MODEL"] !== "0";
+}
 export const PROJECT_FILE = ".loki/project.json";
 export const UNKNOWN_TTL_MS = 60 * 60 * 1000;
 const SESSION_LIMIT_S = 120; // ceiling for one discovery session; the remaining stage budget lowers it
@@ -109,11 +113,11 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
   return { model, cached: false, attempts: MAX_ATTEMPTS, owner: "model" };
 }
 
-/** Intake's stage-data fragment. Default OFF until a consumer reads the model (EL-W1-03):
- *  enabled only by LOKI_E10_PROJECT_MODEL=1. Work surface (L2): any failure yields {}.
+/** Intake's stage-data fragment. Default ON (FC-01: verify, Wall, deep and visual evidence consume it);
+ *  LOKI_E10_PROJECT_MODEL=0 opts out. Work surface (L2): any failure yields {}.
  *  The sessions get what is left of the intake budget (STAGE_BUDGETS.intake, the one table). */
 export async function intakeProjectModel(ctx: RunContext, signal: AbortSignal, startedMs: number): Promise<Record<string, unknown>> {
-  if (process.env["LOKI_E10_PROJECT_MODEL"] !== "1") return {};
+  if (!projectModelEnabled()) return {};
   try {
     const budgetS = STAGE_BUDGETS.intake.limitS - (Date.now() - startedMs) / 1000 - KILL_GRACE_S - MARGIN_S;
     const { model, cached, attempts, owner } = await discoverProjectModel(ctx, signal, { budgetS });

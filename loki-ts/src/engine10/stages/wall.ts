@@ -13,7 +13,8 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallLimitS, wallModel } from "../sizing.ts";
 import { sha256 } from "./seal.ts";
-import { runnerCmd } from "./verify.ts";
+import { commandFor } from "./verify.ts";
+import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 
 const WALL_PREFIX = "loki_wall_";
 
@@ -77,10 +78,11 @@ export function classify(f: TestRef, status: number | null, output: string, repo
 // misread as a failing test. env is explicit, matching verify.ts's runOnce (its default PATH lookup can
 // otherwise resolve a snapshot from process start, not the live env).
 export class RealBaseTestRunner implements BaseTestRunner {
+  constructor(private readonly api?: ProjectApi | null) {} // FC-01: undefined = load the repo's cached Project Model per run
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number } {
-    let pass = 0, fail = 0, not_run = 0; for (const f of files) {
-      const [cmd, args, interpreter] = runnerCmd(f, repoDir);
-      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd: repoDir, encoding: "utf8", timeout: BASE_RUN_TIMEOUT_MS, env: process.env });
+    let pass = 0, fail = 0, not_run = 0; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
+      const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api);
+      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: BASE_RUN_TIMEOUT_MS, env: process.env });
       const status = r.error ? null : r.status;
       const result = classify(f, status, `${r.stdout ?? ""}\n${r.stderr ?? ""}`, repoDir, interpreter);
       if (result === "pass") pass++; else if (result === "fail") fail++; else not_run++;

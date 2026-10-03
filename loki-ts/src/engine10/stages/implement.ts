@@ -4,7 +4,7 @@ import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
-import { selectRelevantFiles } from "./plan.ts"; import { runnerCmd } from "./verify.ts";
+import { selectRelevantFiles } from "./plan.ts"; import { commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { readSessionId } from "../../runner/session_resume.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestMap } from "../types.ts";
@@ -26,7 +26,7 @@ export function impactedTests(ctx: RunContext): string[] {
   return [...new Set([...fromMap, ...wall])];
 }
 
-export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: runnerCmd });
+export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: (t, repoDir) => { const c = commandFor(t, repoDir, loadProjectApi(repoDir)); return [c.cmd, c.args, c.interpreter, c.pkgRoot]; } });
 export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
   return withStagePrefix([ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     FIXED_RULES,

@@ -11,7 +11,7 @@ import { readVerifiedCommand } from "./repomemory.ts";
 
 export interface ContextDeps {
   select: (task: string, map: RepoMap, max: number) => string[];
-  cmd: (t: TestRef, repoDir: string) => [string, string[], unknown?];
+  cmd: (t: TestRef, repoDir: string) => [string, string[], unknown?, string?]; // 4th: package dir the command runs in (FC-01); absent or "." = repo root
 }
 
 // S41-10b: the implement/fix brief's leading block. A plain constant, no task text or interpolation, so
@@ -50,7 +50,7 @@ export function briefContext(ctx: RunContext, d: ContextDeps): string {
   const tm = o.intake?.testmap as TestMap | undefined;
   const refs = tm && files.length ? ctx.tests.impacted(tm, files).slice(0, MAX_TESTS) : [];
   const rel = (p: string): string => (p.startsWith(`${ctx.repoDir}/`) ? p.slice(ctx.repoDir.length + 1) : p);
-  const cmds = refs.map((t) => { const [c, a] = d.cmd(t, ctx.repoDir); return [rel(c), ...a].map(shq).join(" "); });
+  const cmds = refs.map((t) => { const [c, a, , dir] = d.cmd(t, ctx.repoDir); return `${dir && dir !== "." ? `cd ${shq(dir)} && ` : ""}${[rel(c), ...a].map(shq).join(" ")}`; });
   const verified = readVerifiedCommand(repoCacheDir(repoKey(null, ctx.repoDir)));
   return [
     files.length ? `Relevant files:\n${files.join("\n")}` : "",

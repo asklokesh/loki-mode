@@ -169,14 +169,14 @@ describe("intake wiring", () => {
     const ctx = { ...ctxFor(d, m.runner), branch: "loki/pm-test", tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] } } as unknown as RunContext;
     const prev = process.env["LOKI_E10_PROJECT_MODEL"];
     try {
-      process.env["LOKI_E10_PROJECT_MODEL"] = "1";
+      delete process.env["LOKI_E10_PROJECT_MODEL"]; // FC-01: default ON
       const r = await runIntake(ctx, sig, { taskText: "do a thing" });
       const pm = (r.data as any).project_model;
       expect(pm.status).toBe("ok");
       expect(pm.cached).toBe(false);
       expect(pm.key).toBe(loadCached(d)!.key);
       expect(((await runIntake(ctx, sig, { taskText: "do a thing" })).data as any).project_model.cached).toBe(true);
-      delete process.env["LOKI_E10_PROJECT_MODEL"]; // default OFF until a consumer exists
+      process.env["LOKI_E10_PROJECT_MODEL"] = "0"; // the opt-out
       const before = m.briefs.length;
       expect((await runIntake(ctx, sig, { taskText: "do a thing" })).data).not.toHaveProperty("project_model");
       expect(m.briefs.length).toBe(before);
