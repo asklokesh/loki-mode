@@ -154,6 +154,8 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
     return { status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" };
   }
 
+  if (testMap && runners.length === 0 && !(repoMap?.files ?? []).some((p) => /\.(py|go)$/.test(p))) return { status: "skipped", data: { size: sz.size, files: [], no_runner: true }, reason: "no runnable test command detected: the Wall cannot write a runnable check" }; // FC-17: decided before any model session
+
   const tree = prior.intake?.tree as string | undefined;
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);
 

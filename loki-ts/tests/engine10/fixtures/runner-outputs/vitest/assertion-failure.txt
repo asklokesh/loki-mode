@@ -1,0 +1,11 @@
+
+ RUN  v1.6.0 /work/app
+
+ FAIL  src/sum.test.ts > sum > adds numbers
+AssertionError: expected 3 to be 4 // Object.is equality
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 passed (5)
+   Duration  311ms
+
+------ Failed Tests 1 -------

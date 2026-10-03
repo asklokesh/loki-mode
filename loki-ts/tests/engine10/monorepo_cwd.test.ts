@@ -85,7 +85,7 @@ const calls = (): string[] => { try { return readFileSync(logPath, "utf8").split
 beforeEach(() => {
   stubDir = tmp("e10-fc01-stub-");
   logPath = join(stubDir, "calls.log");
-  writeFileSync(join(stubDir, "npx"), `#!/bin/sh\necho "$(pwd -P)|$*" >> "${logPath}"\necho "Tests  1 passed (1)"\nexit 0\n`);
+  writeFileSync(join(stubDir, "npx"), `#!/bin/sh\necho "$(pwd -P)|$*" >> "${logPath}"\necho " Test Files  1 passed (1)"\necho "      Tests  1 passed (1)"\nexit 0\n`);
   chmodSync(join(stubDir, "npx"), 0o755);
   process.env["PATH"] = `${stubDir}:${savedPath ?? ""}`;
   delete process.env["LOKI_E10_PROJECT_MODEL"];
@@ -145,7 +145,7 @@ describe("FC-01 verify in a multi-root monorepo", () => {
     const { dir, base } = monorepo(true);
     const api = loadProjectApi(dir)!;
     const m = api.model as ProjectModel;
-    m.packages[0]!.commands.test = cmd(`pwd -P > "${join(stubDir, "deep.cwd")}"`, "backend", "backend/package.json");
+    m.packages[0]!.commands.test = cmd(`pwd -P > "${join(stubDir, "deep.cwd")}"; echo " Test Files  1 passed (1)"; echo "      Tests  1 passed (1)"`, "backend", "backend/package.json");
     writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
     const checks: DeepCheck[] = []; const notProven = new Set<string>();
     await runFullSuite(ctxFor(dir, base, []), sig(), {}, checks, notProven);
@@ -185,5 +185,68 @@ describe("FC-01 single-package repo is unchanged", () => {
     await runLintChecks(ctxFor(dir, "HEAD", []), ["tests/a.test.ts"], sig(), checks, { api: loadProjectApi(dir) });
     expect(checks.map((c) => c.name)).toEqual(["lint:tsc"]);
     expect(calls()).toEqual([`${dir}|tsc --noEmit -p .`]);
+  });
+});
+
+// FC-16 C1 + FC-02 integration: the per-package path uses the same result classifier as verify and deep.
+describe("FC-16 C1 per-package suites route through classifyCheck", () => {
+  const suite = async (stdout: string, exit = 0): Promise<{ checks: DeepCheck[]; notProven: string[] }> => {
+    const { dir, base } = monorepo(true);
+    const m = loadProjectApi(dir)!.model as ProjectModel;
+    writeFileSync(join(dir, "backend", "go.out"), stdout);
+    m.packages[0]!.commands.test = cmd(`cat go.out; exit ${exit}`, "backend", "backend/package.json");
+    writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
+    const checks: DeepCheck[] = []; const notProven = new Set<string>();
+    await runFullSuite(ctxFor(dir, base, []), sig(), {}, checks, notProven);
+    return { checks, notProven: [...notProven] };
+  };
+  const GO_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n--- PASS: TestB (0.00s)\nPASS\nok  \texample.com/a\t0.004s\n";
+  test("go test -v output with ANSI colour is parsed (2 executed tests) and passes", async () => {
+    const r = await suite(GO_V.replace("PASS\n", "\u001b[32mPASS\u001b[0m\n").replace("ok  ", "\u001b[32mok\u001b[0m  "));
+    expect(r.checks.map((c) => [c.name, c.result])).toEqual([["full suite: backend", "pass"]]);
+  });
+  test("a non-verbose go summary (exit 0, no count) is not_run, executed count unmeasured, never a pass", async () => {
+    const r = await suite("ok  \texample.com/a\t0.004s\n");
+    expect(r.checks[0]!.result).toBe("not_run");
+    expect(r.notProven.some((n) => n.startsWith("not run: full suite: backend") && n.includes("unmeasured"))).toBe(true);
+  });
+  test("exit 0 with [no test files] only is not_run (no tests executed)", async () => {
+    const r = await suite("?   \texample.com/a\t[no test files]\n");
+    expect(r.checks[0]!.result).toBe("not_run");
+  });
+  test("a failing package stays fail", async () => {
+    const r = await suite("--- FAIL: TestA (0.00s)\nFAIL\nFAIL\texample.com/a\t0.004s\n", 1);
+    expect(r.checks[0]!.result).toBe("fail");
+  });
+});
+
+// Lint identification: ONE mechanism (RunOpts.kind "static"), no name-prefix test, same in verify, deep and per-package paths.
+describe("lint and typecheck identification is kind static everywhere", () => {
+  const LOAD_ERR = readFileSync(join(import.meta.dir, "fixtures", "runner-outputs", "vitest", "load-error.txt"), "utf8");
+  test("tsc in the root and in a package are static: exit 0 with no test summary passes, exit 1 with a runner load-error text is a plain fail (never harness-owned)", async () => {
+    for (const [mono, files, name] of [[false, ["tests/a.test.ts"], "lint:tsc"], [true, ["backend/src/validation.ts"], "lint:tsc:backend"]] as const) {
+      const { dir } = mono ? monorepo(true) : singlePackage();
+      const run = async (): Promise<VerifyCheck> => {
+        const checks: VerifyCheck[] = [];
+        await runLintChecks(ctxFor(dir, "HEAD", []), [...files], sig(), checks, { api: loadProjectApi(dir) });
+        return checks.find((c) => c.name === name)!;
+      };
+      expect((await run()).result).toBe("pass"); // stub npx prints "Tests  1 passed" on exit 0; a test-kind check would also pass, so also check the failing shape below
+      writeFileSync(join(stubDir, "npx"), `#!/bin/sh\ncat "${join(dir, "load.txt")}"\nexit 1\n`);
+      writeFileSync(join(dir, "load.txt"), LOAD_ERR);
+      chmodSync(join(stubDir, "npx"), 0o755);
+      const bad = await run();
+      expect(bad.result).toBe("fail");
+      expect(bad.owner).toBeUndefined();
+      writeFileSync(join(stubDir, "npx"), `#!/bin/sh\nexit 0\n`);
+      const quiet = await run();
+      expect(quiet.result).toBe("pass"); // a test-kind check with no parsed count would be not_run
+      expect(quiet.n).toBeUndefined();
+    }
+  });
+  test("verify.ts has no name-prefix lint exemption: only opts.kind decides", () => {
+    const src = readFileSync(join(import.meta.dir, "..", "..", "src", "engine10", "stages", "verify.ts"), "utf8");
+    expect(/\/\^\(\?:lint:/.test(src)).toBe(false);
+    expect((src.match(/kind: "static"/g) ?? []).length).toBeGreaterThanOrEqual(5); // bash-n, shellcheck, tsc, eslint, select-tests
   });
 });

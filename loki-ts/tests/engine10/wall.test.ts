@@ -228,6 +228,7 @@ describe("engine10 wall stage", () => {
 
   test("a sealed file whose runner cannot be guessed never counts toward already_satisfied, even if every executed test passes", async () => {
     const { repoDir, runDir, testmap: tm } = setup({ runners: [], tests: [] });
+    writeFileSync(join(runDir, "repomap.json"), JSON.stringify({ files: ["src/a.py"], entries: [], truncated: false }), "utf8"); // FC-17: a .py file in the repo keeps the Wall runnable
     const events: string[] = [];
     const sessions = new FakeSessionRunner((opts) => {
       // .py always resolves to pytest regardless of the detected runners;
