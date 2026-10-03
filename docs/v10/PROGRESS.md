@@ -2091,3 +2091,13 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - G-04 built (0a90538a8, 25/0). Opus HIGH review is running.
 - W1-S3: TL BLOCK, because its wiring test survives a mutation. A test-only r2 fix was requested.
 - train/99 Tests: the full rerun failed on the same shards 3, 4 and 7, so the failure is real. P0-T99-ROUTING is open and building (sonnet). train/99's release and train/100 are held until it is green.
+
+## 2026-10-03T13:22Z (CoS)
+- P0-T99-ROUTING merged as ec5cc3398 after a sonnet TL APPROVE. Tier corrected HIGH to MEDIUM because it is a parser and test fix, not moat. The 5 suites are green on macOS and in ubuntu docker. Advisory carded: change sed `\s` to `[[:space:]]` at the root.
+- W1-S3 merged with dist f0ece075d. On main: engine10 1199/0, tsc 0, dist guard 13/0.
+- train/100 pushed at 4c39bb68f (13:22:12Z), superseding train/99. Waiting on Tests, Bun Parity, Coverage and Security.
+- Drift audit (turn 2226):
+  - `git worktree list` reports 220 worktrees. Merged-slice worktrees will be removed in the end-of-window pass (D69, recorded paths only).
+  - Opus share is 38% against its 30% budget. Builders and LOW/MEDIUM reviews stay on sonnet.
+  - The pulse git probes are timing out under load, so its UNKNOWN metrics are not regressions.
+- In flight: SEAL r10 opus HIGH review (it also covers ratifying D80) and G-04 r2 build.
