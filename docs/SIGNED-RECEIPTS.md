@@ -99,6 +99,19 @@ is required rather than optional: with a single unlabeled key, the first
 rotation would make every previously-issued receipt fail verification -- and a
 receipt that stops verifying is indistinguishable from a tampered one.
 
+### Export as an in-toto Statement (DSSE)
+
+`loki verify <run-id> --export-dsse > receipt.dsse.json` prints a verified v10
+receipt as an in-toto Statement v1 (`_type` `https://in-toto.io/Statement/v1`)
+inside a DSSE envelope (`payloadType` `application/vnd.in-toto+json`). The
+subject is the commit and tree the receipt covers (`gitCommit`, `gitTree`), the
+`predicateType` is `https://autonomi.dev/loki/receipt/v10`, and the predicate is
+the receipt body unchanged. It is signed with the same Ed25519 receipt key (the
+`keyid` is the receipt `kid`) over the DSSE PAE bytes, so any DSSE verifier given
+the public key (`loki keys export`) can check it. `loki verify receipt.dsse.json`
+accepts the envelope too (add `--pubkey FILE` on another machine). A tampered or
+unverified receipt is refused for export.
+
 ### In a Kubernetes cluster
 
 The Helm chart wires this for you. Generate a key and pass it as a file:
