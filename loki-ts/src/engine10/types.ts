@@ -71,6 +71,8 @@ export interface SessionRunOptions {
   cwd?: string;
   /** Pins this session's model for its tier (E-45 Wall on sonnet); unset inherits the run model. */
   model?: string;
+  /** Provider reasoning effort for this session (EL-W0-06, L1); omitted when unset so the provider default applies. */
+  effort?: string;
 }
 export interface SessionResult {
   exit: number | null; // null when killed before exiting

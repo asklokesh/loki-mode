@@ -192,6 +192,16 @@ function claudeTierToModel(tier: SessionTier): string {
 // is still planning, so a capability-router or recovery tier change wins.
 // Known divergence: LOKI_MODEL_OVERRIDE (below) still wins over the pin here;
 // run.sh lets the pin overwrite the override.
+// EL-W0-06 (D86, FC-04, L1): an engine10 child with nothing configured passes NO model, so the
+// claude CLI uses its own default exactly like raw `claude -p`. session.ts sets LOKI_E10_MODEL_DEFAULT=1
+// only when no override or pin exists; any explicit tier pin, ceiling or routing here still wins.
+function useProviderDefaultModel(call: ProviderInvocation): boolean {
+  const e = process.env;
+  if (e["LOKI_E10_MODEL_DEFAULT"] !== "1" || call.tier === "fast") return false;
+  const name = call.tier === "planning" ? "PLANNING" : "DEVELOPMENT";
+  return !(e[`LOKI_CLAUDE_MODEL_${name}`] || e[`LOKI_MODEL_${name}`] || e["LOKI_MODEL_OVERRIDE"] || e["LOKI_MAX_TIER"] || e["LOKI_TIER_ROUTING"]);
+}
+
 function claudeModelFor(call: ProviderInvocation): string {
   const opusPin =
     call.mainLoop === true &&
@@ -327,6 +337,7 @@ export function claudeProvider(): ProviderInvoker {
   return {
     async invoke(call: ProviderInvocation): Promise<ProviderResult> {
       const model = claudeModelFor(call);
+      const modelArgv = useProviderDefaultModel(call) ? [] : ["--model", model];
 
       // v7.5.19 Phase B: prime the claude --help cache once, then compose
       // the auto-derived flag set. ensureClaudeHelpCache is idempotent --
@@ -372,8 +383,7 @@ export function claudeProvider(): ProviderInvoker {
         cli,
         // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG
         "--dangerously-skip-permissions",
-        "--model",
-        model,
+        ...modelArgv,
         ...autoFlags,
         ...sessionArgv,
         ...(hostGuard ? ["--settings", hostGuardSettingsJson()] : []),
@@ -535,7 +545,7 @@ export function buildSdkLoopOptions(args: {
 
   // effort tier (same mapping as buildAutoFlags).
   try {
-    out.effort = effortForTier(args.tier, args.complexity);
+    out.effort = process.env["LOKI_E10_EFFORT"] || effortForTier(args.tier, args.complexity);
   } catch {
     // omit
   }
@@ -627,6 +637,7 @@ export function sdkQueryProvider(): ProviderInvoker {
 
       // Model resolution is shared with claudeProvider (do NOT fork it).
       const model = claudeModelFor(call);
+      const defaultModel = useProviderDefaultModel(call);
 
       // caveman (main loop -> activate at the tier-inferred level, if warranted).
       const cavemanLvl = cavemanActivateEnv(call.tier);
@@ -652,7 +663,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         // resolved are spread in; a miss omits that option.
         const extra = buildSdkLoopOptions({
           tier: call.tier,
-          model,
+          model: defaultModel ? "opus" : model, // fallback derivation only; the provider default is unpinned
           cwd: call.cwd,
           complexity: process.env["DETECTED_COMPLEXITY"] ?? process.env["LOKI_COMPLEXITY"],
           allowHaiku: process.env["LOKI_ALLOW_HAIKU"] === "true",
@@ -668,7 +679,7 @@ export function sdkQueryProvider(): ProviderInvoker {
         const q = query({
           prompt: call.prompt,
           options: {
-            model,
+            ...(defaultModel ? {} : { model }),
             cwd: call.cwd,
             // fully autonomous, like --dangerously-skip-permissions. bypassPermissions
             // REQUIRES the allowDangerouslySkipPermissions companion or it throws.

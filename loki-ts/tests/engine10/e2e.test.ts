@@ -170,7 +170,7 @@ describe("engine10 e2e (stub claude)", () => {
     expect(r.events.some((e) => e.type === "cost")).toBe(true);
     // Seal priced the run from the stages' iteration ids (never "no iteration ids recorded").
     expect(receipt.not_proven.some((n: string) => n.startsWith("cost not measured"))).toBe(false);
-    expect(receipt.model).toBe("sonnet");
+    expect(receipt.model).toBe("claude (provider default)"); // EL-W0-06: no model configured, the provider default runs
     expect(r.out).toContain("Outcome:    VERIFIED");
     expect(r.out).toContain("PR:         none");
   }, 90_000);

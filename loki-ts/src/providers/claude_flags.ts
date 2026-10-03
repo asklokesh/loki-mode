@@ -219,7 +219,7 @@ export function buildAutoFlags(args: AutoFlagsArgs): string[] {
   const out: string[] = [];
 
   if (claudeFlagSupported("--effort")) {
-    const e = effortForTier(args.tier, args.complexity);
+    const e = process.env["LOKI_E10_EFFORT"] || effortForTier(args.tier, args.complexity); // EL-W0-06: engine10 SessionRunOptions.effort
     out.push("--effort", e);
   }
   if (claudeFlagSupported("--max-budget-usd")) {
