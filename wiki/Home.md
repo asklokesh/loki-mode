@@ -119,7 +119,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 
 ## Version History
 
-Current Version: **10.9.0** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
+Current Version: **10.9.1** ([CHANGELOG](https://github.com/asklokesh/loki-mode/blob/main/CHANGELOG.md))
 
 See [[Changelog]] for detailed release notes.
 

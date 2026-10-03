@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v10.9.1 (2026-10-03)
+
+Release-gate fix for 10.9.0: the 10.9.0 publish was blocked at its gate by one loki-ts type error and an engine10 size budget overrun, so nothing reached npm as 10.9.0. 10.9.1 ships everything listed under v10.9.0 below, plus these fixes.
+
+### Fixed
+
 - Fix: the 10.9.0 release gate (loki-ts typecheck plus bun test) failed on tests/engine10/e2e.test.ts TS2532 and the engine10 core size budget (5000 of a strict < 5000 after the merges); both are fixed, so nothing was published as 10.9.0. tests/dashboard/test_cost_partial_surfaced.py drops its two render checks of the deleted legacy cost.html and proofs.html (CPE-24 L6).
+
 ## v10.9.0 (2026-10-03)
 
 Legacy dashboard removal release: the classic dashboard UI is deleted (the browser UI is the Control Plane), two guards keep it gone, and the Control Plane now serves the audit, checkpoint, memory, context, focus, tasks, session control and Completion Council routes the legacy dashboard answered. Also fixes the Python 3.10 pricing pin that turned 10.8.0 Tests red. Shipped under the founder CI waiver (D88); new tests for these slices are owed after the Oct 7 reset. It also fixes forward every 10.8.0 CI and Docker red (10.8.0 reached npm `next` only), retires 34 more legacy routes with named replacements (CPE24-P6), adds Project Model discovery behind a flag (EL-W1-01) with the L0 guard (EL-W1-00), and folds in FC-10, MW-2, L5, L8 and the opt-in fix-round resume.
