@@ -2049,3 +2049,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Opus BLOCKs: SEAL-FORGED-LINES r3 (suites N slack wrong for empty describe, describe.skip and # SKIP-named passes on the spec reporter); W1-S2 r2 (style examples classified by directory, so a src/spec/ module body prints raw). Both in r4/r3 rework. P7-SCALAR-PIN 9a0d4c524 in opus review.
 - Building: D61-11 r3. P0-CORE-BUDGET TL r2 still open.
 
+
+## 2026-10-03T11:37Z CoS
+- Train/96 (761cd7b01) all green; train-cycle promoted and cut v10.6.12 (5e84b0bbb) at 11:25Z. Release workflow gate success, required-ci in progress; npm latest still 10.6.11 at 11:36Z. Local main rebased onto 5e84b0bbb (7 commits, clean).
+- Merged: P7-SCALAR-PIN d7711bb0e (opus APPROVE, 13 mutations, new fixtures catch 11; P7 moat script rc 0 on main).
+- Opus BLOCKs: SEAL-FORGED-LINES r4 (TODO-shaped name, newline name, describe.todo and failing describe each free a forged slot on spec). D69 ruling: spec path fails closed (NOT VERIFIED) on any ambiguity, TAP named as the sound reporter; r5 building. W1-S2 r4 (dotted stems, path vs basename tie) and r5 (index/__init__ dir modules, suffix paths ranked exact). D69 ruling: bias to over-exclusion. r6 e1083d661 in opus review.
+- Building: SEAL r5, D61-11 r3. P0-CORE-BUDGET TL r2 still open.
