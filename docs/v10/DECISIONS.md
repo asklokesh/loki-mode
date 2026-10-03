@@ -660,3 +660,9 @@ Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14
    - Trains: cut one from whatever has merged as soon as the previous train's push has registered its CI runs. Never push while a release is running: a push during a release cancels its Tests (GUARD, memory "Pushing during a release cancels its Tests"). Never cancel a releasing train.
    - The real ceiling is about 12 min per Tests run plus the release, so roughly 4 releases per hour. The achieved rate is reported honestly.
 5. Usage: the 85% weekly floor stands. At the floor, stop starting new work and record what is left in the handoff.
+
+## D83 (2026-10-03 15:20Z, founder via peer relay): enterprise-grade Control Plane UI
+1. Founder words: "i want enterprise grade UI, not just a dummy simple page ... make sure the previous UI design is used, I meant fonts, colors, UI looks and design ... even if it's a rewrite, I like Old UI".
+2. Supersedes the minimal CP-UI-SHELL look. The Control Plane reuses the legacy dashboard design system (fonts, serif wordmark, purple palette, light and dark themes, sidebar and right panel, card, KPI, badge, table and timeline components).
+3. Step 1: an opus architect writes docs/v10/CP-ENTERPRISE-UI.md (legacy inventory with KEEP/REWORK/DROP, design tokens, feature set drawn from Devin, Factory, 8090, Vorflux and Claude.ai, and the v10 API each page needs). Step 2: parallel sonnet builders, one per page, on a shared token package. Every number from real ingested data. Start-run and stop endpoints get an opus security review. Ships as 10.8.0; legacy dashboard code is deleted at parity.
+4. Does not hold 10.7.0, which ships at its cutoff. D82 also waived the D61 gate E evidence for the LOKI_SPEED default flip.
