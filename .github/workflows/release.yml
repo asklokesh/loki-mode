@@ -479,33 +479,54 @@ jobs:
           # ignored), UNLESS a SUCCESSFUL full-history run on main (event push
           # or workflow_dispatch, head_branch main) was created after it: a main
           # push always runs the full scan, so that success supersedes the stale
-          # scheduled verdict and a fixed tree can release. A success on a
+          # scheduled verdict and a fixed tree can release. A main push can clear
+          # the red even when its npm and python audits were reused via E-160,
+          # because secret-scan on main never reuses (D75). A success on a
           # train/** branch never clears it (range scan only).
+          # D75b: two queries, never one page of mixed events. (a) the newest
+          # scheduled run is fetched on its own (event=schedule, per_page=1), so
+          # it cannot fall off a page crowded by main pushes; "no scheduled run"
+          # passes ONLY when that query's total_count is 0. (b) newer successes
+          # come from status=success, created>=the scheduled run; if none of the
+          # fetched ones qualifies but total_count says more exist, the verdict is
+          # indeterminate and blocks.
           # Fail closed: a gh error (retried 3 times, e.g. a 404 after a
-          # workflow rename) blocks the release. The gate passes without a
-          # verdict only on a successful response that has zero runs, or no
-          # scheduled run at all, and logs that reason.
-          sched_audit_fetch() {
-            # One line: green|cleared|red<TAB>conclusion<TAB>url<TAB>created_at,
-            # or none (zero runs), or nosched (runs exist, none scheduled).
+          # workflow rename) blocks the release.
+          sched_audit_api() {
+            # $1 = query string, $2 = jq program. Retries; returns 1 on persistent error.
             local i out
             for i in 1 2 3; do
-              if out="$(gh api "repos/$REPO/actions/workflows/security-audit.yml/runs?branch=main&status=completed&per_page=100" \
-                --jq 'if ((.workflow_runs // []) | length) == 0 then "none"
-                  else ([.workflow_runs[] | select(.status=="completed")]) as $runs
-                    | ([$runs[] | select(.event=="schedule" and .head_branch=="main")] | sort_by(.created_at) | last) as $s
-                    | if $s == null then "nosched"
-                      else (if $s.conclusion=="success" then "green"
-                            elif ([$runs[] | select(.conclusion=="success" and (.event=="push" or .event=="workflow_dispatch") and .head_branch=="main" and .created_at > $s.created_at)] | length) > 0 then "cleared"
-                            else "red" end) + "\t\($s.conclusion)\t\($s.html_url)\t\($s.created_at)"
-                      end
-                  end' 2>/dev/null)"; then
+              if out="$(gh api "repos/$REPO/actions/workflows/security-audit.yml/runs?$1" --jq "$2" 2>/dev/null)"; then
                 printf '%s\n' "$out"
                 return 0
               fi
               sleep 5
             done
             return 1
+          }
+          sched_audit_fetch() {
+            # One line: none | indeterminate | green|cleared|red|indeterminate<TAB>conclusion<TAB>url<TAB>created_at
+            local s concl created found
+            s="$(sched_audit_api 'event=schedule&branch=main&status=completed&per_page=1' \
+              'if (.total_count // 0) == 0 then "none"
+               else ((.workflow_runs // []) | map(select(.event=="schedule" and .head_branch=="main" and .status=="completed")) | first) as $s
+                 | if $s == null then "indeterminate" else "\($s.conclusion)\t\($s.html_url)\t\($s.created_at)" end
+               end')" || return 1
+            case "$s" in
+              none | indeterminate) printf '%s\n' "$s"; return 0 ;;
+            esac
+            concl="$(printf '%s' "$s" | cut -f1)"
+            if [ "$concl" = "success" ]; then
+              printf 'green\t%s\n' "$s"
+              return 0
+            fi
+            created="$(printf '%s' "$s" | cut -f3)"
+            found="$(sched_audit_api "branch=main&status=success&created=%3E%3D${created}&per_page=100" \
+              '([(.workflow_runs // [])[] | select(.conclusion=="success" and (.event=="push" or .event=="workflow_dispatch") and .head_branch=="main" and .created_at > "'"$created"'")] | length) as $n
+               | if $n > 0 then "cleared"
+                 elif (.total_count // 0) > ((.workflow_runs // []) | length) then "indeterminate"
+                 else "red" end')" || return 1
+            printf '%s\t%s\n' "$found" "$s"
           }
           sched_audit_ok() {
             # $1 = line from sched_audit_fetch. Prints the reason; returns 0 to pass.
@@ -515,11 +536,11 @@ jobs:
             url="$(printf '%s' "$1" | cut -f3)"
             created="$(printf '%s' "$1" | cut -f4)"
             case "$state" in
-              none) echo "Security Audit has zero completed runs on main; not blocking"; return 0 ;;
-              nosched) echo "no completed scheduled run on main yet; not blocking"; return 0 ;;
+              none) echo "no completed scheduled run on main (total_count 0); not blocking"; return 0 ;;
               green) echo "newest scheduled run succeeded ($created)"; return 0 ;;
               cleared) echo "newest scheduled run concluded '$concl' ($created, $url) but a newer successful full-history run on main supersedes it"; return 0 ;;
               red) echo "newest scheduled run on main concluded '$concl' ($created, $url) and no newer successful main run supersedes it; review it before releasing"; return 1 ;;
+              indeterminate) echo "indeterminate: the scheduled run or the newer successes could not be fully read ($url); blocking"; return 1 ;;
               *) echo "unreadable scheduled Security Audit verdict '$state'"; return 1 ;;
             esac
           }
