@@ -1678,6 +1678,7 @@ run_test "loki start stale PID cleanup (cli)" "timeout -k 10 120 bash $SCRIPT_DI
 run_test "loki start/run unified dispatch (cli)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test_start_run_unified.sh"
 run_test "non-standard suite registration guard (cli, dashboard, integration)" "timeout -k 10 120 bash $SCRIPT_DIR/test-registration-nonstandard.sh"
 run_test "measure-run and guard-changed help is read-only (PO5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-help-readonly-scripts.sh"
+run_test "cp-redesign image allowlist guard (D26)" "timeout -k 10 120 bash $SCRIPT_DIR/test-cp-redesign-images.sh"
 run_test "mobile emulator tests: NOT VERIFIED without a device" "timeout -k 10 120 bash $SCRIPT_DIR/test-mobile-verify.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
