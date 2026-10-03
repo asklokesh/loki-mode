@@ -1,6 +1,6 @@
 # Service Level Objectives
 
-This document records baseline targets for the user-visible behavior of the CLI and the runner. These are honest first-pass targets. **No SLI/SLO infrastructure is shipped yet.** Tracking is manual, via the parity-drift workflow and soak-window observation.
+This document records baseline targets for the user-visible behavior of the CLI and the runner. These are honest first-pass targets. **No SLI/SLO infrastructure is shipped yet.** Tracking is manual, via soak-window observation.
 
 The targets below should be treated as goals, not contracts. They will be revised as measurement infrastructure is built out.
 
@@ -25,7 +25,7 @@ The targets below should be treated as goals, not contracts. They will be revise
 
 | Property | Target | Measurement |
 |----------|--------|-------------|
-| Byte-divergence between Bash and Bun routes for the ported commands | 0 divergences | `parity-drift.yml` workflow runs the Bun and Bash routes side by side; any non-empty diff fails the job |
+| Byte-divergence between Bash and Bun routes for the ported commands | 0 divergences | `tests/test-bash-bun-parity.sh` and the per-command parity suites (run on demand and in the Tests workflow) |
 
 The eight commands currently in scope: `version`, `status`, `stats`, `doctor`, `provider show`, `provider list`, `memory list`, `memory index`.
 
@@ -45,7 +45,7 @@ The reliability numbers above are explicitly aspirational. The system does not c
 
 ## Notes on measurement
 
-- The only continuous SLI shipping today is the parity-drift workflow.
+- There is no continuous parity SLI shipping today; parity is checked by test suites only.
 - Latency measurements are recorded in `.loki/metrics/migration_bench_soak.jsonl` when a benchmark run is performed; they are not collected continuously.
 - Reliability is tracked by manual review during the v7.3.0 soak window.
 

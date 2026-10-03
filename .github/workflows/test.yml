@@ -5,7 +5,7 @@ on:
     # D44: train/N branches run Tier B before main is fast-forwarded to them.
     # E-162: slice-* pushes do NOT run this workflow (no 8-shard matrix); the
     # Tier A workflow runs the structural guards and diff-selected suites
-    # there, and Bun Parity still runs. The train stays the release verdict.
+    # there. The train stays the release verdict.
     branches: [main, "train/**"]
   pull_request:
     branches: [main]

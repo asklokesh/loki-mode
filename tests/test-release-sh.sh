@@ -161,7 +161,7 @@ fi
 
 echo
 echo "T5-T11 -- RELEASE_ON_RED release gate + --bump-only (S-108)"
-echo "  founder rule: never bump a tree without a green Tests + Bun Parity"
+echo "  founder rule: never bump a tree without a green Tests"
 echo "  run at HEAD's exact SHA. Real gh is never called: a stub gh (and a"
 echo "  stub bun, plus a placeholder loki-ts/node_modules, so the rebuild"
 echo "  step needs no real install or network)"
@@ -196,7 +196,6 @@ red()   { printf '[{"status":"completed","conclusion":"failure","headSha":"%s"}]
 case "$GH_MODE" in
     green) green ;;
     tests_red)      [ "$wf" = "Tests" ] && red || green ;;
-    bunparity_red)  [ "$wf" = "Bun Parity" ] && red || green ;;
     empty) echo '[]' ;;
     diffsha) printf '[{"status":"completed","conclusion":"success","headSha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}]\n' ;;
     ghfail) exit 7 ;;
@@ -282,7 +281,7 @@ run_gate_case() {
     return $rc
 }
 
-echo "T5 -- green Tests + Bun Parity: --bump-only succeeds"
+echo "T5 -- green Tests: --bump-only succeeds"
 : > "$WORK2/gh-calls.log"
 if run_gate_case green; then
     ok "exit 0 on green"
@@ -302,11 +301,10 @@ grep -q "1.2.4" "$REPO2/web-app/src/components/Footer.tsx" 2>/dev/null \
     && ok "green: web-app/src/components/Footer.tsx version badge bumped" \
     || bad "green: web-app/src/components/Footer.tsx not bumped"
 if grep -q -- "--commit $STUB_SHA" "$WORK2/gh-calls.log" \
-    && grep -q -- "--workflow Tests" "$WORK2/gh-calls.log" \
-    && grep -q -- "--workflow Bun Parity" "$WORK2/gh-calls.log"; then
-    ok "green: gate actually queried Tests and Bun Parity at HEAD's SHA"
+    && grep -q -- "--workflow Tests" "$WORK2/gh-calls.log"; then
+    ok "green: gate actually queried Tests at HEAD's SHA"
 else
-    bad "green: gh was not queried for both required workflows at HEAD: $(cat "$WORK2/gh-calls.log")"
+    bad "green: gh was not queried for the required workflow at HEAD: $(cat "$WORK2/gh-calls.log")"
 fi
 PORCELAIN_AFTER_GREEN="$(git -C "$REPO2" status --porcelain)"
 [ -n "$PORCELAIN_AFTER_GREEN" ] && ok "green: a successful bump-only does dirty the tree (sanity check)" \
@@ -327,16 +325,7 @@ fi
 [ "$(log2)" = "$LOG_BEFORE" ] && ok "Tests-red: git log unchanged (no commit made)" || bad "Tests-red: a commit was created"
 
 echo
-echo "T7 -- Bun Parity red (Tests green): refuses, exit 3"
-if run_gate_case bunparity_red; then
-    bad "expected exit 3, got 0"
-else
-    [ $? -eq 3 ] && ok "exit 3 on Bun-Parity-red even with Tests green" || bad "expected exit 3, got $?"
-fi
-[ "$(snapshot2)" = "$CONTENT_BEFORE" ] && ok "Bun-Parity-red: no file content changed" || bad "Bun-Parity-red: files were modified"
-
-echo
-echo "T8 -- no run found for either workflow: refuses, exit 3"
+echo "T8 -- no run found for the required workflow: refuses, exit 3"
 if run_gate_case empty; then
     bad "expected exit 3, got 0"
 else
