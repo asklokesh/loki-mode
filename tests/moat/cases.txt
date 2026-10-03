@@ -81,3 +81,5 @@ P5.airgap-audit-telemetry-state
 P5.airgap-audit-ollama-cloud-not-local
 P5.local-provider-no-claude-sidecalls
 P5.claude-sidecall-opt-in-audited
+P2.cp-verdict-honest-never-upgraded
+P7.cp-unmeasured-never-fabricated
