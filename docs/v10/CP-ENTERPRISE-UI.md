@@ -352,8 +352,8 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | POST `/api/enterprise/tokens` | none | none | UNUSED | 410 with notice |
 | GET `/api/enterprise/tokens` | none | none | UNUSED | 410 with notice |
 | DELETE `/api/enterprise/tokens/{identifier}` | none | none | UNUSED | 410 with notice |
-| GET `/api/enterprise/audit` | none | none | UNUSED | 410 with notice |
-| GET `/api/enterprise/audit/summary` | none | none | UNUSED | 410 with notice |
+| GET `/api/enterprise/audit` | none | /v1/audit (CPE24-P2) | PARTIAL (read-only; the operator audit table, no hash chain access) | map |
+| GET `/api/enterprise/audit/summary` | none | /v1/audit/summary (CPE24-P2) | PARTIAL (read-only; success, failure and resource-type counts are null, not measured) | map |
 | GET `/api/compliance` | none | none | UNUSED | 410 with notice |
 | GET `/api/memory/summary` | none | none | UNUSED | 410 with notice |
 | GET `/api/memory/episodes` | vscode-extension/src/views/memoryViewProvider.ts:152 | none | MISSING | 501 not yet supported |
@@ -402,10 +402,10 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | PUT `/api/notifications/triggers` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:6802 | none | MISSING | 501 not yet supported |
 | POST `/api/notifications/{notification_id}/acknowledge` | none | none | UNUSED | 410 with notice |
 | POST `/api/notifications/{notification_id}/unacknowledge` | none | none | UNUSED | 410 with notice |
-| GET `/api/checkpoints` | vscode-extension/src/views/checkpointProvider.ts:108, vscode-extension/src/views/checkpointProvider.ts:134 | none | MISSING | 501 not yet supported |
-| GET `/api/checkpoints/{checkpoint_id}` | none | none | UNUSED | 410 with notice |
-| POST `/api/checkpoints` | vscode-extension/media/loki-dashboard.js:5960 | none | MISSING | 501 not yet supported |
-| POST `/api/checkpoints/{checkpoint_id}/rollback` | vscode-extension/media/loki-dashboard.js:5960 | none | MISSING | 501 not yet supported |
+| GET `/api/checkpoints` | vscode-extension/src/views/checkpointProvider.ts:108, vscode-extension/src/views/checkpointProvider.ts:134 | /v1/checkpoints (CPE24-P2) | PARTIAL (reads the same .loki/state/checkpoints store; unmeasured values are null) | map |
+| GET `/api/checkpoints/{checkpoint_id}` | none | /v1/checkpoints/{id} (CPE24-P2) | PARTIAL (reads the same .loki/state/checkpoints store; unmeasured values are null) | map |
+| POST `/api/checkpoints` | vscode-extension/media/loki-dashboard.js:5960 | /v1/checkpoints (CPE24-P2) | PARTIAL (loopback peer, loopback Host and JSON required; audited) | map |
+| POST `/api/checkpoints/{checkpoint_id}/rollback` | vscode-extension/media/loki-dashboard.js:5960 | /v1/checkpoints/{id}/rollback (CPE24-P2) | PARTIAL (loopback peer, loopback Host and JSON required; forced pre-rollback snapshot; audited) | map |
 | GET `/api/agents` | none | none | UNUSED | 410 with notice |
 | POST `/api/agents/{agent_id}/kill` | vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
 | POST `/api/agents/{agent_id}/pause` | vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
