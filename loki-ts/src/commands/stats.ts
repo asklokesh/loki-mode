@@ -139,6 +139,7 @@ type Aggregated = {
   totalOutput: number;
   totalTokens: number;
   totalCost: number;
+  costMeasured: boolean;
   totalDuration: number;
   budgetLimit: number;
   budgetUsed: number;
@@ -179,6 +180,7 @@ function aggregate(loki: string): Aggregated {
   const totalOutput = iterations.reduce((s, it) => s + (it.output_tokens ?? 0), 0);
   const totalTokens = totalInput + totalOutput;
   const totalCost = iterations.reduce((s, it) => s + (it.cost_usd ?? 0), 0);
+  const costMeasured = iterations.some((it) => it.cost_usd !== undefined && it.cost_usd !== null);
   const totalDuration = iterations.reduce((s, it) => s + (it.duration_seconds ?? 0), 0);
 
   // Budget
@@ -269,6 +271,7 @@ function aggregate(loki: string): Aggregated {
     totalOutput,
     totalTokens,
     totalCost,
+    costMeasured,
     totalDuration,
     budgetLimit,
     budgetUsed,
@@ -365,7 +368,7 @@ function renderText(a: Aggregated, showEfficiency: boolean): string {
     lines.push(`  Input tokens:  ${fmtNumber(a.totalInput)}`);
     lines.push(`  Output tokens: ${fmtNumber(a.totalOutput)}`);
     lines.push(`  Total tokens:  ${fmtNumber(a.totalTokens)}`);
-    lines.push(`  Estimated cost: $${fmtFixed(a.totalCost, 2)}`);
+    lines.push(a.costMeasured ? `  Estimated cost: $${fmtFixed(a.totalCost, 2)}` : "  Estimated cost: unmeasured");
   } else {
     lines.push("  N/A (no iteration metrics found)");
   }

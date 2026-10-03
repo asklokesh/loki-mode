@@ -6257,8 +6257,14 @@ cmd_status() {
     if [ -f "$LOKI_DIR/metrics/budget.json" ]; then
         local budget_limit budget_used budget_remaining
         budget_limit=$(LOKI_BUDGET_FILE="$LOKI_DIR/metrics/budget.json" python3 -c "import json,os; d=json.load(open(os.environ['LOKI_BUDGET_FILE'])); print(d.get('budget_limit', 0))" 2>/dev/null || echo "0")
-        budget_used=$(LOKI_BUDGET_FILE="$LOKI_DIR/metrics/budget.json" python3 -c "import json,os; d=json.load(open(os.environ['LOKI_BUDGET_FILE'])); print(round(d.get('budget_used', 0), 2))" 2>/dev/null || echo "0")
-        if [ "$budget_limit" != "0" ]; then
+        budget_used=$(LOKI_BUDGET_FILE="$LOKI_DIR/metrics/budget.json" python3 -c "import json,os; d=json.load(open(os.environ['LOKI_BUDGET_FILE'])); v=d.get('budget_used'); print('unmeasured' if v is None else round(v, 2))" 2>/dev/null || echo "0")
+        if [ "$budget_used" = "unmeasured" ]; then
+            if [ "$budget_limit" != "0" ]; then
+                echo -e "${CYAN}Budget:${NC} unmeasured / \$$budget_limit"
+            else
+                echo -e "${CYAN}Cost:${NC} unmeasured"
+            fi
+        elif [ "$budget_limit" != "0" ]; then
             echo -e "${CYAN}Budget:${NC} \$$budget_used / \$$budget_limit"
             # Show budget gauge if TUI is loaded
             if type context_gauge &>/dev/null; then
@@ -6739,6 +6745,7 @@ total_input = sum(it.get('input_tokens', 0) for it in iterations)
 total_output = sum(it.get('output_tokens', 0) for it in iterations)
 total_tokens = total_input + total_output
 total_cost = sum(it.get('cost_usd', 0) for it in iterations)
+cost_measured = any(it.get('cost_usd') is not None for it in iterations)
 total_duration = sum(it.get('duration_seconds', 0) for it in iterations)
 
 # Budget
@@ -6896,7 +6903,10 @@ if iterations:
     print(f'  Input tokens:  {fmt_number(total_input)}')
     print(f'  Output tokens: {fmt_number(total_output)}')
     print(f'  Total tokens:  {fmt_number(total_tokens)}')
-    print(f'  Estimated cost: \${total_cost:.2f}')
+    if cost_measured:
+        print(f'  Estimated cost: \${total_cost:.2f}')
+    else:
+        print('  Estimated cost: unmeasured')
 else:
     print('  N/A (no iteration metrics found)')
 print()

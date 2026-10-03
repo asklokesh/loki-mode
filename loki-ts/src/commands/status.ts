@@ -491,7 +491,7 @@ function readBudgetField(file: string, field: "budget_limit" | "budget_used"): s
       return String(v);
     }
     if (v === undefined || v === null) {
-      return "0";
+      return field === "budget_used" ? "unmeasured" : "0";
     }
     return String(v);
   } catch {
@@ -633,7 +633,13 @@ async function runStatusText(): Promise<number> {
   if (existsSync(budgetFile)) {
     const budgetLimit = readBudgetField(budgetFile, "budget_limit");
     const budgetUsed = readBudgetField(budgetFile, "budget_used");
-    if (budgetLimit !== "0") {
+    if (budgetUsed === "unmeasured") {
+      if (budgetLimit !== "0") {
+        process.stdout.write(`${CYAN}Budget:${NC} unmeasured / \$${budgetLimit}\n`);
+      } else {
+        process.stdout.write(`${CYAN}Cost:${NC} unmeasured\n`);
+      }
+    } else if (budgetLimit !== "0") {
       process.stdout.write(`${CYAN}Budget:${NC} \$${budgetUsed} / \$${budgetLimit}\n`);
       // Budget gauge (autonomy/loki:2909-2919). Bash converts dollars to integer
       // cents via `bc scale=0` (truncation) before calling context_gauge, with
