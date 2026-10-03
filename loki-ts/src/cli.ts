@@ -1,10 +1,10 @@
 /**
  * Loki Mode TypeScript CLI dispatcher (Bun runtime).
  *
- * Phase 2 of the bash->Bun migration. Routes the 8 highest-traffic
- * read-only commands (version, status, provider show/list, stats,
- * memory list/index, doctor) to TypeScript ports; everything else
- * falls through to autonomy/loki (bash) via the bin/loki shim.
+ * Phase 2 of the bash->Bun migration. Routes the commands listed in HELP
+ * (and the internal/help/version plumbing) to TypeScript ports; everything
+ * else falls through to autonomy/loki (bash) via the bin/loki shim. Keep
+ * HELP in step with the dispatch() case labels (tests/commands/cli_help_routes.test.ts).
  *
  * See docs/architecture/ADR-001-runtime-migration.md and
  * /Users/lokesh/.claude/plans/polished-waddling-stardust.md.
@@ -19,7 +19,7 @@ const HELP = `Loki Mode (TypeScript port, Phase 2 of bash->Bun migration)
 
 Usage: loki <command> [args...]
 
-Phase 2 ported (Bun-native, fast):
+Bun-native commands:
   version                Print Loki Mode version
   status [--json]        Show current orchestrator status
   stats [--json] [--efficiency]   Session statistics
@@ -37,6 +37,14 @@ Phase 2 ported (Bun-native, fast):
   answer [run] [--text]  Resume a BLOCKED run with an answer (--text, or the Control Plane answer file)
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
+  kpis [--json]          KPI snapshot (alias of: report kpis)
+  report kpis            Canonical KPI snapshot report
+  trust <subcmd>         Trust trajectory derived from proof-of-run history
+  crash <subcmd>         Inspect or submit scrubbed local crash reports
+  contract <subcmd>      Spec contract operations
+  start [flags]          Run the RARV autonomous loop (Bun route, LOKI_SDK_LOOP)
+  slack <subcmd>         Slack inbound integration
+  engine10 <subcmd>      Engine10 operations
 
 All other commands fall through to the bash CLI (autonomy/loki).
 Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
