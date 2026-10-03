@@ -60,6 +60,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - loki backlog: a corrupt spend ledger now stops new units when a daily budget is set, instead of reading as $0 spent.
 - `loki control status` shows runs as unknown when the control plane cannot be read.
 - control plane: malformed URL encoding returns 400.
+- Grouped speed output no longer keeps the process alive after a command finishes.
 - Loki 10 intake no longer fails with ENOTDIR in a linked git worktree (where .git is a file), so `loki workspace run` per-repo runs start (D65-BUG7).
 - The delivery contract (`.loki/contract.json`) is frozen at intake: seal traces only that copy, records its sha256 in `receipt.contract.sha256`, and an edit, deletion or late creation after intake shows as a NOT PROVEN line; the verdict never changes (D65-SPEC-F2).
 - The Control Plane container image now builds from the repo Dockerfile.control-plane (it copies the loki-ts files ingest.ts imports; `docker build` no longer fails with Could not resolve).

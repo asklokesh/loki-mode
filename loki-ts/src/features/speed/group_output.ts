@@ -51,7 +51,11 @@ export interface GroupRendererOpts {
 }
 
 export function createGroupRenderer(o: GroupRendererOpts) {
-  const setT = o.setTimer ?? ((fn, ms) => setInterval(fn, ms));
+  const setT = o.setTimer ?? ((fn, ms) => {
+    const t = setInterval(fn, ms);
+    (t as { unref?: () => void }).unref?.();
+    return t;
+  });
   const clearT = o.clearTimer ?? ((t) => clearInterval(t as ReturnType<typeof setInterval>));
   let units: UnitRow[] = [];
   let timer: unknown = null;
