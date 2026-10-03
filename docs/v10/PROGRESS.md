@@ -1968,3 +1968,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Incident: train-cycle Phase A pushed train/88 before Phase B evaluated green train/87, and Phase B only looks at the newest train, so a green train was skipped. Promoted 87 by hand with the same RM push Phase B uses. Guard slice wanted: Phase A must not supersede a green unpromoted train.
 - Train 88 (c127f5e9f) pushed: C11b E2E legs 5-9, D65-BUG5 (schemas/ shipped), D65-BUG6 (Dockerfile COPYs), D65-BUG6-G (TL APPROVE, 18/0), D61-04-F.
 - In flight: P0-CORE-BUDGET TL r2, D61-11 test fix. E2E-D65 section 6 table refresh due after train 88.
+
+## 2026-10-03T06:31Z tick (CoS)
+- v10.6.9 released (tag 48dadd05c). Release run all 10 jobs success; publish-npm logged "+ loki-mode@10.6.9" at 06:24:51Z. Registry at 06:30Z still reads latest=next=10.6.8 with no time entry; not announced as latest until npm view shows it (peer finding accepted).
+- Peer finding: `loki serve` is the deprecated alias of `loki api start`, not the Control Plane; docs and help disagreed. D65-UI-NAMING (62b592031) and D65-UI-NAMING-2 (e564d2423, bash fallback honors LOKI_CONTROL=0 and names bun) merged, both TL APPROVE.
+- P0-TC-SUPERSEDE merged (bd686b7c9): train-cycle now holds a green unpromoted train so Phase B promotes it first.
+- Train 88 was cut before the v10.6.9 release commit, so it is not a fast-forward of main. Merged origin/main into local main (7ad91e03f, no conflicts, dist rebuilt unchanged, dist guard 13/0) and pushed train 89 (8576564a7) carrying C11b, D65-BUG5, D65-BUG6, D65-BUG6-G, D61-04-F, P0-TC-SUPERSEDE, D65-UI-NAMING and -2.
