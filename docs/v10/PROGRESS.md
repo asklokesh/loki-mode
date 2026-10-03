@@ -2130,3 +2130,18 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
   - No product code was written by the CoS.
   - The ready queue is still dependency-blocked: 14 of 18 rows.
   - The weekly projection of 141% is overridden by the D68 85% live floor.
+
+## 2026-10-03T14:48Z (CoS)
+- train/101 Tests (run 37129766523) was red on two deterministic failures, handled per D81 (fix forward, revert deadline about 15:05Z).
+- T101-G04-DUPROW merged at 8b314af87 after TL APPROVE.
+  - It was a test bug: GNU grep refuses input == output.
+  - Weakening the writer's check makes R2-3 go red on ubuntu and macOS (83/2). Green is 85/0 on both.
+- T101-SEAL-NODEFLAG built at 72aa6c4ba (test only).
+  - Cause: CI Node 22 lacks --test-isolation.
+  - TL review is in flight. The reviewer must explain the 7 non-pass results on node:22 and mutation-prove the r7 test still guards on Node 22.
+- ADV-SEAL-JEST-E2E (e0be2eb32) is in TL review and merges after NODEFLAG.
+- Drift audit (turn 2256):
+  - The peer's train/101 report was verified independently from the CI job logs before acting.
+  - No product code was written by the CoS.
+  - BOARD and commit steps ran in separate calls.
+  - Opus share has fallen to 26.5%, under its 30% budget.
