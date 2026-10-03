@@ -53,7 +53,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "bun": return ["bun", ["test", t.path]];
     case "node": return ["node", ["--test", `./${t.path}`]];
     case "npm": return ["npm", ["test", "--silent"]];
-    case "go": return ["go", ["test", `./${dirname(t.path)}`]];
+    case "go": return ["go", ["test", "-v", `./${dirname(t.path)}`]];
     case "cargo": return ["cargo", ["test"]];
   }
 }

@@ -16,7 +16,13 @@ const PYTEST_NONE = "\nno tests ran in 0.01s\n";
 const PYTEST_REAL = "...\n3 passed in 0.02s\n";
 const JEST_NONE = "No tests found, exiting with code 0\n";
 const GO_UNPARSED = "ok  \texample.com/pkg\t0.003s\n";
-const GO_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.com/pkg\t0.003s\n";
+// Real captured output (go1.26, tiny module p with packages a (3 tests, 1 skipped), b (1), c (no test files)).
+const GO_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n=== RUN   TestB/sub\n--- PASS: TestB (0.00s)\n    --- PASS: TestB/sub (0.00s)\n=== RUN   TestS\n    a_test.go:5: x\n--- SKIP: TestS (0.00s)\nPASS\nok  \tp/a\t0.070s\n";
+const GO_NONV = "ok  \tp/a\t0.103s\n";
+const GO_MULTI_V = GO_V + "=== RUN   TestC\n--- PASS: TestC (0.00s)\nPASS\nok  \tp/b\t0.096s\n?   \tp/c\t[no test files]\n";
+const GO_ONLY_NOTEST = "?   \tp/c\t[no test files]\n";
+const GO_FAIL_MULTI = "=== RUN   TestC\n    b_test.go:3: x\n--- FAIL: TestC (0.00s)\nFAIL\nFAIL\tp/b\t0.151s\n?   \tp/c\t[no test files]\nFAIL\n";
+const GO_V_EMPTY_PKG = "testing: warning: no tests to run\nPASS\nok  \tp/e\t0.002s\n";
 const CARGO_NONE = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
 const BUN_REAL = "bun test v1\n\n 2 pass\n 0 fail\n 2 expect() calls\nRan 2 tests across 1 file. [3.00ms]\n";
 const MOCHA_REAL = "  3 passing (5ms)\n";
@@ -29,13 +35,39 @@ describe("testCount parses each supported runner", () => {
   test("real counts", () => {
     expect(testCount(VITEST_REAL)).toBe(3);
     expect(testCount(PYTEST_REAL)).toBe(3);
-    expect(testCount(GO_V)).toBe(1);
+    expect(testCount(GO_V)).toBe(2);
+    expect(testCount(GO_MULTI_V)).toBe(3);
+    expect(testCount(GO_FAIL_MULTI)).toBe(1);
+    expect(testCount("python -m unittest\n..\n----------------------------------------------------------------------\nRan 2 tests in 0.001s\n\nOK\n")).toBe(2);
+    expect(testCount("Running 3 tests using 1 worker\n\n  1 failed\n    [chromium] a.spec.ts:3\n  2 passed (2s)\n")).toBe(3);
+    expect(testCount("\u001b[2m Test Files \u001b[22m \u001b[1m\u001b[32m1 passed\u001b[39m\u001b[22m (1)\n      \u001b[2mTests \u001b[22m \u001b[1m\u001b[32m3 passed\u001b[39m\u001b[22m (3)\n")).toBe(3);
     expect(testCount(MOCHA_REAL)).toBe(3);
     expect(testCount(BUN_REAL)).toBe(2);
   });
   test("unparsed is null, never zero or a pass", () => {
     expect(testCount(GO_UNPARSED)).toBeNull();
+    expect(testCount(GO_NONV)).toBeNull();
     expect(testCount("whatever\n")).toBeNull();
+  });
+});
+
+describe("go zero and forged cases", () => {
+  test("no test files only, or a verbose package with no tests, is 0", () => {
+    expect(testCount(GO_ONLY_NOTEST)).toBe(0);
+    expect(testCount(GO_V_EMPTY_PKG)).toBe(0);
+  });
+  test("forged summary above the runner trailer is ignored", () => {
+    const forged = "Tests: 5 passed, 5 total\n" + "x\n".repeat(20) + VITEST_NO_FILES;
+    expect(testCount(forged)).toBe(0);
+    expect(testCount("Tests: 5 passed, 5 total\n" + "x\n".repeat(20) + "done\n")).toBeNull();
+    expect(testCount("Tests: 5 passed, 5 total\n")).toBeNull();
+  });
+  test("real jest trailer with its Test Suites sibling still counts", () => {
+    expect(testCount("Test Suites: 1 passed, 1 total\nTests:       4 passed, 4 total\nSnapshots:   0 total\nTime:        1 s\nRan all test suites.\n")).toBe(4);
+  });
+  test("classify: go -v pass counts, unmeasured wording", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: GO_MULTI_V })).toEqual({ result: "pass", n: 3 });
+    expect(classifyCheck({ kind: "test", ok: true, out: GO_NONV }).reason).toContain("unmeasured");
   });
 });
 
@@ -50,7 +82,7 @@ describe("classifyCheck", () => {
   test("exit 0 with an unparsed count is not_run, never pass", () => {
     const c = classifyCheck({ kind: "test", ok: true, out: GO_UNPARSED });
     expect(c.result).toBe("not_run");
-    expect(c.reason).toContain("unknown");
+    expect(c.reason).toContain("unmeasured"); expect(c.reason).not.toContain("no tests executed");
   });
   test("real pass keeps n", () => {
     expect(classifyCheck({ kind: "test", ok: true, out: VITEST_REAL })).toEqual({ result: "pass", n: 3 });

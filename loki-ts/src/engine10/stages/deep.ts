@@ -63,7 +63,7 @@ const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
   bun: { cmd: "bun", args: ["test"] },
   node: { cmd: "node", args: ["--test"] },
   npm: { cmd: "npm", args: ["test", "--silent"] },
-  go: { cmd: "go", args: ["test", "./..."] },
+  go: { cmd: "go", args: ["test", "-v", "./..."] },
   cargo: { cmd: "cargo", args: ["test"] },
 };
 /** One check per detected runner, run to completion (no retry: flaky-rerun
