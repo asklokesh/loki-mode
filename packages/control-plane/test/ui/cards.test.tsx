@@ -33,6 +33,7 @@ test("outcome lines are plain English from real fields and read unmeasured for g
   expect(outcome(run("a"))[1]).toBe("2 files touched, $0.50, 1m 30s");
   const gap = outcome(run("g", { files_touched: undefined, cost_usd: null, partial_usd: null, wall_s: null }));
   expect(gap[1]).toBe("files unmeasured, cost unmeasured, unmeasured");
+  expect(outcome(run("e", { files_touched: [] }))[1]).toStartWith("files unmeasured");
   expect(outcome(run("f", { verdict: "FAILED" }))[0]).toStartWith("Failed:");
   expect(outcome(run("b"), "Which database?")[0]).toBe("Blocked: needs answer. Which database?");
   expect(outcome(run("b"), null)[0]).toContain("question unmeasured");

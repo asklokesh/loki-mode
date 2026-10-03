@@ -25,7 +25,7 @@ export function SessionCard({ run, now, question }: { run: RunRow; now: number; 
   return (
     <a data-testid="session-card" href={href(run)} style={{ textDecoration: "none", color: "inherit", display: "block", minWidth: 0 }}>
       <Card interactive style={{ display: "flex", flexDirection: "column", gap: 8, height: "100%" }}>
-        <div data-testid="card-title" title={cardTitle(run)} style={{ fontWeight: 600, fontSize: "var(--cp-text-md)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{cardTitle(run)}</div>
+        <div data-testid="card-title" title={cardTitle(run)} style={{ fontWeight: 600, fontSize: "var(--cp-text-md)", ...CLAMP2, whiteSpace: "normal", overflowWrap: "anywhere" }}>{cardTitle(run)}</div>
         <div data-testid="card-outcome" style={{ ...CLAMP2, fontSize: "var(--cp-text-base)", color: "var(--cp-text-2)", lineHeight: 1.4 }}>{l1}{"\n"}{l2}</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           {question !== undefined ? <VerdictBadge verdict="BLOCKED" /> : <VerdictBadge run={run} />}
