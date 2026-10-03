@@ -25,8 +25,7 @@ const LOAD_PATTERNS: [RegExp, string][] = [
   [/Failed Suites\s+[1-9]/, "test suite failed to load"],
   [/Test suite failed to run/, "test suite failed to run"],
   [/Failed to load (?:url|config)|failed to load config|Failed to resolve (?:import|entry)/i, "runner config or import could not be loaded"],
-  [/Cannot find (?:module|package) '[^']+'/, "module not found while loading tests"],
-  [/Cannot find module\b/, "module not found while loading tests"],
+  [/^\s*(?:\w*Error: )?Cannot find (?:module|package) '[^']+'/m, "module not found while loading tests"],
   [/ERR_MODULE_NOT_FOUND/, "module not found while loading tests"],
   [/Interrupted: \d+ errors? during collection/, "collection error"],
   [/^_+ ERROR collecting /m, "collection error"],
@@ -34,7 +33,8 @@ const LOAD_PATTERNS: [RegExp, string][] = [
   [/^ERROR: (?:file or directory not found|not found:)/m, "test path not found by the runner"],
   [/No test files found, exiting with code [1-9]/, "runner found no test files (wrong cwd or path)"],
   [/\[setup failed\]|cannot find package|no required module provides package/, "go package could not be set up"],
-  [/could not determine executable to run|command not found/i, "test runner executable not found"],
+  [/could not determine executable to run/i, "test runner executable not found"],
+  [/^(?:\S+: )?(?:line \d+: )?[\w.-]+: command not found$/m, "test runner executable not found"],
 ];
 
 /** First line carrying the error, capped, for the NOT PROVEN reason. */

@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
-import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
+import { classifyRunnerOutput } from "../../runner/runner_errors.ts"; import { loadErrorIsHarnessOwned } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -73,6 +73,7 @@ export function changedFiles(repoDir: string, baseSha: string): string[] {
 interface RunOpts {
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   stdin?: string;
+  protect?: boolean; // FC-02: Wall or task-relevant check, never harness-owned
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
   interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
 }
@@ -137,17 +138,17 @@ export async function runCheck(
 ): Promise<VerifyCheck> {
   const started = Date.now();
   const cmdStr = [cmd, ...args].join(" ");
-  const skip = (a: Awaited<ReturnType<typeof runOnce>>): string | undefined =>
+  const skip = async (a: Awaited<ReturnType<typeof runOnce>>): Promise<string | undefined> =>
     a.missing ? `${cmd} not found on PATH`
     : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`)
-    : !a.ok && !/^(?:lint:|select-tests)/.test(name) && classifyRunnerOutput(a.out).kind === "load_error" ? classifyRunnerOutput(a.out).reason // FC-02: harness-owned, never retried, never a fix round
+    : !a.ok && !/^(?:lint:|select-tests)/.test(name) && classifyRunnerOutput(a.out).kind === "load_error" && await loadErrorIsHarnessOwned({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out: a.out, cmd, args, signal, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) ? classifyRunnerOutput(a.out).reason // FC-02: harness-owned (load_owner.ts), never retried, never a fix round
     : ran(a.out, /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
   let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-  let reason = skip(attempt);
+  let reason = await skip(attempt);
   let result: VerifyCheck["result"] = reason ? "not_run" : "pass";
   if (!reason && !attempt.ok) {
     attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-    reason = skip(attempt);
+    reason = await skip(attempt);
     result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
   }
   const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" ? { n: ran(attempt.out) ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(reason?.startsWith("runner could not load") ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
@@ -266,7 +267,7 @@ export const verifyStage: Stage = {
     for (const t of tests) {
       if (signal.aborted) break;
       const [cmd, args, interpreter] = runnerCmd(t, ctx.repoDir);
-      await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks, interpreter ? { interpreter } : {});
+      await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks, { ...(interpreter ? { interpreter } : {}), protect: [...wallTests, ...relevant].includes(t) });
     }
     const preRed = await subtractBase(ctx, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), new Set(relevant.map((t) => `${t.runner}:${t.path}`)), signal);
     if (!signal.aborted) {

@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverProjectGraph } from "../../project_graph.ts";
 import { run } from "../../util/shell.ts";
-import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
+import { classifyRunnerOutput } from "../../runner/runner_errors.ts"; import { loadErrorIsHarnessOwned } from "../../runner/load_owner.ts";
 import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
@@ -94,7 +94,7 @@ async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOpti
       notProven.add(`not run: ${name} (aborted)`);
       continue;
     }
-    const loadErr = r.exitCode === 0 ? null : classifyRunnerOutput(`${r.stdout}\n${r.stderr}`); if (loadErr?.kind === "load_error") { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${loadErr.reason} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
+    const loadErr = r.exitCode === 0 ? null : classifyRunnerOutput(`${r.stdout}\n${r.stderr}`); if (loadErr?.kind === "load_error" && await loadErrorIsHarnessOwned({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out: `${r.stdout}\n${r.stderr}`, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) })) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${loadErr.reason} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
     checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: r.exitCode === 0 ? "pass" : "fail", duration_s: durationS });
   }
 }
