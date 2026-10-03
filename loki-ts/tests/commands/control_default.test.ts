@@ -82,6 +82,11 @@ describe("startShip discovery", () => {
 });
 
 describe("test sandbox", () => {
+  test("preload gives every bun test child LOKI_CONTROL=0 when the ambient env has none", async () => {
+    const e: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: home };
+    const p = Bun.spawn(["bun", "test", "tests/commands/control_env_probe.test.ts"], { cwd: join(import.meta.dir, "../.."), env: e, stdout: "ignore", stderr: "ignore" });
+    expect(await p.exited).toBe(0);
+  }, 30000);
   test("a live instance in HOME receives no ingest from the engine10 ship_hook suite", async () => {
     let posts = 0;
     const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
