@@ -7,7 +7,7 @@
 // slice's files.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sealedLog } from "./log_fixture.ts";
-import { createHash } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -344,6 +344,56 @@ describe("main() CLI wiring", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// P0-VERIFY-ARG: takePubkey used indexOf("--pubkey") == -1 and dropped args[0], so the named run was silently ignored.
+describe("main() run-id with and without --pubkey (P0-VERIFY-ARG)", () => {
+  function twoRuns(dir: string): void {
+    writeUnsignedReceipt(dir, "e10-1-bad");
+    const path = join(dir, "runs", "e10-1-bad", "receipt.json"), r = JSON.parse(readFileSync(path, "utf8"));
+    r.verdict = "PARTIAL"; // intact (re-hashed) receipt of a run that did not verify
+    const { receipt_sha256: _h, verification, ...fields } = r;
+    writeFileSync(path, JSON.stringify({ ...fields, receipt_sha256: computeReceiptHash(fields), verification }));
+    writeUnsignedReceipt(dir, "e10-2-good");
+  }
+  function pubkeyFile(dir: string): string {
+    const { publicKey } = generateKeyPairSync("ed25519");
+    const f = join(dir, "pub.jwk");
+    writeFileSync(f, JSON.stringify(publicKey.export({ format: "jwk" })));
+    return f;
+  }
+  test("a named PARTIAL run with no --pubkey exits 4 and reports that run, not the latest", async () => {
+    const dir = tmpDir();
+    try {
+      twoRuns(dir);
+      const r = await runMain(["e10-1-bad"], join(dir, "runs"));
+      expect(r.code).toBe(4);
+      expect(r.out).toContain("run: e10-1-bad");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("--pubkey before and after the positional both verify the named run", async () => {
+    const dir = tmpDir();
+    try {
+      twoRuns(dir);
+      const k = pubkeyFile(dir);
+      for (const args of [["--pubkey", k, "e10-1-bad"], ["e10-1-bad", "--pubkey", k]]) {
+        const r = await runMain(args, join(dir, "runs"));
+        expect(r.code).toBe(4);
+        expect(r.out).toContain("run: e10-1-bad");
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  test("--pubkey without a value is a usage error, never a silent verify", async () => {
+    const dir = tmpDir();
+    try {
+      twoRuns(dir);
+      for (const args of [["e10-1-bad", "--pubkey"], ["--pubkey", "--allow-unsigned"]]) {
+        const r = await runMain(args, join(dir, "runs"));
+        expect(r.code).toBe(2);
+        expect(r.out).toBe("");
+      }
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
 

@@ -9,9 +9,11 @@ function parsePubkey(t: string): KeyObject {
 }
 /** Strips `--pubkey <file>` from args; an unreadable or invalid key is an error (caller exits 2). */
 export function takePubkey(args: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string } {
-  const i = args.indexOf("--pubkey"), rest = args.filter((_, j) => j !== i && j !== i + 1);
-  if (i < 0) return { args: rest };
-  try { return { args: rest, pubkey: parsePubkey(readFileSync(args[i + 1] ?? "", "utf8")) }; } catch { return { args: rest, error: `cannot read an Ed25519 public key from ${args[i + 1] ?? "(missing file)"}` }; }
+  const i = args.indexOf("--pubkey");
+  if (i < 0) return { args: [...args] }; // absent: leave every arg (including the run-id) untouched
+  const file = args[i + 1], rest = args.filter((_, j) => j !== i && j !== i + 1);
+  if (file === undefined || file.startsWith("--")) return { args: args.filter((_, j) => j !== i), error: "--pubkey requires a file argument" };
+  try { return { args: rest, pubkey: parsePubkey(readFileSync(file, "utf8")) }; } catch { return { args: rest, error: `cannot read an Ed25519 public key from ${file}` }; }
 }
 export async function main(args: readonly string[]): Promise<number> {
   const priv = args[0] === "export" ? loadSigningKey(false) : null;
