@@ -1715,9 +1715,9 @@ PY
         grep -qx 'provider accepted' "$T/auto-pr/push.log" \
             && nok "[auto-pr] a git push from the provider session was accepted by the remote"
         grep -qx 'loki accepted' "$T/auto-pr/push.log" \
-            || nok "[auto-pr] the session PR push (create_session_pr) did not carry the token (push log: $(tr '\n' ',' < "$T/auto-pr/push.log"))"
+            || nok "[auto-pr] the session PR push (create_session_pr) did not carry the token (push log: $(tr '\n' ',' < "$T/auto-pr/push.log"); start rc=$(cat "$T/auto-pr/start.rc" 2>/dev/null); stdout: $(tail -c 600 "$T/auto-pr/start.out" 2>/dev/null | tr '\n' '~'); stderr: $(tail -c 400 "$T/auto-pr/start.err" 2>/dev/null | tr '\n' '~'))"
         grep -q '^loki token=yes via=[a-z]* pr create' "$T/auto-pr/gh.log" \
-            || nok "[auto-pr] the session PR gh pr create did not carry the token"
+            || nok "[auto-pr] the session PR gh pr create did not carry the token (gh log: $(tr '\n' ',' < "$T/auto-pr/gh.log" 2>/dev/null); start rc=$(cat "$T/auto-pr/start.rc" 2>/dev/null); stdout: $(tail -c 600 "$T/auto-pr/start.out" 2>/dev/null | tr '\n' '~'); stderr: $(tail -c 400 "$T/auto-pr/start.err" 2>/dev/null | tr '\n' '~'))"
     fi
     }
 
@@ -1741,9 +1741,9 @@ PY
             grep -qx 'provider accepted' "$T/auto-pr-ssh/push.log" \
                 && nok "[auto-pr-ssh] a git push from the provider session was accepted by the remote"
             grep -q "fp=$SSH_FP cmd=git-receive-pack" "$T/auto-pr-ssh/ssh.log" 2>/dev/null \
-                || nok "[auto-pr-ssh] Loki's own session push never reached ssh with the real agent (SSH re-grant missing; ssh log: $(tr '\n' ',' < "$T/auto-pr-ssh/ssh.log" 2>/dev/null))"
+                || nok "[auto-pr-ssh] Loki's own session push never reached ssh with the real agent (SSH re-grant missing; ssh log: $(tr '\n' ',' < "$T/auto-pr-ssh/ssh.log" 2>/dev/null); start rc=$(cat "$T/auto-pr-ssh/start.rc" 2>/dev/null); stdout: $(tail -c 600 "$T/auto-pr-ssh/start.out" 2>/dev/null | tr '\n' '~'); stderr: $(tail -c 400 "$T/auto-pr-ssh/start.err" 2>/dev/null | tr '\n' '~'))"
             grep -qx 'loki accepted' "$T/auto-pr-ssh/push.log" \
-                || nok "[auto-pr-ssh] Loki's own session push over the SSH origin was not accepted (push log: $(tr '\n' ',' < "$T/auto-pr-ssh/push.log"))"
+                || nok "[auto-pr-ssh] Loki's own session push over the SSH origin was not accepted (push log: $(tr '\n' ',' < "$T/auto-pr-ssh/push.log"); start rc=$(cat "$T/auto-pr-ssh/start.rc" 2>/dev/null); stdout: $(tail -c 600 "$T/auto-pr-ssh/start.out" 2>/dev/null | tr '\n' '~'); stderr: $(tail -c 400 "$T/auto-pr-ssh/start.err" 2>/dev/null | tr '\n' '~'))"
         fi
     fi
     }
