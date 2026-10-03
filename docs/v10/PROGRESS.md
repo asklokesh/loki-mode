@@ -2055,3 +2055,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Merged: P7-SCALAR-PIN d7711bb0e (opus APPROVE, 13 mutations, new fixtures catch 11; P7 moat script rc 0 on main).
 - Opus BLOCKs: SEAL-FORGED-LINES r4 (TODO-shaped name, newline name, describe.todo and failing describe each free a forged slot on spec). D69 ruling: spec path fails closed (NOT VERIFIED) on any ambiguity, TAP named as the sound reporter; r5 building. W1-S2 r4 (dotted stems, path vs basename tie) and r5 (index/__init__ dir modules, suffix paths ranked exact). D69 ruling: bias to over-exclusion. r6 e1083d661 in opus review.
 - Building: SEAL r5, D61-11 r3. P0-CORE-BUDGET TL r2 still open.
+
+## 2026-10-03T11:57Z CoS
+- v10.6.12 on npm latest at 11:53:55Z (registry checked); peer notified with the user-facing change list.
+- Train/97 pushed at 80665d4ca (P7-SCALAR-PIN d7711bb0e plus docs); CI waiting on Tests, Bun Parity, Coverage, Security Audit.
+- Opus BLOCK: SEAL-FORGED-LINES r5 f02531df5, B1 reproduced: a test name with \r, U+2028 or U+2029 is unparsed by SPEC_MARK and silently dropped, freeing a forged pass slot (PASS on default and spec; TAP holds). D69 ruling: any mark-prefixed line that does not fully parse is ambiguous, NOT VERIFIED. r6 building (sonnet).
+- W1-S2 r8 05be797c5 in opus review. D61-11 r3 builder over budget (451 min), finishing its mutation check; re-slice if it misses this cycle. P0-CORE-BUDGET TL r2 still open.
