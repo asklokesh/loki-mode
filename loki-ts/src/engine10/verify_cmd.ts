@@ -84,17 +84,20 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   }
   const logProblem = checkEventLog(receiptPath, receipt);
   if (logProblem) return { verdict: "TAMPERED", reasons: [logProblem] };
-  const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt, deps); if (gp) return { verdict: gp.verdict, reasons: [gp.reason] }; // D61-13
+  const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt, deps); // D61-13
+  if (gp?.verdict === "TAMPERED") return { verdict: "TAMPERED", reasons: [gp.reason] }; // UNCHECKED is held: a forged combined receipt must read TAMPERED before it can read UNCHECKED
   const shot = receiptScreensProblem(receiptPath, receipt); if (shot) return { verdict: "TAMPERED", reasons: [shot] };
   const verification = (receipt["verification"] ?? {}) as { jwt?: string | null };
   const jwt = verification.jwt ?? null;
   if (jwt !== null && typeof jwt !== "string") return { verdict: "UNCHECKED", reasons: ["verification.jwt is not a string"] };
+  if (!jwt && gp) return { verdict: gp.verdict, reasons: [gp.reason] };
   if (!jwt) return { verdict: "UNSIGNED", reasons: [], receiptSha256: computed };
   const outcome = checkAttestation(jwt, computed, deps.pubkey);
   if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
   const seal = receipt["log_seal"] !== true ? null : checkLogSeal(receiptPath, computed, (JSON.parse(Buffer.from(jwt.split(".")[0]!, "base64url").toString()) as { kid?: unknown }).kid, deps.pubkey);
   if (seal) return { verdict: seal.verdict, reasons: [seal.reason] };
+  if (gp) return { verdict: gp.verdict, reasons: [gp.reason] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }
 function latestRunId(runsRoot: string): string | null {

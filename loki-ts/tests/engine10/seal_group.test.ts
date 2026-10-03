@@ -216,6 +216,47 @@ describe("D61-13 group seal and verify", () => {
     expect(sealGroup(bctx.runDir, receiptSha256 as never).problems).toBe(0);
   }, 60000);
 
+  test("B2: a forged combined receipt over an unsigned sub-receipt reads TAMPERED, not UNCHECKED", async () => {
+    const { path } = await sealGroupRun("forge-comb", [{ id: "u1" }, { id: "u2", verdict: "FAILED", unsigned: true }]);
+    rewrite(path, (r) => { r["verdict"] = "VERIFIED"; }, true);
+    const v = await verifyReceipt(path);
+    expect(v.verdict).toBe("TAMPERED");
+  }, 60000);
+
+  test("B2: a forged single-run receipt with an injected group section reads TAMPERED", async () => {
+    const { repo, base } = makeRepo("forge-single");
+    const ctx = ctxFor(repo, base);
+    ctx.outputs().verify!["checks"] = [{ name: "pytest", cmd: "pytest -q", result: "fail", duration_s: 1 }];
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    const path = s.data["receipt_path"] as string;
+    sealedLog(dirname(path), (JSON.parse(readFileSync(path, "utf8")) as Receipt).receipt_sha256);
+    rewrite(path, (r) => { r["verdict"] = "VERIFIED"; }, true);
+    const ud = join(ctx.runDir, "group/units/x");
+    mkdirSync(ud, { recursive: true });
+    const body = { schema: "loki.v10.receipt/1", run_id: "x", verdict: "VERIFIED", head_sha: "h".repeat(40), events_sha256: sha256(""), not_proven: [] };
+    const h = receiptSha256(body as never), subTxt = JSON.stringify({ ...body, receipt_sha256: h, verification: { jwt: null, kid: null } });
+    writeFileSync(join(ud, "receipt.json"), subTxt);
+    rewrite(path, (r) => { r["group"] = { group_id: "g", units: [{ index: 0, unit_id: "x", sub_receipt_sha256: sha256(subTxt), receipt_sha256: h, events_file_sha256: null, verdict: "VERIFIED" }] }; }, true);
+    expect((await verifyReceipt(path)).verdict).toBe("TAMPERED");
+  }, 60000);
+
+  test("deps pass-through: sub-receipts verify with --pubkey when no local signing key exists", async () => {
+    const { path } = await sealGroupRun("deps", U3);
+    const pub = join(root, "deps.pub.pem");
+    writeFileSync(pub, createPublicKey(loadSigningKey(false)!).export({ type: "spki", format: "pem" }));
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(root, "absent", "nokey.pem");
+    expect(await verifyMain(["--pubkey", pub, path])).toBe(0);
+  }, 60000);
+
+  test("verify side rejects case-colliding unit ids in the group section", async () => {
+    const { path } = await sealGroupRun("case-verify", [{ id: "ab" }, { id: "cd" }]);
+    rewrite(path, (r) => { const g = r["group"] as { units: Array<Record<string, unknown>> }; g.units[0]!["unit_id"] = "Cd"; }, true);
+    const v = await verifyReceipt(path);
+    expect(v.verdict).toBe("TAMPERED");
+    expect(v.reasons.join(" ")).toContain("case-colliding");
+  }, 60000);
+
   test("a corrupt sub-receipt at seal time fails closed, never VERIFIED", async () => {
     const { repo, base } = makeRepo("corrupt");
     const ctx = ctxFor(repo, base);
