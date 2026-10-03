@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-10-03T21:26Z: v10.10.1 latest, v10.10.2 on next (CoS)
+- v10.10.1: release run 37152525535 success. Smoke passed (peer, 20:58Z); promote moved latest (`npm view loki-mode dist-tags` = latest 10.10.1). The MCP registry publish was skipped: the publisher token expired and the MCP content is unchanged since 10.9.1.
+- v10.10.2 at 78dc27a45: release run 37154153167 success; dist-tags next 10.10.2. Ships CP-REDESIGN, FC-01 Project Model default, the coverage step in test.yml, the cp-redesign image guard, and core-budget (engine10 core 4719; engine suites 1431/0, tsc rc=0 on merged main).
+- Local main 1ea6596f9 (unpushed): CP follow-ups a88af4bf3 (MEDIUM APPROVE; CP 454/0, ui tsc rc=0). Follow-ups filed: F1 diffstat failures are uncached, so git respawns per list request (5s each); the leading-dash sha fixture is missing.
+- FC-15 redesigned per steer: no refusal path; ALREADY_SATISFIED is checked against the PR target. aa0e626ba got REQUEST_CHANGES because the unmerged_loki_work note is not user-visible; the fix is in progress (fix-fc15-r1). Follow-up: receipt and draft-PR allow-signals.
+- FC-19 2b1aa50e7: HIGH BLOCK (regex scope guard misclassifies 10/10; a silent PARTIAL with no PR or comment; STAGE_PREFIX reaches plan/Wall). Fix in progress (fix-fc19).
+- FC-16 6155c23cc + FC-02 d0ef2995e integrated on main as slice-fc16-fc02-integ 20211aecf (C1/C2 applied, lint identified by kind:"static" only; 1472/0). HIGH review in progress.
+- CLI follow-ups (peer): `loki status` prints a dead CP URL; the start line still suggests legacy (goes with W1-01).
+
 ## 2026-10-03T20:09Z: v10.10.0 pushed, P0/P1 lanes staffed (CoS)
 - v10.10.0 pushed at 0240a0a00 (release run 37150219461 in progress). It carries the status renderer, the CLI registry and completions, STALE-ZERO SZ-01..03, W1-02/W1-03, the moat P7 retarget and the fx-tests reds. Evidence in main: bun tests 1576/2 (the 2 are A-130 load flakes, 16/0 alone), p7 rc=0, test-release-dist-guard rc=0.
 - Main CI RED on Bun Parity: the status and status-json cases diff the Loki 10 status against the legacy bash box. Fix is in the W1-01b lane (W2-01).
