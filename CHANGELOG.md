@@ -78,6 +78,103 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.12 (2026-10-03)
+
+Workspace runs API and E2E, interrupt handling, a bounded prep lock, honest dashboard and api runs reads, unmeasured cost shown as unmeasured, fast_verify exit codes, loki verify hardened against planted Python modules, a Jira site check for the tracker, a fail-closed backlog ledger, control-plane 400 on bad encoding, a speed spinner that no longer holds the process open, the Wall manifest library for engine10, an MCP run that reports an early crash with its exit code, the pre-run git status snapshot that refuses to run repo-configured fsmonitor or filter drivers, and the CI moat job renamed to Moat rules (no regression).
+
+### Changes
+- ci(release): wait for npm to serve the published version; scheduled-audit none needs total_count 0 (NPM-LAG-b, D75b)
+- ci(train-cycle): refuse release while previous version is not on npm; sync local main after release (NPM-LAG-a)
+- feat(engine10): reviewer-first PR body, contract then criteria with files and check then NOT PROVEN last, 60-line budget (INTEL-3)
+- fix(engine10): PR body shows only passing checks as proof, legacy bytes preserved, docs say renderPrBody is not wired (INTEL-3 r2)
+- build(dist): rebuild after INTEL-3 merge; drop superseded r1 CHANGELOG line
+- feat(v10): export the Seal receipt as an in-toto Statement in a DSSE envelope (INTEL-1)
+- build(dist): rebuild after INTEL-1 merge
+- feat(seal): list each discarded Wall test by path in not_proven (A-103b)
+- build(dist): rebuild after A-103b merge; CHANGELOG says file name and sealed copy location
+- fix(v10): DSSE export and verify hardening, five review follow-ups (INTEL-1b)
+- fix(v10): scope the export read override, refuse envelope input, move export out of core (INTEL-1b round 2)
+- build(dist): rebuild after INTEL-1b merge
+- test: cover scripts/metrics-usage-append.py
+- test: cover scripts/check-inline-scripts.js
+- test: cover scripts/clean-test-branches.sh safety rules
+- test(v10): find bash 4+ via PATH, no hardcoded paths; timeout -k on registration (PO-TEST-3 fix-forward)
+- fix(verify): legacy loki verify refuses an unknown-kid attestation and a missing run-id pointer (D76, A-121c)
+- fix(v10): standalone verify.sh UNCHECKED fails per D76 (A-121c round 2)
+- fix(v10): secret-scan test fixture used a gitleaks-allowlisted AWS example key (SEC-SCAN-1)
+- feat(cli): loki help answer and --export-dsse in help verify (PO-HELP-1)
+- fix(dashboard): standalone receipts list marks a partly priced cost as at least (PO-STANDALONE-COST-1)
+- fix(audit): verify CLI exits 2 when it checked nothing (PO-AUDIT-CLI-1)
+- fix(web-app): receipt and cost trend mark a partly priced run (PO-WEB-COST-1)
+- fix(tests): drop cherry-pick conflict markers in shard-durations.tsv, keep both rows
+- fix(web-app): failed preview-info fetch and finished-session phase labels (PO-WEB-WORKSPACE-1)
+- fix(web-app): DeployConnections handlers stop pushing synthesized statuses after a failed fetch (PO-WEB-DEPLOY-1)
+- fix(dashboard): unmeasured running_agents and unreadable triggers are not shown as 0 or empty (PO-DASH-HONEST-1)
+- feat(workspaces): per-repo run timing and PRs-per-hour metric (PO-WS-METRICS-1)
+- test(dashboard): council vote label guard (PO-COUNCIL-LABEL-TEST-1)
+- fix(run): session commit warns on a failed git add and the untrack keeps force-staged files (PO-SESSION-COMMIT-1)
+- feat(loki-seal): refuse done until the request's acceptance items have passing tests (A-04c, D45)
+- fix(loki-seal): contract blocks use their own valve, under-derive items, require assertions (A-04c round 2)
+- fix(loki-seal): block any failing item test, filter chat sentences from contract (A-04c r3)
+- fix(v10): seal coverage closes four false greens (A-04c round 4)
+- fix(loki-seal): coverage requires runner-passing ids, close N1-N7 (A-04c round 5)
+- fix(run): refused resume warning names the blocking ignored file and the recorded branch (S-233)
+- test(moat): P7 catches optional-call sinks and one-hop aliases (PO-P7-SINKS-1)
+- test(loki-seal): escape spec-reporter marks in a fixture so the emoji scan stays green
+- feat: read-only workspace runs API over integration.json (D51-B13r)
+- test: workspace E2E through autonomy/loki and bin/loki, plus verify-a-run doc (D51-B16r)
+- fix: workspace SIGTERM records interrupted run, status shows unreadable runs (WS-INTERRUPT)
+- fix: bound worktree prep lock and refuse relative-symlink and shebang escapes (WS-PREP-BOUND)
+- fix: PR receipt renderer runs isolated python3 -I -S, ignores cwd json.py (S-215r)
+- fix: corrupt or denied proofs and memory files give 503 or an error row, never empty (HONEST-READ-1)
+- fix: unmeasured cost reads unmeasured in stats and status on both routes (S-226r)
+- fix(visual-evidence): SIGKILL stubborn dev server, reject non-file evidence paths, default on (D62-VIS-F1, D70)
+- fix(visual-evidence): default-on never starts a server without changed pages; supervisor reaps the dev server group (D62-VIS-F1 r2)
+- fix(visual-evidence): reap announced session groups on every exit path; harness ignores pgid announcements (D62-VIS-F1 r3)
+- build: rebuild loki-ts dist for D62-VIS-F1
+- fix: fast_verify exits 3 on INCONCLUSIVE, 64 on unknown flag, 2 on missing root (P2-FV-EXIT)
+- fix: fast_verify accepts --path DIR and --help exits 0, unknown options stay 64 (P2-FV-EXIT r2)
+- fix: loki verify inline python readers run -I -S, ignore a planted json.py (S-216r)
+- fix: verify_emit_evidence and every remaining inline python3 site run -I -S, static guard against bare python3 (S-216r)
+- fix: verify syntax gate runs py_compile isolated, static guard also bans bare python3 -m (S-216r)
+- test: verify cwd-shadow suite flags only a provider file created during the run (S-216r)
+- refactor(engine10): remove dead core code to restore the 5,000-line budget (P0-CORE-BUDGET)
+- test: repin engine10 dist and already_done tests to the renamed intake and pr stage exports (P0-CORE-BUDGET)
+- build: rebuild loki-ts dist for P0-CORE-BUDGET
+- chore: gitleaks-ignore the planted fake AWS key in the secret-scan test fixture (SEC-SCAN-1)
+- fix: Jira intake refuses a browse URL whose site differs from JIRA_BASE_URL (TRACKER-SITE-1)
+- fix: /api runs report unreadable or corrupt events and iteration records, not none recorded (HONEST-READ-2)
+- fix: loki backlog daily cap fails closed on a corrupt spend ledger (BACKLOG-LEDGER-FAILCLOSED)
+- fix: loki control status shows runs as unknown when /v1/runs cannot be read (CTRL-STATUS-RUNS)
+- fix: control plane returns 400 for malformed URL percent-encoding (CP-BAD-ENCODING)
+- fix: add missing drizzle 0001 snapshot so db:generate on an unchanged schema yields no spurious migration (CP-DRIZZLE-SNAP)
+- test: control-plane COPY guard catches dynamic import(), same-line imports and transitive loki-ts value imports (CP-COPY-GUARD-2)
+- fix: grouped speed output spinner interval is unref'd so it never keeps the process alive (SPEED-TIMER-UNREF)
+- test: warning-level shellcheck count ratchet for autonomy/loki (SC-LOKI-RATCHET)
+- test(S-191): run review-assurance-tail case groups concurrently, budgets unchanged
+- test(S-191): serial groups at scale 1, clean up on timeout kill, rebalance
+- test(S-191): signal only live child groups; gate concurrency on the shard
+- test(S-191): bounded concurrency (LOKI_TEST_JOBS, default 3), shard case runs alone, row 116 to 45
+- feat: start page Workspace runs card with stale badge and honest errors (D51-B14r)
+- fix: start page workspace card reads the real B13r row shape (D51-B14r r2)
+- feat(engine10): D77 signatures-only Wall manifest builder (W1-S1)
+- fix(engine10): W1-S1 r2 Wall manifest leaks (B1-B7) and advisories A1/A5/A6
+- fix(engine10): W1-S1 r3 Wall manifest fails closed (regex prefix, python escapes, generic defaults)
+- fix(engine10): W1-S1 r4 Wall manifest: python via ast, whole-file fail-closed TS, masked defaults
+- fix(engine10): W1-S1 r5 Wall manifest allowlists decorators, annotations, bases and defaults
+- fix(wall-manifest): fail closed on any non-allowlisted decorator shape (W1-S1 r6)
+- fix(wall-manifest): allowlist the token after a decorator, discriminating PATH test (W1-S1 r7)
+- build: rebuild loki-ts dist for TRACKER-SITE-1, CTRL-STATUS-RUNS and SPEED-TIMER-UNREF
+- fix(mcp): v10_run reports an early loki crash with exit code and log tail (MCP-RUN-EXIT)
+- fix(tests): train/94 red shards: secret-scan fixture quoting, stale gitleaks ignore, help verify DSSE suffix
+- fix: snapshot git status ignores repo-local core.fsmonitor (S-218r)
+- fix: snapshot git status also blanks filter clean/smudge/process drivers (S-218r r2)
+- fix: snapshot git status passes filter overrides via GIT_CONFIG_KEY/VALUE, no lazy fetch (S-218r r3)
+- fix: snapshot git status byte-exact driver lookup, fail closed without GIT_CONFIG_COUNT (S-218r r4)
+- fix: snapshot git status needs git >= 2.44 and a per-call nonce sentinel (S-218r r5)
+- ci: rename Moat suite job display name to Moat rules (no regression)
+- fix(snapshot): drop process substitution from _loki_untracked_status
+
 ## v10.6.11 (2026-10-03)
 
 loki workspace run now works across linked git worktrees (all 9 D65 stub E2E legs pass from a clean install), the delivery contract is frozen at intake so a later edit cannot change what the receipt proves, and train pushes scan only their own range for secrets while main keeps the full scan and a red daily scan halts releases.
