@@ -1,6 +1,6 @@
 // D77 (W1-S2): wires the Wall manifest to a git base tree. Reads only blobs of the intake tree (never the
-// worktree, diff or .loki/), builds wall_manifest.txt, and returns its sha256. Any failure returns null so
-// the Wall behaves as if the flag were off (fail closed).
+// worktree, diff or .loki/), builds wall_manifest.txt, and returns its sha256. Any failure or misalignment
+// returns null so the Wall behaves as if the flag were off (fail closed).
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
@@ -10,35 +10,54 @@ export const wallManifestEnabled = (env: NodeJS.ProcessEnv = process.env): boole
 const CONFIG = /^(package\.json|bunfig\.toml|(vitest|jest)\.config\.[cm]?[jt]s|pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|go\.mod|Cargo\.toml)$/;
 const TESTISH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
 const SOURCE = /\.(py|[cm]?[jt]sx?)$/;
-const MAX_BLOB = 200_000, MAX_FILES = 300, MAX_NAMED = 5;
+const MAX_BLOB = 200_000, MAX_FILES = 300, MAX_NAMED = 5, GIT_TIMEOUT_MS = 5_000;
+// --no-replace-objects: a replace ref must never change what the sealed tree read returns.
 const git = (repoDir: string, args: string[], input?: string): Buffer | null => {
-  const r = spawnSync("git", ["-C", repoDir, ...args], { input, maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
+  const r = spawnSync("git", ["--no-replace-objects", "-C", repoDir, ...args], { input, maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS, env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" } });
   return r.error || r.status !== 0 ? null : r.stdout;
 };
+
+interface Entry { path: string; sha: string }
+// Regular blobs of the tree within the size cap. A path that cannot round-trip (control characters, a newline,
+// invalid UTF-8) is dropped; objects are fetched by sha, never by a path-derived name.
+function blobEntries(ls: Buffer): Entry[] | null {
+  const out: Entry[] = [];
+  for (const raw of ls.toString("latin1").split("\0")) {
+    if (!raw) continue;
+    const tab = raw.indexOf("\t"), m = /^(\d{6}) (\w+) ([0-9a-f]{40,64}) +(\d+|-)$/.exec(raw.slice(0, tab));
+    if (tab < 0 || !m) return null;
+    if (m[2] !== "blob" || (m[1] !== "100644" && m[1] !== "100755") || m[4] === "-" || Number(m[4]) > MAX_BLOB) continue;
+    const bytes = Buffer.from(raw.slice(tab + 1), "latin1"), path = bytes.toString("utf8");
+    if (/[\x00-\x1f\x7f]/.test(path) || !Buffer.from(path, "utf8").equals(bytes)) continue;
+    out.push({ path, sha: m[3]! });
+  }
+  return out;
+}
 
 export function wallManifestFor(repoDir: string, tree: string | undefined, task: string, env: NodeJS.ProcessEnv = process.env): { text: string; sha256: string } | null {
   if (!wallManifestEnabled(env)) return null;
   try {
     if (!tree || !/^[0-9a-f]{40,64}$/.test(tree)) return null;
-    const ls = git(repoDir, ["ls-tree", "-r", "--name-only", "-z", tree]);
-    if (!ls) return null;
-    const paths = ls.toString("utf8").split("\0").filter(Boolean), low = task.toLowerCase();
-    const named = paths.filter((p) => SOURCE.test(p) && !TESTISH.test(p) && low.includes(basename(p).toLowerCase())).slice(0, MAX_NAMED);
-    const want = [...new Set([...paths.filter((p) => CONFIG.test(p)), ...paths.filter((p) => TESTISH.test(p)).slice(0, MAX_FILES), ...named])];
-    const cat = git(repoDir, ["cat-file", "--batch"], want.map((p) => `${tree}:${p}`).join("\n") + "\n");
+    const ls = git(repoDir, ["ls-tree", "-r", "-l", "-z", tree]);
+    const all = ls && blobEntries(ls);
+    if (!all) return null;
+    const low = task.toLowerCase();
+    const named = all.filter((e) => SOURCE.test(e.path) && !TESTISH.test(e.path) && low.includes(basename(e.path).toLowerCase())).slice(0, MAX_NAMED);
+    const want = [...new Set([...all.filter((e) => CONFIG.test(e.path)), ...all.filter((e) => TESTISH.test(e.path)).slice(0, MAX_FILES), ...named])];
+    const cat = git(repoDir, ["cat-file", "--batch"], want.map((e) => e.sha).join("\n") + "\n");
     if (!cat) return null;
     const files: ManifestFile[] = [];
-    for (let at = 0, i = 0; i < want.length; i++) {
+    let at = 0;
+    for (const e of want) {
       const nl = cat.indexOf(10, at);
       if (nl < 0) return null;
-      const head = cat.subarray(at, nl).toString("utf8").split(" ");
-      if (head[1] !== "blob") { at = nl + 1; continue; }
-      const size = Number(head[2]), start = nl + 1;
-      if (!Number.isInteger(size)) return null;
-      if (size <= MAX_BLOB) files.push({ path: want[i]!, content: cat.subarray(start, start + size).toString("utf8") });
+      const head = cat.subarray(at, nl).toString("latin1").split(" "), size = Number(head[2]), start = nl + 1;
+      if (head.length !== 3 || head[0] !== e.sha || head[1] !== "blob" || !Number.isInteger(size) || size < 0 || start + size + 1 > cat.length || cat[start + size] !== 10) return null;
+      files.push({ path: e.path, content: cat.subarray(start, start + size).toString("utf8") });
       at = start + size + 1;
     }
-    const text = buildWallManifest(files, named);
+    if (at !== cat.length) return null;
+    const text = buildWallManifest(files, named.map((e) => e.path));
     return { text, sha256: createHash("sha256").update(text).digest("hex") };
   } catch { return null; }
 }

@@ -6,3 +6,5 @@ export const RUNNER_HINT: Partial<Record<string, string>> = {
   bun: "bun:test. Example: import { test, expect } from 'bun:test'; test('name', () => { expect(fn(1)).toBe(2); });  Run: bun test <file>.",
   pytest: "pytest. Example: def test_name(): assert fn(1) == 2  Run: python -m pytest <file>.",
 };
+// D77 (W1-S2): the Wall manifest wiring lives in features/; re-exported here so wall.ts needs no extra import line (core budget).
+export { wallManifestFor } from "../features/wall_manifest_wire.ts";

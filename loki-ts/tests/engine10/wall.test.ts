@@ -685,6 +685,7 @@ describe("engine10 wall manifest wiring, D77", () => {
     expect(all).not.toContain("CANARY_DIFF_5519");
     expect(r.files["wall_manifest.txt"]).toContain("export function search(q: string): string[]");
     expect(r.brief).toContain("wall_manifest.txt");
+    expect(r.brief).not.toContain("export function search"); // A4: the brief only references the file, never embeds it
   });
 
   test("flag on: wall.sealed carries manifest_sha256 equal to sha256 of wall_manifest.txt", async () => {

@@ -569,3 +569,69 @@ describe("round 6 review findings", () => {
     }
   });
 });
+
+// D77 / W1-S2 r2: the git base-tree reader (wall_manifest_wire.ts) is robust to hostile trees.
+import { execFileSync } from "node:child_process";
+import { wallManifestFor } from "../../src/features/wall_manifest_wire.ts";
+
+describe("wallManifestFor base-tree reader (D77, W1-S2 r2)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function repo() {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    g("init", "-q");
+    mkdirSync(join(dir, "src")); mkdirSync(join(dir, "tests"));
+    writeFileSync(join(dir, "package.json"), '{"scripts":{"test":"bun test"}}', "utf8");
+    writeFileSync(join(dir, "src", "core.ts"), 'export function core(): string {\n  return "CANARY_CORE_4402";\n}\n', "utf8");
+    writeFileSync(join(dir, "tests", "a.test.ts"), 'import { test } from "bun:test";\ntest("a_style", () => {});\n', "utf8");
+    writeFileSync(join(dir, "tests", "b.test.ts"), 'import { test } from "bun:test";\ntest("b_style", () => {});\n', "utf8");
+    g("add", "package.json", "src/core.ts", "tests/a.test.ts", "tests/b.test.ts");
+    g("commit", "-q", "-m", "base");
+    return { dir, g };
+  }
+
+  test("a newline in a base-tree path cannot inject extra object names into the read", () => {
+    const { dir, g } = repo();
+    try {
+      g("update-index", "--add", "--cacheinfo", `100644,${g("rev-parse", "HEAD:tests/a.test.ts")},tests/0\nHEAD:src/core.ts`);
+      const r = wallManifestFor(dir, g("write-tree"), "task", ON);
+      expect(r?.text ?? "").not.toContain("CANARY_CORE_4402");
+      expect(r?.text ?? "").not.toContain("HEAD:src");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("a gitlink (non-blob) entry never misaligns the reader: the real test files still read correctly", () => {
+    const { dir, g } = repo();
+    try {
+      g("update-index", "--add", "--cacheinfo", `160000,${g("rev-parse", "HEAD")},tests/0sub.test.ts`);
+      const r = wallManifestFor(dir, g("write-tree"), "task", ON);
+      expect(r).not.toBeNull();
+      expect(r!.text).toContain("--- example: tests/a.test.ts");
+      expect(r!.text).toContain('test("a_style"');
+      expect(r!.text).not.toMatch(/^author /m);
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("a replace ref never changes what the sealed tree read returns", () => {
+    const { dir, g } = repo();
+    try {
+      const orig = g("rev-parse", "HEAD:tests/a.test.ts");
+      const fake = execFileSync("git", ["-C", dir, "hash-object", "-w", "--stdin"], { input: "REPLACED_CANARY_9001\n", encoding: "utf8" }).trim();
+      g("replace", orig, fake);
+      const r = wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), "task", ON);
+      expect(r!.text).not.toContain("REPLACED_CANARY_9001");
+      expect(r!.text).toContain('test("a_style"');
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  test("a blob over the size cap is skipped without failing the manifest", () => {
+    const { dir, g } = repo();
+    try {
+      writeFileSync(join(dir, "tests", "big.test.ts"), "// BIG_CANARY_1\n" + "x".repeat(300_000), "utf8");
+      g("add", "tests/big.test.ts"); g("commit", "-q", "-m", "big");
+      const r = wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), "task", ON);
+      expect(r).not.toBeNull();
+      expect(r!.text).not.toContain("BIG_CANARY_1");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
