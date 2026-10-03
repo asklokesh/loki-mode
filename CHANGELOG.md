@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - engine10 (D86, FC-15, L4/L2): a run is never refused for starting on a branch with commits that are not on the PR target; the guard moved from the run to the ALREADY_SATISFIED claim. The claim is checked against the PR target (LOKI_E10_BASE or the origin default branch): evidence that exists only in commits not on the target voids it and the run implements. When those commits are really Loki's (a "Loki-Run:" commit trailer, or a local receipt with commits of its own) the note "work exists on <branch>, not on <target>; open or resume it" is printed on stderr, in the run summary and in the PR body, and recorded as unmerged_loki_work in the intake data. The start line now prints the PR target and the base.
 
+### Fixed
+- engine10 (FC-21): an implement time limit no longer skips verify and fix; the work that exists is verified (the receipt can only be PARTIAL), the run cap scales with task size (about 45 minutes for large subscription tasks; loki.yaml budgets.run_cap_s or LOKI_E10_CAP_S override), implement is told its remaining time, and the CLI Outcome line names the receipt verdict (PARTIAL, not FAILED).
+
 ## v10.10.3 (2026-10-03)
 
 ### Fixed

@@ -62,12 +62,12 @@ export function formatHeartbeatLine(h: HeartbeatLine): string {
   return `[${formatClock(h.clockS)}] ${h.stage.padEnd(NAME_WIDTH)}${bits.join("  ")}`;
 }
 // A-110: one outcome name and a fixed exit ladder, mapped at the edge (the receipt keeps its verdict strings). 2 is usage/preflight, returned by main().
-export type Outcome = "VERIFIED" | "ALREADY_SATISFIED" | "BUDGET_STOP" | "BLOCKED" | "STALLED" | "FAILED";
-export const EXIT: Record<Outcome, number> = { VERIFIED: 0, ALREADY_SATISFIED: 0, FAILED: 1, BUDGET_STOP: 3, BLOCKED: 4, STALLED: 5 };
+export type Outcome = "VERIFIED" | "ALREADY_SATISFIED" | "BUDGET_STOP" | "BLOCKED" | "STALLED" | "PARTIAL" | "FAILED";
+export const EXIT: Record<Outcome, number> = { VERIFIED: 0, ALREADY_SATISFIED: 0, FAILED: 1, PARTIAL: 1, BUDGET_STOP: 3, BLOCKED: 4, STALLED: 5 };
 export function outcomeOf(verdict: Verdict, capHit: boolean, stop: string | null, tampered = false): Outcome {
   if (tampered) return "FAILED"; // a run whose event log was modified is never VERIFIED, whatever the receipt says
   if (verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED") return verdict;
-  return capHit ? "BUDGET_STOP" : verdict === "SPEC_CONFLICT" ? "BLOCKED" : stop === "stalled" ? "STALLED" : "FAILED";
+  return capHit ? "BUDGET_STOP" : verdict === "SPEC_CONFLICT" ? "BLOCKED" : stop === "stalled" ? "STALLED" : verdict === "PARTIAL" ? "PARTIAL" : "FAILED"; // FC-21 (d): the Outcome line names the receipt verdict; BUDGET_STOP/STALLED/BLOCKED stay the explicit stop reasons
 }
 export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | null, outcome: Outcome): string | undefined { // A-130: one-line cause, first match wins
   const done = (s: string) => ev.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data, v = done("verify"), checks = (v?.checks ?? []) as { name: string; result: string; first_error?: string }[], bad = checks.find((c) => c.result === "fail");

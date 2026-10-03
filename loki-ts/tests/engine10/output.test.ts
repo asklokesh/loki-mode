@@ -251,7 +251,7 @@ describe("outcomeOf and the exit ladder (A-110)", () => {
     const row = (v: Parameters<typeof outcomeOf>[0], cap: boolean, stop: string | null) => { const o = outcomeOf(v, cap, stop); return [o, EXIT[o]]; };
     expect(row("VERIFIED", false, null)).toEqual(["VERIFIED", 0]);
     expect(row("ALREADY_SATISFIED", false, null)).toEqual(["ALREADY_SATISFIED", 0]);
-    expect(row("PARTIAL", false, null)).toEqual(["FAILED", 1]);
+    expect(row("PARTIAL", false, null)).toEqual(["PARTIAL", 1]); // FC-21 (d): the Outcome line is the receipt verdict
     expect(row("FAILED", false, "fatal:auth")).toEqual(["FAILED", 1]);
     expect(row("PARTIAL", true, null)).toEqual(["BUDGET_STOP", 3]);
     expect(row("SPEC_CONFLICT", false, null)).toEqual(["BLOCKED", 4]);

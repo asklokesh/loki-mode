@@ -249,7 +249,7 @@ describe("engine10 machine", () => {
     expect(sealCap).toBe(true);
   });
 
-  it("a stage over its limit is aborted and failed with reason limit", async () => {
+  it("a stage over its limit is aborted and failed with reason limit, then verify still runs", async () => {
     const { ctx, events } = fakeCtx();
     const r = await runMachine(ctx, {
       load: loaderOf(all({
@@ -257,7 +257,7 @@ describe("engine10 machine", () => {
       })),
     });
     expect(events.find((e) => e.type === "stage.failed" && e.stage === "implement")?.data.reason).toBe("limit");
-    expect(of(events, "stage.started")).not.toContain("verify");
+    expect(of(events, "stage.started")).toContain("verify"); // FC-21 (a): a limit still verifies the work that exists
     expect(of(events, "stage.completed")).toContain("seal");
     expect(r.capHit).toBe(false);
   });

@@ -3,6 +3,7 @@
 // id; post-PR: detached deep verify, then Slack notify.
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
+import { resolveRunCapS } from "../util/run_cap.ts";
 import { terminalWidth } from "../util/term_width.ts";
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
@@ -326,7 +327,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     const wait = setInterval(() => { if (existsSync(eventsPath)) { clearInterval(wait); stopLiveTail = tail(eventsPath, (e) => liveLine.onEvent(e), { intervalMs: 250 }); } }, 100);
     liveStop = () => { clearInterval(wait); clearInterval(tick); stopLiveTail(); liveLine.clear(); };
   }
-  const capS = deep ? DEEP_CAP_S : Number(env.LOKI_E10_CAP_S) || DEFAULT_CAP_S;
+  const capS = deep ? DEEP_CAP_S : resolveRunCapS(repoDir, runDir, task, cap.usd <= 0, env); if (!deep) env.LOKI_E10_CAP_S = String(capS); // FC-21 (b): scaled by task size; the worker reads the same value
   const res = await runSupervisor({
     runId, repoDir, env, capS,
     workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model],

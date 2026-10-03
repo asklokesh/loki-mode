@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
+import { timeBudgetNote } from "../util/run_cap.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
 import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
@@ -62,7 +63,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const capCtl = new AbortController();
   const capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
   const sessions = { run: async (o: Parameters<typeof ctx.sessions.run>[0]) => {
-    const r = await ctx.sessions.run(o.stage === "implement" && implementBudgetS > o.limitS ? { ...o, limitS: implementBudgetS } : o);
+    const imp = o.stage === "implement" ? { ...o, limitS: Math.max(o.limitS, implementBudgetS) } : o, r = await ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 ? { ...imp, brief: `${imp.brief}\n\n${timeBudgetNote(imp.limitS)}` } : imp); // FC-21 (c): the dynamic time note goes AFTER the byte-stable prefix and body
     const t = (r as { stderrTail?: string }).stderrTail ?? "", sdk = /\[sdk-loop error: [^\n]*?(?:(Failed to authenticate|API key is invalid|Not logged in)|(credit balance))/.exec(t); // the SDK's real wording, matched only on its own error line
     const k = r.exit === 0 ? null : sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason; if (k === "auth" || k === "quota_exhausted") fatal ??= `fatal:${k}`; if (ctx.overCap?.()) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     return r;
@@ -124,6 +125,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         clearTimeout(graceTimer);
       }
       r = { status: "failed", data: {}, reason: why, killed: true };
+      if (name === "implement" && why === "limit") outputs.implement = { exit: "killed" }; // FC-21 (a): the work that exists is verified, and seal reads exit=killed so the verdict can never be VERIFIED
     }
     const res = r as StageResult;
     if (res.status === "completed") {
@@ -140,7 +142,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const mustJump = (name: StageName, r: StageResult | null): boolean => {
     if (capHit) return true;
     if (!r) return false;
-    if (r.status === "failed") return name !== "plan" && name !== "wall" && name !== "verify" && name !== "fix";
+    if (r.status === "failed") return r.reason !== "limit" && name !== "plan" && name !== "wall" && name !== "verify" && name !== "fix";
     return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
   try {
