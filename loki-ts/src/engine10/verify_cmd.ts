@@ -8,7 +8,7 @@ import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto
 import { lokiDir } from "../util/paths.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
-import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
+import { verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
   verdict: Verdict;
@@ -84,6 +84,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   }
   const logProblem = checkEventLog(receiptPath, receipt);
   if (logProblem) return { verdict: "TAMPERED", reasons: [logProblem] };
+  const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt); if (gp) return { verdict: gp.verdict, reasons: [gp.reason] }; // D61-13
   const shot = receiptScreensProblem(receiptPath, receipt); if (shot) return { verdict: "TAMPERED", reasons: [shot] };
   const verification = (receipt["verification"] ?? {}) as { jwt?: string | null };
   const jwt = verification.jwt ?? null;

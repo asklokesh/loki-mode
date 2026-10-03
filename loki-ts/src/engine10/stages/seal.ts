@@ -12,7 +12,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { discar
 import { run } from "../../util/shell.ts"; import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
-import { sealContract } from "../../features/contract.ts";
+import { sealContract } from "../../features/contract.ts"; import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
@@ -201,9 +201,10 @@ export const sealStage: Stage = {
     const rawDiff = diffOk ? diff.stdout.split("\0").filter(Boolean) : [];
     const weakTests: string[] = [];
     for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
-    const verdict = verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase);
+    const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
+    const verdict = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase), grp);
 
-    const notProven = new Set<string>(DEEP_NOT_PROVEN);
+    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...grp.notProven]);
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
@@ -256,7 +257,7 @@ export const sealStage: Stage = {
       wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: wallPassed },
       checks,
       not_proven: [],
-      verdict,
+      verdict, ...(grp.section ? { group: grp.section } : {}),
       ...(str(o.implement?.spec_conflict_reason) !== null
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
         : {}),

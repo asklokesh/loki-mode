@@ -5,7 +5,7 @@
 // emitted event gets it), so "Stage times:" degrades honestly to nothing shown, never a fake 0s,
 // until machine.ts stores duration_s too.
 import { formatDuration } from "./output.ts";
-import type { StageName, Verdict } from "./types.ts";
+import type { StageName, Verdict } from "./types.ts"; import { unitTableLines, type ReceiptGroup } from "../features/speed/seal_group.ts";
 export interface PrBodyInput {
   verdict: Verdict;
   notProven: string[];
@@ -14,6 +14,8 @@ export interface PrBodyInput {
   capHit: boolean;
   /** ctx.outputs(): every completed stage's stage.completed.data, keyed by stage name. */
   outputs: Partial<Record<StageName, Record<string, unknown>>>;
+  /** D61-13: the combined receipt's group section; absent for a single run. */
+  group?: ReceiptGroup;
 }
 /** Section 4 PR: "DRAFT when the verdict is not VERIFIED, or when the cap fired." */
 export function isDraft(verdict: Verdict, capHit: boolean): boolean {
@@ -45,5 +47,6 @@ export function renderPrBody(input: PrBodyInput): string {
   }
   lines.push("NOT PROVEN:", ...(input.notProven.length > 0 ? input.notProven.map((p) => `- ${p}`) : ["- none"]));
   if (input.receiptPath) lines.push("", `Receipt: ${input.receiptPath}`);
+  if (input.group) lines.push("", ...unitTableLines(input.group));
   return `${lines.join("\n")}\n`;
 }
