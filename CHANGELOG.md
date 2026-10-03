@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v10.10.3 (2026-10-03)
+
 ### Fixed
+- Fix (FC-19 R1): if the single resume after a spec conflict fails, is killed, or ends without a marker, the run keeps the first session's question and ends BLOCKED instead of PARTIAL or FAILED; duration_s counts both sessions.
 - Fix (D86, FC-19, L0, L1): the implement stage does the full job. The implement brief (FIXED_RULES) no longer limits the model to named files or impacted tests and allows the full suite; STAGE_PREFIX and LEAN_PREFIX are role-neutral so the plan and Wall briefs keep their roles; the implement limit comes from the run budget instead of a fixed 480s. A LOKI_SPEC_CONFLICT from implement now gets one resume with a correction (Loki imposes no limits) before it is believed; a persisting conflict is the normal BLOCKED with its question. Side effect: deep-mode implement now gets its 1800s session limit (session.ts used to kill it at 480s).
+
+### Changed
+- Control Plane run page follow-ups: changed files are taken from the receipt shas, a "why" line, structured evidence rows, a summary grid and a default repo chip.
+
+### Docs
+- CP parity matrix against the legacy dashboard: 101 rows (57 wired, 37 backend-missing, 7 drop).
 
 ## v10.10.2 (2026-10-03)
 
