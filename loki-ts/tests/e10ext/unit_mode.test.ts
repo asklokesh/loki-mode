@@ -1,12 +1,14 @@
 // D61-11: unit run mode. Write set as scope fence (real git), pack-only brief, inert when off.
 import { afterAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync, truncateSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { briefContext } from "../../src/e10ext/context.ts";
 import { parseStaged } from "../../src/e10ext/commit_filter.ts";
 import { revertUnrelated, unrelatedNote } from "../../src/e10ext/scope.ts";
-import { unitBrief, unitCapEnv, unitOutsideNote, unitSpec } from "../../src/features/speed/unit_mode.ts";
+import { parseCapUsd } from "../../src/e10ext/budget_cap.ts";
+import { inWriteSet, unitBrief, unitCapEnv, unitOutsideNote, unitSpec } from "../../src/features/speed/unit_mode.ts";
 import type { RunContext } from "../../src/engine10/types.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "d61-11-"));
@@ -38,7 +40,53 @@ describe("unitSpec", () => {
     expect(unitBrief(on(specFile("g2.json", good)))).toBe("Relevant files:\nsrc/a.ts\nlib/b.ts");
   });
   test("per-unit budget maps onto the existing cap env", () => {
-    expect(unitCapEnv(unitSpec(on(specFile("g3.json", good)))!, 10)).toEqual({ LOKI_E10_MAX_COST_USD: "0.5" });
+    expect(unitCapEnv(unitSpec(on(specFile("g3.json", good)))!, 10, 20)).toEqual({ LOKI_E10_MAX_COST_USD: "0.5" });
+  });
+  const sp = (tokenBudget: number) => ({ id: "x", writeSet: ["a"], pack: [], tokenBudget });
+  const capOk = (r: Record<string, string>, ex: number) => { const n = parseCapUsd(r["LOKI_E10_MAX_COST_USD"]); expect(n).not.toBeNull(); expect(n!).toBeLessThanOrEqual(ex); return n!; };
+  test("unit cap never disables or loosens the run cap", () => {
+    capOk(unitCapEnv(sp(Infinity), 15, 1), 1);
+    expect(capOk(unitCapEnv(sp(1), 0.1, 5), 5)).toBe(0.01);
+    expect(capOk(unitCapEnv(sp(1e30), 15, 7), 7)).toBe(7);
+    for (const rate of [NaN, Infinity, 0, -1]) expect(unitCapEnv(sp(5000), rate, 3)).toEqual({ LOKI_E10_MAX_COST_USD: "3" });
+    expect(unitCapEnv(sp(5000), NaN, 1e-7)).toEqual({ LOKI_E10_MAX_COST_USD: "0.000001" });
+    expect(unitCapEnv(sp(1e7), 15, 1)).toEqual({ LOKI_E10_MAX_COST_USD: "1" });
+    expect(unitCapEnv(sp(1e9), 1e300, 1e30).LOKI_E10_MAX_COST_USD).not.toMatch(/e/i);
+  });
+  test("spec rejects non-finite or absurd budgets, control chars in entries", () => {
+    expect(unitSpec(on(specFile("tb1.json", '{"id":"u","writeSet":["a"],"pack":[],"tokenBudget":1e999}')))).toBeNull();
+    expect(unitSpec(on(specFile("tb2.json", { ...good, tokenBudget: 2e9 })))).toBeNull();
+    expect(unitSpec(on(specFile("nl1.json", { ...good, pack: ["a.ts\nsecret.ts"] })))).toBeNull();
+    expect(unitSpec(on(specFile("nl2.json", { ...good, writeSet: ["a\u0001"] })))).toBeNull();
+  });
+  test("write set src/a.ts does not admit src/a.tsx", () => {
+    const s = unitSpec(on(specFile("g5.json", good)))!;
+    expect(inWriteSet(s, "src/a.ts")).toBe(true);
+    expect(inWriteSet(s, "src/a.tsx")).toBe(false);
+  });
+  test("spec is parsed once per process (memoized)", () => {
+    const p = specFile("memo.json", good);
+    expect(unitSpec(on(p))?.id).toBe("u1");
+    writeFileSync(p, "{broken");
+    expect(unitSpec(on(p))?.id).toBe("u1");
+  });
+  test("oversize file and symlink are rejected without a full read", () => {
+    const big = join(tmp, "big.json"); writeFileSync(big, ""); truncateSync(big, 300 * 1024 * 1024);
+    const t0 = Date.now();
+    expect(unitSpec(on(big))).toBeNull();
+    expect(Date.now() - t0).toBeLessThan(1000);
+    const link = join(tmp, "link.json"); symlinkSync(specFile("target.json", good), link);
+    expect(unitSpec(on(link))).toBeNull();
+  });
+  const hasMkfifo = Bun.spawnSync(["mkfifo", "--help"]).exitCode !== 127 && Bun.which("mkfifo") !== null;
+  test.skipIf(!hasMkfifo)("a FIFO spec returns null without hanging (child process, 5s timeout)", () => {
+    const fifo = join(tmp, "spec.fifo");
+    expect(Bun.spawnSync(["mkfifo", fifo]).exitCode).toBe(0);
+    const mod = join(import.meta.dir, "../../src/features/speed/unit_mode.ts");
+    const code = `import { unitSpec } from ${JSON.stringify(mod)}; console.log(String(unitSpec({ LOKI_SPEED: "1", LOKI_UNIT_SPEC: ${JSON.stringify(fifo)} })));`;
+    const r = spawnSync(process.execPath, ["-e", code], { timeout: 5000, encoding: "utf8" });
+    expect(r.error).toBeUndefined();
+    expect(r.stdout.trim()).toBe("null");
   });
 });
 
@@ -106,6 +154,21 @@ describe("write-set scope fence (real git)", () => {
     const notes = await run(dir, base, ["src/a.ts", "lib/b.ts", "src/c.ts"], false);
     expect(notes).toEqual([unrelatedNote("settings.py")]);
     expect(existsSync(join(dir, "src/new_outside.ts"))).toBe(true);
+  });
+
+  test("unit mode exempts intake preexisting_dirty paths from the fence revert", async () => {
+    const { dir, base } = repo();
+    writeFileSync(join(dir, "src/c.ts"), "user dirt\n"); writeFileSync(join(dir, "settings.py"), "edited\n");
+    sh(dir, "add", "-A");
+    const staged = parseStaged(sh(dir, "diff", "--cached", "--name-status", "--no-renames", "-z", base));
+    process.env["LOKI_SPEED"] = "1"; process.env["LOKI_UNIT_SPEC"] = specFile("f-pre.json", good);
+    try {
+      const o = { plan: { relevant_files: ["src/c.ts", "settings.py"], plan: "x" }, intake: { task: "t", preexisting_dirty: { "src/c.ts": " M" } } };
+      const notes = await revertUnrelated(async (a) => ({ code: Bun.spawnSync(["git", ...a], { cwd: dir, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }).exitCode }), base, o, staged);
+      expect(notes).toContain(unitOutsideNote("settings.py"));
+      expect(notes).not.toContain(unitOutsideNote("src/c.ts"));
+      expect(readFileSync(join(dir, "src/c.ts"), "utf8")).toBe("user dirt\n");
+    } finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
   });
 
   test("a failing git step returns null", async () => {

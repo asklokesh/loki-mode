@@ -24,7 +24,7 @@ export function unrelatedEdits(o: Partial<Record<string, Obj>>, staged: Staged[]
 
 /** Reverts out-of-scope edits to base (index and disk, literal pathspecs). Returns the NOT PROVEN notes; null = restore failed. */
 export async function revertUnrelated(git: (a: string[]) => Promise<{ code: number }>, base: string, o: Partial<Record<string, Obj>>, staged: Staged[]): Promise<string[] | null> {
-  const fence = await unitFence(git, base, staged); // D61-11: null unless a unit spec is active
+  const fence = await unitFence(git, base, staged, process.env, (o.intake?.preexisting_dirty ?? {}) as Record<string, string>); // D61-11: null unless a unit spec is active
   if (fence && !fence.ok) return null;
   const rest = fence ? fence.kept : staged, un = unrelatedEdits(o, rest);
   if (un && un.length > 0 && (await git(["--literal-pathspecs", "restore", `--source=${base}`, "--staged", "--worktree", "--", ...un])).code !== 0) return null;
