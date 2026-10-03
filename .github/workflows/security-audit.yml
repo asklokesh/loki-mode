@@ -1,6 +1,6 @@
 name: Security Audit
 
-# Runs `npm audit` (and `bun audit` if available) on every PR and weekly.
+# Runs `npm audit` (and `bun audit` if available) on every PR and daily (D75).
 # Fails the workflow on high or critical vulnerabilities.
 #
 # Also runs `pip-audit` over every product/test Python dependency manifest,
@@ -42,8 +42,10 @@ on:
       - 'train/**'
       - 'slice-*'
   schedule:
-    # Mondays at 07:00 UTC
-    - cron: '0 7 * * 1'
+    # D75: daily at 07:00 UTC (was Mondays). train/** pushes scan only their
+    # range (D74 follow-up), so the full-history scan runs on every main push
+    # and daily here; a red daily scan halts releases.
+    - cron: '0 7 * * *'
   workflow_dispatch:
 
 permissions:
@@ -294,7 +296,10 @@ jobs:
   secret-scan:
     name: gitleaks (secrets, new-findings-blocking)
     needs: [train-reuse]
-    if: ${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}
+    # D75: a main push ALWAYS runs the full-history scan. It ignores E-160
+    # train reuse because a train/** run only scanned its own range, so its
+    # verdict must never stand in for the full scan that gates npm publish.
+    if: ${{ !cancelled() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.train-reuse.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     # D74: the full-history scan grows with history and passed in 11-15 min on
     # trains 83-87, then hit the old 15 min limit on trains 86/88/89/90. More
@@ -323,6 +328,40 @@ jobs:
             /tmp/gitleaks.tar.gz | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
           /tmp/gitleaks version
+
+      - name: Select gitleaks scan mode (D75)
+        # train/** pushes scan only merge-base(origin/main)..SHA. Any doubt
+        # (fetch failure, no merge-base, empty range, non-push event) leaves
+        # GITLEAKS_RANGE empty, which is the full-history scan. The base
+        # CONFIG trust in scripts/security-audit-gitleaks.sh is unchanged:
+        # the release tag's .gitleaks.toml, never this merge-base's.
+        run: |
+          set -uo pipefail
+          range=""
+          case "${GITHUB_REF:-}" in
+            refs/heads/train/*)
+              if [ "${GITHUB_EVENT_NAME:-}" = "push" ]; then
+                base=""
+                if git fetch --no-tags origin main >/dev/null 2>&1; then
+                  base="$(git merge-base origin/main "$GITHUB_SHA" 2>/dev/null || true)"
+                fi
+                n=""
+                if [ -n "$base" ] && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+                  n="$(git rev-list --count "${base}..${GITHUB_SHA}" 2>/dev/null || true)"
+                fi
+                case "$n" in
+                  '' | *[!0-9]* | 0) ;;
+                  *) range="${base}..${GITHUB_SHA}" ;;
+                esac
+              fi
+              ;;
+          esac
+          if [ -n "$range" ]; then
+            echo "gitleaks mode: range ${range}"
+          else
+            echo "gitleaks mode: full"
+          fi
+          printf 'GITLEAKS_RANGE=%s\n' "$range" >> "$GITHUB_ENV"
 
       - name: gitleaks scan (all reachable history)
         # POSTURE: NEW FINDINGS BLOCK. The reviewed baseline contains 35

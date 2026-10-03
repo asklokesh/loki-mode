@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `LOKI_SPEED=1`, the already-done check runs off the critical path: implement starts at once, and a run only stops as ALREADY_SATISFIED when a confirmation session, run in a pinned copy of the base tree outside the repo, cites files unchanged since base (D61-04).
 
 ### Changed
+- CI: train/** pushes run a range-only secret scan (merge-base with origin/main to the pushed SHA); main pushes always run the full-history scan, the Security Audit cron is daily instead of weekly, and release required-ci counts only main or dispatch Security Audit runs (D75).
 - `loki serve --help` and the docs now point to `loki` or `loki control serve` for the UI; `loki serve` stays a deprecated alias of `loki api start` (the dashboard API, not the Control Plane) (D65-UI-NAMING).
 - `loki control` help and the bash fallback now match the bun route: the Control Plane is on by default, `LOKI_CONTROL=0` turns it off, and the fallback names bun as required instead of demanding `LOKI_CONTROL=1` (D65-UI-NAMING-2).
 - `loki` with no arguments now opens the Control Plane (set `LOKI_CONTROL_DEFAULT=0` for the previous dashboard).

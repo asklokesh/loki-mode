@@ -417,11 +417,14 @@ jobs:
             # Push runs only, EXCEPT Security Audit, which also accepts a
             # workflow_dispatch run (E-87: lets a tree whose VERSION is already
             # bumped publish after an audit fix, since a VERSION push cannot be
-            # re-created). Tests and Bun Parity stay push-only. A pull_request
+            # re-created). Tests and Bun Parity stay push-only. D75: a Security
+            # Audit run counts only if head_branch is main or it was a dispatch,
+            # because a train/** run scans only its range and must never stand
+            # in for the full-history scan (also covers the parent reuse path). A pull_request
             # run at the same head_sha tested a different merge ref and must
             # never satisfy this.
             gh api "repos/$REPO/actions/runs?head_sha=$1&per_page=100" \
-              --jq '.workflow_runs[] | select(.event=="push" or (.event=="workflow_dispatch" and .name=="Security Audit")) | "\(.name)\t\(.status)\t\(.conclusion)\t\(.created_at)"' 2>/dev/null || true
+              --jq '.workflow_runs[] | select(.event=="push" or (.event=="workflow_dispatch" and .name=="Security Audit")) | select(.name!="Security Audit" or .head_branch=="main" or .event=="workflow_dispatch") | "\(.name)\t\(.status)\t\(.conclusion)\t\(.created_at)"' 2>/dev/null || true
           }
 
           audit_verdict() {
