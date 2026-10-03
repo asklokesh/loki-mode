@@ -4,7 +4,7 @@
 #
 # Targeted coverage for the feature-branch-by-default lifecycle in
 # autonomy/run.sh: setup_agent_branch(), commit_session_changes(), and
-# create_session_pr(). Reference: docs/BRANCH-LIFECYCLE-PLAN.md "## SDET test
+# create_session_pr(). Reference: the removed BRANCH-LIFECYCLE-PLAN (see git history) "## SDET test
 # plan" (tests 1-10).
 #
 # WHY EXTRACT, NOT SOURCE autonomy/run.sh: sourcing run.sh runs main() and the

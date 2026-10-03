@@ -1,3 +1,9 @@
+---
+date: 2026-06-19
+status: historical
+note: Historical record, last changed 2026-06-19. Superseded by Loki 10; kept for reference only.
+---
+
 # Unified Config-File Plan (FEAT-CONFIG, task #691)
 
 Status: design for implementation. Build target: POST-v7.73.0 main (the v7.73.0

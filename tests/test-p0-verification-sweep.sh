@@ -45,7 +45,6 @@ DOC_SET=(
     "SKILL.md"
     "CLAUDE.md"
     "plugins/loki-mode/README.md"
-    "wiki/Quality-Gates.md"
     "wiki/Environment-Variables.md"
     "wiki/Home.md"
     "wiki/CLI-Reference.md"
@@ -138,7 +137,7 @@ assert_doc_absent_fixed "no 'min_coverage: 80% # Never drop' line in doc set" "m
 # ===========================================================================
 # P0-2: phantom guardrails removed + honest gate count (plan sections 3, 9).
 # After Slice B: zero live "Input Guardrails" / "Output Guardrails" / "11 gates"
-# in the doc set; "8 gates" present in quality-gates.md + wiki/Quality-Gates.md.
+# in the doc set; "8 gates" present in quality-gates.md.
 # ===========================================================================
 echo "--- P0-2: phantom guardrails removed + 8-gate count ---"
 assert_doc_absent_fixed "no live 'Input Guardrails' in doc set"  "Input Guardrails"

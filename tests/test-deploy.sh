@@ -4,7 +4,7 @@
 #
 # Targeted coverage for `loki deploy` in autonomy/loki: the advisory, PRINT-ONLY
 # deploy command printer + CI/CD-aware git-PR precedence.
-# Reference: docs/DEPLOY-PLAN.md SS5 + docs/BRANCH-LIFECYCLE-PLAN.md (Change B
+# Reference: docs/DEPLOY-PLAN.md SS5 + the removed BRANCH-LIFECYCLE-PLAN (see git history) (Change B
 # deploy tests).
 #
 # WHY DRIVE THE REAL BINARY (not extract+source): cmd_deploy lives in the

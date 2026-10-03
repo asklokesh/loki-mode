@@ -7,7 +7,7 @@ dashboard/telemetry.py:generic-api-key:28
 # Reviewed product/configuration prose; these values are feature flags and
 # iteration settings, not credentials.
 SKILL.md:generic-api-key:10
-docs/CONFIG-FILE-PLAN.md:generic-api-key:362
+docs/history/v8-config-plan.md:generic-api-key:368
 
 # Reviewed synthetic test and fixture values. Each is deliberately secret-shaped
 # so the corresponding scanner, redaction, policy, or lifecycle test is

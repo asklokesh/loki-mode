@@ -5,7 +5,7 @@
 # Coverage for `loki start --config <path>` (aliases --vars / --env-file): the
 # canonical LOKI_CONFIG_MAP + shared loki_config_export_key precedence helper +
 # the .env / YAML / JSON parsers + ${VAR} expansion + raw-secret detection +
-# `config example|schema|validate`. Reference: docs/CONFIG-FILE-PLAN.md SS7.
+# `config example|schema|validate`. Reference: docs/history/v8-config-plan.md SS7.
 #
 # TWO OBSERVATION STRATEGIES (both honest, neither vacuous):
 #  1. UNIT: config-map.sh is side-effect-free on source, so the .env parser, the

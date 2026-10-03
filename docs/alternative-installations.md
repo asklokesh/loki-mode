@@ -89,7 +89,7 @@ jobs:
 | `github_token` | (required) | GitHub token for PR comments |
 | `prd_file` | | Path to PRD file (for fix/test modes) |
 
-**Engine:** every mode runs the Loki 10 engine through `loki start "<task>" --no-pr --provider <name> --max-cost <usd>` (the same path as `loki start owner/repo#N`), with `LOKI_ENGINE=v10`. The PRD file or PR diff is folded into the task text. The action never opens a PR itself (Rule of Two). A run that crosses the cap ends BUDGET_STOP (exit 3). The legacy `--simple` path is no longer used.
+**Engine:** every mode runs the Loki 10 engine through `loki start "<task>" --no-pr --provider <name> --max-cost <usd>` (the same path as `loki start owner/repo#N`). The PRD file or PR diff is folded into the task text. The action never opens a PR itself (Rule of Two). A run that crosses the cap ends BUDGET_STOP (exit 3). The legacy `--simple` path is no longer used.
 
 **Modes:**
 

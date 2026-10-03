@@ -320,7 +320,7 @@ fi
 # what else the page still tells a reader.
 #
 # Historical surfaces (CHANGELOG, artifacts/, dated plans such as
-# docs/V8-AGENT-SDK-PLAN.md and the dated docs/competitive/ reports) are
+# docs/history/v8-agent-sdk-plan.md and the dated docs/competitive/ reports) are
 # deliberately NOT listed -- a past snapshot describing the surface AT THAT TIME
 # is accurate and must not be rewritten. docs/RARV-C-CHANGE-MAP.md is historical
 # for the same reason: its own line 3 reads "SUPERSEDED ... Kept as history", so

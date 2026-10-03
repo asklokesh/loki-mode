@@ -12,7 +12,7 @@ import { dedupeChangedFiles, isLiveBinding, parseSpec } from '../../src/cockpit/
 // ---------------------------------------------------------------------------
 
 test.describe('phase map', () => {
-  // Every row of the table in docs/EXECUTION-COCKPIT-PLAN.md section 4.
+  // Every row of the table in the removed EXECUTION-COCKPIT-PLAN (see git history) section 4.
   const TABLE: [string, string][] = [
     ['idle', 'not-started'],
     ['starting', 'understanding'],

@@ -94,7 +94,7 @@ loki owner/repo#123
 
 The v10 engine accepts a quoted multi-word task, a GitHub, GitLab or Jira issue reference, `status`, `verify`, `dashboard`, and other subcommands. Flags (`loki-ts/src/engine10/cli.ts` USAGE): `--no-pr` builds and verifies without opening a pull request, `--deep` requests the deep verify pass and a longer implement budget, `--provider <name>` picks the coding provider, `--max-cost <usd>` sets the per-run cost cap (default $100.00 when an API key is set, no dollar cap on a subscription run where the start line adds `subscription: no dollar cap; usage counts against your plan limits`; or `budgets.per_run` in `loki.yaml`; the flag wins; the start line prints it as `cap $100.00 (default)`; reaching it ends the run BUDGET_STOP, exit 3) (`--json` and `--verbose` are also parsed by the supervisor, see [Quiet output](#quiet-output)). The engine needs Bun; without it the command exits 1 with a message and installation instructions.
 
-**Legacy engine (being removed).** The previous engine still ships in 10.6.6 and is reachable with `LOKI_ENGINE=legacy` or `loki legacy <args>`. `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word task>"` run on Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`; `loki start ./prd.md`, a flag-first call and a one-word start stay on the legacy engine. For many issues use `loki backlog owner/repo --all|--label X|--issues N,N` (many issues, N in parallel, each on a `loki/backlog-N` worktree branch) instead. Legacy removal is planned and resumes on 2026-10-07; see [docs/v10/LEGACY-REMOVAL.md](docs/v10/LEGACY-REMOVAL.md). Sections below marked "legacy" describe features that run only on that engine.
+**Legacy engine (being removed).** Migration note: the previous engine is being removed and has no engine switch; use `loki "<task>"` and `loki owner/repo#N`. `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word task>"` run on Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`; `loki start ./prd.md`, a flag-first call and a one-word start stay on the legacy engine. For many issues use `loki backlog owner/repo --all|--label X|--issues N,N` (many issues, N in parallel, each on a `loki/backlog-N` worktree branch) instead. Legacy removal is planned and resumes on 2026-10-07; see [docs/v10/LEGACY-REMOVAL.md](docs/v10/LEGACY-REMOVAL.md). Sections below marked "legacy" describe features that run only on that engine.
 
 ### The state machine
 
@@ -160,7 +160,7 @@ The run cap is 900s (2700s with `--deep`, `DEFAULT_CAP_S` and `DEEP_CAP_S` in `t
 
 A finished run prints a short summary (see [Quiet output](#quiet-output), which also shows an example) whose `NOT PROVEN` line is never empty by omission: deep checks deferred to the deep-verify pass are always listed there.
 
-`loki status [run-id]` and `loki verify [run-id]` are built on the v10 path (bare `loki verify` follows the newest run, v10 or legacy). `loki dashboard` and `loki status` reach the v10 commands with `LOKI_ENGINE=v10`. Two-way Slack (`loki slack serve`) is on by default and documented in [docs/slack.md](docs/slack.md); outbound notifications use `LOKI_SLACK_WEBHOOK_URL`.
+`loki status [run-id]` and `loki verify [run-id]` are built on the v10 path (bare `loki verify` follows the newest run, v10 or legacy). Two-way Slack (`loki slack serve`) is on by default and documented in [docs/slack.md](docs/slack.md); outbound notifications use `LOKI_SLACK_WEBHOOK_URL`.
 
 ## Run from Jira or Linear
 

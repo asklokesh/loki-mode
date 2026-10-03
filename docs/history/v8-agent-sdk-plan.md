@@ -1,3 +1,9 @@
+---
+date: 2026-07-14
+status: historical
+note: Historical record, last changed 2026-07-14. Superseded by Loki 10; kept for reference only.
+---
+
 # V8: SDK-Based Runtime Migration Plan
 
 Status: IMPLEMENTED (shipped on feature/v8-agent-sdk as v8.0.0 + v8.1; kept as design history)

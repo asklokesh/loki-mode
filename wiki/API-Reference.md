@@ -512,7 +512,7 @@ curl -X POST http://localhost:57374/api/checkpoints \
 }
 ```
 
-See [[Checkpoints]] for CLI usage, directory structure, and retention policy.
+
 
 ---
 
@@ -1272,7 +1272,6 @@ No endpoints documented in this page were found missing from `dashboard/server.p
 
 ## See Also
 
-- [[Checkpoints]] - Checkpoint system documentation
 - [[CLI Reference]] - Command-line interface
 - [[Configuration]] - Configuration options
 - [[Enterprise Features]] - Enterprise authentication and audit

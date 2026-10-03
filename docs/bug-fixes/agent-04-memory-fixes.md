@@ -2,7 +2,7 @@
 
 ## Scope
 Comprehensive review and fix of all 16 Python modules in `memory/` (~10K lines).
-Addressed bugs from `docs/BUG-AUDIT-v6.61.0.md` plus newly discovered issues.
+Addressed bugs from `docs/history/v6.61.0-audit.md` plus newly discovered issues.
 
 ## Bugs Fixed
 

@@ -4,9 +4,8 @@ This index maps each historical plan doc to its status. Plan docs are kept as de
 
 | Plan | Status | Notes |
 |---|---|---|
-| BRANCH-LIFECYCLE-PLAN.md | shipped | Feature-branch-by-default + CI/CD-aware deploy; `feature_branch` logic in `autonomy/run.sh`. |
 | BUILD-HUD-PLAN.md | shipped | Live in-terminal build HUD; `LOKI_HUD` / `[HUD]` in `autonomy/run.sh`, CHANGELOG "Live in-terminal build HUD". |
-| CONFIG-FILE-PLAN.md | shipped | Unified config file; `--config` / `--vars` / `--env-file` flags in `autonomy/loki`. |
+| history/v8-config-plan.md | shipped | Unified config file; `--config` / `--vars` / `--env-file` flags in `autonomy/loki`. |
 | CRASH-REPORTING-PLAN.md | shipped | Crash-reporting + auto-fix; `cmd_crash()` in `autonomy/loki` (`loki crash`). |
 | DEPLOY-PLAN.md | shipped | `loki deploy` advisory print-only; CHANGELOG "`loki deploy`: advisory, print-only deploy guidance". |
 | FAILURE-MEMORY-PLAN.md | shipped | Failure-memory loop; `FailureMode` schema in `memory/schemas.py`. |
@@ -29,5 +28,5 @@ This index maps each historical plan doc to its status. Plan docs are kept as de
 | UNCERTAINTY-ESCALATION-PLAN.md | shipped | Uncertainty-gated escalation (v7.19.2); uncertainty escalation logic in `autonomy/run.sh`. |
 | VERIFIED-COMPLETION-PLAN.md | shipped | Verified completion (v7.19.1); verified-completion gate in `autonomy/run.sh` + `autonomy/completion-council.sh`. |
 | WELCOME-OPENER-PLAN.md | shipped | Welcome opener ("magic opener"); `welcome` path in `autonomy/loki`. |
-| V8-AGENT-SDK-PLAN.md | shipped | The v8 Anthropic SDK runtime migration; shipped on `feature/v8-agent-sdk` as v8.0.0 + v8.1 (`loki-ts/src/runner/sdk_invoker.ts`, `sdk_mode.ts`, CHANGELOG v8.0.0/v8.1). Feature-branch-only, not yet merged to main. |
+| history/v8-agent-sdk-plan.md | shipped | The v8 Anthropic SDK runtime migration; shipped on `feature/v8-agent-sdk` as v8.0.0 + v8.1 (`loki-ts/src/runner/sdk_invoker.ts`, `sdk_mode.ts`, CHANGELOG v8.0.0/v8.1). Feature-branch-only, not yet merged to main. |
 | V8-SDK-RESEARCH-RAW.md | shipped | Research notes underpinning V8-AGENT-SDK-PLAN; design history for the v8 SDK arc. |

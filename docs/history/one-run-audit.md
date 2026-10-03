@@ -1,3 +1,9 @@
+---
+date: 2026-09-14
+status: historical
+note: Historical record, last changed 2026-09-14. Superseded by Loki 10; kept for reference only.
+---
+
 # One-Run Completion Audit
 
 Empirical audit of whether ONE RUN completes the job today. Read against
