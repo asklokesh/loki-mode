@@ -2061,3 +2061,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Train/97 pushed at 80665d4ca (P7-SCALAR-PIN d7711bb0e plus docs); CI waiting on Tests, Bun Parity, Coverage, Security Audit.
 - Opus BLOCK: SEAL-FORGED-LINES r5 f02531df5, B1 reproduced: a test name with \r, U+2028 or U+2029 is unparsed by SPEC_MARK and silently dropped, freeing a forged pass slot (PASS on default and spec; TAP holds). D69 ruling: any mark-prefixed line that does not fully parse is ambiguous, NOT VERIFIED. r6 building (sonnet).
 - W1-S2 r8 05be797c5 in opus review. D61-11 r3 builder over budget (451 min), finishing its mutation check; re-slice if it misses this cycle. P0-CORE-BUDGET TL r2 still open.
+
+## 2026-10-03T12:20Z CoS
+- v10.6.13 (train/97, af05ca299) released by train-cycle at 12:08Z; release.yml still in_progress at 12:18Z, npm latest still 10.6.12.
+- Merged on local main since: PO3 HELP-ALLCMDS, HEAL-DOC, PAUSED-TTY, MEM-INDEX, SKILL-RUNTIME-DOC, COUNCIL-TODO; next train cuts after npm promotes 10.6.13.
+- PO4 refill landed 9 cards (BOARD a57e57635); 7 sonnet builders dispatched; CLI-SUITES-REG waits on START-REPO-DIR-FIX, TODO-PLURAL (HIGH) waits on COUNCIL-TEST-TMP.
+- W1-S2 r11 opus BLOCK (unicode names in plain import list leak; r10 same); r12 fix building. SEAL r7 11019f987 113/0, in opus re-review.
