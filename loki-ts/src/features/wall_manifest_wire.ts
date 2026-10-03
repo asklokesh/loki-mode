@@ -42,8 +42,12 @@ export function wallManifestFor(repoDir: string, tree: string | undefined, task:
     const all = ls && blobEntries(ls);
     if (!all) return null;
     const low = task.toLowerCase();
-    // A file the task names, in any directory (test directories included), gets signatures and is never a style example.
-    const named = all.filter((e) => SOURCE.test(e.path) && (low.includes(basename(e.path).toLowerCase()) || low.includes(basename(e.path).replace(/\.[^.]*$/, "").toLowerCase()))).slice(0, MAX_NAMED);
+    // A file the task names (whole-token basename, path or stem), in any directory, is never a style example. The exclusion
+    // set takes EVERY match before any cap; only the signature list is capped, exact basename or path matches first.
+    const token = (n: string): boolean => new RegExp(`(?<![A-Za-z0-9_])${n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`).test(low);
+    const matched = all.filter((e) => SOURCE.test(e.path) && (token(basename(e.path)) || token(e.path) || token(basename(e.path).replace(/\.[^.]*$/, ""))));
+    const exact = (e: Entry): boolean => token(e.path) || token(basename(e.path));
+    const named = [...matched.filter(exact), ...matched.filter((e) => !exact(e))].slice(0, MAX_NAMED);
     const tests = all.filter((e) => TESTISH.test(e.path)).slice(0, MAX_FILES), listed = tests.filter((e) => !SOURCE.test(e.path));
     const want = [...new Set([...all.filter((e) => CONFIG.test(e.path)), ...tests.filter((e) => SOURCE.test(e.path)), ...named])];
     const cat = git(repoDir, ["cat-file", "--batch"], want.map((e) => e.sha).join("\n") + "\n");
@@ -60,7 +64,7 @@ export function wallManifestFor(repoDir: string, tree: string | undefined, task:
     }
     if (at !== cat.length) return null;
     // Non-source files under test directories appear in the layout by name only, never with content.
-    const text = buildWallManifest([...files, ...listed.map((e) => ({ path: e.path, content: "" }))], named.map((e) => e.path));
+    const text = buildWallManifest([...files, ...listed.map((e) => ({ path: e.path, content: "" }))], named.map((e) => e.path), matched.map((e) => e.path));
     return { text, sha256: createHash("sha256").update(text).digest("hex") };
   } catch { return null; }
 }

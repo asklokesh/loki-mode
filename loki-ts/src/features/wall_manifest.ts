@@ -16,7 +16,7 @@ const MAX_LAYOUT = 60;
 const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
 // A style example needs a test FILENAME and a parseable source extension; a test directory alone never qualifies (W1-S2 r3).
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.(py|go)$/;
-const EXAMPLE_EXT = /\.(py|go|[cm]?[jt]sx?)$/;
+const EXAMPLE_EXT = /\.(py|[cm]?[jt]sx?)$/;
 const baseOf = (p: string): string => p.split("/").pop() ?? p;
 const norm = (s: string): string => s.replace(/\r\n?/g, "\n");
 const stemOf = (p: string): string => (p.split("/").pop() ?? p).replace(/\.[^.]*$/, "");
@@ -722,10 +722,13 @@ function safeTs(content: string, path: string): string[] {
   try { return tsAmbiguous(norm(content), jsx) ? [] : tsSignatures(content, jsx); } catch { return []; }
 }
 
-export function buildWallManifest(files: readonly ManifestFile[], taskModules: readonly string[]): string {
+// taskModules: the (capped) modules whose signatures print. alsoNamed: EVERY task-matched path before any cap; it only
+// feeds the example exclusion (basenames, stems, import checks), never the signature list (W1-S2 r4).
+export function buildWallManifest(files: readonly ManifestFile[], taskModules: readonly string[], alsoNamed: readonly string[] = []): string {
   const all = [...files].sort(byPath).map((f) => ({ path: f.path.replace(/^\.\//, ""), content: norm(f.content) }));
   const mods = [...new Set(taskModules.map((m) => m.replace(/^\.\//, "")))].sort();
-  const stems = new Set(mods.map(stemOf));
+  const excl = [...new Set([...mods, ...alsoNamed.map((m) => m.replace(/^\.\//, ""))])];
+  const stems = new Set(excl.map(stemOf));
   const tests = all.filter((f) => TEST_PATH.test(f.path));
   const out: string[] = ["# wall manifest (D77): signatures only, from the base tree", "", "## runner", ...runnerSection(all)];
   out.push("", "## test layout", ...tests.slice(0, MAX_LAYOUT).map((f) => f.path));
@@ -736,7 +739,7 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
     out.push("", `## signatures: ${path}`, ...(path.endsWith(".py") ? pySignatures(f.content) : safeTs(f.content, path)));
   }
   out.push("", "## style examples");
-  const named = new Set(mods.flatMap((m) => [baseOf(m), stemOf(m)]));
+  const named = new Set(excl.flatMap((m) => [baseOf(m), stemOf(m)]));
   const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path)) && !named.has(stemOf(t.path)) && !importsNamed(t.path, t.content, stems);
   for (const f of tests.filter(eligible).slice(0, MAX_EXAMPLES)) {
     out.push(`--- example: ${f.path}`, ...f.content.split("\n").slice(0, EXAMPLE_LINES));

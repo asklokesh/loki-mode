@@ -680,3 +680,47 @@ describe("style examples need a test filename (D77, W1-S2 r3)", () => {
     expect(t).toContain("tests/data.json");
   });
 });
+
+// D77 / W1-S2 r4: the example exclusion takes EVERY task-matched file before any cap, matched as whole tokens.
+describe("named-file cap never weakens the example exclusion (D77, W1-S2 r4)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function manifest(files: Record<string, string>, task: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r4-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    try {
+      g("init", "-q");
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); }
+      g("commit", "-q", "-m", "base");
+      return wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), task, ON)!.text;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const T = (body: string, imp = ""): string => `import { test } from "bun:test";\n${imp}test("t", () => { /* ${body} */ });\n`;
+  const idx = (n: string): Record<string, string> => ({ [`src/${n}/index.ts`]: `export const ${n} = 1;\n` });
+  const FIVE = ["a", "b", "c", "d", "e", "f"].reduce((acc, n) => ({ ...acc, ...idx(n) }), {} as Record<string, string>);
+
+  test("A2: common stems cannot crowd out the real target: its signatures print and its importing test is not an example", () => {
+    const files: Record<string, string> = { "package.json": '{"scripts":{"test":"bun test"}}', "src/zengine.ts": "export function zrun(n: number): number {\n  return n;\n}\n", "tests/zengine.test.ts": T("BODY_A2_IMPORTER", 'import { zrun } from "../src/zengine";\n'), "tests/other.test.ts": T("other_style") };
+    for (const n of ["api", "app", "errors", "types", "util"]) files[`src/${n}.ts`] = `export const ${n} = 1;\n`;
+    const t = manifest(files, "fix the app api errors in zengine.ts so types utility code works");
+    expect(t).toContain("export function zrun(n: number): number");
+    expect(t).not.toContain("BODY_A2_IMPORTER");
+    expect(t).toContain("other_style");
+  });
+
+  test("A: more same-name modules than the signature cap: a test importing one of them is never an example", () => {
+    const t = manifest({ ...FIVE, "tests/f.test.ts": T("BODY_A_IMPORTER", 'import { f } from "../src/f/index";\n'), "tests/other.test.ts": T("other_style") }, "update index.ts");
+    expect(t).not.toContain("BODY_A_IMPORTER");
+    expect(t).toContain("other_style");
+  });
+
+  test("J: a task-named test file is never an example even when same-name modules fill the cap", () => {
+    const t = manifest({ ...FIVE, "tests/engine.test.ts": T("BODY_J_NAMED"), "tests/other.test.ts": T("other_style") }, "update index.ts and engine.test.ts");
+    expect(t).not.toContain("BODY_J_NAMED");
+    expect(t).toContain("other_style");
+  });
+
+  test("stems match whole tokens only: 'application' does not name app.ts, so a test importing it stays an example", () => {
+    const t = manifest({ "src/app.ts": "export const app = 1;\n", "tests/app.test.ts": T("BODY_TOKEN_STYLE", 'import { app } from "../src/app";\n') }, "improve the application");
+    expect(t).toContain("BODY_TOKEN_STYLE");
+  });
+});
