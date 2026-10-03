@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Docs
+- loki-seal README Known limits now names four coverage limits: empty or early-return tests still count, assertions in later helpers still count, same-name or keyword matches collide across files, and a test can forge a pass by printing runner-format lines (A-04d).
+
 ### Fixed
 - When `loki start` refuses to resume the recorded agent branch because checking it out would overwrite one of your gitignored files, the warning now names that file and the branch where the earlier commits stay, instead of only saying the branch "could not be checked out" (S-233).
 - The standalone dashboard receipts list now shows a partly priced run's cost as "at least $X.XX" (only when `/api/proofs` reports `cost_partial: true`) instead of presenting a lower bound as a complete total (PO-STANDALONE-COST-1).
