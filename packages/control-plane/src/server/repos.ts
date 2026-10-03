@@ -1,5 +1,6 @@
 // local_repos: the server-side map from source_id to a real repo path. Filled only by local discovery (never by /v1/ingest);
 // the path never leaves the server. The API exposes display names only.
+import { basename, resolve } from "node:path";
 import type { Hono } from "hono";
 import type { Db } from "../db/migrate.ts";
 import { localRepos } from "../db/schema.ts";
@@ -22,6 +23,8 @@ export function repoNames(db: Db): string[] {
 }
 
 /** GET /v1/repos. `act` is the loopback-only router; `peerIsLoopback` checks the real socket address. */
-export function mountRepos(act: Hono, db: Db, peerIsLoopback: (c: Parameters<Parameters<Hono["get"]>[1]>[0]) => boolean): void {
-  act.get("/v1/repos", (c) => peerIsLoopback(c) ? c.json({ repos: repoNames(db) }) : c.json({ error: "loopback only" }, 403));
+export function mountRepos(act: Hono, db: Db, peerIsLoopback: (c: Parameters<Parameters<Hono["get"]>[1]>[0]) => boolean, repoDir?: string): void {
+  // default_repo is the folder name of the directory the service was launched from (what a run with no repo chip uses); the path itself is never sent.
+  const defaultRepo = repoDir ? basename(resolve(repoDir)) || null : null;
+  act.get("/v1/repos", (c) => peerIsLoopback(c) ? c.json({ repos: repoNames(db), default_repo: defaultRepo }) : c.json({ error: "loopback only" }, 403));
 }

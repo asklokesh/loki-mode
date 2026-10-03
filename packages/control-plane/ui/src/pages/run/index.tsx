@@ -9,7 +9,7 @@ import { postRun } from "../compose/api";
 import { verifyRun, type VerifyResult } from "../receipts/api";
 import { fetchArtifact, fetchEvents, followStream, type RunEvent } from "./stream";
 import { buildTimeline } from "./timeline";
-import { clock, describeLine, elapsedLabel, notProvenItem, parseDiffFiles, stageProgress, UNMEASURED, type ChangedFile } from "./model";
+import { changedFilesFor, clock, describeLine, elapsedLabel, notProvenItem, receiptFacts, stageProgress, UNMEASURED, whyForRun } from "./model";
 
 export const NOT_MEASURED = UNMEASURED;
 const LOG_CAP = 2000;
@@ -123,21 +123,23 @@ function Section({ title, meta, children, testid }: { title: string; meta?: Reac
 }
 
 function ChangedFiles({ d, patch }: { d: RunDetailResponse; patch: string | null | undefined }) {
-  const files: ChangedFile[] | null = patch ? parseDiffFiles(patch) : null;
+  const got = changedFilesFor(patch, d.diff_stat);
   const names = d.files_touched ?? [];
-  const added = files?.reduce((n, f) => n + f.added, 0) ?? 0;
-  const removed = files?.reduce((n, f) => n + f.removed, 0) ?? 0;
+  const files = got?.files ?? null;
+  const added = files?.reduce((n, f) => n + (f.added ?? 0), 0) ?? 0;
+  const removed = files?.reduce((n, f) => n + (f.removed ?? 0), 0) ?? 0;
   const KIND = { added: ["+", "var(--cp-success-ink)"], deleted: ["-", "var(--cp-error-ink)"], modified: ["~", "var(--cp-warning-ink)"] } as const;
+  const count = (n: number | null, sign: string) => (n === null ? "binary" : `${sign}${n}`);
   return (
-    <Section title="Changed files" testid="run-diff" meta={files && files.length ? `${files.length} files, +${added} -${removed}` : names.length ? `${names.length} files touched` : undefined}>
+    <Section title="Changed files" testid="run-diff" meta={files && files.length ? `${files.length} files, +${added} -${removed}${got?.source === "git" ? " (from the receipt's commit range)" : ""}` : names.length ? `${names.length} files touched` : undefined}>
       {files && files.length ? (
         <ul style={{ listStyle: "none", margin: 0, padding: 0, fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>
           {files.map((f) => (
             <li key={f.path} data-testid="changed-file" style={{ display: "flex", gap: 10, padding: "3px 0" }}>
               <span style={{ color: KIND[f.kind][1], width: 12 }}>{KIND[f.kind][0]}</span>
               <span className="cp-trunc" style={{ flex: 1 }} title={f.path}>{f.path}</span>
-              <span style={{ color: "var(--cp-success-ink)" }}>+{f.added}</span>
-              <span style={{ color: "var(--cp-error-ink)" }}>-{f.removed}</span>
+              <span style={{ color: "var(--cp-success-ink)" }}>{count(f.added, "+")}</span>
+              <span style={{ color: "var(--cp-error-ink)" }}>{f.removed === null ? "" : count(f.removed, "-")}</span>
             </li>
           ))}
         </ul>
@@ -145,29 +147,54 @@ function ChangedFiles({ d, patch }: { d: RunDetailResponse; patch: string | null
         <ul style={{ listStyle: "none", margin: 0, padding: 0, fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>
           {names.map((n) => <li key={n} data-testid="changed-file" className="cp-trunc" title={n}>{n} <span style={{ color: "var(--cp-text-muted)" }}>(line counts {UNMEASURED})</span></li>)}
         </ul>
-      ) : <span data-testid="changed-files-unmeasured">{patch === undefined ? <Spinner label="Loading diff" /> : `Changed files ${UNMEASURED}: this run recorded no diff.`}</span>}
+      ) : <span data-testid="changed-files-unmeasured">{patch === undefined ? <Spinner label="Loading diff" /> : `Changed files ${UNMEASURED}: no diff or commit range could be read for this run.`}</span>}
     </Section>
   );
 }
 
-function Evidence({ d, source, run, receipt }: { d: RunDetailResponse; source: string; run: string; receipt: string | null | undefined }) {
+const short = (x: string | null | undefined, n = 12): string => (x ? x.slice(0, n) : UNMEASURED);
+
+function Row({ k, children, testid }: { k: string; children: ReactNode; testid: string }) {
+  return (
+    <div data-testid={testid} style={{ display: "flex", gap: 12, alignItems: "baseline", padding: "3px 0", borderBottom: "1px solid var(--cp-border)" }}>
+      <span style={{ width: 120, flexShrink: 0, color: "var(--cp-text-muted)" }}>{k}</span>
+      <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>{children}</span>
+    </div>
+  );
+}
+
+function Evidence({ d, source, run, receipt, receiptJson }: { d: RunDetailResponse; source: string; run: string; receipt: string | null | undefined; receiptJson: string | null | undefined }) {
   const [v, setV] = useState<{ busy: boolean; res?: VerifyResult; error?: string }>({ busy: false });
+  const [showRaw, setShowRaw] = useState(false);
   const sha = d.receipt?.sha256 ?? null;
+  const facts = receiptFacts(receiptJson);
   const go = async () => {
     setV({ busy: true });
     try { setV({ busy: false, res: await verifyRun(source, run) }); } catch (e) { setV({ busy: false, error: (e as Error).message }); }
   };
+  const base = facts?.base ?? d.diff_stat?.base ?? null, head = facts?.head ?? d.diff_stat?.head ?? null;
+  const sig = !d.receipt ? UNMEASURED : !d.receipt.signed ? "unsigned" : d.sig_checked ? "signed, signature checked" : "signed, signature not checked";
+  const ck = facts?.checks;
   return (
-    <Section title="Evidence and receipt" testid="run-receipt" meta={sha ? `sha256 ${sha.slice(0, 16)}, ${d.receipt?.signed ? "signed" : "unsigned"}` : "no receipt"}>
+    <Section title="Evidence and receipt" testid="run-receipt" meta={sha ? `sha256 ${sha.slice(0, 16)}` : "no receipt"}>
+      <div data-testid="receipt-rows" style={{ display: "flex", flexDirection: "column", fontSize: "var(--cp-text-base)" }}>
+        <Row k="Verdict" testid="rr-verdict">{facts?.verdict ?? d.receipt?.verdict ? `receipt says ${facts?.verdict ?? d.receipt?.verdict}` : UNMEASURED}</Row>
+        <Row k="Diff hash" testid="rr-diff"><code title={facts?.diffSha ?? undefined}>{short(facts?.diffSha, 16)}</code></Row>
+        <Row k="Base" testid="rr-base"><code title={base ?? undefined}>{short(base)}</code></Row>
+        <Row k="Head" testid="rr-head"><code title={head ?? undefined}>{short(head)}</code></Row>
+        <Row k="Signature" testid="rr-sig">{sig}</Row>
+        <Row k="Checks run" testid="rr-checks">{ck ? (ck.total === 0 ? "none recorded" : `${ck.total} run: ${ck.pass} passed, ${ck.fail} failed${ck.notRun ? `, ${ck.notRun} not run` : ""}`) : UNMEASURED}</Row>
+      </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Button variant="secondary" size="sm" data-testid="run-verify" disabled={!sha || v.busy} onClick={() => void go()}><ShieldCheck size={13} aria-hidden="true" /> {v.busy ? "Verifying" : "Verify"}</Button>
+        <Button variant="ghost" size="sm" data-testid="receipt-raw-toggle" aria-pressed={showRaw} onClick={() => setShowRaw((x) => !x)}>{showRaw ? "Hide raw" : "Show raw"}</Button>
         {!sha ? <span style={{ color: "var(--cp-text-muted)" }}>No receipt to verify {UNMEASURED}.</span> : null}
         {v.res ? <span data-testid="run-verify-result" role="status"><VerdictBadge verdict={v.res.verdict} /> {v.res.reasons[0] ?? ""}</span> : null}
         {v.error ? <span role="alert" data-testid="run-verify-error" style={{ color: "var(--cp-error-ink)" }}>{v.error}</span> : null}
       </div>
-      {receipt === undefined ? <Spinner label="Loading receipt" /> : receipt === null ? <div>Receipt text not available for this run.</div> : (
-        <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-sm)", maxHeight: 280, overflow: "auto", color: "var(--cp-text-2)" }}>{receipt}</pre>
-      )}
+      {showRaw ? (receipt === undefined ? <Spinner label="Loading receipt" /> : receipt === null ? <div data-testid="receipt-raw">Receipt text not available for this run.</div> : (
+        <pre data-testid="receipt-raw" style={{ margin: 0, whiteSpace: "pre-wrap", fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-sm)", maxHeight: 280, overflow: "auto", color: "var(--cp-text-2)" }}>{receipt}</pre>
+      )) : null}
     </Section>
   );
 }
@@ -232,6 +259,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
   const events = useEvents(source, run);
   const patch = useArtifact(source, run, "diff.patch");
   const receipt = useArtifact(source, run, "receipt.md");
+  const receiptJson = useArtifact(source, run, "receipt.json");
   const load = useCallback(() => { getRun(source, run).then((x) => { setD(x); setErr(null); }, (e: Error) => setErr(e.message)); }, [source, run]);
   const inProgress = !d || d.status === "running" || d.verdict === null;
   useEffect(() => {
@@ -248,6 +276,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
   const blocked = !!d.blocked_question;
   const running = d.status === "running" || (d.verdict === null && !d.ended_at);
   const prog = stageProgress(d.stages);
+  const why = running ? null : whyForRun(d, events);
   const canRetry = !running && !!d.issue_ref;
   const doRetry = async () => {
     setRetry({ busy: true });
@@ -268,6 +297,20 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
         {renderSlot ? null : <Button variant="secondary" size="sm" data-testid="run-retry" disabled={!canRetry || retry.busy} title={running ? "The run is still in progress" : d.issue_ref ? "Start this issue again" : `No issue reference recorded ${UNMEASURED}`} onClick={() => void doRetry()}><RotateCcw size={13} aria-hidden="true" /> Retry</Button>}
         {retry.msg ? <span role={retry.error ? "alert" : "status"} data-testid="run-retry-msg" style={{ color: retry.error ? "var(--cp-error-ink)" : "var(--cp-text-2)", fontSize: "var(--cp-text-base)" }}>{retry.msg}</span> : null}
       </header>
+      {why ? <p data-testid="run-why" style={{ margin: "-8px 0 0", fontSize: "var(--cp-text-md)", color: "var(--cp-text-2)", overflowWrap: "anywhere" }}><strong style={{ color: "var(--cp-text)" }}>Why:</strong> {why}</p> : null}
+
+      {d.blocked_question ? <ReplyPrompt source={source} run={run} question={d.blocked_question} onSent={load} /> : null}
+
+      <div data-testid="run-summary" style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 440px), 1fr))", alignItems: "start" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+          <ChangedFiles d={d} patch={patch} />
+          <Evidence d={d} source={source} run={run} receipt={receipt} receiptJson={receiptJson} />
+        </div>
+        <div data-testid="run-aside" style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
+          <NotProven d={d} />
+          <PullRequest d={d} />
+        </div>
+      </div>
 
       <div className="cp-term" data-testid="run-panel">
         <div className="cp-term-bar">
@@ -283,15 +326,6 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
           <span data-testid="run-progress">{prog.m ? `stage ${prog.n} / ${prog.m}` : `stage ${UNMEASURED}`}</span>
           {running ? <span data-testid="run-live" style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--cp-term-green)" }}><Dot color="var(--cp-term-green)" pulse /> live</span> : <span data-testid="run-ended">{d.ended_at ? "run ended" : `end time ${UNMEASURED}`}</span>}
         </div>
-      </div>
-
-      {d.blocked_question ? <ReplyPrompt source={source} run={run} question={d.blocked_question} onSent={load} /> : null}
-
-      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 420px), 1fr))", alignItems: "start" }}>
-        <ChangedFiles d={d} patch={patch} />
-        <Evidence d={d} source={source} run={run} receipt={receipt} />
-        <NotProven d={d} />
-        <PullRequest d={d} />
       </div>
 
       <div>

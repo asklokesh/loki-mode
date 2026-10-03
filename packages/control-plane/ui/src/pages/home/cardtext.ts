@@ -21,7 +21,13 @@ export function timeAgo(iso: string | null | undefined, now: number): string {
 
 const cost = (r: RunRow): string => (r.cost_usd !== null && r.cost_usd !== undefined ? fmtUsd(r.cost_usd) : r.partial_usd ? `at least ${fmtUsd(r.partial_usd)}` : `cost ${UNMEASURED}`);
 // An empty list means no diff was recorded, which is a gap, not zero files changed.
-const files = (r: RunRow): string => (Array.isArray(r.files_touched) && r.files_touched.length > 0 ? `${r.files_touched!.length} file${r.files_touched!.length === 1 ? "" : "s"} touched` : `files ${UNMEASURED}`);
+// A finished run's diff comes from the receipt's commit range (diff_stat); the events list wins when present.
+const files = (r: RunRow): string => {
+  const n = Array.isArray(r.files_touched) && r.files_touched.length > 0 ? r.files_touched.length : r.diff_stat?.files.length ?? 0;
+  if (n === 0) return `files ${UNMEASURED}`;
+  const ds = r.diff_stat && r.diff_stat.files.length === n ? `, +${r.diff_stat.added} -${r.diff_stat.removed}` : "";
+  return `${n} file${n === 1 ? "" : "s"} touched${ds}`;
+};
 
 /** Two plain-English lines for a card. A blocked run quotes the question when the caller has it. */
 export function outcome(r: RunRow, blockedQuestion?: string | null): [string, string] {

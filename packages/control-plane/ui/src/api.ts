@@ -49,6 +49,8 @@ export interface RunRow {
   elapsed_s?: number | null;
   current_stage?: string | null;
   files_touched?: string[];
+  /** Receipt base..head numstat (server-side git); null when unmeasurable or the run is still running. */
+  diff_stat?: { base: string; head: string; files: { path: string; added: number | null; removed: number | null }[]; added: number; removed: number } | null;
 }
 
 /** GET /v1/runs: total is the filtered count, next_cursor an opaque offset. */
@@ -125,7 +127,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 /** Import the server's own repo (.loki/runs) through the existing backfill. */
 export const importRuns = (): Promise<{ runs: number; sent: number; failed: string[] }> => postJson("/v1/import", {});
-export const listRepos = (): Promise<{ repos: string[] }> => get("/v1/repos");
+export const listRepos = (): Promise<{ repos: string[]; default_repo?: string | null }> => get("/v1/repos");
 
 /** Subscribe to the runs-list SSE stream (GET /v1/stream). Uses fetch so the bearer header can be sent; reconnects until stop() is called. */
 export function watchRuns(onChange: () => void, retryMs = 3000): () => void {

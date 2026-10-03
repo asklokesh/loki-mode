@@ -4,6 +4,7 @@ import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 import type { Db } from "../db/migrate.ts";
 import { events, runs } from "../db/schema.ts";
 import { blockedQuestion } from "./answer.ts";
+import { diffStatFor } from "./diffstat.ts";
 import { effectiveVerdict, pubkeysFromEnv, sealedPrefix, SUCCESS_VERDICTS, verifyRunIntegrity } from "./integrity.ts";
 
 const str = (x: unknown): string | null => (typeof x === "string" ? x : null);
@@ -65,7 +66,8 @@ export function taskTitle(db: Db, sourceId: string, runId: string): string | nul
 // A run with no run.completed yet is running: add its live fields (stage, files) from the stored events.
 const withLive = (db: Db, r: typeof runs.$inferSelect) => {
   const p = { ...parseRun(r), title: taskTitle(db, r.sourceId, r.runId) };
-  return r.endedAt ? { ...p, current_stage: null, files_touched: [] as string[] } : { ...p, ...liveInfo(loadEvents(db, r.sourceId, r.runId)) };
+  // A finished run's events carry no diff; its receipt's base and head give one (git numstat, null when unmeasurable).
+  return r.endedAt ? { ...p, current_stage: null, files_touched: [] as string[], diff_stat: diffStatFor(db, r.sourceId, r.runId) } : { ...p, ...liveInfo(loadEvents(db, r.sourceId, r.runId)), diff_stat: null };
 };
 
 /** Live view of one run from its events so far: current stage, files touched. Elapsed is computed per request. */
