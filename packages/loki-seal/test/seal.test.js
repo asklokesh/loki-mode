@@ -1035,3 +1035,47 @@ test('forged lines r7: an honest test writing stdout with no newline is never BL
     assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
   }
 });
+
+// SEAL-FORGED-LINES r8 (D69): an unterminated write moves the real summary off the line start, and an output cap
+// drops it. A summary key anywhere but at a line start is ambiguous, and truncated output is never trusted.
+const R8_FORGED_SUMMARY = 'ℹ tests 2\\nℹ pass 2\\nℹ fail 0\\n';
+const r8Repo = (script, body) => ({
+  ...nodeRepo(ADD_OK, FORGE_HDR + body),
+  ...NEVER_RAN,
+  'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }),
+});
+const R8_BEFORE_EXIT = "let fired = false; process.on('beforeExit', () => { if (fired) return; fired = true; process.stdout.write('X'); });\n";
+test('forged lines r8 (F1): an unterminated write before the real summary hides a forged summary block, NOT VERIFIED', () => {
+  const body = "test('adds', () => { process.stdout.write('✔ handles negative numbers (1ms)\\n" + R8_FORGED_SUMMARY + "'); assert.strictEqual(add(1,2), 3); });\n" + R8_BEFORE_EXIT;
+  for (const script of R7_SCRIPTS) {
+    const r = negRun(r8Repo(script, body));
+    notVerified(r);
+    assert.notStrictEqual(r.status, 0, script);
+  }
+});
+
+test('forged lines r8 (F1 TAP): an unterminated write with isolation none hides a forged TAP summary, NOT VERIFIED', () => {
+  const body = "test('adds', () => { process.stdout.write('ok 77 - handles negative numbers\\n# tests 2\\n# pass 2\\n# fail 0\\n'); assert.strictEqual(add(1,2), 3); });\n"
+    + "let fired = false; process.on('beforeExit', () => { if (fired) return; fired = true; let n = 6; const tick = () => { if (--n > 0) queueMicrotask(tick); else process.stdout.write('X'); }; queueMicrotask(tick); });\n";
+  for (const script of ['node --test --test-reporter=tap --test-isolation=none', 'node --test --test-reporter=tap']) {
+    const r = negRun(r8Repo(script, body));
+    notVerified(r);
+    assert.notStrictEqual(r.status, 0, script);
+  }
+});
+
+test('forged lines r8 (F2): output beyond the capture cap that drops the real summary is NOT VERIFIED, never PASS', () => {
+  const body = "test('adds', () => { process.stdout.write('✔ handles negative numbers (1ms)\\n" + 'ℹ tests 1\\nℹ suites 0\\nℹ pass 1\\nℹ fail 0\\n' + "'); const chunk = 'ℹ duration_ms 1\\n'.repeat(1 << 16); for (let i = 0; i < 70; i++) process.stdout.write(chunk); assert.strictEqual(add(1,2), 3); });\n";
+  const r = negRun(r8Repo('node --test --test-reporter=spec', body));
+  notVerified(r);
+  assert.notStrictEqual(r.status, 0, r.raw);
+});
+
+test('forged lines r8: honest describe, subtests and console.log runs still pass on every config', () => {
+  const body = "describe('suite', () => { it('adds zero', () => { console.log('# not a summary'); assert.strictEqual(add(0,0), 0); }); });\ntest('p', async (t) => { await t.test('c', () => { console.log('hello'); }); });\n";
+  for (const script of R7_SCRIPTS) {
+    const r = reporterRun(nodeRepo(ADD_OK, FORGE_HDR + body), script, 'Fix the adder.\n- adds zero\n');
+    assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
+    assert.strictEqual(r.status, 0, script + '\n' + r.raw);
+  }
+});

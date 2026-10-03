@@ -148,7 +148,9 @@ const PASS_PREFIX = /^\s*[✔✓√]/;
 const SPEC_MARK = /^(\s*)([✔✓√]) ([^]+?)\s*$/;
 const CTRL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
 const ANY_MARK = /[✔✓√✖﹣▶]/;
-function passRecords(out) {
+const SUM_KEY = /[ℹ#]\s*(?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)\b/g;
+const SUM_LINE = /^\s*[ℹ#]\s*(?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)\b/;
+function passRecords(out, truncated) {
   const lines = out.split('\n');
   const leaf = [];
   let specLines = 0;
@@ -157,12 +159,16 @@ function passRecords(out) {
   const lastSum = lines.findLastIndex((l) => /^\s*[ℹ#]\s*tests\s+\d+\s*$/.test(l));
   const sumAt = lastSum < 0 ? lines.length : lastSum;
   const odd = [];
+  let brokenSummary = truncated ? 'the output exceeded the capture limit, so the real summary may be missing' : null;
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
     // Unterminated output before the runner's own line pushes its mark off the line start ("X✔ name"), so a
     // result mark anywhere but first after the indent makes the line ambiguous, pass and fail marks alike.
     const lead = ln.search(/\S/);
     if (lead >= 0 && ANY_MARK.test(ln) && !ANY_MARK.test(ln[lead])) odd.push('a result mark that is not first on its line');
+    // The same holds for a summary key: one anywhere but at the line start may be a real summary line pushed off
+    // its start, hiding it behind a forged block.
+    for (const k of ln.matchAll(SUM_KEY)) if (k.index !== lead) { brokenSummary = 'a runner summary key that is not at the start of its line'; break; }
     if (/^\s*[✔✓√✖﹣]\s*$/.test(ln)) { odd.push('a result line with an empty name'); continue; }
     if (/^\s*\u2716/.test(ln)) { if (i < sumAt) cross++; continue; }
     let m = SPEC_MARK.exec(ln);
@@ -193,7 +199,13 @@ function passRecords(out) {
   const node = nodeBlock(out);
   let passCount = leaf.length;
   let unverified = null;
-  if (node && node.blocks > 1) unverified = 'the output has more than one runner summary block';
+  if (!brokenSummary && node && !node.fail) {
+    // The trusted block must be complete and end the output: only summary lines may follow its first line.
+    const first = lines.findLastIndex((l) => /^\s*[ℹ#]\s*tests\s+\d+\s*$/.test(l));
+    if (lines.slice(first).some((l) => l.trim() && !SUM_LINE.test(l))) brokenSummary = 'the runner summary block is not the last thing in the output';
+  }
+  if (brokenSummary) unverified = brokenSummary;
+  else if (node && node.blocks > 1) unverified = 'the output has more than one runner summary block';
   else if (node && node.spec) {
     const n0 = (v) => v || 0;
     const skippedSuites = dash - n0(node.skipped);
@@ -268,16 +280,16 @@ function runSuite(root, runner, timeout) {
   const env = { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', PYTHONDONTWRITEBYTECODE: '1' };
   delete env.NODE_TEST_CONTEXT; // set when we are launched inside another node --test run
   return new Promise((resolve) => {
-    let out = '', timedOut = false, done = false;
+    let out = '', timedOut = false, done = false, truncated = false;
     const child = spawn(runner.cmd[0], runner.cmd.slice(1), { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     const timer = setTimeout(() => { timedOut = true; try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already gone */ } }, timeout);
-    const add = (d) => { if (out.length < 1 << 26) out += d; };
+    const add = (d) => { if (out.length < 1 << 26) out += d; else truncated = true; };
     child.stdout.on('data', add);
     child.stderr.on('data', add);
     const finish = (status, error) => {
       if (done) return;
       done = true; clearTimeout(timer);
-      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), ...passRecords(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
+      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), ...passRecords(out, truncated), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
     };
     child.on('error', (e) => finish(null, e));
     child.on('close', (code) => finish(code));
