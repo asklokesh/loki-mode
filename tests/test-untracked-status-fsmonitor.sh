@@ -128,7 +128,7 @@ done
 # Positive control: the same function with the config overrides zeroed runs
 # the driver, so the legs above are not vacuous.
 sed -e 's/"GIT_CONFIG_COUNT=\${n}"/"GIT_CONFIG_COUNT=0"/' \
-    -e 's/sentinel 2>\/dev\/null)" != "1"/sentinel 2>\/dev\/null)" = "never"/' \
+    -e 's/sentinel 2>\/dev\/null)" != "$nonce"/sentinel 2>\/dev\/null)" = "never"/' \
     "$WORK/lib-real.sh" > "$WORK/lib-nofilter.sh"
 if cmp -s "$WORK/lib-real.sh" "$WORK/lib-nofilter.sh"; then
     fail "filter mutation found no GIT_CONFIG_COUNT line to zero"
@@ -266,6 +266,56 @@ case "$shim_out" in *RC=0*) fail "status ran unprotected under a git that hides 
     *MARKER=yes*) fail "driver ran under a git that hides GIT_CONFIG_COUNT" "$shim_out" ;;
     *MARKER=no*) pass "fails closed (non-zero, no hook) when GIT_CONFIG_COUNT is not honored" ;;
     *) fail "unexpected shim output" "$shim_out" ;; esac
+
+# Version floor and planted sentinel. shim_leg <name> <wrapper body line> <plant>
+# runs the real function against a wrapper git on a stat-dirty filter repo and
+# a lazy-fetch repo; prints RC, FILTER and SSH markers.
+shim_leg() {
+    local name="$1" body="$2" plant="$3" w="$WORK/wrap-$1" repo="$WORK/wrepo-$1"
+    printf '#!/bin/sh\n%s\nexec "%s" "$@"\n' "$body" "$real_git" > "$w"
+    chmod +x "$w"
+    (
+        cd "$WORK" || exit 1
+        # shellcheck source=/dev/null
+        . "$WORK/lib-real.sh"
+        eval "_loki_snapshot_git_tool() { printf '%s\\n' '$w'; }"
+        mkdir -p "$repo" && git -C "$repo" init -q
+        git -C "$repo" config user.email t@example.invalid
+        git -C "$repo" config user.name t
+        printf 'f.txt text\n' > "$repo/.gitattributes"
+        printf 'aa\n' > "$repo/f.txt"
+        git -C "$repo" add .gitattributes f.txt && git -C "$repo" commit -q -m init
+        git -C "$repo" config filter.evil.clean "touch '$WORK/fm-$name'; cat"
+        [ -n "$plant" ] && git -C "$repo" config loki.snapshot.sentinel "$plant"
+        printf 'f.txt filter=evil\n' > "$repo/.git/info/attributes"
+        printf 'bb\n' > "$repo/f.txt"; touch -t 203001010000 "$repo/f.txt"
+        blob="$(git -C "$repo" rev-parse HEAD:.gitattributes)"
+        git -C "$repo" update-index --skip-worktree .gitattributes
+        rm -f "$repo/.gitattributes" "$repo/.git/objects/${blob:0:2}/${blob:2}"
+        printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$WORK/sm-$name" > "$WORK/sh-$name.sh"
+        chmod +x "$WORK/sh-$name.sh"
+        git -C "$repo" config core.repositoryformatversion 1
+        git -C "$repo" config extensions.partialClone origin
+        git -C "$repo" config remote.origin.promisor true
+        git -C "$repo" config remote.origin.url ssh://host/x
+        git -C "$repo" config core.sshCommand "$WORK/sh-$name.sh"
+        cd "$repo" || exit 1
+        _loki_untracked_status "$WORK/ss-$name" >/dev/null 2>&1
+        echo "RC=$?"
+        [ -e "$WORK/fm-$name" ] && echo "FILTER=yes" || echo "FILTER=no"
+        [ -e "$WORK/sm-$name" ] && echo "SSH=yes" || echo "SSH=no"
+    )
+}
+planted="$(shim_leg planted 'unset GIT_CONFIG_COUNT' 1)"
+case "$planted" in *RC=0* | *FILTER=yes*) fail "repo-planted sentinel defeated the fail-closed check" "$planted" ;;
+    *) pass "repo-planted sentinel does not defeat the fail-closed check" ;; esac
+v243='if [ "$1" = "--version" ]; then echo "git version 2.43.0"; exit 0; fi'
+old="$(shim_leg v243 "$v243" "")"
+case "$old" in *RC=0* | *FILTER=yes* | *SSH=yes*) fail "git reporting 2.43.0 was not refused" "$old" ;;
+    *) pass "git below 2.44 is refused (non-zero, no hook)" ;; esac
+nolazy="$(shim_leg nolazy "$v243; unset GIT_NO_LAZY_FETCH" "")"
+case "$nolazy" in *RC=0* | *FILTER=yes* | *SSH=yes*) fail "2.43 git that drops GIT_NO_LAZY_FETCH was not refused" "$nolazy" ;; 
+    *) pass "2.43 git that drops GIT_NO_LAZY_FETCH is refused" ;; esac
 
 if [ -e "$REPO_ROOT/.loki/state/provider" ] && [ "$REPO_ROOT/.loki/state/provider" -nt "$WORK" ]; then
     fail "a .loki/state/provider appeared in the repo during this test"

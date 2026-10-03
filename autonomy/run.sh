@@ -10649,6 +10649,21 @@ _loki_untracked_status() {
     local top="" prefix="" gittool=""
     local genv=() fk="" fn="" n=0
     gittool="$(_loki_snapshot_git_tool)" || return 1
+    # Version floor: GIT_CONFIG_COUNT needs git >= 2.31 and GIT_NO_LAZY_FETCH
+    # (no hook-running lazy fetch) needs git >= 2.44. Unparseable also refuses.
+    local gver="" gmaj="" gmin=""
+    gver="$(LC_ALL=C "$gittool" --version 2>/dev/null)" || gver=""
+    gver="${gver#git version }"
+    gmaj="${gver%%.*}"
+    gmin="${gver#*.}"
+    gmin="${gmin%%.*}"
+    case "${gmaj}${gmin}" in
+        '' | *[!0-9]*) gmaj="" ;;
+    esac
+    if [ -z "$gmaj" ] || [ -z "$gmin" ] || [ "$gmaj" -lt 2 ] || { [ "$gmaj" -eq 2 ] && [ "$gmin" -lt 44 ]; }; then
+        echo "snapshot: git >= 2.44 required (got '${gver:-unknown}'); refusing to run status unprotected" >&2
+        return 1
+    fi
     # Inherited GIT_DIR / GIT_WORK_TREE would repoint every call below.
     top="$(env -u GIT_DIR -u GIT_WORK_TREE "$gittool" rev-parse --show-toplevel 2>/dev/null)" || return 1
     prefix="$(env -u GIT_DIR -u GIT_WORK_TREE "$gittool" rev-parse --show-prefix 2>/dev/null)" || return 1
@@ -10676,13 +10691,16 @@ _loki_untracked_status() {
         n=$((n + 1))
     done < <("${genv[@]}" "$gittool" -C "$top" config -z --name-only --get-regexp \
         '^filter\..*\.(clean|smudge|process)$' 2>/dev/null)
-    # git < 2.31 ignores GIT_CONFIG_COUNT and would run every driver: prove the
-    # overrides are visible with a sentinel, and refuse to run unprotected.
-    genv+=("GIT_CONFIG_KEY_${n}=loki.snapshot.sentinel" "GIT_CONFIG_VALUE_${n}=1")
+    # Prove the overrides are visible with a per-call random nonce (a constant
+    # could be planted in .git/config by the agent), or refuse to run.
+    local nonce=""
+    nonce="$(od -An -tx8 -N8 /dev/urandom 2>/dev/null | tr -d ' \n')"
+    [ -n "$nonce" ] || return 1
+    genv+=("GIT_CONFIG_KEY_${n}=loki.snapshot.sentinel" "GIT_CONFIG_VALUE_${n}=${nonce}")
     n=$((n + 1))
     genv+=("GIT_CONFIG_COUNT=${n}")
-    if [ "$("${genv[@]}" "$gittool" -C "$top" config --get loki.snapshot.sentinel 2>/dev/null)" != "1" ]; then
-        echo "snapshot: git does not honor GIT_CONFIG_COUNT (needs git >= 2.31); refusing to run status unprotected" >&2
+    if [ "$("${genv[@]}" "$gittool" -C "$top" config --get loki.snapshot.sentinel 2>/dev/null)" != "$nonce" ]; then
+        echo "snapshot: git does not honor GIT_CONFIG_COUNT; refusing to run status unprotected" >&2
         return 1
     fi
     "${genv[@]}" "$gittool" -C "$top" -c core.fsmonitor=false -c core.untrackedCache=false \
