@@ -2169,3 +2169,15 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - cpe-base: CPE-25/26 merge queue and PR risk pages wired (28fc28647); suite 235/0, tsc 0.
 - Opus BLOCK on CPE-25: route timeout orphans the merge process group and drops merged lines (B1); symlinked registry entry bypasses the per-repo lock (B2). Sonnet fixer dispatched with both plus the GET-origin, exit-code and files-null advisories.
 - CPE-14 settings write-back in opus round 4 (unicode, comments, block scalars after the global line-separator escape).
+
+## 2026-10-03 17:08Z (CoS): 10.7.0 releasing, D86 Wave 0 slices
+- 10.7.0 (ffb58278b): Tests, Bun Parity, Coverage, Security Audit, SBOM success; Release job in progress; npm latest still 10.6.14 at 17:05Z.
+- Local main (unpushed, 6d8bbf7ca): scope advisory (FC-03), `loki control prune`, fixture leak shipper refusal merged for 10.7.1; FAILURE-CLASSES.md FC-01..FC-09 seeded.
+- Built, in opus D12 review: FC-08 ingest integrity (f0b891d2a), FC-02 runner load error plus final ship flush (79a8bb818), FC-09 runner-config registry (3cb3a7216), monorepo cwd (aac46dc26), cascade off (5ca26c9e3).
+- Building: FC-07 hermetic HOME, EL-W0-06 model default, EL-W0-08 PR body golden.
+- Drift audit (turn 2376): every fix slice has an FC row; HIGH reviews opus; no push during the 10.7.0 window; BOARD and commit kept in separate calls.
+
+## 2026-10-03 17:40Z (CoS)
+- Merged cascade (Engine Law L1 never below raw) as 1b1fc67c6; CHANGELOG kept both bullet sets; dist rebuilt in main, dist guard 13/0.
+- 10.7.1 still blocked on guard fix-forward (ad368f08d5bd98594): spawn env guard (ship_hook.ts:10) and e10ext budget (1509/1500). Builder told to land at 1498 or fewer so FC-10 (+1 line) fits.
+- Governor: pulse shows weekly burn projected 528.5% and max engineers next hour 0 (D39). No new dispatch this hour; FC-10 TL review deferred. In-flight agents (FC-07, FC-09, monorepo, W0-06, FC-02 r2, FC-08 r3, guards) finish and are not replaced.
