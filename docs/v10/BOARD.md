@@ -729,10 +729,15 @@ Source: ~/git/autonomi-dev/research/2026-09-30-adoption/SWARM-PROMPT-ADOPTION.md
 | D61-03 | D61 slice 3, lean eligibility without a named file behind LOKI_SPEED | engine10/sizing.ts, features/speed/lean_select.ts, tests engine10/sizing_lean.test.ts | MEDIUM | merged@2026-10-03T03:13Z | TL APPROVE; 999ea6af3 in train/83 1a63ad156. |
 | D61-09 | D61 slice 9, decomposability check with strict-schema confirm | features/speed/decompose_check.ts, tests engine10/decompose_check.test.ts | MEDIUM | merged@2026-10-03T03:13Z | TL APPROVE; 0393c5a6b in train/83 1a63ad156. |
 | D61-15 | D61 slice 15, live unit grid (dashboard /g/<group>, Control Plane group_id) | features/speed/group_grid.ts, engine10/dashboard, packages/control-plane runs and drizzle 0001 | MEDIUM | merged@2026-10-03T03:14Z | TL APPROVE plus should-fix (400 on bad encoding); 024a4d16b, 79eac0297 on main for train/84. Add a drizzle 0001 snapshot before the next schema change. |
-| D61-10 | D61 slice 10, unit runner (backlog.py --dag) | autonomy/lib/backlog.py, tests/test-backlog-units.sh | MEDIUM | review@2026-10-03T03:12Z | Built 41795252f; TL review. |
+| D61-10 | D61 slice 10, unit runner (backlog.py --dag) | autonomy/lib/backlog.py, tests/test-backlog-units.sh | MEDIUM | merged@2026-10-03T03:15Z | TL APPROVE; ad4f4b926. Follow-up D61-10-F1 (option injection, group regex, unknown-id edges). |
 | D61-11 | D61 slice 11, unit run mode (write-set fence, pack-only brief, unit cost cap) | features/speed/unit_mode.ts, e10ext/scope.ts, e10ext/context.ts | HIGH | review@2026-10-03T03:15Z | Built 983e5499c; moat 4 of 9 rc 0; opus review. |
-| D61-12 | D61 slice 12, integrator (ordered merges, fix units, 2-round cap) | features/speed/integrate.ts, tests features/speed/integrate.test.ts | HIGH | review@2026-10-03T03:11Z | Built 1d59957ad; opus review. |
+| D61-12 | D61 slice 12, integrator (ordered merges, fix units, 2-round cap) | features/speed/integrate.ts, tests features/speed/integrate.test.ts | HIGH | building@2026-10-03T03:15Z | Opus BLOCK B1 (dirty-tree readyForSeal); rework in progress. |
 | D61-14 | D61 slice 14, group events plus terminal unit table | features/speed/group_output.ts, engine10/events.ts | MEDIUM | review@2026-10-03T03:09Z | Built d471677da; TL review of validateEnvelope change. |
-| D61-04 | D61 slice 4, already-done off path | engine10 intake, features/speed | HIGH | building@2026-10-03T02:50Z | |
+| D61-04 | D61 slice 4, already-done off path | engine10 intake, features/speed | HIGH | review@2026-10-03T03:18Z | Built 9bd0e9db6; opus review. |
 | D61-13 | D61 slice 13, one Seal plus combined receipt with per-unit sub-receipts | engine10/stages/seal.ts, types.ts, pr_body.ts, features/speed | HIGH | building@2026-10-03T03:13Z | |
 | D61-16 | D61 slice 16, route loki "<task>" and loki <file> through the decomposer behind LOKI_SPEED | engine10/cli.ts, supervisor.ts, features/speed/route.ts | HIGH | building@2026-10-03T03:13Z | |
+| D63-C1 | CP-AUTH: bearer token on /v1/*, refuse non-loopback without token, Host check | control plane app, docs CONTROL-PLANE | HIGH | building@2026-10-03T03:17Z | Card docs/v10/D63-CARDS.md C1. |
+| D63-C2 | CP-DEFAULT: Control Plane on by default (loopback) | per card C2 | MEDIUM | building@2026-10-03T03:17Z | Card C2. |
+| D63-C5 | ROUTING: slack in Bun allowlist, jira:/linear: refs to v10 | bin/loki, per card C5 | MEDIUM | building@2026-10-03T03:17Z | Card C5; merge early. |
+| D63-C8 | WORKSPACES: parallel workspace runs, missing commands | per card C8 | MEDIUM | building@2026-10-03T03:17Z | Card C8. |
+| D63-C9 | MCP: v10 run/status/verify tools, test wired into a runner | mcp/, per card C9 | MEDIUM | building@2026-10-03T03:17Z | Card C9. |
