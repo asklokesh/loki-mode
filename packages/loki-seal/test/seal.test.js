@@ -980,3 +980,30 @@ test('forged lines r5 (6): a narrowed test script plus a printed pass count cann
     assert.match(r.raw, /test count dropped from 3 to 1/, r.raw);
   }
 });
+
+// SEAL-FORGED-LINES r6 (D69): a name holding a line separator must not hide its result line; it is ambiguous (NOT VERIFIED).
+const R6_SEPS = { CR: '\\r', LS: '\\u2028', PS: '\\u2029' };
+for (const [label, sep] of Object.entries(R6_SEPS)) {
+  test('forged lines r6 (B1): a test name with ' + label + ' next to a forged line is NOT VERIFIED, never PASS', () => {
+    for (const script of ['node --test', 'node --test --test-reporter=spec']) {
+      const r = negRun(forgeRepo(FORGE_CHECK, script, "test('x" + sep + "y', () => {});\n"));
+      notVerified(r);
+      assert.notStrictEqual(r.status, 0, script);
+    }
+  });
+  test('forged lines r6 (B1): a describe name with ' + label + ' next to a forged line is NOT VERIFIED, never PASS', () => {
+    for (const script of ['node --test', 'node --test --test-reporter=spec']) {
+      const r = negRun(forgeRepo(FORGE_CHECK, script, "describe('d" + sep + "e', () => { it('z', () => {}); });\n"));
+      notVerified(r);
+      assert.notStrictEqual(r.status, 0, script);
+    }
+  });
+}
+
+test('forged lines r6: honest plain, skip, empty describe and describe.skip runs still pass', () => {
+  const body = FORGE_HDR + "test('adds zero', () => { assert.strictEqual(add(0,0), 0); });\ntest('p', async (t) => { await t.test('c', () => {}); await t.test('s', { skip: true }, () => {}); });\ndescribe('empty', () => {});\ndescribe.skip('sk', () => { it('q', () => {}); });\n";
+  for (const script of REPORTERS) {
+    const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
+    assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
+  }
+});

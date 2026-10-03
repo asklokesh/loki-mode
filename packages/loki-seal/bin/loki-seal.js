@@ -117,7 +117,7 @@ function nodeBlock(out) {
   lines.forEach((l, i) => { if (/^\s*[ℹ#]\s*tests\s+\d+\s*$/.test(l)) starts.push(i); });
   if (!starts.length) return null;
   const block = lines.slice(starts[starts.length - 1]).join('\n');
-  const num = (name) => { const x = new RegExp('^\\s*[\\u2139#]\\s*' + name + '\\s+(\\d+)', 'm').exec(block); return x ? +x[1] : null; };
+  const num = (name) => { const x = new RegExp('^\\s*[ℹ#]\\s*' + name + '\\s+(\\d+)', 'm').exec(block); return x ? +x[1] : null; };
   return { blocks: starts.length, spec: /^\s*ℹ\s*tests\s/m.test(block), tests: num('tests'), pass: num('pass'), fail: num('fail'), suites: num('suites'), skipped: num('skipped'), todo: num('todo'), cancelled: num('cancelled') };
 }
 
@@ -142,22 +142,29 @@ function counts(out) {
 //    (suites - (dash lines - skipped tests)) equal the summary pass exactly, NO coverage is granted from it
 //    (specUnverified), which gives NOT VERIFIED and never BLOCKED. TAP is sound; use --test-reporter=tap.
 //  - Everything else (PASSED, --- PASS, cargo) is a record.
-const SPEC_MARK = /^(\s*)([✔✓√]) (.+?)\s*$/;
+// Detect a result mark first (any line separator can sit inside a name), then parse the body with [^] so no
+// character can hide a line. A pass-mark line that does not parse, or whose name has a control character, is odd.
+const PASS_PREFIX = /^\s*[✔✓√]/;
+const SPEC_MARK = /^(\s*)([✔✓√]) ([^]+?)\s*$/;
+const CTRL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
 function passRecords(out) {
   const lines = out.split('\n');
   const leaf = [];
   let specLines = 0;
   let dash = 0;
   let cross = 0;
-  const sumAt = lines.findLastIndex((l) => /^\s*[\u2139#]\s*tests\s+\d+\s*$/.test(l)) < 0 ? lines.length : lines.findLastIndex((l) => /^\s*[\u2139#]\s*tests\s+\d+\s*$/.test(l));
+  const lastSum = lines.findLastIndex((l) => /^\s*[ℹ#]\s*tests\s+\d+\s*$/.test(l));
+  const sumAt = lastSum < 0 ? lines.length : lastSum;
   const odd = [];
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
     if (/^\s*[✔✓√✖﹣]\s*$/.test(ln)) { odd.push('a result line with an empty name'); continue; }
     if (/^\s*\u2716/.test(ln)) { if (i < sumAt) cross++; continue; }
     let m = SPEC_MARK.exec(ln);
+    if (!m && PASS_PREFIX.test(ln)) { odd.push('a result line that does not parse'); continue; }
     if (m) {
       const body = m[3];
+      if (CTRL.test(body)) odd.push('a result line whose name has a control or line-separator character');
       const name = body.replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '').trim();
       if (!name || /^\(?\d[\d.]*\s?ms\)?$/.test(name)) odd.push('a result line with an empty name');
       if (/\)\s+#/.test(body)) odd.push('a result line carrying a # directive');
