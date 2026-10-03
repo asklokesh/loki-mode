@@ -80,7 +80,7 @@ export const implementStage: Stage = {
     };
     let session = await ctx.sessions.run(first);
     const ids = [first.iterationId];
-    if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, first); session = r.session; ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
+    if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, first, session); session = r.session; ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
 
     const testsReverted = restoreReadOnly(readOnly);
     const iterationId = ids[ids.length - 1]!;

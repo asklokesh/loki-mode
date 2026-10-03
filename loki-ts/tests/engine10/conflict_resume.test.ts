@@ -52,4 +52,23 @@ describe("FC-19 conflict resume", () => {
     expect(s.calls[1]!.resumeSessionId).toBeUndefined();
     expect(s.calls[1]!.brief.startsWith(s.calls[0]!.brief)).toBe(true);
   });
+  describe("R1: a failed resume keeps the original question", () => {
+    const Q = "Which provider: Stripe or Adyen?";
+    const cases: Array<[string, SessionResult]> = [
+      ["resume exits 1 with no marker", { exit: 1, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 2, killed: false }],
+      ["resume is killed", { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 2, killed: true }],
+      ["resume exits 0 with no marker", { exit: 0, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 2, killed: false }],
+    ];
+    for (const [name, second] of cases) {
+      test(name, async () => {
+        const s = new Seq([conflict(Q), second]);
+        const r = await implementStage.run(ctxOf(s), new AbortController().signal);
+        expect(s.calls.length).toBe(2);
+        expect(r.status).toBe("completed");
+        expect(r.data.exit).toBe("spec_conflict");
+        expect(r.data.spec_conflict_reason).toBe(Q);
+        expect(r.data.duration_s).toBe(3);
+      });
+    }
+  });
 });
