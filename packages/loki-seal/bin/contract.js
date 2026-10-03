@@ -10,15 +10,20 @@
 //    request. Local spec files it names (.md .txt .rst .adoc, relative or absolute, resolved against
 //    the repo root, must stay inside the root, max 200 KB, max 5 files) are read too. URLs and bare
 //    issue references (#123) are never fetched.
+//    A spec file is read ONLY when the request marks it ("spec: x.md", "per x.md", "implement x.md").
 // 2. Items. A line is an acceptance item when it is a bullet or checkbox ("-", "*", "+", "1."), or
-//    when a sentence contains must / should / shall / needs to / has to / ensure / make sure /
-//    required / cannot / never. Markers are stripped, duplicates dropped, at most 30 items.
+//    when a sentence contains must / shall / needs to / has to / required / cannot. Conversational
+//    should / make sure / never, pasted output and question-style requests are not requirements.
+//    Items need 2+ keywords. Under-derive: when in doubt, "no contract" (exit 0), never a block.
+//    Markers are stripped, duplicates dropped, at most 30 items. Contract blocks use their own
+//    release counter (cblocks) so they cannot drain the integrity valve.
 // 3. Keywords. Item text is lowercased and split on non-alphanumerics, camelCase and snake_case.
 //    Stopwords and modal words are dropped; a light stemmer folds plurals and -ing/-ed. An item
 //    with no keyword left carries no checkable meaning and is ignored.
 // 4. Mapping. Test names (it/test/describe titles, def test_x, func TestX, plus the file name) are
 //    tokenised the same way. An item is covered by a test sharing at least min(n, 2) and at least
-//    ceil(n/2) of its n keywords. An item with no covering test is UNMATCHED.
+//    ceil(n/2) of its n keywords, and the test body must contain an assertion. An item with no
+//    covering test is UNMATCHED.
 // 5. Verdicts (decided by the caller): no items = "NOT VERIFIED: no contract"; unreadable or missing
 //    transcript = NOT VERIFIED with the reason (never throws); any UNMATCHED item or a covering test
 //    that is failing = NOT VERIFIED naming the item.
@@ -31,11 +36,20 @@ const MAX_SPEC_BYTES = 200 * 1024;
 const MAX_TRANSCRIPT_BYTES = 4 * 1024 * 1024;
 
 const BULLET = /^\s*(?:[-*+]|\d{1,3}[.)])\s+(?:\[[ xX]\]\s+)?(.+)$/;
-const MODAL = /\b(?:must|should|shall|needs?\s+to|has\s+to|have\s+to|ensure|make\s+sure|required?|cannot|can't|never)\b/i;
+// Prose only counts with strong modals. Conversational should / make sure / never / ensure are NOT requirements.
+const MODAL = /\b(?:must|shall|needs?\s+to|has\s+to|have\s+to|required?|cannot)\b/i;
+// Requests that ask for an explanation carry no delivery contract.
+const QUESTION = /^\s*(?:(?:can|could|would)\s+you\s+|please\s+)?(?:explain|summari[sz]e|describe|what|why|how|where|who|show\s+me|tell\s+me|walk\s+me)\b/i;
+// Pasted output (paths, git status, log lines, stack frames) is not a requirement.
+const PASTED = /(?:^|\s)(?:modified|deleted|new file|renamed|untracked|error|warn(?:ing)?|info|debug|at):?\s|[\w.-]+\/[\w.-]+\.\w+|\b\w+\.\w{1,4}:\d+|\d{2}:\d{2}:\d{2}|->|=>|^[MADRU?]{1,2}\s+\S/i;
+const MIN_KEYWORDS = 2;
+// A bare file mention is never a spec. The request must mark it: "spec: x.md", "per x.md", "implement x.md".
+const SPEC_MARK = "(?:\\bspec(?:ification)?s?\\s*[:=]\\s*|\\b(?:per|implement|implements|implementing|according\\s+to|as\\s+specified\\s+in)\\s+(?:the\\s+)?(?:spec\\s+(?:in\\s+|at\\s+)?)?)[`\"']?";
+const ASSERT = /\bassert\w*\s*[.(]|^\s*assert\s|\bexpect\s*\(|\bself\.assert\w+|\bt\.(?:Error|Fatal|Fail)\w*\(|\bassert\w*!\s*\(/m;
 const STOP = new Set(('a an the and or but if then else of to in on at by for with from as is are was were be been being it its this that these those ' +
   'must should shall need needs has have had do does did not no can cannot will would could may might make sure ensure require required requires ' +
   'please also just so too very any all each every some there their they them we you i me my our your when where which who what how than into ' +
-  'about over under up out only own same such via per new add adds added support supports').split(/\s+/));
+  'about over under up out only own same such via per new support supports').split(/\s+/));
 
 function stem(w) {
   if (w.length > 5 && /ing$/.test(w)) return w.slice(0, -3);
@@ -63,7 +77,8 @@ function extractItems(text) {
     if (/^\s*```/.test(raw)) { inFence = !inFence; continue; }
     if (inFence) continue;
     const b = BULLET.exec(raw);
-    if (b) { items.push(b[1].trim()); continue; }
+    if (b) { if (!PASTED.test(b[1]) && b[1].length <= 160) items.push(b[1].trim()); continue; }
+    if (PASTED.test(raw)) continue;
     // Prose: split into sentences and keep those with a modal verb.
     for (const s of raw.split(/(?<=[.!?])\s+/)) if (MODAL.test(s) && s.trim().length > 3) items.push(s.trim());
   }
@@ -72,7 +87,7 @@ function extractItems(text) {
   for (const it of items) {
     const t = it.replace(/\s+/g, ' ').slice(0, 200);
     const k = t.toLowerCase();
-    if (seen.has(k) || keywords(t).length === 0) continue;
+    if (seen.has(k) || keywords(t).length < MIN_KEYWORDS) continue; // under-derive: 1-keyword items are too vague to block on
     seen.add(k);
     out.push(t);
   }
@@ -111,10 +126,11 @@ function specFiles(text, root) {
   const found = [];
   let realRoot;
   try { realRoot = fs.realpathSync(root); } catch { return found; }
-  const rx = /(?:^|[\s("'`<\[=])((?:\.{0,2}\/)?(?:[\w.@-]+\/)*[\w.@-]+\.(?:md|txt|rst|adoc))(?=$|[\s)"'`>\],.:;])/g;
+  // Only a path directly after a spec marker is read; a bare mention (for example "fix the typo in README.md") never is.
+  const rx = new RegExp(SPEC_MARK + '((?:\\.{0,2}\\/)?(?:[\\w.@-]+\\/)*[\\w.@-]+\\.(?:md|txt|rst|adoc))(?=$|[\\s)"\'`>\\],.:;])', 'gi');
   for (const m of text.matchAll(rx)) {
     if (found.length >= MAX_SPEC_FILES) break;
-    if (/:\/\/\S*$/.test(text.slice(Math.max(0, m.index - 200), m.index + 1))) continue; // part of a URL
+    if (/:\/\//.test(m[1])) continue;
     try {
       const real = fs.realpathSync(path.resolve(root, m[1]));
       if (real !== realRoot && !real.startsWith(realRoot + path.sep)) continue;
@@ -137,6 +153,7 @@ function deriveContract(input, root) {
     const text = firstUserText(raw);
     if (text === null) return { status: 'none', items: [], sources: [] };
     const sources = ['request'];
+    if (QUESTION.test(text)) return { status: 'none', items: [], sources };
     let all = extractItems(text);
     for (const f of specFiles(text, root)) {
       try { all = all.concat(extractItems(readCapped(f.real, MAX_SPEC_BYTES))); sources.push(f.rel); } catch { /* skip unreadable spec */ }
@@ -160,14 +177,20 @@ function testNames(files) {
   for (const [p, src] of Object.entries(files)) {
     if (typeof src !== 'string' || src.startsWith('SYMLINK ') || !/\.(js|mjs|cjs|ts|tsx|jsx|py|go|rs)$/.test(p)) continue;
     const base = path.basename(p).replace(/\.(test|spec)\.[^.]+$|\.[^.]+$/, '');
-    rx.forEach((r, i) => { for (const m of src.matchAll(r)) out.push({ name: m[i === 0 ? 2 : 1], file: p, base }); });
+    const decls = [];
+    rx.forEach((r, i) => { for (const m of src.matchAll(r)) decls.push({ pos: m.index, name: m[i === 0 ? 2 : 1], real: !(i === 0 && /^(?:describe|suite)/.test(m[0])) }); });
+    decls.sort((a, b) => a.pos - b.pos);
+    // A test body runs from its declaration to the next declaration. A test without an assertion proves nothing.
+    decls.forEach((d, k) => {
+      if (d.real) out.push({ name: d.name, file: p, base, asserts: ASSERT.test(src.slice(d.pos, k + 1 < decls.length ? decls[k + 1].pos : src.length)) });
+    });
   }
   return out;
 }
 
 // Returns { matched: [{item, tests}], unmatched: [item] }.
 function mapContract(items, files) {
-  const tests = testNames(files).map((t) => ({ ...t, kw: new Set(keywords(t.name + ' ' + t.base, false)) }));
+  const tests = testNames(files).filter((t) => t.asserts).map((t) => ({ ...t, kw: new Set(keywords(t.name + ' ' + t.base, false)) }));
   const matched = [];
   const unmatched = [];
   for (const item of items) {
@@ -179,4 +202,4 @@ function mapContract(items, files) {
   return { matched, unmatched };
 }
 
-module.exports = { deriveContract, mapContract, extractItems, keywords, testNames };
+module.exports = { deriveContract, mapContract, extractItems, keywords, testNames, ASSERT };

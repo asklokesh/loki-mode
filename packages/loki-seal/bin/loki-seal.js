@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
-const { deriveContract, mapContract } = require('./contract.js');
+const { deriveContract, mapContract, ASSERT } = require('./contract.js');
 
 const mode = process.argv[2];
 let ctx = { input: {}, root: process.cwd() };
@@ -23,7 +23,7 @@ const isCI = (p) => /^\.github\/workflows\/[^/]+\.ya?ml$/.test(p) || /^(\.gitlab
 const RX = {
   decl: /^\s*(?:(?:it|test|describe|suite)(?:\.\w+)*\s*\(|(?:async\s+)?def\s+test_|func\s+Test\w*\(|#\[(?:tokio::)?test\b)/gm,
   skip: /\.(?:skip|todo|only)\s*\(|\b(?:xit|xtest|xdescribe)\s*\(|\bskip\s*:\s*true|@pytest\.mark\.(?:skip|skipif|xfail)|\bpytest\.(?:skip|xfail)\s*\(|@unittest\.(?:skip\w*|expectedFailure)|\bt\.Skip\w*\(|#\[ignore/g,
-  assert: /\bassert\w*\s*[.(]|^\s*assert\s|\bexpect\s*\(|\bself\.assert\w+|\bt\.(?:Error|Fatal|Fail)\w*\(|\bassert\w*!\s*\(/gm,
+  assert: new RegExp(ASSERT.source, 'gm'), // one assertion definition shared with the contract module
 };
 const count = (s, rx) => (s.match(rx) || []).length;
 const CI_TEST_LINE = /test|pytest|jest|vitest|cargo|lint|check/i;
@@ -227,6 +227,9 @@ async function main() {
 
   // Delivery contract (A-04c): the request's acceptance items must each map to a passing test.
   const contract = deriveContract(input, root);
+  // Contract findings live in their own list and their own release counter (st.cblocks) so a false
+  // contract block can never drain the integrity/regression valve (st.blocks).
+  const cproblems = [];
   let contractLine, contractNote = null;
   if (contract.status === 'unreadable') {
     contractLine = `contract: NOT VERIFIED: ${contract.reason}`;
@@ -236,22 +239,36 @@ async function main() {
     contractNote = 'NOT VERIFIED: no contract';
   } else {
     const m = mapContract(contract.items, cur);
-    const red = (r && r.ids ? m.matched.filter((x) => x.tests.every((t) => r.ids.some((i) => i.includes(t)))) : []).map((x) => x.item);
+    // Exact test-id match (runner ids may be "file::name"). An item is red only when every test for it
+    // fails now and at least one of them was not already failing at session start (baseline-aware).
+    const idOf = (i) => i.split('::').pop();
+    const failingNow = (t) => !!(r && r.ids && r.ids.some((i) => i === t || idOf(i) === t));
+    const failedAtStart = (t) => !!(suite0 && suite0.ids.some((i) => i === t || idOf(i) === t));
+    const red = m.matched.filter((x) => x.tests.every(failingNow) && !x.tests.every(failedAtStart)).map((x) => x.item);
     const bad = [...m.unmatched.map((i) => `no test matches request item: "${i}"`), ...red.map((i) => `every test for request item "${i}" is failing`)];
     contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '');
-    if (runner) problems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
+    if (runner) cproblems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
     else if (bad.length) contractNote = `NOT VERIFIED: ${bad[0]}`;
   }
-  const contractOnly = problems.length > 0 && problems.every((x) => x.startsWith('NOT VERIFIED: '));
 
   const max = +process.env.LOKI_SEAL_MAX_BLOCKS || MAX_BLOCKS;
   const blocks = (st ? st.blocks : 0) + (problems.length ? 1 : 0);
-  if (st) { st.blocks = problems.length ? blocks : 0; writeState(sp, st); }
   const released = problems.length > 0 && blocks > max;
+  // Contract-only stop: counted on the separate counter. Without state, a repeated stop releases.
+  const cOnly = problems.length === 0 && cproblems.length > 0;
+  const cblocks = (st ? st.cblocks || 0 : 0) + (cOnly ? 1 : 0);
+  const cReleased = cOnly && (st ? cblocks > max : ctx.input.stop_hook_active === true);
+  if (st) {
+    st.blocks = problems.length ? blocks : 0;
+    if (!problems.length) st.cblocks = cOnly ? cblocks : 0; // integrity blocks leave the contract counter alone
+    writeState(sp, st);
+  }
 
   const outcome = !runner ? 'NOT VERIFIED (no test runner detected)'
     : released ? `NOT VERIFIED (released after ${max} blocks)`
-    : problems.length ? (contractOnly ? 'NOT VERIFIED (request item not covered)' : 'BLOCKED')
+    : problems.length ? 'BLOCKED'
+    : cReleased ? `NOT VERIFIED (contract released after ${max} blocks)`
+    : cOnly ? 'NOT VERIFIED (request item not covered)'
     : contractNote ? contractNote : already ? `PASS (no new failures; ${already} already failing)` : 'PASS';
   const basePart = already ? `baseline: ${already} already failing (not caused by this session)` : `baseline: ${baseKind}`;
   const receipt = [
@@ -260,12 +277,12 @@ async function main() {
     `tests-integrity: ${findings.length ? findings.length + ' problem(s)' : 'intact'}; ${basePart}${skippedDirs.length ? `; ${skippedDirs.length} unreadable dir(s) skipped` : ''}`,
     contractLine,
     `tree: ${tree}`,
-    problems.length || !runner || contractNote ? `Not verified by Loki: ${REPO}` : `Verified by Loki ${REPO}`,
+    problems.length || cproblems.length || !runner || contractNote ? `Not verified by Loki: ${REPO}` : `Verified by Loki ${REPO}`,
   ].join('\n');
 
-  if (problems.length && !released) {
+  if ((problems.length && !released) || (cOnly && !cReleased)) {
     // Exit 2: stderr is fed back to the model and the stop is blocked.
-    process.stderr.write(`${receipt}\n\nDo not finish yet. Fix the code, not the tests:\n- ${problems.join('\n- ')}` + (r && r.tail ? `\n\nLast test output:\n${r.tail}` : '') + '\n');
+    process.stderr.write(`${receipt}\n\nDo not finish yet. Fix the code, not the tests:\n- ${[...problems, ...cproblems].join('\n- ')}` + (r && r.tail ? `\n\nLast test output:\n${r.tail}` : '') + '\n');
     process.exit(2);
   }
   // Plain Stop stdout goes only to the debug log; systemMessage is what the docs show to the user.

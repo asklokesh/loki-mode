@@ -155,7 +155,7 @@ test('pytest: red blocks, real fix passes', { skip: !havePytest && 'pytest missi
   put(d, { 'calc.py': 'def add(a, b):\n    return a - b\n' });
   assert.ok(blocked(seal('stop', d)));
   put(d, { 'calc.py': 'def add(a, b):\n    return a + b\n' });
-  const r = seal('stop', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, 'Fix calc.\n- zero calc\n') });
   assert.ok(!blocked(r), r.raw);
   assert.match(r.out.systemMessage, /pytest/);
 });
@@ -423,10 +423,12 @@ test('contract (b): same session with a passing test for the behavior is PASS', 
 });
 
 test('contract: a failing test for the item does not count as covered', () => {
-  const d = repo(nodeRepo(ADD_OK, T_NEG.replace('add(-1, -2), -3', 'add(-1, -2), 99')));
+  const d = repo(nodeRepo(ADD_OK, T_NEG));
   seal('start', d);
+  put(d, { 'test/a.test.js': T_NEG.replace('add(-1, -2), -3', 'add(-1, -2), 99') });
   const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
   assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /every test for request item .* is failing/);
 });
 
 test('contract (c): a request with no derivable contract says NOT VERIFIED: no contract', () => {
@@ -480,10 +482,93 @@ test('contract: block valve still releases a contract block after LOKI_SEAL_MAX_
   assert.strictEqual(run().status, 2);
   const r = run();
   assert.strictEqual(r.status, 0);
-  assert.match(r.stdout, /NOT VERIFIED \(released after 1 blocks\)/);
+  assert.match(r.stdout, /NOT VERIFIED \(contract released after 1 blocks\)/);
 });
 
 test('contract: the module has no network or process imports', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'contract.js'), 'utf8');
   assert.doesNotMatch(src, /require\(['"](?:https?|net|dns|child_process)['"]\)|\bfetch\s*\(/);
+});
+
+// ---- A-04c round 2 regressions ----
+test('B1: contract blocks never drain the integrity valve; a later skip still blocks', () => {
+  const d = repo(nodeRepo(ADD_OK, T_NO_NEG));
+  seal('start', d);
+  const tp = transcript(d, REQ_NEG);
+  const env = { LOKI_SEAL_MAX_BLOCKS: '2' };
+  const codes = [];
+  for (let i = 0; i < 4; i++) codes.push(sealEnv(d, env, 'stop', tp).status);
+  assert.deepStrictEqual(codes, [2, 2, 0, 0], 'contract valve releases on its own counter');
+  put(d, { 'test/a.test.js': T_NO_NEG.replace("test('adds',", "test.skip('adds',") });
+  const r = sealEnv(d, env, 'stop', tp);
+  assert.strictEqual(r.status, 2, r.stdout + r.stderr);
+  assert.match(r.stderr, /^loki-seal: BLOCKED/);
+  assert.match(r.stderr, /skip/);
+});
+
+test('B1: the reviewer probe (a plain explain request) never blocks', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  const tp = transcript(d, 'Can you explain how lib.js works? It should be quick, I only need a short summary.');
+  for (let i = 0; i < 7; i++) assert.strictEqual(sealEnv(d, {}, 'stop', tp).status, 0);
+  put(d, { 'test/a.test.js': T2.replace("test('adds',", "test.skip('adds',") });
+  assert.strictEqual(sealEnv(d, {}, 'stop', tp).status, 2);
+});
+
+test('B2a: conversational should/make sure/never, pasted status lines and 1-keyword bullets are not requirements', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  const req = 'I think this should work now. Make sure it is tidy and never ugly.\n' +
+    '- modified: lib.js\n- M test/a.test.js\n- 12:01:33 error: boom\n- tidy\n';
+  const r = seal('stop', d, { transcript_path: transcript(d, req) });
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage.split('\n')[0], /^loki-seal: NOT VERIFIED: no contract$/);
+});
+
+test('B2b: a bare mention of README.md is not a spec', () => {
+  const d = repo({ ...nodeRepo(ADD_OK, T2), 'README.md': '# Lib\n- supports streaming uploads\n- handles retries gracefully\n- exports metrics\n' });
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, 'Fix the typo in README.md please') });
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage.split('\n')[0], /no contract/);
+});
+
+test('B2b: an explicitly marked spec ("per", "spec:") is read', () => {
+  for (const req of ['Build it per docs/spec.md', 'spec: docs/spec.md']) {
+    const d = repo({ ...nodeRepo(ADD_OK, T2), 'docs/spec.md': '- rejects overflow values\n' });
+    seal('start', d);
+    const r = seal('stop', d, { transcript_path: transcript(d, req) });
+    assert.strictEqual(r.status, 2, req + r.raw);
+    assert.match(r.out.reason, /rejects overflow values/);
+  }
+});
+
+test('B3: a test with no assertion does not satisfy an item', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  put(d, { 'test/a.test.js': T2 + "test('validates email addresses', () => {});\n" });
+  const r = seal('stop', d, { transcript_path: transcript(d, 'Add email validation.\n- must validate email addresses\n') });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /no test matches request item: "must validate email addresses"/);
+  put(d, { 'test/a.test.js': T2 + "test('validates email addresses', () => { assert.ok(true); });\n" });
+  assert.strictEqual(seal('stop', d, { transcript_path: transcript(d, 'Add email validation.\n- must validate email addresses\n') }).status, 0);
+});
+
+test('minor: red-item matching is exact, not substring', () => {
+  const extra = "test('handles negative numbers in bulk', () => { assert.strictEqual(1, 2); });\n";
+  const d = repo(nodeRepo(ADD_OK, T_NEG));
+  seal('start', d);
+  put(d, { 'test/a.test.js': T_NEG + extra });
+  const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
+  assert.strictEqual(r.status, 2, r.raw); // the new failing test blocks
+  assert.doesNotMatch(r.out.reason, /is failing/); // but the item's own passing test is not called failing
+});
+
+test('minor: a test already failing at session start is not blamed by the contract', () => {
+  const bad = T2 + "test('handles negative numbers', () => { assert.strictEqual(add(-1, -2), 99); });\n";
+  const d = repo(nodeRepo(ADD_OK, bad));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.doesNotMatch(r.raw, /is failing/);
 });
