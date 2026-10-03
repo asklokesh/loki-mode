@@ -35,7 +35,7 @@ Phase 2 ported (Bun-native, fast):
   wiki <subcmd>          Auto-generated, cited codebase wiki + Q&A
                          (subcmds: generate | show [section] | ask "<question>")
   answer [run] [--text]  Resume a BLOCKED run with an answer (--text, or the Control Plane answer file)
-  control <subcmd>       Control plane (preview, needs LOKI_CONTROL=1)
+  control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
 
 All other commands fall through to the bash CLI (autonomy/loki).
@@ -215,7 +215,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     }
 
     case "control": {
-      // D56 control plane (preview, gated by LOKI_CONTROL=1 inside runControl).
+      // D56 control plane (on by default; LOKI_CONTROL=0 disables, handled inside runControl).
       // bash cmd_control (autonomy/loki) is the LOKI_LEGACY_BASH fallback.
       const { runControl } = await import("./commands/control.ts");
       return runControl(rest);

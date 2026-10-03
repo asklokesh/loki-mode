@@ -33940,14 +33940,14 @@ cmd_outcomes() {
     LOKI_DIR="${LOKI_DIR:-.loki}" python3 "$lib" "$@"
 }
 
-# loki control -- D56 control plane (preview). The live route is the Bun CLI
+# loki control -- D56 control plane (on by default). The live route is the Bun CLI
 # (loki-ts/src/commands/control.ts); this is the LOKI_LEGACY_BASH / no-shim
-# fallback. It keeps the gate and help in bash and hands the work to Bun.
+# fallback. It keeps the off switch and help in bash and hands the work to Bun.
 cmd_control() {
     local sub="${1:-}"
     case "$sub" in
         ""|-h|--help|help)
-            echo "Usage: loki control <command> [options]   (preview, requires LOKI_CONTROL=1)"
+            echo "Usage: loki control <command> [options]   (on by default; LOKI_CONTROL=0 turns it off; requires bun)"
             echo ""
             echo "Commands:"
             echo "  serve [--port N] [--db PATH]   Run the control plane + UI on 127.0.0.1"
@@ -33956,8 +33956,8 @@ cmd_control() {
             return 0
             ;;
     esac
-    if [ "${LOKI_CONTROL:-}" != "1" ]; then
-        echo "loki control is in preview. Enable it with: export LOKI_CONTROL=1"
+    if [ "${LOKI_CONTROL:-}" = "0" ]; then
+        echo "loki control is off (LOKI_CONTROL=0). Unset it to turn the Control Plane back on."
         return 0
     fi
     local cli="$SKILL_DIR/loki-ts/dist/loki.js"

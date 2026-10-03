@@ -1783,7 +1783,7 @@ Phase 2 ported (Bun-native, fast):
   wiki <subcmd>          Auto-generated, cited codebase wiki + Q&A
                          (subcmds: generate | show [section] | ask "<question>")
   answer [run] [--text]  Resume a BLOCKED run with an answer (--text, or the Control Plane answer file)
-  control <subcmd>       Control plane (preview, needs LOKI_CONTROL=1)
+  control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
 
 All other commands fall through to the bash CLI (autonomy/loki).
@@ -1796,4 +1796,4 @@ Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
 `),2}case"start":{let{runStart:X}=await Promise.resolve().then(() => (wn(),Pn));return X(Q)}case"slack":{let{runSlackCli:X}=await Promise.resolve().then(() => (tn(),rn));return X(Q)}case"answer":{let{runAnswerCli:X}=await Promise.resolve().then(() => (d00(),p00));return X(Q)}case"engine10":{let{runEngine10:X}=await Promise.resolve().then(() => (s00(),n00)),{registryLoader:J}=await Promise.resolve().then(() => (RH(),k00));return X(Q,J)}default:return process.stderr.write(`Unknown command: ${Z}
 `),process.stderr.write(r00),2}}tI();process.on("SIGINT",()=>process.exit(130));process.on("SIGTERM",()=>process.exit(143));var aV8=await iV8(Bun.argv.slice(2));process.exit(aV8);
 
-//# debugId=4DA71004211E1669DD566E270D217808
+//# debugId=B56D1AFAFC0FC9130F4B86A532E945F7

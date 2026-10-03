@@ -96,6 +96,17 @@ loki_env() { env -i HOME="$T/home" PATH="$PATH" LOKI_TELEMETRY_DISABLED=1 LOKI_N
 OUT="$(loki_env LOKI_CONTROL=0 "$LOKI" control serve 2>&1)"
 t "LOKI_CONTROL=0 serve prints one off line" "off serve output: $OUT" [ "$OUT" = "loki control is off (LOKI_CONTROL=0). Unset it to turn the Control Plane back on." ]
 
+# Bash fallback (LOKI_LEGACY_BASH=1): same off switch as the bun route; without bun it names bun and exits nonzero.
+OUT="$(loki_env LOKI_LEGACY_BASH=1 LOKI_CONTROL=0 "$LOKI" control serve 2>&1)"
+t "legacy bash LOKI_CONTROL=0 prints the off line" "legacy off output: $OUT" [ "$OUT" = "loki control is off (LOKI_CONTROL=0). Unset it to turn the Control Plane back on." ]
+NOBUN_PATH="/usr/bin:/bin"
+if ! PATH="$NOBUN_PATH" command -v bun >/dev/null 2>&1; then
+    OUT="$(env -i HOME="$T/home" PATH="$NOBUN_PATH" LOKI_TELEMETRY_DISABLED=1 LOKI_LEGACY_BASH=1 bash "$LOKI" control serve 2>&1)"
+    RC=$?
+    case "$OUT" in *"requires bun"*) NAMED=1 ;; *) NAMED=0 ;; esac
+    t "legacy bash without bun names bun and exits nonzero" "legacy no-bun rc=$RC output: $OUT" [ "$RC" -ne 0 -a "$NAMED" = 1 ]
+fi
+
 # exec chain (subshell -> env -> bin/loki -> bun) keeps $! equal to the CLI pid
 ( exec env -i HOME="$T/home" PATH="$PATH" LOKI_TELEMETRY_DISABLED=1 LOKI_NO_BROWSER=1 LOKI_CONTROL=1 "$LOKI" control serve --port 0 --db "$T/control.db" >"$T/serve.log" 2>&1 ) &
 SERVER_PID=$!
