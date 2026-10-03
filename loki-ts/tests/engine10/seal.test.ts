@@ -6,6 +6,7 @@
 // recomputed in Python from receipt.json, so a TS canonicalizer bug cannot
 // pass by agreeing with itself.
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { snapshotContract } from "../../src/features/contract.ts";
 import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
 import { generateKeyPairSync } from "node:crypto";
 import { sealedLog } from "./log_fixture.ts";
@@ -996,6 +997,7 @@ describe("D50-F1 already-satisfied discards run changes", () => {
       process.env["LOKI_CONTRACT"] = "1";
       const c = makeRepo("contract-on"); wc(c.repo, goodContract);
       const cc = ctxFor(c.repo, c.base);
+      cc.ctx.outputs().intake!.contract_snapshot = snapshotContract(c.repo);
       const sc = await sealStage.run(cc.ctx, new AbortController().signal);
       const rc = receiptOf(sc);
       expect(rc.verdict).toBe(ra.verdict);
@@ -1005,9 +1007,36 @@ describe("D50-F1 already-satisfied discards run changes", () => {
       expect(cc.events.find((e) => e.type === "receipt.sealed")!.data.not_proven as string[]).toContain(line!);
 
       const d = makeRepo("contract-bad"); wc(d.repo, '{"source":"x","criteria":[{"id":"AC-1"}]}');
-      const rd = receiptOf(await sealStage.run(ctxFor(d.repo, d.base).ctx, new AbortController().signal));
+      const dc = ctxFor(d.repo, d.base); dc.ctx.outputs().intake!.contract_snapshot = snapshotContract(d.repo);
+      const rd = receiptOf(await sealStage.run(dc.ctx, new AbortController().signal));
       expect(rd.verdict).toBe(ra.verdict);
       expect(existsSync(join(d.repo, ".loki/runs/r1/receipt.json"))).toBe(true);
+    } finally { if (prev === undefined) delete process.env["LOKI_CONTRACT"]; else process.env["LOKI_CONTRACT"] = prev; }
+  }, 30000);
+
+  test("D65-SPEC-F2 W5: editing contract.json after intake adds a NOT PROVEN line but never changes the verdict", async () => {
+    noKey();
+    const prev = process.env["LOKI_CONTRACT"];
+    try {
+      process.env["LOKI_CONTRACT"] = "1";
+      const wc = (repo: string, ids: string[]) => { mkdirSync(join(repo, ".loki"), { recursive: true }); writeFileSync(join(repo, ".loki/contract.json"), JSON.stringify({ source: "s", criteria: ids.map((id) => ({ id, text: `zebra ${id} migration`, source_line: 1 })) })); };
+      const ctl = makeRepo("contract-f2-ctl");
+      const sig = new AbortController().signal;
+      const cctl = ctxFor(ctl.repo, ctl.base);
+      await commitStage.run(cctl.ctx, sig); // a real commit so the control verdict is VERIFIED, not an empty-diff FAILED
+      const rctl = receiptOf(await sealStage.run(cctl.ctx, sig));
+      expect(rctl.verdict).toBe("VERIFIED");
+      const e = makeRepo("contract-f2-edit"); wc(e.repo, ["AC-1", "AC-2"]);
+      const ec = ctxFor(e.repo, e.base);
+      await commitStage.run(ec.ctx, sig);
+      ec.ctx.outputs().intake!.contract_snapshot = snapshotContract(e.repo);
+      wc(e.repo, ["AC-1"]);
+      const re = receiptOf(await sealStage.run(ec.ctx, new AbortController().signal));
+      expect(re.verdict).toBe(rctl.verdict);
+      expect(re.not_proven.some((n) => n.startsWith("contract changed after intake (sha "))).toBe(true);
+      const ct = (re as unknown as { contract: { criteria: unknown[]; sha256: string } }).contract;
+      expect(ct.criteria).toHaveLength(2);
+      expect(ct.sha256).toMatch(/^[0-9a-f]{64}$/);
     } finally { if (prev === undefined) delete process.env["LOKI_CONTRACT"]; else process.env["LOKI_CONTRACT"] = prev; }
   }, 30000);
 

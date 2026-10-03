@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Loki 10 intake no longer fails with ENOTDIR in a linked git worktree (where .git is a file), so `loki workspace run` per-repo runs start (D65-BUG7).
+- The delivery contract (`.loki/contract.json`) is frozen at intake: seal traces only that copy, records its sha256 in `receipt.contract.sha256`, and an edit, deletion or late creation after intake shows as a NOT PROVEN line; the verdict never changes (D65-SPEC-F2).
 - The Control Plane container image now builds from the repo Dockerfile.control-plane (it copies the loki-ts files ingest.ts imports; `docker build` no longer fails with Could not resolve).
 - The deferred already-done check no longer leaks its pinned base-tree copy (loki-already-done-*) on SIGTERM, process.exit or a failed setup (D61-04-F).
 - The deferred already-done check passes its spawn env inline so the spawn env guard test (no spawn omits env) passes again (P0-SPAWN-ENV-SPEED).

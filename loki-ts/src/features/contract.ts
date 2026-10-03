@@ -5,11 +5,12 @@
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 export interface Criterion { id: string; text: string; source_line: number }
 export interface Contract { source: string; criteria: Criterion[] }
 export interface TracedCriterion { id: string; text: string; files: string[]; checks: string[]; status: "keyword_match" | "no_match" }
-export interface ContractTrace { criteria: TracedCriterion[] }
+export interface ContractTrace { criteria: TracedCriterion[]; sha256?: string }
 
 export const MAX_CRITERIA = 50;
 export const MAX_TEXT = 500;
@@ -100,23 +101,28 @@ export function contractPath(repoDir: string): string {
 
 export const MAX_CONTRACT_BYTES = 1024 * 1024;
 
-export interface ContractRead { contract: Contract | null; notes: string[] }
+export interface ContractRead { contract: Contract | null; notes: string[]; sha256: string | null }
+/** The contract as intake saw it (D65-SPEC-F2): sha256 of the raw file bytes (null when no readable file), the parsed contract, and read notes. */
+export type ContractSnapshot = ContractRead
 
 /** Read .loki/contract.json safely: lstat first so a FIFO, directory, symlink or device is never opened
  *  (a FIFO would block the event loop forever), cap the size, and report why a contract is unusable. */
 export function readContract(repoDir: string): ContractRead {
   const p = contractPath(repoDir);
   let st;
-  try { st = lstatSync(p); } catch { return { contract: null, notes: [] }; }
-  if (!st.isFile()) return { contract: null, notes: ["contract unreadable: not a regular file"] };
-  if (st.size > MAX_CONTRACT_BYTES) return { contract: null, notes: ["contract unreadable: too large"] };
+  try { st = lstatSync(p); } catch { return { contract: null, notes: [], sha256: null }; }
+  if (!st.isFile()) return { contract: null, notes: ["contract unreadable: not a regular file"], sha256: null };
+  if (st.size > MAX_CONTRACT_BYTES) return { contract: null, notes: ["contract unreadable: too large"], sha256: null };
+  let raw: Buffer;
+  try { raw = readFileSync(p); } catch { return { contract: null, notes: ["contract unreadable: read failed"], sha256: null }; }
+  const sha256 = createHash("sha256").update(raw).digest("hex");
   let j: { source?: unknown; criteria?: unknown } | null;
   try {
-    j = JSON.parse(readFileSync(p, "utf8")) as { source?: unknown; criteria?: unknown } | null;
+    j = JSON.parse(raw.toString("utf8")) as { source?: unknown; criteria?: unknown } | null;
   } catch {
-    return { contract: null, notes: ["contract unreadable: invalid JSON"] };
+    return { contract: null, notes: ["contract unreadable: invalid JSON"], sha256 };
   }
-  if (!Array.isArray(j?.criteria)) return { contract: null, notes: [] };
+  if (!Array.isArray(j?.criteria)) return { contract: null, notes: [], sha256 };
   const criteria: Criterion[] = [];
   let malformed = 0;
   for (const c of j.criteria as unknown[]) {
@@ -126,7 +132,13 @@ export function readContract(repoDir: string): ContractRead {
     criteria.push({ id: o.id.slice(0, 40), text: o.text.slice(0, MAX_TEXT), source_line: typeof o.source_line === "number" ? o.source_line : 0 });
   }
   const notes = malformed > 0 ? [`contract: ${malformed} malformed criteria dropped`] : [];
-  return { contract: { source: typeof j.source === "string" ? j.source : "", criteria }, notes };
+  return { contract: { source: typeof j.source === "string" ? j.source : "", criteria }, notes, sha256 };
+}
+
+/** Intake hook (D65-SPEC-F2): freeze the contract before the implement session can edit it. undefined when LOKI_CONTRACT=0. */
+export function snapshotContract(repoDir: string, env: NodeJS.ProcessEnv = process.env): ContractSnapshot | undefined {
+  if (!contractEnabled(env)) return undefined;
+  try { return readContract(repoDir); } catch { return { contract: null, notes: ["contract unreadable: snapshot failed"], sha256: null }; }
 }
 
 export function loadContract(repoDir: string): Contract | null {
@@ -161,16 +173,27 @@ export function main(args: string[]): number {
   return 0;
 }
 
-/** Seal hook: unless LOKI_CONTRACT=0, and when .loki/contract.json exists, attach the optional `contract` field
- *  to the receipt body (additive) and return the untraced lines, which seal adds to the receipt NOT PROVEN list (advisory, never changes the verdict). */
-export function sealContract(repoDir: string, body: object, rawDiff: string[], checks: { name: string }[], env: NodeJS.ProcessEnv = process.env): string[] {
+/** Seal hook: unless LOKI_CONTRACT=0, trace the contract frozen at intake (never the live file, D65-SPEC-F2), attach the optional
+ *  `contract` field to the receipt body (additive) and return NOT PROVEN lines: untraced criteria plus any change made to the file
+ *  after intake. Advisory only, never changes the verdict. */
+export function sealContract(repoDir: string, body: object, rawDiff: string[], checks: { name: string }[], env: NodeJS.ProcessEnv = process.env, snap?: ContractSnapshot): string[] {
   if (!contractEnabled(env)) return [];
   try {
-    const { contract: ct, notes } = readContract(repoDir);
-    if (!ct) return notes;
+    const live = readContract(repoDir);
+    let exists = true;
+    try { lstatSync(contractPath(repoDir)); } catch { exists = false; }
+    if (!snap) return exists ? ["contract not snapshotted at intake; ignored"] : [];
+    const drift: string[] = [];
+    if (snap.sha256 !== null) {
+      const short = (h: string | null): string => (h === null ? "unreadable" : h.slice(0, 12));
+      if (!exists) drift.push("contract removed after intake; traced the intake copy");
+      else if (live.sha256 !== snap.sha256) drift.push(`contract changed after intake (sha ${short(snap.sha256)} -> ${short(live.sha256)}); traced the intake copy`);
+    } else if (exists && snap.notes.length === 0) drift.push("contract created after intake; ignored");
+    const ct = snap.contract;
+    if (!ct) return [...snap.notes, ...drift];
     const trace = traceContract(ct, rawDiff.filter((_, i) => i % 2 === 1), checks.map((c) => c.name));
-    (body as { contract?: ContractTrace }).contract = trace;
-    return [...notes, ...untracedLines(trace)];
+    (body as { contract?: ContractTrace }).contract = { ...trace, ...(snap.sha256 ? { sha256: snap.sha256 } : {}) };
+    return [...snap.notes, ...drift, ...untracedLines(trace)];
   } catch (e) {
     delete (body as { contract?: ContractTrace }).contract;
     return [`contract trace failed: ${sanitizeCriterion(e instanceof Error ? e.message : String(e))}`];
