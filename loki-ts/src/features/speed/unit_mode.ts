@@ -1,4 +1,4 @@
-// D61-11 (D71): unit run mode. One unit of a parallel group runs as a full v10 run whose write set is a scope fence,
+// D61-11 (D71): unit run mode. One unit of a parallel group runs as a full v10 run whose write set is an advisory scope fence,
 // whose brief carries only its own context pack (no transcript, no model-driven exploration) and whose token budget
 // is fixed by the decomposer. Active only when LOKI_SPEED=1 and LOKI_UNIT_SPEC names a readable, valid spec file;
 // otherwise every export is inert and the callers behave byte-identically. Data and fence only, no verdict logic.
@@ -7,8 +7,6 @@ import { isAbsolute, relative, resolve } from "node:path";
 import type { Staged } from "../../e10ext/commit_filter.ts";
 
 export interface UnitSpec { id: string; writeSet: string[]; pack: string[]; tokenBudget: number }
-export type Git = (a: string[]) => Promise<{ code: number }>;
-export const unitOutsideNote = (f: string): string => `edit outside unit write set reverted: ${f}`;
 
 export const MAX_SPEC_BYTES = 1024 * 1024;
 export const MAX_TOKEN_BUDGET = 1e9;
@@ -65,16 +63,11 @@ export function unitBrief(env: NodeJS.ProcessEnv = process.env): string | null {
   return files.length ? `Relevant files:\n${files.join("\n")}` : "";
 }
 
-/** Reverts every staged path outside the write set (edits restore to base; new files are removed), tests included.
- *  null when unit mode is off; ok false when a git step failed. `kept` is what the ordinary scope pass still sees. */
-export async function unitFence(git: Git, base: string, staged: Staged[], env: NodeJS.ProcessEnv = process.env, pre: Record<string, string> = {}): Promise<{ ok: boolean; kept: Staged[]; notes: string[] } | null> {
+/** D76: advisory. Files staged outside the write set (tests and new files included), to be flagged as outside stated scope; nothing is
+ *  reverted. null when unit mode is off. */
+export function unitFlags(staged: Staged[], env: NodeJS.ProcessEnv = process.env, pre: Record<string, string> = {}): string[] | null {
   const s = unitSpec(env);
-  if (!s) return null;
-  const out = staged.filter(({ f }) => !inWriteSet(s, f) && !Object.hasOwn(pre, f)), kept = staged.filter(({ f }) => inWriteSet(s, f) || Object.hasOwn(pre, f));
-  const edits = out.filter(({ st }) => st !== "A").map(({ f }) => f), adds = out.filter(({ st }) => st === "A").map(({ f }) => f);
-  const rs = edits.length ? await git(["--literal-pathspecs", "restore", `--source=${base}`, "--staged", "--worktree", "--", ...edits]) : { code: 0 };
-  const rm = adds.length ? await git(["--literal-pathspecs", "rm", "-f", "-q", "--", ...adds]) : { code: 0 };
-  return { ok: rs.code === 0 && rm.code === 0, kept, notes: out.map(({ f }) => unitOutsideNote(f)) };
+  return s ? staged.filter(({ f }) => !inWriteSet(s, f) && !Object.hasOwn(pre, f)).map(({ f }) => f) : null;
 }
 
 /** Env additions for the unit's worker. Never loosens or disables the run cap: result is min(existing, max(0.01, budget cost)), a plain

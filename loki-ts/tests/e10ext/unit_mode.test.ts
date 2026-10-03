@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { briefContext } from "../../src/e10ext/context.ts";
 import { parseStaged } from "../../src/e10ext/commit_filter.ts";
-import { revertUnrelated, unrelatedNote } from "../../src/e10ext/scope.ts";
+import { flagOutsideScope, outsideNote } from "../../src/e10ext/scope.ts";
 import { parseCapUsd } from "../../src/e10ext/budget_cap.ts";
-import { inWriteSet, unitBrief, unitCapEnv, unitOutsideNote, unitSpec } from "../../src/features/speed/unit_mode.ts";
+import { inWriteSet, unitBrief, unitCapEnv, unitSpec } from "../../src/features/speed/unit_mode.ts";
 import type { RunContext } from "../../src/engine10/types.ts";
 
 const tmp = mkdtempSync(join(tmpdir(), "d61-11-"));
@@ -108,7 +108,7 @@ describe("briefContext in unit mode", () => {
   });
 });
 
-describe("write-set scope fence (real git)", () => {
+describe("write-set advisory scope fence (real git, D76: flag, never revert)", () => {
   function repo(): { dir: string; base: string } {
     const dir = mkdtempSync(join(tmp, "repo-"));
     sh(dir, "init", "-q", "-b", "main"); sh(dir, "config", "user.name", "t"); sh(dir, "config", "user.email", "t@example.invalid");
@@ -126,33 +126,33 @@ describe("write-set scope fence (real git)", () => {
     const o = { plan: { relevant_files: planned, plan: "do it" }, intake: { task: "t" } };
     if (env) { process.env["LOKI_SPEED"] = "1"; process.env["LOKI_UNIT_SPEC"] = specFile(`f${Math.random()}.json`, good); }
     try {
-      return await revertUnrelated(async (a) => ({ code: Bun.spawnSync(["git", ...a], { cwd: dir, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }).exitCode }), base, o, staged);
+      return flagOutsideScope(o, staged);
     } finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
   };
 
-  test("unit mode: edits and new files outside the write set are reverted and listed NOT PROVEN", async () => {
+  test("unit mode: edits and new files outside the write set are KEPT and flagged outside stated scope", async () => {
     const { dir, base } = repo();
     const notes = await run(dir, base, ["src/a.ts", "lib/b.ts", "src/c.ts"], true);
     expect(notes).not.toBeNull();
-    for (const f of ["src/c.ts", "settings.py", "src/new_outside.ts"]) expect(notes).toContain(unitOutsideNote(f));
-    expect(readFileSync(join(dir, "src/c.ts"), "utf8")).toBe("base\n");
-    expect(readFileSync(join(dir, "settings.py"), "utf8")).toBe("base\n");
-    expect(existsSync(join(dir, "src/new_outside.ts"))).toBe(false);
+    for (const f of ["src/c.ts", "settings.py", "src/new_outside.ts"]) expect(notes).toContain(outsideNote(f));
+    expect(readFileSync(join(dir, "src/c.ts"), "utf8")).toBe("edited\n");
+    expect(readFileSync(join(dir, "settings.py"), "utf8")).toBe("edited\n");
+    expect(existsSync(join(dir, "src/new_outside.ts"))).toBe(true);
     expect(readFileSync(join(dir, "src/a.ts"), "utf8")).toBe("edited\n");
     expect(readFileSync(join(dir, "lib/b.ts"), "utf8")).toBe("edited\n");
     expect(existsSync(join(dir, "lib/new_inside.ts"))).toBe(true);
     const left = sh(dir, "diff", "--cached", "--name-only", base).split("\n").filter(Boolean).sort();
-    expect(left).toEqual(["lib/b.ts", "lib/new_inside.ts", "src/a.ts"]);
+    expect(left).toEqual(["lib/b.ts", "lib/new_inside.ts", "settings.py", "src/a.ts", "src/c.ts", "src/new_outside.ts"]);
   });
 
-  test("unit mode never weakens D58: an in-write-set but plan-unrelated edit is still reverted", async () => {
+  test("unit mode: an in-write-set but plan-unrelated edit is flagged and kept", async () => {
     const { dir, base } = repo();
     const notes = await run(dir, base, ["src/a.ts"], true); // lib/b.ts is in the write set but not in the plan
-    expect(notes).toContain(unrelatedNote("lib/b.ts"));
-    expect(readFileSync(join(dir, "lib/b.ts"), "utf8")).toBe("base\n");
+    expect(notes).toContain(outsideNote("lib/b.ts"));
+    expect(readFileSync(join(dir, "lib/b.ts"), "utf8")).toBe("edited\n");
   });
 
-  test("prototype-named new root files outside the write set are reverted and unstaged", async () => {
+  test("prototype-named new root files outside the write set are flagged and kept staged", async () => {
     const { dir, base } = repo();
     const names = ["constructor", "toString", "__proto__", "valueOf", "hasOwnProperty"];
     for (const n of names) writeFileSync(join(dir, n), "x\n");
@@ -162,13 +162,13 @@ describe("write-set scope fence (real git)", () => {
     process.env["LOKI_SPEED"] = "1"; process.env["LOKI_UNIT_SPEC"] = specFile("f-proto.json", good);
     try {
       const o = { plan: { relevant_files: ["src/a.ts"], plan: "x" }, intake: { task: "t" } };
-      const notes = await revertUnrelated(async (a) => ({ code: Bun.spawnSync(["git", ...a], { cwd: dir, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }).exitCode }), base, o, staged);
-      for (const n of names) { expect(notes).toContain(unitOutsideNote(n)); expect(existsSync(join(dir, n))).toBe(false); }
-      expect(sh(dir, "diff", "--cached", "--name-only", base).split("\n").filter(Boolean)).toEqual(["src/a.ts"]);
+      const notes = flagOutsideScope(o, staged);
+      for (const n of names) { expect(notes).toContain(outsideNote(n)); expect(existsSync(join(dir, n))).toBe(true); }
+      expect(sh(dir, "diff", "--cached", "--name-only", base).split("\n").filter(Boolean)).toEqual([...names.map((n) => n).sort(), "src/a.ts"].sort());
     } finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
   });
 
-  test("D58 (unit mode off): tracked root edits named like Object.prototype keys are reverted as unrelated", async () => {
+  test("D76 (unit mode off): tracked root edits named like Object.prototype keys are flagged and kept", async () => {
     const { dir, base: b0 } = repo();
     for (const n of ["constructor", "toString"]) writeFileSync(join(dir, n), "base\n");
     sh(dir, "add", "constructor", "toString"); sh(dir, "commit", "-q", "-m", "proto names");
@@ -178,18 +178,19 @@ describe("write-set scope fence (real git)", () => {
     sh(dir, "add", "-A");
     const staged = parseStaged(sh(dir, "diff", "--cached", "--name-status", "--no-renames", "-z", base));
     const o = { plan: { relevant_files: ["src.ts"], plan: "do it" }, intake: { task: "t" } };
-    const notes = await revertUnrelated(async (a) => ({ code: Bun.spawnSync(["git", ...a], { cwd: dir, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }).exitCode }), base, o, staged);
-    for (const n of ["constructor", "toString"]) { expect(notes).toContain(unrelatedNote(n)); expect(readFileSync(join(dir, n), "utf8")).toBe("base\n"); }
+    const notes = flagOutsideScope(o, staged);
+    for (const n of ["constructor", "toString"]) { expect(notes).toContain(outsideNote(n)); expect(readFileSync(join(dir, n), "utf8")).toBe("edited\n"); }
   });
 
-  test("spec unset: D58 behaviour unchanged (settings.py reverted, new files kept, no unit notes)", async () => {
+  test("spec unset: settings.py is flagged and kept, new files kept, no unit notes", async () => {
     const { dir, base } = repo();
     const notes = await run(dir, base, ["src/a.ts", "lib/b.ts", "src/c.ts"], false);
-    expect(notes).toEqual([unrelatedNote("settings.py")]);
+    expect(notes).toEqual([outsideNote("settings.py")]);
+    expect(readFileSync(join(dir, "settings.py"), "utf8")).toBe("edited\n");
     expect(existsSync(join(dir, "src/new_outside.ts"))).toBe(true);
   });
 
-  test("unit mode exempts intake preexisting_dirty paths from the fence revert", async () => {
+  test("unit mode exempts intake preexisting_dirty paths from the fence flag", async () => {
     const { dir, base } = repo();
     writeFileSync(join(dir, "src/c.ts"), "user dirt\n"); writeFileSync(join(dir, "settings.py"), "edited\n");
     sh(dir, "add", "-A");
@@ -197,18 +198,14 @@ describe("write-set scope fence (real git)", () => {
     process.env["LOKI_SPEED"] = "1"; process.env["LOKI_UNIT_SPEC"] = specFile("f-pre.json", good);
     try {
       const o = { plan: { relevant_files: ["src/c.ts", "settings.py"], plan: "x" }, intake: { task: "t", preexisting_dirty: { "src/c.ts": " M" } } };
-      const notes = await revertUnrelated(async (a) => ({ code: Bun.spawnSync(["git", ...a], { cwd: dir, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }).exitCode }), base, o, staged);
-      expect(notes).toContain(unitOutsideNote("settings.py"));
-      expect(notes).not.toContain(unitOutsideNote("src/c.ts"));
+      const notes = flagOutsideScope(o, staged);
+      expect(notes).toContain(outsideNote("settings.py"));
+      expect(notes).not.toContain(outsideNote("src/c.ts"));
       expect(readFileSync(join(dir, "src/c.ts"), "utf8")).toBe("user dirt\n");
+      expect(readFileSync(join(dir, "settings.py"), "utf8")).toBe("edited\n");
     } finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
   });
 
-  test("a failing git step returns null", async () => {
-    process.env["LOKI_SPEED"] = "1"; process.env["LOKI_UNIT_SPEC"] = specFile("f-fail.json", good);
-    try { expect(await revertUnrelated(async () => ({ code: 1 }), "x", {}, [{ st: "M", f: "zzz.ts" }])).toBeNull(); }
-    finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
-  });
 });
 
 // D61-11b: intake wiring (cap reaches the enforced env, fail closed, spec frozen and kept outside the worktree)
