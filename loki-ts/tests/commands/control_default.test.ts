@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverControlUrl, instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
+import { discoverControlUrl, instancePath, isLoopbackHttp } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { runControl } from "../../src/commands/control.ts";
+import { startShip } from "../../src/e10ext/ship_hook.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 
 let home: string;
 beforeEach(() => { home = mkdtempSync(join(tmpdir(), "cpdef-")); });
@@ -45,6 +47,59 @@ describe("discoverControlUrl", () => {
   });
 });
 
+describe("loopback only", () => {
+  test("a non-loopback instance url is ignored with no fetch", async () => {
+    writeInst({ pid: process.pid, port: 80, url: "http://10.255.255.1:80" });
+    const calls: string[] = [];
+    expect(await discoverControlUrl(env(), { fetchImpl: health("loki-control", calls) })).toBeNull();
+    expect(calls.length).toBe(0);
+  });
+  test("isLoopbackHttp accepts only http on 127.0.0.1, localhost, [::1]", () => {
+    for (const u of ["http://127.0.0.1:5", "http://localhost:5", "http://[::1]:5"]) expect(isLoopbackHttp(u)).toBe(true);
+    for (const u of ["https://127.0.0.1:5", "http://10.0.0.1:5", "http://127.0.0.1.evil.example:5", "nonsense"]) expect(isLoopbackHttp(u)).toBe(false);
+  });
+});
+
+describe("startShip discovery", () => {
+  test("a valid instance gives one ship (ingest reaches the stub)", async () => {
+    let posts = 0;
+    const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
+      const u = new URL(req.url);
+      if (u.pathname === "/health") return Response.json({ service: "loki-control" });
+      if (u.pathname === "/v1/ingest") { posts++; return Response.json({}); }
+      return new Response("nf", { status: 404 });
+    } });
+    try {
+      writeInst({ pid: process.pid, port: srv.port, url: `http://127.0.0.1:${srv.port}` });
+      const runDir = join(home, "repo", ".loki", "runs", "r1"); mkdirSync(runDir, { recursive: true });
+      const log = new SupervisorLog(join(runDir, "events.jsonl"), "r1"); log.append("run.started", null, {});
+      await startShip(join(home, "repo"), log.path, env());
+      for (let i = 0; i < 40 && !existsSync(join(runDir, "ship.json")); i++) await Bun.sleep(100);
+      expect(existsSync(join(runDir, "ship.json"))).toBe(true);
+      expect(posts).toBeGreaterThan(0);
+    } finally { srv.stop(true); }
+  }, 15000);
+});
+
+describe("test sandbox", () => {
+  test("a live instance in HOME receives no ingest from the engine10 ship_hook suite", async () => {
+    let posts = 0;
+    const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) {
+      const u = new URL(req.url);
+      if (u.pathname === "/health") return Response.json({ service: "loki-control" });
+      if (u.pathname === "/v1/ingest") posts++;
+      return Response.json({});
+    } });
+    try {
+      writeInst({ pid: process.pid, port: srv.port, url: `http://127.0.0.1:${srv.port}` });
+      const e: Record<string, string> = { PATH: process.env.PATH ?? "", HOME: home };
+      const p = Bun.spawn(["bun", "test", "tests/engine10/ship_hook.test.ts"], { cwd: join(import.meta.dir, "../.."), env: e, stdout: "ignore", stderr: "ignore" });
+      await p.exited;
+      expect(posts).toBe(0);
+    } finally { srv.stop(true); }
+  }, 60000);
+});
+
 describe("loki control default", () => {
   test("LOKI_CONTROL=0 prints one off line and exits 0", async () => {
     let out = ""; const w = process.stdout.write.bind(process.stdout);
@@ -60,6 +115,7 @@ describe("loki control default", () => {
     try {
       expect(existsSync(f)).toBe(true);
       expect(statSync(f).mode & 0o777).toBe(0o600);
+      expect(statSync(join(home, ".loki", "control")).mode & 0o777).toBe(0o700);
       const inst = JSON.parse(await Bun.file(f).text());
       expect(Object.keys(inst).sort()).toEqual(["db", "install_path", "pid", "port", "url", "version"]);
       expect(await discoverControlUrl(env())).toBe(inst.url);

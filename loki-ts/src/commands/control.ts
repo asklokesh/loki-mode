@@ -1,7 +1,7 @@
 // `loki control serve|backfill|status` (D56 Loki Control Plane, on by default, LOKI_CONTROL=0 turns it off).
 // serve runs the bundled service (packages/control-plane/dist/server.js, or the TypeScript source in a checkout) on
 // 127.0.0.1. backfill ships .loki/runs through the same shipper the live hook uses. status probes /health.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
@@ -61,8 +61,9 @@ async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
     if (!m) continue;
     let version = "unknown";
     try { version = readFileSync(join(REPO_ROOT, "VERSION"), "utf8").trim(); } catch { /* keep */ }
-    mkdirSync(dirname(inst), { recursive: true });
+    mkdirSync(dirname(inst), { recursive: true, mode: 0o700 });
     writeFileSync(inst, `${JSON.stringify({ pid: process.pid, port: Number(m[2]), url: m[1], version, install_path: REPO_ROOT, db })}\n`, { mode: 0o600 });
+    chmodSync(inst, 0o600); // an existing file keeps its old mode through writeFileSync
     buf = "";
   }
   const code = await child.exited;

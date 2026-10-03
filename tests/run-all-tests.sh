@@ -4,7 +4,7 @@
 
 set -euo pipefail
 # Tests always run headless: no suite may open a browser (S-103).
-export LOKI_NO_BROWSER=1
+export LOKI_NO_BROWSER=1 LOKI_CONTROL=0 # tests never ship to a developer's live Control Plane
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

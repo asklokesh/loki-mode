@@ -38,7 +38,7 @@ export LC_ALL=C
 # Each property script exports these itself; set here too so one that forgets
 # still cannot phone home or wait on an update check under the gate.
 export LOKI_TELEMETRY_DISABLED=true DO_NOT_TRACK=1 LOKI_NO_UPDATE_CHECK=1 CI=true \
-  LOKI_DELEGATE_PR=0 LOKI_DASHBOARD=false LOKI_NO_BROWSER=1
+  LOKI_DELEGATE_PR=0 LOKI_DASHBOARD=false LOKI_NO_BROWSER=1 LOKI_CONTROL=0
 # Route and fallback selectors inherited from the caller's shell would silently
 # move every unmarked call onto one route. A script that needs a route sets it
 # per call.

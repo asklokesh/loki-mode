@@ -28,7 +28,7 @@ const norm = (p: string): string[] => readFileSync(p, "utf8").split("\n").filter
 test("unset: no ship.json, no network; set: same result and log, and events arrive", async () => {
   let posts = 0, got = 0;
   const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { posts++; got += ((await req.json()) as { events: unknown[] }).events.length; return Response.json({}); } });
-  const base: NodeJS.ProcessEnv = { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" };
+  const base: NodeJS.ProcessEnv = { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0" };
   delete base.LOKI_CONTROL_URL;
   try {
     const a = repo(), b = repo();
@@ -36,7 +36,7 @@ test("unset: no ship.json, no network; set: same result and log, and events arri
     const aLog = join(a, ".loki", "runs", "e10-ship1", "events.jsonl");
     expect(existsSync(join(a, ".loki", "runs", "e10-ship1", "ship.json"))).toBe(false);
     expect(posts).toBe(0);
-    const rb = await runSupervisor({ runId: "e10-ship1", repoDir: b, env: { ...base, LOKI_CONTROL_URL: `http://127.0.0.1:${srv.port}` }, workerArgv: [process.execPath, "-e", CODE], capS: 20 });
+    const rb = await runSupervisor({ runId: "e10-ship1", repoDir: b, env: { ...base, LOKI_CONTROL: "1", LOKI_CONTROL_URL: `http://127.0.0.1:${srv.port}` }, workerArgv: [process.execPath, "-e", CODE], capS: 20 });
     const bLog = join(b, ".loki", "runs", "e10-ship1", "events.jsonl");
     expect(rb.verdict).toBe(ra.verdict);
     expect(rb.workerExit).toBe(ra.workerExit);
