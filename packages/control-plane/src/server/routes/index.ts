@@ -10,6 +10,7 @@ import { mount as config } from "./config.ts";
 import { mount as control } from "./control.ts";
 import { mount as cost } from "./cost.ts";
 import { mount as integrations } from "./integrations.ts";
+import { mount as mergeRisk } from "./merge_risk.ts";
 import { mount as notify } from "./notify.ts";
 import { mount as providers } from "./providers.ts";
 import { mount as start } from "./start.ts";
@@ -33,7 +34,7 @@ export interface RouteCtx {
   answerDir?: string;
 }
 
-export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, config, providers, verify, integrations, notify, audit];
+export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, config, providers, verify, integrations, notify, audit, mergeRisk];
 
 export function registerRoutes(ctx: RouteCtx): void {
   mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback);
