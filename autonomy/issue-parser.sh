@@ -259,6 +259,7 @@ extract_type_from_labels() {
 # claim.
 _gp_criteria_lines() {
     printf '%s\n' "${1:-}" \
+        | grep -E '^[[:space:]]*([-*][[:space:]]+|[0-9]+[.)][[:space:]]+)' \
         | sed -E 's/^[[:space:]]*[-*][[:space:]]*\[[ xX]\][[:space:]]*//; s/^[[:space:]]*[-*][[:space:]]+//; s/^[[:space:]]*[0-9]+[.)][[:space:]]+//' \
         | grep -vE '^[[:space:]]*$' \
         | grep -vE '^[[:space:]]*-{3,}[[:space:]]*$'

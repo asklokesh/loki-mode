@@ -15,6 +15,13 @@ TARGET="$TMP/repo with spaces ; touch INJECTED"
 mkdir -p "$TARGET"
 printf '{"name":"fixture"}\n' > "$TARGET/package.json"
 
+# Explicit --provider claude pre-flights `command -v claude`; stub one so the
+# suite does not depend on a provider CLI being installed on the host (CI).
+mkdir -p "$TMP/stub-bin"
+printf '#!/bin/sh\nexit 0\n' > "$TMP/stub-bin/claude"
+chmod +x "$TMP/stub-bin/claude"
+export PATH="$TMP/stub-bin:$PATH"
+
 fail=0
 if [ -e "$TMP/INJECTED" ] || [ -e "$TARGET/INJECTED" ]; then
   echo "FAIL: directory metacharacters were evaluated"

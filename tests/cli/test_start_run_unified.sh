@@ -175,7 +175,13 @@ TOTAL=$((TOTAL+1))
 # Use --dry-run so we exit after PRD generation; also --no-start to prevent
 # actually launching anything. Network-dependent -- we check for the "Issue
 # provider:" prefix which comes from cmd_run, proving dispatch happened.
-start_url_out=$(timeout -k 10 30 "$LOKI" start https://github.com/asklokesh/loki-mode/issues/1 --dry-run 2>&1 || true)
+# A stub provider CLI makes the provider gate pass on a host with none
+# installed (CI); this test targets dispatch, not provider availability.
+STUB_BIN="$(mktemp -d "${TMPDIR:-/tmp}/loki-start-unified.XXXXXX")"
+printf '#!/bin/sh\nexit 0\n' > "$STUB_BIN/claude"
+chmod +x "$STUB_BIN/claude"
+start_url_out=$(PATH="$STUB_BIN:$PATH" timeout -k 10 30 "$LOKI" start https://github.com/asklokesh/loki-mode/issues/1 --dry-run 2>&1 || true)
+rm -rf "$STUB_BIN"
 if echo "$start_url_out" | grep -qi "Issue provider:"; then
     log_pass "loki start <URL> dispatches to issue-fetch code path"
 else
