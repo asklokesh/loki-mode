@@ -117,7 +117,7 @@ export function startServer(repoDir: string, port: number = DEFAULT_PORT): Dashb
         return new Response(renderPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
       }
       const g = /^\/g\/([^/]+)$/.exec(url.pathname);
-      if (g) return groupRoute(repoDir, decodeURIComponent(g[1]!));
+      if (g) return groupRoute(repoDir, g[1]!);
       if (url.pathname === "/modernize") {
         return (await import("../modernize/dashboard.ts")).modernizeRoute(repoDir);
       }

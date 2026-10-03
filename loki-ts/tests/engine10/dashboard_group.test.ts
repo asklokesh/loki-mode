@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { groupRoute } from "../../src/engine10/dashboard/page.ts";
 import { groupGrid, groupResponse } from "../../src/features/speed/group_grid.ts";
 
 let repoDir = "";
@@ -45,5 +46,11 @@ describe("group grid", () => {
     const html = await (await groupResponse(repoDir, "<b>x")).text();
     expect(html).toContain("no data ingested");
     expect(html).not.toContain("<b>x");
+  });
+
+  test("malformed percent-encoding in the group id is a 400, not a throw", async () => {
+    repoDir = mkdtempSync(join(tmpdir(), "e10-grp-"));
+    expect((await groupRoute(repoDir, "%E0%A4%A")).status).toBe(400);
+    expect((await groupRoute(repoDir, "g%201")).status).toBe(200);
   });
 });

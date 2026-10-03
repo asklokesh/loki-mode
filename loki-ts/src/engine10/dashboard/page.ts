@@ -93,5 +93,9 @@ export function renderPage(): string {
 </html>
 `;
 }
-/** D61-15: /g/<group> unit grid; rendering lives in features/speed per D71. */
-export const groupRoute = async (repoDir: string, group: string): Promise<Response> => (await import("../../features/speed/group_grid.ts")).groupResponse(repoDir, group);
+/** D61-15: /g/<group> unit grid (rawGroup is the still-encoded path segment); rendering lives in features/speed per D71. */
+export const groupRoute = async (repoDir: string, rawGroup: string): Promise<Response> => {
+  let group: string;
+  try { group = decodeURIComponent(rawGroup); } catch { return new Response("bad group id", { status: 400 }); }
+  return (await import("../../features/speed/group_grid.ts")).groupResponse(repoDir, group);
+};
