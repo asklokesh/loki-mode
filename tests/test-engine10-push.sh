@@ -247,5 +247,26 @@ p4 "$W/fake/autonomy/lib/engine10-push.sh" push-pr "$A" loki/e10-fix t "$W/body.
 [ "$rc" -eq 3 ] && [ ! -s "$GHLOG" ] && [ ! -s "$W/remote.log" ] && grep -q anchors "$W/err" \
     && ok "missing anchors fail closed (rc 3, no gh, no push)" || bad "missing anchors: rc=$rc err=$(tr '\n' ' ' < "$W/err")"
 
+# Region guard on its own: anchors present, one required trusted-push function
+# dropped (renamed so the anchors still match). Must refuse with rc 3 before
+# anything runs, even when the parent environment exports a same-named function.
+mkdir -p "$W/fake2/autonomy/lib"
+cp "$LIB" "$W/fake2/autonomy/lib/"
+sed 's/^_loki_run_neutral() {$/_loki_run_neutral_dropped() {/' "$ROOT/autonomy/run.sh" > "$W/fake2/autonomy/run.sh"
+grep -q '^_LOKI_WITHHELD_TOKENS=""$' "$W/fake2/autonomy/run.sh" && ! grep -q '^_loki_run_neutral() {$' "$W/fake2/autonomy/run.sh" \
+    && ok "region guard fixture keeps anchors and drops _loki_run_neutral" || bad "region guard fixture is malformed"
+: > "$GHLOG"; : > "$W/remote.log"
+p4 "$W/fake2/autonomy/lib/engine10-push.sh" push-pr "$A" loki/e10-fix t "$W/body.md" >/dev/null 2>"$W/err"; rc=$?
+[ "$rc" -eq 3 ] && [ ! -s "$GHLOG" ] && [ ! -s "$W/remote.log" ] && grep -q "region lacks _loki_run_neutral" "$W/err" \
+    && ok "dropped region function fails closed (rc 3, region lacks, no gh, no push)" || bad "dropped region function: rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+: > "$GHLOG"; : > "$W/remote.log"
+(
+    _loki_run_neutral() { echo "STUB from parent env" >&2; "$@"; }
+    export -f _loki_run_neutral
+    p4 "$W/fake2/autonomy/lib/engine10-push.sh" push-pr "$A" loki/e10-fix t "$W/body.md" >/dev/null 2>"$W/err"
+); rc=$?
+[ "$rc" -eq 3 ] && [ ! -s "$GHLOG" ] && [ ! -s "$W/remote.log" ] && grep -q "region lacks _loki_run_neutral" "$W/err" \
+    && ok "exported same-name function does not satisfy the region guard (rc 3, no gh, no push)" || bad "exported function bypass: rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
