@@ -5,7 +5,7 @@ import { openDb } from "../db/migrate.ts";
 import { ingest } from "./ingest.ts";
 import { defaultAnswerDir, writeAnswer } from "./answer.ts";
 import { listRuns, recomputeLegacy, runDetail } from "./runs.ts";
-import { hostGuard, isLoopbackHost, tokenGuard } from "./auth.ts";
+import { hostGuard, isLoopbackHost, peerIsLoopback, tokenGuard } from "./auth.ts";
 import { backfill } from "../shipper/backfill.ts";
 import { removeRun } from "../db/prune.ts";
 import type { spawnStart } from "./spawn.ts";
@@ -75,10 +75,6 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   // Machine-touching actions exist ONLY on a loopback-bound server (otherwise they are never registered: 404).
   // Each request must also come from a loopback peer (the real socket address, not the spoofable Host header; unknown peer fails closed) and carry JSON (blocks cross-site form posts).
   const act = opts.loopbackOnly ? app : new Hono();
-  const peerIsLoopback = (c: Context): boolean => {
-    const ip = (c.env as { requestIP?: (r: Request) => { address?: string } | null } | undefined)?.requestIP?.(c.req.raw)?.address;
-    return typeof ip === "string" && /^(127\.\d+\.\d+\.\d+|::1|::ffff:127\.\d+\.\d+\.\d+)$/.test(ip);
-  };
   const local = (c: Context) => peerIsLoopback(c) && isLoopbackHost(c.req.header("host")) && (c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json");
   const repoDir = opts.repoDir ?? process.cwd();
   act.post("/v1/import", async (c) => {

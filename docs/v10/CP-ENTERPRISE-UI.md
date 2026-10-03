@@ -230,12 +230,273 @@ Gap: the server stores events only. Artifacts live in the local repo, and source
 
 Every mutating endpoint: requires the bearer token when the server is not loopback-only, refuses non-JSON bodies, checks Origin against the served host, writes an audit row before acting, and returns the resulting state for optimistic reconciliation.
 
-## 5. Parity checklist (gate for CPE-24)
+## 5. Legacy integration contract (gate for CPE-24)
+
+The legacy dashboard (dashboard/server.py, port 57374, 13194 lines) serves 234 routes (method and path entries after dropping HEAD; routers api_v2 at /api/v2, api_operator at /api/operator, api_start, api_runs_v1 at /api/v1/runs, the /lab and /assets mounts, WS /ws and /ws/collab). Deleting it (CPE-24) must not break a real integration. This section is the contract: one row per route, what consumes it, what the Control Plane offers, and what the shim at packages/control-plane/src/server/legacy/ does with it.
+
+Method. Route list: FastAPI introspection of `dashboard.server.app` (the 234 entries). Consumers: a repo-wide text scan of git-tracked files, then each used route's consumer lines were read by hand. Counted as a consumer: the TypeScript and Python SDKs, vscode-extension (src and the bundled media/loki-dashboard.js webview), autonomy/loki and autonomy/run.sh, web-app, .github/workflows, tests/moat, tests/e2e, tests/integration, scripts/run-dashboard-* (marked "(test)" when a test). Not counted: dashboard/ itself, dashboard-ui/ (the legacy UI is deleted with the server), docs, generated maps, packages/control-plane. The scan matches path text, so single-segment paths (/start, /cost, /trust, /) were checked by hand: every hit was `loki start`, `/api/cost` or `/lab/api/cost`, none a request to that HTML route. Limits: a path built at runtime from parts is invisible to a text scan, and an HTTP verb is inferred from the nearby call text, so a verb on a bundled-JS row is best effort. A route with a consumer is USED, otherwise UNUSED.
+
+Status values: EXISTS (the CP serves it today), PARTIAL (the shim maps it and says what differs), MISSING (a USED route the CP has no data or mechanism for), UNUSED (no consumer). Shim actions: map (answer from CP data), 308 to CP UI (HTML page), 410 with notice (UNUSED, retired), 501 not yet supported (USED but no CP data or mechanism: the shim answers an explicit 501, never a faked success), none (the CP already serves the path).
+
+Counts: map 6, 308 5, 501 77, 410 142, none 4; total 234.
+
+Auth contract (never looser than legacy). Legacy `require_scope` is open when LOKI_ENTERPRISE_AUTH and OIDC are both off, and otherwise answers 401 without a token and 403 on a missing scope. Open in every mode: /health, /.well-known/agent.json, /api/enterprise/status, /api/auth/info, /api/providers/models, /metrics, the docs routes. The shim applies one rule to every route the legacy server guarded: if LOKI_CONTROL_TOKEN is set, require the CP bearer token (401 with www-authenticate otherwise); if no CP token is set but legacy enterprise auth or OIDC is enabled in the environment, fail closed with 401 (the CP has no way to check the legacy `loki_*` tokens); if neither is set, open, matching the legacy default. The CP token carries every scope, which is safe because the shim exposes only read routes and answers 501 or 410 for the rest. 501 and 410 answers are also behind the guard, so an unauthenticated caller learns nothing about a guarded route. The shim never binds a port; mounting it on the CP app keeps hostGuard and the loopback-only action routes exactly as they are.
+
+First hit per process, each route logs one line: `legacy dashboard route <path> is served by the Control Plane; migrate to /v1/...` (mapped and 308 routes). A 501 or 410 route logs the same single line in the words "is not served by the Control Plane (501)" or "is retired (410)".
+
+### 5.1 Parity checklist (gate for CPE-24)
 1. Every row of section 1 marked KEEP or REWORK has its v10 home rendered on real data, proven by a UI test with a fixture run.
 2. Every row of section 3.3 not marked DEFERRED works end to end in tests/e2e (start a fixture run, stream, BLOCKED answer, stop, retry, verify, config write).
 3. Visual parity: screenshots of wordmark, nav, card, KPI, badge, table in light and dark compared against legacy captures (CPE-23).
 4. No route under the old dashboard is reachable except the CP-LEGACY redirects (7b701d238).
 5. Lighthouse accessibility at or above 95 on composer, thread, Home; axe zero serious violations.
+
+
+### 5.2 Route contract
+
+| Method and path | Consumers (verified file:line) | CP /v1 equivalent | Status | Shim action |
+|---|---|---|---|---|
+| GET `/openapi.json` | none | none | UNUSED | 410 with notice |
+| GET `/docs` | none | none | UNUSED | 410 with notice |
+| GET `/docs/oauth2-redirect` | none | none | UNUSED | 410 with notice |
+| GET `/redoc` | none | none | UNUSED | 410 with notice |
+| POST `/api/v2/tenants` | sdk/python/loki_mode_sdk/client.py:204, sdk/typescript/src/client.ts:237 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/tenants` | sdk/python/loki_mode_sdk/client.py:191, sdk/typescript/src/client.ts:225 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/tenants/{tenant_id}` | sdk/typescript/src/client.ts:229 | none | MISSING | 501 not yet supported |
+| PUT `/api/v2/tenants/{tenant_id}` | none | none | UNUSED | 410 with notice |
+| DELETE `/api/v2/tenants/{tenant_id}` | sdk/typescript/src/client.ts:241 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/tenants/{tenant_id}/projects` | none | none | UNUSED | 410 with notice |
+| POST `/api/v2/runs` | vscode-extension/media/loki-dashboard.js:9617 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/runs` | sdk/python/loki_mode_sdk/client.py:220, sdk/typescript/src/client.ts:201 | /v1/runs | PARTIAL (ids are source:run strings, not ints; no project_id filter; status maps to running/completed; limit/offset map to limit/cursor) | map |
+| GET `/api/v2/runs/{run_id}` | sdk/python/loki_mode_sdk/client.py:228, sdk/typescript/src/client.ts:205 | /v1/runs/:id | PARTIAL (run_id is source:run (URL-encoded) or a bare run id; legacy integer ids answer 404) | map |
+| POST `/api/v2/runs/{run_id}/cancel` | sdk/python/loki_mode_sdk/client.py:233, sdk/typescript/src/client.ts:209, vscode-extension/media/loki-dashboard.js:9617 | none | MISSING | 501 not yet supported |
+| POST `/api/v2/runs/{run_id}/replay` | sdk/python/loki_mode_sdk/client.py:238, sdk/typescript/src/client.ts:213, vscode-extension/media/loki-dashboard.js:9617 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/runs/{run_id}/timeline` | sdk/python/loki_mode_sdk/client.py:243, sdk/typescript/src/client.ts:217, vscode-extension/media/loki-dashboard.js:9255 | /v1/runs/:id (stages, events) | PARTIAL (phases are CP stages; events carry seq, ts, type, stage only) | map |
+| POST `/api/v2/api-keys` | sdk/python/loki_mode_sdk/client.py:263, sdk/typescript/src/client.ts:178, vscode-extension/media/loki-dashboard.js:10097 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/api-keys` | sdk/python/loki_mode_sdk/client.py:253, sdk/typescript/src/client.ts:170 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/api-keys/{identifier}` | none | none | UNUSED | 410 with notice |
+| PUT `/api/v2/api-keys/{identifier}` | none | none | UNUSED | 410 with notice |
+| DELETE `/api/v2/api-keys/{identifier}` | sdk/typescript/src/client.ts:190, vscode-extension/media/loki-dashboard.js:10097 | none | MISSING | 501 not yet supported |
+| POST `/api/v2/api-keys/{identifier}/rotate` | sdk/python/loki_mode_sdk/client.py:271, sdk/typescript/src/client.ts:186, vscode-extension/media/loki-dashboard.js:10097 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/policies` | none | none | UNUSED | 410 with notice |
+| PUT `/api/v2/policies` | none | none | UNUSED | 410 with notice |
+| POST `/api/v2/policies/evaluate` | none | none | UNUSED | 410 with notice |
+| GET `/api/v2/audit` | sdk/python/loki_mode_sdk/client.py:293, sdk/typescript/src/client.ts:254, vscode-extension/media/loki-dashboard.js:9813 | /v1/audit (added by the shim) | PARTIAL (CP audit is an operator-action log (run removal, prune), not the legacy hash-chained log; resource_type filter answers 400) | map |
+| GET `/api/v2/audit/verify` | tests/moat/p2-honest-verdict.sh:1162 (test), tests/moat/p2-honest-verdict.sh:1258 (test), vscode-extension/media/loki-dashboard.js:9813 | none | MISSING | 501 not yet supported |
+| GET `/api/v2/audit/export` | none | /v1/audit | UNUSED | 410 with notice |
+| GET `/api/operator/runs/{run_id}` | none | /v1/runs/:id | UNUSED | 410 with notice |
+| GET `/api/operator/tests` | none | none | UNUSED | 410 with notice |
+| GET `/api/operator/receipts` | none | none | UNUSED | 410 with notice |
+| GET `/api/operator/releases` | none | none | UNUSED | 410 with notice |
+| GET `/api/operator/phases` | none | none | UNUSED | 410 with notice |
+| GET `/api/operator/workspaces/runs` | none | none | UNUSED | 410 with notice |
+| GET `/api/operator/workspaces/runs/{ws}/{run_id}` | none | none | UNUSED | 410 with notice |
+| GET `/api/onboarding/state` | none | none | UNUSED | 410 with notice |
+| POST `/api/onboarding/provider` | none | none | UNUSED | 410 with notice |
+| POST `/api/onboarding/github` | none | none | UNUSED | 410 with notice |
+| GET `/api/onboarding/repos` | none | none | UNUSED | 410 with notice |
+| POST `/api/onboarding/repo` | none | none | UNUSED | 410 with notice |
+| GET `/api/backlog/issues` | none | none | UNUSED | 410 with notice |
+| POST `/api/backlog/run` | none | none | UNUSED | 410 with notice |
+| GET `/api/backlog/status` | none | none | UNUSED | 410 with notice |
+| GET `/api/v1/runs` | none | /v1/runs | UNUSED | 410 with notice |
+| GET `/api/v1/runs/{run_id}` | none | /v1/runs/:id | UNUSED | 410 with notice |
+| POST `/api/v1/runs` | none | /v1/runs | UNUSED | 410 with notice |
+| POST `/api/v1/runs/{run_id}/stop` | none | none | UNUSED | 410 with notice |
+| GET `/start` | none | CP UI (/) | EXISTS | 308 to CP UI |
+| MOUNT `/lab` | none | CP UI (/) | EXISTS | 308 to CP UI |
+| GET `/health` | autonomy/loki:1929, autonomy/loki:7760, autonomy/run.sh:19293 (+10) | /health | EXISTS (CP /health answers {service, pid, install_path}, not the legacy body; CLI discovery relies on that identity, so the shim never overrides it) | none (CP /health serves) |
+| GET `/api/providers/models` | none | none | UNUSED | 410 with notice |
+| GET `/.well-known/agent.json` | .github/workflows/integrity-audit.yml:114, .github/workflows/integrity-audit.yml:115 | none (static card) | PARTIAL (static card from shim constants; capabilities the CP cannot back (streaming, enterprise rbac/multi-tenant) are false) | map |
+| GET `/api/status` | autonomy/loki:15601, autonomy/run.sh:19357, autonomy/run.sh:19541 (+10) | /v1/runs (derived) | PARTIAL (status, version, uptime, active_sessions, phase, provider only; no running_agents, pending_tasks, iteration, complexity, mode, current_task (CP has no such data, fields omitted)) | map |
+| GET `/api/projects` | sdk/python/loki_mode_sdk/client.py:166, sdk/typescript/src/client.ts:127, tests/moat/p7-no-fabricated-data.sh:446 (test) | none | MISSING | 501 not yet supported |
+| POST `/api/projects` | sdk/python/loki_mode_sdk/client.py:184, sdk/typescript/src/client.ts:139, tests/moat/p7-no-fabricated-data.sh:437 (test) (+1) | none | MISSING | 501 not yet supported |
+| GET `/api/projects/{project_id}` | sdk/python/loki_mode_sdk/client.py:174, sdk/typescript/src/client.ts:131 | none | MISSING | 501 not yet supported |
+| PUT `/api/projects/{project_id}` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| DELETE `/api/projects/{project_id}` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/tasks` | sdk/python/loki_mode_sdk/tasks.py:30, sdk/typescript/src/client.ts:150 | none | MISSING | 501 not yet supported |
+| POST `/api/tasks` | sdk/python/loki_mode_sdk/tasks.py:56, sdk/typescript/src/client.ts:162, vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/tasks/{task_id}` | sdk/python/loki_mode_sdk/tasks.py:38, sdk/typescript/src/client.ts:154, vscode-extension/src/views/dashboardWebview.ts:168 | none | MISSING | 501 not yet supported |
+| PUT `/api/tasks/{task_id}` | sdk/python/loki_mode_sdk/tasks.py:71, vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| DELETE `/api/tasks/{task_id}` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| POST `/api/tasks/{task_id}/move` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| WS `/ws` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/registry/projects` | none | none | UNUSED | 410 with notice |
+| POST `/api/registry/projects` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/registry/projects/{identifier}` | none | none | UNUSED | 410 with notice |
+| DELETE `/api/registry/projects/{identifier}` | none | none | UNUSED | 410 with notice |
+| GET `/api/registry/projects/{identifier}/health` | none | none | UNUSED | 410 with notice |
+| POST `/api/registry/projects/{identifier}/access` | none | none | UNUSED | 410 with notice |
+| GET `/api/registry/discover` | none | none | UNUSED | 410 with notice |
+| POST `/api/registry/sync` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/registry/tasks` | none | none | UNUSED | 410 with notice |
+| GET `/api/registry/learnings` | none | none | UNUSED | 410 with notice |
+| GET `/api/fleet/runs` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4706 (test), tests/moat/p7-no-fabricated-data.sh:4710 (test) (+1) | none | MISSING | 501 not yet supported |
+| GET `/api/fleet/summary` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4695 (test), tests/moat/p7-no-fabricated-data.sh:4696 (test) (+1) | none | MISSING | 501 not yet supported |
+| GET `/api/fleet/runs/{identifier}` | none | none | UNUSED | 410 with notice |
+| POST `/api/focus` | autonomy/run.sh:24831, web-app/server.py:2744 | none | MISSING | 501 not yet supported |
+| GET `/api/focus` | none | none | UNUSED | 410 with notice |
+| DELETE `/api/focus` | none | none | UNUSED | 410 with notice |
+| GET `/api/session/model` | none | none | UNUSED | 410 with notice |
+| POST `/api/session/model` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/running-projects` | none | none | UNUSED | 410 with notice |
+| POST `/api/control/start` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:257, vscode-extension/src/extension.ts:580 | none | MISSING | 501 not yet supported |
+| GET `/api/control/builds/{execution_id}` | none | none | UNUSED | 410 with notice |
+| GET `/api/control/builds/{execution_id}/proof` | none | none | UNUSED | 410 with notice |
+| POST `/api/control/builds/{execution_id}/stop` | none | none | UNUSED | 410 with notice |
+| POST `/api/running-projects/stop` | none | none | UNUSED | 410 with notice |
+| POST `/api/fleet/runs/{identifier}/retry` | none | none | UNUSED | 410 with notice |
+| POST `/api/fleet/runs/{identifier}/cancel` | none | none | UNUSED | 410 with notice |
+| GET `/api/enterprise/status` | none | none | UNUSED | 410 with notice |
+| GET `/api/auth/info` | none | none | UNUSED | 410 with notice |
+| POST `/api/enterprise/tokens` | none | none | UNUSED | 410 with notice |
+| GET `/api/enterprise/tokens` | none | none | UNUSED | 410 with notice |
+| DELETE `/api/enterprise/tokens/{identifier}` | none | none | UNUSED | 410 with notice |
+| GET `/api/enterprise/audit` | none | none | UNUSED | 410 with notice |
+| GET `/api/enterprise/audit/summary` | none | none | UNUSED | 410 with notice |
+| GET `/api/compliance` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/summary` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/episodes` | vscode-extension/src/views/memoryViewProvider.ts:152 | none | MISSING | 501 not yet supported |
+| GET `/api/memory/episodes/{episode_id}` | vscode-extension/src/views/dashboardWebview.ts:204, vscode-extension/src/views/memoryViewProvider.ts:215 | none | MISSING | 501 not yet supported |
+| GET `/api/memory/patterns` | vscode-extension/src/views/memoryViewProvider.ts:151 | none | MISSING | 501 not yet supported |
+| GET `/api/memory/patterns/{pattern_id}` | vscode-extension/src/views/dashboardWebview.ts:186, vscode-extension/src/views/memoryViewProvider.ts:197 | none | MISSING | 501 not yet supported |
+| GET `/api/memory/skills` | vscode-extension/src/views/memoryViewProvider.ts:153 | none | MISSING | 501 not yet supported |
+| GET `/api/memory/skills/{skill_id}` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/economics` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4749 (test), tests/moat/p7-no-fabricated-data.sh:4750 (test) (+2) | none | MISSING | 501 not yet supported |
+| POST `/api/memory/consolidate` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| POST `/api/memory/retrieve` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/memory/index` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/timeline` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/files` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/file` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/search` | none | none | UNUSED | 410 with notice |
+| GET `/api/memory/stats` | none | none | UNUSED | 410 with notice |
+| GET `/api/learning/metrics` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4752 (test) | none | MISSING | 501 not yet supported |
+| GET `/api/learning/trends` | none | none | UNUSED | 410 with notice |
+| GET `/api/learning/signals` | none | none | UNUSED | 410 with notice |
+| GET `/api/learning/aggregation` | none | none | UNUSED | 410 with notice |
+| POST `/api/learning/aggregate` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/learning/preferences` | none | none | UNUSED | 410 with notice |
+| GET `/api/learning/errors` | none | none | UNUSED | 410 with notice |
+| GET `/api/learning/success` | none | none | UNUSED | 410 with notice |
+| GET `/api/learning/tools` | none | none | UNUSED | 410 with notice |
+| POST `/api/control/pause` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:277, vscode-extension/src/extension.ts:703 | none | MISSING | 501 not yet supported |
+| POST `/api/control/resume` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:285, vscode-extension/src/extension.ts:743 | none | MISSING | 501 not yet supported |
+| POST `/api/control/stop` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:269, vscode-extension/src/extension.ts:651 | none | MISSING | 501 not yet supported |
+| GET `/api/cost` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4646 (test), tests/moat/p7-no-fabricated-data.sh:4647 (test) (+3) | none | MISSING | 501 not yet supported |
+| GET `/api/budget` | tests/e2e/dashboard-evidence-panels.mjs:73 (test), tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4650 (test) (+3) | none | MISSING | 501 not yet supported |
+| GET `/api/cost/timeline` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4652 (test), tests/moat/p7-no-fabricated-data.sh:4653 (test) (+15) | none | MISSING | 501 not yet supported |
+| GET `/api/trust/trajectory` | none | none | UNUSED | 410 with notice |
+| GET `/api/gate-policy` | none | none | UNUSED | 410 with notice |
+| GET `/api/pricing` | none | none | UNUSED | 410 with notice |
+| GET `/api/council/state` | none | none | UNUSED | 410 with notice |
+| GET `/api/council/verdicts` | none | none | UNUSED | 410 with notice |
+| GET `/api/council/convergence` | none | none | UNUSED | 410 with notice |
+| GET `/api/council/report` | none | none | UNUSED | 410 with notice |
+| POST `/api/council/force-review` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
+| GET `/api/council/transcripts` | vscode-extension/media/loki-dashboard.js:12426 | none | MISSING | 501 not yet supported |
+| GET `/api/council/transcripts/{iteration_id}` | none | none | UNUSED | 410 with notice |
+| GET `/api/context` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4745 (test), tests/moat/p7-no-fabricated-data.sh:4746 (test) (+3) | none | MISSING | 501 not yet supported |
+| GET `/api/notifications` | none | none | UNUSED | 410 with notice |
+| GET `/api/notifications/triggers` | none | none | UNUSED | 410 with notice |
+| PUT `/api/notifications/triggers` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:6802 | none | MISSING | 501 not yet supported |
+| POST `/api/notifications/{notification_id}/acknowledge` | none | none | UNUSED | 410 with notice |
+| POST `/api/notifications/{notification_id}/unacknowledge` | none | none | UNUSED | 410 with notice |
+| GET `/api/checkpoints` | vscode-extension/src/views/checkpointProvider.ts:108, vscode-extension/src/views/checkpointProvider.ts:134 | none | MISSING | 501 not yet supported |
+| GET `/api/checkpoints/{checkpoint_id}` | none | none | UNUSED | 410 with notice |
+| POST `/api/checkpoints` | vscode-extension/media/loki-dashboard.js:5960 | none | MISSING | 501 not yet supported |
+| POST `/api/checkpoints/{checkpoint_id}/rollback` | vscode-extension/media/loki-dashboard.js:5960 | none | MISSING | 501 not yet supported |
+| GET `/api/agents` | none | none | UNUSED | 410 with notice |
+| POST `/api/agents/{agent_id}/kill` | vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
+| POST `/api/agents/{agent_id}/pause` | vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
+| POST `/api/agents/{agent_id}/resume` | vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
+| GET `/api/logs` | none | none | UNUSED | 410 with notice |
+| POST `/api/collab/join` | none | none | UNUSED | 410 with notice |
+| POST `/api/collab/leave` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/users` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/users/{user_id}` | none | none | UNUSED | 410 with notice |
+| POST `/api/collab/users/{user_id}/heartbeat` | none | none | UNUSED | 410 with notice |
+| POST `/api/collab/users/{user_id}/cursor` | none | none | UNUSED | 410 with notice |
+| POST `/api/collab/users/{user_id}/status` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/presence` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/file/{file_path:path}` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/state` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/state/value` | none | none | UNUSED | 410 with notice |
+| POST `/api/collab/operation` | none | none | UNUSED | 410 with notice |
+| POST `/api/collab/sync` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/history` | none | none | UNUSED | 410 with notice |
+| WS `/ws/collab` | none | none | UNUSED | 410 with notice |
+| GET `/api/collab/status` | none | none | UNUSED | 410 with notice |
+| GET `/api/secrets/status` | none | none | UNUSED | 410 with notice |
+| GET `/api/github/status` | none | none | UNUSED | 410 with notice |
+| GET `/api/github/tasks` | none | none | UNUSED | 410 with notice |
+| GET `/api/github/sync-log` | none | none | UNUSED | 410 with notice |
+| GET `/api/health/processes` | none | none | UNUSED | 410 with notice |
+| GET `/metrics` | autonomy/loki:29162, tests/e2e/webapp-admin-honesty.mjs:271 (test), tests/e2e/webapp-receipt-panel.mjs:54 (test) (+2) | none | MISSING | 501 not yet supported |
+| GET `/api/checklist` | none | none | UNUSED | 410 with notice |
+| GET `/api/usage` | none | none | UNUSED | 410 with notice |
+| GET `/api/checklist/summary` | none | none | UNUSED | 410 with notice |
+| GET `/api/prd-observations` | none | none | UNUSED | 410 with notice |
+| GET `/api/checklist/waivers` | none | none | UNUSED | 410 with notice |
+| POST `/api/checklist/waivers` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| DELETE `/api/checklist/waivers/{item_id}` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/council/gate` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4760 (test), tests/moat/p7-no-fabricated-data.sh:4762 (test) (+1) | none | MISSING | 501 not yet supported |
+| GET `/api/app-runner/status` | none | none | UNUSED | 410 with notice |
+| GET `/api/app-runner/logs` | none | none | UNUSED | 410 with notice |
+| GET `/api/app-runner/errors` | none | none | UNUSED | 410 with notice |
+| POST `/api/control/app-restart` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| POST `/api/control/app-stop` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
+| GET `/api/playwright/results` | none | none | UNUSED | 410 with notice |
+| GET `/api/playwright/screenshot` | none | none | UNUSED | 410 with notice |
+| GET `/api/failures` | none | none | UNUSED | 410 with notice |
+| GET `/api/prompt-versions` | none | none | UNUSED | 410 with notice |
+| POST `/api/prompt-optimize` | autonomy/loki:17793, vscode-extension/media/loki-dashboard.js:7581 | none | MISSING | 501 not yet supported |
+| MOUNT `/assets` | none | UI static assets | EXISTS (vite output under ui/dist/assets) | none (CP UI serves it) |
+| GET `/api/activity` | vscode-extension/media/loki-dashboard.js:8596 | none | MISSING | 501 not yet supported |
+| GET `/api/session-diff` | none | none | UNUSED | 410 with notice |
+| POST `/api/activity` | none | none | UNUSED | 410 with notice |
+| GET `/favicon.svg` | none | UI static asset | EXISTS (the CP UI serves its own favicon from ui/dist) | none (CP UI serves it) |
+| GET `/cost` | none | CP UI (/) | EXISTS | 308 to CP UI |
+| GET `/trust` | none | CP UI (/) | EXISTS | 308 to CP UI |
+| GET `/` | none | CP UI (/) | EXISTS | 308 to CP UI |
+| GET `/api/quality-score` | none | none | UNUSED | 410 with notice |
+| GET `/api/quality-score/history` | none | none | UNUSED | 410 with notice |
+| POST `/api/quality-scan` | autonomy/loki:23927, vscode-extension/media/loki-dashboard.js:7832 | none | MISSING | 501 not yet supported |
+| GET `/api/quality-report` | autonomy/loki:23994 | none | MISSING | 501 not yet supported |
+| GET `/api/migration/list` | vscode-extension/media/loki-dashboard.js:8173 | none | MISSING | 501 not yet supported |
+| POST `/api/migration/start` | none | none | UNUSED | 410 with notice |
+| GET `/api/migration/{migration_id}/status` | vscode-extension/media/loki-dashboard.js:8173 | none | MISSING | 501 not yet supported |
+| GET `/api/migration/{migration_id}/plan` | none | none | UNUSED | 410 with notice |
+| GET `/api/migration/{migration_id}/features` | none | none | UNUSED | 410 with notice |
+| GET `/api/migration/{migration_id}/seams` | none | none | UNUSED | 410 with notice |
+| POST `/api/migration/{migration_id}/advance` | none | none | UNUSED | 410 with notice |
+| POST `/api/migration/{migration_id}/start-phase` | none | none | UNUSED | 410 with notice |
+| GET `/api/managed/events` | vscode-extension/media/loki-dashboard.js:11965 | none | MISSING | 501 not yet supported |
+| GET `/api/managed/status` | tests/integration/test_dashboard_api_smoke.sh:105 (test), tests/integration/test_dashboard_api_smoke.sh:106 (test), vscode-extension/media/loki-dashboard.js:11965 | none | MISSING | 501 not yet supported |
+| GET `/api/managed/memory_versions/{memory_id}` | none | none | UNUSED | 410 with notice |
+| GET `/api/findings/{iteration}` | none | none | UNUSED | 410 with notice |
+| GET `/api/quality/architecture` | none | none | UNUSED | 410 with notice |
+| GET `/api/learnings` | tests/e2e/dashboard-evidence-panels.mjs:72 (test) | none | MISSING | 501 not yet supported |
+| GET `/api/escalations` | vscode-extension/media/loki-dashboard.js:12356 | none | MISSING | 501 not yet supported |
+| GET `/api/escalations/{filename}` | none | none | UNUSED | 410 with notice |
+| GET `/api/phases` | none | none | UNUSED | 410 with notice |
+| GET `/api/proofs` | tests/e2e/dashboard-evidence-panels.mjs:71 (test), tests/e2e/webapp-receipt-panel.mjs:75 (test), tests/e2e/webapp-receipt-panel.mjs:84 (test) | none | MISSING | 501 not yet supported |
+| GET `/api/proofs/summary` | tests/e2e/webapp-receipt-panel.mjs:76 (test) | none | MISSING | 501 not yet supported |
+| GET `/api/proofs/{run_id}` | tests/moat/p2-honest-verdict.sh:1251 (test) | none | MISSING | 501 not yet supported |
+| GET `/api/proofs/{run_id}/html` | none | none | UNUSED | 410 with notice |
+| GET `/api/spec` | none | none | UNUSED | 410 with notice |
+| GET `/api/spec/history` | none | none | UNUSED | 410 with notice |
+| GET `/api/wiki` | none | none | UNUSED | 410 with notice |
+| GET `/api/wiki/{section}` | none | none | UNUSED | 410 with notice |
+| POST `/api/wiki/ask` | vscode-extension/media/loki-dashboard.js:12595 | none | MISSING | 501 not yet supported |
+| GET `/{full_path:path}` | none | SPA fallback | EXISTS (CP app.get("*") serves the SPA and 404s missing assets) | none (CP UI serves it) |
+
+### 5.3 Notes for the deletion gate
+
+- Test consumers that block deleting the legacy routes (they run the Python app in process, so they need the routes or a rewrite): tests/moat/p2-honest-verdict.sh (GET /api/proofs/{run_id}, GET /api/v2/audit/verify) and tests/moat/p7-no-fabricated-data.sh (/api/status, /api/projects, /api/cost, /api/budget, /api/cost/timeline, /api/fleet/runs, /api/fleet/summary, /api/context, /api/memory/economics, /api/learning/metrics, /api/council/gate, /metrics). tests/e2e/dashboard-evidence-panels.mjs and webapp-receipt-panel.mjs read /api/proofs, /api/proofs/summary, /api/learnings, /api/budget. None of these may be weakened or added to tests/moat/pending.txt; CPE-24 must port the property each one proves before the route goes.
+- Corrections to the inventory hints: tests/moat/p5-sovereignty.sh does not call /api/enterprise/status or /api/enterprise/tokens (it runs `loki start`, matched by the text `/start`); autonomy/loki does not call /api/control/start or /api/control/stop on the dashboard; the VS Code extension requests `/status`, which the legacy server never served (its catch-all answered HTML), so it is not a row.
+- /api/memory/* and /api/learning/* are consumed by the VS Code memory view (src/views/memoryViewProvider.ts, dashboardWebview.ts) and the bundled webview, and p7 reads /api/memory/economics and /api/learning/metrics, so those that appear USED above are not deletable on the UI alone.
+- /health: the CP /health identity ({service: "loki-control"}) is relied on by CLI discovery. Callers that probe the legacy /health body at port 57374 (autonomy/loki, autonomy/run.sh, web-app) need either a migrated probe or a separate listener; the shim does not add one.
 
 ## 6. STEP 2 slice plan
 
