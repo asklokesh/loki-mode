@@ -201,14 +201,14 @@ describe("FC-16 C1 per-package suites route through classifyCheck", () => {
     return { checks, notProven: [...notProven] };
   };
   const GO_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\n=== RUN   TestB\n--- PASS: TestB (0.00s)\nPASS\nok  \texample.com/a\t0.004s\n";
-  test("go test -v output with ANSI colour is parsed (2 executed tests) and passes", async () => {
+  test("go test -v output with ANSI colour is never a pass (count could not be confirmed)", async () => {
     const r = await suite(GO_V.replace("PASS\n", "\u001b[32mPASS\u001b[0m\n").replace("ok  ", "\u001b[32mok\u001b[0m  "));
-    expect(r.checks.map((c) => [c.name, c.result])).toEqual([["full suite: backend", "pass"]]);
+    expect(r.checks.map((c) => [c.name, c.result])).toEqual([["full suite: backend", "not_run"]]);
   });
   test("a non-verbose go summary (exit 0, no count) is not_run, executed count unmeasured, never a pass", async () => {
     const r = await suite("ok  \texample.com/a\t0.004s\n");
     expect(r.checks[0]!.result).toBe("not_run");
-    expect(r.notProven.some((n) => n.startsWith("not run: full suite: backend") && n.includes("unmeasured"))).toBe(true);
+    expect(r.notProven.some((n) => n.startsWith("not run: full suite: backend") && n.includes("could not be confirmed"))).toBe(true);
   });
   test("exit 0 with [no test files] only is not_run (no tests executed)", async () => {
     const r = await suite("?   \texample.com/a\t[no test files]\n");

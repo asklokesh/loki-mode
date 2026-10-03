@@ -8,7 +8,6 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
-import { goJsonText } from "../util/check_result.ts";
 import { classifyRunnerOutput } from "./runner_errors.ts";
 
 export interface LoadOwnerInput {
@@ -105,7 +104,7 @@ export async function loadErrorIsHarnessOwned(i: LoadOwnerInput): Promise<boolea
   const git = (args: string[]): void => { execFileSync("git", args, { cwd: i.repoDir, stdio: "ignore", env: process.env }); };
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, i.baseSha]);
-    const baseRaw = await runOnBase(i, dir), base = baseRaw === null ? null : goJsonText(baseRaw);
+    const base = await runOnBase(i, dir);
     return base !== null && classifyRunnerOutput(base).kind === "load_error" && sameLoadError(i.out, base, [i.repoDir, ...(i.cwd ? [i.cwd] : [])], [dir]);
   } catch { return false; } finally {
     try { git(["worktree", "remove", "--force", dir]); } catch { /* pruned below */ }

@@ -6,6 +6,9 @@
 import { basename } from "node:path";
 
 export const NO_TESTS_REASON = "no tests executed";
+export const UNCONFIRMED_REASON = "test count could not be confirmed";
+/** Real failure evidence in a failed run: a failed test line, a go build or setup failure, a go compiler error line, or "N failed|errors". */
+const FAIL_EVIDENCE = /\[(?:build|setup) failed\]|^--- FAIL|^[\w./-]+\.go:\d+:\d+: \S|\b[1-9]\d* (?:failed|errors?)\b/m;
 export const UNMEASURED_REASON = "executed count unmeasured (Loki could not parse the runner summary, harness-owned)";
 
 /** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
@@ -13,8 +16,6 @@ export const UNMEASURED_REASON = "executed count unmeasured (Loki could not pars
  *  all skipped, never a pass (A-111). Node counts a testless file as one pseudo-test named after the file: discounted only when its name is the path under test (A-111b). */
 export function ran(raw: string, path?: string, ok?: boolean): number | null {
   const out = stripAnsi(raw);
-  const gj = goJsonCount(out, ok);
-  if (gj !== undefined) return gj;
   const n = (s: string, re: RegExp): number => +(s.match(re)?.[1] ?? 0);
   const blk = out.trimEnd().match(/(?:^|\n)((?:(?:#|\u2139) \w+ [\d.]+(?:\n|$)){5,})$/)?.[1];
   if (blk) { const c = n(blk, /(?:#|\u2139) pass (\d+)/) + n(blk, /(?:#|\u2139) fail (\d+)/); const nm = out.match(/^(?:ok \d+ - |\u2714 )(\S+\.[cm]?[jt]s)(?: \(|$)/m)?.[1]; return c === 1 && nm && (!path || basename(nm) === basename(path)) ? 0 : c; }
@@ -60,43 +61,6 @@ function unittestCount(out: string): number | null {
   if (!r || !/^(?:OK|FAILED)\b/.test(v)) return null;
   return Math.max(0, +r[1]! - +(v.match(/skipped=(\d+)/)?.[1] ?? 0) - +(v.match(/expected failures=(\d+)/)?.[1] ?? 0));
 }
-interface GoEvent { Action?: string; Test?: string; Package?: string; Output?: string }
-/** go test -json events, or null when the output is not -json. go wraps every test-binary line in an event, so the only other lines
- *  allowed are the go command's own ("go: ...", "# pkg") and a first line cut by a tail window; anything else (a -v run whose test
- *  printed JSON, plain text) is not -json and is never read as events. At least one event must carry a Package. */
-function goJsonEvents(out: string): GoEvent[] | null {
-  const ls = out.split("\n").filter((x) => x.trim()), ev: GoEvent[] = [];
-  for (let k = 0; k < ls.length; k++) {
-    const l = ls[k]!;
-    try { const e = JSON.parse(l) as GoEvent; if (e && typeof e === "object" && typeof e.Action === "string") { ev.push(e); continue; } } catch { /* not an event */ }
-    if (k === 0 || /^(?:go: |# |warning: )/.test(l)) continue;
-    return null;
-  }
-  return ev.some((e) => e.Package) ? ev : null;
-}
-/** The text of a go -json run: the Output fields in order (what -v would have printed, build errors included). Anything that is not
- *  -json is returned unchanged, so every text consumer (firstError, failIds, ran, skipped, the exit reason) calls this and stays runner-agnostic. */
-export function goJsonText(out: string): string {
-  const ev = goJsonEvents(out);
-  return ev ? ev.map((e) => e.Output ?? "").join("") : out;
-}
-/** Counts top-level tests with a "run" event and a final pass or fail; a test that ever skipped never counts; a fail under exit 0 is
- *  unmeasured (null). undefined = not -json. A tail-cut run undercounts (n>0 still), never invents a pass. */
-function goJsonCount(out: string, ok?: boolean): number | null | undefined {
-  const ev = goJsonEvents(out);
-  if (!ev) return undefined;
-  const ran = new Set<string>(), skip = new Set<string>(), st = new Map<string, string>();
-  for (const e of ev) {
-    if (!e.Test || e.Test.includes("/")) continue;
-    const k = `${e.Package}\0${e.Test}`;
-    if (e.Action === "run") ran.add(k);
-    else if (e.Action === "skip") skip.add(k);
-    else if ((e.Action === "pass" || e.Action === "fail") && ran.has(k)) st.set(k, e.Action);
-  }
-  for (const k of skip) st.delete(k);
-  if (ok === true && [...st.values()].includes("fail")) return null;
-  return st.size;
-}
 const GO_PKG_RE = /^(?:ok|FAIL|\?)\s+\S+\s+(?:\(cached\)|[\d.]+s\b|\[(?:no test files|build failed|setup failed)\])/;
 /** go test (-v): executed tests = top-level "--- PASS|FAIL" across every package. "[no test files]" is 0 only when no package ran tests.
  *  Non-verbose "ok pkg 0.1s" carries no count: null (unmeasured). undefined = not go output. */
@@ -119,7 +83,7 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
 /** Skipped or deselected tests from the runner's FINAL summary lines only: pytest "N skipped|deselected", jest/vitest "Tests: N skipped",
  *  node "# skipped N". Test names and captured output above the summary never count (A-115). */
 export function skipped(raw: string): number {
-  return stripAnsi(goJsonText(raw)).split("\n").filter((l) => /^(?:=+ )?\d+ \w+.* in [\d.]+s|^\s*Tests?:?\s+\d|^(?:#|ℹ) skipped \d/.test(l.trim()))
+  return stripAnsi(raw).split("\n").filter((l) => /^(?:=+ )?\d+ \w+.* in [\d.]+s|^\s*Tests?:?\s+\d|^(?:#|ℹ) skipped \d/.test(l.trim()))
     .reduce((t, l) => t + [...l.matchAll(/(\d+) (?:skipped|deselected|xfailed)|skipped (\d+)/g)].reduce((u, m) => u + +(m[1] ?? m[2]!), 0), 0);
 }
 
@@ -127,8 +91,6 @@ export function skipped(raw: string): number {
  *  null = unknown (never a pass). A vitest run with no files and no "Tests" summary is a real 0. */
 export function testCount(raw: string, path?: string, ok?: boolean): number | null {
   const out = stripAnsi(raw);
-  const gj = goJsonCount(out, ok);
-  if (gj !== undefined) return gj;
   const bu = bunCount(out), ut = unittestCount(out);
   if (bu !== null) return bu;
   if (ut !== null) return ut;
@@ -151,10 +113,16 @@ export function classifyCheck(i: ClassifyInput): Classified {
   if (i.missing) return { result: "not_run", reason: "tool not found on PATH" };
   if (i.cut) return { result: "not_run", reason: "timed out or aborted" };
   if (i.kind === "static") return { result: i.ok ? "pass" : "fail" };
+  const text = stripAnsi(i.out);
+  // Go: the count comes from text a test can forge, so it is never trusted. Exit 0 is never a pass from parsing; a failed run is a
+  // fail only when the output shows real failure evidence, else unconfirmed. A parse problem never fails the code and never passes.
+  if (text.split("\n").some((x) => GO_PKG_RE.test(x))) {
+    if (i.ok) return { result: "not_run", reason: UNCONFIRMED_REASON };
+    return FAIL_EVIDENCE.test(text) ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
+  }
   const n = testCount(i.out, i.path, i.ok);
-  // a failed run that shows its own failure (go "[build failed]", a FAIL line, N failed or errors) is a fail even when it executed 0 tests
-  const failed = /\[(?:build|setup) failed\]|^FAIL\b|^--- FAIL|\b[1-9]\d* (?:failed|errors?)\b/m.test(stripAnsi(goJsonText(i.out)));
-  if (n === 0 && (i.ok || !failed)) return { result: "not_run", n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
+  if (!i.ok && FAIL_EVIDENCE.test(text)) return { result: "fail", ...(n !== null ? { n } : {}) }; // L2: a failure is never downgraded by a zero count
+  if (n === 0) return { result: "not_run", n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
   if (!i.ok) return { result: "fail", ...(n !== null ? { n } : {}) };
   if (n === null) return { result: "not_run", reason: UNMEASURED_REASON };
   return { result: "pass", n };

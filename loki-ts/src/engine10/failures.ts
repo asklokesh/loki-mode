@@ -15,9 +15,7 @@ function failCount(out: string): number | null {
 /** A-112: failing test ids (pytest `FAILED|ERROR path::name`, jest `bullet Suite > name` or `bullet name`, node TAP `not ok N - name` or its
  *  spec cross line, vitest `FAIL name`). [] unless the ids cover the runner's reported count: a partial extraction (collection or install
  *  failure, "Tests: 0 total") can never be subtracted. */
-import { goJsonText } from "../util/check_result.ts";
-export function failIds(raw: string): string[] {
-  const output = goJsonText(raw);
+export function failIds(output: string): string[] {
   const ids = [...new Set(output.split("\n").map((l) => ID_LINE.exec(l.trim())).flatMap((m) => (m ? [(m.slice(1).find(Boolean) ?? "").trim()] : [])).filter(Boolean))];
   const c = failCount(output);
   return c && ids.length >= c ? ids : [];
