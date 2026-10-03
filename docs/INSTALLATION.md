@@ -434,10 +434,14 @@ runs any loki command inside the published `asklokesh/loki-mode` image with zero
 config:
 
 ```bash
+loki docker start owner/repo#17      # work a GitHub issue or PR in Docker (primary path)
 loki docker start prd.md             # full local experience in Docker
 loki docker status                   # any loki command works
 loki docker --dry-run start prd.md   # print the docker command, do not run
 ```
+
+On macOS, pass your GitHub login for PRs with
+`GH_TOKEN=$(gh auth token) loki docker start owner/repo#17`.
 
 It bind-mounts the current folder to `/workspace`, so `.loki/` state (memory,
 session, queue, checkpoints) persists on the host and resume and continuity

@@ -187,6 +187,14 @@ loki_docker_build_argv() {
     [ -n "${GH_TOKEN:-}" ] && argv+=(-e "GH_TOKEN=${GH_TOKEN}")
     # No desktop notifications inside a container.
     argv+=(-e "LOKI_NOTIFICATIONS=false")
+    # The container runs as uid 1000 but a macOS Docker Desktop bind mount can
+    # look root-owned, so the repo tool refuses /workspace ("dubious ownership").
+    # Trust it via env config, appending after any caller-set GIT_CONFIG_COUNT=N.
+    local _gc_n="${GIT_CONFIG_COUNT:-0}"
+    case "$_gc_n" in ''|*[!0-9]*) _gc_n=0 ;; esac
+    argv+=(-e "GIT_CONFIG_COUNT=$((_gc_n + 1))"
+        -e "GIT_CONFIG_KEY_${_gc_n}=safe.directory"
+        -e "GIT_CONFIG_VALUE_${_gc_n}=/workspace")
     # Multi-repo unified dashboard (Option B): the in-container run.sh must NOT
     # register into the project registry. A container only sees /workspace, not
     # the real host path, and registry.register_project() hard-fails on a path

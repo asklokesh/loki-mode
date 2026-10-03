@@ -329,6 +329,30 @@ tail4="$(printf '%s\n' "$argv_out" | tail -n 4)"
 assert_eq "$(printf 'asklokesh/loki-mode:latest\nstart\n--api\n./prd.md')" "$tail4" \
     "build_argv(oauth) ends with image then forwarded command"
 
+# ===========================================
+# build_argv: safe.directory env (dubious ownership fix)
+# ===========================================
+log_test "loki_docker_build_argv safe.directory env"
+argv_sd="$(
+    unset GIT_CONFIG_COUNT
+    ANTHROPIC_API_KEY=fake-key LOKI_DASHBOARD_PORT=57374 \
+    LOKI_DOCKER_IMAGE="asklokesh/loki-mode:latest" \
+        loki_docker_build_argv apikey "" 0 start owner/repo#17
+)"
+assert_line "safe.directory: COUNT=1" "GIT_CONFIG_COUNT=1" "$argv_sd"
+assert_line "safe.directory: KEY_0" "GIT_CONFIG_KEY_0=safe.directory" "$argv_sd"
+assert_line "safe.directory: VALUE_0" "GIT_CONFIG_VALUE_0=/workspace" "$argv_sd"
+argv_sd2="$(
+    export GIT_CONFIG_COUNT=2
+    ANTHROPIC_API_KEY=fake-key LOKI_DASHBOARD_PORT=57374 \
+    LOKI_DOCKER_IMAGE="asklokesh/loki-mode:latest" \
+        loki_docker_build_argv apikey "" 0 start owner/repo#17
+)"
+assert_line "safe.directory append: COUNT=3" "GIT_CONFIG_COUNT=3" "$argv_sd2"
+assert_line "safe.directory append: KEY_2" "GIT_CONFIG_KEY_2=safe.directory" "$argv_sd2"
+assert_line "safe.directory append: VALUE_2" "GIT_CONFIG_VALUE_2=/workspace" "$argv_sd2"
+assert_no_line "safe.directory append: no KEY_0 added" "GIT_CONFIG_KEY_0=safe.directory" "$argv_sd2"
+
 echo ""
 echo "========================================"
 echo "Test Summary"

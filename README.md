@@ -498,9 +498,12 @@ If you do not have Bun yet:
 curl -fsSL https://bun.sh/install | bash       # macOS / Linux (or: brew install oven-sh/bun/bun)
 ```
 
-Docker without installing loki locally: `loki docker start prd.md` runs it in the
-published image with zero config, bind-mounting the current folder so `.loki`
-state and resume work exactly like local. See [DOCKER_README.md](DOCKER_README.md).
+Docker without installing loki locally: `loki docker start owner/repo#N` (or
+`loki docker start prd.md`) runs it in the published image with zero config,
+bind-mounting the current folder so `.loki` state and resume work exactly like
+local. On macOS, pass your GitHub login for PRs:
+`GH_TOKEN=$(gh auth token) loki docker start owner/repo#17`.
+See [DOCKER_README.md](DOCKER_README.md).
 
 Upgrading: `loki self-update` auto-detects which package manager installed loki
 and runs the right upgrade. `loki self-update --to bun` migrates an npm install

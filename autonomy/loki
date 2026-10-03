@@ -38278,8 +38278,27 @@ cmd_docker() {
     # its live status from the bind-mounted .loki/session.json. Best-effort and
     # failure-swallowed: registry bookkeeping must never block a build.
     _loki_docker_register_host running
-    "${docker_argv[@]}"
-    local rc=$?
+    local rc _errlog=""
+    # Capture output for a failure summary only when no TTY is attached (a TTY
+    # run already shows the live output and must not be piped).
+    if [ ! -t 1 ] || [ ! -t 0 ]; then
+        _errlog="$(mktemp "${TMPDIR:-/tmp}/loki-docker-out.XXXXXX" 2>/dev/null)" || _errlog=""
+    fi
+    if [ -n "$_errlog" ]; then
+        "${docker_argv[@]}" 2>&1 | tee "$_errlog"
+        rc=${PIPESTATUS[0]}
+    else
+        "${docker_argv[@]}"
+        rc=$?
+    fi
+    if [ "$rc" -ne 0 ]; then
+        local _last=""
+        [ -n "$_errlog" ] && _last="$(grep -v '^[[:space:]]*$' "$_errlog" 2>/dev/null | tail -n 1)"
+        echo -e "${RED}loki docker: container exited with code ${rc}.${NC}" >&2
+        [ -n "$_last" ] && echo "Last error: ${_last}" >&2
+        echo "Fix hint: for PRs set GH_TOKEN=\$(gh auth token), and ensure ANTHROPIC_API_KEY or a Claude login is available, then rerun." >&2
+    fi
+    [ -n "$_errlog" ] && rm -f "$_errlog" 2>/dev/null
     _loki_docker_register_host stopped
     # F4 FIX-DOCKER-STOP (clear side): runs unconditionally after the blocking
     # call (not gated on rc), same as register_host stopped.
