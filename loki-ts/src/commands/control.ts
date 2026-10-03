@@ -78,8 +78,17 @@ async function status(env: NodeJS.ProcessEnv): Promise<number> {
   try {
     const h = (await (await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) })).json()) as { service?: string; pid?: number };
     if (h.service !== "loki-control") throw new Error("not a loki control plane");
-    const r = (await (await fetch(`${url}/v1/runs?limit=1`, { signal: AbortSignal.timeout(3000) })).json()) as { total?: number };
-    process.stdout.write(`loki control: up at ${url} (pid ${h.pid}), ${r.total ?? 0} runs\n`);
+    let runs: string;
+    try {
+      const res = await fetch(`${url}/v1/runs?limit=1`, { signal: AbortSignal.timeout(3000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const r = (await res.json()) as { total?: unknown };
+      if (typeof r.total !== "number") throw new Error("no total in response");
+      runs = `${r.total} runs`;
+    } catch (e) {
+      runs = `runs: unknown (${(e as Error).message})`;
+    }
+    process.stdout.write(`loki control: up at ${url} (pid ${h.pid}), ${runs}\n`);
     return 0;
   } catch (e) {
     process.stdout.write(`loki control: not reachable at ${url} (${(e as Error).message}). Start it with: loki control serve\n`);
