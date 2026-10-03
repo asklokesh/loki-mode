@@ -219,7 +219,13 @@ Release Manager still merges only PRs whose checks concluded success.
   (exit 12); file set overlaps a building, review or review-blocked row
   (11); the G-01 governor max is reached, unknown or unreadable (10; same
   `usage-governor.py --json` source as the pulse); `--live` with no
-  `--cloud` option in the installed CLI (13).
+  `--cloud` option in the installed CLI (13). Fail-safe rules: an in-flight
+  row that cannot be parsed, or has no concrete file set, refuses (11); a
+  ready slice with an elided or path-less file set refuses (12); a row with a
+  tab or escaped pipe refuses (17); `--live` needs a live `.loki/v10-leader`
+  PID (16) and re-checks the row just before launching; the governor call is
+  capped at 180s and a timeout refuses; the dry-run governor runs with
+  `--no-cache`.
 - Verified CLI surface (claude 2.1.288): only the top-level option
   `--cloud [description|session_id|url]` exists. `--help` documents no repo,
   branch, PR or non-interactive flag for it, so the branch and the PR
