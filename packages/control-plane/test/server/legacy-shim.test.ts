@@ -162,7 +162,7 @@ test("every USED-but-unbacked route answers an explicit 501, every unused one 41
     expect(b).toMatchObject({ legacy_route: r.path, method: r.method });
     if (r.action === "501") { n501++; expect(b.error).toBe("not yet supported by the Control Plane"); } else { n410++; expect(b.error).toBe("gone"); }
   }
-  expect([n501, n410]).toEqual([69, 139]);
+  expect([n501, n410]).toEqual([60, 139]);
   sqlite.close();
 });
 

@@ -11,6 +11,7 @@ import { peerIsLoopback, tokenMatches } from "../auth.ts";
 import { liveInfo, listRuns, loadEvents, runDetail } from "../runs.ts";
 import { LEGACY_ROUTES, type LegacyRoute } from "./routes.ts";
 import { auditCheckpointMapped } from "./routes-audit.ts";
+import { memoryMapped } from "./routes-memory.ts";
 import { metricsMapped } from "./routes-metrics.ts";
 
 export interface LegacyShimOpts {
@@ -154,6 +155,7 @@ export function legacyShim(opts: LegacyShimOpts) {
     "GET /api/v2/audit": (c) => { const r = auditList(c); return r.err ?? c.json(r.rows); },
     ...metricsMapped(opts.repoDir ?? process.cwd()),
     ...auditCheckpointMapped(db, opts.repoDir ?? process.cwd(), auditList),
+    ...memoryMapped(opts.repoDir ?? process.cwd()),
   };
 
   // /lab/api/* is data, not a page: 501 JSON on every method (a 308 to the SPA would hand a client HTML). Registered before the /lab mount.
