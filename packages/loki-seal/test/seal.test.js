@@ -1236,6 +1236,37 @@ test('forged lines r11: jest gives a stated reason, checked here on the reason o
   const files = { ...r11Repo('node --test --test-reporter=tap'), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'jest' } }) };
   assert.match(reasonFor(files), /jest is a project-resolved runner/);
 });
+// ADV-SEAL-JEST-E2E: a project-resolved runner (jest, vitest) goes through npm test with a stub node_modules/.bin binary.
+// Red must stay BLOCKED, green must be NOT VERIFIED with the runner reason and never PASS or Verified, driven end to end.
+const STUB_GREEN = '#!/bin/sh\nprintf "PASS test/a.test.js\\n  \\342\\234\\223 adds zero (2 ms)\\n  \\342\\234\\223 handles negative numbers (1 ms)\\n\\nTests:       3 passed, 3 total\\n"\nexit 0\n';
+const STUB_RED = '#!/bin/sh\nprintf "FAIL test/a.test.js\\n  \\342\\234\\225 adds zero (3 ms)\\n\\n  expect(received).toBe(expected)\\n\\nTests:       1 failed, 2 passed, 3 total\\n"\nexit 1\n';
+const runnerE2E = (bin, script, stub, req = R11_REQ) => {
+  const d = repo(r11Repo(script, { ['node_modules/.bin/' + bin]: STUB_GREEN, 'lib.js': ADD_OK }));
+  const f = path.join(d, 'node_modules/.bin', bin);
+  fs.chmodSync(f, 0o755);
+  assert.strictEqual(sealEnv(d, {}, 'start').status, 0);
+  if (stub !== 'green') { fs.writeFileSync(f, STUB_RED); fs.chmodSync(f, 0o755); }
+  return sealEnv(d, {}, 'stop', transcript(d, req));
+};
+for (const [bin, script, rx] of [['jest', 'jest', /jest is a project-resolved runner/], ['vitest', 'vitest run', /vitest is a project-resolved runner/]]) {
+  test(`${bin} e2e: a failing ${bin} run is BLOCKED with the failure counts, never PASS`, () => {
+    const r = runnerE2E(bin, script, 'red');
+    assert.strictEqual(r.status, 2, rawOf(r));
+    assert.match(rawOf(r), /loki-seal: BLOCKED/);
+    assert.match(rawOf(r), /new failing tests since session start \(exit 1\)/);
+    assert.match(rawOf(r), new RegExp(`runner: npm test \\(${bin}\\): 2 passed, 1 failed`));
+    assert.doesNotMatch(rawOf(r), /Verified by Loki|loki-seal: PASS/);
+  });
+  test(`${bin} e2e: a passing ${bin} run is NOT VERIFIED with the runner reason, never PASS with coverage`, () => {
+    const r = runnerE2E(bin, script, 'green');
+    assert.strictEqual(r.status, 2, rawOf(r));
+    assert.match(rawOf(r), /loki-seal: NOT VERIFIED/);
+    assert.match(rawOf(r), rx);
+    assert.match(rawOf(r), /0 covered by passing tests/);
+    assert.match(rawOf(r), new RegExp(`runner: npm test \\(${bin}\\): 3 passed, 0 failed`));
+    assert.doesNotMatch(rawOf(r), /Verified by Loki|loki-seal: PASS|[1-9]\d* covered by passing tests/);
+  });
+}
 test('forged lines r11 (r12 F1): childEnv scrubs NODE_OPTIONS, NODE_PATH and npm_* only for a clean runner', () => {
   const { childEnv } = require('../bin/loki-seal.js');
   const base = { NODE_OPTIONS: '--require x', NODE_PATH: '/p', NODE_TEST_CONTEXT: 'child', npm_config_node_options: 'a', NPM_CONFIG_NODE_OPTIONS: 'b', Npm_Lifecycle_Event: 'test', KEEP_ME: '1' };
