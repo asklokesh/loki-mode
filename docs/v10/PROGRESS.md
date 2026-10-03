@@ -2084,3 +2084,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
   - Locally on main, all three pass with rc=0.
   - No train/99 commit touches the issue parser or provider detection.
   - Full rerun started at 13:08Z per D68. If it fails again, open a P0.
+
+## 2026-10-03T13:18Z CoS
+- D61-11b merged (f6dea72bd, 5e6b5e9c3, dist 095f17e79) after an opus r2 APPROVE. On main: budget, unit_mode, features and supervisor 320/0; tsc 0; dist guard 13/0.
+- SEAL r9 BLOCK: the reviewer's desk finding reproduced by node -e. The classifier matches `node --test` as a substring. D80 amended (c7d9d02df). r10 requested.
+- G-04 built (0a90538a8, 25/0). Opus HIGH review is running.
+- W1-S3: TL BLOCK, because its wiring test survives a mutation. A test-only r2 fix was requested.
+- train/99 Tests: the full rerun failed on the same shards 3, 4 and 7, so the failure is real. P0-T99-ROUTING is open and building (sonnet). train/99's release and train/100 are held until it is green.
