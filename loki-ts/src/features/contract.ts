@@ -124,7 +124,7 @@ export function renderContract(c: Contract): string {
 
 /** seal reads ctx.repoDir/.loki/contract.json, so write to the repo root, not the bare cwd. */
 export function repoRoot(cwd: string): string {
-  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8" });
+  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", env: process.env });
   const top = r.status === 0 ? r.stdout.trim() : "";
   return top !== "" ? top : cwd;
 }
