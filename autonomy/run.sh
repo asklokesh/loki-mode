@@ -9884,12 +9884,19 @@ setup_agent_branch() {
             # file is gone when the user switches back. On conflict the resume
             # is refused and a fresh session branch (with a fresh snapshot) is
             # minted below.
-            if git checkout --no-overwrite-ignore "$recorded" >/dev/null 2>&1; then
+            local resume_err="" resume_files=""
+            if resume_err="$(git checkout --no-overwrite-ignore "$recorded" 2>&1 >/dev/null)"; then
                 log_info "Resuming on recorded agent branch: ${recorded}"
                 _loki_resume_snapshot
                 return 0
             fi
-            log_warn "Recorded agent branch ${recorded} could not be checked out - creating a new one"
+            # git lists the blocking paths as tab-indented lines.
+            resume_files="$(printf '%s\n' "$resume_err" | sed -n 's/^[[:space:]][[:space:]]*//p' | head -5 | paste -sd, - | sed 's/,/, /g')"
+            if [ -n "$resume_files" ]; then
+                log_warn "Recorded agent branch ${recorded} could not be checked out because it would overwrite your ignored file(s): ${resume_files} - creating a new one; the earlier commits stay on ${recorded}"
+            else
+                log_warn "Recorded agent branch ${recorded} could not be checked out - creating a new one; the earlier commits stay on ${recorded}"
+            fi
         fi
     fi
 

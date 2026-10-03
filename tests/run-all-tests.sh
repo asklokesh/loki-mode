@@ -950,6 +950,7 @@ run_test "Public Preview Tunnel (--public consent + tunnel wrap)" "$SCRIPT_DIR/t
 # the advisory prints push+PR commands and does NOT push (real bare remote, zero
 # refs after), with a mutation check proving that assertion is non-vacuous.
 run_test "Branch Lifecycle (default-on, base!=main, commit, advisory no-push)" "$SCRIPT_DIR/test-branch-lifecycle.sh"
+run_test "Refused resume warning names the blocking ignored file and the recorded branch (S-233)" "timeout -k 10 120 $SCRIPT_DIR/test-refused-resume-warning.sh"
 
 # Telemetry disclosure-before-egress under a REAL pty (council cH_r1 AC7). The
 # on-by-default gate resolves interactivity ONCE at the entry point (exported

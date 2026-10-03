@@ -726,3 +726,4 @@ web-app preview says could not detect after a failed preview-info fetch (S-229)	
 skill-session status push sends null running_agents (S-222)	2
 notification triggers unreadable is not empty (PO-DASH-HONEST-1)	2
 notification triggers panel unreadable vs empty (node --test, PO-DASH-HONEST-1)	1
+Refused resume warning names the blocking ignored file and the recorded branch (S-233)	3
