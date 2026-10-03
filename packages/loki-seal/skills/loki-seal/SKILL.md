@@ -11,7 +11,8 @@ When you try to finish, the hook:
 
 1. Detects the runner (npm test with node --test/jest/vitest, pytest, go test, cargo test) and runs the real suite on the working tree.
 2. Blocks the stop when tests newly fail since session start (already-red tests are reported, not blamed), when the run crashed or ran nothing, when the total test count dropped, or when, compared with the session baseline, a test file was removed, test declarations or assertions dropped, a skip/xfail/only marker was added, or a CI workflow test step was removed or softened.
-3. Reports a 5-line receipt (outcome, runner and counts, tests-integrity, tree hash, Verified by Loki link).
+3. Reads the delivery contract from your first request (see README) and blocks while a request item has no matching test.
+4. Reports a 6-line receipt (outcome, runner and counts, tests-integrity, contract, tree hash, Verified by Loki link).
 
 ## What to do when it blocks
 

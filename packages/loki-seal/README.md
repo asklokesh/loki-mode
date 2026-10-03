@@ -21,6 +21,7 @@ The plugin is the enforcing install: its `hooks/hooks.json` registers SessionSta
    - new `.skip`, `.only`, `.todo`, `xit`, `xtest`, `skip: true`, `@pytest.mark.skip/skipif/xfail`, `pytest.skip/xfail`, `@unittest.skip`, `t.Skip`, `#[ignore]`
    - CI config (GitHub workflows, GitLab, CircleCI, Azure, Jenkinsfile) deleted, test/check lines removed, or softened with `continue-on-error: true`, `|| true`, `if: false`
 4. A tree hash over all test files is printed in every receipt.
+5. Delivery contract (`bin/contract.js`, no model calls, no network): the Stop hook reads the first user message from `transcript_path`, plus local spec files it names (.md, .txt, .rst, .adoc inside the repo, max 5, never URLs or issue links). Bullet and checkbox lines, and sentences with must, should, shall, needs to, has to, ensure, make sure, required, cannot or never, become acceptance items. Each item is matched to tests by keyword overlap with test names (at least min(n,2) and ceil(n/2) of its n keywords). An item with no matching test, or whose tests all fail, blocks with "NOT VERIFIED" naming the item. No derivable items: "NOT VERIFIED: no contract" on the receipt. A missing or unreadable transcript: NOT VERIFIED with the reason, and the hook still exits cleanly. Items with no keyword left are ignored, so phrase requirements as specific behaviors.
 
 ## Receipt
 
@@ -28,6 +29,7 @@ The plugin is the enforcing install: its `hooks/hooks.json` registers SessionSta
 loki-seal: PASS
 runner: npm test (node --test): 12 passed, 0 failed
 tests-integrity: intact; baseline: session start
+contract: 1 item(s), 1 covered by passing tests
 tree: 9f2c41d07ab3e5c8
 Verified by Loki https://github.com/asklokesh/loki-mode
 ```

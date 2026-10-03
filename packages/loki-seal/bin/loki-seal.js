@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
+const { deriveContract, mapContract } = require('./contract.js');
 
 const mode = process.argv[2];
 let ctx = { input: {}, root: process.cwd() };
@@ -224,6 +225,25 @@ async function main() {
     if (suite0 && !r.error && total > 0 && total < baseTotal) problems.push(`test count dropped from ${baseTotal} to ${total}`);
   }
 
+  // Delivery contract (A-04c): the request's acceptance items must each map to a passing test.
+  const contract = deriveContract(input, root);
+  let contractLine, contractNote = null;
+  if (contract.status === 'unreadable') {
+    contractLine = `contract: NOT VERIFIED: ${contract.reason}`;
+    contractNote = `NOT VERIFIED: ${contract.reason}`;
+  } else if (contract.status === 'none') {
+    contractLine = 'contract: NOT VERIFIED: no contract';
+    contractNote = 'NOT VERIFIED: no contract';
+  } else {
+    const m = mapContract(contract.items, cur);
+    const red = (r && r.ids ? m.matched.filter((x) => x.tests.every((t) => r.ids.some((i) => i.includes(t)))) : []).map((x) => x.item);
+    const bad = [...m.unmatched.map((i) => `no test matches request item: "${i}"`), ...red.map((i) => `every test for request item "${i}" is failing`)];
+    contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '');
+    if (runner) problems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
+    else if (bad.length) contractNote = `NOT VERIFIED: ${bad[0]}`;
+  }
+  const contractOnly = problems.length > 0 && problems.every((x) => x.startsWith('NOT VERIFIED: '));
+
   const max = +process.env.LOKI_SEAL_MAX_BLOCKS || MAX_BLOCKS;
   const blocks = (st ? st.blocks : 0) + (problems.length ? 1 : 0);
   if (st) { st.blocks = problems.length ? blocks : 0; writeState(sp, st); }
@@ -231,14 +251,16 @@ async function main() {
 
   const outcome = !runner ? 'NOT VERIFIED (no test runner detected)'
     : released ? `NOT VERIFIED (released after ${max} blocks)`
-    : problems.length ? 'BLOCKED' : already ? `PASS (no new failures; ${already} already failing)` : 'PASS';
+    : problems.length ? (contractOnly ? 'NOT VERIFIED (request item not covered)' : 'BLOCKED')
+    : contractNote ? contractNote : already ? `PASS (no new failures; ${already} already failing)` : 'PASS';
   const basePart = already ? `baseline: ${already} already failing (not caused by this session)` : `baseline: ${baseKind}`;
   const receipt = [
     `loki-seal: ${outcome}`,
     runner ? `runner: ${runner.name}: ${c.pass} passed, ${c.fail} failed` : 'runner: none',
     `tests-integrity: ${findings.length ? findings.length + ' problem(s)' : 'intact'}; ${basePart}${skippedDirs.length ? `; ${skippedDirs.length} unreadable dir(s) skipped` : ''}`,
+    contractLine,
     `tree: ${tree}`,
-    problems.length || !runner ? `Not verified by Loki: ${REPO}` : `Verified by Loki ${REPO}`,
+    problems.length || !runner || contractNote ? `Not verified by Loki: ${REPO}` : `Verified by Loki ${REPO}`,
   ].join('\n');
 
   if (problems.length && !released) {

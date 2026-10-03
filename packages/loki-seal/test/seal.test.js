@@ -27,9 +27,19 @@ function put(dir, files) {
 }
 // On pass the receipt is JSON {"systemMessage"} (documented way to show a Stop hook message to the user).
 function msg(out) { try { return JSON.parse(out).systemMessage || out; } catch { return out; } }
+// Delivery contract fixtures: a Claude Code style JSONL transcript whose first user message is the request.
+function transcript(dir, text) {
+  const f = path.join(root, 'tx-' + path.basename(dir) + '-' + n++ + '.jsonl');
+  const lines = [{ type: 'summary', summary: 'x' }, { type: 'user', message: { role: 'user', content: text } },
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } }];
+  fs.writeFileSync(f, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+  return f;
+}
+const DEFAULT_REQUEST = 'Fix the adder.\n- adds zero\n';
 function seal(cmd, dir, extra = {}) {
+  const tp = 'transcript_path' in extra ? {} : { transcript_path: transcript(dir, DEFAULT_REQUEST) };
   const r = spawnSync('node', [SEAL, cmd], {
-    input: JSON.stringify({ session_id: 's-' + path.basename(dir), cwd: dir, ...extra }),
+    input: JSON.stringify({ session_id: 's-' + path.basename(dir), cwd: dir, ...tp, ...extra }),
     env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') },
     encoding: 'utf8',
   });
@@ -50,14 +60,14 @@ test('adds', () => { assert.strictEqual(add(1, 2), 3); });
 test('adds zero', () => { assert.strictEqual(add(0, 0), 0); });
 `;
 
-test('unchanged green passes with a 5-line receipt', () => {
+test('unchanged green passes with a 6-line receipt', () => {
   const d = repo(nodeRepo(ADD_OK, T2));
   seal('start', d);
   const r = seal('stop', d);
   assert.ok(!blocked(r), r.raw);
   const lines = r.out.systemMessage.trim().split('\n');
-  assert.strictEqual(lines.length, 5);
-  assert.match(lines[4], /Verified by Loki .*github\.com\/asklokesh\/loki-mode/);
+  assert.strictEqual(lines.length, 6);
+  assert.match(lines[5], /Verified by Loki .*github\.com\/asklokesh\/loki-mode/);
   assert.match(lines[1], /2 passed, 0 failed/);
 });
 
@@ -251,13 +261,13 @@ test('PASS with a red baseline says so on line 1', () => {
 test('pass output is JSON with systemMessage', () => {
   const d = repo(nodeRepo(ADD_OK, T2));
   seal('start', d);
-  const r = spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8' });
+  const r = spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d, transcript_path: transcript(d, DEFAULT_REQUEST) }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8' });
   assert.strictEqual(r.status, 0);
   assert.match(JSON.parse(r.stdout).systemMessage, /^loki-seal: PASS/);
 });
 
-const sealEnv = (d, env, cmd = 'stop') => spawnSync('node', [SEAL, cmd], {
-  input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }),
+const sealEnv = (d, env, cmd = 'stop', tp) => spawnSync('node', [SEAL, cmd], {
+  input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d, ...(tp ? { transcript_path: tp } : {}) }),
   env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state'), ...env }, encoding: 'utf8',
 });
 const isRoot = process.getuid && process.getuid() === 0;
@@ -386,4 +396,94 @@ test('a FIFO named *.test.js does not hang Stop', () => {
   assert.strictEqual(r0.status, 0, 'start hung or failed');
   const r = spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8', timeout: 30000 });
   assert.ok(r.status === 0 || r.status === 2, `status ${r.status} ${r.error}`);
+});
+
+// ---- A-04c: delivery contract ----
+const REQ_NEG = 'Please fix the calculator.\nIt must handle negative numbers.\n';
+const T_NO_NEG = T2; // green suite that never tests negative numbers
+const T_NEG = T2 + "test('handles negative numbers', () => { assert.strictEqual(add(-1, -2), -3); });\n";
+
+test('contract (a): green suite that never tests the requested behavior is NOT VERIFIED and names it', () => {
+  const d = repo(nodeRepo(ADD_OK, T_NO_NEG));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /^loki-seal: NOT VERIFIED/);
+  assert.match(r.out.reason, /no test matches request item: "It must handle negative numbers\."/);
+  assert.doesNotMatch(r.out.reason, /^loki-seal: PASS/m);
+});
+
+test('contract (b): same session with a passing test for the behavior is PASS', () => {
+  const d = repo(nodeRepo(ADD_OK, T_NEG));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage.split('\n')[0], /^loki-seal: PASS$/);
+  assert.match(r.out.systemMessage, /contract: 1 item\(s\), 1 covered by passing tests/);
+});
+
+test('contract: a failing test for the item does not count as covered', () => {
+  const d = repo(nodeRepo(ADD_OK, T_NEG.replace('add(-1, -2), -3', 'add(-1, -2), 99')));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
+  assert.strictEqual(r.status, 2, r.raw);
+});
+
+test('contract (c): a request with no derivable contract says NOT VERIFIED: no contract', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, 'hey, can you look at this repo?') });
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage.split('\n')[0], /^loki-seal: NOT VERIFIED: no contract$/);
+  assert.match(r.out.systemMessage, /Not verified by Loki/);
+});
+
+test('contract (d): missing, unreadable or non-file transcript_path is NOT VERIFIED with the reason and exits cleanly', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  for (const extra of [{ transcript_path: path.join(root, 'nope.jsonl') }, { transcript_path: root }, { transcript_path: 42 }, { transcript_path: '' }]) {
+    const r = seal('stop', d, extra);
+    assert.strictEqual(r.status, 0, r.raw);
+    assert.match(r.out.systemMessage.split('\n')[0], /^loki-seal: NOT VERIFIED: (transcript not readable|no transcript_path)/);
+  }
+  const r = spawnSync('node', [SEAL, 'stop'], { input: JSON.stringify({ session_id: 's-' + path.basename(d), cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.match(JSON.parse(r.stdout).systemMessage, /no transcript_path in hook input/);
+});
+
+test('contract: garbage transcript lines are tolerated', () => {
+  const d = repo(nodeRepo(ADD_OK, T_NEG));
+  seal('start', d);
+  const f = path.join(root, 'garbage-' + n++ + '.jsonl');
+  fs.writeFileSync(f, '{not json\n\u0000\u0001\n' + JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: REQ_NEG }] } }) + '\n');
+  const r = seal('stop', d, { transcript_path: f });
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage, /^loki-seal: PASS/);
+});
+
+test('contract: a linked local spec file adds items; URLs and escaping paths are not read', () => {
+  const d = repo({ ...nodeRepo(ADD_OK, T_NEG), 'docs/spec.md': '# Spec\n- rejects overflow values\n' });
+  fs.writeFileSync(path.join(root, 'outside-spec.md'), '- must explode\n');
+  seal('start', d);
+  const req = `Implement docs/spec.md and see https://example.com/remote.md and ${path.join(root, 'outside-spec.md')}`;
+  const r = seal('stop', d, { transcript_path: transcript(d, req) });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /request item: "rejects overflow values"/);
+  assert.doesNotMatch(r.out.reason, /explode/);
+});
+
+test('contract: block valve still releases a contract block after LOKI_SEAL_MAX_BLOCKS', () => {
+  const d = repo(nodeRepo(ADD_OK, T_NO_NEG));
+  seal('start', d);
+  const tp = transcript(d, REQ_NEG);
+  const run = () => sealEnv(d, { LOKI_SEAL_MAX_BLOCKS: '1' }, 'stop', tp);
+  assert.strictEqual(run().status, 2);
+  const r = run();
+  assert.strictEqual(r.status, 0);
+  assert.match(r.stdout, /NOT VERIFIED \(released after 1 blocks\)/);
+});
+
+test('contract: the module has no network or process imports', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'bin', 'contract.js'), 'utf8');
+  assert.doesNotMatch(src, /require\(['"](?:https?|net|dns|child_process)['"]\)|\bfetch\s*\(/);
 });
