@@ -50,6 +50,14 @@ const ASSERT = /\bassert\w*\s*[.(]|^\s*assert\s|\bexpect\s*\(|\bself\.assert\w+|
 // correctly. Comments (// , # , /* ... */ multi-line) and Python triple-quoted strings (multi-line) are
 // removed; quoted literals become "". With keep=true the output has the same length (noise blanked,
 // string literals kept) so declaration positions and names survive.
+// A / starts a regex literal (not a division) after an operator, an opening bracket, a separator, a
+// regex-preceding keyword or at the start of the file.
+function regexAllowed(out) {
+  const t = out.replace(/\s+$/, '');
+  if (!t) return true;
+  if (/[(,=:[!&|?{};+\-*%<>~^]$/.test(t)) return true;
+  return /(?:^|[^\w$.])(?:return|typeof|case|in|of|else|do|void|throw|delete|new|yield|await)$/.test(t);
+}
 function lex(s, keep) {
   const blank = (t) => t.replace(/[^\n]/g, ' ');
   let out = '';
@@ -70,7 +78,32 @@ function lex(s, keep) {
       const j = s.indexOf(c + c + c, i + 3);
       end = j < 0 ? n : j + 3;
       out += keep ? blank(s.slice(i, end)) : '""';
-    } else if (c === '"' || c === "'" || c === '`') {
+    } else if (c === '`') {
+      // Template literal: may span lines; ${...} holds code but is treated as part of the literal.
+      let k = i + 1;
+      let depth = 0;
+      while (k < n && !(s[k] === '`' && depth === 0)) {
+        if (s[k] === '\\') k++;
+        else if (s[k] === '$' && s[k + 1] === '{') { depth++; k++; } else if (s[k] === '}' && depth > 0) depth--;
+        k++;
+      }
+      if (k < n) { end = k + 1; out += keep ? s.slice(i, end) : '""'; }
+    } else if (c === '/' && regexAllowed(out)) {
+      // Regex literal: one line, / inside a [class] or after a backslash does not close it.
+      let k = i + 1;
+      let cls = false;
+      while (k < n && s[k] !== '\n' && (cls || s[k] !== '/')) {
+        if (s[k] === '\\') k++;
+        else if (s[k] === '[') cls = true;
+        else if (s[k] === ']') cls = false;
+        k++;
+      }
+      if (k < n && s[k] === '/') {
+        while (k + 1 < n && /[a-z]/i.test(s[k + 1])) k++;
+        end = k + 1;
+        out += keep ? s.slice(i, end) : '""';
+      }
+    } else if (c === '"' || c === "'") {
       let k = i + 1;
       while (k < n && s[k] !== c && s[k] !== '\n') { if (s[k] === '\\') k++; k++; }
       if (k < n && s[k] === c) { end = k + 1; out += keep ? s.slice(i, end) : '""'; }
@@ -80,10 +113,10 @@ function lex(s, keep) {
   return out;
 }
 const stripNoise = (s) => lex(s, false);
-// Prose that is chat, not a requirement on the system: a sentence that opens with a first-person pronoun
-// (I, we, let me, I'll), a tool-version note ("Node 20 is required"), or a status ("needs to be done").
+// Prose that is chat, not a requirement on the system: a sentence that opens with I, I'm, I've, I'll, I'd,
+// we, we're, we've, we'll, let me or let's, a tool-version note ("Node 20 is required"), or a status ("needs to be done").
 // Deliberately narrow: words like before, by, release, version, you and ci appear in real promises.
-const CHAT = /^\s*(?:i|i'm|i've|i'll|i'd|we|we're|we've|we'll|let\s+me|let's|my|our|me|you|please)\b|^\s*(?:node(?:js)?|npm|yarn|pnpm|python\d*|pip|java|jdk|ruby|golang|cargo)\s+v?\d|\b(?:be|get)\s+(?:done|finished|ready|merged|fixed)\b/i;
+const CHAT = /^\s*(?:i|i'm|i've|i'll|i'd|we|we're|we've|we'll|let\s+me|let's)\b|^\s*(?:node(?:js)?|npm|yarn|pnpm|python\d*|pip|java|jdk|ruby|golang|cargo)\s+v?\d|\b(?:be|get)\s+(?:done|finished|ready|merged|fixed)\b/i;
 const STOP = new Set(('a an the and or but if then else of to in on at by for with from as is are was were be been being it its this that these those ' +
   'must should shall need needs has have had do does did not no can cannot will would could may might make sure ensure require required requires ' +
   'please also just so too very any all each every some there their they them we you i me my our your when where which who what how than into ' +
@@ -268,4 +301,20 @@ function mapContract(items, files) {
   return { matched, unmatched };
 }
 
-module.exports = { deriveContract, mapContract, extractItems, keywords, testNames, ASSERT };
+// Test ids the runner reported as PASSED (never skipped, todo, ignored or failed): node TAP and spec,
+// pytest -rA, go -v, cargo, jest/vitest check marks. Coverage requires membership here.
+function passing(out) {
+  const ids = new Set();
+  const add = (x) => { if (x) ids.add(x.trim()); };
+  for (const m of out.matchAll(/^\s*ok \d+ - (.+?)\s*$/gm)) if (!/\s#\s*(?:SKIP|TODO)\b/i.test(m[1])) add(m[1].replace(/\s+#\s.*$/, ''));
+  for (const m of out.matchAll(/^\s*[\u2714\u2713\u221a] (.+?)\s*$/gm)) {
+    if (/\s#\s*(?:SKIP|TODO)\b/i.test(m[1])) continue;
+    add(m[1].replace(/\s+\(?\d[\d.]*\s?ms\)?$/, '').split(' > ').pop());
+  }
+  for (const m of out.matchAll(/^PASSED (\S+)/gm)) add(m[1]);
+  for (const m of out.matchAll(/^\s*--- PASS: (\S+)/gm)) add(m[1]);
+  for (const m of out.matchAll(/^test (\S+) \.\.\. ok$/gm)) add(m[1]);
+  return [...ids];
+}
+
+module.exports = { passing, deriveContract, mapContract, extractItems, keywords, testNames, ASSERT };

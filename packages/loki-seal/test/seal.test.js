@@ -698,3 +698,80 @@ test('R4-B4: end to end, a block-commented assertion leaves the item uncovered',
   assert.strictEqual(r.status, 2, r.raw);
   assert.match(r.out.reason, /no test matches request item: "handles negative numbers"/);
 });
+
+test('R5-N1b: a filtered chat sentence that carries a modal is still listed and never silently dropped', () => {
+  const r = negRun(nodeRepo(ADD_OK, T2), 'Fix the adder.\n- adds zero\nWe must reject negative sums.');
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage, /filtered as chat: 1 sentence\(s\): "We must reject negative sums\."/);
+});
+
+test('R5: passing ids come from tap, spec, pytest -rA, go and cargo output only when the test passed', () => {
+  const { passing } = require('../bin/contract.js');
+  assert.deepStrictEqual(passing('ok 1 - a b\n    ok 2 - c d\nok 3 - e f # SKIP\nnot ok 4 - g h\nok 5 - t # TODO x\n').sort(), ['a b', 'c d']);
+  assert.deepStrictEqual(passing('✔ a b (0.3ms)\n  ✔ c d (1ms)\n﹣ e f (0.1ms) # SKIP\n✖ g h (1ms)\n').sort(), ['a b', 'c d']);
+  assert.deepStrictEqual(passing('PASSED test_a.py::TestX::test_one\nSKIPPED [1] test_a.py:3: x\nFAILED test_a.py::test_two - boom\n'), ['test_a.py::TestX::test_one']);
+  assert.deepStrictEqual(passing('--- PASS: TestA (0.00s)\n    --- PASS: TestA/sub (0.00s)\n--- SKIP: TestB (0.00s)\n--- FAIL: TestC (0.00s)\n').sort(), ['TestA', 'TestA/sub']);
+  assert.deepStrictEqual(passing('test a::b ... ok\ntest c ... ignored\ntest d ... FAILED\n'), ['a::b']);
+});
+
+const notVerified = (r) => { assert.strictEqual(r.status, 2, r.raw); assert.match(r.out.reason, /NOT VERIFIED/); };
+const negRun = (files, req = NEG_REQ_ITEM) => {
+  const d = repo(files);
+  seal('start', d);
+  return seal('stop', d, { transcript_path: transcript(d, req) });
+};
+const PYT = (body) => ({ 'pytest.ini': '[pytest]\n', 'lib.py': 'def add(a,b):\n    return a+b\n', 'test_a.py': 'import pytest, unittest\nfrom lib import add\n' + body });
+const NEG_PASS = "test('handles negative numbers', () => { assert.strictEqual(add(-1,-2), -3); });\n";
+
+test('R5-N1: You / Our / Please modal sentences stay requirement items and block when untested', () => {
+  for (const s of ['You must reject negative sums with a RangeError.', 'Our API must return 404 for missing users.', 'Please note the adder must reject negative sums.']) {
+    const r = negRun(nodeRepo(ADD_OK, T2), 'Fix the adder.\n- adds zero\n' + s);
+    notVerified(r);
+    assert.match(r.out.reason, /no test matches request item/, s);
+  }
+});
+
+test('R5-N2: an assert inside a multi-line template literal is not an assertion', () => {
+  const { testNames } = require('../bin/contract.js');
+  assert.strictEqual(testNames({ 'a.test.js': "test('a b', () => { const note = `\n  assert.strictEqual(add(-1,-2), -3)\n`; });\n" })[0].asserts, false);
+  assert.strictEqual(testNames({ 'a.test.js': "test('a b', () => { const x = `${1}`; assert.ok(x); });\n" })[0].asserts, true);
+  notVerified(negRun(nodeRepo(ADD_OK, T2 + "test('handles negative numbers', () => { const note = `\n  assert.strictEqual(add(-1,-2), -3)\n`; });\n")));
+});
+
+test('R5-N3: a quote inside a regex literal does not open a string that hides a comment', () => {
+  const { testNames } = require('../bin/contract.js');
+  assert.strictEqual(testNames({ 'a.test.js': "test('a b', () => { const r = /'/; /* it's assert.ok(1) */ });\n" })[0].asserts, false);
+  assert.strictEqual(testNames({ 'a.test.js': "const re = /[/*]/;\ntest('a b', () => { assert.ok(1); });\n" })[0].asserts, true);
+  assert.strictEqual(testNames({ 'a.test.js': "test('a b', () => { const s = '/*'; assert.ok(1); });\n" })[0].asserts, true);
+  assert.strictEqual(testNames({ 'a.test.js': "test('a b', () => { assert.strictEqual(4 / 2, 2); });\n" })[0].asserts, true);
+  notVerified(negRun(nodeRepo(ADD_OK, T2 + "test('handles negative numbers', () => { const r = /'/; /* it's assert.strictEqual(add(-1,-2), 99) */ });\n")));
+});
+
+test('R5-N4: a test in a file the runner never ran never covers an item', () => {
+  notVerified(negRun({ ...nodeRepo(ADD_OK, T2), 'spec/neg.spec.js': "const test = require('node:test'); const assert = require('node:assert');\ntest('handles negative numbers', () => { assert.strictEqual(1, 99); });\n" }));
+});
+
+test('R5-N5: ctx.skip() and a skip passed through a variable options object never cover an item', () => {
+  notVerified(negRun(nodeRepo(ADD_OK, T2 + "test('handles negative numbers', (ctx) => { ctx.skip(); assert.strictEqual(add(-1,-2), 99); });\n")));
+  notVerified(negRun(nodeRepo(ADD_OK, T2 + "const opts = { skip: true };\ntest('handles negative numbers', opts, () => { assert.strictEqual(add(-1,-2), 99); });\n")));
+});
+
+test('R5-N6: a describe.skip with unindented nested tests never covers an item', () => {
+  const H = "const test = require('node:test'); const assert = require('node:assert'); const add = require('../lib.js');\nconst { describe, it } = require('node:test');\n";
+  notVerified(negRun(nodeRepo(ADD_OK, H + "it('adds', () => { assert.strictEqual(add(1,2), 3); });\ndescribe.skip('neg', () => {\nit('handles negative numbers', () => { assert.strictEqual(add(-1,-2), 99); });\n});\n")));
+});
+
+test('R5-N7: a pytest class-level skip never covers an item', { skip: !havePytest && 'pytest missing' }, () => {
+  notVerified(negRun(PYT("@pytest.mark.skip(reason='x')\nclass TestNeg:\n    def test_handles_negative_numbers(self):\n        assert add(-1,-2) == -3\n\ndef test_adds():\n    assert add(1,2) == 3\n")));
+  notVerified(negRun(PYT("@unittest.skip('x')\nclass TestNeg(unittest.TestCase):\n    def test_handles_negative_numbers(self):\n        self.assertEqual(add(-1,-2), -3)\n\ndef test_adds():\n    assert add(1,2) == 3\n")));
+  notVerified(negRun(PYT("pytestmark = pytest.mark.skip(reason='x')\n\ndef test_handles_negative_numbers():\n    assert add(-1,-2) == -3\n")));
+});
+
+test('R5-N7: a real passing test still covers the item (node, pytest)', { skip: !havePytest && 'pytest missing' }, () => {
+  const r = negRun(nodeRepo(ADD_OK, T2 + NEG_PASS));
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage, /1 item\(s\), 1 covered by passing tests/);
+  const p = negRun(PYT("class TestNeg:\n    def test_handles_negative_numbers(self):\n        assert add(-1,-2) == -3\n"));
+  assert.strictEqual(p.status, 0, p.raw);
+  assert.match(p.out.systemMessage, /1 item\(s\), 1 covered by passing tests/);
+});

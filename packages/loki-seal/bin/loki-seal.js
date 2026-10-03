@@ -7,7 +7,7 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { spawn, spawnSync } = require('child_process');
-const { deriveContract, mapContract, ASSERT } = require('./contract.js');
+const { deriveContract, mapContract, passing, ASSERT } = require('./contract.js');
 
 const mode = process.argv[2];
 let ctx = { input: {}, root: process.cwd() };
@@ -104,7 +104,7 @@ function detect(root, files) {
   if (has('go.mod')) return { name: 'go test', cmd: ['go', 'test', './...', '-v'] };
   if (has('Cargo.toml')) return { name: 'cargo test', cmd: ['cargo', 'test'] };
   if (['pytest.ini', 'pyproject.toml', 'setup.cfg', 'tox.ini', 'conftest.py'].some(has) || Object.keys(files).some((p) => p.endsWith('.py'))) {
-    return { name: 'pytest', cmd: ['python3', '-m', 'pytest', '-q'] };
+    return { name: 'pytest', cmd: ['python3', '-m', 'pytest', '-q', '-rA'] };
   }
   return null;
 }
@@ -165,7 +165,7 @@ function runSuite(root, runner, timeout) {
     const finish = (status, error) => {
       if (done) return;
       done = true; clearTimeout(timer);
-      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
+      resolve({ error: timedOut ? { code: 'ETIMEDOUT' } : error, status, ids: failing(out), passIds: passing(out), ...counts(out), tail: out.trim().split('\n').slice(-15).join('\n') });
     };
     child.on('error', (e) => finish(null, e));
     child.on('close', (code) => finish(code));
@@ -248,13 +248,18 @@ async function main() {
     const idOf = (i) => i.split('::').pop();
     const failingNow = (t) => !!(r && r.ids && r.ids.some((i) => i === t || idOf(i) === t));
     const failedAtStart = (t) => !!(suite0 && suite0.ids.some((i) => i === t || idOf(i) === t));
+    // Coverage needs a runner-reported pass: a matched test the runner never ran, skipped or did not list is not coverage.
+    const passedNow = (t) => !!(r && r.passIds && r.passIds.some((i) => i === t || idOf(i).replace(/\[.*\]$/, '') === t || i.startsWith(t + '/')));
     const redX = m.matched.filter((x) => x.tests.some(failingNow));
     const red = redX.map((x) => x.item);
+    const redSet = new Set(redX);
+    const unpassed = m.matched.filter((x) => !redSet.has(x) && !x.tests.some(passedNow));
     const bad = [...m.unmatched.map((i) => `no test matches request item: "${i}"`),
       ...redX.map((x) => x.tests.every(failingNow)
         ? `every test for request item "${x.item}" is failing${x.tests.every(failedAtStart) ? ' (already failing at session start, still not fixed)' : ''}`
-        : `a test for request item "${x.item}" is failing: ${[...new Set(x.tests.filter(failingNow))].join(', ')}`)];
-    contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '') + chatNote;
+        : `a test for request item "${x.item}" is failing: ${[...new Set(x.tests.filter(failingNow))].join(', ')}`),
+      ...unpassed.map((x) => `no test for request item "${x.item}" was reported as passed by the runner (not run, skipped, or not listed): ${x.tests.slice(0, 3).join(', ')}`)];
+    contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length - unpassed.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '') + chatNote;
     if (runner) cproblems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
     else if (bad.length) contractNote = `NOT VERIFIED: ${bad[0]}`;
   }
