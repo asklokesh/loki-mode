@@ -187,7 +187,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   writeEngineMarker(opts.repoDir, opts.runId); // first: a failing run still leaves it
   const origin = readOriginUrl(opts.repoDir); // pinned once, before any provider runs
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
-  if (env.LOKI_CONTROL !== "0") void import("../e10ext/ship_hook.ts").then((m) => m.startShip(opts.repoDir, log.path, env)).catch(() => {}); // CP-02: D56 shipper, off with LOKI_CONTROL=0
+  // P0: a caller-built env (tests pass a minimal one) that omits LOKI_CONTROL inherits the process-level off switch the test preload sets.
+  if ((env.LOKI_CONTROL ?? process.env.LOKI_CONTROL) !== "0") void import("../e10ext/ship_hook.ts").then((m) => m.startShip(opts.repoDir, log.path, env)).catch(() => {}); // CP-02: D56 shipper, off with LOKI_CONTROL=0
   log.append("run.started", null, { ...opts.started, origin_repo: githubRepoFromUrl(origin) });
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
   withholdGithubTokens(workerEnv);
