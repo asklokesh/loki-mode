@@ -1,5 +1,6 @@
-// loki-ts/src/util/base_guard.ts -- FC-15: the one place a run's base is resolved and checked.
-// A run must never judge "already done" (or diff, or seal) against Loki's own unmerged work.
+// loki-ts/src/util/base_guard.ts -- FC-15: the one place the PR target is resolved and a claim is checked against it.
+// A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
+// commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -13,12 +14,12 @@ const exists = (repoDir: string, ref: string): boolean => git(repoDir, ["rev-par
 
 export interface ResolvedBase { ref: string; source: "flag" | "remote-default" | "local-default" }
 
-/** Base precedence: explicit (LOKI_E10_BASE) fetched from origin, else origin's default branch, else a local main/master.
- *  Never a loki/* branch and never the working HEAD. Fetches best effort, one 10s non-interactive fetch per resolved name
+/** PR-target precedence: explicit (LOKI_E10_BASE) fetched from origin, else origin's default branch, else a local main/master.
+ *  Never a loki/* branch and never the working HEAD (this is the PR target, not the run's base). Fetches best effort, one 10s non-interactive fetch per resolved name
  *  (LOKI_E10_NO_FETCH=1 skips). Null: nothing resolvable. */
-export function resolveBase(repoDir: string, explicit: string | undefined = process.env.LOKI_E10_BASE): ResolvedBase | null {
+export function resolveBase(repoDir: string, explicit: string | undefined = process.env.LOKI_E10_BASE, fetchRemote = true): ResolvedBase | null {
   const fetch = (b: string): void => {
-    if (process.env.LOKI_E10_NO_FETCH === "1" || git(repoDir, ["remote", "get-url", "origin"]) === null) return;
+    if (!fetchRemote || process.env.LOKI_E10_NO_FETCH === "1" || git(repoDir, ["remote", "get-url", "origin"]) === null) return;
     git(repoDir, ["fetch", "-q", "origin", b], 10000, { GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes" });
   };
   const ex = explicit?.trim();
@@ -37,43 +38,44 @@ export function resolveBase(repoDir: string, explicit: string | undefined = proc
   return null;
 }
 
-export interface UnmergedLokiWork { runId: string | null; branch: string | null; commits: number; base: string }
+export interface UnmergedEvidence { branch: string | null; lokiOwn: boolean; commits: number; target: string; paths: string[] }
 
 const ok = (repoDir: string, args: string[]): boolean => git(repoDir, args) !== null;
 
-const count = (repoDir: string, range: string): number => Number(git(repoDir, ["rev-list", "--count", range]) ?? "0") || 0;
-
-/** Loki's own work reachable from HEAD but not on the base. Only commits Loki authored count:
- *  - a prior run receipt with head_sha != base_sha: commits base_sha..head_sha not on base, and head_sha an ancestor of HEAD
- *    (a run with no commits seals head_sha == base_sha, the user's own tip, and is not work);
- *  - the checked-out loki/* branch: commits after the branch's creation point (oldest reflog entry), not base..HEAD, so the
- *    user's own commits under a branch Loki merely created from them do not count. No reflog: falls back to base..HEAD (fail closed).
- *  Null when HEAD is clean of it or no base resolves (cannot judge, never refuse). */
-export function unmergedLokiWork(repoDir: string, base: ResolvedBase | null = resolveBase(repoDir)): UnmergedLokiWork | null {
-  if (!base) return null;
-  if (count(repoDir, `${base.ref}..HEAD`) === 0) return null;
-  const branch = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
+/** True when a prior run receipt's head_sha is among the commits on HEAD that are not on the target. */
+function receiptOnHead(repoDir: string, target: string): boolean {
   const runsDir = join(repoDir, ".loki", "runs");
-  if (existsSync(runsDir)) {
-    for (const id of readdirSync(runsDir)) {
-      try {
-        const rc = JSON.parse(readFileSync(join(runsDir, id, "receipt.json"), "utf8")) as { head_sha?: unknown; base_sha?: unknown };
-        const sha = typeof rc.head_sha === "string" ? rc.head_sha : "", from = typeof rc.base_sha === "string" ? rc.base_sha : "";
-        if (!/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{40}$/.test(from) || sha === from) continue;
-        if (!ok(repoDir, ["merge-base", "--is-ancestor", sha, "HEAD"]) || ok(repoDir, ["merge-base", "--is-ancestor", sha, base.ref])) continue;
-        const n = Number(git(repoDir, ["rev-list", "--count", sha, `^${from}`, `^${base.ref}`]) ?? "0") || 0;
-        if (n > 0) return { runId: id, branch, commits: n, base: base.ref };
-      } catch { /* no receipt: not a run record */ }
-    }
+  if (!existsSync(runsDir)) return false;
+  for (const id of readdirSync(runsDir)) {
+    try {
+      const sha = (JSON.parse(readFileSync(join(runsDir, id, "receipt.json"), "utf8")) as { head_sha?: unknown }).head_sha;
+      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && ok(repoDir, ["merge-base", "--is-ancestor", sha, "HEAD"]) && !ok(repoDir, ["merge-base", "--is-ancestor", sha, target])) return true;
+    } catch { /* no receipt: not a run record */ }
   }
-  if (branch !== null && branch.startsWith("loki/")) {
-    const created = (git(repoDir, ["reflog", "show", "--format=%H", branch]) ?? "").split("\n").filter((l) => l !== "").pop();
-    const n = created && /^[0-9a-f]{40}$/.test(created) ? count(repoDir, `${created}..HEAD`) : count(repoDir, `${base.ref}..HEAD`);
-    if (n > 0) return { runId: branch.slice(5), branch, commits: n, base: base.ref };
-  }
-  return null;
+  return false;
 }
 
-export function unmergedWorkReason(w: UnmergedLokiWork): string {
-  return `this checkout${w.branch ? ` (branch ${w.branch})` : ""} already has Loki run ${w.runId ?? "?"}'s unmerged work (${w.commits} commit(s) not on ${w.base}); resume or review it, or switch to your base branch (set LOKI_E10_BASE=<branch> to name it) and rerun. Refusing to judge the task against Loki's own unmerged work`;
+/** The ALREADY_SATISFIED claim must rest on the PR target. Null when none of the evidence paths differs between the target
+ *  and HEAD (or no target resolves: cannot judge, keep the claim). Otherwise the evidence lives only in target..HEAD and the
+ *  claim must not stand. startBranch is the branch the user started on (intake has since moved HEAD to the run branch); lokiOwn says those commits are recognisably Loki's (a loki/* branch, or a local receipt head_sha). */
+export function unmergedEvidence(repoDir: string, evidencePaths: string[], startBranch: string | null, target: ResolvedBase | null = resolveBase(repoDir)): UnmergedEvidence | null {
+  if (!target) return null;
+  const changed = new Set((git(repoDir, ["diff", "--name-only", target.ref, "HEAD"]) ?? "").split("\n").filter((l) => l !== ""));
+  const paths = [...new Set(evidencePaths)].filter((p) => changed.has(p));
+  if (paths.length === 0) return null;
+  const branch = startBranch;
+  const lokiOwn = (branch !== null && branch.startsWith("loki/")) || receiptOnHead(repoDir, target.ref);
+  return { branch, lokiOwn, commits: Number(git(repoDir, ["rev-list", "--count", `${target.ref}..HEAD`]) ?? "0") || 0, target: target.ref, paths };
+}
+
+/** Harness-owned informational reason (L5): never a refusal, never VERIFIED. */
+export function unmergedEvidenceNote(u: UnmergedEvidence): string {
+  return `work exists on ${u.branch ?? "HEAD"}, not on ${u.target} (${u.commits} commit(s)); open or resume it. The task is not reported as already satisfied because its evidence (${u.paths.slice(0, 3).join(", ")}) is not on the PR target`;
+}
+
+/** Start-line fragment naming the PR target and the base the run starts from (no network). */
+export function baseLine(repoDir: string): string {
+  const t = resolveBase(repoDir, undefined, false);
+  const b = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? "detached HEAD";
+  return `PR target: ${t ? t.ref : "unresolved"}, base: ${b}`;
 }

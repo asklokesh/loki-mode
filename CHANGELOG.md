@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+- engine10 (D86, FC-15, L4/L2): a run is never refused for starting on a branch with commits that are not on the PR target; the guard moved from the run to the ALREADY_SATISFIED claim. The claim is checked against the PR target (LOKI_E10_BASE or the origin default branch): evidence that exists only in commits not on the target voids it and the run implements. When those commits are Loki's own (a loki/* branch or a local receipt) the intake data carries unmerged_loki_work ("work exists on <branch>, not on <target>; open or resume it"). The start line now prints the PR target and the base.
+
 ## v10.10.0 (2026-10-03)
 
 ### Added

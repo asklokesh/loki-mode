@@ -22,6 +22,7 @@ import { modelDowngrades } from "../runner/model_downgrades.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
+import { baseLine } from "../util/base_guard.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 export const START_LINE = "Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)";
@@ -315,7 +316,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   }
 
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
-  if (!json) process.stdout.write(`${START_LINE}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
   const live = (e: EventEnvelope): void => {
