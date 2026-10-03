@@ -21,7 +21,8 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - verify.ts:224 tsconfig only at the root;
   - visual_evidence.ts:155-168;
   - deep.ts;
-  - the brief's impacted commands.
+  - the brief's impacted commands;
+  - deferred by the FC-01 stopgap (de12ad0cb): deep.ts:84 full suite at the repo root, verify.ts:228 tsconfig root-only, verify.ts:231 ESLINT_CONFIGS root-only.
 - Mechanism: Project Model packageRootOf/commandFor (EL-W1-01, EL-W1-04a/b). Interim: EL-W0-03.
 - Fixture: tests/fixtures/firelater-17 plus the shape fixtures in benchmarks/tasks/shapes.
 
@@ -33,7 +34,8 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - fix.ts:12-13;
   - machine.ts:171 stall;
   - wall.ts classify(), which already separates not_run (reuse it);
-  - deep.ts.
+  - deep.ts;
+  - vitest "No test files found, exiting with code 0" counts as a pass with n=0, when it should be not_run (EL-W1-06).
 - Mechanism: a result classifier with an owner (EL-W1-05). Only a FAIL owned by code drives fix and stall. Interim: EL-W0-02.
 - Fixture: tests/fixtures/runner-outputs/vitest/load-error.txt (from seq 56), plus siblings for each runner.
 - Sibling (2026-10-03): a change-introduced load error is a code fault. Base reproduction is necessary but not sufficient. The base rerun must be hermetic (an inherited editable install imports head code), and a check the task targets is never env-owned (7ad4a18b6, blocked in round 2). Superseded by L0-WAVE1 EL-W1-06: the harness gathers evidence and a separate reviewer call assigns the owner.
