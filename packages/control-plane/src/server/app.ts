@@ -22,6 +22,11 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   // token: bearer required on /v1/*. loopbackOnly: reject a non-loopback Host (DNS rebinding). Both off by default; serve.ts sets them from env.
   if (opts.loopbackOnly) app.use("*", hostGuard());
   if (opts.token) app.use("/v1/*", tokenGuard(opts.token));
+  // Malformed percent-encoding is a client error on every route, not a 500 (or a misleading 404).
+  app.use("*", async (c, next) => {
+    try { decodeURIComponent(new URL(c.req.url).pathname); } catch { return c.json({ error: "malformed URL encoding" }, 400); }
+    await next();
+  });
 
   app.get("/health", (c) => c.json({ service: "loki-control", pid: process.pid, install_path: import.meta.dir }));
   app.get("/ready", (c) => {
@@ -70,7 +75,8 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
 
   // Static UI with SPA fallback. Registered last so /v1, /health and /ready always win.
   app.get("*", (c) => {
-    const p = decodeURIComponent(new URL(c.req.url).pathname);
+    let p: string;
+    try { p = decodeURIComponent(new URL(c.req.url).pathname); } catch { return c.json({ error: "malformed URL encoding" }, 400); }
     if (!uiDir || p.startsWith("/v1/")) return c.json({ error: "not found" }, 404);
     const root = resolve(uiDir);
     const f = resolve(root, `.${p}`);
