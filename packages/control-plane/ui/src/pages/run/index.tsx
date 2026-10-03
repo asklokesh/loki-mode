@@ -1,6 +1,7 @@
 // Run thread (CPE-06): a run shown as a chat-like thread. Everything is from the runs API, the events log and run artifacts; an unknown value reads "not measured".
 import { ExternalLink, FileDiff, GitPullRequest, Info, MessageCircleQuestion, ScrollText, ShieldCheck } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { fmtUsd } from "../../format";
 import { getRun, postAnswer, type RunDetailResponse } from "../../api";
 import { Badge, Button, Card, Drawer, EmptyState, Message, Spinner, Textarea, VerdictBadge, VERDICT } from "../../design/primitives";
 import { fetchArtifact, fetchEvents, followStream, type RunEvent } from "./stream";
@@ -9,8 +10,8 @@ export const NOT_MEASURED = "not measured";
 const LOG_CAP = 2000;
 
 export function costLabel(r: Pick<RunDetailResponse, "cost_usd" | "partial_usd" | "measured_sessions" | "total_sessions">): string {
-  if (r.cost_usd !== null && r.cost_usd !== undefined) return `$${r.cost_usd.toFixed(4)}`;
-  if (r.partial_usd) return `at least $${r.partial_usd.toFixed(4)} (${r.measured_sessions} of ${r.total_sessions} sessions measured)`;
+  if (r.cost_usd !== null && r.cost_usd !== undefined) return fmtUsd(r.cost_usd);
+  if (r.partial_usd) return `at least ${fmtUsd(r.partial_usd)} (${r.measured_sessions} of ${r.total_sessions} sessions measured)`;
   return NOT_MEASURED;
 }
 

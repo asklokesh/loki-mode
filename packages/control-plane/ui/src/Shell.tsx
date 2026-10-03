@@ -1,5 +1,6 @@
 // App shell pieces: empty-state import, start-a-run form, and the Work, Cost and Settings pages.
 import { useEffect, useState } from "react";
+import { fmtUsd } from "./format";
 import { Button } from "./design/primitives";
 import { toggleTheme, useTheme } from "./shell/theme";
 import { importRuns, listRepos, effectiveVerdict, listRuns, startRun, type RunRow } from "./api";

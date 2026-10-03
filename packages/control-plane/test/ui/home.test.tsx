@@ -52,15 +52,15 @@ test("tiles show the stats numbers, blocked inbox and recent runs link to their 
   expect(screen.getByTestId("kpi-today").textContent).toContain("1 running");
   expect(screen.getByTestId("kpi-verified").textContent).toContain("50%");
   expect(screen.getByTestId("kpi-verified").textContent).toContain("4 of 8 finished");
-  expect(screen.getByTestId("kpi-cost").textContent).toContain("$1.7500+");
+  expect(screen.getByTestId("kpi-cost").textContent).toContain("$1.75+");
   expect(screen.getByTestId("kpi-cost").textContent).toContain("partial, 1 run unpriced");
   expect(screen.getByTestId("kpi-blocked").textContent).toContain("1");
   expect(screen.getByTestId("blocked-item").getAttribute("href")).toBe("/r/s1/z");
   const links = screen.getAllByTestId("recent-run");
   expect(links.map((l) => l.getAttribute("href"))).toEqual(["/r/s1/a", "/r/s1/b", "/r/s1/c"]);
   const text = screen.getByTestId("recent-runs").textContent!;
-  expect(text).toContain("$0.1234");
-  expect(text).toContain("at least $0.5000");
+  expect(text).toContain("$0.12");
+  expect(text).toContain("at least $0.50");
   expect(text).toContain("not measured");
 });
 
@@ -73,7 +73,7 @@ test("nothing measured reads not measured, never a zero", () => {
 });
 
 test("fully measured cost has no plus sign; an empty store shows the empty state", async () => {
-  expect(costTile({ measured_usd: 2, measured_runs: 3, partial_usd: null, partial_runs: 0, label: "measured" })).toEqual({ value: "$2.0000", trend: "measured" });
+  expect(costTile({ measured_usd: 2, measured_runs: 3, partial_usd: null, partial_runs: 0, label: "measured" })).toEqual({ value: "$2.00", trend: "measured" });
   serve({ today: stats({}), week: stats({}), runs: [], blocked: [] });
   render(<Home now={NOW} />);
   expect((await screen.findByText("No runs yet")).textContent).toBe("No runs yet");

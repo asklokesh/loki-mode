@@ -66,7 +66,7 @@ test("BLOCKED run shows a reply prompt that posts the answer", async () => {
 });
 
 test("cost labels and SSE frame parsing are honest", () => {
-  expect(costLabel({ cost_usd: 0.5, partial_usd: 0, measured_sessions: 1, total_sessions: 1 })).toBe("$0.5000");
+  expect(costLabel({ cost_usd: 0.5, partial_usd: 0, measured_sessions: 1, total_sessions: 1 })).toBe("$0.50");
   expect(costLabel({ cost_usd: null, partial_usd: 0.2, measured_sessions: 1, total_sessions: 3 })).toContain("1 of 3 sessions measured");
   const got: number[] = [];
   const rest = parseFrames(`: hi\n\nid: 4\nevent: event\ndata: {"seq":4,"type":"x","ts":null,"stage":null,"data":null}\n\nid: 5\nev`, (e) => got.push(e.seq));

@@ -1,6 +1,7 @@
 // Home (CPE-12): KPI tiles, recent runs and the BLOCKED inbox, all from /v1/stats, /v1/runs and /v1/notifications. Anything the API does not carry reads "not measured".
 import { useEffect, useState } from "react";
 import { authToken, type RunRow } from "../../api";
+import { fmtUsd } from "../../format";
 import { EmptyState } from "../../Shell";
 import { Badge, Card, KpiTile, Spinner, Table, VerdictBadge, VERDICT } from "../../design/primitives";
 
@@ -45,7 +46,7 @@ export async function loadHome(now: number): Promise<HomeData> {
   return { today, week, runs: runs.runs.slice(0, 8), blocked: notes.notifications, blockedTotal: notes.total };
 }
 
-const money = (n: number): string => `$${n.toFixed(4)}`;
+const money = fmtUsd;
 const runHref = (s: string, r: string): string => `/r/${encodeURIComponent(s)}/${encodeURIComponent(r)}`;
 
 export function costTile(c: Stats["cost"]): { value: string; trend: string } {
