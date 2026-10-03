@@ -31,12 +31,12 @@ test("all eight fixtures: counts, verified rate, receipts equal the hand fold", 
   const { app } = mk();
   await loadAll(app);
   const j = await stats(app);
-  // Hand fold of run.completed verdicts: VERIFIED x4 (tampered, verified, verified-pr, unpriced), FAILED x2 (cap-hit, failed), PARTIAL x1, SPEC_CONFLICT x1.
+  // Hand fold of run.completed verdicts: VERIFIED x3 (verified, verified-pr, unpriced), TAMPERED x1 (stored VERIFIED, never counted as verified), FAILED x2 (cap-hit, failed), PARTIAL x1, SPEC_CONFLICT x1.
   expect(j.runs_total).toBe(8);
   expect(j.runs_finished).toBe(8);
   expect(j.runs_running).toBe(0);
-  expect(j.by_verdict).toEqual({ VERIFIED: 4, FAILED: 2, PARTIAL: 1, SPEC_CONFLICT: 1 });
-  expect(j.verified_rate).toBe(0.5);
+  expect(j.by_verdict).toEqual({ VERIFIED: 3, TAMPERED: 1, FAILED: 2, PARTIAL: 1, SPEC_CONFLICT: 1 });
+  expect(j.verified_rate).toBe(0.375);
   expect(j.blocked_waiting).toBe(1);
   // One receipt.sealed per fixture.
   const sealed = readdirSync(FIX).flatMap((n) => evs(n)).filter((e) => e.type === "receipt.sealed");
@@ -67,8 +67,8 @@ test("since filters by run start; a bad since is a 400", async () => {
   // Starts after 15:55:10Z: failed 10.554, blocked 11.541, cap-hit 12.542, tampered 13.206, unpriced 14.308.
   const j = await stats(app, "?since=2026-10-01T15:55:10Z");
   expect(j.runs_total).toBe(5);
-  expect(j.by_verdict).toEqual({ FAILED: 2, SPEC_CONFLICT: 1, VERIFIED: 2 });
-  expect(j.verified_rate).toBe(0.4);
+  expect(j.by_verdict).toEqual({ FAILED: 2, SPEC_CONFLICT: 1, VERIFIED: 1, TAMPERED: 1 });
+  expect(j.verified_rate).toBe(0.2);
   expect(j.receipts.total).toBe(5);
   expect((await stats(app, "?since=2027-01-01")).runs_total).toBe(0);
   expect((await app.request("/v1/stats?since=banana")).status).toBe(400);
