@@ -43,15 +43,15 @@ cat >"$T/repo/tests/t-switch.sh" <<'EOF'
 git -C "$(dirname "$0")/.." checkout -q stale
 EOF
 cat >"$T/repo/tests/t-keys.sh" <<'EOF'
-H="${LOKI_REAL_HOME:-$HOME}" # the runner is hermetic now (FC-07); this suite deliberately reaches past it
-mkdir -p "$H/.loki/keys"; : >"$H/.loki/keys/receipt-ed25519.pem"
+# The runner exports LOKI_REAL_HOME derived from ITS HOME (the stand-in); this suite reaches past the sandbox.
+mkdir -p "${LOKI_REAL_HOME:?}/.loki/keys"; : >"$LOKI_REAL_HOME/.loki/keys/receipt-ed25519.pem"
 EOF
 cat >"$T/repo/tests/t-printkey.sh" <<'EOF'
 echo "KEYFILE=$LOKI_RECEIPT_SIGNING_KEY_FILE"
 echo "CHILD_RUN_TMP=[${LOKI_RUN_TMP-unset}]"
 EOF
 
-run_runner() { (cd "$T/repo" && HOME="$T/home" env -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RECEIPT_SIGNING_KEY_FILE -u LOKI_RUN_TMP "$@" bash tests/run-all-tests.sh 2>&1); }
+run_runner() { (cd "$T/repo" && HOME="$T/home" env -u LOKI_REAL_HOME -u LOKI_HERMETIC_HOME -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RECEIPT_SIGNING_KEY_FILE -u LOKI_RUN_TMP "$@" bash tests/run-all-tests.sh 2>&1); }
 
 # E-155: a suite that switches the parent branch is named and fails the run.
 mk_runner <<'EOF'
@@ -114,6 +114,5 @@ run_test "printkey suite" "$SCRIPT_DIR/t-printkey.sh"
 EOF2
 out="$(run_runner TMPDIR="$T" LOKI_TEST_SHARD=0/1)"
 printf '%s\n' "$out" | grep -q "^KEYFILE=$T/loki-run\." && ok "E-154c: run-owned key default set under LOKI_TEST_SHARD" || bad "E-154c: no run-owned key default under LOKI_TEST_SHARD"
-
 echo "Passed: $PASS Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

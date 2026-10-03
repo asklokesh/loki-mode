@@ -116,3 +116,14 @@ No fix slice starts until its row exists (OPERATING-MODEL.md, Engine Laws line).
   - the equivalents for other runners: vitest.config setupFiles, jest setupFiles and moduleNameMapper, pytest conftest.py, and go test flags in Makefiles.
 - Mechanism: one runner-config registry for each runner. Any added or changed file that it names (configs, preloads, setup files, conftest) caps the verdict below VERIFIED, with NOT PROVEN naming the file.
 - Fixture: a stub-provider repro for each runner (bun preload, vitest setupFiles, jest moduleNameMapper, pytest conftest).
+
+## FC-10 A nested sandbox trusts an inherited pointer to the real environment
+- User saw: running the test runner truncated the founder real ~/.loki/keys/receipt-ed25519.pem. A fixture wrote through an inherited LOKI_REAL_HOME that still named the real home while HOME was a stand-in.
+- Law: L2 (trust fails closed).
+- Siblings:
+  - loki_hermetic_home_enter (tests/lib/hermetic-home.sh) took LOKI_REAL_HOME from the environment;
+  - loki-ts/tests/preload.ts used LOKI_REAL_HOME ?? HOME;
+  - run_runner in tests/test-e154-e155-guards.sh kept the exported LOKI_REAL_HOME;
+  - the outer E-154 key check compared names only, so truncating an existing key was invisible.
+- Mechanism: derive the real path from the current HOME, never from an inherited variable (enter unsets LOKI_REAL_HOME, preload reads HOME); the key check fingerprints name, size and mtime.
+- Fixture: tests/test-e154-e155-guards.sh (run_runner strips the pointers; t-keys writes only the runner-derived stand-in). A decoy-pointer probe and a bun HOME probe are owed after Oct 7 (B3, phase D vacuity).

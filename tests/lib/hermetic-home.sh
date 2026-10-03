@@ -23,7 +23,11 @@ loki_hermetic_home_enter() {
         return 0
     fi
 
-    local real_home="${LOKI_REAL_HOME:-${HOME:-}}" saved_tmp="${LOKI_RUN_TMP:-}" had_tmp=0 dir rc=0
+    # The real home is always the CURRENT HOME here (not hermetic, checked above). An
+    # inherited LOKI_REAL_HOME is never trusted: a nested sandbox whose HOME was reset
+    # would otherwise aim "real" at the founder's home (FC-07 round 2).
+    unset LOKI_REAL_HOME
+    local real_home="${HOME:-}" saved_tmp="${LOKI_RUN_TMP:-}" had_tmp=0 dir rc=0
     [ -n "${LOKI_RUN_TMP+x}" ] && had_tmp=1
     [ -n "$real_home" ] || return 1
 

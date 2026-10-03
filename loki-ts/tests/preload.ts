@@ -16,7 +16,8 @@ if (process.env["LOKI_CONTROL"] === undefined) process.env["LOKI_CONTROL"] = "0"
 // (run-all-tests.sh, local-ci.sh) already isolated it. The real HOME stays readable as
 // LOKI_REAL_HOME, and toolchain homes stay pinned so nothing re-downloads.
 if (process.env["LOKI_HERMETIC_HOME"] === undefined || process.env["HOME"] !== process.env["LOKI_HERMETIC_HOME"]) {
-  const realHome = process.env["LOKI_REAL_HOME"] ?? process.env["HOME"] ?? "";
+  // Never trust an inherited LOKI_REAL_HOME: HOME is not hermetic here, so HOME is the real home.
+  const realHome = process.env["HOME"] ?? "";
   if (realHome) {
     process.env["LOKI_REAL_HOME"] = realHome;
     process.env["BUN_INSTALL"] ??= join(realHome, ".bun");

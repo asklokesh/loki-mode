@@ -12,7 +12,16 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # E-154 begin: no test run may write the real ~/.loki/keys. Default the signing
 # key file to a run-owned temp dir unless the caller already chose one.
 _e154_real_keys="${HOME:-/nonexistent}/.loki/keys"
-_e154_keys_before="$(ls -A "$_e154_real_keys" 2>/dev/null || true)"
+# Names alone miss truncating an existing key: fingerprint name, size and mtime (stat only).
+_e154_keys_fp() {
+    local f
+    [ -d "$_e154_real_keys" ] || return 0
+    for f in "$_e154_real_keys"/* "$_e154_real_keys"/.[!.]*; do
+        [ -e "$f" ] || continue
+        printf '%s %s\n' "$f" "$(stat -c '%s %Y' -- "$f" 2>/dev/null || stat -f '%z %m' -- "$f" 2>/dev/null)"
+    done
+}
+_e154_keys_before="$(_e154_keys_fp)"
 if [ -z "${LOKI_TEST_LIST:-}" ] && [ -z "${LOKI_RECEIPT_SIGNING_KEY_FILE:-}" ]; then
     # shellcheck source=../eval/loki10/lib-tmp.sh
     . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
@@ -549,7 +558,7 @@ run_test() {
         echo -e "${RED}$(printf '\342\234\227') ${test_name} FAILED: it changed the parent checkout HEAD (E-155): ${_e155_ref_before:-detached}@${_e155_sha_before:0:8} -> ${_e155_ref_after:-detached}@${_e155_sha_after:0:8}${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
     fi
-    _e154_keys_after="$(ls -A "$_e154_real_keys" 2>/dev/null || true)"
+    _e154_keys_after="$(_e154_keys_fp)"
     if [ "$_e154_keys_after" != "$_e154_keys_before" ]; then
         echo -e "${RED}$(printf '\342\234\227') ${test_name} FAILED: it changed the real ${_e154_real_keys} (E-154)${NC}"
         TOTAL_FAILED=$((TOTAL_FAILED + 1))
