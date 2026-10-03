@@ -129,8 +129,12 @@ fi
 # 5. engine10 appears only in the one cli.ts arm (and the one bin/loki block):
 #    the case line plus its two lazy imports (cli.ts, and E-32's registry.ts).
 cli="$REPO/loki-ts/src/cli.ts"
-hits="$(grep -n 'engine10' "$cli" | cut -d: -f1 | tr '\n' ' ')"
+#    The HELP row documenting the command (PO4-CLI-TS-HELP) is text, not routing.
+help_re='^[[:space:]]*engine10 <subcmd>[[:space:]]'
+help_n="$(grep -cE "$help_re" "$cli")"
+hits="$(grep -n 'engine10' "$cli" | grep -vE "^[0-9]+:${help_re#^}" | cut -d: -f1 | tr '\n' ' ')"
 arm="$(grep -n 'case "engine10": {' "$cli" | cut -d: -f1)"
+expect "cli.ts: exactly one engine10 HELP row" "1" "$help_n"
 if [ -n "$arm" ] && [ "$hits" = "$arm $((arm + 1)) $((arm + 2)) " ]; then
     ok "cli.ts: engine10 only in its arm (lines $hits)"
 else
