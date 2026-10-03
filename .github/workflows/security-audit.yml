@@ -44,7 +44,8 @@ on:
   schedule:
     # D75: daily at 07:00 UTC (was Mondays). train/** pushes scan only their
     # range (D74 follow-up), so the full-history scan runs on every main push
-    # and daily here; a red daily scan halts releases.
+    # and daily here; a red daily scan halts releases (release.yml required-ci,
+    # sched_audit_ok: any non-success conclusion of the newest scheduled run blocks).
     - cron: '0 7 * * *'
   workflow_dispatch:
 

@@ -471,6 +471,37 @@ jobs:
             [ "$RANGE_SCAN" = "clean" ]
           }
 
+          # D75: the daily scheduled Security Audit run is the full-history
+          # authority for what train/** pushes only scanned by range. The newest
+          # COMPLETED scheduled run on main must not be red. A conclusion other
+          # than success (failure, cancelled, timed_out, ...) blocks: a cancelled
+          # or timed-out daily scan covered nothing and must be reviewed, never
+          # ignored. No completed scheduled run yet passes (logged), so the first
+          # release after this lands is not blocked.
+          sched_audit_line() {
+            # conclusion<TAB>url<TAB>created_at of the newest completed schedule run on main.
+            gh api "repos/$REPO/actions/workflows/security-audit.yml/runs?event=schedule&branch=main&status=completed&per_page=10" \
+              --jq '[.workflow_runs[] | select(.event=="schedule" and .head_branch=="main" and .status=="completed")] | sort_by(.created_at) | last // empty | "\(.conclusion)\t\(.html_url)\t\(.created_at)"' 2>/dev/null || true
+          }
+          sched_audit_ok() {
+            # $1 = line from sched_audit_line. Prints the reason; returns 0 to pass.
+            local concl url created
+            concl="$(printf '%s' "$1" | cut -f1)"
+            url="$(printf '%s' "$1" | cut -f2)"
+            created="$(printf '%s' "$1" | cut -f3)"
+            case "$concl" in
+              '') echo "no completed scheduled run yet; not blocking"; return 0 ;;
+              success) echo "newest scheduled run succeeded ($created)"; return 0 ;;
+              *) echo "newest scheduled run on main concluded '$concl' ($created, $url); review it before releasing"; return 1 ;;
+            esac
+          }
+          sched_reason="$(sched_audit_ok "$(sched_audit_line)")" && sched_rc=0 || sched_rc=$?
+          echo "  Security Audit (daily schedule): $sched_reason"
+          if [ "$sched_rc" -ne 0 ]; then
+            echo "FAIL: the daily scheduled Security Audit is not green"
+            exit 1
+          fi
+
           deadline=$(( $(date +%s) + 2400 ))
           while :; do
             runs_release="$(fetch_runs "$SHA")"

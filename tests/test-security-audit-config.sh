@@ -58,6 +58,14 @@ elif kind == "jq":
     m = re.findall(r"--jq '(\.workflow_runs\[\][^\n]*)' 2>/dev/null", rel)
     assert len(m) == 1, "expected exactly one fetch_runs jq filter"
     open(out, "w").write(m[0])
+elif kind == "sjq":
+    m = re.findall(r"--jq '(\[\.workflow_runs\[\][^\n]*)' 2>/dev/null", rel)
+    assert len(m) == 1, "expected exactly one scheduled-run jq filter"
+    open(out, "w").write(m[0])
+elif kind == "sfn":
+    m = re.findall(r"^ +(sched_audit_ok\(\) \{\n.*?\n) {10}\}\n", rel, re.S | re.M)
+    assert len(m) == 1, "expected exactly one sched_audit_ok"
+    open(out, "w").write("sched_audit_ok() {\n" + m[0].split("\n", 1)[1] + "}\n")
 elif kind == "awk":
     m = re.findall(r"'(\$1==\"Security Audit\"[^\n]*END\{print c\})'", rel)
     assert len(m) == 1, "expected exactly one audit_verdict awk program"
@@ -107,6 +115,69 @@ else
   bad "W7: jq is required for this test"
 fi
 
+# W9: a red daily scheduled scan halts releases (release.yml required-ci).
+if command -v jq >/dev/null 2>&1; then
+  _extract sjq "$TMP_ROOT/sched.jq" && _extract sfn "$TMP_ROOT/sched.fn.sh"
+  _sched_run() { # _sched_run <fn-file> <runs-json> -> prints "<rc>|<reason>"
+    local line reason rc=0
+    line="$(printf '%s' "$2" | jq -r "$(cat "$TMP_ROOT/sched.jq")")"
+    reason="$(bash -c 'source "$1"; sched_audit_ok "$2"' _ "$1" "$line")" || rc=$?
+    printf '%s|%s' "$rc" "$reason"
+  }
+  _r() { # name event conclusion created branch
+    printf '{"name":"Security Audit","status":"completed","conclusion":"%s","created_at":"%s","event":"%s","head_branch":"%s","html_url":"https://example.invalid/runs/%s"}' "$3" "$4" "$2" "${5:-main}" "$1"
+  }
+  _w9() { # _w9 <fn-file> ; 0 = all five cases behave per D75
+    local o
+    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r p push success 2026-10-03T07:00:00Z),$(_r s schedule failure 2026-10-03T08:00:00Z)]}")"
+    [ "${o%%|*}" = "1" ] && case "$o" in *"runs/s"*) true ;; *) false ;; esac || return 1
+    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r s1 schedule failure 2026-10-02T08:00:00Z),$(_r s2 schedule success 2026-10-03T08:00:00Z)]}")"
+    [ "${o%%|*}" = "0" ] || return 1
+    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r p push success 2026-10-03T07:00:00Z)]}")"
+    [ "${o%%|*}" = "0" ] && case "$o" in *"no completed scheduled run yet"*) true ;; *) false ;; esac || return 1
+    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r c schedule cancelled 2026-10-03T08:00:00Z)]}")"
+    [ "${o%%|*}" = "1" ] || return 1
+    o="$(_sched_run "$1" "{\"workflow_runs\":[$(_r t schedule timed_out 2026-10-03T08:00:00Z)]}")"
+    [ "${o%%|*}" = "1" ]
+  }
+  if _w9 "$TMP_ROOT/sched.fn.sh"; then
+    ok "W9: a newer scheduled failure, cancelled or timed-out run blocks; a scheduled success passes; no scheduled run passes with a logged reason"
+  else
+    bad "W9: scheduled-audit gate does not match D75"
+  fi
+  # mutation: the check no longer blocks on a non-success conclusion
+  _mutate_file_early() {
+    python3 - "$1" "$2" <<'PYEOF'
+import sys
+s = open(sys.argv[1]).read()
+a = "review it before releasing\"; return 1"
+assert a in s
+open(sys.argv[2], "w").write(s.replace(a, "review it before releasing\"; return 0"))
+PYEOF
+  }
+  _mutate_file_early "$TMP_ROOT/sched.fn.sh" "$TMP_ROOT/sched.fn.mut.sh"
+  if _w9 "$TMP_ROOT/sched.fn.mut.sh"; then
+    bad "W9 mutation (schedule check no longer blocks) stayed green"
+  else
+    ok "W9 mutation (schedule check no longer blocks) goes red"
+  fi
+  # the gate must actually be called from required-ci and must fail the job
+  if grep -qF 'sched_reason="$(sched_audit_ok "$(sched_audit_line)")"' "$REL_YML" \
+     && grep -qF 'FAIL: the daily scheduled Security Audit is not green' "$REL_YML"; then
+    ok "W9: required-ci calls the scheduled-audit gate and exits 1 when it blocks"
+  else
+    bad "W9: required-ci does not call the scheduled-audit gate"
+  fi
+  grep -vF 'sched_reason="$(sched_audit_ok' "$REL_YML" > "$TMP_ROOT/release.nocall.yml"
+  if grep -qF 'sched_reason="$(sched_audit_ok "$(sched_audit_line)")"' "$TMP_ROOT/release.nocall.yml"; then
+    bad "W9 mutation (call dropped) stayed green"
+  else
+    ok "W9 mutation (call dropped) goes red"
+  fi
+else
+  bad "W9: jq is required for this test"
+fi
+
 # W8: a main push runs secret-scan even when train-reuse=true; other jobs keep E-160 reuse.
 _eval_if() { # _eval_if <if-file> <event> <ref> <reuse> -> prints True/False
   python3 - "$1" "$2" "$3" "$4" <<'PYEOF'
@@ -140,7 +211,7 @@ else
   ok "W8 mutation (pre-D75 if:) goes red"
 fi
 _w8_others=1
-for _j in npm-audit bun-audit; do
+for _j in npm-audit python-audit bun-audit; do
   _extract if "$TMP_ROOT/if.$_j" "$_j"
   [ "$(cat "$TMP_ROOT/if.$_j")" = "\${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}" ] || _w8_others=0
 done
