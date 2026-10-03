@@ -145,7 +145,7 @@ unset LOKI_RELEASE_MANAGER PRE_PUSH_SKIP
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${LOKI_TEST_HOOK_OVERRIDE:-$REPO_ROOT/.githooks/pre-push}"
 GITLEAKS_VERSION="8.30.0"
-REAL_GITLEAKS="$HOME/.local/share/loki/bin/gitleaks-${GITLEAKS_VERSION}"
+REAL_GITLEAKS="${LOKI_REAL_HOME:-$HOME}/.local/share/loki/bin/gitleaks-${GITLEAKS_VERSION}"
 REAL_GITLEAKS_SIDECAR="${REAL_GITLEAKS}.sha256"
 
 passed=0

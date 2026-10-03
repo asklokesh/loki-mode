@@ -54,20 +54,22 @@ else
 fi
 
 if [ -f "$CHANGELOG" ]; then
-    # The Deprecated entry must sit under Unreleased and name loki legacy.
-    # Pull just that block, not the whole file.
-    block=$(awk '/^## Unreleased/{f=1} f{print} f && /^## v[0-9]/ && !/^## Unreleased/{exit}' "$CHANGELOG")
+    # The Deprecated entry names loki legacy. It starts under Unreleased and
+    # moves into its release section when it ships, so read every
+    # "### Deprecated" block instead of pinning Unreleased (pinning broke
+    # this test at the first release after the entry was written).
+    block=$(awk '/^### Deprecated/{f=1; print; next} /^##/{f=0} f{print}' "$CHANGELOG")
 
     if printf '%s' "$block" | grep -q '### Deprecated'; then
-        pass "CHANGELOG has a Deprecated entry under Unreleased"
+        pass "CHANGELOG has a Deprecated entry"
     else
-        fail "CHANGELOG has no Deprecated entry under an Unreleased heading"
+        fail "CHANGELOG has no Deprecated entry"
     fi
 
     if printf '%s' "$block" | grep -q 'loki legacy'; then
-        pass "CHANGELOG entry names loki legacy"
+        pass "CHANGELOG Deprecated entry names loki legacy"
     else
-        fail "CHANGELOG entry does not name loki legacy"
+        fail "CHANGELOG Deprecated entry does not name loki legacy"
     fi
 
     # The flip moves from Unreleased into its release section when it ships,

@@ -12,6 +12,7 @@
 # Phase C: _loki_control_ui must honor LOKI_CONTROL=0 and never start a detached
 #          `control serve` or write ~/.loki/control.
 set -uo pipefail
+. "$(dirname "${BASH_SOURCE[0]}")/lib/isolated-git-home.sh" || exit 1
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REAL_HOME="${LOKI_REAL_HOME:-$HOME}"
@@ -59,7 +60,7 @@ git -C "$T/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m ini
 run_runner() { # $1 = home the runner starts with
     (cd "$T/repo" || exit 1
      HOME="$1" TMPDIR="$T" env -u LOKI_TEST_LIST -u LOKI_TEST_SHARD -u LOKI_RECEIPT_SIGNING_KEY_FILE \
-        -u LOKI_RUN_TMP -u LOKI_HERMETIC_HOME -u LOKI_REAL_HOME LOKI_TEST_SUITE_TIMEOUT=300 \
+        -u LOKI_RUN_TMP -u LOKI_HERMETIC_HOME -u LOKI_REAL_HOME -u GIT_CONFIG_GLOBAL -u ISOLATED_GIT_HOME LOKI_TEST_SUITE_TIMEOUT=300 \
         bash tests/run-all-tests.sh 2>&1)
 }
 

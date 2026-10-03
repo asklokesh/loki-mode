@@ -115,7 +115,7 @@ test("fonts.css requests the three families", () => {
 
 test("tokens and primitives contain no emoji or dash punctuation", () => {
   for (const f of ["tokens.css", "fonts.css", "tailwind.preset.ts", "primitives/index.tsx"]) {
-    expect(/[–—\u{1F300}-\u{1FAFF}☀-➿]/u.test(readFileSync(join(DESIGN, f), "utf8")), f).toBe(false);
+    expect(/[\u2013\u2014\u{1F300}-\u{1FAFF}☀-➿]/u.test(readFileSync(join(DESIGN, f), "utf8")), f).toBe(false);
   }
 });
 

@@ -13,7 +13,7 @@ const loop = { requestIP: () => ({ address: "127.0.0.1" }) };
 
 test("a legacy path is answered by the shim, not index.html", async () => {
   const r = await cp.app.request("/api/v2/tenants", { redirect: "manual" }, loop);
-  expect(r.status).toBe(501);
+  expect(r.status).toBe(410); // CPE24-P6 retired tenants (was 501)
   expect(await r.text()).not.toContain("SPA-INDEX");
 });
 

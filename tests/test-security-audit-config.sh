@@ -321,7 +321,9 @@ fi
 
 # Prefer the pinned binary scripts/install-gitleaks.sh puts on disk, then PATH.
 GITLEAKS_BIN=""
-_pinned="$HOME/.local/share/loki/bin/gitleaks-8.30.0"
+# The runner gives suites a hermetic HOME (FC-07); the installed pin lives
+# under the real one.
+_pinned="${LOKI_REAL_HOME:-$HOME}/.local/share/loki/bin/gitleaks-8.30.0"
 if [ -x "$_pinned" ]; then GITLEAKS_BIN="$_pinned"; else GITLEAKS_BIN="$(command -v gitleaks 2>/dev/null || true)"; fi
 if [ -z "$GITLEAKS_BIN" ] && [ -n "${CI:-}" ]; then
   echo "  FAIL: no gitleaks binary under CI -- the Wall checks would not run (install scripts/install-gitleaks.sh first)"

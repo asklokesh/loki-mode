@@ -29,7 +29,10 @@ D=$(helm template t "$CHART" 2>/dev/null)
 printf '%s' "$D" | grep -q "audit-logs" \
   && ok "audit PVC renders by default" \
   || bad "audit PVC missing from the default render"
-if printf '%s' "$D" | grep -q "helm.sh/resource-policy: keep"; then
+# Scope to the audit PVC document: the control token Secret keeps itself on
+# purpose (L4), so a whole-render grep would flag that unrelated object.
+DA=$(printf '%s\n' "$D" | awk '/^---/{if(doc ~ /pvc-audit.yaml/)print doc; doc=""; next}{doc=doc $0 "\n"}END{if(doc ~ /pvc-audit.yaml/)print doc}')
+if printf '%s' "$DA" | grep -q "helm.sh/resource-policy: keep"; then
   bad "keep annotation present by default -- would orphan PVCs for every existing user"
 else
   ok "no keep annotation by default (prior behaviour preserved)"
