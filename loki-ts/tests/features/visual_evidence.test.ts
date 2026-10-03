@@ -201,3 +201,57 @@ test("a SIGTERM-ignoring dev server is dead after capture (recorded pid and grou
     if (pid > 1 && alive(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* gone */ } }
   }
 }, 20000);
+
+function apiRepo(name: string, dev: string): string {
+  const repo = join(root, name);
+  mkdirSync(repo, { recursive: true });
+  writeFileSync(join(repo, "package.json"), JSON.stringify({ scripts: { dev } }));
+  writeFileSync(join(repo, "openapi.json"), JSON.stringify({ paths: { "/a": {} } }));
+  return repo;
+}
+const SERVER = "node -e \"require('fs').writeFileSync('spawned.marker','1');require('http').createServer((q,r)=>r.end('ok')).listen(process.env.PORT,'127.0.0.1')\"";
+
+test("default (flag unset): a non-page change never spawns the start script even with openapi and a start script", async () => {
+  const repo = apiRepo("dflt", SERVER);
+  const env = { ...process.env }; delete env["LOKI_VISUAL_EVIDENCE"];
+  const ev = await captureVisualEvidence(repo, RUN, ["lib/util.py"], { env, budgetMs: 3000 });
+  expect(ev.http).toBe(false);
+  expect(ev.skipped).toContain("no changed page files");
+  expect(existsSync(join(repo, "spawned.marker"))).toBe(false);
+  expect(readdirSync(join(RUN, "evidence")).filter((n) => n !== "screens")).toEqual([]);
+});
+
+test("explicit =1 keeps the API transcript path", async () => {
+  const repo = apiRepo("explicit", SERVER);
+  const ev = await captureVisualEvidence(repo, RUN, ["lib/util.py"], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 10_000 });
+  expect(ev.http).toBe(true);
+  expect(existsSync(join(repo, "spawned.marker"))).toBe(true);
+});
+
+test("the dev server process group is announced via onServer and sealEvidence emits session.started with that pgid", async () => {
+  const repo = apiRepo("announce", SERVER);
+  const seen: number[] = [];
+  await captureVisualEvidence(repo, RUN, [], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 10_000, onServer: (g) => seen.push(g) });
+  expect(seen.length).toBe(1);
+  expect(seen[0]!).toBeGreaterThan(1);
+  process.env["LOKI_VISUAL_EVIDENCE"] = "1";
+  try {
+    const events: { type: string; stage: string; data: Record<string, unknown> }[] = [];
+    await sealEvidence(apiRepo("announce2", SERVER), RUN, { verify: { changed_files: [] } }, new Set<string>(), undefined, (type, stage, data) => events.push({ type, stage, data }));
+    expect(events.length).toBe(1);
+    expect(events[0]!.type).toBe("session.started");
+    expect(typeof events[0]!.data["pgid"]).toBe("number");
+  } finally { delete process.env["LOKI_VISUAL_EVIDENCE"]; }
+});
+
+test("verify fails closed on a FIFO evidence path and does not hang", async () => {
+  const fifo = join(RUN, "evidence", "screens", "pipe.png");
+  const mk = Bun.spawnSync(["mkfifo", fifo]);
+  expect(mk.exitCode).toBe(0);
+  const r = await Promise.race([
+    verifyReceipt(writeReceipt([{ path: "evidence/screens/pipe.png", sha256: "0".repeat(64) }])),
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error("verify hung on FIFO")), 5000)),
+  ]);
+  expect(r.verdict).toBe("TAMPERED");
+  expect(r.reasons[0]).toContain("not a regular file");
+});

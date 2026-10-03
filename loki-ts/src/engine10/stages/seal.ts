@@ -275,7 +275,7 @@ export const sealStage: Stage = {
       model: ctx.model,
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
-      ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal)),
+      ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true,
     };
 

@@ -87,7 +87,7 @@ function openapiPaths(repoDir: string): string[] {
   return [];
 }
 
-export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv }
+export interface CaptureOpts { budgetMs?: number; maxRoutes?: number; signal?: AbortSignal; env?: NodeJS.ProcessEnv; onServer?: (pgid: number) => void } // onServer: the dev server's own process group, so a supervisor can reap it on a hard kill
 const DEFAULT_BUDGET_MS = 25_000; // well under the 60s seal stage limit
 const MAX_ROUTES = 5;
 
@@ -135,8 +135,9 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
     const script = pickScript(JSON.parse(readFileSync(pkgPath, "utf8")));
     if (!script) return skip("no dev, preview or start script");
     const pages = changed.filter(isPageFile);
-    const apiPaths = pages.length === 0 ? openapiPaths(repoDir) : [];
-    if (pages.length === 0 && apiPaths.length === 0) return skip("no changed page files and no openapi routes");
+    const explicitOn = (opts.env ?? process.env)["LOKI_VISUAL_EVIDENCE"] === "1"; // the API transcript needs an explicit =1; the default only acts on changed pages with Playwright
+    const apiPaths = pages.length === 0 && explicitOn ? openapiPaths(repoDir) : [];
+    if (pages.length === 0 && apiPaths.length === 0) return skip(explicitOn ? "no changed page files and no openapi routes" : "no changed page files (set LOKI_VISUAL_EVIDENCE=1 for the API transcript)");
     const pw = pages.length > 0 ? playwrightBin(repoDir) : null;
     if (pages.length > 0 && !pw) return skip("playwright not resolvable in the repo");
     const budget = opts.budgetMs ?? DEFAULT_BUDGET_MS, end = Date.now() + budget, left = (): number => end - Date.now();
@@ -144,6 +145,7 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
     const port = await freePort(), base = `http://127.0.0.1:${port}`;
     child = spawn("npm", ["run", script, "--silent"], { cwd: repoDir, detached: true, env: { ...(opts.env ?? process.env), PORT: String(port), HOST: "127.0.0.1", BROWSER: "none" }, stdio: "ignore" });
     child.on("error", () => undefined);
+    if (child.pid) { try { opts.onServer?.(child.pid); } catch { /* registration is best effort */ } }
     if (!(await waitUp(base, left(), signal))) return skip(aborted() ? "aborted" : `${script} server did not answer within ${Math.round(budget / 1000)}s`);
     const evRoot = join(runDir, "evidence");
     if (isSymlink(evRoot)) return skip("evidence dir is a symlink");
@@ -180,10 +182,10 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
 }
 
 /** Seal hook: returns `{ evidence_screens }` to spread into the receipt body, or `{}`. Records a skip in notProven. Throws only if the stage was aborted, so nothing is written after a limit kill. */
-export async function sealEvidence(repoDir: string, runDir: string, o: { verify?: Record<string, unknown> }, notProven: Set<string>, signal?: AbortSignal): Promise<{ evidence_screens?: EvidenceScreen[] }> {
+export async function sealEvidence(repoDir: string, runDir: string, o: { verify?: Record<string, unknown> }, notProven: Set<string>, signal?: AbortSignal, emit?: (type: "session.started", stage: "seal", data: Record<string, unknown>) => void): Promise<{ evidence_screens?: EvidenceScreen[] }> {
   if (!visualEvidenceEnabled()) return {};
   const cf = Array.isArray(o.verify?.["changed_files"]) ? (o.verify["changed_files"] as unknown[]).map(String) : [];
-  const ev = await captureVisualEvidence(repoDir, runDir, cf, { signal });
+  const ev = await captureVisualEvidence(repoDir, runDir, cf, { signal, onServer: (pgid) => emit?.("session.started", "seal", { session_id: "visual-evidence", provider: "visual-evidence", model: null, pgid }) }); // the supervisor reaps announced groups on a hard kill
   if (signal?.aborted) throw new Error("seal aborted: visual evidence discarded");
   if (ev.skipped) notProven.add(`visual evidence skipped: ${ev.skipped}`);
   return ev.screens.length > 0 ? { evidence_screens: ev.screens } : {};
