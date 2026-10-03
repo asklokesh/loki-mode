@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- Loki 10 runs show their per-run cost cap on the start line (default $20.00, or `budgets.per_run` in loki.yaml, or `--max-cost`); a run that reaches the cap ends BUDGET_STOP with exit code 3 (INTEL-2).
 - `loki answer` resumes a BLOCKED run with the answer typed in the Control Plane (or `--text`).
 
 ### Changed
