@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Added (EL-W1-00, L0): loki-ts/tests/engine10/l0_guard.test.ts fails when a file under loki-ts/src probes a manifest name or embeds a runner command outside l0_guard.allowlist; the allowlist equals the current inventory and may only shrink.
+
 ## v10.9.0 (2026-10-03)
 
 Legacy dashboard removal release: the classic dashboard UI is deleted (the browser UI is the Control Plane), two guards keep it gone, and the Control Plane now serves the audit, checkpoint, memory, context, focus, tasks, session control and Completion Council routes the legacy dashboard answered. Also fixes the Python 3.10 pricing pin that turned 10.8.0 Tests red. Shipped under the founder CI waiver (D88); new tests for these slices are owed after the Oct 7 reset.
