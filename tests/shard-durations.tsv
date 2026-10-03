@@ -131,8 +131,6 @@ Sentrux Iteration Wireup (Dev1)	1
 Sentrux Init-Rules (Dev3)	42
 Doctor JSON Sentrux Parity (Dev4)	3
 Receipt Signing Discoverability	3
-Dashboard Nav UAT (Dev5)	0
-dashboard bundle stays within its measured budget	0
 exposed dashboard bind requires auth (#188)	3
 per-job receipt attestation (signed JWT + JWKS)	0
 remote receipt attestation verdict (JWKS)	1
@@ -208,18 +206,10 @@ resource monitor reaps its sleep child on shutdown (BACKLOG 22)	0
 Python shutdown SIGABRT with piped output (PY-ABORT)	1
 audit chain claims match what the chain proves	1
 audit subsystem Node suites (witness, manifest, crosslink)	2
-dashboard unmeasured cost never renders as zero (node --test)	0
-dashboard panels render unmeasured as unknown (node --test)	0
-dashboard UI component utilities match shipped code (node --test)	0
-dashboard overview issue-to-PR journey (node --test)	1
-dashboard overview proof card wording (node --test)	0
-dashboard static content council vote label (node --test)	1
-dashboard log stream shows an unreachable API, not a quiet log (node --test)	0
 shipped agent roles reach the review pool	0
 policy present but unevaluable refuses fail-closed	0
 audit entries attribute an actor honestly	0
 shipped modules have a recorded reachability verdict	95
-dashboard HTML strings escape run-written values	1
 loki proof chain fronts the buyer verifier	1
 workflow RC handlers are reachable under bash -e	0
 issue-to-PR action and workflow ship, gate and split agent from publish	0
@@ -293,7 +283,6 @@ cmd_web_stop/start use a real process identity check (D14/D15 class)	8
 cmd_web_start port-conflict path scoped by identity	1
 autonomy/verify.sh runtime teardown scoped to LISTEN + ownership	5
 Marketplace action Cleanup step scoped to this job's own loki run	0
-Dashboard fresh-repo/evidence harnesses kill only their own recorded PID	1
 Dashboard API smoke cleanup kills only its own recorded PID	1
 cleanup-test-processes.sh scoped to LISTEN + this uid, --aggressive gated	1
 Runtime Gate port reclaims scoped to LISTEN + cwd ownership	2
@@ -341,7 +330,6 @@ Council Vote Parse	0
 Council Write Transcript Threshold	0
 Cross Project Lift	0
 Da Veto	0
-Dashboard Identity	0
 UI bare loki	0
 Dashboard Json Guards	2
 Dashboard Memory Endpoints	16
@@ -533,10 +521,6 @@ the founder-decisions document is accurate	0
 entry-document pointers resolve	0
 a pause needs no TTY, and a run names its receipt	6
 the mutation probe cannot silently no-op	0
-the Quality page shows which gates block	0
-the evidence receipt is reachable from the dashboard	0
-the build's learnings are visible	1
-the spend-cap state is visible	1
 trust-core tests detect their regressions	130
 trust-core probes never mutate the shared tree	21
 a user-installed reviewer takes part in a run	1
@@ -556,14 +540,12 @@ Add-dir reaches provider	1
 Auto-PR default on	0
 Delegate PR refuses the repo default branch	2
 Dashboard port ownership	0
-Dashboard static fallback and reuse	15
 No dashboard leak from suites	20
 Doctor --json skills section	7
 Emit hang forensics	2
 Issue PRD honesty	0
 Next/resume agreement	3
 PGID stale reap	2
-Pipeline panel	1
 Provider arm coverage	0
 Queue tasks not truncated	0
 Rate limiting	0
@@ -591,7 +573,6 @@ Test provenance gate	1
 Tier harness policy	0
 Ultracode command	0
 Unified memory	1
-Usage markdown render	0
 Verification gap	2
 Vibe-kanban export	1
 Voter agents JSON	1
@@ -616,13 +597,8 @@ Metrics JSON Unmeasured	1
 web-app workspace panels surface fetch failures (node --test)	1
 web-app chat completion never says Done. for a silent failure (node --test)	1
 web-app issue list shows the gh comment count (node --test)	1
-dashboard checkpoint viewer shows a failed read, not empty (node --test)	0
-dashboard council transcripts show a failed hook-events read (node --test)	0
-dashboard task board keeps a server load error visible (node --test)	1
-dashboard API keys load error hides the empty state (node --test)	0
 a partly priced run renders as at least, never a total	1
 web-app CommandPalette file-search failure is not no-results (node --test)	1
-the Cost page budget banner has its own id	1
 prune-worktrees treats cherry-picked branches as merged (S-154)	3
 Eval results archive: redaction and dirty-check exclude (E-101)	1
 auto-capture shadow-write skips empty PROJECT_DIR and never splices importance (S-156)	32
@@ -636,9 +612,6 @@ Council failed_count honesty (S-157 member vote + convergence)	2
 run_test missing or empty argument does not stop the runner (S-174)	3
 Monorepo rejected test cmd is inconclusive (S-175)	3
 proof headline ignores a stale test-results.json (S-176)	3
-dashboard migration view shows a failed load, not an empty state (node --test)	0
-dashboard managed memory events error payload hides the empty state (node --test)	0
-dashboard learning metrics and trends show a failed read, not no data (node --test)	0
 done-recognition readers ignore user-site .pth (-I -S, S-200)	2
 voter-agents readers ignore user-site .pth (-I -S, S-202)	2
 web-app cockpit actions say not loaded after a failed fetch (S-206)	1
@@ -684,7 +657,6 @@ CI security scanners wired, fail-closed (E-123)	1
 Worktree install cache keyed on lockfile hash (E-130)	1
 WhatsNew CURRENT_VERSION matches VERSION (E-129)	1
 Heredoc dollar-digit footgun checker (D44)	2
-Inline script syntax gate parses dashboard HTML	1
 CI cache scope (D44)	2
 Engine10 push GitLab (D44)	5
 gh withhold nested (D44)	2
@@ -727,7 +699,6 @@ web-app workspace phase: completed shows Replay Build, unknown phase is not buil
 web-app preview says could not detect after a failed preview-info fetch (S-229)	1
 skill-session status push sends null running_agents (S-222)	2
 notification triggers unreadable is not empty (PO-DASH-HONEST-1)	2
-notification triggers panel unreadable vs empty (node --test, PO-DASH-HONEST-1)	1
 Refused resume warning names the blocking ignored file and the recorded branch (S-233)	3
 PR receipt renderer ignores cwd json.py (-I -S, S-215)	1
 corrupt or denied proofs and memory files give 503 or an error row, never empty (HONEST-READ-1)	2
@@ -735,7 +706,6 @@ Stats unmeasured cost reads unmeasured (S-226r)	6
 Status budget unmeasured reads unmeasured (S-226r)	6
 verify readers ignore a planted json.py in the reviewed tree (-I -S, S-216)	2
 Dashboard api_runs unreadable reads (HONEST-READ-2)	5
-start page workspace runs card (node --test, D51-B14r)	2
 Untracked status ignores core.fsmonitor (S-218r)	1
 Healing docs disclose unwired modify hooks (issue 200)	1
 SKILL.md runtime-migration paragraph does not understate the Bun route	1
