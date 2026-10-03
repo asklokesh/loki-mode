@@ -11,6 +11,10 @@ WORKDIR /src/packages/control-plane
 COPY packages/control-plane/package.json packages/control-plane/bun.lock ./
 RUN bun install --frozen-lockfile
 COPY packages/control-plane/ ./
+# ingest.ts imports these loki-ts files via ../../../../loki-ts/src (resolves to /src/loki-ts/src).
+# Their value-import closure is just these three files (types are erased at build time).
+COPY loki-ts/src/engine10/events.ts loki-ts/src/engine10/types.ts /src/loki-ts/src/engine10/
+COPY loki-ts/src/util/redact.ts /src/loki-ts/src/util/
 RUN bun run build:all
 
 FROM oven/bun:${BUN_VERSION}-slim AS runtime
