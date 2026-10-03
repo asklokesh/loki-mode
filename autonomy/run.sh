@@ -10683,14 +10683,20 @@ _loki_untracked_status() {
     # keeps the name lookup byte-exact for non-UTF-8 driver names.
     genv=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_GLOBAL
         LC_ALL=C GIT_NO_LAZY_FETCH=1)
+    # The NUL-delimited listing goes to a file beside the output path, read by
+    # a loop in this shell (it appends to genv and n); removed right after the
+    # loop, before any later return path.
+    : > "${1}.filters" || return 1
+    "${genv[@]}" "$gittool" -C "$top" config -z --name-only --get-regexp \
+        '^filter\..*\.(clean|smudge|process)$' > "${1}.filters" 2>/dev/null || true
     while IFS= read -r -d '' fk; do
         fn="${fk%.*}"
         genv+=("GIT_CONFIG_KEY_${n}=${fk}" "GIT_CONFIG_VALUE_${n}=")
         n=$((n + 1))
         genv+=("GIT_CONFIG_KEY_${n}=${fn}.required" "GIT_CONFIG_VALUE_${n}=false")
         n=$((n + 1))
-    done < <("${genv[@]}" "$gittool" -C "$top" config -z --name-only --get-regexp \
-        '^filter\..*\.(clean|smudge|process)$' 2>/dev/null)
+    done < "${1}.filters"
+    rm -f "${1}.filters"
     # Prove the overrides are visible with a per-call random nonce (a constant
     # could be planted in .git/config by the agent), or refuse to run.
     local nonce=""
