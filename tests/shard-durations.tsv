@@ -286,7 +286,6 @@ Marketplace action Cleanup step scoped to this job's own loki run	0
 Dashboard API smoke cleanup kills only its own recorded PID	1
 cleanup-test-processes.sh scoped to LISTEN + this uid, --aggressive gated	1
 Runtime Gate port reclaims scoped to LISTEN + cwd ownership	2
-Bun Parity disk.available_gb tolerance (BACKLOG 26)	0
 council_augment_from_managed_memory never falls back to cwd for PROJECT_DIR (BACKLOG 63)	1
 council_should_stop's shadow-write never falls back to cwd for PROJECT_DIR (BACKLOG 63/127)	11
 Bench Haschanges	0

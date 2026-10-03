@@ -1,8 +1,8 @@
 name: Post-Release Smoke
 
 # Verifies that the PUBLISHED artifacts of a release actually work, closing
-# the manual post-release validation gap. Unlike soak-monitor.yml (a daily
-# adoption-signal HEARTBEAT), this is a SMOKE TEST: it installs/pulls each
+# the manual post-release validation gap. Unlike a daily
+# adoption-signal heartbeat, this is a SMOKE TEST: it installs/pulls each
 # distribution channel for a specific version and asserts the binary runs and
 # reports the expected version.
 #

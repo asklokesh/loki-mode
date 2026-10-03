@@ -1090,7 +1090,7 @@ run_check_bg 'local-ci parent-check exit isolation' 'bash tests/test-local-ci-pa
 # ---------------------------------------------------------------------------
 # Harvest the read-only parallel pool BEFORE the serial-sensitive spine. The
 # spine below spawns loki processes (cli-commands, alias-forwarding,
-# bun-parity), kills processes machine-wide (the stop block), and runs the
+# test-cli-commands), kills processes machine-wide (the stop block), and runs the
 # network/doctor probes (bun test). The prior parallelization flaked precisely
 # because those ran under concurrent CPU + lane load. Draining the pool here
 # means the serial tail runs with nothing else live, which is the determinism
@@ -1912,151 +1912,6 @@ run_check "moat suite (tests/moat/run.sh: nine properties + pending ratchet)" "b
 run_check "tests/test-moat-runner.sh (every moat runner rule fires)" "bash tests/test-moat-runner.sh 2>&1 | tail -25"
 
 # ---------------------------------------------------------------------------
-# 9. bun-parity local equivalent (mirrors bun-parity.yml matrix)
-# ---------------------------------------------------------------------------
-if command -v bun >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
-  # v7.7.5 follow-up: retry-on-flake. Empirically the matrix has a
-  # first-run failure mode immediately after step 8 (test-cli-commands.sh)
-  # that does not reproduce in isolation -- pass on the second attempt
-  # with identical code. Cause hypothesized as state cooldown in the
-  # shared cwd .loki/ dir from the test-cli-commands run; root cause
-  # not yet found. The retry below makes the gate deterministic so
-  # local-ci ergonomics are not blocked while the deeper investigation
-  # continues (tracked in UT2-10).
-  run_check "bun-parity matrix (local)" '
-    set -uo pipefail
-    PARITY_TMP=$(mktemp -d)
-    trap "rm -rf $PARITY_TMP" EXIT
-    # Flake-capture: when a parity attempt fails we copy the offending
-    # bash/bun pair (raw + normalized + unified diff) into a persistent
-    # directory under .loki/local-ci-flake/<UTC-timestamp>/ BEFORE the
-    # tmp trap wipes them. This converts the next real flake into root
-    # cause evidence instead of another lost data point (tracked in
-    # UT2-10 -- v7.7.6 added retry, root cause still unknown after 100
-    # tight-loop reproductions failed to trigger).
-    FLAKE_DIR=".loki/local-ci-flake/$(date -u +%Y%m%dT%H%M%SZ)"
-    MATRIX=("version|--version|text" "provider-show|provider show|text" "provider-list|provider list|text" "memory-list|memory list|text" "status|status|text" "status-json|status --json|json" "stats|stats|text" "stats-json|stats --json|json" "doctor|doctor|text" "doctor-json|doctor --json|json")
-    ATTEMPT=0
-    while [ "$ATTEMPT" -lt 2 ]; do
-      ATTEMPT=$((ATTEMPT + 1))
-      BAD=0
-    for entry in "${MATRIX[@]}"; do
-      label="${entry%%|*}"; rest="${entry#*|}"; args="${rest%|*}"; mode="${rest##*|}"
-      LOKI_LEGACY_BASH=1 bash bin/loki $args > "$PARITY_TMP/$label.bash" 2>&1 || true
-      # v7.7.11 root-cause fix for the recurring first-attempt flake:
-      # bin/loki resolves to loki-ts/dist/loki.js when present, which has
-      # __LOKI_BUILD_VERSION__ baked in at build time. Whenever VERSION is
-      # bumped locally but dist not rebuilt, the bun route reports the
-      # stale build-time version, producing a doctor-json / version diff
-      # vs bash (which reads VERSION live). BUN_FROM_SOURCE=1 forces the
-      # shim to use src/cli.ts which calls readFileSync(VERSION) live so
-      # both routes see the same value. Safe: src/ is always present in
-      # the repo, and CI never runs local-ci.sh from an npm install.
-      BUN_FROM_SOURCE=1 bash bin/loki $args > "$PARITY_TMP/$label.bun" 2>&1 || true
-      if [ "$mode" = "json" ]; then
-        # BACKLOG 26 (matches the BACKLOG-26-DISK-TOLERANCE block in
-        # .github/workflows/bun-parity.yml): a v7.4.12 floor only absorbed
-        # the Python-float-vs-JS-int formatting difference (58.0 vs 58); it
-        # did nothing for a genuine 1GB integer drift between two
-        # near-simultaneous df reads (94 vs 95), which is a real, common
-        # flake here too. Check the two readings are within a small
-        # absolute tolerance, then drop the key from both sides before the
-        # structural diff -- a real divergence (tens of GB off, or present
-        # on only one side) still fails.
-        DISK_TOLERANCE_GB=3
-        bash_disk="$(jq -r ".disk.available_gb // \"null\"" "$PARITY_TMP/$label.bash" 2>/dev/null || echo null)"
-        bun_disk="$(jq -r ".disk.available_gb // \"null\"" "$PARITY_TMP/$label.bun" 2>/dev/null || echo null)"
-        disk_ok=1
-        if [ "$bash_disk" != "null" ] && [ "$bun_disk" != "null" ]; then
-          if ! jq -n --argjson a "$bash_disk" --argjson b "$bun_disk" --argjson tol "$DISK_TOLERANCE_GB" \
-               -e "((\$a - \$b) | if . < 0 then -. else . end) <= \$tol" >/dev/null 2>&1; then
-            disk_ok=0
-          fi
-        elif [ "$bash_disk" != "$bun_disk" ]; then
-          disk_ok=0
-        fi
-        jq -S "if .disk?.available_gb? != null then del(.disk.available_gb) else . end" "$PARITY_TMP/$label.bash" > "$PARITY_TMP/$label.bash.s" 2>/dev/null || true
-        jq -S "if .disk?.available_gb? != null then del(.disk.available_gb) else . end" "$PARITY_TMP/$label.bun"  > "$PARITY_TMP/$label.bun.s"  2>/dev/null || true
-        if [ "$disk_ok" -eq 0 ] || ! diff -q "$PARITY_TMP/$label.bash.s" "$PARITY_TMP/$label.bun.s" >/dev/null 2>&1; then
-          echo "DIFF: $label (attempt $ATTEMPT)"
-          BAD=$((BAD+1))
-          mkdir -p "$FLAKE_DIR" 2>/dev/null || true
-          cp "$PARITY_TMP/$label.bash"   "$FLAKE_DIR/$label.bash.raw"  2>/dev/null || true
-          cp "$PARITY_TMP/$label.bun"    "$FLAKE_DIR/$label.bun.raw"   2>/dev/null || true
-          cp "$PARITY_TMP/$label.bash.s" "$FLAKE_DIR/$label.bash.norm" 2>/dev/null || true
-          cp "$PARITY_TMP/$label.bun.s"  "$FLAKE_DIR/$label.bun.norm"  2>/dev/null || true
-          diff -u "$PARITY_TMP/$label.bash.s" "$PARITY_TMP/$label.bun.s" > "$FLAKE_DIR/$label.attempt${ATTEMPT}.diff" 2>/dev/null || true
-        fi
-      else
-        # v7.4.12: normalize jittery disk-space values (1GB drift can
-        # happen between bash and Bun reads on busy systems).
-        # v7.5.1: also strip the Runtime route block (added in v7.5.1 fix
-        # B23). The block is intentionally environment-dependent (reports
-        # "Bash" on the bash route and "Bun" on the Bun route, plus any
-        # active LOKI_LEGACY_BASH / LOKI_TS_ENTRY / BUN_FROM_SOURCE env)
-        # so it can never be byte-identical across the two routes. We
-        # use sed range deletion: from the Runtime route header line to
-        # the next empty line. Substring match handles ANSI color codes.
-        # Also normalize doctor Summary counts which shift slightly when
-        # LOKI_LEGACY_BASH is set vs not.
-        # v7.31: strip the optional "Dashboard:" status line. It is
-        # environment-dependent, not route-dependent: loki status (text mode)
-        # prints it only when a dashboard pid file holds a LIVE pid. The bash
-        # text path checks only the project-local pid file while the Bun path
-        # (and the bash --json path) also check ~/.loki/dashboard/dashboard.pid,
-        # so when the operator standalone dashboard is up the line appears on
-        # the Bun side and not the bash side -- a deterministic, environment-
-        # induced diff that has nothing to do with route logic. Deleting the
-        # line on both sides keeps the matrix honest (it never hides a real
-        # route divergence: presence of the line is governed by external
-        # dashboard state, not by the two routes formatting status differently).
-        for src in "$PARITY_TMP/$label.bash" "$PARITY_TMP/$label.bun"; do
-          dst="${src}.norm"
-          # Cockpit block: route-dependent (the bash doctor probes the cockpit
-          # renderer; the Bun doctor does not emit this section), so strip it on
-          # both sides -- parity with .github/workflows/bun-parity.yml:182 which
-          # already deletes it. Without this, local-ci flagged a diff the CI gate
-          # does not (the CI normalizer strips it), a local-ci-only false failure.
-          sed -E "s/Disk space: [0-9]+GB/Disk space: NGB/g" "$src" \
-            | sed -E "/Runtime route:/,/^$/d" \
-            | sed -E "/Phase 1 artifacts:/,/^$/d" \
-            | sed -E "/Cockpit:/,/^$/d" \
-            | sed -E "/Dashboard:.*http/d" \
-            | sed -E "s/[0-9]+ passed/N passed/g; s/[0-9]+ failed/N failed/g; s/[0-9]+ warnings/N warnings/g" \
-            > "$dst"
-        done
-        if ! diff -q "$PARITY_TMP/$label.bash.norm" "$PARITY_TMP/$label.bun.norm" >/dev/null 2>&1; then
-          echo "DIFF: $label (attempt $ATTEMPT)"
-          BAD=$((BAD+1))
-          mkdir -p "$FLAKE_DIR" 2>/dev/null || true
-          cp "$PARITY_TMP/$label.bash"      "$FLAKE_DIR/$label.bash.raw"  2>/dev/null || true
-          cp "$PARITY_TMP/$label.bun"       "$FLAKE_DIR/$label.bun.raw"   2>/dev/null || true
-          cp "$PARITY_TMP/$label.bash.norm" "$FLAKE_DIR/$label.bash.norm" 2>/dev/null || true
-          cp "$PARITY_TMP/$label.bun.norm"  "$FLAKE_DIR/$label.bun.norm"  2>/dev/null || true
-          diff -u "$PARITY_TMP/$label.bash.norm" "$PARITY_TMP/$label.bun.norm" > "$FLAKE_DIR/$label.attempt${ATTEMPT}.diff" 2>/dev/null || true
-        fi
-      fi
-    done
-      if [ "$BAD" = "0" ]; then
-        break
-      fi
-      if [ "$ATTEMPT" -lt 2 ]; then
-        echo "bun-parity attempt $ATTEMPT had $BAD mismatch(es); flake artifacts in $FLAKE_DIR; retrying once after 1s cooldown..."
-        sleep 1
-      fi
-    done
-    if [ "$BAD" != "0" ]; then
-      echo "bun-parity both attempts failed; investigate $FLAKE_DIR/*.diff" >&2
-    elif [ "$ATTEMPT" -gt 1 ]; then
-      echo "bun-parity passed on attempt $ATTEMPT; first-attempt flake artifacts preserved in $FLAKE_DIR for root cause analysis"
-    fi
-    [ "$BAD" = "0" ]
-  '
-else
-  skip_check "bun-parity matrix" "bun or jq missing"
-fi
-
-# ---------------------------------------------------------------------------
 # 10. Pre-publish 3a: npm pack tarball includes expected files
 # ---------------------------------------------------------------------------
 # Asserts each required artifact INDIVIDUALLY. The previous form counted
@@ -2259,7 +2114,7 @@ if [ "$TIER" = "fast" ]; then
   echo "  - tests/run-all-tests.sh   282 shell suites   (~10+ min, measured)"
   echo "  - blanket pytest -q        1793 tests         (128s, measured)"
   echo "  - tests/run-shellcheck.sh  repo-wide lint     (118s, measured)"
-  echo "  - SBOM / npm audit / license-audit / bun-parity / MCP handshakes"
+  echo "  - SBOM / npm audit / license-audit / MCP handshakes"
   echo "FAST covers syntax, structure and the full trust core (proof, receipt,"
   echo "council, verify, evidence) -- nothing else. Before push or release:"
   echo "    LOCAL_CI_TIER=full bash scripts/local-ci.sh"

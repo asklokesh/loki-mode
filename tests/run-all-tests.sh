@@ -1201,7 +1201,6 @@ run_test "clean-test-branches.sh refuses own repo, spares protected branches, de
 run_test "No script or test removes run-owned temp dirs by glob (E-140)" "$SCRIPT_DIR/test-no-tmp-sweep.sh"
 run_test "No test starts a build against the repo root (E-165)" "$SCRIPT_DIR/test-no-start-against-repo-root.sh"
 run_test "Runtime Gate port reclaims scoped to LISTEN + cwd ownership" "$SCRIPT_DIR/test-runtime-gate-port-scoping.sh"
-run_test "Bun Parity disk.available_gb tolerance (BACKLOG 26)" "$SCRIPT_DIR/test-bun-parity-disk-tolerance.sh"
 run_test "council_augment_from_managed_memory never falls back to cwd for PROJECT_DIR (BACKLOG 63)" "$SCRIPT_DIR/test-council-augment-managed-memory-project-dir.sh"
 run_test "council_should_stop's shadow-write never falls back to cwd for PROJECT_DIR (BACKLOG 63/127)" "$SCRIPT_DIR/test-council-shadow-write-project-dir.sh"
 run_test "council_managed_should_stop diffs the target project, not the install tree (S-196)" "$SCRIPT_DIR/test-council-managed-diff-target.sh"

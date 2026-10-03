@@ -85,8 +85,7 @@ management.
 ## loki-ts/
 
 The modern Bun/TypeScript runner. Default execution path; mirrors the bash
-route's behavior with strict parity (enforced by the `bun-parity` and
-`parity-drift` workflows).
+route's behavior with strict parity (checked by the parity suites under `tests/`).
 
 **Purpose:** Fast, typed implementation of the runner, CLI, council,
 provider abstraction, and metrics.

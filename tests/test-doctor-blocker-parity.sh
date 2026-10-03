@@ -49,7 +49,7 @@ done
 
 # stdout only, matching what the bun-parity gate captures. The provider install
 # hint deliberately goes to stderr on both routes.
-# Invoked exactly as .github/workflows/bun-parity.yml does it: bin/loki is the
+# Invoked the way the retired bun-parity workflow did it: bin/loki is the
 # Bun route by default, LOKI_LEGACY_BASH=1 selects bash. Driving autonomy/loki
 # directly with LOKI_SDK_LOOP=1 does NOT switch routes -- it runs bash both
 # times and the parity assertion passes vacuously, which is exactly what
@@ -78,7 +78,7 @@ fi
 ok "the failing path ran (doctor exited ${bash_rc})"
 
 # Normalize MACHINE-SPECIFIC noise before comparing, mirroring what
-# .github/workflows/bun-parity.yml does. Three differences are properties of a
+# the retired bun-parity workflow did. Three differences are properties of a
 # developer's laptop, not of the code, and a clean CI runner never produces
 # them: Apple's jq reports "1.7.1apple" to one route and "1.7.1" to the other,
 # and skill paths render as ~ on one side and an absolute $HOME on the other.

@@ -85,8 +85,7 @@ If you are porting a bash command to the Bun route:
 1. Implement under `loki-ts/src/commands/<name>.ts` mirroring an existing command (e.g. `version.ts`, `status.ts`).
 2. Wire it into the dispatcher at `loki-ts/src/cli.ts`.
 3. Add the route token to `bin/loki:80` (the case statement).
-4. Add a parity entry to `.github/workflows/bun-parity.yml` matrix (`<label>|<args>|<text|json>`).
-5. Add a unit test under `loki-ts/tests/commands/<name>.test.ts`.
+4. Add a unit test under `loki-ts/tests/commands/<name>.test.ts`.
 6. Verify both routes produce the same output (the parity matrix enforces this on every PR).
 
 ## Adding a build_prompt parity fixture

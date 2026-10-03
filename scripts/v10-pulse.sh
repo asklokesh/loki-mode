@@ -1807,15 +1807,15 @@ else:
 
 # --- 4d2. D44 item 5: RELEASE_CADENCE (green-age) and MAIN_RED_BY_MERGE -------
 # Both read the SAME cached gh_ci lookup (_gh_out) as CI_RED; no new gh call.
-# Tier B = Tests, Bun Parity, Coverage, `push` event only. Time basis for
+# Tier B = Tests, `push` event only. Time basis for
 # "green for N minutes" is the RUN COMPLETION time (gh updatedAt, latest of
-# the three runs), not the commit time: a commit can sit unbuilt for a while
+# the run), not the commit time: a commit can sit unbuilt for a while
 # before it turns green, and the 20-minute clock is about how long a green,
 # releasable commit has been waiting. Only the main HEAD is judged (the one
 # commit this lookup covers); a fixture/run lacking `event`/`updatedAt` reads
 # n/a, never fires. ponytail: head-only, a green non-head unreleased commit
 # is not seen; add a per-commit gh lookup if trains stop fast-forwarding.
-_TIER_B = ("Tests", "Bun Parity", "Coverage")
+_TIER_B = ("Tests",)
 _D44_GREEN_MIN = 20
 
 

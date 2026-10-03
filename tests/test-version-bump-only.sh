@@ -199,7 +199,7 @@ else
   check_gate "eligible + parent Tests cancelled" "$ELIG" "$(run_json push Tests completed cancelled)" 0 false
   check_gate "eligible + no parent runs" "$ELIG" '{"workflow_runs":[]}' 0 false
   check_gate "eligible + pull_request-only success" "$ELIG" "$(run_json pull_request Tests completed success)" 0 false
-  check_gate "eligible + another workflow's success" "$ELIG" "$(run_json push 'Bun Parity' completed success)" 0 false
+  check_gate "eligible + another workflow's success" "$ELIG" "$(run_json push 'Security Audit' completed success)" 0 false
   check_gate "eligible + gh error" "$ELIG" "$(run_json push Tests completed success)" 1 false
   check_gate "not eligible + parent Tests success" "$NOTELIG" "$(run_json push Tests completed success)" 0 false
   # S-153: release.sh --bump-only now rewrites Footer.tsx; a version-only edit reuses, anything more runs in full.

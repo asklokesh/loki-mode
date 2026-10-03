@@ -75,7 +75,7 @@ runs() {
     done
     printf '%s\n' "$arr" >"$GH_FIX/runs-$sha.json"
 }
-all_green() { runs "$1" "Tests:completed:success" "Bun Parity:completed:success" "Coverage (baseline):completed:success" "Security Audit:completed:success"; }
+all_green() { runs "$1" "Tests:completed:success" "Security Audit:completed:success"; }
 
 gitc() { git -C "$1" -c user.name=testbot -c user.email=t@example.invalid "${@:2}"; }
 
@@ -146,7 +146,7 @@ mkfix t2
 commit_file "$REPO" "feat: y" src/y.txt
 S2="$(git -C "$REPO" rev-parse main)"
 tc
-runs "$S2" "Tests:completed:failure" "Bun Parity:completed:success" "Coverage (baseline):completed:success" "Security Audit:completed:success"
+runs "$S2" "Tests:completed:failure" "Security Audit:completed:success"
 tc
 check "$RC" "2" "exit 2 on a red train"
 has "$(LOG)" "TRAIN_RED 1 Tests" "TRAIN_RED logged with suite"
@@ -208,7 +208,7 @@ mkfix t8
 commit_file "$REPO" "feat: s" src/s.txt
 S8="$(git -C "$REPO" rev-parse main)"
 tc
-runs "$S8" "Tests:completed:success" "Bun Parity:completed:success" "Coverage (baseline):completed:success" "Security Audit:completed:cancelled"
+runs "$S8" "Tests:completed:success" "Security Audit:completed:cancelled"
 tc; tc
 check "$(grep -c '^run rerun' "$GH_FIX/calls.log")" "1" "one gh run rerun across two cycles"
 check "$(omain)" "$(git -C "$SEED" rev-parse HEAD)" "not promoted while Security Audit is cancelled"
@@ -267,7 +267,7 @@ mkfix t12
 commit_file "$REPO" "feat: r1" src/r1.txt
 R1="$(git -C "$REPO" rev-parse main)"
 WT_ENV="" tc
-runs "$R1" "Tests:completed:failure" "Bun Parity:completed:success" "Coverage (baseline):completed:success" "Security Audit:completed:success"
+runs "$R1" "Tests:completed:failure" "Security Audit:completed:success"
 commit_file "$REPO" "feat: r2" src/r2.txt
 WT_ENV="" tc
 check "$(trains)" "train/1 train/2 " "red train/1 superseded by train/2"
