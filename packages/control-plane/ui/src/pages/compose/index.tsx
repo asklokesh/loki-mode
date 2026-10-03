@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Chip, EmptyState, Kbd, Message, Spinner, Toast } from "../../design/primitives";
 import { fetchRepos, postRun, StartError, type RunRequest } from "./api";
+import { COMPOSER_SUBMIT_EVENT } from "../../palette/items";
 
 // Server allowlist (spawn.ts PROVIDERS). Models and budgets are validated by pattern there; these are suggestions only.
 export const PROVIDERS = ["claude", "codex", "cline", "aider", "opencode"] as const;
@@ -62,8 +63,10 @@ export function Composer() {
   }, []);
 
   const busy = pending !== null;
+  const inflight = useRef(false); // Cmd+Enter reaches both the textarea and the window event; post once
   const submit = async () => {
-    if (busy || !text.trim()) return;
+    if (inflight.current || busy || !text.trim()) return;
+    inflight.current = true;
     const body = buildBody(text, chips);
     setError(null);
     setPending(body.target);
@@ -73,8 +76,15 @@ export function Composer() {
     } catch (e) {
       setPending(null);
       setError(errorText(e));
-    }
+    } finally { inflight.current = false; }
   };
+  const latest = useRef(submit);
+  latest.current = submit;
+  useEffect(() => {
+    const on = () => { void latest.current(); };
+    window.addEventListener(COMPOSER_SUBMIT_EVENT, on);
+    return () => window.removeEventListener(COMPOSER_SUBMIT_EVENT, on);
+  }, []);
 
   const workspace = !!chips.workspace;
   return (

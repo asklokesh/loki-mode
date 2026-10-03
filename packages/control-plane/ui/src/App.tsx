@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { Landing, LiveRun } from "./Live";
 import { registerPage } from "./pages/registry";
 import { wirePages } from "./pages/wired";
+import { CommandPalette } from "./palette";
 import { AppShell } from "./shell/AppShell";
 import { EmptyState, SettingsPage, StartRun } from "./Shell";
 import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
@@ -235,6 +236,6 @@ registerPage({ id: "settings-general", path: "/settings/general", title: "Genera
 wirePages();
 
 export function App() {
-  return <AppShell />;
+  return <><AppShell /><CommandPalette /></>;
 }
 

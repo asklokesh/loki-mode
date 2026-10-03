@@ -159,3 +159,12 @@ test("no fields are invented: a fully chipped body has only the server's known k
   expect(Object.keys(calls[0]!.body!).sort()).toEqual(["budget", "model", "provider", "repo", "target"]);
   expect(calls[0]!.body).toEqual({ target: "o/r#1", repo: "alpha", model: "opus", provider: "claude", budget: "25" });
 });
+
+test("COMPOSER_SUBMIT_EVENT submits once, and Cmd+Enter in the input plus the event does not double-post", async () => {
+  const { COMPOSER_SUBMIT_EVENT } = await import("../../ui/src/palette/items");
+  render(<Composer />);
+  type("ship the palette");
+  window.dispatchEvent(new CustomEvent(COMPOSER_SUBMIT_EVENT));
+  await waitFor(() => expect(calls.length).toBe(1));
+  expect(calls[0]!.body).toEqual({ target: "ship the palette" });
+});
