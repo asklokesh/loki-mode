@@ -1506,6 +1506,7 @@ run_test "a user-installed reviewer takes part in a run" "$SCRIPT_DIR/test-insta
 # Skill modules are loaded INTO the agent's context and acted on, so a false
 # claim there is worse than no claim. Asserts the load-bearing ones against source.
 run_test "skill docs match source (gate flags, providers, tiers, index routing, seam)" "$SCRIPT_DIR/test-skill-doc-accuracy.sh"
+run_test "SKILL.md runtime-migration paragraph does not understate the Bun route" "timeout -k 10 120 $SCRIPT_DIR/test-skill-md-runtime-claim.sh"
 run_test "proof md (paste-able receipt, one renderer)" "$SCRIPT_DIR/test-proof-md.sh"
 run_test "air-gapped read-only path (egress severed)" "$SCRIPT_DIR/test-airgap-commands.sh"
 run_test "doctor --airgap judges OLLAMA_HOST locality from the host, not a substring match" "$SCRIPT_DIR/test-airgap-ollama-host.sh"
