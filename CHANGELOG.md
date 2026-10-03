@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - loki heal --assess no longer under-reports debt: TODO/FIXME/HACK/XXX markers count plurals (TODOs, FIXMEs), and largest_file_loc is tracked across every file instead of reading 0 for repos with no file of 500 LOC or more.
 - tests/test-registration-coverage.sh now matches runner registrations as whole path tokens (registered_in), so a runner line for xcli/test-x.sh no longer registers cli/test-x.sh, and test-x.sh.bak or mytest-x.sh no longer register test-x.sh; self-tests added.
+- The trust-core probe anchors pre-check (TRUST_CORE_PROBE_MODE=anchors) now records the replacement string and reports NOOP and fails when a case has find equal to replace, which scripts/mutation-probe.sh would otherwise reject with exit 65 only in CI.
 - Completion council TODO marker count now matches plurals (TODOs, FIXMEs, HACKs, XXXs) at all three sites in autonomy/completion-council.sh, still rejecting identifiers such as TODOs_count, TODOS_LIST, XXXL and HACKATHON.
 - Docs honesty for issue #200: skills/healing.md and docs/dev/architecture-reference.md no longer claim failure-modes.json is written or that the healing snapshot/revert pairing is enforced, because hook_pre_healing_modify and hook_post_healing_modify have no production caller; tests/test-heal-docs-honesty.sh fails if a caller appears while the docs still say so.
 

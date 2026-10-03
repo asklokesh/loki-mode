@@ -113,7 +113,7 @@ probe_case() {
     local i=$case_idx
     case_idx=$((case_idx + 1))
     if [[ "$mode" == "anchors" ]]; then
-        a_args+=("$name" "$file" "$find_s" "${MUTPROBE_AFTER:-}")
+        a_args+=("$name" "$file" "$find_s" "$repl_s" "${MUTPROBE_AFTER:-}")
         return 0
     fi
     (( limit > 0 && i >= limit )) && return 0
@@ -854,12 +854,19 @@ probe_case "a syntax error in the embedded stream parser is caught" \
 
 if [[ "$mode" == "anchors" ]]; then
     echo "TEST: trust-core probe anchors still match their files"
+    # Fixture hook for the wall checks: append one synthetic case. "noop" has
+    # find == repl (must be reported NOOP); "real" has find != repl (must pass).
+    case "${TRUST_CORE_ANCHORS_SELFTEST:-}" in
+        noop) a_args+=("selftest noop" "tests/test-trust-core-tests-detect.sh" "set -uo pipefail" "set -uo pipefail" "") ;;
+        real) a_args+=("selftest real" "tests/test-trust-core-tests-detect.sh" "set -uo pipefail" "set -u" "") ;;
+    esac
     python3 - "$REPO_ROOT" ${a_args[@]+"${a_args[@]}"} <<'PY'
 import sys
 root, rest = sys.argv[1], sys.argv[2:]
 stale = []
-total = len(rest) // 4
-for name, file, find, after in (rest[i:i + 4] for i in range(0, len(rest), 4)):
+noop = []
+total = len(rest) // 5
+for name, file, find, repl, after in (rest[i:i + 5] for i in range(0, len(rest), 5)):
     try:
         with open(root + "/" + file, encoding="utf-8") as handle:
             text = handle.read()
@@ -874,11 +881,16 @@ for name, file, find, after in (rest[i:i + 4] for i in range(0, len(rest), 4)):
         text = text[idx:]
     if find not in text:
         stale.append((name, file, "find-string missing: %r" % find))
+    elif find == repl:
+        noop.append((name, file))
 for name, file, why in stale:
     print("  STALE: %s" % name)
     print("        %s: %s" % (file, why))
-print("  %d anchors checked, %d stale anchors" % (total, len(stale)))
-sys.exit(1 if stale else 0)
+for name, file in noop:
+    print("  NOOP: %s" % name)
+    print("        %s: find == replace, scripts/mutation-probe.sh would exit 65" % file)
+print("  %d anchors checked, %d stale anchors, %d no-op cases" % (total, len(stale), len(noop)))
+sys.exit(1 if stale or noop else 0)
 PY
     exit $?
 fi
