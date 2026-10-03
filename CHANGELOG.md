@@ -105,6 +105,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.14 (2026-10-03)
+
+train/100 green after full Tests rerun
+
+### Changes
+- fix(help): list keys and workspace in All commands, tighten discoverability matcher
+- docs(heal): disclose unwired healing modify hooks, add honesty guard (issue #200)
+- fix(loki-ts): PAUSED.md uses no-TTY resume wording when stdout is not a TTY (#212)
+- fix(loki-ts): PAUSED.md TTY default follows stdin for bash parity (#212)
+- build(loki-ts): rebuild dist for PO3-PAUSED-TTY
+- build(loki-ts): rebuild dist on v10.6.13
+- fix(memory): loki memory index rebuild runs the real scanner and surfaces errors (#204)
+- docs(skill): correct Runtime migration paragraph to match bin/loki routing
+- fix(council): scope TODO marker count to project source and real marker words
+- test(council): todo-scope test uses the run-owned temp helper
+- test(heal): scan all tracked files for hook callers in docs-honesty guard
+- docs: remove em and en dashes from passport output and tracked docs
+- fix(cli): list every Bun-routed command in loki-ts HELP and drop stale route count
+- fix(cli): correct contract, slack and engine10 HELP lines
+- build(loki-ts): rebuild dist for PO4-CLI-TS-HELP
+- test(trust): cover runTrust help, unknown arg, json, cache and trajectory contracts
+- test(cli): start-repo-directory uses run-owned physical tmp, per-condition diagnostics
+- test(trust-core): fast anchors pre-check for mutation probe find-strings (#214)
+- test(cli): register 4 orphaned tests/cli suites and scan subdirs in registration guard
+- fix(council): TODO marker count matches plurals (TODOs, FIXMEs)
+- test(engine10): cli.ts static-shape pin ignores the documented HELP row
+- test(engine10): dispatch shell pin ignores the documented HELP row
+- fix(quickstart): report match confidence, plain-spec fallback when no template matches (#217)
+- fix(assess): count plural debt markers and track largest file LOC for every file
+- test(registration): match runner registrations as whole path tokens
+- test(trust-core): anchors pre-check fails on find == replace cases
+- fix(scripts): -h/--help for release-notes.sh and clean-test-branches.sh
+- fix(dogfood): label the autonomous figure keyword-matched, add --help, reject unknown flags
+- test(dash): whole-tree guard for U+2013/U+2014 and emoji, fix magic-ab README
+- fix(tests): test-workspace.sh fails when no assertions ran
+- test(registration): register orphan cli/dashboard/integration suites and guard them
+- fix(hooks): install-hooks.sh supports --help and rejects unknown args without writing git config
+- fix(scripts): measure-run and guard-changed accept -h/--help read-only
+- feat(speed): D61-11 unit run mode with write-set scope fence and pack-only brief
+- fix(speed): unit spec reader is bounded and non-blocking, unit cap never loosens or disables the run cap (D61-11 round 2)
+- fix(speed): unit fence and scope use Object.hasOwn for preexisting_dirty, cap keeps existing value unchanged (D61-11 round 3)
+- test(speed): cover prototype-named tracked edits in unrelatedEdits (D61-11 round 3)
+- build(loki-ts): rebuild dist for D61-11; BOARD D61-11 merged, D61-11b cap-wiring card
+- feat(engine10): wire the Wall manifest into the Wall cwd and brief, seal manifest_sha256 (D77, W1-S2)
+- fix(engine10): Wall manifest reader fetches blobs by sha, fails closed, no replace refs, brief only references the file (W1-S2 r2)
+- fix(engine10): Wall manifest style examples need a test filename and source extension, never task-named (W1-S2 r3)
+- fix(engine10): Wall manifest example exclusion takes every task match before the cap, whole-token stems (W1-S2 r4)
+- fix(engine10): Wall manifest whole-stem naming, exact-path ranking, case-insensitive match (W1-S2 r5)
+- fix(wall): W1-S2 r6 directory-module stems, left-bounded exact paths, mock specifiers, separator-insensitive stems
+- fix(wall): W1-S2 r7 path-wrapper exact rank, content backstop for example exclusion
+- fix(wall): W1-S2 r8 resolve relative specifiers, location backstop, absolute-path exact rank
+- fix(wall): W1-S2 r9 treat ancestor-directory specifiers as naming the target
+- fix(wall): W1-S2 r10 python imports tolerate comments, semicolons, compound prefixes, dots-before-import
+- fix(wall): W1-S2 r11 python quote tracker honors backslash escapes and triple quotes, plus uncommented statement view
+- fix(wall): W1-S2 r12 plain import list accepts non-ascii names and form feed
+- fix(wall): W1-S2 r13 python import patterns accept form feed and NFKC-normalise names
+- fix(wall): W1-S2 r14 strip UTF-8 BOM and fail closed on non-ascii PEP 263 coding cookies
+- fix(wall): W1-S2 r15 fail closed on U+FFFD and non utf-8/ascii coding cookies, cookie regex immune to U+2028
+- build(loki-ts): rebuild dist for W1-S2, collapse superseded W1-S2 CHANGELOG lines
+- chore(budget): trim e10ext and features under their line caps, no behaviour change
+- fix(speed): unit mode fails closed, freezes its spec at intake, and applies the unit cost cap (D61-11b)
+- fix(speed): unit spec containment uses the route.ts outside predicate, intake runs before the group split (D61-11b round 2)
+- build(loki-ts): rebuild dist for D61-11b
+- feat(wall): W1-S3 size-tied Wall time cap, 90s small / 180s normal, env override clamped to 300s
+- test(wall): W1-S3 non-null assert optional session cwd so typecheck passes
+- test(wall): W1-S3 wiring test uses a normal task (limitS 180) and an env override case (240)
+- build(loki-ts): rebuild dist for W1-S3
+- fix(ci): train 99 shards 3/4/7, criteria import drops headings on GNU sed, tests stub a provider CLI
+
 ## v10.6.13 (2026-10-03)
 
 The P7 no-fabricated-data moat check now pins its scalar-read exclusion with isolating honest and negative fixtures, so a regression that starts fabricating scalar values fails the moat suite instead of passing unnoticed.
