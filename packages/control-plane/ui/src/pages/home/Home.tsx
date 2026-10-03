@@ -17,6 +17,7 @@ export interface Stats {
   blocked_waiting: number;
   verified_rate: number | null;
   verified_unchecked?: number;
+  breakdown?: { verified: number; failed: number; already_satisfied: number; other: number };
   keys_configured?: boolean;
   cost: { measured_usd: number | null; measured_runs: number; partial_usd: number | null; partial_runs: number; label: "measured" | "partial" | "not measured" };
   receipts: { total: number; signed: number };
@@ -67,7 +68,9 @@ export function HomeView({ data }: { data: HomeData }) {
   const unchecked = week.verified_unchecked ?? 0;
   // No key configured: successes cannot be verified, so a 0% rate would mislabel them as failing. Show it as not measured.
   const rateUnmeasured = rate !== null && week.keys_configured === false && unchecked > 0;
-  const rateTrend = rate === null ? undefined : rateUnmeasured ? `${unchecked} signature not checked` : `${week.by_verdict[VERDICT.VERIFIED] ?? 0} of ${week.runs_finished} finished${unchecked ? `, ${unchecked} signature not checked` : ""}`;
+  const b = week.breakdown;
+  const split = b ? `${b.verified} verified, ${b.failed} failed, ${b.already_satisfied} already satisfied, ${b.other} other` : undefined;
+  const rateTrend = rateUnmeasured ? `${unchecked} signature not checked` : split ? `${split}${unchecked ? `, ${unchecked} signature not checked` : ""}` : undefined;
   const cost = costTile(week.cost);
   if (week.runs_total === 0 && runs.length === 0 && blockedTotal === 0) {
     return <EmptyState />;
@@ -77,7 +80,7 @@ export function HomeView({ data }: { data: HomeData }) {
       <h1 style={{ fontFamily: "var(--cp-font-serif)", fontSize: "var(--cp-text-2xl)", margin: 0 }}>Home</h1>
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         <div data-testid="kpi-today"><KpiTile label="Runs today" value={String(today.runs_total)} trend={today.runs_running ? `${today.runs_running} running` : undefined} /></div>
-        <div data-testid="kpi-verified"><KpiTile label="Verified rate, 7 days" value={rate === null ? NOT_MEASURED : rateUnmeasured ? `${NOT_MEASURED}: no verification key` : `${Math.round(rate * 100)}%`} trend={rateTrend} trendTone={rate === null || rateUnmeasured ? "neutral" : rate >= 0.8 ? "success" : "warning"} /></div>
+        <div data-testid="kpi-verified"><KpiTile label="Verified rate, 7 days" value={rate === null ? "--" : rateUnmeasured ? `${NOT_MEASURED}: no verification key` : `${Math.round(rate * 100)}%`} trend={rateTrend} trendTone={rate === null || rateUnmeasured ? "neutral" : rate >= 0.8 ? "success" : "warning"} /></div>
         <div data-testid="kpi-cost"><KpiTile label="Cost, 7 days" value={cost.value} trend={cost.trend} trendTone={week.cost.label === "partial" ? "warning" : "neutral"} /></div>
         <div data-testid="kpi-blocked"><KpiTile label="BLOCKED waiting" value={String(blockedTotal)} trend={blockedTotal ? "needs your answer" : undefined} trendTone="info" /></div>
       </div>

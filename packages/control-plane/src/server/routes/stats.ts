@@ -13,11 +13,13 @@ export interface Stats {
   runs_running: number;
   by_verdict: Record<string, number>;
   blocked_waiting: number;
-  /** Plain VERIFIED (attested, signature-checked) over finished runs that carry a verdict; null when there are none. */
+  /** Plain VERIFIED (attested, signature-checked) over the VERIFIABLE finished outcomes (verified, signature-unchecked verified, failed); ALREADY_SATISFIED and other outcomes are not in the denominator. Null when there are none. */
   verified_rate: number | null;
+  /** Finished runs by outcome class: verified (checked), failed (FAILED, PARTIAL, TAMPERED), already_satisfied (either signature state), other (SPEC_CONFLICT, UNVERIFIED, unattested, anything else). Unchecked verified runs are in verified_unchecked. */
+  breakdown: { verified: number; failed: number; already_satisfied: number; other: number };
   /** Finished successes whose signature could not be checked (VERIFIED (signature not checked)); a rate of 0 with these is "not measured", not "failing". */
   verified_unchecked: number;
-  /** At least one receipt verification key is configured (LOKI_CP_RECEIPT_PUBKEYS). */
+  /** At least one receipt verification key is configured (the local signer key or LOKI_CP_RECEIPT_PUBKEYS). */
   keys_configured: boolean;
   cost: {
     /** Sum over runs whose cost is fully measured; null when no run in the window is. */
@@ -34,7 +36,7 @@ export interface Stats {
 export function computeStats(db: Db, since: string | null): Stats {
   const all = db.select().from(runs).all().filter((r) => !since || (r.startedAt !== null && r.startedAt >= since));
   const by: Record<string, number> = {};
-  let finished = 0, running = 0, blocked = 0, withVerdict = 0, verified = 0, unchecked = 0;
+  let finished = 0, running = 0, blocked = 0, verified = 0, unchecked = 0, failed = 0, satisfied = 0, other = 0;
   let mUsd = 0, mRuns = 0, pUsd = 0, pRuns = 0;
   for (const r of all) {
     if (r.endedAt) finished++; else running++;
@@ -42,7 +44,13 @@ export function computeStats(db: Db, since: string | null): Stats {
     const verdict = r.verdict ? effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 }) : null;
     if (verdict) {
       by[verdict] = (by[verdict] ?? 0) + 1;
-      if (r.endedAt) { withVerdict++; if (verdict === "VERIFIED") verified++; else if (verdict === "VERIFIED (signature not checked)") unchecked++; }
+      if (r.endedAt) {
+        if (verdict === "VERIFIED") verified++;
+        else if (verdict === "VERIFIED (signature not checked)") unchecked++;
+        else if (verdict === "ALREADY_SATISFIED" || verdict === "ALREADY_SATISFIED (signature not checked)") satisfied++;
+        else if (verdict === "FAILED" || verdict === "PARTIAL" || verdict === "TAMPERED") failed++;
+        else other++;
+      }
     }
     if (r.verdict === "SPEC_CONFLICT") blocked++;
     if (r.costUsd !== null) { mUsd += r.costUsd; mRuns++; }
@@ -58,7 +66,8 @@ export function computeStats(db: Db, since: string | null): Stats {
   const r6 = (n: number): number => Math.round(n * 1e6) / 1e6;
   return {
     since, runs_total: all.length, runs_finished: finished, runs_running: running, by_verdict: by, blocked_waiting: blocked,
-    verified_rate: withVerdict ? verified / withVerdict : null, verified_unchecked: unchecked, keys_configured: pubkeysFromEnv().configured === true,
+    verified_rate: verified + unchecked + failed ? verified / (verified + unchecked + failed) : null,
+    breakdown: { verified, failed, already_satisfied: satisfied, other }, verified_unchecked: unchecked, keys_configured: pubkeysFromEnv().configured === true,
     cost: {
       measured_usd: mRuns ? r6(mUsd) : null, measured_runs: mRuns, partial_usd: pRuns ? r6(pUsd) : null, partial_runs: pRuns,
       label: pRuns ? "partial" : mRuns ? "measured" : "not measured",
