@@ -1039,7 +1039,9 @@ async def _push_loki_state_loop() -> None:
                                     "complexity": _sk_complexity,
                                     "mode": "autonomous",
                                     "provider": _sd.get("provider", "claude"),
-                                    "running_agents": 0,
+                                    # Unmeasured: no skill-session file counts
+                                    # agents, so send null, never a claimed 0.
+                                    "running_agents": None,
                                     "pending_tasks": _sk_pending,
                                     "current_task": _sk_current_task,
                                     "version": _sk_version,
@@ -8985,7 +8987,8 @@ async def get_notification_triggers():
     try:
         return json.loads(triggers_file.read_text())
     except (json.JSONDecodeError, OSError):
-        return {"triggers": []}
+        # Unreadable is unknown, not empty: null plus an error, never [].
+        return {"triggers": None, "error": "triggers.json unreadable"}
 
 
 @app.put("/api/notifications/triggers", dependencies=[Depends(auth.require_scope("control"))])

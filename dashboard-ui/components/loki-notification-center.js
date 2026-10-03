@@ -49,6 +49,7 @@ export class LokiNotificationCenter extends LokiElement {
     super();
     this._notifications = [];
     this._triggers = [];
+    this._triggersFailed = false;
     // null until a successful load; cleared on failure so counts read unknown, not 0.
     this._summary = null;
     this._connected = false;
@@ -122,10 +123,18 @@ export class LokiNotificationCenter extends LokiElement {
       const resp = await fetch(apiUrl + '/api/notifications/triggers');
       if (resp.ok) {
         const data = await resp.json();
-        this._triggers = data.triggers || [];
+        if (data.error || data.triggers == null) {
+          this._triggersFailed = true;
+        } else {
+          this._triggers = data.triggers;
+          this._triggersFailed = false;
+        }
+      } else {
+        this._triggersFailed = true;
       }
     } catch {
-      // Keep existing triggers
+      // Keep existing triggers, but do not claim they are an empty list
+      this._triggersFailed = true;
     }
   }
 
@@ -455,6 +464,9 @@ export class LokiNotificationCenter extends LokiElement {
   }
 
   _renderTriggerList() {
+    if (this._triggersFailed && this._triggers.length === 0) {
+      return '<div class="empty-state">Could not load triggers</div>';
+    }
     if (this._triggers.length === 0) {
       return '<div class="empty-state">No triggers configured</div>';
     }

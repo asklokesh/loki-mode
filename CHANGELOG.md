@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `python3 dashboard/audit.py verify <dir>` now exits 2 (status `nothing_checked`) when it checked no files, instead of exiting 0 like a verified chain; a valid chain still exits 0, a tampered one 1, and `tip` is unchanged (PO-AUDIT-CLI-1).
 - The web-app Evidence Receipt Cost field reads "at least $X.XX" and the Metrics cost trend labels a run "(partial)" when the run was only partly priced (cost_partial true), instead of showing a lower bound as the exact cost (PO-WEB-COST-1).
 - Dashboard deploy connections: connecting or disconnecting a platform after a failed status fetch no longer reports invented "not connected" statuses for the other platforms to the rest of the app (PO-WEB-DEPLOY-1).
+- The skill-session WebSocket status push sends `running_agents: null` (unmeasured) instead of a claimed 0, and the notification triggers panel shows "Could not load triggers" instead of "No triggers configured" when the triggers file is unreadable (`GET /api/notifications/triggers` returns `triggers: null` plus `error`; a missing file is still an empty list) (PO-DASH-HONEST-1).
 - The Control Plane container image now builds from the repo Dockerfile.control-plane (it copies the loki-ts files ingest.ts imports; `docker build` no longer fails with Could not resolve).
 - The supervisor commit backstop validates the worker-written base as a full object id (40-64 hex) before any git call, and is skipped (recorded as not proven) when the event log fails verification.
 
