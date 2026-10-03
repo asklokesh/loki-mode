@@ -168,6 +168,10 @@ loki linear:ENG-42     # or a linear.app issue URL
 - Linear needs `LINEAR_API_KEY`.
 - A missing variable stops the run before any work with an error naming it (exit code 2, like other intake errors). GitHub refs are unchanged.
 
+## Two-way Slack (preview)
+
+With `LOKI_SLACK_INBOUND=1`, `loki slack serve --port N` (127.0.0.1 by default) lets you mention `@loki <issue ref or task>` in Slack to start a run, and answer a BLOCKED question in the same thread. Needs `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in the environment. See [docs/slack.md](docs/slack.md) for the scopes.
+
 ## Triggers without a cloud
 
 Both run on your own GitHub Actions minutes; there is no hosted service.

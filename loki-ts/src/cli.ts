@@ -309,6 +309,11 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runStart(rest);
     }
 
+    case "slack": {
+      const { runSlackCli } = await import("./features/slack_inbound.ts");
+      return runSlackCli(rest);
+    }
+
     case "engine10": {
       const { runEngine10 } = await import("./engine10/cli.ts");
       const { registryLoader } = await import("./engine10/registry.ts");
