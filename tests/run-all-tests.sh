@@ -1659,6 +1659,7 @@ run_test "corrupt or denied proofs and memory files give 503 or an error row, ne
 run_test "Stats unmeasured cost reads unmeasured (S-226r)" "timeout -k 10 120 bash $SCRIPT_DIR/test-stats-unmeasured-cost.sh"
 run_test "Status budget unmeasured reads unmeasured (S-226r)" "timeout -k 10 120 bash $SCRIPT_DIR/test-status-budget-unmeasured.sh"
 run_test "verify readers ignore a planted json.py in the reviewed tree (-I -S, S-216)" "timeout -k 10 120 bash $SCRIPT_DIR/test-verify-no-cwd-shadow.sh"
+run_test "start page workspace runs card (node --test, D51-B14r)" "command -v node >/dev/null 2>&1 || { echo 'node not installed: the suite did not run (unmeasured, not clean)'; exit 1; }; timeout -k 10 120 node --test $SCRIPT_DIR/../dashboard-ui/tests/start-workspace-card.node.test.mjs"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 
 # Summary

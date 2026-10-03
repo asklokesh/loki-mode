@@ -48,6 +48,8 @@ table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:6px 8px;
 <button class="sec" id="refresh">Refresh</button><span class="mut" id="conc"></span></div>
 <table><thead><tr><th></th><th>#</th><th>Issue</th><th>Size</th><th>Status</th></tr></thead><tbody id="rows"></tbody></table>
 <div id="bl-msg"></div></section>
+<section class="card" id="ws"><h2>Workspace runs</h2>
+<div id="ws-body" class="mut">Loading...</div></section>
 </main>
 <script>
 const $=id=>document.getElementById(id);
@@ -86,6 +88,33 @@ function render(){
     tr.appendChild(sc);tb.appendChild(tr)})}
 async function poll(){try{const s=await api('GET','/api/backlog/status');status={};s.issues.forEach(i=>status[i.number]=i);
   $('conc').textContent='concurrency '+s.concurrency;if(issues.length)render()}catch(e){}}
+async function loadWorkspaceRuns(){
+  const b=$('ws-body');
+  let r;
+  try{r=await api('GET','/api/operator/workspaces/runs')}
+  catch(e){b.replaceChildren(el('div','Could not load workspace runs: '+e.message,'bad'));return}
+  const runs=Array.isArray(r&&r.runs)?r.runs:null;
+  if(!runs){b.replaceChildren(el('div','Could not load workspace runs: unexpected response','bad'));return}
+  if(!runs.length){b.replaceChildren(el('div','No runs'+(r.reason?' ('+r.reason+')':''),'mut'));return}
+  const t=el('table');
+  t.appendChild(el('thead')).appendChild(el('tr')).append(el('th','Run'),el('th','Repo'),el('th','Status'),el('th','Freshness'));
+  const tb=el('tbody');
+  runs.forEach(run=>{
+    const id=(run.ws||run.workspace||'?')+'/'+(run.run_id||'?');
+    if(run.state==='unreadable'){
+      const tr=el('tr');tr.appendChild(el('td',id));
+      const td=el('td','Unreadable run: '+(run.error||'unknown error'),'bad');td.colSpan=3;tr.appendChild(td);tb.appendChild(tr);return}
+    (run.repos||[]).forEach(rp=>{
+      const tr=el('tr');tr.appendChild(el('td',id));tr.appendChild(el('td',rp.slug||rp.repo||'?'));
+      tr.appendChild(el('td',rp.status||'-','st '+(rp.status||'')));
+      const f=el('td');
+      if(rp.stale===true)f.appendChild(el('span','stale','tag bad'));
+      else if(rp.stale==null&&rp.reason)f.appendChild(el('span',rp.reason,'mut'));
+      tr.appendChild(f);tb.appendChild(tr)});
+    const ig=run.integration&&typeof run.integration==='object'?run.integration.status:run.integration;
+    const tr=el('tr');tr.appendChild(el('td',id));tr.appendChild(el('td','integration','mut'));
+    const sc=el('td');sc.appendChild(el('span',ig||'-','st '+(ig||'')));tr.appendChild(sc);tr.appendChild(el('td'));tb.appendChild(tr)});
+  t.appendChild(tb);b.replaceChildren(t)}
 async function go(btn,msg,fn){btn.disabled=true;try{await fn();say(msg,'Done')}catch(e){say(msg,e.message,1)}btn.disabled=false;await state()}
 $('s1-go').onclick=e=>go(e.target,'s1-msg',async()=>{await api('POST','/api/onboarding/provider',{provider:$('prov').value,api_key:$('key').value||null});$('key').value=''});
 $('s2-go').onclick=e=>go(e.target,'s2-msg',async()=>{await api('POST','/api/onboarding/github',{token:$('pat').value});$('pat').value=''});
@@ -94,7 +123,7 @@ $('sel').onclick=e=>go(e.target,'bl-msg',async()=>{const n=[...document.querySel
   if(!n.length)throw new Error('Select at least one issue');await api('POST','/api/backlog/run',{issues:n});await poll()});
 $('all').onclick=e=>go(e.target,'bl-msg',async()=>{await api('POST','/api/backlog/run',{all:true});await poll()});
 $('refresh').onclick=loadIssues;
-state();setInterval(poll,3000);
+state();loadWorkspaceRuns();setInterval(poll,3000);
 </script>
 </body>
 </html>

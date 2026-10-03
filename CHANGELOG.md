@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Dashboard runs view reports unreadable or corrupt run records instead of claiming none were recorded.
 - `loki stats` and `loki status` print "unmeasured" instead of $0.00 when no iteration records cost_usd or budget.json has no budget_used, on both the bash and bun routes (S-226r).
+### Dashboard
+- The start page gains a "Workspace runs" card: per-repo rows, an integration row and a stale badge; an unreadable run or a failed read shows an error, never an empty card (D51-B14r).
 
 ### Docs
 - docs/WORKSPACES.md gains a "Verify a workspace run" section, backed by an end-to-end test that drives `loki workspace run`, `status`, metrics and PR comments through both `autonomy/loki` and `bin/loki` (D51-B16r).
