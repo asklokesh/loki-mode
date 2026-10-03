@@ -1,0 +1,17 @@
+{{- if and .Values.persistence.controlDb.enabled (not .Values.persistence.controlDb.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "autonomi.fullname" . }}-control-db
+  labels:
+    {{- include "autonomi.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.persistence.controlDb.accessMode }}
+  {{- if .Values.persistence.controlDb.storageClass }}
+  storageClassName: {{ .Values.persistence.controlDb.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.persistence.controlDb.size }}
+{{- end }}

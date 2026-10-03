@@ -74,6 +74,10 @@ spec:
             - secretRef:
                 name: {{ include "autonomi.secretName" . }}
           env:
+            # Ship run events to the Control Plane in this release.
+            - name: LOKI_CONTROL_URL
+              value: "http://{{ include "autonomi.fullname" . }}-controlplane:{{ .Values.service.port }}"
+            {{- include "autonomi.controlTokenEnv" . | nindent 12 }}
             # Same durable-state contract as the Job: per-build state is written
             # under /workspace (the WORKDIR), backed by the durable volume below.
             - name: LOKI_DURABLE_STATE

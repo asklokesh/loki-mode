@@ -3,6 +3,19 @@
 # Run:   docker run -it -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" -v $(pwd):/workspace asklokesh/loki-mode start prd.md
 # Dash:  docker run -it -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" -p 57374:57374 -v $(pwd):/workspace asklokesh/loki-mode start --api prd.md
 
+ARG BUN_VERSION=1.4.2
+
+# Build stage for the Control Plane. The CP source imports ../../../../loki-ts/src
+# (events, redact, types), so loki-ts/src is copied next to it at /src/loki-ts.
+FROM oven/bun:${BUN_VERSION} AS cp-build
+WORKDIR /src/packages/control-plane
+COPY packages/control-plane/package.json packages/control-plane/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY packages/control-plane/ ./
+COPY loki-ts/tsconfig.json /src/loki-ts/tsconfig.json
+COPY loki-ts/src/ /src/loki-ts/src/
+RUN bun run build:all
+
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
@@ -147,16 +160,13 @@ COPY --chown=loki:loki bin/ ./bin/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 
-# Control Plane (packages/control-plane): `loki control serve` runs
-# packages/control-plane/dist/server.js with the built UI at ui/dist. Both are
-# built here (the repo .dockerignore drops dist/ and node_modules/), then the
-# build-only node_modules are removed; the bundle has no runtime dependencies.
-COPY --chown=loki:loki packages/control-plane/ ./packages/control-plane/
-RUN cd packages/control-plane \
-    && bun install --frozen-lockfile \
-    && bun run build:all \
-    && rm -rf node_modules ui/node_modules \
-    && chown -R loki:loki /opt/loki-mode/packages
+# Control Plane (packages/control-plane), built in the cp-build stage above.
+# Only the bundle, the built UI and the migrations ship: no src, tests or bun
+# cache. `loki control serve` runs dist/server.js, which resolves ../drizzle and
+# ../ui/dist relative to dist/.
+COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/dist/server.js ./packages/control-plane/dist/server.js
+COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/drizzle ./packages/control-plane/drizzle
+COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/ui/dist ./packages/control-plane/ui/dist
 
 # v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the opt-in
 # LOKI_SDK_LOOP=1 RARV loop via a DYNAMIC import in dist/loki.js, so it cannot be

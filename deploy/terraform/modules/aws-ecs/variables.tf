@@ -66,7 +66,7 @@ variable "desired_count" {
 }
 
 variable "dashboard_allowed_hosts" {
-  description = "Comma-separated Host headers the dashboard accepts besides loopback (LOKI_DASHBOARD_ALLOWED_HOSTS). Needed when bound to 0.0.0.0 without enterprise auth; with enterprise auth any Host is accepted. /health and /metrics are always exempt."
+  description = "DEPRECATED and ignored: the Control Plane has no Host allowlist off loopback; it is protected by the bearer token (control_token_secret_arn)."
   type        = string
   default     = ""
 }
@@ -84,9 +84,15 @@ variable "dashboard_port" {
 }
 
 variable "control_token_secret_arn" {
-  description = "Secrets Manager or SSM ARN holding LOKI_CONTROL_TOKEN. Empty runs the Control Plane without a token (LOKI_CONTROL_ALLOW_INSECURE_BIND=1); put the service behind a private network or load balancer auth in that case."
+  description = "Secrets Manager or SSM ARN holding LOKI_CONTROL_TOKEN. Required unless allow_insecure_bind is true."
   type        = string
   default     = ""
+}
+
+variable "allow_insecure_bind" {
+  description = "Run the Control Plane with no token on 0.0.0.0. Anyone who can reach the port can forge runs and answers. Leave false."
+  type        = bool
+  default     = false
 }
 
 variable "log_retention_days" {

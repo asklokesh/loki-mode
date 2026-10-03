@@ -231,3 +231,16 @@ it wins so existing overrides keep working; otherwise config.controlPort.
 {{- define "autonomi.controlPort" -}}
 {{- .Values.config.dashboardPort | default .Values.config.controlPort | int -}}
 {{- end }}
+
+{{/*
+Control Plane token env entry (secretKeyRef). The Secret is either chart-made
+(token from secrets.controlToken, the existing Secret, or a generated value) or
+the user's existingSecret, which must hold the key secrets.controlTokenKey.
+*/}}
+{{- define "autonomi.controlTokenEnv" -}}
+- name: LOKI_CONTROL_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "autonomi.secretName" . }}
+      key: {{ .Values.secrets.controlTokenKey | default "LOKI_CONTROL_TOKEN" | quote }}
+{{- end }}

@@ -11,16 +11,10 @@ data:
   # runtime ignores them. State durability comes from the /workspace volume mount.
   LOKI_MAX_WORKERS: {{ .Values.config.maxWorkers | quote }}
   LOKI_PROVIDER: {{ .Values.config.provider | quote }}
-  # Control Plane (packages/control-plane). The legacy LOKI_DASHBOARD_* names are
-  # kept as aliases of the same values for anything that still reads them.
-  LOKI_CONTROL_HOST: {{ .Values.config.dashboardHost | quote }}
-  LOKI_CONTROL_PORT: {{ include "autonomi.controlPort" . | quote }}
-  LOKI_CONTROL_DB: {{ .Values.config.controlDb | quote }}
-  {{- if not (or .Values.secrets.controlToken .Values.secrets.existingSecret) }}
-  # No token configured: the Control Plane refuses a non-loopback bind unless
-  # told otherwise. Set secrets.controlToken to require a bearer token on /v1.
-  LOKI_CONTROL_ALLOW_INSECURE_BIND: "1"
-  {{- end }}
+  # LOKI_CONTROL_* (host, port, db, token) are set on the controlplane container
+  # only, so workers never inherit the 0.0.0.0 bind. The legacy names below are
+  # kept for anything that still reads them; LOKI_DASHBOARD_ALLOWED_HOSTS is
+  # ignored by the Control Plane.
   LOKI_DASHBOARD_HOST: {{ .Values.config.dashboardHost | quote }}
   LOKI_DASHBOARD_PORT: {{ include "autonomi.controlPort" . | quote }}
   {{- if .Values.config.dashboardAllowedHosts }}

@@ -18,7 +18,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The Control Plane UI and API are available at **http://localhost:57374**.
+The Control Plane UI and API are available at **http://localhost:57374** (loopback only by default; set `LOKI_BIND_ADDRESS` to change). `LOKI_CONTROL_TOKEN` is required in `.env` and compose refuses to start without it; open the UI with `#token=<token>` appended to the URL. The database lives under `/workspace/.loki/control` on the `projects` volume. `LOKI_DASHBOARD_ALLOWED_HOSTS` no longer has any effect.
 
 ## Observability Mode
 

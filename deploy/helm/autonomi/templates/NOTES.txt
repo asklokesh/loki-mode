@@ -1,0 +1,17 @@
+Autonomi Control Plane is deployed. It always requires a bearer token.
+
+Get the token:
+  kubectl get secret -n {{ .Release.Namespace }} {{ include "autonomi.secretName" . }} -o jsonpath='{.data.{{ .Values.secrets.controlTokenKey | default "LOKI_CONTROL_TOKEN" | replace "." "\\." }}}' | base64 -d; echo
+
+Open the UI (then append #token=<token> to the URL):
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "autonomi.fullname" . }}-controlplane {{ .Values.service.port }}:{{ .Values.service.port }}
+  http://localhost:{{ .Values.service.port }}/
+{{- if .Values.secrets.existingSecret }}
+
+You use secrets.existingSecret ({{ .Values.secrets.existingSecret }}): it must hold the key
+"{{ .Values.secrets.controlTokenKey | default "LOKI_CONTROL_TOKEN" }}" (secrets.controlTokenKey) or the controlplane pod will not start.
+{{- end }}
+{{- if not .Values.persistence.controlDb.enabled }}
+
+persistence.controlDb.enabled is false: the Control Plane database is lost when the pod restarts.
+{{- end }}

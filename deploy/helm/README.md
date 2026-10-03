@@ -63,6 +63,32 @@ helm install autonomi ./deploy/helm/autonomi \
   --set secrets.existingSecret=autonomi-api-keys
 ```
 
+### Control Plane token and storage
+
+The control-plane pod runs the Control Plane (`loki control serve`) and never
+runs without a bearer token:
+
+- Default: the chart generates a random 32 character token into the release
+  Secret and keeps it stable across upgrades (lookup of the existing Secret).
+  `helm install` prints the `kubectl get secret ... | base64 -d` command in
+  NOTES.txt; open the UI with `#token=<token>` appended to the URL.
+- `secrets.controlToken=<value>` sets your own token.
+- `secrets.existingSecret=<name>`: that Secret MUST contain the key named by
+  `secrets.controlTokenKey` (default `LOKI_CONTROL_TOKEN`), or the pod fails to
+  start. Add it with
+  `kubectl create secret generic <name> --from-literal=LOKI_CONTROL_TOKEN=$(openssl rand -hex 24)`.
+- Workers get `LOKI_CONTROL_URL` (the in-release controlplane Service) and the
+  same token, so they ship runs to the Control Plane automatically. Workers do
+  not inherit `LOKI_CONTROL_HOST`; it is set on the controlplane container only.
+- `config.dashboardPort` is a deprecated alias of `config.controlPort`.
+  `config.dashboardAllowedHosts` (`LOKI_DASHBOARD_ALLOWED_HOSTS`) is ignored by
+  the Control Plane: protection is the token, not a Host allowlist.
+- The Control Plane SQLite database is lost on pod restart unless
+  `persistence.controlDb.enabled=true` (a PVC mounted at the directory of
+  `config.controlDb`). With a ReadWriteOnce claim keep one replica; SQLite
+  must not be shared by two pods. Without it the UI starts empty until workers
+  re-ship.
+
 ## Upgrade
 
 ```bash

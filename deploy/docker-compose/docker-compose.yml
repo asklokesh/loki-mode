@@ -18,7 +18,9 @@ services:
     # LOKI_DASHBOARD_PORT is the host port and is kept for compatibility.
     command: ["control", "serve", "--port", "47821"]
     ports:
-      - "${LOKI_DASHBOARD_PORT:-57374}:47821"
+      # Published on loopback only. Set LOKI_BIND_ADDRESS=0.0.0.0 to expose it
+      # (the token is then the only protection; put TLS in front).
+      - "${LOKI_BIND_ADDRESS:-127.0.0.1}:${LOKI_DASHBOARD_PORT:-57374}:47821"
     volumes:
       - checkpoints:/workspace/.loki/state
       - audit:/workspace/.loki/audit
@@ -27,10 +29,9 @@ services:
       # Core
       - LOKI_MODE=standalone
       - LOKI_CONTROL_HOST=0.0.0.0
-      # A non-loopback bind needs a token. Set LOKI_CONTROL_TOKEN in .env to
-      # require one; unset keeps the open evaluation posture of the old dashboard.
-      - LOKI_CONTROL_TOKEN=${LOKI_CONTROL_TOKEN:-}
-      - LOKI_CONTROL_ALLOW_INSECURE_BIND=${LOKI_CONTROL_ALLOW_INSECURE_BIND:-1}
+      # REQUIRED. The Control Plane has no open mode here: compose fails to
+      # start without a token (generate one with: openssl rand -hex 24).
+      - LOKI_CONTROL_TOKEN=${LOKI_CONTROL_TOKEN:?set LOKI_CONTROL_TOKEN in .env}
       - LOKI_CONTROL_DB=/workspace/.loki/control/control.db
       # Enterprise features (all opt-in via .env)
       - LOKI_OTEL_ENDPOINT=${LOKI_OTEL_ENDPOINT:-}

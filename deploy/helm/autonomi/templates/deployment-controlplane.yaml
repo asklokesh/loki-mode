@@ -74,10 +74,17 @@ spec:
                 name: {{ include "autonomi.fullname" . }}
             - secretRef:
                 name: {{ include "autonomi.secretName" . }}
-          {{- with .Values.controlplane.extraEnv }}
           env:
+            - name: LOKI_CONTROL_HOST
+              value: {{ .Values.config.dashboardHost | quote }}
+            - name: LOKI_CONTROL_PORT
+              value: {{ include "autonomi.controlPort" . | quote }}
+            - name: LOKI_CONTROL_DB
+              value: {{ .Values.config.controlDb | quote }}
+            {{- include "autonomi.controlTokenEnv" . | nindent 12 }}
+            {{- with .Values.controlplane.extraEnv }}
             {{- toYaml . | nindent 12 }}
-          {{- end }}
+            {{- end }}
           resources:
             {{- toYaml .Values.controlplane.resources | nindent 12 }}
           securityContext:
@@ -93,7 +100,16 @@ spec:
             - name: audit-logs
               mountPath: /home/loki/.loki/dashboard/audit
             {{- end }}
+            {{- if .Values.persistence.controlDb.enabled }}
+            - name: control-db
+              mountPath: {{ dir .Values.config.controlDb }}
+            {{- end }}
       volumes:
+        {{- if .Values.persistence.controlDb.enabled }}
+        - name: control-db
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.controlDb.existingClaim | default (printf "%s-control-db" (include "autonomi.fullname" .)) }}
+        {{- end }}
         {{- if .Values.persistence.auditLogs.enabled }}
         - name: audit-logs
           persistentVolumeClaim:

@@ -1,5 +1,10 @@
 // Autonomi (Loki Mode) control plane on ECS/Fargate.
 //
+// Persistence: the Control Plane SQLite database (LOKI_CONTROL_DB) lives in the
+// task filesystem and is LOST when the task restarts. Mount an EFS volume at
+// /home/loki/.loki/control for durability (not provisioned by this module).
+// LOKI_DASHBOARD_ALLOWED_HOSTS is ignored by the Control Plane.
+//
 // The container command, port and health path are taken from the Helm chart's
 // deployment-controlplane.yaml so the two deployment paths cannot drift:
 //   command: loki control serve --port <port>   (packages/control-plane)
@@ -102,6 +107,15 @@ resource "aws_iam_role" "task" {
   tags = local.tags
 }
 
+resource "terraform_data" "require_token" {
+  lifecycle {
+    precondition {
+      condition     = var.control_token_secret_arn != "" || var.allow_insecure_bind
+      error_message = "Set control_token_secret_arn (a secret holding LOKI_CONTROL_TOKEN), or set allow_insecure_bind = true to run the Control Plane with no authentication."
+    }
+  }
+}
+
 resource "aws_security_group" "task" {
   name        = "${local.name}-controlplane"
   description = "Autonomi control plane tasks"
@@ -124,6 +138,8 @@ resource "aws_security_group" "task" {
 }
 
 resource "aws_ecs_task_definition" "controlplane" {
+  depends_on = [terraform_data.require_token]
+
   family                   = "${local.name}-controlplane"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -153,9 +169,11 @@ resource "aws_ecs_task_definition" "controlplane" {
         { name = "LOKI_CONTROL_HOST", value = "0.0.0.0" },
         { name = "LOKI_CONTROL_PORT", value = tostring(local.control_port) },
         { name = "LOKI_CONTROL_DB", value = "/home/loki/.loki/control/control.db" },
-        // Without a token the Control Plane refuses a non-loopback bind, so the
-        // open mode is explicit. Set control_token_secret_arn to require one.
-        { name = "LOKI_CONTROL_ALLOW_INSECURE_BIND", value = var.control_token_secret_arn == "" ? "1" : "0" },
+        // The Control Plane refuses a non-loopback bind without a token. Open
+        // mode exists only behind allow_insecure_bind (default false); an open
+        // Control Plane accepts forged runs and answers from anyone who can
+        // reach the port, which is WORSE than the legacy dashboard.
+        { name = "LOKI_CONTROL_ALLOW_INSECURE_BIND", value = var.allow_insecure_bind ? "1" : "0" },
         { name = "LOKI_LOG_LEVEL", value = var.log_level },
         { name = "LOKI_DASHBOARD_ALLOWED_HOSTS", value = var.dashboard_allowed_hosts },
       ]
