@@ -25,7 +25,7 @@ fail() { FAIL=$((FAIL+1)); echo "  FAIL: $1"; }
 echo "test-issue-to-pr-action"
 
 ACT=".github/actions/issue-to-pr/action.yml"
-WF=".github/workflows/loki-issue-to-pr.yml"
+WF="docs/examples/loki-issue-to-pr.yml.example"
 
 # 1-2. Both files exist and parse. A workflow that does not parse is invisible
 #      to GitHub and fails silently, which is worse than absent.

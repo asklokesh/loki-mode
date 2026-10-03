@@ -8,7 +8,8 @@ set -uo pipefail
 # push or open PRs. Untrusted text may reach an agent only in a session that
 # cannot reach a push credential.
 #
-#   Scope of the three static cases: every .github/workflows/*.yml|yaml, and
+#   Scope of the three static cases: every .github/workflows/*.yml|yaml, every
+#   docs/examples/*.yml.example (workflows users copy), and
 #   every composite action Loki ships (action.yml at the root, which is the
 #   Marketplace action, and .github/actions/*/action.yml). A unit is one job,
 #   or one whole action; an action's caller is unknown, so it is judged as if
@@ -250,7 +251,7 @@ UNTRUSTED_EXPR = re.compile(
 UNTRUSTED_RUN = re.compile(r"\bgh\s+(issue|pr)\s+view\b|\bloki\s+(start|run)\b")
 AGENT_ACTIONS = ("anthropics/claude-code-action", "asklokesh/loki-mode", "openai/codex-action")
 PUSH_RUN = re.compile(r"\bgit\s+push\b|\bgh\s+pr\s+(create|merge)\b")
-LOKI_START = re.compile(r"\bloki\s+(start|run)\b")
+LOKI_START = re.compile(r"\bloki\s+(start|run\b|\"\$\{?GITHUB_REPOSITORY)")
 SECRET = re.compile(r"secrets\.|github\.token\b|inputs\.[A-Za-z0-9_-]*token")
 NEEDS_OUT = re.compile(r"\$\{\{\s*needs\.([A-Za-z0-9_-]+)\.outputs\.")
 EVENT_NAME = re.compile(r"github\.event_name\s*==\s*'([a-z_]+)'")
@@ -390,7 +391,9 @@ def cache_restores(steps):
 
 units, errors, scanned_files = [], [], set()
 wfdir = os.path.join(root, ".github", "workflows")
-for wf in sorted(glob.glob(os.path.join(wfdir, "*.yml")) + glob.glob(os.path.join(wfdir, "*.yaml"))):
+exdir = os.path.join(root, "docs", "examples")
+for wf in sorted(glob.glob(os.path.join(wfdir, "*.yml")) + glob.glob(os.path.join(wfdir, "*.yaml"))
+                 + glob.glob(os.path.join(exdir, "*.yml.example"))):
     rel = os.path.relpath(wf, root)
     try:
         doc = load(wf)

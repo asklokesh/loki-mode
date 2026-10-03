@@ -47,7 +47,7 @@ THEN "loki ci --pr --fail-on critical,high --format markdown" executes
   AND a markdown report is posted as a PR comment
   AND the CI exits non-zero if any blocking issue is found
 ```
-Source: `.github/workflows/loki-ci-example.yml:41-44`
+Source: `docs/examples/loki-ci-example.yml.example`
 
 ### TW-04: Handoff Between Human and AI Coding
 

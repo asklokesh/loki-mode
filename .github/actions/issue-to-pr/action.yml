@@ -10,7 +10,7 @@ branding:
 # must not hold a write token. Run it with `permissions: contents: read,
 # issues: read` and `actions/checkout` with `persist-credentials: false`, upload
 # `outputs.patch`, and push and open the PR from a second job that runs no
-# agent. .github/workflows/loki-issue-to-pr.yml in asklokesh/loki-mode is the
+# agent. docs/examples/loki-issue-to-pr.yml.example in asklokesh/loki-mode is the
 # reference. Earlier versions pushed and opened the PR from the same step that
 # ran the agent; this one does not.
 #
@@ -247,7 +247,7 @@ runs:
         echo "patch=$OUT/loki.patch" >> "$GITHUB_OUTPUT"
         echo "pr_body=$OUT/pr-body.md" >> "$GITHUB_OUTPUT"
 
-        echo "::warning::This action does not open the pull request (Rule of Two). Upload outputs.patch and open the PR from a job that holds the write token and runs no agent; see .github/workflows/loki-issue-to-pr.yml in asklokesh/loki-mode."
+        echo "::warning::This action does not open the pull request (Rule of Two). Upload outputs.patch and open the PR from a job that holds the write token and runs no agent; see docs/examples/loki-issue-to-pr.yml.example in asklokesh/loki-mode."
         if [ -n "$RUN_DIR" ]; then
           echo "Loki 10 receipt under $RUN_DIR/"
         fi

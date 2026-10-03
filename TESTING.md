@@ -150,12 +150,10 @@ GitHub Actions workflows (under `.github/workflows/`) run on push and pull reque
 | Coverage | `coverage.yml` | `bun test --coverage` for `loki-ts`, enforces 70% line minimum, uploads lcov |
 | Bun parity | `bun-parity.yml` | Bun-route vs Bash-route behavior parity |
 | Parity drift | `parity-drift.yml` | Detects output/behavior drift between routes |
-| Mutation testing | `mutation-testing.yml` | Stryker on trust-surface modules (currently `workflow_dispatch`; cron disabled) |
 | Integrity audit | `integrity-audit.yml` | Repository and artifact integrity checks |
 | Post-release smoke | `post-release-smoke.yml` | Smoke tests against published artifacts after a release |
 | Security audit | `security-audit.yml` | Dependency and security scanning |
 | SBOM | `sbom.yml` | Software bill of materials generation |
-| ARM64 runtime | `arm64-runtime.yml` | Runtime checks on arm64 |
 
 ### Local CI mirrors GitHub Actions
 

@@ -85,7 +85,7 @@ The reconciliation:
 
 Be precise about what that does NOT cover, because "CI has it" is false for
 part of the deferred list. Measured by grepping `.github/workflows/`:
-`sbom` appears in four workflows (`sbom.yml`, `provenance.yml`, `release.yml`,
+`sbom` appears in three workflows (`sbom.yml`, `release.yml`,
 `security-audit.yml`), but **shellcheck, license-audit and the MCP handshakes
 match no workflow at all.** Those items are checked NOWHERE until somebody runs
 a full tier deliberately. This is the same point CLAUDE.md makes from the other

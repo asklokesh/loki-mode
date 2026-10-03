@@ -1,3 +1,5 @@
+# Example workflow for users: copy it to .github/workflows/loki-ci-example.yml in your own repository.
+# It is not run by this repository CI.
 # Loki CI - Quality Gate Example Workflow
 # Add this to your repository's .github/workflows/ directory
 # Runs Loki Mode quality gates on every pull request

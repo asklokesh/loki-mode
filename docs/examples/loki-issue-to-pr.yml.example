@@ -1,3 +1,5 @@
+# Example workflow for users: copy it to .github/workflows/loki-issue-to-pr.yml in your own repository.
+# It is not run by this repository CI.
 # Hand Loki an issue, get a pull request.
 #
 # Label an issue `loki` (or comment `/loki` as a repository owner, member or

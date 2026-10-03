@@ -5553,7 +5553,7 @@ except Exception:
 # prompt over IPC; it is left untouched here) explicitly to route around
 # this. The boundary is a CI job that holds
 # no write token and no SSH agent while the agent runs (see
-# .github/workflows/loki-issue-to-pr.yml).
+# docs/examples/loki-issue-to-pr.yml.example).
 #===============================================================================
 _LOKI_WITHHELD_TOKENS=""
 _LOKI_GIT_CONFIG_COUNT_UNSUPPORTED=""

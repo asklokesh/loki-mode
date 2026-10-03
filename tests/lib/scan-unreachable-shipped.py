@@ -55,7 +55,7 @@ ALLOWLIST = {
         "UNREACHABLE at runtime; loaded only by the CI import smoke test.",
 
     "src/integrations/github/action-handler.js":
-        "Reachable ONLY from .github/workflows/loki-enterprise.yml, which is "
+        "Formerly reachable only from the removed loki-enterprise workflow, which was "
         "this repo's own CI, not the shipped product. It ships to npm users "
         "who have no path to it. Retained because the workflow genuinely uses "
         "it; the honest statement is that it is CI tooling that happens to "

@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - test(FC-18): legacy-shim route and doc counts, control-plane route module count and doctor JSON check count now derive from their source of truth instead of pinned literals.
+- CI prune: removed the always-failing or dead workflows loki-enterprise, mutation-testing, check-phase6-ready, arm64-runtime and provenance (release.yml already signs and attests the image); moved loki-issue-to-pr and loki-ci-example to docs/examples/*.yml.example as user-facing examples (the Rule of Two scan now covers them).
 
 ## v10.9.1 (2026-10-03)
 

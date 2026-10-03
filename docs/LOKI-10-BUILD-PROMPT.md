@@ -150,7 +150,7 @@ Order is a default. Re-rank with data, and record why.
   - Decide whether the Seal replaces the Evidence Receipt or profiles it, and record the decision.
 - **M3. Assign it like a teammate (the Devin experience).**
   - Work arrives from:
-    - a GitHub issue label or `/loki` comment (exists: `.github/workflows/loki-issue-to-pr.yml`);
+    - a GitHub issue label or `/loki` comment (exists: `docs/examples/loki-issue-to-pr.yml.example`);
     - a GitLab equivalent;
     - Slack @loki (code exists under `src/integrations/slack/`; verify it is actually reachable, because v9.33.0 found unreachable integrations);
     - Jira (the read path works);
@@ -200,7 +200,7 @@ Order is a default. Re-rank with data, and record why.
     - it works behind a corporate proxy with SSO;
     - the only outbound traffic is to configured model endpoints.
     Measure install-to-first-sealed-PR in the adoption eval.
-  - Keep `provenance.yml` and `sbom.yml` green.
+  - Keep `sbom.yml` and the release.yml signing steps green.
 - **M10. Simplify and ship v10.0.0.**
   - Collapse the surface.
   - Remove deprecated commands and settings that measurement shows nobody needs.
