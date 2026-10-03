@@ -55,3 +55,22 @@ export const runs = sqliteTable("runs", {
   index("runs_verdict").on(t.verdict),
   index("runs_group").on(t.groupId),
 ]);
+
+// LOCAL-ONLY: written by local discovery (shipper/discover.ts), never by /v1/ingest. realpath is never returned over the API.
+export const localRepos = sqliteTable("local_repos", {
+  sourceId: text("source_id").primaryKey(),
+  realpath: text("realpath").notNull(),
+  name: text("name").notNull(),
+  discoveredAt: text("discovered_at").notNull(),
+});
+
+// Audit trail of UI-initiated actions (start, stop, retry, resume, answer, config write).
+export const actions = sqliteTable("actions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ts: text("ts").notNull(),
+  actor: text("actor").notNull(),
+  kind: text("kind").notNull(),
+  target: text("target"),
+  result: text("result").notNull(),
+  detail: text("detail"),
+}, (t) => [index("actions_ts").on(t.ts)]);

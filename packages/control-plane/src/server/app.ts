@@ -8,6 +8,8 @@ import { listRuns, runDetail } from "./runs.ts";
 import { hostGuard, isLoopbackHost, tokenGuard } from "./auth.ts";
 import { backfill } from "../shipper/backfill.ts";
 import { planStart, registryRepos, spawnStart } from "./actions.ts";
+import { syncLocalRepos } from "./repos.ts";
+import { registerRoutes } from "./routes/index.ts";
 
 const MAX_BODY = 1_000_000;
 
@@ -87,7 +89,9 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     });
     return c.json({ runs: r.runs, sent: r.sent, failed: r.failed });
   });
-  act.get("/v1/repos", (c) => peerIsLoopback(c) ? c.json({ repos: [...new Set<string>([repoDir, ...registryRepos()])] }) : c.json({ error: "loopback only" }, 403));
+  // Local discovery fills local_repos (never /v1/ingest). GET /v1/repos (names only, loopback guard) is mounted by routes/index.ts.
+  syncLocalRepos(db, repoDir);
+  registerRoutes({ app, act, db, repoDir, peerIsLoopback, local });
   act.post("/v1/start", async (c) => {
     if (!local(c)) return c.json({ error: "loopback JSON requests only" }, 403);
     const text = await c.req.text();

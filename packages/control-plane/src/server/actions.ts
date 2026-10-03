@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 
 const ISSUE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,8}$/;
 // A free-text task: letters, digits, spaces and a small punctuation set. No colon, quotes, backticks, $, ;, &, |, <, >, parens, braces, backslash or control chars.
@@ -37,9 +37,12 @@ export function planStart(body: unknown, known: string[], bin = "loki"): StartPl
   let cwd = process.cwd();
   if (b.repo !== undefined && b.repo !== "") {
     if (typeof b.repo !== "string" || b.repo.includes("\0")) return { ok: false, error: "repo must be a path string" };
+    // GET /v1/repos exposes display names only, so a repo may be given as a known path or as the unique display name of a known project.
     const want = resolve(b.repo);
-    const hit = known.map((k) => resolve(k)).find((k) => k === want);
-    if (!hit) return { ok: false, error: "repo is not a known project" };
+    const paths = known.map((k) => resolve(k));
+    const named = paths.filter((k) => basename(k) === b.repo);
+    const hit = paths.find((k) => k === want) ?? (named.length === 1 ? named[0] : undefined);
+    if (!hit) return { ok: false, error: named.length > 1 ? "repo name is ambiguous" : "repo is not a known project" };
     cwd = hit;
   }
   // Free text goes as an explicit brief, never auto-detected as a PRD path.

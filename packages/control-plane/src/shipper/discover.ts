@@ -1,9 +1,11 @@
 // C2 CP-DEFAULT: find a running local Control Plane (docs/v10/CONTROL-PLANE.md section 6). Reads
 // ~/.loki/control/instance.json; returns its url only when the pid is alive and /health answers service=loki-control
 // within 300 ms. Never starts a server, never throws. LOKI_CONTROL=0 disables discovery.
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { sourceId } from "./ship.ts";
+import { registryRepos } from "./watch.ts";
 
 export const instancePath = (env: NodeJS.ProcessEnv): string => join(env.HOME || homedir(), ".loki", "control", "instance.json");
 
@@ -13,6 +15,22 @@ const isAlive = (pid: number): boolean => { try { process.kill(pid, 0); return t
 
 export function isLoopbackHttp(u: string): boolean {
   try { const p = new URL(u); return p.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(p.hostname); } catch { return false; }
+}
+
+export interface LocalRepo { sourceId: string; realpath: string; name: string }
+
+/** Local repo discovery for the server: its own repo plus every registered project (existing directories only). Purely local; nothing here comes from /v1/ingest. */
+export function discoverLocalRepos(repoDir: string, env: NodeJS.ProcessEnv = process.env): LocalRepo[] {
+  const out = new Map<string, LocalRepo>();
+  for (const dir of [repoDir, ...registryRepos(env)]) {
+    try {
+      const real = realpathSync(dir);
+      if (!statSync(real).isDirectory()) continue;
+      const id = sourceId(real);
+      if (!out.has(id)) out.set(id, { sourceId: id, realpath: real, name: basename(real) });
+    } catch { /* a vanished or unreadable path is simply not a repo */ }
+  }
+  return [...out.values()];
 }
 
 export async function discoverControlUrl(env: NodeJS.ProcessEnv, o: DiscoverOpts = {}): Promise<string | null> {
