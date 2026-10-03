@@ -21965,6 +21965,8 @@ main() {
                     echo "Alias for 'loki api start'. Starts the dashboard HTTP API"
                     echo "server (FastAPI, port 57374 by default)."
                     echo ""
+                    echo "For the UI, run 'loki' (opens the Control Plane) or 'loki control serve'."
+                    echo ""
                     echo "Options:"
                     echo "  --host HOST    Bind host (default: 127.0.0.1)"
                     echo "  --port PORT    Bind port (default: 57374)"

@@ -7,7 +7,7 @@ This document shows how all Loki Mode tools work together to create a unified au
 | Tool | Entry Point | Purpose | Communication |
 |------|-------------|---------|---------------|
 | **CLI** | `loki` | User interface for all operations | File-based state |
-| **API** | `loki serve` | Remote control, SSE events | HTTP/REST |
+| **API** | `loki api start` | Remote control, SSE events (dashboard API, not the Control Plane UI) | HTTP/REST |
 | **VS Code** | Extension | IDE integration | API client |
 | **MCP** | Claude tools | Claude Code integration | STDIO/MCP protocol |
 | **SKILL** | SKILL.md | Autonomy rules and behavior | File reads |
@@ -71,8 +71,8 @@ loki stop
 loki memory index
 loki memory retrieve "authentication"
 
-# Manage API server (enables VS Code, dashboard)
-loki serve --port 57374
+# Manage the dashboard API server (enables VS Code; not the Control Plane UI, run `loki` for that)
+loki api start --port 57374
 loki api start
 
 # View dashboard (web UI)

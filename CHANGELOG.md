@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - With `LOKI_SPEED=1`, the already-done check runs off the critical path: implement starts at once, and a run only stops as ALREADY_SATISFIED when a confirmation session, run in a pinned copy of the base tree outside the repo, cites files unchanged since base (D61-04).
 
 ### Changed
+- `loki serve --help` and the docs now point to `loki` or `loki control serve` for the UI; `loki serve` stays a deprecated alias of `loki api start` (the dashboard API, not the Control Plane) (D65-UI-NAMING).
 - `loki` with no arguments now opens the Control Plane (set `LOKI_CONTROL_DEFAULT=0` for the previous dashboard).
 - Spec contracts are on by default: criteria in .loki/contract.json are traced in the receipt, and unmatched ones are listed as NOT PROVEN (set LOKI_CONTRACT=0 to turn off).
 

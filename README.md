@@ -553,7 +553,7 @@ Loki 10 engine:
 | `loki status [--json]` | Current status |
 | `loki verify [run-id]` | Re-check a sealed receipt (exit codes above) |
 | `loki doctor [--json] [--airgap]` | Check environment and providers |
-| `LOKI_CONTROL=1 loki control serve\|backfill\|status` | Control Plane v0 preview |
+| `loki control serve\|backfill\|status` | Control Plane server, ship existing runs, reachability check (on by default; `LOKI_CONTROL=0` turns it off) |
 | `loki modernize <repo> --to <target> --dry-run` | Estimate only |
 | `loki plan [PRD]` | Dry-run analysis: complexity, cost, execution plan |
 | `loki version` | Show version |
