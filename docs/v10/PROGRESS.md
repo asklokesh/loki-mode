@@ -2042,3 +2042,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Merged: S-218r r5 (opus APPROVE, 0b6604fd9). Train/95 pushed at 1ff144efb 10:56Z, superseding train/94.
 - Waste: re-dispatched PO-AUDIT-CLI-1 and PO-DASH-HONEST-1 from a stale scratch refill list; both were already merged (2a4c9ef0a, ece26c3f5). Duplicate picks reset locally before any push. Refill list retired; dispatch only from BOARD ready rows.
 - In review: SEAL-FORGED-LINES r2 58ee2065b (opus). Building: D61-11 r3. P0-CORE-BUDGET TL r2 still open.
+
+## 2026-10-03T11:17Z CoS
+- Train/95 (1ff144efb) Tests red: Hard Deadline Confinement banned the `< <(...)` process substitution S-218r added to run.sh. Coverage red on one 5s runStaticAnalysis timeout (load), rerun once. Fix-forward P0-T95-PROCSUB 761cd7b01 (listing to a sibling file, read in the current shell), TL APPROVE, 22/0 and 21/0 and branch-lifecycle 83/83 on main. Train/96 pushed at 761cd7b01, supersedes train/95.
+- Merged: S-231r d8cb2bc9c (CI moat job now reads "Moat rules (no regression)", job id kept, TL APPROVE).
+- Opus BLOCKs: SEAL-FORGED-LINES r3 (suites N slack wrong for empty describe, describe.skip and # SKIP-named passes on the spec reporter); W1-S2 r2 (style examples classified by directory, so a src/spec/ module body prints raw). Both in r4/r3 rework. P7-SCALAR-PIN 9a0d4c524 in opus review.
+- Building: D61-11 r3. P0-CORE-BUDGET TL r2 still open.
+
