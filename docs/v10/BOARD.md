@@ -851,16 +851,22 @@ Source: ~/git/autonomi-dev/research/2026-09-30-adoption/SWARM-PROMPT-ADOPTION.md
 | PO5-HELP-NOTES-BRANCHES | release-notes.sh and clean-test-branches.sh real --help | scripts/release-notes.sh, scripts/clean-test-branches.sh, tests/test-release-notes.sh, tests/test-clean-test-branches.sh | LOW | bash tests/test-release-notes.sh; bash tests/test-clean-test-branches.sh | merged@2026-10-03T12:48Z | 53d295093 |
 | PO5-WORKSPACE-VACUOUS | test-workspace.sh fails when no assertions ran | tests/test-workspace.sh | LOW | bash tests/test-workspace.sh | merged@2026-10-03T12:48Z | 43e805cef |
 | PO5-HELP-INSTALL-HOOKS | install-hooks.sh --help never rewrites git config | scripts/install-hooks.sh, tests/test-install-hooks.sh | LOW | bash tests/test-install-hooks.sh | merged@2026-10-03T12:48Z | fce165e70 |
-| D82-COSTCAP | Cost cap: subscription runs no dollar cap plus one info line; API-key runs default $100; --max-cost and budgets.per_run override; BUDGET_STOP exit 3 | autonomy/ cost-cap code, docs, tests | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-FLAGS | Default-on: visual evidence, spec-to-contract, D61 parallel, Slack two-way, MCP tools, Control Plane, workspaces; env=0 opts out; listeners loopback only; senders inert without credential | flag defaults, docs, tests | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-A-E2E | Playwright browser e2e with video and trace attached to the PR | e2e/verify path | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-B-MERGE | loki merge queue | new CLI subcommand | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-C-REVIEW | loki review PR with a deterministic risk score | new CLI subcommand | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-D-MEMORY | Project memory across runs | memory path | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-E-CPMOBILE | Control Plane mobile layout (roles and sign-in to 10.7.1 under D12) | dashboard UI | LOW | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-F-EMU | Mobile emulator tests | test harness | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-G-REST | REST API for runs (loopback) | dashboard server API | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-H-ACP | VS Code and JetBrains via ACP | acp adapter | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-I-SENTRY | Sentry intake to tasks | intake path | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-J-D50 | D50 Sonnet lift fixes | per D50 | MEDIUM | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
-| D82-GAPS | Gap research vs Devin, Factory, 8090, Vorflux, Claude Code | docs/v10 research doc | LOW | builds, own test file green, CI green | building@14:59Z | D82 10.7.0 big train |
+| D82-COSTCAP | Cost cap: subscription runs no dollar cap plus one info line; API-key runs default $100; --max-cost and budgets.per_run override; BUDGET_STOP exit 3 | autonomy/ cost-cap code, docs, tests | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-FLAGS | Default-on: visual evidence, spec-to-contract, D61 parallel, Slack two-way, MCP tools, Control Plane, workspaces; env=0 opts out; listeners loopback only; senders inert without credential | flag defaults, docs, tests | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-A-E2E | Playwright browser e2e with video and trace attached to the PR | e2e/verify path | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-B-MERGE | loki merge queue | new CLI subcommand | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-C-REVIEW | loki review PR with a deterministic risk score | new CLI subcommand | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-D-MEMORY | Project memory across runs | memory path | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-E-CPMOBILE | Control Plane mobile layout (roles and sign-in to 10.7.1 under D12) | dashboard UI | LOW | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-F-EMU | Mobile emulator tests | test harness | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-G-REST | REST API for runs (loopback) | dashboard server API | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-H-ACP | VS Code and JetBrains via ACP | acp adapter | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-I-SENTRY | Sentry intake to tasks | intake path | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-J-D50 | D50 Sonnet lift fixes | per D50 | MEDIUM | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| D82-GAPS | Gap research vs Devin, Factory, 8090, Vorflux, Claude Code | docs/v10 research doc | LOW | builds, own test file green, CI green | merged@15:33Z | D82 10.7.0 big train |
+| CP-INGEST | Control Plane zero-setup ingest: backfill plus tail of .loki/runs/*/events.jsonl from loki control serve | packages/control-plane shipper | MEDIUM | own tests green | merged@15:33Z 45b0e9c83 | D82 10.7.0 big train |
+| CP-LEGACY | loki dashboard, web, docker host side and run.sh auto-open route to the Control Plane; LOKI_LEGACY_DASHBOARD=1 restores | autonomy/loki, run.sh | MEDIUM | test-web-alias-consistency 7/7 | merged@15:33Z 7b701d238 | D82 10.7.0 big train |
+| CP-UI-LIVE | Control Plane live run view, overview and landing | packages/control-plane ui | LOW | live.test.tsx green | merged@15:33Z c5b9e700a | D82 10.7.0 big train |
+| CP-UI-SHELL | Control Plane shell, brand, import, loopback-only start endpoint | packages/control-plane ui and server | HIGH | opus APPROVE r2, suite 68/0 | merged@15:33Z f88c18a6b | D82 10.7.0 big train |
+| D82-WALL0 | Empty Wall seal is NOT PROVEN; nested Wall files collected | loki-ts engine10 wall and seal | HIGH | opus APPROVE r2, wall+seal 101/0 | merged@15:33Z 9b87e50c8 | D82 10.7.0 big train |
+| D83-CPE | Enterprise Control Plane UI rebuild, slices CPE-01..26 per docs/v10/CP-ENTERPRISE-UI.md, integrating on branch cpe-base | packages/control-plane, loki-ts engine10 run_pid | HIGH | per-slice Wall checks, opus on 04/07/09/14 | building@15:33Z (01,03,05,21 on cpe-base; 04,07 in opus review; 02,09 building) | D83 10.8.0 |
