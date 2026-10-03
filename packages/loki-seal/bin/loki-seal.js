@@ -193,10 +193,10 @@ function counts(out) {
 //  - Everything else (PASSED, --- PASS, cargo) is a record.
 // Detect a result mark first (any line separator can sit inside a name), then parse the body with [^] so no
 // character can hide a line. A pass-mark line that does not parse, or whose name has a control character, is odd.
-const PASS_PREFIX = /^\s*[✔✓√]/;
-const SPEC_MARK = /^(\s*)([✔✓√]) ([^]+?)\s*$/;
+const PASS_PREFIX = /^\s*[\u2714\u2713√]/;
+const SPEC_MARK = /^(\s*)([\u2714\u2713√]) ([^]+?)\s*$/;
 const CTRL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/;
-const ANY_MARK = /[✔✓√✖﹣▶]/;
+const ANY_MARK = /[\u2714\u2713√\u2716﹣▶]/;
 const SUM_KEY = /[ℹ#]\s*(?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)\b/g;
 const SUM_LINE = /^\s*[ℹ#]\s*(?:tests|suites|pass|fail|cancelled|skipped|todo|duration_ms)\b/;
 function passRecords(out, truncated) {
@@ -211,14 +211,14 @@ function passRecords(out, truncated) {
   let brokenSummary = truncated ? 'the output exceeded the capture limit, so the real summary may be missing' : null;
   for (let i = 0; i < lines.length; i++) {
     const ln = lines[i];
-    // Unterminated output before the runner's own line pushes its mark off the line start ("X✔ name"), so a
+    // Unterminated output before the runner's own line pushes its mark off the line start ("X\u2714 name"), so a
     // result mark anywhere but first after the indent makes the line ambiguous, pass and fail marks alike.
     const lead = ln.search(/\S/);
     if (lead >= 0 && ANY_MARK.test(ln) && !ANY_MARK.test(ln[lead])) odd.push('a result mark that is not first on its line');
     // The same holds for a summary key: one anywhere but at the line start may be a real summary line pushed off
     // its start, hiding it behind a forged block.
     for (const k of ln.matchAll(SUM_KEY)) if (k.index !== lead) { brokenSummary = 'a runner summary key that is not at the start of its line'; break; }
-    if (/^\s*[✔✓√✖﹣]\s*$/.test(ln)) { odd.push('a result line with an empty name'); continue; }
+    if (/^\s*[\u2714\u2713√\u2716﹣]\s*$/.test(ln)) { odd.push('a result line with an empty name'); continue; }
     if (/^\s*\u2716/.test(ln)) { if (i < sumAt) cross++; continue; }
     let m = SPEC_MARK.exec(ln);
     if (!m && PASS_PREFIX.test(ln)) { odd.push('a result line that does not parse'); continue; }

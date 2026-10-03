@@ -845,9 +845,9 @@ const DISGUISES = {
   'B1(i) header plus ok line': '▶ handles negative numbers\nok 99 - handles negative numbers\n',
   'B1(ii) fake indent reusing a real name': '    ok 98 - adds\nok 99 - handles negative numbers\n',
   'B1(iii) ok line with a suite yaml block': "ok 99 - handles negative numbers\n  ---\n  type: 'suite'\n  ...\n",
-  'B1(iv) header plus check mark': '▶ handles negative numbers\n✔ handles negative numbers (1ms)\n',
+  'B1(iv) header plus check mark': '▶ handles negative numbers\n\u2714 handles negative numbers (1ms)\n',
   'plain forged ok line': 'ok 99 - handles negative numbers\n',
-  'plain forged check mark': '✔ handles negative numbers (1ms)\n',
+  'plain forged check mark': '\u2714 handles negative numbers (1ms)\n',
 };
 const NESTED_PARENT = "test('parent', async (t) => { await t.test('child', () => { assert.strictEqual(add(1,1), 2); }); });\n";
 
@@ -1013,7 +1013,7 @@ test('forged lines r6: honest plain, skip, empty describe and describe.skip runs
 const R7_SCRIPTS = ['node --test', 'node --test --test-reporter=spec', 'node --test --test-concurrency=4', 'node --test --test-isolation=none'];
 test('forged lines r7 (B1): a forged check line plus an unterminated character is NOT VERIFIED, never PASS', () => {
   for (const script of R7_SCRIPTS) {
-    const r = negRun(forgeRepo('✔ handles negative numbers (1ms)\nX', script));
+    const r = negRun(forgeRepo('\u2714 handles negative numbers (1ms)\nX', script));
     notVerified(r);
     assert.notStrictEqual(r.status, 0, script);
   }
@@ -1022,7 +1022,7 @@ test('forged lines r7 (B1): a forged check line plus an unterminated character i
 test('forged lines r7 (B2): an unterminated prefix hiding a failing cross line in a failing describe never covers an item', () => {
   const extra = "describe('bad', () => { it('a', () => {}); it('boom', async () => { await new Promise((r) => setTimeout(r, 100)); process.stdout.write('Y'); assert.strictEqual(1, 2); }); });\n";
   for (const script of R7_SCRIPTS) {
-    const r = negRun(forgeRepo('✔ handles negative numbers (1ms)\n', script, extra));
+    const r = negRun(forgeRepo('\u2714 handles negative numbers (1ms)\n', script, extra));
     notVerified(r);
     assert.notStrictEqual(r.status, 0, script);
   }
@@ -1046,7 +1046,7 @@ const r8Repo = (script, body) => ({
 });
 const R8_BEFORE_EXIT = "let fired = false; process.on('beforeExit', () => { if (fired) return; fired = true; process.stdout.write('X'); });\n";
 test('forged lines r8 (F1): an unterminated write before the real summary hides a forged summary block, NOT VERIFIED', () => {
-  const body = "test('adds', () => { process.stdout.write('✔ handles negative numbers (1ms)\\n" + R8_FORGED_SUMMARY + "'); assert.strictEqual(add(1,2), 3); });\n" + R8_BEFORE_EXIT;
+  const body = "test('adds', () => { process.stdout.write('\u2714 handles negative numbers (1ms)\\n" + R8_FORGED_SUMMARY + "'); assert.strictEqual(add(1,2), 3); });\n" + R8_BEFORE_EXIT;
   for (const script of R7_SCRIPTS) {
     const r = negRun(r8Repo(script, body));
     notVerified(r);
@@ -1065,7 +1065,7 @@ test('forged lines r8 (F1 TAP): an unterminated write with isolation none hides 
 });
 
 test('forged lines r8 (F2): output beyond the capture cap that drops the real summary is NOT VERIFIED, never PASS', () => {
-  const body = "test('adds', () => { process.stdout.write('✔ handles negative numbers (1ms)\\n" + 'ℹ tests 1\\nℹ suites 0\\nℹ pass 1\\nℹ fail 0\\n' + "'); const chunk = 'ℹ duration_ms 1\\n'.repeat(1 << 16); for (let i = 0; i < 70; i++) process.stdout.write(chunk); assert.strictEqual(add(1,2), 3); });\n";
+  const body = "test('adds', () => { process.stdout.write('\u2714 handles negative numbers (1ms)\\n" + 'ℹ tests 1\\nℹ suites 0\\nℹ pass 1\\nℹ fail 0\\n' + "'); const chunk = 'ℹ duration_ms 1\\n'.repeat(1 << 16); for (let i = 0; i < 70; i++) process.stdout.write(chunk); assert.strictEqual(add(1,2), 3); });\n";
   const r = negRun(r8Repo('node --test --test-reporter=spec', body));
   notVerified(r);
   assert.notStrictEqual(r.status, 0, r.raw);
@@ -1083,7 +1083,7 @@ test('forged lines r8: honest describe, subtests and console.log runs still pass
 
 // SEAL-FORGED-LINES r9 (D80): coverage only from node --test with process isolation; process.exit in a test file
 // is an integrity finding; the truncation check stands on its own.
-const FAKE_SPEC = '✔ adds (1ms)\\n✔ handles negative numbers (1ms)\\nℹ tests 2\\nℹ suites 0\\nℹ pass 2\\nℹ fail 0\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 5\\n';
+const FAKE_SPEC = '\u2714 adds (1ms)\\n\u2714 handles negative numbers (1ms)\\nℹ tests 2\\nℹ suites 0\\nℹ pass 2\\nℹ fail 0\\nℹ cancelled 0\\nℹ skipped 0\\nℹ todo 0\\nℹ duration_ms 5\\n';
 const r9Repo = (script, extraTop = '') => ({
   ...nodeRepo(ADD_OK, FORGE_HDR + extraTop + "test('adds', () => { assert.strictEqual(add(1,2), 3); require('fs').writeSync(1, '" + FAKE_SPEC + "'); process.exit(0); });\ntest('handles negative numbers', () => { assert.strictEqual(add(-1,-2), 99); });\n"),
   'package.json': JSON.stringify({ name: 'fx', scripts: { test: script } }),
@@ -1111,7 +1111,7 @@ test('forged lines r9 (D80-2): a test file calling process.exit, reallyExit, abo
 });
 test('forged lines r9 (D80-3): truncated output is never trusted, with no dependence on the end-of-output rule', () => {
   const { passRecords } = require('../bin/loki-seal.js');
-  const ok = '✔ handles negative numbers (1ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 5\n';
+  const ok = '\u2714 handles negative numbers (1ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 5\n';
   const clean = passRecords(ok, false);
   assert.deepStrictEqual(clean.passIds, ['handles negative numbers']);
   assert.strictEqual(clean.specUnverified, null);
