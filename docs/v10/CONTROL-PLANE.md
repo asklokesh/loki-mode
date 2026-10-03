@@ -100,3 +100,7 @@ Dependencies to add (none present today; web-app/package.json pins react 19, vit
 4. Retention: keep events forever, or prune `heartbeat` after N days?
 5. One shared token for ingest and read, or separate ingest-only tokens per team (D54 scale, team budgets)?
 6. Workspaces: once D51 Phase B lands, should group.json also be shipped as envelope events, the same way as backlog (CP-13)?
+
+## BLOCKED answer and default entry (D65)
+
+A run blocked on a spec conflict shows its question in the run view with an answer box. The answer is POSTed to `/v1/runs/<source>/<run>/answer` (application/json, `answer` up to 4000 chars, the run must be blocked, ids are validated, the server binds 127.0.0.1) and written to `$LOKI_CONTROL_ANSWER_DIR` (default `~/.loki/control/answers`) as `<source>/<run>.answer.txt`, mode 0600. The engine has no in-place resume reader, so resuming is manual: `loki "$(cat <file>)"`. `LOKI_CONTROL_DEFAULT=1` (off by default) makes `loki dashboard` open the Control Plane.

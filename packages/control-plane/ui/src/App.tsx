@@ -1,6 +1,6 @@
 import { Activity, ExternalLink, Moon, Sun, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { getRun, listRuns, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
+import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
 
@@ -165,6 +165,23 @@ function Timeline({ stages }: { stages: TimelineStage[] }) {
   );
 }
 
+function AnswerBox({ source, run, question }: { source: string; run: string; question: string }) {
+  const [text, setText] = useState("");
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const submit = async () => {
+    try { const r = await postAnswer(source, run, text); setMsg({ ok: true, text: `Saved to ${r.path}. Resume: ${r.resume}` }); }
+    catch (e) { setMsg({ ok: false, text: (e as Error).message }); }
+  };
+  return (
+    <Card title="Blocked: your answer is needed">
+      <p data-testid="blocked-question" className="mb-2 text-sm">{question}</p>
+      <textarea data-testid="answer-input" aria-label="Answer" maxLength={4000} value={text} onChange={(e) => setText(e.target.value)} className="w-full rounded border border-slate-300 p-2 text-sm dark:border-slate-700 dark:bg-slate-900" rows={3} />
+      <button type="button" data-testid="answer-submit" disabled={text.trim() === ""} onClick={submit} className="mt-2 rounded bg-sky-600 px-3 py-1 text-sm text-white disabled:opacity-50">Submit answer</button>
+      {msg && <p role={msg.ok ? "status" : "alert"} className={`mt-2 break-all text-sm ${msg.ok ? "text-emerald-600" : "text-red-600"}`}>{msg.text}</p>}
+    </Card>
+  );
+}
+
 export function RunDetail({ source, run }: { source: string; run: string }) {
   const { data, error } = useLoad<RunDetailResponse>(() => getRun(source, run), [source, run], isRunning);
   if (error) return <p role="alert" className="text-red-600">Could not load run: {error}</p>;
@@ -196,6 +213,7 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
         </Card>
         <Card title="Stage timeline"><Timeline stages={data.stages} /></Card>
       </div>
+      {data.blocked_question && <AnswerBox source={source} run={run} question={data.blocked_question} />}
       <Card title="Receipt">
         <div className="space-y-3 text-sm">
           {data.receipt ? (

@@ -45,6 +45,7 @@ export interface RunDetailResponse extends RunRow {
   stages_completed: string[];
   receipt: { sha256: string | null; signed: boolean; verdict: string | null; path: string | null } | null;
   not_proven: string[];
+  blocked_question?: string | null; // set when the run is BLOCKED on a question
 }
 
 export interface RunFilters { verdict?: string; repo?: string; since?: string }
@@ -66,4 +67,12 @@ export function listRuns(f: RunFilters = {}): Promise<RunsResponse> {
 
 export function getRun(source: string, run: string): Promise<RunDetailResponse> {
   return get<RunDetailResponse>(`/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`);
+}
+
+/** POST the answer to a BLOCKED run; resolves with the file it was written to. */
+export async function postAnswer(source: string, run: string, answer: string): Promise<{ path: string; resume: string }> {
+  const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}/answer`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ answer }) });
+  const j = (await res.json()) as { error?: string; path?: string; resume?: string };
+  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  return { path: j.path ?? "", resume: j.resume ?? "" };
 }

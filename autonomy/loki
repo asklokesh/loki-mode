@@ -7324,6 +7324,17 @@ _loki_dashboard_bind_is_safe() {
 cmd_dashboard() {
     local subcommand="${1:-}"
 
+    # LOKI_CONTROL_DEFAULT=1 (off by default): open the Control Plane instead of the old dashboard.
+    # The old dashboard stays available when the flag is unset, and via `loki dashboard stop|status|url`.
+    if [ "${LOKI_CONTROL_DEFAULT:-0}" = "1" ]; then
+        case "$subcommand" in
+            ""|start|open)
+                echo "LOKI_CONTROL_DEFAULT=1: starting the Control Plane (unset it to use the old dashboard)"
+                LOKI_CONTROL=1 exec "$0" control serve
+                ;;
+        esac
+    fi
+
     # If no subcommand provided, show help (backward compatible with old behavior)
     if [ -z "$subcommand" ]; then
         cmd_dashboard_help

@@ -3,6 +3,7 @@ import { fold, partialCost } from "../../../../loki-ts/src/engine10/events.ts";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 import type { Db } from "../db/migrate.ts";
 import { events, runs } from "../db/schema.ts";
+import { blockedQuestion } from "./answer.ts";
 
 const str = (x: unknown): string | null => (typeof x === "string" ? x : null);
 
@@ -108,6 +109,7 @@ export function runDetail(db: Db, sourceId: string, runId: string) {
   const sealed = evs.find((e) => e.type === "receipt.sealed")?.data;
   return {
     ...withLive(db, r),
+    blocked_question: blockedQuestion(evs, r.verdict),
     stages,
     stages_completed: f.completed,
     receipt: sealed ? { sha256: str(sealed.receipt_sha256), signed: sealed.signed === true, verdict: str(sealed.verdict), path: str(sealed.path) } : null,
