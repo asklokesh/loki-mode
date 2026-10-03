@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- Read-only workspace runs API: GET /api/operator/workspaces/runs and /workspaces/runs/{ws}/{run_id} list integration.json evidence, show unreadable files as rows, and report per-repo stale heads (D51-B13r).
+
 ### Docs
 - loki-seal README Known limits now names four coverage limits: empty or early-return tests still count, assertions in later helpers still count, same-name or keyword matches collide across files, and a test can forge a pass by printing runner-format lines (A-04d).
 

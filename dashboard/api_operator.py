@@ -294,3 +294,30 @@ def operator_phases():
         return api_phases.phase_history(_loki_dir())
     except Exception as exc:
         _fail("phase history", exc)
+
+
+@router.get("/workspaces/runs", dependencies=_READ)
+def operator_workspace_runs():
+    """Multi-repo workspace runs, read from each run's integration.json.
+
+    A corrupt file is a row with state "unreadable", never dropped.
+    """
+    try:
+        from . import api_workspaces
+        return api_workspaces.list_runs(_loki_dir())
+    except Exception as exc:
+        _fail("workspace runs", exc)
+
+
+@router.get("/workspaces/runs/{ws}/{run_id}", dependencies=_READ)
+def operator_workspace_run(ws: str, run_id: str):
+    """One workspace run with per-repo stale detection (recorded vs worktree head)."""
+    from . import api_workspaces
+    try:
+        return api_workspaces.get_run(_loki_dir(), ws, run_id)
+    except api_workspaces.BadName:
+        raise HTTPException(status_code=400, detail="invalid workspace or run id")
+    except api_workspaces.NotFound:
+        raise HTTPException(status_code=404, detail="unknown run")
+    except Exception as exc:
+        _fail("workspace run", exc)
