@@ -85,3 +85,27 @@ describe("C7 tracker polish", () => {
     await expect(fetchTrackerIssue({ source: "linear", key: "E-1" }, okJson({ errors: [{ message: "Authentication required" }] }), env)).rejects.toThrow("LINEAR_API_KEY");
   });
 });
+
+describe("TRACKER-SITE-1 jira site mismatch", () => {
+  const env = { JIRA_BASE_URL: "https://acme.atlassian.net", JIRA_EMAIL: "a@b.c", JIRA_API_TOKEN: "tok" };
+  const never = async (): Promise<Response> => { throw new Error("fetch must not run"); };
+  test("a browse URL on another site is refused naming both origins", async () => {
+    const ref = parseTrackerRef("https://other.atlassian.net/browse/X-1", env);
+    expect(ref).toEqual({ source: "jira", key: "X-1", site: "https://other.atlassian.net" });
+    const err = await fetchTrackerIssue(ref as never, never, env).then(() => "", (e: Error) => e.message);
+    expect(err).toContain("https://other.atlassian.net");
+    expect(err).toContain("https://acme.atlassian.net");
+  });
+  test("suffix, userinfo and port tricks are refused", async () => {
+    for (const u of ["https://acme.atlassian.net.evil.com/browse/X-1", "https://user@acme.atlassian.net/browse/X-1", "https://acme.atlassian.net:8443/browse/X-1"]) {
+      expect(parseTrackerRef(u, env)).toBeNull();
+      const ref = { source: "jira" as const, key: "X-1", site: u.replace(/\/browse.*$/, "") };
+      await expect(fetchTrackerIssue(ref, never, env)).rejects.toThrow("does not match");
+    }
+  });
+  test("matching origins still work", async () => {
+    const f = okJson({ key: "X-1", fields: { summary: "S" } });
+    const issue = await fetchTrackerIssue({ source: "jira", key: "X-1", site: "https://acme.atlassian.net" }, f, { ...env, JIRA_BASE_URL: "https://acme.atlassian.net/" });
+    expect(issue.title).toBe("S");
+  });
+});

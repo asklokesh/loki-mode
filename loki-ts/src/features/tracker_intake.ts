@@ -20,7 +20,7 @@ const SELF_URL = new RegExp(`^(https?://[^/\\s?#]+)/browse/(${JIRA_KEY})/?(?:[?#
 function selfHostedSite(s: string, env: NodeJS.ProcessEnv): TrackerRef | null {
   const base = env.JIRA_BASE_URL;
   const m = SELF_URL.exec(s);
-  if (!base || !m) return null;
+  if (!base || !m || m[1]!.includes("@")) return null;
   try {
     if (new URL(base).origin !== new URL(m[1]!).origin) return null;
   } catch { return null; }
@@ -74,6 +74,13 @@ function need(env: NodeJS.ProcessEnv, name: string, hint = ""): string {
 
 async function fetchJira(ref: Extract<TrackerRef, { source: "jira" }>, f: FetchFn, env: NodeJS.ProcessEnv): Promise<TrackerIssue> {
   const base = (env.JIRA_BASE_URL || ref.site || need(env, "JIRA_BASE_URL", "; Jira intake needs JIRA_EMAIL, JIRA_API_TOKEN and JIRA_BASE_URL")).replace(/\/+$/, "");
+  if (env.JIRA_BASE_URL && ref.site) {
+    let a = "", b = "";
+    try { a = new URL(env.JIRA_BASE_URL).origin; b = new URL(ref.site).origin; } catch { /* mismatch below */ }
+    if (!a || a !== b || /@/.test(ref.site)) {
+      throw new Error(`Jira browse URL site ${ref.site} does not match JIRA_BASE_URL ${env.JIRA_BASE_URL}; refusing to fetch ${ref.key} from the wrong site`);
+    }
+  }
   const jiraHint = "; Jira intake needs JIRA_EMAIL, JIRA_API_TOKEN and JIRA_BASE_URL";
   const email = need(env, "JIRA_EMAIL", jiraHint), token = need(env, "JIRA_API_TOKEN", jiraHint);
   const auth = Buffer.from(`${email}:${token}`).toString("base64");
