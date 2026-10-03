@@ -759,3 +759,5 @@ Dashboard /api/v1/runs REST API	1
 Project memory persists across runs and injects a bounded summary	1
 loki merge queue: green-only serial merge, rebase next, dry-run	1
 mobile emulator tests: NOT VERIFIED without a device	1
+legacy dashboard stays deleted: dirs, package files, npm pack, references (CPE24-L7)	15
+Control Plane starts from a fresh npm pack install and serves /health and its UI (CPE24-L7)	20
