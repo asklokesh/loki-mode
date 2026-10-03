@@ -1974,3 +1974,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Peer finding: `loki serve` is the deprecated alias of `loki api start`, not the Control Plane; docs and help disagreed. D65-UI-NAMING (62b592031) and D65-UI-NAMING-2 (e564d2423, bash fallback honors LOKI_CONTROL=0 and names bun) merged, both TL APPROVE.
 - P0-TC-SUPERSEDE merged (bd686b7c9): train-cycle now holds a green unpromoted train so Phase B promotes it first.
 - Train 88 was cut before the v10.6.9 release commit, so it is not a fast-forward of main. Merged origin/main into local main (7ad91e03f, no conflicts, dist rebuilt unchanged, dist guard 13/0) and pushed train 89 (8576564a7) carrying C11b, D65-BUG5, D65-BUG6, D65-BUG6-G, D61-04-F, P0-TC-SUPERSEDE, D65-UI-NAMING and -2.
+
+## 2026-10-03T07:55Z tick (CoS)
+- Train 89 and 90 never went all-green: Security Audit cancelled both because the gitleaks full-history scan hit its 15 min timeout (also trains 86, 88; passing runs took 8-15 min). Train 90 Tests had one P9 red; full rerun green (flake, same code green on 89).
+- D74 (5d4530b18): gitleaks timeout 15 -> 30 min, same scope. Train 91 all six checks green; train-cycle promoted it at 07:41:45Z and cut v10.6.10 (a5a4f0c95, release run in progress at 07:55Z; npm still reads latest=10.6.9, not announced).
+- D75 (cacc31400): peer proposal for a train-range gitleaks scan; CTO APPROVE-WITH-CONDITIONS after finding the full scan would no longer guard npm publish (E-160 reuse plus unfiltered required-ci parent reuse). Slice D75-GITLEAKS-RANGE built (30e96b09c, test 43/0); opus adversarial review in flight.
+- Local main merged origin/main v10.6.10 (a6ebe9897), dist guard 13/0.
+- Drift audit vs CONTROL.md (last 6h): release cadence and merged-unreleased age violated by the gitleaks timeouts (fixed D74/D75); D12/D13 held; active builders 1 vs target 6. Only one ready row is dependency-free (D65-SPEC-F2, needs architect card). engine10 budget.test.ts 27/0 on main, so P0-CORE-BUDGET no longer blocks trains.
