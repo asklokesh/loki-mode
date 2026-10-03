@@ -702,10 +702,10 @@ Source: ~/git/autonomi-dev/research/2026-09-30-adoption/SWARM-PROMPT-ADOPTION.md
 | D61-01 | D62 P1: D61 slice 1, pre-model stage timer | engine10/supervisor.ts, engine10/output.ts, tests engine10/premodel_timing.test.ts | MEDIUM | building@2026-10-03T01:52Z | Behind LOKI_SPEED=1. D61-SPEED.md row 1. |
 | D61-08 | D62 P1: D61 slice 8, deterministic decomposer DAG | new engine10/decompose.ts, tests engine10/decompose.test.ts | MEDIUM | building@2026-10-03T01:52Z | Behind LOKI_SPEED=1. D61-SPEED.md row 8. |
 | D62-FIX | D62 P3: root action.yml routes to Loki 10 (no `--simple`), plus one real end-to-end BUDGET_STOP exit 3 test | action.yml, tests for action and budget e2e | MEDIUM | building@2026-10-03T01:52Z | Small fixes from the D60 report. |
-| D61-02 | D62 P1: D61 slice 2, lean prefix default plus byte-identity guard | e10ext/lean_prefix.ts, stages/implement.ts, stages/fix.ts | MEDIUM | ready@2026-10-03T01:55Z | Next seat. |
-| D61-07 | D62 P1: D61 slice 7, worktree dependency prep | autonomy/lib/worktree_prep.py, tests/test-worktree-prep.sh | MEDIUM | ready@2026-10-03T01:55Z | Next seat. |
-| D62-VIS | D62 P2a: visual evidence in PRs (local Playwright screenshots of changed pages in the PR body) | TBD by architect | MEDIUM | ready@2026-10-03T01:55Z | Needs a slice card (D63 order 2 and 5). |
-| D62-JIRA | D62 P2c: Jira and Linear intake into v10 via autonomy/issue-providers.sh, intake only | TBD by architect | MEDIUM | ready@2026-10-03T01:55Z | Needs a slice card (D63 order 2 and 5). |
+| D61-02 | D62 P1: D61 slice 2, lean prefix default plus byte-identity guard | e10ext/lean_prefix.ts, stages/implement.ts, stages/fix.ts | MEDIUM | building@2026-10-03T01:55Z | Next seat. |
+| D61-07 | D62 P1: D61 slice 7, worktree dependency prep | autonomy/lib/worktree_prep.py, tests/test-worktree-prep.sh | MEDIUM | building@2026-10-03T01:55Z | Next seat. |
+| D62-VIS | D62 P2a: visual evidence in PRs (local Playwright screenshots of changed pages in the PR body) | TBD by architect | MEDIUM | building@2026-10-03T01:55Z | Needs a slice card (D63 order 2 and 5). |
+| D62-JIRA | D62 P2c: Jira and Linear intake into v10 via autonomy/issue-providers.sh, intake only | TBD by architect | MEDIUM | building@2026-10-03T01:55Z | Needs a slice card (D63 order 2 and 5). |
 | D64-VIS | D64 1: visual evidence, local Playwright screenshots plus trace or video of changed pages in the PR body and receipt | new loki-ts/src/engine10/evidence_visual.ts, engine10/pr_body.ts hook, tests | MEDIUM | parked | D64 withdrawn 00:25Z; not started. |
 | D64-E2E | D64 2: verify runs the repo's Playwright or Cypress e2e when present; mobile only if already installed; never claim coverage that did not run | new loki-ts/src/engine10/e2e.ts, verify stage hook, tests | MEDIUM | parked | D64 withdrawn 00:25Z; not started. |
 | D64-SERVE | D64 4: loki serve webhooks (GitHub, Linear, Jira) and cron schedules in the Control Plane | packages/control-plane/src/server/triggers*, tests | MEDIUM | parked | D64 withdrawn 00:25Z; not started. |
@@ -715,3 +715,11 @@ Source: ~/git/autonomi-dev/research/2026-09-30-adoption/SWARM-PROMPT-ADOPTION.md
 | D64-MEM | D64 9: project memory (D50 item 3) in the v10 context pack | new loki-ts/src/e10ext/project_memory.ts, tests | MEDIUM | parked | D64 withdrawn 00:25Z; not started. |
 | D64-INTAKE | D64 10: Jira, Linear and Sentry intake into v10 via autonomy/issue-providers.sh | autonomy/issue-providers.sh, v10 intake ref parsing, tests | MEDIUM | parked | D64 withdrawn 00:25Z; not started. |
 | D64-EASE | D64 ease: first-run gate ease row (time to first PR, prompt count), published in METRICS | first-run gate script, docs/v10/FIRST-RUN-GATE.md, METRICS | MEDIUM | parked | D64 withdrawn 00:25Z; not started. |
+| D61-05 | D65: D61 slice 5, warm engine socket in the dashboard daemon | engine10/dashboard/server.ts, new engine10/warm.ts, tests | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
+| D61-06 | D65: D61 slice 6, CLI warm client with 50ms socket try and cold fallback | engine10/cli.ts, new engine10/warm_client.ts, tests | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
+| D65-CP | D65 D63-3: Control Plane as the default UI plus BLOCKED answer UI | packages/control-plane, loki control wiring | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
+| D65-SLACK | D65 D63-4: Slack two-way (@loki starts a run, BLOCKED answers return) | new integrations slack module, docs | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
+| D65-SPEC | D65 D63-6: spec to delivery contract with criteria traced in the receipt | new engine10/contract.ts, receipt fields | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
+| D65-MULTI | D65 D63-7: multi-repo workspaces, D51 Phase B slices behind LOKI_WORKSPACES | per docs/v10/D51-PHASE-B.md | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
+| D65-MCP | D65 D63-8: MCP server tools run, status and verify for v10 | mcp/server.py, tests | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
+| D65-CONT | D65 D63-9: one container for the Control Plane plus Helm and ECS examples | Dockerfile.control-plane, deploy/helm, deploy/ecs, docs | MEDIUM | building@2026-10-03T01:55Z | D65 phase 1. |
