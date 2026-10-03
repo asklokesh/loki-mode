@@ -1,4 +1,4 @@
-// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, Python importlib dynamic imports.
+// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, a tsconfig alias whose name shares no token with the target. Dynamic and computed specifiers (importlib, path.join, template literals) are covered by the content backstop.
 // D77 (W1-S1): the sealed base-tree manifest the Wall reads instead of the repo. Pure: a file list in,
 // signatures-only text out. It holds the detected runner and config, the test layout, at most two style
 // examples that import no module the task names, and public signatures of the named modules. Function
@@ -22,6 +22,12 @@ const baseOf = (p: string): string => p.split("/").pop() ?? p;
 // One comparison form for stems (W1-S2 r6): lowercase, and "." "-" "_" runs collapse to one ".", so user-service equals user.service.
 const normStem = (s: string): string => s.toLowerCase().replace(/[._-]+/g, ".").replace(/^\.|\.$/g, "");
 // A directory module (index, __init__, mod, main) is also named by its parent directory.
+// Content backstop (W1-S2 r7): any example whose text holds a non-generic target stem as a whole token is excluded.
+const GENERIC_STEMS = ["index", "init", "mod", "main"];
+const mentionsStem = (content: string, stems: string[]): boolean => {
+  const c = content.toLowerCase().replace(/[._-]+/g, ".");
+  return stems.some((s) => new RegExp(`(?<![a-z0-9])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`).test(c));
+};
 const stemsOfTarget = (m: string): string[] => {
   const raw = stemOf(m).toLowerCase(), parent = m.split("/").slice(-2, -1)[0];
   return [normStem(raw), ...(["index", "__init__", "mod", "main"].includes(raw) && parent ? [normStem(parent)] : [])];
@@ -714,7 +720,7 @@ function runnerSection(files: ManifestFile[]): string[] {
 }
 
 // True when a test file imports a module whose stem matches one the task names.
-function importsNamed(path: string, raw: string, stems: Set<string>): boolean {
+function importsNamed(path: string, raw: string, stems: Set<string>, importStems: Set<string> = stems): boolean {
   const content = raw.replace(/\\\n[ \t]*/g, " ");
   // Whole-stem naming (W1-S2 r5): the test stem minus a .test/.spec suffix or a test_/_test affix equals a target stem or
   // extends it after a dot, so dotted and dashed stems (user.service, my-parser) match. Compared case-insensitively.
@@ -726,8 +732,8 @@ function importsNamed(path: string, raw: string, stems: Set<string>): boolean {
   const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
   for (const m of content.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
   for (const m of content.matchAll(/^[ \t]*import[ \t]+([\w.,\t ]+)$/gm)) specs.push(...names(m[1]!));
-  const lastSeg = (s: string): string => normStem((s.trim().split(/[\\/]/).pop() ?? "").replace(/\.([cm]?[jt]sx?|py)$/i, ""));
-  return specs.some((s) => stems.has(lastSeg(s)) || s.trim().replace(/\.(ts|js|py)$/, "").split(/[./\\]/).some((seg) => stems.has(normStem(seg))));
+  const lastSeg = (s: string): string => normStem((s.trim().split(/[\\/]/).pop() ?? "").replace(/\.([cm]?[jt]sx?|py)$/i, "").replace(/^[#@~]+/, ""));
+  return specs.some((s) => importStems.has(lastSeg(s)) || s.trim().replace(/\.(ts|js|py)$/, "").split(/[./\\]/).some((seg) => importStems.has(normStem(seg))));
 }
 
 function safeTs(content: string, path: string): string[] {
@@ -753,7 +759,10 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
   }
   out.push("", "## style examples");
   const named = new Set(excl.flatMap((m) => [baseOf(m).toLowerCase(), ...stemsOfTarget(m)]));
-  const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path).toLowerCase()) && !named.has(normStem(stemOf(t.path))) && !importsNamed(t.path, t.content, stems);
+  // A directory module is named by its parent in specifiers; a bare "./index" alone does not name an unrelated target.
+  const importStems = new Set(excl.flatMap((m) => { const s = stemsOfTarget(m); return s.length > 1 ? s.slice(1) : s; }));
+  const backstop = [...stems].filter((s) => !GENERIC_STEMS.includes(s));
+  const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path).toLowerCase()) && !named.has(normStem(stemOf(t.path))) && !importsNamed(t.path, t.content, stems, importStems) && !mentionsStem(t.content, backstop);
   for (const f of tests.filter(eligible).slice(0, MAX_EXAMPLES)) {
     out.push(`--- example: ${f.path}`, ...f.content.split("\n").slice(0, EXAMPLE_LINES));
   }

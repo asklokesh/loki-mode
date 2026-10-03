@@ -41,15 +41,15 @@ export function wallManifestFor(repoDir: string, tree: string | undefined, task:
     const ls = git(repoDir, ["ls-tree", "-r", "-l", "-z", tree]);
     const all = ls && blobEntries(ls);
     if (!all) return null;
-    const low = task.toLowerCase();
+    const low = task.toLowerCase().replace(/\\/g, "/");
     // A file the task names (whole-token basename, path or stem), in any directory, is never a style example. The exclusion
     // set takes EVERY match before any cap; only the signature list is capped, exact basename or path matches first.
     const token = (n: string): boolean => new RegExp(`(?<![A-Za-z0-9_])${n.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`).test(low);
     // A directory module (index, __init__, mod, main) is also named by its directory path ("fix the module in src/user").
     const dirModule = (e: Entry): boolean => /^(index|__init__|mod|main)\.[^.]+$/.test(basename(e.path)) && e.path.includes("/") && token(dirname(e.path));
     const matched = all.filter((e) => SOURCE.test(e.path) && (token(basename(e.path)) || token(e.path) || token(basename(e.path).replace(/\.[^.]*$/, "")) || dirModule(e)));
-    // Exact path rank: the full path bounded on the left by start, whitespace, a quote, a backtick or "(" (never "/").
-    const pathTok = (p: string): boolean => new RegExp(`(?:^|[\\s"'\`(])(?:\\./)?${p.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`).test(low);
+    // Exact path rank: the full path, not preceded by a path or word character (backslashes are read as "/"), so brackets, commas and colons still count.
+    const pathTok = (p: string): boolean => new RegExp(`(?<![A-Za-z0-9_./-])(?:\\./)?${p.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![A-Za-z0-9_])`).test(low);
     const byPath = matched.filter((e) => pathTok(e.path)), byBase = matched.filter((e) => !byPath.includes(e) && token(basename(e.path)));
     const named = [...byPath, ...byBase, ...matched.filter((e) => !byPath.includes(e) && !byBase.includes(e))].slice(0, MAX_NAMED); // path, then basename, then stem-only
     const tests = all.filter((e) => TESTISH.test(e.path)).slice(0, MAX_FILES), listed = tests.filter((e) => !SOURCE.test(e.path));

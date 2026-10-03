@@ -826,3 +826,61 @@ describe("directory modules, exact-path bounds, mocks, separators (D77, W1-S2 r6
     expect(t).toContain("other_style");
   });
 });
+
+// D77 / W1-S2 r7: path-wrapping task forms, comment-split specifiers, and the content backstop.
+describe("path wrappers and content backstop (D77, W1-S2 r7)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function manifest(files: Record<string, string>, task: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r7-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    try {
+      g("init", "-q");
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); }
+      g("commit", "-q", "-m", "base");
+      return wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), task, ON)!.text;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const T = (body: string, imp = ""): string => `import { test } from "bun:test";\n${imp}test("t", () => { /* ${body} */ });\n`;
+  const other = { "tests/other.test.ts": T("other_style") };
+  const userSrc = { "src/user.ts": "export function target(n: number): number {\n  return n;\n}\n", ...other };
+
+  test("N4: wrapped, comma-joined, colon-joined and backslash paths still rank as exact", () => {
+    const files: Record<string, string> = { ...other };
+    for (let i = 0; i < 7; i++) files[`packages/p${i}/src/index.ts`] = `export function sigP${i}(n: number): number {\n  return n;\n}\n`;
+    for (const task of ["Fix [packages/p5/src/index.ts]", "Fix <packages/p5/src/index.ts>", "Fix packages/p4/src/index.ts,packages/p5/src/index.ts", "Files:packages/p5/src/index.ts", "Fix packages\\p5\\src\\index.ts"]) {
+      expect(manifest(files, task)).toContain("export function sigP5(n: number)");
+    }
+  });
+
+  test("S1: a comment between the paren and the specifier does not hide the import", () => {
+    const t = manifest({ ...userSrc, "tests/c.test.ts": T("BODY_S1", 'const m = import(/* webpackChunkName: "x" */ "../src/user");\n') }, "Fix src/user.ts");
+    expect(t).not.toContain("BODY_S1");
+    expect(t).toContain("other_style");
+  });
+
+  test("S1b: a line comment between require( and the specifier does not hide the import", () => {
+    const t = manifest({ ...userSrc, "tests/c.test.ts": T("BODY_S1B", 'const m = require(\n // why\n "../src/user");\n') }, "Fix src/user.ts");
+    expect(t).not.toContain("BODY_S1B");
+    expect(t).toContain("other_style");
+  });
+
+  test("backstop: require.resolve, path.join, template literals, #user and __import__ are excluded", () => {
+    const bodies: Record<string, string> = {
+      BODY_BS_RESOLVE: 'const p = require.resolve("../src/user");\n',
+      BODY_BS_JOIN: 'const p = path.join(__dirname, "..", "src", "user");\n',
+      BODY_BS_TEMPLATE: "const m = await import(`../src/${'user'}`);\n",
+      BODY_BS_SUBPATH: 'import { target } from "#user";\n',
+      BODY_BS_DUNDER: 'const m = __import__("app.user")\n',
+    };
+    const files: Record<string, string> = { ...userSrc };
+    for (const [b, imp] of Object.entries(bodies)) files[`tests/${b.toLowerCase()}.test.ts`] = T(b, imp);
+    const t = manifest(files, "Fix src/user.ts");
+    for (const b of Object.keys(bodies)) expect(t).not.toContain(b);
+    expect(t).toContain("other_style");
+  });
+
+  test("generic stems alone do not exclude a test that only imports ./index for an unrelated target", () => {
+    const t = manifest({ "src/user/index.ts": "export function target(n: number): number {\n  return n;\n}\n", "tests/helper.test.ts": T("BODY_GENERIC_KEPT", 'import { x } from "./index";\n') }, "Fix src/user/index.ts");
+    expect(t).toContain("BODY_GENERIC_KEPT");
+  });
+});
