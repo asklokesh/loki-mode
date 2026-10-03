@@ -420,10 +420,12 @@ function maskDefaults(sig: string): string {
 // `@Name` / `@a.b` stays; `@Name(args)` (no gap before the paren) becomes `@Name(...)`. After the name or the
 // group the next non-space character must not be `(`, `<`, `?`, `!`, `[` or `.`. Any other shape returns null
 // so the caller omits the whole class or declaration.
+// A reserved statement or expression keyword right after a decorator is invalid TS: fail closed (W1-S2).
+const RESERVED_AFTER_DECORATOR = /^(?:if|else|for|while|do|switch|case|try|catch|finally|return|throw|with|var|let|const|function|new|delete|typeof|void|yield|await|break|continue|import|debugger|instanceof|this|super|null|true|false)(?![\w$])/;
 function maskDecorators(sig: string): string | null {
   let out = "";
   // Allowlist: after a decorator only an identifier start or another @ may follow.
-  const badNext = (at: number): boolean => !/[A-Za-z_$@]/.test(sig.slice(at).trimStart()[0] ?? "");
+  const badNext = (at: number): boolean => { const r = sig.slice(at).trimStart(); return !/[A-Za-z_$@]/.test(r[0] ?? "") || RESERVED_AFTER_DECORATOR.test(r); };
   for (let i = 0; i < sig.length; ) {
     const k = skipLiteral(sig, i);
     if (k !== i) { out += sig.slice(i, k); i = k; continue; }

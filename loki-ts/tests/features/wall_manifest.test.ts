@@ -518,6 +518,16 @@ describe("round 6 review findings", () => {
     }
   });
 
+  test("W1-S2: invalid TS with a keyword right after a decorator omits the class", () => {
+    for (const src of [
+      'export class S {\n  @dec if (SECRET_K1) { go("SECRET_K2"); }\n  m(): void {}\n}\n',
+      'export @dec const SECRET_K3 = "SECRET_K4"; class C {\n}\n',
+      'export class S {\n  @dec return "SECRET_K5";\n}\n',
+    ]) {
+      expect(ts(src)).not.toMatch(/SECRET_K/);
+    }
+  });
+
   test("well-formed decorators still emit", () => {
     const out = ts('export class S {\n  constructor(@Inject("T") private c: Cfg) {}\n  @a.b() m(): void {}\n  @Bare x: number;\n}\n');
     expect(out).toContain("export class S {");

@@ -638,3 +638,78 @@ describe("engine10 wall base run, D42 (3)", () => {
     rmSync(repoDir, { recursive: true, force: true });
   });
 });
+
+// D77 / W1-S2: LOKI_E10_WALL_MANIFEST puts a signatures-only wall_manifest.txt in the Wall cwd.
+describe("engine10 wall manifest wiring, D77", () => {
+  const SRC = 'export function search(q: string): string[] {\n  const secret = "CANARY_BODY_7731";\n  return [q, secret];\n}\n';
+  function gitRepo() {
+    const s = setup({ runners: ["bun"], tests: [{ runner: "bun", path: "tests/a.test.ts" }] });
+    const g = (...a: string[]) => execFileSync("git", ["-C", s.repoDir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    g("init", "-q");
+    mkdirSync(join(s.repoDir, "src")); mkdirSync(join(s.repoDir, "tests"));
+    writeFileSync(join(s.repoDir, "package.json"), '{"scripts":{"test":"bun test"}}', "utf8");
+    writeFileSync(join(s.repoDir, "src", "search.ts"), SRC, "utf8");
+    writeFileSync(join(s.repoDir, "tests", "a.test.ts"), 'import { test } from "bun:test";\ntest("a", () => {});\n', "utf8");
+    g("add", "package.json", "src/search.ts", "tests/a.test.ts"); g("commit", "-q", "-m", "base");
+    writeFileSync(join(s.repoDir, "src", "search.ts"), SRC.replace("CANARY_BODY_7731", "CANARY_DIFF_5519"), "utf8"); // uncommitted implement change
+    return { ...s, tree: g("rev-parse", "HEAD^{tree}") };
+  }
+  async function wall(flag: string | undefined) {
+    const s = gitRepo(), events: { type: string; data: Record<string, unknown> }[] = [];
+    let listing: string[] = [], files: Record<string, string> = {}, brief = "";
+    const sessions = new FakeSessionRunner((o) => {
+      listing = readdirSync(o.cwd!).sort(); brief = o.brief;
+      files = Object.fromEntries(listing.map((f) => [f, readFileSync(join(o.cwd!, f), "utf8")]));
+    });
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, {
+      intake: { task: "extend search in search.ts", testmap: s.testmap, repomap_ref: s.repomapRef, tree: s.tree },
+      implement: { diff: "+ CANARY_DIFF_5519" },
+    }, []);
+    ctx.emit = (type, _stage, data) => { events.push({ type, data: (data ?? {}) as Record<string, unknown> }); };
+    const prev = process.env.LOKI_E10_WALL_MANIFEST;
+    if (flag === undefined) delete process.env.LOKI_E10_WALL_MANIFEST; else process.env.LOKI_E10_WALL_MANIFEST = flag;
+    try { await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 0, fail: 1 }) }); }
+    finally { if (prev === undefined) delete process.env.LOKI_E10_WALL_MANIFEST; else process.env.LOKI_E10_WALL_MANIFEST = prev; }
+    rmSync(s.repoDir, { recursive: true, force: true });
+    return { listing, files, brief, sealed: events.find((e) => e.type === "wall.sealed")!.data };
+  }
+
+  test("flag on: cwd holds only task.md, repomap.txt and wall_manifest.txt", async () => {
+    expect((await wall("1")).listing).toEqual(["repomap.txt", "task.md", "wall_manifest.txt"]);
+  });
+
+  test("flag on: canaries (function body, implement diff) never reach the cwd or the brief; signatures do", async () => {
+    const r = await wall("1");
+    const all = [r.brief, ...Object.values(r.files)].join("\n");
+    expect(all).not.toContain("CANARY_BODY_7731");
+    expect(all).not.toContain("CANARY_DIFF_5519");
+    expect(r.files["wall_manifest.txt"]).toContain("export function search(q: string): string[]");
+    expect(r.brief).toContain("wall_manifest.txt");
+  });
+
+  test("flag on: wall.sealed carries manifest_sha256 equal to sha256 of wall_manifest.txt", async () => {
+    const r = await wall("1");
+    expect(r.sealed.manifest_sha256).toBe(sha256(r.files["wall_manifest.txt"]!));
+  });
+
+  test("flag off or unset: no manifest file, no manifest_sha256, brief byte-identical to the no-manifest brief", async () => {
+    for (const flag of [undefined, "0", "off"]) {
+      const r = await wall(flag);
+      expect(r.listing).toEqual(["repomap.txt", "task.md"]);
+      expect("manifest_sha256" in r.sealed).toBe(false);
+      expect(r.brief).toBe(buildWallBrief("extend search in search.ts", r.files["repomap.txt"]!, ["bun"]));
+    }
+  });
+
+  test("flag on without an intake tree fails closed to the off behaviour", async () => {
+    const s = setup({ runners: ["bun"], tests: [] });
+    let listing: string[] = [];
+    const sessions = new FakeSessionRunner((o) => { listing = readdirSync(o.cwd!).sort(); });
+    const ctx = fakeCtx(s.repoDir, s.runDir, sessions, { intake: { task: "add x", testmap: s.testmap, repomap_ref: s.repomapRef } }, []);
+    process.env.LOKI_E10_WALL_MANIFEST = "1";
+    try { await runWall(ctx, new AbortController().signal, { baseRunner: new FakeBaseTestRunner({ pass: 0, fail: 1 }) }); }
+    finally { delete process.env.LOKI_E10_WALL_MANIFEST; }
+    expect(listing).toEqual(["repomap.txt", "task.md"]);
+    rmSync(s.repoDir, { recursive: true, force: true });
+  });
+});

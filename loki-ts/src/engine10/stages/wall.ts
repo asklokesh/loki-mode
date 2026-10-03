@@ -11,6 +11,7 @@ import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT } from "../../e10ext/wall_hints.ts";
+import { wallManifestFor } from "../../features/wall_manifest_wire.ts";
 import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
 import { sha256 } from "./seal.ts";
 import { runnerCmd } from "./verify.ts";
@@ -93,11 +94,12 @@ export interface WallOptions { baseRunner?: BaseTestRunner; }
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
 
-export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = []): string {
+export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], manifest = ""): string {
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
-    "You cannot see the repository. This directory holds only task.md and repomap.txt.",
+    `You cannot see the repository. This directory holds only task.md and repomap.txt${manifest ? " and wall_manifest.txt (public signatures only)" : ""}.`,
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
+    ...(manifest ? [`Base-tree manifest (wall_manifest.txt):\n${manifest}`] : []),
     ...taskBlock(task),
     "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded.",
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
@@ -155,12 +157,12 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);
 
   const cwd = mkdtempSync(join(tmpdir(), "loki-e15-wall-"));
-  writeFileSync(join(cwd, "task.md"), task, "utf8");
-  writeFileSync(join(cwd, "repomap.txt"), repomapText, "utf8");
+  const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
+  for (const [n, c] of [["task.md", task], ["repomap.txt", repomapText], ...(wm ? [["wall_manifest.txt", wm.text]] : [])] as [string, string][]) writeFileSync(join(cwd, n), c, "utf8");
 
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners),
+    brief: buildWallBrief(task, repomapText, runners, wm?.text),
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model: wallModel(),
@@ -176,9 +178,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const sealedDir = join(ctx.runDir, "wall");
   if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); mkdirSync(sealedDir, { recursive: true }); }
 
-  const sealedFiles: WallSealedFile[] = [];
-  const readOnlyFiles: ReadOnlyFile[] = [];
-  const wallTests: TestRef[] = [];
+  const sealedFiles: WallSealedFile[] = [], readOnlyFiles: ReadOnlyFile[] = [], wallTests: TestRef[] = [];
 
   for (const name of generated) {
     const content = readFileSync(join(cwd, name), "utf8"), dest = join(targetDir, name), runner = guessRunner(name, runners);
@@ -187,7 +187,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
   }
   rmSync(cwd, { recursive: true, force: true });
-  ctx.emit("wall.sealed", "wall", { files: sealedFiles });
+  ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(wm ? { manifest_sha256: wm.sha256 } : {}) });
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: 0 }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
   for (const t of wallTests) {
     const r = baseRunner.run(ctx.repoDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
