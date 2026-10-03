@@ -1,9 +1,8 @@
 // CP-UI-LIVE: the live run view and the Overview render only what the ingested events carry; the rest reads "unmeasured".
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import "./dom";
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 
 const realFetch = globalThis.fetch;
-GlobalRegistrator.register();
 const { cleanup, render, screen } = await import("@testing-library/react");
 const { LiveRun, Overview, Landing, buildStages } = await import("../../ui/src/Live");
 
@@ -25,7 +24,7 @@ function serve(map: Record<string, unknown>) {
 
 beforeAll(() => { (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE = ""; });
 afterEach(cleanup);
-afterAll(async () => { await GlobalRegistrator.unregister(); globalThis.fetch = realFetch; });
+afterAll(() => { globalThis.fetch = realFetch; location.hash = ""; });
 
 test("live run: running stage timeline, diff, unpriced cost shown as unmeasured, no outcome yet", async () => {
   serve({ "/v1/runs/s1/r1": detail({

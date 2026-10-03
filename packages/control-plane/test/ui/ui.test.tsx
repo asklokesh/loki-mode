@@ -1,11 +1,10 @@
 // CP-03 Wall check: the Runs list and detail views render the section 4 JSON captured from the CP-00 corpus.
-import { GlobalRegistrator } from "@happy-dom/global-registrator";
+import "./dom";
 import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const realFetch = globalThis.fetch;
-GlobalRegistrator.register();
 const { cleanup, render, screen, waitFor, within } = await import("@testing-library/react");
 const { RunDetail, RunsList } = await import("../../ui/src/App");
 
@@ -26,7 +25,7 @@ function serve(map: Record<string, unknown>) {
 beforeAll(() => { (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE = ""; });
 afterEach(cleanup);
 // happy-dom replaces global fetch; restore the real one so other files in the same bun process still work
-afterAll(async () => { await GlobalRegistrator.unregister(); globalThis.fetch = realFetch; });
+afterAll(() => { globalThis.fetch = realFetch; location.hash = ""; });
 
 test("runs list: row count and verdict badges equal EXPECTED.json", async () => {
   serve({ "/v1/runs": load("runs.json") });
