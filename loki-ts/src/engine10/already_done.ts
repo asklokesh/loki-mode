@@ -14,6 +14,7 @@ export type { EvidenceHit };
 export interface AlreadyDoneResult {
   satisfied: true;
   evidence: string[]; // the model's own citation first, then the deterministic hits behind it
+  paths: string[]; // the hits' file paths (FC-15: checked against the PR target)
 }
 
 /** Runs the deterministic search, then, only on a candidate, one short confirmation session
@@ -42,5 +43,5 @@ export async function checkAlreadyDone(
   if (!marker) return null;
   // The citation must actually point at one of the search's own hits, not just any file name.
   if (!hits.some((h) => citesRealHit(marker, h, ctx.repoDir))) return null;
-  return { satisfied: true, evidence: [marker, ...evidenceLines(hits)] };
+  return { satisfied: true, evidence: [marker, ...evidenceLines(hits)], paths: hits.map((h) => h.path) };
 }

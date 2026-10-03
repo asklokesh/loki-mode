@@ -11,6 +11,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
+import { renderMainOutput } from "../../src/engine10/supervisor.ts";
+import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
+import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
 import type { CostReader, RunContext, SessionResult, SessionRunner, TestMapProvider } from "../../src/engine10/types.ts";
 
@@ -378,5 +381,189 @@ describe("engine10 intake: contract snapshot (D65-SPEC-F2)", () => {
     const b = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { issueJsonPath: join(FIX, "issue-closed.json") });
     expect(b.data.already_satisfied).toBe(true);
     expect(b.data.contract_snapshot).toBeUndefined();
+  });
+});
+
+// FC-15: a run must never judge "already done" against Loki's own unmerged branch (FireLater#17).
+describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
+  let prevSpeed: string | undefined; let prevFetch: string | undefined; let prevBase: string | undefined;
+  beforeAll(() => { prevSpeed = process.env.LOKI_SPEED; prevFetch = process.env.LOKI_E10_NO_FETCH; prevBase = process.env.LOKI_E10_BASE; process.env.LOKI_SPEED = "0"; delete process.env.LOKI_E10_BASE; });
+  afterAll(() => {
+    if (prevSpeed === undefined) delete process.env.LOKI_SPEED; else process.env.LOKI_SPEED = prevSpeed;
+    if (prevFetch === undefined) delete process.env.LOKI_E10_NO_FETCH; else process.env.LOKI_E10_NO_FETCH = prevFetch;
+    if (prevBase !== undefined) process.env.LOKI_E10_BASE = prevBase;
+  });
+  const CONFIRMED = "search-command.ts:1 search already implemented, tests/search.test.ts covers it, CHANGELOG.md documents it";
+  /** origin (bare) with main = the unfixed sample repo; a clone whose local loki/* branch commits the "fix". */
+  function originAndClone(): { root: string; clone: string } {
+    const root = mkdtempSync(join(tmpdir(), "e10-fc15-"));
+    const seed = join(root, "seed");
+    cpSync(join(FIX, "sample-repo"), seed, { recursive: true });
+    git(seed, ["init", "-q", "-b", "main"]);
+    git(seed, ["config", "user.email", "t@example.com"]); git(seed, ["config", "user.name", "t"]);
+    git(seed, ["add", "-A"]); git(seed, ["commit", "-q", "-m", "initial"]);
+    git(root, ["clone", "-q", "--bare", seed, join(root, "origin.git")]);
+    git(root, ["clone", "-q", join(root, "origin.git"), join(root, "clone")]);
+    const clone = join(root, "clone");
+    git(clone, ["config", "user.email", "t@example.com"]); git(clone, ["config", "user.name", "t"]);
+    git(clone, ["checkout", "-q", "-b", "loki/e10-20261003T150744Z-59b1"]);
+    cpSync(join(FIX, "already-done-repo"), clone, { recursive: true });
+    git(clone, ["add", "-A"]); git(clone, ["commit", "-q", "-m", "loki: fix the issue (unmerged draft)", "-m", "Loki-Run: e10-20261003T150744Z-59b1"]);
+    return { root, clone };
+  }
+
+  test("checkout on a loki branch with unmerged commits: not refused, no ALREADY_SATISFIED from the loki commit, reported as unmerged Loki work", async () => {
+    const { root, clone } = originAndClone();
+    const confirm = fakeConfirmSession({ markers: { done: false, alreadyDone: CONFIRMED, specConflict: null } });
+    const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+    ctx.sessions = confirm.runner;
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" });
+    expect(result.status).toBe("completed");
+    expect(result.data.already_satisfied).toBe(false);
+    const u = result.data.unmerged_loki_work as { branch: string; target: string; commits: number; message: string };
+    expect(u.branch).toBe("loki/e10-20261003T150744Z-59b1");
+    expect(u.target).toBe("origin/main");
+    expect(u.message).toContain("not on origin/main");
+    // L5/L6: the note reaches the terminal summary and the PR body, not only the intake data.
+    const ev: EventEnvelope = { v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data: result.data };
+    const out = renderMainOutput([ev], { pr: null, verdict: "PARTIAL", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] });
+    expect(out).toContain("work exists on loki/");
+    // pr.ts builds the real PR body with renderReviewerBody from ctx.outputs()
+    const body = renderReviewerBody({ verdict: "PARTIAL", draftReason: "verdict PARTIAL", notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r1", outputs: { intake: result.data } });
+    expect(body).toContain("- Note: work exists on loki/");
+    expect(body).toContain("CHANGELOG.md"); // the evidence paths survive unclipped
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a branch merely named loki/* carrying the user's own commit is not labelled Loki's work", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-named"]);
+    const r = await intakeOn(clone, CONFIRMED);
+    expect(r.status).toBe("completed");
+    expect(r.data.already_satisfied).toBe(false);
+    expect(r.data.unmerged_loki_work).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a zero-commit receipt whose head_sha is the user's own tip is not Loki-owned", async () => {
+    const { root, clone, tip } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    mkdirSync(join(clone, ".loki", "runs", "e10-old"), { recursive: true });
+    writeFileSync(join(clone, ".loki", "runs", "e10-old", "receipt.json"), JSON.stringify({ head_sha: tip, base_sha: tip }));
+    const r = await intakeOn(clone, CONFIRMED);
+    expect(r.data.already_satisfied).toBe(false);
+    expect(r.data.unmerged_loki_work).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("the same repo on the true base (origin/main): intake does not see the fix, so no ALREADY_SATISFIED", async () => {
+    const { root, clone } = originAndClone();
+    git(clone, ["checkout", "-q", "main"]);
+    const decline = fakeConfirmSession({ markers: { done: true, alreadyDone: null, specConflict: null } });
+    const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+    ctx.sessions = decline.runner;
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" });
+    expect(result.status).toBe("completed");
+    expect(result.data.already_satisfied).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  /** clone on feature/search carrying one USER commit (the fix), nothing from Loki. */
+  function userFeatureClone(): { root: string; clone: string; tip: string } {
+    const { root, clone } = originAndClone();
+    git(clone, ["checkout", "-q", "-b", "feature/search", "main"]);
+    cpSync(join(FIX, "already-done-repo"), clone, { recursive: true });
+    git(clone, ["add", "-A"]); git(clone, ["commit", "-q", "-m", "user: search"]);
+    return { root, clone, tip: execFileSync("git", ["rev-parse", "HEAD"], { cwd: clone, encoding: "utf8" }).trim() };
+  }
+  async function intakeOn(clone: string, alreadyDone: string | null = null): Promise<{ status: string; reason?: string; data: Record<string, unknown> }> {
+    const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+    ctx.sessions = fakeConfirmSession({ markers: { done: true, alreadyDone, specConflict: null } }).runner;
+    return runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" });
+  }
+
+  test("A: a prior run with no commits sealed head_sha = the user's own tip: not Loki's work", async () => {
+    const { root, clone, tip } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    mkdirSync(join(clone, ".loki", "runs", "e10-old"), { recursive: true });
+    writeFileSync(join(clone, ".loki", "runs", "e10-old", "receipt.json"), JSON.stringify({ head_sha: tip, base_sha: tip }));
+    const r = await intakeOn(clone);
+    expect(r.status).toBe("completed");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("B: loki/* branch created from the user's branch with zero Loki commits: not Loki's work", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-x"]);
+    const r = await intakeOn(clone);
+    expect(r.status).toBe("completed");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("B2: the same loki/* branch with a real Loki commit is not refused and claims nothing", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-x"]);
+    writeFileSync(join(clone, "loki.txt"), "x"); git(clone, ["add", "loki.txt"]); git(clone, ["commit", "-q", "-m", "loki: work"]);
+    const r = await intakeOn(clone);
+    expect(r.status).toBe("completed");
+    expect(r.data.already_satisfied).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("D: fresh clone, checkout of a pushed loki/* branch with 1 Loki commit: not refused, no claim from that commit", async () => {
+    const { root, clone } = originAndClone();
+    git(clone, ["push", "-q", "origin", "loki/e10-20261003T150744Z-59b1"]);
+    const fresh = join(root, "fresh");
+    git(root, ["clone", "-q", join(root, "origin.git"), fresh]);
+    git(fresh, ["config", "user.email", "t@example.com"]); git(fresh, ["config", "user.name", "t"]);
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(fresh, ["checkout", "-q", "loki/e10-20261003T150744Z-59b1"]);
+    const r = await intakeOn(fresh, CONFIRMED);
+    expect(r.status).toBe("completed");
+    expect(r.data.already_satisfied).toBe(false);
+    expect((r.data.unmerged_loki_work as { commits: number }).commits).toBe(1);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a feature branch in a fresh clone carrying the user's own commit: not refused, no claim, not labelled Loki's", async () => {
+    const { root, clone } = userFeatureClone();
+    git(clone, ["push", "-q", "origin", "feature/search"]);
+    const fresh = join(root, "fresh2");
+    git(root, ["clone", "-q", join(root, "origin.git"), fresh]);
+    git(fresh, ["config", "user.email", "t@example.com"]); git(fresh, ["config", "user.name", "t"]);
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(fresh, ["checkout", "-q", "feature/search"]);
+    const r = await intakeOn(fresh, CONFIRMED);
+    expect(r.status).toBe("completed");
+    expect(r.data.already_satisfied).toBe(false);
+    expect(r.data.unmerged_loki_work).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("ALREADY_SATISFIED is still reached when the work is genuinely on the PR target", async () => {
+    const { root, clone } = originAndClone();
+    git(clone, ["checkout", "-q", "main"]);
+    cpSync(join(FIX, "already-done-repo"), clone, { recursive: true });
+    git(clone, ["add", "-A"]); git(clone, ["commit", "-q", "-m", "user: search on main"]);
+    git(clone, ["push", "-q", "origin", "main"]);
+    git(clone, ["checkout", "-q", "loki/e10-20261003T150744Z-59b1"]);
+    process.env.LOKI_E10_NO_FETCH = "1";
+    const r = await intakeOn(clone, CONFIRMED);
+    expect(r.status).toBe("completed");
+    expect(r.data.already_satisfied).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("C: LOKI_E10_BASE=feature/search makes the loki/* branch allowed", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1"; process.env.LOKI_E10_BASE = "feature/search";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-x"]);
+    const r = await intakeOn(clone);
+    delete process.env.LOKI_E10_BASE;
+    expect(r.status).toBe("completed");
+    rmSync(root, { recursive: true, force: true });
   });
 });

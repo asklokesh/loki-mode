@@ -12,6 +12,7 @@ import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
+import { unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 export interface IntakeOptions {
   taskText?: string;
@@ -69,7 +70,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   if (dirty.length > 0) {
     return { status: "failed", data: {}, reason: `dirty tracked tree: ${dirty.join(", ")}` };
   }
-  const baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]);
+  const baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]), startBranch = git(ctx.repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]);
   const tree = git(ctx.repoDir, ["rev-parse", "HEAD^{tree}"]);
   ensureBranch(ctx.repoDir, ctx.branch);
   excludeLokiDir(ctx.repoDir);
@@ -122,9 +123,12 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
     return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
   const base = { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch };
-  if (already) return { status: "completed", data: { ...base, ...alreadyData(already) } };
-  const data = { ...base, ...(await intakeProjectModel(ctx, signal, t0)), repomap_ref: repomapRef, testmap, already_satisfied: false };
-  if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { Object.assign(data, alreadyData(a)); });
+  // FC-15: the claim rests on the PR target. Evidence only in target..HEAD means no claim; Loki's own work there is reported, never refused.
+  const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
+  if (already && !stale) return { status: "completed", data: { ...base, ...alreadyData(already) } };
+  if (stale) process.stderr.write(`engine10: ${stale.lokiOwn ? unmergedEvidenceNote(stale) : `evidence for the task is on ${stale.branch ?? "HEAD"} but not on ${stale.target}; implementing`}\n`); // L5/L6: the operator sees it when the run goes on to implement
+  const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...(await intakeProjectModel(ctx, signal, t0)), repomap_ref: repomapRef, testmap, already_satisfied: false };
+  if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }
 export const stage: Stage = {

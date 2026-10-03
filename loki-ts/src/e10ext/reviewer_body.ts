@@ -1,5 +1,6 @@
 // INTEL-3: reviewer-first PR body, pure rendering from data the engine already holds. Order: what was asked, what changed, how it was tested, NOT PROVEN, receipt. Absent data
 // prints "not recorded", never a number. Task text is untrusted: truncated, never executed.
+import { noteOf } from "../util/base_guard.ts";
 export interface ReviewerBodyInput {
   verdict: string; draftReason: string | null; notProven: string[];
   receiptPath: string | null; receiptSha256: string | null; signed: boolean | null; runId: string;
@@ -45,7 +46,7 @@ export function renderReviewerBody(i: ReviewerBodyInput): string {
   const L = ["## What the issue asked", ...(task ? criteria(task).map((c) => `- ${c}`) : ["- not recorded"]), ""];
   L.push("## What changed and why", `- Why: ${why ? clip(why) : "not recorded"}`);
   L.push(...(files.length > 0 ? more(files, MAX_FILES) : ["- Files in scope: not recorded"]), "");
-  L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...tested(i.outputs), "");
+  L.push("## How it was tested", `- Verdict: ${i.verdict}${i.draftReason ? ` (DRAFT: ${i.draftReason})` : ""}`, ...(noteOf(i.outputs.intake) ? [`- Note: ${noteOf(i.outputs.intake)}`] : []), ...tested(i.outputs), ""); // FC-15: unclipped, the evidence paths are the point
   L.push("## NOT PROVEN", ...(i.notProven.length > 0 ? i.notProven.map((p) => `- ${p}`) : ["- none"]), "");
   L.push("## Receipt", `- Digest: ${i.receiptSha256 ? `sha256:${i.receiptSha256}` : "not recorded"}${i.signed === null ? "" : i.signed ? " (signed)" : " (UNSIGNED)"}`);
   if (i.receiptPath) L.push(`- File: ${i.receiptPath}`);
