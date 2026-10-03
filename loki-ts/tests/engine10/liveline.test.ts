@@ -1,6 +1,6 @@
 // D82: quiet-mode live status line.
 import { describe, expect, test } from "bun:test";
-import { LiveLine } from "../../src/engine10/output.ts";
+import { LiveLine } from "../../src/e10ext/liveline.ts";
 
 const ev = (type: string, stage: string | null, data: Record<string, unknown> = {}) => ({ type, stage, data });
 function rig(tty: boolean) {
