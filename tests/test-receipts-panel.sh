@@ -112,6 +112,30 @@ if printf '%s' "$_out" | grep -q '\$0.00' && printf '%s' "$_out" | grep -q '>0 f
 else
     bad "a real measured zero was hidden as '-': $_out"
 fi
+# --- 3a. A PARTLY priced run is a lower bound, not a total ------------------
+# /api/proofs sets cost_partial true when some iterations had no price. The
+# cell must say "at least $X.XX" then, and ONLY then: a truthy non-boolean or
+# an absent flag keeps the plain figure.
+_out="$(_render '{"cost_usd":1.5,"cost_partial":true}')"
+if printf '%s' "$_out" | grep -q '>at least \$1.50<'; then
+    ok "a partly priced cost renders 'at least \$1.50'"
+else
+    bad "a partly priced cost was shown as a complete total: $_out"
+fi
+for _row in '{"cost_usd":1.5,"cost_partial":false}' '{"cost_usd":1.5}' '{"cost_usd":1.5,"cost_partial":"true"}'; do
+    _out="$(_render "$_row")"
+    if printf '%s' "$_out" | grep -q '>\$1.50<' && ! printf '%s' "$_out" | grep -q 'at least'; then
+        ok "no 'at least' prefix unless cost_partial is true: $_row"
+    else
+        bad "the 'at least' prefix leaked or the cost changed: $_row -> $_out"
+    fi
+done
+_out="$(_render '{"cost_usd":null,"cost_partial":true}')"
+if printf '%s' "$_out" | grep -q '>-<' && ! printf '%s' "$_out" | grep -q 'at least'; then
+    ok "an unmeasured cost stays '-' even when cost_partial is true"
+else
+    bad "an unmeasured partial cost was not '-': $_out"
+fi
 
 # --- 3b. Receipt fields are ESCAPED before they reach innerHTML ------------
 # headline and final_verdict come from proof.json, which the run writes; a

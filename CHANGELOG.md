@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Fixed
+- The standalone dashboard receipts list now shows a partly priced run's cost as "at least $X.XX" (only when `/api/proofs` reports `cost_partial: true`) instead of presenting a lower bound as a complete total (PO-STANDALONE-COST-1).
+
 ### Added
 - `loki help answer` documents `loki answer [<run-id>] [--text "..."]`, and `loki help verify` now describes `--export-dsse` with its exit codes (0, 1, 2, 4, 66) (PO-HELP-1).
 - release.yml publish-npm now waits up to 45 min (backoff, `npm view --prefer-online`) until npm serves the published version before the Release run can succeed, so Post-Release Smoke and Promote never run against a version npm does not serve yet; a never-listed version fails with NPM-LAG-TIMEOUT. The scheduled-audit gate also no longer reads a response without total_count as zero runs (NPM-LAG-b, D75b).

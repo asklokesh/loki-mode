@@ -2532,7 +2532,8 @@ document.addEventListener('DOMContentLoaded', function() {
             var files = (x.files_changed === null || x.files_changed === undefined)
               ? '-' : String(x.files_changed);
             var cost = (x.cost_usd === null || x.cost_usd === undefined)
-              ? '-' : ('$' + Number(x.cost_usd).toFixed(2));
+              ? '-' : ((x.cost_partial === true ? 'at least ' : '')
+                       + '$' + Number(x.cost_usd).toFixed(2));
             var when = x.generated_at ? String(x.generated_at).slice(0, 16).replace('T', ' ') : '-';
             var link = x.has_html
               ? ('<a href="/api/proofs/' + encodeURIComponent(x.run_id || '') + '/html"'
