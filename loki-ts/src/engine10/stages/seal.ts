@@ -9,7 +9,7 @@ import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unl
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { discardIfSatisfied } from "../../e10ext/discard.ts"; import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts"; import { revertUnrelated } from "../../e10ext/scope.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
-import { run } from "../../util/shell.ts";
+import { run } from "../../util/shell.ts"; import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
@@ -270,6 +270,7 @@ export const sealStage: Stage = {
       model: ctx.model,
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
+      ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven)),
       log_seal: true,
     };
 

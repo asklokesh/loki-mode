@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { PushArgs, RunContext, Stage, StageResult, Verdict } from "../types.ts";
 import { pushArgv } from "../types.ts";
 import { renderReviewerBody } from "../../e10ext/reviewer_body.ts";
-import { draftReason } from "../pr_body.ts";
+import { draftReason } from "../pr_body.ts"; import { evidenceSection } from "../../features/visual_evidence.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 /** RunContext plus the pinned origin and the cap signal from the supervisor. */
 export type PrContext = RunContext & {
@@ -52,7 +52,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const draft = verdict !== "VERIFIED" || capHit;
   mkdirSync(ctx.runDir, { recursive: true });
   const bodyFile = join(ctx.runDir, "pr-body.md");
-  writeFileSync(bodyFile, renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() }), "utf8");
+  writeFileSync(bodyFile, renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() }) + evidenceSection(seal.receipt_path), "utf8");
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
   const pushShellArgs = toPushShellArgs({ cmd: "push-pr", repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft });
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
