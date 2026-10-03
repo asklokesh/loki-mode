@@ -125,17 +125,94 @@ for kind in clean process; do
         *) fail "filter driver ($kind) ran during _loki_untracked_status" "$outf" ;; esac
 done
 
-# Positive control: the same function without the filter neutralization runs
+# Positive control: the same function with the config overrides zeroed runs
 # the driver, so the legs above are not vacuous.
-awk '/fargs\+=|"\$\{fargs\[@\]\}"|\$\{fargs\[@\]\+/ { next } { print }' \
+sed -e 's/"GIT_CONFIG_COUNT=\${n}"/"GIT_CONFIG_COUNT=0"/' \
     "$WORK/lib-real.sh" > "$WORK/lib-nofilter.sh"
 if cmp -s "$WORK/lib-real.sh" "$WORK/lib-nofilter.sh"; then
-    fail "filter mutation found no fargs lines to strip"
+    fail "filter mutation found no GIT_CONFIG_COUNT line to zero"
 else
     outc="$(run_filter_case "$WORK/lib-nofilter.sh" nofilter clean)"
     case "$outc" in *MARKER=yes*) pass "control: without the filter overrides the driver runs (fixture is live)" ;;
         *) fail "control: filter driver did not run even without overrides; fixture is dead" "$outc" ;; esac
 fi
+
+# Driver names containing "=": `git -c` would split at the first "=" and miss
+# them. run_eq_case <lib> <tag> <clean|process> <plain|real>: MARKER=yes|no.
+# "plain" runs bare `git status` instead of the function (positive control).
+run_eq_case() {
+    local lib="$1" tag="$2" kind="$3" mode="$4" repo="$WORK/erepo-$2-$3-$4" marker="$WORK/emarker-$2-$3-$4"
+    mkdir -p "$repo" || return 1
+    git -C "$repo" init -q || return 1
+    git -C "$repo" config user.email t@example.invalid
+    git -C "$repo" config user.name t
+    printf 'aa\n' > "$repo/f.txt"
+    git -C "$repo" add f.txt && git -C "$repo" commit -q -m init || return 1
+    git -C "$repo" config "filter.x=y.$kind" "touch '$marker'; cat"
+    git -C "$repo" config "filter.x=y.required" true
+    printf 'f.txt filter=x=y\n' > "$repo/.git/info/attributes"
+    printf 'bb\n' > "$repo/f.txt"
+    touch -t 203001010000 "$repo/f.txt"
+    (
+        cd "$repo" || exit 1
+        if [ "$mode" = plain ]; then
+            git status --porcelain >/dev/null 2>&1
+        else
+            # shellcheck source=/dev/null
+            . "$lib"
+            _loki_untracked_status "$WORK/estatus-$tag-$kind" || true
+        fi
+    ) >/dev/null 2>&1
+    [ -e "$marker" ] && echo "MARKER=yes" || echo "MARKER=no"
+}
+for kind in clean process; do
+    oute="$(run_eq_case "$WORK/lib-real.sh" eq "$kind" real)"
+    case "$oute" in *MARKER=no*) pass "no hook run for driver name containing '=' ($kind)" ;;
+        *) fail "driver named x=y ($kind) ran during _loki_untracked_status" "$oute" ;; esac
+    outp="$(run_eq_case "$WORK/lib-real.sh" eq "$kind" plain)"
+    case "$outp" in *MARKER=yes*) pass "control: plain git status runs the x=y $kind driver (fixture is live)" ;;
+        *) fail "control: plain git status did not run the x=y $kind driver" "$outp" ;; esac
+done
+
+# Partial-clone lazy fetch: .gitattributes is skip-worktree with its blob
+# missing, so status fetches it over core.sshCommand (a repo-config command).
+run_lazy_case() {
+    local lib="$1" tag="$2" mode="$3" repo="$WORK/lrepo-$2-$3" marker="$WORK/lmarker-$2-$3" blob=""
+    mkdir -p "$repo" || return 1
+    git -C "$repo" init -q || return 1
+    git -C "$repo" config user.email t@example.invalid
+    git -C "$repo" config user.name t
+    printf 'f.txt text\n' > "$repo/.gitattributes"
+    printf 'aa\n' > "$repo/f.txt"
+    git -C "$repo" add .gitattributes f.txt && git -C "$repo" commit -q -m init || return 1
+    blob="$(git -C "$repo" rev-parse HEAD:.gitattributes)"
+    git -C "$repo" update-index --skip-worktree .gitattributes
+    rm -f "$repo/.gitattributes" "$repo/.git/objects/${blob:0:2}/${blob:2}"
+    printf '#!/bin/sh\ntouch "%s"\nexit 1\n' "$marker" > "$WORK/lhook-$tag-$mode.sh"
+    chmod +x "$WORK/lhook-$tag-$mode.sh"
+    git -C "$repo" config core.repositoryformatversion 1
+    git -C "$repo" config extensions.partialClone origin
+    git -C "$repo" config remote.origin.promisor true
+    git -C "$repo" config remote.origin.url ssh://host/x
+    git -C "$repo" config core.sshCommand "$WORK/lhook-$tag-$mode.sh"
+    (
+        cd "$repo" || exit 1
+        if [ "$mode" = plain ]; then
+            git status --porcelain >/dev/null 2>&1
+        else
+            # shellcheck source=/dev/null
+            . "$lib"
+            _loki_untracked_status "$WORK/lstatus-$tag" || true
+        fi
+    ) >/dev/null 2>&1
+    [ -e "$marker" ] && echo "MARKER=yes" || echo "MARKER=no"
+}
+outl="$(run_lazy_case "$WORK/lib-real.sh" lazy real)"
+case "$outl" in *MARKER=no*) pass "no core.sshCommand hook run by a partial-clone lazy fetch" ;;
+    *) fail "lazy fetch ran core.sshCommand during _loki_untracked_status" "$outl" ;; esac
+outlp="$(run_lazy_case "$WORK/lib-real.sh" lazy plain)"
+case "$outlp" in *MARKER=yes*) pass "control: plain git status lazy-fetches and runs the hook (fixture is live)" ;;
+    *) fail "control: plain git status did not run the lazy-fetch hook" "$outlp" ;; esac
 
 if [ -e "$REPO_ROOT/.loki/state/provider" ] && [ "$REPO_ROOT/.loki/state/provider" -nt "$WORK" ]; then
     fail "a .loki/state/provider appeared in the repo during this test"

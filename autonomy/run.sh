@@ -10657,18 +10657,28 @@ _loki_untracked_status() {
     # command git runs when status compares a stat-dirty tracked file, so every
     # configured driver is blanked: clean/smudge become cat, process is empty,
     # required is false (a blank process would otherwise be fatal).
-    local fargs=() fk="" fn=""
+    # The overrides travel as GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n, never as
+    # `-c key=value`: git splits -c at the first "=", so a driver named "x=y"
+    # would be missed. GIT_NO_LAZY_FETCH stops a partial-clone status from
+    # fetching a missing blob over an agent-written core.sshCommand. Inherited
+    # GIT_DIR, GIT_WORK_TREE, GIT_CONFIG_PARAMETERS and GIT_CONFIG_GLOBAL are
+    # dropped and GIT_CONFIG_COUNT is overwritten, never appended to.
+    local genv=() fk="" fn="" n=0
+    genv=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_CONFIG_PARAMETERS -u GIT_CONFIG_GLOBAL
+        GIT_NO_LAZY_FETCH=1)
     while IFS= read -r -d '' fk; do
         fn="${fk%.*}"
         case "$fk" in
-            *.process) fargs+=(-c "${fk}=") ;;
-            *) fargs+=(-c "${fk}=cat") ;;
+            *.process) genv+=("GIT_CONFIG_KEY_${n}=${fk}" "GIT_CONFIG_VALUE_${n}=") ;;
+            *) genv+=("GIT_CONFIG_KEY_${n}=${fk}" "GIT_CONFIG_VALUE_${n}=cat") ;;
         esac
-        fargs+=(-c "${fn}.required=false")
-    done < <("$gittool" -C "$top" config -z --name-only --get-regexp \
+        n=$((n + 1))
+        genv+=("GIT_CONFIG_KEY_${n}=${fn}.required" "GIT_CONFIG_VALUE_${n}=false")
+        n=$((n + 1))
+    done < <("${genv[@]}" "$gittool" -C "$top" config -z --name-only --get-regexp \
         '^filter\..*\.(clean|smudge|process)$' 2>/dev/null)
-    "$gittool" -C "$top" -c core.fsmonitor=false -c core.untrackedCache=false \
-        ${fargs[@]+"${fargs[@]}"} \
+    genv+=("GIT_CONFIG_COUNT=${n}")
+    "${genv[@]}" "$gittool" -C "$top" -c core.fsmonitor=false -c core.untrackedCache=false \
         --no-optional-locks status --porcelain -z --no-renames -uall \
         --ignored=matching --ignore-submodules=all -- ":(exclude,literal)${prefix}.loki" \
         > "$1" 2>/dev/null && return 0
