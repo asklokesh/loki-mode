@@ -21,6 +21,7 @@ export const FIXED_RULES = [
   "You are the Loki 10 implement stage.",
   "Rules:",
   "- The Wall tests are read-only: do not edit or delete them. Existing test files are append-only: you may add new test functions, but never edit or delete an existing one.",
+  "- Exception: when the task text itself states the new expected value of an existing assertion, change only that literal in that assertion; never remove, skip or loosen an assertion, and never edit one the task text does not name.",
   "- Run only the impacted tests named below.",
   "- Never run the full test suite, an E2E suite, or a long-lived server.",
   "- Never kill processes.",

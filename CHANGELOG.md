@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - REST API for runs on the local dashboard: GET /api/v1/runs, GET /api/v1/runs/{id}, POST /api/v1/runs (start) and POST /api/v1/runs/{id}/stop, reusing the dashboard scope checks (docs/api-runs-v1.md).
 ### Added
 - `loki acp` runs Loki as an Agent Client Protocol agent over stdio, so ACP-capable editors (VS Code, JetBrains, Zed) can drive `loki quick` and stream its output; a non-zero exit is reported as NOT VERIFIED. Setup in docs/acp-editors.md.
+### Changed
+- Sonnet first-pass lift (D50-F2-S3): the implement brief now lets the agent update a single existing assertion literal when the task text itself states the new expected value, so spec-required test updates are no longer blocked by the append-only rule; removing, skipping or loosening assertions stays forbidden and the verdict is still decided by the D53 checks. See docs/v10/DECISIONS.md D53.
 
 ### Fixed
 - tests/test-cloud-dispatch.sh: the G-04 duplicated-row hook no longer appends with `grep ROW >> SAME_FILE`, which GNU grep refuses ("input file is also the output", rc 2, nothing appended), so the writer saw an unduplicated row on Linux and the R2-3 duplicate-refusal check failed; the hook now copies through a side file. The writer in scripts/cloud-dispatch.sh was already fail-closed (T101-G04-DUPROW).

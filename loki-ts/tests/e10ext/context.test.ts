@@ -83,6 +83,8 @@ describe("S41-10b static-first brief", () => {
   const b = buildImplementBrief("rename bar in lib/b.py", "plan B text", ["tests/b.py"], "Relevant files:\nlib/b.py");
   test("leading fixed block is byte-identical and free of task text", () => {
     expect(FIXED_RULES.length).toBeGreaterThan(200);
+    expect(FIXED_RULES).toContain("states the new expected value of an existing assertion");
+    expect(FIXED_RULES).toContain("never remove, skip or loosen an assertion");
     expect(a.startsWith(FIXED_RULES)).toBe(true);
     expect(b.startsWith(FIXED_RULES)).toBe(true);
     for (const v of ["foo", "bar", "plan A", "plan B", "src/a.ts", "lib/b.py", "tests/"]) expect(FIXED_RULES).not.toContain(v);
