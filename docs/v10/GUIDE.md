@@ -118,7 +118,7 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
   `--no-pr` or never got that far. A draft PR adds the draft reason in
   parentheses.
 
-The PR body is reviewable in 60 seconds. It leads with what the issue asked,
+The PR body is reviewable in 60 seconds (the `renderPrBody` renderer caps at 60 lines, `PR_BODY_LINE_BUDGET`, and ends overflow with a "+N more" line; order is contract, each criterion with files and proving check, NOT PROVEN last). It leads with what the issue asked,
 then what changed and why, how it was tested, NOT PROVEN, and the receipt digest
 with the `loki verify` command. A field the run did not record reads "not
 recorded", never a number:

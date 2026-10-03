@@ -6,6 +6,8 @@
 // until machine.ts stores duration_s too.
 import { formatDuration } from "./output.ts";
 import type { StageName, Verdict } from "./types.ts"; import { unitTableLines, type ReceiptGroup } from "../features/speed/seal_group.ts";
+import { deriveCriteria, intakeTask, layoutPrBody, type CriterionRow } from "../features/pr_criteria.ts";
+export { PR_BODY_LINE_BUDGET, type CriterionRow } from "../features/pr_criteria.ts";
 export interface PrBodyInput {
   verdict: Verdict;
   notProven: string[];
@@ -16,6 +18,10 @@ export interface PrBodyInput {
   outputs: Partial<Record<StageName, Record<string, unknown>>>;
   /** D61-13: the combined receipt's group section; absent for a single run. */
   group?: ReceiptGroup;
+  /** INTEL-3: one-line delivery contract; defaults to the first line of outputs.intake.task. */
+  contract?: string;
+  /** INTEL-3: explicit criterion rows; defaults to the intake task bullets mapped to verify/wall data. */
+  criteria?: CriterionRow[];
 }
 /** Section 4 PR: "DRAFT when the verdict is not VERIFIED, or when the cap fired." */
 export function isDraft(verdict: Verdict, capHit: boolean): boolean {
@@ -40,13 +46,11 @@ function stageTimes(outputs: PrBodyInput["outputs"]): { name: StageName; seconds
 export function renderPrBody(input: PrBodyInput): string {
   const draft = isDraft(input.verdict, input.capHit);
   const reason = draftReason(input.verdict, input.capHit);
-  const lines = [`Verdict: ${input.verdict}${draft ? ` (DRAFT: ${reason})` : ""}`, ""];
-  const stages = stageTimes(input.outputs);
-  if (stages.length > 0) {
-    lines.push("Stage times:", ...stages.map((s) => `- ${s.name}: ${formatDuration(s.seconds)}`), "");
-  }
-  lines.push("NOT PROVEN:", ...(input.notProven.length > 0 ? input.notProven.map((p) => `- ${p}`) : ["- none"]));
-  if (input.receiptPath) lines.push("", `Receipt: ${input.receiptPath}`);
-  if (input.group) lines.push("", ...unitTableLines(input.group));
-  return `${lines.join("\n")}\n`;
+  const task = intakeTask(input.outputs);
+  const stages = stageTimes(input.outputs).map((s) => `- ${s.name}: ${formatDuration(s.seconds)}`);
+  return layoutPrBody({
+    contract: input.contract ?? (task.split("\n").find((l) => l.trim()) ?? ""), verdictLine: `Verdict: ${input.verdict}${draft ? ` (DRAFT: ${reason})` : ""}`,
+    timing: stages, notProven: input.notProven, receipt: input.receiptPath, group: input.group ? unitTableLines(input.group) : [],
+    rows: input.criteria ?? deriveCriteria(input.outputs), legacy: !input.contract && !input.criteria && !task,
+  });
 }
