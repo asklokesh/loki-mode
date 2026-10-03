@@ -1,5 +1,7 @@
 // App shell pieces: empty-state import, start-a-run form, and the Work, Cost and Settings pages.
 import { useEffect, useState } from "react";
+import { Button } from "./design/primitives";
+import { toggleTheme, useTheme } from "./shell/theme";
 import { importRuns, listRepos, listRuns, startRun, type RunRow } from "./api";
 
 const btn = "min-h-11 rounded bg-sky-600 px-4 py-2 text-sm text-white disabled:opacity-50 md:min-h-0 md:px-3 md:py-1";
@@ -114,11 +116,13 @@ export function CostPage() {
   );
 }
 
-export function SettingsPage({ dark, toggle }: { dark: boolean; toggle: () => void }) {
+export function SettingsPage() {
+  const theme = useTheme();
   return (
     <section>
-      <h1 className="mb-4 text-xl font-semibold">Settings</h1>
-      <button type="button" onClick={toggle} className={btn}>{dark ? "Switch to light theme" : "Switch to dark theme"}</button>
+      <h2 className="mb-4 text-xl" style={{ fontFamily: "var(--cp-font-serif)", fontWeight: 400 }}>General</h2>
+      <p className="mb-2 text-sm" style={{ color: "var(--cp-text-2)" }}>Appearance</p>
+      <Button variant="secondary" onClick={toggleTheme}>{theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}</Button>
       <div className="mt-6"><ImportButton /></div>
     </section>
   );

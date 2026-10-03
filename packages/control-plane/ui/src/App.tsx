@@ -1,6 +1,8 @@
-import { Activity, Briefcase, DollarSign, ExternalLink, Settings, Moon, Sun, TriangleAlert } from "lucide-react";
+import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Landing } from "./Live";
+import { Landing, LiveRun } from "./Live";
+import { registerPage } from "./pages/registry";
+import { AppShell } from "./shell/AppShell";
 import { CostPage, EmptyState, SettingsPage, StartRun, WorkPage } from "./Shell";
 import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
@@ -220,35 +222,19 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
   );
 }
 
-function route(hash: string): { source: string; run: string } | null {
-  const m = /^#\/runs\/([^/]+)\/([^/]+)$/.exec(hash);
-  return m ? { source: decodeURIComponent(m[1]!), run: decodeURIComponent(m[2]!) } : null;
-}
+const home = <><StartRun /><RunsList /></>;
 
-const NAV: [string, string, typeof Activity][] = [["#/runs", "Runs", Activity], ["#/work", "Work", Briefcase], ["#/cost", "Cost", DollarSign], ["#/settings", "Settings", Settings]];
+registerPage({ id: "home", path: "/", title: "Home", component: () => <Landing fallback={home} /> });
+registerPage({ id: "overview", path: "/overview", title: "Overview", component: () => <Landing overview fallback={home} /> });
+registerPage({ id: "new-run", path: "/new", title: "New run", component: () => <section><h1 className="mb-4 text-xl font-semibold">New run</h1><StartRun /></section> });
+registerPage({ id: "runs", path: "/runs", title: "Runs", component: () => home });
+registerPage({ id: "run-detail", path: "/runs/:source/:run", title: "Run", component: ({ params }) => <RunDetail source={params.source!} run={params.run!} /> });
+registerPage({ id: "live-run", path: "/live/:source/:run", title: "Live run", component: ({ params }) => <LiveRun source={params.source!} run={params.run!} /> });
+registerPage({ id: "work", path: "/work", title: "Work", component: WorkPage });
+registerPage({ id: "cost", path: "/cost", title: "Cost", component: CostPage });
+registerPage({ id: "settings-general", path: "/settings/general", title: "General", inSettings: true, component: SettingsPage });
 
 export function App() {
-  const [hash, setHash] = useState(globalThis.location?.hash ?? "");
-  const [dark, setDark] = useState(() => { try { return localStorage.getItem("loki-theme") !== "light"; } catch { return true; } });
-  useEffect(() => { const f = () => setHash(location.hash); addEventListener("hashchange", f); return () => removeEventListener("hashchange", f); }, []);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    try { localStorage.setItem("loki-theme", dark ? "dark" : "light"); } catch { /* storage unavailable */ }
-  }, [dark]);
-  const r = route(hash);
-  const page = hash.startsWith("#/work") ? "#/work" : hash.startsWith("#/cost") ? "#/cost" : hash.startsWith("#/settings") ? "#/settings" : "#/runs";
-  return (
-    <div className="flex min-h-screen flex-col bg-white md:flex-row text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <nav data-testid="nav" className="flex w-full shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 p-3 md:block md:w-48 md:border-b-0 md:border-r md:p-4 dark:border-slate-800">
-        <div className="font-semibold md:mb-6">Loki Mode</div>
-        {NAV.map(([h, label, Icon]) => (
-          <a key={h} href={h} aria-current={page === h ? "page" : undefined} className={`flex min-h-11 items-center gap-2 rounded px-3 text-sm md:min-h-0 md:px-2 md:py-1 ${page === h ? "bg-slate-100 dark:bg-slate-900" : "text-slate-500"}`}><Icon size={14} />{label}</a>
-        ))}
-        <button type="button" onClick={() => setDark(!dark)} aria-label="Toggle theme" className="ml-auto flex min-h-11 items-center gap-2 text-sm text-slate-500 md:ml-0 md:mt-6 md:min-h-0">
-          {dark ? <Sun size={14} /> : <Moon size={14} />}{dark ? "Light theme" : "Dark theme"}
-        </button>
-      </nav>
-      <main className="min-w-0 flex-1 overflow-x-auto p-3 md:p-6">{r ? <RunDetail source={r.source} run={r.run} /> : page === "#/work" ? <WorkPage /> : page === "#/cost" ? <CostPage /> : page === "#/settings" ? <SettingsPage dark={dark} toggle={() => setDark(!dark)} /> : hash === "#/runs" ? <><StartRun /><RunsList /></> : <Landing overview={hash === "#/overview"} fallback={<><StartRun /><RunsList /></>} />}</main>
-    </div>
-  );
+  return <AppShell />;
 }
+

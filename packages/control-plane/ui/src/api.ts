@@ -108,5 +108,33 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 /** Import the server's own repo (.loki/runs) through the existing backfill. */
 export const importRuns = (): Promise<{ runs: number; sent: number; failed: string[] }> => postJson("/v1/import", {});
 export const listRepos = (): Promise<{ repos: string[] }> => get("/v1/repos");
+
+/** Subscribe to the runs-list SSE stream (GET /v1/stream). Uses fetch so the bearer header can be sent; reconnects until stop() is called. */
+export function watchRuns(onChange: () => void, retryMs = 3000): () => void {
+  const ctl = new AbortController();
+  const wait = (ms: number) => new Promise<void>((res) => { const t = setTimeout(res, ms); ctl.signal.addEventListener("abort", () => { clearTimeout(t); res(); }, { once: true }); });
+  void (async () => {
+    while (!ctl.signal.aborted) {
+      try {
+        const res = await fetch(`${base()}/v1/stream`, { headers: authHeaders({ accept: "text/event-stream" }), signal: ctl.signal });
+        if (res.ok && res.body) {
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const frames = buf.split("\n\n");
+            buf = frames.pop() ?? "";
+            if (frames.some((f) => /^event: run$/m.test(f))) onChange();
+          }
+        }
+      } catch { /* dropped or aborted: retry below */ }
+      await wait(retryMs);
+    }
+  })();
+  return () => ctl.abort();
+}
 /** Start a run: target is owner/repo#N or a plain task. */
 export const startRun = (target: string, repo: string): Promise<{ ok: true; pid: number; command: string }> => postJson("/v1/start", { target, repo });
