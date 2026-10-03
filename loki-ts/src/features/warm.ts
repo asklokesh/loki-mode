@@ -23,7 +23,7 @@ export function warmSocketPath(): string {
 }
 
 function git(repoDir: string, args: string[]): string | null {
-  const r = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf8" });
+  const r = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf8", env: process.env });
   return r.status === 0 ? r.stdout : null;
 }
 

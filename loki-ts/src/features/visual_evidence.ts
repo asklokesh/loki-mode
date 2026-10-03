@@ -109,7 +109,7 @@ export async function captureVisualEvidence(repoDir: string, lokiRoot: string, c
       const rels: string[] = [];
       for (const route of [...new Set(pages.map(routeFor))]) {
         const rel = join("evidence", "screens", `${screenName(route)}.png`);
-        const r = spawnSync(pw!, ["screenshot", `${base}${route}`, join(lokiRoot, rel)], { cwd: repoDir, timeout: 60_000, stdio: "ignore" });
+        const r = spawnSync(pw!, ["screenshot", `${base}${route}`, join(lokiRoot, rel)], { cwd: repoDir, env: process.env, timeout: 60_000, stdio: "ignore" });
         if (r.status === 0 && existsSync(join(lokiRoot, rel))) rels.push(rel);
       }
       const screens = hashScreens(lokiRoot, rels);
