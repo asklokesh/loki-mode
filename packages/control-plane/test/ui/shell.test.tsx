@@ -34,7 +34,7 @@ beforeEach(() => { location.hash = ""; });
 afterEach(cleanup);
 afterAll(() => { globalThis.fetch = realFetch; location.hash = ""; });
 
-test("grouping: Today, Yesterday, Earlier from local days, newest first, empty groups omitted", () => {
+test("grouping: Today and Earlier from local days, newest first, empty groups omitted", () => {
   const runs = [
     run("old", at(5)),
     run("today-early", at(0, 1)),
@@ -44,10 +44,9 @@ test("grouping: Today, Yesterday, Earlier from local days, newest first, empty g
     run("undated", null),
   ];
   const g = groupRuns(runs, NOW);
-  expect(g.map((x) => x.name)).toEqual(["Today", "Yesterday", "Earlier"]);
+  expect(g.map((x) => x.name)).toEqual(["Today", "Earlier"]);
   expect(g[0]!.runs.map((r) => r.run_id)).toEqual(["today-late", "today-early"]);
-  expect(g[1]!.runs.map((r) => r.run_id)).toEqual(["yesterday-late"]);
-  expect(g[2]!.runs.map((r) => r.run_id)).toEqual(["two-days", "old", "undated"]);
+  expect(g[1]!.runs.map((r) => r.run_id)).toEqual(["yesterday-late", "two-days", "old", "undated"]);
   expect(groupRuns([run("only", at(0))], NOW).map((x) => x.name)).toEqual(["Today"]);
   expect(groupRuns([], NOW)).toEqual([]);
 });
@@ -133,13 +132,12 @@ test("empty state: no runs shows the import-repo state and an empty session list
   expect((await screen.findByTestId("sessions-empty")).textContent).toContain("No sessions yet");
 });
 
-test("New run navigates to the start form; Cmd+K calls the reserved hook only when set", async () => {
+test("home is composer-first and the sidebar has no lone New run button; Cmd+K calls the reserved hook only when set", async () => {
   serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
   render(<AppShell />);
-  fireEvent.click(screen.getByTestId("new-run"));
-  await waitFor(() => expect(location.hash).toBe("#/new"));
-  expect(await screen.findByTestId("composer")).toBeTruthy(); // CPE-08 composer replaces the built-in start form
-  expect(screen.getByTestId("composer-input")).toBeTruthy();
+  expect(screen.queryByTestId("new-run")).toBeNull();
+  expect(await screen.findByTestId("hero")).toBeTruthy();
+  expect(screen.getByText("What should Loki build?")).toBeTruthy();
   const press = () => { const e = new KeyboardEvent("keydown", { key: "k", metaKey: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
   expect(press()).toBe(false);
   let n = 0;

@@ -92,7 +92,7 @@ export function Badge({ tone = "neutral", pulse, children, ...rest }: HTMLAttrib
       data-cp="badge"
       data-tone={tone}
       style={{
-        display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: t("radius-sm"),
+        display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 10px", borderRadius: t("radius-full"),
         fontSize: t("text-xs"), textTransform: "uppercase", letterSpacing: "0.025em", fontWeight: 500,
         background: TONE_BG[tone], color: TONE_FG[tone], ...rest.style,
       }}
@@ -144,7 +144,7 @@ const BTN: Record<ButtonVariant, CSSProperties> = {
   danger: { background: t("error"), color: "#ffffff", border: "1px solid transparent" },
 };
 export function Button({ variant = "primary", size = "md", style, type = "button", ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "sm" | "md" | "lg" }) {
-  const pad = size === "sm" ? "4px 8px" : size === "lg" ? "12px 18px" : "8px 12px";
+  const pad = size === "sm" ? "4px 12px" : size === "lg" ? "12px 24px" : "8px 18px";
   return (
     <button
       {...rest}
@@ -152,7 +152,7 @@ export function Button({ variant = "primary", size = "md", style, type = "button
       data-cp="button"
       data-variant={variant}
       data-size={size}
-      style={{ padding: pad, borderRadius: t("radius-md"), fontSize: size === "sm" ? t("text-base") : t("text-md"), fontWeight: 500, cursor: rest.disabled ? "not-allowed" : "pointer", opacity: rest.disabled ? 0.5 : 1, ...BTN[variant], ...style }}
+      style={{ padding: pad, borderRadius: t("radius-full"), fontSize: size === "sm" ? t("text-base") : t("text-md"), fontWeight: 500, cursor: rest.disabled ? "not-allowed" : "pointer", opacity: rest.disabled ? 0.5 : 1, ...BTN[variant], ...style }}
     />
   );
 }

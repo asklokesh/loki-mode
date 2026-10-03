@@ -4,6 +4,7 @@ import type { RunEvent } from "./stream";
 
 export interface TimelineLine {
   key: string;
+  ts: string | null;
   kind: "run" | "stage" | "pr" | "verdict" | "receipt";
   label: string;
   duration_s: number | null;
@@ -40,9 +41,9 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
   for (const e of events) {
     const d = obj(e.data);
     if (e.type === "run.started") {
-      lines.push({ key: `s${e.seq}`, kind: "run", label: "Run started", duration_s: null, model: str(d.model), cost_usd: null, outcome: "started", detail: str(d.issue_ref) ?? undefined });
+      lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "run", label: "Run started", duration_s: null, model: str(d.model), cost_usd: null, outcome: "started", detail: str(d.issue_ref) ?? undefined });
     } else if (e.type === "stage.started" && e.stage) {
-      const line = { key: `s${e.seq}`, kind: "stage" as const, label: e.stage, duration_s: null, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome: "running", startedMs: ms(e.ts) };
+      const line = { key: `s${e.seq}`, ts: e.ts ?? null, kind: "stage" as const, label: e.stage, duration_s: null, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome: "running", startedMs: ms(e.ts) };
       open.set(e.stage, line);
       lines.push(line);
     } else if ((e.type === "stage.skipped" || e.type === "stage.failed") && e.stage) {
@@ -50,7 +51,7 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
       const why = str(d.reason) ?? (e.type === "stage.skipped" ? "no reason recorded" : null);
       const outcome = e.type === "stage.skipped" ? "skipped" : "failed";
       if (line) Object.assign(line, { outcome, detail: why ?? undefined, cost_usd: costOf(e.stage) });
-      else lines.push({ key: `s${e.seq}`, kind: "stage", label: e.stage, duration_s: null, model: null, cost_usd: costOf(e.stage), outcome, detail: why ?? undefined });
+      else lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "stage", label: e.stage, duration_s: null, model: null, cost_usd: costOf(e.stage), outcome, detail: why ?? undefined });
       open.delete(e.stage);
     } else if (e.type === "stage.completed" && e.stage) {
       const line = open.get(e.stage);
@@ -58,14 +59,14 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
       const reason = str(d.skipped_reason) ?? str(d.reason);
       const outcome = d.skipped === true ? "skipped" : "completed";
       if (line) Object.assign(line, { duration_s: dur, outcome, model: models.get(e.stage) ?? line.model, cost_usd: costOf(e.stage), detail: reason ?? undefined });
-      else lines.push({ key: `s${e.seq}`, kind: "stage", label: e.stage, duration_s: dur, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome, detail: reason ?? undefined });
+      else lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "stage", label: e.stage, duration_s: dur, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome, detail: reason ?? undefined });
       open.delete(e.stage);
     } else if (e.type === "pr.opened") {
-      lines.push({ key: `s${e.seq}`, kind: "pr", label: "Pull request opened", duration_s: null, model: null, cost_usd: null, outcome: d.draft === true ? "draft" : "opened", detail: str(d.url) ?? undefined });
+      lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "pr", label: "Pull request opened", duration_s: null, model: null, cost_usd: null, outcome: d.draft === true ? "draft" : "opened", detail: str(d.url) ?? undefined });
     } else if (e.type === "receipt.sealed") {
-      lines.push({ key: `s${e.seq}`, kind: "receipt", label: "Receipt sealed", duration_s: null, model: null, cost_usd: null, outcome: d.signed === true ? "signed" : "unsigned" });
+      lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "receipt", label: "Receipt sealed", duration_s: null, model: null, cost_usd: null, outcome: d.signed === true ? "signed" : "unsigned" });
     } else if (e.type === "run.completed") {
-      lines.push({ key: `s${e.seq}`, kind: "verdict", label: "Run completed", duration_s: null, model: null, cost_usd: null, outcome: str(d.verdict) ?? "no verdict" });
+      lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "verdict", label: "Run completed", duration_s: null, model: null, cost_usd: null, outcome: str(d.verdict) ?? "no verdict" });
     }
   }
   return lines;
