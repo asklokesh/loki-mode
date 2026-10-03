@@ -111,6 +111,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: a hermetic HOME prelude for every test (extend tests/lib/isolated-git-home.sh), plus a shipper that refuses temp and fixture repos. Cleanup: `loki control prune` (203d38544).
 - Fixture: a lint that fails any test reaching $HOME/.loki without the prelude.
 
+## FC-07b Leaked fixture runs stayed in real Control Plane databases after the leak was closed
+- User saw: e10-t1..t7, e10-dw1..dw6, e37-cline, e37-codex (all acme/widget) in the real CP run list, with no step that removes them.
+- Law: L6 (the run list must show only real runs) and the rule that users never need to run a maintenance command. Same FC-07 class: closing the leak does not clean databases already polluted.
+- Siblings:
+  - `loki control prune` exists but is manual, so every existing install keeps the rows;
+  - local_repos rows whose realpath is under the OS temp dir mark the same fixtures when origin_repo is empty.
+- Mechanism: one startup step in createApp (`cleanupLeakedFixtures`): removes runs with origin acme/widget or a source path under the OS temp dir, audits each removal (action `fixture.cleanup`), and records a once-per-DB marker row (action `fixture.cleanup.done`) so it never repeats.
+- Fixture: test/server/fixture-cleanup.test.ts (first start removes and audits, second start removes nothing, real runs untouched).
+
 ## FC-08 A tampered receipt could render as VERIFIED in the UI
 - User saw: a VERIFIED badge on a run whose log failed integrity.
 - Law: L2 (trust fails closed) and L7.
