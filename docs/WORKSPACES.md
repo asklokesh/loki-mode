@@ -34,4 +34,17 @@ loki workspace status <run-id>
 - Without `path`, a repo is cloned to `~/.loki/repos/owner__name`.
 - After the integration step, a PR comment is posted on each repo PR that exists for its run branch, showing the integration status (PASSED, FAILED, TIMEOUT or NOT CONFIGURED) and every head SHA. It uses your own `gh` login or GH_TOKEN, skips silently when there is no PR, never fails the run, and is disabled with `LOKI_WORKSPACE_COMMENT=0`.
 - Metrics: each run records `timing` (per repo `started_at` and `finished_at`, epoch seconds) in integration.json. `python3 autonomy/lib/workspace_metrics.py <run-dir> --attention-min 30` prints `prs` (repos with outcome ok), `wall_clock_seconds` (earliest start to latest finish), `prs_per_hour` and `prs_per_attention_minute`. Runs recorded before timing existed, and any run where `--attention-min` is not given, print `unmeasured` for the affected rate, never zero.
+- Verify a run: see "Verify a workspace run" below.
 - Backlog (`loki backlog`) and dashboard starts now share the workspace worktree prep: a per-repo lock, a clean start point and copied dependencies. `LOKI_WORKSPACES=0` restores the previous worktree creation (D51-B05, D51-B06).
+
+## Verify a workspace run
+
+After `loki workspace run <name> <ref>` finishes, check the evidence rather than trusting the exit code alone:
+
+1. Exit code: 0 means every repo succeeded and integration did not fail; 3 means only budget stops; 1 is any other failure.
+2. `loki workspace status` prints one row per repo and the integration status for each recorded run.
+3. `.loki/workspaces/<name>/<run-id>/integration.json` holds `status`, the head SHA per repo and `timing`.
+4. `python3 autonomy/lib/workspace_metrics.py <run-dir> --attention-min <minutes>` prints `prs`, `prs_per_hour` and `prs_per_attention_minute`; any value it cannot measure prints `unmeasured`.
+5. Each repo PR for the run branch carries exactly one integration comment.
+
+`tests/workspace/99-e2e.sh` runs this whole check through both `autonomy/loki` and `bin/loki` with a stub launcher and a stub `gh`.
