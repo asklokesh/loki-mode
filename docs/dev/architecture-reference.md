@@ -97,3 +97,7 @@ Default-on in the Bun runner (see `CHANGELOG.md` v7.x entries; documented in `sk
 - `LOKI_HANDOFF_MD` -- write a structured handoff doc before iteration close.
 
 These knobs together implement the RARV-C (closure) loop: findings -> override council -> learnings -> handoff. Reference: `skills/quality-gates.md`, `CHANGELOG.md` entries from v7.x for default-on flip and override-council semantics.
+
+## Worktree substrate (autonomy/lib/worktree_prep.py)
+
+`prepare_worktree(source_repo, dest, branch, setup=None, base=None)` creates an isolated git worktree and returns `{path, base_sha, deps, left_out_changes}`. The start point is `origin/HEAD` after a fetch (when a remote exists), else HEAD. Uncommitted edits in the source checkout are never carried or stashed; their count is reported as `left_out_changes`. An fcntl lock at `~/.loki/repos/<slug>.lock` covers fetch and worktree add. Dependencies: a `setup` command run in the worktree, else a copy-on-write copy of ignored top-level `node_modules`, `.venv`, `venv`, `vendor` (refused as "copy unsafe, declare setup" if it holds absolute symlinks or editable finders), else `none`. CLI: `python3 autonomy/lib/worktree_prep.py SRC DEST BRANCH [--setup CMD] [--base REF]` prints the result as JSON. Not yet wired into backlog or the UI.
