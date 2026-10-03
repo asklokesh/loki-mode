@@ -2036,3 +2036,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Merged since 10:05Z: D62-VIS-F1 (r3, dist 0ab093f25), P2-FV-EXIT (r2), S-216r (r3, opus APPROVE; cwd-shadow 20/0, test-verify 25/0 on main; provider-file leg now measures only files created during the run, 6185c5249).
 - In rework: S-218r r3 e35f56e42 (GIT_CONFIG_COUNT overrides, GIT_NO_LAZY_FETCH) in opus re-review; W1-S1 r4 7ab0e37dd (ast-based python, fail-closed TS/JS) in opus re-review; D61-11 r3 building; 13 refill slices building in wf_9c739ca7-858.
 - Train/94 still held on the P0-CORE-BUDGET TL verdict (over budget, final demand sent 10:24Z); 115 commits unreleased since v10.6.11.
+
+## 2026-10-03T10:57Z CoS
+- Train/94 (4ad0d9426) Tests red in 3 suites, all real and fixed forward in 5ad559ad3: D78 fixture split tripped SC1078 (key now assembled from two vars), stale SEC-SCAN-1 .gitleaksignore entries pushed the baseline to 76 (removed, back to 74), PO-HELP-1 DSSE suffix vs the help-and-log-cap equality pin (prefix plus DSSE-only suffix). secret-scan 6/0, security-scan-coverage 31/0, help-and-log-cap 15/0.
+- Merged: S-218r r5 (opus APPROVE, 0b6604fd9). Train/95 pushed at 1ff144efb 10:56Z, superseding train/94.
+- Waste: re-dispatched PO-AUDIT-CLI-1 and PO-DASH-HONEST-1 from a stale scratch refill list; both were already merged (2a4c9ef0a, ece26c3f5). Duplicate picks reset locally before any push. Refill list retired; dispatch only from BOARD ready rows.
+- In review: SEAL-FORGED-LINES r2 58ee2065b (opus). Building: D61-11 r3. P0-CORE-BUDGET TL r2 still open.
