@@ -5,9 +5,9 @@
 // (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
 // use. An empty token means UNSIGNED, never presented as attested.
 import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { discardIfSatisfied } from "../../e10ext/discard.ts"; import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts"; import { revertUnrelated } from "../../e10ext/scope.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { run } from "../../util/shell.ts"; import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
@@ -206,6 +206,9 @@ export const sealStage: Stage = {
 
     const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...grp.notProven]);
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
+    if (wallNotRun > 0) { // A-103b: wall.ts keeps each sealed copy under runDir/wall; a copy absent from wall.files was discarded (class not_run: no real base result)
+      try { const kept = new Set((Array.isArray(o.wall?.files) ? (o.wall!.files as Obj[]) : []).map((f) => basename(String(f.path)))); for (const n of readdirSync(join(ctx.runDir, "wall")).sort()) if (!kept.has(n)) notProven.add(`wall test discarded: ${n} (not_run)`); } catch { /* no sealed wall dir: count line only */ }
+    }
     if (!diffOk) notProven.add("diff not computed (git diff-tree failed)");
     // E-55: any status other than A means the path existed at base_sha (M, D, or T typechange, e.g. a symlink).
     // D50-F2r3: re-run the classifier on the COMMITTED blob (clean filters run at commit) with verify's counts; any mismatch drops verify's labels, "weakened test" stays.

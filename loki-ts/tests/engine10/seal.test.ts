@@ -320,6 +320,23 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(receiptOf(s).not_proven).toContain("wall base run not_run: 1");
   }, 30000);
 
+  // A-103b: a Wall file discarded for having no real base result (not_run) is listed by path and class, not only counted.
+  test("discarded wall test is listed by path and class in not_proven", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-discarded");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: join(repo, "tests/loki_wall_kept.py"), sha256: "ab".repeat(32) }], base_run: { pass: 1, fail: 0, not_run: 1 } },
+    });
+    mkdirSync(join(ctx.runDir, "wall"), { recursive: true });
+    writeFileSync(join(ctx.runDir, "wall/loki_wall_kept.py"), "# kept\n"); writeFileSync(join(ctx.runDir, "wall/loki_wall_gone.py"), "# gone\n");
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    const np = receiptOf(s).not_proven;
+    expect(np).toContain("wall test discarded: loki_wall_gone.py (not_run)");
+    expect(np).toContain("wall base run not_run: 1");
+    expect(np.some((n: string) => n.includes("loki_wall_kept.py"))).toBe(false);
+  }, 30000);
+
   // E-66 review finding 4: an ALREADY_SATISFIED (no-change) verdict must carry the evidence that
   // justified it in the receipt itself, not just in intake's own stage output -- the receipt is
   // what a reviewer or Seal check actually reads.
