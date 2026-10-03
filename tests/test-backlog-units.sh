@@ -103,6 +103,38 @@ out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/cycle.json" 2>&1)"; rc=
 out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dag.json" --dry-run 2>&1)"; rc=$?
 { [ $rc -eq 0 ] && grep -q "would run unit g1-4 (d) after: b, c" <<<"$out" && [ ! -e "$TMP/events" ]; } && pass "dry run lists units and launches nothing" || fail "dry run" "rc=$rc out=$out"
 
+echo "== hostile and malformed DAGs are refused before anything launches"
+refuse() { # name json expected-substring [extra args]
+    local name="$1" json="$2" want="$3"; shift 3
+    reset_mock
+    printf '%s' "$json" > "$TMP/bad.json"
+    out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/bad.json" "$@" 2>&1)"; rc=$?
+    { [ $rc -eq 2 ] && grep -qF -- "$want" <<<"$out" && [ ! -e "$TMP/events" ]; } && pass "$name" || fail "$name" "rc=$rc out=$out"
+}
+refuse "option-like task text refused (S1)" '{"units":[{"id":"a","items":["--evil"]}]}' "would be read as an option"
+refuse "leading-dot group refused (S2)" '{"units":[{"id":"a","items":["x"]}]}' "group must match" --group .hidden
+refuse "dotdot group refused (S2)" '{"units":[{"id":"a","items":["x"]}]}' "group must match" --group a..b
+refuse "edge naming unknown id refused (S3)" '{"units":[{"id":"a","items":["x"]}],"edges":[{"from":"a","to":"ghost"}]}' "unknown unit id"
+refuse "unknown dep id refused (S3)" '{"units":[{"id":"a","items":["x"],"deps":["ghost"]}]}' "unknown or itself"
+refuse "duplicate ids refused (S4)" '{"units":[{"id":"a","items":["x"]},{"id":"a","items":["y"]}]}' "unique"
+refuse "self dependency refused (S4)" '{"units":[{"id":"a","items":["x"],"deps":["a"]}]}' "unknown or itself"
+refuse "hostile id with newline refused (S4)" '{"units":[{"id":"a\nb","items":["x"]}]}' "is invalid"
+refuse "hostile id with comma refused (S4)" '{"units":[{"id":"a,b","items":["x"]}]}' "is invalid"
+# shellcheck disable=SC2016
+refuse "hostile id with shell metachar refused (S4)" '{"units":[{"id":"$(touch pwned)","items":["x"]}]}' "is invalid"
+refuse "non-object edge refused (S6)" '{"units":[{"id":"a","items":["x"]}],"edges":["a"]}' "edge must be an object"
+big="$(python3 -c 'import json;print(json.dumps({"units":[{"id":"u%d"%i,"items":["x"]} for i in range(501)]}))')"
+refuse "unit count over the cap refused (S6)" "$big" "the limit is"
+long="$(python3 -c 'import json;n=400;print(json.dumps({"units":[{"id":"u%d"%i,"items":["x"],"deps":["u%d"%(i-1)] if i else []} for i in range(n)]}))')"
+reset_mock; printf '%s' "$long" > "$TMP/long.json"
+out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/long.json" --dry-run 2>&1)"; rc=$?
+[ $rc -eq 0 ] && pass "400-deep chain validates without recursion (S6)" || fail "deep chain" "rc=$rc out=${out:0:200}"
+
+echo "== summary header (S5)"
+reset_mock
+out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dag.json" --concurrency 3 2>&1)"
+grep -q '^ITEM ' <<<"$out" && ! grep -q '^ISSUE ' <<<"$out" && pass "summary header says ITEM, not ISSUE" || fail "summary header" "$out"
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

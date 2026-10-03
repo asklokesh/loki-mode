@@ -119,6 +119,11 @@ def parse_result(rc, text):
     return False, "FAILED: " + (reason or "exit %d" % rc), usd
 
 
+MAX_DAG_UNITS = 500
+MAX_DAG_EDGES = 5000
+UNIT_ID_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.:/-]{0,127}$")
+
+
 def load_dag(path, group):
     """-> (group, units) where units = [{n, id, task, deps(list of ids), write_set}] or raises ValueError."""
     try:
@@ -130,22 +135,33 @@ def load_dag(path, group):
     if not isinstance(raw, list) or not raw:
         raise ValueError("DAG has no units")
     group = group or str(dag.get("group") or "g1")
-    if not re.match(r"^[A-Za-z0-9_.-]+$", group):
-        raise ValueError("group must match [A-Za-z0-9_.-]+, got %r" % group)
+    if not re.match(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$", group) or ".." in group:
+        raise ValueError("group must match [A-Za-z0-9_][A-Za-z0-9_.-]* with no '..', got %r" % group)
+    if len(raw) > MAX_DAG_UNITS:
+        raise ValueError("DAG has %d units, the limit is %d" % (len(raw), MAX_DAG_UNITS))
     ids = []
     for u in raw:
         uid = str(u.get("id", "")) if isinstance(u, dict) else ""
         if not uid or uid in ids:
             raise ValueError("DAG unit ids must be present and unique (got %r)" % uid)
+        if not UNIT_ID_RE.match(uid):
+            raise ValueError("DAG unit id %r is invalid (allowed: %s)" % (uid, UNIT_ID_RE.pattern))
         ids.append(uid)
     deps = {i: [] for i in ids}
     for u in raw:
         for d in u.get("deps") or []:
             deps[str(u["id"])].append(str(d))
-    for e in (dag.get("edges") or []):
-        if str(e.get("from")) in deps and str(e.get("to")) in deps:
-            if str(e["from"]) not in deps[str(e["to"])]:
-                deps[str(e["to"])].append(str(e["from"]))
+    edges = dag.get("edges") or []
+    if not isinstance(edges, list) or len(edges) > MAX_DAG_EDGES:
+        raise ValueError("DAG edges must be a list of at most %d entries" % MAX_DAG_EDGES)
+    for e in edges:
+        if not isinstance(e, dict):
+            raise ValueError("DAG edge must be an object, got %r" % (e,))
+        src, dst = str(e.get("from")), str(e.get("to"))
+        if src not in deps or dst not in deps:
+            raise ValueError("DAG edge %s -> %s names an unknown unit id" % (src, dst))
+        if src not in deps[dst]:
+            deps[dst].append(src)
     for i, ds in deps.items():
         for d in ds:
             if d not in deps or d == i:
@@ -161,8 +177,11 @@ def load_dag(path, group):
     for n, u in enumerate(raw, 1):
         uid = str(u["id"])
         items = u.get("items") or []
+        task = "\n".join(str(x) for x in items) or str(u.get("task") or uid)
+        if task.lstrip().startswith("-"):
+            raise ValueError("unit %s task text starts with '-' and would be read as an option" % uid)
         units.append({"n": n, "id": uid, "deps": deps[uid], "write_set": list(u.get("writeSet") or []),
-                      "task": "\n".join(str(x) for x in items) or str(u.get("task") or uid)})
+                      "task": task})
     return group, units
 
 
@@ -365,9 +384,9 @@ def main(argv):
     # ---- summary -----------------------------------------------------------
     say("")
     say("Summary: %s" % a.repo)
-    say("%-8s %-8s %s" % ("ISSUE", "COST", "RESULT"))
+    say("%-14s %-10s %s" % ("ITEM", "COST", "RESULT"))
     for n, s in state.items():
-        say("%-8s %-8s %s" % (spec[n]["label"], ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"), s["status"]))
+        say("%-14s %-10s %s" % (spec[n]["label"], ("$%.2f" % s["cost"] if s["cost"] is not None else "unmeasured" if s["ran"] else "-"), s["status"]))
     measured = sum(s["cost"] or 0 for s in state.values())
     say("Total measured cost: $%.2f%s" % (measured, " (%d run(s) unmeasured, not counted as $0)" % unmeasured if unmeasured else ""))
     bad = [s for s in state.values() if not s["ok"]]
