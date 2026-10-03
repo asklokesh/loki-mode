@@ -1914,12 +1914,14 @@ if not isinstance(pid, int) or isinstance(pid, bool) or not isinstance(url, str)
 u = urllib.parse.urlparse(url)
 if u.scheme != "http" or u.hostname not in ("127.0.0.1", "localhost", "::1"):
     sys.exit(1)
+if u.path not in ("", "/") or u.query or u.fragment or u.params or "@" in u.netloc or "?" in url or "#" in url:
+    sys.exit(1)
 print(pid, url.rstrip("/"))
 PY
 ) || return 1
     pid="${fields%% *}"; url="${fields#* }"
     kill -0 "$pid" 2>/dev/null || return 1
-    health=$(curl -s --max-time 2 "${url}/health" 2>/dev/null) || return 1
+    health=$(curl -g -s --max-time 2 "${url}/health" 2>/dev/null) || return 1
     case "$health" in *'"service"'*'"loki-control"'*) ;; *) return 1 ;; esac
     printf '%s\n' "$url"
 }

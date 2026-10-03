@@ -14,7 +14,7 @@ bad() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/loki-uibare.XXXXXXXX")"
 sleep 60 & SLEEP_PID=$!
-cleanup() { kill "$SLEEP_PID" 2>/dev/null; [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null; [ -n "${CP_PID:-}" ] && kill "$CP_PID" 2>/dev/null; [ -n "$T" ] && [ -d "$T" ] && rm -rf -- "$T"; }
+cleanup() { kill "$SLEEP_PID" 2>/dev/null; [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null; [ -n "${CP_PID:-}" ] && kill "$CP_PID" 2>/dev/null; [ -n "${CP6_PID:-}" ] && kill "$CP6_PID" 2>/dev/null; [ -n "$T" ] && [ -d "$T" ] && rm -rf -- "$T"; }
 trap cleanup EXIT
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -100,6 +100,44 @@ out=$(cprun LOKI_CONTROL_DEFAULT=0 LOKI_HEADLESS=1 bash "$LOKI_BIN")
 printf '{"pid":%s,"port":1,"url":"http://example.com:1","version":"x"}\n' "$SLEEP_PID" > "$INST"
 out=$(cprun LOKI_NO_BROWSER=1 PATH="$T/bin:/usr/bin:/bin" bash "$LOKI_BIN")
 [ "$out" = "$URL" ] && ok "non-loopback instance url is never trusted" || bad "non-loopback instance output: '$out'"
+# TL should-fix: only a bare origin is trusted (empty path or "/"), never a
+# path, query, fragment or userinfo.
+for bad_url in "http://127.0.0.1:${CP_PORT}/x?\$(id)" "http://127.0.0.1:${CP_PORT}/x" "http://127.0.0.1:${CP_PORT}/?q=1" "http://127.0.0.1:${CP_PORT}/#f" "http://u:p@127.0.0.1:${CP_PORT}"; do
+    printf '{"pid":%s,"port":%s,"url":"%s","version":"x"}\n' "$SLEEP_PID" "$CP_PORT" "$bad_url" > "$INST"
+    out=$(cprun LOKI_NO_BROWSER=1 PATH="$T/bin:/usr/bin:/bin" bash "$LOKI_BIN")
+    [ "$out" = "$URL" ] && ok "instance url with path/query/fragment/userinfo rejected: $bad_url" || bad "accepted '$bad_url': '$out'"
+done
+printf '{"pid":%s,"port":%s,"url":"%s/","version":"x"}\n' "$SLEEP_PID" "$CP_PORT" "$CP_URL" > "$INST"
+out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN")
+[ "$out" = "$CP_URL" ] && ok "bare origin with trailing slash accepted" || bad "trailing slash output: '$out'"
+
+# [::1] leg: bind a stub on ::1 when the host supports it.
+cat > "$T/cp6.py" <<'PY'
+import http.server, socket, sys
+class S(http.server.HTTPServer):
+    address_family = socket.AF_INET6
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'{"service":"loki-control","status":"ok"}'
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+srv = S(("::1", 0), H)
+open(sys.argv[1], "w").write(str(srv.server_address[1]))
+srv.serve_forever()
+PY
+python3 "$T/cp6.py" "$T/cp6.port" 2>/dev/null & CP6_PID=$!
+for _ in $(seq 1 30); do [ -s "$T/cp6.port" ] && break; kill -0 "$CP6_PID" 2>/dev/null || break; sleep 0.1; done
+CP6_PORT="$(cat "$T/cp6.port" 2>/dev/null)"
+if [ -n "$CP6_PORT" ]; then
+    CP6_URL="http://[::1]:${CP6_PORT}"
+    printf '{"pid":%s,"port":%s,"url":"%s","version":"x"}\n' "$SLEEP_PID" "$CP6_PORT" "$CP6_URL" > "$INST"
+    out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN")
+    [ "$out" = "$CP6_URL" ] && ok "[::1] Control Plane URL accepted and health-checked" || bad "[::1] output: '$out'"
+    kill "$CP6_PID" 2>/dev/null
+else
+    echo "  SKIP: ::1 not bindable on this host"
+fi
 bound=0
 for p in "$STUB_PID" "$CP_PID" "$SLEEP_PID"; do
     if lsof -nP -a -p "$p" -iTCP -sTCP:LISTEN 2>/dev/null | grep -Eq ':573(7[4-9]|8[0-9]|9[0-9])[^0-9]'; then bound=1; fi
