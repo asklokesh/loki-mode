@@ -1,0 +1,82 @@
+src/cockpit/svg.ts	jest
+src/commands/doctor.ts	package.json
+src/e10ext/assert_delta.ts	pytest
+src/e10ext/select.ts	pytest
+src/e10ext/wall_hints.ts	jest
+src/e10ext/wall_hints.ts	pytest
+src/e10ext/wall_hints.ts	vitest
+src/engine10/failures.ts	jest
+src/engine10/failures.ts	pytest
+src/engine10/failures.ts	vitest
+src/engine10/modernize/inventory.ts	build.gradle
+src/engine10/modernize/inventory.ts	pom.xml
+src/engine10/modernize/inventory.ts	pyproject.toml
+src/engine10/modernize/inventory.ts	setup.py
+src/engine10/modernize/presealed_wall.ts	jest
+src/engine10/modernize/presealed_wall.ts	pytest
+src/engine10/modernize/presealed_wall.ts	vitest
+src/engine10/modernize/targets/java21.ts	build.gradle
+src/engine10/modernize/targets/java21.ts	pom.xml
+src/engine10/modernize/targets/python3.ts	pytest
+src/engine10/output.ts	pytest
+src/engine10/output.ts	vitest
+src/engine10/stages/deep.ts	jest
+src/engine10/stages/deep.ts	pytest
+src/engine10/stages/deep.ts	vitest
+src/engine10/stages/verify.ts	jest
+src/engine10/stages/verify.ts	package.json
+src/engine10/stages/verify.ts	pyproject.toml
+src/engine10/stages/verify.ts	pytest
+src/engine10/stages/verify.ts	vitest
+src/engine10/stages/wall.ts	jest
+src/engine10/stages/wall.ts	pytest
+src/engine10/stages/wall.ts	vitest
+src/engine10/testmap.ts	Cargo.toml
+src/engine10/testmap.ts	cargo test
+src/engine10/testmap.ts	go test
+src/engine10/testmap.ts	go.mod
+src/engine10/testmap.ts	jest
+src/engine10/testmap.ts	npm test
+src/engine10/testmap.ts	package.json
+src/engine10/testmap.ts	pyproject.toml
+src/engine10/testmap.ts	pytest
+src/engine10/testmap.ts	vitest
+src/engine10/types.ts	jest
+src/engine10/types.ts	pytest
+src/engine10/types.ts	vitest
+src/features/visual_evidence.ts	package.json
+src/features/wall_manifest.ts	Cargo.toml
+src/features/wall_manifest.ts	cargo test
+src/features/wall_manifest.ts	go test
+src/features/wall_manifest.ts	go.mod
+src/features/wall_manifest.ts	jest
+src/features/wall_manifest.ts	package.json
+src/features/wall_manifest.ts	pytest
+src/features/wall_manifest.ts	vitest
+src/features/wall_manifest_wire.ts	jest
+src/features/wall_manifest_wire.ts	pytest
+src/features/wall_manifest_wire.ts	vitest
+src/runner/build_prompt.ts	Cargo.toml
+src/runner/build_prompt.ts	build.gradle
+src/runner/build_prompt.ts	composer.json
+src/runner/build_prompt.ts	go.mod
+src/runner/build_prompt.ts	package.json
+src/runner/build_prompt.ts	pom.xml
+src/runner/build_prompt.ts	pyproject.toml
+src/runner/build_prompt.ts	requirements.txt
+src/runner/council.ts	jest
+src/runner/council.ts	pytest
+src/runner/quality_gates.ts	jest
+src/runner/quality_gates.ts	npm test
+src/runner/quality_gates.ts	package.json
+src/runner/quality_gates.ts	pytest
+src/runner/quality_gates.ts	vitest
+src/runner/repo_profile.ts	Cargo.toml
+src/runner/repo_profile.ts	go.mod
+src/runner/repo_profile.ts	package.json
+src/runner/repo_profile.ts	pyproject.toml
+src/runner/repo_profile.ts	requirements.txt
+src/runner/trim.ts	npm test
+src/runner/trim.ts	package.json
+src/runner/trim.ts	pytest
+src/util/update_check.ts	package.json
