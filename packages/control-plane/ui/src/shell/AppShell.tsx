@@ -1,6 +1,6 @@
 // Lean shell (CPE-02): left sidebar (brand, New run, grouped sessions, Settings) plus one router outlet.
 // Everything visual is a --cp-* token or a CPE-01 primitive. Pages come from pages/registry.ts.
-import { Menu, Plus, Settings as Cog } from "lucide-react";
+import { Menu, Moon, Plus, Settings as Cog, Sun } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { listRuns, watchRuns, type RunRow } from "../api";
 import { Button, Drawer, EmptyState, GroupHead, NavItem, Spinner, StatusDot, VerdictBadge, VERDICT, effectiveVerdict, type DotState } from "../design/primitives";
@@ -8,7 +8,7 @@ import { matchPage, pathOf, registryVersion, settingsPages, subscribeRegistry, t
 import { groupRuns } from "./grouping";
 import { openCommandPalette } from "./hooks";
 import { Mascot } from "./Mascot";
-import { applyTheme } from "./theme";
+import { applyTheme, toggleTheme, useTheme } from "./theme";
 
 const t = (n: string) => `var(--cp-${n})`;
 
@@ -74,6 +74,19 @@ export function SessionList({ runs, error, now, activeHash, onNavigate }: { runs
   );
 }
 
+/** Light/dark toggle; the choice is persisted (theme.ts). Until chosen, the theme follows the system. */
+function ThemeToggle() {
+  const theme = useTheme();
+  const next = theme === "dark" ? "light" : "dark";
+  return (
+    <button type="button" data-testid="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${next} theme`}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 12px", marginTop: 2, border: 0, borderRadius: t("radius-nav"), background: "transparent", color: t("text-2"), cursor: "pointer", fontSize: t("text-md"), fontFamily: "inherit" }}>
+      {theme === "dark" ? <Sun size={14} aria-hidden="true" /> : <Moon size={14} aria-hidden="true" />}
+      {theme === "dark" ? "Light theme" : "Dark theme"}
+    </button>
+  );
+}
+
 function SidebarBody({ hash, onNavigate }: { hash: string; onNavigate?: () => void }) {
   const { runs, error } = useSessions();
   const path = pathOf(hash);
@@ -91,6 +104,7 @@ function SidebarBody({ hash, onNavigate }: { hash: string; onNavigate?: () => vo
       </div>
       <div style={{ padding: 8, borderTop: `1px solid ${t("border")}` }}>
         <NavItem href="#/settings" active={path.startsWith("/settings")} icon={<Cog size={14} aria-hidden="true" />} onClick={onNavigate}>Settings</NavItem>
+        <ThemeToggle />
       </div>
     </>
   );

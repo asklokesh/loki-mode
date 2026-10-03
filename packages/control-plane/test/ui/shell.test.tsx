@@ -117,7 +117,7 @@ test("Settings entry lists inSettings pages and opens the chosen one", async () 
     expect(within(sn).getByText("General")).toBeTruthy();
     expect(within(sn).getByText("Keys")).toBeTruthy();
     expect(within(sn).queryByText("Hidden")).toBeNull();
-    expect(screen.getByText("Switch to light theme")).toBeTruthy(); // first settings page (General) shows by default
+    expect(screen.getByText(/Switch to (light|dark) theme/)).toBeTruthy(); // first settings page (General) shows by default
     location.hash = "#/settings/keys";
     expect((await screen.findByTestId("keys-page")).textContent).toBe("keys body");
   } finally { unregisterPage("t-keys"); unregisterPage("t-hidden"); }
