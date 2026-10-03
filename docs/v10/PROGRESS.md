@@ -1948,3 +1948,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Core engine10 at 5001 after D61-13 (budget.test needs < 5000): P0-CORE-BUDGET dispatched. Train 86 waits on it and on P0-CONTROL-LINUX.
 - D61-04 r3 BLOCK (live-tree read), r4 fix 9d2bbf4b9 in opus review. D61-12 r7 BLOCK, r8 fix 35a7b0c32 in opus review (final round, else drop). P0-VERIFY-ARG r2 BLOCK (core budget, unguarded unknown-option check, autonomy/loki routes --pubkey= to legacy), r3 fix running. D61-11 r3 fix running.
 - Deferred cleanup adds: scratchpad rev-d61-04-r3, rev-d61-12-r7, rev-d61-13-r3; 13 pre-existing loki-run.git-home-* dirs in TMPDIR (record exact list at end-of-window pass).
+
+## 2026-10-03T04:57Z CoS tick
+- D73 logged: D61-12 integrator dropped from this window (r8 reproduced C1-C4, S3, E6); D61 ships without it, flag-gated, named in handoff. BOARD a1f83c7a9.
+- Merged to local main: D51-B11 (933ecc9fc, test-workspace 14/0), D51-B05/B06 (c1095889f, backlog 49/0, api_start_prep 2 passed). D51-B02/03/04/07/08/09/10/12 parked as already delivered (99aaa6d2b).
+- P0-CONTROL-LINUX opus APPROVE: root cause reproduced in oven/bun:1.3.13 (repo-root node_modules disables bun auto-install, hono missing); npm tarball uses bundled dist/server.js so no runtime fetch. Cherry-picked 2d6e4a77d, dist 377871c88, dist guard 13/0.
+- Train 86 now waits only on P0-CORE-BUDGET TL verdict. In flight: P0-VERIFY-ARG r3 opus, D61-04 r5 fix, D61-11 test fix, P1-DISCARD-PROTO build (HIGH), D50-F4b build.
+- Deferred cleanup adds: scratchpad rev-d61-04-r4, rev-d61-12-r8.
