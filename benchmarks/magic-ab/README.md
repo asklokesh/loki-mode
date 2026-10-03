@@ -6,8 +6,8 @@ versus running with the gate disabled, on the same PRD.
 ## What it does
 
 For a single PRD, runs `loki start` twice:
-1. **A: gate ON** — `LOKI_GATE_MAGIC_DEBATE=true` (the default)
-2. **B: gate OFF** — `LOKI_GATE_MAGIC_DEBATE=false`
+1. **A: gate ON** - `LOKI_GATE_MAGIC_DEBATE=true` (the default)
+2. **B: gate OFF** - `LOKI_GATE_MAGIC_DEBATE=false`
 
 Captures from each run:
 - Iteration count

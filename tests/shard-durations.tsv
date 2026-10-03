@@ -743,3 +743,4 @@ loki start repo directory routes as repository target (PO4)	1
 loki wiki command (build, ask, grounded citation)	1
 issue-to-PR flow (--prepare-pr, issue-mode)	2
 dogfood-stats honest labeling and flags (PO5)	2
+Whole-tree no dash or emoji codepoint guard (PO5-DASH-BENCH)	5

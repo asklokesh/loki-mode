@@ -1665,6 +1665,7 @@ run_test "verify readers ignore a planted json.py in the reviewed tree (-I -S, S
 run_test "start page workspace runs card (node --test, D51-B14r)" "command -v node >/dev/null 2>&1 || { echo 'node not installed: the suite did not run (unmeasured, not clean)'; exit 1; }; timeout -k 10 120 node --test $SCRIPT_DIR/../dashboard-ui/tests/start-workspace-card.node.test.mjs"
 run_test "Untracked status ignores core.fsmonitor (S-218r)" "timeout -k 10 120 bash $SCRIPT_DIR/test-untracked-status-fsmonitor.sh"
 run_test "loki hub install (manifest fetch and verify)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-hub-install.sh"
+run_test "Whole-tree no dash or emoji codepoint guard (PO5-DASH-BENCH)" "timeout -k 10 120 bash $SCRIPT_DIR/test-no-dashes-tree.sh"
 run_test "loki start repo directory routes as repository target (PO4)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-start-repo-directory.sh"
 run_test "loki wiki command (build, ask, grounded citation)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-wiki-command.sh"
 run_test "issue-to-PR flow (--prepare-pr, issue-mode)" "timeout -k 10 120 bash $SCRIPT_DIR/cli/test-issue-to-pr.sh"
