@@ -28,7 +28,11 @@ export function answerEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export interface BlockedRun { runId: string; task: string; question: string }
 
 /** Reads a run's task and question; returns the reason it cannot be resumed otherwise. */
+const MAX_ANSWER = 4000; // matches the control-plane write cap
+const validId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && !id.includes("..");
+
 export function readBlocked(repoDir: string, runId: string): BlockedRun | string {
+  if (!validId(runId)) return "invalid run id (letters, digits, . _ - only)";
   const p = eventsPath(repoDir, runId);
   if (!existsSync(p)) return `run ${runId} not found`;
   const evs = readEvents(p);
@@ -48,10 +52,10 @@ export function newestBlocked(repoDir: string): string | null {
 
 /** First <answerDir>/<source>/<run>.answer.txt found, or null. */
 export function readAnswerFile(answerDir: string, runId: string): string | null {
-  if (!existsSync(answerDir)) return null;
+  if (!validId(runId) || !existsSync(answerDir)) return null;
   for (const src of readdirSync(answerDir)) {
     const p = join(answerDir, src, `${runId}.answer.txt`);
-    if (existsSync(p)) return readFileSync(p, "utf8").trim() || null;
+    if (existsSync(p)) return readFileSync(p, "utf8").slice(0, MAX_ANSWER).trim() || null;
   }
   return null;
 }

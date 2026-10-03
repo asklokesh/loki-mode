@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { answerEnv, runAnswer, type AnswerDeps } from "../../src/features/blocked_answer.ts";
+import { answerEnv, readAnswerFile, readBlocked, runAnswer, type AnswerDeps } from "../../src/features/blocked_answer.ts";
 
 const FIX = join(import.meta.dir, "../../../packages/control-plane/test/fixtures/runs");
 const root = mkdtempSync(join(tmpdir(), "loki-ans-"));
@@ -65,6 +65,29 @@ describe("loki answer", () => {
     expect(t.err.join("\n")).toContain("--text");
     expect(await runAnswer(["e10-nope", "--text", "x"], t.d)).toBe(2);
     expect(t.calls.length).toBe(0);
+  });
+  test("traversal run ids are rejected with exit 2", async () => {
+    const repo = repoWith("blocked");
+    mkdirSync(join(repo, ".loki", "evil"), { recursive: true });
+    cpSync(join(FIX, "blocked", "events.jsonl"), join(repo, ".loki", "evil", "events.jsonl"));
+    const t = deps(repo, join(root, "none"));
+    for (const id of ["../evil", "a/b", "..", "x..y"]) expect(await runAnswer([id, "--text", "x"], t.d)).toBe(2);
+    expect(readBlocked(repo, "../evil")).toContain("invalid run id");
+    expect(t.err.join("\n")).toContain("invalid run id");
+    expect(t.calls.length).toBe(0);
+    const ad = join(root, "ans2");
+    mkdirSync(join(ad, "s"), { recursive: true });
+    writeFileSync(join(ad, "s", "..x.answer.txt"), "leak");
+    expect(readAnswerFile(ad, "../s/..x")).toBeNull();
+  });
+  test("answer file is capped at 4000 characters", async () => {
+    const ad = join(root, "answers-big");
+    mkdirSync(join(ad, "s"), { recursive: true });
+    writeFileSync(join(ad, "s", `${BLOCKED}.answer.txt`), "a".repeat(9000));
+    expect(readAnswerFile(ad, BLOCKED)!.length).toBe(4000);
+    const t = deps(repoWith("blocked"), ad);
+    await runAnswer([], t.d);
+    expect(t.calls[0]!.argv[1]!.length).toBeLessThan(4600);
   });
   test("default run is the newest BLOCKED one even when a later run is verified", async () => {
     const t = deps(repoWith("blocked", "verified"), join(root, "none"));
