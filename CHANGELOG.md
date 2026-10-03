@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Control Plane live streams (CPE-05): `GET /v1/runs/:source/:run/stream` and `GET /v1/stream` are Server-Sent Events fed from the store (so events shipped by the watcher appear within a second), with a 15s heartbeat, `Last-Event-ID` resume, a cap of 32 concurrent streams (429 beyond it), slots freed on disconnect, and the existing bearer token guard.
 - Control Plane server scaffold (CPE-03): a route registry with a stub per planned route file, new `local_repos` and `actions` tables with a migration, an audit helper, and local discovery that fills `local_repos` (never `/v1/ingest`). `GET /v1/repos` now returns project display names only (no home paths) behind the same loopback guard, and `/v1/start` accepts a unique display name as well as a known path.
 - Control Plane design system (CPE-01, D83): `packages/control-plane/ui/src/design/` ships the light and dark `--cp-*` tokens extracted from the legacy dashboard (light-grey ground, Fraunces/Inter/JetBrains Mono, Tailwind preset) and 19 primitives (Card, KpiTile, Badge, Pill, StatusDot, Button, Input, Chip, Table, NavItem, GroupHead, Timeline, Message, EmptyState, Spinner, Toast, Dialog, Drawer, Kbd). Text uses AA-safe `-ink` and `text-subtle` companions where the legacy light status and muted hex fall below 4.5:1.
 
