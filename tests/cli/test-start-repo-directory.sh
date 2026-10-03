@@ -3,8 +3,14 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOKI="$ROOT/autonomy/loki"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/loki-start-repo.XXXXXX")"
-trap 'rm -rf "$TMP"' EXIT
+# shellcheck source=../../eval/loki10/lib-tmp.sh
+. "$ROOT/eval/loki10/lib-tmp.sh"
+export LOKI_NO_BROWSER=1
+loki_run_tmp_create || exit 1
+trap 'loki_run_tmp_cleanup' EXIT
+# loki_run_tmp_create resolves the temp root physically (pwd -P). cmd_start
+# reports a physical $PWD, so a logical /var path would never equal cwd on macOS.
+TMP="$LOKI_RUN_TMP"
 TARGET="$TMP/repo with spaces ; touch INJECTED"
 mkdir -p "$TARGET"
 printf '{"name":"fixture"}\n' > "$TARGET/package.json"
@@ -42,9 +48,20 @@ _loki_new_session_exec() {
 cmd_start "$2" --provider claude --yes --no-plan
 HARNESS
 LOKI_CAPTURE="$TMP/capture" bash "$TMP/harness.sh" "$TMP/loki-source.sh" "$TARGET" >/dev/null 2>&1
-if ! grep -Fq "cwd=$TARGET" "$TMP/capture" \
-   || ! grep -Fq "arg=$TARGET/.loki/repo-prd-" "$TMP/capture" \
-   || ! ls "$TARGET"/.loki/repo-prd-*.md >/dev/null 2>&1; then
+dispatch_ok=1
+if ! grep -Fq "cwd=$TARGET" "$TMP/capture" 2>/dev/null; then
+  echo "FAIL: dispatch cwd mismatch: want cwd=$TARGET, got: $(grep '^cwd=' "$TMP/capture" 2>/dev/null)"
+  dispatch_ok=0
+fi
+if ! grep -Fq "arg=$TARGET/.loki/repo-prd-" "$TMP/capture" 2>/dev/null; then
+  echo "FAIL: dispatch arg line missing arg=$TARGET/.loki/repo-prd-*, got: $(grep '^arg=' "$TMP/capture" 2>/dev/null | tr '\n' ' ')"
+  dispatch_ok=0
+fi
+if ! ls "$TARGET"/.loki/repo-prd-*.md >/dev/null 2>&1; then
+  echo "FAIL: generated repo PRD file missing under $TARGET/.loki/"
+  dispatch_ok=0
+fi
+if [ "$dispatch_ok" -eq 0 ]; then
   echo "FAIL: stubbed dispatch did not enter target and generate repo input"
   fail=1
 fi
