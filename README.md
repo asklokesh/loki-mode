@@ -169,9 +169,9 @@ loki linear:ENG-42     # or a linear.app issue URL
 - A missing variable stops the run before any work with an error naming it (exit code 2, like other intake errors). GitHub refs are unchanged.
 - Self-hosted Jira: `<JIRA_BASE_URL>/browse/KEY` is accepted when its origin matches `JIRA_BASE_URL`. `LOKI_TRACKER_INTAKE=0` turns tracker intake off. Intake only, no sync. Details: [docs/trackers.md](docs/trackers.md).
 
-## Two-way Slack (preview)
+## Two-way Slack
 
-With `LOKI_SLACK_INBOUND=1`, `loki slack serve --port N` (127.0.0.1 by default) lets you mention `@loki <issue ref or task>` in Slack to start a run, and answer a BLOCKED question in the same thread. Needs `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in the environment. See [docs/slack.md](docs/slack.md) for the scopes.
+Two-way Slack is on by default. With `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in the environment, `loki slack serve --port N` (127.0.0.1 by default) lets you mention `@loki <issue ref or task>` in a Slack thread to start a run, and a BLOCKED question is answered in the same thread. With either variable missing it prints one line naming both and exits 2 without binding a port. Set `LOKI_SLACK_INBOUND=0` to disable it. See [docs/slack.md](docs/slack.md) for the scopes.
 
 ## Spec to contract
 

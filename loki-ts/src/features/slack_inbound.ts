@@ -1,4 +1,4 @@
-// D65-SLACK: two-way Slack for the v10 engine, behind LOKI_SLACK_INBOUND=1 (off by default).
+// D65-SLACK / D63-C6: two-way Slack for the v10 engine, on by default (LOKI_SLACK_INBOUND=0 disables).
 // An app_mention starts a run and replies with the run id in the thread; a BLOCKED run posts its question
 // in the same thread, and a thread reply starts a follow-up run carrying the answer (engine10 has no in-place
 // resume: BLOCKED is terminal, "--resume was removed", so the answer rides along as task context).
@@ -6,13 +6,14 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { readEvents } from "../engine10/events.ts";
 
 export const MAX_SKEW_S = 300;
 
 export function slackInboundEnabled(env: NodeJS.ProcessEnv): boolean {
-  return /^(1|true|yes|on)$/i.test(env.LOKI_SLACK_INBOUND ?? "");
+  return !/^(0|false|no|off)$/i.test((env.LOKI_SLACK_INBOUND ?? "").trim());
 }
 
 export function signSlackBody(secret: string, timestamp: string, body: string): string {
@@ -93,18 +94,32 @@ function blockedQuestion(repoDir: string, runId: string): string | undefined {
   } catch { return undefined; }
 }
 
-/** Default run launcher: spawns the same entry `loki "<task>"` uses and discovers the run dir it creates. */
-export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: string = resolve(process.argv[1] ?? "loki")): Pick<InboundDeps, "startRun"> {
+export const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+export const SLACK_SECRET_VARS = ["SLACK_BOT_TOKEN", "SLACK_SIGNING_SECRET"] as const;
+
+/** Child env for a spawned run: both Slack secrets stripped, browser opening disabled. */
+export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = { ...env, LOKI_NO_BROWSER: "1" };
+  for (const k of SLACK_SECRET_VARS) delete out[k];
+  return out;
+}
+
+type SpawnFn = (cmd: string, args: string[], opts: { cwd: string; env: NodeJS.ProcessEnv; stdio: "ignore" }) => ReturnType<typeof spawn>;
+
+/** Default run launcher: spawns REPO_ROOT/bin/loki "<task>" (never argv[1]) and discovers the run dir it creates. */
+export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: string = join(REPO_ROOT, "bin", "loki"), spawnFn: SpawnFn = spawn as SpawnFn): Pick<InboundDeps, "startRun"> {
   const runsDir = join(repoDir, ".loki", "runs");
   const list = (): string[] => (existsSync(runsDir) ? readdirSync(runsDir) : []);
   return {
     async startRun(task) {
       const before = new Set(list());
-      const child = spawn(process.execPath, [cliPath, task], { cwd: repoDir, env, stdio: "ignore" });
-      const done = new Promise<number>((res) => { child.on("exit", (c) => res(c ?? 1)); child.on("error", () => res(1)); });
+      const child = spawnFn(cliPath, [task], { cwd: repoDir, env: childEnv(env), stdio: "ignore" });
+      let exited = false;
+      const done = new Promise<number>((res) => { child.on("exit", (c) => { exited = true; res(c ?? 1); }); child.on("error", () => { exited = true; res(1); }); });
       let runId = "";
       for (let i = 0; i < 100 && !runId; i++) {
         runId = list().find((d) => !before.has(d) && d.startsWith("e10-")) ?? "";
+        if (!runId && exited) break;
         if (!runId) await new Promise((r) => setTimeout(r, 100));
       }
       if (!runId) runId = `pid-${child.pid}`;
@@ -113,40 +128,48 @@ export function spawnRunDeps(repoDir: string, env: NodeJS.ProcessEnv, cliPath: s
   };
 }
 
-export function slackPoster(token: string): InboundDeps["post"] {
+export function slackPoster(token: string, fetchFn: typeof fetch = fetch, log: (line: string) => void = (l) => { process.stderr.write(l + "\n"); }): InboundDeps["post"] {
+  const fail = (why: string): void => log(`slack: post failed (${why.split(token).join("[redacted]").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 120)})`);
   return async (channel, threadTs, text) => {
     try {
-      await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { "content-type": "application/json; charset=utf-8", authorization: `Bearer ${token}` }, body: JSON.stringify({ channel, thread_ts: threadTs, text }) });
-    } catch { /* never throw into the handler; the token is never printed */ }
+      const r = await fetchFn("https://slack.com/api/chat.postMessage", { method: "POST", headers: { "content-type": "application/json; charset=utf-8", authorization: `Bearer ${token}` }, body: JSON.stringify({ channel, thread_ts: threadTs, text }) });
+      if (!r.ok) fail(`HTTP ${r.status}`);
+    } catch (e) { fail(String((e as Error)?.message ?? "network error")); }
   };
 }
 
+/** The verified HTTP handler: POST only, raw body signature check, then the event router. */
+export function makeSlackFetch(secret: string, state: InboundState, deps: InboundDeps): (req: Request) => Promise<Response> {
+  return async (req) => {
+    if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
+    const body = await req.text();
+    if (!verifySlackSignature(secret, req.headers.get("x-slack-request-timestamp") ?? "", body, req.headers.get("x-slack-signature") ?? "")) return new Response("invalid signature", { status: 401 });
+    let payload: unknown;
+    try { payload = JSON.parse(body); } catch { return new Response("bad json", { status: 400 }); }
+    const r = await handleSlackEvent(state, deps, payload);
+    return new Response(r.body, { status: r.status });
+  };
+}
+
+export interface SlackCliOpts { serve?: (o: { hostname: string; port: number; fetch: (req: Request) => Promise<Response> }) => { port: number }; deps?: Partial<InboundDeps>; wait?: boolean }
+
 /** `loki slack serve [--port N] [--host H]`; host defaults to 127.0.0.1. */
-export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
+export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = process.env, opts: SlackCliOpts = {}): Promise<number> {
   if (args[0] !== "serve") { process.stderr.write("usage: loki slack serve [--port N] [--host H]\n"); return 2; }
-  if (!slackInboundEnabled(env)) { process.stderr.write("slack: set LOKI_SLACK_INBOUND=1 to enable the inbound handler\n"); return 2; }
+  if (!slackInboundEnabled(env)) { process.stderr.write("slack: inbound handler disabled by LOKI_SLACK_INBOUND=0\n"); return 2; }
   const token = env.SLACK_BOT_TOKEN, secret = env.SLACK_SIGNING_SECRET;
-  if (!token || !secret) { process.stderr.write("slack: SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET must be set in the environment\n"); return 2; }
+  if (!token || !secret) { process.stderr.write("slack: set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET in the environment (both are required)\n"); return 2; }
   let port = 3000, host = "127.0.0.1";
   for (let i = 1; i < args.length; i++) {
     if (args[i] === "--port") port = Number(args[++i]);
     else if (args[i] === "--host") host = args[++i] ?? host;
   }
   if (!Number.isInteger(port) || port < 1 || port > 65535) { process.stderr.write("slack: invalid --port\n"); return 2; }
-  const state = newInboundState(), deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token) };
-  const server = Bun.serve({
-    hostname: host, port,
-    async fetch(req) {
-      if (req.method !== "POST") return new Response("method not allowed", { status: 405 });
-      const body = await req.text();
-      if (!verifySlackSignature(secret, req.headers.get("x-slack-request-timestamp") ?? "", body, req.headers.get("x-slack-signature") ?? "")) return new Response("invalid signature", { status: 401 });
-      let payload: unknown;
-      try { payload = JSON.parse(body); } catch { return new Response("bad json", { status: 400 }); }
-      const r = await handleSlackEvent(state, deps, payload);
-      return new Response(r.body, { status: r.status });
-    },
-  });
+  const state = newInboundState(), deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token), ...opts.deps };
+  const serve = opts.serve ?? ((o) => Bun.serve(o));
+  const server = serve({ hostname: host, port, fetch: makeSlackFetch(secret, state, deps) });
   process.stdout.write(`slack: listening on http://${host}:${server.port}\n`);
+  if (opts.wait === false) return 0;
   await new Promise<void>(() => {});
   return 0;
 }

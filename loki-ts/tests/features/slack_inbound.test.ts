@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { handleSlackEvent, newInboundState, parseMention, signSlackBody, slackInboundEnabled, threadKey, verifySlackSignature, type InboundDeps } from "../../src/features/slack_inbound.ts";
+import { childEnv, handleSlackEvent, makeSlackFetch, runSlackCli, slackPoster, spawnRunDeps, newInboundState, parseMention, signSlackBody, slackInboundEnabled, threadKey, verifySlackSignature, type InboundDeps } from "../../src/features/slack_inbound.ts";
 
 const SECRET = "test-signing-secret", NOW = 1_700_000_000, BODY = '{"type":"event_callback"}';
 
@@ -27,9 +27,10 @@ describe("parseMention", () => {
     expect(parseMention("<@U0BOT>  fix the &lt;login&gt; bug")).toBe("fix the <login> bug");
   });
   test("returns null when only a mention", () => { expect(parseMention("<@U0BOT>")).toBeNull(); });
-  test("flag is off by default", () => {
-    expect(slackInboundEnabled({})).toBe(false);
+  test("flag is on by default and LOKI_SLACK_INBOUND=0 disables", () => {
+    expect(slackInboundEnabled({})).toBe(true);
     expect(slackInboundEnabled({ LOKI_SLACK_INBOUND: "1" })).toBe(true);
+    expect(slackInboundEnabled({ LOKI_SLACK_INBOUND: "0" })).toBe(false);
   });
 });
 
@@ -78,5 +79,77 @@ describe("thread mapping", () => {
   });
   test("url_verification echoes the challenge", async () => {
     expect((await handleSlackEvent(newInboundState(), fake(0).deps, { type: "url_verification", challenge: "abc" })).body).toBe("abc");
+  });
+});
+
+describe("serve CLI (C6)", () => {
+  const FAKE_TOKEN = "xoxb-fake-token", FAKE_SECRET = "fake-secret";
+  const run = async (env: NodeJS.ProcessEnv) => {
+    let served = 0, err = "";
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((c: string) => { err += c; return true; }) as typeof process.stderr.write;
+    try {
+      const code = await runSlackCli(["serve", "--port", "3999"], env, { wait: false, serve: () => { served++; return { port: 3999 }; } });
+      return { code, served, err };
+    } finally { process.stderr.write = orig; }
+  };
+  test("no credentials: one line naming both, exit 2, nothing bound", async () => {
+    const r = await run({});
+    expect(r.code).toBe(2);
+    expect(r.served).toBe(0);
+    expect(r.err.trim().split("\n").length).toBe(1);
+    expect(r.err).toContain("SLACK_BOT_TOKEN");
+    expect(r.err).toContain("SLACK_SIGNING_SECRET");
+  });
+  test("LOKI_SLACK_INBOUND=0 exits 2 with the disabled line, nothing bound", async () => {
+    const r = await run({ LOKI_SLACK_INBOUND: "0", SLACK_BOT_TOKEN: FAKE_TOKEN, SLACK_SIGNING_SECRET: FAKE_SECRET });
+    expect(r.code).toBe(2);
+    expect(r.served).toBe(0);
+    expect(r.err).toContain("disabled");
+  });
+  test("credentials present binds once with no flag set", async () => {
+    const r = await run({ SLACK_BOT_TOKEN: FAKE_TOKEN, SLACK_SIGNING_SECRET: FAKE_SECRET });
+    expect(r.code).toBe(0);
+    expect(r.served).toBe(1);
+  });
+});
+
+describe("http handler", () => {
+  const mk = (body: string, sig: string, ts: string) => new Request("http://x/", { method: "POST", body, headers: { "x-slack-request-timestamp": ts, "x-slack-signature": sig } });
+  test("signed url_verification returns the challenge; bad signature is 401", async () => {
+    const f = makeSlackFetch(SECRET, newInboundState(), fake(0).deps);
+    const body = JSON.stringify({ type: "url_verification", challenge: "chal-1" }), ts = String(Math.floor(Date.now() / 1000));
+    const ok = await f(mk(body, signSlackBody(SECRET, ts, body), ts));
+    expect(ok.status).toBe(200);
+    expect(await ok.text()).toBe("chal-1");
+    expect((await f(mk(body, "v0=bad", ts))).status).toBe(401);
+  });
+});
+
+describe("launcher and poster", () => {
+  test("spawn uses bin/loki and strips both Slack secrets", async () => {
+    const calls: { cmd: string; env: NodeJS.ProcessEnv }[] = [];
+    const fakeSpawn = ((cmd: string, _a: string[], o: { env: NodeJS.ProcessEnv }) => {
+      calls.push({ cmd, env: o.env });
+      return { pid: 1, on(ev: string, cb: (c: number) => void) { if (ev === "exit") cb(0); } };
+    }) as never;
+    const d = spawnRunDeps("/nonexistent-repo", { SLACK_BOT_TOKEN: "a", SLACK_SIGNING_SECRET: "b", PATH: "/usr/bin" }, undefined, fakeSpawn);
+    const h = await d.startRun("task");
+    await h.done;
+    expect(calls[0]!.cmd.endsWith("bin/loki")).toBe(true);
+    expect(calls[0]!.env.SLACK_BOT_TOKEN).toBeUndefined();
+    expect(calls[0]!.env.SLACK_SIGNING_SECRET).toBeUndefined();
+    expect(calls[0]!.env.LOKI_NO_BROWSER).toBe("1");
+    expect(childEnv({ SLACK_BOT_TOKEN: "a" }).SLACK_BOT_TOKEN).toBeUndefined();
+  });
+  test("poster logs an HTTP failure as one redacted line", async () => {
+    const lines: string[] = [];
+    const post = slackPoster("xoxb-fake-token", (async () => new Response("no", { status: 500 })) as never, (l) => lines.push(l));
+    await post("C1", "1.1", "hi");
+    expect(lines).toEqual(["slack: post failed (HTTP 500)"]);
+    const post2 = slackPoster("xoxb-fake-token", (async () => { throw new Error("boom xoxb-fake-token"); }) as never, (l) => lines.push(l));
+    await post2("C1", "1.1", "hi");
+    expect(lines.length).toBe(2);
+    expect(lines[1]).not.toContain("xoxb-fake-token");
   });
 });
