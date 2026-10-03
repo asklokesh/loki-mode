@@ -151,6 +151,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.7.1 (2026-10-03)
+
+Loki Mode 10.7.1 is a fix-forward train. Test suites no longer flood a developer's live Control Plane with fixture runs (acme/widget), and `loki control prune --repo acme/widget` removes any that already leaked (add --dry-run to preview). Control Plane ingest now verifies the sealed event log and shows tampered runs as TAMPERED. Engine Law L1: implement and fix run on the run's own model by default (LOKI_E10_CASCADE=1 opts in to the sonnet downgrade). Scope control is advisory and never reverts an edit; out-of-scope files are listed in NOT PROVEN, the receipt and the PR body. The PR body now carries what the issue asked, files in scope and tests from the run's recorded stage outputs instead of "not recorded".
+
+### Changes
+- fix(scope): keep edits on the issue's stated surface, disclose as kept outside stated scope
+- feat(control): loki control prune, DELETE /v1/runs/:source/:run and UI Remove
+- fix(scope): D76 advisory scope control, flag outside stated scope and never revert
+- fix(control): stop test fixtures flooding the live Control Plane; tampered runs show TAMPERED
+- fix(control): prune works from the bundled CLI, read-only dry run, loopback-only DELETE
+- engine10: Engine Law L1 never below raw, cascade default off, escalation only up
+- fix(control-plane): verify ingested event log, forged VERIFIED renders TAMPERED (EL-FC08b, D86, FC-08)
+- build(dist): rebuild loki.js after merging the scope, prune and leak slices
+- fix(pr-body): fill PR body fields from the recorded run (L7)
+- engine10: L1 review fix, session writes summary, guard covers pinnedModel
+- fix(pr-body): label planned files, drop reverted files, widen guard (L7)
+- fix(control-plane): round 3 integrity display, ALREADY_SATISFIED seal, boot recompute (D86, FC-08, EL-FC08b)
+- fix(e10ext): thread env into origin lookup and move ship loop out of e10ext
+- build(dist): rebuild loki.js after merging the guard fix-forward
+- chore(e10ext): tighten comments to get under the 1,500-line cap
+- build(dist): rebuild loki.js after the e10ext comment trim
+- fix(build): loki-ts postinstall installs control-plane deps (FC-12)
+
 ## v10.7.0 (2026-10-03)
 
 Loki Mode 10.7.0 turns on the fast path and new defaults. Runs start faster with the speed path on by default (LOKI_SPEED=0 opts out), and quiet mode shows one live status line. A cost cap is on by default: no dollar cap on a subscription, $100 on an API key. New in this release: Playwright end-to-end checks with video, the loki merge queue, loki review --risk, project memory, mobile emulator tests, a REST runs API, ACP for VS Code and JetBrains, and Sentry intake. The Control Plane now ingests runs with zero setup, the legacy dashboard entry points open it, and runs stream live. Default-on listeners bind loopback only.
