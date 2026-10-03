@@ -1961,3 +1961,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Train 86 first push failed: gitleaks github-pat on the synthetic token fixture tests/workspace/80-comment.sh:7 (D51-B11). Fingerprint baselined with a reason line in .gitleaksignore (acb4ee58f). Rerun: TRAIN_PUSHED train/86 at acb4ee58f, 05:25:53Z; CI pending.
 - In flight: P0-CORE-BUDGET TL r2, D61-11 test fix, D61-04-F leak fixes (MEDIUM, new BOARD row).
 - Carry-forward reviewer notes: P0-CONTROL-LINUX wants a frozen-lockfile install for packages/control-plane in CI; D50-F4b invalid-base reason unreachable in supervisor; D61-04 child env carries OLDPWD (informational).
+
+## 2026-10-03T06:15Z tick (CoS)
+- Train 86 red: spawn_env_guard flagged already_done_async.ts (env passed via spread) and the gitleaks shape pin drifted after acb4ee58f. Fixed by P0-SPAWN-ENV-SPEED (env inline, bun suite 3072/0) and the shape pin 3c47d0f1a (31/0).
+- Train 87 (3c47d0f1a) all six checks green (Tests 37101104493, Coverage, Security Audit, Bun Parity, Tier A, First-run). Promoted by SHA to main at 06:14Z (fast-forward from d95095d9d); Phase C waits on main Tests.
+- Incident: train-cycle Phase A pushed train/88 before Phase B evaluated green train/87, and Phase B only looks at the newest train, so a green train was skipped. Promoted 87 by hand with the same RM push Phase B uses. Guard slice wanted: Phase A must not supersede a green unpromoted train.
+- Train 88 (c127f5e9f) pushed: C11b E2E legs 5-9, D65-BUG5 (schemas/ shipped), D65-BUG6 (Dockerfile COPYs), D65-BUG6-G (TL APPROVE, 18/0), D61-04-F.
+- In flight: P0-CORE-BUDGET TL r2, D61-11 test fix. E2E-D65 section 6 table refresh due after train 88.
