@@ -145,6 +145,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.7.0 (2026-10-03)
+
+Loki Mode 10.7.0 turns on the fast path and new defaults. Runs start faster with the speed path on by default (LOKI_SPEED=0 opts out), and quiet mode shows one live status line. A cost cap is on by default: no dollar cap on a subscription, $100 on an API key. New in this release: Playwright end-to-end checks with video, the loki merge queue, loki review --risk, project memory, mobile emulator tests, a REST runs API, ACP for VS Code and JetBrains, and Sentry intake. The Control Plane now ingests runs with zero setup, the legacy dashboard entry points open it, and runs stream live. Default-on listeners bind loopback only.
+
+### Changes
+- feat(G-04): cloud-dispatch.sh dry-run-first cloud fan-out dispatcher
+- fix(G-04): cloud-dispatch round 2, fail-safe parsing and live preflight
+- fix(G-04): cloud-dispatch round 3, parenthesised paths, ancestor leader, live tests
+- fix(loki-seal): forged runner pass lines that contradict the runner summary give NOT VERIFIED (SEAL-FORGED-LINES)
+- fix(loki-seal): cross-check summary against leaf tests only so node describe() and nested t.test() stay VERIFIED (SEAL-FORGED-LINES r2)
+- fix(loki-seal): coverage and summary cross-check share one parsed record set; suite and header-shaped forged lines never cover an item (SEAL-FORGED-LINES r3)
+- fix(loki-seal): exact spec-path reconciliation, last summary block only, empty and skipped describe handled (SEAL-FORGED-LINES r4)
+- fix(loki-seal): spec reporter fails closed, counts() uses the last summary block (SEAL-FORGED-LINES r5)
+- fix(loki-seal): result lines with line separators or control characters in names fail closed (SEAL-FORGED-LINES r6)
+- fix(loki-seal): a result mark not first on its spec line is ambiguous, closing the unterminated-output prefix forgery (SEAL-FORGED-LINES r7)
+- fix(loki-seal): summary keys off the line start and truncated output are NOT VERIFIED (SEAL-FORGED-LINES r8)
+- fix(loki-seal): coverage only from node --test with process isolation, process.exit is an integrity finding (SEAL-FORGED-LINES r9, D80)
+- fix(loki-seal): coverage only when the whole test script is node --test plus allowlisted flags (SEAL-FORGED-LINES r10, D80 amended)
+- fix(loki-seal): launch node --test directly with a scrubbed env, never npm, for coverage (SEAL-FORGED-LINES r11, D80 amendment 2)
+- test(loki-seal): childEnv extracted and unit-tested, NODE_OPTIONS e2e forge guarded (SEAL-FORGED-LINES r12)
+- fix(loki-seal): escape runner check marks so the emoji scan stays green (SEAL-FORGED-LINES r13)
+- fix(engine10): stop SIGPIPE from skipping the post-session push under load (P9 flake)
+- test(engine10-push): cover the run.sh region guard on its own (rc 3, no gh, no push, exported-function bypass)
+- fix(issue-parser): replace GNU-only sed/grep regex with POSIX classes and sed -E (ADV-T99-SED)
+- test(cloud-dispatch): make G-04 duplicated-row hook GNU-safe (T101-G04-DUPROW)
+- test(loki-seal): use --test-isolation=none in the r7 honest-run fixture only where Node supports it
+- test(loki-seal): jest and vitest runs are BLOCKED when red and NOT VERIFIED when green, end to end (ADV-SEAL-JEST-E2E)
+- feat(cost-cap): subscription runs get no dollar cap, API-key runs default to $100 (D82-COSTCAP)
+- feat(speed): D61 speed path on by default, LOKI_SPEED=0 opts out (D82-FLAGS)
+- feat(visual-evidence): record Playwright e2e video and trace, list both in the PR Evidence section
+- feat(cli): loki merge queue, green-only serial merges with rebase-next and --dry-run
+- feat(review): loki review --risk deterministic 0-100 diff risk score with per-factor breakdown
+- feat(memory): project memory across runs, bounded summary injected at start
+- feat(control-plane): mobile layout usable at 375px (stacked shell, collapsing columns, 44px tap targets)
+- feat(verify): mobile emulator tests with honest NOT VERIFIED when no device
+- feat(dashboard): REST API for runs at /api/v1/runs (list, detail, start, stop)
+- feat(acp): loki acp exposes Loki as an Agent Client Protocol agent over stdio
+- feat(start): Sentry issue intake from exported JSON or URL (token-gated API)
+- feat(engine10): implement brief may update one spec-stated assertion literal (D50-F2-S3)
+- build(loki-ts): rebuild dist on main after the D82 slices
+- test(engine10): pin LOKI_SPEED=0 in the S41-10b static-first brief block after the D82 default flip
+- fix(docker): trust /workspace via env safe.directory and report container failures (D82-DOCKER)
+- feat(engine10): quiet-mode live status line, one rewritten line on a TTY (D82-LIVELINE)
+- build(loki-ts): rebuild dist after D82-LIVELINE
+- feat(control-plane): auto-backfill and tail .loki/runs on start, zero setup (CP-INGEST)
+- feat(control): route legacy dashboard user paths to the Control Plane (CP-LEGACY)
+- feat(control-plane): live run view and Overview landing (CP-UI-LIVE)
+- build(loki-ts): rebuild dist after the CP slices
+- feat(control-plane): Loki Mode UI shell, import button, start-a-run endpoint (CP-UI-SHELL)
+- fix(engine10): empty Wall seal is NOT PROVEN, collect nested Wall files (D82-WALL0)
+- test(control-plane): one shared happy-dom per bun process so the UI files pass together
+- build(loki-ts): rebuild dist after D82-WALL0
+- fix(speed): quiet output keeps the 8 line cap with speed on; pin old-default tests (D82-FIXREDS)
+- refactor(engine10): move the quiet-mode LiveLine into e10ext so core stays under the D29 budget
+- revert(engine10): back out D82-WALL0 for 10.7.0, it fails the engine e2e done run (moves to 10.7.1)
+- chore(security): allowlist the fake Sentry fixture token in test-issue-providers.sh for gitleaks
+- test(ci): shard-duration rows for the five suites added in the 10.7.0 train
+- fix(train-102): register acp/merge in help and completions, keep web --port validation, type CP-INGEST env, pin gitleaks baseline 75
+
 ## v10.6.14 (2026-10-03)
 
 train/100 green after full Tests rerun
