@@ -11045,11 +11045,22 @@ _loki_untrack_agent_committed_user_files() {
     fi
     mv -f "$rec.new" "$rec"
     names="$(_loki_nul_names "$rec")"
+    # S-220: keep what the agent force-staged. Save the index as a tree, make the
+    # removal commit from the branch tip alone, then restore the saved index minus
+    # the removed paths. A global `git reset -q` here dropped those staged files
+    # from the session commit that follows. No saved tree (unmerged index): the
+    # old full reset still applies.
+    local saved_tree=""
+    saved_tree="$(git write-tree 2>/dev/null)" || saved_tree=""
     git reset -q >/dev/null 2>&1 || true
     if ! git -C "$top" update-index -z --force-remove --stdin < "$rec" >/dev/null 2>&1 \
        || ! git commit -q -m "Loki Mode: untrack pre-existing user files the agent committed" >/dev/null 2>&1; then
         log_warn "The agent committed your pre-existing files on $1 and Loki could not remove them from the branch: ${names}. They are on disk. Before switching branches, run git rm --cached on each and commit, or a checkout of the base deletes them. Left uncommitted: no session commit."
         return 1
+    fi
+    if [ -n "$saved_tree" ]; then
+        { git read-tree "$saved_tree" \
+            && git -C "$top" update-index -z --force-remove --stdin < "$rec"; } >/dev/null 2>&1 || true
     fi
     log_warn "The agent committed your pre-existing untracked or ignored files on $1: ${names}. Loki removed them from the branch tip; they stay on disk, untracked. The branch history still holds them: do not push $1 as-is. To drop them from its history: git reset --soft ${fork} && git commit"
     audit_agent_action "git_untrack_user_files" "Removed pre-existing user files the agent committed" "files=${names}" || true
@@ -11156,11 +11167,22 @@ commit_session_changes() {
     # (_commit_path_looks_secret + _commit_scan_secret_file over EVERY staged
     # file) is the actual guarantee for nested/weak secrets; these excludes are a
     # cheap first cut for the obvious top-level files only.
+    # S-219: a failed add must not fall through to the "nothing staged" no-op,
+    # which would silently commit nothing. Unstage any partial result and say so.
+    # rc 1 is benign: git exits 1 after staging everything else when a pathspec
+    # (':!.loki') names an ignored path, which is the normal case. A real
+    # failure (unreadable file, lock) exits 128.
+    local add_rc=0
     git add -A \
         ':!.loki' ':!.loki/' \
         ':!.env' ':!.env.*' ':!*.env' \
         ':!*.key' ':!*.pem' ':!*.p12' ':!*.keystore' \
-        ':!id_rsa*' ':!*.token' ':!credentials*' 2>/dev/null || true
+        ':!id_rsa*' ':!*.token' ':!credentials*' 2>/dev/null || add_rc=$?
+    if [ "$add_rc" -gt 1 ]; then
+        git reset -q >/dev/null 2>&1 || true
+        log_warn "Left uncommitted: could not stage the session's changes (git add failed). Review and commit manually."
+        return 0
+    fi
 
     # Unstage exactly the paths recorded as untracked or gitignored when the
     # session started (setup_agent_branch; a "dir/" entry covers its subtree):

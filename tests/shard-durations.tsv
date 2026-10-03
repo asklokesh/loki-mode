@@ -649,6 +649,8 @@ Evidence gate with no tests (BACKLOG 75, S-211)	13
 proof-check readers ignore user-site .pth (-I -S, S-203)	1
 council_managed_should_stop diffs the target project, not the install tree (S-196)	1
 LOKI_AUTO_PR refuses a branch whose history holds user files (S-194)	1
+Session commit warns on a failed git add (S-219)	2
+Untrack keeps force-staged agent files (S-220)	2
 prd-checklist readers ignore user-site .pth (-I -S, S-204)	3
 focus POST skipped when the dashboard is disabled (S-195)	1
 Loki 10 eval harness runner and scorer (EV-1)	40
