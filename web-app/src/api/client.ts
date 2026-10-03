@@ -162,7 +162,8 @@ export interface ProofDetail extends ProofSummary {
   };
   honesty?: { headline?: string | null };
   council?: { final_verdict?: string | null };
-  cost?: { usd?: number | null };
+  // cost_partial: some usage was unpriced, so usd is a lower bound.
+  cost?: { usd?: number | null; cost_partial?: boolean };
   // Added by the server, not part of proof.json: the verdict it COMPUTED by
   // running the CLI verifier's integrity checks (dashboard/server.py
   // _proof_integrity_check). The diff is never re-derived there.
@@ -490,7 +491,7 @@ export const api = {
         total_usd: number | null;
         cost_recorded: boolean;
       };
-      runs: Array<{ run_id?: string; cost_usd?: number | null; timestamp?: string | null }>;
+      runs: Array<{ run_id?: string; cost_usd?: number | null; cost_partial?: boolean; timestamp?: string | null }>;
       // null when the reader is unavailable (a partial install), never 0.
       runs_count: number | null;
       // null when no run recorded a cost; partial when only some did.

@@ -235,10 +235,12 @@ function ReceiptRow({ proof }: { proof: ProofSummary }) {
                      GET /api/proofs/<run_id> returns the raw proof.json, where
                      cost is nested as cost.usd (see autonomy/lib/proof-generator.py
                      and loki-ts/src/commands/proof.ts), not a flat cost_usd --
-                     that flat field only exists on the /api/proofs summary rows. */
+                     that flat field only exists on the /api/proofs summary rows.
+                     A partly priced run's cost is a lower bound (cost_partial,
+                     efficiency_cost.py), so it reads "at least", like cost.html. */
                   value={
                     typeof detail.cost?.usd === 'number'
-                      ? `$${detail.cost.usd.toFixed(2)}`
+                      ? `${detail.cost.cost_partial === true ? 'at least ' : ''}$${detail.cost.usd.toFixed(2)}`
                       : 'unknown'
                   }
                 />

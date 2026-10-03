@@ -150,13 +150,14 @@ export function MetricsPage() {
   const chartWidth = Math.max(280, containerWidth - 48);
 
   // Per-run cost history. `runs` is the persistent per-run series; an entry
-  // with a null cost is dropped rather than plotted as 0.
+  // with a null cost is dropped rather than plotted as 0. A partly priced run's
+  // cost is a lower bound, so its label says "(partial)".
   const costTrend = useMemo(() => {
     const runs = timeline?.runs ?? [];
     return runs
       .filter((r) => typeof r.cost_usd === 'number')
       .map((r, i) => ({
-        label: r.run_id ? r.run_id.slice(-6) : `run ${i + 1}`,
+        label: (r.run_id ? r.run_id.slice(-6) : `run ${i + 1}`) + (r.cost_partial === true ? ' (partial)' : ''),
         value: r.cost_usd as number,
       }));
   }, [timeline]);
