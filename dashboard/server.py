@@ -1362,6 +1362,8 @@ else:
 # D51 Phase A: first-run onboarding + backlog API and its /start page.
 from .api_start import router as api_start_router, START_HTML as _START_HTML
 app.include_router(api_start_router)
+from .api_runs_v1 import router as api_runs_v1_router
+app.include_router(api_runs_v1_router)
 
 
 @app.get("/start", include_in_schema=False, dependencies=[Depends(auth.require_scope("read"))])
