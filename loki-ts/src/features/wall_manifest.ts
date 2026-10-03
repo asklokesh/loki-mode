@@ -1,4 +1,4 @@
-// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, a tsconfig alias whose name shares no token with the target. Dynamic and computed specifiers (importlib, path.join, template literals) are covered by the content backstop.
+// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, a tsconfig alias whose name shares no token with the target, string-concatenated specifiers, and import.meta.glob. Relative specifiers are resolved against the test directory, tests inside a target directory are excluded by location, and literal dynamic forms are caught by the content backstop only when they contain a target stem.
 // D77 (W1-S1): the sealed base-tree manifest the Wall reads instead of the repo. Pure: a file list in,
 // signatures-only text out. It holds the detected runner and config, the test layout, at most two style
 // examples that import no module the task names, and public signatures of the named modules. Function
@@ -27,6 +27,13 @@ const GENERIC_STEMS = ["index", "init", "mod", "main"];
 const mentionsStem = (content: string, stems: string[]): boolean => {
   const c = content.toLowerCase().replace(/[._-]+/g, ".");
   return stems.some((s) => new RegExp(`(?<![a-z0-9])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![a-z0-9])`).test(c));
+};
+// Relative specifier resolution (W1-S2 r8).
+const dirOf = (p: string): string => (p.includes("/") ? p.slice(0, p.lastIndexOf("/")) : "");
+const resolveRel = (dir: string, spec: string): string => {
+  const out = dir ? dir.split("/") : [];
+  for (const seg of spec.split("/")) { if (seg === "" || seg === ".") continue; if (seg === "..") out.pop(); else out.push(seg); }
+  return out.join("/");
 };
 const stemsOfTarget = (m: string): string[] => {
   const raw = stemOf(m).toLowerCase(), parent = m.split("/").slice(-2, -1)[0];
@@ -720,7 +727,7 @@ function runnerSection(files: ManifestFile[]): string[] {
 }
 
 // True when a test file imports a module whose stem matches one the task names.
-function importsNamed(path: string, raw: string, stems: Set<string>, importStems: Set<string> = stems): boolean {
+function importsNamed(path: string, raw: string, stems: Set<string>, importStems: Set<string> = stems, hits: (resolved: string) => boolean = () => false): boolean {
   const content = raw.replace(/\\\n[ \t]*/g, " ");
   // Whole-stem naming (W1-S2 r5): the test stem minus a .test/.spec suffix or a test_/_test affix equals a target stem or
   // extends it after a dot, so dotted and dashed stems (user.service, my-parser) match. Compared case-insensitively.
@@ -732,6 +739,15 @@ function importsNamed(path: string, raw: string, stems: Set<string>, importStems
   const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
   for (const m of content.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
   for (const m of content.matchAll(/^[ \t]*import[ \t]+([\w.,\t ]+)$/gm)) specs.push(...names(m[1]!));
+  // Resolve every relative specifier against the test directory (JS ./ ../ . .. and Python leading dots).
+  const dir = dirOf(path);
+  if (specs.some((s) => s.trim().startsWith(".") && hits(resolveRel(dir, s.trim())))) return true;
+  for (const m of content.matchAll(/^[ \t]*from[ \t]+(\.+)([\w.]*)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) {
+    let base = dir;
+    for (let i = 1; i < m[1]!.length; i++) base = dirOf(base);
+    const r = resolveRel(base, (m[2] ?? "").replace(/\./g, "/"));
+    if (hits(r) || names(m[3] ?? m[4] ?? "").some((n) => hits(resolveRel(r, n)))) return true;
+  }
   const lastSeg = (s: string): string => normStem((s.trim().split(/[\\/]/).pop() ?? "").replace(/\.([cm]?[jt]sx?|py)$/i, "").replace(/^[#@~]+/, ""));
   return specs.some((s) => importStems.has(lastSeg(s)) || s.trim().replace(/\.(ts|js|py)$/, "").split(/[./\\]/).some((seg) => importStems.has(normStem(seg))));
 }
@@ -761,8 +777,16 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
   const named = new Set(excl.flatMap((m) => [baseOf(m).toLowerCase(), ...stemsOfTarget(m)]));
   // A directory module is named by its parent in specifiers; a bare "./index" alone does not name an unrelated target.
   const importStems = new Set(excl.flatMap((m) => { const s = stemsOfTarget(m); return s.length > 1 ? s.slice(1) : s; }));
+  // Resolved-path and location checks (W1-S2 r8): a resolved import equal to a target minus extension, or to a directory module's directory, names it.
+  const info = excl.map((m) => ({ noext: m.replace(/\.[^./]*$/, "").toLowerCase(), dir: dirOf(m).toLowerCase(), mod: !!dirOf(m) && ["index", "__init__", "mod", "main"].includes(stemOf(m).toLowerCase()), src: !TEST_FILE.test(m) }));
+  const hits = (r: string): boolean => {
+    const low = r.toLowerCase().replace(/\.(?:[cm]?[jt]sx?|py)$/, "");
+    return [low, low.replace(/\/(?:index|__init__|mod|main)$/, "")].some((v) => info.some((t) => v === t.noext || (t.mod && v === t.dir)));
+  };
+  // Location backstop: inside a directory-module target's subtree, or beside a source-file target, is never an example (a task-named test file does not condemn its siblings).
+  const inTargetArea = (p: string): boolean => { const d = dirOf(p).toLowerCase(); return info.some((t) => t.src && (d === t.dir || (t.mod && d.startsWith(`${t.dir}/`)))); };
   const backstop = [...stems].filter((s) => !GENERIC_STEMS.includes(s));
-  const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path).toLowerCase()) && !named.has(normStem(stemOf(t.path))) && !importsNamed(t.path, t.content, stems, importStems) && !mentionsStem(t.content, backstop);
+  const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path).toLowerCase()) && !named.has(normStem(stemOf(t.path))) && !inTargetArea(t.path) && !importsNamed(t.path, t.content, stems, importStems, hits) && !mentionsStem(t.content, backstop);
   for (const f of tests.filter(eligible).slice(0, MAX_EXAMPLES)) {
     out.push(`--- example: ${f.path}`, ...f.content.split("\n").slice(0, EXAMPLE_LINES));
   }

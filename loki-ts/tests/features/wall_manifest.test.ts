@@ -884,3 +884,72 @@ describe("path wrappers and content backstop (D77, W1-S2 r7)", () => {
     expect(t).toContain("BODY_GENERIC_KEPT");
   });
 });
+
+// D77 / W1-S2 r8: relative specifier resolution, location backstop, absolute and prefixed exact paths.
+describe("relative resolution, location and absolute paths (D77, W1-S2 r8)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function manifest(files: Record<string, string>, task: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r8-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    try {
+      g("init", "-q");
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); }
+      g("commit", "-q", "-m", "base");
+      return wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), task, ON)!.text;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const T = (body: string, imp = ""): string => `import { test } from "bun:test";\n${imp}test("t", () => { /* ${body} */ });\n`;
+  const P = (body: string, imp: string): string => `${imp}\n\ndef test_t():\n    ${body} = 1\n`;
+  const other = { "tests/other.test.ts": T("other_style") };
+  const tsTarget = { "src/user/index.ts": "export function target(n: number): number {\n  return n;\n}\n", ...other };
+  const pyTarget = { "app/user/__init__.py": "def target(n):\n    return n\n", "tests/test_other.py": "def test_o():\n    other_py_style = 1\n" };
+
+  const tsRows: Array<[string, string, string]> = [
+    ["R7-B1 ../index", "src/user/__tests__/a.test.ts", 'import { target } from "../index";\n'],
+    ["R7-B1 ../index.js", "src/user/__tests__/b.test.ts", 'import { target } from "../index.js";\n'],
+    ["R7-B1 require ../index", "src/user/__tests__/c.test.ts", 'const { target } = require("../index");\n'],
+    ["R7-B1 ./index", "src/user/d.test.ts", 'import { target } from "./index";\n'],
+    ["R7-B2 ..", "src/user/__tests__/e.test.ts", 'import { target } from "..";\n'],
+    ["R7-B2 .", "src/user/f.test.ts", 'import { target } from ".";\n'],
+  ];
+  for (const [name, path, imp] of tsRows) {
+    test(`${name}: a test inside a directory-module target is excluded`, () => {
+      const t = manifest({ ...tsTarget, [path]: T("BODY_R8_TS", imp) }, "Fix src/user/index.ts so target doubles n");
+      expect(t).not.toContain("BODY_R8_TS");
+      expect(t).toContain("other_style");
+    });
+  }
+
+  const pyRows: Array<[string, string, string]> = [
+    ["R7-B1 from ..__init__", "app/user/tests/test_a.py", "from ..__init__ import target"],
+    ["R7-B2 from ..", "app/user/tests/test_b.py", "from .. import target"],
+    ["R7-B2 from .", "app/user/test_c.py", "from . import target"],
+  ];
+  for (const [name, path, imp] of pyRows) {
+    test(`${name}: a Python test inside a package target is excluded`, () => {
+      const t = manifest({ ...pyTarget, [path]: P("BODY_R8_PY", imp) }, "Fix app/user/__init__.py so target doubles n");
+      expect(t).not.toContain("BODY_R8_PY");
+      expect(t).toContain("other_py_style");
+    });
+  }
+
+  test("location: a test beside a source-file target is excluded without any import", () => {
+    const t = manifest({ "src/widget.ts": "export const w = 1;\n", "src/zeta.test.ts": T("BODY_R8_SAMEDIR"), ...other }, "Fix src/widget.ts");
+    expect(t).not.toContain("BODY_R8_SAMEDIR");
+    expect(t).toContain("other_style");
+  });
+
+  test("R7-B3: absolute, drive-letter and ../ prefixed paths keep exact rank", () => {
+    const files: Record<string, string> = { ...other };
+    for (let i = 0; i < 7; i++) files[`packages/p${i}/src/index.ts`] = `export function sigP${i}(n: number): number {\n  return n;\n}\n`;
+    for (const task of ["at target (/home/ci/repo/packages/p5/src/index.ts:12:5)", "Fix C:\\repo\\packages\\p5\\src\\index.ts", "Fix ../packages/p5/src/index.ts"]) {
+      expect(manifest(files, task)).toContain("export function sigP5(n: number)");
+    }
+  });
+
+  test("B8 stays: suffix-only index.ts files lose to the longer full-path match", () => {
+    const files: Record<string, string> = { ...other, "index.ts": "export const root = 1;\n", "src/index.ts": "export const src = 1;\n", "p5/src/index.ts": "export const p5dup = 1;\n", "packages/p5/src/index.ts": "export function sigP5(n: number): number {\n  return n;\n}\n" };
+    for (const n of ["a", "b", "c"]) files[`${n}.ts`] = `export const ${n} = 1;\n`;
+    expect(manifest(files, "Fix a.ts b.ts c.ts and /work/packages/p5/src/index.ts: sigP5 must double n")).toContain("export function sigP5(n: number)");
+  });
+});
