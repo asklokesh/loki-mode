@@ -308,6 +308,15 @@ export async function main(_args: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(`Dashboard: ${server.url}\n`);
+  if (process.env["LOKI_SPEED"] === "1") {
+    // D61 slice 5: warm engine on a unix socket (never a TCP port); best effort.
+    try {
+      const w = (await import("../warm.ts")).startWarmServer();
+      process.stdout.write(`Warm engine: ${w.path}\n`);
+    } catch {
+      // the dashboard works without it
+    }
+  }
   await new Promise<void>(() => {}); // ponytail: blocks forever; the process-level SIGINT/SIGTERM handler in cli.ts terminates it
   return 0;
 }

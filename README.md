@@ -120,6 +120,8 @@ flowchart TD
 | pr | Opened by the supervisor, not the worker (the worker never holds a GitHub token). A non-VERIFIED run opens a draft PR. The body is written for a 60-second review: what the issue asked, what changed, how it was tested, NOT PROVEN, then the receipt digest and `loki verify`. Data the run did not record prints "not recorded". |
 | deep verify | Detached, started after the PR opens (so not with `--no-pr`): full suite, app-boot probe, council, secret scan. A check that is refused or unavailable is reported as NOT PROVEN, never as red. `--deep` is a separate flag that raises the implement and run budgets. |
 
+Warm start (experimental, `LOKI_SPEED=1`, off by default): `loki engine10 dashboard` also serves a unix socket at `~/.loki/run/engine.sock` (override with `LOKI_WARM_SOCK`) that keeps the repo map and test map in memory, keyed by the tree SHA plus a hash of dirty files, so an edit invalidates them. A run tries the socket for 50ms and prints `warm in Xs` when it answers; with no daemon it runs the cold path with identical events.
+
 PR body sample (`loki-ts/src/e10ext/reviewer_body.ts`):
 
 ```

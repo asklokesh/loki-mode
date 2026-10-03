@@ -67,6 +67,15 @@ export async function runEngine10(args: string[], load: Loader = defaultLoader):
     (help ? process.stdout : process.stderr).write(USAGE);
     return help ? 0 : 2;
   }
+  // D61 warm start (LOKI_SPEED=1 only): a best-effort 50ms socket try that prints "warm in Xs";
+  // the run itself is unchanged, so no daemon yields identical events to the cold path.
+  if (r.module === "supervisor.ts" && process.env["LOKI_SPEED"] === "1") {
+    try {
+      await (await import("./warm_client.ts")).tryWarm(process.cwd());
+    } catch {
+      // never load-bearing
+    }
+  }
   const spec = `./${r.module}`;
   let mod: Record<string, unknown>;
   try {
