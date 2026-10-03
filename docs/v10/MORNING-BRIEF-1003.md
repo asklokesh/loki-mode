@@ -1,33 +1,19 @@
-# Morning brief, 2026-10-03 (refreshed 15:35Z, next refresh 16:30Z)
+# Morning brief, 2026-10-03 (refreshed 16:29Z, next refresh 17:30Z)
 
 ## Shipped today
-- 8 releases in 24h. The newest is v10.6.14 (tag 7fbbefc30, 14:01Z).
-- train/101 (seal forged-lines, P9 default push, cloud-dispatch) is folded into the 10.7.0 train.
+- 8 releases in 24h. The newest is v10.6.14 (tag 7fbbefc30, 14:01Z). npm latest is still 10.6.14.
 
-## 10.7.0: one big train, minor bump (D82)
-- Freeze is at 15:45Z, the cut at 15:55Z, and npm at about 16:10Z.
-- On local main, unpushed:
-  - Cost cap (subscription: no dollar cap; API key: $100 default).
-  - Default-on flags, with listeners on loopback only.
-  - Playwright e2e with video, `loki merge` queue, `loki review --risk`, project memory, mobile emulator tests, REST runs API, ACP for VS Code and JetBrains, Sentry intake, and D50 fixes.
-  - Docker and liveline.
-  - Control Plane zero-setup ingest, legacy dashboard entry points routed to the Control Plane, live run view, and shell with a loopback-only start endpoint (opus APPROVE r2).
-  - An empty Wall now seals NOT PROVEN (opus APPROVE r2).
-- Open item: 9 loki-ts bun reds after the LOKI_SPEED default flip. A fixer agent is working on them. If any real speed regression is unfixed by the freeze, the speed flip is reverted for 10.7.0.
+## 10.7.0: one big train, minor bump (D82, D84, D85)
+- train/102 (cf5be9026) went red: Tier A (shard-durations rows) and Tests (help and completion registration for acp and merge, `loki web --port` validation, a CP-INGEST type error, the gitleaks baseline count).
+- All of them were fixed in place (D85) and rerun locally green. train/103 (d9704dfc4) was pushed at 16:28Z and CI is running. Release follows a green Tests run.
+- In: the speed path on by default (with the fix for its 9 reds), quiet-mode live line, the cost cap, loopback-only default listeners, Playwright e2e with video, `loki merge`, `loki review --risk`, project memory, mobile emulator tests, the REST runs API, ACP, Sentry intake, and Control Plane zero-setup ingest, legacy entry points and live runs.
+- Moved to 10.7.1: the empty-Wall seal (it failed the engine e2e done run), CP roles and OIDC, the liveline CP URL, the monorepo RealBaseTestRunner, and mobile-verify wiring.
 
 ## 10.8.0: enterprise Control Plane rebuild (D83)
-- Plan: docs/v10/CP-ENTERPRISE-UI.md, slices CPE-01..26. Integration happens on branch cpe-base, kept off main until 10.7.0 is cut.
-- Status:
-  - Done: CPE-01 (legacy tokens, fonts, 19 primitives), CPE-03 (server scaffold), CPE-05 (SSE) and CPE-21 (notifications, audit). cpe-base suite is 97/0.
-  - Opus security review: CPE-04 (artifacts read API) and CPE-07 (POST /v1/runs).
-  - Building: CPE-02 (lean claude.ai-style shell) and CPE-09 (run.pid plus stop, retry and resume).
-
-## Decisions taken without you
-- D83 point 6:
-  - Ground #F1F2F6 and the mascot are kept.
-  - The merge queue and PR risk get UI pages (CPE-25, CPE-26).
-  - Schedules, memory and modernize stay hidden.
-- CPE-01 added AA-safe ink tokens, because the legacy light-theme status hex fail WCAG AA on the ground (FOUNDER-QUEUE 18).
+- On cpe-base: shell, home, runs, run thread, compose, cost, work, receipts, models, plans, merge queue and PR risk pages, a11y and contrast fixes. The suite is 235/0 and UI tsc is 0.
+- Settings (loki.yaml write-back, CPE-14) has been blocked by opus three times, on YAML 1.1 parser differences. The shell-command lock now holds. A fixer is on the remaining quoting gaps.
+- Opus security review is running on the merge-run endpoint.
+- Next: CPE-19 workspaces, CPE-20 integrations, and CPE-24 deleting the legacy dashboard last.
 
 ## Risks
 - Host load makes the pulse git and ps probes time out, so many metrics read UNKNOWN.
