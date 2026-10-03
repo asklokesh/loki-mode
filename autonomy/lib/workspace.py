@@ -208,6 +208,7 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     child_env_base = dict(os.environ, LOKI_ENGINE="v10", LOKI_NO_BROWSER="1")
 
     outcome, worktrees, heads, kind = {}, {}, {}, {}
+    timing = {}  # repo -> {started_at, finished_at} epoch seconds
     running = {}  # repo -> (Popen, log file handle)
     try:
         conc = max(1, int(os.environ.get("LOKI_WORKSPACE_CONCURRENCY") or ws.get("concurrency") or 2))
@@ -260,12 +261,14 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
             p = subprocess.Popen([launcher, arg], cwd=wt, env=dict(child_env_base, **extra), stdout=lf,
                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
             running[repo] = (p, lf)
+            timing[repo] = {"started_at": time.time()}
         for repo, (p, lf) in list(running.items()):
             rc = p.poll()
             if rc is None:
                 continue
             lf.close()
             running.pop(repo)
+            timing[repo]["finished_at"] = time.time()
             if rc == 0:
                 outcome[repo], kind[repo] = "ok", "ok"
             else:
@@ -281,6 +284,7 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
 
     ev = run_integration(ws, run_dir, worktrees, heads)
     ev["outcomes"] = outcome
+    ev["timing"] = {r: t for r, t in timing.items() if "finished_at" in t}
     ev_path = os.path.join(run_dir, "integration.json")
     tmp = ev_path + ".tmp"
     with open(tmp, "w") as f:
