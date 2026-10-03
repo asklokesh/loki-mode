@@ -3053,9 +3053,26 @@ PYEOF
 _verify_receipt_digest() {
     local rid pj lib rc=0
     rid="$(cat .loki/state/last-proof-id.txt 2>/dev/null || true)"
-    case "$rid" in '' | *[!A-Za-z0-9._-]*) return 0 ;; esac
+    # D76: a missing or unusable run-id pointer must not silently skip the receipt check.
+    # Proofs on disk with no pointer to one is NOT VERIFIED; a tree that never recorded a
+    # proof (nothing to verify) says so aloud and does not claim a receipt check.
+    if [ -z "$rid" ]; then
+        if compgen -G ".loki/proofs/*/proof.json" >/dev/null 2>&1; then
+            echo "receipt: NOT VERIFIED (no last-proof-id.txt pointer, but proofs exist under .loki/proofs; the receipt was not checked)"
+            return 1
+        fi
+        echo "receipt: NONE (no proof was recorded in this tree; no receipt was checked)"
+        return 0
+    fi
+    case "$rid" in *[!A-Za-z0-9._-]*)
+        echo "receipt: NOT VERIFIED (last-proof-id.txt holds an unusable id; the receipt was not checked)"
+        return 1 ;;
+    esac
     pj=".loki/proofs/$rid/proof.json"
-    [ -f "$pj" ] || return 0
+    if [ ! -f "$pj" ]; then
+        echo "receipt: NOT VERIFIED (last-proof-id.txt names ${rid} but .loki/proofs/${rid}/proof.json is missing; the receipt was not checked)"
+        return 1
+    fi
     lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
     python3 -E -c "import sys; sys.path[:] = [p for p in sys.path if p not in ('', '.')]
 import importlib.util, json
@@ -3069,7 +3086,7 @@ print('receipt_sha256: ' + h if ok else 'receipt: TAMPERED (integrity hash does 
 sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
     [ "$rc" -ne 3 ] || return 1
     # Provenance: the deploy gate's own verdict (Ed25519 attestation against the local
-    # key plus LOKI_RECEIPT_RETIRED_PUBKEYS; unknown kid or no key is UNCHECKED).
+    # key plus LOKI_RECEIPT_RETIRED_PUBKEYS; unknown kid or no key is UNCHECKED, which fails per D76).
     # Defined in autonomy/loki, so it is absent when verify.sh runs standalone.
     declare -f _deploy_receipt_verdict >/dev/null 2>&1 || { echo "attestation: UNCHECKED (run via loki verify)"; return 0; }
     local att
@@ -3084,6 +3101,16 @@ sys.exit(0 if ok else 3)" "$lib" "$pj" 2>/dev/null || rc=$?
         return 1
     fi
     printf 'attestation: %s\n' "$att"
+    # D76: UNCHECKED (a well-formed token whose kid no local key matches, or a check that
+    # could not run) is not a pass: anyone can mint a foreign-kid token. rc 2, VERDICT not VERIFIED.
+    if [ "$att" = "UNCHECKED" ]; then
+        echo "  Not verified: no local key matches this attestation, so who signed it is unproven."
+        echo "  Cross-machine path: loki verify --pubkey FILE <run-id> checks a Loki 10 run receipt"
+        echo "  (.loki/runs/<run-id>/receipt.json) against the signer's public key (JWK or PEM)."
+        echo "  It does not read a legacy .loki/proofs proof.json; for that, add the signer's public"
+        echo "  key to LOKI_RECEIPT_RETIRED_PUBKEYS on this machine."
+        return 1
+    fi
     [ "$att" != "TAMPERED" ]
 }
 

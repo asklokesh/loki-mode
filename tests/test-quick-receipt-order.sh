@@ -122,6 +122,51 @@ junk_case "two-part" '"aaaa.bbbb"'
 junk_case "non-base64 header" '"!!!.e30.sig"'
 cp "$PJ.orig" "$PJ"
 
+# D76 / A-121c: a well-formed token with a kid no local key matches is UNCHECKED and must
+# exit 2 with a VERDICT that is not VERIFIED, with or without the local key; the message
+# names `loki verify --pubkey FILE`. Only the header kid is changed: the hash excludes
+# `verification`, so the integrity check still passes and only provenance is unknown.
+if [ "$SIGNED" = yes ]; then
+    python3 - "$PJ.orig" "$PJ" <<'PYK'
+import sys, json, base64
+d = json.load(open(sys.argv[1]))
+v = d["verification"]
+h, p, sg = v["attestation"].split(".")
+hd = json.loads(base64.urlsafe_b64decode(h + "=" * (-len(h) % 4)))
+hd["kid"] = "foreign-kid-not-held-locally"
+h2 = base64.urlsafe_b64encode(json.dumps(hd).encode()).decode().rstrip("=")
+v["attestation"] = ".".join([h2, p, sg])
+json.dump(d, open(sys.argv[2], "w"))
+PYK
+    for h in "$T/home2" "$T/home"; do
+        KOUT="$( cd "$FIX" && HOME="$h" "$REPO_ROOT/bin/loki" verify < /dev/null 2>&1 )"; KRC=$?
+        [ "$KRC" -eq 2 ] && printf '%s\n' "$KOUT" | grep -q '^attestation: UNCHECKED' \
+            && ! printf '%s\n' "$KOUT" | grep -q '^VERDICT: VERIFIED' \
+            && printf '%s\n' "$KOUT" | grep -q 'loki verify --pubkey FILE' \
+            && ok "unknown-kid attestation exits 2, UNCHECKED, not VERIFIED, names --pubkey (HOME=${h##*/})" \
+            || bad "unknown-kid attestation not refused" "rc=$KRC HOME=${h##*/} $(printf '%s\n' "$KOUT" | grep -E 'attestation|VERDICT' | tr '\n' ' ')"
+    done
+    cp "$PJ.orig" "$PJ"
+    GOUT="$( cd "$FIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify < /dev/null 2>&1 )"; GRC=$?
+    [ "$GRC" -eq 0 ] && printf '%s\n' "$GOUT" | grep -q '^attestation: VERIFIED$' \
+        && ok "locally signed receipt still verifies rc 0" || bad "locally signed receipt no longer passes" "rc=$GRC"
+fi
+
+# D76 / A-121c: a missing run-id pointer must not silently skip the receipt check. With
+# proofs present it is NOT VERIFIED (rc 2); with no proofs at all (a tree that never ran a
+# build) it says so aloud and the receipt check is not claimed.
+mv "$FIX/.loki/state/last-proof-id.txt" "$T/pointer.bak"
+MOUT="$( cd "$FIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify < /dev/null 2>&1 )"; MRC=$?
+[ "$MRC" -eq 2 ] && ! printf '%s\n' "$MOUT" | grep -q '^VERDICT: VERIFIED' \
+    && printf '%s\n' "$MOUT" | grep -q '^receipt: NOT VERIFIED (no last-proof-id.txt' \
+    && ok "missing run-id pointer with proofs present: rc 2, NOT VERIFIED with reason" \
+    || bad "missing run-id pointer silently passed" "rc=$MRC $(printf '%s\n' "$MOUT" | grep -E 'receipt|VERDICT' | tr '\n' ' ')"
+mv "$T/pointer.bak" "$FIX/.loki/state/last-proof-id.txt"
+NFIX="$T/noproof"; mkdir -p "$NFIX"; git -C "$NFIX" init -q
+NOUT="$( cd "$NFIX" && HOME="$T/home" "$REPO_ROOT/bin/loki" verify < /dev/null 2>&1 )"
+printf '%s\n' "$NOUT" | grep -q '^receipt: NONE (no proof was recorded in this tree' \
+    && ok "tree with no proofs says no receipt was checked" || bad "no-proof tree not honest about the receipt" "$(printf '%s\n' "$NOUT" | tail -5 | tr '\n' ' ')"
+
 # Tamper: edit proof.json, verify must exit non-zero, say BLOCKED and TAMPERED, and
 # evidence.json must not record VERIFIED.
 python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['iterations']=999; json.dump(d, open(p,'w'))" "$PJ"

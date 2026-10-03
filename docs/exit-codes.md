@@ -92,6 +92,26 @@ not rank above UNCHECKED.
 | Engine10 (`loki-ts`, `verify_cmd.ts`) | exit 3, `attestation: UNSIGNED, integrity not attested; refusing (pass --allow-unsigned to accept)` | exit 0, `attestation: UNSIGNED (accepted by --allow-unsigned; integrity not attested)` |
 | Legacy shell (`autonomy/verify.sh`) | BLOCKED (non-zero) | the receipt line passes with the same accepted line |
 
+### UNCHECKED attestations and a missing run-id pointer on legacy (D76)
+
+Legacy `loki verify` (`autonomy/verify.sh`) no longer passes a receipt whose
+attestation it cannot evaluate. A well-formed token whose kid matches no local key
+(and no `LOKI_RECEIPT_RETIRED_PUBKEYS` entry) prints `attestation: UNCHECKED`,
+exits 2 (BLOCKED) and the `VERDICT:` line is not VERIFIED, matching engine10.
+Anyone can mint a token with a foreign kid, so exit 0 was a downgrade path. The
+output names the honest cross-machine path: `loki verify --pubkey FILE <run-id>`
+checks a Loki 10 run receipt against the signer's public key, but it does not read
+a legacy `.loki/proofs/<id>/proof.json`; for a legacy receipt signed elsewhere, add
+the signer's public key (PEM) to `LOKI_RECEIPT_RETIRED_PUBKEYS`. A token signed by
+the local key still verifies with exit 0.
+
+A missing `.loki/state/last-proof-id.txt` no longer skips the receipt check. If
+proofs exist under `.loki/proofs` the run is `receipt: NOT VERIFIED` (exit 2); a
+pointer naming a missing proof is the same. A tree that never recorded a proof
+prints `receipt: NONE (no proof was recorded in this tree; no receipt was checked)`
+and is not failed for it, because there is nothing to verify; that line is not a
+receipt pass.
+
 Engine10 `loki verify [run-id]` exits: 0 verified, 1 tampered, 2 unchecked,
 3 unsigned (refused), 4 run outcome not verified (a sealed receipt of a FAILED or
 otherwise unverified run), 66 no runs. The outcome check runs before the UNSIGNED
