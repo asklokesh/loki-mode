@@ -1998,3 +1998,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - INTEL-3 merged (0bab386c2, d4865ed9e; TL r2 APPROVE). INTEL-1 merged (c3031c9aa; opus APPROVE, 14 probes); dist rebuilt both times, guard 13/0. INTEL-1b opened for the 5 non-blocking findings (FAILED-run export, run_id binding, single read, all-unknown keyid, rotation keyid); builder dispatched.
 - D76 decided (A-121c): legacy unknown-kid verify exits rc 2; builder dispatched. EV-12D blocked: main has 0 large tasks (measure-size rc=0, validate rc=0).
 - Drift audit: 182 commits on main in 6h; 1 release in the last hour against the 20 min cadence target (MISS, train/93 Tests and Coverage still in progress). Seats: 6 agents active against the 8-16 target; 6 unblocked ready rows remain, most HIGH or CTO-owned (G-04, S41-06, S41-13, EV-9, D50-W1, E-160).
+
+## 2026-10-03T08:51Z CoS
+- v10.6.11 release run in progress on f9dbe5f4c (Tests green); npm dist-tags still 10.6.10, peer announcement waits for the registry.
+- INTEL-1b r1 HIGH BLOCK: export read hook reached verifyGroup, a genuine group receipt read TAMPERED (reproduced); r2 sent with group export test, stronger sign-bytes test, run_id-before-export and a zero core-line delta. A-121c HIGH review running.
+- D77 decided (CTO): Wall gets a sealed base-tree signatures manifest, never repo access; cap 90/180s, override max 300s; W1-S1..S4 on BOARD, core-budget gated.
+- PO batch: 7 LOW/MEDIUM slices carded with reproduced evidence; 6 builders dispatched (PO-HELP-1 waits for A-121c). PO-DOC-3 done (ac8ae0425).
+- Drift audit: 1 release in the last hour against the 20 min target (MISS: train/94 held on the engine10 core budget, 5007 of 5000, until P0-CORE-BUDGET merges). Seats: 12 agents active, inside 8-16. Ready queue still mostly HIGH or core-gated.
