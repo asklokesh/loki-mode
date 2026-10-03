@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
-import { capNote, parseCapUsd, resolveCap } from "../e10ext/budget_cap.ts";
+import { capNote, parseCapUsd, resolveCap, SUBSCRIPTION_NOTE } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
@@ -310,7 +310,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     }
   }
 
-  if (!json) process.stdout.write(`${START_LINE}, ${capNote(cap.usd, cap.source)}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (!json) process.stdout.write(`${START_LINE}, ${capNote(cap.usd, cap.source)}\n`); if (!json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
   const live = (e: EventEnvelope): void => {

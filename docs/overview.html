@@ -176,7 +176,7 @@ flowchart TB
     <tr><td>Try without a PR</td><td><code>loki owner/repo#123 --no-pr</code></td><td>Builds and verifies, opens nothing.</td></tr>
     <tr><td>Work a backlog</td><td><code>loki backlog owner/repo --all</code></td><td>One isolated run per issue, within your budget.</td></tr>
     <tr><td>Watch runs</td><td><code>loki dashboard start</code></td><td>Or the new Control Plane: <code>LOKI_CONTROL=1 loki control serve</code> <span class="pill preview">Preview</span></td></tr>
-    <tr><td>Cap the cost</td><td><code>loki owner/repo#123 --max-cost 5</code></td><td>Every run shows its cap and stops at it. $20 by default, or <code>budgets.per_run</code> in <code>loki.yaml</code>.</td></tr>
+    <tr><td>Cap the cost</td><td><code>loki owner/repo#123 --max-cost 5</code></td><td>Every run shows its cap and stops at it. $100 by default with an API key, no dollar cap on a subscription run, or <code>budgets.per_run</code> in <code>loki.yaml</code>.</td></tr>
     <tr><td>Automate it</td><td>GitHub Action</td><td>Label an issue <code>loki</code> or comment <code>/loki</code>. Add a nightly <code>loki backlog</code> schedule on your own Actions minutes.</td></tr>
     <tr><td>Check a receipt</td><td><code>loki verify</code></td><td>Says VERIFIED, TAMPERED or UNCHECKED.</td></tr>
   </table></div>

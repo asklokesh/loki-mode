@@ -86,7 +86,7 @@ loki "fix the login redirect loop" --no-pr
 loki owner/repo#123
 ```
 
-The v10 engine accepts a quoted multi-word task, a GitHub, GitLab or Jira issue reference, `status`, `verify`, `dashboard`, and other subcommands. Flags (`loki-ts/src/engine10/cli.ts` USAGE): `--no-pr` builds and verifies without opening a pull request, `--deep` requests the deep verify pass and a longer implement budget, `--provider <name>` picks the coding provider, `--max-cost <usd>` sets the per-run cost cap (default $20.00, or `budgets.per_run` in `loki.yaml`; the flag wins; the start line prints it as `cap $20.00 (default)`; reaching it ends the run BUDGET_STOP, exit 3) (`--json` and `--verbose` are also parsed by the supervisor, see [Quiet output](#quiet-output)). The engine needs Bun; without it the command exits 1 with a message and installation instructions.
+The v10 engine accepts a quoted multi-word task, a GitHub, GitLab or Jira issue reference, `status`, `verify`, `dashboard`, and other subcommands. Flags (`loki-ts/src/engine10/cli.ts` USAGE): `--no-pr` builds and verifies without opening a pull request, `--deep` requests the deep verify pass and a longer implement budget, `--provider <name>` picks the coding provider, `--max-cost <usd>` sets the per-run cost cap (default $100.00 when an API key is set, no dollar cap on a subscription run where the start line adds `subscription: no dollar cap; usage counts against your plan limits`; or `budgets.per_run` in `loki.yaml`; the flag wins; the start line prints it as `cap $100.00 (default)`; reaching it ends the run BUDGET_STOP, exit 3) (`--json` and `--verbose` are also parsed by the supervisor, see [Quiet output](#quiet-output)). The engine needs Bun; without it the command exits 1 with a message and installation instructions.
 
 **Legacy engine (being removed).** The previous engine still ships in 10.6.6 and is reachable with `LOKI_ENGINE=legacy` or `loki legacy <args>`. `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word task>"` run on Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`; `loki start ./prd.md`, a flag-first call and a one-word start stay on the legacy engine. For many issues use `loki backlog owner/repo --all|--label X|--issues N,N` (many issues, N in parallel, each on a `loki/backlog-N` worktree branch) instead. Legacy removal is planned and resumes on 2026-10-07; see [docs/v10/LEGACY-REMOVAL.md](docs/v10/LEGACY-REMOVAL.md). Sections below marked "legacy" describe features that run only on that engine.
 
@@ -205,7 +205,7 @@ A v10 run ends in exactly one outcome. The mapping is `EXIT` in `loki-ts/src/eng
 | 0 | ALREADY_SATISFIED | The work was already done; evidence is recorded. |
 | 1 | FAILED | A check failed, the stage failed, or the event log was modified outside the engine. |
 | 2 | (usage) | No task given, not inside a git repository, or a preflight refusal. Nothing ran. |
-| 3 | BUDGET_STOP | The cost cap (`--max-cost`, `budgets.per_run`, default $20.00) or the time cap fired before the work finished. |
+| 3 | BUDGET_STOP | The cost cap (`--max-cost`, `budgets.per_run`; default $100.00 with an API key, none on a subscription) or the time cap fired before the work finished. |
 | 4 | BLOCKED | Spec conflict: the contract cannot be satisfied as written. The summary names the conflict (`spec conflict: <reason>`); the run never guesses and calls it done. |
 | 5 | STALLED | The same failures three verifies in a row. |
 
