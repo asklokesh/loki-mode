@@ -224,7 +224,6 @@ A `next` release. A Loki 10 run that finds the task already satisfied now leaves
 - The restore never writes through a symbolic link: every write checks the target and each parent directory with lstat first, stays inside the repository and creates files exclusively, so a link planted by the agent cannot redirect a write outside the repository. A test fails if a raw file write reappears in the discard path (D50-F1).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - JSON Schemas for `loki why --json` (`schemas/why-result.schema.json`) and `loki status --json` (`schemas/status-result.schema.json`), validated in tests against real command output, each with a sample that must be rejected (D48 row 5).
 
 ### Documentation
@@ -275,7 +274,6 @@ A `next` release. The promote gate now recognizes the exact message `loki` print
 A `next` release. `npm install -g loki-mode` now brings its own bun, so the Loki 10 engine (the default since v10.5.22) runs on machines that never installed bun. When it still cannot run, `loki` says so plainly on the first line instead of falling back quietly, and the release gate now checks both kinds of machine before moving `latest`.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - bun 1.4.2 ships as an optional dependency. npm installs only the one platform package that matches the machine (`@oven/bun-<os>-<arch>`). Measured cost: about 62MB on macOS arm64; published sizes are 79.5MB for linux-x64, 69.3MB for macOS x64 and 86.1MB for Windows x64. Platforms bun does not support skip it without failing the install (P0-nobun).
 
 ### Changed
@@ -308,7 +306,6 @@ A `next` release. Jira auto-sync starts when configured, the release gate checks
 A `next` release. v10.5.21 was never published: its Release run failed because a test still expected the engine-default note under Unreleased after the release moved it. This release ships everything listed under v10.5.21 (the Loki 10 engine is now the default for `loki "<task>"`, issue mode and `loki quick`, and a bare `loki verify` after a Loki 10 run uses the v10 verifier with exit 4 for a non-VERIFIED outcome), and adds third-party receipt verification.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki keys export` prints the public receipt-signing key as an Ed25519 JWK (kty, crv, x, kid, alg, use). It never prints the private key (D48).
 - `loki verify --pubkey FILE <receipt.json|run-id>` (v10) checks a receipt's signature against the supplied public key (a JWK from `loki keys export`, or PEM) and never the local key set, so someone without your machine can check your receipt. Exits 0 VERIFIED, 1 TAMPERED, 2 UNCHECKED (the key's kid does not match, or the key file is unusable), 3 UNSIGNED, 4 run outcome not verified. A receipt with no signature is refused with 3 even with `--allow-unsigned`, because the caller asked for a signature check; the sealed event log is checked against the supplied key too (D48).
 - `keys export` is listed in `loki help` and in shell completions.
@@ -357,7 +354,6 @@ A `next` release. v10.5.18 was never published, because its Release run was bloc
 A `next` release. Running `loki` with no arguments opens a local dashboard to connect a provider and GitHub, pick a repo and complete its open issues; v10 runs start even when a task's setup rewrote a lockfile; and the docs were swept for stale claims.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki` with no arguments starts the local dashboard and opens `/start`: choose a provider (a logged-in `claude` or `codex` CLI is detected), connect GitHub with a personal access token (stored at `~/.loki/credentials/github`, file mode 0600, never logged or returned by the API), pick a repo, then select issues and press "Complete selected" or "Complete all". Each issue runs as a v10 issue-mode run in its own worktree and branch, with live status (queued, running, PR open, BLOCKED with its question, failed). `--no-open`, `LOKI_HEADLESS=1` or a non-interactive shell print the URL instead of opening a browser; `LOKI_LANDING=1` keeps the previous landing text (D51-A12).
 - A CI check fails when a doc names a `loki` command or flag the CLI does not accept, or shows an old version as current (DOC-02).
 
@@ -373,7 +369,6 @@ A `next` release. Running `loki` with no arguments opens a local dashboard to co
 A `next` release. `loki verify` now refuses unsigned receipts and catches a tampered event log even when the end of the log is deleted, `loki backlog` runs a repo's issues headless from one `loki.yaml`, and v10 runs post to Slack.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki backlog owner/repo --all | --label X | --issues 1,2,3` runs a v10 issue-mode run per issue, each in its own worktree and branch, with a concurrency cap and a daily budget stop, and prints one line per issue plus a summary. Exit 0 only when every issue ended with a PR or VERIFIED. `--dry-run` lists what would run (D51-A3).
 - `loki.yaml` (repo root, then `~/.loki/loki.yaml`) configures provider and models, the NAME of the env var holding a GitHub token, repos, concurrency, budgets, knowledge sources and notifications; `loki config validate` checks it against `schemas/loki-yaml.schema.json`. An annotated example is in `docs/loki.yaml.example` (D51-A3).
 - Slack notifications on the v10 path for PR opened, BLOCKED (with its question) and run finished, from the webhook in the env var named by `LOKI_SLACK_WEBHOOK_ENV` (default `LOKI_SLACK_WEBHOOK_URL`). The URL is never logged, and a slow or failing webhook never fails a run (D51-A4).
@@ -430,7 +425,6 @@ A `next` release. v10 is quiet by default and never reports a tampered run as ve
 A `next` release. It carries everything in v10.5.12, whose version commit landed on main but was never tagged or published (its Release run stopped on three secret-scan false positives on the signing key's file name), plus the work below. The headline: v10 refuses more ways of claiming success it has not earned, receipts are signed natively by default, and every v10 run ends with one named outcome and an honest exit code.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - One named outcome and a fixed exit ladder for v10 runs: VERIFIED and ALREADY_SATISFIED exit 0, FAILED 1, usage or preflight errors 2, a cost or time cap 3, BLOCKED (spec conflict) 4, STALLED 5. `--json` prints one object with `ok`, `outcome`, `stop`, `run_id` and `receipt_sha256`. A BLOCKED run posts its one question, and names an opened draft PR when there is one (A-110).
 - v10 signs receipts natively with Ed25519 (no Python needed) and by default. A receipt signed by a key this machine does not know reads UNCHECKED, not TAMPERED; a retired key still verifies (A-121).
 - Legacy `loki quick` prints its Evidence Receipt after the final commit, so the printed head and digest match what `loki verify` checks; it is quiet by default, with `--verbose` (or `LOKI_VERBOSE=1`) for the setup chatter, and its headline names the unsigned state and the not-proven count. Legacy `loki verify` reports the receipt's signature as VERIFIED, UNCHECKED, TAMPERED or UNSIGNED, and a tampered receipt is BLOCKED everywhere, including `evidence.json` (A-134).
@@ -458,7 +452,6 @@ A `next` release. It carries everything in v10.5.12, whose version commit landed
 Not published to npm: the Release run stopped on three secret-scan false positives. Everything below ships in v10.5.13. `loki quick` on an existing repository now commits only the fix, receipts get a local signing key by default, the Wall detects `node:test` repositories, and the new `packages/loki-seal` Claude Code plugin blocks "done" on red or weakened tests.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `packages/loki-seal`: a Claude Code plugin whose Stop hook blocks the agent from finishing while tests are red or were weakened (fewer tests than the session baseline, a crashed or empty run). It subtracts tests that were already red at session start, releases after repeated hook errors so a broken hook never traps a session, and ships an advisory skill and a demo. It is installed from a clone of this repository (A-04).
 - Receipt signing key: on first use Loki generates one local Ed25519 key (`~/.loki/keys/receipt-ed25519.pem`, file mode 0600) so receipts are signed by default. A failed permission change never silently downgrades a receipt to unsigned; the server path never auto-generates a key (A-120).
 
@@ -555,7 +548,6 @@ Main now moves only to a release train whose full test tier already passed, the 
 Parallel worktrees stop reinstalling npm dependencies from scratch, v10 sessions can trim oversized tool output behind a flag, and the eval harness now refuses to report a cost it did not fully measure.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `LOKI_E10_TRIM=1` (off by default): v10 engine sessions shorten oversized tool results as they arrive. Bash output over 200 lines keeps its first 40 and last 120 lines, Read keeps 400 lines and Grep keeps 100 matches, and the head and thresholds halve from tool call 25 on. A Bash result always keeps its last 120 lines so a failing command's tail is never cut, because the SDK exposes no exit code to the hook (S41-11).
 
 ### Changed
@@ -610,7 +602,6 @@ The v10 Wall no longer mistakes a test run that never started for a failing test
 - The usage governor no longer crashes on a live reading, and says "uncalibrated" when no plan reading is on file instead of reporting a number (E-118).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki modernize` pre-sealed Wall mode: the oracle and target conformance tests are sealed before any conversion exists and re-verified before use (M-14, not yet wired into the full modernize run).
 - `loki modernize` re-slices a non-equivalent unit to at most depth 2; if any child is still not equivalent the unit is NOT PROVEN, never forced to pass (M-18, not yet wired into the full modernize run).
 - `LOKI_E10_PREFIX=lean` (off by default): v10 engine sessions use a short fixed system prompt in place of the Claude Code preset, for a smaller cached prefix; tools, CLAUDE.md loading and permission hooks are unchanged (S41-09).
@@ -631,7 +622,6 @@ CI secret scanning can no longer be switched off by a pushed gitleaks configurat
 - The pre-push hook refuses the push when its `.gitleaks.toml` change check cannot run, instead of treating the error as "unchanged" (E-119).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki modernize` equivalence checker (M-13, not yet wired into the full modernize run): compares captured behaviour of the original and the converted code under normalizers sealed with the oracle before any conversion exists. A missing capture, malformed value, runner error, too few cases, or any mismatch with the sealed normalizer hash is reported as NOT PROVEN, never as equal.
 
 ### Internal
@@ -665,7 +655,6 @@ A local pre-push secret scan that covers every pushed commit and file, so a secr
 - Test fixtures that exercise secret redaction build their sample secrets at runtime, so the repository itself contains no secret-shaped values (E-110).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `scripts/metrics-usage-append.py` (internal swarm tooling): appends an hourly usage-governor snapshot (5-hour and weekly output tokens, per-engineer burn, output by model and role, max engineers) to docs/v10/METRICS.md.
 
 ## v10.5.0 (2026-09-28)
@@ -689,7 +678,6 @@ Loki 10 engine (opt-in: `LOKI_ENGINE=v10`): the verify stage now actually runs a
 `loki modernize <repo> --to <target>` now runs on the v10 engine whatever your default engine is, and the release tooling can no longer publish a version without its built files. This release carries v10.4.0, which was not published: its release was blocked by the secret scan (see Fixed).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki modernize <repo> --to <target>` reaches the v10 modernize command under every engine setting, including `LOKI_ENGINE=legacy` (M-08). The existing `loki modernize heal` and `loki modernize migrate` commands, and `loki modernize --help`, keep their current behaviour.
 - Usage governor (G-01, internal swarm tooling): `scripts/usage-governor.py` reads Claude Code usage from the local transcripts, counts each streamed message once, and projects the 5-hour and weekly windows to their real reset times (daylight saving aware). At 85% of the window or 90% of the week it recommends zero additional engineers.
 - Eval results are durable (E-101): every eval row is archived, with log paths and secret-shaped strings removed, to `~/loki-ci-logs/eval/<run>/` and `eval/loki10/archive/`. `scripts/prune-worktrees.sh` never removes a worktree that has a live process, a commit in the last 30 minutes, or unarchived eval results.
@@ -703,7 +691,6 @@ Loki 10 engine (opt-in: `LOKI_ENGINE=v10`): the verify stage now actually runs a
 `loki modernize <repo> --to <target>` now runs on the v10 engine whatever your default engine is, and the release tooling can no longer publish a version without its built files.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki modernize <repo> --to <target>` reaches the v10 modernize command under every engine setting, including `LOKI_ENGINE=legacy` (M-08). The existing `loki modernize heal` and `loki modernize migrate` commands, and `loki modernize --help`, keep their current behaviour.
 - Usage governor (G-01, internal swarm tooling): `scripts/usage-governor.py` reads Claude Code usage from the local transcripts, counts each streamed message once, and projects the 5-hour and weekly windows to their real reset times (daylight saving aware). At 85% of the window or 90% of the week it recommends zero additional engineers.
 - Eval results are durable (E-101): every eval row is archived, with log paths and secret-shaped strings removed, to `~/loki-ci-logs/eval/<run>/` and `eval/loki10/archive/`. `scripts/prune-worktrees.sh` never removes a worktree that has a live process, a commit in the last 30 minutes, or unarchived eval results.
@@ -716,7 +703,6 @@ Loki 10 engine (opt-in: `LOKI_ENGINE=v10`): the verify stage now actually runs a
 A user guide for `loki modernize`, and a pre-push secret scan that can no longer be weakened by a pushed commit's own allowlist.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - User guide for `loki modernize` at docs/v10/GUIDE-MODERNIZE.md (M-30): what it does, every flag, a worked example and its current limits. A test keeps the guide in step with the CLI: it fails when the guide names a flag the CLI does not parse, omits one it does, or shows a modernization id the CLI would reject.
 
 ### Fixed
@@ -727,7 +713,6 @@ A user guide for `loki modernize`, and a pre-push secret scan that can no longer
 Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`): runs that cannot finish now end with a visible result instead of stalling, and the first `loki modernize` command entry point lands. Also a pre-push secret scan for eval fixtures and swarm tooling.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - No pause state (E-67): a run that cannot finish within its cap never waits for input and never ends silently. It ends as a draft PR or an issue comment that states the reason, and uncommitted or untracked work reaches that draft PR. The supervisor's backstop always leaves the worker time to seal its result, at every cap from a few seconds up to the default.
 - `loki modernize <repo> --to <target>` command and flag parsing on the v10 engine (M-07). It rejects a repo path that does not exist instead of reporting success. The conversion pipeline behind it is still being built; this release adds the entry point and its help text.
 - Java behaviour capture for modernize (M-11): JUnit under JDK 8 with JaCoCo and Randoop when available; every control character in its status output is escaped, and a missing JDK or a malformed status file is reported as not proven, never as a pass.
@@ -743,7 +728,6 @@ Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`): runs that cannot finish now en
 Test guard and planning docs. No change to how `loki` runs your builds.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `tests/test-dep-inventory.sh` now also runs the dependency inventory's self-test with no GitHub credentials, no `gh` on the path and an empty home directory, so a self-test that quietly reaches the network fails on a developer machine the same way it would on a CI runner (E-93; guard for the main-branch failure fixed in v10.2.2).
 - `docs/v10/SCALE.md`: what the Claude Max plan sustains for the engineering swarm and what larger headcounts would cost on API billing, with every figure labelled as measured or estimated (G-03).
 - `docs/v10/METRICS.md`: the medium-tier gate result for the Loki 10 engine against raw `claude -p` (EV-14): raw completed 12 of 14 runs, the v10 engine 10 of 14, so the default engine stays legacy.
@@ -753,7 +737,6 @@ Test guard and planning docs. No change to how `loki` runs your builds.
 Eval tooling release: one size rule for the medium and large eval tiers. No change to how `loki` runs your builds.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `eval/loki10/measure-size.py` (D34): measures every tiered eval task from its committed reference diff, counting only non-test Python product files and added non-blank lines (deletions never count), and exits 1 when a task misses its tier's bar (medium: at least 2 files; large: at least 4 files, at least 150 added lines and above the largest medium task), when a reference diff is missing, or, with `--online`, when the committed diff no longer matches upstream.
 - Reference diffs for the medium-tier tasks under `eval/loki10/refdiff/`, and a new `eval/loki10/test-harness.sh` section that runs the size gate with negative controls.
 
@@ -765,7 +748,6 @@ Eval tooling release: one size rule for the medium and large eval tiers. No chan
 `loki modernize` oracle groundwork and swarm tooling fixes. The modernize modules are internal and not yet reachable from the CLI; nothing changes for existing `loki` users.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Coverage-guided input search for the modernize oracle (M-10): generates inputs that reach uncovered branches of a legacy module, stops on a coverage plateau, and ends as "capture failed" with the real cause when the seed run cannot execute, instead of reporting a plateau. It resolves the old Python runtime the same way the capture tracer does and passes an explicit environment to every child process.
 - Oracle seal for modernize (M-12): the captured cases and a held-out split are hashed and recorded before any agent session, with an 80% branch-coverage floor that reports NOT PROVEN up front. The seal is anchored in the append-only modernize log, so deleting and re-sealing a unit is refused, and verification cross-checks the hashes, the split and the verdict against that record.
 
@@ -777,7 +759,6 @@ Eval tooling release: one size rule for the medium and large eval tiers. No chan
 Tooling release: a dependency inventory for the modernization workstream, plus the fix that restored the test suite after it landed. No change to how `loki` runs your builds.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `scripts/dep-inventory.py` and `docs/v10/DEPS.md`: an inventory of every dependency Loki Mode uses (7 npm/bun manifests, Python requirements and pyproject files, 24 GitHub Actions workflows and 2 composite actions, the Node, Python and Bun CI matrices, Docker base images, both Helm charts, Terraform providers and the Homebrew formula), each with its current and latest stable version, the bump class (patch, minor, MAJOR, or 0.x breaking), runtime end-of-life dates, and floating action tags resolved to the release they actually point at. It drives the dependency upgrade slices (DEP-01, D35).
 - Findings it surfaced: Node 20 in the CI matrix is past end of life (2026-04-30); `actions/checkout@v4` and `actions/setup-node@v4` run on the deprecated Node 20 runtime; both Helm charts carry an appVersion that no longer matches the product version.
 
@@ -790,7 +771,6 @@ Tooling release: a dependency inventory for the modernization workstream, plus t
 Publishes the v10.2.0 changes below. 10.2.0 was bumped but never reached npm: its release gate stopped on a secret-scan false positive (a pinned upstream werkzeug commit in an eval task, allowlisted by exact fingerprint), and a version that is already bumped cannot be re-released by dispatch.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Eval: the second half of the medium tier (11 upstream tasks), each audited with deletion mutants (EV-11).
 - Eval harness: the v10 arm uses this repo's `bin/loki`, records its path and the agent SDK version, and refuses to run when `loki-ts/node_modules` does not match `bun.lock` (E-62).
 
@@ -802,7 +782,6 @@ Publishes the v10.2.0 changes below. 10.2.0 was bumped but never reached npm: it
 Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - "Already implemented" is a first-class outcome: when the requested behaviour already exists, the run cites the code and test evidence, ends as no change needed with a receipt and an issue comment, and opens no PR (E-66).
 - A session that exits with an error fails its stage instead of reporting done, and its stderr tail is kept under the run directory, with the path in the failure event (E-61).
 - `loki modernize` groundwork, not yet wired to the CLI: deterministic codemods first (futurize, OpenRewrite) or a recorded skip (M-16), strangler targets and routes.json (M-19), dashboard view (M-24), Java graph that records every unresolved import (M-04).
@@ -817,7 +796,6 @@ Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`).
 `loki modernize` groundwork. Both modules are internal building blocks of the upcoming `loki modernize` command and are not yet reachable from the CLI; nothing changes for existing `loki` users.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Python import graph for modernize (M-03): `autonomy/lib/modernize/py_imports.py` lexes source with `tokenize`, so it reads Python 2 files (print statements, backticks, old `except X, e` syntax) that `ast` rejects, and `loki-ts/src/engine10/modernize/lang/python.ts` turns the result into the dependency graph the planner clusters. It resolves absolute, relative and bare relative imports (`from . import X`, `from .. import X`), and records imports it cannot resolve instead of dropping them.
 - Behaviour capture tracer for modernize (M-09): `autonomy/lib/modernize/py_capture.py` runs a module's functions under Python 2 or 3 and records inputs, return values and raised exceptions as type-tagged JSON with branch coverage, so a migrated module can later be checked for identical behaviour. Supported values are tagged faithfully, including sets and frozensets (sorted), `Decimal`, the `datetime` family and `bytearray`.
 
@@ -829,7 +807,6 @@ Loki 10 engine (still opt-in: `LOKI_ENGINE=v10`).
 Loki 10 engine improvements (still opt-in: `LOKI_ENGINE=v10`; the default engine is unchanged).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Model cascade and lean small path (E-64): small tasks run one implement session on sonnet with the cached repo map and the impacted tests; fix rounds stay on the cheap model and escalate to the top model only on a real test failure, with the reason in the event log. `LOKI_E10_CASCADE=0` restores the previous behaviour. Not yet re-measured on the full 29-task arm, so the release gate numbers in v10.0.0 still describe the default configuration.
 - Every session exit is classified, including limit kills (125, 143); progress heartbeat every 30s by default (E-68).
 - Eval harness: `no_change_needed` expected outcome, for tasks where the feature already exists (EV-13).
@@ -871,7 +848,6 @@ Loki 10: a new engine (TypeScript/Bun, under 5,000 lines, one state machine: int
 ## v9.81.0 (2026-09-28)
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Loki 10 engine (opt-in, `LOKI_ENGINE=v10`): cost path for small tasks (plan call skipped, Wall on sonnet with a short brief, sized "normal" when the repo map is truncated) (E-45); first-run preflight with actionable refusals (E-36); runs from the npm package via a static module registry (E-32); `--resume` through the supervisor (E-46); detached deep verify after the PR and Slack notify (E-48); issue-ref runs create their run dir before the fetch (E-58).
 - Eval: the harness passes `LOKI_TS_ENTRY` and `LOKI_E10_*` knobs to the v10 arm (E-52) and reaps arm processes that escape the timeout group (EV-10).
 - `scripts/local-ci.sh` fast tier runs gitleaks over the push range when installed (E-60).
@@ -891,7 +867,6 @@ Loki 10: a new engine (TypeScript/Bun, under 5,000 lines, one state machine: int
 ## v9.80.0 (2026-09-28)
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Loki 10 engine (opt-in, `LOKI_ENGINE=v10`): the real entry runs end to end (supervisor and worker, PR opened only by the supervisor with the pinned origin); the temporary run.ts glue is deleted (E-42).
 - Eval: gate report generator and publish script for the loki10-gate marker (E-33, EV-6); legacy arm pinned to `LOKI_ENGINE=legacy` with a `--tasks` subset (E-38); eval PR path regression test (E-51).
 - Engine tests: interrupt and resume end to end (E-39); live PR smoke on a sandbox repo, skipped without `LOKI_E10_LIVE_REPO` (E-40).
@@ -1794,7 +1769,6 @@ never referenced.
   modules, with neither over- nor under-reach.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `tests/test-web-app-no-orphan-components.sh`: every module under
   `web-app/src` must be reachable from the entry point. Deleted and unreachable
@@ -1864,7 +1838,6 @@ shape production writes.
   the call site instead of reproducing it.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Live cost visibility.** `check_budget_limit` has always computed cumulative
   spend every iteration and printed nothing below 80% of cap. It now reports
@@ -2008,7 +1981,6 @@ from the server.
   control of 23.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/test-verify-client-routes.sh`** proves every web-app client path
   resolves to a real FastAPI route. It reads the actual route table via
@@ -2085,7 +2057,6 @@ Hand Loki a GitHub issue and get a pull request, with nothing installed. And
 two commands that used to contradict each other now agree.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **An issue-to-PR GitHub Action.** The headline use case had no entry point:
   the only Action in the repo was `Loki Mode Code Review`, and NO workflow or
@@ -2169,7 +2140,6 @@ A second repository the agent can actually read, plans that arrive whole, and
 the flake that blocked two releases.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`LOKI_ADD_DIRS` grants the agent read access to sibling repositories.**
   Nothing in `autonomy/`, `providers/`, `loki-ts/src/` or `bin/` ever passed
@@ -2451,7 +2421,6 @@ supply-chain gate that did not exist.
   not.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/detect-hallucinated-deps.sh`** -- a slopsquatting guard. A model can
   emit a dependency name that does not exist, and an attacker who registers it
@@ -2855,7 +2824,6 @@ order.
 The most expensive step in a build now reports how long it took.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`completion_council` stage timing.** Sixteen build stages emit a
   `stage_complete` record carrying `duration_s`. The completion council did not
@@ -2989,7 +2957,6 @@ one assembled from a cache hit is worse.
 When the model you pinned is not the model that ran, the receipt now says so.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`model_substituted` records.** An operator can pin a model and get a
   different one. The substitution is often legitimate -- a `fable` pin collapses
@@ -3102,7 +3069,6 @@ The buyer's verification command gets a front door, and post-release smoke stops
 failing with no diagnostic.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki proof chain`.** `tools/verify-chain.py` runs the whole verification
   chain and reports one verdict. It shipped in `package.json` `files[]` and **no
@@ -3159,7 +3125,6 @@ failing with no diagnostic.
   correction.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/test-workflow-rc-capture.sh`** (4 assertions). The `bash -e` failure
   mode is silent -- the workflow does not report "your handler is unreachable",
@@ -3211,7 +3176,6 @@ delete it; it makes the repo unable to acquire more of it silently.
   advertised.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/lib/scan-unreachable-shipped.py` and
   `tests/test-no-unreachable-shipped.sh`** (4 assertions). The durable
@@ -3305,7 +3269,6 @@ a role label that enforces nothing is worse than no label.
   `docs/AUDIT-CHAIN-THREAT-MODEL.md`, so it is not cited as audit evidence.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/test-audit-actor-attribution.sh`** (8 assertions). It extracts and
   drives the REAL `_audit` functions out of `server.py` rather than
@@ -3374,7 +3337,6 @@ sells to regulated buyers; ours was built and unreachable.
   has never written one.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/test-policy-node-failclosed.sh`** (10 assertions). It extracts and
   drives the REAL `check_policy` out of `run.sh` rather than reimplementing it,
@@ -3443,7 +3405,6 @@ The redundant change was reverted. What remains is the guard.
   where each half lives.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/test-agent-types-loaded.sh`** (10 assertions). Pins a three-link chain
   that can break silently at any point: `agents/types.json` exists, `agents/` is
@@ -3500,7 +3461,6 @@ would have left open.
   three forgeries, and switching to tip-equality breaks honest growth.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **The audit subscriber now writes witnesses.** At session end, after the
   flush (witnessing before it would pin a tip missing every buffered entry and
@@ -3589,7 +3549,6 @@ integrity claim does not hold. So it gets checked first.
   not a substitute for one.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`docs/AUDIT-CHAIN-THREAT-MODEL.md`.** States what the chain proves, carries
   both reproductions, and names what would actually close the gap: a keyed MAC
@@ -3644,7 +3603,6 @@ true, which is the same defect class v9.28.0 shipped to correct, found this
 time in our own suites.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tests/test-stop-latency.sh`.** `docs/stop-latency.md` published "about 1
   second to SIGKILL" and labelled it **MEASURED**, while the file it named as
@@ -3785,7 +3743,6 @@ any code moved.
   costs is preserved, and the exit code is unchanged.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`docs/stop-latency.md`.** Enterprises ask how fast a run can be stopped, and
   the answer was undocumented. Investigating it inverted the premise: `loki stop`
@@ -3868,7 +3825,6 @@ any code moved.
 ## v9.27.1
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki start --help` now states the exit-code contract.** `docs/exit-codes.md`
   documents a strong two-tier contract: with `LOKI_DURABLE_STATE=1`, code 20
@@ -3894,7 +3850,6 @@ any code moved.
 ## v9.27.0
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **The evidence receipt now reports model provenance.**
   `autonomy/lib/decision_record.py` has written an append-only trail to
@@ -3947,7 +3902,6 @@ any code moved.
   degradation only when no parser exists at all. No production code changed.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`scripts/guard-changed.sh`** -- runs the test suites that reference the
   files in your diff, plus ShellCheck on the changed shell files, before a push.
@@ -4038,7 +3992,6 @@ a receipt that reports a stage it never ran.
 
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki verify` now runs an LLM review stage, on by default.** Until now the
   receipt reported `llm_review.status = "skipped"` with the reason
@@ -4142,7 +4095,6 @@ so no gate goes red and only a bill shows the difference. Both are guarded.
 ## v9.24.0
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **The unattributed quarter of every build is now measured.** A profiled
   16-minute build summed its stages to 723s against a 960s wall clock, leaving
@@ -4236,7 +4188,6 @@ on `.../loki-mode-sdk`, while `publish-docker` and `publish-python-sdk`
 succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **OpenCode provider completion:** local OpenCode runs now use the same bounded
   provider inventory, startup, trust, and recovery contracts as the other
@@ -4266,7 +4217,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.11
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **MiniMax model catalog support:** local operators can select MiniMax-M3 or
   MiniMax-M2.7 through Loki's existing Anthropic-compatible or OpenAI-compatible
@@ -4276,7 +4226,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.10
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Honest first useful result timing:** issue runs now record the measured
   command-entry-to-plan latency, whether it beat 60 seconds, and explicitly
@@ -4297,7 +4246,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.9
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Live capability/task-class routing:** the Bun runner now routes each
   iteration's RARV phase to a task class (`REASON` -> planning, `ACT` ->
@@ -4323,7 +4271,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.8
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Zero-file reviewed quickstart continuation:** a schema-v1 JSON preview can
   be piped directly into `loki quickstart --from-preview - --yes`. Stdin is
@@ -4349,7 +4296,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.6
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Verified issue-to-PR golden path:** `loki start owner/repo#123 --pr`
   imports a bounded GitHub issue, runs the existing autonomous engine, and
@@ -4365,7 +4311,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.5
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Provider-free quickstart template discovery:**
   `loki quickstart --list-templates` enumerates all 21 shipped starter
@@ -4376,7 +4321,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.4
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **One-command first build:** `loki quickstart "<idea-or-prd>" --yes` now
   supports non-interactive shells while preserving the estimator-backed plan,
@@ -4400,7 +4344,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.3
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Exact-verdict automation gates:** installed outcome-canary evaluation and
   receipt verification now accept `--require-verdict PROMOTE|HOLD|ROLLBACK`.
@@ -4416,7 +4359,6 @@ succeeded. v9.22.14 did not publish either; v9.24.0 is the next version on npm.
 ## v9.22.2
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Installed end-to-end outcome canary workflow:** self-hosted operators can
   now run `loki outcomes canary {plan,record,evaluate,receipt,verify}` from any
@@ -4445,7 +4387,6 @@ Source-bound measurement closes the outcome-routing canary loop without
 invoking or switching a provider.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Deterministic outcome canary evaluation**
   (`tools/outcome-canary-evaluate.py`): validates a canary plan against its
@@ -4468,7 +4409,6 @@ Four features from the parallel lanes plus one post-release fix to v9.20.0's
 lineage guard.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki start <dir>` accepts an existing repository directory**, not only a
   spec file, with an opt-in fast repository pass for the common case.
@@ -4510,7 +4450,6 @@ only by people who already had our infrastructure.
 Two security fixes ship alongside it, and both were reachable in production.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Per-job receipt attestation.** Ed25519 JWT binding job id, run id and the
   receipt's own integrity digest, with the signing keys published at
@@ -4605,7 +4544,6 @@ moved between adjacent cases run to run.
   the gating run is now captured once and branched on.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **A measured page-weight budget for the dashboard bundle.** It is a single
   788 KB file every user downloads before seeing anything, and nothing guarded
@@ -4619,7 +4557,6 @@ Closes the spec-to-production loop. Two gaps, both of which broke the promise of
 an end-to-end autonomous lifecycle.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **A deploy is now authorized by a verified receipt, or refused.** `loki deploy`
   was print-only: Loki built, verified, produced an Evidence Receipt, then handed
@@ -4708,7 +4645,6 @@ cancelled by subsequent pushes to main (required-ci correctly refuses to treat
 `cancelled` as a pass). No code change from 9.18.0 beyond the additions below.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **A remote build's Evidence Receipt is verifiable without trusting the machine
   that produced it.** `GET /jobs/<id>/proof` serves the receipt and its detached
@@ -4746,7 +4682,6 @@ cancelled by subsequent pushes to main (required-ci correctly refuses to treat
   the recommendation and never reached it.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Deployment path.** `POST /jobs` on the trigger server: an authenticated
   non-GitHub submit with a credential separate from the webhook HMAC,
@@ -4802,7 +4737,6 @@ tarball with a positive control. No code change; this ships the intended tree.
   vulnerable". Adds one audit call, measured at 418ms (0.5% of a 77s verify).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **The Evidence Receipt is reachable from the dashboard.** `/api/proofs`
   served receipts with a verdict, file count and cost, and nothing in the UI
@@ -4827,7 +4761,6 @@ tarball with a positive control. No code change; this ships the intended tree.
 Completes the 10-item competitive roadmap.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Agent readiness -- a measurement where the competitor ships an opinion.**
   Factory AI's Agent Readiness Model records `modelUsed` and `reasoningEffort`
@@ -4866,7 +4799,6 @@ Completes the 10-item competitive roadmap.
 ## v9.15.0
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Claim grounding -- the completion claim is the one artifact nobody checks.**
   Our evidence gate has six axes (diff non-empty, tests green, runtime boot,
@@ -4909,7 +4841,6 @@ Completes the 10-item competitive roadmap.
 ## v9.14.0
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki intent` -- detect the drift a verification gate structurally cannot see.**
   Our gates prove code matches spec. They cannot prove the spec was RIGHT. 8090 AI
@@ -4947,7 +4878,6 @@ Completes the 10-item competitive roadmap.
 ## v9.13.0
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki outcomes` -- measure whether the work was RIGHT, not that it happened.**
   Every competing agent reports volume. Measured against their own published
@@ -4986,7 +4916,6 @@ Completes the 10-item competitive roadmap.
 ## v9.12.6
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Loop-harness measurement without invented outcomes.** The new read-only
   report derives routing and verification evidence from existing receipts and
@@ -10812,7 +10741,6 @@ than it is.
   encoding the bug rather than catching it. Now derives from the catalog.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Review and prompt caps derive from `PROVIDER_CONTEXT_WINDOW`.** That value
   was declared by all four providers and read by nothing but a display line,
@@ -10870,7 +10798,6 @@ output quality independently of the model.
   sets the floor -- not the peak -- as the two-year metric.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `docs/STRATEGY-2026-2028.md`, `docs/adoption-baseline-2026-07-31.md`,
   `benchmarks/EQUIVALENCE-STATE-2026-07-31.md`.
@@ -10910,7 +10837,6 @@ shared a property: every one was invisible to a green CI.
   k8s SIGKILLed builds 30s into a rolling upgrade.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `LOKI_MAX_DURATION` / `--max-duration` (accepts `90m`, `2h`): spend and
   iterations were capped, but a STALLED run was bounded by neither.
@@ -15927,7 +15853,6 @@ docker compose .env workflow, plus a security fix for a tracked empty .env.
   memory and session continuity.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki docker <any-loki-command>` zero-friction host wrapper. Runs loki inside
   the published image with the same experience as the local CLI. It bind-mounts
   the current folder to /workspace so `.loki/` state (memory, session, queue,
@@ -15987,7 +15912,6 @@ from a browser.
   existing user is stranded (mirrors the `loki run` -> `loki start` deprecation).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Dashboard can now START a build from the browser, absorbing Purple Lab's one
   unique value. New `POST /api/control/start` (scope: control) accepts a PRD as
   text or path (path-traversal guarded, post-resolution containment check),
@@ -16115,7 +16039,6 @@ bug-hunt findings and documents the v7.41.x default-on knobs across all surfaces
   live on the Bun route (was dead; dormant until the Phase 6 sunset).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Documented the v7.41.x default-on opt-out knobs
   (LOKI_REVIEW_INCONCLUSIVE_BLOCK, LOKI_COMPLETION_TEST_CAPTURE, LOKI_AUTO_DOCS,
   and the caveman compressor knobs) across wiki (Environment-Variables,
@@ -16245,7 +16168,6 @@ regression that v7.41.1 introduced.
   failed the lint gate; newer shellcheck does not.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `tests/test-plan-json-smoke.sh`: a fast direct regression guard asserting
   `loki plan --json` exits 0, emits valid JSON with a populated
   `cost.iterations_by_model`, and never prints "unbound variable" (the v7.41.1
@@ -16316,7 +16238,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.41.0] - 2026-06-14
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Optional output-token compressor integration (caveman). caveman
   (https://github.com/JuliusBrussee/caveman, MIT, vendor-less pin) is a Claude
   Code skill + SessionStart hook that instructs the model to compress its OUTPUT
@@ -16359,7 +16280,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.40.0] - 2026-06-14
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Autonomous, complexity-gated decision for the no-PRD codebase-analysis pass.
   When no PRD is provided, Loki reverse-engineers a PRD from the existing code.
   On the Claude provider, when the repo is detected as complex (file_count > 50,
@@ -16413,7 +16333,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.39.0] - 2026-06-14
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Claude Code plugin and marketplace packaging. Loki now ships a plugin manifest
   (plugins/loki-mode/.claude-plugin/plugin.json) and a marketplace manifest
   (.claude-plugin/marketplace.json) so users can install via the Claude Code
@@ -16437,7 +16356,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.38.0] - 2026-06-14
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Claude Code Dynamic Workflows adoption, opt-in and Claude-provider-only
   (issue: workflows-embed). Two surfaces, both additive; the council, the 11
   quality gates, the evidence gate, and the RARV loop are untouched (they stay
@@ -16469,7 +16387,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.37.0] - 2026-06-13
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Session-Continuity Phase 2, recovery resume (issue #165), opt-in via
   `LOKI_RESUME_SESSION=1`, default OFF. When a previously interrupted run
   (paused, rate-limited, or budget-cutoff) is restarted, the FIRST main-loop
@@ -16496,7 +16413,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.36.0] - 2026-06-13
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki review --ultra` (issue #168): an explicit, opt-in, on-demand cloud
   multi-agent code review that wraps the upstream `claude ultrareview`
   subcommand. Paid cloud operation, billed by Anthropic, separate from local
@@ -16540,7 +16456,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.35.0] - 2026-06-12
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Dashboard: running-project chips in the sidebar are now clickable. Clicking
   a chip name focuses that project (the same path as the project dropdown),
   so switching apps is one click. The Stop button keeps its own handler;
@@ -16571,7 +16486,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.34.0] - 2026-06-11
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Claude session-id stamping (Phase 1, correlation-only): every run writes a
   deterministic per-run UUID (UUIDv5 of the trust-run-id) to
   `.loki/state/claude-session.json` and surfaces it as `claude_session_id` on
@@ -16599,7 +16513,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.33.0] - 2026-06-11
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Embedded three Claude Code 2.1.170 CLI flags, all default-on with env
   opt-outs and gated on CLI support (older `claude` degrades to no-op):
   - `--strict-mcp-config` (`LOKI_STRICT_MCP=0` to disable): added wherever
@@ -16673,7 +16586,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.32.0] - 2026-06-10
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - CLI consolidation Phase B: `loki report kpis` is the canonical KPI command
   (old `loki kpis` kept as a working alias); `loki memory compound`,
   `loki analyze` (explain/onboard/code/context), and `loki modernize`
@@ -16724,7 +16636,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.31.0] - 2026-06-10
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Mid-flight model switching: change the model a live run uses from the
   dashboard (GET/POST /api/session/model + a model select in session
   controls). The switch applies at the next iteration boundary (each
@@ -16786,7 +16697,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.30.0] - 2026-06-10
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki mcp`: launch the Loki Mode MCP server reliably from any project
   directory. Fixes three independent launch blockers a fresh npm consumer
   hit: the repo's local `mcp/` package shadowed the pip MCP SDK (namespace
@@ -16932,7 +16842,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.28.0] - 2026-06-10
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Held-out spec evals (anti-reward-hacking for the checklist, default-on when
   reserved). Before the first verification, `checklist_select_heldout`
   (`autonomy/prd-checklist.sh`) deterministically reserves a slice of checklist
@@ -17048,7 +16957,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.27.0] - 2026-06-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki verify [base-ref]`: standalone deterministic verification of any branch or PR diff.
   Runs build, tests, and static analysis scoped to changed files; diff-scoped secret scan;
   dependency audit. Exit codes: 0 VERIFIED / 1 CONCERNS / 2 BLOCKED for CI gating.
@@ -17078,7 +16986,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.26.0] - 2026-06-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Compose-first fullstack support. When a spec requires more than one service
   (web + database + cache, etc.) the agent is now instructed via RUN_CONTRACT
   to generate a 12-factor `docker-compose.yml` with a clearly-named primary web
@@ -17106,7 +17013,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.25.0] - 2026-06-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Auto-open dashboard on `loki start`. For interactive foreground sessions Loki
   now opens the dashboard in the default browser automatically after the run
   starts. The behavior is cross-platform (macOS `open`, Linux
@@ -17140,7 +17046,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.24.0] - 2026-06-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Live App Preview panel in the dashboard. While a `loki start` run is in
   progress the dashboard now embeds the locally-running app (served by the
   existing app-runner) in an iframe so users can interact with it immediately,
@@ -17180,7 +17085,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.23.0] - 2026-06-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Hybrid codebase search: `loki code search "<query>"`. Combines ripgrep keyword
   matching with ChromaDB semantic search via reciprocal-rank fusion (deduped by
   file:line), with token-budget-aware output. Flags: --grep-only, --semantic-only,
@@ -17215,7 +17119,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.22.0] - 2026-06-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Delegate then notify on done. When a background run (`loki start --bg`)
   finishes, Loki now writes a durable completion summary and fires a local
   desktop notification, so you can delegate a run, walk away, and be told when
@@ -17241,7 +17144,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.21.0] - 2026-06-08
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - AGENTS.md support. Loki now points the agent at `AGENTS.md` in the repository
   root for build, test, and style conventions, falling back to `CLAUDE.md` when
   AGENTS.md is absent (nearest-file-wins, never merged). AGENTS.md is the
@@ -17313,7 +17215,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.19.3] - 2026-06-07
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Shareable proof-of-run: the proof HTML (`loki proof`) now renders a branded
   in-page card (what was built, verified, cost, duration, with Loki/Autonomi
   branding) and opt-in share buttons (X/Twitter, LinkedIn, Copy link). The
@@ -17346,7 +17247,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.19.2] - 2026-06-07
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Uncertainty-gated escalation (default-on, opt out with
   `LOKI_UNCERTAINTY_ESCALATION=0`). When Loki looks stuck, it now proactively
   escalates to the human (writes a structured handoff, fires an intervention
@@ -17381,7 +17281,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.19.1] - 2026-06-07
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Verified-completion evidence gate (default-on, opt out with
   `LOKI_EVIDENCE_GATE=0`). Loki no longer accepts a "done" claim without real
   evidence: the completion council blocks completion unless there is a nonzero
@@ -17428,7 +17327,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.19.0] - 2026-06-07
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Failure-memory loop (default-on, opt out with `LOKI_FAILURE_MEMORY=0`). Loki
   now learns from its own failures within a run so it stops repeating the same
   mistake. When an iteration fails, the scrubbed crash record (or, when
@@ -17477,7 +17375,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.18.2] - 2026-06-06
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Crash reporting Phase 0 (local-only, zero network egress). On an uncaught
   exception, unhandled rejection, nonzero iteration exit, provider-spawn
   exhaustion, rate-limit failover exhaustion, or repeated quality-gate failure,
@@ -17619,7 +17516,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.17.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Shareable team assets (R8 of the competitive arc): `loki assets export <bundle>`
   / `import <bundle>` / `inspect` - bundle a team's reusable assets (learnings,
   project memory, custom agents, PRD templates, council config, optionally the
@@ -17669,7 +17565,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.16.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Visible trust trajectory (R4 of the competitive arc): a per-project view of
   whether the agent is earning autonomy over time, derived from real run history
   (council pass-rate, quality-gate pass-rate, iterations-to-completion, and a
@@ -17698,7 +17593,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.15.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Open-core hooks (R9 of the competitive arc): the seams for hosted + enterprise
   + paid plans WITHOUT gating any existing free feature or faking a service.
   Loki stays fully functional open-source with zero hosted backend.
@@ -17729,7 +17623,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.14.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - 1-click rollback + checkpoint UX (R6 of the competitive arc): deterministic,
   obvious rollback so autonomous runs can be undone in one action. Enhances the
   existing checkpoint/rollback in place (no parallel system).
@@ -17761,7 +17654,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.13.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Auto-wiki + cited codebase Q&A (R5 of the competitive arc): Loki's answer to
   a per-repo knowledge base. `loki wiki generate | show | ask` builds a
   persistent per-project wiki (architecture overview, key modules, data flow)
@@ -17794,7 +17686,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.12.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Zero-config killer first run (R7 of the competitive arc): `loki start "<one
   line brief>"` now works and produces a fast, visible artifact, lowering
   time-to-first-value so a new user gets a good first experience instead of a
@@ -17822,7 +17713,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.11.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Cost + observability dashboard (R3 of the competitive arc): transparent,
   anti-surprise cost visibility, counter-positioned against the market's #1
   churn driver (surprise AI bills). All built by ENHANCING the existing cost
@@ -17869,7 +17759,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.10.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Head-to-head benchmark harness (R2 of the competitive arc): `loki bench`
   (run | vs | list | verify | report). A reproducible harness that runs a task
   on Loki and competitors and produces a results table, built so a third party
@@ -17932,7 +17821,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.9.0] - 2026-05-30
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Shareable proof-of-run (R1 of the competitive arc). Every run now emits a
   self-contained, shareable proof artifact under `.loki/proofs/<run_id>/`
   (`proof.json` + `index.html`) summarizing what the run built and how cheaply +
@@ -17987,7 +17875,6 @@ with opt-out env knobs, never a required user decision.
 ## [7.8.2] - 2026-05-29
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Bun-route usage analytics: the `bin/loki` shim now emits the `cli_command`
   product-analytics event for Bun-routed commands (version, status, stats,
   doctor, provider, memory, rollback, internal, kpis). These commands bypass
@@ -18036,7 +17923,6 @@ is sharper.
   section template makes later incremental updates tractable.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki start --regen-prd`** (alias `--regenerate-prd` / `--regen`, or
   `LOKI_PRD_REGEN=1`) forces a fresh PRD, overriding reuse.
@@ -18053,7 +17939,6 @@ semantics and the stream-json output schema (which Loki's parser consumes) is
 intact. These two adoptions are pure improvements.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`--setting-sources user,project,local`** on the Claude provider invocation
   (when supported). Pins which settings sources Claude Code loads so Loki's
@@ -18252,7 +18137,6 @@ addresses the verified multi-folder `loki stop` issue users reported.
   verified: stopping folder A leaves folder B's session alive.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki stop --all`** preserves the legacy machine-wide behavior for users
   who want to tear down every Loki runner at once. It works even from a
@@ -18402,7 +18286,6 @@ PATCH release. A welcome opener (the "magic opener") shown on first run and
 via `loki welcome`, styled in the dashboard design language.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`assets/welcome/welcome.html`** (NEW): a self-contained welcome page
   using the loki dashboard design tokens (accent #553DE9, DM Serif Display
@@ -18452,7 +18335,6 @@ PATCH release. UX: "more running in the background, less input required."
 Plus the docs reframe completion.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Live Tool Activity panel in the dashboard.** The council-transcripts
   component now also fetches Claude hook events
@@ -18556,7 +18438,6 @@ moat proof.
   inert cross-project graph on any multi-word query.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tools/bench_cross_project_lift.py` (NEW)**: the memory moat proof.
   Seeds two sibling source projects (payments-api, auth-service) and one
@@ -18591,7 +18472,6 @@ PATCH release. Speed bench (excellence bar 7) + privacy opt-out (bar 6)
 arc.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`tools/bench_memory_retrieval.py` (NEW, bar 7)**: seeds N synthetic
   episodes, runs M COLD retrievals (fresh MemoryRetrieval+MemoryStorage
@@ -18654,7 +18534,6 @@ Cline, Aider, Codex, Devin, Windsurf) offers session replay. Sixth
 release in the v7.7.17-v7.7.24 memory arc.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`memory/replay.py` (NEW ~210 LOC)**: `replay_episode(episode_id,
   memory_base)` loads a past episode and renders a READ-ONLY report:
@@ -18713,7 +18592,6 @@ rate + top-accessed patterns in the dashboard + a normalized API.
   snake_case + backward-compat camelCase aliases + `raw` passthrough.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - Dashboard "Token Economics" tile in the Memory panel: hit rate %,
   total tokens, savings %, top-5 retrieved patterns. Auto-refreshes
@@ -18764,7 +18642,6 @@ hook installer with the VERIFIED Claude Code schema (deferred from
 v7.7.18). Fourth release in the v7.7.17 through v7.7.24 memory arc.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Cross-project knowledge graph woken** (diagnosis flagged
   `memory/knowledge_graph.py` + `cross_project.py` as ZERO-call-site
@@ -18883,7 +18760,6 @@ Code, never producing episodes. This release adds two voluntary
 capture paths so EVERY developer session can populate `.loki/memory/`.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`memory/ingest.py` (NEW, ~440 LOC)**: two ingest entry points:
   - `ingest_from_claude_transcript(transcript_path, memory_base)` -> reads
@@ -18981,7 +18857,6 @@ masking any future memory regression. v7.7.17 surfaces those failures.
   was absolute; locked in by test 9 parity assertion).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `memory/error_log.py` (~155 LOC): structured error log helper.
   Tab-separated single-line records: `timestamp \\t function \\t
@@ -19110,7 +18985,6 @@ verifier returned `valid=False` while the chain was actually intact).
   transparency.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `tests/test-audit-chain-cross-file.sh` (5/5 PASS):
   - `verify_all_logs` on real production audit dir reports
@@ -19181,7 +19055,6 @@ DIAGNOSTIC-BROADCAST.md` section 3).
   guaranteed on the class.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `tests/test-lsp-diagnostics-regression.sh`: 5/5 PASS including
   structural check, end-to-end fake-LSP publishDiagnostics flow via
@@ -19253,7 +19126,6 @@ and Docker.
   `LOKI_AUTO_CONFIRM=true`.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `tests/test-empty-args-no-prd.sh` (6/6 PASS): asserts the safe
   expansion pattern works on bash 3.2 semantics; asserts the old
@@ -19305,7 +19177,6 @@ default route is Bun, not bash).
   restores parity: both routes report provider_source=cli identically.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `tests/test-status-cli-provider-parity.sh` (9/9 PASS): asserts bash
   and bun routes report identical provider + provider_source for valid
@@ -19340,7 +19211,6 @@ closed PR #161. Three-reviewer council (2 Opus + 1 Sonnet) unanimous
 APPROVE after one fix iteration on real defects surfaced by Opus reviewers.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **UT2-12 USAGE markdown rendering** (`dashboard-ui/scripts/build-standalone.js`):
   `renderUsageMarkdown()` function converts USAGE.md fenced code blocks,
@@ -19432,7 +19302,6 @@ PATCH release. F-3 USAGE.md port hallucination fix (defect in v7.7.3 intelligent
   do NOT infer port from script names or convention.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - Secret scrubber on entrypoint capture: lines containing any of API_KEY,
   SECRET, PASSWORD, TOKEN, PRIVATE_KEY, CREDENTIAL, BEARER (case-insensitive)
@@ -19475,7 +19344,6 @@ rm -rf /tmp/loki-* /tmp/test-* /tmp/package /tmp/*.tgz 2>/dev/null || true
 PATCH release. v7.7.0 LSP acceptance criterion #4 (Java coverage).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `jdtls` added to `mcp/lsp_proxy.py` LANG_MAP for Java `.java` files
 - `autonomy/lib/mcp-config.sh` detection list now includes `jdtls`
@@ -19515,7 +19383,6 @@ PATCH release. v7.7.0 LSP acceptance criterion #5: system prompt now
 instructs agents WHEN to call the LSP grounding tools.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `LSP_GROUNDING_INSTRUCTION` in both bash (`autonomy/run.sh:9405`) and
   TS (`loki-ts/src/runner/build_prompt.ts:222`) prompt templates. The
@@ -19666,7 +19533,6 @@ PATCH release. Documents-only ship: standing SDLC fleet pattern from
 the v7.6.0 demonstrated workflow now codified as a binding rule.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `skills/sdlc-fleet.md`: the 6-role SDLC fleet pattern (architect,
   product owner, dev fleet in parallel, SDET, 3-reviewer council with
@@ -19711,7 +19577,6 @@ SOMETHING; this hook re-runs a cheap model call with the FINAL project
 state to refine that output (or write it if missing).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `_intelligent_usage_regen()` in `autonomy/run.sh`. Triggered right after
   COMPLETION PROMISE FULFILLED (before memory consolidation). Captures
@@ -19753,7 +19618,6 @@ PATCH release. B-5 fix: provider precedence is now documented and surfaced
 in `loki status --json` so users can verify why a value was chosen.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `loki status --json` and `loki status --json` (Bun route) both include
   a new `provider_source` field with values `"saved"`, `"env"`, or
@@ -19785,7 +19649,6 @@ in `loki status --json` so users can verify why a value was chosen.
 PATCH release. F-1 follow-up: USAGE.md surfaced in Dashboard UI.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `GET /api/usage` endpoint on Dashboard server: returns the project's
   USAGE.md as JSON `{exists, content, path, size, mtime, truncated}`.
@@ -19824,7 +19687,6 @@ var, no flag, no per-language config. Inspired by OpenCode's LSP design
 (studied end-to-end before implementing).
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 **4 new agent-facing LSP tools** in `mcp/lsp_proxy.py`, exposed via the
 auto-generated `.loki/mcp-config.json` (wired in v7.5.22 Phase D +
@@ -20451,7 +20313,6 @@ stale examples. Updated:
   bottom.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki-ts/src/metrics/kpis.ts`** (new, ~210 lines). Pure functions
   for KPI derivation. Exports `computeKpis(lokiDir)`, `formatKpisJson`,
@@ -20626,7 +20487,6 @@ a JSON edit + release, no code change. Generic model aliases
 table that closes the loop.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki-ts/data/model-pricing.json`** (new). Canonical pricing
   source of truth. USD per 1M tokens. Contains: opus (5/25), sonnet
@@ -20707,7 +20567,6 @@ Ollama). Both bash and Bun routes honor the override; doctor warns
 when an alt endpoint is set without an override.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`providers/claude.sh::resolve_model_for_tier`** -- after the
   existing tier resolution + LOKI_MAX_TIER ceiling, `LOKI_MODEL_OVERRIDE`
@@ -20804,7 +20663,6 @@ the nearest `.git/` directory. No new CLI subcommands. No new opt-in
 env vars.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`mcp/lsp_proxy.py`** (new, 713 lines, stdlib-only). MCP server
   proxying LSP requests to language-specific binaries. Stdlib-only
@@ -20919,7 +20777,6 @@ env vars (LOKI_PROJECT_GRAPH_*) are set by Loki at start and never
 read from the user environment.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`autonomy/lib/project-graph.sh`** (new, ~570 lines). Functions:
   - `loki_project_graph_discover <target_dir>` -- runs the discovery
@@ -21031,7 +20888,6 @@ events stream into `.loki/events.jsonl` via the existing event bus
 for dashboard visibility. No new CLI subcommands.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki-ts/src/providers/mcp_config.ts`** (new, ~98 lines). Exports
   `mcpConfigPath(targetDir)`, `userMcpConfigPath()`, `buildMcpConfigArgv`.
@@ -21132,7 +20988,6 @@ support, parse error, missing voter slug). No new CLI subcommands. No new
 opt-in env vars.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki-ts/data/finding-schema.json`** (new, ~80 lines). JSON Schema
   draft-07 for the multi-finding response. Top-level shape is
@@ -21251,7 +21106,6 @@ flag. Suppress with `LOKI_DYNAMIC_PROMPT_SECTIONS=keep`. No new CLI subcommand.
 No new opt-in env var unless the user wants the old behavior.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`providers/claude.sh::_loki_build_claude_auto_flags`** -- appends
   `--exclude-dynamic-system-prompt-sections` (boolean flag, no value) when
@@ -21330,7 +21184,6 @@ Code CLI flags into Loki's Claude provider invocation, derived automatically
 from existing Loki state. No new CLI subcommands. No new opt-in env vars.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`autonomy/lib/claude-flags.sh`** (new helper, ~120 LOC). Public API:
   - `loki_effort_for_tier <tier> [complexity]` -> emits `low|medium|high|xhigh|max`
@@ -21438,7 +21291,6 @@ parallel.
   research program name, not a provider reference.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Clear deprecation guard**: `LOKI_PROVIDER=gemini` now exits 1 with a
   user-friendly message naming active providers (`claude`, `codex`, `cline`,
@@ -21597,7 +21449,6 @@ No migration. Each fix is additive or strict bug correction. Rollback:
 PATCH release. Adds council transcript persistence across both bash and Bun council paths, a REST API to query transcripts, and a live dashboard panel. Motivation: YC demo readiness -- a partner clicking through the dashboard can now see the full multi-reviewer council record (who voted what, whether the devil's advocate triggered, and whether it flipped the outcome) without digging into raw log files.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Bash council transcript writer** (`autonomy/completion-council.sh`): new function
   `council_write_transcript()` persists a structured JSON record per council round to
@@ -21664,7 +21515,6 @@ Closes most of the v7.5.12 council-deferred backlog and the v7.5.14 sentrux
 follow-ups. Zero breaking changes; every new behavior is opt-in or additive.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Sentrux iteration-loop wire-in** (autonomy/run.sh, opt-in via
   `LOKI_SENTRUX_GATE=1`, default OFF). Two helper functions
@@ -21784,7 +21634,6 @@ loop in this release. Users opt in via the new `loki sentrux` subcommand
 and a `loki doctor` line that reports presence.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **autonomy/lib/sentrux-gate.sh** (new helper, ~150 LOC).
   Public functions: `sentrux_available`, `sentrux_version`,
@@ -23277,7 +23126,6 @@ Embedded into the existing autonomous loop; no new CLI commands.
 Backward-compatible behind four feature flags, all default off.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - `loki-ts/src/runner/findings_injector.ts` -- parses per-reviewer `*.txt`
   files in `.loki/quality/reviews/<id>/` with the same `\[(Critical|High|Medium|Low)\]`
@@ -23742,7 +23590,6 @@ PATCH release. Ships the deferred items v7.4.12 promised "v7.4.13":
 the `loki self-update` command + a Bun-first README rewrite.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`loki self-update`** -- one upgrade command for everyone.
   Auto-detects which package manager installed loki by resolving the
@@ -23934,7 +23781,6 @@ re-pushing. Introduces strict pre-push local-CI gating per user mandate.
   the v7.4.10 SBOM workflow failure.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **`scripts/local-ci.sh`** -- mirrors EVERY GitHub Actions workflow
   check on this Mac. Runs in ~1.5 minutes (full mode with SBOM):
@@ -24269,7 +24115,6 @@ real this time -- see RETRACTIONS below.
   BSD utility differences before users hit them.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **6 new GitHub Actions workflows** authored by W1-A4:
   - `sbom.yml` (CycloneDX SBOM via `@cyclonedx/cyclonedx-npm`,
@@ -25020,7 +24865,6 @@ rolls back any user to bash. Default behavior unchanged for users on previous
 versions; the new shim auto-detects Bun and falls through to bash if missing.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **TypeScript ports of 8 read-only commands** (loki version, status [--json],
   stats [--json] [--efficiency], provider show/list, memory list/index, doctor
@@ -25179,7 +25023,6 @@ reviewers (3 per item), integration tester, release manager. 14 SHIP
 verdicts + 1 false-positive cleared.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Dashboard managed-memory panel.** New Web Component
   `dashboard-ui/components/loki-managed-memory-panel.js` (~580 lines).
@@ -25462,7 +25305,6 @@ breaking changes for users with all flags off.
 ## [6.83.0] - 2026-04-24
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **Managed Agents Memory integration -- Phase 1 MVP (opt-in).** Loki can now
   mirror a whitelisted subset of RARV-C learnings to a Claude Managed Agents
@@ -25502,7 +25344,6 @@ breaking changes for users with all flags off.
 ## [6.82.0] - 2026-04-24
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **S0.2 loki_complete_task MCP tool.** Structured replacement for the previous
   COMPLETION PROMISE FULFILLED string-match. Agents declaring task completion
@@ -25589,7 +25430,6 @@ magic debate gate.
   restores the feature for all distribution channels.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **`benchmarks/magic-ab/`**: A/B benchmark harness (`run.sh`,
   `compare.py`, `prd.md`, `README.md`) that runs the same PRD twice
   -- once with `LOKI_GATE_MAGIC_DEBATE=true` and once with `false`
@@ -25643,7 +25483,6 @@ new provider models for review.
   with `ModuleNotFoundError: httpx / sqlalchemy` and blocked the publish.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **`/api/providers/models` endpoint** (`dashboard/server.py`): returns
   `providers/model_catalog.json` verbatim with a degraded fallback if the
   file is missing. Future frontend rebuilds can drop hardcoded model lists
@@ -25688,7 +25527,6 @@ server-side gate that blocks the Release workflow from running until tests
 pass. Both land in this release.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Pre-push git hook** (`.githooks/pre-push`): runs `bash -n` on
   `autonomy/run.sh` and `autonomy/loki`, then `python3 -m pytest -q`.
   Aborts the push if anything fails. Bypass with `PRE_PUSH_SKIP=1 git push`
@@ -25768,7 +25606,6 @@ stay consistent.
   trigger a clean reload.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `tests/test-openspec-sentinel.sh` - 10 focused integration tests covering
   the six state transitions (fresh run, crash-restart, change switch,
   content edit, non-OpenSpec task preservation, legacy-sentinel upgrade).
@@ -25793,7 +25630,6 @@ extractors now work on arbitrary project layouts (not just loki-mode's) and
 the memory bridge's happy path works end-to-end against the real memory API.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Dynamic model catalog** (`providers/model_catalog.json`, `providers/models.sh`):
   single source of truth for provider/tier -> model ID mapping. New releases
   update one JSON file; every provider, doc, and dashboard picks it up.
@@ -25847,7 +25683,6 @@ Magic Modules is now woven into the autonomous orchestrator. Users do not run
 components during normal RARV-C phases.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **BOOTSTRAP hook** (`autonomy/run.sh`): design tokens auto-extracted from
   project at iteration 0; saved to `.loki/magic/tokens.json`.
 - **REASON phase** (`magic/core/prd_scanner.py`): PRD scanner detects UI
@@ -25884,7 +25719,6 @@ Inspired by [MagicModules](https://github.com/romannurik/MagicModules-Experiment
 multi-persona debate (MoMoA) into a native Loki subsystem.
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **`loki magic` CLI**: New command family with 6 subcommands
   - `magic generate <name>` -- create React + Web Component from description, spec, or screenshot
   - `magic update` -- incremental regen via SHA256 freshness check
@@ -25933,7 +25767,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.72.0] - 2026-03-24 - Dark Mode, RBAC/Teams, GitPanel, Template Gallery, CI/CD Pipeline, NotificationSystem
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **BuildActivityFeed** (sprint-2): Real-time build activity stream in Purple Lab dashboard showing agent actions, file changes, and build events as they happen
 - **DeployPanel** (sprint-2): Integrated deployment control panel with one-click deploy, environment selection, and live deployment status tracking
 - **CheckpointTimeline** (sprint-3): Visual timeline of project checkpoints with diff viewer, restore capability, and checkpoint annotations
@@ -25967,7 +25800,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.63.0] - 2026-03-22 - PRD-to-Task Parser with Rich Task Details
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `populate_prd_queue()` function in `autonomy/run.sh` -- extracts features/requirements from plain PRD markdown into structured task entries with title, description, acceptance criteria, user stories, priority, and project name
 - PRD parser runs once (idempotent via `.prd-populated` sentinel) and skips if BMAD/OpenSpec/MiroFish adapters already populated tasks
 - Dashboard task API (`GET /api/tasks`) now passes through `acceptance_criteria`, `user_story`, `project`, and `source` fields from queue files
@@ -26005,7 +25837,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - **Cross-cutting** (12 bugs): Queue file race conditions, non-atomic session.json, log truncation invalidating indices, temp file leaks
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - 43 new CLI bug-fix regression tests (tests/test-bugfix-audit.sh)
 - 44 new Purple Lab regression tests (web-app/tests/test_server.py)
 - Bug audit report at docs/BUG-AUDIT-v6.61.0.md (215 bugs documented)
@@ -26036,7 +25867,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.60.0] - 2026-03-21 - MiroFish Market Validation Integration
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - MiroFish swarm intelligence adapter (`autonomy/mirofish-adapter.py`) for pre-build market validation
 - CLI flags: `--mirofish`, `--mirofish-docker`, `--mirofish-rounds`, `--mirofish-timeout`, `--mirofish-bg`, `--no-mirofish`
 - Non-blocking background pipeline: ontology generation, graph building, simulation, report generation
@@ -26051,7 +25881,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.59.0] - 2026-03-21 - AI Chat as Real Agent Interface + Auto-Fix Error Loop
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Error-aware chat: AI chat now auto-injects dev server errors and quality gate failures into context
 - Auto-fix loop: dev server crashes trigger automatic error repair (up to 3 attempts with circuit breaker)
 - Fix endpoint: POST /api/sessions/{id}/fix for manual error fixing via UI
@@ -26070,7 +25899,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.58.0] - 2026-03-21 - 3-dot project menu, static file fix, Docker-first, UI polish
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - 3-dot context menu on project cards (Open, Open in new tab, Copy path, Delete)
 - Docker Compose as highest-priority dev server detection (isolated containers)
 - LLM instructed to generate Dockerfile + docker-compose.yml for all projects
@@ -26094,7 +25922,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.57.2] - 2026-03-21 - Docker-first dev server, multi-select delete, Expo QR, 7 framework detections
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Docker Compose detection as highest-priority dev server strategy (isolated containers, no port conflicts)
 - Multi-select delete for projects: checkbox on hover, Select All / Clear / Delete(N) bulk actions, red ring highlight on selected cards
 - Delete projects from Projects page (trash icon, confirmation dialog, full cleanup: files, node_modules, processes, PTY, dev server)
@@ -26126,7 +25953,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.56.0] - 2026-03-21 - Project delete, Expo QR, stack-agnostic detection
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Delete projects from Projects page (trash icon, confirmation dialog, full cleanup: files, node_modules, processes, PTY, dev server)
 - Expo/React Native QR code preview for Expo Go mobile testing
 - Java/Spring Boot detection (Maven + Gradle with wrapper support)
@@ -26146,7 +25972,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.55.0] - 2026-03-21 - Auto-install deps, portless, dev server fixes
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Auto-install dependencies before starting dev server (npm install if node_modules missing, pip install if requirements.txt)
 - Portless integration for named .localhost URLs (optional, falls back gracefully)
 - Dev server searches subdirectories for package.json (nested project structures)
@@ -26178,7 +26003,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.52.0] - 2026-03-21 - Cloud readiness: encryption, migrations, linting
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Fernet encryption for secrets (activates when PURPLE_LAB_SECRET_KEY is set)
 - Alembic database migrations with initial schema (5 tables)
 - ESLint 9 flat config (typescript-eslint + react-hooks + react-refresh)
@@ -26191,7 +26015,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.51.0] - 2026-03-20 - Test stability, Docker production readiness
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - web-app/Dockerfile for Purple Lab standalone container (multi-stage: Node build + Python runtime)
 - Chat mode tests (quick/standard/max command construction)
 - ANSI stripping tests (3 test cases covering color, bold, cursor codes)
@@ -26221,7 +26044,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.50.0] - 2026-03-20 - Purple Lab v2: Production IDE Platform
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Real interactive terminal (pexpect PTY + xterm.js) with multi-tab support
 - Dev server manager with auto-detection for 8+ frameworks (Vite, Next.js, Django, Flask, Express, Go, Rust)
 - HTTP/WebSocket proxy for live preview with HMR support
@@ -26260,7 +26082,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.45.0] - 2026-03-20
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Smart preview detection: auto-detect project type (web-app, API, static-site, library, Go, Rust, containerized) for Preview tab
 - Secrets management: full CRUD UI with add/delete/show-hide, ENV_VAR validation, injected into builds
 - Non-blocking AI Chat: polling pattern with task_id, 5-min timeout guard
@@ -26289,7 +26110,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.44.0] - 2026-03-20
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Workspace tab system in Project Workspace: Code, Preview, Config, Secrets, PRD tabs for structured navigation
 - Build controls: Stop, Pause, Resume buttons with real-time session status polling
 - Full process tree cleanup on `loki web stop`: SIGTERM then SIGKILL for all loki-run child processes
@@ -26301,7 +26121,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.43.0] - 2026-03-20
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Context menu on file tree (right-click for Open, Preview, Run Tests, View Docs, Delete)
 - Template prefill: selecting a template on the Templates page now pre-populates the PRD input on Home
 - AI chat panel: added Max mode alongside Quick and Standard
@@ -26315,7 +26134,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.42.0] - 2026-03-20
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Multi-page web app: Projects page (session browser with filtering), Templates page (13 PRD templates with categories), Settings page (provider selection, version info)
 - AI Chat panel: in-session conversational interface using `loki quick` for mid-run steering and clarifications
 - Activity panel: real-time activity feed showing agent actions as they happen
@@ -26330,7 +26148,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.41.0] - 2026-03-19
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Tab system: open multiple files simultaneously, click tabs to switch, close tabs with unsaved changes warning, modified indicator dot on tabs
 - Quick Open (Cmd/Ctrl+P): fuzzy file search modal -- type to filter, Enter to open, Escape to close
 - Preview auto-refresh: saving HTML/CSS/JS files automatically reloads the preview iframe
@@ -26339,7 +26156,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.40.0] - 2026-03-19
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Monaco Editor integration in ProjectWorkspace -- full VS Code-grade syntax highlighting for 17+ languages, bracket pair colorization, code folding, smooth scrolling
 - Resizable split panes (react-resizable-panels) -- drag to resize file tree, editor, and preview panels independently
 - File CRUD API endpoints: PUT (save/update), POST (create file), DELETE (delete file), POST directory (create folder) -- all with path traversal protection and atomic writes
@@ -26357,7 +26173,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.39.0] - 2026-03-19
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - URL-based project routing: `/project/:sessionId` URLs persist across refresh (React Router)
 - Live preview server: `GET /api/sessions/:id/preview/:path` serves project files with correct MIME types, enabling HTML/CSS/JS preview in iframe
 - ProjectPage component with lazy loading (code-split 8.4KB chunk)
@@ -26388,7 +26203,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - Purple Lab: null guards on agent type and phase toLowerCase calls (fixes TypeError crash when agents have undefined type)
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - ProjectWorkspace component: full IDE-like view with file tree sidebar, code viewer, and HTML preview iframe
 - "View Project" primary CTA button after build completes -- opens ProjectWorkspace with file browser
 - ErrorBoundary component with retry button for graceful crash recovery
@@ -26396,7 +26210,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.38.3] - 2026-03-19
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Project Workspace: full-screen file browser and HTML preview panel after a build completes
 - "View Project -- Browse Files and Preview" CTA button appears post-build in the dashboard
 - File tree with recursive expand/collapse, language-specific icons, file size display
@@ -26615,7 +26428,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - Subprocess now spawned with `start_new_session=True` for clean process group kill on stop
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `/health` endpoint for load balancer and orchestrator health checks
 - WebSocket disconnect indicator already visible in header (verified working)
 
@@ -26663,7 +26475,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.33.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki watch [prd-path]` command: auto-rerun on PRD file changes
   - Monitors a PRD file and automatically re-runs `loki start` when the file is saved
   - Enables a tight edit-PRD-see-results development loop
@@ -26689,7 +26500,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.32.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki metrics` command: session productivity reporter that analyzes past Loki Mode sessions
   - Reads `.loki/` session data (orchestrator state, queue, efficiency metrics, memory)
   - Aggregates stats: iterations completed, agents deployed, tasks completed, success rate
@@ -26709,7 +26519,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.31.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki explain [path]` command: analyze any codebase and generate a plain-English architectural explanation
   - Executive summary, architecture overview, technology stack, key patterns, getting started, and contributor guide
   - Auto-detects language, framework, build system, test framework, CI/CD, and architecture patterns
@@ -26744,7 +26553,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.30.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki share` command: upload session reports as shareable GitHub Gists in one command
 - Supports `--private` flag for secret gists (default: public)
 - Supports `--format text|markdown|html` flag (default: markdown)
@@ -26757,7 +26565,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.29.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - BMAD story priority ordering by MVP/phase label: stories from MVP epics are queued first, then Phase 2, then Phase 3
 - Auto-write-back to sprint-status.yml and epics.md checkboxes when stories are completed
 - New CLI flags: --write-back, --completed-story, --completed-stories-file for bmad-adapter.py
@@ -26771,7 +26578,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.28.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki init` project scaffolding: creates project directory, prd.md from template, .loki/ config, README.md, and git init
 - Expanded template gallery from 13 to 22 templates (added ai-chatbot, api-only, blog-platform, e-commerce, full-stack-demo, rest-api-auth, saas-starter, simple-todo-app, static-landing-page)
 - New flags: --template/-t TYPE, --no-git, --stdout, --dry-run
@@ -26792,7 +26598,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.27.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki report` command -- session report generator with text, markdown, and HTML output formats
 - Report reads .loki/ session data (autonomy state, quality gates, agents, queue, council, events)
 - Flags: `--format text|markdown|html`, `--output <file>`, `--no-gates`, `--no-agents`, `--no-timeline`
@@ -26849,7 +26654,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.26.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki web` CLI command: serves the web app, auto-starts dashboard API, opens browser
   - Subcommands: start (default), stop, status. Options: --port, --no-open, --no-api
 - Web App: File Browser with recursive tree view, expand/collapse, file content preview
@@ -26879,7 +26683,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.25.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Loki Web App: Replit-like web UI for visual PRD-to-code workflow
 - PRD Input panel with template selector (13 templates) and provider picker
 - Agent Dashboard with live status, color-coded agent cards, phase indicators
@@ -26893,7 +26696,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.24.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki test` command: AI-powered test generation for any language/framework
 - Auto-detects language (JavaScript, TypeScript, Python, Go, Rust, Java, Ruby, Shell)
 - Auto-detects test framework (jest, vitest, mocha, pytest, go-test, cargo-test, junit, rspec, bats)
@@ -26911,7 +26713,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.23.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - VSCode extension: added 4 new commands to command palette and quick pick menu
   - "Analyze PRD Complexity (loki plan)" -- opens file picker for PRD, runs loki plan
   - "Review Code Quality (loki review)" -- runs loki review on current workspace
@@ -26922,7 +26723,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.22.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki ci` command: CI/CD quality gate integration for GitHub Actions, GitLab CI, Jenkins, CircleCI
 - Auto-detects CI environment from standard env vars (GITHUB_ACTIONS, GITLAB_CI, JENKINS_URL, CIRCLECI)
 - PR diff review with static analysis, security scanning, and anti-pattern detection
@@ -26938,7 +26738,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.21.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki onboard` command: instant project analysis and CLAUDE.md generation
 - Scans directory structure, package files, README, CI configs to detect project type
 - Language detection: JavaScript/TypeScript, Python, Rust, Go, Ruby, Java/Kotlin, C/C++, Bash
@@ -26955,7 +26754,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.20.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki review` standalone code review command with diff-based quality gates
 - Review sources: uncommitted changes, staged (--staged), GitHub PR (--pr), files/dirs, since commit (--since)
 - Security scanning: hardcoded secrets, SQL injection, eval/exec, unsafe deserialization, disabled SSL
@@ -26971,7 +26769,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.19.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Cross-provider auto-failover: automatic provider switching on rate limit (429/529) detection
 - `loki failover` command: status, --enable, --disable, --chain, --test, --reset
 - Failover state persistence in `.loki/state/failover.json`
@@ -26984,7 +26781,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.18.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki plan` command: pre-execution PRD analysis with complexity assessment, cost estimation, iteration planning, and quality gate preview
 - `--json` flag for programmatic JSON output
 - `--verbose` flag for detailed analysis breakdown
@@ -26993,7 +26789,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.17.2] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki stats` command: comprehensive session statistics (token usage, quality gates, efficiency, budget tracking)
 - `--json` flag for programmatic JSON output
 - `--efficiency` flag for per-iteration token and cost breakdown
@@ -27007,7 +26802,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.17.0] - 2026-03-18
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki trigger` command: event-driven autonomous execution (analogous to Cursor Automations)
 - `autonomy/trigger-server.py`: GitHub webhook receiver (issues, pull_request, workflow_run events)
   - HMAC-SHA256 signature validation (X-Hub-Signature-256)
@@ -27029,7 +26823,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.16.0] - 2026-03-17
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Dashboard memory browser: FTS5 full-text search with collection filtering and result display
 - Dashboard memory browser: storage backend stats showing backend type, entry counts, database size, FTS5 status
 - Dashboard: quality gates and RARV timeline components now wired into standalone dashboard pages
@@ -27044,7 +26837,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.15.0] - 2026-03-17
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **SQLite + FTS5 memory storage**: New primary storage backend with full-text search. Factory auto-selects SQLite when available, falls back to JSON storage. Located in `memory/sqlite_storage.py`.
 - **Auto RARV capture**: Cleaned up duplicate `store_episode_trace` calls in the autonomous loop for cleaner episode recording.
 - **3 MCP memory tools**: Added `mem_search`, `mem_timeline`, and `mem_get` tools to `mcp/server.py` for programmatic memory access.
@@ -27053,7 +26845,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.14.0] - 2026-03-17
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **`loki review <dir>` command**: Standalone quality gate runner for any project directory. Runs 6 gates: project-type detection, lint, tests, security, dependencies, and structure. Supports `--json` and `--verbose` flags. No AI provider needed. Works as a CI/CD step.
 - **GitHub Action (`review`)**: New reusable action at `.github/actions/review/action.yml` -- enables `loki review` in any GitHub Actions workflow.
 
@@ -27068,7 +26859,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.13.0] - 2026-03-17
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **`loki demo` rewrite**: Replaced simulated/fake demo with real execution that runs `loki start` on a bundled template. Supports `--dir`, `--provider`, `--dry-run` flags. Shows project summary and offers to open result in browser.
 
 ## [6.12.5] - 2026-03-07
@@ -27099,7 +26889,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.12.0] - 2026-03-07
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **OpenSpec Bridge** (`loki start --openspec PATH`): Spec-driven development input pathway
   - Reads OpenSpec change directories (proposal.md, specs/, tasks.md, design.md)
   - Normalizes to Loki-native formats (PRD, task queue, delta context)
@@ -27134,7 +26923,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.11.0] - 2026-03-07
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **OpenSpec Bridge** (`loki start --openspec PATH`): New input pathway for spec-driven development
   - Reads OpenSpec change directories (proposal.md, specs/, tasks.md, design.md)
   - Normalizes to Loki-native formats (PRD, task queue, delta context)
@@ -27168,7 +26956,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.9.0] - 2026-03-06
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Dashboard task detail modal: click any task to view story, acceptance criteria, context files, and full specification
 - Dashboard checkpoint enrichment: checkpoints now show iteration number, provider, phase, git branch, and file count
 - Task markdown parser in dashboard API: extracts structured data from queue markdown files (metadata, spec, criteria, context)
@@ -27190,7 +26977,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.8.0] - 2026-03-05
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Dynamic model configuration: all providers use env var override chains instead of hardcoded model strings
 - Claude provider uses aliases (`opus`/`sonnet`/`haiku`) that auto-resolve to latest versions via Claude CLI
 - 3-tier env var precedence: provider-specific (`LOKI_CLAUDE_MODEL_PLANNING`) > generic (`LOKI_MODEL_PLANNING`) > default
@@ -27217,7 +27003,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.7.0] - 2026-03-04
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Hard quality gates: `enforce_static_analysis()` and `enforce_test_coverage()` in orchestrator, controlled by `LOKI_HARD_GATES` env var
 - `loki audit lint` and `loki audit test` CLI commands for on-demand quality checks
 - Gate failure injection into `build_prompt()` so LLM self-corrects on next iteration
@@ -27251,7 +27036,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.6.0] - 2026-03-01
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Cline CLI provider (Tier 2 - near-full capabilities with subagents and MCP)
 - Aider provider (Tier 3 - 18+ model provider support via OpenRouter, Ollama, etc.)
 - `--cline-model`, `--aider-model`, `--aider-flags` CLI options
@@ -27305,7 +27089,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.4.0] - 2026-02-27
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Concurrent sessions** - Multiple `loki run` commands can execute in parallel
   - Per-session PID/lock files under `.loki/sessions/<issue-id>/`
   - `loki run 52 --ship -d` and `loki run 54 --ship -d` no longer block each other
@@ -27338,7 +27121,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.3.0] - 2026-02-26
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 #### Track A: Migration Engine V2 Hardening
 - **Deterministic migration hooks engine** (`autonomy/hooks/migration-hooks.sh`)
@@ -27416,7 +27198,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.2.0] - 2026-02-25
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Progressive Isolation flags for `loki run`: `--worktree`, `--pr`, `--ship`, `--detach` with cascade logic
 - Docker credential mount presets (9 presets: gh, git, ssh, aws, azure, kube, terraform, gcloud, npm)
 - `resolve_docker_mounts()` function with env var passthrough and wildcard support
@@ -27429,7 +27210,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [6.1.0] - 2026-02-25
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - BMAD Method integration for structured requirements pipeline
   - `autonomy/bmad-adapter.py` -- discovers and normalizes BMAD output artifacts (PRD, architecture, epics)
   - `--bmad-project <path>` flag for `loki start` -- loads BMAD artifacts as structured input
@@ -27455,7 +27235,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - Blind validation enabled by default in completion council (validators no longer see iteration/convergence context)
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki run <issue>` - New primary entry point for issue-driven engineering
   - Supports GitHub, GitLab, Jira, and Azure DevOps issues
   - Auto-detects issue provider from URL/reference format
@@ -27494,7 +27273,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.59.0] - 2026-02-25
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Migrate: dashboard auto-launches during migration with real-time progress monitoring
 - Migrate: new `--no-dashboard` flag to disable dashboard during migration
 - Migrate: post-migration `migration_docs/` generation with 8 comprehensive documentation files
@@ -27558,7 +27336,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.58.0] - 2026-02-25
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Per-iteration checkpoints: state snapshots after every successful and failed iteration
 - Session checkpoint count logged at session end
 - Codebase Knowledge Graph: peer-reviewed architecture reference in CLAUDE.md and memory
@@ -27584,7 +27361,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.57.0] - 2026-02-24
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Remote Control: `loki remote` command starts Claude Code Remote Control sessions
 - Connect from phone, tablet, or browser via claude.ai/code with Loki Mode pre-loaded
 - Supports --verbose, --sandbox, --no-sandbox flags and optional PRD file
@@ -27624,7 +27400,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.56.0] - 2026-02-24
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Cross-provider analytics dashboard - activity heatmap, tool usage breakdown, velocity metrics, and provider comparison
 
 ## [5.55.1] - 2026-02-24
@@ -27641,7 +27416,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.55.0] - 2026-02-24
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki migrate` command - enterprise code transformation engine
 - 4-phase migration pipeline: Understand > Guardrail > Migrate > Verify
 - MigrationPipeline with phase gates, thread-safe state management, atomic writes
@@ -27656,7 +27430,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.54.0] - 2026-02-24
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Activity Logger: JSONL append-only log with 10MB rotation, thread-safe reads/writes
 - Session Diff API: /api/session-diff returns structured change summary since timestamp
 - Session Resume dashboard card on Overview page
@@ -27705,7 +27478,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - Release workflow now auto-syncs SDK versions from root VERSION file
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - CI test matrix workflow (Node 18/20/22, Python 3.10-3.13, shell tests, Helm lint, dashboard build)
 - Weekly integrity audit workflow with auto-issue on failure
 - PyPI and npm SDK publishing jobs in release workflow
@@ -27853,7 +27625,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.49.4] - 2026-02-21
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki setup-skill` command: creates skill symlinks for all 3 providers (Claude, Codex, Gemini)
 - `loki doctor` now checks skill symlinks for all 3 provider directories
 - Multi-provider postinstall: `bin/postinstall.js` creates symlinks at `~/.claude/skills/`, `~/.codex/skills/`, and `~/.gemini/skills/`
@@ -27869,7 +27640,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.49.3] - 2026-02-21
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Mandatory testing rules in `skills/testing.md`: 7 rules covering test-first, real assertions, mock restrictions, assertion protection
 - Test quality review checklist in `references/quality-control.md`: reviewers now check for assertion manipulation, excessive internal mocks, and meaningless tests
 - Gate 8/9 run documentation in `skills/quality-gates.md`: VERIFY phase execution, env var toggles (`LOKI_GATE_MOCK_DETECTOR`, `LOKI_GATE_MUTATION_DETECTOR`)
@@ -27885,7 +27655,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.49.2] - 2026-02-21
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Dashboard honest process states: `_resolve_process_state()` returns 6 states (RUNNING, STALE, COMPLETED, FAILED, CRASHED, UNKNOWN) instead of simple "alive"/"dead"
 - Dashboard `/api/health/processes` now includes timestamps: `started`, `last_heartbeat`, `heartbeat_age_seconds`, `duration_seconds`, `checked_at`
 - Dashboard PID registry uses file mtime as heartbeat fallback when no explicit heartbeat field
@@ -27903,7 +27672,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.49.1] - 2026-02-21
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Central PID registry at `.loki/pids/` with JSON entries for all spawned processes
 - 6 registry functions: `init_pid_registry`, `register_pid`, `unregister_pid`, `kill_registered_pid`, `cleanup_orphan_pids`, `kill_all_registered`
 - `_parse_json_field` helper with python3 + shell (sed) fallback for environments without python3
@@ -27942,7 +27710,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.49.0] - 2026-02-19
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Config self-protection: validate-bash.sh now blocks deletion/overwrite of .loki/council/, .loki/config.yaml, .loki/logs/bash-audit, .loki/session.lock
 - Config self-protection: Docker sandbox mounts .loki/council/ and .loki/config.yaml as read-only
 - Council severity-aware error budget: LOKI_COUNCIL_SEVERITY_THRESHOLD (critical/high/medium/low) and LOKI_COUNCIL_ERROR_BUDGET env vars
@@ -28003,7 +27770,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.47.0] - 2026-02-16
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Council hard gate: blocks completion when critical PRD checklist items are failing
 - Waiver mechanism: add/remove/list waivers for checklist items that should not block completion
 - Re-verification: council re-runs checklist verification before every evaluation for fresh data
@@ -28041,7 +27807,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.46.0] - 2026-02-16
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - PRD Checklist system: automated requirement tracking from PRD analysis (`autonomy/prd-checklist.sh`, `autonomy/checklist-verify.py`)
 - PRD Analyzer: quality scoring, gap detection, assumption tracking (`autonomy/prd-analyzer.py`)
 - App Runner: auto-detect, start, restart, and health-check user applications locally (`autonomy/app-runner.sh`)
@@ -28084,7 +27849,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - Runtime: Added provider CLI validation in completion-council.sh before council invocations
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - 8 enterprise documentation files: network-security.md, authentication.md, authorization.md, metrics.md, git-workflow.md, audit-logging.md, siem-integration.md, openclaw-integration.md
 - wiki/Changelog.md linking to main CHANGELOG.md
 
@@ -28115,7 +27879,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.41.0] - 2026-02-13
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - GitHub sync-back: `sync_github_status()` wired into iteration loop and session lifecycle
 - GitHub PR creation: `create_github_pr()` called on successful session end (`LOKI_GITHUB_PR=true`)
 - GitHub task export: `export_tasks_to_github()` available via CLI
@@ -28154,7 +27917,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.40.0] - 2026-02-14
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Context window tracking: parses Claude session JSONL to track token usage per RARV iteration
 - Context tracker dashboard component with gauge, timeline, and breakdown tabs
 - SVG circular progress ring showing context window usage percentage with color thresholds
@@ -28180,7 +27942,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.39.0] - 2026-02-12
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Anonymous usage telemetry via PostHog (opt-out: LOKI_TELEMETRY_DISABLED=true or DO_NOT_TRACK=1)
 - Telemetry tracks: installs, session starts/ends, CLI commands, dashboard starts (anonymous, no PII)
 - New files: autonomy/telemetry.sh (bash), dashboard/telemetry.py (Python)
@@ -28218,7 +27979,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.38.0] - 2026-02-12
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Branch protection: agent sessions auto-create feature branches (LOKI_BRANCH_PROTECTION=true), PR creation via `gh`
 - Agent action audit trail: JSON lines log at .loki/logs/agent-audit.jsonl (cli_invoke, git_commit, session events)
 - `loki audit` CLI with log/count/help subcommands
@@ -28243,7 +28003,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - CORS wildcard warning logged when LOKI_DASHBOARD_CORS set to *
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Syslog audit log forwarding via LOKI_AUDIT_SYSLOG_HOST/PORT/PROTO (fire-and-forget, off by default)
 - Role parameter on token generation (generate_token(role="viewer"))
 - resolve_scopes() and list_roles() functions in auth module
@@ -28255,7 +28014,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.37.0] - 2026-02-12
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Dashboard: TLS/HTTPS support via LOKI_TLS_CERT and LOKI_TLS_KEY environment variables
 - Dashboard: OIDC/SSO authentication support (experimental, claims-based JWT validation)
 - Dashboard: Budget and cost limit controls (/api/budget endpoint, LOKI_BUDGET_LIMIT env var)
@@ -28294,7 +28052,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.35.0] - 2026-02-12
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Quality gates: 3-specialist code review execution in run.sh with keyword-based selection (v5.35.0)
 - CONTINUITY.md: Automatic working memory management updated each iteration (v5.35.0)
 - VSCode extension: Checkpoint tree view with create/rollback commands (v5.35.0)
@@ -28311,7 +28068,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.34.0] - 2026-02-12
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Checkpoint/snapshot system with automatic git SHA tracking (v5.34.0)
 - Automatic state checkpoints after session completion in run.sh
 - `loki checkpoint` CLI with create/list/show/rollback subcommands
@@ -28390,7 +28146,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - completion-council.sh: COUNCIL_SIZE>3 assigns empty role (#54)
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - completion-council.sh: council_evaluate_member() function for test/convergence/error checks
 - completion-council.sh: council_aggregate_votes() function with 2/3 majority logic
 - completion-council.sh: council_devils_advocate_review() with 5 skeptical checks
@@ -28421,7 +28176,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.32.0] - 2026-02-10
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `loki doctor` command for system prerequisite checks (#22)
 - `--json` flag for `loki status` machine-readable output (#20)
 - Dark/light theme toggle for dashboard (#17)
@@ -28442,7 +28196,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.31.0] - 2026-02-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Shell completion support for bash and zsh (community contribution by @jpreyesm03)
 - 28 commands with 15 subcommand groups in completions
 - `loki completions [bash|zsh]` subcommand to output completion scripts
@@ -28461,7 +28214,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.30.0] - 2026-02-09
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Knowledge Compounding system (COMPOUND phase) - structured solution files with YAML frontmatter at `~/.loki/solutions/{category}/`
 - Deepen-Plan phase - 4 parallel research agents (repo-analyzer, dependency-researcher, edge-case-finder, security-threat-modeler) enhance architecture plans before coding
 - CLI: `loki compound` with 6 subcommands (list, show, search, run, stats, help)
@@ -28479,7 +28231,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.29.0] - 2026-02-08
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Docker Desktop Sandbox as default isolation mode for `loki sandbox`
 - 3-tier fallback: Docker Desktop microVM > Docker Container > Git Worktree
 - New `--docker-desktop` flag for explicit Docker Desktop Sandbox selection
@@ -28512,7 +28263,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 - Low: Dead-letter and failed queue tasks invisible in `/api/tasks` endpoint
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `provider` field in `dashboard-state.json` for multi-provider visibility
 - Efficiency tracking files written per iteration for `/api/cost` data
 - `/api/pricing` endpoint with multi-provider support (Claude, Codex, Gemini)
@@ -28521,7 +28271,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.28.0] - 2026-02-07
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - CLI: `loki demo` - Interactive 60-second demo with live dashboard visualization
 - CLI: `loki quick "task"` - Lightweight single-task mode (3 iterations max)
 - CLI: `loki init` - Interactive PRD builder with template support (`--template`, `--list-templates`)
@@ -28681,7 +28430,6 @@ multi-persona debate (MoMoA) into a native Loki subsystem.
 ## [5.26.0] - Developer Adoption and Community Infrastructure
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - CONTRIBUTING.md with prerequisites, setup, and test instructions
 - GitHub issue templates (bug report, feature request)
 - Pull request template with checklist
@@ -31755,7 +31503,6 @@ Two dispatch modes based on task complexity - reduces latency for simple tasks:
 - **Rule #6** in Core Autonomy Rules - "NEVER edit `autonomy/run.sh` while running"
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 
 - **ACKNOWLEDGEMENTS.md** - Comprehensive citations for 50+ research sources:
   - Anthropic (8 papers)
@@ -32221,7 +31968,6 @@ Loki Mode already implements most research-backed patterns:
 - Time: 45.1 minutes
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - `--loki` flag for benchmark runner to use multi-agent system
 - `--retries N` flag to control RARV retry attempts
 - Architect agent (analyzes problem, designs approach)
@@ -32291,7 +32037,6 @@ Loki Mode already implements most research-backed patterns:
 | Time | 56.9 minutes |
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Benchmark badge in README showing 98.17% HumanEval Pass@1
 - Benchmark Results section in README
 - SWE-bench results in competitive analysis
@@ -32462,7 +32207,6 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
 ## [2.18.5] - 2026-01-04
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **System Resource Monitoring** - Prevents computer overload from too many parallel agents (run.sh:786-899):
   - **Background Resource Monitor** checks CPU and memory usage every 5 minutes (configurable)
   - **Automatic Warnings** logged when CPU or memory exceeds thresholds (default: 80%)
@@ -32510,7 +32254,6 @@ Based on comprehensive competitive analysis against Claude-Flow (10.7K stars), M
   - **Better Structure:** Logical flow from "what it is" → "why it's better" → "how to use it" → "how it works"
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **INSTALLATION.md** - Comprehensive installation guide with all platforms:
   - Table of contents for easy navigation
   - Quick install section (recommended approach)
@@ -32570,7 +32313,6 @@ The previous "37 agents" messaging was misleading because:
 ## [2.18.2] - 2026-01-04
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Agent Monitoring Dashboard** - Real-time visibility into active agents (run.sh:330-735):
   - **Active Agents Section** with grid layout displaying all spawned agents
   - **Agent Cards** showing:
@@ -32638,7 +32380,6 @@ The previous "37 agents" messaging was misleading because:
 ## [2.18.0] - 2026-01-04
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Self-Updating Learning System** - Agents learn from mistakes automatically (SKILL.md:253-278):
   - "Mistakes & Learnings" section in CONTINUITY.md template
   - Error → Learning → Prevention pattern
@@ -32708,7 +32449,6 @@ To fully utilize:
 ## [2.17.0] - 2026-01-04
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Git Checkpoint System** - Automatic commit protocol for rollback safety (SKILL.md:479-578):
   - Automatic git commit after every completed task
   - Structured commit message format with agent metadata
@@ -32777,7 +32517,6 @@ For existing `.loki/` projects:
 ## [2.16.0] - 2026-01-02
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Model Selection Strategy** - Performance and cost optimization (SKILL.md:78-119):
   - Comprehensive model selection table (Haiku/Sonnet/Opus)
   - Use Haiku 4.5 for simple tasks (tests, docs, commands, fixes)
@@ -32811,7 +32550,6 @@ For existing `.loki/` projects:
 ## [2.15.0] - 2026-01-02
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Enhanced Quick Reference Section** - Immediate orientation for every turn:
   - Critical First Steps checklist (4-step workflow)
   - Key Files priority table with update frequency
@@ -32838,7 +32576,6 @@ For existing `.loki/` projects:
 ## [2.14.0] - 2026-01-02
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Claude Code Best Practices** - Integrated patterns from "Claude Code in Action" course:
 
   **CLAUDE.md Generation:**
@@ -32927,7 +32664,6 @@ For existing `.loki/` projects:
 ## [2.13.0] - 2026-01-02
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Spec-Driven Development (SDD)** - Specifications as source of truth BEFORE code:
 
   **Philosophy**: `Spec → Tests from Spec → Code to Satisfy Spec → Validation`
@@ -33028,7 +32764,6 @@ Loki Mode now combines the best practices from GitHub's ecosystem:
 ## [2.12.0] - 2026-01-02
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Quality Control Principles** - Integrated GitHub's "Speed Without Control" framework:
 
   **Principle 1: Guardrails, Not Just Acceleration**
@@ -33088,7 +32823,6 @@ AI accelerates velocity but can introduce "AI slop" (semi-functional code accumu
 ## [2.11.0] - 2026-01-02
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **CONTINUITY.md Working Memory Protocol** - Inspired by OpenAI's persistent memory pattern:
   - Single working memory file at `.loki/CONTINUITY.md`
   - Read at START of every RAR (Reason-Act-Reflect) cycle
@@ -33135,7 +32869,6 @@ CONTINUITY.md provides a simpler, more explicit "every turn" memory protocol tha
 ## [2.10.0] - 2025-12-31
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Context Memory Management System** - Inspired by Continuous-Claude-v2:
   - **Ledger-based state preservation** - Save state to `.loki/memory/ledgers/` instead of letting context degrade through compaction
   - **Agent Handoff System** - Clean context transfer between agents at `.loki/memory/handoffs/`
@@ -33173,7 +32906,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.9.0] - 2025-12-31
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Ralph Wiggum Mode** - True perpetual autonomous operation:
   - Reason-Act-Reflect (RAR) cycle for every iteration
   - Products are NEVER "complete" - always improvements to make
@@ -33214,7 +32946,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.8.0] - 2025-12-29
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Smart Rate Limit Detection** - Automatically detects rate limit messages and waits until reset:
   - Parses "resets Xam/pm" from Claude output
   - Calculates exact wait time until reset (+ 2 min buffer)
@@ -33228,7 +32959,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.7.0] - 2025-12-28
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Codebase Analysis Mode** - When no PRD is provided, Loki Mode now:
   1. **Auto-detects PRD files** - Searches for `PRD.md`, `REQUIREMENTS.md`, `SPEC.md`, `PROJECT.md` and docs variants
   2. **Analyzes existing codebase** - If no PRD found, performs comprehensive codebase analysis:
@@ -33250,7 +32980,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.6.0] - 2025-12-28
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Complete SDLC Testing Phases** - 11 comprehensive testing phases (all enabled by default):
   - `UNIT_TESTS` - Run existing unit tests with coverage
   - `API_TESTS` - Functional API testing with real HTTP requests
@@ -33275,7 +33004,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.5.0] - 2025-12-28
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Real-time Streaming Output** - Claude's output now streams live using `--output-format stream-json`
   - Parses JSON stream in real-time to display text, tool calls, and results
   - Shows `[Tool: name]` when Claude uses a tool
@@ -33302,7 +33030,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.4.0] - 2025-12-28
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Live Output** - Claude's output now streams in real-time using pseudo-TTY
   - Uses `script` command to allocate PTY for proper streaming
   - Visual separator shows when Claude is working
@@ -33318,7 +33045,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.3.0] - 2025-12-27
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Unified Autonomy Runner** (`autonomy/run.sh`) - Single script that does everything:
   - Prerequisite checks (Claude CLI, Python, Git, curl, Node.js, jq)
   - Skill installation verification
@@ -33340,7 +33066,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.2.0] - 2025-12-27
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Vibe Kanban Integration** - Optional visual dashboard for monitoring agents:
   - `integrations/vibe-kanban.md` - Full integration guide
   - `scripts/export-to-vibe-kanban.sh` - Export Loki tasks to Vibe Kanban format
@@ -33355,7 +33080,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.1.0] - 2025-12-27
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Autonomous Wrapper Script** (`scripts/loki-wrapper.sh`) - True autonomy with auto-resume:
   - Monitors Claude Code process and detects when session ends
   - Automatically resumes from checkpoint on rate limits or interruptions
@@ -33404,7 +33128,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [2.0.0] - 2025-12-27
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Example PRDs** - 4 test PRDs for users to try before implementing:
   - `examples/simple-todo-app.md` - Quick functionality test (~10 min)
   - `examples/api-only.md` - Backend agent testing
@@ -33450,7 +33173,6 @@ Instead of "degrade gracefully through compression", Loki Mode now uses "reset c
 ## [1.0.0] - 2025-12-27
 
 ### Added
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - **Initial Release** of Loki Mode skill for Claude Code
 
 - **Multi-Agent Architecture** - 37 specialized agents across 6 swarms:

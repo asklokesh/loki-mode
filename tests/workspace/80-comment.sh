@@ -99,8 +99,17 @@ else
     bad "workspace comment: no-PR skip (rc=$_ws80_rc)"
 fi
 
+_ws80_run LOKI_WORKSPACE_COMMENT=1 >/dev/null
+_ws80_on="$(_ws80_count)"
+_ws80_leftover="$(find "$_ws80_tmp/proj/.loki" -name 'comment-*.md' | wc -l | tr -d ' ')"
+if [ "$_ws80_on" = 2 ] && [ "$_ws80_leftover" = 0 ]; then
+    ok "workspace comment: opt-out unset comments, and no comment-*.md body file remains"
+else
+    bad "workspace comment: unset opt-out (comments=$_ws80_on leftover=$_ws80_leftover)"
+fi
+
 _ws80_run LOKI_WORKSPACE_COMMENT=0 >/dev/null
-if [ ! -f "$_ws80_tmp/stub/argv.log" ]; then
+if [ ! -f "$_ws80_tmp/stub/argv.log" ] && [ "$_ws80_on" = 2 ]; then
     ok "workspace comment: LOKI_WORKSPACE_COMMENT=0 never calls gh"
 else
     bad "workspace comment: opt-out still called gh"
@@ -116,4 +125,4 @@ else
 fi
 
 rm -rf -- "$_ws80_tmp"
-unset _ws80_tmp _ws80_py _ws80_tok _ws80_out _ws80_rc _ws80_n _ws80_sha _ws80_posts _ws80_leak
+unset _ws80_tmp _ws80_py _ws80_tok _ws80_out _ws80_rc _ws80_n _ws80_sha _ws80_posts _ws80_leak _ws80_on _ws80_leftover

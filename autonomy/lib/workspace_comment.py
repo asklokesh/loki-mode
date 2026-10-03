@@ -8,6 +8,7 @@ the run's exit code. Opt out with LOKI_WORKSPACE_COMMENT=0.
 import os
 import re
 import subprocess
+import tempfile
 
 GH_TIMEOUT_S = 60
 
@@ -47,7 +48,8 @@ def _gh(args, cwd):
 
 
 def _branch(wt):
-    r = subprocess.run(["git", "-C", wt, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", wt, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True,
+                       timeout=GH_TIMEOUT_S)
     b = r.stdout.strip()
     return b if r.returncode == 0 and b and b != "HEAD" else None
 
@@ -68,10 +70,16 @@ def post_comments(ws_name, run_id, run_dir, worktrees, ev, say):
                 num = r.stdout.strip()
                 if r.returncode != 0 or not re.fullmatch(r"\d+", num):
                     continue
-                body = os.path.join(run_dir, "comment-%s.md" % re.sub(r"[^A-Za-z0-9_.-]", "__", repo))
-                with open(body, "w") as f:
-                    f.write(render(ws_name, run_id, repo, ev))
-                c = _gh(["pr", "comment", num, "--repo", repo, "--body-file", body], wt)
+                fd, body = tempfile.mkstemp(prefix="comment-", suffix=".md", dir=run_dir)  # mode 0600
+                try:
+                    with os.fdopen(fd, "w") as f:
+                        f.write(render(ws_name, run_id, repo, ev))
+                    c = _gh(["pr", "comment", num, "--repo", repo, "--body-file", body], wt)
+                finally:
+                    try:
+                        os.unlink(body)
+                    except OSError:
+                        pass
                 if c.returncode == 0:
                     posted += 1
                 else:
