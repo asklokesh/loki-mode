@@ -738,3 +738,7 @@ Untracked status ignores core.fsmonitor (S-218r)	1
 Healing docs disclose unwired modify hooks (issue 200)	1
 SKILL.md runtime-migration paragraph does not understate the Bun route	1
 Council TODO marker scope (PO3-COUNCIL-TODO)	0
+loki hub install (manifest fetch and verify)	2
+loki start repo directory routes as repository target (PO4)	1
+loki wiki command (build, ask, grounded citation)	1
+issue-to-PR flow (--prepare-pr, issue-mode)	2

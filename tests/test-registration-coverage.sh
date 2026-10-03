@@ -16,7 +16,12 @@
 # gate the surface silently re-rots, because nothing about adding a test file
 # forces you to also register it.
 #
-# WHAT THIS ASSERTS: every tests/test-*.sh is referenced by at least one of the
+# SCOPE: this scan also covers one level of subdirectories (tests/*/test-*.sh),
+# not only tests/test-*.sh. Subdir suites are matched by their path relative to
+# tests/ (for example cli/test-wiki-command.sh), so a same-named file elsewhere
+# cannot mask an orphan. Today only tests/cli holds such suites.
+#
+# WHAT THIS ASSERTS: every tests/test-*.sh and tests/*/test-*.sh is referenced by at least one of the
 # three runners (tests/run-all-tests.sh, scripts/local-ci.sh,
 # .github/workflows/test.yml), or is explicitly listed in IGNORE below.
 #
@@ -86,9 +91,9 @@ registered() {
 
 total=0
 orphans=()
-for f in "$REPO_ROOT"/tests/test-*.sh; do
+for f in "$REPO_ROOT"/tests/test-*.sh "$REPO_ROOT"/tests/*/test-*.sh; do
     [ -f "$f" ] || continue
-    name="$(basename "$f")"
+    name="${f#"$REPO_ROOT"/tests/}"
     is_ignored "$name" && continue
     total=$((total + 1))
     registered "$name" || orphans+=("$name")
