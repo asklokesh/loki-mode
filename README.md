@@ -153,6 +153,19 @@ A finished run prints a short summary (see [Quiet output](#quiet-output), which 
 
 `loki status [run-id]` and `loki verify [run-id]` are built on the v10 path (bare `loki verify` follows the newest run, v10 or legacy). `loki dashboard` and `loki status` reach the v10 commands with `LOKI_ENGINE=v10`. Slack notifications are not part of the v10 engine surface yet.
 
+## Run from Jira or Linear
+
+Loki 10 can start from a Jira or Linear issue the same way it starts from a GitHub issue: same run, same receipt. The issue is fetched deterministically before any model runs and normalized into the same `issue.json`, with a `source` field of `jira` or `linear`.
+
+```bash
+loki jira:PROJ-123     # or https://<site>.atlassian.net/browse/PROJ-123
+loki linear:ENG-42     # or a linear.app issue URL
+```
+
+- Jira needs `JIRA_EMAIL` and `JIRA_API_TOKEN`, plus `JIRA_BASE_URL` (for example `https://acme.atlassian.net`) unless you pass the full browse URL. The ADF description is converted to plain text.
+- Linear needs `LINEAR_API_KEY`.
+- A missing variable stops the run before any work with an error naming it (exit code 2, like other intake errors). GitHub refs are unchanged.
+
 ## Triggers without a cloud
 
 Both run on your own GitHub Actions minutes; there is no hosted service.

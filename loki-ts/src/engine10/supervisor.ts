@@ -12,6 +12,7 @@ import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
 import { capNote, resolveCap } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
+import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
@@ -292,11 +293,11 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }
-  const isIssue = ISSUE_RE.test(task), model = resolveModel(provider), env: NodeJS.ProcessEnv = { ...process.env };
+  const trackerRef = parseTrackerRef(task), isIssue = ISSUE_RE.test(task) || trackerRef !== null, model = resolveModel(provider), env: NodeJS.ProcessEnv = { ...process.env };
   env.LOKI_E10_MAX_COST_USD = String(cap.usd); if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
-    try { fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
+    try { if (trackerRef) await fetchTrackerIssueToFile(trackerRef, join(runDir, "issue.json")); else fetchIssueToFile(task, join(runDir, "issue.json")); } catch (err) { // P1: deterministic, before any LLM
       process.stderr.write(`engine10: issue fetch failed: ${(err as Error).message.split("\n")[0]}\n`);
       return 2;
     }
