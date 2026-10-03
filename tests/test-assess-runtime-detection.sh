@@ -125,5 +125,36 @@ else
     bad "dependency_staleness became '${stale}' without a network opt-in"
 fi
 
+# 5. DEBT SIGNALS ARE HONEST. Plural markers count, identifiers do not, and
+#    largest_file_loc covers every file (not only files >= 500 LOC).
+debt() {
+    ( cd "$1" && git add -A >/dev/null 2>&1; git commit -qm x >/dev/null 2>&1
+      "$LOKI" heal . --assess --json </dev/null 2>/dev/null ) | python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw[raw.index("{"):raw.rindex("}") + 1])
+except Exception:
+    print("UNPARSEABLE"); raise SystemExit
+ds = d.get("debt_signals", {})
+print(ds.get("todo_fixme_count"), ds.get("largest_file_loc"))
+' 2>/dev/null
+}
+d="$(mkrepo debt1)"
+printf '# TODOs and FIXMEs here\n# TODO real\n' > "$d/x.py"
+r="$(debt "$d")"
+if [ "$r" = "2 2" ]; then ok "plural markers counted and largest_file_loc tracks a small file (${r})"
+else bad "debt1 expected '2 2', got '${r}'"; fi
+d="$(mkrepo debt2)"
+printf '# FIXMEs\nx = 1\n' > "$d/y.py"
+r="$(debt "$d")"
+if [ "${r%% *}" = "1" ]; then ok "a lone FIXMEs counts as 1"
+else bad "debt2 expected todo count 1, got '${r}'"; fi
+d="$(mkrepo debt3)"
+printf '# NOTTODO\nx = 1\n' > "$d/z.py"
+r="$(debt "$d")"
+if [ "${r%% *}" = "0" ]; then ok "NOTTODO is not a marker"
+else bad "debt3 expected todo count 0, got '${r}'"; fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

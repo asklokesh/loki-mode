@@ -19270,7 +19270,7 @@ LANG_BY_EXT = {
 }
 
 TEST_HINT = re.compile(r'(^|[/_.-])(test|tests|spec|specs|__tests__)([/_.-]|s?$|\.)', re.I)
-TODO_RE = re.compile(r'\b(TODO|FIXME|HACK|XXX)\b')
+TODO_RE = re.compile(r'\b(TODO|FIXME|HACK|XXX)s?\b')
 
 # import/require line -> the referenced module basename(s). Deliberately cheap:
 # we only need a proxy for how many OTHER files reference a given file, to rank
@@ -19291,6 +19291,7 @@ total_files = 0
 todo_count = 0
 has_tests = False
 big_files = []      # (loc, relpath)
+max_loc = 0         # largest file by LOC, across every file
 # module reference tallies: how many files import a given basename (no-ext)
 ref_counts = {}
 file_records = {}   # relpath -> record
@@ -19340,6 +19341,8 @@ for dirpath, dirnames, filenames in os.walk(root):
         }
         files.append(rec)
         file_records[rel] = rec
+        if loc > max_loc:
+            max_loc = loc
         if loc >= 500:
             big_files.append((loc, rel))
         # tally inbound references toward the imported basenames
@@ -19352,7 +19355,7 @@ for rec in files:
 
 # --- Technical-debt / maintenance-risk signals (all deterministic) ---
 big_files.sort(reverse=True)
-largest_loc = big_files[0][0] if big_files else 0
+largest_loc = max_loc
 # dependency-manifest presence (a real, cheap signal; NOT a staleness figure).
 manifest_names = {
     'package.json', 'requirements.txt', 'Pipfile', 'pyproject.toml', 'go.mod',
