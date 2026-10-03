@@ -88,7 +88,7 @@ export function LiveRun({ source, run }: { source: string; run: string }) {
       {!running && (
         <div data-testid="live-outcome" className={card}>
           <h2 className="mb-1 text-sm font-semibold uppercase text-slate-500">Outcome</h2>
-          <p className="text-lg font-medium">{data.verdict ?? UNMEASURED}</p>
+          <p className={`text-lg font-medium${data.tampered ? " text-red-600" : ""}`}>{data.tampered ? "TAMPERED" : (data.verdict ?? UNMEASURED)}</p>
           <p className="mt-1 flex flex-wrap gap-4 text-sm">
             {pr ? <a data-testid="live-pr" href={pr} target="_blank" rel="noreferrer" className="text-sky-600 hover:underline dark:text-sky-400">Pull request</a> : <span data-testid="live-pr" className="text-slate-500">no PR</span>}
             {data.receipt ? <a data-testid="live-receipt" href={`#/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`} className="text-sky-600 hover:underline dark:text-sky-400">Receipt{data.receipt.signed ? " (signed)" : " (unsigned)"}</a> : <span data-testid="live-receipt" className="text-slate-500">no receipt</span>}
@@ -112,7 +112,7 @@ export function summarize(runs: RunRow[], now: number): OverviewStats {
   for (const r of runs) {
     const t = r.started_at ? Date.parse(r.started_at) : NaN;
     if (!Number.isNaN(t)) { if (t >= t0) s.today++; if (t >= t0 - 6 * 86400000) s.week++; }
-    if (r.verdict === "VERIFIED") s.verified++; else if (r.verdict === "PARTIAL") s.partial++; else if (r.verdict === "FAILED") s.failed++; else if (r.verdict) s.other++; else s.running++;
+    if (r.tampered) s.other++; else if (r.verdict === "VERIFIED") s.verified++; else if (r.verdict === "PARTIAL") s.partial++; else if (r.verdict === "FAILED") s.failed++; else if (r.verdict) s.other++; else s.running++;
     if (r.cost_usd !== null && r.cost_usd !== undefined) s.costUsd += r.cost_usd; else { s.unmeasuredRuns++; s.costUsd += r.partial_usd ?? 0; }
     if (r.pr_url) s.prsOpened++;
   }
@@ -146,7 +146,7 @@ export function Overview({ runs, now = Date.now() }: { runs: RunRow[]; now?: num
           {s.last.map((r) => (
             <li key={`${r.source_id}/${r.run_id}`} data-testid="ov-run" className="flex flex-wrap justify-between gap-x-4">
               <a href={`#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} className="break-all py-1 font-mono text-xs text-sky-600 hover:underline dark:text-sky-400">{r.run_id}</a>
-              <span>{r.verdict ?? "in progress"}, {costText(r)}</span>
+              <span className={r.tampered ? "text-red-600" : undefined}>{r.tampered ? "TAMPERED" : (r.verdict ?? "in progress")}, {costText(r)}</span>
             </li>
           ))}
         </ul>

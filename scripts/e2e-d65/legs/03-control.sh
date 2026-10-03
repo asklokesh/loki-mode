@@ -21,7 +21,7 @@ leg_03_control() {
         ship_env=("LOKI_CONTROL_URL=$url")   # fall back so the remaining assertions still run
     fi
     # A BLOCKED run, shipped live by the engine hook.
-    ( cd "$repo" && cenv LOKI_CONTROL=1 E2E_STUB_BLOCK=1 ${ship_env[@]+"${ship_env[@]}"} timeout -k 5 240 "$LOKI" quick "make sum use a global counter" ) < /dev/null > "$T/logs/leg3-run.log" 2>&1
+    ( cd "$repo" && cenv LOKI_CONTROL=1 LOKI_CONTROL_ALLOW_TMP=1 E2E_STUB_BLOCK=1 ${ship_env[@]+"${ship_env[@]}"} timeout -k 5 240 "$LOKI" quick "make sum use a global counter" ) < /dev/null > "$T/logs/leg3-run.log" 2>&1
     rc=$?
     note "blocked run rc=$rc run=$(newest_run "$repo")"
     n=0; out=""

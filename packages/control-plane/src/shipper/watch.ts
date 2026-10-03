@@ -5,6 +5,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { backfill } from "./backfill.ts";
+import { discoveryRefusal } from "./discover.ts";
 import { shipRun, sourceId } from "./ship.ts";
 
 /** Repo dirs from the dashboard project registry; never throws, a missing or corrupt registry means none. */
@@ -29,7 +30,8 @@ const sig = (f: string): string => { try { const s = statSync(f); return `${s.si
 /** Backfill every repo, then watch. Resolves once the backfill is done; the watcher keeps polling until stop(). */
 export async function ingestAndWatch(o: WatchOpts): Promise<Watcher> {
   const env: NodeJS.ProcessEnv = { ...(o.env ?? process.env), LOKI_CONTROL_URL: o.url };
-  const repos = [...new Set([o.repoDir, ...registryRepos(env)])];
+  // P0: registry entries are third-party-registered paths; skip temp and fixture repos (the explicit repoDir is always kept).
+  const repos = [...new Set([o.repoDir, ...registryRepos(env).filter((r) => discoveryRefusal(r, null, env) === null)])];
   const seen = new Map<string, string>(); // events.jsonl path -> size:mtime last shipped OK
   for (const repoDir of repos) {
     try { await backfill({ repoDir, env, attempts: 1, fetchImpl: o.fetchImpl }); } catch { /* one bad repo must not block the rest */ }

@@ -33,7 +33,29 @@ test("runs list: row count and verdict badges equal EXPECTED.json", async () => 
   const rows = await screen.findAllByTestId("run-row");
   expect(rows.length).toBe(expected.run_count);
   const shown = rows.map((r) => within(r).getByTestId("verdict").textContent).sort();
-  expect(shown).toEqual(Object.values(expected.runs).map((r) => r.verdict).sort());
+  expect(shown).toEqual(Object.values(expected.runs).map((r) => (r as { tampered?: boolean }).tampered ? "TAMPERED" : r.verdict).sort());
+});
+
+test("runs list: a tampered run shows a red TAMPERED badge, never its recorded verdict", async () => {
+  const runs = load("runs.json");
+  serve({ "/v1/runs": runs });
+  render(<RunsList />);
+  const rows = await screen.findAllByTestId("run-row");
+  const t = runs.runs.find((r: { tampered: boolean }) => r.tampered);
+  const badge = within(rows.find((r) => r.textContent!.includes(t.run_id))!).getByTestId("verdict");
+  expect(badge.textContent).toBe("TAMPERED");
+  expect(badge.className).toContain("text-red-");
+  expect(rows.map((r) => r.textContent).join(" ")).not.toMatch(/tampered/);
+});
+
+test("run detail: a tampered run shows TAMPERED as the verdict, including the receipt badge", async () => {
+  const d = load("detail-tampered.json");
+  serve({ [`/v1/runs/${d.source_id}/${d.run_id}`]: d });
+  render(<RunDetail source={d.source_id} run={d.run_id} />);
+  await screen.findByText(/event log tampered/);
+  const badges = screen.getAllByTestId("verdict").map((b) => b.textContent);
+  expect(badges.length).toBeGreaterThan(0);
+  for (const b of badges) expect(b).toBe("TAMPERED");
 });
 
 test("runs list: unpriced run shows 'unpriced', never $0", async () => {

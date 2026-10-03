@@ -38,6 +38,7 @@ set -uo pipefail
 # Tests always run headless: loki_open_url (autonomy/lib/browser-open.sh) and
 # proof.ts never open a browser under this (S-103).
 export LOKI_NO_BROWSER=1
+export LOKI_CONTROL="${LOKI_CONTROL:-0}" # tests never ship to a developer's live Control Plane
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 2
