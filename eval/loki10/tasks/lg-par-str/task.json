@@ -1,0 +1,56 @@
+{
+  "id": "lg-par-str",
+  "kind": "public",
+  "prompt": "Add four independent string utility modules to the more_itertools package. They share no code and no symbols; each lives in its own new file.\n\n1. more_itertools/lg_caesar.py: shift(text, k) rotates ASCII letters by k positions (any integer, negative allowed), preserving case and leaving every other character alone; unshift(text, k) reverses it.\n2. more_itertools/lg_wrap.py: wrap_words(text, width) greedily packs whitespace-separated words into lines of at most width characters joined by single spaces and returns the list of lines; a word longer than width gets its own line unbroken; ValueError for width < 1; blank text gives [].\n3. more_itertools/lg_pal.py: is_palindrome(s) ignores case and every non-alphanumeric character ('A man, a plan, a canal: Panama' is True); the empty string and strings with no alphanumerics are True.\n4. more_itertools/lg_anagram.py: group_anagrams(words) groups words that are anagrams of each other case-insensitively; each group keeps input order, groups are ordered by their first member's first appearance, returns a list of lists.\n\nAll functions are plain Python with no third-party dependencies. Do not modify existing modules or tests.\nCommit your work on a new branch and push it.",
+  "issue_ref": null,
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "5d946b3590bfe92f1465c1b9b9830dd434745c84"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_lg_par_str.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_lg_par_str.py",
+    "provenance": {
+      "tests/test_lg_par_str.py": "authored"
+    },
+    "sha256": {
+      "tests/test_lg_par_str.py": "05c3665707b746174a33c1c10ab24aba2b70d053a339a92c6996c65d900480af"
+    },
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "more_itertools/lg_caesar.py",
+        "tests": [
+          "tests/test_lg_par_str.py::TestCaesar"
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "more_itertools/lg_wrap.py",
+        "tests": [
+          "tests/test_lg_par_str.py::TestWrap"
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "more_itertools/lg_pal.py",
+        "tests": [
+          "tests/test_lg_par_str.py::TestPal"
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "more_itertools/lg_anagram.py",
+        "tests": [
+          "tests/test_lg_par_str.py::TestAnagram"
+        ]
+      }
+    ]
+  },
+  "timeout_s": 2400,
+  "tier": "large",
+  "decomposable": true
+}

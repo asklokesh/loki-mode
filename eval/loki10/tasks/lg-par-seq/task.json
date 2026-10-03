@@ -1,0 +1,56 @@
+{
+  "id": "lg-par-seq",
+  "kind": "public",
+  "prompt": "Add four independent sequence utility modules to the more_itertools package. They share no code and no symbols; each lives in its own new file.\n\n1. more_itertools/lg_chunk.py: chunk_even(seq, n) splits a sequence into n consecutive chunks whose sizes differ by at most 1, larger chunks first (7 items in 3 -> sizes 3,2,2); n larger than len gives empty trailing chunks; ValueError for n < 1.\n2. more_itertools/lg_window.py: sliding_sum(xs, k) returns the sums of every window of k consecutive numbers (len(xs)-k+1 values, [] when k > len); ValueError for k < 1.\n3. more_itertools/lg_dedupe.py: dedupe_keep_last(items, key=None) removes duplicates (by key(item) when given) keeping the LAST occurrence of each, with the surviving items in the order of those last occurrences.\n4. more_itertools/lg_runs.py: longest_run(xs) returns (value, length) of the longest run of equal consecutive items, the earliest run on ties; ValueError on an empty sequence.\n\nAll functions are plain Python with no third-party dependencies. Do not modify existing modules or tests.\nCommit your work on a new branch and push it.",
+  "issue_ref": null,
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "5d946b3590bfe92f1465c1b9b9830dd434745c84"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_lg_par_seq.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_lg_par_seq.py",
+    "provenance": {
+      "tests/test_lg_par_seq.py": "authored"
+    },
+    "sha256": {
+      "tests/test_lg_par_seq.py": "e2c57f065ba986c95ab533ce386f7f9daea8517468cd19fa85dd09c42a2f5d6b"
+    },
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "more_itertools/lg_chunk.py",
+        "tests": [
+          "tests/test_lg_par_seq.py::TestChunk"
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "more_itertools/lg_window.py",
+        "tests": [
+          "tests/test_lg_par_seq.py::TestWindow"
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "more_itertools/lg_dedupe.py",
+        "tests": [
+          "tests/test_lg_par_seq.py::TestDedupe"
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "more_itertools/lg_runs.py",
+        "tests": [
+          "tests/test_lg_par_seq.py::TestRuns"
+        ]
+      }
+    ]
+  },
+  "timeout_s": 2400,
+  "tier": "large",
+  "decomposable": true
+}

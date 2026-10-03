@@ -3,7 +3,7 @@
 
 Subcommands (run.sh and summarize are thin wrappers around these):
   validate <task_dir>...
-  run --arm <v10|raw-claude|legacy> (--task ID | --tasks A,B | --all) [--tier small|medium|large] [--parallel N] [--out DIR] [--tasks-dir DIR]
+  run --arm <v10|raw-claude|legacy|v10-parallel|v10-seq> (--task ID | --tasks A,B | --all) [--tier small|medium|large] [--parallel N] [--out DIR] [--tasks-dir DIR]
   summarize <results.jsonl> [--markdown]
 
 Honesty rules (the v10.0.0 release gate depends on them):
@@ -48,12 +48,21 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-ARMS = ("v10", "raw-claude", "legacy")
+ARMS = ("v10", "raw-claude", "legacy", "v10-parallel", "v10-seq")
+# D61 slice 17: the large tier compares three arms. Every v10* arm runs the
+# same v10 engine (same marker, events and token accounting); only LOKI_SPEED
+# differs. v10-parallel is a STUB until the decomposer (D61 slices 8-16) lands:
+# today LOKI_SPEED=1 on the v10 engine is the whole arm, and every surface that
+# reports it (stdout, manifest, rows, summarize) says so.
+V10_ARMS = ("v10", "v10-parallel", "v10-seq")
+ARM_SPEED = {"v10-parallel": "1", "v10-seq": "0"}
+ARM_STUB_NOTE = {"v10-parallel": "STUB: v10 with LOKI_SPEED=1; the D61 decomposer is not built, "
+                                 "so this is not yet a parallel measurement"}
 KINDS = ("augmentiq", "public", "quickstart")
 TIERS = ("small", "medium", "large")
 DEFAULT_TIER = "small"
 TASK_KEYS = {"id", "kind", "prompt", "issue_ref", "repo", "setup", "hidden", "timeout_s",
-             "expected_outcome", "tier"}
+             "expected_outcome", "tier", "decomposable"}
 # EV-13: "already implemented" is a first-class outcome, never a pause or a
 # duplicate PR. The only value today; unknown values are rejected so a typo
 # fails validate_task instead of silently grading as a normal build task.
@@ -238,6 +247,8 @@ def validate_task(task_dir):
     ts = t.get("timeout_s", DEFAULT_TIMEOUT_S)
     if isinstance(ts, bool) or not isinstance(ts, int) or ts <= 0:
         errs.append("timeout_s must be a positive integer")
+    if "decomposable" in t and not isinstance(t.get("decomposable"), bool):
+        errs.append("decomposable must be a boolean")
     if "tier" in t and t.get("tier") not in TIERS:
         errs.append("tier must be one of %s" % "|".join(TIERS))
     return (None if errs else t), ["%s: %s" % (task_dir, e) for e in errs]
@@ -586,7 +597,7 @@ def arm_env(rundir, model, alias, arm=None):
         "LOKI_SESSION_MODEL": alias,
         "LOKI_MODEL_OVERRIDE": model,
     })
-    if arm == "v10":
+    if arm in V10_ARMS:
         # E-42/ENGINE.md: the gate measures what ships, from the operator's
         # LOKI_TS_ENTRY (the rebuilt dist bundle). Read by exact name from the
         # real environment, since the blanket LOKI_* scrub above already
@@ -596,6 +607,11 @@ def arm_env(rundir, model, alias, arm=None):
         for k in V10_ENGINE_ENV_ALLOWLIST:
             if k in os.environ:
                 env[k] = os.environ[k]
+        # D61: the speed arms pin LOKI_SPEED themselves (the blanket LOKI_*
+        # scrub already dropped the operator's value), so v10-seq can never
+        # be sped up and v10-parallel can never silently run sequential.
+        if arm in ARM_SPEED:
+            env["LOKI_SPEED"] = ARM_SPEED[arm]
     return env
 
 
@@ -1151,6 +1167,22 @@ def _v10_events(work):
     return out
 
 
+def budget_stopped(events):
+    """True iff the v10 run was stopped by its own budget (D61 slice 17): a
+    budget stop is never a completed run, same as a wall-cap kill. Read from
+    the event log only: a budget.* event, or a run.completed whose status
+    names a budget/cap stop."""
+    for e in events:
+        t = str(e.get("type") or "")
+        if t.startswith("budget."):
+            return True
+        d = e.get("data") if isinstance(e.get("data"), dict) else {}
+        if t == "run.completed" and str(d.get("status") or d.get("reason") or "") in (
+                "budget_stopped", "budget_exceeded", "capped"):
+            return True
+    return False
+
+
 _TOKEN_KEYS = ("input", "output", "cache_read", "cache_write")
 
 
@@ -1300,6 +1332,8 @@ def new_row(task, arm, cfg, slot, logs):
     return {"run_id": slot, "task": task["id"], "arm": arm, "status": "ok", "model": cfg["model"],
             "repo_ref": task["repo"]["ref"], "harness_sha": cfg["harness_sha"],
             "expected_outcome": task.get("expected_outcome"), "tier": task.get("tier", DEFAULT_TIER),
+            "decomposable": task.get("decomposable"), "arm_note": ARM_STUB_NOTE.get(arm),
+            "budget_stopped": False,
             "started": None, "ended": None, "wall_s": None, "time_to_pr_s": None,
             "pr_opened": False, "pr_branch": None, "hidden_pass": False, "completed": False,
             "hidden_subset": hidden_subset(task),
@@ -1373,7 +1407,7 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     if arm == "raw-claude":
         argv = [binary, "-p", prompt + PUSH_INSTRUCTION, "--output-format", "json",
                 "--dangerously-skip-permissions", "--model", cfg["model"]]
-    elif arm == "v10":
+    elif arm in V10_ARMS:
         env["LOKI_ENGINE"] = "v10"
         argv = [binary, prompt]
     else:
@@ -1393,11 +1427,11 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
     started = time.time()
     rc, wall, capped = capped_run(argv, work, dict(env, **auth), cap, L["arm_stderr"], L["arm_stdout"])
     row.update(started=iso(started), ended=iso(time.time()), wall_s=wall, exit_code=rc, capped=capped)
-    events = _v10_events(work) if arm == "v10" else []
+    events = _v10_events(work) if arm in V10_ARMS else []
     row["cost_usd"], row["cost_source"], row["cost_partial_usd"] = provider_cost(arm, L["arm_stdout"], work, events)
     if arm == "raw-claude":
         row["tokens"] = _raw_claude_tokens(L["arm_stdout"])
-    elif arm == "v10":
+    elif arm in V10_ARMS:
         row["tokens"], row["tokens_by_stage"] = _v10_tokens(events)
         row["first_turn_prompt_tokens"] = _first_turn_prompt_tokens(work)
         # fix.round's own "escalated" field is the only real escalation
@@ -1411,7 +1445,8 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         # fix, which is not "attempts" in section 4's sense.
         row["attempts"] = sum(1 for e in events if e.get("type") == "session.started" and e.get("stage") == "implement")
 
-    if arm == "v10":
+    if arm in V10_ARMS:
+        row["budget_stopped"] = budget_stopped(events)
         why = v10_marker_problem(work, started)
         if why:
             row["status"] = "arm_unavailable"
@@ -1463,17 +1498,18 @@ def run_one(task, task_dir, arm, cfg, row, rundir, logdir):
         # deterministic evidence the feature already exists, and (still) the
         # regression check passes. A PR or any source diff is never completed,
         # no matter what the arm's own output claims.
-        row["no_change_evidence"] = v10_verdict(work) == "ALREADY_SATISFIED" if arm == "v10" \
+        row["no_change_evidence"] = v10_verdict(work) == "ALREADY_SATISFIED" if arm in V10_ARMS \
             else claims_no_change_needed(arm, L["arm_stdout"])
         # exit_code == 0 matters here specifically because NO_CHANGE_CLAIM_RE
         # also matches ordinary error text ("branch already exists", "file
         # already exists"): without this, a crashed run that never touched the
         # tree could still read as a correct no_change_needed completion.
         row["completed"] = (not row["pr_opened"]) and row["no_source_diff"] and row["no_change_evidence"] \
-            and row["hidden_pass"] and rc == 0 and not capped and not row.get("push_time_anomaly")
+            and row["hidden_pass"] and rc == 0 and not capped and not row["budget_stopped"] \
+            and not row.get("push_time_anomaly")
     else:
         row["completed"] = row["pr_opened"] and row["hidden_pass"] and not capped \
-            and not row.get("push_time_anomaly")
+            and not row["budget_stopped"] and not row.get("push_time_anomaly")
     return row
 
 
@@ -1512,7 +1548,7 @@ def cmd_run(args):
 
     # E-62/EV-8: a loki arm (v10, legacy) runs bin/loki against loki-ts's
     # build; refuse loudly rather than silently measuring a stale SDK.
-    if args.arm in ("v10", "legacy"):
+    if args.arm in V10_ARMS or args.arm == "legacy":
         why = lockfile_mismatch(REPO)
         if why:
             print("error: %s" % why, file=sys.stderr)
@@ -1553,10 +1589,13 @@ def cmd_run(args):
         r = subprocess.run([TIMEOUT_BIN, "-k", "5", "30", binary, "--version"],
                            capture_output=True, text=True)
         version = (r.stdout or r.stderr).strip()[:200]
+    if args.arm in ARM_STUB_NOTE:
+        print("NOTE %s: %s" % (args.arm, ARM_STUB_NOTE[args.arm]), file=sys.stderr)
     # One line per invocation, so several arms can share one --out.
     with open(os.path.join(out, "manifest.jsonl"), "a") as f:
         f.write(json.dumps({"arm": args.arm, "model": model, "arm_binary": binary,
                             "arm_version": version, "harness_sha": cfg["harness_sha"],
+                            "arm_note": ARM_STUB_NOTE.get(args.arm), "loki_speed": ARM_SPEED.get(args.arm),
                             "agent_sdk_version": installed_agent_sdk_version(REPO),
                             "isolation": "fresh CLAUDE_CONFIG_DIR per run", "auth_source": auth_source,
                             "tasks": [t["id"] for t, _ in tasks], "started": iso(time.time())}) + "\n")
@@ -1622,7 +1661,7 @@ def cmd_run(args):
                 f.write(archived)
             with open(archive_repo_results, "a") as f:
                 f.write(archived)
-            if args.arm == "v10":
+            if args.arm in V10_ARMS:
                 work = os.path.join(rundir, "work")
                 rid = _v10_run_id(work)
                 events = os.path.join(work, ".loki", "runs", rid, "events.jsonl") if rid else None
@@ -1675,13 +1714,34 @@ def dedupe(rows):
     return [r for _, r in sorted(latest.values(), key=lambda x: x[0])]
 
 
+def is_done(r):
+    return bool(r.get("completed")) and not r.get("capped") and not r.get("budget_stopped")
+
+
+def token_total(r):
+    """Total tokens of one row (input+output+cache read+cache write), or None
+    when the row has no measured token record: unknown is never zero."""
+    t = r.get("tokens")
+    if not isinstance(t, dict):
+        return None
+    vals = [t.get(k) for k in _TOKEN_KEYS]
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in vals):
+        return None
+    return sum(vals)
+
+
 def arm_stats(rs):
     unavailable = [r for r in rs if r.get("status") == "arm_unavailable"]
     evaluated = [r for r in rs if is_evaluated(r)]
     infra = [r for r in rs if not is_evaluated(r) and r.get("status") != "arm_unavailable"]
-    done = [r for r in evaluated if r.get("completed")]
+    # A capped or budget-stopped run is never completed, even when a row
+    # claims it (D61 slice 17): the summary re-enforces what run_one decides.
+    done = [r for r in evaluated if is_done(r)]
     ttp = [r["time_to_pr_s"] for r in done if r.get("time_to_pr_s") is not None]
     costed = [r for r in evaluated if r.get("cost_usd") is not None]
+    walls = [r["wall_s"] for r in done if isinstance(r.get("wall_s"), (int, float))]
+    toks = [token_total(r) for r in done]
+    tokens_per = round(sum(toks) / len(done)) if done and all(t is not None for t in toks) else None
     cost_per = None
     if done and len(costed) == len(evaluated):
         cost_per = round(sum(r["cost_usd"] for r in costed) / len(done), 4)
@@ -1690,6 +1750,10 @@ def arm_stats(rs):
         "completion_rate": round(len(done) / len(evaluated), 4) if evaluated else None,
         "p50_time_to_pr_s": nearest_rank(ttp, 50), "p90_time_to_pr_s": nearest_rank(ttp, 90),
         "cost_per_completed_usd": cost_per, "cost_measured_runs": len(costed),
+        "p50_wall_s": nearest_rank(walls, 50), "tokens_per_completed": tokens_per,
+        "tokens_measured_runs": sum(1 for t in toks if t is not None),
+        "budget_stopped": sum(1 for r in rs if r.get("budget_stopped")),
+        "note": next((r["arm_note"] for r in rs if r.get("arm_note")), None),
         "capped": sum(1 for r in rs if r.get("capped")), "unavailable": len(unavailable),
         "infra_or_interrupted": len(infra),
     }
@@ -1713,7 +1777,7 @@ def summarize_rows(rows):
             "invalid_tasks": [{"task": t, "reason": invalid[t]} for t in sorted(invalid)],
             "arms": {a: arm_stats([r for r in live if r["arm"] == a]) for a in sorted({r["arm"] for r in rs})},
             "misses": [{"task": r["task"], "arm": r["arm"], "reason": miss_reason(r)}
-                       for r in live if not r.get("completed")],
+                       for r in live if not is_done(r)],
         })
     return out
 
@@ -1725,6 +1789,8 @@ def miss_reason(r):
             (" (after a push)" if r.get("pr_opened") else "")
     if r.get("capped"):
         return "capped at wall limit"
+    if r.get("budget_stopped"):
+        return "stopped by its budget"
     if r.get("expected_outcome") == "no_change_needed":
         # Never "no branch pushed" here: for this outcome, not pushing is
         # correct, so it must never read as the reason a run missed.
@@ -1769,6 +1835,13 @@ def cmd_summarize(args):
                           fmt(a["p50_time_to_pr_s"], "s"), fmt(a["p90_time_to_pr_s"], "s"),
                           fmt(a["cost_per_completed_usd"]), a["cost_measured_runs"], a["evaluated"],
                           a["capped"], a["unavailable"], a["infra_or_interrupted"]))
+                print("    wall p50 %s, completion %s, tokens/completed %s (tokens measured %d/%d), "
+                      "budget-stopped %d" % (
+                          fmt(a["p50_wall_s"], "s"), fmt(a["completion_rate"]),
+                          fmt(a["tokens_per_completed"]), a["tokens_measured_runs"], a["completed"],
+                          a["budget_stopped"]))
+                if a["note"]:
+                    print("    note: %s" % a["note"])
             for t in g["invalid_tasks"]:
                 print("  invalid task %s: %s" % (t["task"], t["reason"]))
         return 0
@@ -1783,16 +1856,18 @@ def cmd_summarize(args):
           "when any evaluated run lacks a figure.\n")
     for g in groups:
         print("#### model %s, harness %s\n" % (g["model"], g["harness_sha"]))
-        print("| Arm | Completed | Rate | p50 time to PR | p90 time to PR | Cost per completed | Cost measured "
-              "| Capped | Unavailable | Infra/interrupted |")
-        print("|---|---|---|---|---|---|---|---|---|---|")
+        print("| Arm | Completed | Rate | p50 time to PR | p90 time to PR | p50 wall | Tokens per completed "
+              "| Cost per completed | Cost measured | Capped | Budget-stopped | Unavailable | Infra/interrupted |")
+        print("|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for arm, a in g["arms"].items():
             rate = "n/a" if a["completion_rate"] is None else "%.1f%%" % (100 * a["completion_rate"])
             cost = "n/a" if a["cost_per_completed_usd"] is None else "$%.4f" % a["cost_per_completed_usd"]
-            print("| %s | %d/%d | %s | %s | %s | %s | %d/%d | %d | %d | %d |" % (
-                arm, a["completed"], a["evaluated"], rate, fmt(a["p50_time_to_pr_s"], "s"),
-                fmt(a["p90_time_to_pr_s"], "s"), cost, a["cost_measured_runs"], a["evaluated"],
-                a["capped"], a["unavailable"], a["infra_or_interrupted"]))
+            label = arm + (" (%s)" % a["note"] if a["note"] else "")
+            print("| %s | %d/%d | %s | %s | %s | %s | %s | %s | %d/%d | %d | %d | %d | %d |" % (
+                label, a["completed"], a["evaluated"], rate, fmt(a["p50_time_to_pr_s"], "s"),
+                fmt(a["p90_time_to_pr_s"], "s"), fmt(a["p50_wall_s"], "s"), fmt(a["tokens_per_completed"]),
+                cost, a["cost_measured_runs"], a["evaluated"],
+                a["capped"], a["budget_stopped"], a["unavailable"], a["infra_or_interrupted"]))
         if g["invalid_tasks"]:
             print("\nInvalid tasks (excluded from every arm):\n")
             for t in g["invalid_tasks"]:

@@ -1,0 +1,56 @@
+{
+  "id": "lg-seq-kv",
+  "kind": "public",
+  "prompt": "Build a layered key=value configuration pipeline in four new modules of the more_itertools package. Each stage consumes the previous stage's output, so build them in order and keep the data shapes below exactly.\n\nOrder matters: requirement N imports and builds on requirement N-1.\n1. more_itertools/lg_kvparse.py: parse_lines(text) returns a list of (key, value) string pairs in file order. Lines are 'key=value' split at the FIRST '='; key and value are stripped; blank lines and lines starting with '#' are skipped; a non-blank line with no '=' or an empty key raises ValueError.\n2. more_itertools/lg_kvschema.py: validate(pairs, schema) takes the pairs from lg_kvparse.parse_lines and a schema dict {key: 'int'|'bool'|'str'}; returns a dict with typed values (bool accepts true/false/yes/no/1/0 case-insensitively). A later duplicate key overrides an earlier one. Unknown key raises KeyError, a value that does not convert raises ValueError.\n3. more_itertools/lg_kvmerge.py: merge(layers, schema) takes a list of config texts (lowest priority first), parses each with lg_kvparse and validates each with lg_kvschema (import them, do not re-implement), and returns one dict where later layers override earlier ones key by key. Errors from the earlier stages propagate unchanged. merge([], schema) is {}.\n4. more_itertools/lg_kvdump.py: dump(config, schema) renders a typed dict as 'key=value' lines sorted by key, each line ending in a newline (bool as true/false, int and str with str()); a key absent from the schema raises KeyError. Round trip: lg_kvmerge.merge([dump(c, s)], s) == c for every valid c without newlines in string values.\n\nAll functions are plain Python with no third-party dependencies. Do not modify existing modules or tests.\nCommit your work on a new branch and push it.",
+  "issue_ref": null,
+  "repo": {
+    "source": "https://github.com/more-itertools/more-itertools.git",
+    "ref": "5d946b3590bfe92f1465c1b9b9830dd434745c84"
+  },
+  "setup": "python3 -m venv .venv && .venv/bin/pip install -q -e . pytest",
+  "hidden": {
+    "files": [
+      "tests/test_lg_seq_kv.py"
+    ],
+    "run": ".venv/bin/python -m pytest -q -rf --color=no -p no:cacheprovider -o addopts=\"\" tests/test_lg_seq_kv.py",
+    "provenance": {
+      "tests/test_lg_seq_kv.py": "authored"
+    },
+    "sha256": {
+      "tests/test_lg_seq_kv.py": "d2de594ae3ae09fdeb0290d06645b6fa139e3726940ce01883b11f750d918d6c"
+    },
+    "requirements": [
+      {
+        "id": "R1",
+        "text": "more_itertools/lg_kvparse.py",
+        "tests": [
+          "tests/test_lg_seq_kv.py::TestKvParse"
+        ]
+      },
+      {
+        "id": "R2",
+        "text": "more_itertools/lg_kvschema.py",
+        "tests": [
+          "tests/test_lg_seq_kv.py::TestKvSchema"
+        ]
+      },
+      {
+        "id": "R3",
+        "text": "more_itertools/lg_kvmerge.py",
+        "tests": [
+          "tests/test_lg_seq_kv.py::TestKvMerge"
+        ]
+      },
+      {
+        "id": "R4",
+        "text": "more_itertools/lg_kvdump.py",
+        "tests": [
+          "tests/test_lg_seq_kv.py::TestKvDump"
+        ]
+      }
+    ]
+  },
+  "timeout_s": 2400,
+  "tier": "large",
+  "decomposable": false
+}
