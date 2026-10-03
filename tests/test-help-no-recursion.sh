@@ -167,7 +167,23 @@ if [ -s "$_o3" ] && ! grep -qE "fork failed" "$_o3" 2>/dev/null; then
 else
     bad "loki help verify printed nothing -- the fix broke real delegation"
 fi
+if grep -qi "dsse" "$_o3" 2>/dev/null && grep -q -- "--export-dsse" "$_o3" 2>/dev/null; then
+    ok "loki help verify documents --export-dsse (PO-HELP-1)"
+else
+    bad "loki help verify does not mention --export-dsse"
+fi
 rm -f "$_o3" "$_out"
+
+# `loki help answer` is a topic of its own and documents --text (PO-HELP-1).
+_o4="$(mktemp "${TMPDIR:-/tmp}/loki-helprec4-XXXXXX")"
+_run_capped "$_o4" bash "$LOKI" help answer
+_rc4=$?
+if [ "$_rc4" -eq 0 ] && grep -q -- "--text" "$_o4" 2>/dev/null; then
+    ok "loki help answer exits 0 and documents --text"
+else
+    bad "loki help answer rc=$_rc4 or missing --text"
+fi
+rm -f "$_o4"
 
 # --- the machine is no worse off than when we started ----------------------
 _after=$(ps -e 2>/dev/null | wc -l | tr -d ' ')

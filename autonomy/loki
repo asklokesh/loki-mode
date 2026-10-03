@@ -1589,6 +1589,48 @@ PYEOF
 }
 
 # Show help
+# `loki help answer`: `loki answer` is a v10 (loki-ts) command with no bash
+# implementation, so its help lives here rather than behind delegation.
+_help_answer() {
+    echo -e "${BOLD}loki answer${NC} - Resume a BLOCKED run with an answer"
+    echo ""
+    echo "Usage: loki answer [<run-id>] [--text \"...\"]"
+    echo ""
+    echo "A run BLOCKED on a spec conflict has no in-place resume. This command"
+    echo "starts a fresh run whose task carries the original task plus the"
+    echo "question and your answer as context, then prints the new run id."
+    echo ""
+    echo "Arguments:"
+    echo "  <run-id>        BLOCKED run to answer. Default: the newest BLOCKED run"
+    echo "                  in the current repo (else the latest run)."
+    echo ""
+    echo "Options:"
+    echo "  --text \"...\"    The answer text (also --text=...). Without it, the answer is"
+    echo "                  read from the Control Plane answer file"
+    echo "                  \$LOKI_CONTROL_ANSWER_DIR/<source>/<run-id>.answer.txt"
+    echo "                  (default dir: ~/.loki/control/answers)."
+    echo ""
+    echo "Exit codes: 0 the new run succeeded (otherwise its exit code), 2 no runs,"
+    echo "run not BLOCKED, no answer supplied, or bad usage."
+    echo "The child run drops SLACK_* and LOKI_CONTROL_TOKEN from its environment"
+    echo "and sets LOKI_NO_BROWSER=1."
+}
+
+# Appended to `loki help verify`: the v10 DSSE export flag (docs/exit-codes.md).
+_help_verify_dsse() {
+    echo ""
+    echo "DSSE EXPORT (v10 engine):"
+    echo "    loki verify <run-id|receipt.json> --export-dsse"
+    echo "        Print a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto"
+    echo "        Statement v1 inside a DSSE envelope (Ed25519 over PAE). Refusals"
+    echo "        print nothing on stdout. Exit codes:"
+    echo "          0   envelope printed"
+    echo "          1   TAMPERED, an envelope given as input, or run_id mismatch"
+    echo "          2   UNSIGNED, UNCHECKED, or unreadable receipt"
+    echo "          4   run outcome is not VERIFIED or ALREADY_SATISFIED"
+    echo "          66  no signing key, or no runs"
+}
+
 show_help() {
     local version=$(get_version)
     # Strip color when stdout is not a TTY (piped/redirected) so captured help
@@ -22328,8 +22370,15 @@ main() {
                         # and a future spelling would slip past it.
                         if [ "${LOKI_HELP_ONLY:-}" = "1" ]; then
                             show_help
+                        elif [ "$_help_target" = "answer" ]; then
+                            _help_answer
                         else
                             LOKI_HELP_ONLY=1 "$0" "$_help_target" --help "$@"
+                            local _help_rc=$?
+                            if [ "$_help_target" = "verify" ] && [ "$_help_rc" -eq 0 ]; then
+                                _help_verify_dsse
+                            fi
+                            return "$_help_rc"
                         fi
                         ;;
                 esac
