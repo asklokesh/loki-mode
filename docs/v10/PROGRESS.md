@@ -1925,3 +1925,11 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Cause: D61-03 (999ea6af3) value-imports selectRelevantFiles from stages/plan.ts. Fix-forward slice P0-D66-FENCE dispatched (dependency injection, test untouched). Train 83 will not release; train 84 carries the fix.
 - Guard gap: the D61-03 engineer and TL did not run budget.test.ts. Every features/ slice prompt now names it as a required command.
 - Dispatched D63 cards C1 (HIGH), C2, C5, C8, C9, C12 and D61-10-F1; reviews: D61-04 (opus), D61-12 re-review (opus).
+
+## 2026-10-03T03:56Z v10.6.8 released, train 85 staged, train 86 reviewed
+- v10.6.8 released from main d95095d9d (train/82 tree e072e47a9; Tests, Bun Parity, Coverage, Security Audit, First-run green on that SHA). Peer told; D49 auto-promote pending (npm latest 10.6.7 at 03:46Z).
+- train/84 (b45cc902e, carries P0-D66-FENCE) CI running.
+- Train 85 on local main 52c3b0e02: C5, C9, C7, D61-10-F1, D61-16, C4 plus dist (dist guard 13/0). local-ci fast tier hit the 590s cap (rc 124) after 76 PASS, 0 FAIL, bun test PASS; train CI is the authority.
+- Train 86 fully reviewed: C2 00f6741d9 (opus) + C2-F 3177c28ba + C2-F2 3fca6590d (TL, preload mutation goes red), C3 e41381751 + C3-F 362e9c501 (TL, 20/0), C11a 50a75bcfa (TL; legs 1-2 PASS, positive control rc 1).
+- D61-12 round 4 opus BLOCK (B3: repo filter driver fooled the fresh verify checkout). Round 5 630772f97 fixes B3, N1, N5, N7 (integrate tests 68/0); opus round 5 running.
+- In review: C6 (HIGH), C1 (HIGH), C8, C12 (HIGH), D61-04, D61-11, D61-13, D61-16-F, VIS-F1. Next: BUG-C (slack --port 0) after C6, C10 after C1, C11b after train 86.
