@@ -1,7 +1,11 @@
 // D77 (W1-S1): the sealed base-tree manifest the Wall reads instead of the repo. Pure: a file list in,
 // signatures-only text out. It holds the detected runner and config, the test layout, at most two style
 // examples that import no module the task names, and public signatures of the named modules. Function
-// and method bodies never enter the output: only text before a body's opening brace (TS) or colon (Python).
+// and method bodies never enter the output. TS/JS: only text before a body's opening brace, and a file whose
+// lexing is undecidable emits nothing. Python: heads come from the stdlib ast in an isolated interpreter.
+// Parameter and field defaults are always masked as `= ...`.
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
 export interface ManifestFile { path: string; content: string }
 
 export const MANIFEST_MAX_LINES = 400;
@@ -281,17 +285,141 @@ function strictMember(m: Item): boolean {
   return true;
 }
 
+// Whole-file fail-closed pre-pass. True when the file cannot be lexed with certainty: a `/` that is not a
+// comment and whose previous token is `)`, `]`, `}`, a word, a quote, `++`/`--` or anything else that is not a
+// clear regex prefix; any backtick in jsx/tsx; an unterminated string, template, regex or comment; or
+// brackets that do not balance. Iterative, so deep nesting cannot overflow the stack.
+function tsAmbiguous(s: string, jsx: boolean): boolean {
+  const n = s.length, stack: string[] = [];
+  const tpl = (from: number): number => {
+    for (let j = from; j < n; ) {
+      const c = s[j];
+      if (c === "\\") j += 2;
+      else if (c === "`") return j + 1;
+      else if (c === "$" && s[j + 1] === "{") { stack.push("$"); return j + 2; }
+      else j++;
+    }
+    return -1;
+  };
+  let prev = "", prev2 = "";
+  const set = (c: string): void => { prev2 = prev; prev = c; };
+  for (let i = 0; i < n; ) {
+    const c = s[i]!;
+    if (/\s/.test(c)) { i++; continue; }
+    if (c === "/" && s[i + 1] === "/") { const e = s.indexOf("\n", i); if (e < 0) break; i = e; continue; }
+    if (c === "/" && s[i + 1] === "*") { const e = s.indexOf("*/", i + 2); if (e < 0) return true; i = e + 2; continue; }
+    if (c === "`" || c === "}" && stack[stack.length - 1] === "$") {
+      if (c === "`" && jsx) return true;
+      if (c === "}") stack.pop();
+      const e = tpl(i + 1);
+      if (e < 0) return true;
+      i = e; set("a");
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      for (; j < n && s[j] !== c; j++) { if (s[j] === "\\") j++; else if (s[j] === "\n") return true; }
+      if (j >= n) return true;
+      i = j + 1; set("a");
+      continue;
+    }
+    if (c === "/") {
+      if (jsx && prev === "<") { i++; set("/"); continue; }
+      if (prev && !"(,=:[!&|?{;+-*%~^".includes(prev)) return true;
+      if ((prev === "+" || prev === "-") && prev2 === prev) return true;
+      let j = i + 1, cls = false, closed = false;
+      for (; j < n; j++) {
+        const d = s[j]!;
+        if (d === "\n") return true;
+        if (d === "\\") j++;
+        else if (d === "[") cls = true;
+        else if (d === "]") cls = false;
+        else if (d === "/" && !cls) { closed = true; break; }
+      }
+      if (!closed) return true;
+      i = j + 1;
+      while (i < n && /[a-z]/i.test(s[i]!)) i++;
+      set("a");
+      continue;
+    }
+    if (c === "(" || c === "[" || c === "{") stack.push(c);
+    else if (c === ")" || c === "]" || c === "}") {
+      const o = stack.pop();
+      if (o !== (c === ")" ? "(" : c === "]" ? "[" : "{")) return true;
+    }
+    set(c);
+    i++;
+  }
+  return stack.length > 0;
+}
+
+// Replaces every default value inside a parameter list with `= ...`; generic type defaults are untouched.
+function maskDefaults(sig: string): string {
+  let out = "", pd = 0;
+  for (let i = 0; i < sig.length; ) {
+    const k = skipLiteral(sig, i);
+    if (k !== i) { out += sig.slice(i, k); i = k; continue; }
+    const c = sig[i]!;
+    if (c === "(") pd++;
+    else if (c === ")") pd--;
+    else if (c === "=" && pd > 0 && sig[i + 1] !== "=" && sig[i + 1] !== ">" && !"=!<>".includes(sig[i - 1] ?? " ")) {
+      out = out.trimEnd() + " = ...";
+      let d = 0, angle = 0, j = i + 1;
+      for (; j < sig.length; ) {
+        const l = skipLiteral(sig, j);
+        if (l !== j) { j = l; continue; }
+        const e = sig[j]!;
+        if ("([{".includes(e)) d++;
+        else if (")]}".includes(e)) { if (d === 0) break; d--; }
+        else if (e === "<" && /[\w$]/.test(sig[j - 1] ?? "")) angle++;
+        else if (e === ">" && sig[j - 1] !== "=" && angle > 0) angle--;
+        else if (e === "," && d === 0 && angle === 0) break;
+        j++;
+      }
+      i = j;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+// `export enum E { A = "x", B }` becomes `export enum E { A, B }`: member names only.
+function enumSig(h: string): string | null {
+  const open = h.indexOf("{");
+  if (open < 0) return null;
+  const close = matchingBrace(h, open);
+  if (close >= h.length) return null;
+  const names: string[] = [];
+  let depth = 0, from = open + 1;
+  const take = (to: number): void => { const nm = h.slice(from, to).split("=")[0]!.trim(); if (nm) names.push(nm); };
+  for (let i = open + 1; i < close; ) {
+    const k = skipLiteral(h, i);
+    if (k !== i) { i = k; continue; }
+    const c = h[i]!;
+    if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === "," && depth === 0) { take(i); from = i + 1; }
+    i++;
+  }
+  take(close);
+  return `${h.slice(0, open).trim()} { ${names.join(", ")} }`;
+}
+
 function tsSignatures(src: string, jsx: boolean): string[] {
   const out: string[] = [];
   for (const it of items(src)) {
     const h = it.head.trim();
     if (!/^export\b/.test(h)) continue;
     const lines: string[] = [];
-    if (/^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]/.test(h)) {
+    if (/^export\s+(declare\s+)?enum\b/.test(h)) {
+      lines.push(enumSig(h) ?? exportHead(h, it.end));
+    } else if (/^export\s+(declare\s+)?(type|interface)\b|^export\s*(type\s*)?[{*]/.test(h)) {
       lines.push(exportHead(h, it.end));
     } else if (/^export\s+(default\s+)?(abstract\s+)?class\b/.test(h)) {
       const ms = jsx || !it.balanced ? [] : items(it.body ?? "");
-      const sigs = ms.map((m) => (strictMember(m) ? memberSig(m.head.trim()) : null));
+      const sigs = ms.map((m) => (strictMember(m) ? memberSig(m.head.trim()) : null)).map((m) => (m === null ? null : maskDefaults(m)));
       const dropped = ms.some((m) => !strictMember(m)) || sigs.some((m) => m !== null && (hasTopSemi(m) || NOT_MEMBER.test(m)));
       const keep = dropped ? [] : sigs.filter((m): m is string => !!m);
       lines.push(`${exportHead(h, "")} {`, ...keep.map((m) => `  ${m};`), "}");
@@ -306,78 +434,72 @@ function tsSignatures(src: string, jsx: boolean): string[] {
     } else {
       lines.push(memberSig(h) ?? h);
     }
-    if (!lines.some(hasTopSemi)) out.push(...lines);
+    const masked = /^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]|^export\s+(default\s+)?(abstract\s+)?class\b/.test(h) ? lines : lines.map(maskDefaults);
+    if (!masked.some(hasTopSemi)) out.push(...masked);
   }
   return out;
 }
 
-const PY_HEADER_MAX_LINES = 50;
+const PY_TIMEOUT_MS = 5000;
+const PY_SCRIPT = `
+import ast, sys, json, re
+def u(n): return ast.unparse(n)
+def deco(d): return "@" + (u(d.func) + "(...)" if isinstance(d, ast.Call) else u(d))
+def clean(n): return "..." if any(isinstance(x, ast.Constant) for x in ast.walk(n)) else u(n)
+def arg(a, has_default):
+    t = a.arg
+    if a.annotation is not None: t += ": " + u(a.annotation)
+    if has_default: t += " = ..." if a.annotation is not None else "=..."
+    return t
+def args(a):
+    pos = list(a.posonlyargs) + list(a.args)
+    first_default = len(pos) - len(a.defaults)
+    out = []
+    for i, x in enumerate(pos):
+        out.append(arg(x, i >= first_default))
+        if a.posonlyargs and i == len(a.posonlyargs) - 1: out.append("/")
+    if a.vararg is not None: out.append("*" + arg(a.vararg, False))
+    elif a.kwonlyargs: out.append("*")
+    for x, d in zip(a.kwonlyargs, a.kw_defaults): out.append(arg(x, d is not None))
+    if a.kwarg is not None: out.append("**" + arg(a.kwarg, False))
+    return ", ".join(out)
+def fn(n, ind):
+    r = [ind + deco(d) for d in n.decorator_list]
+    h = ind + ("async def " if isinstance(n, ast.AsyncFunctionDef) else "def ") + n.name + "(" + args(n.args) + ")"
+    if n.returns is not None: h += " -> " + u(n.returns)
+    return r + [h + ":"]
+def cls(n):
+    r = [deco(d) for d in n.decorator_list]
+    parts = [clean(b) for b in n.bases] + [(k.arg + "=" + clean(k.value)) if k.arg else "**..." for k in n.keywords]
+    return r + ["class " + n.name + ("(" + ", ".join(parts) + ")" if parts else "") + ":"]
+tree = ast.parse(sys.stdin.read())
+out = []
+for n in tree.body:
+    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith("_"):
+        out += fn(n, "")
+    elif isinstance(n, ast.ClassDef) and not n.name.startswith("_"):
+        out += cls(n)
+        for m in n.body:
+            if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and (not m.name.startswith("_") or re.fullmatch(r"__\\w+__", m.name)):
+                out += fn(m, "    ")
+    else:
+        t = n.targets[0] if isinstance(n, ast.Assign) and len(n.targets) == 1 else (n.target if isinstance(n, ast.AnnAssign) else None)
+        if isinstance(t, ast.Name) and re.fullmatch(r"[A-Z][A-Z0-9_]*", t.id): out.append(t.id + " = ...")
+print(json.dumps(out))
+`;
 
-// Reads one Python signature starting at lines[i]; returns text cut at the colon closing the header, or
-// null (fail closed) when strings or brackets do not close within the header or 50 lines.
-function pyHeader(lines: string[], i: number): { text: string; next: number } | null {
-  const src = lines.slice(i, i + PY_HEADER_MAX_LINES).join("\n");
-  let depth = 0;
-  for (let k = 0; k < src.length; k++) {
-    const c = src[k]!;
-    if (c === '"' || c === "'") {
-      const q = src.startsWith(c.repeat(3), k) ? c.repeat(3) : c;
-      let j = k + q.length;
-      for (; j < src.length; j++) {
-        if (src[j] === "\\") j++;
-        else if (src.startsWith(q, j)) break;
-        else if (q.length === 1 && src[j] === "\n") return null;
-      }
-      if (j >= src.length) return null;
-      k = j + q.length - 1;
-      continue;
-    }
-    if (c === "#") { while (k < src.length && src[k] !== "\n") k++; k--; continue; }
-    if (c === "\\" && src[k + 1] === "\n") { k++; continue; }
-    if ("([{".includes(c)) depth++;
-    else if (")]}".includes(c)) depth--;
-    else if (c === ":" && depth === 0) {
-      const raw = src.slice(0, k + 1);
-      return { text: raw.split("\n").map((l) => l.trimEnd()).join("\n"), next: i + raw.split("\n").length };
-    } else if (c === "\n" && depth <= 0) return null;
-  }
-  return null;
-}
-
+// Python signatures from the stdlib ast, run in an isolated interpreter (-I -S) from a neutral cwd with the
+// source on stdin. Any parse error, missing python3, or timeout yields no signatures for the file.
 function pySignatures(src: string): string[] {
-  const lines = norm(src).split("\n");
-  const out: string[] = [];
-  let pending: string[] = [], inClass = false, inTriple = false;
-  for (let i = 0; i < lines.length; ) {
-    const line = lines[i]!;
-    const startedInTriple = inTriple;
-    if ((line.match(/"""|'''/g) ?? []).length % 2 === 1) inTriple = !inTriple;
-    if (startedInTriple || !line.trim()) { i++; continue; }
-    const indent = line.length - line.trimStart().length;
-    if (indent === 0) inClass = false;
-    const top: boolean = indent === 0;
-    const member: boolean = inClass && indent === 4;
-    if ((top || member) && line.trim().startsWith("@")) { pending.push(line.trimEnd()); i++; continue; }
-    const m = /^\s*(?:async\s+)?(def|class)\s+(\w+)/.exec(line);
-    if ((top || member) && m) {
-      const hdr = pyHeader(lines, i);
-      if (!hdr) { pending = []; i++; continue; }
-      const { text, next } = hdr;
-      const name = m[2]!;
-      const isPublic: boolean = !name.startsWith("_") || (m[1] === "def" && member && /^__\w+__$/.test(name));
-      if (isPublic) out.push(...pending, text);
-      if (top && m[1] === "class") inClass = isPublic;
-      pending = [];
-      for (let k = i + 1; k < next; k++) inTriple = inTriple !== ((lines[k]!.match(/"""|'''/g) ?? []).length % 2 === 1);
-      i = next;
-      continue;
-    }
-    pending = [];
-    const c = top ? /^([A-Z][A-Z0-9_]*)\s*(?::[^=]+)?=/.exec(line) : null;
-    if (c) out.push(`${c[1]} = ...`);
-    i++;
-  }
-  return out;
+  try {
+    const r = spawnSync("python3", ["-I", "-S", "-c", PY_SCRIPT], {
+      input: norm(src), cwd: tmpdir(), timeout: PY_TIMEOUT_MS, encoding: "utf8",
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, maxBuffer: 8 * 1024 * 1024, stdio: ["pipe", "pipe", "ignore"],
+    });
+    if (r.error || r.status !== 0) return [];
+    const parsed: unknown = JSON.parse(r.stdout);
+    return Array.isArray(parsed) && parsed.every((l) => typeof l === "string") ? (parsed as string[]) : [];
+  } catch { return []; }
 }
 
 function packageRunner(content: string): string | null {
@@ -431,7 +553,8 @@ function importsNamed(path: string, raw: string, stems: Set<string>): boolean {
 }
 
 function safeTs(content: string, path: string): string[] {
-  try { return tsSignatures(content, /\.[jt]sx$/.test(path)); } catch { return []; }
+  const jsx = /\.[jt]sx$/.test(path);
+  try { return tsAmbiguous(norm(content), jsx) ? [] : tsSignatures(content, jsx); } catch { return []; }
 }
 
 export function buildWallManifest(files: readonly ManifestFile[], taskModules: readonly string[]): string {

@@ -100,7 +100,7 @@ describe("buildWallManifest (D77)", () => {
 
   test("every public Python signature is present", () => {
     const out = buildWallManifest(fixture(), MODULES);
-    for (const sig of ["LIMIT = ...", "@decorator", "def add(a: int,\n        b: int = 2) -> int:", "async def fetch(url: str) -> str:", "class Box:", "    def __init__(self, item):", "    def get(self, key: str) -> str:"]) {
+    for (const sig of ["LIMIT = ...", "@decorator", "def add(a: int, b: int = ...) -> int:", "async def fetch(url: str) -> str:", "class Box:", "    def __init__(self, item):", "    def get(self, key: str) -> str:"]) {
       expect(out).toContain(sig);
     }
     expect(out).not.toContain("_private");
@@ -234,9 +234,10 @@ describe("round 2 review findings (B1-B7)", () => {
     const a = ts('def f(x="("):\n    return "LEAK_p1"\n\ndef g():\n    pass\n', "m.py");
     expect(a).not.toMatch(MARKERS);
     expect(a).toContain("def g():");
+    expect(a).toContain('def f(x=...):');
     const b = ts('def f(sep=")"):\n    return "LEAK_p2"\n', "m.py");
     expect(b).not.toMatch(MARKERS);
-    expect(b).toContain('def f(sep=")"):');
+    expect(b).toContain("def f(sep=...):");
   });
 
   test("B6: style examples never import a named module in any form", () => {
@@ -304,7 +305,7 @@ const R3_INPUTS: [string, string][] = [
 describe("round 3 review findings", () => {
   test("B1: } and postfix ++ never start a regex; JSX text and division leak nothing", () => {
     for (const [p, src] of R3_INPUTS.slice(0, 3)) expect(ts(src, p)).not.toMatch(SECRETS);
-    expect(ts(R3_INPUTS[2]![1], "m.ts")).toContain("ok(): void");
+    expect(ts(R3_INPUTS[2]![1], "m.ts")).not.toContain("export class K");
   });
 
   test("B1: a lexer desync that slips through is caught by the member grammar", () => {
@@ -335,12 +336,12 @@ describe("round 3 review findings", () => {
   test("B2: Python escaped quotes, raw quotes and triple-quoted defaults", () => {
     const a = ts(R3_INPUTS[5]![1], "m.py");
     expect(a).not.toMatch(SECRETS);
-    expect(a).toContain('def quote(sep="\\""):');
+    expect(a).toContain("def quote(sep=...):");
     expect(a).toContain("def after():");
     expect(ts(R3_INPUTS[6]![1], "m.py")).not.toMatch(SECRETS);
     const t = ts(R3_INPUTS[7]![1], "m.py");
     expect(t).not.toMatch(SECRETS);
-    expect(t).toContain('def m(s="""a:\nb"""):');
+    expect(t).toContain("def m(s=...):");
   });
 
   test("B2: an unclosed Python header emits nothing", () => {
@@ -376,5 +377,53 @@ describe("round 3 review findings", () => {
 
   test("every SECRET and LEAK input from both reviews leaks nothing", () => {
     for (const [p, src] of R3_INPUTS) expect(ts(src, p)).not.toMatch(SECRETS);
+  });
+});
+
+const X_INPUTS: [string, string][] = [
+  ["m.ts", 'export function f(a: string) {\n  if (a) /}`/.test(a);\n  const t = `\nexport function leaked(k = "SECRET_DESYNC_1") {}\nexport interface Creds { pw: "SECRET_DESYNC_2" }\n`;\n  return t;\n}'],
+  ["m.ts", 'export function f(a: string) {\n  if (a) { a = a.trim(); }\n  /}`/.test(a);\n  const t = `\nexport type Leak = "SECRET_DESYNC_3";\n`;\n  return t;\n}'],
+  ["m.tsx", "export function C() {\n  return <p>Press ` to open</p>;\n}\nexport const a = `\n}\nexport function leaked(pw = \"SECRET_JSX2\") {}\n`;\nexport const b = `x`;"],
+  ["m.py", "DELIM = '\"\"\"'\ndef f():\n    pass\nTEMPLATE = \"\"\"\ndef leaked(pw=\"SECRET_PY_1\"):\nclass Leaked(SECRET_PY_2):\n\"\"\""],
+  ["m.py", "def f():\n    x = \"'''\"\n    return 1\nDOC = '''\ndef leaked2(token=\"SECRET_PY_3\"):\n'''"],
+  ["m.py", "class A:\n    s = '\"\"\"'\n    def m(self):\n        pass\nT = \"\"\"\n    def leaked3(self, k=\"SECRET_PY_4\"):\n\"\"\""],
+];
+
+describe("round 4 review findings (X1-X6) and fail-closed extraction", () => {
+  test("X1-X6: string-content desync leaks nothing", () => {
+    for (const [p, src] of X_INPUTS) expect(ts(src, p)).not.toMatch(SECRETS);
+  });
+
+  test("Python signatures come from the AST: defaults masked, classes and decorators kept", () => {
+    const out = ts("@dec(SECRET_ARG)\ndef f(a: int, b: str = 'SECRET_D', *args, k=1, **kw) -> int:\n    return 1\n\nclass B(Base, metaclass=M):\n    def m(self, x=SECRET_E): pass\n    def _p(self): pass\nLIMIT = 5\n", "m.py");
+    expect(out).not.toMatch(SECRETS);
+    for (const s of ["@dec(...)", "def f(a: int, b: str = ..., *args, k=..., **kw) -> int:", "class B(Base, metaclass=M):", "    def m(self, x=...):", "LIMIT = ..."]) expect(out).toContain(s);
+    expect(out).not.toContain("_p");
+  });
+
+  test("a Python file that does not parse emits nothing", () => {
+    const out = ts('def ok():\n    pass\ndef bad(:\n    return "SECRET_BAD"\n', "m.py");
+    expect(out).not.toContain("def ok");
+    expect(out).not.toMatch(SECRETS);
+  });
+
+  test("TS: a file with an undecidable slash or any tsx backtick is omitted whole", () => {
+    expect(ts("export function a(): number { return 1 }\nexport const r = (x: number) => x / 2;\n")).not.toContain("export function a");
+    expect(ts("export function a(): number { return 1 }\nconst s = `x`;\n", "m.tsx")).not.toContain("export function a");
+    expect(ts("export function a(): number { return 1 }\nconst s = `x`;\n")).toContain("export function a");
+    expect(ts("export function a(): number { return 1 }\nconst s = \"unterminated;\n")).not.toContain("export function a");
+    expect(ts("export function a(): number { return 1 }\nfunction g() {\n")).not.toContain("export function a");
+  });
+
+  test("A1: parameter defaults are masked and enum members keep names only", () => {
+    const out = ts('export function f(k = "SECRET_K", o: { a?: string } = { a: "SECRET_O" }, n: number = 5): void {}\nexport enum E { A = "SECRET_A", B, C = 1 << 2 }\nexport class K {\n  m(x = "SECRET_M"): void {}\n}\n');
+    expect(out).not.toMatch(SECRETS);
+    expect(out).toContain("export function f(k = ..., o: { a?: string } = ..., n: number = ...): void");
+    expect(out).toContain("export enum E { A, B, C }");
+    expect(out).toContain("m(x = ...): void");
+  });
+
+  test("every X input is in the all-inputs regression", () => {
+    for (const [p, src] of [...R3_INPUTS, ...X_INPUTS]) expect(ts(src, p)).not.toMatch(SECRETS);
   });
 });
