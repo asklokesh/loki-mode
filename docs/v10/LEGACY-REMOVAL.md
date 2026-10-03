@@ -90,10 +90,14 @@ Evidence: `grep -rn autonomy/|providers/` over loki-ts/src/engine10, packages/co
 | legacy runner in loki-ts/src/runner (v8 loop, commands subdir) | loki-ts/src/runner/*:1-100 | engine10 imports subset (state, proof, budget, providers, github_token, types, retry_class) | PORT the subset (23 files); DELETE loki-ts/src/runner/commands/ (100+ files, not referenced by engine10) |
 | trial-and-error recovery in autonomy/run.sh:8000-8500 | grep -n "recovery\|retry\|backoff" autonomy/run.sh | loki-ts/src/runner/recovery_policy.ts:1-50 (5 refs) | REPLACE; engine10 has recovery_policy.ts; delete autonomy version |
 | escalation, intervention hooks | loki-ts/src/runner/escalation_handoff.ts:21-100, intervention.ts:422 | voter_agents, escalation handoff | PORT; keep escalation_handoff.ts and intervention.ts (engine10 call them) |
+| engine10 gate: security scan (secret scan) | loki-ts/src/engine10/stages/deep.ts:153-180 sources autonomy/lib/secret-scan.sh via `bash -c` (deep.ts:52-53, 165-167) and calls `_commit_scan_secret_file`, `_commit_path_looks_secret`; no TS implementation exists | engine10 deep stage (stages/deep.ts:245) | PORT to TS (W1-03 evidence: bash-only). Until ported, autonomy/lib/secret-scan.sh stays; do not DELETE |
+| engine10 gate: app boot | loki-ts/src/engine10/stages/deep.ts:104-121 only runs discoverProjectGraph and records "not_run"; real boot lives in autonomy/app-runner.sh (deep.ts:102) | engine10 deep stage (stages/deep.ts:243) | PORT (TS app boot is absent, gate is NOT PROVEN today); autonomy/app-runner.sh stays until ported |
+| engine10 gate: council | deep.ts:32-47,122-152 takes an injectable CouncilRunner; no production code constructs one (grep council loki-ts/src/engine10 loki-ts/src/e10ext finds only deep.ts and seal.ts:19); TS port exists in loki-ts/src/runner/council.ts but is not wired | engine10 deep stage (stages/deep.ts:244) | PORT: wire runner/council.ts as the production CouncilRunner; blocks DELETE of council/ shell and runner/council.ts |
+| engine10 gates already TS (verify, wall, seal) | stages/verify.ts:208-227 (lint:ruff, lint:bash-n, lint:shellcheck, lint:tsc, lint:eslint via runCheck), verify.ts:274 (select-tests via scripts/select-tests.sh), wall.ts:134 runWall, seal.ts:92 signReceipt; deep.ts:70 full suite. engine10 never imports runner/quality_gates.ts (grep returns 0 hits) | engine10 verify, wall, seal, deep stages | KEEP (no work); note runner/quality_gates.ts is NOT an engine10 dependency, so its PORT row above is moot for v10 and it is DELETE-eligible with the v8 loop |
 
 Decision: PORT `quality_gates.ts`, `escalation_handoff.ts`, `intervention.ts`, `recovery_policy.ts` (verify they are imported by engine10/stages or engine10/cli). DELETE autonomy/run.sh main (phase loop, RARV, council); keep issue-providers.sh, secret-scan.sh, engine10-push.sh. DELETE loki-ts/src/runner/commands/ (100+ files). DELETE council/, council/gates/ if not referenced.
 
-Row count: 8 rows, decisions: 1 PORT, 3 KEEP, 4 DELETE.
+Row count: 12 rows, decisions: 4 PORT, 4 KEEP, 4 DELETE (4 rows added by W1-03).
 
 ## 5. B. Commands
 
