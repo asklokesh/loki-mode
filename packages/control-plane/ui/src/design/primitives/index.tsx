@@ -104,10 +104,10 @@ export function Badge({ tone = "neutral", pulse, children, ...rest }: HTMLAttrib
 }
 
 /** Pass `run` to apply the tamper rule; `verdict` alone renders that exact string. */
-export function VerdictBadge({ verdict, run }: { verdict?: string | null; run?: VerdictSource | null }) {
+export function VerdictBadge({ verdict, run, style }: { verdict?: string | null; run?: VerdictSource | null; style?: CSSProperties }) {
   const v = run ? effectiveVerdict(run) : verdict ?? null;
-  if (!v) return <Badge pulse>running</Badge>;
-  return <Badge tone={VERDICT_TONE[v] ?? "neutral"} pulse={v === VERDICT.RUNNING} data-verdict={v}>{v}</Badge>;
+  if (!v) return <Badge pulse style={style}>running</Badge>;
+  return <Badge tone={VERDICT_TONE[v] ?? "neutral"} pulse={v === VERDICT.RUNNING} data-verdict={v} title={style ? v : undefined} style={style}>{v}</Badge>;
 }
 
 /* Pill */

@@ -90,6 +90,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: a flush on terminal events plus a dead-pid reconciler (EL-W0-04, EL-W0-09, EL-W1-07).
 - Fixture: tests/test-e10-kill-each-stage.sh plus a CP ingest test with a dead pid.
 
+## FC-06b Control Plane run page said "No events yet" for a finished run (FireLater#17, e10-20261003T191822Z-7683)
+- User saw: "Live log: No events yet." on a completed run whose events.jsonl and stored events held every stage (105 events).
+- Law: L6 (a finished run must read as finished, with its evidence). Same FC-06 class: the page trusted a live-only path.
+- Siblings:
+  - any UI reader that passes a sentinel the server validation rejects (`after=-1`) and maps every non-200 to an empty result;
+  - fetchEvents swallowed the 400 and returned [], so the empty state was indistinguishable from "no events".
+- Mechanism: one shared `fetchEvents` that sends no `after` on the first page, pages until `has_more` is false, and is the only history loader; the live stream only appends.
+- Fixture: test/ui/run-finished.test.tsx ingests a finished run (test/fixtures/runs/verified-pr/events.jsonl) into the real server app and renders the page against it.
+
 ## FC-07 The test suite leaked fixture runs into the founder's real Control Plane
 - User saw: acme/widget and e10-t1.. runs in the real CP.
 - Law: none of L1 to L7 fits. Proposed L8, "Tests never touch real user state", is a founder decision. This is a recurrence of GUARDS.md 12 (~/.gitconfig).
@@ -101,6 +110,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - the memory store.
 - Mechanism: a hermetic HOME prelude for every test (extend tests/lib/isolated-git-home.sh), plus a shipper that refuses temp and fixture repos. Cleanup: `loki control prune` (203d38544).
 - Fixture: a lint that fails any test reaching $HOME/.loki without the prelude.
+
+## FC-07b Leaked fixture runs stayed in real Control Plane databases after the leak was closed
+- User saw: e10-t1..t7, e10-dw1..dw6, e37-cline, e37-codex (all acme/widget) in the real CP run list, with no step that removes them.
+- Law: L6 (the run list must show only real runs) and the rule that users never need to run a maintenance command. Same FC-07 class: closing the leak does not clean databases already polluted.
+- Siblings:
+  - `loki control prune` exists but is manual, so every existing install keeps the rows;
+  - local_repos rows whose realpath is under the OS temp dir mark the same fixtures when origin_repo is empty.
+- Mechanism: one startup step in createApp (`cleanupLeakedFixtures`): removes runs with origin acme/widget or a source path under the OS temp dir, audits each removal (action `fixture.cleanup`), and records a once-per-DB marker row (action `fixture.cleanup.done`) so it never repeats.
+- Fixture: test/server/fixture-cleanup.test.ts (first start removes and audits, second start removes nothing, real runs untouched).
 
 ## FC-08 A tampered receipt could render as VERIFIED in the UI
 - User saw: a VERIFIED badge on a run whose log failed integrity.

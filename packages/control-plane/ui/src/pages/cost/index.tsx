@@ -1,10 +1,11 @@
 // CPE-13 Cost and usage page. Measured, partial and unmeasured are always separate; unmeasured never reads as $0.
 import { useEffect, useState } from "react";
 import { Badge, Card, Chip, EmptyState, KpiTile, Spinner, Table } from "../../design/primitives";
+import { fmtUsd } from "../../format";
 import { getCost } from "./data";
 import type { CostResponse, CostRow, Dim } from "./data";
 
-const usd = (n: number) => `$${n.toFixed(2)}`;
+const usd = fmtUsd;
 const tok = (n: number) => n.toLocaleString("en-US");
 const DIMS: Array<{ value: Dim; label: string }> = [
   { value: "day", label: "Day" }, { value: "model", label: "Model" }, { value: "repo", label: "Repo" }, { value: "provider", label: "Provider" },

@@ -44,7 +44,11 @@ test("fixture run renders every section; missing cost reads not measured", async
   expect(screen.getByTestId("run-header-slot").textContent).toBe("Stop");
   expect(screen.getByTestId("run-not-proven").textContent).toContain("perf budget not checked");
   expect(screen.getByTestId("run-pr").textContent).toContain("pull/7");
+  await waitFor(() => expect(screen.getByTestId("run-timeline").textContent).toContain("plan"));
+  expect(screen.queryByTestId("run-log")).toBeNull(); // raw JSON is behind the toggle
+  fireEvent.click(screen.getByTestId("run-raw-toggle"));
   await waitFor(() => expect(screen.getByTestId("run-log").textContent).toContain("stage.started plan"));
+  fireEvent.click(screen.getByTestId("run-raw-toggle"));
   expect(screen.getAllByText("Show details")).toHaveLength(2);
   fireEvent.click(screen.getAllByText("Show details")[0]!);
   await waitFor(() => expect(screen.getByTestId("run-diff").textContent).toContain("+hello"));
@@ -66,7 +70,7 @@ test("BLOCKED run shows a reply prompt that posts the answer", async () => {
 });
 
 test("cost labels and SSE frame parsing are honest", () => {
-  expect(costLabel({ cost_usd: 0.5, partial_usd: 0, measured_sessions: 1, total_sessions: 1 })).toBe("$0.5000");
+  expect(costLabel({ cost_usd: 0.5, partial_usd: 0, measured_sessions: 1, total_sessions: 1 })).toBe("$0.50");
   expect(costLabel({ cost_usd: null, partial_usd: 0.2, measured_sessions: 1, total_sessions: 3 })).toContain("1 of 3 sessions measured");
   const got: number[] = [];
   const rest = parseFrames(`: hi\n\nid: 4\nevent: event\ndata: {"seq":4,"type":"x","ts":null,"stage":null,"data":null}\n\nid: 5\nev`, (e) => got.push(e.seq));
