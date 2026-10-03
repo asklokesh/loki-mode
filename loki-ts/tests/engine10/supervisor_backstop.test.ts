@@ -329,7 +329,7 @@ describe("A-110 exit ladder", () => {
   test("a red suite that ends PARTIAL exits 1 (was 0: only FAILED exited non-zero)", async () => {
     const { r, exit } = await ladder(() => `${verifyRed("t::a")}${sealedAs("PARTIAL")}`);
     expect(r.verdict).toBe("PARTIAL");
-    expect(r.outcome).toBe("FAILED");
+    expect(r.outcome).toBe("PARTIAL"); // FC-21 (d): the outcome is the receipt verdict
     expect(exit).toBe(1);
     expect(r.receiptSha).toBe("ab".repeat(32));
   });
