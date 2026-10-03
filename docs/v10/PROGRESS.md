@@ -2162,3 +2162,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - train/102 (cf5be9026): first push blocked by pre-push gitleaks on a fake Sentry fixture token, allowlisted by fingerprint (cf5be9026). Tier A red on shard-durations drift (5 new suites); rows added (9bbfcf920), drift 6/0, structural 11/0. train/103 queued behind train/102 Tests.
 - cpe-base: CPE-16 fix (opus r2 APPROVE), CPE-17 plans plus honesty follow-up, CPE-23 Playwright a11y and parity (33/33), plans wiring; suite 214/0, tsc 0. CPE-14 fixes (b568de7c9) in opus r2 review. CPE-27 (receipts tone test, real-envelope test, AA contrast fixes) building.
 - Drift audit (turn 2322): HIGH reviews opus D12; CoS edits limited to integration wiring, a test-budget refactor move, a revert and CI registration rows; BOARD and commit in separate calls; no main-checkout edits while train-cycle ran.
+
+## 2026-10-03 16:37Z (CoS): train/103, CPE reviews
+- train/102 Tests reds (acp/merge help and completion registration, `loki web --port` validation, CP-INGEST env typing, gitleaks baseline 74 -> 75) fixed in place per D85 (d9704dfc4); five suites plus security-scan-coverage 31/0 and dist guard 13/0 rerun locally rc 0.
+- train/103 (d9704dfc4) pushed 16:28Z: Tier A, Bun Parity, First-run gate, Security Audit, Coverage green; Tests pending. 10.7.0 releases on a green Tests run.
+- cpe-base: CPE-25/26 merge queue and PR risk pages wired (28fc28647); suite 235/0, tsc 0.
+- Opus BLOCK on CPE-25: route timeout orphans the merge process group and drops merged lines (B1); symlinked registry entry bypasses the per-repo lock (B2). Sonnet fixer dispatched with both plus the GET-origin, exit-code and files-null advisories.
+- CPE-14 settings write-back in opus round 4 (unicode, comments, block scalars after the global line-separator escape).
