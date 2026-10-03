@@ -3,7 +3,7 @@
 // E-04 wall check. RunContext deps (sessions/tests/cost/clock) are fakes per
 // the slice's contract: machine.ts (E-02) and testmap.ts (E-05) do not exist
 // yet on main, and this stage codes against types.ts's interfaces only.
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -252,6 +252,10 @@ describe("engine10 intake", () => {
 // symbols, test file names, CHANGELOG headings) gates one short cheap-model confirmation session
 // that must cite files; only a confirmed candidate reaches ALREADY_SATISFIED with no PR.
 describe("engine10 intake: already-implemented (E-66)", () => {
+  // The inline check pins LOKI_SPEED=0; the deferred (speed-on) path has its own tests (already_done_async).
+  let prevSpeed: string | undefined;
+  beforeAll(() => { prevSpeed = process.env.LOKI_SPEED; process.env.LOKI_SPEED = "0"; });
+  afterAll(() => { if (prevSpeed === undefined) delete process.env.LOKI_SPEED; else process.env.LOKI_SPEED = prevSpeed; });
   const TASK = "Add global search (Cmd+K)";
   const CONFIRMED = "search-command.ts:1 search already implemented, tests/search.test.ts covers it, CHANGELOG.md documents it";
 

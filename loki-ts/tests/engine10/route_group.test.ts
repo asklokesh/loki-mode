@@ -155,9 +155,9 @@ describe("flag on", () => {
     const { task } = await run("big.md", ON, async () => 0, d, d);
     expect(Buffer.byteLength(task)).toBeLessThanOrEqual(MAX_SEQ_TASK_BYTES);
   }));
-  test("flag unset returns the task unchanged even for an existing spec path", () => withDir(async (d) => {
+  test("LOKI_SPEED=0 returns the task unchanged even for an existing spec path", () => withDir(async (d) => {
     writeFileSync(join(d, "spec.md"), SPEC);
-    const { r, task, err } = await run("spec.md", {}, async () => 0, d, d);
+    const { r, task, err } = await run("spec.md", { LOKI_SPEED: "0" }, async () => 0, d, d);
     expect(r).toBeNull();
     expect(task).toBe("spec.md");
     expect(err).toBe("");

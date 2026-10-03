@@ -83,9 +83,13 @@ describe("runEngine10", () => {
   });
 
   test("a module without the export exits 2", async () => {
-    const { value, err } = await captureStderr(() => runEngine10(["fix x"], async () => ({})));
-    expect(value).toBe(2);
-    expect(err).toContain("supervisor.ts does not export main");
+    // LOKI_SPEED=0: the speed path probes the host warm socket (~/.loki/run/engine.sock) before loading supervisor.ts.
+    const prev = process.env.LOKI_SPEED; process.env.LOKI_SPEED = "0";
+    try {
+      const { value, err } = await captureStderr(() => runEngine10(["fix x"], async () => ({})));
+      expect(value).toBe(2);
+      expect(err).toContain("supervisor.ts does not export main");
+    } finally { if (prev === undefined) delete process.env.LOKI_SPEED; else process.env.LOKI_SPEED = prev; }
   });
 });
 

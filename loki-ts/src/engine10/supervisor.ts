@@ -260,10 +260,10 @@ export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
   return d?.source === "text" && d?.already_satisfied === true && typeof d.comment === "string" ? d.comment : null;
 }
 /** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
-export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput): string {
+export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
   const c = alreadyDoneTextComment(events);
   const pm = (events.findLast((e) => e.type === "run.completed")?.data.pre_model ?? null) as PreModelTiming | null;
-  return `${c ? `\n${c}\n` : ""}${formatPreModelLine(pm)}${formatSummary(summary)}\n`;
+  return `${c ? `\n${c}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n`;
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.
@@ -310,7 +310,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     }
   }
 
-  if (!json) process.stdout.write(`${START_LINE}, ${capNote(cap.usd, cap.source)}\n`); if (!json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (!json) process.stdout.write(`${START_LINE}, ${capNote(cap.usd, cap.source)}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
   const live = (e: EventEnvelope): void => {
@@ -386,7 +386,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     wallS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000),
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
-  });
+  }, verbose);
   process.stdout.write(out);
   return EXIT[res.outcome];
 }

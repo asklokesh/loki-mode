@@ -2,6 +2,7 @@
 // engine from the real entry (bin/loki, LOKI_ENGINE=v10, LOKI_TS_ENTRY=src/cli.ts,
 // stub claude CLI via LOKI_E10_INVOKER=cli) on a fresh copy of a tiny bun repo:
 // with --no-pr, and with a local bare origin plus a canary GH_TOKEN (Rule of Two).
+import { hasApiKey } from "../../src/e10ext/budget_cap.ts";
 import { afterAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -128,7 +129,7 @@ describe("engine10 e2e (stub claude)", () => {
     const q = runEngine("done");
     const lines = q.out.trim().split("\n");
     expect(lines.length).toBeLessThanOrEqual(8);
-    expect(lines[0]).toBe("Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine), cap $20.00 (default)");
+    expect(lines[0]).toBe(`Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine), ${hasApiKey(process.env) ? "cap $100.00 (default)" : "no dollar cap (subscription)"}`); // D82-COSTCAP: the cap follows whether the env holds an API key
     expect(q.out).not.toMatch(/^\[\d\d:\d\d\]/m);
     expect(q.out).toMatch(/^Receipt:\s+sha256:[0-9a-f]{64}/m);
     expect(q.out).toContain("NOT PROVEN:");
