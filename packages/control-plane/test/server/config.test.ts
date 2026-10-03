@@ -1,6 +1,7 @@
 // CPE-14: GET and PUT /v1/config. Comment-preserving atomic writes, If-Match, schema validation, secret refusal, symlink and peer guards.
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
@@ -227,7 +228,7 @@ test("workspace shell strings are read-only through the API", async () => {
     expect(((await r.json()) as { error: string }).error).toContain("edit shell commands in loki.yaml directly");
   }
   expect(readFileSync(join(dir, "loki.yaml"), "utf8")).toBe(yml);
-  const ok = await put(app, { config: edit((c) => { c.concurrency = 3; c.workspaces.w.repos[0].path = "/x"; }) }, { etag });
+  const ok = await put(app, { config: edit((c) => { c.concurrency = 3; }) }, { etag });
   expect(ok.status).toBe(200);
 });
 
@@ -256,4 +257,67 @@ test("renderVerified returns null unless the re-parsed render equals the request
   expect(renderVerified(parseDocument("a: 1\n"), { a: 1 })).toBe("a: 1\n");
   expect(renderVerified(parseDocument("a: 1\n"), { a: 2 })).toBeNull();
   expect(renderVerified(parseDocument("a: 1\n"), { b: 1 })).toBeNull();
+});
+
+test("a shell-bearing workspace is read-only as a whole: re-pointing repo and path under an unchanged setup is 422", async () => {
+  const yml = "workspaces:\n  w:\n    repos:\n      - repo: a/b\n        path: ../b\n        setup: npm ci\n";
+  writeFileSync(join(dir, "loki.yaml"), yml);
+  const { app } = mk();
+  const { etag, config } = await (await get(app)).json() as { etag: string; config: any };
+  for (const f of [(c: any) => { c.workspaces.w.repos[0].repo = "bad/pkg"; c.workspaces.w.repos[0].path = "../../../Downloads/bad"; }, (c: any) => { c.workspaces.w.repos[0].path = "/x"; }, (c: any) => { c.workspaces.w.integration = { path: "q" }; }]) {
+    const c = structuredClone(config); f(c);
+    const r = await put(app, { config: c }, { etag });
+    expect(r.status).toBe(422);
+  }
+  expect(readFileSync(join(dir, "loki.yaml"), "utf8")).toBe(yml);
+});
+
+test("a workspace without shell strings cannot take a .. path", async () => {
+  writeFileSync(join(dir, "loki.yaml"), SAMPLE);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  const r = await put(app, { config: { workspaces: { w: { repos: [{ repo: "a/b", path: "../../x" }] } } } }, { etag });
+  expect(r.status).toBe(422);
+  expect(((await r.json()) as { error: string }).error).toContain(".. segments");
+  expect((await put(app, { config: { workspaces: { w: { repos: [{ repo: "a/b", path: "/x/y" }] } } } }, { etag })).status).toBe(200);
+});
+
+test("the YAML merge key << is refused at any depth", async () => {
+  writeFileSync(join(dir, "loki.yaml"), SAMPLE);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  for (const c of [{ workspaces: { "<<": { repos: [{ repo: "a/b", path: "/x" }] } } }, { workspaces: { w: { repos: [{ repo: "a/b", path: "/x", "<<": 1 }] } } }]) {
+    const r = await put(app, { config: c }, { etag });
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { error: string }).error).toContain("merge key");
+  }
+  expect(readFileSync(join(dir, "loki.yaml"), "utf8")).toBe(SAMPLE);
+});
+
+test("strings YAML 1.1 reads as non-strings are written quoted and round-trip under 1.1", async () => {
+  writeFileSync(join(dir, "loki.yaml"), SAMPLE);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  const vals = ["yes", "2026-01-01", "on", "No", "~", "null", "1_000", "0o17", "0x1F", "1:30", "1.5e3", "012"];
+  const r = await put(app, { config: { knowledge_sources: vals } }, { etag });
+  expect(r.status).toBe(200);
+  const text = readFileSync(join(dir, "loki.yaml"), "utf8");
+  expect(text).toContain('"yes"');
+  expect(text).toContain('"2026-01-01"');
+  expect(text).toContain('"on"');
+  expect((parseDocument(text, { version: "1.1", schema: "yaml-1.1", merge: true }).toJS() as { knowledge_sources: string[] }).knowledge_sources).toEqual(vals);
+  const py = spawnSync("python3", ["-c", "import yaml"]);
+  if (py.status !== 0) return;
+  const script = join(import.meta.dir, "..", "..", "..", "..", "autonomy", "lib", "loki_yaml.py");
+  const v = spawnSync("python3", [script, "validate", join(dir, "loki.yaml")], { encoding: "utf8" });
+  expect(v.status).toBe(0);
+});
+
+test("a payload nested past the cap returns the exact nested-too-deeply error", async () => {
+  writeFileSync(join(dir, "loki.yaml"), SAMPLE);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  const r = await raw(app, `{"config":{"knowledge_sources":${"[".repeat(30)}${"]".repeat(30)}}}`, etag);
+  expect(r.status).toBe(422);
+  expect(((await r.json()) as { error: string }).error).toBe("config is nested too deeply");
 });

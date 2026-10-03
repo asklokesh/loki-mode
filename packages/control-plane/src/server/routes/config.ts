@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { closeSync, fchmodSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import type { Context } from "hono";
-import { isMap, parseDocument, type Document } from "yaml";
+import { isMap, isScalar, parseDocument, visit, type Document } from "yaml";
 import { audit } from "../audit.ts";
 import { originOk } from "./start.ts";
 import type { RouteCtx } from "./index.ts";
@@ -113,25 +113,62 @@ export function tooDeep(v: Json, max = MAX_DEPTH): boolean {
   return false;
 }
 
-/** Shell strings that run later (workspace integration commands and repo setup). Read-only through the API. */
-export function shellStrings(cfg: Json): Record<string, string> {
-  const out: Record<string, string> = {};
+const hasShell = (w: Json): boolean =>
+  isObj(w) && ((isObj(w.integration) && "command" in w.integration) || (Array.isArray(w.repos) && w.repos.some((r) => isObj(r) && "setup" in r)));
+
+/** A workspace holding any shell string (repo setup or integration.command) is read-only as a whole: repos, paths and names decide where it runs. */
+export function shellLocked(prev: Json, next: Json): boolean {
+  const pw = isObj(prev) && isObj(prev.workspaces) ? prev.workspaces : {};
+  const nw = isObj(next) && isObj(next.workspaces) ? next.workspaces : {};
+  for (const name of new Set([...Object.keys(pw), ...Object.keys(nw)])) {
+    const a = Object.hasOwn(pw, name) ? pw[name] : undefined;
+    const b = Object.hasOwn(nw, name) ? nw[name] : undefined;
+    if ((hasShell(a) || hasShell(b)) && !deepEq(a, b)) return true;
+  }
+  return false;
+}
+
+/** Paths of workspace repo entries whose `path` has a `..` segment and was not already that exact value in `prev` (existing files keep their own). */
+export function traversalPaths(cfg: Json, prev: Json = {}): string[] {
+  const pw = isObj(prev) && isObj(prev.workspaces) ? prev.workspaces : {};
+  const out: string[] = [];
   const ws = isObj(cfg) && isObj(cfg.workspaces) ? cfg.workspaces : {};
   for (const [name, w] of Object.entries(ws)) {
-    if (!isObj(w)) continue;
-    if (isObj(w.integration) && "command" in w.integration) out[`workspaces.${name}.integration.command`] = JSON.stringify(w.integration.command);
-    if (Array.isArray(w.repos)) w.repos.forEach((r, i) => { if (isObj(r) && "setup" in r) out[`workspaces.${name}.repos[${i}].setup`] = JSON.stringify(r.setup); });
+    if (!isObj(w) || !Array.isArray(w.repos)) continue;
+    w.repos.forEach((r, i) => { if (isObj(r) && typeof r.path === "string" && r.path.split(/[\\/]+/).includes("..")) {
+      const old = Object.hasOwn(pw, name) && isObj(pw[name]) && Array.isArray((pw[name] as Record<string, Json>).repos) ? ((pw[name] as Record<string, Json[]>).repos![i] as Json) : undefined;
+      if (!(isObj(old) && old.path === r.path)) out.push(`workspaces.${name}.repos[${i}].path`);
+    } });
   }
   return out;
 }
-const shellChanged = (a: Json, b: Json): boolean => !deepEq(shellStrings(a), shellStrings(b));
 
-/** Renders the document and re-parses it; null unless the result equals `next` exactly. */
+/** Paths of every mapping key named `<<` (a YAML 1.1 merge key; PyYAML would merge it). Iterative. */
+export function mergeKeyPaths(v: Json): string[] {
+  const out: string[] = [];
+  const stack: Array<[Json, string]> = [[v, ""]];
+  while (stack.length) {
+    const [x, p] = stack.pop()!;
+    if (Array.isArray(x)) x.forEach((y, i) => stack.push([y, `${p}[${i}]`]));
+    else if (isObj(x)) for (const [k, y] of Object.entries(x)) { if (k === "<<") out.push(p || "(root)"); stack.push([y, p ? `${p}.${k}` : k]); }
+  }
+  return out;
+}
+
+const V11 = { version: "1.1", schema: "yaml-1.1", merge: true } as const;
+const readsAsString11 = (s: string): boolean => {
+  try { const d = parseDocument(s, V11); return !d.errors.length && d.toJS() === s; } catch { return false; }
+};
+
+/** Renders the document with every string YAML 1.1 would not read back as that string quoted, then re-parses it under 1.2 and 1.1; null unless both equal `next`. */
 export function renderVerified(doc: Document, next: Json): string | null {
   try {
+    visit(doc, { Scalar(_k, n) { if (typeof n.value === "string" && !readsAsString11(n.value)) n.type = "QUOTE_DOUBLE"; } });
     const out = String(doc);
     const back = parseDocument(out);
-    return back.errors.length || !deepEq(back.toJS(), next) ? null : out;
+    if (back.errors.length || !deepEq(back.toJS(), next)) return null;
+    const back11 = parseDocument(out, V11);
+    return back11.errors.length || !deepEq(back11.toJS(), next) ? null : out;
   } catch { return null; }
 }
 
@@ -218,6 +255,8 @@ export function mount(ctx: RouteCtx): void {
       const next = isObj(body) ? body.config : undefined;
       if (!isObj(next)) return refuse(400, "body must be {config: object}");
 
+      const merge = mergeKeyPaths(next);
+      if (merge.length) return refuse(422, "the YAML merge key << is not allowed", { paths: merge });
       const secrets = findSecrets(next);
       if (secrets.length) return refuse(422, "value looks like a secret; loki.yaml stores env var names only", { paths: secrets });
       const errors = validateConfig(next);
@@ -237,7 +276,9 @@ export function mount(ctx: RouteCtx): void {
       if (doc.contents !== null && !isMap(doc.contents)) return refuse(422, "existing loki.yaml root is not a mapping");
       const prev = (doc.toJS({ maxAliasCount: 20 }) ?? {}) as Record<string, Json>;
       if (tooDeep(prev)) return refuse(422, "existing loki.yaml is nested too deeply");
-      if (shellChanged(prev, next)) return refuse(422, "edit shell commands in loki.yaml directly");
+      const trav = traversalPaths(next, prev);
+      if (trav.length) return refuse(422, "repo paths must not contain .. segments", { paths: trav });
+      if (shellLocked(prev, next)) return refuse(422, "edit shell commands in loki.yaml directly");
       if (doc.contents === null) doc.contents = doc.createNode({}) as typeof doc.contents;
       sync(doc, [], prev, next);
       const out = renderVerified(doc, next);
