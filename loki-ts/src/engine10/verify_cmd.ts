@@ -8,7 +8,7 @@ import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto
 import { lokiDir } from "../util/paths.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
-import { envelopeRunIdProblem, isEnvelope, outcomeOf, signEnvelope, verifyDsseReceipt } from "../features/receipt_dsse.ts";
+import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
@@ -127,26 +127,9 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (!runId) return (process.stderr.write("loki verify: no runs found\n"), 66);
   const receiptPath = existsSync(runId) && statSync(runId).isFile() ? runId : join(runsRoot, runId, "receipt.json"); // a receipt file path works directly
   const byRunId = !(existsSync(runId) && statSync(runId).isFile());
-  if (exportDsse) { // INTEL-1: print the receipt as a DSSE-wrapped in-toto Statement signed with the receipt key; only a verified receipt of a VERIFIED or ALREADY_SATISFIED run is exported
-    const key = loadSigningKey(false);
-    let text: string; // INTEL-1b: read once, verify these bytes, sign these bytes
-    try { text = (deps.read ?? ((p) => readFileSync(p, "utf8")))(receiptPath); } catch { return (process.stderr.write(`loki verify --export-dsse: receipt not found: ${receiptPath}\n`), 2); }
-    const r = await verifyReceipt(receiptPath, { ...deps, read: () => text });
-    if (r.verdict !== "VERIFIED" || !key) return (process.stderr.write(`loki verify --export-dsse: ${key ? `receipt is ${r.verdict}; refusing to export` : "no signing key found (set LOKI_RECEIPT_SIGNING_KEY_FILE)"}\n`), !key ? 66 : r.verdict === "TAMPERED" ? 1 : 2);
-    try {
-      const parsed = JSON.parse(text) as Record<string, unknown>, outcome = outcomeOf(parsed);
-      if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") return (process.stderr.write(`loki verify --export-dsse: run outcome is ${outcome}, only VERIFIED or ALREADY_SATISFIED receipts are exported; refusing to export\n`), 4);
-      const signer = kidOf(createPublicKey(key)), rk = (parsed["verification"] as { kid?: unknown } | undefined)?.kid;
-      if (rk !== signer) process.stderr.write(`loki verify --export-dsse: note: receipt kid ${String(rk)} differs from the current signing key ${signer}; the envelope keyid is the current key (the retired private key is not available), the receipt attestation stays under the receipt kid\n`);
-      process.stdout.write(`${JSON.stringify(signEnvelope(parsed, key, signer))}\n`); return 0;
-    } catch (e) { return (process.stderr.write(`loki verify --export-dsse: ${(e as Error).message}\n`), 2); }
-  }
-  if (byRunId) { // INTEL-1b: an envelope found under a run id must be for that run
-    let j: Record<string, unknown> | null = null;
-    try { j = JSON.parse(readFileSync(receiptPath, "utf8")); } catch { /* verifyReceipt reports it */ }
-    const problem = j ? envelopeRunIdProblem(j, runId) : null;
-    if (problem) return (process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${problem}\n`), 1);
-  }
+  if (exportDsse) return exportDsseReceipt({ receiptPath, runId: byRunId ? runId : null, deps, verify: verifyReceipt, key: loadSigningKey(false), kidOf }); // INTEL-1 / INTEL-1b
+  const bad = byRunId ? runIdGuard(receiptPath, runId) : null; // INTEL-1b: an envelope found under a run id must be for that run
+  if (bad) return (process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${bad}\n`), 1);
   const result = await verifyReceipt(receiptPath, deps);
   // An intact (VERIFIED or UNSIGNED) receipt of a run that did not verify is never exit 0 and no flag changes that; unreadable fails closed.
   if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") {

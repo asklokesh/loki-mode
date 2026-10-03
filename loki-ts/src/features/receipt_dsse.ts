@@ -1,6 +1,7 @@
 // INTEL-1: export the Seal receipt as an in-toto Statement v1 inside a DSSE envelope, signed with the SAME
 // Ed25519 receipt key (the key type DSSE expresses natively: PureEdDSA over the PAE bytes). Reads seal.ts only.
-import { sign, verify, type KeyObject } from "node:crypto";
+import { createPublicKey, sign, verify, type KeyObject } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 export const DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json";
 export const STATEMENT_TYPE = "https://in-toto.io/Statement/v1";
@@ -85,4 +86,36 @@ export function verifyDsseReceipt(env: DsseEnvelope, d: DsseVerifyDeps): { verdi
   const o = typeof jwt === "string" ? d.attest(jwt, computed) : { status: "tampered" as const, reason: "receipt carries no attestation" };
   if (o.status !== "verified") return { verdict: o.status === "tampered" ? "TAMPERED" : "UNCHECKED", reasons: [o.reason ?? "attestation invalid"] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
+}
+
+/** run-id path guard: the problem string when the file under a run id is an envelope for another run, else null (unreadable files are left to the verifier). */
+export function runIdGuard(receiptPath: string, runId: string): string | null {
+  try { return envelopeRunIdProblem(JSON.parse(readFileSync(receiptPath, "utf8")), runId); } catch { return null; }
+}
+export interface ExportArgs {
+  receiptPath: string; runId: string | null; // runId is set only when the receipt was found by run id
+  deps: { read?: (p: string) => string };
+  verify: (path: string, deps: { read?: (p: string) => string }) => Promise<{ verdict: string }>;
+  key: KeyObject | null; kidOf: (pub: KeyObject) => string;
+}
+/** `loki verify --export-dsse`: reads the receipt ONCE, verifies those bytes (the override is scoped to the top-level path so group sub-receipts read their own files), signs those same bytes.
+ *  Prints the envelope and returns the exit code; refusals write only to stderr. Only a verified VERIFIED or ALREADY_SATISFIED receipt is exported. */
+export async function exportDsseReceipt(a: ExportArgs): Promise<number> {
+  const fail = (rc: number, m: string): number => (process.stderr.write(`loki verify --export-dsse: ${m}\n`), rc);
+  const rd = a.deps.read ?? ((p: string) => readFileSync(p, "utf8"));
+  let text: string;
+  try { text = rd(a.receiptPath); } catch { return fail(2, `receipt not found: ${a.receiptPath}`); }
+  let parsed: Record<string, unknown>;
+  try { parsed = JSON.parse(text); } catch { return fail(2, "receipt.json is not valid JSON"); }
+  const mismatch = a.runId === null ? null : envelopeRunIdProblem(parsed, a.runId);
+  if (mismatch) return fail(1, mismatch);
+  if (isEnvelope(parsed)) return fail(1, "the input is already a DSSE envelope; export takes a receipt, not an envelope");
+  const r = await a.verify(a.receiptPath, { ...a.deps, read: (p) => (p === a.receiptPath ? text : rd(p)) });
+  if (!a.key) return fail(66, "no signing key found (set LOKI_RECEIPT_SIGNING_KEY_FILE)");
+  if (r.verdict !== "VERIFIED") return fail(r.verdict === "TAMPERED" ? 1 : 2, `receipt is ${r.verdict}; refusing to export`);
+  const outcome = outcomeOf(parsed);
+  if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") return fail(4, `run outcome is ${outcome}, only VERIFIED or ALREADY_SATISFIED receipts are exported; refusing to export`);
+  const signer = a.kidOf(createPublicKey(a.key)), rk = (parsed["verification"] as { kid?: unknown } | undefined)?.kid;
+  if (rk !== signer) process.stderr.write(`loki verify --export-dsse: note: receipt kid ${String(rk)} differs from the current signing key ${signer}; the envelope keyid is the current key (the retired private key is not available), the receipt attestation stays under the receipt kid\n`);
+  try { process.stdout.write(`${JSON.stringify(signEnvelope(parsed, a.key, signer))}\n`); return 0; } catch (e) { return fail(2, (e as Error).message); }
 }

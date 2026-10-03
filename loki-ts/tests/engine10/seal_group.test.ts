@@ -249,6 +249,24 @@ describe("D61-13 group seal and verify", () => {
     expect(await verifyMain(["--pubkey", pub, path])).toBe(0);
   }, 60000);
 
+  test("INTEL-1b B1: a verified signed two-unit group exports as a DSSE envelope (sub-receipts read their own bytes)", async () => {
+    const { path } = await sealGroupRun("dsse-group", [{ id: "u1" }, { id: "u2" }]);
+    expect((await verifyReceipt(path)).verdict).toBe("VERIFIED");
+    let out = "", err = "";
+    const w = process.stdout.write.bind(process.stdout), e = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((x: string) => ((out += x), true)) as never;
+    process.stderr.write = ((x: string) => ((err += x), true)) as never;
+    let rc = -1;
+    try { rc = await verifyMain([path, "--export-dsse"]); } finally { process.stdout.write = w; process.stderr.write = e; }
+    expect(err).toBe("");
+    expect(rc).toBe(0);
+    const env = JSON.parse(out);
+    expect(JSON.parse(Buffer.from(env.payload, "base64").toString()).predicate.receipt_sha256).toBe((JSON.parse(readFileSync(path, "utf8")) as Receipt).receipt_sha256);
+    const ep = join(root, "dsse-group.env.json");
+    writeFileSync(ep, out);
+    expect(await verifyMain([ep])).toBe(0);
+  }, 60000);
+
   test("verify side rejects case-colliding unit ids in the group section", async () => {
     const { path } = await sealGroupRun("case-verify", [{ id: "ab" }, { id: "cd" }]);
     rewrite(path, (r) => { const g = r["group"] as { units: Array<Record<string, unknown>> }; g.units[0]!["unit_id"] = "Cd"; }, true);

@@ -74,14 +74,31 @@ describe("INTEL-1b", () => {
     expect((await run([p])).rc).toBe(0);
   });
 
-  test("4: export reads the receipt file exactly once and signs the verified bytes", async () => {
+  test("4: export signs the exact bytes it verified, even if the file changes after the read", async () => {
     put("fu-once", sealed("fu-once"));
     const target = join(root, "runs", "fu-once", "receipt.json");
     let reads = 0;
-    const r = await run(["fu-once", "--export-dsse"], { read: (p: string) => { if (p === target) reads++; return readFileSync(p, "utf8"); } });
+    const r = await run(["fu-once", "--export-dsse"], { read: (p: string) => { const t = readFileSync(p, "utf8"); if (p === target) { reads++; writeFileSync(p, JSON.stringify(sealed("fu-once", { task: "swapped after read" }))); } return t; } });
     expect(r.rc).toBe(0);
     expect(reads).toBe(1);
-    expect(JSON.parse(Buffer.from(JSON.parse(r.out).payload, "base64").toString()).predicate.run_id).toBe("fu-once");
+    const pred = JSON.parse(Buffer.from(JSON.parse(r.out).payload, "base64").toString()).predicate;
+    expect(pred.task).toBe("t");
+    expect(pred.run_id).toBe("fu-once");
+  });
+
+  test("6: export refuses an input that is already an envelope, and a run-id envelope for another run", async () => {
+    const env = signEnvelope(sealed("fu-src"), kp.privateKey, kidOf(pub()));
+    put("fu-envdir", env);
+    const a = await run(["fu-envdir", "--export-dsse"]);
+    expect(a.rc).toBe(1);
+    expect(a.out).toBe("");
+    expect(a.err).toContain("run_id");
+    const p = join(root, "already.json");
+    writeFileSync(p, JSON.stringify(env));
+    const b = await run([p, "--export-dsse"]);
+    expect(b.rc).toBe(1);
+    expect(b.out).toBe("");
+    expect(b.err).toContain("already a DSSE envelope");
   });
 
   test("5: after rotation the envelope still verifies, and the keyid names the key that actually signed", async () => {
