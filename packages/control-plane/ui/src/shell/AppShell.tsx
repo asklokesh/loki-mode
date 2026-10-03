@@ -50,7 +50,7 @@ function SessionRow({ run, active, onNavigate }: { run: RunRow; active: boolean;
     <a data-testid="session-row" href={sessionHref(run)} aria-current={active ? "page" : undefined} onClick={onNavigate} style={style}>
       <StatusDot state={dotState(run)} />
       <span style={{ minWidth: 0, flex: 1 }}>
-        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionTitle(run)}</span>
+        <span title={sessionTitle(run)} style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionTitle(run)}</span>
         {run.origin_repo || (run.title && run.issue_ref) ? <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: t("text-sm"), color: t("text-muted") }}>{[run.origin_repo, run.title ? run.issue_ref : null].filter(Boolean).join(" \u00b7 ")}</span> : null}
       </span>
       {run.verdict ? <VerdictBadge run={run} style={BADGE_CLIP} /> : null}

@@ -34,7 +34,7 @@ beforeEach(() => { location.hash = ""; });
 afterEach(cleanup);
 afterAll(() => { globalThis.fetch = realFetch; location.hash = ""; });
 
-test("grouping: Today, Yesterday, Earlier from local days, newest first, empty groups omitted", () => {
+test("grouping: Today and Earlier from local days, newest first, empty groups omitted", () => {
   const runs = [
     run("old", at(5)),
     run("today-early", at(0, 1)),
@@ -44,10 +44,9 @@ test("grouping: Today, Yesterday, Earlier from local days, newest first, empty g
     run("undated", null),
   ];
   const g = groupRuns(runs, NOW);
-  expect(g.map((x) => x.name)).toEqual(["Today", "Yesterday", "Earlier"]);
+  expect(g.map((x) => x.name)).toEqual(["Today", "Earlier"]);
   expect(g[0]!.runs.map((r) => r.run_id)).toEqual(["today-late", "today-early"]);
-  expect(g[1]!.runs.map((r) => r.run_id)).toEqual(["yesterday-late"]);
-  expect(g[2]!.runs.map((r) => r.run_id)).toEqual(["two-days", "old", "undated"]);
+  expect(g[1]!.runs.map((r) => r.run_id)).toEqual(["yesterday-late", "two-days", "old", "undated"]);
   expect(groupRuns([run("only", at(0))], NOW).map((x) => x.name)).toEqual(["Today"]);
   expect(groupRuns([], NOW)).toEqual([]);
 });

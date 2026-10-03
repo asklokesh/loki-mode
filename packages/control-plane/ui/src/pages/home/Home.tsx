@@ -28,7 +28,7 @@ export interface HomeData { today: Stats; week: Stats; runs: RunRow[]; blocked: 
 
 const base = (): string => (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";
 
-async function get<T>(path: string): Promise<T> {
+export async function get<T>(path: string): Promise<T> {
   const t = authToken();
   const res = await fetch(`${base()}${path}`, { headers: t ? { authorization: `Bearer ${t}` } : {} });
   if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);

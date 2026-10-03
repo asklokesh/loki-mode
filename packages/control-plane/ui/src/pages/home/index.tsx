@@ -1,12 +1,12 @@
-import { Home } from "./Home";
+import { Cards } from "./Cards";
 import { Hero } from "./Hero";
 
-/** Composer first, then the existing overview. */
+/** Composer first, then the session cards. */
 export function HomeStart() {
   return (
     <div data-testid="home-start">
       <Hero />
-      <Home />
+      <Cards />
     </div>
   );
 }
