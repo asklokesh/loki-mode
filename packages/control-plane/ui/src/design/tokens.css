@@ -1,0 +1,97 @@
+/* Loki Control Plane design tokens (CPE-01). Source of truth: docs/v10/CP-ENTERPRISE-UI.md section 2.1. */
+:root, [data-theme="light"] {
+  /* ground: build-standalone.js:116-139 */
+  --cp-bg: #F1F2F6; --cp-bg-2: #E6E8EE; --cp-bg-3: #DBDEE6;
+  --cp-card: rgba(255,255,255,0.86); --cp-hover: #E6E8EE;
+  --cp-glass: rgba(255,255,255,0.7); --cp-glass-border: rgba(255,255,255,0.4);
+  --cp-glass-shadow: 0 4px 24px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --cp-text: #201515; --cp-text-2: #4A4640; --cp-text-muted: #8A857C; --cp-text-inverse: #ffffff;
+  --cp-border: rgba(0,0,0,0.08); --cp-border-light: rgba(0,0,0,0.05);
+  /* accent: shell :124-126, hover/active unified-styles.js:33-35 */
+  --cp-accent: #553DE9; --cp-accent-hover: #4432c4; --cp-accent-active: #3828a0;
+  --cp-accent-glow: rgba(85,61,233,0.15); --cp-accent-muted: rgba(85,61,233,0.10);
+  /* status text: shell :131-134 (AA on light ground); fills: unified-styles.js:51-58 */
+  --cp-success: #1f8a52; --cp-warning: #9a6a12; --cp-error: #b23a3a; --cp-info: #2F71E3;
+  --cp-success-fill: #1FC5A8; --cp-success-muted: rgba(31,197,168,0.12);
+  --cp-warning-fill: #D4A03C; --cp-warning-muted: rgba(212,160,60,0.12);
+  --cp-error-fill: #C45B5B;   --cp-error-muted: rgba(196,91,91,0.12);
+  --cp-info-muted: rgba(47,113,227,0.12);
+  /* AA companions (additive, not in the legacy sources): text-safe ink on bg-2 and bg for small text */
+  --cp-success-ink: #1a7546; --cp-warning-ink: #895e10; --cp-info-ink: #2963c8; --cp-text-subtle: #6a665f;
+  /* models: unified-styles.js:72-75 */
+  --cp-opus: #d97706; --cp-sonnet: #553DE9; --cp-haiku: #1FC5A8;
+  --cp-shadow-sm: 0 1px 2px rgba(32,21,21,0.04); --cp-shadow-md: 0 4px 6px rgba(32,21,21,0.06);
+  --cp-shadow-lg: 0 10px 15px rgba(32,21,21,0.08); --cp-focus: 0 0 0 3px rgba(85,61,233,0.25);
+}
+[data-theme="dark"] {           /* build-standalone.js:164-185; unified-styles.js:86-146 */
+  --cp-bg: #17161C; --cp-bg-2: #1E1D25; --cp-bg-3: #27262F;
+  --cp-card: rgba(35,34,43,0.82); --cp-hover: #27262F;
+  --cp-glass: rgba(23,22,28,0.7); --cp-glass-border: rgba(255,255,255,0.08);
+  --cp-glass-shadow: 0 4px 24px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.12);
+  --cp-text: #F0ECF8; --cp-text-2: #B8B0C8; --cp-text-muted: #8B85A0; --cp-text-inverse: #17161C;
+  --cp-border: rgba(255,255,255,0.08); --cp-border-light: rgba(255,255,255,0.04);
+  --cp-accent: #8b7bf5; --cp-accent-hover: #9c8ff7; --cp-accent-active: #6258D0;
+  --cp-accent-glow: rgba(139,123,245,0.2); --cp-accent-muted: rgba(123,107,240,0.18);
+  --cp-success: #2ED8B6; --cp-warning: #E8B84A; --cp-error: #E07070; --cp-info: #5A9CF5;
+  --cp-success-fill: #2ED8B6; --cp-success-muted: rgba(46,216,182,0.18);
+  --cp-warning-fill: #E8B84A; --cp-warning-muted: rgba(232,184,74,0.18);
+  --cp-error-fill: #E07070;   --cp-error-muted: rgba(224,112,112,0.18);
+  --cp-info-muted: rgba(90,156,245,0.18);
+  --cp-success-ink: #2ED8B6; --cp-warning-ink: #E8B84A; --cp-info-ink: #5A9CF5; --cp-text-subtle: #8B85A0;
+  --cp-opus: #f59e0b; --cp-sonnet: #8b7bf5; --cp-haiku: #2ED8B6;
+  --cp-shadow-sm: 0 1px 2px rgba(0,0,0,0.4); --cp-shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+  --cp-shadow-lg: 0 10px 25px rgba(0,0,0,0.6); --cp-focus: 0 0 0 3px rgba(123,107,240,0.30);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {             /* build-standalone.js:164-185; unified-styles.js:86-146 */
+    --cp-bg: #17161C; --cp-bg-2: #1E1D25; --cp-bg-3: #27262F;
+    --cp-card: rgba(35,34,43,0.82); --cp-hover: #27262F;
+    --cp-glass: rgba(23,22,28,0.7); --cp-glass-border: rgba(255,255,255,0.08);
+    --cp-glass-shadow: 0 4px 24px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.12);
+    --cp-text: #F0ECF8; --cp-text-2: #B8B0C8; --cp-text-muted: #8B85A0; --cp-text-inverse: #17161C;
+    --cp-border: rgba(255,255,255,0.08); --cp-border-light: rgba(255,255,255,0.04);
+    --cp-accent: #8b7bf5; --cp-accent-hover: #9c8ff7; --cp-accent-active: #6258D0;
+    --cp-accent-glow: rgba(139,123,245,0.2); --cp-accent-muted: rgba(123,107,240,0.18);
+    --cp-success: #2ED8B6; --cp-warning: #E8B84A; --cp-error: #E07070; --cp-info: #5A9CF5;
+    --cp-success-fill: #2ED8B6; --cp-success-muted: rgba(46,216,182,0.18);
+    --cp-warning-fill: #E8B84A; --cp-warning-muted: rgba(232,184,74,0.18);
+    --cp-error-fill: #E07070;   --cp-error-muted: rgba(224,112,112,0.18);
+    --cp-info-muted: rgba(90,156,245,0.18);
+  --cp-success-ink: #2ED8B6; --cp-warning-ink: #E8B84A; --cp-info-ink: #5A9CF5; --cp-text-subtle: #8B85A0;
+    --cp-opus: #f59e0b; --cp-sonnet: #8b7bf5; --cp-haiku: #2ED8B6;
+    --cp-shadow-sm: 0 1px 2px rgba(0,0,0,0.4); --cp-shadow-md: 0 4px 12px rgba(0,0,0,0.5);
+    --cp-shadow-lg: 0 10px 25px rgba(0,0,0,0.6); --cp-focus: 0 0 0 3px rgba(123,107,240,0.30);
+}
+}
+:root {
+  --cp-font-serif: 'Fraunces', Georgia, 'Times New Roman', serif;          /* unified-styles.js:358-362 */
+  --cp-font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  --cp-font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, monospace;
+  --cp-text-xs: 10px; --cp-text-sm: 11px; --cp-text-base: 12px; --cp-text-md: 13px;
+  --cp-text-lg: 14px; --cp-text-xl: 16px; --cp-text-2xl: 18px; --cp-text-3xl: 24px;
+  --cp-space-xs: 4px; --cp-space-sm: 8px; --cp-space-md: 12px; --cp-space-lg: 16px;   /* :333-341 */
+  --cp-space-xl: 24px; --cp-space-2xl: 32px; --cp-space-3xl: 48px;
+  --cp-radius-sm: 2px; --cp-radius-md: 4px; --cp-radius-lg: 5px; --cp-radius-nav: 8px; --cp-radius-full: 9999px; /* :346-353, nav :400-406 */
+  --cp-ease: cubic-bezier(0.4,0,0.2,1); --cp-dur-fast: 100ms; --cp-dur: 200ms; --cp-dur-slow: 300ms; /* :390-405 */
+  --cp-sidebar-w: 240px;   /* build-standalone.js:126 grid track */
+  --cp-detail-w: 288px; --cp-rail-w: 48px;   /* :120-121, used only by the optional Details drawer */
+  --cp-main-pad: 28px 32px;   /* .main-content :917-923 */
+  --cp-thread-max: 820px;     /* NEW: reading width of the run thread (Claude.ai-like) */
+  --cp-z-dropdown: 100; --cp-z-sticky: 200; --cp-z-modal: 300; --cp-z-popover: 400; --cp-z-toast: 600; /* :419-427 */
+}
+
+/* Base and motion (build-standalone.js:283-296, 925-940) */
+.cp-root {
+  background: var(--cp-bg); color: var(--cp-text); font-family: var(--cp-font-sans);
+  font-size: var(--cp-text-md); line-height: 1.5; -webkit-font-smoothing: antialiased;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+}
+@keyframes cp-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+@keyframes cp-spin { to { transform: rotate(360deg); } }
+@keyframes cp-fade-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.cp-fade-in { animation: cp-fade-in var(--cp-dur) var(--cp-ease); }
+.cp-pulse { animation: cp-pulse 2s var(--cp-ease) infinite; }
+.cp-spinner { animation: cp-spin 0.8s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .cp-fade-in, .cp-pulse, .cp-spinner { animation: none; }
+}
