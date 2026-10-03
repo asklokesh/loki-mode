@@ -64,7 +64,7 @@ function sameLoadError(head: string, base: string, headRoots: string[], baseRoot
 function killTree(pid: number): void {
   const all = [pid];
   for (let k = 0; k < all.length; k++) {
-    const kids = spawnSync("pgrep", ["-P", String(all[k])], { encoding: "utf8" }).stdout.split(/\s+/).filter(Boolean).map(Number);
+    const kids = spawnSync("pgrep", ["-P", String(all[k])], { encoding: "utf8", env: process.env }).stdout.split(/\s+/).filter(Boolean).map(Number);
     all.push(...kids.filter((x) => Number.isInteger(x) && !all.includes(x)));
   }
   for (const p of all.reverse()) { try { process.kill(p, "SIGKILL"); } catch { /* already gone */ } }
