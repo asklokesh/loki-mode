@@ -1,4 +1,4 @@
-# Handoff to next week (D59, written 2026-10-01; resume Wednesday 2026-10-07)
+# Handoff state (D59 pause ended early by D62 on 2026-10-03 about 00:05Z; work resumed, see DECISIONS D62)
 
 ## On npm now (updated 2026-10-02T23:52Z after the D60 sprint)
 - latest and next: 10.6.7 (`npm view loki-mode dist-tags` gave latest 10.6.7, next 10.6.7 at 23:51Z; moved by the D49 auto-promote after Post-Release Smoke passed on bfce1db12; the D58 real-repo gate is still not wired into promote).
@@ -16,7 +16,7 @@
 - 10.6.7 (bfce1db12, train/79 1917333e1): Tests, Bun Parity, Coverage, Security Audit, First-run gate, SBOM, Release, Post-Release Smoke, Promote all success.
 - Shipped: `loki start` runs Loki 10 (moat P9 probe ported, moat rc=0); dashboard prints the bound port (LEAK3, test-ui-bare-loki rc=0); reviewer-first PR body; issue-to-PR Action on Loki 10 plus nightly `loki backlog` example; visible cost cap ($20 default, `--max-cost`, loki.yaml `budgets.per_run`, BUDGET_STOP exit 3).
 - Open: no real end-to-end exit 3 run of the cost cap yet; root action.yml still uses `loki start --simple`.
-- D61 (speed, docs/v10/D61-SPEED.md) paused by the governor; slice 17 partial work in worktree agent-ad890c5afa3648ae6. Peer GO covers slices 1, 2, 7, 8, 17 behind LOKI_SPEED=1.
+- D61 (speed, docs/v10/D61-SPEED.md) resumed under D62. Worktree agent-ad890c5afa3648ae6 held no saved slice 17 work (clean, no commits), so slice 17 restarts. Peer GO covers slices 1, 2, 7, 8, 17 behind LOKI_SPEED=1.
 - D58 basics 1 and 2 below are superseded by 10.6.7 (now PASS on CI; still unproven on a real repo).
 
 ## D58 basics
