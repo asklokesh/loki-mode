@@ -819,3 +819,21 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   worktree allowed, leader `git checkout main` allowed, subagent forms and
   the unchecked-`cd` case blocked.
   Run: `bash tests/test-v10-guard.sh`.
+
+## cp-redesign image allowlist (third-party screenshot incident)
+
+- **Incident:** a third-party product screenshot showing a real person's name
+  and customer data was committed under `docs/v10/cp-redesign/` by a UI slice
+  and was caught only in review.
+- **Root cause:** nothing restricted which images may live in the doc folder;
+  evidence is the review finding on the CP-REDESIGN merge.
+- **The guard:** `docs/v10/cp-redesign/ALLOWED-IMAGES.txt` is an explicit
+  allowlist with one-line provenance per image. `tests/test-cp-redesign-images.sh`
+  fails on any tracked image there that is not listed, and on any tracked image
+  anywhere named vorflux, lovable, bolt, v0-, or competitor, or under a path
+  containing `ui-refs` or `research/`. `.githooks/pre-commit` runs the same
+  check on staged files (`--staged`).
+- **The test that proves it fires:** the self-test inside
+  `tests/test-cp-redesign-images.sh` builds a fixture with an unlisted image,
+  a ui-refs image and a banned name and asserts each fails.
+  Run: `bash tests/test-cp-redesign-images.sh`.

@@ -1,0 +1,9 @@
+# Allowlist of image files permitted under docs/v10/cp-redesign/.
+# Format: filename | provenance. Enforced by tests/test-cp-redesign-images.sh.
+# Never add a third-party product screenshot or anything showing a real person's data.
+autonomi-panel.png | capture of autonomi.dev (our own site)
+home-dark.png | generated Loki Control Plane capture
+home-light.png | generated Loki Control Plane capture
+run-page-dark.png | generated Loki Control Plane capture
+run-page-light.png | generated Loki Control Plane capture
+side-by-side.png | generated composite of Loki Control Plane and autonomi.dev captures
