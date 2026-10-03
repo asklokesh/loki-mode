@@ -3,6 +3,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
+import { speedLikelyFiles } from "../features/speed/lean_select.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
@@ -38,6 +39,7 @@ export function repoMapText(repoDir: string, tree: string | undefined, repomapRe
 export function hasRelevantTests(task: string, map: RepoMap | null, tests: TestMap | null, impacted: (m: TestMap, files: string[]) => TestRef[]): boolean {
   if (!tests?.runners.length) return false;
   const likely = namedFiles(task, map);
+  if (!likely.length) likely.push(...speedLikelyFiles(task, map)); // D61-03: LOKI_SPEED=1 keyword fallback
   return likely.length > 0 && impacted(tests, likely).length > 0;
 }
 
