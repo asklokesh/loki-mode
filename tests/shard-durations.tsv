@@ -749,3 +749,4 @@ loki status empty state files (cli)	2
 loki start stale PID cleanup (cli)	2
 loki start/run unified dispatch (cli)	3
 non-standard suite registration guard (cli, dashboard, integration)	1
+install-hooks.sh --help and unknown args never write git config (PO5)	1

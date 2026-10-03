@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - tests/test-no-dashes-tree.sh: whole-tree guard that no tracked text file contains U+2013, U+2014 or emoji codepoints (explicit exclusion list with reasons); fixed the two em dashes in benchmarks/magic-ab/README.md.
+- scripts/install-hooks.sh now supports -h/--help (usage, exit 0) and rejects unknown arguments with exit 2; neither writes core.hooksPath (previously every argument was ignored and git config was always mutated).
 - `TRUST_CORE_PROBE_MODE=anchors` for tests/test-trust-core-tests-detect.sh checks in about 0.1s that every probe_case find-string still matches its file, naming each stale anchor, and local-ci fast tier now runs it (issue #214 option 3).
 - tests/test-registration-coverage.sh now also scans tests/*/test-*.sh, and the four orphaned tests/cli suites (hub-install, start-repo-directory, wiki-command, issue-to-pr) are registered in tests/run-all-tests.sh with shard-duration rows.
 - Signatures-only Wall manifest builder for engine10 (D77, W1-S1): turns a base tree into exported names and signatures with every body, default value and decorator argument masked, and omits any file or class it cannot mask with certainty. It is a library only in this release; nothing calls it until the LOKI_E10_WALL_MANIFEST flag is wired in a later slice.
