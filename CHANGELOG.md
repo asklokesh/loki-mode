@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- Signatures-only Wall manifest builder for engine10 (D77, W1-S1): turns a base tree into exported names and signatures with every body, default value and decorator argument masked, and omits any file or class it cannot mask with certainty. It is a library only in this release; nothing calls it until the LOKI_E10_WALL_MANIFEST flag is wired in a later slice.
 - Read-only workspace runs API: GET /api/operator/workspaces/runs and /workspaces/runs/{ws}/{run_id} list integration.json evidence, show unreadable files as rows, and report per-repo stale heads (D51-B13r).
 ### Fixed
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
