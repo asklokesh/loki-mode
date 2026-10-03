@@ -12,6 +12,7 @@ import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
+import { unmergedLokiWork, unmergedWorkReason } from "../../util/base_guard.ts";
 import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 export interface IntakeOptions {
   taskText?: string;
@@ -69,6 +70,9 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   if (dirty.length > 0) {
     return { status: "failed", data: {}, reason: `dirty tracked tree: ${dirty.join(", ")}` };
   }
+  // FC-15: never judge against Loki's own unmerged work (base.ts is the one resolver).
+  const unmerged = unmergedLokiWork(ctx.repoDir);
+  if (unmerged) return { status: "failed", data: {}, reason: unmergedWorkReason(unmerged) };
   const baseSha = git(ctx.repoDir, ["rev-parse", "HEAD"]);
   const tree = git(ctx.repoDir, ["rev-parse", "HEAD^{tree}"]);
   ensureBranch(ctx.repoDir, ctx.branch);

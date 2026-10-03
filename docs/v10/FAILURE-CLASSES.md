@@ -186,12 +186,18 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - The repo default branch is used only when it is configured as `default`. Never hardcode "main" (L0).
   - The start line prints `base: <branch> (<flag, config or checkout>)`.
   - The PR target is the configured target, else the repo default branch, and the PR body names it.
-- Siblings: every outcome that compares against the base (ALREADY_SATISFIED, the Wall base run, the scope diff, the receipt delta).
-- Mechanism:
-  - Detect Loki's own unmerged work on the base from its run records (the loki/e10-* branch plus the run receipt), not from a branch-name regex.
-  - Report "this branch already has run <id>'s unmerged work (PR #N, <state>); resume or review it", never ALREADY_SATISFIED.
-  - A dirty or foreign checkout is noted in the output.
-- Fixture: owed. A repo whose checkout is a prior run's branch with a receipt must yield the unmerged-work outcome.
+- Siblings (swept 2026-10-03; every place a base or diff is computed):
+  - loki-ts/src/engine10/stages/intake.ts: baseSha = rev-parse HEAD, the ALREADY_SATISFIED judge (checkAlreadyDone, closed-issue exit); FIXED, now refuses first;
+  - loki-ts/src/engine10/worker.ts:49: ctx.baseSha = rev-parse HEAD (inherits intake's refusal, runs after it in the same checkout);
+  - loki-ts/src/engine10/stages/seal.ts:111-116,190,256: staged diff, discardIfSatisfied, diff-tree and receipt base_sha, all against ctx.baseSha;
+  - loki-ts/src/engine10/stages/verify.ts:63-67,103,176,238,287: changedFiles, testConfigChanged, the pre_red worktree at ctx.baseSha (the engine's only worktree use), inBase;
+  - loki-ts/src/engine10/stages/deep.ts:134,236: council diff and changedFiles against ctx.baseSha;
+  - loki-ts/src/engine10/supervisor.ts:221-224: PR diff-vs-base from intake's base_sha;
+  - loki-ts/src/engine10/stages/wall.ts, modernize/presealed_wall.ts: Wall base run and already_satisfied count, fed by the same ctx.baseSha.
+  All of them consume ctx.baseSha, which is HEAD after intake; one guard at intake covers them.
+- Mechanism (shipped): loki-ts/src/util/base_guard.ts resolveBase (LOKI_E10_BASE else origin default branch, fetched, else local main/master; never loki/* or HEAD) and unmergedLokiWork (a prior run receipt head_sha, or a checked-out loki/* branch, with commits not on base). Intake refuses with "already has Loki run <id>'s unmerged work" before ensureBranch. The engine has no run-level worktree (verify.ts only adds a detached pre_red one), so refusal is the supported path. Placed in util/ because engine10, e10ext and features are all at their size caps (budget.test.ts).
+- Still owed: a --base CLI flag, loki.yaml base_branch, the "base:" start line and PR-target wording from the founder rule; resolveBase already takes the explicit value via LOKI_E10_BASE.
+- Fixture: loki-ts/tests/engine10/intake.test.ts describe "base is not Loki's unmerged work (FC-15)" (origin + clone, local loki/e10-* branch committing the fix; without the guard intake returned completed and the confirm session ran, with it status failed and zero session calls; control on main is not satisfied).
 
 ## FC-16 ALREADY_SATISFIED with zero Loki-executed checks
 - User saw: the same run had verify "checks": [] and changed_files []. The verdict rested only on the implement agent's self-report ("10/10 named impacted tests pass ... via npx vitest run").

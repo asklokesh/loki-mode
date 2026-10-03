@@ -380,3 +380,57 @@ describe("engine10 intake: contract snapshot (D65-SPEC-F2)", () => {
     expect(b.data.contract_snapshot).toBeUndefined();
   });
 });
+
+// FC-15: a run must never judge "already done" against Loki's own unmerged branch (FireLater#17).
+describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
+  let prevSpeed: string | undefined; let prevFetch: string | undefined; let prevBase: string | undefined;
+  beforeAll(() => { prevSpeed = process.env.LOKI_SPEED; prevFetch = process.env.LOKI_E10_NO_FETCH; prevBase = process.env.LOKI_E10_BASE; process.env.LOKI_SPEED = "0"; delete process.env.LOKI_E10_BASE; });
+  afterAll(() => {
+    if (prevSpeed === undefined) delete process.env.LOKI_SPEED; else process.env.LOKI_SPEED = prevSpeed;
+    if (prevFetch === undefined) delete process.env.LOKI_E10_NO_FETCH; else process.env.LOKI_E10_NO_FETCH = prevFetch;
+    if (prevBase !== undefined) process.env.LOKI_E10_BASE = prevBase;
+  });
+  const CONFIRMED = "search-command.ts:1 search already implemented, tests/search.test.ts covers it, CHANGELOG.md documents it";
+  /** origin (bare) with main = the unfixed sample repo; a clone whose local loki/* branch commits the "fix". */
+  function originAndClone(): { root: string; clone: string } {
+    const root = mkdtempSync(join(tmpdir(), "e10-fc15-"));
+    const seed = join(root, "seed");
+    cpSync(join(FIX, "sample-repo"), seed, { recursive: true });
+    git(seed, ["init", "-q", "-b", "main"]);
+    git(seed, ["config", "user.email", "t@example.com"]); git(seed, ["config", "user.name", "t"]);
+    git(seed, ["add", "-A"]); git(seed, ["commit", "-q", "-m", "initial"]);
+    git(root, ["clone", "-q", "--bare", seed, join(root, "origin.git")]);
+    git(root, ["clone", "-q", join(root, "origin.git"), join(root, "clone")]);
+    const clone = join(root, "clone");
+    git(clone, ["config", "user.email", "t@example.com"]); git(clone, ["config", "user.name", "t"]);
+    git(clone, ["checkout", "-q", "-b", "loki/e10-20261003T150744Z-59b1"]);
+    cpSync(join(FIX, "already-done-repo"), clone, { recursive: true });
+    git(clone, ["add", "-A"]); git(clone, ["commit", "-q", "-m", "loki: fix the issue (unmerged draft)"]);
+    return { root, clone };
+  }
+
+  test("checkout on a loki branch with unmerged commits: refused, never ALREADY_SATISFIED, no session call", async () => {
+    const { root, clone } = originAndClone();
+    const confirm = fakeConfirmSession({ markers: { done: false, alreadyDone: CONFIRMED, specConflict: null } });
+    const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+    ctx.sessions = confirm.runner;
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" });
+    expect(result.status).toBe("failed");
+    expect(result.data.already_satisfied).toBeUndefined();
+    expect(result.reason).toContain("unmerged work");
+    expect(confirm.briefs).toHaveLength(0);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("the same repo on the true base (origin/main): intake does not see the fix, so no ALREADY_SATISFIED", async () => {
+    const { root, clone } = originAndClone();
+    git(clone, ["checkout", "-q", "main"]);
+    const decline = fakeConfirmSession({ markers: { done: true, alreadyDone: null, specConflict: null } });
+    const ctx = makeCtx(clone, runDir, new RealTestMapProvider());
+    ctx.sessions = decline.runner;
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: "Add global search (Cmd+K)" });
+    expect(result.status).toBe("completed");
+    expect(result.data.already_satisfied).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
