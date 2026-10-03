@@ -307,7 +307,7 @@ describe("W1-S3 size-tied Wall time cap", () => {
     const ctx: RunContext = {
       runId: "w1s3", repoDir: dir, runDir: dir, baseSha: "abc", branch: "b", provider: "claude", model: "m", deep: false, capS: 900,
       emit: () => {},
-      sessions: { run: async (o) => { seen.push(o); writeFileSync(join(o.cwd, "loki_wall_x.test.ts"), "x"); return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true }; } },
+      sessions: { run: async (o) => { seen.push(o); writeFileSync(join(o.cwd!, "loki_wall_x.test.ts"), "x"); return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true }; } },
       tests: { detect: async () => TM, impacted: () => [] }, cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
       clock: { now: () => Date.now() }, outputs: () => ({ intake: { task: "refactor mod1.ts mod2.ts mod3.ts mod4.ts mod5.ts across everything", repomap_ref: ref, testmap: TM } }),
     };
