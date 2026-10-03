@@ -30,7 +30,10 @@ cat > "$T/loki" <<'STUB'
 case "$1" in
 verify) [ -s ".loki/runs/$2/receipt.json" ] && { echo "VERDICT: VERIFIED"; exit 0; }; echo "no receipt"; exit 4 ;;
 start)
-    corpus=0; case "$2" in *.md) corpus=1 ;; esac
+    # mirror bin/loki start routing: only an issue ref, issue URL or multi-word task reaches Loki 10;
+    # anything else (a file path, one word) is legacy, which rejects --no-pr
+    case "$2" in */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|*" "*) ;; *) echo "Unknown option: --no-pr" >&2; exit 1 ;; esac
+    corpus=0; case "$2" in */*\#[0-9]*) ;; *) corpus=1 ;; esac
     [ "$FAKE_MODE" = timeout ] && sleep 30
     mkdir -p .loki/runs/r1; echo '{"type":"run.started"}' > .loki/runs/r1/events.jsonl
     [ "$FAKE_MODE" = norecept ] || echo '{"outcome":"x"}' > .loki/runs/r1/receipt.json

@@ -63,7 +63,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
   const sessions = { run: async (o: Parameters<typeof ctx.sessions.run>[0]) => {
     const r = await ctx.sessions.run(o);
-    const t = (r as { stderrTail?: string }).stderrTail ?? "", sdk = /\[sdk-loop error: [^\n]*?(?:(Failed to authenticate|API key is invalid)|(credit balance))/.exec(t); // the SDK's real wording, matched only on its own error line
+    const t = (r as { stderrTail?: string }).stderrTail ?? "", sdk = /\[sdk-loop error: [^\n]*?(?:(Failed to authenticate|API key is invalid|Not logged in)|(credit balance))/.exec(t); // the SDK's real wording, matched only on its own error line
     const k = r.exit === 0 ? null : sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason; if (k === "auth" || k === "quota_exhausted") fatal ??= `fatal:${k}`; if (ctx.overCap?.()) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     return r;
   } };

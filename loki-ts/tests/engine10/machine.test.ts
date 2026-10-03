@@ -183,7 +183,8 @@ describe("engine10 machine", () => {
   for (const [label, child, klass] of [
     ["the session child's own stderr", "echo 'invalid x-api-key' >&2; exit 1", "auth"],
     ["the real SDK auth line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Claude Code returned an error result: Failed to authenticate. API Error: 401 API key is invalid.]' > .loki/iteration-it-implement.log; exit 1", "auth"],
-    ["the SDK error line in the iteration log", "mkdir -p .loki; echo '[sdk-loop error: Your credit balance is too low to access the API]' > .loki/iteration-it-implement.log; exit 1", "quota_exhausted"],
+    ["the SDK Not logged in error line", "mkdir -p .loki; echo '[sdk-loop error: Claude Code returned an error result: Not logged in - Please run /login]' > .loki/iteration-it-implement.log; exit 1", "auth"],
+    ["the SDK error line in the iteration log","mkdir -p .loki; echo '[sdk-loop error: Your credit balance is too low to access the API]' > .loki/iteration-it-implement.log; exit 1", "quota_exhausted"],
   ] as const) {
     it(`real session runner: ${label} stops fatal:${klass} after ONE session`, async () => {
       const runs = { n: 0 };
