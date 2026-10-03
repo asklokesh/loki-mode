@@ -78,6 +78,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.13 (2026-10-03)
+
+The P7 no-fabricated-data moat check now pins its scalar-read exclusion with isolating honest and negative fixtures, so a regression that starts fabricating scalar values fails the moat suite instead of passing unnoticed.
+
+### Changes
+- test(moat): pin P7 SCALAR_READ exclusion with isolating honest and negative fixtures
+
 ## v10.6.12 (2026-10-03)
 
 Workspace runs API and E2E, interrupt handling, a bounded prep lock, honest dashboard and api runs reads, unmeasured cost shown as unmeasured, fast_verify exit codes, loki verify hardened against planted Python modules, a Jira site check for the tracker, a fail-closed backlog ledger, control-plane 400 on bad encoding, a speed spinner that no longer holds the process open, the Wall manifest library for engine10, an MCP run that reports an early crash with its exit code, the pre-run git status snapshot that refuses to run repo-configured fsmonitor or filter drivers, and the CI moat job renamed to Moat rules (no regression).
