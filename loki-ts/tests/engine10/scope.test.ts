@@ -36,12 +36,12 @@ function runEngine(mode: string, plan: "1" | "0") {
   return { repo, receipt, committed, out: r.stdout.toString() + r.stderr.toString() };
 }
 
-describe("D58 scope control", () => {
-  test("planned file kept, unrelated settings.py reverted on disk and listed in NOT PROVEN", () => {
+describe("D58/D76 scope control (advisory: flag, never revert)", () => {
+  test("planned file kept, unrelated settings.py KEPT and flagged outside stated scope in NOT PROVEN", () => {
     const r = runEngine("scope", "1");
-    expect(r.committed).toEqual(["calc.ts"]);
-    expect(readFileSync(join(r.repo, "settings.py"), "utf8")).toBe(SETTINGS);
-    expect(r.receipt.not_proven).toContain("unrelated edit reverted: settings.py");
+    expect(r.committed.sort()).toEqual(["calc.ts", "settings.py"]);
+    expect(readFileSync(join(r.repo, "settings.py"), "utf8")).toBe(`${SETTINGS}DEBUG = False\n`);
+    expect(r.receipt.not_proven).toContain("outside stated scope: settings.py");
     expect(r.receipt.not_proven).not.toContain("scope not determined; all edits committed");
   }, 120_000);
   test("no plan file list: all edits committed, with the scope note", () => {
@@ -49,11 +49,11 @@ describe("D58 scope control", () => {
     expect(r.committed.sort()).toEqual(["calc.ts", "settings.py"]);
     expect(r.receipt.not_proven).toContain("scope not determined; all edits committed");
   }, 120_000);
-  test("only unrelated edits: empty diff, never VERIFIED", () => {
+  test("only unrelated edits: committed and flagged, never VERIFIED", () => {
     const r = runEngine("unrelated", "1");
-    expect(r.committed).toEqual([]);
-    expect(readFileSync(join(r.repo, "settings.py"), "utf8")).toBe(SETTINGS);
+    expect(r.committed).toEqual(["settings.py"]);
+    expect(readFileSync(join(r.repo, "settings.py"), "utf8")).toBe(`${SETTINGS}DEBUG = False\n`);
     expect(r.receipt.verdict).not.toBe("VERIFIED");
-    expect(r.receipt.not_proven).toContain("unrelated edit reverted: settings.py");
+    expect(r.receipt.not_proven).toContain("outside stated scope: settings.py");
   }, 120_000);
 });
