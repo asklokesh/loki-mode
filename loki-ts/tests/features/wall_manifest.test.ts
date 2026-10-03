@@ -1,5 +1,8 @@
 // D77 / W1-S1: the Wall manifest is signatures only, never bodies, never a named module import.
 import { describe, expect, test } from "bun:test";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildWallManifest, MANIFEST_MAX_LINES, type ManifestFile } from "../../src/features/wall_manifest.ts";
 
 const CANARY = "BODY_CANARY_7f3a";
@@ -492,5 +495,49 @@ describe("round 5 review findings", () => {
     try { expect(ts("def a(): pass\n", "m.py")).toContain("def a():"); } finally { process.env.PATH = saved; }
     process.env.PATH = ":relative/bin";
     try { expect(ts("def a(): pass\n", "m.py")).not.toContain("def a"); } finally { process.env.PATH = saved; }
+  });
+});
+
+const N_INPUTS: string[] = [
+  'export class S {\n  constructor(@Inject ("SECRET_N1") c: Cfg) {}\n}',
+  'export class S {\n  constructor(@Inject<Tok>("SECRET_N2") c: Cfg) {}\n}',
+  'export class S {\n  constructor(@ Inject("SECRET_N3") c: Cfg) {}\n}',
+  'export class S {\n  constructor(@Inject?.("SECRET_N5") c: Cfg) {}\n}',
+  'export @Component ({ selector: "SECRET_N6" }) class C {\n}',
+  'export @Dec("SECRET_N7a")("SECRET_N7b") class C {\n}',
+  'export class S {\n  constructor(@Inject\n  ("SECRET_N8") c: Cfg) {}\n}',
+  'export class S {\n  constructor(@Inject!("SECRET_N9") c: Cfg) {}\n}',
+];
+
+describe("round 6 review findings", () => {
+  test("N1-N9: any odd decorator shape omits the whole class", () => {
+    for (const src of N_INPUTS) {
+      const out = ts(src);
+      expect(out).not.toMatch(SECRETS);
+      expect(out).not.toContain("class ");
+    }
+  });
+
+  test("well-formed decorators still emit", () => {
+    const out = ts('export class S {\n  constructor(@Inject("T") private c: Cfg) {}\n  @a.b() m(): void {}\n  @Bare x: number;\n}\n');
+    expect(out).toContain("export class S {");
+    expect(out).toContain("@Inject(...) private c: Cfg");
+  });
+
+  test("a relative PATH entry holding python3 is never executed", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-run.wm-"));
+    const savedPath = process.env.PATH, savedCwd = process.cwd();
+    try {
+      mkdirSync(join(dir, "fakebin"));
+      writeFileSync(join(dir, "fakebin", "python3"), '#!/bin/sh\necho \'["def SECRET_FAKE():"]\'\n');
+      chmodSync(join(dir, "fakebin", "python3"), 0o755);
+      process.chdir(dir);
+      process.env.PATH = "fakebin";
+      expect(ts("def a(): pass\n", "m.py")).not.toMatch(SECRETS);
+    } finally {
+      process.chdir(savedCwd);
+      process.env.PATH = savedPath;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

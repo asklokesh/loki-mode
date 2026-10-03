@@ -417,23 +417,22 @@ function maskDefaults(sig: string): string {
   return out;
 }
 
-// `@Name` stays; `@Name(args)` becomes `@Name(...)`; anything else after `@` becomes `@...`.
-function maskDecorators(sig: string): string {
+// `@Name` / `@a.b` stays; `@Name(args)` (no gap before the paren) becomes `@Name(...)`. After the name or the
+// group the next non-space character must not be `(`, `<`, `?`, `!`, `[` or `.`. Any other shape returns null
+// so the caller omits the whole class or declaration.
+function maskDecorators(sig: string): string | null {
   let out = "";
+  const badNext = (at: number): boolean => /[(<?![.]/.test(sig.slice(at).trimStart()[0] ?? "");
   for (let i = 0; i < sig.length; ) {
     const k = skipLiteral(sig, i);
     if (k !== i) { out += sig.slice(i, k); i = k; continue; }
     if (sig[i] !== "@") { out += sig[i]; i++; continue; }
     const m = /^@[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/.exec(sig.slice(i, i + 200));
-    if (!m) {
-      out += "@...";
-      i++;
-      if (sig[i] === "(") i = skipBalanced(sig, i);
-      continue;
-    }
+    if (!m) return null;
     out += m[0];
     i += m[0].length;
     if (sig[i] === "(") { out += "(...)"; i = skipBalanced(sig, i); }
+    if (badNext(i)) return null;
   }
   return out;
 }
@@ -513,9 +512,12 @@ function tsSignatures(src: string, jsx: boolean): string[] {
       const sigs = ms.map((m) => (strictMember(m) ? memberSig(m.head.trim()) : null)).map((m) => (m === null ? null : maskDefaults(m)));
       const dropped = ms.some((m) => !strictMember(m)) || sigs.some((m) => m !== null && (hasTopSemi(m) || NOT_MEMBER.test(m)));
       const keep = dropped ? [] : sigs.filter((m): m is string => !!m);
-      lines.push(`${maskExtends(maskDecorators(exportHead(h, "")))} {`, ...keep.map((m) => `  ${maskDecorators(m)};`), "}");
+      const headM = maskDecorators(exportHead(h, ""));
+      const memM = keep.map(maskDecorators);
+      if (headM !== null && !memM.includes(null)) lines.push(`${maskExtends(headM)} {`, ...memM.map((m) => `  ${m};`), "}");
     } else if (/^export\s+(default\s+)?@/.test(h)) {
-      lines.push(maskExtends(maskDecorators(h)));
+      const dm = maskDecorators(h);
+      if (dm !== null) lines.push(maskExtends(dm));
     } else if (/^export\s+default\s/.test(h)) {
       const rest = h.replace(/^export\s+default\s+/, "");
       const len = arrowHeadLen(rest);
@@ -527,8 +529,11 @@ function tsSignatures(src: string, jsx: boolean): string[] {
     } else {
       lines.push(memberSig(h) ?? h);
     }
-    const masked = /^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]|^export\s+(default\s+)?(abstract\s+)?class\b/.test(h) ? lines : lines.map((l) => maskDefaults(maskDecorators(l)));
-    if (!masked.some(hasTopSemi)) out.push(...masked);
+    if (!lines.length) continue;
+    const masked = /^export\s+(declare\s+)?(type|interface|enum)\b|^export\s*(type\s*)?[{*]|^export\s+(default\s+)?(abstract\s+)?class\b/.test(h) ? lines : lines.map((l) => { const d = maskDecorators(l); return d === null ? null : maskDefaults(d); });
+    if (masked.includes(null)) continue;
+    const done = masked as string[];
+    if (!done.some(hasTopSemi)) out.push(...done);
   }
   return out;
 }
@@ -631,6 +636,7 @@ print(json.dumps(out))
 
 // Python signatures from the stdlib ast, run in an isolated interpreter (-I -S) from a neutral cwd with the
 // source on stdin. Any parse error, missing python3, or timeout yields no signatures for the file.
+// Trusted interpreter boundary: an absolute PATH entry (for example a venv) is trusted; relative entries are not.
 function resolvePython3(): string | null {
   for (const dir of (process.env.PATH ?? "").split(":")) {
     if (!dir || !dir.startsWith("/")) continue;
