@@ -13,16 +13,12 @@ const STATUS_WIDTH = 8; // fits "skipped" plus a required separating space
 const LABEL_WIDTH = 12; // fits "NOT PROVEN:" + one space
 export function formatClock(elapsedS: number): string {
   const s = Math.max(0, Math.round(elapsedS));
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${String(m).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 export function formatDuration(totalS: number): string {
   const s = Math.max(0, Math.round(totalS));
   if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  const rem = s % 60;
-  return `${m}m${String(rem).padStart(2, "0")}s`;
+  return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, "0")}s`;
 }
 /** 212000 -> "212k"; under 1000 renders as-is. */
 export function formatTokens(n: number): string {
@@ -78,6 +74,15 @@ export function reasonOf(ev: EventEnvelope[], tampered: boolean, stop: string | 
   const r = EXIT[outcome] === 0 ? "" : tampered ? "event log modified outside the engine" : stop?.startsWith("fatal:") ? ({ "fatal:quota_exhausted": "provider credit exhausted", "fatal:auth": "provider authentication failed" } as Record<string, string>)[stop] ?? stop : outcome === "BLOCKED" ? `spec conflict: ${done("implement")?.spec_conflict_reason ?? "see the receipt"}` : stop === "stalled" ? "stalled: same failure 3 times" : bad ? `${bad.name} failed${bad.first_error ? `: ${bad.first_error}` : ""}` : ev.find((e) => e.type === "stage.failed")?.data.reason ?? (ev.some((e) => e.type === "cap.hit") ? "cost/time cap reached" : v && !checks.length ? "no tests to run" : stop ?? (ev.some((e) => e.type === "receipt.sealed") ? "" : "engine ended before sealing a receipt"));
   return redactSecrets(String(r ?? "").replace(/[\x00-\x1f\x7f]+/g, " ").trim()).slice(0, 200) || undefined;
 }
+export interface PreModelTiming { span_s: number; stages: Record<string, number> } // D61-1: startMs to first session.started, self-time per stage ("setup" = none open); sums to span_s
+export function preModelTiming(events: EventEnvelope[], startMs: number): PreModelTiming | null {
+  const cut = events.find((e) => e.type === "session.started"); if (!cut) return null;
+  const cutMs = Math.max(startMs, Date.parse(cut.ts)), stages: Record<string, number> = {}, open: string[] = []; let prev = startMs;
+  const charge = (at: number): void => { const n = open.at(-1) ?? "setup"; stages[n] = (stages[n] ?? 0) + (at - prev) / 1000; prev = at; };
+  for (const e of events.slice(0, events.indexOf(cut))) { charge(Math.min(Math.max(Date.parse(e.ts), prev), cutMs)); if (e.type === "stage.started" && e.stage) open.push(e.stage); else if (/^stage\.(completed|failed|skipped)$/.test(e.type)) { const i = open.lastIndexOf(String(e.stage)); if (i >= 0) open.splice(i, 1); } }
+  charge(cutMs); return { span_s: (cutMs - startMs) / 1000, stages };
+}
+export const formatPreModelLine = (t: PreModelTiming | null, env: NodeJS.ProcessEnv = process.env): string => env.LOKI_SPEED !== "1" || !t ? "" : `pre-model ${t.span_s.toFixed(1)}s (${Object.entries(t.stages).filter(([, v]) => v >= 0.05).map(([k, v]) => `${k} ${v.toFixed(1)}s`).join(", ")})\n`; // flag off: byte-identical output
 export interface SummaryInput {
   pr: { url: string; draft: boolean; draftReason?: string | null } | null;
   verdict: Verdict;

@@ -13,7 +13,7 @@ import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./ev
 import { capNote, resolveCap } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
-import { formatHeartbeatLine, formatStageLine, formatSummary, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
+import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import type { PrContext } from "./stages/pr.ts";
@@ -245,7 +245,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
       log.append("issue.commented", null, { argv: out?.argv ?? [], ok: out?.ok ?? false, reason });
     } else if (!blocked) process.stderr.write(`engine10: run ${opts.runId} ended FAILED with no PR: ${reason}\n`);
   }
-  log.append("run.completed", null, { verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS });
+  log.append("run.completed", null, { verdict, pr_url: prUrl, not_proven: notProven, cost_usd: costUsd, wall_s: wallS, pre_model: preModelTiming(allEvents, t0) }); // D61-1
   log.sealLog();
   const stages = allEvents.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number").map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })), // E-48 notify: Slack when configured, no-op otherwise
     pc = partialCost(allEvents, log.tampered),
@@ -262,7 +262,8 @@ export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
 /** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
 export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput): string {
   const c = alreadyDoneTextComment(events);
-  return `${c ? `\n${c}\n` : ""}${formatSummary(summary)}\n`;
+  const pm = (events.findLast((e) => e.type === "run.completed")?.data.pre_model ?? null) as PreModelTiming | null;
+  return `${c ? `\n${c}\n` : ""}${formatPreModelLine(pm)}${formatSummary(summary)}\n`;
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.

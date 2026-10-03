@@ -159,7 +159,12 @@ def profile_run(events_path, row=None):
         source = "time_to_pr_s"
 
     unattributed = pre + internal + post
+    pre_model = None  # D61-1: run.completed data.pre_model = {span_s, stages}, argv to first provider byte
+    for e in events:
+        if e["type"] == "run.completed" and isinstance(e.get("data", {}).get("pre_model"), dict):
+            pre_model = e["data"]["pre_model"]
     return {
+        "pre_model": pre_model,
         "stages": stage_seconds,
         "unattributed": unattributed,
         "unattributed_pre_launch": pre,
@@ -286,6 +291,7 @@ def print_table(per_arm):
         sum_total = sum(totals)
         stage_names = sorted({name for r in runs for name in r["stages"]})
         rows = []
+        pm_runs = [r["pre_model"] for r in runs if r.get("pre_model")]
         for name in stage_names + ["unattributed"]:
             vals = [r["stages"].get(name, 0.0) if name != "unattributed" else r["unattributed"]
                     for r in runs]
@@ -296,12 +302,17 @@ def print_table(per_arm):
             # construction (unlike a p50-over-p50 ratio, which does not,
             # since p50s of different stages do not fall on the same run).
             share = (sum(vals) / sum_total * 100.0) if sum_total else None
-            rows.append((name, p50, p90, share))
+            pm = nearest_rank([m.get("stages", {}).get(name, 0.0) for m in pm_runs], 50) if pm_runs and name != "unattributed" else None
+            rows.append((name, p50, p90, share, pm))
         print("\n== %s (n=%d, total p50=%.1fs p90=%.1fs) ==" %
               (arm, len(runs), p50_total or 0.0, nearest_rank(totals, 90) or 0.0))
-        print("%-14s %10s %10s %10s" % ("stage", "p50 (s)", "p90 (s)", "share %"))
-        for name, p50, p90, share in rows:
-            print("%-14s %10.1f %10.1f %9.1f%%" % (name, p50, p90, share if share else 0.0))
+        print("%-14s %10s %10s %10s %14s" % ("stage", "p50 (s)", "p90 (s)", "share %", "pre_model p50"))
+        for name, p50, p90, share, pm in rows:
+            print("%-14s %10.1f %10.1f %9.1f%% %14s" % (name, p50, p90, share if share else 0.0,
+                                                       "-" if pm is None else "%.2f" % pm))
+        if pm_runs:
+            print("  pre_model span p50=%.2fs (n=%d, argv to first provider byte)"
+                  % (nearest_rank([m.get("span_s", 0.0) for m in pm_runs], 50) or 0.0, len(pm_runs)))
         unattr_vals = [r["unattributed"] for r in runs]
         pre_vals = [r["unattributed_pre_launch"] for r in runs]
         internal_vals = [r["unattributed_internal_gap"] for r in runs]
