@@ -17,6 +17,17 @@ test("verified-pr fixture: one line per stage with duration, model, cost and out
   expect(tl.find((l) => l.label === "Receipt sealed")!.outcome).toBe("signed");
 });
 
+test("skipped stages show the recorded reason inline; no recorded reason says so", () => {
+  const tl = buildTimeline([
+    { seq: 0, ts: "2026-10-01T00:00:00Z", type: "stage.started", stage: "plan", data: {} },
+    { seq: 1, ts: "2026-10-01T00:00:00Z", type: "stage.skipped", stage: "plan", data: { reason: "small task: implementer plans" } },
+    { seq: 2, ts: "2026-10-01T00:00:00Z", type: "stage.started", stage: "wall", data: {} },
+    { seq: 3, ts: "2026-10-01T00:00:00Z", type: "stage.skipped", stage: "wall", data: {} },
+  ]);
+  expect(tl[0]).toMatchObject({ outcome: "skipped", detail: "small task: implementer plans" });
+  expect(tl[1]).toMatchObject({ outcome: "skipped", detail: "no reason recorded" });
+});
+
 test("a started stage with no completion reads running; a null-usd cost stays unmeasured", () => {
   const tl = buildTimeline([
     { seq: 0, ts: "2026-10-01T00:00:00Z", type: "stage.started", stage: "implement", data: {} },

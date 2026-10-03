@@ -146,13 +146,18 @@ export function runDetail(db: Db, sourceId: string, runId: string) {
   const r = db.select().from(runs).where(and(eq(runs.sourceId, sourceId), eq(runs.runId, runId))).get();
   if (!r) return null;
   const evs = loadEvents(db, sourceId, runId);
-  const stages: { stage: string; started_at: string | null; ended_at: string | null; status: string }[] = [];
+  const stages: { stage: string; started_at: string | null; ended_at: string | null; status: string; reason: string | null }[] = [];
   for (const e of evs) {
     if (e.stage === null || !e.type.startsWith("stage.")) continue;
     let s = stages.find((x) => x.stage === e.stage);
-    if (!s) stages.push((s = { stage: e.stage, started_at: null, ended_at: null, status: "started" }));
+    if (!s) stages.push((s = { stage: e.stage, started_at: null, ended_at: null, status: "started", reason: null }));
     if (e.type === "stage.started") s.started_at = e.ts;
-    else { s.ended_at = e.ts; s.status = e.type.slice("stage.".length); }
+    else {
+      s.ended_at = e.ts; s.status = e.type.slice("stage.".length);
+      // The engine records why a stage was skipped or failed (stage.skipped data.reason); nothing is invented when it did not.
+      const why = (e.data as Record<string, unknown> | null)?.reason;
+      s.reason = typeof why === "string" && why ? why : null;
+    }
   }
   const f = fold(evs);
   const done = f.run.completed?.data;

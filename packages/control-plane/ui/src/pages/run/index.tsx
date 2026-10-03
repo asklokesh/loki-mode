@@ -134,6 +134,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
         {d.stages.map((s, i) => (
           <Message key={`${s.stage}-${i}`} icon={<ScrollText size={16} />} title={s.stage} meta={s.status === "started" ? "running" : s.status}>
             <span data-testid="run-stage" data-status={s.status} />
+            {s.reason ? <span data-testid="run-stage-reason">{s.reason}</span> : s.status === "skipped" ? <span data-testid="run-stage-reason">no reason recorded</span> : null}
           </Message>
         ))}
       </div>

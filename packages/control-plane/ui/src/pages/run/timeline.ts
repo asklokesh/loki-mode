@@ -45,6 +45,13 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
       const line = { key: `s${e.seq}`, kind: "stage" as const, label: e.stage, duration_s: null, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome: "running", startedMs: ms(e.ts) };
       open.set(e.stage, line);
       lines.push(line);
+    } else if ((e.type === "stage.skipped" || e.type === "stage.failed") && e.stage) {
+      const line = open.get(e.stage);
+      const why = str(d.reason) ?? (e.type === "stage.skipped" ? "no reason recorded" : null);
+      const outcome = e.type === "stage.skipped" ? "skipped" : "failed";
+      if (line) Object.assign(line, { outcome, detail: why ?? undefined, cost_usd: costOf(e.stage) });
+      else lines.push({ key: `s${e.seq}`, kind: "stage", label: e.stage, duration_s: null, model: null, cost_usd: costOf(e.stage), outcome, detail: why ?? undefined });
+      open.delete(e.stage);
     } else if (e.type === "stage.completed" && e.stage) {
       const line = open.get(e.stage);
       const dur = num(d.duration_s) ?? (line?.startedMs != null && ms(e.ts) != null ? (ms(e.ts)! - line.startedMs) / 1000 : null);

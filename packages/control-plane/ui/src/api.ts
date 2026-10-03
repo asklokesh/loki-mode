@@ -55,7 +55,7 @@ export interface RunRow {
 export interface RunsResponse { runs: RunRow[]; total: number; next_cursor: string | null }
 
 /** status is the stage event suffix: "started" while open, else "completed" / "failed" / ... */
-export interface TimelineStage { stage: string; started_at: string | null; ended_at: string | null; status: string }
+export interface TimelineStage { stage: string; started_at: string | null; ended_at: string | null; status: string; reason?: string | null }
 
 /** GET /v1/runs/:source/:run: the summary row, flat, plus the folded detail. */
 export interface RunDetailResponse extends RunRow {
