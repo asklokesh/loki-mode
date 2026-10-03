@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `loki help` now lists `keys` and `workspace` in its "All commands:" block, and the discoverability test checks membership in that block instead of anywhere in the help text.
 - The Bun route's `.loki/PAUSED.md` no longer says "Press Enter in terminal" when stdin is not a TTY; it now uses the bash no-TTY wording "(no TTY: keypress resume unavailable)" (issue #212).
+- `loki memory index rebuild` now calls MemoryEngine.rebuild_index, prints the real count of indexed memories, and exits nonzero with the error on failure instead of emptying the index and printing "Index rebuilt" (#204).
 - MCP loki run now returns the exit code and log tail when loki exits before a run starts.
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 ### Fixed

@@ -193,12 +193,32 @@ fi
 
 # Test 11: Memory Index Rebuild
 log_test "memory index rebuild command"
-output=$("$LOKI_CLI" memory index rebuild 2>&1 | strip_ansi || true)
-# May fail if module not available, but should not crash
-if echo "$output" | grep -q "rebuilt\|Error\|not found"; then
-    pass "memory index rebuild command (handles errors gracefully)"
+mkdir -p .loki/memory/episodic/2026-01-01
+for n in 1 2; do
+    printf '{"id":"ep-%s","timestamp":"2026-01-01T00:00:0%sZ","context":{"goal":"goal %s","phase":"development"},"outcome":"success"}\n' \
+        "$n" "$n" "$n" > ".loki/memory/episodic/2026-01-01/task-$n.json"
+done
+echo '{"version":"1.0","topics":[],"total_memories":0}' > .loki/memory/index.json
+output=$("$LOKI_CLI" memory index rebuild 2>&1 | strip_ansi)
+rc=${PIPESTATUS[0]}
+total=$(python3 -c "import json;print(json.load(open('.loki/memory/index.json')).get('total_memories'))" 2>/dev/null || echo "?")
+if [ "$rc" -eq 0 ] && [ "$total" = "2" ] && echo "$output" | grep -q "Index rebuilt: 2 memories"; then
+    pass "memory index rebuild scans episodes (total_memories=2)"
 else
-    fail "memory index rebuild command - unexpected output: $output"
+    fail "memory index rebuild - rc=$rc total=$total output: $output"
+fi
+
+# Test 11b: import failure must exit nonzero and not claim success
+log_test "memory index rebuild surfaces import failure"
+fake_skill="$TEST_DIR/fake-skill"
+mkdir -p "$fake_skill/memory"
+echo 'raise ImportError("boom")' > "$fake_skill/memory/__init__.py"
+output=$(SKILL_DIR="$fake_skill" PYTHONPATH="" "$LOKI_CLI" memory index rebuild 2>&1 | strip_ansi)
+rc=${PIPESTATUS[0]}
+if [ "$rc" -ne 0 ] && ! echo "$output" | grep -q "Index rebuilt" && echo "$output" | grep -q "Error"; then
+    pass "memory index rebuild failure exits nonzero with error"
+else
+    fail "memory index rebuild failure - rc=$rc output: $output"
 fi
 
 # =============================================================================

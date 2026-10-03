@@ -24647,16 +24647,17 @@ if total_removed > 0:
             # Show or rebuild the memory index layer
             if [ "${2:-}" = "rebuild" ]; then
                 PYTHONPATH="${SKILL_DIR}${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
+import sys
 try:
-    from memory.layers import IndexLayer
-    layer = IndexLayer('.loki/memory')
-    layer.update([])  # Will scan and rebuild
-    print('Index rebuilt')
-except ImportError:
-    print('Error: memory.layers module not found')
+    from memory.engine import MemoryEngine
+    engine = MemoryEngine(base_path='.loki/memory')
+    engine.rebuild_index()
+    total = (engine.get_index() or {}).get('total_memories', 0)
 except Exception as e:
-    print(f'Error: {e}')
-" 2>/dev/null
+    print(f'Error: index rebuild failed: {type(e).__name__}: {e}', file=sys.stderr)
+    sys.exit(1)
+print(f'Index rebuilt: {total} memories indexed')
+" || return 1
             else
                 cat .loki/memory/index.json 2>/dev/null | python3 -m json.tool 2>/dev/null || echo "No index found"
             fi
