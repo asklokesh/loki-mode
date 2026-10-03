@@ -2,7 +2,7 @@
 // deterministic evidence search and its confirmation gate.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -12,10 +12,12 @@ import {
   findEvidence,
   renderAlreadyDoneComment,
 } from "../../src/engine10/already_done.ts";
-import { runIntake } from "../../src/engine10/stages/intake.ts";
+import { runIntake, intakeStage } from "../../src/engine10/stages/intake.ts";
+import { runMachine } from "../../src/engine10/machine.ts";
+import { hitsUnchangedFromBase } from "../../src/features/speed/already_done_async.ts";
 import { buildRepoMap, listRepoFiles } from "../../src/engine10/repomap.ts";
 import { buildTestMap, isTestFile } from "../../src/engine10/testmap.ts";
-import type { CostReader, RunContext, SessionRunner, TestMap } from "../../src/engine10/types.ts";
+import type { CostReader, RunContext, SessionRunner, Stage, StageName, TestMap } from "../../src/engine10/types.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "intake", "already-done-repo");
@@ -500,7 +502,7 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
     describe("race with implement's own edits", () => {
       const SENTINEL = "// FEATURE_IMPLEMENTED_BY_THIS_RUN";
       const cited = "src/search-command.ts";
-      const impl = (ctx: RunContext, edit: (() => void) | null) => ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i-impl", limitS: 60, signal: new AbortController().signal, cwd: ctx.repoDir });
+      const impl = (ctx: RunContext) => ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i-impl", limitS: 60, signal: new AbortController().signal, cwd: ctx.repoDir });
       function raceRig(dir: string, edit: () => void) {
         const target = join(dir, cited);
         let wrote: () => void = () => {};
@@ -528,13 +530,89 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
         const events: string[] = [];
         ctx.emit = (t) => { events.push(t); };
         const res2 = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
-        const out = await impl(ctx, null);
+        const out = await impl(ctx);
         expect(res2.data.already_satisfied).toBe(false);
         expect(out.killed).toBe(false);
         expect(out.markers.alreadyDone).toBeNull();
         expect(events).not.toContain("already.satisfied");
         expect(res.data.already_satisfied).toBe(false);
         rmSync(dir, { recursive: true, force: true });
+      });
+      /** Race rig where the model cites `cite(dir)` after implement ran `edit`. */
+      async function uncited(edit: (dir: string) => void, cite: (dir: string) => string | null) {
+        const dir = freshRepo();
+        let wrote: () => void = () => {};
+        const w = new Promise<void>((r) => { wrote = r; });
+        const sessions: SessionRunner = {
+          run: async (o: Opts) => {
+            if (o.stage === "intake") { await w; return ok(cite(dir)); }
+            edit(dir); wrote();
+            await new Promise<void>((res) => { o.signal.addEventListener("abort", () => res(), { once: true }); setTimeout(res, 300); });
+            return o.signal.aborted ? killed : ok(null);
+          },
+        };
+        const { ctx } = await intakeWith(rig(null), TASK, dir);
+        ctx.sessions = sessions;
+        const events: string[] = [];
+        ctx.emit = (t) => { events.push(t); };
+        const res2 = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
+        const out = await impl(ctx);
+        rmSync(dir, { recursive: true, force: true });
+        return { res2, out, events };
+      }
+      test("implement edits a hit file, model cites only an unchanged sibling hit: not already satisfied", async () => {
+        const r = await uncited(
+          (d) => appendFileSync(join(d, cited), `\n${SENTINEL}\n`),
+          (d) => readFileSync(join(d, cited), "utf8").includes(SENTINEL) ? "tests/search.test.ts:1 covers global search; implementation present" : null,
+        );
+        expect(r.res2.data.already_satisfied).toBe(false);
+        expect(r.out.killed).toBe(false);
+        expect(r.events).not.toContain("already.satisfied");
+      });
+      test("implement deletes a cited hit file: not already satisfied", async () => {
+        const r = await uncited(
+          (d) => unlinkSync(join(d, "tests/search.test.ts")),
+          () => `${cited}:1 and tests/search.test.ts:1 prove it`,
+        );
+        expect(r.res2.data.already_satisfied).toBe(false);
+        expect(r.events).not.toContain("already.satisfied");
+      });
+      test("hitsUnchangedFromBase fails closed on an empty baseSha and on no paths", () => {
+        const dir = freshRepo();
+        const sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+        expect(hitsUnchangedFromBase(dir, sha, [cited])).toBe(true);
+        expect(hitsUnchangedFromBase(dir, "", [cited])).toBe(false);
+        expect(hitsUnchangedFromBase(dir, sha, [])).toBe(false);
+        rmSync(dir, { recursive: true, force: true });
+      });
+      test("machine: a deferred hit makes implement jump to the tail, verify never runs", async () => {
+        const dir = freshRepo();
+        const prevTask = process.env["LOKI_E10_TASK_TEXT"];
+        process.env["LOKI_E10_TASK_TEXT"] = TASK;
+        const r = rig(CITE);
+        const ctx = ctxWith(r.sessions, dir);
+        ctx.runDir = mkdtempSync(join(tmpdir(), "e10-already-done-run-"));
+        ctx.baseSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
+        const ran: string[] = [];
+        const st = (name: StageName, run: Stage["run"]): Stage => ({ name, targetS: 1, limitS: 30, run });
+        const stages: Partial<Record<StageName, Stage>> = {
+          intake: intakeStage,
+          implement: st("implement", async (c) => {
+            setTimeout(() => r.release(), 20);
+            await c.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i-impl", limitS: 60, signal: new AbortController().signal });
+            return { status: "completed", data: {} };
+          }),
+          verify: st("verify", async () => { ran.push("verify"); return { status: "completed", data: {} }; }),
+          commit: st("commit", async () => { ran.push("commit"); return { status: "completed", data: {} }; }),
+        };
+        try {
+          const out = await runMachine(ctx, { flow: ["intake", "implement", "verify", "commit"], load: async (n) => stages[n] ?? null });
+          expect(out.outputs.intake?.already_satisfied).toBe(true);
+          expect(ran).toEqual(["commit"]);
+        } finally {
+          if (prevTask === undefined) delete process.env["LOKI_E10_TASK_TEXT"]; else process.env["LOKI_E10_TASK_TEXT"] = prevTask;
+          rmSync(dir, { recursive: true, force: true });
+        }
       });
       test("cited file untouched at base: confirmed hit fires and emits already.satisfied", async () => {
         const dir = freshRepo();
@@ -546,7 +624,7 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
         const events: string[] = [];
         ctx.emit = (t) => { events.push(t); };
         const res2 = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
-        const out = await impl(ctx, null);
+        const out = await impl(ctx);
         expect(out.markers.alreadyDone).toBe(`${cited}:1 feature present`);
         expect(res2.data.already_satisfied).toBe(true);
         expect(events).toContain("already.satisfied");

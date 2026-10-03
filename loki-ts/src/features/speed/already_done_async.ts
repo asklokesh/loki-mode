@@ -4,21 +4,23 @@
 // the run as already done. The check's result only counts while implement is in flight: a check that is
 // cancelled, late or unconfirmed never changes the verdict, so the cold path stays the reference.
 import { execFileSync } from "node:child_process";
-import { checkAlreadyDone, citedHitPaths, findEvidence, type AlreadyDoneResult } from "../../engine10/already_done.ts";
+import { checkAlreadyDone, findEvidence, type AlreadyDoneResult } from "../../engine10/already_done.ts";
 import type { RepoMap } from "../../engine10/repomap.ts";
 import type { RunContext, SessionResult, TestMap } from "../../engine10/types.ts";
 import { speedEnabled } from "../warm.ts";
 
 export { speedEnabled };
 
-/** True only when every cited file exists at baseSha and the live tree still equals it (no edit, no untracked
- *  stand-in). The check runs while implement edits this tree, so a hit on a file implement touched describes
- *  the work in flight, not the base, and must never be reported as already done. */
-function citedUnchangedFromBase(repoDir: string, baseSha: string, paths: string[]): boolean {
+/** True only when every path the model was shown exists at baseSha and the live tree still equals it (no edit,
+ *  no deletion, no untracked stand-in). The model reads every hit file from the live tree implement is editing,
+ *  so a change to ANY hit file, cited or not, means the verdict describes work in flight, not the base. Fails
+ *  closed on an empty path list or an empty baseSha. */
+export function hitsUnchangedFromBase(repoDir: string, baseSha: string, paths: string[]): boolean {
   if (paths.length === 0 || !baseSha) return false;
+  const run = (args: string[]): void => { execFileSync("git", ["--literal-pathspecs", ...args], { cwd: repoDir, stdio: "pipe", env: process.env }); };
   try {
-    for (const p of paths) execFileSync("git", ["cat-file", "-e", `${baseSha}:${p}`], { cwd: repoDir, stdio: "pipe" });
-    execFileSync("git", ["diff", "--quiet", baseSha, "--", ...paths], { cwd: repoDir, stdio: "pipe" });
+    for (const p of paths) run(["cat-file", "-e", `${baseSha}:${p}`]);
+    run(["diff", "--quiet", baseSha, "--", ...paths]);
     return true;
   } catch { return false; }
 }
@@ -38,7 +40,7 @@ export function deferAlreadyDone(
   const fire = (): void => {
     if (!hit || fired) return;
     const h = hit;
-    if (!citedUnchangedFromBase(ctx.repoDir, ctx.baseSha, citedHitPaths(h.evidence[0] ?? "", hits, ctx.repoDir))) { hit = null; return; }
+    if (!hitsUnchangedFromBase(ctx.repoDir, ctx.baseSha, [...new Set(hits.map((x) => x.path))])) { hit = null; return; }
     try { apply(h); } catch { hit = null; return; }
     fired = true;
     ctx.emit("already.satisfied", "intake", { evidence: h.evidence, deferred: true });
