@@ -2,6 +2,7 @@ import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Landing, LiveRun } from "./Live";
 import { registerPage } from "./pages/registry";
+import { wirePages } from "./pages/wired";
 import { AppShell } from "./shell/AppShell";
 import { CostPage, EmptyState, SettingsPage, StartRun, WorkPage } from "./Shell";
 import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
@@ -233,6 +234,7 @@ registerPage({ id: "live-run", path: "/live/:source/:run", title: "Live run", co
 registerPage({ id: "work", path: "/work", title: "Work", component: WorkPage });
 registerPage({ id: "cost", path: "/cost", title: "Cost", component: CostPage });
 registerPage({ id: "settings-general", path: "/settings/general", title: "General", inSettings: true, component: SettingsPage });
+wirePages();
 
 export function App() {
   return <AppShell />;
