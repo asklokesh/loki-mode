@@ -1,4 +1,4 @@
-// loki-ts/src/engine10/dashboard/page.ts
+// loki-ts/src/util/dashboard_page.ts (moved from engine10/dashboard/page.ts to keep the core under its line cap, D29/D33)
 //
 // E-24: the dashboard's single HTML page (docs/v10/ENGINE.md section 12).
 // Inlined as a string so `dist` bundles it with no separate asset step. All
@@ -97,5 +97,5 @@ export function renderPage(): string {
 export const groupRoute = async (repoDir: string, rawGroup: string): Promise<Response> => {
   let group: string;
   try { group = decodeURIComponent(rawGroup); } catch { return new Response("bad group id", { status: 400 }); }
-  return (await import("../../features/speed/group_grid.ts")).groupResponse(repoDir, group);
+  return (await import("../features/speed/group_grid.ts")).groupResponse(repoDir, group);
 };

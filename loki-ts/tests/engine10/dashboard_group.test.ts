@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { groupRoute } from "../../src/engine10/dashboard/page.ts";
+import { groupRoute } from "../../src/util/dashboard_page.ts";
 import { groupGrid, groupResponse } from "../../src/features/speed/group_grid.ts";
 
 let repoDir = "";
