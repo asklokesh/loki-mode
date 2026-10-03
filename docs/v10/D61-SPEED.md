@@ -81,3 +81,7 @@ Order: 1, 2, 7, 8 start now (disjoint files); 3-6 and 9-11 next; 12-16 after 8-1
 ## Slice 2 status: stage prefix (LOKI_SPEED=1)
 
 With `LOKI_SPEED=1` (default off), the implement, fix, wall and plan stage prompts all begin with the same fixed block (`STAGE_PREFIX` in `loki-ts/src/e10ext/lean_prefix.ts`), so the provider prompt cache can reuse it across stages. With the flag off, prompts are unchanged byte for byte. `loki-ts/tests/e10ext/prefix_identity.test.ts` asserts the first 200 bytes match across stages and that flag-off output is unprefixed.
+
+## Slice 4 status: already-done check off the critical path (LOKI_SPEED=1)
+
+With `LOKI_SPEED=1` (default off), intake no longer waits on the cheap-model already-done check. Implement starts at once; the check runs only when deterministic hits exist, and its confirmation session runs in a pinned copy of the base tree extracted to a temporary directory outside the repo (`git archive -o` then `tar -x`, each exit code checked), so in-flight edits cannot satisfy it. A run stops as ALREADY_SATISFIED only when that session cites files unchanged since base; a bad base SHA or any extract failure fails closed (no session, not satisfied). Code: `loki-ts/src/features/speed/already_done_async.ts`, tests in `loki-ts/tests/engine10/already_done.test.ts`. Known follow-up (D61-04-F): the temporary copy can outlive a SIGTERM exit, and four race tests leave one copy each.
