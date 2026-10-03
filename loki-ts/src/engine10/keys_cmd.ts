@@ -7,12 +7,25 @@ function parsePubkey(t: string): KeyObject {
   if (key.asymmetricKeyType !== "ed25519") throw new Error("not an Ed25519 key");
   return key;
 }
-/** Strips `--pubkey <file>` from args; an unreadable or invalid key is an error (caller exits 2). */
+/** Strips `--pubkey <file>` or `--pubkey=<file>`; an unreadable or invalid key, an empty value or a repeated flag is an error (caller exits 2). */
 export function takePubkey(args: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string } {
-  const i = args.indexOf("--pubkey");
-  if (i < 0) return { args: [...args] }; // absent: leave every arg (including the run-id) untouched
-  const file = args[i + 1], rest = args.filter((_, j) => j !== i && j !== i + 1);
-  if (file === undefined || file.startsWith("--")) return { args: args.filter((_, j) => j !== i), error: "--pubkey requires a file argument" };
+  const rest: string[] = [], files: string[] = [];
+  let missing = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--pubkey") {
+      const v = args[i + 1];
+      if (v === undefined || v.startsWith("--")) { missing = true; continue; }
+      files.push(v); i++;
+    } else if (a.startsWith("--pubkey=")) {
+      const v = a.slice("--pubkey=".length);
+      if (v === "") missing = true; else files.push(v);
+    } else rest.push(a);
+  }
+  if (files.length + (missing ? 1 : 0) > 1) return { args: rest, error: "--pubkey may be given only once" };
+  if (missing) return { args: rest, error: "--pubkey requires a file argument" };
+  const file = files[0];
+  if (file === undefined) return { args: rest }; // absent: leave every arg (including the run-id) untouched
   try { return { args: rest, pubkey: parsePubkey(readFileSync(file, "utf8")) }; } catch { return { args: rest, error: `cannot read an Ed25519 public key from ${file}` }; }
 }
 export async function main(args: readonly string[]): Promise<number> {

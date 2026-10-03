@@ -7,7 +7,8 @@
 // slice's files.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sealedLog } from "./log_fixture.ts";
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync, sign as nodeSign } from "node:crypto";
+import { kidOf } from "../../src/engine10/stages/seal.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -394,6 +395,68 @@ describe("main() run-id with and without --pubkey (P0-VERIFY-ARG)", () => {
         expect(r.out).toBe("");
       }
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+// P0-VERIFY-ARG round 2: --pubkey=FILE must not be silently ignored, and the argument shape fails closed.
+describe("main() argument shape fails closed (P0-VERIFY-ARG)", () => {
+  const SAVED = process.env["LOKI_RECEIPT_SIGNING_KEY"];
+  let dir: string, local: { publicKey: import("node:crypto").KeyObject; privateKey: import("node:crypto").KeyObject }, vendorJwk: string, localJwk: string;
+  const jwkFile = (name: string, k: import("node:crypto").KeyObject): string => {
+    const f = join(dir, name);
+    writeFileSync(f, JSON.stringify(k.export({ format: "jwk" })));
+    return f;
+  };
+  beforeEach(() => {
+    dir = tmpDir();
+    local = generateKeyPairSync("ed25519");
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = local.privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+    vendorJwk = jwkFile("vendor.jwk", generateKeyPairSync("ed25519").publicKey);
+    localJwk = jwkFile("local.jwk", local.publicKey);
+    writeUnsignedReceipt(dir, "us1");
+    const path = writeUnsignedReceipt(dir, "sg1"), r = JSON.parse(readFileSync(path, "utf8"));
+    const h = Buffer.from(JSON.stringify({ alg: "EdDSA", kid: kidOf(local.publicKey) })).toString("base64url");
+    const p = Buffer.from(JSON.stringify({ receipt_sha256: r.receipt_sha256 })).toString("base64url");
+    const sig = nodeSign(null, Buffer.from(`${h}.${p}`), local.privateKey).toString("base64url");
+    r.verification = { jwt: `${h}.${p}.${sig}`, kid: kidOf(local.publicKey) };
+    writeFileSync(path, JSON.stringify(r));
+  });
+  afterEach(() => {
+    if (SAVED === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"]; else process.env["LOKI_RECEIPT_SIGNING_KEY"] = SAVED;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const code = async (args: string[]) => (await runMain(args, join(dir, "runs"))).code;
+  test("sg1 --pubkey=vendor.jwk exits 2 (vendor key does not match), never the local JWKS", async () => {
+    expect(await code(["sg1", `--pubkey=${vendorJwk}`])).toBe(2);
+  });
+  test("--pubkey=vendor.jwk sg1 (flag first) exits 2", async () => {
+    const r = await runMain([`--pubkey=${vendorJwk}`, "sg1"], join(dir, "runs"));
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("run: sg1"); // the flag is honored and sg1 is the run checked, never the flag text as a run id
+    expect(r.out).not.toContain("VERIFIED against the local JWKS");
+  });
+  test("us1 --pubkey=FILE --allow-unsigned exits 3 like the space form", async () => {
+    expect(await code(["us1", "--pubkey", vendorJwk, "--allow-unsigned"])).toBe(3);
+    expect(await code(["us1", `--pubkey=${vendorJwk}`, "--allow-unsigned"])).toBe(3);
+  });
+  test("--pubkey= with an empty value exits 2", async () => {
+    expect(await code(["sg1", "--pubkey="])).toBe(2);
+  });
+  test("a second --pubkey in any form exits 2", async () => {
+    expect(await code(["sg1", "--pubkey", localJwk, "--pubkey", localJwk])).toBe(2);
+    expect(await code(["sg1", `--pubkey=${localJwk}`, `--pubkey=${localJwk}`])).toBe(2);
+    expect(await code(["sg1", "--pubkey", localJwk, `--pubkey=${localJwk}`])).toBe(2);
+  });
+  test("an unknown -x flag exits 2", async () => {
+    expect(await code(["sg1", "-x"])).toBe(2);
+    expect(await code(["sg1", "--bogus"])).toBe(2);
+  });
+  test("two positionals exit 2", async () => {
+    expect(await code(["sg1", "us1"])).toBe(2);
+  });
+  test("--pubkey=<correct key> on a good run exits 0, as does the space form", async () => {
+    expect(await code(["sg1", `--pubkey=${localJwk}`])).toBe(0);
+    expect(await code(["sg1", "--pubkey", localJwk])).toBe(0);
   });
 });
 

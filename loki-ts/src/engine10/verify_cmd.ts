@@ -111,12 +111,15 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const allowUnsigned = args.includes("--allow-unsigned") || process.env["LOKI_VERIFY_ALLOW_UNSIGNED"] === "1";
   args = args.filter((a) => a !== "--allow-unsigned");
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\nUnknown flags and more than one run-id exit 2.\n");
     return 0;
   }
   const pk = takePubkey(args);
   if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   args = pk.args;
+  const stray = args.find((a) => a.startsWith("-"));
+  if (stray !== undefined) return (process.stderr.write(`loki verify: unknown option ${stray}\n`), 2);
+  if (args.length > 1) return (process.stderr.write(`loki verify: expected at most one run-id or receipt path, got ${args.length}\n`), 2);
   if (pk.pubkey) deps = { ...deps, pubkey: pk.pubkey };
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
   const runId = args[0] ?? latestRunId(runsRoot) ?? undefined;
