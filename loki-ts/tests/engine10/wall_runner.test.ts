@@ -128,6 +128,10 @@ describe("A-103 wall discards tests that are not red for the right reason", () =
     const r = await wallWith({ "loki_wall_two.test.js": H + "test('a', () => { nope(); });\ntest('b', () => { ({}).mean(); });\n" });
     expect(r.result.data.base_run).toEqual({ pass: 0, fail: 1, not_run: 0 });
   });
+  test("classify go: a forged RUN/PASS from TestMain with os.Exit(0) (real go 1.26.3) is not_run, never pass", () => {
+    const fg = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.com/fg\t0.189s\n";
+    expect(classify({ runner: "go" as const, path: "a_test.go" }, 0, fg, "/x")).toBe("not_run");
+  });
   test("classify node:assertion failure is red; ReferenceError or missing module is not_run", () => {
     const f = { runner: "node" as const, path: "t.test.js" };
     expect(classify(f, 1, "# tests 1\n# pass 0\n# fail 1\n", "/x")).toBe("fail");

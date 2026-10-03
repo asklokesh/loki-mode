@@ -146,10 +146,8 @@ describe("engine10 issue-ref e2e (stub gh, stub claude)", () => {
     expect(receipt.verdict).toBe("VERIFIED");
   }, 90_000);
 
-  test("a closed issue seals ALREADY_SATISFIED with no implement session", () => {
+  test("a closed issue with no executed check is NOT PROVEN (FC-16), with no implement session", () => {
     const r = runEngine("acme/widgets#202", 202);
-    if (r.code !== 0) console.error(r.out);
-    expect(r.code).toBe(0);
 
     // No implement session at all: intake's already_satisfied short-circuit
     // (machine.ts earlyExit) skips plan, wall, implement, verify and fix.
@@ -162,9 +160,10 @@ describe("engine10 issue-ref e2e (stub gh, stub claude)", () => {
     expect(intake!.data.already_satisfied).toBe(true);
 
     const receipt = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
-    expect(receipt.verdict).toBe("ALREADY_SATISFIED");
+    expect(receipt.verdict).toBe("PARTIAL");
+    expect(receipt.not_proven).toContain("no tests executed");
     expect(receipt.head_sha).toBe(receipt.base_sha);
     expect(readFileSync(join(r.repo, "calc.ts"), "utf8")).not.toContain("subtract");
-    expect(r.out).toContain("Outcome:    ALREADY_SATISFIED");
+    expect(r.out).not.toContain("Outcome:    ALREADY_SATISFIED");
   }, 90_000);
 });

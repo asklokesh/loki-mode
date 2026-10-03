@@ -8,10 +8,12 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { discoverProjectGraph } from "../../project_graph.ts";
 import { run } from "../../util/shell.ts";
+import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { runPackageSuites } from "../../project_model/package_suite.ts";
+import { classifyCheck, NO_TESTS_REASON } from "../../util/check_result.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
@@ -63,13 +65,13 @@ const FULL_SUITE_CMD: Record<RunnerName, { cmd: string; args: string[] }> = {
   bun: { cmd: "bun", args: ["test"] },
   node: { cmd: "node", args: ["--test"] },
   npm: { cmd: "npm", args: ["test", "--silent"] },
-  go: { cmd: "go", args: ["test", "./..."] },
+  go: { cmd: "go", args: ["test", "-v", "./..."] },
   cargo: { cmd: "cargo", args: ["test"] },
 };
 /** One check per detected runner, run to completion (no retry: flaky-rerun
  *  is a fast-verify concept, ENGINE.md never asks for it in deep verify). */
 export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOptions, checks: DeepCheck[], notProven: Set<string>): Promise<void> {
-  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS }, checks, notProven)) return;
+  if (await runPackageSuites(ctx.repoDir, signal, { path: opts.path, timeoutMs: opts.fullSuiteTimeoutMs ?? FULL_SUITE_TIMEOUT_MS, baseSha: ctx.baseSha }, checks, notProven)) return;
   const map = await ctx.tests.detect(ctx.repoDir);
   if (map.runners.length === 0) {
     notProven.add("full suite (no test runner detected)");
@@ -95,7 +97,11 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       notProven.add(`not run: ${name} (aborted)`);
       continue;
     }
-    checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: r.exitCode === 0 ? "pass" : "fail", duration_s: durationS });
+    const out = `${r.stdout}\n${r.stderr}`, lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
+    if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
+    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...(spec.cmd === "go" ? { runner: "go" as const } : {}) });
+    checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS }); // FC-16: exit 0 with no executed tests is not a pass
+    if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
 }
 /** ENGINE.md section 4: "app boot (via project_graph.ts discoverProjectGraph)".

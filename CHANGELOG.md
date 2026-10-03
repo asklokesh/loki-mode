@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - engine10 (FC-21): an implement time limit no longer skips verify and fix; the work that exists is verified (the receipt can only be PARTIAL), the run cap scales with task size (about 45 minutes for large subscription tasks; loki.yaml budgets.run_cap_s or LOKI_E10_CAP_S override), implement is told its remaining time, and the CLI Outcome line names the receipt verdict (PARTIAL, not FAILED).
+- FC-02: a test runner that cannot load or collect (import error, missing module) is judged by one shared owner check (`loki-ts/src/runner/load_owner.ts`): when the same command also fails to load on the base commit and no changed file is named in the error, the check is NOT PROVEN (harness-owned, no fix rounds) instead of a code failure. Applies to the per-file checks, the deep full suite and per-package suites; lint, typecheck and selector checks (`kind: static`) never go through it.
+- FC-16 follow-ups: go test runs with -v (per package and in the deep full suite) and the count sums top-level `--- PASS|FAIL` across every package, with `[no test files]` zero only when no package ran tests; a non-verbose go summary is reported as unmeasured, never as "no tests executed". Runner summaries are read only from the last 12 output lines (a testless file printing "Tests: 5 passed" no longer counts), ANSI colour codes are stripped, and `python -m unittest` and Playwright summaries parse. User-visible: intake's closed-issue / already-done short-circuit now always ends PARTIAL (NOT PROVEN) because it has no Loki-executed check.
 
 ## v10.10.3 (2026-10-03)
 

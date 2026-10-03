@@ -41,7 +41,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - vitest "No test files found, exiting with code 0" counts as a pass with n=0, when it should be not_run (EL-W1-06).
 - Mechanism: a result classifier with an owner (EL-W1-05). Only a FAIL owned by code drives fix and stall. Interim: EL-W0-02.
 - Fixture: tests/fixtures/runner-outputs/vitest/load-error.txt (from seq 56), plus siblings for each runner.
+- Status: FIXED (interim, FC-02 lane F). One shared classifier loki-ts/src/runner/runner_errors.ts (classifyRunnerOutput); verify.ts runCheck turns a load or collection error into not_run with owner harness (no rerun, no fix round, listed in verify not_proven); deep.ts runFullSuite does the same; wall.ts classify() already returned not_run for jest/vitest/bun with no parsed failure and is left unchanged. A real failed-test count in the same output keeps it a code failure; lint checks are never reclassified. Fixtures: loki-ts/tests/engine10/fixtures/runner-outputs/{vitest,pytest}, test loki-ts/tests/engine10/runner_errors.test.ts. Still open: the n=0 pass rule (EL-W1-06) and per-runner fixtures for jest, node:test, go, cargo.
+- Integration with FC-16 (2026-10-03): one mechanism identifies lint, typecheck and selector checks: `RunOpts.kind: "static"` (verify, deep and per-package paths alike); the FC-02 name-prefix exemption is removed. Load ownership is the single helper `harnessLoadReason` (runner/load_owner.ts), called from verify runCheck (kind test only), deep runFullSuite and project_model/package_suite.ts, which also routes results through FC-16 classifyCheck. Test: tests/engine10/monorepo_cwd.test.ts (FC-16 C1, lint kind blocks).
 - Sibling (2026-10-03): a change-introduced load error is a code fault. Base reproduction is necessary but not sufficient. The base rerun must be hermetic (an inherited editable install imports head code), and a check the task targets is never env-owned (7ad4a18b6, blocked in round 2). Superseded by L0-WAVE1 EL-W1-06: the harness gathers evidence and a separate reviewer call assigns the owner.
+- Ownership rule (2026-10-03, HIGH review of fd3ad2037): loki-ts/src/runner/load_owner.ts loadErrorIsHarnessOwned, one mechanism used by verify.ts runCheck AND deep.ts runFullSuite (sibling sweep done: wall.ts classify() already returns fail for a parsed failure). A load error is harness-owned not_run only when the same command reproduces a load error on a hermetic base worktree, no changed file is named in the output (path or module stem), the check is not a Wall or task-relevant test, and its target file is not itself changed; else it stays fail so fix rounds run. Patterns tightened (N1): command not found and Cannot find module match runner-load shapes only. Regressions: tests/engine10/runner_errors.test.ts (B1 SyntaxError in changed source, B2 Wall missing symbol, base-reproduced harness error, non-reproducing error, N1).
 
 ## FC-03 Scope control reverted in-scope route edits
 - User saw: the PR without the fix (routes/applications.ts, assets.ts and attachments.ts reverted).
@@ -221,21 +224,27 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Still owed: a --base CLI flag, loki.yaml base_branch, the PR-target wording in the PR body (the start line now prints "PR target: <ref>, base: <branch>"); resolveBase already takes the explicit value via LOKI_E10_BASE.
 - Fixture: loki-ts/tests/engine10/intake.test.ts describe "base is not Loki's unmerged work (FC-15)" (origin + clone, local loki/e10-* branch committing the fix; without the guard intake returned already_satisfied from that unmerged commit, with it the claim is voided, the run completes and implements, and unmerged_loki_work is reported; control on main is not satisfied). Regressions A, B, B2 (no refusal, no claim), D (fresh clone of a pushed loki/* branch, 1 Loki commit: not refused, no claim, unmerged_loki_work.commits 1), a feature branch in a fresh clone (no refusal, not labelled Loki's), a loki/*-named branch with only the user's commit and a zero-commit receipt (neither labelled Loki's), the note present in renderMainOutput and renderReviewerBody, ALREADY_SATISFIED still reached when the work is on the target, and C (LOKI_E10_BASE=feature/search).
 
-## FC-16 ALREADY_SATISFIED with zero Loki-executed checks
-- User saw: the same run had verify "checks": [] and changed_files []. The verdict rested only on the implement agent's self-report ("10/10 named impacted tests pass ... via npx vitest run").
-- Law: L0 and L3 (the model never grades its own work), L5; Seal accuracy.
-- Siblings: every outcome that is reachable with an empty checks list.
-- Mechanism:
-  - A success-class outcome requires harness-executed evidence against the target base: the impacted tests run through the Project Model commands, plus each acceptance point of the issue checked.
-  - With zero executed checks the outcome is NOT VERIFIED.
-- Fixture: owed. A verify with checks [] and a self-reported pass must yield NOT VERIFIED.
+## FC-16 ALREADY_SATISFIED / VERIFIED with zero Loki-executed checks (n=0 counted as pass)
+- User saw: FireLater#17 on 10.7.1 recorded checks `"result":"pass","n":0` (zero tests executed counted as PASS). The same run had verify "checks": [] and changed_files []; the verdict rested only on the implement agent's self-report ("10/10 named impacted tests pass ... via npx vitest run").
+- Law: L0 and L3 (the model never grades its own work), L5 (not a pass: NOT PROVEN, owner harness); Seal accuracy.
+- Rule: a test check with n=0 executed, or a count that cannot be parsed, is not_run with reason "no tests executed". VERIFIED and ALREADY_SATISFIED require at least one Loki-executed check with n>0 and a pass; otherwise the seal verdict is PARTIAL (the engine's existing NOT PROVEN label) and `no tests executed` is listed in NOT PROVEN.
+- Mechanism (one shared module, loki-ts/src/util/check_result.ts): `testCount` (vitest, jest, bun test, pytest, go test -v (the engine passes -v; non-verbose is unmeasured), unittest, Playwright, cargo test, node --test, mocha; null = unknown), `classifyCheck` (kind test needs n>0 to pass; kind static = lint/typecheck/scan, decided by exit code), `hasExecutedProof`.
+- Sibling sweep (every site that set or consumed "pass"):
+  - stages/verify.ts runCheck (was `n: ran(out) ?? 0` on a pass, and a null count passed): now classifyCheck. Lint, tsc, eslint, ruff, bash -n, shellcheck and select-tests are kind static.
+  - stages/wall.ts classify (exit 0 was an unconditional pass, feeding base_run.pass and wallGreenOnBase): now classifyCheck; zero or unknown count is not_run.
+  - stages/deep.ts runFullSuite (exit 0 was a pass): now classifyCheck, not_run lists NOT PROVEN. Council and secret-scan pass entries are static (no tests exist to count).
+  - stages/seal.ts verdictOf (VERIFIED and every ALREADY_SATISFIED route: intake.already_satisfied, wallGreenOnBase, implement exit already_done): gated on `proof` (hasExecutedProof over verify's raw checks, or a Wall base run with n>0).
+  - Consumers unchanged and now correct by construction: e10ext/select.ts, e10ext/reviewer_body.ts, features/pr_criteria.ts (they read result "pass", which now implies n>0 for test checks).
+  - Not applicable: modernize/presealed_wall.ts (red-base proof, never a pass), runner/quality_gates.ts (gate stubs, not test runs).
+- Fixture: loki-ts/tests/engine10/check_result.test.ts (vitest `No test files found` and `Test Files 0`, pytest `no tests ran`, jest, cargo, mocha zero; go unparsed is unknown; real pass keeps n; verdict gate: VERIFIED and ALREADY_SATISFIED without proof are PARTIAL).
 
 ## FC-17 The Wall spends time and money and writes nothing
 - User saw: the same run's Wall produced "files": [] in 1m42s, with base_run 0/0/0. This is the D82-WALL0 class again.
 - Law: L5 (no work without evidence), cost.
 - Siblings: D82-WALL0 and any stage that can finish with zero artifacts and still bill.
 - Mechanism: if the Wall cannot write a check, it skips in under 10s with a NOT PROVEN note and never runs a model session to an empty result.
-- Fixture: owed. A repo with no runnable test command yields a Wall skip under 10s with NOT PROVEN.
+- Fixture: loki-ts/tests/engine10/runner_errors.test.ts (FC-17 block). A repo with no runnable test command yields a Wall skip under 10s.
+- Status: FIXED for the no-runner case (lane G). wall.ts runWall prechecks, before any model session: a detected test map with no runner and no .py or .go file in the repo map returns stage.skipped with reason "no runnable test command detected: the Wall cannot write a runnable check". Still open: a Wall that has runners but writes nothing still bills its session (the SessionRunner has no progress hook for a no-progress cutoff); needs a session.ts change.
 
 ## FC-19 Loki's own stage rules talk a capable model out of doing the job
 - User saw: FireLater#17 run e10-20261003T200907Z-fea1 on 10.9.1 ended BLOCKED in 6m58s with a draft PR. The model's reason: "spec conflict: the task asks for all 37 route files to be migrated, validated and covered 100%, but the stage rules limit me to the named files and a few tests". Raw Claude Code finishes the same task in about 2 minutes. The user was told their spec conflicted; it was Loki's brief.

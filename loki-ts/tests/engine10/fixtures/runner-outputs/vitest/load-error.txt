@@ -1,0 +1,13 @@
+
+ RUN  v1.6.0 /work/firelater
+
+ FAIL  backend/src/routes/issues.test.ts [ backend/src/routes/issues.test.ts ]
+Error: Cannot find module '/work/firelater/backend/vitest.config.ts'
+ Failed to load url ../db (resolved id: ../db) in /work/firelater/backend/src/routes/issues.ts. Does the file exist?
+
+ Test Files  1 failed (1)
+      Tests  no tests
+   Start at  10:01:02
+   Duration  412ms
+
+------ Failed Suites 1 -------

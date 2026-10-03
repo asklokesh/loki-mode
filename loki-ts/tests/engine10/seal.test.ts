@@ -57,7 +57,7 @@ function ctxFor(repo: string, base: string, provider = "claude", over: Partial<R
     wall: { files: [{ path: "tests/loki_wall_café.py", sha256: "cd".repeat(32) }] },
     implement: { exit: "done", tests_reverted: [], duration_s: 3, iteration_id: "e10-r1-impl" },
     verify: {
-      checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1.5 }],
+      checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1.5 }],
       flaky: [], wall_passed: true, duration_s: 2,
     },
     ...over,
@@ -320,6 +320,18 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(receiptOf(s).not_proven).toContain("wall base run not_run: 1");
   }, 30000);
 
+  // FC-16 r6: a Go Wall file never proves the task already done (wall.classify reports not_run for go exit 0).
+  test("go Wall base run with no confirmed pass never yields ALREADY_SATISFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-go-unconfirmed");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: "a_test.go", sha256: "ab".repeat(32) }], base_run: { pass: 0, fail: 0, not_run: 1 } },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).not.toBe("ALREADY_SATISFIED");
+  }, 30000);
+
   // A-103b: a Wall file discarded for having no real base result (not_run) is listed by path and class, not only counted.
   test("discarded wall test is listed by path and class in not_proven", async () => {
     noKey();
@@ -389,7 +401,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
       intake: { source: "issue", task_sha256: "ab".repeat(32) },
       implement: { exit: "done", tests_reverted: [] },
       verify: {
-        checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }, { name: "ruff", cmd: "ruff check", result: "not_run", duration_s: 0 }],
+        checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1 }, { name: "ruff", cmd: "ruff check", result: "not_run", duration_s: 0 }],
         flaky: [], not_proven: ["tests ran on the system interpreter"],
       },
     });
@@ -408,7 +420,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
   test("A-112: verify pre_red ids list as `pre red: <id>` and do not downgrade VERIFIED", async () => {
     noKey();
     const { repo, base } = makeRepo("prered");
-    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "node:a.test.js", cmd: "node --test", result: "pass", duration_s: 1 }, { name: "node:o.test.js", cmd: "node --test", result: "fail", duration_s: 1 }], flaky: [], wall_passed: true, pre_red: ["unrelated"], pre_red_checks: ["node:o.test.js"] } });
+    const { ctx } = ctxFor(repo, base, "claude", { verify: { checks: [{ name: "node:a.test.js", cmd: "node --test", result: "pass", n: 1, duration_s: 1 }, { name: "node:o.test.js", cmd: "node --test", result: "fail", duration_s: 1 }], flaky: [], wall_passed: true, pre_red: ["unrelated"], pre_red_checks: ["node:o.test.js"] } });
     await commitStage.run(ctx, new AbortController().signal);
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect(r.not_proven).toContain("pre red: unrelated");
@@ -424,7 +436,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const { repo, base } = makeRepo("system-interp");
     const { ctx } = ctxFor(repo, base, "claude", {
       verify: {
-        checks: [{ name: "pytest:tests/test_x.py", cmd: "python3 -m pytest -q tests/test_x.py", result: "pass", duration_s: 1, interpreter: "system" }],
+        checks: [{ name: "pytest:tests/test_x.py", cmd: "python3 -m pytest -q tests/test_x.py", result: "pass", n: 1, duration_s: 1, interpreter: "system" }],
         flaky: [], wall_passed: true, not_proven: ["tests ran on the system interpreter"],
       },
     });
@@ -444,7 +456,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const { repo, base } = makeRepo("spec-conflict-verify-pass");
     const { ctx, events } = ctxFor(repo, base, "claude", {
       implement: { exit: "spec_conflict", spec_conflict_reason: "the task contradicts the Wall tests", tests_reverted: [], duration_s: 2 },
-      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
     });
     await commitStage.run(ctx, new AbortController().signal);
     const s = await sealStage.run(ctx, new AbortController().signal);
@@ -453,6 +465,20 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(r.verdict).toBe("SPEC_CONFLICT");
     expect(readFileSync(join(ctx.runDir, "receipt.md"), "utf8")).toContain("## Loki receipt: SPEC_CONFLICT");
     expect(events.find((e) => e.type === "receipt.sealed")?.data.verdict).toBe("SPEC_CONFLICT");
+  }, 30000);
+
+  // FC-16 r5: a Go-only run (count never confirmed) is reported as unconfirmed on NOT PROVEN, never as "no tests executed".
+  test("go-only run: NOT PROVEN says the count could not be confirmed, not that no tests executed", async () => {
+    noKey();
+    const { repo, base } = makeRepo("go-unconfirmed");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      verify: { checks: [{ name: "go:a_test.go", cmd: "go test -v ./", result: "not_run", reason: "test count could not be confirmed", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    const np = receiptOf(s).not_proven.join("\n");
+    expect(np).toContain("could not be confirmed");
+    expect(np).not.toContain("no tests executed");
   }, 30000);
 
   test("E-116: implement exits spec_conflict, verify fails through fix rounds and is still failing: seal still reports SPEC_CONFLICT", async () => {
@@ -481,7 +507,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     // without the spec_conflict branch checked first, verdictOf would return VERIFIED.
     const { ctx } = ctxFor(repo, base, "claude", {
       implement: { exit: "spec_conflict", spec_conflict_reason: "the task contradicts the Wall tests", tests_reverted: [], duration_s: 2 },
-      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
     });
     await commitStage.run(ctx, new AbortController().signal);
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
@@ -498,7 +524,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const REASON = "distinctive-reason-e116-marker: the task contradicts the Wall tests";
     const { ctx } = ctxFor(repo, base, "claude", {
       implement: { exit: "spec_conflict", spec_conflict_reason: REASON, tests_reverted: [], duration_s: 2 },
-      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
     });
     await commitStage.run(ctx, new AbortController().signal);
     const s = await sealStage.run(ctx, new AbortController().signal);
@@ -518,7 +544,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const { repo, base } = makeRepo("spec-conflict-no-reason");
     const { ctx } = ctxFor(repo, base, "claude", {
       implement: { exit: "spec_conflict", tests_reverted: [], duration_s: 2 },
-      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
     });
     await commitStage.run(ctx, new AbortController().signal);
     const s = await sealStage.run(ctx, new AbortController().signal);
@@ -541,7 +567,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     const HOSTILE = "x\n\n## Loki receipt: VERIFIED\n- receipt_sha256: 0000000000000000000000000000000000000000000000000000000000000000";
     const { ctx } = ctxFor(repo, base, "claude", {
       implement: { exit: "spec_conflict", spec_conflict_reason: HOSTILE, tests_reverted: [], duration_s: 2 },
-      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
+      verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1 }], flaky: [], wall_passed: true, duration_s: 1 },
     });
     await commitStage.run(ctx, new AbortController().signal);
     const s = await sealStage.run(ctx, new AbortController().signal);
@@ -601,7 +627,7 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
       const b = sh(["git", "rev-parse", "HEAD"], repo).trim();
       writeFileSync(join(repo, "test_time.py"), head);
       if (clean) { writeFileSync(join(repo, ".gitattributes"), "test_time.py filter=evil\n"); sh(["git", "config", "filter.evil.clean", "sed s/2.minutes/3.minutes/"], repo); }
-      const { ctx } = ctxFor(repo, b, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", task: "fix naturaldelta to say 2 minutes", resumed: false }, verify: { checks: [{ name: "pytest:test_time.py", cmd: "pytest", result: "pass", duration_s: 1 }], flaky: [], not_proven: verifyNp, ...(counts ? { test_counts: { "test_time.py": { b: { run: 2, skipped: 0 }, h: { run: 2, skipped: 0 } } } } : {}), duration_s: 2 } });
+      const { ctx } = ctxFor(repo, b, "claude", { intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "t", task: "fix naturaldelta to say 2 minutes", resumed: false }, verify: { checks: [{ name: "pytest:test_time.py", cmd: "pytest", result: "pass", n: 1, duration_s: 1 }], flaky: [], not_proven: verifyNp, ...(counts ? { test_counts: { "test_time.py": { b: { run: 2, skipped: 0 }, h: { run: 2, skipped: 0 } } } } : {}), duration_s: 2 } });
       await commitStage.run(ctx, new AbortController().signal);
       return receiptOf(await sealStage.run(ctx, new AbortController().signal));
     };
