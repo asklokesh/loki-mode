@@ -41,8 +41,9 @@ step() { # step <label> <seconds> <cmd...>
     if run_to "$secs" "$@" >"$T/step.log" 2>&1; then ok "$label"; else bad "$label"; tail -20 "$T/step.log"; fi
 }
 
-# Static guard: every value import from loki-ts/src in the control-plane source must be a COPY source in the image.
-MISSING="$(python3 - "$REPO" <<'PY'
+# Static guard: every value import from loki-ts/src in the control-plane source, including dynamic import(),
+# several imports on one line, and the transitive value-import closure of loki-ts files, must be a COPY source.
+cp_guard() { python3 - "$1" <<'PY'
 import os, re, sys
 repo = sys.argv[1]
 src = os.path.join(repo, "packages/control-plane/src")
@@ -52,30 +53,78 @@ for line in open(os.path.join(repo, "Dockerfile.control-plane")):
     if parts and parts[0].upper() == "COPY":
         args = [p for p in parts[1:] if not p.startswith("--")]
         copied.update(os.path.normpath(a) for a in args[:-1])
-pat = re.compile(r'(?:^|\n)\s*(import|export)(\s+type)?\b[^;]*?\bfrom\s*["\']([^"\']+)["\']|(?:^|\n)\s*import\s*["\']([^"\']+)["\']')
+# Static (import|export ... from "x"), bare import "x", and dynamic import("x"); several per line.
+pat = re.compile(r'(?:^|[;\n])\s*(?:import|export)(\s+type)?\b[^;]*?\bfrom\s*["\']([^"\']+)["\']|(?:^|[;\n])\s*import\s*["\']([^"\']+)["\']|\bimport\s*\(\s*["\']([^"\']+)["\']\s*\)')
+def resolve(d, spec):
+    base = os.path.normpath(os.path.join(d, spec))
+    for c in (base, re.sub(r"\.js$", ".ts", base), base + ".ts", os.path.join(base, "index.ts")):
+        if os.path.isfile(c):
+            return os.path.relpath(c, repo)
+    return os.path.relpath(base, repo)
+def value_specs(p):
+    for m in pat.finditer(open(p).read()):
+        if m.group(1):
+            continue
+        spec = m.group(2) or m.group(3) or m.group(4)
+        if spec and spec.startswith("."):
+            yield spec
 need = set()
+queue = []
 for d, _, files in os.walk(src):
     for f in files:
-        if not f.endswith((".ts", ".tsx")):
+        if f.endswith((".ts", ".tsx")):
+            queue.append(os.path.join(d, f))
+seen = set()
+while queue:
+    p = queue.pop()
+    for spec in value_specs(p):
+        rel = resolve(os.path.dirname(p), spec)
+        if not rel.startswith("loki-ts/src/") or rel in need:
             continue
-        p = os.path.join(d, f)
-        for m in pat.finditer(open(p).read()):
-            if m.group(2):
-                continue
-            spec = m.group(3) or m.group(4)
-            if not spec or not spec.startswith("."):
-                continue
-            rel = os.path.relpath(os.path.normpath(os.path.join(d, spec)), repo)
-            if rel.startswith("loki-ts/src/"):
-                need.add(rel)
+        need.add(rel)
+        full = os.path.join(repo, rel)
+        if os.path.isfile(full) and full not in seen:
+            seen.add(full)
+            queue.append(full)
 for r in sorted(need):
     if r not in copied:
         print(r)
 if not need:
     print("NO-IMPORTS-FOUND")
 PY
-)"
+}
+MISSING="$(cp_guard "$REPO")"
 t "Dockerfile.control-plane COPYs every loki-ts/src value import" "Dockerfile.control-plane lacks COPY for: $(echo "$MISSING" | tr '\n' ' ')" [ -z "$MISSING" ]
+
+# Guard self-tests: each fixture tree must report the uncopied file. Type-only imports stay ignored.
+mkfx() { # mkfx <name>: fresh fake repo with a Dockerfile copying only loki-ts/src/a.ts
+    local d="$T/gfx/$1"
+    mkdir -p "$d/packages/control-plane/src" "$d/loki-ts/src"
+    printf 'COPY loki-ts/src/a.ts /src/loki-ts/src/\n' >"$d/Dockerfile.control-plane"
+    printf 'export const a = 1;\n' >"$d/loki-ts/src/a.ts"
+    printf 'export const x = 1;\nexport type T = number;\n' >"$d/loki-ts/src/x.ts"
+    echo "$d"
+}
+FX="$(mkfx dyn)"
+printf 'const m = await import("../../../loki-ts/src/x.ts");\n' >"$FX/packages/control-plane/src/d.ts"
+t "guard catches dynamic import()" "guard missed dynamic import()" [ "$(cp_guard "$FX")" = "loki-ts/src/x.ts" ]
+FX="$(mkfx two)"
+printf 'import { a } from "../../../loki-ts/src/a.ts"; import { x } from "../../../loki-ts/src/x.ts";\n' >"$FX/packages/control-plane/src/d.ts"
+t "guard catches a second import on one line" "guard missed second import on one line" [ "$(cp_guard "$FX")" = "loki-ts/src/x.ts" ]
+FX="$(mkfx chain)"
+printf 'import { a } from "../../../loki-ts/src/a.ts";\n' >"$FX/packages/control-plane/src/d.ts"
+printf 'import { x } from "./x.ts";\nexport const a = x;\n' >"$FX/loki-ts/src/a.ts"
+t "guard catches transitive loki-ts value import" "guard missed transitive loki-ts value import" [ "$(cp_guard "$FX")" = "loki-ts/src/x.ts" ]
+FX="$(mkfx typeonly)"
+printf 'import { a } from "../../../loki-ts/src/a.ts";\n' >"$FX/packages/control-plane/src/d.ts"
+printf 'import type { T } from "./x.ts";\nexport const a: T = 1;\n' >"$FX/loki-ts/src/a.ts"
+t "guard ignores type-only imports" "guard flagged a type-only import" [ -z "$(cp_guard "$FX")" ]
+FX="$T/gfx/mut"
+mkdir -p "$FX/packages/control-plane" "$FX/loki-ts"
+cp -R "$REPO/packages/control-plane/src" "$FX/packages/control-plane/src"
+cp -R "$REPO/loki-ts/src" "$FX/loki-ts/src"
+grep -v 'util/redact.ts' "$REPO/Dockerfile.control-plane" >"$FX/Dockerfile.control-plane"
+t "guard goes red when a real COPY line is deleted" "guard stayed green with a COPY line deleted" [ "$(cp_guard "$FX")" = "loki-ts/src/util/redact.ts" ]
 
 step "install control-plane (frozen)" 120 bash -c "cd '$REPO/packages/control-plane' && bun install --frozen-lockfile"
 step "install control-plane ui (frozen)" 120 bash -c "cd '$REPO/packages/control-plane/ui' && bun install --frozen-lockfile"
