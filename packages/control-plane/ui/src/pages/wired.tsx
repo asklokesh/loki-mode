@@ -13,6 +13,7 @@ import { page as runs } from "./runs";
 import { page as models } from "./models";
 import { page as compose } from "./compose";
 import { RunControls } from "./run-controls";
+import { page as plans, pickerPage as plansPicker } from "./plans";
 
 // The run thread takes source/run props; the registry passes route params.
 const RunPage = runPage.component;
@@ -33,5 +34,8 @@ export function wirePages(): void {
   // Home links runs as /r/:source/:run (spec 3.1); serve it with the run thread.
   registerPage({ ...run, id: "run-short", path: "/r/:source/:run" });
   registerPage(run);
+  // Plans reads route params itself, so it registers as-is.
+  registerPage(plans);
+  registerPage(plansPicker);
   for (const p of [cost, work, receipts, runs, models, compose]) registerPage(adapt(p));
 }
