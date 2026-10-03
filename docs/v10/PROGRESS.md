@@ -2012,3 +2012,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - A-04c r3 opus BLOCK: four reproduced seal false greens (chat filter drops real promises, partial red counted covered, skipped test covers, block comment or docstring assert). r4 dispatched.
 - v10.6.11 Release run still in_progress at 08:56Z; npm latest 10.6.10. Train/94 held on P0-CORE-BUDGET.
 - Drift audit: 1 release last hour (MISS, same cause). Seats: 6 agents active, below 8; ready rows are core-budget gated or HIGH/CTO-owned, DOC-INTEL-1b added.
+
+## 2026-10-03T09:07Z CoS
+- v10.6.11 on npm next (npm view dist-tags 09:06Z: next 10.6.11, latest 10.6.10; Release run success); peer announced; latest waits for D49 auto-promote.
+- PO-TEST-3 late TL BLOCK (hardcoded /opt/homebrew and /usr/local bash paths) fixed forward on main a0bb364fc: structural-checks 11/0, no-hardcoded-paths 3/0, suite 39/0.
+- DOC-INTEL-1b merged 92c194e05 (TL APPROVE; exit-codes-documented 19/0, docs-cli-drift 0 failed).
+- A-121c r2 d0d2410d7 (standalone UNCHECKED returns 1; receipt-order 38/0, red 36/2 before) in opus HIGH re-review.
+- Drift audit: 0 releases to latest in the last hour (MISS; train/94 held on P0-CORE-BUDGET). Seats: 5 agents, below 8; no unblocked ready rows outside core-budget gating and parked real-model legs.
