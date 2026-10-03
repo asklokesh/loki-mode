@@ -14,6 +14,7 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `loki-ts/package.json` | `@types/bun` | `latest` | `1.4.2` | unknown | no numeric version in spec (unpinned or a dist-tag like 'latest'); cannot compute a bump class |
 | `loki-ts/package.json` | `typescript` | `^5.6.0` | `7.0.2` | MAJOR |  |
 | `loki-ts/tests/engine10/fixtures/testmap/package.json` | `vitest` | `^2.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
+| `loki-ts/tests/fixtures/monorepo-fc01/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
 | `loki-ts/tests/fixtures/project-model/firelater-17/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
 | `package.json` | `@resvg/resvg-wasm` | `^2.6.2` | `2.6.2` | up-to-date |  |
 | `package.json` | `@types/node` | `^25.2.0` | `26.6.4` | MAJOR |  |
@@ -72,6 +73,7 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `web-app/package.json` | `typescript` | `~5.7.2` | `7.0.2` | MAJOR |  |
 | `web-app/package.json` | `typescript-eslint` | `^8.70.1` | `8.71.0` | minor |  |
 | `web-app/package.json` | `vite` | `^6.2.0` | `8.3.2` | MAJOR |  |
+| `loki-ts/tests/fixtures/monorepo-fc01/frontend/package.json` | `(none found)` | `` | `-` | n/a | test fixture; no dependencies or devDependencies declared |
 | `loki-ts/tests/fixtures/project-model/firelater-17/frontend/package.json` | `(none found)` | `` | `-` | n/a | test fixture; no dependencies or devDependencies declared |
 
 ## Python (requirements*.txt)
