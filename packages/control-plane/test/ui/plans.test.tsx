@@ -46,6 +46,20 @@ test("proven only with a passing linked check; a criterion without evidence is n
   expect(m.rows[1]!.note).toContain("no check linked");
 });
 
+test("a passing check matched by keyword only stays NOT PROVEN (link inferred)", async () => {
+  const receipt = { verdict: "VERIFIED", checks: [{ name: "returns suite", cmd: "bun test sum", result: "pass" }] };
+  const m = buildMatrix({ issue: ISSUE, plan: PLAN, receipt, changedFiles: [] });
+  expect(m.rows[0]!.status).toBe("not proven");
+  expect(m.rows[0]!.note).toBe("link inferred");
+  expect(m.rows[0]!.inferred.length).toBe(1);
+  const named = buildMatrix({ issue: ISSUE, plan: { steps: [{ title: "Implement returns", checks: ["returns suite"] }] }, receipt, changedFiles: [] });
+  expect(named.rows[0]!.status).toBe("proven");
+  serve({ "receipt.json": JSON.stringify(receipt) });
+  render(<Plans params={{ source: "s1", run: "r1" }} />);
+  expect((await screen.findAllByTestId("row-status"))[0]!.textContent).toContain("NOT PROVEN (link inferred)");
+  expect(screen.getAllByTestId("inferred-hint").length).toBeGreaterThan(0);
+});
+
 test("a non-VERIFIED receipt never yields proven, and no receipt is all not proven", () => {
   expect(buildMatrix({ issue: ISSUE, plan: PLAN, receipt: { ...RECEIPT, verdict: "PARTIAL" }, changedFiles: [] }).rows[0]!.status).toBe("not proven");
   expect(buildMatrix({ issue: ISSUE, plan: PLAN, receipt: null, changedFiles: [] }).rows.every((r) => r.status === "not proven")).toBe(true);

@@ -71,8 +71,8 @@ function MatrixView({ source, run }: { source: string; run: string }) {
             r.criterion,
             r.steps.length ? <ol key="s" style={{ margin: 0, paddingLeft: 16 }}>{r.steps.map((s) => <li key={s}>{s}</li>)}</ol> : none,
             r.files.length ? <div key="f" style={mono}>{r.files.map((f) => <div key={f}>{f}</div>)}</div> : none,
-            r.evidence.length ? <div key="e">{r.evidence.map((c) => <div key={c.name} style={mono}>{c.result}: {c.name}</div>)}</div> : none,
-            <span key="v" data-testid="row-status" data-status={r.status}><Badge tone={TONE[r.status]}>{r.status === "not proven" ? "NOT PROVEN" : r.status.toUpperCase()}</Badge>{r.note ? <div style={{ color: "var(--cp-text-2)", fontSize: 12 }}>{r.note}</div> : null}</span>,
+            r.evidence.length || r.inferred.length ? <div key="e">{r.evidence.map((c) => <div key={c.name} style={mono}>{c.result}: {c.name}</div>)}{r.inferred.map((c) => <div key={`i-${c.name}`} data-testid="inferred-hint" style={{ ...mono, color: "var(--cp-text-2)" }}>inferred, not recorded: {c.result}: {c.name}</div>)}</div> : none,
+            <span key="v" data-testid="row-status" data-status={r.status}><Badge tone={TONE[r.status]}>{r.status === "not proven" ? (r.note === "link inferred" ? "NOT PROVEN (link inferred)" : "NOT PROVEN") : r.status.toUpperCase()}</Badge>{r.note ? <div style={{ color: "var(--cp-text-2)", fontSize: 12 }}>{r.note}</div> : null}</span>,
           ])}
         />
       )}

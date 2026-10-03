@@ -5,7 +5,7 @@
 export type RowStatus = "proven" | "failed" | "not proven";
 export interface Check { name: string; cmd?: string; result: string }
 export interface Receipt { verdict?: string | null; checks?: Check[]; not_proven?: string[]; wall?: { files?: string[] } }
-export interface MatrixRow { criterion: string; steps: string[]; files: string[]; evidence: Check[]; status: RowStatus; note: string | null }
+export interface MatrixRow { criterion: string; steps: string[]; files: string[]; evidence: Check[]; inferred: Check[]; status: RowStatus; note: string | null }
 export interface Matrix { rows: MatrixRow[]; unmapped_files: string[]; criteria_source: "checklist" | "title" | "none" }
 
 const STOP = new Set(["that", "this", "with", "from", "when", "should", "must", "will", "have", "into", "then", "than", "each", "which", "their", "there", "about"]);
@@ -36,7 +36,7 @@ export function criteriaOf(issue: unknown): { list: string[]; source: Matrix["cr
   return title ? { list: [title], source: "title" } : { list: [], source: "none" };
 }
 
-export interface PlanStep { text: string; files: string[]; criterion?: string }
+export interface PlanStep { text: string; files: string[]; criterion?: string; checks: string[] }
 
 /** plan.json is tolerated in several shapes: an array, or { steps | plan }, of strings or objects. */
 export function stepsOf(plan: unknown): PlanStep[] {
@@ -44,13 +44,14 @@ export function stepsOf(plan: unknown): PlanStep[] {
   const arr = Array.isArray(plan) ? plan : Array.isArray(o?.steps) ? o.steps : Array.isArray(o?.plan) ? o.plan : typeof o?.plan === "string" ? o.plan.split(/\r?\n/).filter((l) => l.trim()) : [];
   const out: PlanStep[] = [];
   for (const s of arr as unknown[]) {
-    if (typeof s === "string") { const t = s.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim(); if (t) out.push({ text: t, files: [] }); continue; }
+    if (typeof s === "string") { const t = s.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim(); if (t) out.push({ text: t, files: [], checks: [] }); continue; }
     if (s && typeof s === "object") {
       const r = s as Record<string, unknown>;
       const text = [r.title, r.step, r.description, r.text].find((v): v is string => typeof v === "string" && v.trim() !== "");
       if (!text) continue;
       const files = Array.isArray(r.files) ? r.files.filter((f): f is string => typeof f === "string") : [];
-      out.push({ text: text.trim(), files, ...(typeof r.criterion === "string" ? { criterion: r.criterion } : {}) });
+      const checks = Array.isArray(r.checks) ? r.checks.filter((f): f is string => typeof f === "string") : [];
+      out.push({ text: text.trim(), files, checks, ...(typeof r.criterion === "string" ? { criterion: r.criterion } : {}) });
     }
   }
   return out;
@@ -84,19 +85,24 @@ export function buildMatrix(input: { issue: unknown; plan: unknown; receipt: Rec
     for (const f of changed) if (overlaps(ct, pathTokens(f))) files.add(f);
     const fileList = [...files];
     fileList.forEach((f) => used.add(f));
-    const evidence = checks.filter((c) => {
+    // Explicit link: the criterion or a mapped plan step names the check (by name, or in the step's `checks`). Keyword overlap alone is inferred.
+    const names = (c: Check) => c.name.trim().toLowerCase();
+    const explicit = (c: Check) => !!names(c) && (criterion.toLowerCase().includes(names(c)) || mine.some((s) => s.text.toLowerCase().includes(names(c)) || s.checks.some((n) => n.trim().toLowerCase() === names(c))));
+    const linked = checks.filter((c) => {
       const t = tokens(`${c.name} ${c.cmd ?? ""}`);
-      return overlaps(ct, t) || fileList.some((f) => overlaps(pathTokens(f), t));
+      return explicit(c) || overlaps(ct, t) || fileList.some((f) => overlaps(pathTokens(f), t));
     });
+    const evidence = linked.filter(explicit);
+    const inferred = linked.filter((c) => !explicit(c));
     let status: RowStatus = "not proven";
     let note: string | null = null;
     if (!input.receipt) note = "no receipt for this run";
     else if (evidence.some((c) => c.result === "fail")) { status = "failed"; note = "a linked check failed"; }
-    else if (evidence.length === 0) note = "no check linked to this criterion";
+    else if (evidence.length === 0) note = inferred.length ? "link inferred" : "no check linked to this criterion";
     else if (!evidence.every((c) => c.result === "pass")) note = "a linked check did not run";
     else if (!verified) note = `receipt verdict is ${input.receipt.verdict ?? "unknown"}`;
     else status = "proven";
-    return { criterion, steps: mine.map((s) => s.text), files: fileList, evidence, status, note };
+    return { criterion, steps: mine.map((s) => s.text), files: fileList, evidence, inferred, status, note };
   });
   return { rows, unmapped_files: changed.filter((f) => !used.has(f)), criteria_source: source };
 }
