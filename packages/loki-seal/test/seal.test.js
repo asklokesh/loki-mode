@@ -1228,9 +1228,33 @@ test('forged lines r11: an honest node --test repo is VERIFIED through the direc
   assert.strictEqual(r.status, 0, rawOf(r));
   assert.match(rawOf(r), /3 passed, 0 failed/);
 });
-test('forged lines r11: jest or vitest give NOT VERIFIED with the reason while red still counts', () => {
+test('forged lines r11: jest gives a stated reason, checked here on the reason only', () => {
   const files = { ...r11Repo('node --test --test-reporter=tap'), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'jest' } }) };
   assert.match(reasonFor(files), /jest is a project-resolved runner/);
+});
+test('forged lines r11 (r12 F1): childEnv scrubs NODE_OPTIONS, NODE_PATH and npm_* only for a clean runner', () => {
+  const { childEnv } = require('../bin/loki-seal.js');
+  const base = { NODE_OPTIONS: '--require x', NODE_PATH: '/p', NODE_TEST_CONTEXT: 'child', npm_config_node_options: 'a', NPM_CONFIG_NODE_OPTIONS: 'b', Npm_Lifecycle_Event: 'test', KEEP_ME: '1' };
+  const clean = childEnv({ clean: true }, base);
+  for (const k of Object.keys(base).filter((k) => k !== 'KEEP_ME')) assert.ok(!(k in clean), k);
+  assert.strictEqual(clean.KEEP_ME, '1');
+  assert.strictEqual(clean.CI, '1');
+  assert.ok(!('node_options' in childEnv({ clean: true }, { node_options: 'x', Node_Path: 'y' })) && !('Node_Path' in childEnv({ clean: true }, { Node_Path: 'y' })));
+  const loose = childEnv({ clean: false }, base);
+  assert.ok(!('NODE_TEST_CONTEXT' in loose));
+  assert.strictEqual(loose.NODE_OPTIONS, '--require x');
+  assert.strictEqual(loose.npm_config_node_options, 'a');
+  assert.strictEqual(loose.KEEP_ME, '1');
+});
+test('forged lines r11 (r12 F1 e2e): NODE_OPTIONS requiring a fake-TAP file cannot forge the direct run', () => {
+  const d = repo(r11Repo('node --test --test-reporter=tap'));
+  const x = path.join(d, 'x.cjs');
+  fs.writeFileSync(x, "if (process.execArgv.includes('--test')) {\n" + FAKE_TAP + "process.exit(0);\n}\n");
+  const e = { NODE_OPTIONS: '--require ' + x };
+  assert.strictEqual(sealEnv(d, e, 'start').status, 0);
+  const r = sealEnv(d, e, 'stop', transcript(d, R11_REQ));
+  notForged(r, 'NODE_OPTIONS');
+  assert.match(rawOf(r), /1 passed, 2 failed/);
 });
 test('forged lines r10: the bin runs as a hook (require.main guard) and exports detect and passRecords when required', () => {
   const d = repo(nodeRepo(ADD_OK, T2));

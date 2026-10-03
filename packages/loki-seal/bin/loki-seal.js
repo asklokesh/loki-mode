@@ -144,7 +144,7 @@ function detect(root, files) {
     if (s && !/no test specified/.test(s)) {
       const parsed = parseNodeTest(root, s, pkgScripts);
       if (parsed.args) {
-        return { name: 'npm test (node --test)', cmd: [process.execPath, ...parsed.args], clean: true, coverageBlock: exitFinding(root, files) };
+        return { name: 'node --test (direct)', cmd: [process.execPath, ...parsed.args], clean: true, coverageBlock: exitFinding(root, files) };
       }
       const kind = /vitest/.test(s) ? 'vitest' : /jest/.test(s) ? 'jest' : 'script';
       return { name: `npm test (${kind})`, cmd: ['npm', 'test', '--silent'], coverageBlock: parsed.reason };
@@ -325,10 +325,17 @@ function failing(out) {
   return [...ids];
 }
 
-function runSuite(root, runner, timeout) {
-  const env = { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', PYTHONDONTWRITEBYTECODE: '1' };
+// The environment a test run gets. A clean (directly launched node --test) run loses NODE_OPTIONS, NODE_PATH and every
+// npm_* variable, matched case-insensitively, so no inherited setting can inject code into the runner (D80).
+function childEnv(runner, base = process.env) {
+  const env = { ...base, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', PYTHONDONTWRITEBYTECODE: '1' };
   delete env.NODE_TEST_CONTEXT; // set when we are launched inside another node --test run
-  if (runner.clean) for (const k of Object.keys(env)) if (k === 'NODE_OPTIONS' || k === 'NODE_PATH' || /^npm_/i.test(k)) delete env[k];
+  if (runner.clean) for (const k of Object.keys(env)) if (/^node_(?:options|path)$/i.test(k) || /^npm_/i.test(k)) delete env[k];
+  return env;
+}
+
+function runSuite(root, runner, timeout) {
+  const env = childEnv(runner);
   return new Promise((resolve) => {
     let out = '', timedOut = false, done = false, truncated = false;
     const child = spawn(runner.cmd[0], runner.cmd.slice(1), { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -499,7 +506,7 @@ function countHookError() {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { passRecords, detect };
+module.exports = { passRecords, detect, childEnv };
 if (require.main === module) main().catch((e) => {
   const m = (e && e.message) || String(e);
   if (mode === 'start') {
