@@ -554,3 +554,8 @@ The $20.00 default per-run cap stays. It is a hard stop on priced sessions only;
 - D61-12 is parked. D61 ships without an integrator: parallel units stay behind their flag and the integrator is not in the shipped feature set. Named in the handoff as not shipped.
 - Next window: redesign around per-resolution-commit containment (B at R^1, X at R, H at HEAD) and a revert guard for covered units, as the reviewer proposed.
 
+
+## D74: gitleaks job timeout 15 -> 30 min (CoS under D69, 07:25Z 2026-10-03)
+- Evidence: the gitleaks full-history scan took 8-15 min on trains 83-87 and was cancelled at the 15 min limit on trains 86, 88, 89 and 90 ("gitleaks scan (all reachable history) ##[error]The operation was canceled", run 37104195817 attempt 2). Every other Security Audit job passed.
+- Decision: raise timeout-minutes to 30. Same scan, same config, same blocking posture; nothing is narrowed or skipped, so this is not a gate weakening.
+- Follow-up slice: make the scan scale (incremental scan against a reviewed baseline commit) before history doubles again. Any change to scan scope needs a CTO pass.

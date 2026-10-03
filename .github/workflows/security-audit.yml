@@ -296,7 +296,10 @@ jobs:
     needs: [train-reuse]
     if: ${{ !cancelled() && needs.train-reuse.outputs.reuse != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # D74: the full-history scan grows with history and passed in 11-15 min on
+    # trains 83-87, then hit the old 15 min limit on trains 86/88/89/90. More
+    # time keeps the same coverage; it never narrows the scan.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
