@@ -2019,3 +2019,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - DOC-INTEL-1b merged 92c194e05 (TL APPROVE; exit-codes-documented 19/0, docs-cli-drift 0 failed).
 - A-121c r2 d0d2410d7 (standalone UNCHECKED returns 1; receipt-order 38/0, red 36/2 before) in opus HIGH re-review.
 - Drift audit: 0 releases to latest in the last hour (MISS; train/94 held on P0-CORE-BUDGET). Seats: 5 agents, below 8; no unblocked ready rows outside core-budget gating and parked real-model legs.
+
+## 2026-10-03T09:30Z CoS
+- Merged to main since 09:07Z: SEC-SCAN-1 04f62ff4e, PO-HELP-1 ef50958a5, PO-STANDALONE-COST-1 f99c8cc64, PO-AUDIT-CLI-1 db276a24e, PO-WEB-COST-1 4a429626b, PO-WEB-WORKSPACE-1 38ae6a29c, PO-WEB-DEPLOY-1 fd92d52f0, PO-DASH-HONEST-1 99674923f, PO-WS-METRICS-1 624b5d964. Each had a TL APPROVE (DEPLOY r2 closed its one finding) and its Wall tests pass on main.
+- Incident: scratchpad strip.py ignored its argument and rewrote CHANGELOG.md only, so shard-durations.tsv kept conflict markers (drift test 4/2). Fixed in 8106e6a72, script now takes argv; drift test now 6/0.
+- In review: A-04c r5 06638f484 (opus), PO-SESSION-COMMIT-1 187ed849e, P0-CORE-BUDGET r2, D62-VIS-F1 (opus). Rework: PO-COUNCIL-LABEL-TEST-1 (missing shard row). Building: D61-11 r3, PO-P7-SINKS-1, S-233, DEP-02.
+- Train/94 held on P0-CORE-BUDGET: engine10 budget.test.ts fails on main until it lands.
