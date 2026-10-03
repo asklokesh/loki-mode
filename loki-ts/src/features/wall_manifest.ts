@@ -733,11 +733,13 @@ function importsNamed(path: string, raw: string, stems: Set<string>, importStems
   // extends it after a dot, so dotted and dashed stems (user.service, my-parser) match. Compared case-insensitively.
   const ts = stemOf(path).toLowerCase(), core = normStem(ts.replace(/[._-]?(test|spec)$/, "").replace(/^test[._-]/, ""));
   if ([...stems].some((s) => core === s || core.startsWith(`${s}.`) || ts.split(/[._-]/).includes(s))) return true;
-  // PEP 263 (W1-S2 r14): a python file whose first two lines declare a non-ascii-compatible coding cannot be read as text here, so fail closed and treat it as importing the target.
+  // PEP 263 (W1-S2 r14, r15): fail closed on a python file whose bytes we cannot trust to read like Python does. The wire decodes every file as UTF-8, so a latin-1/cp1252 body (or any U+FFFD) can hide a name that Python's NFKC reads as the target. Only utf-8 and ascii cookies (CPython aliases included) pass; [^\n]*? so U+2028/U+2029 cannot hide the cookie.
   if (/\.py$/i.test(path)) {
+    if (content.includes("\uFFFD")) return true;
+    const okCoding = new Set(["utf-8", "utf8", "utf", "u8", "ascii", "us-ascii", "646", "ansi-x3.4-1968", "ansi-x3.4-1986", "cp367", "csascii", "ibm367", "iso646-us", "iso-ir-6", "us"]);
     for (const line of content.split("\n", 2)) {
-      const cookie = /^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)/.exec(line);
-      if (cookie && !["utf-8", "utf8", "ascii", "latin-1", "iso-8859-1"].includes(cookie[1]!.toLowerCase().replace(/_/g, "-"))) return true;
+      const cookie = /^[ \t\f]*#[^\n]*?coding[:=][ \t]*([-\w.]+)/.exec(line);
+      if (cookie && !okCoding.has(cookie[1]!.toLowerCase().replace(/_/g, "-"))) return true;
     }
   }
   const specs: string[] = [];

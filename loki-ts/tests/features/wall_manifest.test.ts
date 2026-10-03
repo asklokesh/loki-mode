@@ -1047,6 +1047,14 @@ describe("python import forms: comments, semicolons, compound prefixes (D77, W1-
     ["BOM with CRLF from-import", "\uFEFFfrom main import run\r\n", {}],
     ["utf-7 coding cookie", "# coding: utf-7\nimport +AG0-ain\n", {}],
     ["utf-7 cookie on second line", "#!/usr/bin/python\n# -*- coding: UTF_7 -*-\nx = 1\n", {}],
+    ["latin-1 cookie with undecodable byte in import", "# coding: latin-1\nimport m\uFFFDin\n", {}],
+    ["iso-8859-1 cookie with undecodable byte", "# -*- coding: iso-8859-1 -*-\nimport m\uFFFDin\n", {}],
+    ["latin_1 cookie with undecodable byte in from-import", "# coding=latin_1\nfrom m\uFFFDin import *\n", {}],
+    ["latin-1 cookie with undecodable byte in import list", "# coding: latin-1\nimport m\uFFFDin, os\n", {}],
+    ["cookie hidden by U+2028", "#\u2028coding: cp1252\nimport m\uFFFDin\n", {}],
+    ["utf-7 cookie hidden by U+2028", "#\u2028coding: utf-7\nimport +AG0-ain\n", {}],
+    ["utf-7 cookie hidden by U+2029", "# x\u2029 coding: utf-7\nimport +AG0-ain\n", {}],
+    ["undecodable byte without any cookie", "import m\uFFFDin\n", {}],
   ];
   test("import index as non-ascii alias: test_a.py is not an example", () => {
     const t = manifest({ ...base, "index.py": "def f():\n    return 1\n", "tests/test_a.py": "import index as \u00f1\n\ndef test_a():\n    assert True\n" }, "fix index.py");
@@ -1061,8 +1069,8 @@ describe("python import forms: comments, semicolons, compound prefixes (D77, W1-
     });
   }
 
-  test("control: utf-8 and latin_1 cookies without a main import stay examples", () => {
-    for (const cookie of ["# -*- coding: utf-8 -*-", "# coding=Latin_1", "\uFEFF# vim: set fileencoding=ascii :"]) {
+  test("control: utf-8 and us_ascii cookies without a main import stay examples", () => {
+    for (const cookie of ["# -*- coding: utf-8 -*-", "# coding=US_ASCII", "\uFEFF# vim: set fileencoding=ascii :"]) {
       const t = manifest({ ...base, "tests/test_a.py": `${cookie}\nimport os\n\ndef test_a():\n    assert True\n` }, "fix main.py");
       expect(t).toContain("--- example: tests/test_a.py");
     }
