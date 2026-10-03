@@ -120,7 +120,7 @@ If any check fails, do not release; fix the root cause first.
 
 Stage files by name (never `git add -A` or `git add .`), commit with the
 repo-local `asklokesh` identity, no co-author. Batch approved merges locally;
-push once per train (`git push origin main`); wait for Tests, Bun Parity and
+push once per train (`git push origin main`); wait for Tests and
 Security Audit to go green on that exact SHA before bumping VERSION and
 releasing. GitHub Actions then creates the tag, the GitHub Release, publishes
 npm, builds/pushes Docker, and updates the Homebrew tap. Do not manually

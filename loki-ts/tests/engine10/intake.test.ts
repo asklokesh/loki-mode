@@ -11,6 +11,9 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
+import { renderMainOutput } from "../../src/engine10/supervisor.ts";
+import { renderPrBody } from "../../src/engine10/pr_body.ts";
+import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
 import type { CostReader, RunContext, SessionResult, SessionRunner, TestMapProvider } from "../../src/engine10/types.ts";
 
@@ -405,7 +408,7 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     git(clone, ["config", "user.email", "t@example.com"]); git(clone, ["config", "user.name", "t"]);
     git(clone, ["checkout", "-q", "-b", "loki/e10-20261003T150744Z-59b1"]);
     cpSync(join(FIX, "already-done-repo"), clone, { recursive: true });
-    git(clone, ["add", "-A"]); git(clone, ["commit", "-q", "-m", "loki: fix the issue (unmerged draft)"]);
+    git(clone, ["add", "-A"]); git(clone, ["commit", "-q", "-m", "loki: fix the issue (unmerged draft)", "-m", "Loki-Run: e10-20261003T150744Z-59b1"]);
     return { root, clone };
   }
 
@@ -421,6 +424,34 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     expect(u.branch).toBe("loki/e10-20261003T150744Z-59b1");
     expect(u.target).toBe("origin/main");
     expect(u.message).toContain("not on origin/main");
+    // L5/L6: the note reaches the terminal summary and the PR body, not only the intake data.
+    const ev: EventEnvelope = { v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data: result.data };
+    const out = renderMainOutput([ev], { pr: null, verdict: "PARTIAL", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] });
+    expect(out).toContain("work exists on loki/");
+    const body = renderPrBody({ verdict: "PARTIAL", notProven: [], receiptPath: null, capHit: false, outputs: { intake: result.data } });
+    expect(body).toContain("work exists on loki/");
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a branch merely named loki/* carrying the user's own commit is not labelled Loki's work", async () => {
+    const { root, clone } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    git(clone, ["checkout", "-q", "-b", "loki/e10-named"]);
+    const r = await intakeOn(clone, CONFIRMED);
+    expect(r.status).toBe("completed");
+    expect(r.data.already_satisfied).toBe(false);
+    expect(r.data.unmerged_loki_work).toBeUndefined();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  test("a zero-commit receipt whose head_sha is the user's own tip is not Loki-owned", async () => {
+    const { root, clone, tip } = userFeatureClone();
+    process.env.LOKI_E10_NO_FETCH = "1";
+    mkdirSync(join(clone, ".loki", "runs", "e10-old"), { recursive: true });
+    writeFileSync(join(clone, ".loki", "runs", "e10-old", "receipt.json"), JSON.stringify({ head_sha: tip, base_sha: tip }));
+    const r = await intakeOn(clone, CONFIRMED);
+    expect(r.data.already_satisfied).toBe(false);
+    expect(r.data.unmerged_loki_work).toBeUndefined();
     rmSync(root, { recursive: true, force: true });
   });
 

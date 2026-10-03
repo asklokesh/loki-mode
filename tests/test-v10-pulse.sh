@@ -3323,7 +3323,7 @@ t55_runs() {  # $1=file $2=event $3=Tests conclusion $4=completion time
 import json, sys
 f, ev, tests, t = sys.argv[1:5]
 json.dump([{"status": "completed", "conclusion": c, "workflowName": w, "event": ev, "updatedAt": t}
-           for w, c in (("Tests", tests), ("Bun Parity", "success"), ("Coverage", "success"))], open(f, "w"))
+           for w, c in (("Tests", tests),)], open(f, "w"))
 PY
 }
 t55_run() {

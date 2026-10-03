@@ -265,8 +265,49 @@ def build_jwks(private_key=None, retired_public_keys=None) -> dict:
     return {"keys": keys}
 
 
+SEAL_V2 = "seal.v2"
+
+
+def seal_meta(verification, kid):
+    """The verification.* metadata a seal.v2 token signs.
+
+    Every key of `verification` except the token itself and attestation_kid
+    (which is replaced by the signing kid, so a forged kid can never match).
+    Any extra key a forger adds (for example gpg_signature) changes this dict
+    and so fails the comparison in check_seal_meta.
+    """
+    meta = {k: v for k, v in (verification or {}).items()
+            if k not in ("attestation", "attestation_kid")}
+    meta["attestation_kid"] = kid
+    return meta
+
+
+def check_seal_meta(token, claims, verification):
+    """Bind verification.* metadata to a verified token. Returns (status, why).
+
+    status is "v2" (metadata signed and matching), "legacy" (seal.v1 token: the
+    metadata is NOT signed, the caller must say so), or "bad" (a seal.v2 token
+    whose signed metadata differs from what the receipt now shows).
+    """
+    if not isinstance(claims, dict) or "seal" not in claims:
+        return "legacy", "metadata not signed (legacy seal.v1)"
+    if claims.get("seal") != SEAL_V2:
+        return "bad", "unknown seal version"
+    try:
+        kid = json.loads(_b64url_decode(token.split(".")[0])).get("kid", "")
+    except Exception:
+        return "bad", "malformed token"
+    if not isinstance(verification, dict):
+        return "bad", "verification block missing"
+    if verification.get("attestation_kid") != kid:
+        return "bad", "attestation_kid differs from the signing kid"
+    if claims.get("meta") != seal_meta(verification, kid):
+        return "bad", "verification metadata differs from the signed metadata"
+    return "v2", ""
+
+
 def sign_attestation(private_key, kid, *, job_id, run_id, receipt_hash,
-                     submitter="", issued_at=None, issuer=""):
+                     submitter="", issued_at=None, issuer="", verification=None):
     """Return a compact JWT binding a receipt hash to a job identity.
 
     The signed claims are what gpg could never carry: WHICH job produced this
@@ -294,6 +335,10 @@ def sign_attestation(private_key, kid, *, job_id, run_id, receipt_hash,
     # Optional claims are omitted rather than emitted empty: a present-but-blank
     # `sub` reads as "an anonymous submitter was recorded" instead of "no
     # submitter identity was available".
+    if verification is not None:
+        # seal.v2: the verification.* metadata is inside the signature.
+        payload["seal"] = SEAL_V2
+        payload["meta"] = seal_meta(verification, kid)
     if submitter:
         payload["sub"] = submitter
     if issuer:

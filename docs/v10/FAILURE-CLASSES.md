@@ -22,9 +22,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - visual_evidence.ts:155-168;
   - deep.ts;
   - the brief's impacted commands;
-  - deferred by the FC-01 stopgap (de12ad0cb): deep.ts:84 full suite at the repo root, verify.ts:228 tsconfig root-only, verify.ts:231 ESLINT_CONFIGS root-only.
+  - deferred by the FC-01 stopgap (de12ad0cb): deep.ts full suite at the repo root, verify.ts tsconfig root-only, verify.ts ESLINT_CONFIGS root-only. All three are now closed (see Status).
 - Mechanism: Project Model packageRootOf/commandFor (EL-W1-01, EL-W1-04a/b). Interim: EL-W0-03.
-- Fixture: tests/fixtures/firelater-17 plus the shape fixtures in benchmarks/tasks/shapes.
+- Status (FIXED, lane E): the Project Model is ON by default (opt-out LOKI_E10_PROJECT_MODEL=0). One shared resolver, loki-ts/src/project_model/resolve.ts (loadProjectApi, siteFor, groupByPackage) plus verify.ts commandFor(t, repoDir, api), returns cwd and argv. A file owned by a package below the repo root runs in that package dir with a package-relative path. An unknown model, the opt-out, or a root-only (single-package) model resolves to the repo root exactly as before.
+- Sites now on the resolver: verify.ts test loop and subtractBase base run; verify.ts runLintChecks (tsc, eslint config lookup, cwd and file paths per package, check name lint:tsc:<root>); wall.ts RealBaseTestRunner; deep.ts runFullSuite (each package's own test command in its cwd); features/visual_evidence.ts (UI boot command, Playwright and e2e media from the UI package dir); implement brief (e10ext/context.ts prints `cd <pkg> && cmd`).
+- Deliberately root-only: verify.ts select-tests (scripts/select-tests.sh, Loki's own repo); ruff and shellcheck (take repo-relative paths from the root); wall_manifest.ts reads the root package.json for style hints (read only, not a runner invocation).
+- Fixture: tests/fixtures/firelater-17 plus the shape fixtures in benchmarks/tasks/shapes; tests/fixtures/monorepo-fc01 (backend with vitest, frontend, no root package.json) with loki-ts/tests/engine10/monorepo_cwd.test.ts (red at the repo root before, green after; includes the single-package regression).
 
 ## FC-02 A runner load error was treated as a code failure; two fix rounds, then STALLED
 - User saw: 11 min, $2.66 and a FAILED draft PR for a bug that did not exist. Raw: done in 2 min.
@@ -90,6 +93,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: a flush on terminal events plus a dead-pid reconciler (EL-W0-04, EL-W0-09, EL-W1-07).
 - Fixture: tests/test-e10-kill-each-stage.sh plus a CP ingest test with a dead pid.
 
+## FC-06b Control Plane run page said "No events yet" for a finished run (FireLater#17, e10-20261003T191822Z-7683)
+- User saw: "Live log: No events yet." on a completed run whose events.jsonl and stored events held every stage (105 events).
+- Law: L6 (a finished run must read as finished, with its evidence). Same FC-06 class: the page trusted a live-only path.
+- Siblings:
+  - any UI reader that passes a sentinel the server validation rejects (`after=-1`) and maps every non-200 to an empty result;
+  - fetchEvents swallowed the 400 and returned [], so the empty state was indistinguishable from "no events".
+- Mechanism: one shared `fetchEvents` that sends no `after` on the first page, pages until `has_more` is false, and is the only history loader; the live stream only appends.
+- Fixture: test/ui/run-finished.test.tsx ingests a finished run (test/fixtures/runs/verified-pr/events.jsonl) into the real server app and renders the page against it.
+
 ## FC-07 The test suite leaked fixture runs into the founder's real Control Plane
 - User saw: acme/widget and e10-t1.. runs in the real CP.
 - Law: none of L1 to L7 fits. Proposed L8, "Tests never touch real user state", is a founder decision. This is a recurrence of GUARDS.md 12 (~/.gitconfig).
@@ -101,6 +113,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - the memory store.
 - Mechanism: a hermetic HOME prelude for every test (extend tests/lib/isolated-git-home.sh), plus a shipper that refuses temp and fixture repos. Cleanup: `loki control prune` (203d38544).
 - Fixture: a lint that fails any test reaching $HOME/.loki without the prelude.
+
+## FC-07b Leaked fixture runs stayed in real Control Plane databases after the leak was closed
+- User saw: e10-t1..t7, e10-dw1..dw6, e37-cline, e37-codex (all acme/widget) in the real CP run list, with no step that removes them.
+- Law: L6 (the run list must show only real runs) and the rule that users never need to run a maintenance command. Same FC-07 class: closing the leak does not clean databases already polluted.
+- Siblings:
+  - `loki control prune` exists but is manual, so every existing install keeps the rows;
+  - local_repos rows whose realpath is under the OS temp dir mark the same fixtures when origin_repo is empty.
+- Mechanism: one startup step in createApp (`cleanupLeakedFixtures`): removes runs with origin acme/widget or a source path under the OS temp dir, audits each removal (action `fixture.cleanup`), and records a once-per-DB marker row (action `fixture.cleanup.done`) so it never repeats.
+- Fixture: test/server/fixture-cleanup.test.ts (first start removes and audits, second start removes nothing, real runs untouched).
 
 ## FC-08 A tampered receipt could render as VERIFIED in the UI
 - User saw: a VERIFIED badge on a run whose log failed integrity.
@@ -195,10 +216,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - loki-ts/src/engine10/supervisor.ts:221-224: PR diff-vs-base from intake's base_sha;
   - loki-ts/src/engine10/stages/wall.ts, modernize/presealed_wall.ts: Wall base run and already_satisfied count, fed by the same ctx.baseSha.
   All of them consume ctx.baseSha, which is HEAD after intake; one guard at intake covers them.
-- Mechanism (shipped, redesigned 2026-10-03): the guard sits on the CLAIM, not the run. A run always starts from the base the user asked for and is never refused for carrying commits that are not on the PR target. loki-ts/src/util/base_guard.ts resolveBase resolves the PR TARGET (LOKI_E10_BASE else origin default branch, fetched with a 10s non-interactive fetch, else local main/master; never loki/* or HEAD). unmergedEvidence compares the ALREADY_SATISFIED evidence paths (AlreadyDoneResult.paths) with `git diff --name-only <target> HEAD`: evidence that exists only in target..HEAD voids the claim, and the run proceeds to implement. When those commits are recognisably Loki's (the branch the user started on is loki/*, or a local .loki/runs receipt head_sha is among them) intake also records data.unmerged_loki_work with the harness-owned note "work exists on <branch>, not on <target>; open or resume it" (L5; informational, never a refusal, never VERIFIED). The start line prints "PR target: <ref>, base: <branch>". No reflog is read. Placed in util/ because engine10 core is at its size cap (budget.test.ts).
+- Mechanism (shipped, redesigned 2026-10-03): the guard sits on the CLAIM, not the run. A run always starts from the base the user asked for and is never refused for carrying commits that are not on the PR target. loki-ts/src/util/base_guard.ts resolveBase resolves the PR TARGET (LOKI_E10_BASE else origin default branch, fetched with a 10s non-interactive fetch, else local main/master; never loki/* or HEAD). unmergedEvidence compares the ALREADY_SATISFIED evidence paths (AlreadyDoneResult.paths) with `git diff --name-only <target> HEAD`: evidence that exists only in target..HEAD voids the claim, and the run proceeds to implement. When those commits are really Loki's (one carries the engine's "Loki-Run:" commit trailer, or a local .loki/runs receipt sealed head_sha != base_sha with commits of its own there; a branch merely named loki/* or a zero-commit receipt does not count) intake records data.unmerged_loki_work with the harness-owned note "work exists on <branch>, not on <target>; open or resume it" (L5; informational, never a refusal, never VERIFIED). The note is visible in three places: a stderr line when intake finishes and the run goes on to implement, the terminal summary (renderMainOutput via unmergedLokiWorkNote), and a "Note:" line in the PR body (renderPrBody). The start line prints "PR target: <ref>, base: <branch>". No reflog is read. Placed in util/ because engine10 core is at its size cap (budget.test.ts).
 - Review fix (HIGH F1-F3, superseded by the redesign): the earlier refusal path and its reflog counting (including the R1 fresh-clone hole, where the oldest reflog entry is the tip itself) are removed rather than patched; with no refusal there is no wrongly-allowed run to close.
 - Still owed: a --base CLI flag, loki.yaml base_branch, the PR-target wording in the PR body (the start line now prints "PR target: <ref>, base: <branch>"); resolveBase already takes the explicit value via LOKI_E10_BASE.
-- Fixture: loki-ts/tests/engine10/intake.test.ts describe "base is not Loki's unmerged work (FC-15)" (origin + clone, local loki/e10-* branch committing the fix; without the guard intake returned already_satisfied from that unmerged commit, with it the claim is voided, the run completes and implements, and unmerged_loki_work is reported; control on main is not satisfied). Regressions A, B, B2 (no refusal, no claim), D (fresh clone of a pushed loki/* branch, 1 Loki commit: not refused, no claim, unmerged_loki_work.commits 1), a feature branch in a fresh clone (no refusal, not labelled Loki's), ALREADY_SATISFIED still reached when the work is on the target, and C (LOKI_E10_BASE=feature/search).
+- Fixture: loki-ts/tests/engine10/intake.test.ts describe "base is not Loki's unmerged work (FC-15)" (origin + clone, local loki/e10-* branch committing the fix; without the guard intake returned already_satisfied from that unmerged commit, with it the claim is voided, the run completes and implements, and unmerged_loki_work is reported; control on main is not satisfied). Regressions A, B, B2 (no refusal, no claim), D (fresh clone of a pushed loki/* branch, 1 Loki commit: not refused, no claim, unmerged_loki_work.commits 1), a feature branch in a fresh clone (no refusal, not labelled Loki's), a loki/*-named branch with only the user's commit and a zero-commit receipt (neither labelled Loki's), the note present in renderMainOutput and renderPrBody, ALREADY_SATISFIED still reached when the work is on the target, and C (LOKI_E10_BASE=feature/search).
 
 ## FC-16 ALREADY_SATISFIED with zero Loki-executed checks
 - User saw: the same run had verify "checks": [] and changed_files []. The verdict rested only on the implement agent's self-report ("10/10 named impacted tests pass ... via npx vitest run").

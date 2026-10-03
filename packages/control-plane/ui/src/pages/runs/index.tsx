@@ -1,5 +1,6 @@
 // CPE-11: the runs table. Dense list of every run with filters, sortable columns, a per-repo rollup and live refresh.
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { fmtUsd as fmtUsdShared } from "../../format";
 import { authToken, listRuns, type RunRow } from "../../api";
 import { Badge, Card, Chip, EmptyState, Input, Spinner, VerdictBadge } from "../../design/primitives";
 import { NO_FILTERS, applyFilters, distinct, repoOf, rollupByRepo, sortRows, sourceOf, statusOf, type Filters, type SortKey } from "./logic";
@@ -37,7 +38,7 @@ export const subscribeRunsStream: Subscribe = (onChange) => {
   return () => ctl.abort();
 };
 
-const fmtUsd = (n: number | null): string => (n === null ? "unpriced" : `$${n.toFixed(2)}`);
+const fmtUsd = (n: number | null): string => (n === null ? "unpriced" : fmtUsdShared(n));
 const fmtDur = (s: number | null | undefined): string => {
   if (s === null || s === undefined) return "not measured";
   if (s < 60) return `${Math.round(s)}s`;

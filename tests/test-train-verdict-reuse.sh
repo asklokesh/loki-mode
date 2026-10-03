@@ -155,10 +155,10 @@ def chk(c, m):
     global ok
     print(("  [PASS] " if c else "  [FAIL] ") + m)
     ok = ok and c
-for wf in ("test", "bun-parity", "coverage", "first-run-gate", "security-audit", "release"):
+for wf in ("test", "first-run-gate", "security-audit", "release"):
     yaml.safe_load(open(f"{d}/{wf}.yml"))
     print(f"  [PASS] {wf}.yml parses")
-for wf in ("bun-parity", "coverage", "first-run-gate", "security-audit"):
+for wf in ("first-run-gate", "security-audit"):
     y = yaml.safe_load(open(f"{d}/{wf}.yml"))
     jobs = y["jobs"]
     chk("train-reuse" in jobs, f"{wf}: has train-reuse job")
@@ -183,7 +183,7 @@ chk("steps.reuse.outputs.reuse == 'true'" in str(g["outputs"]["skip"]) and "step
     "test.yml: version-bump-gate skip output ORs both gates")
 rs = [s for s in g["steps"] if s.get("id") == "reuse"]
 chk(len(rs) == 1 and rs[0].get("continue-on-error") is True, "test.yml: reuse step is continue-on-error")
-for wf in ("coverage", "first-run-gate"):
+for wf in ("first-run-gate",):
     y = yaml.safe_load(open(f"{d}/{wf}.yml"))
     chk(y["concurrency"] == t["concurrency"], f"{wf}: concurrency matches test.yml")
 sys.exit(0 if ok else 1)

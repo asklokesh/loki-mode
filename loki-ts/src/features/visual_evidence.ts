@@ -2,6 +2,7 @@
 // or an HTTP transcript for API repos. Capture never throws and never fails a run: a skip is recorded.
 // Each screenshot's sha256 goes into receipt.evidence_screens; `loki verify` rechecks it when present.
 import { spawn } from "node:child_process";
+import { isMultiRoot, loadProjectApi } from "../project_model/resolve.ts";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -152,20 +153,27 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
   const startedAt = Date.now(), budgetMs = opts.budgetMs ?? DEFAULT_BUDGET_MS;
   try {
     if (!visualEvidenceEnabled(opts.env)) return skip("LOKI_VISUAL_EVIDENCE is 0");
-    const pkgPath = join(repoDir, "package.json");
-    if (!existsSync(pkgPath)) return skip("no package.json");
-    const script = pickScript(JSON.parse(readFileSync(pkgPath, "utf8")));
-    if (!script) return skip("no dev, preview or start script");
+    // FC-01: with a multi-root Project Model the UI boots with the model's own command in the UI package's directory.
+    const api = loadProjectApi(repoDir), boot = isMultiRoot(api) ? api.uiBoot() : null;
+    const appDir = boot ? join(repoDir, boot.boot.cwd) : repoDir;
+    const pkgPath = join(appDir, "package.json");
+    let script: string | null = null;
+    if (!boot) {
+      if (!existsSync(pkgPath)) return skip("no package.json");
+      script = pickScript(JSON.parse(readFileSync(pkgPath, "utf8")));
+      if (!script) return skip("no dev, preview or start script");
+    }
     const pages = changed.filter(isPageFile);
     const explicitOn = (opts.env ?? process.env)["LOKI_VISUAL_EVIDENCE"] === "1"; // the API transcript needs an explicit =1; the default only acts on changed pages with Playwright
     const apiPaths = pages.length === 0 && explicitOn ? openapiPaths(repoDir) : [];
     if (pages.length === 0 && apiPaths.length === 0) return skip(explicitOn ? "no changed page files and no openapi routes" : "no changed page files (set LOKI_VISUAL_EVIDENCE=1 for the API transcript)");
-    const pw = pages.length > 0 ? playwrightBin(repoDir) : null;
+    const pw = pages.length > 0 ? (playwrightBin(appDir) ?? playwrightBin(repoDir)) : null;
     if (pages.length > 0 && !pw) return skip("playwright not resolvable in the repo");
     const budget = opts.budgetMs ?? DEFAULT_BUDGET_MS, end = Date.now() + budget, left = (): number => end - Date.now();
     const aborted = (): boolean => signal?.aborted === true;
     const port = await freePort(), base = `http://127.0.0.1:${port}`;
-    child = spawn("npm", ["run", script, "--silent"], { cwd: repoDir, detached: true, env: { ...(opts.env ?? process.env), PORT: String(port), HOST: "127.0.0.1", BROWSER: "none" }, stdio: "ignore" });
+    const [bc, ba] = boot ? (["bash", ["-c", boot.boot.cmd]] as const) : (["npm", ["run", script!, "--silent"]] as const);
+    child = spawn(bc, [...ba], { cwd: appDir, detached: true, env: { ...(opts.env ?? process.env), PORT: String(port), HOST: "127.0.0.1", BROWSER: "none" }, stdio: "ignore" });
     child.on("error", () => undefined);
     if (child.pid) { try { opts.onServer?.(child.pid); } catch { /* registration is best effort */ } }
     if (!(await waitUp(base, left(), signal))) return skip(aborted() ? "aborted" : `${script} server did not answer within ${Math.round(budget / 1000)}s`);
@@ -179,12 +187,12 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
       for (const route of [...new Set(pages.map(routeFor))].slice(0, opts.maxRoutes ?? MAX_ROUTES)) {
         if (aborted() || left() <= 0) break;
         const rel = join(rel0, `${screenName(route)}.png`);
-        const ok = await shoot(pw!, ["screenshot", `${base}${route}`, join(runDir, rel)], repoDir, left(), signal);
+        const ok = await shoot(pw!, ["screenshot", `${base}${route}`, join(runDir, rel)], appDir, left(), signal);
         if (ok && !aborted() && !isSymlink(join(runDir, rel)) && existsSync(join(runDir, rel))) rels.push(rel);
       }
       if (aborted()) return skip("aborted");
       const routes = [...new Set(pages.map(routeFor))].slice(0, opts.maxRoutes ?? MAX_ROUTES);
-      const media = rels.length > 0 && left() > 0 ? await recordE2eMedia(repoDir, runDir, rel0, base, routes, left(), signal) : { rels: [] as string[], skipped: null };
+      const media = rels.length > 0 && left() > 0 ? await recordE2eMedia(appDir, runDir, rel0, base, routes, left(), signal) : { rels: [] as string[], skipped: null };
       if (aborted()) return skip("aborted");
       const screens = hashScreens(runDir, [...rels, ...media.rels]); // video and trace are hashed like screenshots so `loki verify` rechecks them
       return screens.length > 0 ? { screens, http: false, skipped: null, e2eSkipped: media.skipped } : skip(left() <= 0 ? `screenshots did not finish within ${Math.round(budget / 1000)}s` : "screenshots failed");

@@ -1183,11 +1183,9 @@ EOF
 }
 case_console_verdict() {
     need python3 git node || return
-    local d="$RUN/cv" ts="" bad="" out rc cand
-    for cand in web-app; do
-        [ -f "$REPO_ROOT/$cand/node_modules/typescript/lib/typescript.js" ] \
-            && { ts="$REPO_ROOT/$cand/node_modules/typescript/lib/typescript.js"; break; }
-    done
+    local d="$RUN/cv" ts="" bad="" out rc
+    [ -f "$REPO_ROOT/web-app/node_modules/typescript/lib/typescript.js" ] \
+        && ts="$REPO_ROOT/web-app/node_modules/typescript/lib/typescript.js"
     [ -n "$ts" ] || { _why="prerequisite missing: typescript (npm ci in web-app of this checkout)"; return; }
     PYTHONUSERBASE="$MOAT_USERBASE" python3 -c 'import fastapi, httpx' >/dev/null 2>&1 \
         || { _why="prerequisite missing: python fastapi + httpx (the server leg drives the real dashboard app)"; return; }
@@ -1368,9 +1366,8 @@ EOF
         # VALID, a broken one TAMPERED, and affirmed a good receipt): flagging
         # those would mean the probe is too strict, not that the code was wrong.
         # (It could never label a signed receipt Verified, so that one is new-only.)
-        for ctl in "OLD receipt-panel: control: a server-verified receipt"; do
-            printf '%s\n' "$out" | grep -qF "$ctl" && bad="$bad [negative control: the probe flags what the old code got right: $ctl]"
-        done
+        ctl="OLD receipt-panel: control: a server-verified receipt"
+        printf '%s\n' "$out" | grep -qF "$ctl" && bad="$bad [negative control: the probe flags what the old code got right: $ctl]"
         while IFS= read -r line; do
             bad="$bad [${line#NEW }]"
         done < <(printf '%s\n' "$out" | grep '^NEW ')

@@ -42,14 +42,20 @@ export interface UnmergedEvidence { branch: string | null; lokiOwn: boolean; com
 
 const ok = (repoDir: string, args: string[]): boolean => git(repoDir, args) !== null;
 
-/** True when a prior run receipt's head_sha is among the commits on HEAD that are not on the target. */
-function receiptOnHead(repoDir: string, target: string): boolean {
+/** True when the commits on HEAD that are not on the target are really Loki's: one carries the engine's "Loki-Run:" commit
+ *  trailer (stages/seal.ts), or a local receipt sealed head_sha != base_sha with commits of its own there. A branch merely
+ *  named loki/*, or a zero-commit receipt (head_sha is the user's own tip), does not count. */
+function lokiCommitsOnHead(repoDir: string, target: string): boolean {
+  if ((git(repoDir, ["log", `${target}..HEAD`, "--format=%(trailers:key=Loki-Run,valueonly)"]) ?? "").trim() !== "") return true;
   const runsDir = join(repoDir, ".loki", "runs");
   if (!existsSync(runsDir)) return false;
   for (const id of readdirSync(runsDir)) {
     try {
-      const sha = (JSON.parse(readFileSync(join(runsDir, id, "receipt.json"), "utf8")) as { head_sha?: unknown }).head_sha;
-      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && ok(repoDir, ["merge-base", "--is-ancestor", sha, "HEAD"]) && !ok(repoDir, ["merge-base", "--is-ancestor", sha, target])) return true;
+      const rc = JSON.parse(readFileSync(join(runsDir, id, "receipt.json"), "utf8")) as { head_sha?: unknown; base_sha?: unknown };
+      const sha = typeof rc.head_sha === "string" ? rc.head_sha : "", from = typeof rc.base_sha === "string" ? rc.base_sha : "";
+      if (!/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{40}$/.test(from) || sha === from) continue;
+      if (ok(repoDir, ["merge-base", "--is-ancestor", sha, "HEAD"]) && !ok(repoDir, ["merge-base", "--is-ancestor", sha, target])
+        && (Number(git(repoDir, ["rev-list", "--count", sha, `^${from}`, `^${target}`]) ?? "0") || 0) > 0) return true;
     } catch { /* no receipt: not a run record */ }
   }
   return false;
@@ -57,14 +63,14 @@ function receiptOnHead(repoDir: string, target: string): boolean {
 
 /** The ALREADY_SATISFIED claim must rest on the PR target. Null when none of the evidence paths differs between the target
  *  and HEAD (or no target resolves: cannot judge, keep the claim). Otherwise the evidence lives only in target..HEAD and the
- *  claim must not stand. startBranch is the branch the user started on (intake has since moved HEAD to the run branch); lokiOwn says those commits are recognisably Loki's (a loki/* branch, or a local receipt head_sha). */
+ *  claim must not stand. startBranch is the branch the user started on (intake has since moved HEAD to the run branch); lokiOwn says those commits are really Loki's (a Loki-Run trailer or a receipt with commits). */
 export function unmergedEvidence(repoDir: string, evidencePaths: string[], startBranch: string | null, target: ResolvedBase | null = resolveBase(repoDir)): UnmergedEvidence | null {
   if (!target) return null;
   const changed = new Set((git(repoDir, ["diff", "--name-only", target.ref, "HEAD"]) ?? "").split("\n").filter((l) => l !== ""));
   const paths = [...new Set(evidencePaths)].filter((p) => changed.has(p));
   if (paths.length === 0) return null;
   const branch = startBranch;
-  const lokiOwn = (branch !== null && branch.startsWith("loki/")) || receiptOnHead(repoDir, target.ref);
+  const lokiOwn = lokiCommitsOnHead(repoDir, target.ref);
   return { branch, lokiOwn, commits: Number(git(repoDir, ["rev-list", "--count", `${target.ref}..HEAD`]) ?? "0") || 0, target: target.ref, paths };
 }
 
@@ -78,4 +84,10 @@ export function baseLine(repoDir: string): string {
   const t = resolveBase(repoDir, undefined, false);
   const b = git(repoDir, ["symbolic-ref", "-q", "--short", "HEAD"]) ?? "detached HEAD";
   return `PR target: ${t ? t.ref : "unresolved"}, base: ${b}`;
+}
+
+/** The recorded note from an intake stage.completed data object (null when absent). */
+export function noteOf(intake: Record<string, unknown> | undefined): string | null {
+  const m = (intake?.["unmerged_loki_work"] as { message?: unknown } | undefined)?.message;
+  return typeof m === "string" && m !== "" ? m : null;
 }

@@ -248,8 +248,8 @@ templates/                 21 PRD templates (saas, cli, discord-bot, ...)
 agents/                    Agent registry: types.json, hub install, managed registry
 benchmarks/                SWE-bench and HumanEval harnesses
 plugins/                   Claude Code plugin packaging
-.github/workflows/         CI: tests, bun-parity, parity-drift, release, sbom,
-                           security-audit, post-release-smoke, soak-monitor, ...
+.github/workflows/         CI: tests, release, sbom,
+                           security-audit, post-release-smoke, ...
 SKILL.md                   Slim core skill (progressive disclosure entry)
 CLAUDE.md                  Project + agent operating instructions
 VERSION / package.json     Single source of version truth
@@ -267,9 +267,8 @@ Dockerfile* / docker-compose.yml   Container distribution
 
 - **Dual runtime with enforced parity.** Rather than a risky big-bang migration,
   the modern Bun/TS runner runs as the default while the Bash engine remains a
-  fallback. A parity matrix and `parity-drift` CI workflow enforce byte-identical
-  behavior across both routes, so the legacy path stays a safety net instead of
-  rotting.
+  fallback. Parity suites under `tests/` check identical
+  behavior across both routes; there is no continuous parity CI workflow.
 
 - **Filesystem state bus over in-process coupling.** Coordination through
   `.loki/` files (rather than shared memory or a message broker) buys
@@ -329,9 +328,8 @@ Dockerfile* / docker-compose.yml   Container distribution
   TS providers module.
 - **Docker / Docker Compose** for distribution and for the multi-service,
   12-factor stacks Loki generates (web + database + cache with healthchecks).
-- **GitHub Actions** for CI/CD: test suites, bun-parity and parity-drift gates,
-  SBOM and security audits, multi-channel release (npm, Docker, Homebrew), and
-  post-release smoke and soak monitoring.
+- **GitHub Actions** for CI/CD: test suites, SBOM and security audits,
+  multi-channel release (npm, Docker, Homebrew), and post-release smoke tests.
 
 ---
 

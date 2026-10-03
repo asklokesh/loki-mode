@@ -3,3 +3,19 @@
 @tailwind utilities;
 
 body { margin: 0; background: var(--cp-bg); color: var(--cp-text); font-family: var(--cp-font-sans); }
+
+/* Terminal-style panels (autonomi.dev "Control Plane" demo): always dark, in both themes. */
+.cp-term { background: var(--cp-term-bg); color: var(--cp-term-text); border: 1px solid #1A1A1A; border-radius: 20px; overflow: hidden; box-shadow: 0 40px 80px -40px rgba(10,10,10,0.5); }
+.cp-term-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 20px; background: var(--cp-term-bar); border-bottom: 1px solid var(--cp-term-line); font-family: var(--cp-font-mono); font-size: 12px; color: var(--cp-term-muted); }
+.cp-term-body { display: grid; grid-template-columns: 1fr; min-height: 320px; }
+@media (min-width: 768px) { .cp-term-body { grid-template-columns: 220px minmax(0, 1fr); } }
+.cp-term-side { padding: 16px; background: var(--cp-term-side); border-bottom: 1px solid var(--cp-term-line); font-family: var(--cp-font-mono); font-size: 12px; }
+@media (min-width: 768px) { .cp-term-side { border-bottom: 0; border-right: 1px solid var(--cp-term-line); } }
+.cp-term-main { padding: 20px 24px; min-width: 0; }
+.cp-term-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 24px; border-top: 1px solid var(--cp-term-line); font-family: var(--cp-font-mono); font-size: 11px; color: var(--cp-term-muted); }
+.cp-tl-row { display: grid; grid-template-columns: 64px 96px minmax(0, 1fr); gap: 4px 12px; padding: 8px 0; border-bottom: 1px solid var(--cp-term-line); font-size: 12px; line-height: 1.55; }
+.cp-tl-meta { grid-column: 3; display: flex; flex-wrap: wrap; gap: 4px 14px; font-family: var(--cp-font-mono); font-size: 11px; color: var(--cp-term-muted); }
+.cp-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.cp-eyebrow { font-family: var(--cp-font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--cp-text-muted); }
+.cp-display { font-family: var(--cp-font-sans); font-weight: 650; letter-spacing: -0.025em; line-height: 1.12; }
+.cp-pill-btn { border-radius: 9999px; }

@@ -76,9 +76,9 @@ def _required_names():
 
 class TheRequiredListCoversTheRealGates(unittest.TestCase):
 
-    def test_tests_bun_parity_and_security_audit_are_all_required(self):
+    def test_tests_and_security_audit_are_all_required(self):
         names = _required_names()
-        for expected in ("Tests", "Bun Parity", "Security Audit"):
+        for expected in ("Tests", "Security Audit"):
             self.assertIn(
                 expected, names,
                 "%r is not in the release gate's REQUIRED list; a release can "
@@ -579,14 +579,6 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         })
         self.assertEqual(rc, 99, out)
 
-    def test_bun_parity_failure_at_release_sha_fails(self):
-        rc, out = self._run({
-            self.parent: [],
-            self.sha: [("Tests", "completed", "success"), ("Bun Parity", "completed", "failure"),
-                       ("Security Audit", "completed", "success")],
-        })
-        self.assertEqual(rc, 1, out)
-
     def test_all_success_at_release_sha_passes(self):
         """A plain, no-failure-anywhere green run must pass. This is the case
         a success/failure branch swap breaks: every success would flip to
@@ -774,13 +766,6 @@ class PollLoopPriorityIsExercisedForReal(unittest.TestCase):
         rc, out = self._run({self.parent: [], self.sha: [
             ("Tests", "completed", "success", "workflow_dispatch"),
             ("Bun Parity", "completed", "success"),
-            ("Security Audit", "completed", "success")]})
-        self.assertEqual(rc, 99, out)
-
-    def test_e87_dispatch_bun_parity_success_is_not_accepted(self):
-        rc, out = self._run({self.parent: [], self.sha: [
-            ("Tests", "completed", "success"),
-            ("Bun Parity", "completed", "success", "workflow_dispatch"),
             ("Security Audit", "completed", "success")]})
         self.assertEqual(rc, 99, out)
 

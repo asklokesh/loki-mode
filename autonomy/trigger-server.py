@@ -1069,6 +1069,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         token = sign_attestation(
             self.signing_key, self.signing_kid,
             job_id=job_id, run_id=run_id, receipt_hash=receipt_hash,
+            verification=verification,
         )
         if not token:
             return proof

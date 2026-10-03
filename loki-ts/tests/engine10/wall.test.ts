@@ -359,7 +359,7 @@ describe("engine10 wall base run, D42 (3)", () => {
   }
 
   /** repoDir/.venv/bin/python execs the host's real python3, found via .venv (E-98a), never PATH. */
-  // E-132/r5: CI installs pytest (test.yml, coverage.yml, release.yml); without it fail loudly, never misread.
+  // E-132/r5: CI installs pytest (test.yml, release.yml); without it fail loudly, never misread.
   const HAS_PYTEST = spawnSync(PYTHON3, ["-m", "pytest", "--version"]).status === 0;
   function venvShim(repoDir: string): void {
     if (!HAS_PYTEST) throw new Error(`pytest required for this test: ${PYTHON3} -m pytest is unavailable`);

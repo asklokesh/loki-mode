@@ -1,6 +1,7 @@
 import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Landing, LiveRun } from "./Live";
+import { fmtUsd } from "./format";
 import { registerPage } from "./pages/registry";
 import { wirePages } from "./pages/wired";
 import { CommandPalette } from "./palette";
@@ -12,7 +13,7 @@ import { deleteRun, getRun, listRuns, postAnswer, type RunDetailResponse, type R
 const MISSING = "not recorded";
 
 export function fmtCost(r: Pick<RunRow, "cost_usd" | "partial_usd" | "measured_sessions" | "total_sessions">): string {
-  if (r.cost_usd !== null && r.cost_usd !== undefined) return `$${r.cost_usd.toFixed(4)}`;
+  if (r.cost_usd !== null && r.cost_usd !== undefined) return fmtUsd(r.cost_usd);
   if (r.total_sessions > 0 && r.measured_sessions < r.total_sessions) {
     return `unpriced (${r.measured_sessions} of ${r.total_sessions} sessions priced)`;
   }

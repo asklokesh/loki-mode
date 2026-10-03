@@ -45,7 +45,7 @@ printf '#!/bin/sh\necho "$@" >> "%s/open.log"\n' "$T" > "$T/bin/open"
 chmod +x "$T/bin/open"
 run() { env -u CI LOKI_CONTROL_DEFAULT=0 HOME="$T/home" PATH="$T/bin:$PATH" "$@" bash "$LOKI_BIN" 2>/dev/null; }
 
-URL="http://127.0.0.1:${PORT}/start"
+URL="http://127.0.0.1:${PORT}"
 [ -n "$PORT" ] || bad "stub server did not bind a port"
 echo "TEST: headless prints the URL and does not open a browser"
 out=$(run LOKI_HEADLESS=1)

@@ -199,7 +199,7 @@ else
   check_gate "eligible + parent Tests cancelled" "$ELIG" "$(run_json push Tests completed cancelled)" 0 false
   check_gate "eligible + no parent runs" "$ELIG" '{"workflow_runs":[]}' 0 false
   check_gate "eligible + pull_request-only success" "$ELIG" "$(run_json pull_request Tests completed success)" 0 false
-  check_gate "eligible + another workflow's success" "$ELIG" "$(run_json push 'Bun Parity' completed success)" 0 false
+  check_gate "eligible + another workflow's success" "$ELIG" "$(run_json push 'Security Audit' completed success)" 0 false
   check_gate "eligible + gh error" "$ELIG" "$(run_json push Tests completed success)" 1 false
   check_gate "not eligible + parent Tests success" "$NOTELIG" "$(run_json push Tests completed success)" 0 false
   # S-153: release.sh --bump-only now rewrites Footer.tsx; a version-only edit reuses, anything more runs in full.
@@ -243,8 +243,8 @@ for name in names[1:]:
         fails.append(f"{name}: if does not require skip != 'true' ({j.get('if')!r})")
     if "!cancelled()" not in cond:
         fails.append(f"{name}: if lacks !cancelled(), so a failed gate would skip the suite")
-if len(names) < 9:
-    fails.append(f"only {len(names)} jobs parsed; expected the gate plus the 8+ heavy jobs")
+if len(names) < 7:
+    fails.append(f"only {len(names)} jobs parsed; expected the gate plus the 6+ heavy jobs (test.yml was pruned in fc5181184)")
 for f in fails:
     print("    " + f)
 sys.exit(1 if fails else 0)

@@ -254,3 +254,128 @@ test("a seal field rewritten by redaction (a base64url signature matching a key 
   t.events[3].data.tampered = true;
   expect((await viaApi(t.events, true)).detail.effective_verdict).toBe("TAMPERED");
 });
+
+// --- automatic local key (CPE-POLISH item 1): the CP loads the local signer's public half with no LOKI_CP_RECEIPT_PUBKEYS setup ---
+async function withLocalKey<T>(keyPem: string | null, pubEnv: string | null, fn: () => Promise<T>): Promise<T> {
+  const saved = { f: process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"], p: process.env["LOKI_CP_RECEIPT_PUBKEYS"] };
+  const keyFile = join(mkdtempSync(join(tmp, "k-")), "receipt-ed25519.pem"); // a generated test key in a temp dir, never the real ~/.loki/keys
+  if (keyPem !== null) writeFileSync(keyFile, keyPem, { mode: 0o600 });
+  process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+  if (pubEnv !== null) process.env["LOKI_CP_RECEIPT_PUBKEYS"] = pubEnv; else delete process.env["LOKI_CP_RECEIPT_PUBKEYS"];
+  try { return await fn(); } finally {
+    if (saved.f === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = saved.f;
+    if (saved.p === undefined) delete process.env["LOKI_CP_RECEIPT_PUBKEYS"]; else process.env["LOKI_CP_RECEIPT_PUBKEYS"] = saved.p;
+  }
+}
+const ingestVerdict = async (events: any[]) => {
+  const { app } = createApp({ dbPath: ":memory:" });
+  await app.request("/v1/ingest", { method: "POST", body: JSON.stringify({ source: SRC, run_id: events[0].run, events }) });
+  return (await (await app.request(`/v1/runs/${SRC}/${events[0].run}`)).json()) as any;
+};
+const privPem = (k: KeyObject) => k.export({ type: "pkcs8", format: "pem" }) as string;
+
+test("local key: a run signed by the local key is VERIFIED with the signature checked, no env setup", async () => {
+  await withLocalKey(privPem(privateKey), null, async () => {
+    const d = await ingestVerdict(honest("e10-lk1").events);
+    expect([d.tampered, d.effective_verdict]).toEqual([false, "VERIFIED"]);
+  });
+});
+
+test("local key: a forgery under the local kid is TAMPERED; an unknown kid with only the implicit key is NOT CHECKED, as loki verify", async () => {
+  const other = seeded("cp-other-lk");
+  await withLocalKey(privPem(privateKey), null, async () => {
+    const forgedSameKid = await ingestVerdict(honest("e10-lk2", "VERIFIED", { signer: other.privateKey }).events);
+    expect([forgedSameKid.tampered, forgedSameKid.effective_verdict]).toEqual([true, "TAMPERED"]);
+    const wrongKid = await ingestVerdict(honest("e10-lk3", "VERIFIED", { signer: other.privateKey, kid: engineKidOf(other.publicKey) }).events);
+    expect([wrongKid.tampered, wrongKid.effective_verdict]).toEqual([false, UNCHECKED_SIG]);
+  });
+});
+
+test("explicit LOKI_CP_RECEIPT_PUBKEYS keeps the strict rule: an unknown kid is TAMPERED", async () => {
+  const other = seeded("cp-other-strict");
+  const teamPem = join(tmp, "strict-team.pem");
+  writeFileSync(teamPem, seeded("cp-strict-team").publicKey.export({ type: "spki", format: "pem" }));
+  await withLocalKey(privPem(privateKey), teamPem, async () => {
+    const d = await ingestVerdict(honest("e10-lk3s", "VERIFIED", { signer: other.privateKey, kid: engineKidOf(other.publicKey) }).events);
+    expect([d.tampered, d.effective_verdict]).toEqual([true, "TAMPERED"]);
+  });
+});
+
+test("LOKI_RECEIPT_RETIRED_PUBKEYS keys verify (a rotated key), like loki verify", async () => {
+  const old = seeded("cp-retired");
+  const retiredPem = join(tmp, "retired.pem");
+  writeFileSync(retiredPem, old.publicKey.export({ type: "spki", format: "pem" }));
+  process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"] = retiredPem;
+  try {
+    await withLocalKey(privPem(privateKey), null, async () => {
+      const d = await ingestVerdict(honest("e10-lk7", "VERIFIED", { signer: old.privateKey, kid: engineKidOf(old.publicKey) }).events);
+      expect([d.tampered, d.effective_verdict]).toEqual([false, "VERIFIED"]);
+    });
+  } finally { delete process.env["LOKI_RECEIPT_RETIRED_PUBKEYS"]; }
+});
+
+test("local key derivation order matches loadSigningKey: inline key beats the key file; a bad named file gives a reason, not a silent fallback", async () => {
+  const { localKeyInfo, pubkeysFromEnv } = await import("../../src/server/integrity.ts");
+  const other = seeded("cp-inline");
+  const dir = mkdtempSync(join(tmp, "ord-"));
+  const file = join(dir, "k.pem");
+  writeFileSync(file, privPem(privateKey), { mode: 0o600 });
+  const both = localKeyInfo({ LOKI_RECEIPT_SIGNING_KEY: privPem(other.privateKey), LOKI_RECEIPT_SIGNING_KEY_FILE: file, HOME: dir });
+  expect(engineKidOf(both.key!)).toBe(engineKidOf(other.publicKey));
+  expect(localKeyInfo({ LOKI_RECEIPT_SIGNING_KEY_FILE: file, HOME: dir }).key).toBeDefined();
+  expect(localKeyInfo({ HOME: dir })).toEqual({}); // default path absent: no key, no reason
+  const bad = join(dir, "bad.pem");
+  writeFileSync(bad, "not a pem");
+  const r = pubkeysFromEnv({ LOKI_RECEIPT_SIGNING_KEY_FILE: bad, HOME: dir });
+  expect([r.configured, typeof r.reason]).toEqual([false, "string"]);
+  expect(pubkeysFromEnv({ LOKI_RECEIPT_SIGNING_KEY_FILE: join(dir, "missing.pem"), HOME: dir }).reason).toContain("ENOENT");
+});
+
+test("LOKI_CP_RECEIPT_PUBKEYS ignores non-Ed25519 keys", async () => {
+  const { pubkeysFromEnv } = await import("../../src/server/integrity.ts");
+  const { generateKeyPairSync } = await import("node:crypto");
+  const rsa = join(tmp, "rsa.pem");
+  writeFileSync(rsa, generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey.export({ type: "spki", format: "pem" }));
+  const r = pubkeysFromEnv({ LOKI_CP_RECEIPT_PUBKEYS: rsa, HOME: tmp });
+  expect([r.configured, r.strict]).toEqual([false, false]);
+});
+
+test("boot recompute: a historical not-checked row stays not-checked (never TAMPERED) when a local key appears with a different kid", async () => {
+  const dbPath = join(mkdtempSync(join(tmp, "boot-")), "cp.db");
+  const noKey = (fn: () => Promise<void>) => withLocalKey(null, null, fn);
+  const foreign = honest("e10-boot1", "VERIFIED", { signer: seeded("cp-ci").privateKey, kid: engineKidOf(seeded("cp-ci").publicKey) }).events;
+  await noKey(async () => {
+    const a = createApp({ dbPath });
+    await a.app.request("/v1/ingest", { method: "POST", body: JSON.stringify({ source: SRC, run_id: foreign[0].run, events: foreign }) });
+    expect((await (await a.app.request(`/v1/runs/${SRC}/${foreign[0].run}`)).json() as any).effective_verdict).toBe(UNCHECKED_SIG);
+  });
+  await withLocalKey(privPem(privateKey), null, async () => {
+    const { openDb } = await import("../../src/db/migrate.ts");
+    const { recomputeLegacy } = await import("../../src/server/runs.ts");
+    const { db, sqlite } = openDb(dbPath);
+    expect(recomputeLegacy(db)).toBe(1); // key set changed: re-judged
+    sqlite.close();
+    const b = createApp({ dbPath });
+    const d = (await (await b.app.request(`/v1/runs/${SRC}/${foreign[0].run}`)).json()) as any;
+    expect([d.tampered, d.effective_verdict]).toEqual([false, UNCHECKED_SIG]);
+  });
+});
+
+test("local key: no key file and no env stays NOT CHECKED (VERIFIED (signature not checked))", async () => {
+  await withLocalKey(null, null, async () => {
+    const d = await ingestVerdict(honest("e10-lk4").events);
+    expect([d.tampered, d.effective_verdict]).toEqual([false, UNCHECKED_SIG]);
+  });
+});
+
+test("local key: LOKI_CP_RECEIPT_PUBKEYS is merged with the local key, so a team key and the local key both verify", async () => {
+  const team = seeded("cp-team");
+  const teamPem = join(tmp, "team.pem");
+  writeFileSync(teamPem, team.publicKey.export({ type: "spki", format: "pem" }));
+  await withLocalKey(privPem(privateKey), teamPem, async () => {
+    const local = await ingestVerdict(honest("e10-lk5").events);
+    const remote = await ingestVerdict(honest("e10-lk6", "VERIFIED", { signer: team.privateKey, kid: engineKidOf(team.publicKey) }).events);
+    expect(local.effective_verdict).toBe("VERIFIED");
+    expect(remote.effective_verdict).toBe("VERIFIED");
+  });
+});

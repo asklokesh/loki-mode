@@ -116,3 +116,6 @@ ff2f4719c34fa391ad1dd664c217d7337d6e5fac:loki-ts/dist/loki.js:generic-api-key:12
 c09dfd1eb6f2f2cc1f81b2be0d7ddee717141d66:tests/workspace/80-comment.sh:github-pat:7
 # Reviewed fake fixture token (Sentry intake test asserts it is never printed); not a credential.
 00d12afea485ed91ff77ef0a2d8a91b408377bf3:tests/test-issue-providers.sh:generic-api-key:294
+# CPE-POLISH integrity.ts: generic-api-key matched env["LOKI_RECEIPT_SIGNING_KEY"] / _FILE env-var name lookups (public key derivation); no key material in source.
+449db8f56fce87ef05510b5ae8634ce6438a696d:packages/control-plane/src/server/integrity.ts:generic-api-key:46
+b4775bede0a04a021c89e366500ecae8ce1ae609:packages/control-plane/src/server/integrity.ts:generic-api-key:55

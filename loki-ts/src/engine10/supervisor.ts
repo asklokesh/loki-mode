@@ -6,8 +6,10 @@ import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { terminalWidth } from "../util/term_width.ts";
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
+export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts"; import { writeRunPid } from "../util/run_pid.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
@@ -22,7 +24,7 @@ import { modelDowngrades } from "../runner/model_downgrades.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
-import { baseLine } from "../util/base_guard.ts";
+import { baseLine, noteOf } from "../util/base_guard.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 export const START_LINE = "Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)";
@@ -70,28 +72,6 @@ export interface SupervisorResult {
   notProven: string[];
   prUrl: string | null;
   workerExit: number | null;
-}
-export function eventsRelPath(runId: string): string {
-  return `.loki/runs/${runId}/events.jsonl`;
-}
-export function writeEngineMarker(repoDir: string, runId: string): void { // EV-1 marker, atomic (temp file in the same dir, then rename)
-  const dir = join(repoDir, ".loki");
-  mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, `.engine.json.${process.pid}.tmp`);
-  writeFileSync(tmp, JSON.stringify({ engine: "v10", run_id: runId, events: eventsRelPath(runId) }) + "\n");
-  renameSync(tmp, join(dir, "engine.json"));
-}
-export function readOriginUrl(repoDir: string): string | null {
-  try {
-    const url = execFileSync("git", ["-C", repoDir, "config", "--get", "remote.origin.url"], { encoding: "utf8", env: process.env }).trim();
-    return url || null;
-  } catch {
-    return null;
-  }
-}
-export function githubRepoFromUrl(url: string | null): string | null {
-  const m = url?.match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/);
-  return m?.[1] ?? null;
 }
 export class SupervisorLog { // single writer with a running sha256 of the bytes it appended
   private readonly log: EventLog;
@@ -264,11 +244,15 @@ export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
   const d = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data;
   return d?.source === "text" && d?.already_satisfied === true && typeof d.comment === "string" ? d.comment : null;
 }
+/** FC-15 (L5/L6): intake's harness-owned "work exists on <branch>, not on <target>" note, null when absent. */
+export function unmergedLokiWorkNote(events: EventEnvelope[]): string | null {
+  return noteOf(events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data);
+}
 /** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
 export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
-  const c = alreadyDoneTextComment(events);
+  const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);
   const pm = (events.findLast((e) => e.type === "run.completed")?.data.pre_model ?? null) as PreModelTiming | null;
-  return `${c ? `\n${c}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n`;
+  return `${c ? `\n${c}\n` : ""}${un ? `\n${un}\n` : ""}${verbose ? formatPreModelLine(pm) : ""}${formatSummary(summary)}\n`;
 }
 const ISSUE_RE = /^(?:[\w.-]+\/[\w.-]+#\d+|https?:\/\/\S+\/(?:-\/)?issues\/\d+)$/;
 // E-59: every token field the provider reported, cache included (E-50 found "1k shown for 372k used" when this summed only input+output). The sole place tokens are computed for the Cost line.

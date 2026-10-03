@@ -5,7 +5,7 @@ import { fold, partialCost, readEvents, tail } from "../events.ts";
 import { eventsPath, listRunIds } from "../status.ts";
 import type { EventEnvelope, Verdict } from "../types.ts";
 import { getVersion } from "../../version.ts";
-import { groupRoute, renderPage } from "./page.ts";
+import { groupRoute, renderPage } from "../../util/dashboard_page.ts";
 export const DEFAULT_PORT = 57375;
 const HOSTNAME = "127.0.0.1"; // section 12: localhost only; never configurable
 const DASHBOARD_IDENT = "loki-v10"; // /version's "dashboard" field, identifies a v10 occupant

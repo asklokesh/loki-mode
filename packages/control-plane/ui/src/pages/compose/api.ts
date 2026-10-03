@@ -24,3 +24,8 @@ export async function postRun(body: RunRequest): Promise<RunStarted> {
 }
 
 export const fetchRepos = async (): Promise<string[]> => (await listRepos()).repos;
+/** Registered repos plus the folder name of the directory the control service runs from (null when the server does not say). */
+export const fetchRepoInfo = async (): Promise<{ repos: string[]; defaultRepo: string | null }> => { const r = await listRepos(); return { repos: r.repos, defaultRepo: r.default_repo ?? null }; };
+
+/** What the repo chip shows when no repo is picked: the real folder name, or the generic words when the server did not say. */
+export const defaultRepoLabel = (defaultRepo: string | null): string => defaultRepo ?? "server directory";

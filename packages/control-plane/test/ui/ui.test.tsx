@@ -102,14 +102,15 @@ test("empty DB: import button and CLI line, no env-var text", async () => {
   expect(document.body.textContent ?? "").not.toContain("LOKI_CONTROL_URL");
 });
 
-test("brand is Loki Mode with New run and one Settings entry", async () => {
+test("brand is Loki Mode with one Settings entry and no lone New run button", async () => {
   serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
   const { App } = await import("../../ui/src/App");
   render(<App />);
   const nav = screen.getByTestId("nav");
   expect(nav.textContent).toContain("Loki Mode");
   expect(nav.textContent).not.toContain("Loki Control");
-  for (const l of ["New run", "Settings"]) expect(within(nav).getByText(l)).toBeTruthy();
+  expect(within(nav).getByText("Settings")).toBeTruthy();
+  expect(within(nav).queryByText("New run")).toBeNull();
   expect(readFileSync(join(import.meta.dir, "../../ui/index.html"), "utf8")).toContain("<title>Loki Mode</title>");
 });
 

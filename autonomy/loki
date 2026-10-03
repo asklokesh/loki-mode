@@ -918,7 +918,7 @@ import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
-    from receipt_jwt import verify_attestation, _CRYPTO_AVAILABLE
+    from receipt_jwt import verify_attestation, check_seal_meta, _CRYPTO_AVAILABLE
 except ImportError:
     sys.exit(1)          # -> "" : cannot check, never a verdict
 proof = json.load(open(sys.argv[1]))
@@ -966,10 +966,14 @@ if not ok:
 # receipt. Recompute the digest the same way the receipt records it (with
 # `verification` stripped) and require the signed claim to match, or a valid
 # token lifted from a different run would vouch for these bytes.
-proof.pop("verification", None)
+_vmeta = proof.pop("verification", None)
 canon = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
-print("ok" if claims.get("receipt_sha256") == hashlib.sha256(canon).hexdigest()
-      else "bad")
+if claims.get("receipt_sha256") != hashlib.sha256(canon).hexdigest():
+    print("bad"); sys.exit(0)
+# seal.v2: the verification.* metadata (scope, algo, attestation_kid, ...) is
+# inside the signature; a token that signs different metadata is refused. A
+# legacy seal.v1 token still verifies (its metadata is simply unsigned).
+print("ok" if check_seal_meta(tok, claims, _vmeta)[0] != "bad" else "bad")
 PY
 }
 
@@ -1052,7 +1056,7 @@ import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
 import json, sys, os, hashlib, urllib.request
 sys.path.insert(0, sys.argv[3])
 try:
-    from receipt_jwt import verify_attestation, _CRYPTO_AVAILABLE
+    from receipt_jwt import verify_attestation, check_seal_meta, _CRYPTO_AVAILABLE
 except ImportError:
     sys.exit(1)                      # "" : cannot check
 try:
@@ -1117,10 +1121,32 @@ if not ok:
 # A verifying signature is not enough: it must attest to THESE bytes. Recompute
 # the digest the way the receipt records it, so a token lifted from another run
 # cannot vouch for this one.
-proof.pop("verification", None)
+_vmeta = proof.pop("verification", None)
 canon = json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
-print("ok" if claims.get("receipt_sha256") == hashlib.sha256(canon).hexdigest()
-      else "bad")
+if claims.get("receipt_sha256") != hashlib.sha256(canon).hexdigest():
+    print("bad"); sys.exit(0)
+# seal.v2: the verification.* metadata (scope, algo, attestation_kid, ...) is
+# inside the signature; a token that signs different metadata is refused. A
+# legacy seal.v1 token still verifies (its metadata is simply unsigned).
+print("ok" if check_seal_meta(tok, claims, _vmeta)[0] != "bad" else "bad")
+PY
+}
+
+# Prints "legacy" when the receipt's attestation is a seal.v1 token (the
+# verification.* metadata is NOT inside the signature), else nothing. Callers
+# append "metadata not signed (legacy seal.v1)" to a VERIFIED line.
+loki_proof_seal_legacy() {
+    python3 -E - "$1" "${_LOKI_SCRIPT_DIR}" 2>/dev/null <<'PY' || true
+import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]
+import json, sys
+sys.path.insert(0, sys.argv[2])
+from receipt_jwt import _b64url_decode
+try:
+    tok = json.load(open(sys.argv[1]))["verification"]["attestation"]
+    claims = json.loads(_b64url_decode(tok.split(".")[1]))
+    print("legacy" if "seal" not in claims else "")
+except Exception:
+    print("")
 PY
 }
 
@@ -37660,7 +37686,11 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                 _pv_att="$(loki_proof_attestation_check "$pj" "$_pv_jwks")"
                 case "$_pv_att" in
                     ok)
-                        echo "attestation: VERIFIED against ${_pv_jwks}" >&2
+                        if [ "$(loki_proof_seal_legacy "$pj")" = "legacy" ]; then
+                            echo "attestation: VERIFIED against ${_pv_jwks} (metadata not signed (legacy seal.v1): scope, algo and attestation_kid are not covered by the signature)" >&2
+                        else
+                            echo "attestation: VERIFIED against ${_pv_jwks}" >&2
+                        fi
                         echo "  Proven: these bytes were signed by the holder of a key in that set." >&2
                         echo "  NOT proven: that the code is correct. A receipt records which checks ran." >&2
                         _pv_attestation_field="VERIFIED"
