@@ -350,6 +350,60 @@ test("every corpus string round-trips through PyYAML safe_load identically and l
   }
 });
 
+const BAD_CPS = [0x7f, ...Array.from({ length: 0x20 }, (_, i) => 0x80 + i).filter((c) => c !== 0x85), 0xfffe, 0xffff];
+
+test("code points PyYAML refuses raw (U+007F, U+0080-9F minus 85, U+FFFE/F) are escaped and load in PyYAML", async () => {
+  if (!pyOk) return;
+  writeFileSync(join(dir, "loki.yaml"), SAMPLE);
+  const { app } = mk();
+  const vals = BAD_CPS.map((c) => "a" + String.fromCodePoint(c) + "b");
+  expect(vals.length).toBe(34);
+  const file = join(dir, "loki.yaml");
+  const py = (f: string) => spawnSync("python3", ["-c", "import yaml,json,sys; print(json.dumps(yaml.safe_load(open(sys.argv[1], encoding='utf-8').read()), ensure_ascii=True))", f], { encoding: "utf8" });
+  const etag = (await (await get(app)).json() as { etag: string }).etag;
+  expect((await put(app, { config: { knowledge_sources: vals } }, { etag })).status).toBe(200);
+  const r = py(file);
+  expect(r.status).toBe(0);
+  expect((JSON.parse(r.stdout) as { knowledge_sources: string[] }).knowledge_sources).toEqual(vals);
+  expect(spawnSync("python3", [LOKI_YAML, "validate", file], { encoding: "utf8" }).status).toBe(0);
+  for (const v of ["\u007f", "\u009f", "\ufffe"]) {
+    const e = (await (await get(app)).json() as { etag: string }).etag;
+    expect((await put(app, { config: { models: { default: v } } }, { etag: e })).status).toBe(200);
+    const one = py(file);
+    expect(one.status).toBe(0);
+    expect((JSON.parse(one.stdout) as { models: { default: string } }).models.default).toBe(v);
+  }
+});
+
+test("an existing file with escaped bad code points stays loadable in PyYAML after an unrelated edit", async () => {
+  if (!pyOk) return;
+  const yml = 'models:\n  default: "\\x7f"\nknowledge_sources:\n  - "\\x9f"\n  - "\\uFFFE"\nconcurrency: 3\n';
+  writeFileSync(join(dir, "loki.yaml"), yml);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  expect((await put(app, { config: { models: { default: "\u007f" }, knowledge_sources: ["\u009f", "\ufffe"], concurrency: 4 } }, { etag })).status).toBe(200);
+  const file = join(dir, "loki.yaml");
+  const r = spawnSync("python3", ["-c", "import yaml,json,sys; print(json.dumps(yaml.safe_load(open(sys.argv[1], encoding='utf-8').read()), ensure_ascii=True))", file], { encoding: "utf8" });
+  expect(r.status).toBe(0);
+  const j = JSON.parse(r.stdout) as { models: { default: string }; knowledge_sources: string[]; concurrency: number };
+  expect(j.models.default).toBe("\u007f");
+  expect(j.knowledge_sources).toEqual(["\u009f", "\ufffe"]);
+  expect(j.concurrency).toBe(4);
+});
+
+test("renderVerified refuses output that still holds a character PyYAML rejects", () => {
+  // a renderer that leaks a raw control character the escapes do not cover: only the final guard can refuse it
+  const leaky = parseDocument("a: 1\n");
+  leaky.toString = () => "a: 1 # p\u0001q\n";
+  expect(renderVerified(leaky, { a: 1 })).toBeNull();
+  const clean = parseDocument("a: 1\n");
+  clean.toString = () => "a: 1 # pq\n";
+  expect(renderVerified(clean, { a: 1 })).toBe("a: 1 # pq\n");
+  const d2 = parseDocument("a: x\n");
+  d2.set("a", "p\u007fq");
+  expect(renderVerified(d2, { a: "p\u007fq" })).toBe('a: "p\\x7fq"\n');
+});
+
 test("needsQuote quotes the dangerous scalars and leaves plain names plain", () => {
   for (const v of ["=", "<<", "a\u2029b", "a\u2028b", "a\u0085b", "yes", "-", "1.5", "x "]) expect(needsQuote(v)).toBe(true);
   for (const v of ["sonnet", "a/b", "per_run_usd", "gpt-5.3-codex", "a b"]) expect(needsQuote(v)).toBe(false);

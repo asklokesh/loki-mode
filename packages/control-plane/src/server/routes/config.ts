@@ -168,11 +168,18 @@ export function needsQuote(s: string): boolean {
   return !PLAIN_OK.test(s) || s.endsWith(" ") || s === "-" || NUMERIC_LIKE.test(s) || !readsAsString11(s);
 }
 
+/** Anything outside PyYAML's reader-accepted set; output containing one is never written. */
+const PYYAML_REJECTS = /[^\x09\x0A\x0D\x20-\x7E\x85\xA0-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
+
 /** Renders the document with every string that needs it double-quoted (U+0085, U+2028, U+2029 escaped, since PyYAML mishandles them raw), then re-parses under 1.2 and 1.1; null unless both equal `next`. `quote` is injectable so tests can prove the re-parse refuses on its own. */
 export function renderVerified(doc: Document, next: Json, quote: (s: string) => boolean = needsQuote): string | null {
   try {
     visit(doc, { Scalar(_k, n) { if (typeof n.value === "string" && quote(n.value)) n.type = "QUOTE_DOUBLE"; } });
-    const out = String(doc).replace(/\u0085/g, "\\N").replace(/\u2028/g, "\\L").replace(/\u2029/g, "\\P");
+    // U+2028/U+2029 are escaped for comments' sake too: PyYAML reads them raw inside scalars. The final class replace is safe globally because PLAIN_OK forces any such string into double quotes.
+    const out = String(doc).replace(/\u0085/g, "\\N").replace(/\u2028/g, "\\L").replace(/\u2029/g, "\\P")
+      .replace(/[\x7f-\x84\x86-\x9f]/g, (c) => "\\x" + c.charCodeAt(0).toString(16))
+      .replace(/\ufffe/g, "\\uFFFE").replace(/\uffff/g, "\\uFFFF");
+    if (PYYAML_REJECTS.test(out)) return null;
     const back = parseDocument(out);
     if (back.errors.length || !deepEq(back.toJS(), next)) return null;
     const back11 = parseDocument(out, V11);
