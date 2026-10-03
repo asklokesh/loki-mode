@@ -1,4 +1,4 @@
-// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, a tsconfig alias whose name shares no token with the target, string-concatenated specifiers, and import.meta.glob. Relative specifiers are resolved against the test directory, tests inside a target directory are excluded by location, literal dynamic forms are caught by the content backstop only when they contain a target stem, and a specifier resolving to an ancestor directory of a target is treated as naming it. Also not handled: workspace package-name imports (import from "p5") are not resolved; generic stems (index, main, app) get no content backstop, so a literal dynamic reference such as subprocess.run([..., 'main.py']) is not caught; CommonJS module.exports = function yields an empty signatures section.
+// Known gaps of the example exclusion: a test reaching a named module only through an index re-export, a task naming only a function, a tsconfig alias whose name shares no token with the target, string-concatenated specifiers, and import.meta.glob. Relative specifiers are resolved against the test directory, tests inside a target directory are excluded by location, literal dynamic forms are caught by the content backstop only when they contain a target stem, and a specifier resolving to an ancestor directory of a target is treated as naming it. Also not handled: workspace package-name imports (import from "p5") are not resolved; generic stems (index, main, app) get no content backstop, so a literal dynamic reference such as subprocess.run([..., 'main.py']) is not caught; CommonJS module.exports = function (or function f(){} plus exports.f = f) yields an empty signatures section. Dynamic gap also covers require(require.resolve('..')) and import(/* c */ '..').
 // D77 (W1-S1): the sealed base-tree manifest the Wall reads instead of the repo. Pure: a file list in,
 // signatures-only text out. It holds the detected runner and config, the test layout, at most two style
 // examples that import no module the task names, and public signatures of the named modules. Function
@@ -736,13 +736,15 @@ function importsNamed(path: string, raw: string, stems: Set<string>, importStems
   const specs: string[] = [];
   for (const m of content.matchAll(/\b(?:from|import|require)\s*\(?\s*["'`]([^"'`]+)["'`]/g)) specs.push(m[1]!);
   for (const m of content.matchAll(/\.(?:mock|doMock|unmock|importActual|requireActual|importMock|requireMock)\s*(?:<[^>]*>)?\s*\(\s*["'`]([^"'`]+)["'`]/g)) specs.push(m[1]!);
+  // Python statement view (W1-S2 r10): strip # comments outside quotes, then split on ; so each statement matches on its own.
+  const py = content.split("\n").map((l) => { let q = ""; for (let i = 0; i < l.length; i++) { const c = l[i]!; if (q) { if (c === q) q = ""; } else if (c === '"' || c === "'") q = c; else if (c === "#") return l.slice(0, i); } return l; }).join("\n").replace(/;/g, "\n");
   const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
-  for (const m of content.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
-  for (const m of content.matchAll(/^[ \t]*import[ \t]+([\w.,\t ]+)$/gm)) specs.push(...names(m[1]!));
+  for (const m of py.matchAll(/(?:^|:)[ \t]*from[ \t]+([\w.]+?)(?:[ \t]+|(?<=\.)[ \t]*)import\b[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
+  for (const m of py.matchAll(/(?:^|:)[ \t]*import[ \t]+([\w.,\t ]+)$/gm)) specs.push(...names(m[1]!));
   // Resolve every relative specifier against the test directory (JS ./ ../ . .. and Python leading dots).
   const dir = dirOf(path);
   if (specs.some((s) => s.trim().startsWith(".") && hits(resolveRel(dir, s.trim())))) return true;
-  for (const m of content.matchAll(/^[ \t]*from[ \t]+(\.+)([\w.]*)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) {
+  for (const m of py.matchAll(/(?:^|:)[ \t]*from[ \t]+(\.+)([\w.]*?)[ \t]*\bimport\b[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) {
     let base = dir;
     for (let i = 1; i < m[1]!.length; i++) base = dirOf(base);
     const r = resolveRel(base, (m[2] ?? "").replace(/\./g, "/"));

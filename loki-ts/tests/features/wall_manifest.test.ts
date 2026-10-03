@@ -995,3 +995,39 @@ describe("ancestor-directory specifiers (D77, W1-S2 r9)", () => {
     expect(t).toContain("BODY_R9_SIBLING");
   });
 });
+
+describe("python import forms: comments, semicolons, compound prefixes (D77, W1-S2 r10)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function manifest(files: Record<string, string>, task: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r10-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    try {
+      g("init", "-q");
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); }
+      g("commit", "-q", "-m", "base");
+      return wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), task, ON)!.text;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const base = { "main.py": "def run(n):\n    return n * 2\n", "tests/test_other.py": "import os\n# other_style_r10\ndef test_o():\n    assert True\n" };
+  const cases: Array<[string, string, Record<string, string>]> = [
+    ["import with trailing comment", "import main  # the app\n", {}],
+    ["semicolon then import", "import os; import main\n", {}],
+    ["semicolon then from-import", "import os; from main import run\n", {}],
+    ["try: prefix on its own line", "try: from main import run\nexcept ImportError: run = None\n", {}],
+    ["semicolon then dotted relative", "import os; from ..main import run\n", { "__init__.py": "", "tests/__init__.py": "" }],
+    ["dots directly before import", "from ..import main\n", { "__init__.py": "", "tests/__init__.py": "" }],
+  ];
+  for (const [name, first, extra] of cases) {
+    test(`${name}: test_a.py is not an example`, () => {
+      const t = manifest({ ...base, ...extra, "tests/test_a.py": `${first}\ndef test_a():\n    assert True\n` }, "fix main.py");
+      expect(t).not.toContain("--- example: tests/test_a.py");
+      expect(t).toContain("--- example: tests/test_other.py");
+    });
+  }
+
+  test("negative control: an unrelated test is still an example", () => {
+    const t = manifest({ ...base, "tests/test_a.py": "import os  # main\nx = 'a; import main'\n\ndef test_a():\n    assert True\n" }, "fix main.py");
+    expect(t).toContain("--- example: tests/test_a.py");
+    expect(t).toContain("--- example: tests/test_other.py");
+  });
+});
