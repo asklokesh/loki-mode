@@ -5,6 +5,7 @@ import { fmtUsd } from "../../format";
 import { getRun, postAnswer, type RunDetailResponse } from "../../api";
 import { Badge, Button, Card, Drawer, EmptyState, Message, Spinner, Textarea, VerdictBadge, VERDICT } from "../../design/primitives";
 import { fetchArtifact, fetchEvents, followStream, type RunEvent } from "./stream";
+import { buildTimeline } from "./timeline";
 
 export const NOT_MEASURED = "not measured";
 const LOG_CAP = 2000;
@@ -23,8 +24,9 @@ export function eventLine(e: RunEvent): string {
   return [e.type, e.stage, detail.length > 160 ? `${detail.slice(0, 160)}...` : detail].filter(Boolean).join(" ");
 }
 
-function LiveLog({ source, run }: { source: string; run: string }) {
+function RunLog({ source, run }: { source: string; run: string }) {
   const [lines, setLines] = useState<RunEvent[]>([]);
+  const [raw, setRaw] = useState(false);
   const last = useRef(-1);
   useEffect(() => {
     const ac = new AbortController();
@@ -43,9 +45,26 @@ function LiveLog({ source, run }: { source: string; run: string }) {
     })();
     return () => ac.abort();
   }, [source, run]);
+  const tl = buildTimeline(lines);
   return (
-    <div data-testid="run-log" role="log" aria-live="polite" style={{ maxHeight: 280, overflow: "auto", fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-sm)", color: "var(--cp-text-2)" }}>
-      {lines.length === 0 ? <div>No events yet.</div> : lines.map((e) => <div key={e.seq}>{`${e.seq}  ${eventLine(e)}`}</div>)}
+    <div>
+      <div style={{ marginBottom: 6 }}><Button variant="ghost" size="sm" data-testid="run-raw-toggle" aria-pressed={raw} onClick={() => setRaw((x) => !x)}>{raw ? "Show timeline" : "Show raw"}</Button></div>
+      {raw ? (
+        <div data-testid="run-log" role="log" aria-live="polite" style={{ maxHeight: 280, overflow: "auto", fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-sm)", color: "var(--cp-text-2)" }}>
+          {lines.length === 0 ? <div>No events yet.</div> : lines.map((e) => <div key={e.seq}>{`${e.seq}  ${eventLine(e)}`}</div>)}
+        </div>
+      ) : (
+        <ol data-testid="run-timeline" aria-live="polite" style={{ listStyle: "none", margin: 0, padding: 0, maxHeight: 360, overflow: "auto", fontSize: "var(--cp-text-sm)" }}>
+          {tl.length === 0 ? <li>No events yet.</li> : tl.map((l) => (
+            <li key={l.key} data-testid="timeline-line" data-outcome={l.outcome} style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", padding: "3px 0" }}>
+              <strong style={{ minWidth: 120 }}>{l.label}</strong>
+              <span>{l.outcome}</span>
+              {l.kind === "stage" ? <><span data-testid="tl-duration">{typeof l.duration_s === "number" ? fmtS(l.duration_s) : "--"}</span><span data-testid="tl-model">{l.model ?? "--"}</span><span data-testid="tl-cost">{l.cost_usd === null ? "--" : fmtUsd(l.cost_usd)}</span></> : null}
+              {l.detail ? <span data-testid="tl-detail" style={{ color: "var(--cp-text-muted)" }}>{l.detail}</span> : null}
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }
@@ -121,7 +140,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
 
       {d.blocked_question ? <ReplyPrompt source={source} run={run} question={d.blocked_question} onSent={load} /> : null}
 
-      <Message icon={<ScrollText size={16} />} title="Live log" expandable defaultOpen><LiveLog source={source} run={run} /></Message>
+      <Message icon={<ScrollText size={16} />} title="Timeline" expandable defaultOpen><RunLog source={source} run={run} /></Message>
 
       <Message icon={<FileDiff size={16} />} title="Diff" meta={d.files_touched?.length ? `${d.files_touched.length} files touched` : undefined} expandable>
         <div data-testid="run-diff"><Artifact source={source} run={run} name="diff.patch" empty="Diff not available for this run." /></div>
