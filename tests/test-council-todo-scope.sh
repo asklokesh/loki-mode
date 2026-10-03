@@ -25,13 +25,19 @@ TO=""
 if command -v timeout >/dev/null 2>&1; then TO="timeout -k 5 60"
 elif command -v gtimeout >/dev/null 2>&1; then TO="gtimeout -k 5 60"; fi
 
-SCRATCH="$(mktemp -d "${TMPDIR:-/tmp}/council-todo-scope.XXXXXX")" || exit 1
-cleanup() {
-    [ -n "${SCRATCH:-}" ] && [ -d "$SCRATCH" ] || return 0
-    find "$SCRATCH" -type f -exec rm -f {} + 2>/dev/null
-    find "$SCRATCH" -depth -type d -exec rmdir {} + 2>/dev/null
-}
-trap cleanup EXIT
+# Temp hygiene: the run-owned helper only, never raw mktemp.
+RAW_TMP_CMD="mk""temp"
+if grep -q 'loki_run_tmp_create' "${BASH_SOURCE[0]}" && ! grep -v '^[[:space:]]*#' "${BASH_SOURCE[0]}" | grep -q "$RAW_TMP_CMD"; then
+    ok "uses loki_run_tmp_create and no raw temp-dir command"
+else
+    bad "temp hygiene" "must use loki_run_tmp_create and no raw temp-dir command"
+fi
+
+# shellcheck source=../eval/loki10/lib-tmp.sh
+. "$REPO_ROOT/eval/loki10/lib-tmp.sh"
+loki_run_tmp_create || exit 2
+trap 'loki_run_tmp_cleanup' EXIT
+SCRATCH="$LOKI_RUN_TMP"
 
 # The marker-count assignment lines, verbatim from the source.
 LINES="$SCRATCH/lines.txt"
