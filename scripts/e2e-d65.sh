@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/e2e-d65.sh -- C11a hermetic `npm pack` E2E for the D63/D65 features (legs 1-4).
+# scripts/e2e-d65.sh -- C11a hermetic `npm pack` E2E for the D63/D65 features (legs 1-9).
 # Packs this checkout, installs the tarball into a temp prefix under a run-owned dir, and drives the
 # INSTALLED loki with a stub `claude`. Throwaway HOME and npm cache, no provider, no keys.
 # One PASS|FAIL|SKIP(<reason>) line per leg; exit 0 if and only if there is no FAIL.
@@ -117,7 +117,7 @@ for f in "$HERE"/legs/*.sh; do
     # shellcheck source=/dev/null
     . "$f"
 done
-for n in ${E2E_LEGS:-1 2 3 4}; do
+for n in ${E2E_LEGS:-1 2 3 4 5 6 7 8 9}; do
     fn="$(declare -F | awk -v n="0$n" '$3 ~ "^leg_" n "_" {print $3}' | head -1)"
     if [ -z "$fn" ]; then echo "SKIP(leg $n not implemented) leg $n"; continue; fi
     LEG_STATUS="" LEG_NOTE=""
