@@ -115,7 +115,16 @@ Export rules:
 
 - Only a receipt that verifies AND whose run outcome is `VERIFIED` or
   `ALREADY_SATISFIED` is exported. A tampered, unsigned, unchecked or
-  failed-run receipt is refused: non-zero exit, empty stdout (a failed run exits 4).
+  failed-run receipt is refused: non-zero exit, empty stdout, reason on stderr.
+  Exit codes: 1 tampered, 2 unsigned or unchecked (also an unreadable or non-JSON
+  receipt), 4 verified receipt of a run whose outcome is not `VERIFIED` or
+  `ALREADY_SATISFIED`, 66 no signing key found.
+- The input must be a receipt, not an envelope: `--export-dsse` on a DSSE envelope
+  exits 1 ("the input is already a DSSE envelope"). When the receipt is found by
+  run id, an envelope under that id whose `predicate.run_id` differs is refused
+  with exit 1 before export.
+- Group (multi-repo) receipts export too: the single-read override applies only
+  to the top-level receipt path, so each sub-receipt is read from its own file.
 - The receipt file is read once; the bytes that were verified are the bytes signed.
 - After a key rotation the envelope is signed by the current key and its `keyid`
   is that key (the retired private key is not available); the predicate keeps the

@@ -237,7 +237,7 @@ A verified receipt is bound to the run's event log, so a receipt lifted out of i
 
 ### Export as a DSSE envelope
 
-`loki verify <run> --export-dsse > receipt.dsse.json` wraps a verified v10 receipt as a DSSE envelope whose payload is an in-toto Statement v1, signed with the Ed25519 receipt key. The export refuses unless the receipt verifies (exit 1 if tampered, 2 if unsigned or unchecked, 66 if no signing key is found). `loki verify receipt.dsse.json` accepts the envelope too; add `--pubkey FILE` on another machine. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
+`loki verify <run> --export-dsse > receipt.dsse.json` wraps a verified v10 receipt as a DSSE envelope whose payload is an in-toto Statement v1, signed with the Ed25519 receipt key. The export refuses unless the receipt verifies (exit 1 if tampered, 2 if unsigned or unchecked, 66 if no signing key is found) and its run outcome is `VERIFIED` or `ALREADY_SATISFIED` (exit 4 otherwise, empty stdout). It takes a receipt, not an envelope (exit 1), and an envelope found under a run id must carry that run id (exit 1). Example: `loki verify 20261003-abc --export-dsse > r.dsse.json; echo $?` prints 4 for a failed run. `loki verify receipt.dsse.json` accepts the envelope too; add `--pubkey FILE` on another machine. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
 
 ### Visual evidence (opt-in)
 
