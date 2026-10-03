@@ -6,6 +6,7 @@ import { readRepoMapCache, repoCacheDir, repoKey } from "../engine10/cache.ts";
 import type { RepoMap } from "../engine10/repomap.ts";
 import { loadRepoMap } from "../engine10/sizing.ts";
 import type { RunContext, TestMap, TestRef } from "../engine10/types.ts";
+import { unitBrief } from "../features/speed/unit_mode.ts";
 import { readVerifiedCommand } from "./repomemory.ts";
 
 export interface ContextDeps {
@@ -35,6 +36,8 @@ const MAX_TESTS = 10;
 const shq = (w: string): string => (/^[\w@%+=:,./-]+$/.test(w) ? w : `'${w.replace(/'/g, "'\\''")}'`);
 
 export function briefContext(ctx: RunContext, d: ContextDeps): string {
+  const unit = unitBrief(); // D61-11: a unit brief is its pack files only
+  if (unit !== null) return unit;
   const o = ctx.outputs();
   const tree = o.intake?.tree as string | undefined;
   const task = (o.intake?.task as string | undefined) ?? "";

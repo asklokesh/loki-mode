@@ -3,6 +3,7 @@
 import { basename } from "node:path";
 import { isTestFile } from "../engine10/testmap.ts";
 import type { Obj } from "../engine10/types.ts";
+import { unitFence } from "../features/speed/unit_mode.ts";
 import type { Staged } from "./commit_filter.ts";
 
 export const SCOPE_UNDETERMINED = "scope not determined; all edits committed";
@@ -23,7 +24,9 @@ export function unrelatedEdits(o: Partial<Record<string, Obj>>, staged: Staged[]
 
 /** Reverts out-of-scope edits to base (index and disk, literal pathspecs). Returns the NOT PROVEN notes; null = restore failed. */
 export async function revertUnrelated(git: (a: string[]) => Promise<{ code: number }>, base: string, o: Partial<Record<string, Obj>>, staged: Staged[]): Promise<string[] | null> {
-  const un = unrelatedEdits(o, staged);
+  const fence = await unitFence(git, base, staged); // D61-11: null unless a unit spec is active
+  if (fence && !fence.ok) return null;
+  const rest = fence ? fence.kept : staged, un = unrelatedEdits(o, rest);
   if (un && un.length > 0 && (await git(["--literal-pathspecs", "restore", `--source=${base}`, "--staged", "--worktree", "--", ...un])).code !== 0) return null;
-  return un ? un.map(unrelatedNote) : staged.length > 0 ? [SCOPE_UNDETERMINED] : [];
+  return [...(fence?.notes ?? []), ...(un ? un.map(unrelatedNote) : rest.length > 0 ? [SCOPE_UNDETERMINED] : [])];
 }
