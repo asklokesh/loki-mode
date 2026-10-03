@@ -1,6 +1,6 @@
 # Workspaces: one issue across several repos
 
-Experimental, off by default. Set `LOKI_WORKSPACES=1` to enable. Design: `docs/v10/D51-PHASE-B.md`.
+On by default. Set `LOKI_WORKSPACES=0` to disable. Design: `docs/v10/D51-PHASE-B.md`.
 
 Define a group of repos once in `loki.yaml`:
 
@@ -13,16 +13,21 @@ workspaces:
     integration: {command: "make e2e", timeout_s: 900}
 ```
 
+Repos with no pending `after` run in parallel, at most `concurrency` at a time (default 2; set `LOKI_WORKSPACE_CONCURRENCY` to change it).
+
 Then:
 
 ```bash
-LOKI_WORKSPACES=1 loki workspace list
-LOKI_WORKSPACES=1 loki workspace run shop acme/api#12
+loki workspace list
+loki workspace show shop
+loki workspace run shop acme/api#12
+loki workspace status            # every recorded run, one row per repo
+loki workspace status <run-id>
 ```
 
 - Each repo gets its own git worktree on a `loki/ws-<run-id>-N` branch and its own engine run. Your checkouts are not touched.
 - `after` orders repos: a repo starts once its predecessors succeed. If a predecessor fails, its dependents are SKIPPED.
-- A failing repo does not stop the others (continue and report). The command exits 0 only when every repo succeeded and the integration step did not fail; otherwise 1.
+- A failing repo does not stop the others (continue and report). The command exits 0 only when every repo succeeded and the integration step did not fail. It exits 3 when the only non-ok outcomes are budget stops (a child exited 3, or a dependent was skipped behind one), and 1 for any other failure. Ctrl-C (SIGINT) stops the recorded child process groups like SIGTERM.
 - The repo that owns the issue ref gets the ref; other repos get a task text naming the ref and the sibling worktree paths as read-only context.
 - After all repos finish, the `integration` command runs once from the run directory with `LOKI_WS_DIR_<OWNER>_<REPO>` pointing at each worktree. A timeout counts as failed. With no integration configured the status is `not_configured`.
 - Evidence is written to `.loki/workspaces/<name>/<run-id>/integration.json`: head SHA per repo, exit code, log sha256. It is not part of the Seal.

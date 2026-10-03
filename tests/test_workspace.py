@@ -75,12 +75,117 @@ class WorkspaceTest(unittest.TestCase):
             workspace.order_repos({"repos": [{"repo": "a/b", "after": ["x/y"]}]})
 
     def test_flag_gate(self):
-        old = os.environ.pop("LOKI_WORKSPACES", None)
+        old = os.environ.get("LOKI_WORKSPACES")
+        os.environ["LOKI_WORKSPACES"] = "0"
         try:
             self.assertEqual(workspace.main(["list"]), 2)
+            self.assertFalse(workspace.enabled())
+            self.assertTrue(workspace.enabled({}))
+            self.assertTrue(workspace.enabled({"LOKI_WORKSPACES": "1"}))
         finally:
-            if old is not None:
+            if old is None:
+                os.environ.pop("LOKI_WORKSPACES", None)
+            else:
                 os.environ["LOKI_WORKSPACES"] = old
+
+    def _timing_launcher(self, name, sleep="1"):
+        path = os.path.join(self.t, name)
+        _launcher(path, 'python3 -c "import time;print(time.time())" > start.txt; sleep %s; '
+                        'python3 -c "import time;print(time.time())" > end.txt; exit 0' % sleep)
+        return path
+
+    def _times(self, ev_path, repo):
+        run_dir = os.path.dirname(ev_path)
+        wt = os.path.join(run_dir, "worktrees", repo.replace("/", "__"))
+        out = {}
+        for k in ("start", "end"):
+            with open(os.path.join(wt, k + ".txt")) as f:
+                out[k] = float(f.read())
+        return out
+
+    def test_independent_repos_run_in_parallel(self):
+        ws = {"shop": {"repos": [{"repo": "acme/api", "path": self.api},
+                                 {"repo": "acme/web", "path": self.web}]}}
+        rc, ev_path = workspace.run_workspace(
+            "shop", "acme/api#12", ws, base_dir=self.base, launcher=self._timing_launcher("par.sh"))
+        self.assertEqual(rc, 0)
+        a, w = self._times(ev_path, "acme/api"), self._times(ev_path, "acme/web")
+        self.assertLess(a["start"], w["end"])
+        self.assertLess(w["start"], a["end"])
+
+    def test_concurrency_one_serializes(self):
+        ws = {"shop": {"concurrency": 1, "repos": [{"repo": "acme/api", "path": self.api},
+                                                   {"repo": "acme/web", "path": self.web}]}}
+        rc, ev_path = workspace.run_workspace(
+            "shop", "acme/api#12", ws, base_dir=self.base, launcher=self._timing_launcher("ser.sh", "0.3"))
+        self.assertEqual(rc, 0)
+        a, w = self._times(ev_path, "acme/api"), self._times(ev_path, "acme/web")
+        first, second = (a, w) if a["start"] < w["start"] else (w, a)
+        self.assertGreaterEqual(second["start"], first["end"])
+
+    def test_dependent_starts_after_predecessor(self):
+        rc, ev_path = workspace.run_workspace(
+            "shop", "acme/api#12", self._ws(), base_dir=self.base,
+            launcher=self._timing_launcher("dep.sh", "0.3"))
+        self.assertEqual(rc, 0)
+        a, w = self._times(ev_path, "acme/api"), self._times(ev_path, "acme/web")
+        self.assertGreaterEqual(w["start"], a["end"])
+
+    def test_all_budget_stops_exit_3(self):
+        launcher = os.path.join(self.t, "launch-3.sh")
+        _launcher(launcher, "exit 3")
+        ws = {"shop": {"repos": [{"repo": "acme/api", "path": self.api},
+                                 {"repo": "acme/web", "path": self.web}]}}
+        rc, _ = workspace.run_workspace("shop", "acme/api#12", ws, base_dir=self.base, launcher=launcher)
+        self.assertEqual(rc, 3)
+        # a dependent skipped behind a budget stop stays a budget outcome
+        rc, _ = workspace.run_workspace("shop", "acme/api#12", self._ws(), base_dir=self.base, launcher=launcher)
+        self.assertEqual(rc, 3)
+
+    def test_budget_stop_plus_real_failure_exit_1(self):
+        launcher = os.path.join(self.t, "launch-mixed.sh")
+        _launcher(launcher, 'case "$PWD" in *api) exit 3;; *) exit 1;; esac')
+        ws = {"shop": {"repos": [{"repo": "acme/api", "path": self.api},
+                                 {"repo": "acme/web", "path": self.web}]}}
+        rc, _ = workspace.run_workspace("shop", "acme/api#12", ws, base_dir=self.base, launcher=launcher)
+        self.assertEqual(rc, 1)
+
+    def test_status_and_show(self):
+        launcher = os.path.join(self.t, "launch-ok3.sh")
+        _launcher(launcher, "exit 0")
+        _, ev_path = workspace.run_workspace(
+            "shop", "acme/api#12", self._ws(), base_dir=self.base, launcher=launcher)
+        run_id = os.path.basename(os.path.dirname(ev_path))
+        lines = []
+        rc = workspace.status(self.base, None, say=lines.append)
+        self.assertEqual(rc, 0)
+        text = "\n".join(lines)
+        self.assertIn(run_id, text)
+        self.assertIn("acme/api", text)
+        self.assertIn("acme/web", text)
+        lines = []
+        self.assertEqual(workspace.status(self.base, run_id, say=lines.append), 0)
+        self.assertTrue(any(l.startswith("acme/api") and "ok" in l for l in lines))
+        self.assertEqual(workspace.status(self.base, "nope", say=lambda m: None), 1)
+        lines = []
+        self.assertEqual(workspace.show("shop", self._ws(), say=lines.append), 0)
+        self.assertIn("acme/web", "\n".join(lines))
+        self.assertIn("after: acme/api", "\n".join(lines))
+        self.assertEqual(workspace.show("zzz", self._ws(), say=lambda m: None), 2)
+
+    def test_sigint_handled_like_sigterm(self):
+        import signal
+        old = signal.getsignal(signal.SIGINT)
+        try:
+            ws = {"shop": {"repos": [{"repo": "acme/api", "path": self.api}]}}
+            launcher = os.path.join(self.t, "l.sh")
+            _launcher(launcher, "exit 0")
+            workspace.run_workspace("shop", "acme/api#12", ws, base_dir=self.base, launcher=launcher)
+            h = signal.getsignal(signal.SIGINT)
+            self.assertTrue(callable(h) and h is not signal.default_int_handler)
+            self.assertIs(h, signal.getsignal(signal.SIGTERM))
+        finally:
+            signal.signal(signal.SIGINT, old)
 
     def test_run_all_ok_with_integration_evidence(self):
         launcher = os.path.join(self.t, "launch-ok.sh")

@@ -2,9 +2,11 @@
 """loki workspace: run one issue across several repos (D51 Phase B, D65).
 
     loki workspace list
+    loki workspace show <name>
     loki workspace run <name> <issue-ref>
+    loki workspace status [<run-id>]
 
-Gated by LOKI_WORKSPACES=1. Workspaces are defined in loki.yaml:
+On by default (LOKI_WORKSPACES=0 disables). Workspaces are defined in loki.yaml:
 
     workspaces:
       shop:
@@ -20,7 +22,12 @@ checked out, and evidence lands in
 .loki/workspaces/<name>/<run-id>/integration.json. Integration evidence is not
 part of the Seal.
 
-Exit: 0 all repos ok and integration not failed; 1 otherwise; 2 usage/config.
+Repos with no pending `after` run in parallel, at most `concurrency` at once
+(workspace key or LOKI_WORKSPACE_CONCURRENCY, default 2). SIGINT and SIGTERM
+kill each recorded child process group.
+
+Exit: 0 all repos ok and integration not failed; 3 when the only non-ok
+outcomes are budget stops (child exit 3); 1 otherwise; 2 usage/config.
 
 Test seam: LOKI_WORKSPACE_LAUNCHER replaces the engine launcher (called with
 the issue ref or task text, cwd = the repo worktree).
@@ -33,6 +40,8 @@ import re
 import signal
 import subprocess
 import sys
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -46,8 +55,12 @@ def say(msg):
     print(msg, flush=True)
 
 
+BUDGET_EXIT = 3
+
+
 def enabled(env=None):
-    return (os.environ if env is None else env).get("LOKI_WORKSPACES") == "1"
+    """On by default; LOKI_WORKSPACES=0 disables."""
+    return (os.environ if env is None else env).get("LOKI_WORKSPACES") != "0"
 
 
 def git(*args, cwd=None):
@@ -194,46 +207,73 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     launcher = launcher or os.environ.get("LOKI_WORKSPACE_LAUNCHER") or os.path.join(REPO_ROOT, "bin", "loki")
     child_env_base = dict(os.environ, LOKI_ENGINE="v10", LOKI_NO_BROWSER="1")
 
-    outcome, worktrees, heads = {}, {}, {}
-    running = {}
+    outcome, worktrees, heads, kind = {}, {}, {}, {}
+    running = {}  # repo -> (Popen, log file handle)
+    try:
+        conc = max(1, int(os.environ.get("LOKI_WORKSPACE_CONCURRENCY") or ws.get("concurrency") or 2))
+    except (TypeError, ValueError):
+        conc = 2
 
     def stop(*_):
-        for p in running.values():
+        for p, _lf in running.values():
             try:
                 os.killpg(p.pid, signal.SIGTERM)
             except OSError:
                 pass
         sys.exit(130)
-    signal.signal(signal.SIGTERM, stop)
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, stop)
+        signal.signal(signal.SIGINT, stop)
 
-    for i, entry in enumerate(ordered):
-        repo = entry["repo"]
-        failed_dep = [d for d in entry.get("after") or [] if outcome.get(d) != "ok"]
-        if failed_dep:
-            outcome[repo] = "SKIPPED (predecessor failed: %s)" % ", ".join(failed_dep)
-            say("workspace: %s %s" % (repo, outcome[repo]))
-            continue
-        try:
-            src = source_checkout(entry)
-            dest = os.path.join(run_dir, "worktrees", _slug(repo))
-            wt = prepare(src, dest, "loki/ws-%s-%d" % (run_id, i), entry.get("setup"))
-        except (RuntimeError, OSError) as e:
-            outcome[repo] = "FAILED: %s" % e
-            say("workspace: %s %s" % (repo, outcome[repo]))
-            continue
-        worktrees[repo] = wt
-        siblings = [os.path.join(run_dir, "worktrees", _slug(o["repo"])) for o in ordered if o["repo"] != repo]
-        arg, extra = task_for(entry, ref, siblings)
-        log = os.path.join(run_dir, "%s.log" % _slug(repo))
-        say("workspace: %s running" % repo)
-        with open(log, "w") as lf:
+    index = {e["repo"]: i for i, e in enumerate(ordered)}
+    pending = list(ordered)
+    while pending or running:
+        for entry in list(pending):
+            repo = entry["repo"]
+            deps = entry.get("after") or []
+            failed_dep = [d for d in deps if d in kind and kind[d] != "ok"]
+            if failed_dep:
+                pending.remove(entry)
+                outcome[repo] = "SKIPPED (predecessor failed: %s)" % ", ".join(failed_dep)
+                kind[repo] = "budget" if all(kind[d] == "budget" for d in failed_dep) else "fail"
+                say("workspace: %s %s" % (repo, outcome[repo]))
+        for entry in list(pending):
+            repo = entry["repo"]
+            if len(running) >= conc:
+                break
+            if not all(kind.get(d) == "ok" for d in entry.get("after") or []):
+                continue
+            pending.remove(entry)
+            try:
+                src = source_checkout(entry)
+                dest = os.path.join(run_dir, "worktrees", _slug(repo))
+                wt = prepare(src, dest, "loki/ws-%s-%d" % (run_id, index[repo]), entry.get("setup"))
+            except (RuntimeError, OSError) as e:
+                outcome[repo], kind[repo] = "FAILED: %s" % e, "fail"
+                say("workspace: %s %s" % (repo, outcome[repo]))
+                continue
+            worktrees[repo] = wt
+            siblings = [os.path.join(run_dir, "worktrees", _slug(o["repo"])) for o in ordered if o["repo"] != repo]
+            arg, extra = task_for(entry, ref, siblings)
+            lf = open(os.path.join(run_dir, "%s.log" % _slug(repo)), "w")
+            say("workspace: %s running" % repo)
             p = subprocess.Popen([launcher, arg], cwd=wt, env=dict(child_env_base, **extra), stdout=lf,
                                  stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
-            running[repo] = p
-            rc = p.wait()
-            running.pop(repo, None)
-        outcome[repo] = "ok" if rc == 0 else "FAILED: exit %d" % rc
-        say("workspace: %s %s" % (repo, outcome[repo]))
+            running[repo] = (p, lf)
+        for repo, (p, lf) in list(running.items()):
+            rc = p.poll()
+            if rc is None:
+                continue
+            lf.close()
+            running.pop(repo)
+            if rc == 0:
+                outcome[repo], kind[repo] = "ok", "ok"
+            else:
+                outcome[repo] = "FAILED: exit %d" % rc
+                kind[repo] = "budget" if rc == BUDGET_EXIT else "fail"
+            say("workspace: %s %s" % (repo, outcome[repo]))
+        if running:
+            time.sleep(0.05)
 
     for repo, wt in worktrees.items():
         r = git("rev-parse", "HEAD", cwd=wt)
@@ -252,16 +292,60 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     for repo, res in outcome.items():
         say("%-30s %s" % (repo, res))
     say("%-30s %s" % ("integration", ev["status"]))
-    bad = any(v != "ok" for v in outcome.values()) or ev["status"] == "failed"
-    return (1 if bad else 0), ev_path
+    if ev["status"] == "failed" or any(k == "fail" for k in kind.values()):
+        return 1, ev_path
+    return (3 if any(k == "budget" for k in kind.values()) else 0), ev_path
+
+
+def _runs(base_dir):
+    """Yield (workspace, run_id, evidence dict) for every recorded run, oldest first."""
+    root = os.path.join(base_dir, ".loki", "workspaces")
+    if not os.path.isdir(root):
+        return
+    for name in sorted(os.listdir(root)):
+        for run_id in sorted(os.listdir(os.path.join(root, name))):
+            path = os.path.join(root, name, run_id, "integration.json")
+            try:
+                with open(path) as f:
+                    yield name, run_id, json.load(f)
+            except (OSError, ValueError):
+                continue
+
+
+def status(base_dir, run_id=None, say=say):
+    """Print per-repo rows from integration.json for one run, or for every run."""
+    found = [r for r in _runs(base_dir) if run_id in (None, r[1])]
+    if not found:
+        say("workspace: no such run %s" % run_id if run_id else "no workspace runs recorded")
+        return 0 if run_id is None else 1
+    for name, rid, ev in found:
+        say("%s %s" % (name, rid))
+        for repo, res in sorted((ev.get("outcomes") or {}).items()):
+            say("%-30s %s" % (repo, res))
+        say("%-30s %s" % ("integration", ev.get("status")))
+    return 0
+
+
+def show(name, workspaces, say=say):
+    ws = workspaces.get(name)
+    if ws is None:
+        say("workspace: unknown workspace %r (known: %s)" % (name, ", ".join(sorted(workspaces)) or "none"))
+        return 2
+    say("%s (concurrency %s)" % (name, ws.get("concurrency") or 2))
+    for e in ws.get("repos") or []:
+        extra = "; after: " + ", ".join(e["after"]) if e.get("after") else ""
+        say("%s  path: %s%s" % (e.get("repo", "?"), e.get("path") or "(clone)", extra))
+    integ = ws.get("integration") or {}
+    say("integration: %s" % (integ.get("command") or "not configured"))
+    return 0
 
 
 def main(argv):
     if not enabled():
-        say("loki workspace is disabled. Set LOKI_WORKSPACES=1 to use it.")
+        say("loki workspace is disabled (LOKI_WORKSPACES=0). Unset it to use workspaces.")
         return 2
     if not argv or argv[0] in ("-h", "--help", "help"):
-        say("Usage: loki workspace list | run <name> <owner/repo#N | task text>")
+        say("Usage: loki workspace list | show <name> | run <name> <owner/repo#N | task text> | status [<run-id>]")
         return 0 if argv else 2
     try:
         workspaces, errors = load_workspaces()
@@ -279,10 +363,14 @@ def main(argv):
         for n, ws in sorted(workspaces.items()):
             say("%s: %s" % (n, ", ".join(e.get("repo", "?") for e in ws.get("repos") or [])))
         return 0
+    if cmd == "show" and len(argv) == 2:
+        return show(argv[1], workspaces)
+    if cmd == "status" and len(argv) <= 2:
+        return status(os.getcwd(), argv[1] if len(argv) == 2 else None)
     if cmd == "run" and len(argv) >= 3:
         rc, _ = run_workspace(argv[1], " ".join(argv[2:]), workspaces)
         return rc
-    say("Usage: loki workspace list | run <name> <issue-ref>")
+    say("Usage: loki workspace list | show <name> | run <name> <issue-ref> | status [<run-id>]")
     return 2
 
 

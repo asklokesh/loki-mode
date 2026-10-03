@@ -1,6 +1,8 @@
 # D51 Phase B: workspaces, cross-repo runs, combined integration evidence
 
-Architect design, 2026-10-01, base ee67eaf16. Design only; nothing here is built. Flag: `LOKI_WORKSPACES=1` (off by default).
+Architect design, 2026-10-01, base ee67eaf16. Flag: `LOKI_WORKSPACES=0` disables (on by default since D63 C8).
+
+Status (D63 C8): `autonomy/lib/workspace.py` runs repos with no pending `after` in parallel (bounded by `concurrency`, default 2), has `list`, `show`, `run` and `status`, exits 3 when the only non-ok outcomes are budget stops, and handles SIGINT like SIGTERM. Still design only: B03 to B07, B09 to B15 (worktree_prep hardening, group.json store, dashboard, `clean`). The bash gate in `autonomy/loki` flips in C3.
 
 ## Goal (user-visible)
 1. Name a group of repos once in loki.yaml (`workspaces.shop: [acme/api, acme/web]`) and run one issue across all of them: `loki workspace run shop acme/api#12`.
