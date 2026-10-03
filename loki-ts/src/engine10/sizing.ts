@@ -64,12 +64,4 @@ export const wallModel = (env = process.env): string => resolveModelAlias(env.LO
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */
 export const cascadeImplementModel = wallModel;
 
-/** L1: relative strength of a model id or alias; unknown ids rank top so they are never treated as weaker than the run model. */
-export const modelRank = (m: string): number => { const id = resolveModelAlias(m).toLowerCase(); return ["haiku", "sonnet", "opus", "fable"].findIndex((t) => id.includes(t)) + (id.match(/haiku|sonnet|opus|fable/) ? 0 : 5); };
-/** L1: the strongest model the provider offers by default (catalog opus alias; fable stays opt-in for cost); an escalated round is never below the run model. */
-export const escalationModel = (runModel: string): string => (modelRank(runModel) > modelRank("opus") ? runModel : resolveModelAlias("opus"));
-/** L1: with the opt-in cascade on, the downgrade target; null when it would not be weaker than the run model (nothing is pinned). */
-export function cascadeDowngrade(runModel: string, env = process.env): { from: string; to: string; note: string } | null {
-  const to = cascadeImplementModel(env);
-  return cascadeEnabled(env) && modelRank(to) < modelRank(runModel) ? { from: runModel, to, note: `model downgraded by cascade: ${runModel} -> ${to} (opt-in)` } : null;
-}
+export { modelRank, escalationModel, cascadeDowngrade } from "../runner/model_rank.ts"; // L1 model ordering lives outside the engine10 line budget

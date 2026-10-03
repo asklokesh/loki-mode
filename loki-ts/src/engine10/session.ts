@@ -19,12 +19,14 @@ export interface SessionRunnerConfig {
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
   lokiRoot?: string; // where efficiency records and result-cost files live (the repo's .loki)
 }
-/** The model a session really runs: the override, else the provider's development pin. Never "default". */
+/** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
+export const PROVIDER_DEFAULT_MODEL = "claude (provider default)";
+/** The model a session really runs: the override, else a configured pin, else the provider's own default (no --model flag, L1 never below raw). */
 export function resolveModel(provider: string): string {
   const e = process.env;
   if (e.LOKI_MODEL_OVERRIDE) return e.LOKI_MODEL_OVERRIDE;
   if (provider !== "claude") return `${provider} (model not recorded)`;
-  return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || "sonnet";
+  return e.LOKI_CLAUDE_MODEL_DEVELOPMENT || e.LOKI_MODEL_DEVELOPMENT || PROVIDER_DEFAULT_MODEL;
 }
 function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -47,7 +49,9 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
       env["LOKI_CLAUDE_MODEL_FAST"] = override;
     }
   }
-  if (opts.model) {
+  if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
+  if (opts.effort) env["LOKI_E10_EFFORT"] = opts.effort;
+  if (opts.model && opts.model !== PROVIDER_DEFAULT_MODEL) { // the label is a record, never a --model value
     const t = String(opts.tier).toUpperCase(); // E-45: pin wins over any inherited tier model
     env[`LOKI_CLAUDE_MODEL_${t}`] = opts.model;
     env[`LOKI_MODEL_${t}`] = opts.model;

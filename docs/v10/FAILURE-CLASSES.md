@@ -62,7 +62,8 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - fix.ts:63 escalation gate;
   - implement.ts:56 limit;
   - the plan stage on the "fast" tier;
-  - no effort field in SessionRunOptions.
+  - no effort field in SessionRunOptions;
+  - `loki start prd.md` still goes to the legacy run.sh route, whose default is sonnet (providers/claude.sh CLAUDE_DEFAULT_DEVELOPMENT).
 - Mechanism: a catalog best_default plus a top tier for each provider (EL-W0-06, EL-W0-07), and a size gate on the artifact (EL-W0-05).
 - Fixture: a unit test that the default run.started.model equals the catalog best_default, plus a parity replay row.
 

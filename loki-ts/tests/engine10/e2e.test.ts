@@ -129,7 +129,7 @@ describe("engine10 e2e (stub claude)", () => {
     const q = runEngine("done");
     const lines = q.out.trim().split("\n");
     expect(lines.length).toBeLessThanOrEqual(8);
-    expect(lines[0]).toBe(`Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine), ${hasApiKey(process.env) ? "cap $100.00 (default)" : "no dollar cap (subscription)"}`); // D82-COSTCAP: the cap follows whether the env holds an API key
+    expect(lines[0].split("; downgrade: ")[0]).toBe(`Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine), ${hasApiKey(process.env) ? "cap $100.00 (default)" : "no dollar cap (subscription)"}`); // D82-COSTCAP: the cap follows whether the env holds an API key
     expect(q.out).not.toMatch(/^\[\d\d:\d\d\]/m);
     expect(q.out).toMatch(/^Receipt:\s+sha256:[0-9a-f]{64}/m);
     expect(q.out).toContain("NOT PROVEN:");
@@ -170,7 +170,7 @@ describe("engine10 e2e (stub claude)", () => {
     expect(r.events.some((e) => e.type === "cost")).toBe(true);
     // Seal priced the run from the stages' iteration ids (never "no iteration ids recorded").
     expect(receipt.not_proven.some((n: string) => n.startsWith("cost not measured"))).toBe(false);
-    expect(receipt.model).toBe("sonnet");
+    expect(receipt.model).toBe("claude (provider default)"); // EL-W0-06: no model configured, the provider default runs
     expect(r.out).toContain("Outcome:    VERIFIED");
     expect(r.out).toContain("PR:         none");
   }, 90_000);
