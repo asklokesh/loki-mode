@@ -127,10 +127,9 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };
 }
-export const intakeStage: Stage = {
+export const stage: Stage = {
   name: "intake",
   targetS: 15,
   limitS: 60,
   run: (ctx, signal) => runIntake(ctx, signal),
 };
-export const stage = intakeStage;
