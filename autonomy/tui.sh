@@ -24,7 +24,11 @@ TUI_HAS_COLOR=false
 TUI_COLS=80
 if [ -t 1 ]; then
     TUI_HAS_COLOR=true
-    TUI_COLS=$(tput cols 2>/dev/null || echo 80)
+    # FC-10: tput can print 0 or nothing on a pty with no size; fall back to COLUMNS, then 80
+    TUI_COLS=$(tput cols 2>/dev/null || true)
+    case "$TUI_COLS" in '' | *[!0-9]*) TUI_COLS="${COLUMNS:-80}" ;; esac
+    case "$TUI_COLS" in '' | *[!0-9]*) TUI_COLS=80 ;; esac
+    [ "$TUI_COLS" -ge 40 ] || TUI_COLS=80
 fi
 
 # Unicode box drawing (degrade to ASCII if terminal doesn't support)
