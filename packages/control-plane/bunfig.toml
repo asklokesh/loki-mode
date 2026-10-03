@@ -1,0 +1,2 @@
+[test]
+preload = ["../../loki-ts/tests/preload.ts"]

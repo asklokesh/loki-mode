@@ -23,6 +23,7 @@ echo "=== E-154/E-155 run-all-tests guards ==="
 mkdir -p "$T/repo/tests" "$T/repo/eval/loki10" "$T/home"
 cp "$ROOT/eval/loki10/lib-tmp.sh" "$T/repo/eval/loki10/"
 cp "$ROOT/tests/shard-durations.tsv" "$T/repo/tests/"
+cp -R "$ROOT/tests/lib" "$T/repo/tests/lib"
 [ -f "$ROOT/tests/quarantine.txt" ] && cp "$ROOT/tests/quarantine.txt" "$T/repo/tests/"
 first=$(awk '/^run_test "/ {print NR; exit}' "$ROOT/tests/run-all-tests.sh")
 sum=$(awk '/TEST SUITE SUMMARY/ {print NR - 2; exit}' "$ROOT/tests/run-all-tests.sh")
@@ -42,7 +43,8 @@ cat >"$T/repo/tests/t-switch.sh" <<'EOF'
 git -C "$(dirname "$0")/.." checkout -q stale
 EOF
 cat >"$T/repo/tests/t-keys.sh" <<'EOF'
-mkdir -p "$HOME/.loki/keys"; : >"$HOME/.loki/keys/receipt-ed25519.pem"
+H="${LOKI_REAL_HOME:-$HOME}" # the runner is hermetic now (FC-07); this suite deliberately reaches past it
+mkdir -p "$H/.loki/keys"; : >"$H/.loki/keys/receipt-ed25519.pem"
 EOF
 cat >"$T/repo/tests/t-printkey.sh" <<'EOF'
 echo "KEYFILE=$LOKI_RECEIPT_SIGNING_KEY_FILE"

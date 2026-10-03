@@ -1,6 +1,7 @@
 // CP-02: the shipper hook never changes a run. With LOKI_CONTROL_URL unset: no ship.json and no network. With it set to a live stub:
 // the same result and an identical events.jsonl (timestamps aside), and the events arrive.
 import { afterAll, expect, test } from "bun:test";
+import { generateKeyPairSync } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,13 +23,25 @@ function repo(): string {
 }
 const CODE = `console.log(JSON.stringify({ type: "stage.completed", stage: "intake", data: { base_sha: "x" } })); await new Promise((r) => setTimeout(r, 900));`;
 const norm = (p: string): string[] => readFileSync(p, "utf8").split("\n").filter(Boolean).map((l) => {
-  const e = JSON.parse(l); e.ts = "T"; if ("wall_s" in e.data) e.data.wall_s = 0; return JSON.stringify(e);
+  const e = JSON.parse(l); e.ts = "T"; if ("wall_s" in e.data) e.data.wall_s = 0;
+  // FC-07: with a resolvable signing key the supervisor appends log.sealed, whose hash and signature cover the raw timestamps; mask them so the test is key-independent.
+  if (e.type === "log.sealed") { for (const k of ["events_sha256", "sig", "kid"]) if (k in e.data) e.data[k] = "X"; }
+  return JSON.stringify(e);
 });
 
-test("unset: no ship.json, no network; set: same result and log, and events arrive", async () => {
+// Pin the signing key explicitly so the outcome never depends on the host: a generated key file, and an unusable inline key (unsigned path).
+function keyEnv(): NodeJS.ProcessEnv {
+  const d = mkdtempSync(join(tmpdir(), "e10-ship-key-"));
+  roots.push(d);
+  const f = join(d, "receipt-ed25519.pem");
+  writeFileSync(f, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+  return { LOKI_RECEIPT_SIGNING_KEY_FILE: f };
+}
+const variants: [string, () => NodeJS.ProcessEnv][] = [["with a signing key", keyEnv], ["without a signing key", () => ({ LOKI_RECEIPT_SIGNING_KEY: "not-a-key" })]];
+for (const [label, pin] of variants) test(`unset: no ship.json, no network; set: same result and log, and events arrive (${label})`, async () => {
   let posts = 0, got = 0;
   const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", async fetch(req) { posts++; got += ((await req.json()) as { events: unknown[] }).events.length; return Response.json({}); } });
-  const base: NodeJS.ProcessEnv = { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0" };
+  const base: NodeJS.ProcessEnv = { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true", LOKI_CONTROL: "0", ...pin() };
   delete base.LOKI_CONTROL_URL;
   try {
     const a = repo(), b = repo();

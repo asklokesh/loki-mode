@@ -1981,6 +1981,9 @@ _loki_control_ui() {
             echo "loki: the Control Plane needs bun (https://bun.sh); using the classic dashboard." >&2
             return 1
         fi
+        # FC-07: LOKI_CONTROL=0 is the test off switch (supervisor, run-all-tests, local-ci);
+        # it must never start a detached `control serve` that writes ~/.loki/control.
+        [ "${LOKI_CONTROL:-}" = "0" ] && return 1
         local cli="$SKILL_DIR/loki-ts/dist/loki.js" cdir="${HOME}/.loki/control" spid
         [ -f "$cli" ] || cli="$SKILL_DIR/loki-ts/src/cli.ts"
         mkdir -p "$cdir" && chmod 700 "$cdir" 2>/dev/null || true

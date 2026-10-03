@@ -116,7 +116,7 @@ run_gate skipver;    expect skipver skip-not-verified FAIL;  expect skipver skip
 
 # P0-DASH-STATIC: dashboard-root assertion (needs fastapi+uvicorn; otherwise the gate prints SKIP, never FAIL)
 DPY=""
-for p in "$HOME/.loki/dashboard-venv/bin/python" python3; do
+for p in "${LOKI_REAL_HOME:-$HOME}/.loki/dashboard-venv/bin/python" python3; do
     if command -v "$p" >/dev/null 2>&1 && "$p" -c 'import fastapi, uvicorn' >/dev/null 2>&1; then DPY="$p"; break; fi
 done
 run_gate clean
