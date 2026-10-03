@@ -1630,7 +1630,7 @@ show_help() {
     echo "  start [SPEC]     Start a build (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
     echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
     echo "  backlog <owner/repo> --all|--label X|--issues N,N   Run every matching open issue, N in parallel"
-    echo "  workspace list | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=1)"
+    echo "  workspace list | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=0 disables)"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
@@ -1783,7 +1783,7 @@ show_help() {
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
     echo "  ultracode update verify version voice watch watchdog web welcome why"
     echo "  wiki worktree (wt)"
-    echo "  control (preview, needs LOKI_CONTROL=1)"
+    echo "  control"
     echo ""
     echo "Any command: loki <command> --help"
     echo ""
@@ -1897,7 +1897,72 @@ _loki_dashboard_port_is_ours() {
     return 1
 }
 
+# C3: the Control Plane is the default UI. Prints a live loopback URL from
+# ~/.loki/control/instance.json (pid alive, http loopback only, /health says
+# service=loki-control), or starts `loki control serve` detached and waits for
+# it to publish one. Returns 1 when the caller should fall back to the old
+# dashboard (LOKI_CONTROL_DEFAULT=0, no bun, no python3, server did not start).
+_loki_control_live_url() {
+    local inst="${HOME}/.loki/control/instance.json" fields pid url health
+    [ -f "$inst" ] || return 1
+    fields=$(python3 - "$inst" 2>/dev/null <<'PY'
+import json, sys, urllib.parse
+d = json.load(open(sys.argv[1]))
+pid, url = d.get("pid"), d.get("url")
+if not isinstance(pid, int) or isinstance(pid, bool) or not isinstance(url, str):
+    sys.exit(1)
+u = urllib.parse.urlparse(url)
+if u.scheme != "http" or u.hostname not in ("127.0.0.1", "localhost", "::1"):
+    sys.exit(1)
+print(pid, url.rstrip("/"))
+PY
+) || return 1
+    pid="${fields%% *}"; url="${fields#* }"
+    kill -0 "$pid" 2>/dev/null || return 1
+    health=$(curl -s --max-time 2 "${url}/health" 2>/dev/null) || return 1
+    case "$health" in *'"service"'*'"loki-control"'*) ;; *) return 1 ;; esac
+    printf '%s\n' "$url"
+}
+
+_loki_control_ui() {
+    [ "${LOKI_CONTROL_DEFAULT:-1}" = "0" ] && return 1
+    local url="" open_it=1 arg i
+    for arg in "$@"; do [ "$arg" = "--no-open" ] && open_it=0; done
+    if [ "${LOKI_HEADLESS:-0}" = "1" ] || [ "${LOKI_NO_BROWSER:-0}" = "1" ]; then open_it=0; fi
+    command -v python3 >/dev/null 2>&1 || return 1
+    url=$(_loki_control_live_url) || url=""
+    if [ -z "$url" ]; then
+        if ! command -v bun >/dev/null 2>&1; then
+            echo "loki: the Control Plane needs bun (https://bun.sh); using the classic dashboard." >&2
+            return 1
+        fi
+        local cli="$SKILL_DIR/loki-ts/dist/loki.js" cdir="${HOME}/.loki/control" spid
+        [ -f "$cli" ] || cli="$SKILL_DIR/loki-ts/src/cli.ts"
+        mkdir -p "$cdir" && chmod 700 "$cdir" 2>/dev/null || true
+        LOKI_CONTROL=1 LOKI_NO_BROWSER=1 nohup bun "$cli" control serve >"$cdir/serve.log" 2>&1 </dev/null &
+        spid=$!
+        echo "$spid" > "$cdir/serve.pid" 2>/dev/null || true
+        for i in $(seq 1 100); do
+            url=$(_loki_control_live_url) && break
+            url=""
+            kill -0 "$spid" 2>/dev/null || break
+            sleep 0.1
+        done
+        if [ -z "$url" ]; then
+            echo "loki: the Control Plane did not start (see $cdir/serve.log); using the classic dashboard." >&2
+            return 1
+        fi
+    fi
+    if [ "$open_it" = "1" ]; then
+        loki_open_url "$url" || echo "$url"
+    else
+        echo "$url"
+    fi
+    return 0
+}
+
 cmd_ui() {
+    _loki_control_ui "$@" && return 0
     local port="" pid=""
     if [ -f "$DASHBOARD_PID_FILE" ]; then
         pid=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null)
@@ -7325,16 +7390,15 @@ _loki_dashboard_bind_is_safe() {
 cmd_dashboard() {
     local subcommand="${1:-}"
 
-    # LOKI_CONTROL_DEFAULT=1 (off by default): open the Control Plane instead of the old dashboard.
-    # The old dashboard stays available when the flag is unset, and via `loki dashboard stop|status|url`.
-    if [ "${LOKI_CONTROL_DEFAULT:-0}" = "1" ]; then
-        case "$subcommand" in
-            ""|start|open)
-                echo "LOKI_CONTROL_DEFAULT=1: starting the Control Plane (unset it to use the old dashboard)"
-                LOKI_CONTROL=1 exec "$0" control serve
-                ;;
-        esac
-    fi
+    # The Control Plane is the default UI; LOKI_CONTROL_DEFAULT=0 restores the classic dashboard.
+    # Only the bare forms are taken over; `start --port ...` and friends keep the classic server.
+    case "$subcommand" in
+        ""|start|open)
+            if [ $# -le 1 ] || { [ $# -eq 2 ] && [ "$2" = "--no-open" ]; }; then
+                _loki_control_ui "${@:2}" && return 0
+            fi
+            ;;
+    esac
 
     # If no subcommand provided, show help (backward compatible with old behavior)
     if [ -z "$subcommand" ]; then
@@ -12921,10 +12985,10 @@ cmd_config_schema() {
     loki_config_generate_schema
 }
 
-# D65: multi-repo workspaces (D51 Phase B). Gated by LOKI_WORKSPACES=1.
+# D65: multi-repo workspaces (D51 Phase B). On by default; LOKI_WORKSPACES=0 disables.
 cmd_workspace() {
-    if [ "${LOKI_WORKSPACES:-}" != "1" ]; then
-        echo -e "${RED}loki workspace is disabled.${NC} Set LOKI_WORKSPACES=1 to use it." >&2
+    if [ "${LOKI_WORKSPACES:-}" = "0" ]; then
+        echo -e "${RED}loki workspace is disabled.${NC} Unset LOKI_WORKSPACES (it is set to 0)." >&2
         return 2
     fi
     command -v python3 >/dev/null 2>&1 || { echo -e "${RED}loki workspace: python3 is required${NC}" >&2; return 2; }

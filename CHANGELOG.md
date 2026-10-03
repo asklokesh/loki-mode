@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki answer` resumes a BLOCKED run with the answer typed in the Control Plane (or `--text`).
 
 ### Changed
+- `loki` with no arguments now opens the Control Plane (set `LOKI_CONTROL_DEFAULT=0` for the previous dashboard).
 - Spec contracts are on by default: criteria in .loki/contract.json are traced in the receipt, and unmatched ones are listed as NOT PROVEN (set LOKI_CONTRACT=0 to turn off).
 
 ### Deprecated

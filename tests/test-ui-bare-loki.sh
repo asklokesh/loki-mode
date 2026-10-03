@@ -14,7 +14,7 @@ bad() { echo "  FAIL: $1"; FAIL=$((FAIL+1)); }
 
 T="$(mktemp -d "${TMPDIR:-/tmp}/loki-uibare.XXXXXXXX")"
 sleep 60 & SLEEP_PID=$!
-cleanup() { kill "$SLEEP_PID" 2>/dev/null; [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null; [ -n "$T" ] && [ -d "$T" ] && rm -rf -- "$T"; }
+cleanup() { kill "$SLEEP_PID" 2>/dev/null; [ -n "${STUB_PID:-}" ] && kill "$STUB_PID" 2>/dev/null; [ -n "${CP_PID:-}" ] && kill "$CP_PID" 2>/dev/null; [ -n "$T" ] && [ -d "$T" ] && rm -rf -- "$T"; }
 trap cleanup EXIT
 
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
@@ -43,19 +43,68 @@ echo "$SLEEP_PID" > "$T/home/.loki/dashboard/dashboard.pid"
 echo "$PORT" > "$T/home/.loki/dashboard/port"
 printf '#!/bin/sh\necho "$@" >> "%s/open.log"\n' "$T" > "$T/bin/open"
 chmod +x "$T/bin/open"
-run() { env -u CI HOME="$T/home" PATH="$T/bin:$PATH" "$@" bash "$LOKI_BIN" 2>/dev/null; }
+run() { env -u CI LOKI_CONTROL_DEFAULT=0 HOME="$T/home" PATH="$T/bin:$PATH" "$@" bash "$LOKI_BIN" 2>/dev/null; }
 
 URL="http://127.0.0.1:${PORT}/start"
 [ -n "$PORT" ] || bad "stub server did not bind a port"
 echo "TEST: headless prints the URL and does not open a browser"
 out=$(run LOKI_HEADLESS=1)
 [ "$out" = "$URL" ] && ok "LOKI_HEADLESS=1 prints $URL" || bad "headless output: '$out'"
-out=$(env -u CI HOME="$T/home" PATH="$T/bin:$PATH" bash "$LOKI_BIN" --no-open 2>/dev/null)
+out=$(env -u CI LOKI_CONTROL_DEFAULT=0 HOME="$T/home" PATH="$T/bin:$PATH" bash "$LOKI_BIN" --no-open 2>/dev/null)
 [ "$out" = "$URL" ] && ok "--no-open prints the URL" || bad "--no-open output: '$out'"
 out=$(run LOKI_NO_BROWSER=1)
 [ "$out" = "$URL" ] && ok "LOKI_NO_BROWSER=1 falls back to printing the URL" || bad "no-browser output: '$out'"
 [ ! -s "$T/open.log" ] && ok "open was never invoked" || bad "open was invoked: $(cat "$T/open.log")"
 
+
+# C3: Control Plane leg. A stub answering /health with service=loki-control and
+# a stub instance.json in a temp HOME; bare loki must print that URL and never
+# open a browser or bind a dashboard port.
+mkdir -p "$T/cp-home/.loki/control" "$T/cp-home/.loki/dashboard"
+cp "$T/home/.loki/dashboard/dashboard.pid" "$T/home/.loki/dashboard/port" "$T/cp-home/.loki/dashboard/"
+cat > "$T/cp.py" <<'PY'
+import http.server, sys
+portfile = sys.argv[1]
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = b'{"service":"loki-control","status":"ok"}'
+        self.send_response(200); self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def log_message(self, *a): pass
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+open(portfile, "w").write(str(srv.server_address[1]))
+srv.serve_forever()
+PY
+python3 "$T/cp.py" "$T/cp.port" & CP_PID=$!
+for _ in $(seq 1 50); do [ -s "$T/cp.port" ] && break; sleep 0.1; done
+CP_PORT="$(cat "$T/cp.port" 2>/dev/null)"
+CP_URL="http://127.0.0.1:${CP_PORT}"
+INST="$T/cp-home/.loki/control/instance.json"
+printf '{"pid":%s,"port":%s,"url":"%s","version":"x","install_path":"/x","db":"/x"}\n' "$SLEEP_PID" "$CP_PORT" "$CP_URL" > "$INST"
+chmod 600 "$INST"
+cprun() { env -u CI -u LOKI_CONTROL_DEFAULT HOME="$T/cp-home" PATH="$T/bin:$PATH" "$@" 2>/dev/null; }
+
+echo "TEST: Control Plane is the default for bare loki"
+rm -f "$T/open.log"
+out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN")
+[ "$out" = "$CP_URL" ] && ok "LOKI_NO_BROWSER=1 prints the Control Plane URL" || bad "control output: '$out'"
+out=$(cprun LOKI_HEADLESS=1 bash "$LOKI_BIN")
+[ "$out" = "$CP_URL" ] && ok "LOKI_HEADLESS=1 prints the Control Plane URL" || bad "headless control output: '$out'"
+out=$(cprun bash "$LOKI_BIN" --no-open)
+[ "$out" = "$CP_URL" ] && ok "--no-open prints the Control Plane URL" || bad "--no-open control output: '$out'"
+out=$(cprun LOKI_NO_BROWSER=1 bash "$LOKI_BIN" dashboard open)
+[ "$out" = "$CP_URL" ] && ok "loki dashboard open reuses the Control Plane URL" || bad "dashboard open output: '$out'"
+[ ! -s "$T/open.log" ] && ok "open recorded zero calls" || bad "open was invoked: $(cat "$T/open.log")"
+out=$(cprun LOKI_CONTROL_DEFAULT=0 LOKI_HEADLESS=1 bash "$LOKI_BIN")
+[ "$out" = "$URL" ] && ok "LOKI_CONTROL_DEFAULT=0 restores the classic dashboard" || bad "opt-out output: '$out'"
+printf '{"pid":%s,"port":1,"url":"http://example.com:1","version":"x"}\n' "$SLEEP_PID" > "$INST"
+out=$(cprun LOKI_NO_BROWSER=1 PATH="$T/bin:/usr/bin:/bin" bash "$LOKI_BIN")
+[ "$out" = "$URL" ] && ok "non-loopback instance url is never trusted" || bad "non-loopback instance output: '$out'"
+bound=0
+for p in "$STUB_PID" "$CP_PID" "$SLEEP_PID"; do
+    if lsof -nP -a -p "$p" -iTCP -sTCP:LISTEN 2>/dev/null | grep -Eq ':573(7[4-9]|8[0-9]|9[0-9])[^0-9]'; then bound=1; fi
+done
+[ "$bound" -eq 0 ] && ok "no port in 57374-57399 bound by recorded PIDs" || bad "a recorded PID bound a dashboard port"
 
 echo "TEST: the newcomer landing is kept behind LOKI_LANDING=1"
 out=$(run LOKI_LANDING=1)
