@@ -15,6 +15,7 @@ import { mount as costLedger } from "./cost_ledger.ts";
 import { mount as fleet } from "./fleet.ts";
 import { mount as memory } from "./memory.ts";
 import { mount as metrics } from "./metrics.ts";
+import { mount as sessionControl } from "./session_control.ts";
 import { mount as integrations } from "./integrations.ts";
 import { mount as mergeRisk } from "./merge_risk.ts";
 import { mount as notify } from "./notify.ts";
@@ -42,7 +43,7 @@ export interface RouteCtx {
   answerDir?: string;
 }
 
-export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, costLedger, fleet, metrics, checkpoints, memory, config, providers, verify, integrations, notify, audit, mergeRisk];
+export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, costLedger, fleet, metrics, checkpoints, memory, sessionControl, config, providers, verify, integrations, notify, audit, mergeRisk];
 
 export function registerRoutes(ctx: RouteCtx): void {
   mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback);

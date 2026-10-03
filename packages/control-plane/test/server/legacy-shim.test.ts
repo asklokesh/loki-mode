@@ -162,14 +162,14 @@ test("every USED-but-unbacked route answers an explicit 501, every unused one 41
     expect(b).toMatchObject({ legacy_route: r.path, method: r.method });
     if (r.action === "501") { n501++; expect(b.error).toBe("not yet supported by the Control Plane"); } else { n410++; expect(b.error).toBe("gone"); }
   }
-  expect([n501, n410]).toEqual([60, 139]);
+  expect([n501, n410]).toEqual([55, 135]);
   sqlite.close();
 });
 
 test("the named MISSING routes (pause, resume, api-keys, tenants, audit verify, replay, /ws, cancel) are 501", async () => {
   const { app, sqlite } = mk();
   const cases: [string, string][] = [
-    ["POST", "/api/control/pause"], ["POST", "/api/control/resume"], ["POST", "/api/control/stop"], ["POST", "/api/control/start"],
+    ["POST", "/api/control/start"],
     ["GET", "/api/v2/api-keys"], ["POST", "/api/v2/api-keys"], ["DELETE", "/api/v2/api-keys/k1"], ["POST", "/api/v2/api-keys/k1/rotate"],
     ["GET", "/api/v2/tenants"], ["POST", "/api/v2/tenants"], ["GET", "/api/v2/audit/verify"],
     ["POST", "/api/v2/runs/1/replay"], ["POST", "/api/v2/runs/1/cancel"], ["GET", "/ws"],
@@ -190,7 +190,7 @@ test("auth parity: a CP token is required on every legacy-guarded route, open ro
   }
   expect((await get(app, "/api/status", bearer)).status).toBe(200);
   expect((await get(app, "/api/control/pause", {}, "POST")).status).toBe(401);
-  expect((await get(app, "/api/control/pause", bearer, "POST")).status).toBe(501);
+  expect((await get(app, "/api/control/start", bearer, "POST")).status).toBe(501);
   for (const p of ["/.well-known/agent.json", "/api/enterprise/status", "/api/auth/info", "/api/providers/models", "/docs", "/openapi.json"]) {
     expect([p, (await get(app, p)).status === 401]).toEqual([p, false]);
   }
@@ -209,7 +209,7 @@ test("auth parity: legacy enterprise auth or OIDC on with no CP token fails clos
   for (const env of [{}, { LOKI_ENTERPRISE_AUTH: "false" }, { LOKI_OIDC_ISSUER: "https://idp.test" }]) {
     const { app, sqlite } = mk({ env });
     expect((await get(app, "/api/status")).status).toBe(200);
-    expect((await get(app, "/api/control/pause", {}, "POST")).status).toBe(501);
+    expect((await get(app, "/api/control/start", {}, "POST")).status).toBe(501);
     sqlite.close();
   }
 });
@@ -257,7 +257,7 @@ test("unknown /api/* is a JSON 404 and a trailing slash on a mapped route is ser
   expect(await r.json()).toEqual({ detail: "Not Found" });
   expect((await get(app, "/api/status/")).status).toBe(200);
   expect((await get(app, "/api/v2/runs/")).status).toBe(200);
-  expect((await get(app, "/api/control/pause/", {}, "POST")).status).toBe(501);
+  expect((await get(app, "/api/control/start/", {}, "POST")).status).toBe(501);
   sqlite.close();
 });
 
@@ -276,13 +276,13 @@ test("first hit per process logs one migrate line per route, never again, and no
   await get(app, "/api/status", h); await get(app, "/api/status", h);
   await get(app, "/api/v2/runs/a:b", h);
   await get(app, "/start", h);
-  await get(app, "/api/control/pause", h, "POST"); await get(app, "/api/control/pause", h, "POST");
+  await get(app, "/api/control/start", h, "POST"); await get(app, "/api/control/start", h, "POST");
   await get(app, "/api/proofs/summary", h);
   expect(lines).toEqual([
     "legacy dashboard route /api/status is served by the Control Plane; migrate to /v1/runs",
     "legacy dashboard route /api/v2/runs/{run_id} is served by the Control Plane; migrate to /v1/runs/:id",
     "legacy dashboard route /start is served by the Control Plane; migrate to /",
-    "legacy dashboard route /api/control/pause is not served by the Control Plane (501); no /v1 equivalent yet",
+    "legacy dashboard route /api/control/start is not served by the Control Plane (501); no /v1 equivalent yet",
     "legacy dashboard route /api/proofs/summary is not served by the Control Plane (501); no /v1 equivalent yet",
   ]);
   sqlite.close();

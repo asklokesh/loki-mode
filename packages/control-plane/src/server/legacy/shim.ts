@@ -13,6 +13,7 @@ import { LEGACY_ROUTES, type LegacyRoute } from "./routes.ts";
 import { auditCheckpointMapped } from "./routes-audit.ts";
 import { memoryMapped } from "./routes-memory.ts";
 import { metricsMapped } from "./routes-metrics.ts";
+import { controlMapped } from "./routes-control.ts";
 
 export interface LegacyShimOpts {
   db: Db;
@@ -156,6 +157,7 @@ export function legacyShim(opts: LegacyShimOpts) {
     ...metricsMapped(opts.repoDir ?? process.cwd()),
     ...auditCheckpointMapped(db, opts.repoDir ?? process.cwd(), auditList),
     ...memoryMapped(opts.repoDir ?? process.cwd()),
+    ...controlMapped(db, opts.repoDir ?? process.cwd()),
   };
 
   // /lab/api/* is data, not a page: 501 JSON on every method (a 308 to the SPA would hand a client HTML). Registered before the /lab mount.

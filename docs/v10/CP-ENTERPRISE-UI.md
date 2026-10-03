@@ -380,21 +380,21 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | GET `/api/learning/errors` | none | none | UNUSED | 410 with notice |
 | GET `/api/learning/success` | none | none | UNUSED | 410 with notice |
 | GET `/api/learning/tools` | none | none | UNUSED | 410 with notice |
-| POST `/api/control/pause` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:277, vscode-extension/src/extension.ts:703 | none | MISSING | 501 not yet supported |
-| POST `/api/control/resume` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:285, vscode-extension/src/extension.ts:743 | none | MISSING | 501 not yet supported |
-| POST `/api/control/stop` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:269, vscode-extension/src/extension.ts:651 | none | MISSING | 501 not yet supported |
+| POST `/api/control/pause` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:277, vscode-extension/src/extension.ts:703 | /v1/control/pause (CPE24-P4) | PARTIAL (writes only the .loki signal file run.sh reads; no process is signalled; same-origin plus loopback or CP token required) | map |
+| POST `/api/control/resume` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:285, vscode-extension/src/extension.ts:743 | /v1/control/resume (CPE24-P4) | PARTIAL (writes only the .loki signal file run.sh reads; no process is signalled; same-origin plus loopback or CP token required) | map |
+| POST `/api/control/stop` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:269, vscode-extension/src/extension.ts:651 | /v1/control/stop (CPE24-P4) | PARTIAL (writes only the .loki signal file run.sh reads; no process is signalled; same-origin plus loopback or CP token required) | map |
 | GET `/api/cost` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4646 (test), tests/moat/p7-no-fabricated-data.sh:4647 (test) (+3) | /v1/cost/snapshot (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/budget` | tests/e2e/dashboard-evidence-panels.mjs:73 (test), tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4650 (test) (+3) | none | MISSING | 501 not yet supported |
 | GET `/api/cost/timeline` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4652 (test), tests/moat/p7-no-fabricated-data.sh:4653 (test) (+15) | /v1/cost/timeline (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/trust/trajectory` | none | none | UNUSED | 410 with notice |
 | GET `/api/gate-policy` | none | none | UNUSED | 410 with notice |
 | GET `/api/pricing` | none | none | UNUSED | 410 with notice |
-| GET `/api/council/state` | none | none | UNUSED | 410 with notice |
-| GET `/api/council/verdicts` | none | none | UNUSED | 410 with notice |
-| GET `/api/council/convergence` | none | none | UNUSED | 410 with notice |
-| GET `/api/council/report` | none | none | UNUSED | 410 with notice |
-| POST `/api/council/force-review` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
-| GET `/api/council/transcripts` | vscode-extension/media/loki-dashboard.js:12426 | none | MISSING | 501 not yet supported |
+| GET `/api/council/state` | none | /v1/council/state (CPE24-P4) | PARTIAL (reads the same .loki/council files; read-only) | map |
+| GET `/api/council/verdicts` | none | /v1/council/verdicts (CPE24-P4) | PARTIAL (reads the same .loki/council files; read-only) | map |
+| GET `/api/council/convergence` | none | /v1/council/convergence (CPE24-P4) | PARTIAL (reads the same .loki/council files; read-only) | map |
+| GET `/api/council/report` | none | /v1/council/report (CPE24-P4) | PARTIAL (reads the same .loki/council files; read-only) | map |
+| POST `/api/council/force-review` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:4312 | /v1/control/council-review (CPE24-P4) | PARTIAL (writes only the .loki signal file run.sh reads; no process is signalled; same-origin plus loopback or CP token required) | map |
+| GET `/api/council/transcripts` | vscode-extension/media/loki-dashboard.js:12426 | /v1/council/transcripts (CPE24-P4) | PARTIAL (reads the same .loki/council files; read-only) | map |
 | GET `/api/council/transcripts/{iteration_id}` | none | none | UNUSED | 410 with notice |
 | GET `/api/context` | tests/moat/p7-no-fabricated-data.sh:4638 (test), tests/moat/p7-no-fabricated-data.sh:4745 (test), tests/moat/p7-no-fabricated-data.sh:4746 (test) (+3) | /v1/context (CPE24-P3) | PARTIAL (reads the same .loki source; legacy SQLite memory backend not read; unmeasured values are null) | map |
 | GET `/api/notifications` | none | none | UNUSED | 410 with notice |
