@@ -320,6 +320,18 @@ print(load_signing_key(auto_generate=False)[1])`, AUTONOMY, keyFile], root).trim
     expect(receiptOf(s).not_proven).toContain("wall base run not_run: 1");
   }, 30000);
 
+  // FC-16 r6: a Go Wall file never proves the task already done (wall.classify reports not_run for go exit 0).
+  test("go Wall base run with no confirmed pass never yields ALREADY_SATISFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-go-unconfirmed");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [{ path: "a_test.go", sha256: "ab".repeat(32) }], base_run: { pass: 0, fail: 0, not_run: 1 } },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).not.toBe("ALREADY_SATISFIED");
+  }, 30000);
+
   // A-103b: a Wall file discarded for having no real base result (not_run) is listed by path and class, not only counted.
   test("discarded wall test is listed by path and class in not_proven", async () => {
     noKey();
