@@ -544,3 +544,6 @@ The D61 decomposer (125 lines) does not fit: engine10 core is at 4,993 of its 5,
 - The card marked C12 optional, and an explicit LOKI_E10_INVOKER=cli already selects the CLI invoker for the stub-provider gate. Dropping it costs no user capability.
 - C11b and the D65 stub E2E use LOKI_E10_INVOKER=cli explicitly. Row set to rejected; no founder input needed (D69).
 
+
+## D60-5 addendum: INTEL-2 closed (visible cost cap)
+The $20.00 default per-run cap stays. It is a hard stop on priced sessions only; lower it with one line in loki.yaml (`budgets.per_run`) or `--max-cost`. Every v10 start line shows the cap and its source (`--max-cost`, `loki.yaml` or `default`). A run that reaches it ends BUDGET_STOP with exit 3. Unpriced sessions (subscription or local providers) never count, so the cap never fires on a guess. Proven end to end through the CLI for the flag, the yaml key and flag-over-yaml precedence (loki-ts/tests/engine10/budget_stop_e2e.test.ts, commit 0cc189106). The typical cost of a fast run has not been measured yet; the default is not justified by a run-cost figure.
