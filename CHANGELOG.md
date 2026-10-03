@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v10.8.0 (2026-10-03)
+
+Enterprise Control Plane release: the new Control Plane UI replaces the classic dashboard UI, the legacy /api shim is mounted, metrics, cost and fleet routes are ported, and test runs use a hermetic HOME. Shipped under the founder CI waiver (D88, "skip all CIs for next 10 releases"): this release did not wait for the Tests, Bun Parity or Security Audit workflows, and new tests for these slices are owed after the Oct 7 reset.
+
 - The Control Plane now serves metrics, cost and fleet spend that the legacy dashboard answered on port 57374: `/v1/metrics`, `/v1/cost/snapshot`, `/v1/cost/timeline`, `/v1/fleet/runs` and `/v1/fleet/summary` read the same `.loki/` and registry files, return null with a "not measured" marker instead of a zero, and the legacy `/metrics`, `/api/cost`, `/api/cost/timeline` and `/api/fleet/*` paths now map onto them (the legacy `/metrics` now requires the same auth as other legacy routes).
 - The Control Plane server now mounts the legacy dashboard shim ahead of its SPA fallback, so old dashboard paths on the Control Plane port get the shim's 308, 501 or 410 answer (or a mapped response) instead of the single-page app.
 - Agent SDK 0.3.288 (Claude Code 2.1.288) with Sonnet 5.5 cost rates of $2 input and $10 output per MTok, and CLAUDE_CODE_DISABLE_STRUCTURED_OUTPUTS now verified to reach SDK sessions.
