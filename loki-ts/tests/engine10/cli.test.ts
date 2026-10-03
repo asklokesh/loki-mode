@@ -98,7 +98,10 @@ describe("static shape", () => {
 
   test("engine10 appears only in the one cli.ts arm", () => {
     const lines = readFileSync(join(SRC, "cli.ts"), "utf8").split("\n");
-    const hits = lines.flatMap((l, i) => (l.includes("engine10") ? [i] : []));
+    // The HELP row that documents the command (PO4-CLI-TS-HELP) is text, not routing.
+    const helpRow = /^\s*engine10 <subcmd>\s/;
+    const hits = lines.flatMap((l, i) => (l.includes("engine10") && !helpRow.test(l) ? [i] : []));
+    expect(lines.filter((l) => helpRow.test(l)).length).toBe(1);
     // E-32: the arm also loads the static registry so dist can reach every module.
     expect(hits.length).toBe(3);
     expect(lines[hits[0]!]!.trim()).toBe('case "engine10": {');
