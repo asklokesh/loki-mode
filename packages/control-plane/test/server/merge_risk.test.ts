@@ -1,11 +1,11 @@
 // CPE-25/26: merge queue and PR risk routes shell out to a stub `loki` (never the real CLI or GitHub), validate every argument, and audit mutations and refusals.
 import { afterAll, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
 import { actions } from "../../src/db/schema.ts";
-import { parseRisk } from "../../src/server/routes/merge_risk.ts";
+import { limits, parseRisk } from "../../src/server/routes/merge_risk.ts";
 
 const dir = realpathSync(mkdtempSync(join(tmpdir(), "cp-merge-")));
 const bin = join(dir, "loki");
@@ -79,7 +79,7 @@ test("the dry run only ever invokes `merge run --dry-run`, and a real run is a s
   const r = await req("POST", "/v1/merge/run", { dryRun: false });
   expect(r.status).toBe(200);
   expect(calls()).toEqual(["merge run --dry-run", "merge run"]);
-  expect(rows().map((x) => x.kind)).toEqual(["merge.dry_run", "merge.run"]);
+  expect(rows().map((x) => x.kind)).toEqual(["merge.dry_run", "merge.pr_merged", "merge.run"]);
 });
 
 test("a real run that leaves PRs in the queue (exit 1) is a result, not a server error", async () => {
@@ -135,4 +135,125 @@ test("a missing binary reads not measured", async () => {
   const r = await other.app.fetch(new Request("http://127.0.0.1:1234/v1/review/risk?pr=1", { headers: { host: "127.0.0.1:1234" } }), peer("127.0.0.1"));
   expect(((await r.json()) as { measured: boolean }).measured).toBe(false);
   other.close();
+});
+
+// A stub that records its pid, prints a merged line, then blocks on a long sleep child (like gh/sleep under cmd_merge).
+const slowBin = (name: string, body: string): string => { const b = join(dir, name); writeFileSync(b, `#!/bin/sh\n${body}\n`); chmodSync(b, 0o755); return b; };
+const appWith = (startBin: string, repoDir = dir) => createApp({ dbPath: ":memory:", loopbackOnly: true, startBin, repoDir });
+const post = (a: { app: { fetch: (r: Request, e?: unknown) => Response | Promise<Response> } }, path: string, body: unknown) =>
+  a.app.fetch(new Request(`http://127.0.0.1:1234${path}`, { method: "POST", body: JSON.stringify(body), headers: { host: "127.0.0.1:1234", "content-type": "application/json" } }), peer("127.0.0.1"));
+const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+test("production limits are pinned: 600s real-merge timeout and 5000-byte body cap", async () => {
+  expect(limits.mergeRunMs).toBe(600_000);
+  expect(limits.bodyMax).toBe(5_000);
+  const big = await req("POST", "/v1/merge/queue", { prs: ["1"], pad: "x".repeat(5_001) });
+  expect(big.status).toBe(413);
+  const ok = await req("POST", "/v1/merge/queue", { prs: ["1"] });
+  expect(ok.status).toBe(200);
+});
+
+test("a real merge that times out returns the collected lines with timedOut, audits merged PRs and leaves no live child", async () => {
+  const pidf = join(dir, "child.pid");
+  rmSync(pidf, { force: true });
+  const b = slowBin("loki-slow", `echo "#5: merged"\nsleep 300 &\necho $! > "${pidf}"\nwait`);
+  const a = appWith(b);
+  const saved = limits.mergeRunMs, savedG = limits.graceMs;
+  limits.mergeRunMs = 800; limits.graceMs = 300;
+  try {
+    const r = await post(a, "/v1/merge/run", { dryRun: false });
+    const j = (await r.json()) as { lines: string[]; timedOut: boolean; partial: boolean; ran: boolean; error: string };
+    expect(r.status).toBe(500);
+    expect(j.timedOut).toBe(true);
+    expect(j.partial).toBe(true);
+    expect(j.lines).toEqual(["#5: merged"]);
+    expect(j.error).toContain("timed out");
+    const cpid = Number(readFileSync(pidf, "utf8").trim());
+    expect(cpid).toBeGreaterThan(1);
+    await sleep(300);
+    expect(alive(cpid)).toBe(false);
+    const audited = a.db.select().from(actions).all();
+    expect(audited.some((x) => x.kind === "merge.pr_merged" && x.target === "#5")).toBe(true);
+  } finally { limits.mergeRunMs = saved; limits.graceMs = savedG; a.close(); }
+});
+
+test("the child env carries a poll budget that fits inside the route timeout", async () => {
+  const b = slowBin("loki-env", `echo "$LOKI_MERGE_MAX_POLLS $LOKI_MERGE_POLL_S"`);
+  const a = appWith(b);
+  const j = (await (await post(a, "/v1/merge/run", { dryRun: false })).json()) as { lines: string[] };
+  const [tries, poll] = j.lines[0]!.split(" ").map(Number);
+  expect(tries! * poll!).toBeLessThan(600);
+  expect(tries!).toBeGreaterThan(0);
+  a.close();
+});
+
+test("only exit 1 is blocked; other non-zero exits are errors", async () => {
+  writeFileSync(join(dir, "out.merge"), "boom\n");
+  writeFileSync(join(dir, "rc.merge"), "2");
+  const r = await req("POST", "/v1/merge/run", { dryRun: false });
+  expect(r.status).toBe(500);
+  expect(((await r.json()) as { ran: boolean }).ran).toBe(false);
+  expect(rows()[0]).toMatchObject({ kind: "merge.run", result: "error" });
+});
+
+test("an output-cap kill is reported as such, not as a timeout", async () => {
+  const b = slowBin("loki-flood", `yes aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`);
+  const a = appWith(b);
+  const r = await post(a, "/v1/merge/run", { dryRun: false });
+  const j = (await r.json()) as { timedOut: boolean; capped: boolean; error: string };
+  expect(j.capped).toBe(true);
+  expect(j.timedOut).toBe(false);
+  expect(j.error).toContain("size cap");
+  a.close();
+});
+
+test("a second real merge in the same repo is 409 while the first runs", async () => {
+  const b = slowBin("loki-hold", `sleep 2`);
+  const a = appWith(b);
+  const first = post(a, "/v1/merge/run", { dryRun: false });
+  await sleep(300);
+  const second = await post(a, "/v1/merge/run", { dryRun: false });
+  expect(second.status).toBe(409);
+  expect(a.db.select().from(actions).all().some((x) => x.result === "conflict")).toBe(true);
+  expect((await first).status).toBe(200);
+  expect((await post(a, "/v1/merge/run", { dryRun: false })).status).toBe(200);
+  a.close();
+});
+
+test("the busy lock keys on the real path: a symlinked registry entry cannot start a second real run", async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "cp-home-")));
+  const link = join(home, "repolink");
+  symlinkSync(dir, link);
+  mkdirSync(join(home, ".loki", "dashboard"), { recursive: true });
+  writeFileSync(join(home, ".loki", "dashboard", "projects.json"), JSON.stringify({ projects: { x: { path: link } } }));
+  const oldHome = process.env["HOME"];
+  process.env["HOME"] = home;
+  const b = slowBin("loki-hold2", `sleep 2`);
+  const a = appWith(b);
+  try {
+    const first = post(a, "/v1/merge/run", { dryRun: false });
+    await sleep(300);
+    expect((await post(a, "/v1/merge/run", { dryRun: false, repo: link })).status).toBe(409);
+    expect((await post(a, "/v1/merge/run", { dryRun: false, repo: "repolink" })).status).toBe(409);
+    expect((await first).status).toBe(200);
+  } finally { process.env["HOME"] = oldHome; a.close(); rmSync(home, { recursive: true, force: true }); }
+});
+
+test("GET queue and risk enforce Origin, and concurrent CLI spawns beyond the cap get 429", async () => {
+  expect((await req("GET", "/v1/merge/queue", undefined, { origin: "https://evil.example" })).status).toBe(403);
+  expect((await req("GET", "/v1/review/risk?pr=1", undefined, { origin: "https://evil.example" })).status).toBe(403);
+  expect(calls()).toEqual([]);
+  const b = slowBin("loki-hold3", `sleep 1\necho "#1"`);
+  const a = appWith(b);
+  const get = () => a.app.fetch(new Request("http://127.0.0.1:1234/v1/merge/queue", { headers: { host: "127.0.0.1:1234" } }), peer("127.0.0.1"));
+  const rs = await Promise.all([get(), get(), get(), get()]);
+  expect(rs.map((r) => r.status).sort()).toEqual([200, 200, 429, 429]);
+  a.close();
+});
+
+test("parseRisk reports files null (not 0) when the field is missing", () => {
+  expect(parseRisk('{"score":5,"level":"low","factors":[]}')?.files).toBeNull();
+  expect(parseRisk('{"score":5,"level":"low","files":4,"factors":[]}')?.files).toBe(4);
+  expect(existsSync(bin)).toBe(true);
 });

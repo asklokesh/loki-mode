@@ -93,3 +93,26 @@ test("risk failure and an unusable response read not measured, never 0", async (
   fireEvent.click(screen.getByText("Measure risk"));
   await waitFor(() => screen.getByText("Risk score: not measured"));
 });
+
+test("a timed-out real merge still shows the merged lines and says the outcome is partial", async () => {
+  handler = (c) => {
+    if (c.path.startsWith("/v1/merge/queue") && c.method === "GET") return new Response(JSON.stringify({ measured: true, queue: [5, 6] }));
+    if (c.path === "/v1/merge/run") return new Response(JSON.stringify({ ok: false, ran: false, dryRun: false, exit: null, lines: ["#5: merged"], timedOut: true, partial: true, error: "merge run timed out; the outcome is partial" }), { status: 500 });
+    return new Response("{}");
+  };
+  render(<merge.MergePage />);
+  await waitFor(() => screen.getByText("PR #5"));
+  fireEvent.click(screen.getByRole("button", { name: "Merge queue" }));
+  fireEvent.click(screen.getByText("Confirm merge"));
+  await waitFor(() => screen.getByText(/#5: merged/));
+  expect(screen.getAllByText(/partial/i).length).toBeGreaterThan(0);
+  expect(screen.queryByText(/not done/i)).toBeNull();
+});
+
+test("risk with no files field shows files not measured, never 0 files", async () => {
+  handler = () => new Response(JSON.stringify({ measured: true, score: 10, level: "low", source: "PR #9", files: null, factors: [] }));
+  render(<risk.RiskPage />);
+  fireEvent.input(screen.getByLabelText("PR number"), { target: { value: "9" } });
+  fireEvent.click(screen.getByText("Measure risk"));
+  await waitFor(() => screen.getByText(/files: not measured/));
+});

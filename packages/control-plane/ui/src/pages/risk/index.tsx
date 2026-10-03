@@ -6,7 +6,7 @@ import type { Tone } from "../../design/primitives";
 
 const base = (): string => (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";
 
-export interface Risk { score: number; level: string; source: string; files: number; factors: Array<{ factor: string; points: number; max: number; detail: string }> }
+export interface Risk { score: number; level: string; source: string; files: number | null; factors: Array<{ factor: string; points: number; max: number; detail: string }> }
 type Resp = ({ measured: true } & Risk) | { measured: false; reason?: string };
 type Mode = "pr" | "staged" | "since";
 
@@ -50,6 +50,7 @@ export function RiskPage() {
             <KpiTile label="Risk score" value={`${res.score}/100`} />
             <Badge tone={tone(res.level)}>{res.level}</Badge>
             <small>{res.source}</small>
+            <small>{typeof res.files === "number" ? `${res.files} files` : "files: not measured"}</small>
           </div>
           <Table caption="Risk factors" columns={["Factor", "Points", "Detail"]} rows={res.factors.map((f) => [f.factor, `${f.points}/${f.max}`, f.detail])} />
         </>

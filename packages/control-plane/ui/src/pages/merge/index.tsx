@@ -9,13 +9,21 @@ const headers = (json: boolean): Record<string, string> => {
   return { ...(json ? { "content-type": "application/json" } : {}), ...(t ? { authorization: `Bearer ${t}` } : {}) };
 };
 
-interface RunResult { ok: boolean; ran: boolean; dryRun: boolean; exit: number | null; lines: string[]; error?: string }
+interface RunResult { ok: boolean; ran: boolean; dryRun: boolean; exit: number | null; lines: string[]; timedOut?: boolean; capped?: boolean; partial?: boolean; error?: string }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base()}${path}`, init);
   const j = (await res.json().catch(() => ({}))) as T & { error?: string };
   if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
   return j;
+}
+
+/** A run call keeps the body on a non-2xx result: a timed-out real merge still carries the lines of what already merged. */
+async function callRun(dryRun: boolean): Promise<RunResult> {
+  const res = await fetch(`${base()}/v1/merge/run`, { method: "POST", headers: headers(true), body: JSON.stringify({ dryRun }) });
+  const j = (await res.json().catch(() => null)) as Partial<RunResult> | null;
+  if (!j || !Array.isArray(j.lines)) throw new Error(j?.error ?? `HTTP ${res.status}`);
+  return { ok: false, ran: false, dryRun, exit: null, ...j, lines: j.lines } as RunResult;
 }
 
 export function MergePage() {
@@ -48,7 +56,7 @@ export function MergePage() {
   const run = async (dryRun: boolean) => {
     setBusy(true); setMsg(null); setConfirming(false);
     try {
-      const r = await call<RunResult>("/v1/merge/run", { method: "POST", headers: headers(true), body: JSON.stringify({ dryRun }) });
+      const r = await callRun(dryRun);
       if (dryRun) { setPlan(r); setResult(null); } else { setResult(r); setPlan(null); }
       await load();
     } catch (e) { setMsg({ tone: "error", text: e instanceof Error ? e.message : String(e) }); }
@@ -89,7 +97,8 @@ export function MergePage() {
       {plan ? <Card><strong>Plan (dry run, nothing changed)</strong><pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{plan.lines.join("\n") || "not measured"}</pre></Card> : null}
       {result ? (
         <Card>
-          <strong>Merge result</strong> <Badge tone={result.ok ? "success" : "warning"}>{result.ok ? "all merged" : "some PRs left in queue"}</Badge>
+          <strong>Merge result</strong> <Badge tone={result.ok ? "success" : "warning"}>{result.ok ? "all merged" : result.partial || !result.ran ? "partial result" : "some PRs left in queue"}</Badge>
+          {result.partial || !result.ran ? <p role="alert" style={{ margin: "4px 0" }}>Partial outcome: {result.error ?? "the run did not finish cleanly"}. The lines below show what completed before it stopped; PRs not listed as merged may still be queued.</p> : null}
           <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{result.lines.join("\n")}</pre>
         </Card>
       ) : null}
