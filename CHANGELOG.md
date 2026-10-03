@@ -13,36 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `renderPrBody` (library renderer, not yet wired into the live PR stage, which still uses `renderReviewerBody`) can render a reviewer-first body: contract, criteria with files and passing check only, NOT PROVEN last, capped at 60 lines with a "+N more" line when cut; criteria files and checks are shared run-wide, not mapped per criterion (INTEL-3).
 - `loki verify <run> --export-dsse` exports a verified v10 receipt as an in-toto Statement v1 in a DSSE envelope signed with the receipt Ed25519 key, and `loki verify` accepts that envelope (INTEL-1).
 - A Loki 10 receipt lists each Wall test discarded for having no real base result in NOT PROVEN as "wall test discarded: <file name> (not_run)" (the sealed copy is under .loki/runs/<run-id>/wall/), beside the existing count (A-103b).
-- `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Loki 10 runs show their per-run cost cap on the start line (default $20.00, or `budgets.per_run` in loki.yaml, or `--max-cost`); a run that reaches the cap ends BUDGET_STOP with exit code 3 (INTEL-2).
-- `loki answer` resumes a BLOCKED run with the answer typed in the Control Plane (or `--text`).
-- `loki backlog` and dashboard starts reuse the shared worktree prep (per-repo lock, clean start point, node_modules copy) unless LOKI_WORKSPACES=0 (D51-B05, D51-B06).
-- With `LOKI_SPEED=1`, the already-done check runs off the critical path: implement starts at once, and a run only stops as ALREADY_SATISFIED when a confirmation session, run in a pinned copy of the base tree outside the repo, cites files unchanged since base (D61-04).
 
 ### Changed
-- CI: train/** pushes run a range-only secret scan (merge-base with origin/main to the pushed SHA); main pushes always run the full-history scan, the Security Audit cron is daily instead of weekly, and release required-ci counts only main or dispatch Security Audit runs (D75).
-- `loki serve --help` and the docs now point to `loki` or `loki control serve` for the UI; `loki serve` stays a deprecated alias of `loki api start` (the dashboard API, not the Control Plane) (D65-UI-NAMING).
-- `loki control` help and the bash fallback now match the bun route: the Control Plane is on by default, `LOKI_CONTROL=0` turns it off, and the fallback names bun as required instead of demanding `LOKI_CONTROL=1` (D65-UI-NAMING-2).
 - `loki` with no arguments now opens the Control Plane (set `LOKI_CONTROL_DEFAULT=0` for the previous dashboard).
-- Spec contracts are on by default: criteria in .loki/contract.json are traced in the receipt, and unmatched ones are listed as NOT PROVEN (set LOKI_CONTRACT=0 to turn off).
 
 ### Fixed
-- Loki 10 intake no longer fails with ENOTDIR in a linked git worktree (where .git is a file), so `loki workspace run` per-repo runs start (D65-BUG7).
-- The delivery contract (`.loki/contract.json`) is frozen at intake: seal traces only that copy, records its sha256 in `receipt.contract.sha256`, and an edit, deletion or late creation after intake shows as a NOT PROVEN line; the verdict never changes (D65-SPEC-F2).
 - The Control Plane container image now builds from the repo Dockerfile.control-plane (it copies the loki-ts files ingest.ts imports; `docker build` no longer fails with Could not resolve).
-- The deferred already-done check no longer leaks its pinned base-tree copy (loki-already-done-*) on SIGTERM, process.exit or a failed setup (D61-04-F).
-- The deferred already-done check passes its spawn env inline so the spawn env guard test (no spawn omits env) passes again (P0-SPAWN-ENV-SPEED).
-- Installed packages now ship the loki.yaml schema (`schemas/`) so `loki workspace run` works outside a source checkout (D65-BUG5).
-- `loki control serve` from a source checkout no longer dies with "Cannot find package 'hono'" when any parent directory has a node_modules but packages/control-plane does not (bun switched auto-install off); it now starts with `bun --install=fallback` (P0-CONTROL-LINUX).
-- `loki verify <run>` now verifies the run you name instead of silently verifying the latest one when `--pubkey` is not given. `--pubkey` with no file is now a usage error. `--pubkey=FILE` is accepted as the same as `--pubkey FILE`, including through the `loki` command on the default engine (it was silently ignored, or sent to the legacy verifier, so a signed receipt verified against the local JWKS or exited 3), and `loki verify` now exits 2 for an empty `--pubkey=`, a repeated `--pubkey`, any unknown option, or more than one run-id.
 - The supervisor commit backstop validates the worker-written base as a full object id (40-64 hex) before any git call, and is skipped (recorded as not proven) when the event log fails verification.
 
 ### Security
-- The Control Plane API now requires `LOKI_CONTROL_TOKEN` (bearer) on every /v1 route, refuses to bind beyond localhost without a token (set `LOKI_CONTROL_ALLOW_INSECURE_BIND=1` to override), and rejects DNS-rebinding Host headers.
-- The Control Plane container, Helm chart and ECS task now require an access token whenever the service is exposed beyond localhost.
-
-- Two-way Slack: `LOKI_SLACK_ALLOWED_USERS` (comma-separated Slack user IDs) restricts who can start a run, and `loki slack serve` warns at startup when it is unset (D63-C6-F).
-- Two-way Slack caps task text at 64 KB ("task too long", no spawn) and no longer posts spawn errors, which can hold local paths, back to the thread; the detail goes to stderr. `loki slack serve --port ""` now exits 2 instead of binding port 0 (D63-C6-F).
 - Fixed: an already-satisfied run no longer leaves files named like object prototype members (constructor, toString, valueOf, hasOwnProperty, __proto__) behind in the working tree (P1-DISCARD-PROTO).
 
 ### Deprecated
@@ -12740,10 +12720,6 @@ chain). Both suites green.
 - **chore(hooks): pre-push identity guard.** Aborts a github.com push unless the repo identity
   is asklokesh <lokeshmure@live.com> (github.disney.com/murel002 exempt). Prevents the Disney
   identity leaking onto github.com. Skippable with PRE_PUSH_SKIP=1.
-
-## [Unreleased]
-
-(none)
 
 ## [7.117.1] - 2026-07-02
 
