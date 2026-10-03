@@ -109,8 +109,25 @@ subject is the commit and tree the receipt covers (`gitCommit`, `gitTree`), the
 the receipt body unchanged. It is signed with the same Ed25519 receipt key (the
 `keyid` is the receipt `kid`) over the DSSE PAE bytes, so any DSSE verifier given
 the public key (`loki keys export`) can check it. `loki verify receipt.dsse.json`
-accepts the envelope too (add `--pubkey FILE` on another machine). A tampered or
-unverified receipt is refused for export.
+accepts the envelope too (add `--pubkey FILE` on another machine).
+
+Export rules:
+
+- Only a receipt that verifies AND whose run outcome is `VERIFIED` or
+  `ALREADY_SATISFIED` is exported. A tampered, unsigned, unchecked or
+  failed-run receipt is refused: non-zero exit, empty stdout (a failed run exits 4).
+- The receipt file is read once; the bytes that were verified are the bytes signed.
+- After a key rotation the envelope is signed by the current key and its `keyid`
+  is that key (the retired private key is not available); the predicate keeps the
+  receipt's own `verification.kid`, and `loki verify` checks it against the active
+  plus `LOKI_RECEIPT_RETIRED_PUBKEYS` keys. The export prints a note when the two differ.
+- Verification uses a threshold of one: a single good signature whose keyid is
+  known verifies the envelope. If no signature has a known keyid the result is
+  UNCHECKED (exit 2), however many signatures there are; a known key with a bad
+  signature is TAMPERED (exit 1).
+- An envelope found by run id (`.loki/runs/<run-id>/receipt.json`) must carry
+  `predicate.run_id` equal to that run id, otherwise exit 1. Verifying an explicit
+  file path does not apply this check.
 
 ### In a Kubernetes cluster
 

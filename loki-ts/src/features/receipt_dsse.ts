@@ -35,18 +35,19 @@ export const isEnvelope = (x: unknown): x is DsseEnvelope => !!x && typeof x ===
 
 export type EnvelopeCheck = { ok: true; receipt: Record<string, unknown>; kid: string } | { ok: false; unchecked?: boolean; reason: string };
 
-/** Checks the signature over PAE (key chosen by keyid; an unknown keyid is UNCHECKED, never tried against other keys), then the statement shape and subject binding. */
+/** Checks the signature over PAE (key chosen by keyid; threshold of one: any one good signature verifies; when no signature has a known keyid the result is UNCHECKED, never tried against other keys; a known key with a bad signature is TAMPERED), then the statement shape and subject binding. */
 export function verifyEnvelope(env: DsseEnvelope, pubFor: (kid: string) => KeyObject | undefined): EnvelopeCheck {
   if (env.payloadType !== DSSE_PAYLOAD_TYPE) return { ok: false, reason: `unexpected payloadType: ${env.payloadType}` };
   const body = Buffer.from(env.payload, "base64");
-  let unknown = "", kid = "";
+  let unknown = "", kid = "", known = 0;
   for (const s of env.signatures) {
     if (!s || typeof s.keyid !== "string" || typeof s.sig !== "string") continue;
     const pub = pubFor(s.keyid);
-    if (!pub) { unknown = s.keyid; continue; }
+    if (!pub) { unknown ||= s.keyid; continue; }
+    known++;
     if (verify(null, pae(env.payloadType, body), pub, Buffer.from(s.sig, "base64"))) { kid = s.keyid; break; }
   }
-  if (!kid) return unknown && env.signatures.length === 1 ? { ok: false, unchecked: true, reason: `no key for keyid ${unknown} on this machine (use --pubkey FILE)` } : { ok: false, reason: "DSSE signature does not verify" };
+  if (!kid) return unknown && known === 0 ? { ok: false, unchecked: true, reason: `no key for keyid ${unknown} on this machine (use --pubkey FILE)` } : { ok: false, reason: "DSSE signature does not verify" };
   let st: Record<string, unknown>;
   try { st = JSON.parse(body.toString("utf8")); } catch { return { ok: false, reason: "payload is not JSON" }; }
   if (st["_type"] !== STATEMENT_TYPE) return { ok: false, reason: "payload is not an in-toto Statement v1" };
@@ -58,6 +59,17 @@ export function verifyEnvelope(env: DsseEnvelope, pubFor: (kid: string) => KeyOb
   return { ok: true, receipt, kid };
 }
 
+/** The run outcome of a parsed receipt or DSSE envelope; "UNREADABLE" when it cannot be read. */
+export function outcomeOf(j: Record<string, unknown>): string {
+  try { return String(isEnvelope(j) ? (JSON.parse(Buffer.from(j.payload, "base64").toString()) as { predicate: { verdict: unknown } }).predicate.verdict : j["verdict"]); } catch { return "UNREADABLE"; }
+}
+/** An envelope found by run id must describe that run: its predicate.run_id equals the id. */
+export function envelopeRunIdProblem(j: Record<string, unknown>, runId: string): string | null {
+  if (!isEnvelope(j)) return null;
+  let id: unknown;
+  try { id = (JSON.parse(Buffer.from(j.payload, "base64").toString()) as { predicate?: { run_id?: unknown } }).predicate?.run_id; } catch { return "envelope payload is not readable"; }
+  return id === runId ? null : `envelope predicate.run_id ${JSON.stringify(id)} does not match run id ${JSON.stringify(runId)}`;
+}
 export interface DsseVerifyDeps {
   pubFor: (kid: string) => KeyObject | undefined;
   hash: (receipt: Record<string, unknown>) => string; // the receipt's own receipt_sha256 recomputation, injected so this module never imports seal.ts or verify_cmd.ts

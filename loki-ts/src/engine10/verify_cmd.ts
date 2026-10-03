@@ -8,7 +8,7 @@ import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto
 import { lokiDir } from "../util/paths.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
-import { isEnvelope, signEnvelope, verifyDsseReceipt } from "../features/receipt_dsse.ts";
+import { envelopeRunIdProblem, isEnvelope, outcomeOf, signEnvelope, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
@@ -21,6 +21,7 @@ export const computeReceiptHash = (receipt: Record<string, unknown>): string => 
 export interface VerifyDeps {
   runsRoot?: string; // overrides lokiDir()/runs, for tests
   pubkey?: KeyObject; // --pubkey: check against this key only, never the local JWKS
+  read?: (path: string) => string; // reads the receipt file (tests count reads); default readFileSync utf8
 }
 interface AttestationOutcome { status: "verified" | "tampered" | "unchecked"; reason: string | null }
 /** The public key for a kid: the local key's public half, or a retired one from LOKI_RECEIPT_RETIRED_PUBKEYS (colon-separated PEM paths). Never creates a key. */
@@ -77,7 +78,7 @@ function checkLogSeal(receiptPath: string, hash: string, kid: unknown, given?: K
 export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}): Promise<VerifyResult> {
   if (!existsSync(receiptPath)) return { verdict: "UNCHECKED", reasons: [`receipt not found: ${receiptPath}`] };
   let receipt: Record<string, unknown>;
-  try { receipt = JSON.parse(readFileSync(receiptPath, "utf8")); } catch { return { verdict: "UNCHECKED", reasons: ["receipt.json is not valid JSON"] }; }
+  try { receipt = JSON.parse((deps.read ?? ((p) => readFileSync(p, "utf8")))(receiptPath)); } catch { return { verdict: "UNCHECKED", reasons: ["receipt.json is not valid JSON"] }; }
   if (isEnvelope(receipt)) return verifyDsseReceipt(receipt, { pubFor: (kid) => pubFor(kid, deps.pubkey), hash: computeReceiptHash, attest: (j, h) => checkAttestation(j, h, deps.pubkey) }); // INTEL-1: DSSE envelope
   const recorded = receipt["receipt_sha256"];
   const computed = computeReceiptHash(receipt);
@@ -114,7 +115,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const exportDsse = args.includes("--export-dsse");
   args = args.filter((a) => a !== "--allow-unsigned" && a !== "--export-dsse");
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --export-dsse prints the receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\nUnknown flags and more than one run-id exit 2.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\nUnknown flags and more than one run-id exit 2.\n");
     return 0;
   }
   const pk = takePubkey(args);
@@ -125,15 +126,31 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const runId = args[0] ?? latestRunId(runsRoot) ?? undefined;
   if (!runId) return (process.stderr.write("loki verify: no runs found\n"), 66);
   const receiptPath = existsSync(runId) && statSync(runId).isFile() ? runId : join(runsRoot, runId, "receipt.json"); // a receipt file path works directly
-  if (exportDsse) { // INTEL-1: print the receipt as a DSSE-wrapped in-toto Statement signed with the receipt key; only a receipt that verifies is exported
-    const r = await verifyReceipt(receiptPath, deps), key = loadSigningKey(false);
+  const byRunId = !(existsSync(runId) && statSync(runId).isFile());
+  if (exportDsse) { // INTEL-1: print the receipt as a DSSE-wrapped in-toto Statement signed with the receipt key; only a verified receipt of a VERIFIED or ALREADY_SATISFIED run is exported
+    const key = loadSigningKey(false);
+    let text: string; // INTEL-1b: read once, verify these bytes, sign these bytes
+    try { text = (deps.read ?? ((p) => readFileSync(p, "utf8")))(receiptPath); } catch { return (process.stderr.write(`loki verify --export-dsse: receipt not found: ${receiptPath}\n`), 2); }
+    const r = await verifyReceipt(receiptPath, { ...deps, read: () => text });
     if (r.verdict !== "VERIFIED" || !key) return (process.stderr.write(`loki verify --export-dsse: ${key ? `receipt is ${r.verdict}; refusing to export` : "no signing key found (set LOKI_RECEIPT_SIGNING_KEY_FILE)"}\n`), !key ? 66 : r.verdict === "TAMPERED" ? 1 : 2);
-    try { process.stdout.write(`${JSON.stringify(signEnvelope(JSON.parse(readFileSync(receiptPath, "utf8")), key, kidOf(createPublicKey(key))))}\n`); return 0; } catch (e) { return (process.stderr.write(`loki verify --export-dsse: ${(e as Error).message}\n`), 2); }
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>, outcome = outcomeOf(parsed);
+      if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") return (process.stderr.write(`loki verify --export-dsse: run outcome is ${outcome}, only VERIFIED or ALREADY_SATISFIED receipts are exported; refusing to export\n`), 4);
+      const signer = kidOf(createPublicKey(key)), rk = (parsed["verification"] as { kid?: unknown } | undefined)?.kid;
+      if (rk !== signer) process.stderr.write(`loki verify --export-dsse: note: receipt kid ${String(rk)} differs from the current signing key ${signer}; the envelope keyid is the current key (the retired private key is not available), the receipt attestation stays under the receipt kid\n`);
+      process.stdout.write(`${JSON.stringify(signEnvelope(parsed, key, signer))}\n`); return 0;
+    } catch (e) { return (process.stderr.write(`loki verify --export-dsse: ${(e as Error).message}\n`), 2); }
+  }
+  if (byRunId) { // INTEL-1b: an envelope found under a run id must be for that run
+    let j: Record<string, unknown> | null = null;
+    try { j = JSON.parse(readFileSync(receiptPath, "utf8")); } catch { /* verifyReceipt reports it */ }
+    const problem = j ? envelopeRunIdProblem(j, runId) : null;
+    if (problem) return (process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${problem}\n`), 1);
   }
   const result = await verifyReceipt(receiptPath, deps);
   // An intact (VERIFIED or UNSIGNED) receipt of a run that did not verify is never exit 0 and no flag changes that; unreadable fails closed.
   if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") {
-    const outcome = (() => { try { const j = JSON.parse(readFileSync(receiptPath, "utf8")); return String(isEnvelope(j) ? (JSON.parse(Buffer.from(j.payload, "base64").toString()) as { predicate: { verdict: unknown } }).predicate.verdict : j.verdict); } catch { return "UNREADABLE"; } })();
+    const outcome = (() => { try { return outcomeOf(JSON.parse(readFileSync(receiptPath, "utf8"))); } catch { return "UNREADABLE"; } })();
     if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") { process.stdout.write(`run: ${runId}\nverdict: NOT VERIFIED (run outcome ${outcome}; receipt integrity ${result.verdict === "UNSIGNED" ? "unattested" : "intact"})\n`); return 4; }
   }
   process.stdout.write(`run: ${runId}\nverdict: ${result.verdict}\n`);
