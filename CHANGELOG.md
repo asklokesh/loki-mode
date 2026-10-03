@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v10.10.2 (2026-10-03)
+
+### Added
+- Control Plane redesign (CP-REDESIGN): the run page uses the autonomi.dev design tokens, the home page is composer-first, and sessions show as a card grid. The receipt badge reads "Receipt signed" only when the signature was actually checked (`sig_checked` true), "Receipt unchecked" when it was not, and "receipt unmeasured" when the receipt carries no check result.
+- Project Model on by default (FC-01): Loki detects the packages in a repo and runs each package's checks from that package's own directory, through one shared command resolver.
+
+### Changed
+- Engine core size: the already-done evidence search, the engine origin helpers and the dashboard page renderer moved out of `loki-ts/src/engine10` into `loki-ts/src/util`. Behavior is unchanged; the engine core is back under its 5,000-line cap (4,719 lines).
+
+### CI
+- The bun unit-test job in `test.yml` prints the coverage table (`bun test --coverage`). It replaces the removed `coverage.yml` and enforces no floor.
+- New guard on `docs/v10/cp-redesign` images: only files listed in `ALLOWED-IMAGES.txt` may be committed there, and the pre-commit hook rejects an unlisted staged image (tests/test-cp-redesign-images.sh).
+
 ## v10.10.1 (2026-10-03)
 
 Release-gate fix for 10.10.0: the 10.10.0 publish was blocked at its gate (spawn env guard and the MCP status contract test), and ten CI checks were red on its commit, so nothing reached npm as 10.10.0. 10.10.1 ships everything listed under v10.10.0 below, plus the items here.
