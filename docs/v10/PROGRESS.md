@@ -2182,7 +2182,7 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - 10.7.1 still blocked on guard fix-forward (ad368f08d5bd98594): spawn env guard (ship_hook.ts:10) and e10ext budget (1509/1500). Builder told to land at 1498 or fewer so FC-10 (+1 line) fits.
 - Governor: pulse shows weekly burn projected 528.5% and max engineers next hour 0 (D39). No new dispatch this hour; FC-10 TL review deferred. In-flight agents (FC-07, FC-09, monorepo, W0-06, FC-02 r2, FC-08 r3, guards) finish and are not replaced.
 
-## 2026-10-03 19:45Z (CoS)
+## 2026-10-03T19:45Z: 10.9.1 published, 10.9.2 red triage (CoS)
 - 10.9.1 published to npm next: Release run 37147901069 completed success at 19:40Z (`npm view loki-mode dist-tags` next=10.9.1, latest=10.7.1 via the gate).
 - 10.9.1 Tests run 37147901071 reds triaged. Moat job: the registry ratchet "case registry may only grow: P7.dashboard-client-routes-exist was registered at v10.8.0" (dropped by 9dda8171c). P1/P2 FAIL lines are pending-listed, not regressions. Shell shards: shard-duration table (30 dead rows), DEPS.md fixture manifests, D44-C self-test, node-test runner, MCP registry pin 9.50.1, gitleaks baseline E-123, leak2 opener, C4 legacy-dashboard allowlist in moat p2/p7, CP-04. Three sonnet fix lanes dispatched (moat, structural, tests).
 - Local main (unpushed): 644c03bca LEGACY-REMOVAL.md A-K inventory (104 rows, W1 x4, W2 x13, SZ-01..03); a4108e839 CLI registry + auto-install completions (bun test tests/cli: 21 pass 0 fail); 48ef7139d dist rebuild (test-release-dist-guard rc=0).
