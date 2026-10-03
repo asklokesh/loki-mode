@@ -152,6 +152,12 @@ landing:static-landing-page:3
 static:static-landing-page:3
 marketing:static-landing-page:3
 fullstack:full-stack-demo:3
+shortener:rest-api:3
+url:rest-api:2
+urls:rest-api:2
+stats:dashboard:3
+statistics:dashboard:3
+metrics:dashboard:3
 MAP
 }
 
@@ -171,6 +177,10 @@ _qs_is_stopword() {
 # plus the curated keyword weights. No network, no provider, no LLM.
 _qs_score_templates() {
     local brief="$1"
+    # --best: print only the strongest real score (baseline excluded) so callers
+    # can tell a genuine match from simple-todo-app winning by default.
+    local best_mode=false
+    [ "${2:-}" = "--best" ] && best_mode=true
     local tdir; tdir="$(_qs_templates_dir)"
     local brief_lc; brief_lc=$(printf '%s' "$brief" | tr '[:upper:]' '[:lower:]')
 
@@ -198,7 +208,7 @@ _qs_score_templates() {
 
     # No templates resolvable: fall back to the guaranteed default only.
     if [ -z "$scores" ]; then
-        printf 'simple-todo-app\n'
+        if [ "$best_mode" = true ]; then printf '0\n'; else printf 'simple-todo-app\n'; fi
         return 0
     fi
 
@@ -230,7 +240,7 @@ _qs_score_templates() {
     done
 
     # Guaranteed default baseline: simple-todo-app gets +1 and wins exact ties.
-    deltas="${deltas}simple-todo-app\t1\n"
+    [ "$best_mode" = true ] || deltas="${deltas}simple-todo-app\t1\n"
 
     # Fold: keep only names that are REAL templates (a keyword map entry naming
     # a template that does not exist must not invent one), sum the deltas, then
@@ -250,7 +260,20 @@ _qs_score_templates() {
                 printf "%d\t%d\t%s\n", sum[n], prio, n
             }
         }
-    ' | sort -t"$(printf '\t')" -k1,1nr -k2,2n -k3,3 | head -3 | cut -f3
+    ' | sort -t"$(printf '\t')" -k1,1nr -k2,2n -k3,3 | {
+        if [ "$best_mode" = true ]; then
+            head -1 | cut -f1 | awk '{ print ($1 == "" ? 0 : $1) }'
+        else
+            head -3 | cut -f3
+        fi
+    }
+}
+
+# _qs_match_strength <brief>: the best real (non-baseline) template score. 0
+# means no template matched the brief at all; >= 2 is a real match (one
+# filename token or one curated keyword).
+_qs_match_strength() {
+    _qs_score_templates "$1" --best
 }
 
 # _qs_template_summary <name>: a short one-line description for the picker.
@@ -1363,6 +1386,10 @@ cmd_quickstart() {
             [ -n "$line" ] && top3+=("$line")
         done < <(_qs_score_templates "$brief")
 
+        local match_strength=0
+        match_strength="$(_qs_match_strength "$brief")"
+        case "$match_strength" in ''|*[!0-9]*) match_strength=0;; esac
+
         # Defensive: guarantee a default if scoring produced nothing.
         if [ "${#top3[@]}" -eq 0 ]; then
             top3=("simple-todo-app")
@@ -1388,6 +1415,9 @@ cmd_quickstart() {
                 printf '    %d) %-18s %s%s\n' "$i" "$t" "$(_qs_template_summary "$t")" "$suffix"
                 i=$((i + 1))
             done
+            if [ "$match_strength" -lt 2 ] && [ -n "$brief" ]; then
+                printf '  No strong match (score %s); these are weak guesses. Type "none" to build from your description.\n' "$match_strength"
+            fi
             printf '  Choose 1-%d, or press Enter for 1.\n' "${#top3[@]}"
             printf '> '
             read -r pick 2>/dev/null || pick=""
@@ -1400,7 +1430,17 @@ cmd_quickstart() {
             # non-interactive choice is exactly the one an operator pressing
             # Enter would get. No picker, no prompt, no second code path.
             printf '%sStep 3 of 4: Template%s\n' "$_QS_BOLD" "$_QS_NC"
-            printf '  Selected %s (top match) for "%s".\n\n' "${top3[0]}" "$brief"
+            if [ "$match_strength" -ge 2 ]; then
+                printf '  Selected %s (top match, score %s) for "%s".\n\n' "${top3[0]}" "$match_strength" "$brief"
+            elif [ -n "$brief" ]; then
+                # No template matched: building a todo app for an unrelated
+                # brief is wrong (issue #217). Use the brief as the spec.
+                pick="none"
+                printf '  No strong template match for "%s" (score %s).\n' "$brief" "$match_strength"
+                printf '  Falling back to a plain-spec build from your description.\n\n'
+            else
+                printf '  Selected %s (default) for the sample Todo app.\n\n' "${top3[0]}"
+            fi
         fi
 
         # An explicit rejection is honored, never converted into a selection.

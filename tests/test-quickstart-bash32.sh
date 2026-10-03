@@ -110,6 +110,50 @@ else
 fi
 
 echo
+echo "T4 -- match confidence (issue #217)"
+
+# The URL shortener brief matches no todo keyword; simple-todo-app only ever
+# scored the +1 baseline there. It must not rank first.
+url_top=$(/bin/bash -c "source '$QS' >/dev/null 2>&1; _qs_score_templates 'a URL shortener with click stats'" 2>/dev/null | head -1)
+if [ -n "$url_top" ] && [ "$url_top" != "simple-todo-app" ]; then
+    ok "URL shortener brief ranks '$url_top' first, not simple-todo-app"
+else
+    bad "URL shortener brief ranked '${url_top:-nothing}' first"
+fi
+
+# Gibberish has no real match: strength must be 0 and must say so.
+g=$(/bin/bash -c "source '$QS' >/dev/null 2>&1; _qs_match_strength 'zxqv blorp wibble'" 2>/dev/null)
+if [ "$g" = "0" ]; then
+    ok "gibberish brief reports no strong match (strength 0)"
+else
+    bad "gibberish brief strength was '${g:-empty}', expected 0"
+fi
+
+# Positive control: a real brief reports a strong match, so the check above is
+# not passing because the function always prints 0.
+r=$(/bin/bash -c "source '$QS' >/dev/null 2>&1; _qs_match_strength 'a chrome extension for tabs'" 2>/dev/null)
+if [ -n "$r" ] && [ "$r" -ge 2 ] 2>/dev/null; then
+    ok "chrome extension brief reports strong match (strength $r)"
+else
+    bad "chrome extension brief strength was '${r:-empty}', expected >= 2"
+fi
+
+# The baseline alone must never count as a match.
+t=$(/bin/bash -c "source '$QS' >/dev/null 2>&1; _qs_match_strength ''" 2>/dev/null)
+if [ "$t" = "0" ]; then
+    ok "empty brief reports strength 0 (baseline not counted)"
+else
+    bad "empty brief strength was '${t:-empty}', expected 0"
+fi
+
+# The selection print must not claim "top match" unconditionally.
+if grep -n 'Selected %s (top match)' "$QS" | grep -q .; then
+    bad "unconditional 'top match' print still present"
+else
+    ok "no unconditional 'top match' print"
+fi
+
+echo
 echo "==============================================================="
 echo "Results: $PASS passed, $FAIL failed, $((PASS + FAIL)) total"
 [ "$FAIL" -eq 0 ]

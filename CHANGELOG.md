@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The completion council now counts only real TODO/FIXME/HACK/XXX marker words in project source, skipping node_modules, .git, .loki, dist, build and vendor, so dependency content and identifiers like XXXLarge no longer trigger a false block while real project TODOs still block.
 - Removed em and en dashes from the Proof Passport Markdown summary and six tracked docs (PO4-DASH-SWEEP); a test now pins the passport output as dash-free.
 - `loki --help` on the Bun route now lists every routed command (kpis, report, trust, crash, contract, start, slack, engine10) and the stale "8 highest-traffic" header is gone, guarded by cli_help_routes.test.ts.
+- `loki quickstart` no longer reports simple-todo-app as the "top match" for briefs that match no template (for example "a URL shortener with click stats"): it prints the match score, adds url, shortener and stats keywords, and falls back to a plain-spec build from the brief when nothing matches (#217).
 - MCP loki run now returns the exit code and log tail when loki exits before a run starts.
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 ### Fixed
