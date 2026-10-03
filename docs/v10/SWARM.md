@@ -222,8 +222,11 @@ Release Manager still merges only PRs whose checks concluded success.
   `--cloud` option in the installed CLI (13). Fail-safe rules: an in-flight
   row that cannot be parsed, or has no concrete file set, refuses (11); a
   ready slice with an elided or path-less file set refuses (12); a row with a
-  tab or escaped pipe refuses (17); `--live` needs a live `.loki/v10-leader`
-  PID (16) and re-checks the row just before launching; the governor call is
+  tab, escaped pipe or a row not starting with `| ID |` refuses (17, also in
+  dry-run); path-shaped tokens inside parentheses in a file set still count
+  toward overlap; `--live` needs a live `.loki/v10-leader` PID that is an
+  ancestor of the caller (16) and re-checks the row just before launching; the
+  BOARD write keeps the file's mode; the governor call is
   capped at 180s and a timeout refuses; the dry-run governor runs with
   `--no-cache`.
 - Verified CLI surface (claude 2.1.288): only the top-level option

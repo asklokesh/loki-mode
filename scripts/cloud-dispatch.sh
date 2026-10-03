@@ -178,10 +178,28 @@ def expand_braces(t):
 
 
 def tokens(fs):
+    # Text in parentheses is not trusted to be prose: path-shaped tokens inside
+    # it are kept (over-refusal is acceptable, a missed overlap is not).
     s = fs.replace("`", "")
+    inner = []
     prev = None
     while prev != s:
+        inner.extend(re.findall(r"\(([^()]*)\)", s))
         prev, s = s, re.sub(r"\([^()]*\)", "", s)
+    res = tokens_flat(s)
+    for chunk in inner:
+        try:
+            extra = tokens_flat(chunk)
+        except ValueError:
+            continue
+        for t in extra:
+            t = t.rstrip(".,")
+            if t and any(c in t for c in "/.*") and t not in res:
+                res.append(t)
+    return res
+
+
+def tokens_flat(s):
     s = re.sub(r"(?<=\s)and(?=\s)", ",", s).replace(";", ",")
     raw, cur, depth = [], "", 0
     for ch in s:
@@ -321,6 +339,8 @@ if "\t" in row["line"]:
     problems.append("a tab in the row")
 if "\\|" in row["line"]:
     problems.append("an escaped pipe in the row")
+if not row["line"].startswith("| %s |" % slice_id):
+    problems.append("row does not start with '| %s |' (the writer needs that exact prefix)" % slice_id)
 if h["notes"] is None:
     problems.append("no Notes column to record the dispatch in")
 if not problems:
@@ -383,9 +403,11 @@ lines[hits[0]] = row
 new = "\n".join(lines)
 if not new:
     sys.exit("refusing to write an empty board")
+mode = os.stat(board).st_mode & 0o7777
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(board)))
 with os.fdopen(fd, "w", encoding="utf-8") as fh:
     fh.write(new)
+os.chmod(tmp, mode)
 os.replace(tmp, board)
 PYEOF
 
@@ -481,6 +503,18 @@ case "$leader_pid" in
 esac
 if ! kill -0 "$leader_pid" 2>/dev/null; then
   echo "REFUSED: leader lock PID $leader_pid is dead; only the live leader may dispatch" >&2; exit 16
+fi
+# The leader must be this process or an ancestor of it (R2-2).
+is_ancestor=0
+walk=$$
+hops=0
+while [ -n "$walk" ] && [ "$walk" -gt 1 ] 2>/dev/null && [ "$hops" -lt 64 ]; do
+  if [ "$walk" = "$leader_pid" ]; then is_ancestor=1; break; fi
+  walk="$(ps -o ppid= -p "$walk" 2>/dev/null | tr -d ' ')"
+  hops=$((hops + 1))
+done
+if [ "$is_ancestor" != 1 ]; then
+  echo "REFUSED: leader lock PID $leader_pid is not an ancestor of this process; only the leader session may dispatch" >&2; exit 16
 fi
 fresh="$(analyze)" || { echo "cloud-dispatch: board re-analysis failed" >&2; exit 2; }
 if [ "$(printf '%s\n' "$fresh" | awk -F'\t' '$1=="ORIG" {print $2}')" != "$orig_line" ]; then

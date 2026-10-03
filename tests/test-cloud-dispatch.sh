@@ -270,6 +270,124 @@ expect_refusal "F4: --live with a dead leader PID refuses" 16 "*REFUSED*leader*d
 [ ! -e "$MARK" ] && ok "F4: no cloud command ran with a dead leader" || bad "F4: stub cloud command ran with a dead leader"
 [ "$(cksum < "$B4")" = "$B4_SUM" ] && ok "F4: refused live leaves the board untouched" || bad "F4: board changed"
 
+# R2-1. path-shaped tokens inside parentheses are still compared
+B6="$(mkboard r21 <<'EOF'
+| Q-1 | eng | scripts/a.sh (plus tests/b.sh) | LOW | building@2026-10-01T10:00Z | in flight |
+| T-1 | po | tests/b.sh | LOW | ready@2026-10-01T10:00Z | overlaps a path named in parentheses |
+| T-2 | po | scripts/z.sh (also touches scripts/a.sh) | LOW | ready@2026-10-01T10:00Z | own parentheses name an in-flight path |
+| T-3 | po | scripts/c.sh (docs only, no code) | LOW | ready@2026-10-01T10:00Z | prose in parentheses is not a path |
+EOF
+)"
+out="$(run_on "$B6" "$GOV_BIG" T-1)"; rc=$?
+expect_refusal "R2-1: a path named only in an in-flight row's parentheses overlaps" 11 "*REFUSED*overlaps*Q-1*" "$rc" "$out"
+out="$(run_on "$B6" "$GOV_BIG" T-2)"; rc=$?
+expect_refusal "R2-1: a path in the ready row's own parentheses overlaps" 11 "*REFUSED*overlaps*Q-1*" "$rc" "$out"
+out="$(run_on "$B6" "$GOV_BIG" T-3)"; rc=$?
+[ "$rc" -eq 0 ] && ok "R2-1: prose in parentheses does not cause a refusal" || bad "R2-1: prose parentheses refused (rc=$rc: $out)"
+
+# Precondition: dry-run applies the writer's row-start check
+B7="$(mkboard rowstart <<'EOF'
+|  W1-S4 | po | scripts/ws.sh | LOW | ready@2026-10-01T10:00Z | double space after the pipe |
+EOF
+)"
+out="$(run_on "$B7" "$GOV_BIG" W1-S4)"; rc=$?
+expect_refusal "precondition: dry-run refuses a row that does not start with '| ID |'" 17 "*REFUSED*does not start with*" "$rc" "$out"
+
+# R2-2 / R2-3. --live with a stub CLAUDE_BIN; no real cloud session can start
+STUB3="$TMP/claude-stub3"
+MARK3="$TMP/stub3-ran"
+cat > "$STUB3" <<SEOF
+#!/bin/sh
+case "\$1" in
+  --help) echo "  --cloud [description]" ;;
+  *) : > "$MARK3"
+     [ -n "\${STUB_HOOK:-}" ] && sh -c "\$STUB_HOOK"
+     echo "\${STUB_OUT-started https://claude.ai/code/session_abc123}" ;;
+esac
+SEOF
+chmod 755 "$STUB3"
+# live_on BOARD LEADER_FILE args... (env STUB_OUT, STUB_HOOK, GOVCMD optional)
+live_on() {
+  local b="$1" lf="$2"; shift 2
+  CLOUD_DISPATCH_GOVERNOR_CMD="${GOVCMD:-cat $GOV_BIG}" CLOUD_DISPATCH_NOW="2026-10-03T12:00Z" \
+    CLAUDE_BIN="$STUB3" CLOUD_DISPATCH_LEADER_FILE="$lf" \
+    "$SUT_BASH" "$TOOL" --board "$b" --live "$@" 2>&1
+}
+mklive() { # NAME ; fresh board with P-2
+  { printf '# Board\n\n%s\n' "$HDR"; printf '| P-2 | po | scripts/p2.sh | LOW | ready@2026-10-01T10:00Z | clean |\n| P-9 | po | scripts/p9.sh | LOW | ready@2026-10-01T10:00Z | other |\n'; } > "$TMP/$1.md"
+  printf '%s' "$TMP/$1.md"
+}
+LF_SELF="$TMP/leader-self"
+printf '%s 2026-10-03T00:00Z\n' "$$" > "$LF_SELF"
+
+# R2-2: unrelated live PID is refused, ancestor PID passes
+sleep 120 &
+UNREL_PID=$!
+printf '%s 2026-10-03T00:00Z\n' "$UNREL_PID" > "$TMP/leader-unrelated"
+B8="$(mklive l8)"
+rm -f "$MARK3"
+out="$(live_on "$B8" "$TMP/leader-unrelated" P-2)"; rc=$?
+expect_refusal "R2-2: a live PID that is not an ancestor is refused" 16 "*REFUSED*not an ancestor*" "$rc" "$out"
+[ ! -e "$MARK3" ] && ok "R2-2: no cloud command ran for a non-ancestor leader" || bad "R2-2: stub ran for a non-ancestor leader"
+kill "$UNREL_PID" 2>/dev/null; wait "$UNREL_PID" 2>/dev/null
+
+# missing lock file is its own refusal, not the dead-PID one
+rm -f "$MARK3"
+out="$(live_on "$B8" "$TMP/no-such-leader" P-2)"; rc=$?
+expect_refusal "R2-3: a missing lock file reports 'no leader lock'" 16 "*REFUSED*no leader lock*" "$rc" "$out"
+[ ! -e "$MARK3" ] && ok "R2-3: no cloud command ran without a lock file" || bad "R2-3: stub ran without a lock file"
+
+# happy path: the leader file names this shell (an ancestor); mode preserved (A5)
+B9="$(mklive l9)"
+chmod 640 "$B9"
+cp "$B9" "$TMP/l9.before"
+rm -f "$MARK3"
+out="$(live_on "$B9" "$LF_SELF" P-2)"; rc=$?
+[ "$rc" -eq 0 ] && ok "R2-3: live dispatch with an ancestor leader succeeds" || bad "R2-3: live rc=$rc: $out"
+[ -e "$MARK3" ] && ok "R2-3: the stub cloud command ran" || bad "R2-3: stub did not run"
+grep -q '^| P-2 .*building@2026-10-03T12:00Z.*https://claude.ai/code/session_abc123.*cloud/p-2' "$B9" \
+  && ok "R2-3: the row records building, the session id and the branch" || bad "R2-3: row not updated: $(cat "$B9")"
+[ "$(diff "$TMP/l9.before" "$B9" | grep -c '^>')" = 1 ] && ok "R2-3: exactly one line changed" || bad "R2-3: more than one line changed"
+grep -q '^| P-9 .*ready@2026-10-01T10:00Z' "$B9" && ok "R2-3: the other row is untouched" || bad "R2-3: other row changed"
+[ "$(ls -l "$B9" | cut -c1-10)" = "-rw-r-----" ] && ok "A5: the board's file mode is preserved across the write" || bad "A5: mode is $(ls -l "$B9" | cut -c1-10)"
+
+# no session id in the output: refuse, board untouched
+B10="$(mklive l10)"; SUM10="$(cksum < "$B10")"
+rm -f "$MARK3"
+out="$(STUB_OUT="started, no id" live_on "$B10" "$LF_SELF" P-2)"; rc=$?
+expect_refusal "R2-3: no session id in the output refuses" 14 "*no session id*" "$rc" "$out"
+[ "$(cksum < "$B10")" = "$SUM10" ] && ok "R2-3: no session id leaves the board untouched" || bad "R2-3: board changed without a session id"
+
+# writer original-row check: the row changes after the command starts
+B11="$(mklive l11)"
+out="$(STUB_HOOK="sed 's/| clean |/| edited |/' $B11 > $B11.new && mv $B11.new $B11" live_on "$B11" "$LF_SELF" P-2)"; rc=$?
+expect_refusal "R2-3: the writer refuses when the row changed since analysis" 15 "*slice row changed or not unique*" "$rc" "$out"
+grep -q 'edited' "$B11" && ! grep -q 'building@' "$B11" && ok "R2-3: a changed row is not overwritten" || bad "R2-3: changed row was overwritten"
+B12="$(mklive l12)"
+out="$(STUB_HOOK="grep '^| P-2 ' $B12 >> $B12" live_on "$B12" "$LF_SELF" P-2)"; rc=$?
+expect_refusal "R2-3: the writer refuses a duplicated row" 15 "*slice row changed or not unique*" "$rc" "$out"
+! grep -q 'building@' "$B12" && ok "R2-3: a duplicated row is not overwritten" || bad "R2-3: duplicated row was overwritten"
+
+# BOARD re-read before dispatch: the row changes after the first analysis
+B13="$(mklive l13)"
+rm -f "$MARK3"
+out="$(GOVCMD="cat $GOV_BIG; sed 's/ready@/review@/' $B13 > $B13.new && mv $B13.new $B13" live_on "$B13" "$LF_SELF" P-2)"; rc=$?
+expect_refusal "R2-3: a row that changed before dispatch refuses" 12 "*REFUSED*changed*" "$rc" "$out"
+[ ! -e "$MARK3" ] && ok "R2-3: no cloud command ran after the row changed" || bad "R2-3: stub ran after the row changed"
+
+# governor timeout kills the whole process group, not just the shell
+PIDF="$TMP/gov-child.pid"
+rm -f "$PIDF"
+out="$(CLOUD_DISPATCH_GOVERNOR_CMD="sleep 33 >/dev/null 2>&1 & echo \$! > $PIDF; wait" CLOUD_DISPATCH_GOVERNOR_TIMEOUT=1 "$SUT_BASH" "$TOOL" --board "$BOARD" R-1 2>&1)"; rc=$?
+sleep 1
+CHILD="$(cat "$PIDF" 2>/dev/null)"
+if [ -n "$CHILD" ] && kill -0 "$CHILD" 2>/dev/null; then
+  bad "A1: the governor's child process survived the timeout (pid $CHILD)"
+  kill "$CHILD" 2>/dev/null
+else
+  [ -n "$CHILD" ] && ok "A1: the governor's child process was killed with its group" || bad "A1: child pid not recorded"
+fi
+
 # F6. the dry-run governor call must not write the parse cache
 grep -q -- '--json --no-cache' "$TOOL" && ok "F6: dry-run governor command passes --no-cache" || bad "F6: no --no-cache in the dry-run governor command"
 
