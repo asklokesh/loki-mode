@@ -1,8 +1,13 @@
-import { Activity, Briefcase, DollarSign, ExternalLink, Settings, Moon, Sun, TriangleAlert } from "lucide-react";
+import { ExternalLink, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Landing } from "./Live";
-import { CostPage, EmptyState, SettingsPage, StartRun, WorkPage } from "./Shell";
-import { deleteRun, effectiveVerdict, getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
+import { Landing, LiveRun } from "./Live";
+import { registerPage } from "./pages/registry";
+import { wirePages } from "./pages/wired";
+import { CommandPalette } from "./palette";
+import { AppShell } from "./shell/AppShell";
+import { EmptyState, SettingsPage, StartRun } from "./Shell";
+import { effectiveVerdict, FILTER_OPTIONS, VERDICT, type VerdictSource } from "./design/primitives";
+import { deleteRun, getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
 
@@ -21,18 +26,18 @@ const fmtSecs = (s: number | null | undefined): string => (typeof s === "number"
 const fmtTime = (t: string | null | undefined): string => (t ? t.replace("T", " ").replace(/\.\d+Z$/, "Z") : MISSING);
 
 const VERDICT_CLASS: Record<string, string> = {
-  VERIFIED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-emerald-500/30",
-  PARTIAL: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
-  FAILED: "bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30",
-  TAMPERED: "bg-red-600/20 text-red-700 dark:text-red-300 ring-red-600/50",
-  "VERIFIED (signature not checked)": "bg-sky-500/15 text-sky-700 dark:text-sky-300 ring-sky-500/30",
-  UNVERIFIED: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
-  SPEC_CONFLICT: "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-violet-500/30",
+  [VERDICT.VERIFIED]: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-emerald-500/30",
+  [VERDICT.PARTIAL]: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
+  [VERDICT.FAILED]: "bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30",
+  [VERDICT.TAMPERED]: "bg-red-600/20 text-red-700 dark:text-red-300 ring-red-600/50",
+  [VERDICT.VERIFIED_UNCHECKED]: "bg-sky-500/15 text-sky-700 dark:text-sky-300 ring-sky-500/30",
+  [VERDICT.UNVERIFIED]: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
+  [VERDICT.SPEC_CONFLICT]: "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-violet-500/30",
 };
 
-/** A tampered event log overrides whatever verdict was recorded: shown as TAMPERED, in red, everywhere. */
-export function VerdictBadge({ verdict, tampered }: { verdict: string | null; tampered?: boolean }) {
-  if (tampered) verdict = "TAMPERED";
+/** A tampered event log, or one that failed ingest integrity, overrides the recorded verdict (effectiveVerdict). Pass `run` to apply it. */
+export function VerdictBadge({ verdict: stored, run }: { verdict?: string | null; run?: VerdictSource }) {
+  const verdict = run ? effectiveVerdict(run) : stored ?? null;
   const cls = verdict ? (VERDICT_CLASS[verdict] ?? "bg-slate-500/15 text-slate-600 dark:text-slate-300 ring-slate-500/30") : "bg-slate-500/15 text-slate-600 dark:text-slate-300 ring-slate-500/30";
   return <span data-testid="verdict" className={`inline-block rounded px-2 py-0.5 text-xs font-medium ring-1 ${cls}`}>{verdict ?? "in progress"}</span>;
 }
@@ -100,7 +105,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
         <label className="flex flex-col gap-1">Verdict
           <select aria-label="Verdict" className={inp} value={verdict} onChange={(e) => setVerdict(e.target.value)}>
             <option value="">All</option>
-            {["VERIFIED", "VERIFIED (signature not checked)", "UNVERIFIED", "TAMPERED", "PARTIAL", "FAILED", "SPEC_CONFLICT"].map((v) => <option key={v}>{v}</option>)}
+            {FILTER_OPTIONS.map((v) => <option key={v}>{v}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">Repo
@@ -122,7 +127,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
             <tbody>
               {data.runs.map((r) => (
                 <tr key={`${r.source_id}/${r.run_id}`} data-testid="run-row" className="border-t border-slate-200 dark:border-slate-800">
-                  <td className="p-2"><VerdictBadge verdict={effectiveVerdict(r)} tampered={r.tampered} /></td>
+                  <td className="p-2"><VerdictBadge run={r} /></td>
                   <td className="p-2 font-mono text-xs">
                     <a href={`#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} onClick={() => onOpen?.(r)} className="inline-block break-all py-2 text-sky-600 hover:underline md:py-0 dark:text-sky-400">{r.run_id}</a>
                   </td>
@@ -214,7 +219,7 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
       <a href="#/runs" className="text-sm text-sky-600 hover:underline dark:text-sky-400">Back to runs</a>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="font-mono text-lg font-semibold">{r.run_id}</h1>
-        <VerdictBadge verdict={effectiveVerdict(r)} tampered={r.tampered} />
+        <VerdictBadge run={r} />
         {r.tampered && <span className="inline-flex items-center gap-1 text-sm text-red-600"><TriangleAlert size={14} />event log tampered</span>}
         {r.conflict && <span className="inline-flex items-center gap-1 text-sm text-amber-600"><TriangleAlert size={14} />conflicting events ingested</span>}
       </div>
@@ -239,7 +244,7 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
       <Card title="Receipt">
         <div className="space-y-3 text-sm">
           {data.receipt ? (
-            <p>Receipt verdict: <VerdictBadge verdict={effectiveVerdict({ verdict: data.receipt.verdict, tampered: r.tampered, attested: r.attested, sig_checked: r.sig_checked })} tampered={r.tampered} /> <span className="ml-2 font-mono text-xs text-slate-500">{data.receipt.sha256}</span></p>
+            <p>Receipt verdict: <VerdictBadge run={{ verdict: data.receipt.verdict, tampered: r.tampered, attested: r.attested, sig_checked: r.sig_checked }} /> <span className="ml-2 font-mono text-xs text-slate-500">{data.receipt.sha256}</span></p>
           ) : <p className="text-slate-500">No receipt ingested for this run.</p>}
           <div>
             <h3 className="font-medium">NOT PROVEN</h3>
@@ -254,35 +259,18 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
   );
 }
 
-function route(hash: string): { source: string; run: string } | null {
-  const m = /^#\/runs\/([^/]+)\/([^/]+)$/.exec(hash);
-  return m ? { source: decodeURIComponent(m[1]!), run: decodeURIComponent(m[2]!) } : null;
-}
+const home = <><StartRun /><RunsList /></>;
 
-const NAV: [string, string, typeof Activity][] = [["#/runs", "Runs", Activity], ["#/work", "Work", Briefcase], ["#/cost", "Cost", DollarSign], ["#/settings", "Settings", Settings]];
+registerPage({ id: "home", path: "/", title: "Home", component: () => <Landing fallback={home} /> });
+registerPage({ id: "overview", path: "/overview", title: "Overview", component: () => <Landing overview fallback={home} /> });
+registerPage({ id: "new-run", path: "/new", title: "New run", component: () => <section><h1 className="mb-4 text-xl font-semibold">New run</h1><StartRun /></section> });
+registerPage({ id: "runs", path: "/runs", title: "Runs", component: () => home });
+registerPage({ id: "run-detail", path: "/runs/:source/:run", title: "Run", component: ({ params }) => <RunDetail source={params.source!} run={params.run!} /> });
+registerPage({ id: "live-run", path: "/live/:source/:run", title: "Live run", component: ({ params }) => <LiveRun source={params.source!} run={params.run!} /> });
+registerPage({ id: "settings-general", path: "/settings/general", title: "General", inSettings: true, component: SettingsPage });
+wirePages();
 
 export function App() {
-  const [hash, setHash] = useState(globalThis.location?.hash ?? "");
-  const [dark, setDark] = useState(() => { try { return localStorage.getItem("loki-theme") !== "light"; } catch { return true; } });
-  useEffect(() => { const f = () => setHash(location.hash); addEventListener("hashchange", f); return () => removeEventListener("hashchange", f); }, []);
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    try { localStorage.setItem("loki-theme", dark ? "dark" : "light"); } catch { /* storage unavailable */ }
-  }, [dark]);
-  const r = route(hash);
-  const page = hash.startsWith("#/work") ? "#/work" : hash.startsWith("#/cost") ? "#/cost" : hash.startsWith("#/settings") ? "#/settings" : "#/runs";
-  return (
-    <div className="flex min-h-screen flex-col bg-white md:flex-row text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <nav data-testid="nav" className="flex w-full shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 p-3 md:block md:w-48 md:border-b-0 md:border-r md:p-4 dark:border-slate-800">
-        <div className="font-semibold md:mb-6">Loki Mode</div>
-        {NAV.map(([h, label, Icon]) => (
-          <a key={h} href={h} aria-current={page === h ? "page" : undefined} className={`flex min-h-11 items-center gap-2 rounded px-3 text-sm md:min-h-0 md:px-2 md:py-1 ${page === h ? "bg-slate-100 dark:bg-slate-900" : "text-slate-500"}`}><Icon size={14} />{label}</a>
-        ))}
-        <button type="button" onClick={() => setDark(!dark)} aria-label="Toggle theme" className="ml-auto flex min-h-11 items-center gap-2 text-sm text-slate-500 md:ml-0 md:mt-6 md:min-h-0">
-          {dark ? <Sun size={14} /> : <Moon size={14} />}{dark ? "Light theme" : "Dark theme"}
-        </button>
-      </nav>
-      <main className="min-w-0 flex-1 overflow-x-auto p-3 md:p-6">{r ? <RunDetail source={r.source} run={r.run} /> : page === "#/work" ? <WorkPage /> : page === "#/cost" ? <CostPage /> : page === "#/settings" ? <SettingsPage dark={dark} toggle={() => setDark(!dark)} /> : hash === "#/runs" ? <><StartRun /><RunsList /></> : <Landing overview={hash === "#/overview"} fallback={<><StartRun /><RunsList /></>} />}</main>
-    </div>
-  );
+  return <><AppShell /><CommandPalette /></>;
 }
+

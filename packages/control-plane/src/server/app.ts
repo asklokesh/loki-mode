@@ -8,7 +8,9 @@ import { listRuns, recomputeLegacy, runDetail } from "./runs.ts";
 import { hostGuard, isLoopbackHost, tokenGuard } from "./auth.ts";
 import { backfill } from "../shipper/backfill.ts";
 import { removeRun } from "../db/prune.ts";
-import { planStart, registryRepos, spawnStart } from "./actions.ts";
+import type { spawnStart } from "./spawn.ts";
+import { syncLocalRepos } from "./repos.ts";
+import { registerRoutes } from "./routes/index.ts";
 
 const MAX_BODY = 1_000_000;
 
@@ -79,7 +81,6 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   };
   const local = (c: Context) => peerIsLoopback(c) && isLoopbackHost(c.req.header("host")) && (c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json");
   const repoDir = opts.repoDir ?? process.cwd();
-  const inflight = new Set<string>();
   act.post("/v1/import", async (c) => {
     if (!local(c)) return c.json({ error: "loopback JSON requests only" }, 403);
     const r = await backfill({
@@ -106,21 +107,9 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     const left = (sqlite.query("select count(*) n from runs").get() as { n: number }).n;
     return c.json({ ok: true, removed: r, remaining_runs: left });
   });
-  act.get("/v1/repos", (c) => peerIsLoopback(c) ? c.json({ repos: [...new Set<string>([repoDir, ...registryRepos()])] }) : c.json({ error: "loopback only" }, 403));
-  act.post("/v1/start", async (c) => {
-    if (!local(c)) return c.json({ error: "loopback JSON requests only" }, 403);
-    const text = await c.req.text();
-    if (text.length > 20_000) return c.json({ error: "body too large" }, 413);
-    let body: unknown;
-    try { body = JSON.parse(text); } catch { return c.json({ error: "invalid JSON" }, 400); }
-    const plan = planStart(body, [repoDir, ...registryRepos()], opts.startBin);
-    if (!plan.ok) return c.json({ error: plan.error }, 400);
-    if (inflight.has(plan.cwd)) return c.json({ error: "a run is already starting or running in this repo" }, 409);
-    inflight.add(plan.cwd);
-    const r = await (opts.spawnImpl ?? spawnStart)(plan.argv, plan.cwd, () => inflight.delete(plan.cwd));
-    if ("error" in r) { inflight.delete(plan.cwd); return c.json({ error: r.error }, 500); }
-    return c.json({ ok: true, pid: r.pid, command: plan.argv.slice(1).join(" ") });
-  });
+  // Local discovery fills local_repos (never /v1/ingest). GET /v1/repos (names only, loopback guard) is mounted by routes/index.ts.
+  syncLocalRepos(db, repoDir);
+  registerRoutes({ app, act, db, repoDir, token: opts.token, peerIsLoopback, local, startBin: opts.startBin, spawnImpl: opts.spawnImpl, answerDir });
   // :id is `source:run` (run ids never contain a colon)
   app.get("/v1/runs/:id", (c) => {
     const id = c.req.param("id");

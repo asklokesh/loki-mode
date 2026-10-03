@@ -1,0 +1,3 @@
+# Playwright specs (test/e2e) run under `bunx playwright test`, never under bun's own runner.
+[test]
+pathIgnorePatterns = ["**/e2e/**", "**/node_modules/**"]

@@ -12,9 +12,12 @@
   },
   "dependencies": {
     "drizzle-orm": "^0.45.3",
-    "hono": "^4.13.12"
+    "hono": "^4.13.12",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.58.1",
+    "axe-core": "4.13.0",
     "drizzle-kit": "^0.31.11"
   }
 }

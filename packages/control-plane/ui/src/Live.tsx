@@ -1,6 +1,7 @@
 // Live run view and Overview. Everything is derived from the runs API; a value the API does not carry shows "unmeasured".
 import { useEffect, useState, type ReactNode } from "react";
-import { effectiveVerdict, getRun, listRuns, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
+import { effectiveVerdict, VERDICT } from "./design/primitives";
+import { getRun, listRuns, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 export const UNMEASURED = "unmeasured";
 const POLL = 3000;
@@ -112,7 +113,7 @@ export function summarize(runs: RunRow[], now: number): OverviewStats {
   for (const r of runs) {
     const t = r.started_at ? Date.parse(r.started_at) : NaN;
     if (!Number.isNaN(t)) { if (t >= t0) s.today++; if (t >= t0 - 6 * 86400000) s.week++; }
-    const ev = effectiveVerdict(r); if (ev === "VERIFIED") s.verified++; else if (ev?.endsWith("(signature not checked)")) s.unchecked++; else if (ev === "PARTIAL") s.partial++; else if (ev === "FAILED") s.failed++; else if (ev) s.other++; else s.running++;
+    const ev = effectiveVerdict(r); if (ev === VERDICT.VERIFIED) s.verified++; else if (ev === VERDICT.VERIFIED_UNCHECKED) s.unchecked++; else if (ev === VERDICT.PARTIAL) s.partial++; else if (ev === VERDICT.FAILED) s.failed++; else if (ev) s.other++; else s.running++;
     if (r.cost_usd !== null && r.cost_usd !== undefined) s.costUsd += r.cost_usd; else { s.unmeasuredRuns++; s.costUsd += r.partial_usd ?? 0; }
     if (r.pr_url) s.prsOpened++;
   }
@@ -133,10 +134,10 @@ export function Overview({ runs, now = Date.now() }: { runs: RunRow[]; now?: num
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat id="ov-today" label="Runs today" value={String(s.today)} />
         <Stat id="ov-week" label="Runs, last 7 days" value={String(s.week)} />
-        <Stat id="ov-verified" label="VERIFIED" value={String(s.verified)} />
+        <Stat id="ov-verified" label={VERDICT.VERIFIED} value={String(s.verified)} />
         <Stat id="ov-unchecked" label="Signature not checked" value={String(s.unchecked)} />
-        <Stat id="ov-partial" label="PARTIAL" value={String(s.partial)} />
-        <Stat id="ov-failed" label="FAILED" value={String(s.failed)} />
+        <Stat id="ov-partial" label={VERDICT.PARTIAL} value={String(s.partial)} />
+        <Stat id="ov-failed" label={VERDICT.FAILED} value={String(s.failed)} />
         <Stat id="ov-cost" label="Total cost" value={cost} />
         <Stat id="ov-pr-opened" label="PRs opened" value={String(s.prsOpened)} />
         <Stat id="ov-pr-merged" label="PRs merged" value={UNMEASURED} />

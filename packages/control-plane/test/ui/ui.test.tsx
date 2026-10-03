@@ -12,7 +12,7 @@ const FIX = join(import.meta.dir, "fixtures");
 const load = (f: string) => JSON.parse(readFileSync(join(FIX, f), "utf8"));
 const expected = JSON.parse(readFileSync(join(import.meta.dir, "../fixtures/EXPECTED.json"), "utf8")) as {
   run_count: number;
-  runs: Record<string, { verdict: string; cost_usd: number | null; not_proven: string[]; pr_url: string | null }>;
+  runs: Record<string, { verdict: string; tampered: boolean; cost_usd: number | null; not_proven: string[]; pr_url: string | null }>;
 };
 
 function serve(map: Record<string, unknown>) {
@@ -102,14 +102,14 @@ test("empty DB: import button and CLI line, no env-var text", async () => {
   expect(document.body.textContent ?? "").not.toContain("LOKI_CONTROL_URL");
 });
 
-test("brand is Loki Mode with Runs, Work, Cost and Settings navigation", async () => {
+test("brand is Loki Mode with New run and one Settings entry", async () => {
   serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
   const { App } = await import("../../ui/src/App");
   render(<App />);
   const nav = screen.getByTestId("nav");
   expect(nav.textContent).toContain("Loki Mode");
   expect(nav.textContent).not.toContain("Loki Control");
-  for (const l of ["Runs", "Work", "Cost", "Settings"]) expect(within(nav).getByText(l)).toBeTruthy();
+  for (const l of ["New run", "Settings"]) expect(within(nav).getByText(l)).toBeTruthy();
   expect(readFileSync(join(import.meta.dir, "../../ui/index.html"), "utf8")).toContain("<title>Loki Mode</title>");
 });
 
@@ -136,19 +136,21 @@ test("live run: list shows stage, elapsed and files; detail polls until complete
   expect(n).toBeGreaterThanOrEqual(2);
 }, 12000);
 
-test("mobile layout: shell stacks, wide columns collapse, no fixed-width nav below md", async () => {
+test("mobile layout: sidebar is desktop-only with a drawer button, wide columns collapse", async () => {
   serve({ "/v1/runs": load("runs.json") });
   const { App } = await import("../../ui/src/App");
   location.hash = "#/runs"; // the Runs page; the bare route is the landing view
   const { container } = render(<App />);
   await screen.findAllByTestId("run-row");
   const nav = within(container as HTMLElement).getByTestId("nav");
-  expect(nav.className).toContain("w-full");
-  expect(nav.className).toContain("md:w-48");
-  expect((container.firstElementChild as HTMLElement).className).toContain("flex-col");
-  const heads = Array.from(container.querySelectorAll("th")).filter((h) => h.textContent === "Repo" || h.textContent === "Started");
+  expect(nav.className).toContain("hidden");
+  expect(nav.className).toContain("md:flex");
+  expect(within(container as HTMLElement).getByTestId("open-drawer")).toBeTruthy();
+  // CPE-11 runs table keeps every column and scrolls inside its own container instead of hiding columns
+  const table = within(container as HTMLElement).getByTestId("runs-table");
+  expect(table.parentElement?.style.overflow).toBe("auto");
+  const heads = Array.from(container.querySelectorAll("th")).filter((h) => /^(Started|Repo)/.test(h.textContent ?? ""));
   expect(heads.length).toBe(2);
-  for (const h of heads) expect(h.className).toContain("hidden");
 });
 
 test("remove run: confirm step, DELETE call, then back to the runs list", async () => {
