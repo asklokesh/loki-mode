@@ -40,6 +40,15 @@ export function warmRequest(
   });
 }
 
+/** CLI hook: best-effort warm try that never throws and never blocks the run. */
+export async function tryWarmSafe(repoDir: string): Promise<void> {
+  try {
+    await tryWarm(repoDir);
+  } catch {
+    // never load-bearing
+  }
+}
+
 /** Formats the user-facing line, e.g. "warm in 0.1s". */
 export function warmLine(seconds: number): string {
   return `warm in ${seconds.toFixed(1)}s`;

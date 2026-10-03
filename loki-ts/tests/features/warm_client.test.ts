@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tryWarm, warmLine, warmRequest } from "../../src/engine10/warm_client.ts";
+import { tryWarm, warmLine, warmRequest } from "../../src/features/warm_client.ts";
 
 const temps: string[] = [];
 const saved = process.env["LOKI_SPEED"];

@@ -8,9 +8,9 @@ import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:
 import { createServer, type Server } from "node:net";
 import { dirname, resolve } from "node:path";
 import { homeLokiDir } from "../util/paths.ts";
-import { buildRepoMap, type RepoMap } from "./repomap.ts";
-import { buildTestMap } from "./testmap.ts";
-import type { TestMap } from "./types.ts";
+import { buildRepoMap, type RepoMap } from "../engine10/repomap.ts";
+import { buildTestMap } from "../engine10/testmap.ts";
+import type { TestMap } from "../engine10/types.ts";
 
 export function speedEnabled(): boolean {
   return process.env["LOKI_SPEED"] === "1";
@@ -99,6 +99,16 @@ export class WarmEngine {
 
   size(): number {
     return this.entries.size;
+  }
+}
+
+/** Dashboard hook: starts the warm socket only under LOKI_SPEED=1; never throws. */
+export function startWarmIfEnabled(): WarmServer | null {
+  if (!speedEnabled()) return null;
+  try {
+    return startWarmServer();
+  } catch {
+    return null;
   }
 }
 

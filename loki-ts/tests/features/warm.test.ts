@@ -3,8 +3,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { startWarmServer, WarmEngine, warmKey, type WarmServer } from "../../src/engine10/warm.ts";
-import { warmRequest } from "../../src/engine10/warm_client.ts";
+import { startWarmServer, WarmEngine, warmKey, type WarmServer } from "../../src/features/warm.ts";
+import { warmRequest } from "../../src/features/warm_client.ts";
 
 const temps: string[] = [];
 const servers: WarmServer[] = [];
