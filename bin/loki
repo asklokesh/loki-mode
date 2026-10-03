@@ -115,6 +115,17 @@ else
     exec "$BASH_CLI" "$@"
 fi
 
+# Shell completions install themselves: once per VERSION, on the first interactive
+# run after an install or upgrade (stamp: ~/.loki/completions-version). Never needed
+# by the user; skipped under CI, LOKI_NO_COMPLETIONS=1 and non-TTY stdout. Failure
+# is silent and never blocks the command.
+if [ -t 1 ] && [ -z "${CI:-}" ] && [ "${LOKI_NO_COMPLETIONS:-}" != "1" ] \
+   && [ "${1:-}" != "completion" ] && [ "${1:-}" != "__complete" ] \
+   && [ "$(cat "${HOME}/.loki/completions-version" 2>/dev/null)" != "$(cat "$REPO_ROOT/VERSION" 2>/dev/null)" ] \
+   && command -v bun >/dev/null 2>&1; then
+    bun "$BUN_CLI" completion --auto </dev/null || true
+fi
+
 # v7.88.1 covert-path fix (council cF_r2 + cG_r2 sentinel edge): under on-by-default
 # diagnostics, NO telemetry may egress before the user has seen a disclosure once.
 # The cmd_start welcome only shows on `loki start`, so a first `loki version`/`doctor`
@@ -567,7 +578,7 @@ fi
 # Two-token routes (provider show/list, memory list/index) match on the first
 # token only; the Bun dispatcher handles subcommand routing internally.
 case "${1:-}" in
-    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|receipt|wiki|crash|control|contract|slack|answer)
+    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|receipt|wiki|crash|control|contract|slack|answer|completion|__complete)
         # v7.5.2: rollback added (wires loki-ts/src/commands/rollback.ts).
         # v7.5.3: internal added for autonomy/run.sh phase1-hooks calls.
         # v7.5.28: kpis added (Phase K MVP: read-only KPI snapshot).

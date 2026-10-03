@@ -334,6 +334,17 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runAnswerCli(rest);
     }
 
+    case "completion": {
+      // Hidden plumbing (not in HELP): generated completions; installs run automatically.
+      const { runCompletion } = await import("./commands/completion.ts");
+      return runCompletion(rest);
+    }
+
+    case "__complete": {
+      const { runDynComplete } = await import("./commands/completion.ts");
+      return runDynComplete(rest);
+    }
+
     case "engine10": {
       const { runEngine10 } = await import("./engine10/cli.ts");
       const { registryLoader } = await import("./engine10/registry.ts");
@@ -347,6 +358,11 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // through here to the bash route (cmd_bench -> benchmarks/bench/run.sh).
       // Bun parity is free via this fall-through; do not add a Bun bench command.
       process.stderr.write(`Unknown command: ${cmd}\n`);
+      {
+        const { suggestCommand } = await import("./cli/registry.ts");
+        const hint = cmd === undefined ? undefined : suggestCommand(cmd);
+        if (hint) process.stderr.write(`Did you mean 'loki ${hint}'?\n`);
+      }
       process.stderr.write(HELP);
       return 2;
   }

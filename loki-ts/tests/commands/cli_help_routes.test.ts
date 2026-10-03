@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const SRC = readFileSync(resolve(import.meta.dir, "..", "..", "src", "cli.ts"), "utf8");
-const EXCLUDED = new Set(["help", "--help", "-h", "--version", "-v", "receipt", "internal"]);
+const EXCLUDED = new Set(["help", "--help", "-h", "--version", "-v", "receipt", "internal", "completion", "__complete"]);
 
 function helpText(): string {
   const m = SRC.match(/const HELP = `([\s\S]*?)`;/);
