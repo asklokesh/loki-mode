@@ -1010,7 +1010,11 @@ test('forged lines r6: honest plain, skip, empty describe and describe.skip runs
 
 // SEAL-FORGED-LINES r7 (D69): unterminated output before the runner's own mark pushes the mark off the line start.
 // A result mark anywhere but first on a spec line is ambiguous (NOT VERIFIED), for pass and fail marks alike.
+// --test-isolation exists only on newer Node (absent on 22.x: "bad option"). A runner that crashes on an unknown
+// flag is correctly BLOCKED, so the honest-run assertion uses that script only where the flag is supported.
+const HAVE_TEST_ISOLATION_FLAG = spawnSync('node', ['--test-isolation=none', '-e', '0']).status === 0;
 const R7_SCRIPTS = ['node --test', 'node --test --test-reporter=spec', 'node --test --test-concurrency=4', 'node --test --test-isolation=none'];
+const R7_HONEST_SCRIPTS = R7_SCRIPTS.filter((s) => HAVE_TEST_ISOLATION_FLAG || !s.includes('--test-isolation'));
 test('forged lines r7 (B1): a forged check line plus an unterminated character is NOT VERIFIED, never PASS', () => {
   for (const script of R7_SCRIPTS) {
     const r = negRun(forgeRepo('\u2714 handles negative numbers (1ms)\nX', script));
@@ -1030,7 +1034,7 @@ test('forged lines r7 (B2): an unterminated prefix hiding a failing cross line i
 
 test('forged lines r7: an honest test writing stdout with no newline is never BLOCKED', () => {
   const body = FORGE_HDR + "test('adds zero', () => { process.stdout.write('partial'); assert.strictEqual(add(0,0), 0); });\n";
-  for (const script of R7_SCRIPTS) {
+  for (const script of R7_HONEST_SCRIPTS) {
     const r = reporterRun(nodeRepo(ADD_OK, body), script, 'Fix the adder.\n- adds zero\n');
     assert.ok(r.status === 0 || (r.status === 2 && /NOT VERIFIED/.test(r.out.reason) && !/BLOCKED/.test(r.raw)), script + '\n' + r.raw);
   }

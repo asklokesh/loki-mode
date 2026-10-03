@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Fixed the loki-seal r7 honest-run test failing on Node 22, whose runner rejects `--test-isolation=none`; the fixture now uses that flag only where Node supports it (test-only, product fail-closed behaviour unchanged).
+
 ### Fixed
 - tests/test-cloud-dispatch.sh: the G-04 duplicated-row hook no longer appends with `grep ROW >> SAME_FILE`, which GNU grep refuses ("input file is also the output", rc 2, nothing appended), so the writer saw an unduplicated row on Linux and the R2-3 duplicate-refusal check failed; the hook now copies through a side file. The writer in scripts/cloud-dispatch.sh was already fail-closed (T101-G04-DUPROW).
 - tests/test-engine10-push.sh now covers the run.sh region guard on its own: a run.sh that keeps the region anchors but lacks a required trusted-push function is refused with rc 3 ("region lacks"), no gh call and no push, even when a same-named function is exported from the parent environment (ADV-PUSH-RC3).
