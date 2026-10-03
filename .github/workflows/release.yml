@@ -506,9 +506,10 @@ jobs:
           }
           sched_audit_fetch() {
             # One line: none | indeterminate | green|cleared|red|indeterminate<TAB>conclusion<TAB>url<TAB>created_at
+            # "none" needs an explicit total_count of 0 AND no runs; a response without total_count is never read as zero runs. per_page=1 relies on GitHub returning workflow runs newest first (verified live 2026-10-03).
             local s concl created found
             s="$(sched_audit_api 'event=schedule&branch=main&status=completed&per_page=1' \
-              'if (.total_count // 0) == 0 then "none"
+              'if (.total_count == 0 and ((.workflow_runs // []) | length) == 0) then "none"
                else ((.workflow_runs // []) | map(select(.event=="schedule" and .head_branch=="main" and .status=="completed")) | first) as $s
                  | if $s == null then "indeterminate" else "\($s.conclusion)\t\($s.html_url)\t\($s.created_at)" end
                end')" || return 1
@@ -1104,6 +1105,48 @@ jobs:
         run: npm publish --access public --tag next
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Wait until npm serves the published version
+        # NPM-LAG: npm can take 30+ minutes to serve a version it just accepted
+        # (10.5.34 smoke failed ETARGET during a 29 minute lag and skipped
+        # promote). Post-Release Smoke and Promote both trigger on this workflow
+        # finishing successfully, so holding THIS job until the registry serves
+        # the exact version gates both on visibility: neither can run against a
+        # version npm does not serve yet. Three states, never conflated:
+        #   visible: npm view prints exactly VERSION, so pass
+        #   lagging: empty output, E404 or a transient error, so keep polling;
+        #            this is neither a failure nor a pass
+        #   timeout: still not visible at the deadline, so fail with the
+        #            distinct NPM-LAG-TIMEOUT message
+        # --prefer-online bypasses the local packument cache. The smoke and
+        # promote retry windows stay as they are; this wait only adds the
+        # guarantee in front of them.
+        env:
+          NPM_WAIT_TIMEOUT_S: '2700'
+          NPM_WAIT_BASE_S: '5'
+          NPM_WAIT_CAP_S: '60'
+        run: |
+          set -uo pipefail
+          VERSION="$(tr -d '\n' < VERSION)"
+          deadline=$(( $(date +%s) + NPM_WAIT_TIMEOUT_S ))
+          delay="$NPM_WAIT_BASE_S"
+          polls=0
+          while :; do
+            polls=$(( polls + 1 ))
+            FOUND="$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)"
+            if [ "$FOUND" = "$VERSION" ]; then
+              echo "OK: npm serves loki-mode@${VERSION} (poll ${polls})"
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "NPM-LAG-TIMEOUT: loki-mode@${VERSION} still not served by npm after ${NPM_WAIT_TIMEOUT_S}s (${polls} polls); the publish step succeeded but the registry never listed it"
+              exit 1
+            fi
+            echo "poll ${polls}: loki-mode@${VERSION} not visible on npm yet (registry lag, not a failure); sleeping ${delay}s"
+            sleep "$delay"
+            delay=$(( delay * 2 ))
+            [ "$delay" -gt "$NPM_WAIT_CAP_S" ] && delay="$NPM_WAIT_CAP_S"
+          done
 
   publish-python-sdk:
     needs: release

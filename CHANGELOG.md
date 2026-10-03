@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- release.yml publish-npm now waits up to 45 min (backoff, `npm view --prefer-online`) until npm serves the published version before the Release run can succeed, so Post-Release Smoke and Promote never run against a version npm does not serve yet; a never-listed version fails with NPM-LAG-TIMEOUT. The scheduled-audit gate also no longer reads a response without total_count as zero runs (NPM-LAG-b, D75b).
 - `loki workspace run` posts one PR comment per repo PR with the integration status and head SHAs when a PR exists on the run branch (no LLM, best effort, opt out with `LOKI_WORKSPACE_COMMENT=0`) (D51-B11).
 - Loki 10 runs show their per-run cost cap on the start line (default $20.00, or `budgets.per_run` in loki.yaml, or `--max-cost`); a run that reaches the cap ends BUDGET_STOP with exit code 3 (INTEL-2).
 - `loki answer` resumes a BLOCKED run with the answer typed in the Control Plane (or `--text`).

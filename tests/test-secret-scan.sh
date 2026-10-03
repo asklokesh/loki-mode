@@ -142,7 +142,7 @@ fi
 # -------------------------------------------------------------------------
 S3="$TMP_ROOT/s3-generic"
 init_repo "$S3"
-commit_file "$S3" "settings.js" 'const api_key = "ab12CD34ef56GH78ij90KL12mn34OP56qr78ST90";'
+commit_file "$S3" "settings.js" 'const api_key = "ab12CD34''ef56GH78ij90KL12mn34OP56qr78ST90";'
 run_verify "$S3" main
 if [ "$RC" -eq 2 ] && [ "$VERDICT" = "BLOCKED" ] && [ "$SECRET_STATUS" = "fail" ]; then
     _ok "generic api_key literal -> secret_scan=fail, BLOCKED (exit 2)"

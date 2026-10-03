@@ -212,6 +212,10 @@ STUBEOF
     # schedule query says total_count 5 but returns no run: indeterminate, never "none"
     o="$(W9_RAW_SCHED='{"total_count":5,"workflow_runs":[]}' _sched_run "$f" "$(_blob "$(_r p push success 2026-10-03T07:00:00Z)")")"
     [ "${o%%|*}" = "1" ] && case "$o" in *indeterminate*) true ;; *) false ;; esac || return 1
+    # D75b LOW 1: a response with NO total_count and a red scheduled run must block,
+    # never be read as "zero runs"
+    o="$(W9_RAW_SCHED="{\"workflow_runs\":[$(_r s schedule failure 2026-10-03T08:00:00Z)]}" _sched_run "$f" "$(_blob "$(_r p push failure 2026-10-03T07:00:00Z)")")"
+    [ "${o%%|*}" = "1" ] && case "$o" in *"runs/s"*) true ;; *) false ;; esac || return 1
     # two transient gh errors then success: the retry reads the verdict
     : > "$TMP_ROOT/w9.flaky"
     o="$(W9_FLAKY="$TMP_ROOT/w9.flaky" _sched_run "$f" "$(_blob "$(_r s schedule success 2026-10-03T08:00:00Z)")")"
@@ -244,7 +248,8 @@ PYEOF
   _w9_mut oldsuccess '&created=%3E%3D${created}' '' '.created_at > "'"'"'"$created"'"'"'")' '.created_at > "0")'
   _w9_mut noindet 'elif (.total_count // 0) > ((.workflow_runs // []) | length) then "indeterminate"' 'elif false then "indeterminate"'
   _w9_mut indetpass 'could not be fully read ($url); blocking"; return 1' 'could not be fully read ($url); blocking"; return 0'
-  _w9_mut nototalcheck 'if (.total_count // 0) == 0 then "none"' 'if ((.workflow_runs // []) | length) == 0 then "none"'
+  _w9_mut nototalcheck 'if (.total_count == 0 and ((.workflow_runs // []) | length) == 0) then "none"' 'if ((.workflow_runs // []) | length) == 0 then "none"'
+  _w9_mut nulltotalzero 'if (.total_count == 0 and ((.workflow_runs // []) | length) == 0) then "none"' 'if (.total_count // 0) == 0 then "none"'
   _w9_mut mixedpage 'event=schedule&branch=main&status=completed&per_page=1' 'branch=main&status=completed&per_page=100'
   _w9_mut failopen '(API error)"
     return 1' '(API error)"
@@ -869,6 +874,94 @@ chmod +x "$_SCRIPT_M6A" "$_SCRIPT_M6B"
 if _w6 "$SCRIPT" w6; then ok "W6: a zero-rule tip config and a zero-rule merge-base config never hide a secret in range mode"; else bad "W6: range mode trusted a tip or merge-base config"; fi
 if _w6 "$_SCRIPT_M6A" w6a; then bad "W6 mutation (tip config left in place) stayed green"; else ok "W6 mutation (tip config left in place) goes red"; fi
 if _w6 "$_SCRIPT_M6B" w6b; then bad "W6 mutation (merge-base config trusted) stayed green"; else ok "W6 mutation (merge-base config trusted) goes red"; fi
+
+# W10 (NPM-LAG): publish-npm holds until npm serves the exact version. The real run: block
+# is extracted from release.yml and driven with a stubbed npm and a stubbed date-free clock.
+cat > "$TMP_ROOT/extract10.py" <<'PYEOF'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+steps = d["jobs"]["publish-npm"]["steps"]
+names = [s.get("name", "") for s in steps]
+w = [i for i, n in enumerate(names) if n.startswith("Wait until npm serves")]
+pub = [i for i, n in enumerate(names) if n == "Publish to npm"]
+assert len(w) == 1 and len(pub) == 1 and w[0] > pub[0], "wait step must exist once, after Publish to npm"
+open(sys.argv[2], "w").write(steps[w[0]]["run"])
+for k, v in steps[w[0]]["env"].items():
+    print("%s=%s" % (k, v))
+PYEOF
+if python3 "$TMP_ROOT/extract10.py" "$REL_YML" "$TMP_ROOT/npmwait.sh" > "$TMP_ROOT/npmwait.env"; then
+  ok "W10: publish-npm has exactly one npm-visibility wait step after Publish to npm"
+else
+  bad "W10: publish-npm wait step missing or before the publish step"
+fi
+_w10_run() { # _w10_run <script> <visible-after-N-polls|never> -> prints "<rc>|<output>"
+  local d="$TMP_ROOT/w10.cur" rc=0 out
+  rm -rf "$d"; mkdir -p "$d/bin"; printf '10.9.9\n' > "$d/VERSION"; echo 0 > "$d/count"
+  cat > "$d/bin/npm" <<'NPMEOF'
+#!/bin/bash
+# stub: records the flags and lists the version only after N polls
+echo "$*" >> "$W10_DIR/calls"
+case "$*" in *--prefer-online*) ;; *) exit 0 ;; esac
+n=$(( $(cat "$W10_DIR/count") + 1 )); echo "$n" > "$W10_DIR/count"
+if [ "$W10_AFTER" != never ] && [ "$n" -gt "$W10_AFTER" ]; then echo "10.9.9"; else echo "npm error code E404" >&2; fi
+NPMEOF
+  chmod +x "$d/bin/npm"
+  out="$(cd "$d" && env PATH="$d/bin:$PATH" W10_DIR="$d" W10_AFTER="$2" \
+    NPM_WAIT_TIMEOUT_S=3 NPM_WAIT_BASE_S=1 NPM_WAIT_CAP_S=1 bash -c "$(cat "$1")" 2>&1)" || rc=$?
+  printf '%s|%s' "$rc" "$out"
+}
+_w10() { # _w10 <script> ; 0 = behaves per NPM-LAG
+  local o
+  o="$(_w10_run "$1" never)"
+  [ "${o%%|*}" = "1" ] && case "$o" in *NPM-LAG-TIMEOUT*) true ;; *) false ;; esac || return 1
+  # lagging polls are neither a pass nor a failure message, and must be more than one
+  [ "$(grep -c 'not visible on npm yet' <<<"$o")" -ge 2 ] || return 1
+  # backoff: a 3s window with 1s sleeps polls a handful of times, never spins
+  [ "$(cat "$TMP_ROOT/w10.cur/count")" -le 10 ] || return 1
+  o="$(_w10_run "$1" 2)"
+  [ "${o%%|*}" = "0" ] && case "$o" in *"OK: npm serves loki-mode@10.9.9 (poll 3)"*) true ;; *) false ;; esac || return 1
+  # every poll bypasses the cache and names the exact version
+  grep -q '^view loki-mode@10.9.9 version --prefer-online$' "$TMP_ROOT/w10.cur/calls" || return 1
+  # visible on the first poll: no sleeping, immediate pass
+  o="$(_w10_run "$1" 0)"
+  [ "${o%%|*}" = "0" ] && case "$o" in *"poll 1"*) true ;; *) false ;; esac
+}
+_w10_mut() { # _w10_mut <name> <old> <new>
+  python3 - "$TMP_ROOT/npmwait.sh" "$TMP_ROOT/npmwait.$1.sh" "$2" "$3" <<'PYEOF'
+import sys
+s = open(sys.argv[1]).read()
+assert s.count(sys.argv[3]) == 1, sys.argv[3]
+open(sys.argv[2], "w").write(s.replace(sys.argv[3], sys.argv[4]))
+PYEOF
+  if _w10 "$TMP_ROOT/npmwait.$1.sh"; then bad "W10 mutation ($1) stayed green"; else ok "W10 mutation ($1) goes red"; fi
+}
+set -a
+# shellcheck disable=SC1091
+. "$TMP_ROOT/npmwait.env"
+set +a
+unset NPM_WAIT_TIMEOUT_S NPM_WAIT_BASE_S NPM_WAIT_CAP_S
+if _w10 "$TMP_ROOT/npmwait.sh"; then
+  ok "W10: a never-listed version fails with NPM-LAG-TIMEOUT after the bounded wait; a version listed after 2 polls passes on poll 3 using --prefer-online"
+else
+  bad "W10: npm visibility wait does not match NPM-LAG"
+fi
+_w10_mut nocache ' --prefer-online' ''
+_w10_mut timeoutpass 'echo "NPM-LAG-TIMEOUT:' 'echo "TIMEOUT:'
+_w10_mut timeoutexit0 'polls); the publish step succeeded but the registry never listed it"
+              exit 1' 'polls); the publish step succeeded but the registry never listed it"
+              exit 0'
+_w10_mut lagispass '[ "$FOUND" = "$VERSION" ]' '[ -z "$FOUND" ] || [ "$FOUND" = "$VERSION" ]'
+_w10_mut nobackoff 'sleep "$delay"' ':'
+# the default window is not shorter than the 45 minutes the smoke and promote steps assume
+grep -q '^NPM_WAIT_TIMEOUT_S=2700$' "$TMP_ROOT/npmwait.env" \
+  && ok "W10: default wait is 2700s (45 min)" || bad "W10: default wait is not 2700s"
+# gating: Post-Release Smoke triggers only on a successful Release run, so a failed wait stops smoke and promote
+if grep -qE "workflows: \[\"Release\"\]" "$REPO_ROOT/.github/workflows/post-release-smoke.yml" \
+   && grep -q "workflow_run.conclusion == 'success'" "$REPO_ROOT/.github/workflows/post-release-smoke.yml"; then
+  ok "W10: smoke runs only after a successful Release run, which now includes the npm visibility wait"
+else
+  bad "W10: smoke is not gated on a successful Release run"
+fi
 
 echo
 echo "=== $PASS passed, $FAIL failed ==="
