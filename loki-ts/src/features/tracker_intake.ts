@@ -14,13 +14,29 @@ const JIRA_URL = new RegExp(`^https://([\\w-]+(?:\\.[\\w-]+)*\\.atlassian\\.net)
 const LINEAR_REF = /^linear:([A-Za-z][A-Za-z0-9]*-\d+)$/;
 const LINEAR_URL = /^https:\/\/linear\.app\/[\w-]+\/issue\/([A-Za-z][A-Za-z0-9]*-\d+)(?:\/\S*)?$/;
 
+const SELF_URL = new RegExp(`^(https?://[^/\\s?#]+)/browse/(${JIRA_KEY})/?(?:[?#]\\S*)?$`);
+
+// Self-hosted Jira: a browse URL parses only when its origin equals JIRA_BASE_URL's origin.
+function selfHostedSite(s: string, env: NodeJS.ProcessEnv): TrackerRef | null {
+  const base = env.JIRA_BASE_URL;
+  const m = SELF_URL.exec(s);
+  if (!base || !m) return null;
+  try {
+    if (new URL(base).origin !== new URL(m[1]!).origin) return null;
+  } catch { return null; }
+  return { source: "jira", key: m[2]!, site: new URL(m[1]!).origin };
+}
+
 /** Returns the parsed tracker ref, or null for anything else (GitHub refs, free text). */
-export function parseTrackerRef(ref: string): TrackerRef | null {
+export function parseTrackerRef(ref: string, env: NodeJS.ProcessEnv = process.env): TrackerRef | null {
+  if (env.LOKI_TRACKER_INTAKE === "0") return null;
   const s = ref.trim();
   let m = JIRA_REF.exec(s);
   if (m) return { source: "jira", key: m[1]! };
   m = JIRA_URL.exec(s);
   if (m) return { source: "jira", key: m[2]!, site: `https://${m[1]}` };
+  const site = selfHostedSite(s, env);
+  if (site) return site;
   m = LINEAR_REF.exec(s) ?? LINEAR_URL.exec(s);
   if (m) return { source: "linear", key: m[1]!.toUpperCase() };
   return null;
@@ -50,15 +66,16 @@ export function adfToText(doc: unknown): string {
   return walk(doc as AdfNode, "").replace(/\n{3,}/g, "\n\n").trim();
 }
 
-function need(env: NodeJS.ProcessEnv, name: string): string {
+function need(env: NodeJS.ProcessEnv, name: string, hint = ""): string {
   const v = env[name];
-  if (!v) throw new Error(`${name} is not set (required for this issue ref)`);
+  if (!v) throw new Error(`${name} is not set (required for this issue ref${hint})`);
   return v;
 }
 
 async function fetchJira(ref: Extract<TrackerRef, { source: "jira" }>, f: FetchFn, env: NodeJS.ProcessEnv): Promise<TrackerIssue> {
-  const base = (env.JIRA_BASE_URL || ref.site || need(env, "JIRA_BASE_URL")).replace(/\/+$/, "");
-  const email = need(env, "JIRA_EMAIL"), token = need(env, "JIRA_API_TOKEN");
+  const base = (env.JIRA_BASE_URL || ref.site || need(env, "JIRA_BASE_URL", "; Jira intake needs JIRA_EMAIL, JIRA_API_TOKEN and JIRA_BASE_URL")).replace(/\/+$/, "");
+  const jiraHint = "; Jira intake needs JIRA_EMAIL, JIRA_API_TOKEN and JIRA_BASE_URL";
+  const email = need(env, "JIRA_EMAIL", jiraHint), token = need(env, "JIRA_API_TOKEN", jiraHint);
   const auth = Buffer.from(`${email}:${token}`).toString("base64");
   const res = await f(`${base}/rest/api/3/issue/${encodeURIComponent(ref.key)}`, { headers: { Authorization: `Basic ${auth}`, Accept: "application/json" } });
   if (!res.ok) throw new Error(`Jira returned HTTP ${res.status} for ${ref.key}`);
@@ -75,15 +92,17 @@ async function fetchJira(ref: Extract<TrackerRef, { source: "jira" }>, f: FetchF
 }
 
 async function fetchLinear(ref: Extract<TrackerRef, { source: "linear" }>, f: FetchFn, env: NodeJS.ProcessEnv): Promise<TrackerIssue> {
-  const key = need(env, "LINEAR_API_KEY");
+  const key = need(env, "LINEAR_API_KEY", "; Linear intake needs LINEAR_API_KEY");
   const res = await f("https://api.linear.app/graphql", {
     method: "POST",
     headers: { Authorization: key, "Content-Type": "application/json" },
     body: JSON.stringify({ query: "query($id: String!) { issue(id: $id) { identifier title description url } }", variables: { id: ref.key } }),
   });
+  if (res.status === 401) throw new Error(`Linear rejected the credentials (HTTP 401); check LINEAR_API_KEY`);
   if (!res.ok) throw new Error(`Linear returned HTTP ${res.status} for ${ref.key}`);
   const j = (await res.json()) as { data?: { issue?: { identifier?: string; title?: string; description?: string | null; url?: string } | null }; errors?: { message?: string }[] };
   const is = j.data?.issue;
+  if (!j.data && j.errors?.length) throw new Error(`Linear returned errors for ${ref.key}; check LINEAR_API_KEY: ${j.errors[0]?.message ?? "unknown"}`);
   if (!is) throw new Error(`Linear issue ${ref.key} not found${j.errors?.[0]?.message ? `: ${j.errors[0].message}` : ""}`);
   return {
     source: "linear", provider: "linear", number: 0,

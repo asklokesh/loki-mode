@@ -167,6 +167,7 @@ loki linear:ENG-42     # or a linear.app issue URL
 - Jira needs `JIRA_EMAIL` and `JIRA_API_TOKEN`, plus `JIRA_BASE_URL` (for example `https://acme.atlassian.net`) unless you pass the full browse URL. The ADF description is converted to plain text.
 - Linear needs `LINEAR_API_KEY`.
 - A missing variable stops the run before any work with an error naming it (exit code 2, like other intake errors). GitHub refs are unchanged.
+- Self-hosted Jira: `<JIRA_BASE_URL>/browse/KEY` is accepted when its origin matches `JIRA_BASE_URL`. `LOKI_TRACKER_INTAKE=0` turns tracker intake off. Intake only, no sync. Details: [docs/trackers.md](docs/trackers.md).
 
 ## Two-way Slack (preview)
 

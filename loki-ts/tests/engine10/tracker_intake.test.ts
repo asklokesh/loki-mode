@@ -62,3 +62,26 @@ describe("fetchTrackerIssue", () => {
     await expect(fetchTrackerIssue({ source: "jira", key: "P-1" }, okJson({}), { JIRA_BASE_URL: "https://x" })).rejects.toThrow("JIRA_EMAIL");
   });
 });
+
+describe("C7 tracker polish", () => {
+  test("kill switch returns null", () => {
+    expect(parseTrackerRef("jira:PROJ-1", { LOKI_TRACKER_INTAKE: "0" })).toBeNull();
+    expect(parseTrackerRef("linear:ENG-1", { LOKI_TRACKER_INTAKE: "0" })).toBeNull();
+  });
+  test("self-hosted browse URL parses only when origin matches JIRA_BASE_URL", () => {
+    const env = { JIRA_BASE_URL: "https://jira.corp.example" };
+    expect(parseTrackerRef("https://jira.corp.example/browse/OPS-7", env)).toEqual({ source: "jira", key: "OPS-7", site: "https://jira.corp.example" });
+    expect(parseTrackerRef("https://evil.example/browse/OPS-7", env)).toBeNull();
+    expect(parseTrackerRef("https://jira.corp.example/browse/OPS-7", {})).toBeNull();
+  });
+  test("missing credentials name the variables", async () => {
+    await expect(fetchTrackerIssue({ source: "jira", key: "P-1" }, okJson({}), { JIRA_BASE_URL: "https://x" })).rejects.toThrow("JIRA_EMAIL, JIRA_API_TOKEN and JIRA_BASE_URL");
+    await expect(fetchTrackerIssue({ source: "linear", key: "E-1" }, okJson({}), {})).rejects.toThrow("Linear intake needs LINEAR_API_KEY");
+  });
+  test("linear 401 and errors-without-data name LINEAR_API_KEY", async () => {
+    const env = { LINEAR_API_KEY: "k" };
+    const r401 = async () => new Response("{}", { status: 401 });
+    await expect(fetchTrackerIssue({ source: "linear", key: "E-1" }, r401, env)).rejects.toThrow("LINEAR_API_KEY");
+    await expect(fetchTrackerIssue({ source: "linear", key: "E-1" }, okJson({ errors: [{ message: "Authentication required" }] }), env)).rejects.toThrow("LINEAR_API_KEY");
+  });
+});
