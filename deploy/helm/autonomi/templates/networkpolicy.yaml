@@ -1,6 +1,6 @@
 {{- if .Values.security.networkPolicy.enabled }}
 # Control plane: accept ingress on the dashboard port from anywhere in the
-# namespace. Tracks config.dashboardPort so a non-default port is not silently
+# namespace. Tracks config.controlPort so a non-default port is not silently
 # firewalled off (the port was previously hardcoded 57374).
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -18,7 +18,7 @@ spec:
     - Egress
   ingress:
     - ports:
-        - port: {{ .Values.config.dashboardPort | int }}
+        - port: {{ include "autonomi.controlPort" . }}
           protocol: TCP
   # EGRESS DEFAULTS TO ALLOW-ALL, and that is a deliberate default rather than an
   # oversight: the engine must reach a hosted provider API (see

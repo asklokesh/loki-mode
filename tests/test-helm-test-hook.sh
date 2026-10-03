@@ -35,7 +35,11 @@ echo "T2 -- the probe URL is DERIVED from values, not hardcoded"
 # would get a test that probes the wrong endpoint and reports a false red (or
 # worse, a false green against a stale path). Deriving it means the test and the
 # kubelet probe can never disagree.
-printf '%s' "$OUT" | grep -q 'URL="http://t-autonomi-controlplane:57374/health"' \
+VALS="$CHART/values.yaml"
+exp_port=$(python3 -c "import yaml;print(yaml.safe_load(open('$VALS'))['service']['port'])" 2>/dev/null)
+exp_path=$(python3 -c "import yaml;print(yaml.safe_load(open('$VALS'))['controlplane']['probes']['readiness']['path'])" 2>/dev/null)
+[ -n "$exp_port" ] && [ -n "$exp_path" ] || bad "could not read service.port / probes.readiness.path from values.yaml"
+printf '%s' "$OUT" | grep -qF "URL=\"http://t-autonomi-controlplane:${exp_port}${exp_path}\"" \
   && ok "default render targets the controlplane service on the readiness path" \
   || bad "default URL is not the expected service/path"
 

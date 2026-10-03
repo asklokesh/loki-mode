@@ -58,13 +58,24 @@ echo "T4 -- ECS and Helm agree (the drift this guards)"
 # If these two disagree, one platform gets a health check that passes while the
 # other fails, and nobody finds out until one of them is in production.
 H="$REPO_ROOT/deploy/helm/autonomi/values.yaml"
-hp=$(python3 -c "import yaml;print(yaml.safe_load(open('$H'))['config']['dashboardPort'])" 2>/dev/null)
-grep -q "default     = $hp" "$M/variables.tf" \
-  && ok "dashboard_port default ($hp) matches the Helm chart" \
-  || bad "port drifted from Helm's config.dashboardPort ($hp)"
-grep -q "uvicorn" "$M/main.tf" \
-  && ok "runs the same uvicorn command as the Helm deployment" \
-  || bad "command differs from the Helm chart"
+hp=$(python3 -c "import yaml;print(yaml.safe_load(open('$H'))['config']['controlPort'])" 2>/dev/null)
+tp=$(awk '/^variable "control_port"/{f=1} f&&/default/{print $3; exit}' "$M/variables.tf")
+if [ -z "$hp" ] || [ -z "$tp" ]; then
+  bad "control port unreadable (helm config.controlPort='$hp', terraform control_port default='$tp')"
+elif [ "$hp" = "$tp" ]; then
+  ok "control_port default ($tp) matches the Helm chart config.controlPort ($hp)"
+else
+  bad "port drifted: terraform control_port=$tp, helm config.controlPort=$hp"
+fi
+helm_cmd=$(helm template t "$REPO_ROOT/deploy/helm/autonomi" --show-only templates/deployment-controlplane.yaml 2>/dev/null \
+  | awk '/^ +command:/{f=1;next} f&&/^ +- /{gsub(/["-]/,"");printf "%s ",$1;next} f{exit}' | sed 's/ *$//')
+tf_cmd=$(awk '/command = \[/{f=1;next} f&&/\]/{exit} f' "$M/main.tf" | tr -d '", \n' )
+case "$helm_cmd" in "loki control serve"*) hc=1 ;; *) hc=0 ;; esac
+if [ "$hc" = 1 ] && printf '%s' "$tf_cmd" | grep -q '^lokicontrolserve--port'; then
+  ok "ECS and Helm both run: loki control serve --port"
+else
+  bad "command differs from the Helm chart (helm='$helm_cmd' ecs='$tf_cmd')"
+fi
 grep -q "/health" "$M/main.tf" \
   && ok "health check hits /health, the same path Kubernetes probes" \
   || bad "health path differs from the Kubernetes probe"

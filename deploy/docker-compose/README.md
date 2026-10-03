@@ -18,7 +18,7 @@ cp .env.example .env
 docker compose up -d
 ```
 
-The dashboard is available at **http://localhost:57374**.
+The Control Plane UI and API are available at **http://localhost:57374** (loopback only by default; set `LOKI_BIND_ADDRESS` to change). `LOKI_CONTROL_TOKEN` is required in `.env` and compose refuses to start without it (upgrade note: earlier compose files started with an empty token, now `docker compose up` fails closed with "set LOKI_CONTROL_TOKEN in .env" until you set one); open the UI with `#token=<token>` appended to the URL. The database lives under `/workspace/.loki/control` on the `projects` volume. `LOKI_DASHBOARD_ALLOWED_HOSTS` no longer has any effect.
 
 ## Observability Mode
 
@@ -33,7 +33,7 @@ docker compose --profile observability up -d
 
 | Service        | URL                       | Purpose                  |
 |----------------|---------------------------|--------------------------|
-| Dashboard      | http://localhost:57374     | Autonomi dashboard       |
+| Dashboard      | http://localhost:57374     | Control Plane UI and API |
 | Jaeger UI      | http://localhost:16686     | Trace visualization      |
 | OTLP (gRPC)   | localhost:4317             | Trace ingestion (gRPC)   |
 | OTLP (HTTP)    | localhost:4318             | Trace ingestion (HTTP)   |
@@ -115,7 +115,7 @@ docker compose ps
 docker compose logs autonomi
 ```
 
-The health check hits `http://localhost:57374/health`. If the container shows
+The health check hits `http://localhost:47821/health` inside the container. If the container shows
 as `unhealthy`, inspect the logs for startup errors.
 
 ### Port conflict

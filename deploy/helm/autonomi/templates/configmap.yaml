@@ -11,8 +11,12 @@ data:
   # runtime ignores them. State durability comes from the /workspace volume mount.
   LOKI_MAX_WORKERS: {{ .Values.config.maxWorkers | quote }}
   LOKI_PROVIDER: {{ .Values.config.provider | quote }}
+  # LOKI_CONTROL_* (host, port, db, token) are set on the controlplane container
+  # only, so workers never inherit the 0.0.0.0 bind. The legacy names below are
+  # kept for anything that still reads them; LOKI_DASHBOARD_ALLOWED_HOSTS is
+  # ignored by the Control Plane.
   LOKI_DASHBOARD_HOST: {{ .Values.config.dashboardHost | quote }}
-  LOKI_DASHBOARD_PORT: {{ .Values.config.dashboardPort | quote }}
+  LOKI_DASHBOARD_PORT: {{ include "autonomi.controlPort" . | quote }}
   {{- if .Values.config.dashboardAllowedHosts }}
   LOKI_DASHBOARD_ALLOWED_HOSTS: {{ .Values.config.dashboardAllowedHosts | quote }}
   {{- end }}

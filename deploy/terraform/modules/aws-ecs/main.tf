@@ -1,15 +1,22 @@
 // Autonomi (Loki Mode) control plane on ECS/Fargate.
 //
+// Persistence: the Control Plane SQLite database (LOKI_CONTROL_DB) lives in the
+// task filesystem and is LOST when the task restarts. Mount an EFS volume at
+// /home/loki/.loki/control for durability (not provisioned by this module).
+// LOKI_DASHBOARD_ALLOWED_HOSTS is ignored by the Control Plane.
+//
 // The container command, port and health path are taken from the Helm chart's
 // deployment-controlplane.yaml so the two deployment paths cannot drift:
-//   command: python3 -m uvicorn dashboard.server:app --host <host> --port <port>
-//   health:  GET /health   (dashboard/server.py:1070)
+//   command: loki control serve --port <port>   (packages/control-plane)
+//   health:  GET /health (liveness), GET /ready (readiness)
 // Hardcoding a different path here would give ECS a health check that passes
 // while Kubernetes fails, or the reverse, and neither would be discovered until
 // one of them was in production.
 
 locals {
   name = var.name_prefix
+  // dashboard_port is a deprecated alias: when set it wins over control_port.
+  control_port = var.dashboard_port != null ? var.dashboard_port : var.control_port
 
   tags = merge(
     {
@@ -64,21 +71,34 @@ resource "aws_iam_role_policy_attachment" "execution_managed" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-// Reading the provider secret is granted ONLY when a secret is configured, and
-// scoped to that one ARN rather than secretsmanager:* -- a wildcard here would
-// let the control plane read every secret in the account.
+// Secret reads are granted ONLY for the secrets that are configured (the
+// provider key and the Control Plane token), each scoped to its exact ARN rather
+// than secretsmanager:* -- a wildcard here would let the control plane read
+// every secret in the account. The execution role resolves valueFrom at launch,
+// so a secret referenced in the task definition but missing here fails the task.
+locals {
+  execution_secret_arns = compact([var.provider_secret_arn, var.control_token_secret_arn])
+}
+
 resource "aws_iam_role_policy" "execution_secrets" {
-  count = var.provider_secret_arn == "" ? 0 : 1
-  name  = "${local.name}-read-provider-secret"
+  count = length(local.execution_secret_arns) == 0 ? 0 : 1
+  name  = "${local.name}-read-secrets"
   role  = aws_iam_role.execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue"]
-      Resource = [var.provider_secret_arn]
-    }]
+    Statement = concat(
+      [{
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = local.execution_secret_arns
+      }],
+      var.secrets_kms_key_arn == "" ? [] : [{
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.secrets_kms_key_arn]
+      }]
+    )
   })
 }
 
@@ -98,6 +118,15 @@ resource "aws_iam_role" "task" {
   })
 
   tags = local.tags
+}
+
+resource "terraform_data" "require_token" {
+  lifecycle {
+    precondition {
+      condition     = var.control_token_secret_arn != "" || var.allow_insecure_bind
+      error_message = "Set control_token_secret_arn (a secret holding LOKI_CONTROL_TOKEN), or set allow_insecure_bind = true to run the Control Plane with no authentication."
+    }
+  }
 }
 
 resource "aws_security_group" "task" {
@@ -122,6 +151,8 @@ resource "aws_security_group" "task" {
 }
 
 resource "aws_ecs_task_definition" "controlplane" {
+  depends_on = [terraform_data.require_token]
+
   family                   = "${local.name}-controlplane"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -138,18 +169,24 @@ resource "aws_ecs_task_definition" "controlplane" {
 
       // Mirrors the Helm chart exactly. See the note at the top of this file.
       command = [
-        "python3", "-m", "uvicorn", "dashboard.server:app",
-        "--host", "0.0.0.0",
-        "--port", tostring(var.dashboard_port),
+        "loki", "control", "serve",
+        "--port", tostring(local.control_port),
       ]
 
       portMappings = [{
-        containerPort = var.dashboard_port
+        containerPort = local.control_port
         protocol      = "tcp"
       }]
 
       environment = [
-        { name = "LOKI_DASHBOARD_PORT", value = tostring(var.dashboard_port) },
+        { name = "LOKI_CONTROL_HOST", value = "0.0.0.0" },
+        { name = "LOKI_CONTROL_PORT", value = tostring(local.control_port) },
+        { name = "LOKI_CONTROL_DB", value = "/home/loki/.loki/control/control.db" },
+        // The Control Plane refuses a non-loopback bind without a token. Open
+        // mode exists only behind allow_insecure_bind (default false); an open
+        // Control Plane accepts forged runs and answers from anyone who can
+        // reach the port, which is WORSE than the legacy dashboard.
+        { name = "LOKI_CONTROL_ALLOW_INSECURE_BIND", value = var.allow_insecure_bind ? "1" : "0" },
         { name = "LOKI_LOG_LEVEL", value = var.log_level },
         { name = "LOKI_DASHBOARD_ALLOWED_HOSTS", value = var.dashboard_allowed_hosts },
       ]
@@ -157,9 +194,14 @@ resource "aws_ecs_task_definition" "controlplane" {
       // Secrets arrive as secret references, never as plaintext environment
       // variables: environment is visible in the ECS console and in
       // describe-task-definition output to anyone with read access.
-      secrets = var.provider_secret_arn == "" ? [] : [
-        { name = "ANTHROPIC_API_KEY", valueFrom = var.provider_secret_arn },
-      ]
+      secrets = concat(
+        var.provider_secret_arn == "" ? [] : [
+          { name = "ANTHROPIC_API_KEY", valueFrom = var.provider_secret_arn },
+        ],
+        var.control_token_secret_arn == "" ? [] : [
+          { name = "LOKI_CONTROL_TOKEN", valueFrom = var.control_token_secret_arn },
+        ],
+      )
 
       logConfiguration = {
         logDriver = "awslogs"
@@ -174,7 +216,7 @@ resource "aws_ecs_task_definition" "controlplane" {
       // so a slow cold start is not reported as an unhealthy task -- the same
       // reason the helm test hook retries instead of probing once.
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -fsS http://localhost:${var.dashboard_port}/health || exit 1"]
+        command     = ["CMD-SHELL", "curl -fsS http://localhost:${local.control_port}/health || exit 1"]
         interval    = 30
         timeout     = 5
         retries     = 3

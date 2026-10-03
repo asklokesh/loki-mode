@@ -63,6 +63,46 @@ helm install autonomi ./deploy/helm/autonomi \
   --set secrets.existingSecret=autonomi-api-keys
 ```
 
+### Control Plane token and storage
+
+The control-plane pod runs the Control Plane (`loki control serve`) and never
+runs without a bearer token:
+
+- The token always lives in the chart-owned `<release>-autonomi-control-token`
+  Secret, in every mode (including `secrets.existingSecret`, so upgrading an
+  existing deployment never leaves workers in CreateContainerConfigError).
+  Default: the chart generates a random 32 character token and keeps it stable
+  across upgrades (lookup of that Secret, then of the legacy location, the main
+  release Secret, which is how an upgrade from an older chart keeps its token).
+  `helm install` prints the `kubectl get secret ... | base64 -d` command in
+  NOTES.txt; open the UI with `#token=<token>` appended to the URL.
+- `secrets.controlToken=<value>` sets your own token.
+- `secrets.controlTokenFromExistingSecret=true` (with `secrets.existingSecret`)
+  reads the token from your Secret instead: it MUST contain
+  `secrets.controlTokenKey` (default `LOKI_CONTROL_TOKEN`) or the pods fail to
+  start. Add it with
+  `kubectl create secret generic <name> --from-literal=LOKI_CONTROL_TOKEN=$(openssl rand -hex 24)`.
+- GitOps and `helm template`: there is no cluster to look up, so a generated
+  token changes on every render and rotates on every sync. Under Argo CD, Flux
+  or `helm template | kubectl apply`, always set `secrets.controlToken` or use
+  `secrets.controlTokenFromExistingSecret=true`. The token Secret carries
+  `helm.sh/resource-policy: keep` (survives `helm uninstall`) and
+  `argocd.argoproj.io/sync-options: Prune=false` (survives an Argo CD prune);
+  the provider-key Secret carries neither.
+- `controlplane.replicas` must be 1 when `persistence.controlDb.enabled=true`
+  (the render fails otherwise); that Deployment uses the Recreate strategy.
+- Workers get `LOKI_CONTROL_URL` (the in-release controlplane Service) and the
+  same token, so they ship runs to the Control Plane automatically. Workers do
+  not inherit `LOKI_CONTROL_HOST`; it is set on the controlplane container only.
+- `config.dashboardPort` is a deprecated alias of `config.controlPort`.
+  `config.dashboardAllowedHosts` (`LOKI_DASHBOARD_ALLOWED_HOSTS`) is ignored by
+  the Control Plane: protection is the token, not a Host allowlist.
+- The Control Plane SQLite database is lost on pod restart unless
+  `persistence.controlDb.enabled=true` (a PVC mounted at the directory of
+  `config.controlDb`). With a ReadWriteOnce claim keep one replica; SQLite
+  must not be shared by two pods. Without it the UI starts empty until workers
+  re-ship.
+
 ## Upgrade
 
 ```bash
@@ -248,7 +288,7 @@ This runs two test pods:
 |    Ingress       |------>|  Control Plane          |
 |  (optional TLS)  |       |  Deployment (serves      |
 +------------------+       |  traffic, HA-capable)   |
-                           |  Dashboard API : 57374  |
+                           |  Control Plane   : 57374  |
                            +-------------------------+
                                     |
                                     | (durable audit volume)
@@ -367,7 +407,7 @@ Three failures account for most cases:
 - **Readiness never passes** - the control plane is up but not answering on
   `controlplane.probes.readiness.path`. Port-forward and check by hand:
   `kubectl port-forward -n <ns> svc/<release>-autonomi-controlplane 57374:57374`
-  then `curl localhost:57374/health`.
+  then `curl localhost:57374/ready` (the Service maps 57374 to the Control Plane port).
 
 ### No builds are being picked up
 

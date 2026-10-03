@@ -4,7 +4,7 @@
 # observability.serviceMonitor.enabled. Requires the prometheus-operator CRDs
 # (monitoring.coreos.com/v1); without them this manifest will not apply.
 # Selects the control-plane Service by its selector labels and scrapes its named
-# "http" port (the same port the dashboard binds, config.dashboardPort).
+# "http" port (the same port the dashboard binds, config.controlPort).
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:

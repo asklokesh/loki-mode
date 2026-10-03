@@ -67,11 +67,11 @@ controlplane:
   podAnnotations: {}
 
   # Readiness / liveness probe overrides.
-  # port: empty = probe the named container port "http" (tracks config.dashboardPort
+  # port: empty = probe the named container port "http" (tracks config.controlPort
   # automatically). Set a numeric value only to override.
   probes:
     readiness:
-      path: /health
+      path: /ready
       port: ""
       initialDelaySeconds: 10
       periodSeconds: 15
@@ -422,6 +422,18 @@ storage:
   endpoint: ""
 
 persistence:
+  # Control Plane SQLite (runs, events, verdicts). Off by default: the database
+  # then lives in the pod filesystem and is LOST on restart or reschedule, so
+  # the UI starts empty until workers re-ship. Enable for durability. A
+  # ReadWriteOnce claim needs controlplane replicas=1 and a Recreate-safe
+  # rollout; SQLite must not be shared by two pods.
+  controlDb:
+    enabled: false
+    storageClass: ""
+    accessMode: ReadWriteOnce
+    size: 1Gi
+    existingClaim: ""
+
   # Worker /workspace durable volume (per-build state + worker JSONL audit).
   checkpoints:
     enabled: true
@@ -472,13 +484,23 @@ config:
   maxWorkers: "4"
   # Provider (claude, codex, cline, aider, opencode)
   provider: "claude"
-  # Dashboard bind address
+  # Control Plane bind address (LOKI_CONTROL_HOST). Name kept for compatibility.
   dashboardHost: "0.0.0.0"
-  dashboardPort: "57374"
+  # Control Plane bind port (LOKI_CONTROL_PORT). The Service still exposes
+  # service.port (57374 by default) and forwards to this container port.
+  controlPort: "47821"
+  # DEPRECATED alias of controlPort. Empty by default; when set it overrides
+  # controlPort, so existing `--set config.dashboardPort=...` keeps working.
+  dashboardPort: ""
+  # SQLite file for the Control Plane (LOKI_CONTROL_DB). Lost on pod restart
+  # unless persistence.controlDb.enabled is true.
+  controlDb: "/home/loki/.loki/control/control.db"
   # Comma-separated Host headers the dashboard accepts besides loopback
   # (LOKI_DASHBOARD_ALLOWED_HOSTS), e.g. "loki.example.com". Needed when the
   # dashboard is bound to 0.0.0.0 WITHOUT enterprise auth; with enterprise auth
   # enabled any Host is accepted. /health and /metrics are always exempt.
+  # DEPRECATED and ignored: the Control Plane has no Host allowlist off loopback;
+  # it is protected by the bearer token (secrets.controlToken) instead.
   dashboardAllowedHosts: ""
 
 # ---------------------------------------------------------------------------
@@ -495,6 +517,20 @@ secrets:
   googleApiKey: ""
   slackBotToken: ""
   githubToken: ""
+  # Bearer token for the Control Plane /v1 API (LOKI_CONTROL_TOKEN). The
+  # Control Plane never runs open: when this is empty and existingSecret is
+  # unset, the chart generates a random 32 character token and keeps it stable
+  # across upgrades (lookup of the existing Secret). Retrieve it with the
+  # command printed in NOTES.txt; the UI accepts it as #token=<value>.
+  controlToken: ""
+  # Key inside the token Secret (<fullname>-control-token). With
+  # controlTokenFromExistingSecret=true, existingSecret MUST contain this key or
+  # the controlplane pod fails to start.
+  controlTokenKey: "LOKI_CONTROL_TOKEN"
+  # The chart always owns a <fullname>-control-token Secret for the token unless
+  # existingSecret is set AND this is true. Set true only if existingSecret already
+  # holds controlTokenKey.
+  controlTokenFromExistingSecret: false
 
 # ---------------------------------------------------------------------------
 # Observability

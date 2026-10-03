@@ -66,15 +66,44 @@ variable "desired_count" {
 }
 
 variable "dashboard_allowed_hosts" {
-  description = "Comma-separated Host headers the dashboard accepts besides loopback (LOKI_DASHBOARD_ALLOWED_HOSTS). Needed when bound to 0.0.0.0 without enterprise auth; with enterprise auth any Host is accepted. /health and /metrics are always exempt."
+  description = "DEPRECATED and ignored: the Control Plane has no Host allowlist off loopback; it is protected by the bearer token (control_token_secret_arn)."
   type        = string
   default     = ""
 }
 
-variable "dashboard_port" {
-  description = "Port the control plane binds. Mirrors the Helm chart's config.dashboardPort so the two deployment paths agree."
+variable "control_port" {
+  description = "Port the Control Plane binds. Mirrors the Helm chart's config.controlPort so the two deployment paths agree."
   type        = number
-  default     = 57374
+  default     = 47821
+}
+
+variable "dashboard_port" {
+  description = "DEPRECATED alias of control_port. When non-null it overrides control_port, so existing callers keep working."
+  type        = number
+  default     = null
+}
+
+variable "control_token_secret_arn" {
+  description = "Secrets Manager ARN holding LOKI_CONTROL_TOKEN. Required unless allow_insecure_bind is true. SSM parameter ARNs are not supported (the execution role is granted secretsmanager:GetSecretValue only)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.control_token_secret_arn == "" || can(regex("^arn:[^:]+:secretsmanager:[^:]+:[0-9]+:secret:[^:]+$", var.control_token_secret_arn))
+    error_message = "control_token_secret_arn must be a plain Secrets Manager secret ARN (arn:aws:secretsmanager:region:account:secret:name). Do not append a JSON key suffix such as :KEY::; the token must be the whole secret value."
+  }
+}
+
+variable "secrets_kms_key_arn" {
+  description = "ARN of the customer-managed KMS key that encrypts the secrets above. Grants the execution role kms:Decrypt on that key only. Leave empty when the secrets use the default aws/secretsmanager key."
+  type        = string
+  default     = ""
+}
+
+variable "allow_insecure_bind" {
+  description = "Run the Control Plane with no token on 0.0.0.0. Anyone who can reach the port can forge runs and answers. Leave false."
+  type        = bool
+  default     = false
 }
 
 variable "log_retention_days" {

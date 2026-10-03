@@ -91,6 +91,10 @@ spec:
             - secretRef:
                 name: {{ include "autonomi.secretName" . }}
           env:
+            # Ship run events to the Control Plane in this release.
+            - name: LOKI_CONTROL_URL
+              value: "http://{{ include "autonomi.fullname" . }}-controlplane:{{ .Values.service.port }}"
+            {{- include "autonomi.controlTokenEnv" . | nindent 12 }}
             # Activates the run.sh durable-state assertion, crash-resume, and the
             # process-exit contract honored by podFailurePolicy above. All
             # per-build state is written under /workspace (the WORKDIR), which is

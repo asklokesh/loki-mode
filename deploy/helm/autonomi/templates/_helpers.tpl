@@ -223,3 +223,37 @@ tokenSecretKey is set the clone is unauthenticated (public repos only).
       mountPath: /workspace
 {{- end }}
 {{- end }}
+
+{{/*
+Control Plane bind port. config.dashboardPort is a deprecated alias: when set
+it wins so existing overrides keep working; otherwise config.controlPort.
+*/}}
+{{- define "autonomi.controlPort" -}}
+{{- .Values.config.dashboardPort | default .Values.config.controlPort | int -}}
+{{- end }}
+
+{{/*
+Control Plane token env entry (secretKeyRef). The Secret is either chart-made
+(token from secrets.controlToken, the existing Secret, or a generated value) or
+the user's existingSecret, which must hold the key secrets.controlTokenKey.
+*/}}
+{{- define "autonomi.controlTokenEnv" -}}
+- name: LOKI_CONTROL_TOKEN
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "autonomi.controlTokenSecretName" . }}
+      key: {{ .Values.secrets.controlTokenKey | default "LOKI_CONTROL_TOKEN" | quote }}
+{{- end }}
+
+{{/*
+Secret that holds the Control Plane token: always the chart-owned
+<fullname>-control-token, unless secrets.controlTokenFromExistingSecret opts in
+to reading the key from the user's existingSecret.
+*/}}
+{{- define "autonomi.controlTokenSecretName" -}}
+{{- if not (and .Values.secrets.existingSecret .Values.secrets.controlTokenFromExistingSecret) }}
+{{- printf "%s-control-token" (include "autonomi.fullname" .) }}
+{{- else }}
+{{- include "autonomi.secretName" . }}
+{{- end }}
+{{- end }}

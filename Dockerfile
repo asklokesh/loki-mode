@@ -3,6 +3,19 @@
 # Run:   docker run -it -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" -v $(pwd):/workspace asklokesh/loki-mode start prd.md
 # Dash:  docker run -it -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" -p 57374:57374 -v $(pwd):/workspace asklokesh/loki-mode start --api prd.md
 
+ARG BUN_VERSION=1.4.2
+
+# Build stage for the Control Plane. The CP source imports ../../../../loki-ts/src
+# (events, redact, types), so loki-ts/src is copied next to it at /src/loki-ts.
+FROM oven/bun:${BUN_VERSION} AS cp-build
+WORKDIR /src/packages/control-plane
+COPY packages/control-plane/package.json packages/control-plane/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY packages/control-plane/ ./
+COPY loki-ts/tsconfig.json /src/loki-ts/tsconfig.json
+COPY loki-ts/src/ /src/loki-ts/src/
+RUN bun run build:all
+
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
@@ -147,6 +160,14 @@ COPY --chown=loki:loki bin/ ./bin/
 COPY --chown=loki:loki loki-ts/dist/ ./loki-ts/dist/
 COPY --chown=loki:loki loki-ts/data/ ./loki-ts/data/
 
+# Control Plane (packages/control-plane), built in the cp-build stage above.
+# Only the bundle, the built UI and the migrations ship: no src, tests or bun
+# cache. `loki control serve` runs dist/server.js, which resolves ../drizzle and
+# ../ui/dist relative to dist/.
+COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/dist/server.js ./packages/control-plane/dist/server.js
+COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/drizzle ./packages/control-plane/drizzle
+COPY --from=cp-build --chown=loki:loki /src/packages/control-plane/ui/dist ./packages/control-plane/ui/dist
+
 # v8: the Agent SDK (@anthropic-ai/claude-agent-sdk) powers the opt-in
 # LOKI_SDK_LOOP=1 RARV loop via a DYNAMIC import in dist/loki.js, so it cannot be
 # bundled into dist (unlike the raw @anthropic-ai/sdk judge bridge, which is a
@@ -192,8 +213,9 @@ RUN mkdir -p /workspace && \
 # Set workspace as working directory
 WORKDIR /workspace
 
-# Expose dashboard/API port
-EXPOSE 57374
+# Expose Control Plane port (LOKI_CONTROL_PORT, default 47821).
+# 57374 stays exposed only for the legacy dashboard shim and `loki start --api`.
+EXPOSE 47821 57374
 
 # Security: Switch to non-root user
 USER loki
