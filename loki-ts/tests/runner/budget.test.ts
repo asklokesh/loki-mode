@@ -40,9 +40,9 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     expect(cost).toBe(30);
   });
 
-  it("computes sonnet pricing (3/15 per 1M)", () => {
+  it("computes sonnet pricing (2/10 per 1M)", () => {
     const cost = calculateCostFromRecords([{ model: "sonnet", input_tokens: 1_000_000, output_tokens: 1_000_000 }]);
-    expect(cost).toBe(18);
+    expect(cost).toBe(12);
   });
 
   it("computes haiku pricing (1/5 per 1M)", () => {
@@ -60,7 +60,7 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
 
   it("falls back to sonnet pricing for unknown models", () => {
     const cost = calculateCostFromRecords([{ model: "unknown-model", input_tokens: 1_000_000, output_tokens: 0 }]);
-    expect(cost).toBe(3);
+    expect(cost).toBe(2);
   });
 
   it("rounds to 4 decimal places", () => {

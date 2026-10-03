@@ -573,7 +573,7 @@ describe("consumeSdkStream: T3(a) full-shape SDK message replay (loop-flip gate)
     expect(partial).toEqual({ input_tokens: 1_000_000, output_tokens: 1_000_000, cache_read_tokens: 0, cache_creation_tokens: 0, model: "sonnet" });
 
     const c = recordPartialStreamCost(join(scratch, ".loki"), "9", { status: "killed", durationMs: 90_000, model: "sonnet" });
-    expect(c.usd).toBe(18); // 1M input @ $3/M + 1M output @ $15/M (data/model-pricing.json "sonnet")
+    expect(c.usd).toBe(12); // 1M input @ $2/M + 1M output @ $10/M (data/model-pricing.json "sonnet")
     expect(c.source).not.toBe("");
   });
 });
