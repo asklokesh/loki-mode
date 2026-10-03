@@ -19,6 +19,13 @@ const TEST_PATH = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[jt]sx?$|(^|\/
 const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$|(^|\/)test_[^/]*\.py$|_test\.py$/;
 const EXAMPLE_EXT = /\.(py|[cm]?[jt]sx?)$/;
 const baseOf = (p: string): string => p.split("/").pop() ?? p;
+// One comparison form for stems (W1-S2 r6): lowercase, and "." "-" "_" runs collapse to one ".", so user-service equals user.service.
+const normStem = (s: string): string => s.toLowerCase().replace(/[._-]+/g, ".").replace(/^\.|\.$/g, "");
+// A directory module (index, __init__, mod, main) is also named by its parent directory.
+const stemsOfTarget = (m: string): string[] => {
+  const raw = stemOf(m).toLowerCase(), parent = m.split("/").slice(-2, -1)[0];
+  return [normStem(raw), ...(["index", "__init__", "mod", "main"].includes(raw) && parent ? [normStem(parent)] : [])];
+};
 const norm = (s: string): string => s.replace(/\r\n?/g, "\n");
 const stemOf = (p: string): string => (p.split("/").pop() ?? p).replace(/\.[^.]*$/, "");
 const byPath = (a: ManifestFile, b: ManifestFile): number =>
@@ -711,15 +718,16 @@ function importsNamed(path: string, raw: string, stems: Set<string>): boolean {
   const content = raw.replace(/\\\n[ \t]*/g, " ");
   // Whole-stem naming (W1-S2 r5): the test stem minus a .test/.spec suffix or a test_/_test affix equals a target stem or
   // extends it after a dot, so dotted and dashed stems (user.service, my-parser) match. Compared case-insensitively.
-  const ts = stemOf(path).toLowerCase(), core = ts.replace(/\.(test|spec)$/, "").replace(/^test_/, "").replace(/_test$/, "");
+  const ts = stemOf(path).toLowerCase(), core = normStem(ts.replace(/[._-]?(test|spec)$/, "").replace(/^test[._-]/, ""));
   if ([...stems].some((s) => core === s || core.startsWith(`${s}.`) || ts.split(/[._-]/).includes(s))) return true;
   const specs: string[] = [];
   for (const m of content.matchAll(/\b(?:from|import|require)\s*\(?\s*["'`]([^"'`]+)["'`]/g)) specs.push(m[1]!);
+  for (const m of content.matchAll(/\.(?:mock|doMock|unmock|importActual|requireActual|importMock|requireMock)\s*(?:<[^>]*>)?\s*\(\s*["'`]([^"'`]+)["'`]/g)) specs.push(m[1]!);
   const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
   for (const m of content.matchAll(/^[ \t]*from[ \t]+([\w.]+)[ \t]+import[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
   for (const m of content.matchAll(/^[ \t]*import[ \t]+([\w.,\t ]+)$/gm)) specs.push(...names(m[1]!));
-  const lastSeg = (s: string): string => (s.trim().split(/[\\/]/).pop() ?? "").replace(/\.([cm]?[jt]sx?|py)$/i, "").toLowerCase();
-  return specs.some((s) => stems.has(lastSeg(s)) || s.trim().replace(/\.(ts|js|py)$/, "").toLowerCase().split(/[./\\]/).some((seg) => stems.has(seg)));
+  const lastSeg = (s: string): string => normStem((s.trim().split(/[\\/]/).pop() ?? "").replace(/\.([cm]?[jt]sx?|py)$/i, ""));
+  return specs.some((s) => stems.has(lastSeg(s)) || s.trim().replace(/\.(ts|js|py)$/, "").split(/[./\\]/).some((seg) => stems.has(normStem(seg))));
 }
 
 function safeTs(content: string, path: string): string[] {
@@ -733,7 +741,7 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
   const all = [...files].sort(byPath).map((f) => ({ path: f.path.replace(/^\.\//, ""), content: norm(f.content) }));
   const mods = [...new Set(taskModules.map((m) => m.replace(/^\.\//, "")))].sort();
   const excl = [...new Set([...mods, ...alsoNamed.map((m) => m.replace(/^\.\//, ""))])];
-  const stems = new Set(excl.map((m) => stemOf(m).toLowerCase()));
+  const stems = new Set(excl.flatMap(stemsOfTarget));
   const tests = all.filter((f) => TEST_PATH.test(f.path));
   const out: string[] = ["# wall manifest (D77): signatures only, from the base tree", "", "## runner", ...runnerSection(all)];
   out.push("", "## test layout", ...tests.slice(0, MAX_LAYOUT).map((f) => f.path));
@@ -744,8 +752,8 @@ export function buildWallManifest(files: readonly ManifestFile[], taskModules: r
     out.push("", `## signatures: ${path}`, ...(path.endsWith(".py") ? pySignatures(f.content) : safeTs(f.content, path)));
   }
   out.push("", "## style examples");
-  const named = new Set(excl.flatMap((m) => [baseOf(m).toLowerCase(), stemOf(m).toLowerCase()]));
-  const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path).toLowerCase()) && !named.has(stemOf(t.path).toLowerCase()) && !importsNamed(t.path, t.content, stems);
+  const named = new Set(excl.flatMap((m) => [baseOf(m).toLowerCase(), ...stemsOfTarget(m)]));
+  const eligible = (t: ManifestFile): boolean => TEST_FILE.test(t.path) && EXAMPLE_EXT.test(t.path) && !named.has(baseOf(t.path).toLowerCase()) && !named.has(normStem(stemOf(t.path))) && !importsNamed(t.path, t.content, stems);
   for (const f of tests.filter(eligible).slice(0, MAX_EXAMPLES)) {
     out.push(`--- example: ${f.path}`, ...f.content.split("\n").slice(0, EXAMPLE_LINES));
   }

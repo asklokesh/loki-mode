@@ -771,3 +771,58 @@ describe("whole-stem naming and path ranking (D77, W1-S2 r5)", () => {
     expect(t).toContain("other_style");
   });
 });
+
+// D77 / W1-S2 r6: directory-module targets, left-bounded exact paths, mock specifiers, separator-insensitive stems.
+describe("directory modules, exact-path bounds, mocks, separators (D77, W1-S2 r6)", () => {
+  const ON = { LOKI_E10_WALL_MANIFEST: "1" };
+  function manifest(files: Record<string, string>, task: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s2r6-"));
+    const g = (...a: string[]): string => execFileSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t", ...a], { encoding: "utf8" }).trim();
+    try {
+      g("init", "-q");
+      for (const [p, c] of Object.entries(files)) { mkdirSync(join(dir, p, ".."), { recursive: true }); writeFileSync(join(dir, p), c, "utf8"); g("add", p); }
+      g("commit", "-q", "-m", "base");
+      return wallManifestFor(dir, g("rev-parse", "HEAD^{tree}"), task, ON)!.text;
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  const T = (body: string, imp = ""): string => `import { test } from "bun:test";\n${imp}test("t", () => { /* ${body} */ });\n`;
+  const other = { "tests/other.test.ts": T("other_style") };
+  const userFiles = { "src/user/index.ts": "export function target(n: number): number {\n  return n;\n}\n", "tests/user.test.ts": T("BODY_B7_USER", 'import { target } from "../src/user";\n'), "tests/acct.test.ts": T("BODY_B7_ACCT", 'import { target } from "../src/user";\n'), ...other };
+
+  test("B7a: a directory-module target excludes tests importing the directory", () => {
+    for (const task of ["Fix src/user/index.ts so target doubles n", "Fix the user module in src/user", "Fix src/user/index.ts"]) {
+      const t = manifest(userFiles, task);
+      expect(t).not.toContain("BODY_B7_USER");
+      expect(t).not.toContain("BODY_B7_ACCT");
+      expect(t).toContain("other_style");
+    }
+  });
+
+  test("B7b: a Python package target excludes a test doing from app.user import target", () => {
+    const t = manifest({ "app/user/__init__.py": "def target(n):\n    return n\n", "tests/test_user.py": "from app.user import target\n\ndef test_t():\n    BODY_B7_PY = 1\n", "tests/test_other.py": "def test_o():\n    other_py_style = 1\n" }, "Fix app/user/__init__.py so target doubles n");
+    expect(t).not.toContain("BODY_B7_PY");
+    expect(t).toContain("other_py_style");
+  });
+
+  test("B8: a path suffix is not an exact-path match (root index.ts and src/index.ts)", () => {
+    const files: Record<string, string> = { ...other, "index.ts": "export const root = 1;\n", "src/index.ts": "export const src = 1;\n", "p5/src/index.ts": "export const p5dup = 1;\n", "packages/p5/src/index.ts": "export function sigP5(n: number): number {\n  return n;\n}\n" };
+    for (const n of ["a", "b", "c"]) files[`${n}.ts`] = `export const ${n} = 1;\n`;
+    expect(manifest(files, "Fix a.ts b.ts c.ts and packages/p5/src/index.ts: sigP5 must double n")).toContain("export function sigP5(n: number): number");
+    delete files["a.ts"];
+    expect(manifest(files, "Fix b.ts c.ts and packages/p5/src/index.ts: sigP5 must double n")).toContain("export function sigP5(n: number): number");
+  });
+
+  test("A1: jest.mock, vi.mock and importActual specifiers count as imports", () => {
+    const base = { "src/widget.ts": "export const w = 1;\n", ...other };
+    const t = manifest({ ...base, "tests/a.test.ts": T("BODY_A1_JEST", 'jest.mock("../src/widget");\n'), "tests/b.test.ts": T("BODY_A1_VI", 'vi.mock("../src/widget", () => ({}));\n'), "tests/c.test.ts": T("BODY_A1_ACTUAL", 'const m = await vi.importActual("../src/widget");\n'), "tests/d.test.ts": T("BODY_A1_REQ", 'const m = jest.requireActual("../src/widget");\n') }, "Fix src/widget.ts");
+    for (const b of ["BODY_A1_JEST", "BODY_A1_VI", "BODY_A1_ACTUAL", "BODY_A1_REQ"]) expect(t).not.toContain(b);
+    expect(t).toContain("other_style");
+  });
+
+  test("A2: user-service.test.ts is excluded for user.service.ts, and separators compare alike", () => {
+    const t = manifest({ "src/user.service.ts": "export const u = 1;\n", "tests/user-service.test.ts": T("BODY_A2_DASH"), "tests/user_service.test.ts": T("BODY_A2_UNDER"), ...other }, "Fix src/user.service.ts");
+    expect(t).not.toContain("BODY_A2_DASH");
+    expect(t).not.toContain("BODY_A2_UNDER");
+    expect(t).toContain("other_style");
+  });
+});
