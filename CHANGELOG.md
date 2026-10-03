@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `loki verify --fast` no longer exits 0 when it cannot give a verdict: nothing scanned (INCONCLUSIVE) exits 3, an unknown flag exits 64, and a missing root directory exits 2 (P2-FV-EXIT).
 - `loki verify` no longer lets a planted `json.py` in the reviewed tree forge its recorded gates (a dependency audit with high CVEs could read as pass); every inline Python call site in verify.sh runs isolated (-I -S, or -E with the cwd stripped from sys.path), and the syntax gate's py_compile runs isolated too (S-216r).
 - The pre-run snapshot's `git status` call now ignores a repo-local `core.fsmonitor` and untracked cache, so an agent-written `.git/config` cannot run a command inside the snapshot step (S-218r).
+- The pre-run snapshot's `git status` call now ignores a repo-local `core.fsmonitor`, the untracked cache, and any configured `filter.*` clean/smudge/process driver, so an agent-written `.git/config` cannot run a command inside the snapshot step (S-218r).
 - When `loki start` refuses to resume the recorded agent branch because checking it out would overwrite one of your gitignored files, the warning now names that file and the branch where the earlier commits stay, instead of only saying the branch "could not be checked out" (S-233).
 - The standalone dashboard receipts list now shows a partly priced run's cost as "at least $X.XX" (only when `/api/proofs` reports `cost_partial: true`) instead of presenting a lower bound as a complete total (PO-STANDALONE-COST-1).
 

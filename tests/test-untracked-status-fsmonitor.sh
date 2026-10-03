@@ -94,6 +94,49 @@ else
         *) fail "control: hook did not run even without the flags; fixture is dead" "$out2" ;; esac
 fi
 
+# Filter-driver legs: a tracked, stat-dirty file plus a clean/process filter
+# driver named in .git/info/attributes makes git run the driver during status.
+# run_filter_case <lib> <tag> <clean|process>: prints MARKER=yes|no.
+run_filter_case() {
+    local lib="$1" tag="$2" kind="$3" repo="$WORK/frepo-$2-$3" marker="$WORK/fmarker-$2-$3"
+    mkdir -p "$repo" || return 1
+    git -C "$repo" init -q || return 1
+    git -C "$repo" config user.email t@example.invalid
+    git -C "$repo" config user.name t
+    printf 'aa\n' > "$repo/tracked.txt"
+    git -C "$repo" add tracked.txt && git -C "$repo" commit -q -m init || return 1
+    git -C "$repo" config "filter.evil.$kind" "touch '$marker'; cat"
+    git -C "$repo" config filter.evil.required true
+    printf '* filter=evil\n' > "$repo/.git/info/attributes"
+    printf 'bb\n' > "$repo/tracked.txt"
+    touch -t 200001010000 "$repo/tracked.txt"
+    (
+        cd "$repo" || exit 1
+        # shellcheck source=/dev/null
+        . "$lib"
+        _loki_untracked_status "$WORK/fstatus-$tag-$kind" || true
+    ) >/dev/null 2>&1
+    [ -e "$marker" ] && echo "MARKER=yes" || echo "MARKER=no"
+}
+
+for kind in clean process; do
+    outf="$(run_filter_case "$WORK/lib-real.sh" real "$kind")"
+    case "$outf" in *MARKER=no*) pass "no filter.evil.$kind marker written by _loki_untracked_status" ;;
+        *) fail "filter driver ($kind) ran during _loki_untracked_status" "$outf" ;; esac
+done
+
+# Positive control: the same function without the filter neutralization runs
+# the driver, so the legs above are not vacuous.
+awk '/fargs\+=|"\$\{fargs\[@\]\}"|\$\{fargs\[@\]\+/ { next } { print }' \
+    "$WORK/lib-real.sh" > "$WORK/lib-nofilter.sh"
+if cmp -s "$WORK/lib-real.sh" "$WORK/lib-nofilter.sh"; then
+    fail "filter mutation found no fargs lines to strip"
+else
+    outc="$(run_filter_case "$WORK/lib-nofilter.sh" nofilter clean)"
+    case "$outc" in *MARKER=yes*) pass "control: without the filter overrides the driver runs (fixture is live)" ;;
+        *) fail "control: filter driver did not run even without overrides; fixture is dead" "$outc" ;; esac
+fi
+
 if [ -e "$REPO_ROOT/.loki/state/provider" ] && [ "$REPO_ROOT/.loki/state/provider" -nt "$WORK" ]; then
     fail "a .loki/state/provider appeared in the repo during this test"
 else

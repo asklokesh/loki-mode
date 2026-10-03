@@ -10653,7 +10653,22 @@ _loki_untracked_status() {
     # BACKLOG 131c: a repo-local core.fsmonitor is a command git runs on
     # status; the agent can write .git/config, so disable it (and the
     # untracked cache it could have poisoned) for this one call.
+    # A filter driver named by attributes (clean/smudge/process) is also a
+    # command git runs when status compares a stat-dirty tracked file, so every
+    # configured driver is blanked: clean/smudge become cat, process is empty,
+    # required is false (a blank process would otherwise be fatal).
+    local fargs=() fk="" fn=""
+    while IFS= read -r -d '' fk; do
+        fn="${fk%.*}"
+        case "$fk" in
+            *.process) fargs+=(-c "${fk}=") ;;
+            *) fargs+=(-c "${fk}=cat") ;;
+        esac
+        fargs+=(-c "${fn}.required=false")
+    done < <("$gittool" -C "$top" config -z --name-only --get-regexp \
+        '^filter\..*\.(clean|smudge|process)$' 2>/dev/null)
     "$gittool" -C "$top" -c core.fsmonitor=false -c core.untrackedCache=false \
+        ${fargs[@]+"${fargs[@]}"} \
         --no-optional-locks status --porcelain -z --no-renames -uall \
         --ignored=matching --ignore-submodules=all -- ":(exclude,literal)${prefix}.loki" \
         > "$1" 2>/dev/null && return 0
