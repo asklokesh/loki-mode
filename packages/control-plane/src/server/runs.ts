@@ -55,9 +55,16 @@ const parseRun = (r: typeof runs.$inferSelect) => ({
   effective_verdict: effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 }),
   status: r.endedAt ? "completed" : "running", elapsed_s: elapsedS(r),
 });
+/** The task title the intake stage recorded (its `title`, else the first line of `task`), for sidebar rows of runs that have no issue ref. Null when intake has not completed. */
+export function taskTitle(db: Db, sourceId: string, runId: string): string | null {
+  const d = db.select({ data: events.data }).from(events).where(and(eq(events.sourceId, sourceId), eq(events.runId, runId), eq(events.type, "stage.completed"), eq(events.stage, "intake"))).orderBy(asc(events.seq)).limit(1).get()?.data as Record<string, unknown> | undefined;
+  const raw = str(d?.["title"]) ?? str(d?.["task"]);
+  const t = raw?.split("\n")[0]?.trim();
+  return t ? (t.length > 140 ? `${t.slice(0, 139)}...` : t) : null;
+}
 // A run with no run.completed yet is running: add its live fields (stage, files) from the stored events.
 const withLive = (db: Db, r: typeof runs.$inferSelect) => {
-  const p = parseRun(r);
+  const p = { ...parseRun(r), title: taskTitle(db, r.sourceId, r.runId) };
   return r.endedAt ? { ...p, current_stage: null, files_touched: [] as string[] } : { ...p, ...liveInfo(loadEvents(db, r.sourceId, r.runId)) };
 };
 

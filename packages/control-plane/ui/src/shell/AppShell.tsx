@@ -37,7 +37,8 @@ export function useSessions(): { runs: RunRow[] | null; error: string | null } {
 }
 
 const dotState = (r: RunRow): DotState => (r.status === "running" || (!r.verdict && !r.ended_at) ? "active" : r.verdict === VERDICT.FAILED || effectiveVerdict(r) === VERDICT.TAMPERED ? "error" : "idle");
-export const sessionTitle = (r: RunRow): string => r.issue_ref ?? r.run_id;
+export const sessionTitle = (r: RunRow): string => r.title ?? r.issue_ref ?? r.run_id;
+const BADGE_CLIP: CSSProperties = { display: "block", flex: "0 1 auto", minWidth: 0, maxWidth: "46%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 const sessionHref = (r: RunRow) => `#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`;
 
 function SessionRow({ run, active, onNavigate }: { run: RunRow; active: boolean; onNavigate?: () => void }) {
@@ -50,9 +51,9 @@ function SessionRow({ run, active, onNavigate }: { run: RunRow; active: boolean;
       <StatusDot state={dotState(run)} />
       <span style={{ minWidth: 0, flex: 1 }}>
         <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionTitle(run)}</span>
-        {run.origin_repo ? <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: t("text-sm"), color: t("text-muted") }}>{run.origin_repo}</span> : null}
+        {run.origin_repo || (run.title && run.issue_ref) ? <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: t("text-sm"), color: t("text-muted") }}>{[run.origin_repo, run.title ? run.issue_ref : null].filter(Boolean).join(" \u00b7 ")}</span> : null}
       </span>
-      {run.verdict ? <VerdictBadge run={run} /> : null}
+      {run.verdict ? <VerdictBadge run={run} style={BADGE_CLIP} /> : null}
     </a>
   );
 }

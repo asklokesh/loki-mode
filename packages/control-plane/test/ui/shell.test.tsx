@@ -67,6 +67,19 @@ test("sidebar renders the grouped sessions from GET /v1/runs", async () => {
   expect(screen.getByTestId("mascot")).toBeTruthy();
 });
 
+test("sidebar row without an issue ref shows the task title and repo, and the badge truncates instead of wrapping", async () => {
+  const today = new Date().toISOString();
+  serve({ "/v1/runs": { runs: [run("run-title", today, { issue_ref: null, title: "add a multiply function", origin_repo: "acme/calc", verdict: "VERIFIED", attested: true, sig_checked: false, tampered: false })], total: 1, next_cursor: null } });
+  render(<AppShell />);
+  const row = await screen.findByTestId("session-row");
+  expect(row.textContent).toContain("add a multiply function");
+  expect(row.textContent).toContain("acme/calc");
+  expect(row.textContent).not.toContain("run-title");
+  const badge = row.querySelector("[data-cp='badge']") as HTMLElement;
+  expect([badge.style.whiteSpace, badge.style.textOverflow, badge.style.overflow]).toEqual(["nowrap", "ellipsis", "hidden"]);
+  expect(badge.getAttribute("title")).toBe(badge.textContent!);
+});
+
 test("registry: a registered page renders in the outlet with its params", async () => {
   serve({ "/v1/runs": load("empty.json") });
   const Probe = ({ params }: { params: Record<string, string> }) => <p data-testid="probe">probe {params.id}</p>;

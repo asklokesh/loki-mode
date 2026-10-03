@@ -19,6 +19,7 @@ export interface RunRow {
   run_id: string;
   origin_repo: string | null;
   issue_ref: string | null;
+  title?: string | null; // intake task title (or issue title); null until intake completes
   task_source: string | null;
   provider: string | null;
   model: string | null;
