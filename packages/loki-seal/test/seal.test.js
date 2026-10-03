@@ -708,7 +708,7 @@ test('R5-N1b: a filtered chat sentence that carries a modal is still listed and 
 test('R5: passing ids come from tap, spec, pytest -rA, go and cargo output only when the test passed', () => {
   const { passing } = require('../bin/contract.js');
   assert.deepStrictEqual(passing('ok 1 - a b\n    ok 2 - c d\nok 3 - e f # SKIP\nnot ok 4 - g h\nok 5 - t # TODO x\n').sort(), ['a b', 'c d']);
-  assert.deepStrictEqual(passing('✔ a b (0.3ms)\n  ✔ c d (1ms)\n﹣ e f (0.1ms) # SKIP\n✖ g h (1ms)\n').sort(), ['a b', 'c d']);
+  assert.deepStrictEqual(passing('\u2714 a b (0.3ms)\n  \u2714 c d (1ms)\n\ufe63 e f (0.1ms) # SKIP\n\u2716 g h (1ms)\n').sort(), ['a b', 'c d']);
   assert.deepStrictEqual(passing('PASSED test_a.py::TestX::test_one\nSKIPPED [1] test_a.py:3: x\nFAILED test_a.py::test_two - boom\n'), ['test_a.py::TestX::test_one']);
   assert.deepStrictEqual(passing('--- PASS: TestA (0.00s)\n    --- PASS: TestA/sub (0.00s)\n--- SKIP: TestB (0.00s)\n--- FAIL: TestC (0.00s)\n').sort(), ['TestA', 'TestA/sub']);
   assert.deepStrictEqual(passing('test a::b ... ok\ntest c ... ignored\ntest d ... FAILED\n'), ['a::b']);
