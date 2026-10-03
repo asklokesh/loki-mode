@@ -143,3 +143,13 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - the shipper imports in e10ext/ship_hook.ts and commands/control.ts, which have no external deps today but share the same path.
 - Mechanism: one `postinstall` in loki-ts/package.json installs packages/control-plane from its frozen lockfile, so every loki-ts install (CI, Docker, local) gets the sibling's deps. No per-workflow steps.
 - Fixture: a clean `git worktree add` at HEAD, then `bun install --frozen-lockfile && bun run build` in loki-ts, and again with `--production`. Both exit 0 and the dist is byte-identical to the committed one; without the postinstall the build exits 1 with the error above.
+
+## FC-13 Tests pin a data value that a correct change is allowed to move
+- User saw: nothing; the full loki-ts bun test on merged main ca9b85b7f had 5 red in "budget: cache token pricing" after MW-1 correctly moved sonnet from 3/15/0.3/3.75 to 2/10/0.2/2.5. The expected totals (0.6617, 3.0) and tiers were literals, so the price change read as a cost bug. The MW-1 review was approved on the slice's own suites, without the full bun test (an FC-11 sibling).
+- Law: L7 (the release is a contract); a guard must fail on wrong behavior, not on a legitimate data change.
+- Siblings:
+  - tests/dashboard/test_api_cost_cache.py stubs its own table, so it stays consistent, but its docstring says the other routes return 0.6617, which is stale (cosmetic);
+  - tests/test-pricing-parity.sh (MW-1) compares routes against model-pricing.json, the correct shape;
+  - the codex and gpt rows drift between run.sh and budget.ts (rv-mw1 follow-up), which is the same file-is-the-source rule.
+- Mechanism: arithmetic tests derive expectations from the single pricing source (loki-ts/data/model-pricing.json) and assert the loaded table equals the file; only the fixture token counts are literal. Pricing-table changes run the full bun test in main before the train (FC-11 mechanism).
+- Fixture: loki-ts/test/budget_cache_pricing.test.ts at 0de0838e1, 8 pass 0 fail; "cache tiers survive loading" compares the loaded PRICING with the file (loader mutation not yet run; follow-up).
