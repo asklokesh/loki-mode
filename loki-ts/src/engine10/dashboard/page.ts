@@ -93,3 +93,5 @@ export function renderPage(): string {
 </html>
 `;
 }
+/** D61-15: /g/<group> unit grid; rendering lives in features/speed per D71. */
+export const groupRoute = async (repoDir: string, group: string): Promise<Response> => (await import("../../features/speed/group_grid.ts")).groupResponse(repoDir, group);

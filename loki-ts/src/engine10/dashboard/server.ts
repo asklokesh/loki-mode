@@ -5,7 +5,7 @@ import { fold, partialCost, readEvents, tail } from "../events.ts";
 import { eventsPath, listRunIds } from "../status.ts";
 import type { EventEnvelope, Verdict } from "../types.ts";
 import { getVersion } from "../../version.ts";
-import { renderPage } from "./page.ts";
+import { groupRoute, renderPage } from "./page.ts";
 export const DEFAULT_PORT = 57375;
 const HOSTNAME = "127.0.0.1"; // section 12: localhost only; never configurable
 const DASHBOARD_IDENT = "loki-v10"; // /version's "dashboard" field, identifies a v10 occupant
@@ -116,6 +116,8 @@ export function startServer(repoDir: string, port: number = DEFAULT_PORT): Dashb
       if (url.pathname === "/") {
         return new Response(renderPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
       }
+      const g = /^\/g\/([^/]+)$/.exec(url.pathname);
+      if (g) return groupRoute(repoDir, decodeURIComponent(g[1]!));
       if (url.pathname === "/modernize") {
         return (await import("../modernize/dashboard.ts")).modernizeRoute(repoDir);
       }

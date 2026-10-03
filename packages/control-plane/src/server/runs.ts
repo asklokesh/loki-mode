@@ -24,7 +24,7 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
   const row = {
     sourceId, runId,
     originRepo: str(sd.origin_repo), issueRef: str(sd.issue_ref), taskSource: str(sd.task_source),
-    provider: str(sd.provider), model: str(sd.model),
+    provider: str(sd.provider), model: str(sd.model), groupId: str(sd.group_id), unitId: str(sd.unit_id),
     startedAt: f.run.started?.ts ?? evs[0]?.ts ?? null, endedAt: f.run.completed?.ts ?? null,
     verdict: f.run.verdict,
     prUrl: str(done.pr_url) ?? str(pr?.url), prDraft: typeof pr?.draft === "boolean" ? Number(pr.draft) : null,
@@ -39,7 +39,7 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
 
 const parseRun = (r: typeof runs.$inferSelect) => ({
   source_id: r.sourceId, run_id: r.runId, origin_repo: r.originRepo, issue_ref: r.issueRef, task_source: r.taskSource,
-  provider: r.provider, model: r.model, started_at: r.startedAt, ended_at: r.endedAt, verdict: r.verdict,
+  group_id: r.groupId, unit_id: r.unitId, provider: r.provider, model: r.model, started_at: r.startedAt, ended_at: r.endedAt, verdict: r.verdict,
   pr_url: r.prUrl, pr_draft: r.prDraft === null ? null : r.prDraft === 1,
   cost_usd: r.costUsd, partial_usd: r.partialUsd, measured_sessions: r.measuredSessions, total_sessions: r.totalSessions,
   input_tokens: r.inputTokens, output_tokens: r.outputTokens, wall_s: r.wallS, last_seq: r.lastSeq,
@@ -75,7 +75,7 @@ const elapsedS = (r: typeof runs.$inferSelect): number | null => {
   return Math.max(0, (end - Date.parse(r.startedAt)) / 1000);
 };
 
-export interface ListQuery { verdict?: string; repo?: string; since?: string; until?: string; limit?: number; cursor?: string }
+export interface ListQuery { verdict?: string; repo?: string; since?: string; until?: string; group_id?: string; limit?: number; cursor?: string }
 
 export function listRuns(db: Db, q: ListQuery) {
   const limit = Math.min(Math.max(q.limit ?? 50, 1), 200);
@@ -83,6 +83,7 @@ export function listRuns(db: Db, q: ListQuery) {
   const where = and(
     q.verdict ? eq(runs.verdict, q.verdict) : undefined,
     q.repo ? eq(runs.originRepo, q.repo) : undefined,
+    q.group_id ? eq(runs.groupId, q.group_id) : undefined,
     q.since ? gte(runs.startedAt, q.since) : undefined,
     q.until ? lt(runs.startedAt, q.until) : undefined,
   );

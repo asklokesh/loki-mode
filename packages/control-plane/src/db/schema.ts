@@ -47,8 +47,11 @@ export const runs = sqliteTable("runs", {
   lastEventAt: text("last_event_at"),
   tampered: integer("tampered").notNull(),
   conflict: integer("conflict").notNull().default(0),
+  groupId: text("group_id"),
+  unitId: text("unit_id"),
 }, (t) => [
   primaryKey({ columns: [t.sourceId, t.runId] }),
   index("runs_started").on(t.startedAt),
   index("runs_verdict").on(t.verdict),
+  index("runs_group").on(t.groupId),
 ]);

@@ -36,7 +36,7 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
 
   app.get("/v1/runs", (c) => {
     const q = c.req.query();
-    return c.json(listRuns(db, { verdict: q.verdict, repo: q.repo, since: q.since, until: q.until, limit: q.limit ? Number(q.limit) : undefined, cursor: q.cursor }));
+    return c.json(listRuns(db, { verdict: q.verdict, repo: q.repo, since: q.since, until: q.until, group_id: q.group_id, limit: q.limit ? Number(q.limit) : undefined, cursor: q.cursor }));
   });
   const detail = (c: { json: (b: unknown, s?: 404) => Response }, source: string, run: string) => {
     const d = runDetail(db, source, run);
