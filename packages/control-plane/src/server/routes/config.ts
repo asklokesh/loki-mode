@@ -160,11 +160,19 @@ const readsAsString11 = (s: string): boolean => {
   try { const d = parseDocument(s, V11); return !d.errors.length && d.toJS() === s; } catch { return false; }
 };
 
-/** Renders the document with every string YAML 1.1 would not read back as that string quoted, then re-parses it under 1.2 and 1.1; null unless both equal `next`. */
-export function renderVerified(doc: Document, next: Json): string | null {
+/** Conservative plain-scalar allowlist: anything outside it is double-quoted so no YAML reader has to guess. */
+const PLAIN_OK = /^[A-Za-z0-9_./@+-][A-Za-z0-9_./@+ -]*$/;
+const NUMERIC_LIKE = /^[-+.\d][\d._+-]*([eE][-+]?\d+)?$/;
+/** True when a string must be written double-quoted (not on the allowlist, `-`, number-like, or something YAML 1.1 reads as a non-string). */
+export function needsQuote(s: string): boolean {
+  return !PLAIN_OK.test(s) || s.endsWith(" ") || s === "-" || NUMERIC_LIKE.test(s) || !readsAsString11(s);
+}
+
+/** Renders the document with every string that needs it double-quoted (U+0085, U+2028, U+2029 escaped, since PyYAML mishandles them raw), then re-parses under 1.2 and 1.1; null unless both equal `next`. `quote` is injectable so tests can prove the re-parse refuses on its own. */
+export function renderVerified(doc: Document, next: Json, quote: (s: string) => boolean = needsQuote): string | null {
   try {
-    visit(doc, { Scalar(_k, n) { if (typeof n.value === "string" && !readsAsString11(n.value)) n.type = "QUOTE_DOUBLE"; } });
-    const out = String(doc);
+    visit(doc, { Scalar(_k, n) { if (typeof n.value === "string" && quote(n.value)) n.type = "QUOTE_DOUBLE"; } });
+    const out = String(doc).replace(/\u0085/g, "\\N").replace(/\u2028/g, "\\L").replace(/\u2029/g, "\\P");
     const back = parseDocument(out);
     if (back.errors.length || !deepEq(back.toJS(), next)) return null;
     const back11 = parseDocument(out, V11);
@@ -257,6 +265,8 @@ export function mount(ctx: RouteCtx): void {
 
       const merge = mergeKeyPaths(next);
       if (merge.length) return refuse(422, "the YAML merge key << is not allowed", { paths: merge });
+      const badNames = Object.keys(isObj(next.workspaces) ? next.workspaces : {}).filter((n) => !/^[A-Za-z0-9_.-]+$/.test(n) || n === "." || n === "..");
+      if (badNames.length) return refuse(422, "workspace names may only use letters, digits, _ . and -", { paths: badNames.map((_n, i) => `workspaces.(name ${i + 1})`) });
       const secrets = findSecrets(next);
       if (secrets.length) return refuse(422, "value looks like a secret; loki.yaml stores env var names only", { paths: secrets });
       const errors = validateConfig(next);

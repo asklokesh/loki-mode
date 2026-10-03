@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseDocument } from "yaml";
-import { renderVerified } from "../../src/server/routes/config.ts";
+import { needsQuote, renderVerified } from "../../src/server/routes/config.ts";
 import { createApp } from "../../src/server/app.ts";
 
 const peer = (address: string) => ({ requestIP: () => ({ address }) });
@@ -320,4 +320,77 @@ test("a payload nested past the cap returns the exact nested-too-deeply error", 
   const r = await raw(app, `{"config":{"knowledge_sources":${"[".repeat(30)}${"]".repeat(30)}}}`, etag);
   expect(r.status).toBe(422);
   expect(((await r.json()) as { error: string }).error).toBe("config is nested too deeply");
+});
+
+const pyOk = spawnSync("python3", ["-c", "import yaml"]).status === 0;
+const LOKI_YAML = join(import.meta.dir, "..", "..", "..", "..", "autonomy", "lib", "loki_yaml.py");
+const CORPUS = ["=", "<<", "a\u2029b", "a\u2028b", "a\u0085b", "\u2029", "yes", "No", "~", "1_000", "0o17", "1e3", "-", "a: b", "a #b", "tab\there", "x ", "caf\u00e9", "{a}", "!tag", "*alias", "&anc", "?", "|", ">", "%x", "@x", "`x"];
+
+test("every corpus string round-trips through PyYAML safe_load identically and loki_yaml.py validate exits 0", async () => {
+  if (!pyOk) return;
+  writeFileSync(join(dir, "loki.yaml"), SAMPLE);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  const all = await put(app, { config: { knowledge_sources: CORPUS } }, { etag });
+  expect(all.status).toBe(200);
+  const file = join(dir, "loki.yaml");
+  const py = (f: string) => spawnSync("python3", ["-c", "import yaml,json,sys; print(json.dumps(yaml.safe_load(open(sys.argv[1], encoding='utf-8').read()), ensure_ascii=True))", f], { encoding: "utf8" });
+  const r = py(file);
+  expect(r.status).toBe(0);
+  expect((JSON.parse(r.stdout) as { knowledge_sources: string[] }).knowledge_sources).toEqual(CORPUS);
+  expect(spawnSync("python3", [LOKI_YAML, "validate", file], { encoding: "utf8" }).status).toBe(0);
+  // each value alone, under models.default as well
+  for (const v of CORPUS) {
+    const e = (await (await get(app)).json() as { etag: string }).etag;
+    expect((await put(app, { config: { models: { default: v } } }, { etag: e })).status).toBe(200);
+    const one = py(file);
+    expect(one.status).toBe(0);
+    expect((JSON.parse(one.stdout) as { models: { default: string } }).models.default).toBe(v);
+    expect(spawnSync("python3", [LOKI_YAML, "validate", file], { encoding: "utf8" }).status).toBe(0);
+  }
+});
+
+test("needsQuote quotes the dangerous scalars and leaves plain names plain", () => {
+  for (const v of ["=", "<<", "a\u2029b", "a\u2028b", "a\u0085b", "yes", "-", "1.5", "x "]) expect(needsQuote(v)).toBe(true);
+  for (const v of ["sonnet", "a/b", "per_run_usd", "gpt-5.3-codex", "a b"]) expect(needsQuote(v)).toBe(false);
+});
+
+test("the YAML 1.1 re-parse refuses a write on its own when the quoter misses a value", () => {
+  const never = () => false;
+  const docWith = (v: string) => { const d = parseDocument("a: x\n"); d.set("a", v); return d; };
+  // "yes" is a string under 1.2 (first re-parse passes) but a boolean under 1.1: only the second re-parse can refuse it
+  expect(parseDocument("a: yes\n").toJS()).toEqual({ a: "yes" });
+  expect(renderVerified(docWith("yes"), { a: "yes" }, never)).toBeNull();
+  expect(renderVerified(docWith("yes"), { a: "yes" })).toBe('a: "yes"\n');
+});
+
+test("a NEW .. path is refused even when a different .. path already exists in the file", async () => {
+  const yml = "workspaces:\n  w:\n    repos:\n      - repo: a/b\n        path: ../old\n";
+  writeFileSync(join(dir, "loki.yaml"), yml);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  const keep = { repo: "a/b", path: "../old" };
+  for (const w of [
+    { w: { repos: [keep, { repo: "c/d", path: "../new" }] } },
+    { w: { repos: [{ repo: "a/b", path: "../other" }] } },
+    { w: { repos: [keep] }, v: { repos: [{ repo: "c/d", path: "../old" }] } },
+  ]) {
+    const r = await put(app, { config: { workspaces: w } }, { etag });
+    expect(r.status).toBe(422);
+    expect(((await r.json()) as { error: string }).error).toContain(".. segments");
+  }
+  expect((await put(app, { config: { workspaces: { w: { repos: [keep] } } } }, { etag })).status).toBe(200);
+  expect(readFileSync(join(dir, "loki.yaml"), "utf8")).toContain("../old");
+});
+
+test("workspace names are restricted to [A-Za-z0-9_.-]+ and may not be . or ..", async () => {
+  writeFileSync(join(dir, "loki.yaml"), SAMPLE);
+  const { app } = mk();
+  const { etag } = await (await get(app)).json() as { etag: string };
+  for (const n of ["../../escape", "..", ".", "a/b", "a b", ""]) {
+    const r = await put(app, { config: { workspaces: { [n]: { repos: [{ repo: "a/b", path: "/x" }] } } } }, { etag });
+    expect(r.status).toBe(422);
+  }
+  expect((await put(app, { config: { workspaces: { "my-ws_1.x": { repos: [{ repo: "a/b", path: "/x" }] } } } }, { etag })).status).toBe(200);
+  expect(readFileSync(join(dir, "loki.yaml"), "utf8")).toBe(SAMPLE.length ? readFileSync(join(dir, "loki.yaml"), "utf8") : "");
 });
