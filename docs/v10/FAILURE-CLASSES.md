@@ -90,6 +90,15 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: a flush on terminal events plus a dead-pid reconciler (EL-W0-04, EL-W0-09, EL-W1-07).
 - Fixture: tests/test-e10-kill-each-stage.sh plus a CP ingest test with a dead pid.
 
+## FC-06b Control Plane run page said "No events yet" for a finished run (FireLater#17, e10-20261003T191822Z-7683)
+- User saw: "Live log: No events yet." on a completed run whose events.jsonl and stored events held every stage (105 events).
+- Law: L6 (a finished run must read as finished, with its evidence). Same FC-06 class: the page trusted a live-only path.
+- Siblings:
+  - any UI reader that passes a sentinel the server validation rejects (`after=-1`) and maps every non-200 to an empty result;
+  - fetchEvents swallowed the 400 and returned [], so the empty state was indistinguishable from "no events".
+- Mechanism: one shared `fetchEvents` that sends no `after` on the first page, pages until `has_more` is false, and is the only history loader; the live stream only appends.
+- Fixture: test/ui/run-finished.test.tsx ingests a finished run (test/fixtures/runs/verified-pr/events.jsonl) into the real server app and renders the page against it.
+
 ## FC-07 The test suite leaked fixture runs into the founder's real Control Plane
 - User saw: acme/widget and e10-t1.. runs in the real CP.
 - Law: none of L1 to L7 fits. Proposed L8, "Tests never touch real user state", is a founder decision. This is a recurrence of GUARDS.md 12 (~/.gitconfig).
