@@ -2,7 +2,7 @@
 // parseContract turns a spec/PRD markdown into acceptance criteria; traceContract maps each criterion
 // to changed files and checks by keyword overlap. The `loki contract <spec.md>` subcommand prints the
 // contract and writes .loki/contract.json. The receipt field is strictly additive (seal.ts).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -98,23 +98,39 @@ export function contractPath(repoDir: string): string {
   return join(repoDir, ".loki", "contract.json");
 }
 
-export function loadContract(repoDir: string): Contract | null {
+export const MAX_CONTRACT_BYTES = 1024 * 1024;
+
+export interface ContractRead { contract: Contract | null; notes: string[] }
+
+/** Read .loki/contract.json safely: lstat first so a FIFO, directory, symlink or device is never opened
+ *  (a FIFO would block the event loop forever), cap the size, and report why a contract is unusable. */
+export function readContract(repoDir: string): ContractRead {
   const p = contractPath(repoDir);
-  if (!existsSync(p)) return null;
+  let st;
+  try { st = lstatSync(p); } catch { return { contract: null, notes: [] }; }
+  if (!st.isFile()) return { contract: null, notes: ["contract unreadable: not a regular file"] };
+  if (st.size > MAX_CONTRACT_BYTES) return { contract: null, notes: ["contract unreadable: too large"] };
+  let j: { source?: unknown; criteria?: unknown } | null;
   try {
-    const j = JSON.parse(readFileSync(p, "utf8")) as { source?: unknown; criteria?: unknown };
-    if (!Array.isArray(j?.criteria)) return null;
-    const criteria: Criterion[] = [];
-    for (const c of j.criteria as unknown[]) {
-      const o = c as { id?: unknown; text?: unknown; source_line?: unknown } | null;
-      if (typeof o?.id !== "string" || typeof o.text !== "string" || o.id === "" || o.text === "") continue;
-      criteria.push({ id: o.id.slice(0, 40), text: o.text.slice(0, MAX_TEXT), source_line: typeof o.source_line === "number" ? o.source_line : 0 });
-      if (criteria.length >= MAX_CRITERIA) break;
-    }
-    return { source: typeof j.source === "string" ? j.source : "", criteria };
+    j = JSON.parse(readFileSync(p, "utf8")) as { source?: unknown; criteria?: unknown } | null;
   } catch {
-    return null;
+    return { contract: null, notes: ["contract unreadable: invalid JSON"] };
   }
+  if (!Array.isArray(j?.criteria)) return { contract: null, notes: [] };
+  const criteria: Criterion[] = [];
+  let malformed = 0;
+  for (const c of j.criteria as unknown[]) {
+    const o = c as { id?: unknown; text?: unknown; source_line?: unknown } | null;
+    if (typeof o?.id !== "string" || typeof o.text !== "string" || o.id === "" || o.text === "") { malformed++; continue; }
+    if (criteria.length >= MAX_CRITERIA) continue;
+    criteria.push({ id: o.id.slice(0, 40), text: o.text.slice(0, MAX_TEXT), source_line: typeof o.source_line === "number" ? o.source_line : 0 });
+  }
+  const notes = malformed > 0 ? [`contract: ${malformed} malformed criteria dropped`] : [];
+  return { contract: { source: typeof j.source === "string" ? j.source : "", criteria }, notes };
+}
+
+export function loadContract(repoDir: string): Contract | null {
+  return readContract(repoDir).contract;
 }
 
 export function renderContract(c: Contract): string {
@@ -150,11 +166,11 @@ export function main(args: string[]): number {
 export function sealContract(repoDir: string, body: object, rawDiff: string[], checks: { name: string }[], env: NodeJS.ProcessEnv = process.env): string[] {
   if (!contractEnabled(env)) return [];
   try {
-    const ct = loadContract(repoDir);
-    if (!ct) return [];
+    const { contract: ct, notes } = readContract(repoDir);
+    if (!ct) return notes;
     const trace = traceContract(ct, rawDiff.filter((_, i) => i % 2 === 1), checks.map((c) => c.name));
     (body as { contract?: ContractTrace }).contract = trace;
-    return untracedLines(trace);
+    return [...notes, ...untracedLines(trace)];
   } catch (e) {
     delete (body as { contract?: ContractTrace }).contract;
     return [`contract trace failed: ${sanitizeCriterion(e instanceof Error ? e.message : String(e))}`];

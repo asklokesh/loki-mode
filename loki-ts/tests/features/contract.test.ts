@@ -1,7 +1,8 @@
 // D65-SPEC: spec to contract parsing and trace mapping.
 import { describe, expect, test } from "bun:test";
 import { loadContract, repoRoot, sanitizeCriterion, parseContract, sealContract, traceContract, untracedLines, MAX_CRITERIA } from "../../src/features/contract.ts";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -108,5 +109,59 @@ describe("untraced lines and repo root", () => {
   test("repoRoot resolves a subdirectory to the repo top", () => {
     expect(repoRoot(join(import.meta.dir, "..")).endsWith("/loki-ts")).toBe(false);
     expect(repoRoot("/nonexistent-dir-xyz")).toBe("/nonexistent-dir-xyz");
+  });
+});
+
+describe("contract reader hardening (D65-SPEC-F1)", () => {
+  const mkdirLoki = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-contract-f1-"));
+    mkdirSync(join(dir, ".loki"));
+    return dir;
+  };
+  const ON = { LOKI_CONTRACT: "1" };
+  test("FIFO at contract.json does not hang and is NOT PROVEN", () => {
+    const dir = mkdirLoki();
+    const mk = spawnSync("mkfifo", [join(dir, ".loki", "contract.json")], { env: { ...process.env } });
+    expect(mk.status).toBe(0);
+    const script = `import { sealContract } from ${JSON.stringify(join(import.meta.dir, "../../src/features/contract.ts"))};
+console.log(JSON.stringify(sealContract(${JSON.stringify(dir)}, {}, [], [], { LOKI_CONTRACT: "1" })));`;
+    const r = spawnSync("bun", ["-e", script], { env: { ...process.env, LOKI_NO_BROWSER: "1" }, encoding: "utf8", timeout: 5000 });
+    expect(r.error).toBeUndefined();
+    expect(JSON.parse(r.stdout.trim())).toEqual(["contract unreadable: not a regular file"]);
+  });
+  test("directory and symlink are not regular files", () => {
+    const d1 = mkdirLoki();
+    mkdirSync(join(d1, ".loki", "contract.json"));
+    expect(sealContract(d1, {}, [], [], ON)).toEqual(["contract unreadable: not a regular file"]);
+    const d2 = mkdirLoki();
+    writeFileSync(join(d2, "real.json"), "{}");
+    symlinkSync(join(d2, "real.json"), join(d2, ".loki", "contract.json"));
+    expect(sealContract(d2, {}, [], [], ON)).toEqual(["contract unreadable: not a regular file"]);
+  });
+  test("oversize file is too large", () => {
+    const d = mkdirLoki();
+    writeFileSync(join(d, ".loki", "contract.json"), " ".repeat(1024 * 1024 + 1));
+    expect(sealContract(d, {}, [], [], ON)).toEqual(["contract unreadable: too large"]);
+  });
+  test("invalid JSON is one NOT PROVEN line", () => {
+    const d = mkdirLoki();
+    writeFileSync(join(d, ".loki", "contract.json"), "{not json");
+    const body: Record<string, unknown> = {};
+    expect(sealContract(d, body, [], [], ON)).toEqual(["contract unreadable: invalid JSON"]);
+    expect(body["contract"]).toBeUndefined();
+  });
+  test("malformed criteria are counted, valid ones still trace", () => {
+    const d = mkdirLoki();
+    writeFileSync(join(d, ".loki", "contract.json"), '{"source":"x","criteria":[{"id":"AC-1"},null,{"id":3,"text":"x"},{"id":"AC-2","text":"export csv files"}]}');
+    const body: Record<string, unknown> = {};
+    const lines = sealContract(d, body, ["M", "src/export.ts"], [], ON);
+    expect(lines).toEqual(["contract: 3 malformed criteria dropped"]);
+    expect((body["contract"] as { criteria: unknown[] }).criteria.length).toBe(1);
+  });
+  test("flag off returns [] without touching the filesystem", () => {
+    const d = mkdirLoki();
+    writeFileSync(join(d, ".loki", "contract.json"), "{not json");
+    expect(sealContract(d, {}, [], [], {})).toEqual([]);
+    expect(sealContract("/nonexistent-dir-xyz", {}, [], [], { LOKI_CONTRACT: "0" })).toEqual([]);
   });
 });
