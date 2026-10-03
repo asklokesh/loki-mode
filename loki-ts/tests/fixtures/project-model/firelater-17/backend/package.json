@@ -1,0 +1,1 @@
+{ "name": "firelater-backend", "scripts": { "test": "vitest run", "lint": "eslint src", "build": "tsc -p .", "start": "node dist/server.js" }, "devDependencies": { "vitest": "^1.0.0" } }

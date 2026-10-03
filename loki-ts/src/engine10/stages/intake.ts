@@ -1,6 +1,6 @@
 // loki-ts/src/engine10/stages/intake.ts -- E-04 Intake (ENGINE.md section 4). Deterministic:
 // dirty-tree refusal, branch creation, .git/info/exclude, the issue already-done check, repo map /
-// test map build. No LLM call, no PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or
+// test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or
 // issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo,
 // resumed for later stages.
 import { execFileSync } from "node:child_process";
@@ -12,7 +12,7 @@ import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
 import { type AlreadyDoneResult, buildAlreadyDoneCommentArgv, checkAlreadyDone, renderAlreadyDoneComment } from "../already_done.ts";
 import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_done_async.ts";
 import { snapshotContract } from "../../features/contract.ts";
-import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
 export interface IntakeOptions {
   taskText?: string;
   issueJsonPath?: string;
@@ -121,7 +121,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
     const commentArgv = source === "issue" && issueRef ? buildAlreadyDoneCommentArgv(ctx.runId, issueRef, bodyFile) : undefined;
     return { already_satisfied: true, evidence: already.evidence, iteration_ids: [`${ctx.runId}-already-done`], comment, ...(commentArgv ? { comment_argv: commentArgv } : {}) };
   };
-  const base = { ...common, task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch };
+  const base = { ...common, ...(await intakeProjectModel(ctx, signal)), task_sha256: taskSha256, source, base_sha: baseSha, tree, branch: ctx.branch };
   if (already) return { status: "completed", data: { ...base, ...alreadyData(already) } };
   const data = { ...base, repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { Object.assign(data, alreadyData(a)); });
@@ -130,6 +130,6 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
 export const stage: Stage = {
   name: "intake",
   targetS: 15,
-  limitS: 60,
+  limitS: 270, // two Project Model discovery sessions (120s each) fit inside it
   run: (ctx, signal) => runIntake(ctx, signal),
 };
