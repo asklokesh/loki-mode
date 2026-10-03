@@ -2145,3 +2145,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
   - No product code was written by the CoS.
   - BOARD and commit steps ran in separate calls.
   - Opus share has fallen to 26.5%, under its 30% budget.
+
+## 2026-10-03 15:21Z (CoS): 10.7.0 assembly, D83 opened
+- Merged on local main for 10.7.0 (unpushed, origin is v10.6.14): all D82 slices (COSTCAP, FLAGS, A..J, GAPS), DOCKER, LIVELINE, CP-INGEST, CP-LEGACY, CP-UI-LIVE; dist rebuilt (7223d72c0), test-release-dist-guard 13/0.
+- Opus HIGH reviews: D82-WALL0 BLOCKED (no-runner cut turned FAILED into PARTIAL), fixed in f27eba9c6, re-review running. CP-UI-SHELL start endpoint BLOCKED (Host-header-only loopback check, reproduced LAN spawn), fix running. Both miss 10.7.0 unless APPROVE by 15:45Z.
+- D83 recorded (e6d6c362f, addendum 29c367a91): enterprise Control Plane UI on the legacy design, lean conversation layout, full CLI parity; opus architect writing docs/v10/CP-ENTERPRISE-UI.md for 10.8.0.
+- D82-FIXREDS (9 loki-ts reds after the speed flip) still running; if a red is a real speed regression, the flip is reverted for 10.7.0.
+- Drift audit (turn 2280): reviews were D12 opus for HIGH; no product code by CoS; BOARD not yet written this window (due at the freeze, separate call); opus share 9.3%.
