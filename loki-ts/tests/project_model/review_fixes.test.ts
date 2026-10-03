@@ -196,12 +196,12 @@ describe("A5 and B3: ownership and the stage budget", () => {
   test("intake derives the budget from STAGE_BUDGETS.intake and fails open when it is spent", async () => {
     const f = failing();
     const prev = process.env["LOKI_E10_PROJECT_MODEL"];
-    process.env["LOKI_E10_PROJECT_MODEL"] = "1";
+    delete process.env["LOKI_E10_PROJECT_MODEL"]; // FC-01: default ON
     try {
       const frag = await intakeProjectModel(ctxFor(repo(), f.runner), sig, Date.now() - 3600_000);
       expect((frag as any).project_model.owner).toBe("harness");
       expect(f.limits.length).toBe(0);
-      delete process.env["LOKI_E10_PROJECT_MODEL"];
+      process.env["LOKI_E10_PROJECT_MODEL"] = "0"; // the opt-out
       expect(await intakeProjectModel(ctxFor(repo(), f.runner), sig, Date.now())).toEqual({});
     } finally { if (prev === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = prev; }
   });

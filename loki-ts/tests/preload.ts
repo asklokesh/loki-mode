@@ -8,6 +8,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RECEIPT_SIGNER_BASENAME } from "../src/util/receipt_signer.ts";
 
+// FC-01: the Project Model is ON by default in production; tests with a fake session runner opt out so discovery does not add a session. Tests of the default delete this.
+if (process.env["LOKI_E10_PROJECT_MODEL"] === undefined) process.env["LOKI_E10_PROJECT_MODEL"] = "0";
+
 // C2-F: runs ship to a discovered local Control Plane by default; no test may reach a developer's live instance.
 if (process.env["LOKI_CONTROL"] === undefined) process.env["LOKI_CONTROL"] = "0";
 

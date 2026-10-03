@@ -1,0 +1,5 @@
+{
+  "name": "frontend",
+  "private": true,
+  "scripts": { "dev": "vite", "test": "vitest run" }
+}

@@ -11,6 +11,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failId
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
+import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi, siteFor } from "../../project_model/resolve.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
  *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */
@@ -56,6 +57,12 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "cargo": return ["cargo", ["test"]];
   }
 }
+/** FC-01: the one resolver for a test invocation: a package-owned file runs in its package dir with a package-relative path, else exactly runnerCmd at the root. */
+export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null): { cwd: string; cmd: string; args: string[]; argv: string[]; interpreter?: Interpreter; pkgRoot: string } {
+  const site = siteFor(api, repoDir, t.path);
+  const [cmd, args, interpreter] = runnerCmd(site ? { runner: t.runner, path: site.file } : t, repoDir);
+  return { cwd: site?.cwd ?? repoDir, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: site?.root ?? "." };
+}
 const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
 /** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
  *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
@@ -73,6 +80,7 @@ interface RunOpts {
   stdin?: string;
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
   interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
+  cwd?: string; // FC-01: directory the check runs in (the owning package); defaults to ctx.repoDir
 }
 /** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
  *  line, cargo "test result:", go "[no test"), never test names or captured stdout above it; null = no summary. 0 = empty or
@@ -139,11 +147,12 @@ export async function runCheck(
     a.missing ? `${cmd} not found on PATH`
     : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`)
     : ran(a.out, /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
-  let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
+  const cwd = opts.cwd ?? ctx.repoDir;
+  let attempt = await runOnce(cmd, args, cwd, signal, opts);
   let reason = skip(attempt);
   let result: VerifyCheck["result"] = reason ? "not_run" : "pass";
   if (!reason && !attempt.ok) {
-    attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
+    attempt = await runOnce(cmd, args, cwd, signal, opts);
     reason = skip(attempt);
     result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
   }
@@ -161,7 +170,7 @@ export async function runCheck(
  *  NOT PROVEN (a skipped target is not a fixed target). Weak also means it ran FEWER tests than base (pytest.exit, xfail, a deleted test):
  *  every relevant pass is compared with its base run, and xfailed counts as skipped, never passed.
  *  ponytail: bun/go/cargo/npm yield no ids and no skip count, so they are never subtracted or judged weak. */
-async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[]; weak: string[]; cnt: Record<string, { b: { run: number; skipped: number }; h: { run: number; skipped: number } }> }> {
+async function subtractBase(ctx: RunContext, api: ProjectApi | null, checks: VerifyCheck[], tests: TestRef[], changed: string[], wall: Set<string>, rel: Set<string>, signal: AbortSignal): Promise<{ ids: string[]; names: string[]; weak: string[]; cnt: Record<string, { b: { run: number; skipped: number }; h: { run: number; skipped: number } }> }> {
   const out = { ids: [] as string[], names: [] as string[], weak: [] as string[], cnt: {} as Record<string, { b: { run: number; skipped: number }; h: { run: number; skipped: number } }> };
   const pairs = checks.flatMap((c) => {
     const t = tests.find((x) => `${x.runner}:${x.path}` === c.name);
@@ -176,8 +185,7 @@ async function subtractBase(ctx: RunContext, checks: VerifyCheck[], tests: TestR
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
     const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number }>();
     for (const { c, t } of new Set([...un, ...sus])) {
-      const [cmd, args] = runnerCmd(t, dir);
-      const b = await runOnce(cmd, args, dir, signal, {});
+      const bc = commandFor(t, dir, api), b = await runOnce(bc.cmd, bc.args, bc.cwd, signal, {});
       base.set(c, { red: !b.ok && !b.cut ? failIds(b.out) : [], n: ran(b.out) ?? (['pass', 'fail'] as const).reduce((t, k) => t + +([...b.out.matchAll(new RegExp(`^(?:#|\\u2139) ${k} (\\d+)$`, 'gm'))].pop()?.[1] ?? 0), 0) /* node spec prints its failing-tests section after the summary block; take the LAST pass and fail lines, not every one */, sk: skipped(b.out) });
     }
     out.weak = sus.filter(({ c }) => (c.sk ?? 0) > base.get(c)!.sk || (c.n ?? 0) < base.get(c)!.n).map(({ c }) => c.name); for (const { c } of sus) out.cnt[c.name] = { b: { run: base.get(c)!.n, skipped: base.get(c)!.sk }, h: { run: c.n ?? 0, skipped: c.sk ?? 0 } };
@@ -206,8 +214,9 @@ const ESLINT_CONFIGS = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".eslintr
  *  (when configured) for TS/JS, ruff for Python. Every named tool that applies to the changed set
  *  gets a check entry: a missing tool is not_run, never silently absent (section 9 NOT PROVEN). */
 export async function runLintChecks(
-  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts = {},
+  ctx: RunContext, changed: string[], signal: AbortSignal, checks: VerifyCheck[], opts: RunOpts & { api?: ProjectApi | null } = {},
 ): Promise<void> {
+  const { api, ...runOpts } = opts; opts = runOpts;
   const py = changed.filter((f) => f.endsWith(".py"));
   if (py.length) {
     const [ruffCmd, interpreter] = resolveTool(ctx.repoDir, "ruff", "ruff"); // E-98a: same project-first resolution as pytest
@@ -218,14 +227,11 @@ export async function runLintChecks(
     await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, opts);
     await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, opts);
   }
-  const tsjs = changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f));
-  if (tsjs.length) {
-    if (existsSync(join(ctx.repoDir, "tsconfig.json"))) {
-      await runCheck(ctx, "lint:tsc", "npx", ["tsc", "--noEmit", "-p", "."], signal, checks, opts);
-    }
-    if (ESLINT_CONFIGS.some((f) => existsSync(join(ctx.repoDir, f)))) {
-      await runCheck(ctx, "lint:eslint", "npx", ["eslint", ...tsjs], signal, checks, opts);
-    }
+  // FC-01: tsc and eslint belong to the package that owns the file: config lookup, cwd and file paths are per package.
+  for (const g of groupByPackage(api, ctx.repoDir, changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f)))) {
+    const sfx = g.root === "." ? "" : `:${g.root}`, co = g.root === "." ? opts : { ...opts, cwd: g.cwd };
+    if (existsSync(join(g.cwd, "tsconfig.json"))) await runCheck(ctx, `lint:tsc${sfx}`, "npx", ["tsc", "--noEmit", "-p", "."], signal, checks, co);
+    if (ESLINT_CONFIGS.some((f) => existsSync(join(g.cwd, f)))) await runCheck(ctx, `lint:eslint${sfx}`, "npx", ["eslint", ...g.rel], signal, checks, co);
   }
 }
 export const verifyStage: Stage = {
@@ -247,6 +253,7 @@ export const verifyStage: Stage = {
       return { status: "failed", data: { changed_files: [] }, reason: "empty diff without an already_done marker" };
     }
     const checks: VerifyCheck[] = [];
+    const api = loadProjectApi(ctx.repoDir); // FC-01: null (repo-root behavior) unless the model has a package below the root
     const map = await ctx.tests.detect(ctx.repoDir);
     const impacted = ctx.tests.impacted(map, changed);
     const changedTestFiles = map.tests.filter((t) => changed.includes(t.path));
@@ -262,13 +269,13 @@ export const verifyStage: Stage = {
     const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]);
     for (const t of tests) {
       if (signal.aborted) break;
-      const [cmd, args, interpreter] = runnerCmd(t, ctx.repoDir);
-      await runCheck(ctx, `${t.runner}:${t.path}`, cmd, args, signal, checks, interpreter ? { interpreter } : {});
+      const tc = commandFor(t, ctx.repoDir, api);
+      await runCheck(ctx, `${t.runner}:${t.path}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) });
     }
-    const preRed = await subtractBase(ctx, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), new Set(relevant.map((t) => `${t.runner}:${t.path}`)), signal);
+    const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), new Set(relevant.map((t) => `${t.runner}:${t.path}`)), signal);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
-      await runLintChecks(ctx, changed, signal, checks);
+      await runLintChecks(ctx, changed, signal, checks, { api });
       // Self-hosting only: also run the repo's own fast-gate selector (section 4).
       if (isLokiModeRepo(ctx.repoDir)) {
         await runCheck(ctx, "select-tests", "bash", ["scripts/select-tests.sh", "--files", "-", "--run"], signal, checks, {

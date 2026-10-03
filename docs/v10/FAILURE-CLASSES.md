@@ -22,9 +22,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - visual_evidence.ts:155-168;
   - deep.ts;
   - the brief's impacted commands;
-  - deferred by the FC-01 stopgap (de12ad0cb): deep.ts:84 full suite at the repo root, verify.ts:228 tsconfig root-only, verify.ts:231 ESLINT_CONFIGS root-only.
+  - deferred by the FC-01 stopgap (de12ad0cb): deep.ts full suite at the repo root, verify.ts tsconfig root-only, verify.ts ESLINT_CONFIGS root-only. All three are now closed (see Status).
 - Mechanism: Project Model packageRootOf/commandFor (EL-W1-01, EL-W1-04a/b). Interim: EL-W0-03.
-- Fixture: tests/fixtures/firelater-17 plus the shape fixtures in benchmarks/tasks/shapes.
+- Status (FIXED, lane E): the Project Model is ON by default (opt-out LOKI_E10_PROJECT_MODEL=0). One shared resolver, loki-ts/src/project_model/resolve.ts (loadProjectApi, siteFor, groupByPackage) plus verify.ts commandFor(t, repoDir, api), returns cwd and argv. A file owned by a package below the repo root runs in that package dir with a package-relative path. An unknown model, the opt-out, or a root-only (single-package) model resolves to the repo root exactly as before.
+- Sites now on the resolver: verify.ts test loop and subtractBase base run; verify.ts runLintChecks (tsc, eslint config lookup, cwd and file paths per package, check name lint:tsc:<root>); wall.ts RealBaseTestRunner; deep.ts runFullSuite (each package's own test command in its cwd); features/visual_evidence.ts (UI boot command, Playwright and e2e media from the UI package dir); implement brief (e10ext/context.ts prints `cd <pkg> && cmd`).
+- Deliberately root-only: verify.ts select-tests (scripts/select-tests.sh, Loki's own repo); ruff and shellcheck (take repo-relative paths from the root); wall_manifest.ts reads the root package.json for style hints (read only, not a runner invocation).
+- Fixture: tests/fixtures/firelater-17 plus the shape fixtures in benchmarks/tasks/shapes; tests/fixtures/monorepo-fc01 (backend with vitest, frontend, no root package.json) with loki-ts/tests/engine10/monorepo_cwd.test.ts (red at the repo root before, green after; includes the single-package regression).
 
 ## FC-02 A runner load error was treated as a code failure; two fix rounds, then STALLED
 - User saw: 11 min, $2.66 and a FAILED draft PR for a bug that did not exist. Raw: done in 2 min.
