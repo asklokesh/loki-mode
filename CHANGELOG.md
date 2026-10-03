@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Read-only workspace runs API: GET /api/operator/workspaces/runs and /workspaces/runs/{ws}/{run_id} list integration.json evidence, show unreadable files as rows, and report per-repo stale heads (D51-B13r).
+### Fixed
+- A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 
 ### Docs
 - docs/WORKSPACES.md gains a "Verify a workspace run" section, backed by an end-to-end test that drives `loki workspace run`, `status`, metrics and PR comments through both `autonomy/loki` and `bin/loki` (D51-B16r).

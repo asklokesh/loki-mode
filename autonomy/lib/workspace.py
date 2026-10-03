@@ -221,6 +221,22 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
                 os.killpg(p.pid, signal.SIGTERM)
             except OSError:
                 pass
+        now = time.time()
+        for r in list(running):
+            outcome[r] = "INTERRUPTED"
+            kind[r] = "fail"
+            timing[r]["finished_at"] = now
+        for e in pending:
+            outcome.setdefault(e["repo"], "INTERRUPTED (not started)")
+        try:
+            ev_i = {"status": "interrupted", "outcomes": outcome,
+                    "timing": {r: t for r, t in timing.items() if "finished_at" in t}}
+            ip = os.path.join(run_dir, "integration.json")
+            with open(ip + ".tmp", "w") as f:
+                json.dump(ev_i, f, indent=2, sort_keys=True)
+            os.replace(ip + ".tmp", ip)
+        except OSError:
+            pass
         sys.exit(130)
     if threading.current_thread() is threading.main_thread():
         signal.signal(signal.SIGTERM, stop)
@@ -318,8 +334,11 @@ def _runs(base_dir):
             try:
                 with open(path) as f:
                     yield name, run_id, json.load(f)
-            except (OSError, ValueError):
+            except FileNotFoundError:
                 continue
+            except (OSError, ValueError) as e:
+                yield name, run_id, {"state": "unreadable", "status": "unreadable",
+                                     "error": "%s: %s" % (type(e).__name__, e)}
 
 
 def status(base_dir, run_id=None, say=say):
@@ -332,6 +351,9 @@ def status(base_dir, run_id=None, say=say):
         say("%s %s" % (name, rid))
         for repo, res in sorted((ev.get("outcomes") or {}).items()):
             say("%-30s %s" % (repo, res))
+        if ev.get("state") == "unreadable":
+            say("%-30s %s (%s)" % ("integration", "unreadable", ev.get("error")))
+            continue
         say("%-30s %s" % ("integration", ev.get("status")))
     return 0
 
