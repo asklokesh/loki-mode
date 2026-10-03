@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { childEnv, findRepoRoot, REPO_ROOT, TASK_HINT, handleSlackEvent, makeSlackFetch, runSlackCli, slackPoster, spawnRunDeps, newInboundState, parseMention, signSlackBody, slackInboundEnabled, threadKey, verifySlackSignature, type InboundDeps } from "../../src/features/slack_inbound.ts";
+import { MAX_TASK_BYTES, TASK_TOO_LONG, NOT_ALLOWED, START_FAILED, childEnv, findRepoRoot, REPO_ROOT, TASK_HINT, handleSlackEvent, makeSlackFetch, runSlackCli, slackPoster, spawnRunDeps, newInboundState, parseMention, signSlackBody, slackInboundEnabled, threadKey, verifySlackSignature, type InboundDeps } from "../../src/features/slack_inbound.ts";
 
 const SECRET = "test-signing-secret", NOW = 1_700_000_000, BODY = '{"type":"event_callback"}';
 
@@ -201,5 +201,71 @@ describe("round 2 (D63-C6)", () => {
     expect(posts.length).toBe(1);
     expect(posts[0]).toContain("Could not start a run");
     expect(posts.join()).not.toContain("pid-undefined");
+  });
+});
+
+describe("hardening (D63-C6-F)", () => {
+  const mentionBy = (id: string, user: string, text: string, ts: string) => ({ type: "event_callback", event_id: id, event: { type: "app_mention", channel: "C1", user, text, ts } });
+  test("allowlist set: a user outside it is rejected, nothing spawned, brief thread reply", async () => {
+    const st = newInboundState(), f = fake(0);
+    st.allowedUsers = new Set(["U1"]);
+    expect((await handleSlackEvent(st, f.deps, mentionBy("F1", "U9", "<@UB> fix the login bug", "400.1"))).body).toBe("forbidden");
+    expect(f.tasks).toEqual([]);
+    expect(f.posts).toEqual([NOT_ALLOWED]);
+    expect((await handleSlackEvent(st, f.deps, mentionBy("F2", "U1", "<@UB> fix the login bug", "400.2"))).body).toBe("started");
+  });
+  test("allowlist unset: any user starts a run", async () => {
+    const st = newInboundState(), f = fake(0);
+    expect((await handleSlackEvent(st, f.deps, mentionBy("F3", "U9", "<@UB> fix the login bug", "400.3"))).body).toBe("started");
+  });
+  test("allowlist also guards a BLOCKED-thread answer", async () => {
+    const st = newInboundState(), f = fake(4, "which db?");
+    st.allowedUsers = new Set(["U1"]);
+    await handleSlackEvent(st, f.deps, mentionBy("F4", "U1", "<@UB> build it now", "500.1"));
+    await tick();
+    const reply = { type: "event_callback", event_id: "F5", event: { type: "message", channel: "C1", user: "U9", text: "use mysql", ts: "500.2", thread_ts: "500.1" } };
+    expect((await handleSlackEvent(st, f.deps, reply)).body).toBe("forbidden");
+    expect(f.tasks.length).toBe(1);
+  });
+  test("serve warns once when unset, and not when set", async () => {
+    const go = async (extra: NodeJS.ProcessEnv) => {
+      let err = "";
+      const orig = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((c: string) => { err += c; return true; }) as typeof process.stderr.write;
+      try { await runSlackCli(["serve", "--port", "0"], { SLACK_BOT_TOKEN: "x", SLACK_SIGNING_SECRET: "s", ...extra }, { wait: false, serve: () => ({ port: 1 }) }); } finally { process.stderr.write = orig; }
+      return err;
+    };
+    expect((await go({})).match(/LOKI_SLACK_ALLOWED_USERS/g)?.length).toBe(1);
+    expect(await go({ LOKI_SLACK_ALLOWED_USERS: "U1,U2" })).toBe("");
+  });
+  test("task over 64 KB replies 'task too long' and spawns nothing", async () => {
+    const st = newInboundState(), f = fake(0);
+    const big = "word ".repeat(Math.ceil(MAX_TASK_BYTES / 5) + 10);
+    expect((await handleSlackEvent(st, f.deps, mention("F6", `<@UB> ${big}`, "600.1"))).body).toBe("rejected");
+    expect(f.tasks).toEqual([]);
+    expect(f.posts).toEqual([TASK_TOO_LONG]);
+  });
+  test("spawn failure posts a generic message with no local path; detail goes to the log", async () => {
+    const posts: string[] = [], logs: string[] = [];
+    const deps: InboundDeps = { async startRun() { throw new Error("could not launch the CLI (spawn /Users/me/repo/bin/loki ENOENT)"); }, async post(_c, _t, x) { posts.push(x); }, log: (l) => logs.push(l) };
+    await handleSlackEvent(newInboundState(), deps, mention("F7", "<@UB> fix the thing", "700.1"));
+    await tick();
+    expect(posts).toEqual([START_FAILED]);
+    expect(posts.join()).not.toContain("/Users");
+    expect(logs.join()).toContain("/Users/me/repo/bin/loki");
+  });
+  test("multi-token mention starting with a dash is rejected", async () => {
+    const st = newInboundState(), f = fake(0);
+    expect((await handleSlackEvent(st, f.deps, mention("F8", "<@UB> -x foo", "800.1"))).body).toBe("rejected");
+    expect(f.tasks).toEqual([]);
+  });
+  test.each(["", " ", "abc", "-1", "3000x"])("--port %p is rejected with exit 2", async (p) => {
+    let served = 0;
+    const orig = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try {
+      expect(await runSlackCli(["serve", "--port", p], { SLACK_BOT_TOKEN: "x", SLACK_SIGNING_SECRET: "s" }, { wait: false, serve: () => { served++; return { port: 1 }; } })).toBe(2);
+    } finally { process.stderr.write = orig; }
+    expect(served).toBe(0);
   });
 });

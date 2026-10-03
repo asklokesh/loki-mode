@@ -40,16 +40,34 @@ export const threadKey = (channel: string, threadTs: string): string => `${chann
 
 export interface RunHandle { runId: string; done: Promise<{ code: number; question?: string }> }
 export interface InboundDeps {
+  log?(line: string): void;
   startRun(task: string): Promise<RunHandle>;
   post(channel: string, threadTs: string, text: string): Promise<void>;
 }
-export interface InboundState { threads: Map<string, ThreadRun>; seen: Set<string> }
+export interface InboundState { threads: Map<string, ThreadRun>; seen: Set<string>; allowedUsers?: Set<string> }
 export const newInboundState = (): InboundState => ({ threads: new Map(), seen: new Set() });
+
+/** Task text cap in bytes; a larger argv entry risks E2BIG when spawning. */
+export const MAX_TASK_BYTES = 64 * 1024;
+export const TASK_TOO_LONG = "task too long";
+export const NOT_ALLOWED = "You are not allowed to start runs from Slack.";
+export const START_FAILED = "Could not start a run (see the server log).";
+
+/** `LOKI_SLACK_ALLOWED_USERS` (comma-separated Slack user IDs) -> a set, or undefined when unset or blank. */
+export function parseAllowedUsers(raw: string | undefined): Set<string> | undefined {
+  const ids = (raw ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  return ids.length ? new Set(ids) : undefined;
+}
 
 export async function launchInThread(state: InboundState, deps: InboundDeps, channel: string, threadTs: string, task: string): Promise<void> {
   const key = threadKey(channel, threadTs);
   let h: RunHandle;
-  try { h = await deps.startRun(task); } catch (e) { await deps.post(channel, threadTs, `Could not start a run: ${String((e as Error)?.message ?? e).slice(0, 200)}`); return; }
+  try { h = await deps.startRun(task); } catch (e) {
+    const line = `slack: run start failed (${String((e as Error)?.message ?? e).replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 300)})`;
+    (deps.log ?? ((l: string) => { process.stderr.write(l + "\n"); }))(line);
+    await deps.post(channel, threadTs, START_FAILED);
+    return;
+  }
   const rec: ThreadRun = { runId: h.runId, task, state: "running" };
   state.threads.set(key, rec);
   await deps.post(channel, threadTs, `Started run ${h.runId}.`);
@@ -74,13 +92,21 @@ export async function handleSlackEvent(state: InboundState, deps: InboundDeps, p
   if (!channel || !ts) return { status: 200, body: "ignored" };
   const existing = state.threads.get(threadKey(channel, threadTs));
   const text = parseMention(String(ev.text ?? ""));
+  const wouldAct = (ev.type === "app_mention" || (ev.type === "message" && existing?.state === "blocked" && ev.thread_ts)) && text;
+  if (wouldAct && state.allowedUsers && !state.allowedUsers.has(String(ev.user ?? ""))) {
+    await deps.post(channel, threadTs, NOT_ALLOWED);
+    return { status: 200, body: "forbidden" };
+  }
   if ((ev.type === "message" || ev.type === "app_mention") && existing?.state === "blocked" && ev.thread_ts && text) {
+    const combined = `${existing.task}\n\nClarification answering "${existing.question ?? "the blocked question"}": ${text}`;
+    if (Buffer.byteLength(combined) > MAX_TASK_BYTES) { await deps.post(channel, threadTs, TASK_TOO_LONG); return { status: 200, body: "rejected" }; }
     existing.state = "running";
-    void launchInThread(state, deps, channel, threadTs, `${existing.task}\n\nClarification answering "${existing.question ?? "the blocked question"}": ${text}`);
+    void launchInThread(state, deps, channel, threadTs, combined);
     return { status: 200, body: "answer" };
   }
   if (ev.type === "app_mention" && text) {
     if (existing?.state === "running") { await deps.post(channel, threadTs, `Run ${existing.runId} is still running in this thread.`); return { status: 200, body: "busy" }; }
+    if (Buffer.byteLength(text) > MAX_TASK_BYTES) { await deps.post(channel, threadTs, TASK_TOO_LONG); return { status: 200, body: "rejected" }; }
     if (!isValidTaskText(text)) { await deps.post(channel, threadTs, TASK_HINT); return { status: 200, body: "rejected" }; }
     void launchInThread(state, deps, channel, threadTs, text);
     return { status: 200, body: "started" };
@@ -182,11 +208,14 @@ export async function runSlackCli(args: string[], env: NodeJS.ProcessEnv = proce
   if (!token || !secret) { process.stderr.write("slack: set SLACK_BOT_TOKEN and SLACK_SIGNING_SECRET in the environment (both are required)\n"); return 2; }
   let port = 3000, host = "127.0.0.1";
   for (let i = 1; i < args.length; i++) {
-    if (args[i] === "--port") port = Number(args[++i]);
+    if (args[i] === "--port") { const v = args[++i]; port = v !== undefined && /^\d+$/.test(v.trim()) ? Number(v) : NaN; }
     else if (args[i] === "--host") host = args[++i] ?? host;
   }
   if (!Number.isInteger(port) || port < 0 || port > 65535) { process.stderr.write("slack: invalid --port\n"); return 2; }
-  const state = newInboundState(), deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token), ...opts.deps };
+  const state = newInboundState();
+  state.allowedUsers = parseAllowedUsers(env.LOKI_SLACK_ALLOWED_USERS);
+  if (!state.allowedUsers) process.stderr.write("slack: warning: LOKI_SLACK_ALLOWED_USERS is not set, so anyone who can mention the bot can start a run\n");
+  const deps: InboundDeps = { ...spawnRunDeps(process.cwd(), env), post: slackPoster(token), ...opts.deps };
   const serve = opts.serve ?? ((o) => Bun.serve(o));
   const server = serve({ hostname: host, port, fetch: makeSlackFetch(secret, state, deps) });
   process.stdout.write(`slack: listening on http://${host}:${server.port}\n`);

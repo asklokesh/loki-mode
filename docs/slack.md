@@ -19,6 +19,12 @@ Point the Slack Events API request URL at this server through a tunnel or revers
 - Runs are launched through the repo `bin/loki` with the two Slack secrets removed from the child environment and `LOKI_NO_BROWSER=1` set. A failed Slack post logs one redacted line to stderr.
 - Every request is verified with the Slack signature (HMAC sha256 over `v0:timestamp:body`, constant-time compare, timestamps older than 5 minutes are rejected). Retried events are deduplicated.
 
+## Who can start a run
+
+Set `LOKI_SLACK_ALLOWED_USERS` to a comma-separated list of Slack user IDs (for example `U012ABC,U034DEF`). A mention or a BLOCKED-thread answer from any other user is rejected with a short thread reply and nothing is spawned. When it is unset, anyone who can mention the bot can start a run, and `loki slack serve` prints one startup line saying so.
+
+Limits: task text over 64 KB is rejected with "task too long" and no run starts. If a run cannot be launched, the thread gets a generic message and the detail (which may include local paths) is logged to stderr only. `--port` must be a whole number (an empty value exits 2).
+
 ## App manifest scopes
 
 Bot token scopes: `app_mentions:read`, `chat:write`, `channels:history` (and `groups:history` for private channels, `im:history` for DMs).
