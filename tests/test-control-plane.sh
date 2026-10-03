@@ -41,6 +41,42 @@ step() { # step <label> <seconds> <cmd...>
     if run_to "$secs" "$@" >"$T/step.log" 2>&1; then ok "$label"; else bad "$label"; tail -20 "$T/step.log"; fi
 }
 
+# Static guard: every value import from loki-ts/src in the control-plane source must be a COPY source in the image.
+MISSING="$(python3 - "$REPO" <<'PY'
+import os, re, sys
+repo = sys.argv[1]
+src = os.path.join(repo, "packages/control-plane/src")
+copied = set()
+for line in open(os.path.join(repo, "Dockerfile.control-plane")):
+    parts = line.split()
+    if parts and parts[0].upper() == "COPY":
+        args = [p for p in parts[1:] if not p.startswith("--")]
+        copied.update(os.path.normpath(a) for a in args[:-1])
+pat = re.compile(r'(?:^|\n)\s*(import|export)(\s+type)?\b[^;]*?\bfrom\s*["\']([^"\']+)["\']|(?:^|\n)\s*import\s*["\']([^"\']+)["\']')
+need = set()
+for d, _, files in os.walk(src):
+    for f in files:
+        if not f.endswith((".ts", ".tsx")):
+            continue
+        p = os.path.join(d, f)
+        for m in pat.finditer(open(p).read()):
+            if m.group(2):
+                continue
+            spec = m.group(3) or m.group(4)
+            if not spec or not spec.startswith("."):
+                continue
+            rel = os.path.relpath(os.path.normpath(os.path.join(d, spec)), repo)
+            if rel.startswith("loki-ts/src/"):
+                need.add(rel)
+for r in sorted(need):
+    if r not in copied:
+        print(r)
+if not need:
+    print("NO-IMPORTS-FOUND")
+PY
+)"
+t "Dockerfile.control-plane COPYs every loki-ts/src value import" "Dockerfile.control-plane lacks COPY for: $(echo "$MISSING" | tr '\n' ' ')" [ -z "$MISSING" ]
+
 step "install control-plane (frozen)" 120 bash -c "cd '$REPO/packages/control-plane' && bun install --frozen-lockfile"
 step "install control-plane ui (frozen)" 120 bash -c "cd '$REPO/packages/control-plane/ui' && bun install --frozen-lockfile"
 step "install loki-ts (frozen)" 120 bash -c "cd '$REPO/loki-ts' && bun install --frozen-lockfile"
