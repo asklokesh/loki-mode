@@ -746,16 +746,17 @@ function importsNamed(path: string, raw: string, stems: Set<string>, importStems
     }
     return l;
   };
-  const views = [content.split("\n").map(stripComment).join("\n").replace(/;/g, "\n"), content.replace(/;/g, "\n")];
+  const pyText = content.normalize("NFKC"); // Python NFKC-normalises identifiers (W1-S2 r13)
+  const views = [pyText.split("\n").map(stripComment).join("\n").replace(/;/g, "\n"), pyText.replace(/;/g, "\n")];
   const names = (list: string): string[] => list.split(",").map((n) => n.replace(/#.*$/gm, "").trim().split(/\s+as\s+/)[0]!.trim()).filter(Boolean);
   for (const py of views) {
-    for (const m of py.matchAll(/(?:^|:)[ \t]*from[ \t]+([\w.]+?)(?:[ \t]+|(?<=\.)[ \t]*)import\b[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
-    for (const m of py.matchAll(/(?:^|:)[ \t]*import[ \t]+([^\n#;]+?)[ \t]*(?:#.*)?$/gm)) specs.push(...names(m[1]!));
+    for (const m of py.matchAll(/(?:^|:)[ \t\f]*from[ \t\f]+([\w.]+?)(?:[ \t\f]+|(?<=\.)[ \t\f]*)import\b[ \t\f]*(?:\(([^)]*)\)|([^\n]*))/gm)) specs.push(m[1]!, ...names(m[2] ?? m[3] ?? ""));
+    for (const m of py.matchAll(/(?:^|:)[ \t\f]*import[ \t\f]+([^\n#;]+?)[ \t\f]*(?:#.*)?$/gm)) specs.push(...names(m[1]!));
   }
   // Resolve every relative specifier against the test directory (JS ./ ../ . .. and Python leading dots).
   const dir = dirOf(path);
   if (specs.some((s) => s.trim().startsWith(".") && hits(resolveRel(dir, s.trim())))) return true;
-  for (const py of views) for (const m of py.matchAll(/(?:^|:)[ \t]*from[ \t]+(\.+)([\w.]*?)[ \t]*\bimport\b[ \t]*(?:\(([^)]*)\)|([^\n]*))/gm)) {
+  for (const py of views) for (const m of py.matchAll(/(?:^|:)[ \t\f]*from[ \t\f]+(\.+)([\w.]*?)[ \t\f]*\bimport\b[ \t\f]*(?:\(([^)]*)\)|([^\n]*))/gm)) {
     let base = dir;
     for (let i = 1; i < m[1]!.length; i++) base = dirOf(base);
     const r = resolveRel(base, (m[2] ?? "").replace(/\./g, "/"));

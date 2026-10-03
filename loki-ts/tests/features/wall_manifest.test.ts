@@ -1028,6 +1028,18 @@ describe("python import forms: comments, semicolons, compound prefixes (D77, W1-
     ["import list with non-ascii first", "import \u00e9, main\n", {}],
     ["import as non-ascii containing alias", "import main as m\u00e9\n", {}],
     ["import with trailing form feed", "import main\f\n", {}],
+    ["form feed after import", "import\fmain\n", {}],
+    ["form feed and space after import", "import\f main\n", {}],
+    ["leading form feed before import", "\fimport main\n", {}],
+    ["compound prefix then form feed import", "if True:\fimport main\n", {}],
+    ["leading form feed before from-import", "\ffrom main import run\n", {}],
+    ["form feed after from", "from\fmain import run\n", {}],
+    ["form feed before from-import keyword", "from main\fimport run\n", {}],
+    ["form feed in relative from-import", "from\f..\fimport main\n", { "__init__.py": "", "tests/__init__.py": "" }],
+    ["fullwidth import name", "import \uff4d\uff41\uff49\uff4e\n", {}],
+    ["fullwidth import name with alias", "import \uff4d\uff41\uff49\uff4e as m\n", {}],
+    ["fullwidth from-import module", "from \uff4d\uff41\uff49\uff4e import run\n", {}],
+    ["math bold import name", "import \u{1D426}ain\n", {}],
   ];
   test("import index as non-ascii alias: test_a.py is not an example", () => {
     const t = manifest({ ...base, "index.py": "def f():\n    return 1\n", "tests/test_a.py": "import index as \u00f1\n\ndef test_a():\n    assert True\n" }, "fix index.py");
