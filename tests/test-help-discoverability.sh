@@ -102,14 +102,23 @@ if [ "$(printf '%s' "$HELP_OUT" | wc -l | tr -d ' ')" -lt 20 ]; then
     exit 1
 fi
 
+# Membership is checked against the "All commands:" block only. A bare grep over
+# the whole help text passes when a command is merely mentioned in prose.
+CMD_BLOCK="$(printf '%s\n' "$HELP_OUT" | awk '/^All commands:/{f=1;next} /^Any command:/{f=0} f' | tr -d '()' )"
+if [ -z "$(printf '%s' "$CMD_BLOCK" | tr -d ' \n')" ]; then
+    bad "'loki help' has no 'All commands:' block; the matcher cannot run"
+    printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+    exit 1
+fi
+
 missing=""
 missing_n=0
 while read -r c; do
     # Accept either spelling: `self_update` dispatches but `self-update` is what
     # a user types and what help lists. Rejecting that would be a phantom gap.
     alt="$(printf '%s' "$c" | tr '_' '-')"
-    if printf '%s' "$HELP_OUT" | grep -qw -- "$c" \
-       || printf '%s' "$HELP_OUT" | grep -qw -- "$alt"; then
+    if printf '%s' "$CMD_BLOCK" | grep -qw -- "$c" \
+       || printf '%s' "$CMD_BLOCK" | grep -qw -- "$alt"; then
         continue
     fi
     missing="${missing}${c} "
