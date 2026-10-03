@@ -209,3 +209,44 @@ describe("write-set scope fence (real git)", () => {
     finally { delete process.env["LOKI_SPEED"]; delete process.env["LOKI_UNIT_SPEC"]; }
   });
 });
+
+// D61-11b: intake wiring (cap reaches the enforced env, fail closed, spec frozen and kept outside the worktree)
+import { unitIntake, UNIT_NOT_PROVEN } from "../../src/features/speed/unit_mode.ts";
+import { capMeter } from "../../src/e10ext/budget_cap.ts";
+describe("unitIntake", () => {
+  const repo = mkdtempSync(join(tmp, "repo-"));
+  test("the unit cap reaches the env the worker meter enforces, never loosening the run cap", () => {
+    const r = unitIntake({ ...on(specFile("i1.json", good)), LOKI_UNIT_USD_PER_MTOK: "10" }, repo, 20);
+    expect(r?.ok).toBe(true);
+    const env = { ...(r as { env: Record<string, string> }).env };
+    expect(env["LOKI_E10_MAX_COST_USD"]).toBe("0.5");
+    const m = capMeter(((): void => {}) as never, env);
+    (m.emit as unknown as (t: string, s: string, d: object) => void)("cost", "x", { usd: 0.6 });
+    expect(m.over()).toBe(true);
+    const tight = unitIntake({ ...on(specFile("i1b.json", good)), LOKI_UNIT_USD_PER_MTOK: "10" }, repo, 0.2) as { env: Record<string, string> };
+    expect(tight.env["LOKI_E10_MAX_COST_USD"]).toBe("0.2");
+  });
+  test("requested but missing or invalid spec fails closed with a NOT PROVEN note", () => {
+    for (const p of [join(tmp, "nope.json"), specFile("i2.json", "{bad"), specFile("i3.json", { ...good, writeSet: [] })]) {
+      const r = unitIntake(on(p), repo, 20);
+      expect(r?.ok).toBe(false);
+      expect((r as { note: string }).note).toContain("NOT PROVEN");
+    }
+    expect(UNIT_NOT_PROVEN("x")).toContain("no unfenced run");
+    expect(unitIntake({}, repo, 20)).toBeNull();
+    expect(unitIntake({ LOKI_UNIT_SPEC: "/x" }, repo, 20)).toBeNull();
+  });
+  test("a spec inside the worktree is rejected", () => {
+    const p = join(repo, "spec.json"); writeFileSync(p, JSON.stringify(good));
+    const r = unitIntake(on(p), repo, 20);
+    expect(r?.ok).toBe(false);
+    expect((r as { note: string }).note).toContain("inside the worktree");
+  });
+  test("the spec is frozen at intake: later edits to the file do not change the active spec", () => {
+    const p = specFile("i4.json", good);
+    const r = unitIntake(on(p), repo, 20) as { env: Record<string, string> };
+    writeFileSync(p, JSON.stringify({ ...good, writeSet: ["everything/"] }));
+    const e = { ...on(p), ...r.env };
+    expect(unitSpec(e)?.writeSet).toEqual(["src/a.ts", "lib/"]);
+  });
+});

@@ -2,7 +2,8 @@
 // whose brief carries only its own context pack (no transcript, no model-driven exploration) and whose token budget
 // is fixed by the decomposer. Active only when LOKI_SPEED=1 and LOKI_UNIT_SPEC names a readable, valid spec file;
 // otherwise every export is inert and the callers behave byte-identically. Data and fence only, no verdict logic.
-import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { Staged } from "../../e10ext/commit_filter.ts";
 
 export interface UnitSpec { id: string; writeSet: string[]; pack: string[]; tokenBudget: number }
@@ -31,22 +32,24 @@ function readBounded(path: string): string | null {
   } finally { closeSync(fd); }
 }
 
-function parseSpec(path: string): UnitSpec | null {
+function parseText(txt: string): UnitSpec | null {
   try {
-    const txt = readBounded(path);
-    if (txt === null) return null;
     const j = JSON.parse(txt) as Record<string, unknown>, ws = strs(j.writeSet), pack = strs(j.pack), tb = j.tokenBudget;
     if (typeof j.id !== "string" || !j.id || !ws || ws.length === 0 || !pack || typeof tb !== "number" || !Number.isFinite(tb) || !(tb > 0) || tb > MAX_TOKEN_BUDGET) return null;
     return { id: j.id, writeSet: ws, pack, tokenBudget: tb };
   } catch { return null; }
+}
+function parseSpec(path: string): UnitSpec | null {
+  try { const txt = readBounded(path); return txt === null ? null : parseText(txt); } catch { return null; }
 }
 
 // Process-lifetime cache keyed by path: a spec (including a null from an invalid or missing one) is never re-read, so a fixed file needs a new process.
 const memo = new Map<string, UnitSpec | null>();
 /** The active unit spec, or null (speed off, no spec, unreadable or invalid: fail-safe to the ordinary run). Parsed once per path per process. */
 export function unitSpec(env: NodeJS.ProcessEnv = process.env): UnitSpec | null {
-  const path = env["LOKI_UNIT_SPEC"];
+  const path = env["LOKI_UNIT_SPEC"], frozen = env["LOKI_UNIT_SPEC_FROZEN"];
   if (env["LOKI_SPEED"] !== "1" || !path) return null;
+  if (frozen !== undefined) return frozen.length <= MAX_SPEC_BYTES ? parseText(frozen) : null; // frozen at intake: the file is never consulted again
   if (!memo.has(path)) memo.set(path, parseSpec(path));
   return memo.get(path) ?? null;
 }
@@ -84,4 +87,27 @@ export function unitCapEnv(s: UnitSpec, usdPerMillionTokens: number, existingCap
   if (!Number.isFinite(usdPerMillionTokens) || !(usdPerMillionTokens > 0) || !Number.isFinite(cost)) return ex === null ? {} : { LOKI_E10_MAX_COST_USD: ex > 1e15 ? fmt(ex) : keep(ex) };
   const v = Math.max(0.01, cost);
   return { LOKI_E10_MAX_COST_USD: ex !== null && ex <= v && ex <= 1e15 ? keep(ex) : fmt(ex === null ? v : Math.min(ex, v)) };
+}
+
+export const UNIT_NOT_PROVEN = (why: string): string => `NOT PROVEN: unit mode was requested but ${why}; no unfenced run was started`;
+export const DEFAULT_UNIT_USD_PER_MTOK = 15;
+
+/** Intake for a unit run, before any worker spawns. null when unit mode is not requested (LOKI_SPEED=1 and LOKI_UNIT_SPEC set).
+ *  Otherwise fails closed (ok false + a NOT PROVEN note) when the spec is missing, invalid, or lives inside the repo/worktree, where the
+ *  agent could rewrite its own write set. On success returns env additions: the spec frozen as read now, and the cost cap from unitCapEnv
+ *  applied over the run's existing cap (never loosened). */
+export function unitIntake(env: NodeJS.ProcessEnv, repoDir: string, existingCapUsd?: number): { ok: true; env: Record<string, string> } | { ok: false; note: string } | null {
+  const path = env["LOKI_UNIT_SPEC"];
+  if (env["LOKI_SPEED"] !== "1" || !path) return null;
+  const bad = (why: string) => ({ ok: false as const, note: UNIT_NOT_PROVEN(why) });
+  let txt: string | null;
+  try {
+    const real = realpathSync(resolve(path)), root = realpathSync(repoDir), rel = relative(root, real);
+    if (rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))) return bad("its spec file is inside the worktree where the agent could edit it");
+    txt = readBounded(real);
+  } catch { return bad("its spec file is missing or unreadable"); }
+  const spec = txt === null ? null : parseText(txt);
+  if (txt === null || !spec) return bad("its spec file is invalid");
+  const rate = Number(env["LOKI_UNIT_USD_PER_MTOK"] ?? DEFAULT_UNIT_USD_PER_MTOK);
+  return { ok: true, env: { LOKI_UNIT_SPEC_FROZEN: txt, ...unitCapEnv(spec, rate, existingCapUsd) } };
 }

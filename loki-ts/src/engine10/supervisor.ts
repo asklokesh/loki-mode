@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
-import { capNote, resolveCap } from "../e10ext/budget_cap.ts";
+import { capNote, parseCapUsd, resolveCap } from "../e10ext/budget_cap.ts";
 import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
@@ -303,6 +303,11 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       process.stderr.write(`engine10: issue fetch failed: ${(err as Error).message.split("\n")[0]}\n`);
       return 2;
     }
+  }
+  { // D61-11b: unit mode fails closed; its frozen spec and cost cap reach the env the worker enforces
+    const u = (await import("../features/speed/unit_mode.ts")).unitIntake(process.env, repoDir, cap.usd);
+    if (u && !u.ok) { process.stderr.write(`engine10: ${u.note}\n`); return 2; }
+    if (u) { Object.assign(env, u.env); const c = parseCapUsd(env.LOKI_E10_MAX_COST_USD); if (c !== null) cap.usd = c; }
   }
 
   if (!json) process.stdout.write(`${START_LINE}, ${capNote(cap.usd, cap.source)}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt

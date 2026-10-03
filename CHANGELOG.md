@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Fixed
+- Unit run mode (D61-11b) now fails closed and enforces its cost cap: engine10 main() reads and freezes LOKI_UNIT_SPEC at intake (never re-read), rejects a spec inside the worktree, stops with a NOT PROVEN note and exit 2 when the spec is missing or invalid instead of running unfenced, and applies unitCapEnv over the run cap (never loosened) to the env the worker meters.
 - loki heal --assess no longer under-reports debt: TODO/FIXME/HACK/XXX markers count plurals (TODOs, FIXMEs), and largest_file_loc is tracked across every file instead of reading 0 for repos with no file of 500 LOC or more.
 - tests/test-registration-coverage.sh now matches runner registrations as whole path tokens (registered_in), so a runner line for xcli/test-x.sh no longer registers cli/test-x.sh, and test-x.sh.bak or mytest-x.sh no longer register test-x.sh; self-tests added.
 - The trust-core probe anchors pre-check (TRUST_CORE_PROBE_MODE=anchors) now records the replacement string and reports NOOP and fails when a case has find equal to replace, which scripts/mutation-probe.sh would otherwise reject with exit 65 only in CI.
