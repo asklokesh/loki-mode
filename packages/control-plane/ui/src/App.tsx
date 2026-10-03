@@ -1,5 +1,6 @@
 import { Activity, ExternalLink, Moon, Sun, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
+import { Landing } from "./Live";
 import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
@@ -254,7 +255,7 @@ export function App() {
           {dark ? <Sun size={14} /> : <Moon size={14} />}{dark ? "Light theme" : "Dark theme"}
         </button>
       </nav>
-      <main className="min-w-0 flex-1 overflow-x-auto p-3 md:p-6">{r ? <RunDetail source={r.source} run={r.run} /> : <RunsList />}</main>
+      <main className="min-w-0 flex-1 overflow-x-auto p-3 md:p-6">{r ? <RunDetail source={r.source} run={r.run} /> : hash === "#/runs" ? <RunsList /> : <Landing overview={hash === "#/overview"} fallback={<RunsList />} />}</main>
     </div>
   );
 }
