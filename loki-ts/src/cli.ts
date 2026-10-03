@@ -207,6 +207,12 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       return runWiki(rest);
     }
 
+    case "contract": {
+      // D65-SPEC: spec to delivery contract (gated by LOKI_CONTRACT=1 inside main).
+      const { main: contractMain } = await import("./features/contract.ts");
+      return contractMain(rest);
+    }
+
     case "control": {
       // D56 control plane (preview, gated by LOKI_CONTROL=1 inside runControl).
       // bash cmd_control (autonomy/loki) is the LOKI_LEGACY_BASH fallback.

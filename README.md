@@ -172,6 +172,10 @@ loki linear:ENG-42     # or a linear.app issue URL
 
 With `LOKI_SLACK_INBOUND=1`, `loki slack serve --port N` (127.0.0.1 by default) lets you mention `@loki <issue ref or task>` in Slack to start a run, and answer a BLOCKED question in the same thread. Needs `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in the environment. See [docs/slack.md](docs/slack.md) for the scopes.
 
+## Spec to contract
+
+Opt in with `LOKI_CONTRACT=1` (off by default). `loki contract <spec.md>` parses a spec or PRD into numbered acceptance criteria (AC-1, AC-2, up to 50) from checklist items (`- [ ]`) and from bullets and numbered lists under headings such as "Acceptance criteria", "Requirements" or "Must", prints them, and writes `.loki/contract.json`. When a run seals with a contract present, each criterion is matched to changed files and checks by keyword overlap and recorded in an optional `contract` field on the receipt (`traced` or `untraced`). Untraced criteria are listed under NOT PROVEN in the PR body. Keyword overlap is a heuristic: "traced" means a changed file plausibly relates to the criterion, not that the criterion is proven. The legacy PRD path is unchanged.
+
 ## Triggers without a cloud
 
 Both run on your own GitHub Actions minutes; there is no hosted service.
