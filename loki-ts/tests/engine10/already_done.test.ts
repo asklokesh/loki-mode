@@ -647,25 +647,26 @@ describe("deferred confirmation reads a base-pinned tree (D61-04 r3 B2)", () => 
   }
   const okRes = (a: string | null) => ({ exit: 0, durationS: 0.1, killed: false, markers: { done: a === null, alreadyDone: a, specConflict: null } });
   const killedRes = { exit: null, durationS: 0, killed: true, markers: { done: false, alreadyDone: null, specConflict: null } };
-  async function scenario(edit: (d: string) => void, model: (cwd: string) => string | null) {
+  async function scenario(edit: (d: string) => void, model: (cwd: string) => string | null, inRepo = false, baseSha?: string) {
     process.env.LOKI_SPEED = "1";
     const dir = baseRepo();
     let wrote: () => void = () => {};
     const w = new Promise<void>((r) => { wrote = r; });
-    let cwdSeen = "";
+    let cwdSeen = "", calls = 0;
     const sessions = { run: async (o: any) => {
-      if (o.stage === "intake") { await w; cwdSeen = o.cwd; return okRes(model(o.cwd)); }
+      if (o.stage === "intake") { calls++; if (baseSha === undefined) await w; cwdSeen = o.cwd; return okRes(model(o.cwd)); }
       edit(dir); wrote();
       await new Promise<void>((res) => { o.signal.addEventListener("abort", () => res(), { once: true }); setTimeout(res, 300); });
       return o.signal.aborted ? killedRes : okRes(null);
     } };
-    const runDir = mkdtempSync(join(tmpdir(), "e10-already-done-run-"));
-    const ctx: any = { repoDir: dir, runDir, runId: "r", branch: "loki/r", sessions, baseSha: gitOut(dir, ["rev-parse", "HEAD"]).trim(),
+    const runDir = inRepo ? join(dir, ".loki", "runs", "r") : mkdtempSync(join(tmpdir(), "e10-already-done-run-"));
+    mkdirSync(runDir, { recursive: true });
+    const ctx: any = { repoDir: dir, runDir, runId: "r", branch: "loki/r", sessions, baseSha: baseSha ?? gitOut(dir, ["rev-parse", "HEAD"]).trim(),
       emit: () => {}, tests: { detect: async (d: string) => buildTestMap(d) }, outputs: () => ({}) };
     const res: any = await runIntake(ctx, new AbortController().signal, { taskText: TASK });
     await ctx.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i", limitS: 60, signal: new AbortController().signal, cwd: dir });
     await new Promise((r) => setTimeout(r, 100));
-    const out = { already: res.data.already_satisfied, cwdSeen, dir, leftover: existsSync(join(runDir, "already-done-base")) };
+    const out = { already: res.data.already_satisfied, cwdSeen, dir, calls, leftover: cwdSeen !== "" && existsSync(dirname(cwdSeen)) };
     rmSync(dir, { recursive: true, force: true }); rmSync(runDir, { recursive: true, force: true });
     delete process.env.LOKI_SPEED;
     return out;
@@ -686,4 +687,33 @@ describe("deferred confirmation reads a base-pinned tree (D61-04 r3 B2)", () => 
     );
     expect(r.already).toBe(false);
   });
+  const implEngine = (d: string) => writeFileSync(join(d, "src/engine.ts"), `export function runQuery(q: string): string[] { return [q]; } // REAL IMPL\n`);
+  test("F: with runDir inside the repo, `git diff` from the session cwd cannot see in-flight edits", async () => {
+    const r = await scenario(implEngine, (c) => {
+      let o = ""; try { o = execFileSync("git", ["diff"], { cwd: c, encoding: "utf8", stdio: "pipe" }); } catch { /* not a repo */ }
+      return o.includes("REAL IMPL") ? "src/search-command.ts:1 done" : null;
+    }, true);
+    expect(r.already).toBe(false);
+    expect(r.leftover).toBe(false);
+  });
+  test("G: with runDir inside the repo, a ../ relative read cannot reach the live tree", async () => {
+    const r = await scenario(implEngine, (c) => {
+      try { return readFileSync(join(c, "../../../../src/engine.ts"), "utf8").includes("REAL IMPL") ? "src/search-command.ts:1 done" : null; } catch { return null; }
+    }, true);
+    expect(r.already).toBe(false);
+  });
+  test("H: with runDir inside the repo, `git status` from the session cwd cannot see an untracked in-flight file", async () => {
+    const r = await scenario((d) => writeFileSync(join(d, "src/global-search-palette.ts"), "export const cmdK = true;\n"), (c) => {
+      let o = ""; try { o = execFileSync("git", ["status", "--short", "--untracked-files=all"], { cwd: c, encoding: "utf8", stdio: "pipe" }); } catch { /* not a repo */ }
+      return o.includes("global-search-palette") ? "src/search-command.ts:1 palette present" : null;
+    }, true);
+    expect(r.already).toBe(false);
+  });
+  for (const [name, sha] of [["empty", ""], ["bogus", "0".repeat(40)]] as const) {
+    test(`B2: ${name} baseSha runs no confirmation session and is not already satisfied`, async () => {
+      const r = await scenario(() => {}, () => "src/search-command.ts:1 done", false, sha);
+      expect(r.calls).toBe(0);
+      expect(r.already).toBe(false);
+    });
+  }
 });
