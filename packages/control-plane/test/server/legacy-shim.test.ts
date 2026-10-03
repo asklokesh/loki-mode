@@ -162,7 +162,7 @@ test("every USED-but-unbacked route answers an explicit 501, every unused one 41
     expect(b).toMatchObject({ legacy_route: r.path, method: r.method });
     if (r.action === "501") { n501++; expect(b.error).toBe("not yet supported by the Control Plane"); } else { n410++; expect(b.error).toBe("gone"); }
   }
-  expect([n501, n410]).toEqual([77, 142]);
+  expect([n501, n410]).toEqual([72, 142]);
   sqlite.close();
 });
 
@@ -172,7 +172,7 @@ test("the named MISSING routes (pause, resume, api-keys, tenants, audit verify, 
     ["POST", "/api/control/pause"], ["POST", "/api/control/resume"], ["POST", "/api/control/stop"], ["POST", "/api/control/start"],
     ["GET", "/api/v2/api-keys"], ["POST", "/api/v2/api-keys"], ["DELETE", "/api/v2/api-keys/k1"], ["POST", "/api/v2/api-keys/k1/rotate"],
     ["GET", "/api/v2/tenants"], ["POST", "/api/v2/tenants"], ["GET", "/api/v2/audit/verify"],
-    ["POST", "/api/v2/runs/1/replay"], ["POST", "/api/v2/runs/1/cancel"], ["GET", "/ws"], ["GET", "/metrics"],
+    ["POST", "/api/v2/runs/1/replay"], ["POST", "/api/v2/runs/1/cancel"], ["GET", "/ws"],
   ];
   for (const [m, p] of cases) expect([m, p, (await get(app, p, {}, m)).status]).toEqual([m, p, 501]);
   sqlite.close();
@@ -181,7 +181,7 @@ test("the named MISSING routes (pause, resume, api-keys, tenants, audit verify, 
 test("auth parity: a CP token is required on every legacy-guarded route, open routes stay open", async () => {
   const { app, sqlite } = mk({ token: "s3cret" });
   const bearer = { authorization: "Bearer s3cret" };
-  const guarded: [string, number][] = [["/api/status", 200], ["/api/v2/runs", 200], ["/api/v2/audit", 200], ["/v1/audit", 200], ["/api/cost", 501], ["/api/memory/stats", 410], ["/start", 308]];
+  const guarded: [string, number][] = [["/api/status", 200], ["/api/v2/runs", 200], ["/api/v2/audit", 200], ["/v1/audit", 200], ["/api/cost", 200], ["/metrics", 200], ["/api/memory/stats", 410], ["/start", 308]];
   for (const [p, ok] of guarded) {
     const none = await get(app, p);
     expect([p, none.status, none.headers.get("www-authenticate")]).toEqual([p, 401, "Bearer"]);
@@ -191,7 +191,7 @@ test("auth parity: a CP token is required on every legacy-guarded route, open ro
   expect((await get(app, "/api/status", bearer)).status).toBe(200);
   expect((await get(app, "/api/control/pause", {}, "POST")).status).toBe(401);
   expect((await get(app, "/api/control/pause", bearer, "POST")).status).toBe(501);
-  for (const p of ["/.well-known/agent.json", "/api/enterprise/status", "/api/auth/info", "/api/providers/models", "/metrics", "/docs", "/openapi.json"]) {
+  for (const p of ["/.well-known/agent.json", "/api/enterprise/status", "/api/auth/info", "/api/providers/models", "/docs", "/openapi.json"]) {
     expect([p, (await get(app, p)).status === 401]).toEqual([p, false]);
   }
   sqlite.close();
@@ -204,7 +204,6 @@ test("auth parity: legacy enterprise auth or OIDC on with no CP token fails clos
       expect([JSON.stringify(env), m, p, (await get(app, p, {}, m)).status]).toEqual([JSON.stringify(env), m, p, 401]);
     }
     expect((await get(app, "/.well-known/agent.json")).status).toBe(200);
-    expect((await get(app, "/metrics")).status).toBe(501); // open in legacy, so not behind the guard
     sqlite.close();
   }
   for (const env of [{}, { LOKI_ENTERPRISE_AUTH: "false" }, { LOKI_OIDC_ISSUER: "https://idp.test" }]) {

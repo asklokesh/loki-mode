@@ -331,8 +331,8 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | POST `/api/registry/sync` | vscode-extension/media/loki-dashboard.js:496 | none | MISSING | 501 not yet supported |
 | GET `/api/registry/tasks` | none | none | UNUSED | 410 with notice |
 | GET `/api/registry/learnings` | none | none | UNUSED | 410 with notice |
-| GET `/api/fleet/runs` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4706 (test), tests/moat/p7-no-fabricated-data.sh:4710 (test) (+1) | none | MISSING | 501 not yet supported |
-| GET `/api/fleet/summary` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4695 (test), tests/moat/p7-no-fabricated-data.sh:4696 (test) (+1) | none | MISSING | 501 not yet supported |
+| GET `/api/fleet/runs` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4706 (test), tests/moat/p7-no-fabricated-data.sh:4710 (test) (+1) | /v1/fleet/runs (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
+| GET `/api/fleet/summary` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4695 (test), tests/moat/p7-no-fabricated-data.sh:4696 (test) (+1) | /v1/fleet/summary (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/fleet/runs/{identifier}` | none | none | UNUSED | 410 with notice |
 | POST `/api/focus` | autonomy/run.sh:24831, web-app/server.py:2744 | none | MISSING | 501 not yet supported |
 | GET `/api/focus` | none | none | UNUSED | 410 with notice |
@@ -383,9 +383,9 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | POST `/api/control/pause` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:277, vscode-extension/src/extension.ts:703 | none | MISSING | 501 not yet supported |
 | POST `/api/control/resume` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:285, vscode-extension/src/extension.ts:743 | none | MISSING | 501 not yet supported |
 | POST `/api/control/stop` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/src/api/client.ts:269, vscode-extension/src/extension.ts:651 | none | MISSING | 501 not yet supported |
-| GET `/api/cost` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4646 (test), tests/moat/p7-no-fabricated-data.sh:4647 (test) (+3) | none | MISSING | 501 not yet supported |
+| GET `/api/cost` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4646 (test), tests/moat/p7-no-fabricated-data.sh:4647 (test) (+3) | /v1/cost/snapshot (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/budget` | tests/e2e/dashboard-evidence-panels.mjs:73 (test), tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4650 (test) (+3) | none | MISSING | 501 not yet supported |
-| GET `/api/cost/timeline` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4652 (test), tests/moat/p7-no-fabricated-data.sh:4653 (test) (+15) | none | MISSING | 501 not yet supported |
+| GET `/api/cost/timeline` | tests/moat/p7-no-fabricated-data.sh:4637 (test), tests/moat/p7-no-fabricated-data.sh:4652 (test), tests/moat/p7-no-fabricated-data.sh:4653 (test) (+15) | /v1/cost/timeline (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/trust/trajectory` | none | none | UNUSED | 410 with notice |
 | GET `/api/gate-policy` | none | none | UNUSED | 410 with notice |
 | GET `/api/pricing` | none | none | UNUSED | 410 with notice |
@@ -432,7 +432,7 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | GET `/api/github/tasks` | none | none | UNUSED | 410 with notice |
 | GET `/api/github/sync-log` | none | none | UNUSED | 410 with notice |
 | GET `/api/health/processes` | none | none | UNUSED | 410 with notice |
-| GET `/metrics` | autonomy/loki:29162, tests/e2e/webapp-admin-honesty.mjs:271 (test), tests/e2e/webapp-receipt-panel.mjs:54 (test) (+2) | none | MISSING | 501 not yet supported |
+| GET `/metrics` | autonomy/loki:29162, tests/e2e/webapp-admin-honesty.mjs:271 (test), tests/e2e/webapp-receipt-panel.mjs:54 (test) (+2) | /v1/metrics (CPE24-P1) | PARTIAL (reads the same .loki or registry source; unmeasured values are null with a not-measured marker) | map |
 | GET `/api/checklist` | none | none | UNUSED | 410 with notice |
 | GET `/api/usage` | none | none | UNUSED | 410 with notice |
 | GET `/api/checklist/summary` | none | none | UNUSED | 410 with notice |

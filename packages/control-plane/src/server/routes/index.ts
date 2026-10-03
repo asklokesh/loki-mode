@@ -10,6 +10,9 @@ import { mount as audit } from "./audit.ts";
 import { mount as config } from "./config.ts";
 import { mount as control } from "./control.ts";
 import { mount as cost } from "./cost.ts";
+import { mount as costLedger } from "./cost_ledger.ts";
+import { mount as fleet } from "./fleet.ts";
+import { mount as metrics } from "./metrics.ts";
 import { mount as integrations } from "./integrations.ts";
 import { mount as mergeRisk } from "./merge_risk.ts";
 import { mount as notify } from "./notify.ts";
@@ -37,7 +40,7 @@ export interface RouteCtx {
   answerDir?: string;
 }
 
-export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, config, providers, verify, integrations, notify, audit, mergeRisk];
+export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, costLedger, fleet, metrics, config, providers, verify, integrations, notify, audit, mergeRisk];
 
 export function registerRoutes(ctx: RouteCtx): void {
   mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback);
