@@ -1016,6 +1016,12 @@ describe("python import forms: comments, semicolons, compound prefixes (D77, W1-
     ["try: prefix on its own line", "try: from main import run\nexcept ImportError: run = None\n", {}],
     ["semicolon then dotted relative", "import os; from ..main import run\n", { "__init__.py": "", "tests/__init__.py": "" }],
     ["dots directly before import", "from ..import main\n", { "__init__.py": "", "tests/__init__.py": "" }],
+    ["escaped single quote then import", "x = 'it\\'s'; import main  # c\n", {}],
+    ["escaped double quote then import", 'x = "say \\"hi"; import main  # c\n', {}],
+    ["triple quote with apostrophe then import", "x = '''it's'''; import main  # c\n", {}],
+    ["escaped quote hash then import", "x = '\\'#'; import main\n", {}],
+    ["escaped dquote hash then import", 's = "\\"#\\""; import main\n', {}],
+    ["escaped quote hash then from-import", "x = '\\'#'; from main import run\n", {}],
   ];
   for (const [name, first, extra] of cases) {
     test(`${name}: test_a.py is not an example`, () => {
