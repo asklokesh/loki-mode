@@ -79,8 +79,12 @@ describe("briefContext", () => {
 });
 
 describe("S41-10b static-first brief", () => {
+  // D82 made LOKI_SPEED default-on; this block pins the unprefixed brief.
+  const prevSpeed = process.env["LOKI_SPEED"];
+  process.env["LOKI_SPEED"] = "0";
   const a = buildImplementBrief("add foo to src/a.ts", "plan A text", ["tests/a.test.ts"], "Relevant files:\nsrc/a.ts");
   const b = buildImplementBrief("rename bar in lib/b.py", "plan B text", ["tests/b.py"], "Relevant files:\nlib/b.py");
+  if (prevSpeed === undefined) delete process.env["LOKI_SPEED"]; else process.env["LOKI_SPEED"] = prevSpeed;
   test("leading fixed block is byte-identical and free of task text", () => {
     expect(FIXED_RULES.length).toBeGreaterThan(200);
     expect(FIXED_RULES).toContain("states the new expected value of an existing assertion");
