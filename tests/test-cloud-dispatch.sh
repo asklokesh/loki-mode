@@ -364,7 +364,7 @@ out="$(STUB_HOOK="sed 's/| clean |/| edited |/' $B11 > $B11.new && mv $B11.new $
 expect_refusal "R2-3: the writer refuses when the row changed since analysis" 15 "*slice row changed or not unique*" "$rc" "$out"
 grep -q 'edited' "$B11" && ! grep -q 'building@' "$B11" && ok "R2-3: a changed row is not overwritten" || bad "R2-3: changed row was overwritten"
 B12="$(mklive l12)"
-out="$(STUB_HOOK="grep '^| P-2 ' $B12 >> $B12" live_on "$B12" "$LF_SELF" P-2)"; rc=$?
+out="$(STUB_HOOK="grep '^| P-2 ' $B12 > $B12.dup && cat $B12.dup >> $B12" live_on "$B12" "$LF_SELF" P-2)"; rc=$?
 expect_refusal "R2-3: the writer refuses a duplicated row" 15 "*slice row changed or not unique*" "$rc" "$out"
 ! grep -q 'building@' "$B12" && ok "R2-3: a duplicated row is not overwritten" || bad "R2-3: duplicated row was overwritten"
 
