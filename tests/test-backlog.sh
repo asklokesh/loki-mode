@@ -224,6 +224,25 @@ printf '1:0:nopr\n2:0:nopr\n' > "$TMP/outcomes"
 out="$(run backlog acme/widgets --issues 1,2 --concurrency 1 2>&1)"
 [ "$(wc -l < "$TMP/launches" | tr -d ' ')" = "2" ] && pass "unmeasured cost is not counted as \$0 spend or a stop" || fail "unmeasured" "$out"
 echo "$out" | grep -qi 'unmeasured\|not measured' && pass "summary reports unmeasured cost" || fail "unmeasured text" "$out"
+
+# Corrupt ledger fails closed when a cap is set (BACKLOG-LEDGER-FAILCLOSED)
+reset_mock; echo "$issues5" > "$TMP/issues.json"
+printf 'budgets:\n  per_day_usd: 1.0\n' > loki.yaml
+printf '1:0:pr\n' > "$TMP/outcomes"
+mkdir -p "$HOME/.loki"; printf '{not json' > "$HOME/.loki/backlog-spend.json"
+out="$(run backlog acme/widgets --issues 1 2>&1)"; rc=$?
+{ [ ! -f "$TMP/launches" ] && echo "$out" | grep -q 'BUDGET_STOP.*ledger unreadable'; } && pass "corrupt ledger + cap: BUDGET_STOP ledger unreadable, no unit started" || fail "corrupt ledger stop" "rc=$rc $out"
+reset_mock; echo "$issues5" > "$TMP/issues.json"
+printf '1:0:pr\n' > "$TMP/outcomes"
+out="$(run backlog acme/widgets --issues 1 2>&1)"
+[ -f "$TMP/launches" ] && pass "missing ledger still reads as \$0 spent" || fail "missing ledger" "$out"
+rm -f loki.yaml
+reset_mock; echo "$issues5" > "$TMP/issues.json"
+printf '1:0:pr\n' > "$TMP/outcomes"
+mkdir -p "$HOME/.loki"; printf '{not json' > "$HOME/.loki/backlog-spend.json"
+MOCK_COST=0.50 run backlog acme/widgets --issues 1 >/dev/null 2>&1
+cf="$(ls "$HOME/.loki"/backlog-spend.json.corrupt-* 2>/dev/null | head -1)"
+{ [ -n "$cf" ] && [ "$(cat "$cf")" = '{not json' ]; } && pass "add_spend moves a corrupt ledger aside, bytes preserved" || fail "corrupt preserved" "$(ls "$HOME/.loki")"
 rm -f loki.yaml
 
 # ---- Shared worktree prep (D51-B05) ------------------------------------------
