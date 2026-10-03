@@ -566,3 +566,9 @@ The $20.00 default per-run cap stays. It is a hard stop on priced sessions only;
 - Conditions: secret-scan on main always runs full (no E-160 skip); required-ci reuses only main-branch or dispatch audit verdicts; the weekly cron becomes daily and a red daily scan halts releases.
 - No base-config fallback (r3 class). PR, slice-*, main, schedule and dispatch stay full. HIGH tier, unanimous opus review. Proposed by peer autonomi-dev-76; decided by the CTO advisor.
 - Saves about 15 min per promotion; release latency may still include the main full scan, accepted (moat over speed). Unmeasured hypothesis for a later CTO pass: --all on a fetch-depth 0 checkout also scans stale remote slice branches.
+
+## D76: legacy `loki verify` treats an unknown-kid attestation as not verified (CoS under D69, 08:32Z 2026-10-03)
+- Decision: on legacy, a well-formed token whose kid matches no local key and no `--pubkey` exits rc 2 with `attestation: UNCHECKED` and a VERDICT that is not VERIFIED, matching engine10. This supersedes the D47 carve-out for legacy UNCHECKED.
+- Why: anyone can mint a token with a foreign kid, so rc 0 is a downgrade forgery path. Moat order puts Seal accuracy above convenience, and D48 row 2 gives honest cross-machine verification an explicit path (`loki verify --pubkey`).
+- Also in scope: a missing .loki/state/last-proof-id.txt must not skip the receipt check silently; it reports not verified (A-134 class).
+- Users who relied on rc 0 for foreign tokens must pass `--pubkey`; the error message names that flag. CHANGELOG and docs say so. HIGH tier, unanimous opus review.
