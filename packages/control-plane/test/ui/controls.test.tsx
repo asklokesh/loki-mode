@@ -88,3 +88,30 @@ test("resume success reads as running with Stop offered", async () => {
   expect(posts).toEqual(["POST /v1/runs/s1/r1/resume"]);
   expect(screen.queryByText("Stop")).not.toBeNull();
 });
+
+test("wired run page: BLOCKED header shows Resume and Retry, running header shows Stop", async () => {
+  const { wirePages } = await import("../../ui/src/pages/wired");
+  const { matchPage } = await import("../../ui/src/pages/registry");
+  wirePages();
+  const m = matchPage("#/runs/s1/r1")!;
+  const Page = m.page.component;
+  const detail = (o: Record<string, unknown>) => ({ source_id: "s1", run_id: "r1", origin_repo: "o/r", issue_ref: "o/r#7", verdict: null, status: "running", stages: [], stages_completed: [], files_touched: [], not_proven: [], receipt: null, ...o });
+  const serve = (d: unknown) => {
+    globalThis.fetch = (async (url: string) => {
+      const u = String(url);
+      if (u.endsWith("/v1/runs/s1/r1")) return new Response(JSON.stringify(d));
+      if (u.includes("/events")) return new Response(JSON.stringify({ events: [] }));
+      return new Response("nope", { status: 404 });
+    }) as unknown as typeof fetch;
+  };
+  serve(detail({ blocked_question: "Which db?" }));
+  const a = render(<Page params={m.params} />);
+  await waitFor(() => expect(screen.queryByText("Resume")).not.toBeNull());
+  expect(screen.queryByText("Retry")).not.toBeNull();
+  expect(screen.queryByText("Stop")).toBeNull();
+  a.unmount();
+  serve(detail({}));
+  render(<Page params={m.params} />);
+  await waitFor(() => expect(screen.queryByText("Stop")).not.toBeNull());
+  expect(screen.queryByText("Resume")).toBeNull();
+});

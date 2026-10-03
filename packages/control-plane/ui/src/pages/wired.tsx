@@ -12,10 +12,11 @@ import { page as receipts } from "./receipts";
 import { page as runs } from "./runs";
 import { page as models } from "./models";
 import { page as compose } from "./compose";
+import { RunControls } from "./run-controls";
 
 // The run thread takes source/run props; the registry passes route params.
 const RunPage = runPage.component;
-const run: PageDef = { ...runPage, component: ({ params }) => <RunPage source={params.source} run={params.run} /> };
+const run: PageDef = { ...runPage, component: ({ params }) => <RunPage source={params.source} run={params.run} renderSlot={(d, reload) => <RunControls source={params.source!} run={params.run!} status={d.blocked_question ? "BLOCKED" : d.status === "running" || d.verdict === null ? "running" : (d.verdict ?? d.status ?? "")} onChanged={reload} />} /> };
 
 // Slice pages take their own optional props; the registry passes route params. Adapt by
 // rendering with defaults so every page fits PageDef.

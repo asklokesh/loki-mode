@@ -79,7 +79,7 @@ function ReplyPrompt({ source, run, question, onSent }: { source: string; run: s
   );
 }
 
-export function RunThread({ source, run, slot }: { source: string; run: string; slot?: ReactNode }) {
+export function RunThread({ source, run, slot, renderSlot }: { source: string; run: string; slot?: ReactNode; renderSlot?: (d: RunDetailResponse, reload: () => void) => ReactNode }) {
   const [d, setD] = useState<RunDetailResponse | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [drawer, setDrawer] = useState(false);
@@ -105,7 +105,7 @@ export function RunThread({ source, run, slot }: { source: string; run: string; 
         {blocked ? <VerdictBadge verdict="BLOCKED" /> : d.verdict ? <VerdictBadge verdict={d.verdict} /> : <Badge pulse>running</Badge>}
         <span data-testid="run-elapsed">{fmtS(d.elapsed_s ?? d.wall_s)}</span>
         <span data-testid="run-cost">{costLabel(d)}</span>
-        <span data-testid="run-header-slot" style={{ display: "inline-flex", gap: 8 }}>{slot}</span>
+        <span data-testid="run-header-slot" style={{ display: "inline-flex", gap: 8 }}>{slot}{renderSlot ? renderSlot(d, load) : null}</span>
         <Button variant="ghost" size="sm" onClick={() => setDrawer(true)}><Info size={14} /> Details</Button>
       </header>
 
@@ -164,9 +164,9 @@ function fromLocation(): { source: string; run: string } | null {
   return m ? { source: decodeURIComponent(m[1]!), run: decodeURIComponent(m[2]!) } : null;
 }
 
-export function RunPage({ source, run, slot }: { source?: string; run?: string; slot?: ReactNode }) {
+export function RunPage({ source, run, slot, renderSlot }: { source?: string; run?: string; slot?: ReactNode; renderSlot?: (d: RunDetailResponse, reload: () => void) => ReactNode }) {
   const loc = source && run ? { source, run } : fromLocation();
-  return loc ? <RunThread source={loc.source} run={loc.run} slot={slot} /> : <EmptyState title="No run selected" hint="Open a run from Home or Runs." />;
+  return loc ? <RunThread source={loc.source} run={loc.run} slot={slot} renderSlot={renderSlot} /> : <EmptyState title="No run selected" hint="Open a run from Home or Runs." />;
 }
 
 export const page = { id: "run", path: "/runs/:source/:run", title: "Run", component: RunPage };
