@@ -1,6 +1,6 @@
 // Removal of runs from the control DB: shared by `loki control prune` (direct DB) and DELETE /v1/runs/:source/:run (server).
 // One transaction deletes the runs, their events, and any source left with neither. An audit row is written first, inside the same transaction.
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
 
 export interface PruneFilter { repo?: string; before?: string }
 export interface PruneCounts { runs: number; events: number; sources: number }
@@ -47,9 +47,13 @@ export function audit(sqlite: Database, action: string, actor: string, detail: u
   sqlite.query("insert into audit (ts, action, actor, detail) values (?, ?, ?, ?)").run(new Date().toISOString(), action, actor, JSON.stringify(detail));
 }
 
-const dropOrphanSources = (sqlite: Database): void => {
-  sqlite.query("delete from sources where not exists (select 1 from runs r where r.source_id = sources.id) and not exists (select 1 from events e where e.source_id = sources.id)").run();
+/** Drops only the given sources, and only when they now hold neither runs nor events (matches what countFor reported). */
+const dropOrphanSources = (sqlite: Database, ids: Iterable<string>): void => {
+  for (const id of ids) sqlite.query("delete from sources where id = ? and not exists (select 1 from runs where source_id = ?) and not exists (select 1 from events where source_id = ?)").run(id, id, id);
 };
+
+/** Read-only handle for dry runs: no migrations, no journal-mode change, no writes. */
+export const openReadOnly = (path: string): Database => new Database(path, { readonly: true });
 
 /** Removes the matching runs. dryRun counts only and writes nothing. At least one filter is required. */
 export function pruneRuns(sqlite: Database, f: PruneFilter, opts: { dryRun?: boolean; actor?: string } = {}): PruneCounts {
@@ -67,7 +71,7 @@ export function pruneRuns(sqlite: Database, f: PruneFilter, opts: { dryRun?: boo
       sqlite.query("delete from events where source_id = ? and run_id = ?").run(k.source_id, k.run_id);
       sqlite.query("delete from runs where source_id = ? and run_id = ?").run(k.source_id, k.run_id);
     }
-    dropOrphanSources(sqlite);
+    dropOrphanSources(sqlite, new Set(keys.map((k) => k.source_id)));
   }).immediate();
   return out;
 }
@@ -81,7 +85,7 @@ export function removeRun(sqlite: Database, source: string, run: string, actor =
     audit(sqlite, "run.remove", actor, { source_id: source, run_id: run, counts: out });
     sqlite.query("delete from events where source_id = ? and run_id = ?").run(source, run);
     sqlite.query("delete from runs where source_id = ? and run_id = ?").run(source, run);
-    dropOrphanSources(sqlite);
+    dropOrphanSources(sqlite, [source]);
   }).immediate();
   return out;
 }

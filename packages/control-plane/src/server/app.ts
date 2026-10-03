@@ -69,22 +69,6 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     const r = writeAnswer(answerDir, source, run, body?.answer);
     return c.json(r.body, r.status);
   });
-  // Remove one run (and its events). hostGuard/tokenGuard above already cover Host and bearer. JSON content type blocks cross-site form posts;
-  // a browser Origin must match the host this server is served on. Absent Origin (curl, the CLI) is allowed. The audit row is written inside the delete transaction, before the rows go.
-  app.delete("/v1/runs/:source/:run", async (c) => {
-    if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) return c.json({ error: "content-type must be application/json" }, 400);
-    const origin = c.req.header("origin");
-    if (origin !== undefined) {
-      let oh = "";
-      try { oh = new URL(origin).host.toLowerCase(); } catch { /* refused below */ }
-      if (!oh || oh !== (c.req.header("host") ?? "").toLowerCase()) return c.json({ error: "origin not allowed" }, 403);
-    }
-    const source = c.req.param("source"), run = c.req.param("run");
-    const r = removeRun(sqlite, source, run);
-    if (!r) return c.json({ error: "run not found" }, 404);
-    const left = (sqlite.query("select count(*) n from runs").get() as { n: number }).n;
-    return c.json({ ok: true, removed: r, remaining_runs: left });
-  });
   // Machine-touching actions exist ONLY on a loopback-bound server (otherwise they are never registered: 404).
   // Each request must also come from a loopback peer (the real socket address, not the spoofable Host header; unknown peer fails closed) and carry JSON (blocks cross-site form posts).
   const act = opts.loopbackOnly ? app : new Hono();
@@ -103,6 +87,23 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
       fetchImpl: ((u: string, init: RequestInit) => app.fetch(new Request(u, { ...init, headers: { ...(init.headers as Record<string, string>), host: "127.0.0.1" } }))) as unknown as typeof fetch,
     });
     return c.json({ runs: r.runs, sent: r.sent, failed: r.failed });
+  });
+  // Remove one run (and its events). Loopback-only like /v1/start (never registered on a non-loopback server); bearer via tokenGuard when a token is set. JSON content type blocks cross-site form posts;
+  // a browser Origin must match the host this server is served on. Absent Origin (curl, the CLI) is allowed. The audit row is written inside the delete transaction, before the rows go.
+  act.delete("/v1/runs/:source/:run", async (c) => {
+    if (!peerIsLoopback(c) || !isLoopbackHost(c.req.header("host"))) return c.json({ error: "loopback only" }, 403);
+    if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) return c.json({ error: "content-type must be application/json" }, 400);
+    const origin = c.req.header("origin");
+    if (origin !== undefined) {
+      let oh = "";
+      try { oh = new URL(origin).host.toLowerCase(); } catch { /* refused below */ }
+      if (!oh || oh !== (c.req.header("host") ?? "").toLowerCase()) return c.json({ error: "origin not allowed" }, 403);
+    }
+    const source = c.req.param("source"), run = c.req.param("run");
+    const r = removeRun(sqlite, source, run);
+    if (!r) return c.json({ error: "run not found" }, 404);
+    const left = (sqlite.query("select count(*) n from runs").get() as { n: number }).n;
+    return c.json({ ok: true, removed: r, remaining_runs: left });
   });
   act.get("/v1/repos", (c) => peerIsLoopback(c) ? c.json({ repos: [...new Set<string>([repoDir, ...registryRepos()])] }) : c.json({ error: "loopback only" }, 403));
   act.post("/v1/start", async (c) => {

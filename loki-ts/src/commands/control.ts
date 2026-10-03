@@ -8,7 +8,7 @@ import { instancePath } from "../../../packages/control-plane/src/shipper/discov
 import { ingestAndWatch } from "../../../packages/control-plane/src/shipper/watch.ts";
 import { backfill } from "../../../packages/control-plane/src/shipper/backfill.ts";
 import { openDb } from "../../../packages/control-plane/src/db/migrate.ts";
-import { parseBefore, pruneRuns, type PruneFilter } from "../../../packages/control-plane/src/db/prune.ts";
+import { openReadOnly, parseBefore, pruneRuns, type PruneFilter } from "../../../packages/control-plane/src/db/prune.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 
 export const DEFAULT_PORT = 47821;
@@ -127,15 +127,18 @@ function prune(args: string[], env: NodeJS.ProcessEnv): number {
   const dry = args.includes("--dry-run");
   const db = resolve(flag(args, "--db") ?? env.LOKI_CONTROL_DB ?? join(env.HOME || homedir(), ".loki", "control", "control.db"));
   if (!existsSync(db)) { process.stdout.write(`loki control: no control database at ${db}, nothing to ${dry ? "remove" : "prune"}\n`); return 0; }
-  const { sqlite } = openDb(db);
+  let sqlite: ReturnType<typeof openDb>["sqlite"] | undefined;
   try {
+    // a dry run is strictly read-only: no migrations, no WAL change, no audit row
+    sqlite = dry ? openReadOnly(db) : openDb(db).sqlite;
     const c = pruneRuns(sqlite, f, { dryRun: dry, actor: "cli" });
     process.stdout.write(`loki control: ${dry ? "would remove" : "removed"} ${c.runs} runs, ${c.events} events, ${c.sources} orphaned sources${dry ? " (dry run, nothing changed)" : ""}\n`);
     return 0;
   } catch (e) {
-    process.stderr.write(`loki control prune: failed, nothing was removed (${(e as Error).message})\n`);
+    const m = (e as Error).message;
+    process.stderr.write(`loki control prune: nothing was ${dry ? "counted" : "removed"}: ${/no such table/.test(m) ? `this database has an older schema than this version (${m}); run 'loki control serve' once to migrate it` : m}\n`);
     return 1;
-  } finally { sqlite.close(); }
+  } finally { sqlite?.close(); }
 }
 
 export async function runControl(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {

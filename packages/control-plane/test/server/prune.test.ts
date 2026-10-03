@@ -113,22 +113,25 @@ test("prune waits on a concurrent writer instead of failing (WAL + busy timeout)
   expect(counts(db).runs).toBe(2);
 });
 
-// ---- DELETE endpoint ----
+// ---- DELETE endpoint (loopback-only, like /v1/start) ----
 const H = { "content-type": "application/json", host: "127.0.0.1:47821" };
+type Srv = { fetch: (r: Request, env?: unknown) => Response | Promise<Response> };
 function served(opts: { token?: string } = {}) {
   const p = join(tmp, `srv-${Math.random().toString(36).slice(2)}.db`);
   seed(p);
-  const c = createApp({ dbPath: p, ...opts });
+  const c = createApp({ dbPath: p, loopbackOnly: true, ...opts });
   return { ...c, p };
 }
-const del = (app: { request: (u: string, i?: RequestInit) => Response | Promise<Response> }, path: string, headers: Record<string, string> = H) => app.request(path, { method: "DELETE", headers });
+const del = (app: Srv, path: string, headers: Record<string, string> = H, ip = "127.0.0.1") =>
+  app.fetch(new Request(`http://127.0.0.1:47821${path}`, { method: "DELETE", headers }), { requestIP: () => ({ address: ip }) });
+const get = (app: Srv, path: string) => app.fetch(new Request(`http://127.0.0.1:47821${path}`, { headers: { host: "127.0.0.1:47821" } }), { requestIP: () => ({ address: "127.0.0.1" }) });
 
 test("DELETE 200 returns resulting state and audits first; run is gone", async () => {
   const { app, p } = served();
   const r = await del(app, "/v1/runs/srcA/w-old");
   expect(r.status).toBe(200);
   expect(await r.json()).toEqual({ ok: true, removed: { runs: 1, events: 1, sources: 0 }, remaining_runs: 3 });
-  expect((await app.request("/v1/runs/srcA/w-old")).status).toBe(404);
+  expect((await get(app, "/v1/runs/srcA/w-old")).status).toBe(404);
   const d = new Database(p, { readonly: true });
   const row = d.query("select action, detail from audit").get() as { action: string; detail: string };
   expect(row.action).toBe("run.remove");
@@ -136,11 +139,15 @@ test("DELETE 200 returns resulting state and audits first; run is gone", async (
   d.close();
 });
 
-test("DELETE of the last run in a source drops the orphaned source", async () => {
-  const { app } = served();
+test("DELETE of the last run in a source drops only that orphaned source", async () => {
+  const { app, p } = served();
+  const extra = new Database(p);
+  extra.query("insert into sources (id, first_seen, last_seen) values ('unrelated', 'x', 'x')").run();
+  extra.close();
   await del(app, "/v1/runs/srcA/w-old");
   const r = await del(app, "/v1/runs/srcA/w-new");
   expect(((await r.json()) as { removed: { sources: number } }).removed.sources).toBe(1);
+  expect(counts(p).sources).toBe(2); // srcB and the unrelated empty source survive
 });
 
 test("DELETE unknown run is 404 and writes no audit row", async () => {
@@ -149,21 +156,54 @@ test("DELETE unknown run is 404 and writes no audit row", async () => {
   expect(counts(p).audit).toBe(0);
 });
 
-test("DELETE refuses a cross-origin request, non-JSON, and (with a token) a missing bearer; nothing is deleted", async () => {
+test("DELETE refuses cross-origin, non-JSON, a non-loopback peer, a foreign Host, and (with a token) a missing bearer; nothing is deleted", async () => {
   const { app, p } = served({ token: "tok" });
   const auth = { ...H, authorization: "Bearer tok" };
   expect((await del(app, "/v1/runs/srcA/w-old", { ...auth, origin: "http://evil.example" })).status).toBe(403);
   expect((await del(app, "/v1/runs/srcA/w-old", { ...auth, origin: "not a url" })).status).toBe(403);
   expect((await del(app, "/v1/runs/srcA/w-old", { ...auth, "content-type": "text/plain" })).status).toBe(400);
+  expect((await del(app, "/v1/runs/srcA/w-old", auth, "10.0.0.5")).status).toBe(403);
+  expect((await del(app, "/v1/runs/srcA/w-old", { ...auth, host: "evil.example" })).status).toBe(403);
   expect((await del(app, "/v1/runs/srcA/w-old", H)).status).toBe(401);
   expect(counts(p)).toMatchObject({ runs: 4, audit: 0 });
   expect((await del(app, "/v1/runs/srcA/w-old", { ...auth, origin: "http://127.0.0.1:47821" })).status).toBe(200);
 });
 
-test("DELETE with loopbackOnly refuses a foreign Host", async () => {
-  const p = join(tmp, "lo.db");
+test("DELETE is not registered on a non-loopback server", async () => {
+  const p = join(tmp, "nonlo.db");
   seed(p);
-  const { app } = createApp({ dbPath: p, loopbackOnly: true });
-  expect((await del(app, "/v1/runs/srcA/w-old", { ...H, host: "evil.example" })).status).toBe(403);
+  const { app } = createApp({ dbPath: p, token: "tok" });
+  const r = await app.request("/v1/runs/srcA/w-old", { method: "DELETE", headers: { ...H, authorization: "Bearer tok" } });
+  expect(r.status).toBe(404);
   expect(counts(p).runs).toBe(4);
+});
+
+// ---- packaged artifact: the bundled CLI, from a cwd outside the repo, against a DB built through migrations ----
+const DIST = join(import.meta.dir, "../../../../loki-ts/dist/loki.js");
+const outside = mkdtempSync(join(tmpdir(), "cp-outside-"));
+const dist = (args: string[]) => Bun.spawnSync(["bun", DIST, "control", "prune", ...args], { cwd: outside, env: { PATH: process.env.PATH ?? "", HOME: tmp } });
+const text = (b: Uint8Array) => new TextDecoder().decode(b);
+
+test.skipIf(!existsSync(DIST))("bundled dist: dry-run is read-only, real prune works, from outside the repo", () => {
+  const db = fresh("dist");
+  const before = new Database(db, { readonly: true }).query("pragma journal_mode").get();
+  const d = dist(["--repo", "acme/widget", "--dry-run", "--db", db]);
+  expect(text(d.stderr)).not.toContain("migrations folder");
+  expect(d.exitCode).toBe(0);
+  expect(text(d.stdout)).toContain("would remove 2 runs");
+  expect(counts(db)).toEqual({ runs: 4, events: 4, sources: 2, audit: 0 });
+  expect(new Database(db, { readonly: true }).query("pragma journal_mode").get()).toEqual(before);
+  const r = dist(["--repo", "acme/widget", "--db", db]);
+  expect(r.exitCode).toBe(0);
+  expect(text(r.stdout)).toContain("removed 2 runs, 2 events, 1 orphaned sources");
+  expect(counts(db)).toEqual({ runs: 2, events: 2, sources: 1, audit: 1 });
+});
+
+test.skipIf(!existsSync(DIST))("bundled dist: a non-database file gives a clean message, no stack trace", () => {
+  const bad = join(tmp, "garbage.db");
+  Bun.write(bad, "this is not sqlite");
+  const r = dist(["--repo", "acme/widget", "--db", bad]);
+  expect(r.exitCode).toBe(1);
+  expect(text(r.stderr)).toContain("nothing was removed");
+  expect(text(r.stderr)).not.toContain("    at ");
 });
