@@ -1693,6 +1693,7 @@ show_help() {
     echo "Observe:"
     echo "  dashboard [cmd]  Operations UI server (start|stop|status|url|open)"
     echo "  mcp              Launch the MCP server (Model Context Protocol, stdio)"
+    echo "  acp              Run Loki as an ACP agent over stdio (VS Code, JetBrains, Zed)"
     echo ""
     echo "Report:"
     echo "  report [cmd]     Reporting: session|metrics|cost|export|share|dogfood"
@@ -21766,6 +21767,8 @@ memory context ctx checkpoint state report kpis cost metrics stats logs otel \
 syslog telemetry crash config provider doctor setup-skill onboard quickstart \
 welcome update self-update rollback merge failover cluster enterprise remote deploy docker \
 sandbox api mcp magic compound assets export wiki control docs explain why audit compliance \
+welcome update self-update rollback failover cluster enterprise remote deploy docker \
+sandbox api mcp acp magic compound assets export wiki control docs explain why audit compliance \
 secrets analyze optimize bench ci reset cleanup notify trigger voice sentrux \
 worktree wt projects cp rc trust-metrics serve agent code self_update test help version"
     local best
@@ -22179,6 +22182,10 @@ main() {
             ;;
         mcp)
             cmd_mcp "$@"
+            ;;
+        acp)
+            # ACP agent over stdio; stdout is protocol-only. See docs/acp-editors.md.
+            LOKI_ACP_LOKI="${LOKI_ACP_LOKI:-$_LOKI_SCRIPT_DIR/loki}" exec python3 "$_LOKI_SCRIPT_DIR/acp-agent.py"
             ;;
         migrate)
             # CLI consolidation (Phase B): 'migrate' -> 'modernize migrate'.
