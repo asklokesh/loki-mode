@@ -91,16 +91,42 @@ function treeHash(files) {
   return h.digest('hex').slice(0, 16);
 }
 
-// D80: runner output is trusted for coverage only from `node --test` with process isolation (the default), where
-// a test cannot print or exit its way to a complete fake summary. Isolation none, a direct `node file` script or
-// any script that is not positively classified gives NOT VERIFIED with a reason, as does a node test file that
-// calls process.exit, reallyExit, abort or kill. Only node --test and unclassified scripts are held to this;
-// jest, vitest, pytest, go and cargo are classified runners with their own output.
-function coverageBlock(root, files, script, kind) {
-  if (kind === 'jest' || kind === 'vitest') return null;
-  if (kind === 'script') return `the npm test script ("${script.trim().slice(0, 80)}") is not positively classified as node --test with process isolation`;
-  if (/--(?:experimental-)?test-isolation(?:=|\s+)none\b/.test(script)) return 'node --test runs with --test-isolation=none, so a test shares the runner process and can print a complete fake summary';
-  if (/--(?:experimental-)?test-isolation(?:=|\s+)(?!process\b)\S/.test(script)) return 'node --test runs with an isolation mode other than process';
+// D80 (amended): runner output is trusted for coverage only when the WHOLE npm test script is `node --test`
+// followed by allowlisted flags and plain path arguments, so no chained command, wrapper, redirect or other flag can
+// stand in for the runner or change its isolation. Anything else, a pretest or posttest script, a project .npmrc
+// that sets node-options or script-shell, or NODE_OPTIONS in the hook environment gives NOT VERIFIED with a reason.
+// A node test file that calls process.exit, reallyExit, abort or kill stays an integrity finding (defense in depth).
+// jest and vitest scripts are held to the same shape (the runner name plus plain flags and paths) and hygiene checks.
+const ALLOWED_FLAG = /^--(?:test-reporter=[\w.-]+|test-reporter-destination=stdout|test-isolation=process|test-concurrency=\d+|test-timeout=\d+)$/;
+const PLAIN_PATH = /^[\w@./-]+$/;
+const SHELL_META = /[;&|$`'"#<>\\(){}*?~!\n\r]/;
+function scriptShape(script, kind) {
+  const t = script.trim();
+  if (SHELL_META.test(t)) return 'the npm test script contains a shell metacharacter';
+  const tok = t.split(/\s+/);
+  if (kind === 'node --test') {
+    if (tok[0] !== 'node' || tok[1] !== '--test') return `the npm test script ("${t.slice(0, 80)}") is not exactly node --test with allowlisted flags`;
+    for (const a of tok.slice(2)) {
+      if (a.startsWith('-') ? !ALLOWED_FLAG.test(a) : !PLAIN_PATH.test(a)) return `the npm test script has the token "${a.slice(0, 40)}", which is not an allowlisted node --test flag or a plain path`;
+    }
+    return null;
+  }
+  const i = tok[0] === 'npx' ? 1 : 0;
+  if (tok[i] !== kind) return `the npm test script ("${t.slice(0, 80)}") is not exactly ${kind} with plain flags and paths`;
+  for (const a of tok.slice(i + 1)) if (!/^-{0,2}[\w@./=:,-]+$/.test(a)) return `the npm test script has the token "${a.slice(0, 40)}", which is not a plain flag or path`;
+  return null;
+}
+
+function coverageBlock(root, files, script, kind, pkgScripts) {
+  if (kind === 'script') return `the npm test script ("${script.trim().slice(0, 80)}") is not positively classified as node --test`;
+  const shape = scriptShape(script, kind);
+  if (shape) return shape;
+  if (pkgScripts && (pkgScripts.pretest || pkgScripts.posttest)) return 'a pretest or posttest script exists and could change what npm test runs';
+  try {
+    if (/^\s*(?:node[-_]options|script[-_]shell)\s*=/im.test(fs.readFileSync(path.join(root, '.npmrc'), 'utf8'))) return 'the project .npmrc sets node-options or script-shell';
+  } catch { /* no .npmrc */ }
+  if (process.env.NODE_OPTIONS) return 'NODE_OPTIONS is set in the hook environment';
+  if (kind !== 'node --test') return null;
   for (const p of Object.keys(files).filter((f) => isTest(f) && /\.[cm]?[jt]sx?$/.test(f))) {
     let c = '';
     try { c = fs.readFileSync(path.join(root, p), 'utf8'); } catch { continue; }
@@ -112,11 +138,11 @@ function coverageBlock(root, files, script, kind) {
 function detect(root, files) {
   const has = (f) => fs.existsSync(path.join(root, f));
   if (has('package.json')) {
-    let s = '';
-    try { s = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts.test || ''; } catch { /* no script */ }
+    let s = '', pkgScripts = null;
+    try { pkgScripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts; s = pkgScripts.test || ''; } catch { /* no script */ }
     if (s && !/no test specified/.test(s)) {
       const kind = /vitest/.test(s) ? 'vitest' : /jest/.test(s) ? 'jest' : /node\s+--test/.test(s) ? 'node --test' : 'script';
-      return { name: `npm test (${kind})`, cmd: ['npm', 'test', '--silent'], coverageBlock: coverageBlock(root, files, s, kind) };
+      return { name: `npm test (${kind})`, cmd: ['npm', 'test', '--silent'], coverageBlock: coverageBlock(root, files, s, kind, pkgScripts) };
     }
   }
   if (has('go.mod')) return { name: 'go test', cmd: ['go', 'test', './...', '-v'] };
@@ -467,7 +493,7 @@ function countHookError() {
   } finally { fs.closeSync(fd); }
 }
 
-module.exports = { passRecords };
+module.exports = { passRecords, detect };
 if (require.main === module) main().catch((e) => {
   const m = (e && e.message) || String(e);
   if (mode === 'start') {

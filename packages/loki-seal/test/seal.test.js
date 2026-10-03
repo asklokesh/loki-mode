@@ -1119,3 +1119,51 @@ test('forged lines r9 (D80-3): truncated output is never trusted, with no depend
   assert.deepStrictEqual(cut.passIds, []);
   assert.match(cut.specUnverified, /capture limit/);
 });
+
+// SEAL-FORGED-LINES r10 (D80 amended): the whole test script must be node --test plus allowlisted flags and paths.
+const blockFor = (files, env) => {
+  const d = repo(files);
+  const { detect } = require('../bin/loki-seal.js');
+  const saved = process.env.NODE_OPTIONS;
+  if (env) process.env.NODE_OPTIONS = env; else delete process.env.NODE_OPTIONS;
+  try { return detect(d, Object.fromEntries(Object.keys(files).map((k) => [k, 'h']))).coverageBlock; } finally { if (saved === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved; }
+};
+const scriptRepo = (script, more = {}) => ({ ...nodeRepo(ADD_OK, T2), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: script, ...more } }) });
+test('forged lines r10: bypass scripts that merely contain "node --test" get no coverage', () => {
+  for (const s of ['node --test-reporter=spec t.js', 'node --test-only t.js', 'node --test && node fake.js', 'echo node --test; node t.js',
+    'node --test; node t.js', 'node --test | cat', 'node --test > /dev/null', 'node --test $(echo x)', 'node --test `x`', "node --test 'a'", 'node --test "a"', 'node --test # x',
+    'node --test --test-only', 'node --test --test-isolation=none', 'node --test --import ./x.js', 'node --require ./x.js --test', 'node --test --test-name-pattern=x', 'FOO=1 node --test', 'node --test *.js']) {
+    assert.ok(blockFor(scriptRepo(s)), s);
+  }
+});
+test('forged lines r10: pretest, posttest, .npmrc node-options or script-shell, and NODE_OPTIONS withhold coverage', () => {
+  assert.match(blockFor(scriptRepo('node --test', { pretest: 'node x.js' })), /pretest or posttest/);
+  assert.match(blockFor(scriptRepo('node --test', { posttest: 'node x.js' })), /pretest or posttest/);
+  assert.match(blockFor({ ...scriptRepo('node --test'), '.npmrc': 'node-options=--require ./x.js\n' }), /npmrc/);
+  assert.match(blockFor({ ...scriptRepo('node --test'), '.npmrc': 'script-shell=./sh\n' }), /npmrc/);
+  assert.match(blockFor(scriptRepo('node --test'), '--no-warnings'), /NODE_OPTIONS/);
+});
+test('forged lines r10: allowlisted node --test scripts keep coverage', () => {
+  for (const s of ['node --test', '  node --test  ', 'node --test --test-reporter=tap', 'node --test --test-reporter=spec --test-reporter-destination=stdout',
+    'node --test --test-isolation=process --test-concurrency=2 --test-timeout=5000 test/', 'node --test test/a.test.js']) {
+    assert.strictEqual(blockFor(scriptRepo(s)), null, s);
+  }
+});
+test('forged lines r10: end to end, a chained script is NOT VERIFIED with the reason and a hook NODE_OPTIONS does too', () => {
+  const r = negRun({ ...nodeRepo(ADD_OK, T2), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node --test && node -e 0' } }) }, 'Fix the adder.\n- adds zero\n');
+  notVerified(r);
+  assert.match(r.raw, /allowlisted|metacharacter/);
+  const d = repo(nodeRepo(ADD_OK, T2));
+  assert.strictEqual(sealEnv(d, {}, 'start').status, 0);
+  const s = sealEnv(d, { NODE_OPTIONS: '--no-warnings' }, 'stop', transcript(d, 'Fix the adder.\n- adds zero\n'));
+  assert.strictEqual(s.status, 2, s.stdout + s.stderr);
+  assert.match(s.stderr, /NODE_OPTIONS/);
+});
+test('forged lines r10: the bin runs as a hook (require.main guard) and exports nothing side-effecting when required', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  const r = spawnSync('node', [SEAL, 'start'], { input: JSON.stringify({ session_id: 'smoke', cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8', timeout: 60000 });
+  assert.strictEqual(r.status, 0, r.stdout + r.stderr);
+  const q = spawnSync('node', ['-e', "const m = require(process.argv[1]); process.stdout.write(Object.keys(m).sort().join())", SEAL], { encoding: 'utf8', timeout: 10000, stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.strictEqual(q.status, 0, q.stderr);
+  assert.match(q.stdout, /detect.*passRecords/);
+});
