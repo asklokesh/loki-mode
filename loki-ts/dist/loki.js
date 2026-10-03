@@ -1947,4 +1947,4 @@ Set LOKI_LEGACY_BASH=1 to force the bash CLI for every command.
 `),2}case"start":{let{runStart:X}=await Promise.resolve().then(() => (Gs(),qs));return X(Q)}case"slack":{let{runSlackCli:X}=await Promise.resolve().then(() => (ys(),bs));return X(Q)}case"answer":{let{runAnswerCli:X}=await Promise.resolve().then(() => (U90(),B90));return X(Q)}case"engine10":{let{runEngine10:X}=await Promise.resolve().then(() => (C90(),A90)),{registryLoader:J}=await Promise.resolve().then(() => (aH(),Z90));return X(Q,J)}default:return process.stderr.write(`Unknown command: ${Z}
 `),process.stderr.write(T90),2}}bD();process.on("SIGINT",()=>process.exit(130));process.on("SIGTERM",()=>process.exit(143));var vq8=await fq8(Bun.argv.slice(2));process.exit(vq8);
 
-//# debugId=D3BCA43ECA7CB18444DD7A89F963E5B5
+//# debugId=B04848F77954401779463BCFA0FA4F07

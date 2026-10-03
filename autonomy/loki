@@ -1813,7 +1813,7 @@ show_help() {
     # missing from this list, so a new command cannot ship invisible.
     echo ""
     echo "All commands:"
-    echo "  agent analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
+    echo "  acp agent analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
     echo "  enterprise estimate explain export failover github grill heal help"
@@ -8337,7 +8337,9 @@ cmd_web_redirect_to_dashboard() {
         echo "      it watches runs that are already going. To build from that spec:" >&2
         echo "        loki start '${_web_dropped_prd}'" >&2
     fi
-    if [ "${LOKI_LEGACY_DASHBOARD:-0}" != "1" ] && _loki_control_ui; then
+    # Flags such as --port must reach the classic validator, so only the
+    # bare form (optionally --no-open) is routed to the Control Plane.
+    if [ "${LOKI_LEGACY_DASHBOARD:-0}" != "1" ] && [ ${#dash_args[@]} -eq 0 ] && _loki_control_ui; then
         return 0
     fi
     cmd_dashboard_start ${dash_args[@]+"${dash_args[@]}"}

@@ -188,6 +188,8 @@ function _loki_commands {
         'deploy:Advisory deploy command (print-only)'
         'docker:Run Loki in a Docker container'
         'mcp:MCP server commands'
+        'merge:Green-only serial merge queue'
+        'acp:Agent Client Protocol agent over stdio'
         'magic:Spec-driven component generation'
         'assets:Export/import shareable team assets'
         'spec:Living spec drift detection'

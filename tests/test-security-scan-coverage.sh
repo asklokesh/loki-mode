@@ -393,6 +393,8 @@ fi
 # (v10.5.13..v10.5.14 history), 25 -> 37, 61 -> 73. Measured: 12 findings, all merges.
 # 74 74 36 38 0: commit acb4ee58 added 1 exact fingerprint for the synthetic
 # ghp_FAKE token in the D51-B11 fixture tests/workspace/80-comment.sh:7, 37 -> 38, 73 -> 74.
+# 75 75 36 39 0: commit cf5be902 added 1 exact fingerprint for the fake Sentry token in
+# tests/test-issue-providers.sh:294 (commit 00d12afe), 38 -> 39, 74 -> 75.
 _ignore="${LOKI_GITLEAKS_IGNORE:-$REPO_ROOT/.gitleaksignore}"
 _ignore_shape="$(python3 - "$_ignore" <<'PY'
 import re, sys
@@ -406,10 +408,10 @@ print(len(entries), len(set(entries)),
       sum(not current.fullmatch(e) and not historical.fullmatch(e) for e in entries))
 PY
 )"
-if [ "$_ignore_shape" = "74 74 36 38 0" ]; then
-  ok "gitleaks baseline contains 36 current and 38 commit-qualified historical fingerprints"
+if [ "$_ignore_shape" = "75 75 36 39 0" ]; then
+  ok "gitleaks baseline contains 36 current and 39 commit-qualified historical fingerprints"
 else
-  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 74 74 36 38 0)"
+  bad "gitleaks baseline shape drifted ($_ignore_shape; expected 75 75 36 39 0)"
 fi
 
 # Optional live mutation proof. Exact-SHA acceptance supplies the same pinned

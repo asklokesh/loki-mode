@@ -28,7 +28,7 @@ const sig = (f: string): string => { try { const s = statSync(f); return `${s.si
 
 /** Backfill every repo, then watch. Resolves once the backfill is done; the watcher keeps polling until stop(). */
 export async function ingestAndWatch(o: WatchOpts): Promise<Watcher> {
-  const env = { ...(o.env ?? process.env), LOKI_CONTROL_URL: o.url };
+  const env: NodeJS.ProcessEnv = { ...(o.env ?? process.env), LOKI_CONTROL_URL: o.url };
   const repos = [...new Set([o.repoDir, ...registryRepos(env)])];
   const seen = new Map<string, string>(); // events.jsonl path -> size:mtime last shipped OK
   for (const repoDir of repos) {
