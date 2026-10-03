@@ -626,6 +626,7 @@ Eval results archive: redaction and dirty-check exclude (E-101)	1
 auto-capture shadow-write skips empty PROJECT_DIR and never splices importance (S-156)	32
 web-app NLSearch failed request is not no-results (S-159)	1
 web-app DeployConnections failed load is not Not connected (S-185)	1
+web-app DeployConnections handlers do not push synthesized statuses (PO-WEB-DEPLOY-1)	1
 web-app ProjectsPage poll error is not an empty list (S-161)	1
 web-app CI/CD panel shows unknown status as unknown (node --test)	1
 web-app cost estimate ignores the iteration cap (S-187)	1

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Loader2,
   AlertCircle,
@@ -367,11 +367,14 @@ export function DeployConnections({
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Last statuses a successful fetch returned. Never the synthesized defaults.
+  const lastFetchedRef = useRef<AllConnectionStatuses | null>(null);
 
   // Fetch all connection statuses
   const fetchStatuses = useCallback(async () => {
     try {
       const data = await api.getDeployStatus();
+      lastFetchedRef.current = data;
       setStatuses(data);
       onStatusChange?.(data);
       setError(null);
@@ -398,13 +401,15 @@ export function DeployConnections({
           ...prev,
           vercel: { connected: true, user: result.user },
         }));
-        onStatusChange?.({
-          ...statuses,
-          vercel: { connected: true, user: result.user },
-        });
+        const base = lastFetchedRef.current;
+        if (base) {
+          const next = { ...base, vercel: { connected: true, user: result.user } };
+          lastFetchedRef.current = next;
+          onStatusChange?.(next);
+        }
       }
     },
-    [statuses, onStatusChange],
+    [onStatusChange],
   );
 
   const handleConnectNetlify = useCallback(
@@ -415,13 +420,15 @@ export function DeployConnections({
           ...prev,
           netlify: { connected: true, user: result.user },
         }));
-        onStatusChange?.({
-          ...statuses,
-          netlify: { connected: true, user: result.user },
-        });
+        const base = lastFetchedRef.current;
+        if (base) {
+          const next = { ...base, netlify: { connected: true, user: result.user } };
+          lastFetchedRef.current = next;
+          onStatusChange?.(next);
+        }
       }
     },
-    [statuses, onStatusChange],
+    [onStatusChange],
   );
 
   // Disconnect handler
@@ -432,10 +439,14 @@ export function DeployConnections({
         ...prev,
         [platform]: { connected: false },
       }));
-      const updated = { ...statuses, [platform]: { connected: false } };
-      onStatusChange?.(updated);
+      const base = lastFetchedRef.current;
+      if (base) {
+        const updated = { ...base, [platform]: { connected: false } };
+        lastFetchedRef.current = updated;
+        onStatusChange?.(updated);
+      }
     },
-    [statuses, onStatusChange],
+    [onStatusChange],
   );
 
   // Connect callback map
