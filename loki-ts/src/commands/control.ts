@@ -33,7 +33,9 @@ function serverCmd(): string[] | null {
   const bundled = join(REPO_ROOT, "packages/control-plane/dist/server.js");
   if (existsSync(bundled)) return ["bun", bundled];
   const src = join(REPO_ROOT, "packages/control-plane/src/server/serve.ts");
-  return existsSync(src) ? ["bun", "run", src] : null;
+  // --install=fallback: a checkout whose packages/control-plane has no node_modules still resolves hono and drizzle-orm. Bare
+  // auto-install switches OFF as soon as ANY ancestor has a node_modules (CI's repo-root npm install), which killed serve on Linux.
+  return existsSync(src) ? ["bun", "--install=fallback", "run", src] : null;
 }
 
 async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {

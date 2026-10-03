@@ -114,10 +114,12 @@ describe("loki control default", () => {
   });
   test("serve needs no flag; instance.json is 0600 and removed after exit", async () => {
     const db = join(home, "c.db");
-    const p = Bun.spawn(["bun", join(import.meta.dir, "../../src/cli.ts"), "control", "serve", "--port", "0", "--db", db], { env: { PATH: process.env.PATH ?? "", HOME: home, LOKI_NO_BROWSER: "1", LOKI_TELEMETRY_DISABLED: "1" }, stdout: "ignore", stderr: "ignore" });
+    const p = Bun.spawn(["bun", join(import.meta.dir, "../../src/cli.ts"), "control", "serve", "--port", "0", "--db", db], { env: { PATH: process.env.PATH ?? "", HOME: home, LOKI_NO_BROWSER: "1", LOKI_TELEMETRY_DISABLED: "1" }, stdout: "ignore", stderr: "pipe" });
+    const errText = new Response(p.stderr as ReadableStream).text();
     const f = instancePath(env());
     for (let i = 0; i < 100 && !existsSync(f); i++) await Bun.sleep(100);
     try {
+      if (!existsSync(f)) { p.kill("SIGTERM"); await p.exited; throw new Error(`instance.json never appeared; child exit=${p.exitCode} stderr:\n${await errText}`); }
       expect(existsSync(f)).toBe(true);
       expect(statSync(f).mode & 0o777).toBe(0o600);
       expect(statSync(join(home, ".loki", "control")).mode & 0o777).toBe(0o700);
