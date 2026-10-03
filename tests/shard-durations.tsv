@@ -728,3 +728,4 @@ notification triggers unreadable is not empty (PO-DASH-HONEST-1)	2
 notification triggers panel unreadable vs empty (node --test, PO-DASH-HONEST-1)	1
 Refused resume warning names the blocking ignored file and the recorded branch (S-233)	3
 PR receipt renderer ignores cwd json.py (-I -S, S-215)	1
+corrupt or denied proofs and memory files give 503 or an error row, never empty (HONEST-READ-1)	2

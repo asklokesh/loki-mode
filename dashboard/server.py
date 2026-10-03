@@ -108,6 +108,20 @@ def _safe_json_read(path: _Path, default: Any = None) -> Any:
     return default
 
 
+def _read_json_or_503(path: _Path, what: str) -> Any:
+    """Read JSON; a missing file is the caller's empty case, anything else is a 503.
+
+    An unreadable (denied) or corrupt file must never read as "no data": the
+    caller would render an empty list as a healthy empty store.
+    """
+    try:
+        return json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except FileNotFoundError:
+        raise
+    except (OSError, ValueError) as e:
+        raise HTTPException(status_code=503, detail=f"{what} unreadable: {type(e).__name__}")
+
+
 def _safe_read_text(path: _Path) -> str:
     """Read a text file with UTF-8 encoding, replacing non-UTF-8 bytes.
 
@@ -6433,8 +6447,8 @@ async def list_episodes(limit: int = Query(default=50, ge=1, le=1000)):
         if ep_dir.exists():
             for f in _memory_episode_files(ep_dir):
                 try:
-                    loaded.append(json.loads(f.read_text()))
-                except Exception:
+                    loaded.append(_read_json_or_503(f, "episode"))
+                except FileNotFoundError:
                     pass
         loaded.sort(key=lambda e: e.get("timestamp", "") if isinstance(e, dict) else "", reverse=True)
         return loaded[:limit]
@@ -6494,13 +6508,11 @@ async def list_patterns():
     # Fallback to JSON
     sem_dir = _get_loki_dir() / "memory" / "semantic"
     patterns_file = sem_dir / "patterns.json"
-    if patterns_file.exists():
-        try:
-            data = json.loads(patterns_file.read_text())
-            return data if isinstance(data, list) else data.get("patterns", [])
-        except Exception:
-            pass
-    return []
+    try:
+        data = _read_json_or_503(patterns_file, "patterns")
+    except FileNotFoundError:
+        return []
+    return data if isinstance(data, list) else data.get("patterns", [])
 
 
 @app.get("/api/memory/patterns/{pattern_id}", dependencies=[Depends(auth.require_scope("read"))])
@@ -6539,8 +6551,8 @@ async def list_skills():
         if skills_dir.exists():
             for f in _memory_skill_files(skills_dir):
                 try:
-                    skills.append(json.loads(f.read_text()))
-                except Exception:
+                    skills.append(_read_json_or_503(f, "skill"))
+                except FileNotFoundError:
                     pass
         return skills
 
@@ -6751,12 +6763,10 @@ async def retrieve_memory(query: dict = None):
 async def get_memory_index():
     """Get memory index (Layer 1 - lightweight discovery)."""
     index_file = _get_loki_dir() / "memory" / "index.json"
-    if index_file.exists():
-        try:
-            return json.loads(index_file.read_text())
-        except Exception:
-            pass
-    return {"topics": [], "lastUpdated": None}
+    try:
+        return _read_json_or_503(index_file, "memory index")
+    except FileNotFoundError:
+        return {"topics": [], "lastUpdated": None}
 
 
 @app.get("/api/memory/timeline", dependencies=[Depends(auth.require_scope("read"))])
@@ -12571,16 +12581,24 @@ async def list_proofs():
     items: list[dict] = []
     try:
         entries = sorted(proofs_dir.iterdir())
-    except (OSError, FileNotFoundError):
+    except FileNotFoundError:
         return {"proofs": []}
+    except OSError as e:
+        raise HTTPException(status_code=503, detail=f"proofs unreadable: {type(e).__name__}")
     for entry in entries:
         if not entry.is_dir():
             continue
         proof_json = entry / "proof.json"
         if not proof_json.is_file():
             continue
-        data = _safe_json_read(proof_json, default=None)
+        try:
+            data = _read_json_or_503(proof_json, "proof")
+        except HTTPException as e:
+            # One bad receipt is an error row, never a silently dropped run.
+            items.append({"run_id": entry.name, "error": e.detail})
+            continue
         if not isinstance(data, dict):
+            items.append({"run_id": entry.name, "error": "proof unreadable: not an object"})
             continue
         # Deterministic honesty headline (single source of truth, same access as
         # proofs_summary's bucketing). Read, never recomputed. The list endpoint

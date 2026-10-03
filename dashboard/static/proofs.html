@@ -147,6 +147,11 @@
     for (var i = 0; i < proofs.length; i++) {
       var p = proofs[i];
       var rid = esc(p.run_id);
+      if (p.error) {
+        rows += '<div class="row"><div class="top"><span class="rid">' + rid +
+          '</span><span class="ts">Could not read this proof: ' + esc(p.error) + "</span></div></div>";
+        continue;
+      }
       var usd = (p.cost_usd !== null && p.cost_usd !== undefined) ? atLeastUsd(p.cost_usd, p.cost_partial) : "";
       var fc = (p.files_changed !== null && p.files_changed !== undefined) ? (p.files_changed + " files") : "";
       var verdict = p.final_verdict ? '<span class="badge ' + badgeClass(p.final_verdict) + '" title="Recorded council vote, not a verification result">council ' + esc(p.final_verdict) + "</span>" : "";
