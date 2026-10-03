@@ -17,6 +17,7 @@
   --cp-error-fill: #C45B5B;   --cp-error-muted: rgba(196,91,91,0.12);
   --cp-info-muted: rgba(47,113,227,0.12);
   /* AA companions (additive, not in the legacy sources): text-safe ink on bg-2 and bg for small text */
+  --cp-accent-solid: #553DE9; --cp-accent-ink: #553DE9; --cp-error-ink: #b23a3a;
   --cp-success-ink: #1a7546; --cp-warning-ink: #895e10; --cp-info-ink: #2963c8; --cp-text-subtle: #6a665f;
   /* models: unified-styles.js:72-75 */
   --cp-opus: #d97706; --cp-sonnet: #553DE9; --cp-haiku: #1FC5A8;
@@ -37,7 +38,8 @@
   --cp-warning-fill: #E8B84A; --cp-warning-muted: rgba(232,184,74,0.18);
   --cp-error-fill: #E07070;   --cp-error-muted: rgba(224,112,112,0.18);
   --cp-info-muted: rgba(90,156,245,0.18);
-  --cp-success-ink: #2ED8B6; --cp-warning-ink: #E8B84A; --cp-info-ink: #5A9CF5; --cp-text-subtle: #8B85A0;
+  --cp-success-ink: #2ED8B6; --cp-warning-ink: #E8B84A; --cp-info-ink: #6DA8F6;
+  --cp-accent-solid: #6a55f2; --cp-accent-ink: #9c8ef6; --cp-error-ink: #E58989;   /* AA 4.5:1 companions, lightness only (CPE-27) */ --cp-text-subtle: #8B85A0;
   --cp-opus: #f59e0b; --cp-sonnet: #8b7bf5; --cp-haiku: #2ED8B6;
   --cp-shadow-sm: 0 1px 2px rgba(0,0,0,0.4); --cp-shadow-md: 0 4px 12px rgba(0,0,0,0.5);
   --cp-shadow-lg: 0 10px 25px rgba(0,0,0,0.6); --cp-focus: 0 0 0 3px rgba(123,107,240,0.30);
@@ -57,7 +59,8 @@
     --cp-warning-fill: #E8B84A; --cp-warning-muted: rgba(232,184,74,0.18);
     --cp-error-fill: #E07070;   --cp-error-muted: rgba(224,112,112,0.18);
     --cp-info-muted: rgba(90,156,245,0.18);
-  --cp-success-ink: #2ED8B6; --cp-warning-ink: #E8B84A; --cp-info-ink: #5A9CF5; --cp-text-subtle: #8B85A0;
+  --cp-success-ink: #2ED8B6; --cp-warning-ink: #E8B84A; --cp-info-ink: #6DA8F6;
+  --cp-accent-solid: #6a55f2; --cp-accent-ink: #9c8ef6; --cp-error-ink: #E58989;   /* AA 4.5:1 companions, lightness only (CPE-27) */ --cp-text-subtle: #8B85A0;
     --cp-opus: #f59e0b; --cp-sonnet: #8b7bf5; --cp-haiku: #2ED8B6;
     --cp-shadow-sm: 0 1px 2px rgba(0,0,0,0.4); --cp-shadow-md: 0 4px 12px rgba(0,0,0,0.5);
     --cp-shadow-lg: 0 10px 25px rgba(0,0,0,0.6); --cp-focus: 0 0 0 3px rgba(123,107,240,0.30);

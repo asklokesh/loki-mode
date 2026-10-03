@@ -4,7 +4,7 @@ import { Button } from "./design/primitives";
 import { toggleTheme, useTheme } from "./shell/theme";
 import { importRuns, listRepos, listRuns, startRun, type RunRow } from "./api";
 
-const btn = "min-h-11 rounded bg-sky-600 px-4 py-2 text-sm text-white disabled:opacity-50 md:min-h-0 md:px-3 md:py-1";
+const btn = "min-h-11 rounded bg-sky-700 px-4 py-2 text-sm text-white disabled:opacity-50 md:min-h-0 md:px-3 md:py-1";
 const inp = "rounded border border-slate-300 bg-white px-2 py-2 text-sm md:py-1 dark:border-slate-700 dark:bg-slate-900";
 
 export const START_CLI = "loki start owner/repo#N";

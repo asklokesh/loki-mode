@@ -54,3 +54,16 @@ test("trend skips days with no finished run", () => {
   const t = verifiedTrend([run("a", "VERIFIED", "2026-10-01"), run("b", "FAILED", "2026-10-01"), run("c", null, "2026-10-02")]);
   expect(t).toEqual([{ day: "2026-10-01", rate: 0.5, total: 2 }]);
 });
+
+// A1: the tone is the claim. Only VERIFIED may read green; TAMPERED is the one red; everything unproven is amber.
+const TONES: [string, string][] = [["VERIFIED", "success"], ["UNSIGNED", "warning"], ["NOT_VERIFIED", "warning"], ["UNCHECKED", "warning"], ["TAMPERED", "error"]];
+for (const [verdict, tone] of TONES) {
+  test(`verify verdict ${verdict} renders a ${tone} badge`, async () => {
+    serve(verdict);
+    render(<Receipts />);
+    fireEvent.click((await screen.findAllByTestId("verify-btn"))[0]!);
+    const out = await screen.findByTestId("verify-result");
+    expect(out.getAttribute("data-verdict")).toBe(verdict);
+    expect(out.querySelector('[data-cp="badge"]')!.getAttribute("data-tone")).toBe(tone);
+  });
+}

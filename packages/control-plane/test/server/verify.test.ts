@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
 import { actions, localRepos } from "../../src/db/schema.ts";
-import { computeReceiptHash } from "../../../../loki-ts/src/engine10/verify_cmd.ts";
-import { kidOf } from "../../../../loki-ts/src/engine10/stages/seal.ts";
+import { computeReceiptHash, verifyReceipt } from "../../../../loki-ts/src/engine10/verify_cmd.ts";
+import { kidOf, loadSigningKey } from "../../../../loki-ts/src/engine10/stages/seal.ts";
+import { exportDsseReceipt } from "../../../../loki-ts/src/features/receipt_dsse.ts";
 
 const FIX = join(import.meta.dir, "../fixtures/runs");
 const SRC = "abcdef0123456789";
@@ -121,9 +122,26 @@ test("a correctly signed receipt of a FAILED run is NOT_VERIFIED, never VERIFIED
   expect(j.reasons[0]).toContain("run outcome FAILED");
 });
 
+/** A real, validly signed DSSE envelope for `runId`, produced by the engine's own `loki verify --export-dsse` path (exportDsseReceipt). */
+async function realEnvelope(runId: string): Promise<Record<string, unknown>> {
+  const file = join(root, `${runId}-receipt.json`);
+  writeFileSync(file, JSON.stringify(signed(runId)));
+  let out = "";
+  const w = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => { out += String(chunk); return true; }) as typeof process.stdout.write;
+  let rc: number;
+  try { rc = await exportDsseReceipt({ receiptPath: file, runId: null, deps: {}, verify: verifyReceipt, key: loadSigningKey(false), kidOf }); }
+  finally { process.stdout.write = w; }
+  expect(rc).toBe(0);
+  return JSON.parse(out) as Record<string, unknown>;
+}
+
 test("a DSSE envelope copied from another run reads TAMPERED (runIdGuard)", async () => {
-  const payload = Buffer.from(JSON.stringify({ predicate: { run_id: "good-e", verdict: "VERIFIED" } })).toString("base64");
-  await seedRun("env-b", { payloadType: "application/vnd.in-toto+json", payload, signatures: [{ keyid: "k", sig: "AAAA" }] });
+  const env = await realEnvelope("good-e");
+  // control: the same real envelope under its own run id verifies, so the signature is genuine
+  await seedRun("good-e", env);
+  expect((await body(await verify("good-e"))).verdict).toBe("VERIFIED");
+  await seedRun("env-b", env);
   const j = await body(await verify("env-b"));
   expect(j.verdict).toBe("TAMPERED");
   expect(j.reasons[0]).toContain("does not match run id");

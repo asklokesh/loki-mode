@@ -122,25 +122,10 @@ async function scan(page: Page) {
   return (res as { id: string; impact: string; targets: string[] }[]).filter((v) => v.impact === "serious" || v.impact === "critical");
 }
 
-// REAL contrast violations found by this scan (WCAG 2 AA, serious). They are reported here, not hidden:
-// each is annotated "known-a11y" in the run output and must be fixed in the owning component, then deleted from this list.
-//   dark: Button primary label #ffffff on #8b7bf5 = 3.36 (needs 4.5)               button[data-testid=new-run]
-//   dark: Badge error  #e07070 on #3b262b/#432e35 = 4.48/3.99 (needs 4.5)          session rows, runs table, home table
-//   dark: Badge info   #5a9cf5 on #2b364d = 4.32 (needs 4.5)                       runs table, cost budget badge
-//   dark: active NavItem label #8b7bf5 on #2f2b47 = 4.01 to 4.06 (needs 4.5)       Settings nav entries
-//   light and dark: legacy Settings page button .min-h-11 #ffffff on #0284c7 = 4.09 (needs 4.5)   ui/src/Shell.tsx SettingsPage
+// A reported, not-yet-fixed contrast violation goes in this list: it is annotated "known-a11y" in the run output and must be fixed in
+// the owning component, then deleted. Empty since CPE-27 fixed the five CPE-23 findings (primary Button, error and info Badge, active NavItem, legacy Settings button).
 const normalise = (t: string) => t.replace(/ \[[^\]]*= [\d.]+\]$/, "").replace(/:nth-child\(\d+\)/g, "").replace(/\[data-run=\\?"[^\]]*"\]/, "[data-run]");
-const KNOWN_CONTRAST = new Set([
-  'button[data-testid="new-run"]',
-  'a[data-testid="session-row"] > span[data-tone="error"][data-cp="badge"]',
-  'tr > td > span[data-tone="error"][data-cp="badge"]',
-  'tr[data-run] > td > span[data-tone="error"][data-cp="badge"]',
-  'td > span[data-tone="info"][data-cp="badge"]',
-  'div[data-testid="cost-budget-subscription"] > span[data-tone="info"][data-cp="badge"]',
-  'a[href$="#/settings"] > span',
-  'a[href$="#/settings/general"] > span',
-  ".min-h-11",
-]);
+const KNOWN_CONTRAST = new Set<string>([]);
 
 const verified = (fx("runs.json").runs as { run_id: string; source_id: string; verdict: string }[]).find((r) => r.verdict === "VERIFIED")!;
 const PAGES: [string, string][] = [

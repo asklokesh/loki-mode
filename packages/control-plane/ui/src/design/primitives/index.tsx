@@ -10,7 +10,7 @@ const TONE_BG: Record<Tone, string> = {
   success: t("success-muted"), warning: t("warning-muted"), error: t("error-muted"), info: t("info-muted"), neutral: t("bg-3"),
 };
 const TONE_FG: Record<Tone, string> = {
-  success: t("success-ink"), warning: t("warning-ink"), error: t("error"), info: t("info-ink"), neutral: t("text-2"),
+  success: t("success-ink"), warning: t("warning-ink"), error: t("error-ink"), info: t("info-ink"), neutral: t("text-2"),
 };
 
 /* Card */
@@ -113,7 +113,7 @@ export function StatusDot({ state = "idle", label }: { state?: DotState; label?:
 /* Button */
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
 const BTN: Record<ButtonVariant, CSSProperties> = {
-  primary: { background: t("accent"), color: "#ffffff", border: "1px solid transparent" },
+  primary: { background: t("accent-solid"), color: "#ffffff", border: "1px solid transparent" },
   secondary: { background: t("bg-3"), color: t("text"), border: `1px solid ${t("border")}` },
   ghost: { background: "transparent", color: t("text-2"), border: "1px solid transparent" },
   danger: { background: t("error"), color: "#ffffff", border: "1px solid transparent" },
@@ -223,7 +223,7 @@ export function NavItem({ active, icon, children, href, onClick }: { active?: bo
   const style: CSSProperties = {
     position: "relative", display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: t("radius-nav"), fontSize: t("text-md"), fontWeight: 500,
     textDecoration: "none", cursor: "pointer", border: 0, width: "100%", textAlign: "left",
-    background: active ? t("accent-glow") : "transparent", color: active ? t("accent") : t("text-2"),
+    background: active ? t("accent-glow") : "transparent", color: active ? t("accent-ink") : t("text-2"),
   };
   const inner = (
     <>
