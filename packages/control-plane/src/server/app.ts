@@ -115,7 +115,7 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   });
 
   // Legacy dashboard paths (CPE-24) are answered by the shim; mounted before the SPA fallback so index.html never shadows them.
-  app.route("/", legacyShim({ db, token: opts.token }));
+  app.route("/", legacyShim({ db, token: opts.token, repoDir }));
 
   // Static UI with SPA fallback. Registered last so /v1, /health and /ready always win.
   app.get("*", (c) => {

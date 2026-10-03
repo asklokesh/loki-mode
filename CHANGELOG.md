@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- The Control Plane now serves metrics, cost and fleet spend that the legacy dashboard answered on port 57374: `/v1/metrics`, `/v1/cost/snapshot`, `/v1/cost/timeline`, `/v1/fleet/runs` and `/v1/fleet/summary` read the same `.loki/` and registry files, return null with a "not measured" marker instead of a zero, and the legacy `/metrics`, `/api/cost`, `/api/cost/timeline` and `/api/fleet/*` paths now map onto them (the legacy `/metrics` now requires the same auth as other legacy routes).
 - The Control Plane server now mounts the legacy dashboard shim ahead of its SPA fallback, so old dashboard paths on the Control Plane port get the shim's 308, 501 or 410 answer (or a mapped response) instead of the single-page app.
 - Agent SDK 0.3.288 (Claude Code 2.1.288) with Sonnet 5.5 cost rates of $2 input and $10 output per MTok, and CLAUDE_CODE_DISABLE_STRUCTURED_OUTPUTS now verified to reach SDK sessions.
 - Deploy hardening for the Control Plane: Helm now generates a stable random token (or reads `secrets.controlTokenKey` from your `existingSecret`), compose requires `LOKI_CONTROL_TOKEN` and publishes on 127.0.0.1, and the ECS module requires `control_token_secret_arn` unless `allow_insecure_bind` is set, so no deploy path runs the Control Plane open; the image now builds the Control Plane in its own stage and ships only the bundle, UI and migrations, workers ship to it with the same token, and `persistence.controlDb.enabled` keeps its database across restarts.
