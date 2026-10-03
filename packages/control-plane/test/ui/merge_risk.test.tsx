@@ -116,3 +116,30 @@ test("risk with no files field shows files not measured, never 0 files", async (
   fireEvent.click(screen.getByText("Measure risk"));
   await waitFor(() => screen.getByText(/files: not measured/));
 });
+
+test("a timed-out dry run is not shown as a complete plan", async () => {
+  handler = (c) => {
+    if (c.path.startsWith("/v1/merge/queue") && c.method === "GET") return new Response(JSON.stringify({ measured: true, queue: [5] }));
+    if (c.path === "/v1/merge/run") return new Response(JSON.stringify({ ok: false, ran: false, dryRun: true, exit: null, lines: ["#5: checks green, would merge (squash)"], timedOut: true, partial: true, error: "timed out" }), { status: 500 });
+    return new Response("{}");
+  };
+  render(<merge.MergePage />);
+  await waitFor(() => screen.getByText("PR #5"));
+  fireEvent.click(screen.getByText("Preview"));
+  await waitFor(() => screen.getByText(/would merge/));
+  expect(screen.getByRole("alert").textContent).toMatch(/Partial outcome: timed out/);
+});
+
+test("a timed-out real merge says merged PRs may still be listed in the queue", async () => {
+  handler = (c) => {
+    if (c.path.startsWith("/v1/merge/queue") && c.method === "GET") return new Response(JSON.stringify({ measured: true, queue: [5] }));
+    if (c.path === "/v1/merge/run") return new Response(JSON.stringify({ ok: false, ran: false, dryRun: false, exit: null, lines: ["#5: merged"], timedOut: true, partial: true, error: "timed out" }), { status: 500 });
+    return new Response("{}");
+  };
+  render(<merge.MergePage />);
+  await waitFor(() => screen.getByText("PR #5"));
+  fireEvent.click(screen.getByRole("button", { name: "Merge queue" }));
+  fireEvent.click(screen.getByText("Confirm merge"));
+  await waitFor(() => screen.getByText(/#5: merged/));
+  expect(screen.getByRole("alert").textContent).toMatch(/may still appear in the queue/);
+});

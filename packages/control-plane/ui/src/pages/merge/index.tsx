@@ -26,6 +26,14 @@ async function callRun(dryRun: boolean): Promise<RunResult> {
   return { ok: false, ran: false, dryRun, exit: null, ...j, lines: j.lines } as RunResult;
 }
 
+/** Shared partial/error notice for the plan and result cards; empty only for a clean, complete run. */
+function notice(r: RunResult): string | null {
+  if (r.ran && !r.partial && !r.error) return null;
+  const why = r.error ?? "the run did not finish cleanly";
+  if (r.timedOut) return `Partial outcome: ${why}. Lines below show what completed before it stopped. PRs listed as merged are already merged, but the queue file is only rewritten when a run finishes, so they may still appear in the queue; PRs not listed may still be queued.`;
+  return `${r.partial ? "Partial outcome" : "Not completed"}: ${why}. Lines below show what completed before it stopped; PRs not listed as merged may still be queued.`;
+}
+
 export function MergePage() {
   const [queue, setQueue] = useState<number[] | null>(null);
   const [qErr, setQErr] = useState<string | null>(null);
@@ -94,11 +102,16 @@ export function MergePage() {
         {busy ? <Spinner label="Working" /> : null}
       </div>
       {msg ? <Badge tone={msg.tone}>{msg.text}</Badge> : null}
-      {plan ? <Card><strong>Plan (dry run, nothing changed)</strong><pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{plan.lines.join("\n") || "not measured"}</pre></Card> : null}
+      {plan ? (
+        <Card>
+          <strong>Plan (dry run, nothing changed)</strong>{notice(plan) ? <p role="alert" style={{ margin: "4px 0" }}>{notice(plan)}</p> : null}
+          <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{plan.lines.join("\n") || "not measured"}</pre>
+        </Card>
+      ) : null}
       {result ? (
         <Card>
           <strong>Merge result</strong> <Badge tone={result.ok ? "success" : "warning"}>{result.ok ? "all merged" : result.partial || !result.ran ? "partial result" : "some PRs left in queue"}</Badge>
-          {result.partial || !result.ran ? <p role="alert" style={{ margin: "4px 0" }}>Partial outcome: {result.error ?? "the run did not finish cleanly"}. The lines below show what completed before it stopped; PRs not listed as merged may still be queued.</p> : null}
+          {notice(result) ? <p role="alert" style={{ margin: "4px 0" }}>{notice(result)}</p> : null}
           <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>{result.lines.join("\n")}</pre>
         </Card>
       ) : null}

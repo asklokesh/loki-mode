@@ -257,3 +257,28 @@ test("parseRisk reports files null (not 0) when the field is missing", () => {
   expect(parseRisk('{"score":5,"level":"low","files":4,"factors":[]}')?.files).toBe(4);
   expect(existsSync(bin)).toBe(true);
 });
+
+test("a missing gh CLI (exit 1, no PR lines) is an error, not 'left in queue'", async () => {
+  const b = slowBin("loki-nogh", `echo "gh CLI is required" >&2\nexit 1`);
+  const a = appWith(b);
+  const r = await post(a, "/v1/merge/run", { dryRun: false });
+  const j = (await r.json()) as { ran: boolean; error: string };
+  expect(r.status).toBe(500);
+  expect(j.ran).toBe(false);
+  expect(j.error).toContain("gh CLI is required");
+  expect(a.db.select().from(actions).all().some((x) => x.result === "error")).toBe(true);
+  a.close();
+});
+
+test("two long real merges do not 429 the queue list, and the risk GET has its own 429 cap", async () => {
+  const b = slowBin("loki-hold4", `sleep 1\necho "#1"`);
+  const a = appWith(b);
+  const g = (p: string) => a.app.fetch(new Request(`http://127.0.0.1:1234${p}`, { headers: { host: "127.0.0.1:1234" } }), peer("127.0.0.1"));
+  const runs = [post(a, "/v1/merge/run", { dryRun: true }), post(a, "/v1/merge/run", { dryRun: true })];
+  await sleep(200);
+  expect((await g("/v1/merge/queue")).status).toBe(200);
+  await Promise.all(runs);
+  const rs = await Promise.all([g("/v1/review/risk?pr=1"), g("/v1/review/risk?pr=1"), g("/v1/review/risk?pr=1")]);
+  expect(rs.map((r) => r.status).sort()).toEqual([200, 200, 429]);
+  a.close();
+});

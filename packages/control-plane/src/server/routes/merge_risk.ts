@@ -80,7 +80,7 @@ export function mount(ctx: RouteCtx): void {
   const { act, db } = ctx;
   const bin = () => ctx.startBin ?? process.env["LOKI_BIN"] ?? "loki";
   const busy = new Set<string>();
-  const active = { merge: 0, risk: 0 };
+  const active = { run: 0, queue: 0, risk: 0 };
   const real = (p: string): string | null => { try { return realpathSync(p); } catch { return null; } };
 
   /** The repo must be one the server knows (cwd or the project registry), never an arbitrary path. Returns the REAL path so every lock and cwd is symlink-proof. */
@@ -95,7 +95,7 @@ export function mount(ctx: RouteCtx): void {
     return named.length === 1 ? named[0]! : null;
   };
   /** Small per-route cap on concurrent CLI spawns. */
-  const slot = async <T,>(c: Context, kind: "merge" | "risk", auditKind: string, fn: () => Promise<T>): Promise<T | Response> => {
+  const slot = async <T,>(c: Context, kind: "run" | "queue" | "risk", auditKind: string, fn: () => Promise<T>): Promise<T | Response> => {
     if (active[kind] >= limits.maxConcurrent) { audit(db, { kind: auditKind, result: "refused", detail: "too many concurrent requests" }); return c.json({ error: "too many concurrent requests" }, 429); }
     active[kind]++;
     try { return await fn(); } finally { active[kind]--; }
@@ -121,7 +121,7 @@ export function mount(ctx: RouteCtx): void {
     if (!originOk(c.req.header("origin"))) return refuse(c, "merge.list", undefined, 403, "origin not allowed");
     const cwd = repoFor(c.req.query("repo"));
     if (!cwd) return refuse(c, "merge.list", undefined, 422, "repo is not a known project");
-    return slot(c, "merge", "merge.list", async () => {
+    return slot(c, "queue", "merge.list", async () => {
       const r = await runCli(bin(), ["merge", "list"], cwd, limits.shortMs);
       if (r.code !== 0) return c.json({ measured: false, error: r.error ?? `loki merge list exited ${r.code}`, queue: [] });
       const queue = r.stdout.split("\n").map((l) => /^#([0-9]{1,7})$/.exec(l.trim())?.[1]).filter((n): n is string => n !== undefined).map(Number);
@@ -138,7 +138,7 @@ export function mount(ctx: RouteCtx): void {
     const cwd = repoFor(b["repo"]);
     if (!cwd) return refuse(c, "merge.add", undefined, 422, "repo is not a known project");
     const list = prs as string[];
-    return slot(c, "merge", "merge.add", async () => {
+    return slot(c, "queue", "merge.add", async () => {
       const r = await runCli(bin(), ["merge", "add", ...list], cwd, limits.shortMs);
       const ok = r.code === 0;
       const error = ok ? undefined : (r.error ?? (r.stderr.trim() || `exit ${r.code}`));
@@ -157,7 +157,7 @@ export function mount(ctx: RouteCtx): void {
     const cwd = repoFor(b["repo"]);
     if (!cwd) return refuse(c, kind, undefined, 422, "repo is not a known project");
     if (!dry && busy.has(cwd)) { audit(db, { kind, result: "conflict", detail: "merge already running" }); return c.json({ error: "a merge run is already in progress for this repo" }, 409); }
-    return slot(c, "merge", kind, async () => {
+    return slot(c, "run", kind, async () => {
       if (!dry) busy.add(cwd);
       try {
         const ms = dry ? limits.dryRunMs : limits.mergeRunMs;
@@ -166,9 +166,10 @@ export function mount(ctx: RouteCtx): void {
         const r = await runCli(bin(), dry ? ["merge", "run", "--dry-run"] : ["merge", "run"], cwd, ms, { LOKI_MERGE_POLL_S: String(poll), LOKI_MERGE_MAX_POLLS: String(tries) });
         const lines = r.stdout.split("\n").filter(Boolean);
         // Only exit 1 means "PRs left in the queue" (a result). Any other non-zero exit, a timeout or a cap kill is an error.
-        const ran = r.code === 0 || r.code === 1;
+        const noGh = /gh CLI is required/.test(r.stdout + r.stderr);
+        const ran = (r.code === 0 || r.code === 1) && !noGh;
         if (!dry) for (const l of lines) { const m = /^#([0-9]{1,7}): merged$/.exec(l.trim()); if (m) audit(db, { kind: "merge.pr_merged", target: `#${m[1]}`, result: "ok", detail: r.timedOut ? "recorded before timeout" : undefined }); }
-        const reason = r.timedOut ? "merge run timed out; the outcome is partial, check the queue and the PRs" : r.capped ? "merge run output exceeded the size cap and was stopped; the outcome is partial" : r.error ?? (!ran ? `loki merge run exited ${r.code}: ${r.stderr.trim().slice(0, 300)}` : undefined);
+        const reason = r.timedOut ? "merge run timed out; the outcome is partial, check the queue and the PRs" : r.capped ? "merge run output exceeded the size cap and was stopped; the outcome is partial" : noGh ? "the gh CLI is required and was not found; nothing was merged" : r.error ?? (!ran ? `loki merge run exited ${r.code}: ${r.stderr.trim().slice(0, 300)}` : undefined);
         audit(db, { kind, result: !ran ? "error" : r.code === 0 ? "ok" : "blocked", detail: reason ?? lines.slice(-1)[0] });
         return c.json({ ok: r.code === 0, ran, dryRun: dry, exit: r.code, lines, timedOut: r.timedOut, capped: r.capped, partial: r.timedOut || r.capped, error: reason }, ran ? 200 : 500);
       } finally { if (!dry) busy.delete(cwd); }
