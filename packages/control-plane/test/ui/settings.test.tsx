@@ -110,3 +110,16 @@ test("existing file problems are listed, and a load failure offers Retry", async
   expect(await screen.findByText(/resolves outside the repo/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Retry" })).toBeTruthy();
 });
+
+test("workspace shell commands are listed read-only and an edit to them is blocked before the request", async () => {
+  const ws = { w: { repos: [{ repo: "a/b", setup: "npm ci" }], integration: { command: "npm test" } } };
+  serve({ config: { workspaces: ws } });
+  render(<ConfigSettings />);
+  const card = within(await screen.findByTestId("settings-workspaces"));
+  expect(within(card.getByTestId("settings-shell-readonly")).getByText(/integration command: npm test/)).toBeTruthy();
+  const edited = { w: { ...ws.w, integration: { command: "echo changed" } } };
+  fireEvent.input(card.getByLabelText("Workspaces (JSON)"), { target: { value: JSON.stringify(edited) } });
+  fireEvent.click(card.getByRole("button", { name: "Save" }));
+  expect((await card.findByRole("alert")).textContent).toContain("Edit shell commands in loki.yaml directly");
+  expect(calls.length).toBe(0);
+});

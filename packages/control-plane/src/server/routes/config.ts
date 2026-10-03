@@ -27,7 +27,7 @@ export function validateConfig(value: Json, s: Schema = schema as Schema, path =
   if (s.type === "object") {
     if (!isObj(value)) return [`${at}: must be an object`];
     for (const [k, v] of Object.entries(value)) {
-      const sub = s.properties?.[k];
+      const sub = Object.hasOwn(s.properties ?? {}, k) ? s.properties![k] : undefined;
       if (sub) errs.push(...validateConfig(v, sub, join2(k)));
       else if (isObj(s.additionalProperties)) errs.push(...validateConfig(v, s.additionalProperties as Schema, join2(k)));
       else if (s.additionalProperties === false) errs.push(`${join2(k)}: unknown key`);
@@ -92,7 +92,7 @@ const deepEq = (a: Json, b: Json): boolean => JSON.stringify(canon(a)) === JSON.
 /** Applies `next` onto the document key by key, so comments on untouched nodes survive. */
 function sync(doc: Document, path: string[], prev: Json, next: Json): void {
   if (isObj(next) && isObj(prev)) {
-    for (const k of Object.keys(prev)) if (!(k in next)) doc.deleteIn([...path, k]);
+    for (const k of Object.keys(prev)) if (!Object.hasOwn(next, k)) doc.deleteIn([...path, k]);
     for (const [k, v] of Object.entries(next)) sync(doc, [...path, k], prev[k], v);
     return;
   }
@@ -100,23 +100,58 @@ function sync(doc: Document, path: string[], prev: Json, next: Json): void {
   doc.setIn(path, doc.createNode(next));
 }
 
-type Resolved = { ok: true; file: string; exists: boolean } | { ok: false; error: string };
+const MAX_DEPTH = 24;
+/** True when nesting exceeds `max`. Iterative, so hostile input cannot overflow the stack. */
+export function tooDeep(v: Json, max = MAX_DEPTH): boolean {
+  const stack: Array<[Json, number]> = [[v, 1]];
+  while (stack.length) {
+    const [x, d] = stack.pop()!;
+    if (typeof x !== "object" || x === null) continue;
+    if (d > max) return true;
+    for (const y of Array.isArray(x) ? x : Object.values(x)) stack.push([y, d + 1]);
+  }
+  return false;
+}
+
+/** Shell strings that run later (workspace integration commands and repo setup). Read-only through the API. */
+export function shellStrings(cfg: Json): Record<string, string> {
+  const out: Record<string, string> = {};
+  const ws = isObj(cfg) && isObj(cfg.workspaces) ? cfg.workspaces : {};
+  for (const [name, w] of Object.entries(ws)) {
+    if (!isObj(w)) continue;
+    if (isObj(w.integration) && "command" in w.integration) out[`workspaces.${name}.integration.command`] = JSON.stringify(w.integration.command);
+    if (Array.isArray(w.repos)) w.repos.forEach((r, i) => { if (isObj(r) && "setup" in r) out[`workspaces.${name}.repos[${i}].setup`] = JSON.stringify(r.setup); });
+  }
+  return out;
+}
+const shellChanged = (a: Json, b: Json): boolean => !deepEq(shellStrings(a), shellStrings(b));
+
+/** Renders the document and re-parses it; null unless the result equals `next` exactly. */
+export function renderVerified(doc: Document, next: Json): string | null {
+  try {
+    const out = String(doc);
+    const back = parseDocument(out);
+    return back.errors.length || !deepEq(back.toJS(), next) ? null : out;
+  } catch { return null; }
+}
+
+type Resolved = { ok: true; file: string; exists: boolean } | { ok: false; error: string; status: 400 | 422 };
 
 /** loki.yaml in the repo root. A symlink is followed only when it resolves to a regular file inside the repo. */
 export function resolveConfigFile(repoDir: string): Resolved {
   let root: string;
-  try { root = realpathSync(repoDir); } catch { return { ok: false, error: "repo directory not found" }; }
+  try { root = realpathSync(repoDir); } catch { return { ok: false, status: 400, error: "repo directory not found" }; }
   const p = join(root, "loki.yaml");
   let st;
   try { st = lstatSync(p); } catch { return { ok: true, file: p, exists: false }; }
   if (st.isSymbolicLink()) {
     let real: string;
-    try { real = realpathSync(p); } catch { return { ok: false, error: "loki.yaml is a broken symlink" }; }
-    if (!real.startsWith(root + sep)) return { ok: false, error: "loki.yaml is a symlink that resolves outside the repo" };
-    if (!statSync(real).isFile()) return { ok: false, error: "loki.yaml is not a regular file" };
+    try { real = realpathSync(p); } catch { return { ok: false, status: 400, error: "loki.yaml is a broken symlink" }; }
+    if (!real.startsWith(root + sep)) return { ok: false, status: 400, error: "loki.yaml is a symlink that resolves outside the repo" };
+    if (!statSync(real).isFile()) return { ok: false, status: 422, error: "loki.yaml is not a regular file" };
     return { ok: true, file: real, exists: true };
   }
-  if (!st.isFile()) return { ok: false, error: "loki.yaml is not a regular file" };
+  if (!st.isFile()) return { ok: false, status: 422, error: "loki.yaml is not a regular file" };
   return { ok: true, file: p, exists: true };
 }
 
@@ -138,77 +173,89 @@ const norm = (h: string | undefined): string | null => (h ? h.trim().replace(/^W
 export function mount(ctx: RouteCtx): void {
   const { act, db, repoDir, local } = ctx;
 
+  const deny = (c: Context, kind: string, status: 400 | 403 | 409 | 413 | 422 | 428 | 500, error: string, extra: Record<string, unknown> = {}) => {
+    audit(db, { kind, target: "loki.yaml", result: status === 409 ? "conflict" : status === 500 ? "error" : "refused", detail: error });
+    return c.json({ error, ...extra }, status);
+  };
+
   act.get("/v1/config", (c: Context) => {
-    if (!ctx.peerIsLoopback(c)) return c.json({ error: "loopback requests only" }, 403);
-    const r = resolveConfigFile(repoDir);
-    if (!r.ok) return c.json({ error: r.error }, 400);
-    let raw = "";
-    if (r.exists) {
-      if (statSync(r.file).size > MAX_FILE) return c.json({ error: "loki.yaml is too large" }, 413);
-      raw = readFileSync(r.file, "utf8");
+    if (!ctx.peerIsLoopback(c)) return deny(c, "config.read", 403, "loopback requests only");
+    try {
+      const r = resolveConfigFile(repoDir);
+      if (!r.ok) return deny(c, "config.read", r.status, r.error);
+      let raw = "";
+      if (r.exists) {
+        if (statSync(r.file).size > MAX_FILE) return deny(c, "config.read", 413, "loki.yaml is too large");
+        raw = readFileSync(r.file, "utf8");
+      }
+      const doc = parseDocument(raw);
+      let config: Json = {};
+      let errors: string[] = doc.errors.map((e) => e.message.split("\n")[0]!);
+      if (!errors.length) {
+        config = doc.toJS({ maxAliasCount: 20 }) ?? {};
+        if (tooDeep(config)) { config = {}; errors = ["(root): nested too deeply"]; } else errors = validateConfig(config);
+      }
+      c.header("ETag", etagOf(raw));
+      return c.json({ path: "loki.yaml", exists: r.exists, etag: etagOf(raw), config, errors });
+    } catch (e) {
+      return deny(c, "config.read", 422, `loki.yaml could not be read safely: ${(e as Error).message.split("\n")[0]}`);
     }
-    const doc = parseDocument(raw);
-    let config: Json = {};
-    let errors: string[] = doc.errors.map((e) => e.message.split("\n")[0]!);
-    if (!errors.length) {
-      config = doc.toJS({ maxAliasCount: 20 }) ?? {};
-      errors = validateConfig(config);
-    }
-    c.header("ETag", etagOf(raw));
-    return c.json({ path: "loki.yaml", exists: r.exists, etag: etagOf(raw), config, errors });
   });
 
   act.put("/v1/config", async (c: Context) => {
-    if (!local(c)) return c.json({ error: "loopback JSON requests only" }, 403);
-    if (!originOk(c.req.header("origin"))) { audit(db, { kind: "config.update", target: "loki.yaml", result: "refused", detail: "origin not allowed" }); return c.json({ error: "origin not allowed" }, 403); }
-    const text = await c.req.text();
-    if (text.length > MAX_BODY) return c.json({ error: "body too large" }, 413);
-    const refuse = (status: 400 | 409 | 422 | 428, error: string, extra: Record<string, unknown> = {}) => {
-      audit(db, { kind: "config.update", target: "loki.yaml", result: status === 409 ? "conflict" : "refused", detail: error });
-      return c.json({ error, ...extra }, status);
-    };
-    const ifMatch = norm(c.req.header("if-match"));
-    if (!ifMatch) return refuse(428, "If-Match is required");
-    let body: unknown;
-    try { body = JSON.parse(text); } catch { return refuse(400, "invalid JSON"); }
-    const next = isObj(body) ? body.config : undefined;
-    if (!isObj(next)) return refuse(400, "body must be {config: object}");
-
-    const secrets = findSecrets(next);
-    if (secrets.length) return refuse(422, "value looks like a secret; loki.yaml stores env var names only", { paths: secrets });
-    const errors = validateConfig(next);
-    if (errors.length) return refuse(422, "config does not match schemas/loki-yaml.schema.json", { errors });
-
-    const r = resolveConfigFile(repoDir);
-    if (!r.ok) return refuse(400, r.error);
-    let raw = "";
-    if (r.exists) {
-      if (statSync(r.file).size > MAX_FILE) return refuse(400, "loki.yaml is too large");
-      raw = readFileSync(r.file, "utf8");
-    }
-    if (sha(raw) !== ifMatch) return refuse(409, "loki.yaml changed since it was read", { etag: etagOf(raw) });
-
-    const doc = parseDocument(raw);
-    if (doc.errors.length) return refuse(422, "existing loki.yaml does not parse; fix it by hand first");
-    if (doc.contents !== null && !isMap(doc.contents)) return refuse(422, "existing loki.yaml root is not a mapping");
-    const prev = (doc.toJS({ maxAliasCount: 20 }) ?? {}) as Record<string, Json>;
-    if (doc.contents === null) doc.contents = doc.createNode({}) as typeof doc.contents;
-    sync(doc, [], prev, next);
-    const out = String(doc);
-    const back = parseDocument(out);
-    if (back.errors.length || !deepEq(back.toJS(), next)) return refuse(400, "could not render the config safely");
-
-    const changed = [...new Set([...Object.keys(prev), ...Object.keys(next)])].filter((k) => !deepEq(prev[k], next[k]));
+    const K = "config.update";
+    if (!local(c)) return deny(c, K, 403, "loopback JSON requests only");
+    if (!originOk(c.req.header("origin"))) return deny(c, K, 403, "origin not allowed");
     try {
-      const mode = r.exists ? statSync(r.file).mode & 0o777 : 0o644;
-      if (r.exists) atomicWrite(`${r.file}.bak`, raw, 0o600);
-      atomicWrite(r.file, out, mode);
+      const text = await c.req.text();
+      if (text.length > MAX_BODY) return deny(c, K, 413, "body too large");
+      const refuse = (status: 400 | 409 | 422 | 428, error: string, extra: Record<string, unknown> = {}) => deny(c, K, status, error, extra);
+      const ifMatch = norm(c.req.header("if-match"));
+      if (!ifMatch) return refuse(428, "If-Match is required");
+      let body: unknown;
+      try { body = JSON.parse(text); } catch { return refuse(400, "invalid JSON"); }
+      if (tooDeep(body)) return refuse(422, "config is nested too deeply");
+      const next = isObj(body) ? body.config : undefined;
+      if (!isObj(next)) return refuse(400, "body must be {config: object}");
+
+      const secrets = findSecrets(next);
+      if (secrets.length) return refuse(422, "value looks like a secret; loki.yaml stores env var names only", { paths: secrets });
+      const errors = validateConfig(next);
+      if (errors.length) return refuse(422, "config does not match schemas/loki-yaml.schema.json", { errors });
+
+      const r = resolveConfigFile(repoDir);
+      if (!r.ok) return refuse(r.status, r.error);
+      let raw = "";
+      if (r.exists) {
+        if (statSync(r.file).size > MAX_FILE) return refuse(400, "loki.yaml is too large");
+        raw = readFileSync(r.file, "utf8");
+      }
+      if (!(ifMatch === "*" ? r.exists : sha(raw) === ifMatch)) return refuse(409, "loki.yaml changed since it was read", { etag: etagOf(raw) });
+
+      const doc = parseDocument(raw);
+      if (doc.errors.length) return refuse(422, "existing loki.yaml does not parse; fix it by hand first");
+      if (doc.contents !== null && !isMap(doc.contents)) return refuse(422, "existing loki.yaml root is not a mapping");
+      const prev = (doc.toJS({ maxAliasCount: 20 }) ?? {}) as Record<string, Json>;
+      if (tooDeep(prev)) return refuse(422, "existing loki.yaml is nested too deeply");
+      if (shellChanged(prev, next)) return refuse(422, "edit shell commands in loki.yaml directly");
+      if (doc.contents === null) doc.contents = doc.createNode({}) as typeof doc.contents;
+      sync(doc, [], prev, next);
+      const out = renderVerified(doc, next);
+      if (out === null) return refuse(400, "could not render the config safely");
+
+      const changed = [...new Set([...Object.keys(prev), ...Object.keys(next)])].filter((k) => !deepEq(prev[k], next[k]));
+      try {
+        const mode = r.exists ? statSync(r.file).mode & 0o777 : 0o644;
+        if (r.exists) atomicWrite(`${r.file}.bak`, raw, 0o600);
+        atomicWrite(r.file, out, mode);
+      } catch {
+        return deny(c, K, 500, "could not write loki.yaml");
+      }
+      audit(db, { kind: K, target: "loki.yaml", result: "updated", detail: `sections: ${changed.join(", ") || "none"}` });
+      c.header("ETag", etagOf(out));
+      return c.json({ ok: true, etag: etagOf(out), config: next });
     } catch (e) {
-      audit(db, { kind: "config.update", target: "loki.yaml", result: "error", detail: (e as Error).message });
-      return c.json({ error: "could not write loki.yaml" }, 500);
+      return deny(c, K, 422, `config could not be processed: ${(e as Error).message.split("\n")[0]}`);
     }
-    audit(db, { kind: "config.update", target: "loki.yaml", result: "updated", detail: `sections: ${changed.join(", ") || "none"}` });
-    c.header("ETag", etagOf(out));
-    return c.json({ ok: true, etag: etagOf(out), config: next });
   });
 }

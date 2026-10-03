@@ -26,6 +26,18 @@ export const SECTIONS: Section[] = [
 ];
 
 const isObj = (v: unknown): v is ConfigObject => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Shell strings that run later. The server refuses any change to them, so the UI lists them read-only. Mirrors routes/config.ts. */
+export function shellStrings(cfg: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  const ws = isObj(cfg) && isObj(cfg.workspaces) ? cfg.workspaces : {};
+  for (const [name, w] of Object.entries(ws)) {
+    if (!isObj(w)) continue;
+    if (isObj(w.integration) && "command" in w.integration) out[`${name} integration command`] = String(w.integration.command);
+    if (Array.isArray(w.repos)) w.repos.forEach((r, i) => { if (isObj(r) && "setup" in r) out[`${name} setup for repo ${i + 1}`] = String(r.setup); });
+  }
+  return out;
+}
 const getAt = (c: ConfigObject, p: string[]): unknown => p.reduce<unknown>((o, k) => (isObj(o) ? o[k] : undefined), c);
 
 function setAt(c: ConfigObject, p: string[], v: unknown): ConfigObject {
@@ -76,6 +88,7 @@ function SectionCard({ section, state, onSave }: { section: Section; state: Conf
       if (r.error) bad.push(r.error); else next = setAt(next, f.path, r.value);
     });
     if (bad.length) { setProblems(bad); return; }
+    if (JSON.stringify(shellStrings(next)) !== JSON.stringify(shellStrings(state.config))) { setProblems(["Edit shell commands in loki.yaml directly"]); return; }
     setBusy(true); setProblems([]); setSaved(false);
     try { await onSave(next); setSaved(true); }
     catch (e) { setProblems(e instanceof ConfigError ? [e.message, ...e.details] : [(e as Error).message]); }
@@ -109,6 +122,14 @@ function SectionCard({ section, state, onSave }: { section: Section; state: Conf
           );
         })}
       </div>
+      {section.id === "workspaces" && Object.keys(shellStrings(state.config)).length ? (
+        <div data-testid="settings-shell-readonly" style={{ marginTop: 12 }}>
+          <div style={{ fontSize: t("text-md"), marginBottom: 4 }}>Shell commands (read only, edit in loki.yaml directly)</div>
+          <ul style={{ margin: 0, paddingLeft: 18, fontFamily: t("font-mono"), fontSize: t("text-base"), color: t("text-2") }}>
+            {Object.entries(shellStrings(state.config)).map(([k, v]) => <li key={k}>{k}: {v}</li>)}
+          </ul>
+        </div>
+      ) : null}
       {problems.length ? (
         <ul role="alert" data-testid="settings-problems" style={{ margin: "12px 0 0", paddingLeft: 18, color: t("error"), fontSize: t("text-md") }}>
           {problems.map((p) => <li key={p}>{p}</li>)}
