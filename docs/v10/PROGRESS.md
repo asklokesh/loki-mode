@@ -2101,3 +2101,12 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
   - Opus share is 38% against its 30% budget. Builders and LOW/MEDIUM reviews stay on sonnet.
   - The pulse git probes are timing out under load, so its UNKNOWN metrics are not regressions.
 - In flight: SEAL r10 opus HIGH review (it also covers ratifying D80) and G-04 r2 build.
+
+## 2026-10-03T14:22Z (CoS)
+- G-04 cloud-dispatch merged after opus r3 APPROVE (42ce26e09). Advisories carded on its BOARD row.
+- train/100: the first Tests run failed P9.injection-cannot-reach-token in the [default] leg. The full rerun of run 37125941522 (attempt 2) was all green. train-cycle promoted it and tagged v10.6.14 at 7fbbefc30 (14:01:46Z). As of 2026-10-03T14:22Z, the Release job is waiting on required-ci (Security Audit), and npm latest and next are still 10.6.13.
+- Local main was rebased onto origin/main (7fbbefc30) after the usage-readings commit, with no conflicts.
+- SEAL-FORGED-LINES merged. r11 was blocked by opus F1 (the env-scrub mutant survived at 132/0). r12 added the childEnv unit and E2E tests, and the opus re-review APPROVED it (scrub mutant goes 132/2 red; M2a, M2b and M3 were caught). The 12 round commits were cherry-picked; the SEAL suite is 134/0 on main, and CHANGELOG keeps only the final entry (899d200a3).
+- Fast gate on main: rc=124 (590s timeout under load). There is one real failure: the structural emoji scan flags U+2713, U+2714 and U+2716 in the SEAL code, tests and README. The r13 escape-only fix is building. train/101 is held for it.
+- P0-P9-DEFAULT-PUSH: root cause found. The region guard in autonomy/lib/engine10-push.sh, `printf | grep -q` under pipefail, gets SIGPIPE 141 under load, so the post-session push is refused. The fix (b2eebc22f) uses a pipe-free bash match. Repro under docker load: 5/18 failed before the fix, 0/10 after. Opus HIGH review is running. The engineer also saw P2 and P7 moat FAILs in that worktree, with the cause unknown; the reviewer will bisect them.
+- Drift audit (turn 2244): BOARD has ready=18, 14 of them dependency-blocked. The pulse git and ps probes are still timing out, so UNKNOWN metrics there are not regressions. Opus share is 37% against its 30% budget, and opus is used for HIGH reviews only.
