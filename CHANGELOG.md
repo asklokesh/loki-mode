@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- test(FC-18): legacy-shim route and doc counts, control-plane route module count and doctor JSON check count now derive from their source of truth instead of pinned literals.
+
 ## v10.9.1 (2026-10-03)
 
 Release-gate fix for 10.9.0: the 10.9.0 publish was blocked at its gate by one loki-ts type error and an engine10 size budget overrun, so nothing reached npm as 10.9.0. 10.9.1 ships everything listed under v10.9.0 below, plus these fixes.

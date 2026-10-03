@@ -69,5 +69,6 @@ test("audit helper writes the actions table and never throws", () => {
 });
 
 test("every planned route stub exists and mounts nothing harmful", () => {
-  expect(routeModules.length).toBe(19);
+  const files = readdirSync(join(import.meta.dir, "../../src/server/routes")).filter((n) => n.endsWith(".ts") && n !== "index.ts");
+  expect(routeModules.length).toBe(files.length);
 });
