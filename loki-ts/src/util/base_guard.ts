@@ -76,7 +76,7 @@ export function unmergedEvidence(repoDir: string, evidencePaths: string[], start
 
 /** Harness-owned informational reason (L5): never a refusal, never VERIFIED. */
 export function unmergedEvidenceNote(u: UnmergedEvidence): string {
-  return `work exists on ${u.branch ?? "HEAD"}, not on ${u.target} (${u.commits} commit(s)); open or resume it. The task is not reported as already satisfied because its evidence (${u.paths.slice(0, 3).join(", ")}) is not on the PR target`;
+  return `work exists on ${u.branch ?? "HEAD"}, not on ${u.target} (${u.commits} commit(s)); open or resume it. The task is not reported as already satisfied because its evidence (${u.paths.slice(0, 3).join(", ")}${u.paths.length > 3 ? ` (+${u.paths.length - 3} more)` : ""}) is not on the PR target`;
 }
 
 /** Start-line fragment naming the PR target and the base the run starts from (no network). */

@@ -126,7 +126,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   // FC-15: the claim rests on the PR target. Evidence only in target..HEAD means no claim; Loki's own work there is reported, never refused.
   const stale = already ? unmergedEvidence(ctx.repoDir, already.paths, startBranch) : null;
   if (already && !stale) return { status: "completed", data: { ...base, ...alreadyData(already) } };
-  if (stale?.lokiOwn) process.stderr.write(`engine10: ${unmergedEvidenceNote(stale)}\n`); // L5/L6: the operator sees it when the run goes on to implement
+  if (stale) process.stderr.write(`engine10: ${stale.lokiOwn ? unmergedEvidenceNote(stale) : `evidence for the task is on ${stale.branch ?? "HEAD"} but not on ${stale.target}; implementing`}\n`); // L5/L6: the operator sees it when the run goes on to implement
   const data = { ...base, ...(stale?.lokiOwn ? { unmerged_loki_work: { branch: stale.branch, target: stale.target, commits: stale.commits, message: unmergedEvidenceNote(stale) } } : {}), ...(await intakeProjectModel(ctx, signal, t0)), repomap_ref: repomapRef, testmap, already_satisfied: false };
   if (speedEnabled()) deferAlreadyDone(ctx, signal, task, repoMap, testmap, (a) => { if (unmergedEvidence(ctx.repoDir, a.paths, startBranch)) throw new Error("evidence not on the PR target"); Object.assign(data, alreadyData(a)); });
   return { status: "completed", data };

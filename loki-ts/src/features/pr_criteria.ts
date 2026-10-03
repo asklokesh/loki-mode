@@ -36,12 +36,12 @@ function criterionLines(r: CriterionRow): string[] {
   const sh = r.shared ? " (shared by all criteria)" : "";
   return [`- ${clip(r.text)}`, `  files${sh}: ${files}; check${sh}: ${check}`];
 }
-export interface Parts { contract: string; verdictLine: string; timing: string[]; notProven: string[]; receipt: string | null; group: string[]; rows: CriterionRow[]; legacy: boolean; note?: string }
+export interface Parts { contract: string; verdictLine: string; timing: string[]; notProven: string[]; receipt: string | null; group: string[]; rows: CriterionRow[]; legacy: boolean }
 /** Order: contract, verdict, criteria, stage times, receipt, unit table, NOT PROVEN last. `legacy` (no contract, no criteria, no intake task) keeps the pre-INTEL-3 bytes. */
 export function layoutPrBody(p: Parts): string {
   if (p.legacy) { // raw: no clip, no fit, so pre-INTEL-3 bytes are preserved exactly
     const st = p.timing.length > 0 ? ["Stage times:", ...p.timing, ""] : [];
-    return `${[p.verdictLine, ...(p.note ? [`Note: ${p.note}`] : []), "", ...st, "NOT PROVEN:", ...(p.notProven.length > 0 ? p.notProven.map((x) => `- ${x}`) : ["- none"]), ...(p.receipt ? ["", `Receipt: ${p.receipt}`] : []), ...(p.group.length ? ["", ...p.group] : [])].join("\n")}\n`;
+    return `${[p.verdictLine, "", ...st, "NOT PROVEN:", ...(p.notProven.length > 0 ? p.notProven.map((x) => `- ${x}`) : ["- none"]), ...(p.receipt ? ["", `Receipt: ${p.receipt}`] : []), ...(p.group.length ? ["", ...p.group] : [])].join("\n")}\n`;
   }
   const unproven = p.rows.filter((r) => !r.check).map((r) => `criterion has no passing check: ${r.text}`);
   const all = [...p.notProven, ...unproven.filter((u) => !p.notProven.includes(u))];
@@ -50,8 +50,8 @@ export function layoutPrBody(p: Parts): string {
   const receipt = p.receipt ? [`Receipt: ${p.receipt}`] : [];
   const group = p.group.length > 0 ? fit(p.group, MAX_GROUP, "unit lines") : [];
   const tail = [...timing, ...(receipt.length ? [...receipt, ""] : []), ...(group.length ? [...group, ""] : []), ...np];
-  const room = Math.max(MIN_CRITERIA_LINES, PR_BODY_LINE_BUDGET - (3 + 2 + tail.length + (p.note ? 1 : 0))); // contract, verdict, blank + criteria header, trailing blank
+  const room = Math.max(MIN_CRITERIA_LINES, PR_BODY_LINE_BUDGET - (3 + 2 + tail.length)); // contract, verdict, blank + criteria header, trailing blank
   const keep = p.rows.length * 2 <= room ? p.rows.length : Math.floor((room - 1) / 2); // whole criteria only, never half a pair
   const crit = p.rows.length === 0 ? ["- no acceptance criteria recorded"] : [...p.rows.slice(0, keep).flatMap(criterionLines), ...(keep < p.rows.length ? [`+${p.rows.length - keep} more criteria`] : [])];
-  return `${[`Contract: ${p.contract ? clip(p.contract) : "not recorded"}`, p.verdictLine, ...(p.note ? [`Note: ${clip(p.note)}`] : []), "", "Acceptance criteria (files and proving check):", ...crit, "", ...tail].join("\n")}\n`;
+  return `${[`Contract: ${p.contract ? clip(p.contract) : "not recorded"}`, p.verdictLine, "", "Acceptance criteria (files and proving check):", ...crit, "", ...tail].join("\n")}\n`;
 }

@@ -4,7 +4,7 @@
 // Known contract gap: machine.ts stores outputs[name] = res.data with no duration_s (only the
 // emitted event gets it), so "Stage times:" degrades honestly to nothing shown, never a fake 0s,
 // until machine.ts stores duration_s too.
-import { formatDuration } from "./output.ts"; import { noteOf } from "../util/base_guard.ts";
+import { formatDuration } from "./output.ts";
 import type { StageName, Verdict } from "./types.ts"; import { unitTableLines, type ReceiptGroup } from "../features/speed/seal_group.ts";
 import { deriveCriteria, intakeTask, layoutPrBody, type CriterionRow } from "../features/pr_criteria.ts";
 export { PR_BODY_LINE_BUDGET, type CriterionRow } from "../features/pr_criteria.ts";
@@ -51,6 +51,6 @@ export function renderPrBody(input: PrBodyInput): string {
   return layoutPrBody({
     contract: input.contract ?? (task.split("\n").find((l) => l.trim()) ?? ""), verdictLine: `Verdict: ${input.verdict}${draft ? ` (DRAFT: ${reason})` : ""}`,
     timing: stages, notProven: input.notProven, receipt: input.receiptPath, group: input.group ? unitTableLines(input.group) : [],
-    rows: input.criteria ?? deriveCriteria(input.outputs), legacy: !input.contract && !input.criteria && !task, note: noteOf(input.outputs.intake) ?? undefined,
+    rows: input.criteria ?? deriveCriteria(input.outputs), legacy: !input.contract && !input.criteria && !task,
   });
 }

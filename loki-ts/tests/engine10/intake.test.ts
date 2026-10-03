@@ -12,7 +12,7 @@ import { join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { renderMainOutput } from "../../src/engine10/supervisor.ts";
-import { renderPrBody } from "../../src/engine10/pr_body.ts";
+import { renderReviewerBody } from "../../src/e10ext/reviewer_body.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
 import type { CostReader, RunContext, SessionResult, SessionRunner, TestMapProvider } from "../../src/engine10/types.ts";
@@ -428,8 +428,10 @@ describe("engine10 intake: base is not Loki's unmerged work (FC-15)", () => {
     const ev: EventEnvelope = { v: 1, seq: 0, ts: "2026-01-01T00:00:00Z", run: "r1", type: "stage.completed", stage: "intake", data: result.data };
     const out = renderMainOutput([ev], { pr: null, verdict: "PARTIAL", notProven: [], flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] });
     expect(out).toContain("work exists on loki/");
-    const body = renderPrBody({ verdict: "PARTIAL", notProven: [], receiptPath: null, capHit: false, outputs: { intake: result.data } });
-    expect(body).toContain("work exists on loki/");
+    // pr.ts builds the real PR body with renderReviewerBody from ctx.outputs()
+    const body = renderReviewerBody({ verdict: "PARTIAL", draftReason: "verdict PARTIAL", notProven: [], receiptPath: null, receiptSha256: null, signed: null, runId: "r1", outputs: { intake: result.data } });
+    expect(body).toContain("- Note: work exists on loki/");
+    expect(body).toContain("CHANGELOG.md"); // the evidence paths survive unclipped
     rmSync(root, { recursive: true, force: true });
   });
 
