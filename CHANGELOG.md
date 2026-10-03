@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - The deferred already-done check no longer leaks its pinned base-tree copy (loki-already-done-*) on SIGTERM, process.exit or a failed setup (D61-04-F).
+- The deferred already-done check passes its spawn env inline so the spawn env guard test (no spawn omits env) passes again (P0-SPAWN-ENV-SPEED).
 - `loki control serve` from a source checkout no longer dies with "Cannot find package 'hono'" when any parent directory has a node_modules but packages/control-plane does not (bun switched auto-install off); it now starts with `bun --install=fallback` (P0-CONTROL-LINUX).
 - `loki verify <run>` now verifies the run you name instead of silently verifying the latest one when `--pubkey` is not given. `--pubkey` with no file is now a usage error. `--pubkey=FILE` is accepted as the same as `--pubkey FILE`, including through the `loki` command on the default engine (it was silently ignored, or sent to the legacy verifier, so a signed receipt verified against the local JWKS or exited 3), and `loki verify` now exits 2 for an empty `--pubkey=`, a repeated `--pubkey`, any unknown option, or more than one run-id.
 - The supervisor commit backstop validates the worker-written base as a full object id (40-64 hex) before any git call, and is skipped (recorded as not proven) when the event log fails verification.

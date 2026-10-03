@@ -53,9 +53,9 @@ function pinBaseTree(ctx: RunContext, signal: AbortSignal): Promise<string | nul
   try { root = mkdtempSync(join(tmpdir(), "loki-already-done-")); } catch { return Promise.resolve(null); }
   trackRoot(root);
   try { mkdirSync(join(root, "tree")); } catch { dropRoot(root); return Promise.resolve(null); }
-  const tarball = join(root, "base.tar"), opts = { env: process.env, signal };
+  const tarball = join(root, "base.tar");
   const step = (cmd: string, args: string[], cwd: string): Promise<boolean> =>
-    new Promise((res) => { execFile(cmd, args, { ...opts, cwd }, (err) => res(!err)); });
+    new Promise((res) => { execFile(cmd, args, { env: process.env, signal, cwd }, (err) => res(!err)); });
   return (async () => {
     if (!ctx.baseSha || !(await step("git", ["archive", "-o", tarball, ctx.baseSha], ctx.repoDir))
       || !(await step("tar", ["-x", "-f", tarball, "-C", join(root, "tree")], root))) {
