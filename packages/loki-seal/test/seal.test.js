@@ -560,8 +560,9 @@ test('minor: red-item matching is exact, not substring', () => {
   seal('start', d);
   put(d, { 'test/a.test.js': T_NEG + extra });
   const r = seal('stop', d, { transcript_path: transcript(d, REQ_NEG) });
-  assert.strictEqual(r.status, 2, r.raw); // the new failing test blocks
-  assert.doesNotMatch(r.out.reason, /is failing/); // but the item's own passing test is not called failing
+  assert.strictEqual(r.status, 2, r.raw); // the new failing test blocks, and it matches the item (R4-B2: any failing match blocks)
+  assert.match(r.out.reason, /a test for request item .* is failing: handles negative numbers in bulk$/m);
+  assert.doesNotMatch(r.out.reason, /is failing:.*handles negative numbers(?:,|$)/m); // the item's own passing test is not called failing
 });
 
 test('F1: an item whose only test was red at session start and is still red blocks (never PASS)', () => {
@@ -609,4 +610,91 @@ test('assertion scan: commented-out and quoted asserts do not count; testify, py
   assert.strictEqual(testNames({ 'x_test.go': 'func TestA(t *testing.T) {\n\trequire.Equal(t, 1, 1)\n}\n' })[0].asserts, true);
   assert.strictEqual(testNames({ 't.py': 'def test_a():\n    # assert x\n    pass\n' })[0].asserts, false);
   assert.strictEqual(testNames({ 't.py': 'def test_a():\n    with pytest.raises(ValueError):\n        f()\n' })[0].asserts, true);
+});
+
+// ---- A-04c round 4: four false greens ----
+const NEG_REQ_ITEM = '- handles negative numbers\n';
+
+test('R4-B1: real promises containing before/by/release/version/you/your/ci are items', () => {
+  const { extractItems } = require('../bin/contract.js');
+  for (const s of [
+    'Passwords must be hashed before they are stored.',
+    'The CLI must print the version with --version.',
+    'Signup must reject a request by an unauthenticated user.',
+    'The lock must release after a timeout.',
+    'Users must be able to download your invoices.',
+    'Rate limiting must apply to the CI webhook endpoint.',
+  ]) assert.strictEqual(extractItems(s).length, 1, s);
+});
+
+test('R4-B1: end to end, a modal sentence with "before" is not dropped (never a silent PASS)', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, 'Fix the adder.\n- adds zero\nNegative sums must be rejected before they are returned.') });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /no test matches request item: "Negative sums must be rejected before they are returned\."/);
+});
+
+test('R4-B1: a sentence filtered as chat is reported in the receipt, not dropped silently', () => {
+  const d = repo(nodeRepo(ADD_OK, T2));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, 'I have to leave soon, can you refactor the parser?') });
+  assert.strictEqual(r.status, 0, r.raw);
+  assert.match(r.out.systemMessage, /filtered as chat: 1 sentence\(s\): "I have to leave soon"/);
+});
+
+test('R4-B2: a partly red item (one matched test fails, another passes) blocks', () => {
+  const src = T2 + "test('handles negative numbers', () => { assert.strictEqual(add(-1, -2), 99); });\n" +
+    "test('negative numbers render', () => { assert.strictEqual(add(-1, -2), -3); });\n";
+  const d = repo(nodeRepo(ADD_OK, src));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, NEG_REQ_ITEM) });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /a test for request item "handles negative numbers" is failing: handles negative numbers/);
+  assert.match(r.out.reason, /contract: 1 item\(s\), 0 covered by passing tests/);
+});
+
+test('R4-B3: a skipped test (already present at start) never covers an item', () => {
+  const src = T2 + "test.skip('handles negative numbers', () => { assert.strictEqual(add(-1, -2), -3); });\n";
+  const d = repo(nodeRepo(ADD_OK, src));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, NEG_REQ_ITEM) });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /no test matches request item: "handles negative numbers"/);
+});
+
+test('R4-B3: skip, todo, xit, describe.skip, option skip, pytest and rust ignore markers are flagged skipped', () => {
+  const { testNames } = require('../bin/contract.js');
+  const sk = (p, src) => testNames({ [p]: src }).map((t) => t.skipped);
+  assert.deepStrictEqual(sk('a.test.js', "it.skip('a b', () => { assert.ok(1); });\n"), [true]);
+  assert.deepStrictEqual(sk('a.test.js', "test.todo('a b');\n"), [true]);
+  assert.deepStrictEqual(sk('a.test.js', "xit('a b', () => { assert.ok(1); });\n"), [true]);
+  assert.deepStrictEqual(sk('a.test.js', "test('a b', { skip: true }, () => { assert.ok(1); });\n"), [true]);
+  assert.deepStrictEqual(sk('a.test.js', "test('a b', { skip: false }, () => { assert.ok(1); });\n"), [false]);
+  assert.deepStrictEqual(sk('a.test.js', "describe.skip('grp', () => {\n  it('a b', () => { assert.ok(1); });\n});\nit('c d', () => { assert.ok(1); });\n"), [true, false]);
+  assert.deepStrictEqual(sk('t.py', "@pytest.mark.skip(reason='x')\ndef test_a():\n    assert 1\n\ndef test_b():\n    assert 1\n"), [true, false]);
+  assert.deepStrictEqual(sk('t.py', "def test_a():\n    pytest.skip('x')\n    assert 1\n"), [true]);
+  assert.deepStrictEqual(sk('x.rs', "#[test]\n#[ignore]\nfn a() { assert!(true); }\n"), [true]);
+  assert.deepStrictEqual(sk('x_test.go', "func TestA(t *testing.T) {\n\tt.Skip(\"x\")\n\trequire.Equal(t, 1, 1)\n}\n"), [true]);
+  assert.deepStrictEqual(sk('a.test.js', "it('a b', () => { assert.ok(1); });\n"), [false]);
+});
+
+test('R4-B4: block comments and python docstrings are not assertions', () => {
+  const { testNames } = require('../bin/contract.js');
+  const asserts = (p, src) => testNames({ [p]: src })[0].asserts;
+  assert.strictEqual(asserts('a.test.js', "test('handles negative numbers',()=>{ /* assert.strictEqual(add(-1,-2),-3) */ });\n"), false);
+  assert.strictEqual(asserts('a.test.js', "test('a b', () => {\n  /*\n   assert.ok(1);\n   expect(2)\n  */\n});\n"), false);
+  assert.strictEqual(asserts('a.test.js', "test('a b', () => {\n  /* note */ assert.ok(1);\n});\n"), true);
+  assert.strictEqual(asserts('t.py', 'def test_a():\n    """\n    assert x == 1\n    """\n'), false);
+  assert.strictEqual(asserts('t.py', "def test_a():\n    '''\n    assert x == 1\n    '''\n"), false);
+  assert.strictEqual(asserts('t.py', 'def test_a():\n    """doc"""\n    assert x == 1\n'), true);
+});
+
+test('R4-B4: end to end, a block-commented assertion leaves the item uncovered', () => {
+  const src = T2 + "test('handles negative numbers',()=>{ /* assert.strictEqual(add(-1,-2),-3) */ });\n";
+  const d = repo(nodeRepo(ADD_OK, src));
+  seal('start', d);
+  const r = seal('stop', d, { transcript_path: transcript(d, NEG_REQ_ITEM) });
+  assert.strictEqual(r.status, 2, r.raw);
+  assert.match(r.out.reason, /no test matches request item: "handles negative numbers"/);
 });

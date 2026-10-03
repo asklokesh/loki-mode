@@ -230,26 +230,31 @@ async function main() {
   // Contract findings live in their own list and their own release counter (st.cblocks) so a false
   // contract block can never drain the integrity/regression valve (st.blocks).
   const cproblems = [];
+  // Modal sentences dropped as chat are listed so a real promise filtered by mistake is visible.
+  const chatNote = contract.filtered && contract.filtered.length
+    ? `; filtered as chat: ${contract.filtered.length} sentence(s): ${contract.filtered.slice(0, 3).map((f) => `"${f}"`).join(', ')}` : '';
   let contractLine, contractNote = null;
   if (contract.status === 'unreadable') {
     contractLine = `contract: NOT VERIFIED: ${contract.reason}`;
     contractNote = `NOT VERIFIED: ${contract.reason}`;
   } else if (contract.status === 'none') {
-    contractLine = 'contract: NOT VERIFIED: no contract';
+    contractLine = 'contract: NOT VERIFIED: no contract' + chatNote;
     contractNote = 'NOT VERIFIED: no contract';
   } else {
     const m = mapContract(contract.items, cur);
-    // Exact test-id match (runner ids may be "file::name"). An item is red whenever every test for it
-    // fails NOW, whatever the start state: a delivery cannot be verified by a test that is still red.
+    // Exact test-id match (runner ids may be "file::name"). An item is red whenever ANY test matched to it
+    // fails NOW, whatever the start state: a delivery cannot be verified while one of its tests is red.
     // Failing at session start only changes the wording.
     const idOf = (i) => i.split('::').pop();
     const failingNow = (t) => !!(r && r.ids && r.ids.some((i) => i === t || idOf(i) === t));
     const failedAtStart = (t) => !!(suite0 && suite0.ids.some((i) => i === t || idOf(i) === t));
-    const redX = m.matched.filter((x) => x.tests.every(failingNow));
+    const redX = m.matched.filter((x) => x.tests.some(failingNow));
     const red = redX.map((x) => x.item);
     const bad = [...m.unmatched.map((i) => `no test matches request item: "${i}"`),
-      ...redX.map((x) => `every test for request item "${x.item}" is failing${x.tests.every(failedAtStart) ? ' (already failing at session start, still not fixed)' : ''}`)];
-    contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '');
+      ...redX.map((x) => x.tests.every(failingNow)
+        ? `every test for request item "${x.item}" is failing${x.tests.every(failedAtStart) ? ' (already failing at session start, still not fixed)' : ''}`
+        : `a test for request item "${x.item}" is failing: ${[...new Set(x.tests.filter(failingNow))].join(', ')}`)];
+    contractLine = `contract: ${contract.items.length} item(s), ${m.matched.length - red.length} covered by passing tests` + (bad.length ? `; ${bad.length} not verified` : '') + chatNote;
     if (runner) cproblems.push(...bad.map((b) => 'NOT VERIFIED: ' + b));
     else if (bad.length) contractNote = `NOT VERIFIED: ${bad[0]}`;
   }

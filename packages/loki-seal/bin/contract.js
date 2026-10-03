@@ -46,12 +46,44 @@ const MIN_KEYWORDS = 2;
 // A bare file mention is never a spec. The request must mark it: "spec: x.md", "per x.md", "implement x.md".
 const SPEC_MARK = "(?:\\bspec(?:ification)?s?\\s*[:=]\\s*|\\b(?:per|implement|implements|implementing|according\\s+to|as\\s+specified\\s+in)\\s+(?:the\\s+)?(?:spec\\s+(?:in\\s+|at\\s+)?)?)[`\"']?";
 const ASSERT = /\bassert\w*\s*[.(]|^\s*assert\s|\bexpect\s*\(|\bself\.assert\w+|\bt\.(?:Error|Fatal|Fail)\w*\(|\bassert\w*!\s*\(|\brequire\.[A-Z]\w*\(|\bpytest\.raises\s*\(|\.should\b/m;
-// Comments and string literals are removed before the assertion scan so a commented-out or quoted
-// "assert(" never counts.
-const stripNoise = (s) => s.replace(/(['"`])(?:\\.|(?!\1).)*\1/g, '""').replace(/\/\/.*$/gm, '').replace(/(^|\s)#.*$/gm, '$1');
-// Prose that is chat, not a requirement on the system: first/second person, deadlines, environment talk,
-// or a status ("needs to be done"). A modal sentence must be about the code's behavior.
-const CHAT = /\b(?:i|i'm|i've|we|we've|my|our|me|you|your)\b|\b(?:before|by|soon|today|tomorrow|tonight|meeting|release|deadline|asap|eod|later|until)\b|\b(?:node(?:js)?|npm|yarn|pnpm|python\d*|pip|java|jdk|ruby|golang|cargo|laptop|machine|computer|ci|docker|version|eslint|prettier|webpack)\b|\b(?:be|get)\s+(?:done|finished|ready|merged|fixed)\b|\bplease\b/i;
+// One left-to-right scan so quotes inside comments and comment markers inside strings are handled
+// correctly. Comments (// , # , /* ... */ multi-line) and Python triple-quoted strings (multi-line) are
+// removed; quoted literals become "". With keep=true the output has the same length (noise blanked,
+// string literals kept) so declaration positions and names survive.
+function lex(s, keep) {
+  const blank = (t) => t.replace(/[^\n]/g, ' ');
+  let out = '';
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    const c = s[i];
+    let end = -1;
+    if (c === '/' && s[i + 1] === '*') {
+      const j = s.indexOf('*/', i + 2);
+      end = j < 0 ? n : j + 2;
+      out += keep ? blank(s.slice(i, end)) : ' ';
+    } else if ((c === '/' && s[i + 1] === '/') || (c === '#' && s[i + 1] !== '[' && (i === 0 || /\s/.test(s[i - 1])))) {
+      const j = s.indexOf('\n', i);
+      end = j < 0 ? n : j;
+      if (keep) out += blank(s.slice(i, end));
+    } else if ((c === '"' || c === "'") && s[i + 1] === c && s[i + 2] === c) {
+      const j = s.indexOf(c + c + c, i + 3);
+      end = j < 0 ? n : j + 3;
+      out += keep ? blank(s.slice(i, end)) : '""';
+    } else if (c === '"' || c === "'" || c === '`') {
+      let k = i + 1;
+      while (k < n && s[k] !== c && s[k] !== '\n') { if (s[k] === '\\') k++; k++; }
+      if (k < n && s[k] === c) { end = k + 1; out += keep ? s.slice(i, end) : '""'; }
+    }
+    if (end < 0) { out += c; i++; } else i = end;
+  }
+  return out;
+}
+const stripNoise = (s) => lex(s, false);
+// Prose that is chat, not a requirement on the system: a sentence that opens with a first-person pronoun
+// (I, we, let me, I'll), a tool-version note ("Node 20 is required"), or a status ("needs to be done").
+// Deliberately narrow: words like before, by, release, version, you and ci appear in real promises.
+const CHAT = /^\s*(?:i|i'm|i've|i'll|i'd|we|we're|we've|we'll|let\s+me|let's|my|our|me|you|please)\b|^\s*(?:node(?:js)?|npm|yarn|pnpm|python\d*|pip|java|jdk|ruby|golang|cargo)\s+v?\d|\b(?:be|get)\s+(?:done|finished|ready|merged|fixed)\b/i;
 const STOP = new Set(('a an the and or but if then else of to in on at by for with from as is are was were be been being it its this that these those ' +
   'must should shall need needs has have had do does did not no can cannot will would could may might make sure ensure require required requires ' +
   'please also just so too very any all each every some there their they them we you i me my our your when where which who what how than into ' +
@@ -76,7 +108,7 @@ function keywords(text, dropStop = true) {
   return [...out];
 }
 
-function extractItems(text) {
+function extractItems(text, filtered) {
   const items = [];
   let inFence = false;
   for (const raw of String(text).split('\n')) {
@@ -88,7 +120,8 @@ function extractItems(text) {
     // Prose: split into sentences and keep those with a modal verb.
     for (const s0 of raw.split(/(?<=[.!?])\s+|;\s+|,\s+(?=(?:and\s+)?(?:please|can|could|would)\b)/i)) {
       const s = s0.trim();
-      if (MODAL.test(s) && s.length > 3 && !CHAT.test(s)) items.push(s);
+      if (!(MODAL.test(s) && s.length > 3)) continue;
+      if (CHAT.test(s)) { if (Array.isArray(filtered) && keywords(s).length >= MIN_KEYWORDS) filtered.push(s.replace(/\s+/g, ' ').slice(0, 120)); } else items.push(s);
     }
   }
   const seen = new Set();
@@ -162,36 +195,60 @@ function deriveContract(input, root) {
     const text = firstUserText(raw);
     if (text === null) return { status: 'none', items: [], sources: [] };
     const sources = ['request'];
-    if (QUESTION.test(text)) return { status: 'none', items: [], sources };
-    let all = extractItems(text);
+    if (QUESTION.test(text)) return { status: 'none', items: [], sources, filtered: [] };
+    const filtered = [];
+    let all = extractItems(text, filtered);
     for (const f of specFiles(text, root)) {
-      try { all = all.concat(extractItems(readCapped(f.real, MAX_SPEC_BYTES))); sources.push(f.rel); } catch { /* skip unreadable spec */ }
+      try { all = all.concat(extractItems(readCapped(f.real, MAX_SPEC_BYTES), filtered)); sources.push(f.rel); } catch { /* skip unreadable spec */ }
     }
     const seen = new Set();
     const items = all.filter((i) => !seen.has(i.toLowerCase()) && seen.add(i.toLowerCase())).slice(0, MAX_ITEMS);
-    return { status: items.length ? 'ok' : 'none', items, sources };
+    return { status: items.length ? 'ok' : 'none', items, sources, filtered };
   } catch (e) {
     return { status: 'unreadable', reason: `contract derivation failed (${(e && e.message) || e})`, items: [] };
   }
 }
 
+const SKIP_NAME = /\.(?:skip|todo)\b|^x(?:it|test|describe)\b/;
+const SKIP_OPT = /^\s*,\s*\{[^}]*\b(?:skip|todo)\s*(?::(?!\s*false\b)|[,}])/;
+const SKIP_BODY = /\bt\.(?:skip|todo)\s*\(|\bpytest\.(?:skip|xfail)\s*\(|\bt\.Skip\w*\s*\(|\bself\.skipTest\s*\(/;
+const SKIP_DECO = /@(?:pytest\.mark\.(?:skip|skipif|xfail)|unittest\.(?:skip\w*|expectedFailure))/;
+
 function testNames(files) {
   const out = [];
   const rx = [
-    /\b(?:it|test|describe|suite)(?:\.\w+)*\s*\(\s*(['"`])((?:\\.|(?!\1).)+)\1/g,
-    /^\s*(?:async\s+)?def\s+(test_\w+)/gm,
-    /^\s*func\s+(Test\w+)\s*\(/gm,
-    /#\[(?:tokio::)?test\b[^\]]*\]\s*(?:async\s+)?fn\s+(\w+)/g,
+    { r: /\b(?:x?it|x?test|x?describe|suite)(?:\.\w+)*\s*\(\s*(['"`])((?:\\.|(?!\1).)+)\1/g, name: (m) => m[2], js: true },
+    { r: /((?:^[ \t]*@[^\n]*\n)*)^[ \t]*(?:async\s+)?def\s+(test_\w+)/gm, name: (m) => m[2], skip: (m) => SKIP_DECO.test(m[1]) },
+    { r: /^\s*func\s+(Test\w+)\s*\(/gm, name: (m) => m[1] },
+    { r: /((?:#\[[^\]]*\]\s*)+)(?:async\s+)?fn\s+(\w+)/g, name: (m) => m[2], real: (m) => /#\[(?:tokio::)?test\b/.test(m[1]), skip: (m) => /#\[ignore/.test(m[1]) },
   ];
-  for (const [p, src] of Object.entries(files)) {
-    if (typeof src !== 'string' || src.startsWith('SYMLINK ') || !/\.(js|mjs|cjs|ts|tsx|jsx|py|go|rs)$/.test(p)) continue;
+  for (const [p, raw] of Object.entries(files)) {
+    if (typeof raw !== 'string' || raw.startsWith('SYMLINK ') || !/\.(js|mjs|cjs|ts|tsx|jsx|py|go|rs)$/.test(p)) continue;
     const base = path.basename(p).replace(/\.(test|spec)\.[^.]+$|\.[^.]+$/, '');
+    // Comments and docstrings are blanked first (positions kept) so a commented-out test never counts.
+    const src = lex(raw, true);
     const decls = [];
-    rx.forEach((r, i) => { for (const m of src.matchAll(r)) decls.push({ pos: m.index, name: m[i === 0 ? 2 : 1], real: !(i === 0 && /^(?:describe|suite)/.test(m[0])) }); });
+    for (const x of rx) {
+      for (const m of src.matchAll(x.r)) {
+        if (x.real && !x.real(m)) continue;
+        const describe = !!x.js && /^x?(?:describe|suite)/.test(m[0]);
+        const own = x.js ? SKIP_NAME.test(m[0].split('(')[0]) || SKIP_OPT.test(src.slice(m.index + m[0].length, m.index + m[0].length + 200)) : !!(x.skip && x.skip(m));
+        const ls = src.lastIndexOf('\n', m.index - 1) + 1;
+        decls.push({ pos: m.index, name: x.name(m), real: !describe, describe, own, indent: m.index - ls });
+      }
+    }
     decls.sort((a, b) => a.pos - b.pos);
     // A test body runs from its declaration to the next declaration. A test without an assertion proves nothing.
+    // A skipped describe skips every declaration nested under it (deeper indentation).
+    let skipIndent = null;
     decls.forEach((d, k) => {
-      if (d.real) out.push({ name: d.name, file: p, base, asserts: ASSERT.test(stripNoise(src.slice(d.pos, k + 1 < decls.length ? decls[k + 1].pos : src.length))) });
+      if (skipIndent !== null && d.indent <= skipIndent) skipIndent = null;
+      const inSkipped = skipIndent !== null;
+      if (d.describe && d.own && !inSkipped) skipIndent = d.indent;
+      if (!d.real) return;
+      const body = src.slice(d.pos, k + 1 < decls.length ? decls[k + 1].pos : src.length);
+      const stripped = stripNoise(body);
+      out.push({ name: d.name, file: p, base, asserts: ASSERT.test(stripped), skipped: d.own || inSkipped || SKIP_BODY.test(stripped) });
     });
   }
   return out;
@@ -199,7 +256,7 @@ function testNames(files) {
 
 // Returns { matched: [{item, tests}], unmatched: [item] }.
 function mapContract(items, files) {
-  const tests = testNames(files).filter((t) => t.asserts).map((t) => ({ ...t, kw: new Set(keywords(t.name + ' ' + t.base, false)) }));
+  const tests = testNames(files).filter((t) => t.asserts && !t.skipped).map((t) => ({ ...t, kw: new Set(keywords(t.name + ' ' + t.base, false)) }));
   const matched = [];
   const unmatched = [];
   for (const item of items) {
