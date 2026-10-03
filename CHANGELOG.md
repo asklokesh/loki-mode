@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Legacy dashboard shim (CPE24-P6): 34 more legacy routes that the Control Plane retires (tenants, api-keys, task writes, /ws, agents, quality scan, wiki ask and others) now answer 410 Gone naming their Control Plane replacement; 21 routes with no /v1 equivalent yet still answer 501.
+
 ## v10.9.0 (2026-10-03)
 
 Legacy dashboard removal release: the classic dashboard UI is deleted (the browser UI is the Control Plane), two guards keep it gone, and the Control Plane now serves the audit, checkpoint, memory, context, focus, tasks, session control and Completion Council routes the legacy dashboard answered. Also fixes the Python 3.10 pricing pin that turned 10.8.0 Tests red. Shipped under the founder CI waiver (D88); new tests for these slices are owed after the Oct 7 reset.
