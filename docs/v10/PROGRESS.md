@@ -2222,3 +2222,11 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - FireLater#17 gate on 10.10.3 (steering): PARTIAL $2.27, full migration, 5855/5858 green; implement hit the 900s cap and verify was skipped. FC-21 filed (8d17b8c59); sonnet fix-fc21 seated 22:24Z under D87.
 - FC-16 narrowed (Go exit 0 always not_run) at 1f3c97831: 1504/0, red-then-green 4/6 against c35bc2d62; opus re-review in flight.
 - Next: FC-16 APPROVE + FC-21 green, then one train FC-15+FC-16+FC-21, then the gate rerun.
+
+## 2026-10-03T23:34Z (CoS)
+- v10.10.5 live: npm latest=10.10.5, next=10.10.5; release run 37161077606 success. Ships FC-15, FC-16 + FC-02 (6 review rounds, final 6bc7f8674), FC-21 (21fec9deb, opus APPROVE).
+- v10.10.4 (4fa4e8015) never published: release gate 37160286619 failed spawn env guard (run_cap.ts git ls-files, load_owner.ts pgrep had no env). Fixed d64739204; full bun test 3580/0, tsc rc=0; fix-forward a3b303478.
+- Lesson: slice and review gates ran 4 suite dirs; loki-ts/src changes now need the full bun test before APPROVE.
+- Main CI fix 65ce2060b (CP-04 Dockerfile, DEP-01 DEPS rows): Tests 37159323291 success.
+- Follow-ups ready: FC-21b (HIGH, next train: earned VERIFIED after a limit, Project Model cap sizing, L7 outcome on cap stop), FC-16b.
+- Steering running the FireLater#17 gate on 10.10.5 defaults. Seats: 0 active (week 82 percent at 22:43Z, D87 stop at 95).
