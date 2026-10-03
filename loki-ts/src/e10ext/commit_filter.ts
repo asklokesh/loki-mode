@@ -32,3 +32,15 @@ export function backstopCommit(repoDir: string, workerEnv: NodeJS.ProcessEnv, ru
     try { g(["commit", "-q", "-m", `loki: backstop commit (${runId})`, "-m", `Loki-Run: ${runId}`]); } catch { /* best-effort */ }
   }
 }
+
+/** D50-F4b: base comes from the worker-written event log, so it must be a full object id before any git call (no option, no ref). */
+export const validBase = (b: unknown): string | null => (typeof b === "string" && /^[0-9a-f]{40,64}$/.test(b) ? b : null);
+
+/** Runs backstopCommit only when the log verified intact and base is valid; otherwise fails closed with no git spawn and returns why. */
+export function guardedBackstop(intact: boolean, repoDir: string, workerEnv: NodeJS.ProcessEnv, runId: string, base: unknown, preexistingDirty: unknown): string | null {
+  if (!intact) return "backstop commit skipped: event log failed verification";
+  const b = validBase(base);
+  if (b === null) return base === null || base === undefined ? null : "backstop commit skipped: base is not a full object id";
+  backstopCommit(repoDir, workerEnv, runId, b, preexistingDirty);
+  return null;
+}

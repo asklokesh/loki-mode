@@ -3,7 +3,7 @@
 // id; post-PR: detached deep verify, then Slack notify.
 import { execFileSync, spawn, spawnSync } from "node:child_process"; import { currentBranch, restoreBranch } from "../e10ext/stop_restore.ts";
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
-import { backstopCommit } from "../e10ext/commit_filter.ts";
+import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -214,8 +214,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   let hasDiff = false;
   if (verdict === "FAILED") {
     const stages = fold(readEvents(log.path)).stages; // A-104c: a failed commit stage already chose what to exclude (Wall files, lockfiles, pre-run dirt); a blanket `add -A` would undo it
-    const baseE = stages["intake"], base = baseE?.type === "stage.completed" && typeof baseE.data.base_sha === "string" ? baseE.data.base_sha : null;
-    if (base !== null && stages["commit"]?.type !== "stage.failed") backstopCommit(opts.repoDir, workerEnv, opts.runId, base, baseE?.type === "stage.completed" ? baseE.data.preexisting_dirty : undefined); // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
+    const baseE = stages["intake"], base = validBase(baseE?.type === "stage.completed" ? baseE.data.base_sha : null); // D50-F4b: a worker-written base is never an option or ref
+    if (stages["commit"]?.type !== "stage.failed") { const why = guardedBackstop(intact, opts.repoDir, workerEnv, opts.runId, base, baseE?.type === "stage.completed" ? baseE.data.preexisting_dirty : undefined); if (why) notProven.push(why); } // no completed intake = no run branch: repoDir is still the user's own branch, never `add -A` there
     try { // net diff against base (a revert commit can leave HEAD past base with nothing to publish); any failure counts as a diff
       execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "diff", "--quiet", "--no-ext-diff", "--no-textconv", String(base), "HEAD", "--", ".", ":(exclude).loki"], { cwd: opts.repoDir, env: workerEnv, stdio: "ignore" });
     } catch { hasDiff = base !== null; }
