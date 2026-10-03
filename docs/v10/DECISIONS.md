@@ -627,3 +627,36 @@ That amendment is NOT ratified. It is replaced by this rule, which the CoS adopt
   - Any slice not fixed and TL-approved by then is reverted for train/102, and the rest ships as v10.6.15. This is the D68 rule "drop red slices".
   - A failed rerun is not attempted, because both failures are deterministic.
 - Each fix must keep fail-closed semantics: no skip, no weakened assertion, and nothing added to tests/moat/pending.txt.
+
+## D82 (2026-10-03T14:54Z, CoS per D69): founder directive 14:55Z, all features on by default, cost-cap rework, 10/10 program
+Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14:55Z. Recorded as given; executed without founder waits.
+1. Default-on: visual evidence, spec-to-contract, D61 parallel/speed, Slack two-way, MCP tools, Control Plane and workspaces become default-on in the next train. Each env var stays as an opt-out (=0).
+   - A feature still in D12 review ships the same day its review passes.
+   - CTO guardrails, from security, which outranks speed:
+     - A default-on network listener binds loopback only.
+     - Anything that sends data off the machine (for example a Slack webhook) stays inert until its credential is configured. Default-on means "on when configured", never "prompt for or read stored secrets".
+2. Cost cap: the $20 default is removed.
+   - Subscription runs (CLI login, no API key) have no dollar cap and print one info line: "subscription: no dollar cap; usage counts against your plan limits".
+   - API-key runs default to a $100 cap.
+   - --max-cost and loki.yaml budgets.per_run override both. BUDGET_STOP stays exit 3.
+   - The start line, docs and tests are updated.
+3. 10/10 program, built in order (a) to (j):
+   - (a) browser e2e with a Playwright video and trace
+   - (b) loki merge queue
+   - (c) loki review with a deterministic risk score
+   - (d) project memory across runs
+   - (e) Control Plane mobile layout, roles and sign-in (single-admin token, then OIDC)
+   - (f) mobile emulator tests when the tools are installed
+   - (g) a REST API for runs
+   - (h) VS Code and JetBrains via ACP
+   - (i) Sentry intake
+   - (j) the D50 Sonnet lift fixes
+   - Plus a fresh gap-research pass (Devin, Factory, 8090, Vorflux, Claude Code). New items join the queue.
+   - An architect slices each item into small slices that keep CI green.
+4. Amended by the founder at 15:00Z and 15:02Z, relayed by the peer: "no testing", "10 releases every hour", "use least tokens".
+   - Until about 17:00Z, LOW and MEDIUM slices merge as built, with no agent-side review round. CI Tier A and Tier B are the gate, because nothing reaches npm without a green Tier B on its exact tree (D55).
+   - HIGH slices (moat, Seal, verifier, auth/sign-in, security) keep one opus D12 review. A peer relay cannot waive it.
+   - Models (D52): haiku for docs, flag flips, pins and mechanical edits; sonnet for feature code; opus only for HIGH review. Fresh agents get small briefs and return short results.
+   - Trains: cut one from whatever has merged as soon as the previous train's push has registered its CI runs. Never push while a release is running: a push during a release cancels its Tests (GUARD, memory "Pushing during a release cancels its Tests"). Never cancel a releasing train.
+   - The real ceiling is about 12 min per Tests run plus the release, so roughly 4 releases per hour. The achieved rate is reported honestly.
+5. Usage: the 85% weekly floor stands. At the floor, stop starting new work and record what is left in the handoff.
