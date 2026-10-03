@@ -1,7 +1,8 @@
 // Home (CPE-12): KPI tiles, recent runs and the BLOCKED inbox, all from /v1/stats, /v1/runs and /v1/notifications. Anything the API does not carry reads "not measured".
 import { useEffect, useState } from "react";
 import { authToken, type RunRow } from "../../api";
-import { Badge, Card, EmptyState, KpiTile, Spinner, Table, VerdictBadge } from "../../design/primitives";
+import { EmptyState } from "../../Shell";
+import { Badge, Card, KpiTile, Spinner, Table, VerdictBadge } from "../../design/primitives";
 
 export const NOT_MEASURED = "not measured";
 const DAY = 86_400_000;
@@ -62,7 +63,7 @@ export function HomeView({ data }: { data: HomeData }) {
   const rate = week.verified_rate;
   const cost = costTile(week.cost);
   if (week.runs_total === 0 && runs.length === 0 && blockedTotal === 0) {
-    return <EmptyState title="No runs yet" hint="Start one from the composer and its results will show up here." />;
+    return <EmptyState />;
   }
   return (
     <section data-testid="home" style={{ display: "flex", flexDirection: "column", gap: 20 }}>

@@ -111,7 +111,8 @@ test("Settings entry lists inSettings pages and opens the chosen one", async () 
 });
 
 test("empty state: no runs shows the import-repo state and an empty session list", async () => {
-  serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
+  const zero = { since: null, runs_total: 0, runs_finished: 0, runs_running: 0, by_verdict: {}, verified_rate: null, cost: { measured_usd: null, measured_runs: 0, partial_usd: null, partial_runs: 0, label: "not measured" } };
+  serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] }, "/v1/stats": zero, "/v1/notifications": { notifications: [], total: 0 } });
   render(<AppShell />);
   const empty = await screen.findByTestId("empty-state");
   expect(within(empty).getByText("Import runs from this folder")).toBeTruthy();
@@ -124,7 +125,8 @@ test("New run navigates to the start form; Cmd+K calls the reserved hook only wh
   render(<AppShell />);
   fireEvent.click(screen.getByTestId("new-run"));
   await waitFor(() => expect(location.hash).toBe("#/new"));
-  expect(await screen.findByTestId("start-run")).toBeTruthy();
+  expect(await screen.findByTestId("composer")).toBeTruthy(); // CPE-08 composer replaces the built-in start form
+  expect(screen.getByTestId("composer-input")).toBeTruthy();
   const press = () => { const e = new KeyboardEvent("keydown", { key: "k", metaKey: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
   expect(press()).toBe(false);
   let n = 0;

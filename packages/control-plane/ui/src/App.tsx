@@ -4,7 +4,7 @@ import { Landing, LiveRun } from "./Live";
 import { registerPage } from "./pages/registry";
 import { wirePages } from "./pages/wired";
 import { AppShell } from "./shell/AppShell";
-import { CostPage, EmptyState, SettingsPage, StartRun, WorkPage } from "./Shell";
+import { EmptyState, SettingsPage, StartRun } from "./Shell";
 import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
@@ -231,8 +231,6 @@ registerPage({ id: "new-run", path: "/new", title: "New run", component: () => <
 registerPage({ id: "runs", path: "/runs", title: "Runs", component: () => home });
 registerPage({ id: "run-detail", path: "/runs/:source/:run", title: "Run", component: ({ params }) => <RunDetail source={params.source!} run={params.run!} /> });
 registerPage({ id: "live-run", path: "/live/:source/:run", title: "Live run", component: ({ params }) => <LiveRun source={params.source!} run={params.run!} /> });
-registerPage({ id: "work", path: "/work", title: "Work", component: WorkPage });
-registerPage({ id: "cost", path: "/cost", title: "Cost", component: CostPage });
 registerPage({ id: "settings-general", path: "/settings/general", title: "General", inSettings: true, component: SettingsPage });
 wirePages();
 

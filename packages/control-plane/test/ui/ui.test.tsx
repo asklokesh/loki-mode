@@ -124,7 +124,9 @@ test("mobile layout: sidebar is desktop-only with a drawer button, wide columns 
   expect(nav.className).toContain("hidden");
   expect(nav.className).toContain("md:flex");
   expect(within(container as HTMLElement).getByTestId("open-drawer")).toBeTruthy();
-  const heads = Array.from(container.querySelectorAll("th")).filter((h) => h.textContent === "Repo" || h.textContent === "Started");
+  // CPE-11 runs table keeps every column and scrolls inside its own container instead of hiding columns
+  const table = within(container as HTMLElement).getByTestId("runs-table");
+  expect(table.parentElement?.style.overflow).toBe("auto");
+  const heads = Array.from(container.querySelectorAll("th")).filter((h) => /^(Started|Repo)/.test(h.textContent ?? ""));
   expect(heads.length).toBe(2);
-  for (const h of heads) expect(h.className).toContain("hidden");
 });
