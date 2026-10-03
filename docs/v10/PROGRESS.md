@@ -1933,3 +1933,11 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Train 86 fully reviewed: C2 00f6741d9 (opus) + C2-F 3177c28ba + C2-F2 3fca6590d (TL, preload mutation goes red), C3 e41381751 + C3-F 362e9c501 (TL, 20/0), C11a 50a75bcfa (TL; legs 1-2 PASS, positive control rc 1).
 - D61-12 round 4 opus BLOCK (B3: repo filter driver fooled the fresh verify checkout). Round 5 630772f97 fixes B3, N1, N5, N7 (integrate tests 68/0); opus round 5 running.
 - In review: C6 (HIGH), C1 (HIGH), C8, C12 (HIGH), D61-04, D61-11, D61-13, D61-16-F, VIS-F1. Next: BUG-C (slack --port 0) after C6, C10 after C1, C11b after train 86.
+
+## 2026-10-03T04:13Z Train 85 pushed (2cc94a548), C1 approved, C12 dropped
+- Train 84 went stale behind the v10.6.8 release commit (train-cycle B: TRAIN_STALE); merged origin/main into local main (dist conflict resolved by rebuild, dist guard 13/0) and pushed train/85 (train-cycle A: TRAIN_PUSHED).
+- Train 85 carries C2, C3, C4, C5, C7, C9, C11a, D61-10-F1, D61-16, D61-16-F (opus APPROVE round 3) and C8 (TL APPROVE). Main moat on bf3e42066: 4 of 9, rc 0. Local-ci hit the 590s cap at 43 PASS, 0 FAIL.
+- C1 round 2 opus APPROVE (7ca8f9832); held until C10 so the Dockerfile and Helm chart do not exit 2 on a tokenless 0.0.0.0 bind. C10 builder dispatched on top of C1.
+- C12 dropped (D72). D61-12 round 6 BLOCK; round 7 fix running. Opus round 2 reviews running for D61-04, D61-13, C6, D61-11.
+- Deferred cleanup (no compound rm mid-window): review scratch dirs rev-d61-16-f-r3, rev-d61-12-r6, and 12 git-home dirs leaked by the D61-12 tests (reviewer removed 2 it owned).
+

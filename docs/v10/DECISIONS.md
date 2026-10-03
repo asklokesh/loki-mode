@@ -538,3 +538,9 @@ The D61 decomposer (125 lines) does not fit: engine10 core is at 4,993 of its 5,
 - Core engine10 measures 4936 lines against the 5000 cap (D29, D33, D42), so 64 lines remain. The cap is a gate and is not raised.
 - New D61 modules (decompose check, unit mode, integrator, group seal helpers, group output) go under loki-ts/src/features/speed/ (features budget 3000, 993 used). Each slice may add at most 10 lines of hook code to core engine10; the wave's total stays under 60, and structural-checks.sh must pass on every merge.
 - engine10/decompose.ts (slice 8) stays where it is.
+
+## D72: drop D63-C12 (stub invoker via LOKI_CLAUDE_CLI alone) (CoS with CTO, 04:13Z 2026-10-03)
+- Opus HIGH review blocked 7a83f2fa8: setting LOKI_CLAUDE_CLI alone switches to the CLI invoker, so a paid run records $0 with source "cli-invoker-unmetered", and supervisor.ts disagrees with the receipt. That breaks cost honesty in the receipt.
+- The card marked C12 optional, and an explicit LOKI_E10_INVOKER=cli already selects the CLI invoker for the stub-provider gate. Dropping it costs no user capability.
+- C11b and the D65 stub E2E use LOKI_E10_INVOKER=cli explicitly. Row set to rejected; no founder input needed (D69).
+
