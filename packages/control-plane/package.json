@@ -15,6 +15,8 @@
     "hono": "^4.13.12"
   },
   "devDependencies": {
+    "@playwright/test": "1.58.1",
+    "axe-core": "4.13.0",
     "drizzle-kit": "^0.31.11"
   }
 }
