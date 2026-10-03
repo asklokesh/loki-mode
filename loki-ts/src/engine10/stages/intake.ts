@@ -5,7 +5,7 @@
 // resumed for later stages.
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import { buildRepoMap } from "../repomap.ts";
 import { githubRepoFromUrl, readOriginUrl } from "../supervisor.ts";
@@ -42,7 +42,11 @@ function ensureBranch(repoDir: string, branch: string): void {
 }
 /** Appends ".loki/" to .git/info/exclude, once. Not .gitignore, so it adds no diff. */
 function excludeLokiDir(repoDir: string): void {
-  const path = join(repoDir, ".git", "info", "exclude");
+  // A linked worktree has a .git FILE; ask git where info/exclude lives (the common dir).
+  let path = join(repoDir, ".git", "info", "exclude");
+  try {
+    path = resolve(repoDir, git(repoDir, ["rev-parse", "--git-path", "info/exclude"]));
+  } catch { /* keep the plain-checkout path */ }
   const existing = existsSync(path) ? readFileSync(path, "utf8") : "";
   if (existing.split("\n").some((l) => l.trim() === ".loki/")) return;
   mkdirSync(dirname(path), { recursive: true });

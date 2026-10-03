@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { RealTestMapProvider } from "../../src/engine10/testmap.ts";
@@ -156,6 +156,16 @@ describe("engine10 intake", () => {
     const ctx = makeCtx(repoDir, runDir, provider);
     const result = await runIntake(ctx, new AbortController().signal, { taskText: "do a thing" });
     expect(result.status).toBe("completed");
+  });
+
+  test("D65-BUG7: a linked worktree (.git is a file) starts the run and excludes .loki/ in the common git dir", async () => {
+    const wt = join(runDir, "linked-wt");
+    git(repoDir, ["worktree", "add", "-q", "-b", "ws-branch", wt]);
+    const ctx = makeCtx(wt, runDir, fakeTests());
+    const result = await runIntake(ctx, new AbortController().signal, { taskText: "add a widget" });
+    expect(result.status).toBe("completed");
+    const common = gitOut(wt, ["rev-parse", "--git-path", "info/exclude"]).trim();
+    expect(readFileSync(resolve(wt, common), "utf8")).toContain(".loki/");
   });
 
   test("clean repo with literal task text: creates the branch, excludes .loki/, builds maps", async () => {
