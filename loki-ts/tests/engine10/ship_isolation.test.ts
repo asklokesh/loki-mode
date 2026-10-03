@@ -3,7 +3,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { discoveryRefusal, isThrowawayPath } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { startShip } from "../../src/e10ext/ship_hook.ts";
@@ -21,6 +21,9 @@ const srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) {
 } });
 afterAll(() => srv.stop(true));
 beforeEach(() => { hits = []; });
+
+// A checkout under the OS temp dir (for example a scratch worktree) is itself throwaway, so fall back to HOME.
+const outsideTmp = (): string => (isThrowawayPath(process.cwd()) ? homedir() : process.cwd());
 
 function sandboxHome(): string {
   const home = mkdtempSync(join(tmpdir(), "shipiso-home-"));
@@ -73,13 +76,13 @@ describe("discovery guard (product)", () => {
     expect(hits).toEqual([]);
   });
   test("a repo whose origin is acme/widget never auto-ships even outside the temp dir", async () => {
-    const home = sandboxHome(), repo = repoIn(process.cwd(), "git@github.com:acme/widget.git");
+    const home = sandboxHome(), repo = repoIn(outsideTmp(), "git@github.com:acme/widget.git");
     await startShip(repo, startLog(repo).path, { HOME: home });
     expect(await shipped(repo)).toBe(false);
     expect(hits).toEqual([]);
   });
   test("a normal repo outside the temp dir still ships through discovery", async () => {
-    const home = sandboxHome(), repo = repoIn(process.cwd(), "https://github.com/real-org/real-app.git");
+    const home = sandboxHome(), repo = repoIn(outsideTmp(), "https://github.com/real-org/real-app.git");
     await startShip(repo, startLog(repo).path, { HOME: home });
     expect(await shipped(repo)).toBe(true);
     expect(hits).toContain("/health");
