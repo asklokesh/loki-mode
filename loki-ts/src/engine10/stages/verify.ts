@@ -8,6 +8,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
+import { classifyRunnerOutput } from "../../runner/runner_errors.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -30,6 +31,7 @@ export interface VerifyCheck {
   duration_s: number;
   reason?: string; n?: number; sk?: number; ids?: string[]; first_error?: string; // A-112: failing test ids; A-113: first failing output line, normalized; feeds the stall signature
   interpreter?: Interpreter; // E-98a: which python/ruff this check actually ran on
+  owner?: "harness"; // FC-02: the runner could not load or collect; not_run, never a code failure
 }
 // E-98a B2: .venv, then venv, then an in-repo (realpath under repoDir) VIRTUAL_ENV are "project";
 // else <fallback> on PATH, or <lastResort> literal, is "system" -- never proven against repo sources.
@@ -138,6 +140,7 @@ export async function runCheck(
   const skip = (a: Awaited<ReturnType<typeof runOnce>>): string | undefined =>
     a.missing ? `${cmd} not found on PATH`
     : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`)
+    : !a.ok && !/^(?:lint:|select-tests)/.test(name) && classifyRunnerOutput(a.out).kind === "load_error" ? classifyRunnerOutput(a.out).reason // FC-02: harness-owned, never retried, never a fix round
     : ran(a.out, /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
   let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
   let reason = skip(attempt);
@@ -147,7 +150,7 @@ export async function runCheck(
     reason = skip(attempt);
     result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
   }
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" ? { n: ran(attempt.out) ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" ? { n: ran(attempt.out) ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(reason?.startsWith("runner could not load") ? { owner: "harness" as const } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);
   ctx.emit("test.result", "verify", { ...check });
   return check;
@@ -287,7 +290,7 @@ export const verifyStage: Stage = {
     const inBase = (f: string): boolean => { try { execFileSync("git", ["cat-file", "-e", `${ctx.baseSha}:${f}`], { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); return true; } catch { return false; } };
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[`${t.runner}:${t.path}`]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
     const weakened = [...modifiedRel, ...testConfigChanged(ctx.repoDir, ctx.baseSha, changed).map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
-    const notProven = [...weakened, ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
+    const notProven = [...weakened, ...checks.filter((c) => c.owner === "harness").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
     return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, test_counts: testCounts } };
   },
 };

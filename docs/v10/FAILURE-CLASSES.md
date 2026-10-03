@@ -38,6 +38,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - vitest "No test files found, exiting with code 0" counts as a pass with n=0, when it should be not_run (EL-W1-06).
 - Mechanism: a result classifier with an owner (EL-W1-05). Only a FAIL owned by code drives fix and stall. Interim: EL-W0-02.
 - Fixture: tests/fixtures/runner-outputs/vitest/load-error.txt (from seq 56), plus siblings for each runner.
+- Status: FIXED (interim, FC-02 lane F). One shared classifier loki-ts/src/runner/runner_errors.ts (classifyRunnerOutput); verify.ts runCheck turns a load or collection error into not_run with owner harness (no rerun, no fix round, listed in verify not_proven); deep.ts runFullSuite does the same; wall.ts classify() already returned not_run for jest/vitest/bun with no parsed failure and is left unchanged. A real failed-test count in the same output keeps it a code failure; lint checks are never reclassified. Fixtures: loki-ts/tests/engine10/fixtures/runner-outputs/{vitest,pytest}, test loki-ts/tests/engine10/runner_errors.test.ts. Still open: the n=0 pass rule (EL-W1-06) and per-runner fixtures for jest, node:test, go, cargo.
 - Sibling (2026-10-03): a change-introduced load error is a code fault. Base reproduction is necessary but not sufficient. The base rerun must be hermetic (an inherited editable install imports head code), and a check the task targets is never env-owned (7ad4a18b6, blocked in round 2). Superseded by L0-WAVE1 EL-W1-06: the harness gathers evidence and a separate reviewer call assigns the owner.
 
 ## FC-03 Scope control reverted in-scope route edits
@@ -207,4 +208,5 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Law: L5 (no work without evidence), cost.
 - Siblings: D82-WALL0 and any stage that can finish with zero artifacts and still bill.
 - Mechanism: if the Wall cannot write a check, it skips in under 10s with a NOT PROVEN note and never runs a model session to an empty result.
-- Fixture: owed. A repo with no runnable test command yields a Wall skip under 10s with NOT PROVEN.
+- Fixture: loki-ts/tests/engine10/runner_errors.test.ts (FC-17 block). A repo with no runnable test command yields a Wall skip under 10s.
+- Status: FIXED for the no-runner case (lane G). wall.ts runWall prechecks, before any model session: a detected test map with no runner and no .py or .go file in the repo map returns stage.skipped with reason "no runnable test command detected: the Wall cannot write a runnable check". Still open: a Wall that has runners but writes nothing still bills its session (the SessionRunner has no progress hook for a no-progress cutoff); needs a session.ts change.

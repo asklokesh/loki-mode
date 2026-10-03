@@ -1,0 +1,12 @@
+============================= test session starts ==============================
+collected 0 items / 1 error
+
+==================================== ERRORS ====================================
+_________________ ERROR collecting tests/test_api.py _________________
+ImportError while importing test module '/work/app/tests/test_api.py'.
+Hint: make sure your test modules/packages have valid Python names.
+E   ModuleNotFoundError: No module named 'fastapi'
+=========================== short test summary info ============================
+ERROR tests/test_api.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+=============================== 1 error in 0.11s ===============================
