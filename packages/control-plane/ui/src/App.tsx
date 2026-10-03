@@ -1,6 +1,7 @@
-import { Activity, ExternalLink, Moon, Sun, TriangleAlert } from "lucide-react";
+import { Activity, Briefcase, DollarSign, ExternalLink, Settings, Moon, Sun, TriangleAlert } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Landing } from "./Live";
+import { CostPage, EmptyState, SettingsPage, StartRun, WorkPage } from "./Shell";
 import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
@@ -40,19 +41,6 @@ function PrLink({ url }: { url: string | null }) {
     </a>
   ) : (
     <span className="break-all font-mono text-xs" title="local origin, no web URL">{url}</span>
-  );
-}
-
-function EmptyRuns() {
-  return (
-    <div className="rounded border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
-      <p className="text-lg font-medium">No runs ingested yet</p>
-      <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Connect a run in one of two ways:</p>
-      <ul className="mx-auto mt-3 max-w-xl space-y-2 text-left text-sm">
-        <li>Set <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">LOKI_CONTROL_URL</code> in the environment of <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">loki start</code> and runs ship as they happen.</li>
-        <li>Run <code className="rounded bg-slate-200 px-1 dark:bg-slate-800">loki control backfill</code> to ship runs already on disk.</li>
-      </ul>
-    </div>
   );
 }
 
@@ -119,7 +107,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
       </div>
       {error && <p role="alert" className="text-red-600">Could not load runs: {error}</p>}
       {!data && !error && <p className="text-slate-500">Loading runs</p>}
-      {data && data.runs.length === 0 && (filtered ? <p>No runs match these filters.</p> : <EmptyRuns />)}
+      {data && data.runs.length === 0 && (filtered ? <p>No runs match these filters.</p> : <EmptyState />)}
       {data && data.runs.length > 0 && (
         <div className="overflow-x-auto rounded border border-slate-200 dark:border-slate-800">
           <table className="w-full text-left text-sm">
@@ -237,6 +225,8 @@ function route(hash: string): { source: string; run: string } | null {
   return m ? { source: decodeURIComponent(m[1]!), run: decodeURIComponent(m[2]!) } : null;
 }
 
+const NAV: [string, string, typeof Activity][] = [["#/runs", "Runs", Activity], ["#/work", "Work", Briefcase], ["#/cost", "Cost", DollarSign], ["#/settings", "Settings", Settings]];
+
 export function App() {
   const [hash, setHash] = useState(globalThis.location?.hash ?? "");
   const [dark, setDark] = useState(() => { try { return localStorage.getItem("loki-theme") !== "light"; } catch { return true; } });
@@ -246,16 +236,19 @@ export function App() {
     try { localStorage.setItem("loki-theme", dark ? "dark" : "light"); } catch { /* storage unavailable */ }
   }, [dark]);
   const r = route(hash);
+  const page = hash.startsWith("#/work") ? "#/work" : hash.startsWith("#/cost") ? "#/cost" : hash.startsWith("#/settings") ? "#/settings" : "#/runs";
   return (
     <div className="flex min-h-screen flex-col bg-white md:flex-row text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <nav data-testid="nav" className="flex w-full shrink-0 flex-wrap items-center gap-3 border-b border-slate-200 p-3 md:block md:w-48 md:border-b-0 md:border-r md:p-4 dark:border-slate-800">
-        <div className="font-semibold md:mb-6">Loki Control</div>
-        <a href="#/runs" className="flex min-h-11 items-center gap-2 rounded bg-slate-100 px-3 text-sm md:min-h-0 md:px-2 md:py-1 dark:bg-slate-900"><Activity size={14} />Runs</a>
+        <div className="font-semibold md:mb-6">Loki Mode</div>
+        {NAV.map(([h, label, Icon]) => (
+          <a key={h} href={h} aria-current={page === h ? "page" : undefined} className={`flex min-h-11 items-center gap-2 rounded px-3 text-sm md:min-h-0 md:px-2 md:py-1 ${page === h ? "bg-slate-100 dark:bg-slate-900" : "text-slate-500"}`}><Icon size={14} />{label}</a>
+        ))}
         <button type="button" onClick={() => setDark(!dark)} aria-label="Toggle theme" className="ml-auto flex min-h-11 items-center gap-2 text-sm text-slate-500 md:ml-0 md:mt-6 md:min-h-0">
           {dark ? <Sun size={14} /> : <Moon size={14} />}{dark ? "Light theme" : "Dark theme"}
         </button>
       </nav>
-      <main className="min-w-0 flex-1 overflow-x-auto p-3 md:p-6">{r ? <RunDetail source={r.source} run={r.run} /> : hash === "#/runs" ? <RunsList /> : <Landing overview={hash === "#/overview"} fallback={<RunsList />} />}</main>
+      <main className="min-w-0 flex-1 overflow-x-auto p-3 md:p-6">{r ? <RunDetail source={r.source} run={r.run} /> : page === "#/work" ? <WorkPage /> : page === "#/cost" ? <CostPage /> : page === "#/settings" ? <SettingsPage dark={dark} toggle={() => setDark(!dark)} /> : hash === "#/runs" ? <><StartRun /><RunsList /></> : <Landing overview={hash === "#/overview"} fallback={<><StartRun /><RunsList /></>} />}</main>
     </div>
   );
 }

@@ -97,3 +97,16 @@ export async function postAnswer(source: string, run: string, answer: string): P
   if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
   return { path: j.path ?? "", resume: j.resume ?? "" };
 }
+
+async function postJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${base()}${path}`, { method: "POST", headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify(body) });
+  const j = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  return j;
+}
+
+/** Import the server's own repo (.loki/runs) through the existing backfill. */
+export const importRuns = (): Promise<{ runs: number; sent: number; failed: string[] }> => postJson("/v1/import", {});
+export const listRepos = (): Promise<{ repos: string[] }> => get("/v1/repos");
+/** Start a run: target is owner/repo#N or a plain task. */
+export const startRun = (target: string, repo: string): Promise<{ ok: true; pid: number; command: string }> => postJson("/v1/start", { target, repo });

@@ -71,12 +71,25 @@ test("run detail: unpriced cost reads 'unpriced'", async () => {
   await waitFor(() => expect(screen.getByTestId("cost").textContent).toContain("unpriced"));
 });
 
-test("empty DB shows 'No runs ingested yet' and how to connect", async () => {
+test("empty DB: import button and CLI line, no env-var text", async () => {
   serve({ "/v1/runs": load("empty.json") });
   render(<RunsList />);
-  expect(await screen.findByText("No runs ingested yet")).toBeTruthy();
-  expect(screen.getByText("LOKI_CONTROL_URL")).toBeTruthy();
-  expect(screen.getByText("loki control backfill")).toBeTruthy();
+  const empty = await screen.findByTestId("empty-state");
+  expect(screen.getByText("Import runs from this folder")).toBeTruthy();
+  expect(screen.getByText("loki start owner/repo#N")).toBeTruthy();
+  expect(empty.textContent ?? "").not.toMatch(/LOKI_[A-Z_]+/);
+  expect(document.body.textContent ?? "").not.toContain("LOKI_CONTROL_URL");
+});
+
+test("brand is Loki Mode with Runs, Work, Cost and Settings navigation", async () => {
+  serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
+  const { App } = await import("../../ui/src/App");
+  render(<App />);
+  const nav = screen.getByTestId("nav");
+  expect(nav.textContent).toContain("Loki Mode");
+  expect(nav.textContent).not.toContain("Loki Control");
+  for (const l of ["Runs", "Work", "Cost", "Settings"]) expect(within(nav).getByText(l)).toBeTruthy();
+  expect(readFileSync(join(import.meta.dir, "../../ui/index.html"), "utf8")).toContain("<title>Loki Mode</title>");
 });
 
 test("live run: list shows stage, elapsed and files; detail polls until completed", async () => {
@@ -105,6 +118,7 @@ test("live run: list shows stage, elapsed and files; detail polls until complete
 test("mobile layout: shell stacks, wide columns collapse, no fixed-width nav below md", async () => {
   serve({ "/v1/runs": load("runs.json") });
   const { App } = await import("../../ui/src/App");
+  location.hash = "#/runs"; // the Runs page; the bare route is the landing view
   const { container } = render(<App />);
   await screen.findAllByTestId("run-row");
   const nav = within(container as HTMLElement).getByTestId("nav");
