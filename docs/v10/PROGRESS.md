@@ -2067,3 +2067,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Merged on local main since: PO3 HELP-ALLCMDS, HEAL-DOC, PAUSED-TTY, MEM-INDEX, SKILL-RUNTIME-DOC, COUNCIL-TODO; next train cuts after npm promotes 10.6.13.
 - PO4 refill landed 9 cards (BOARD a57e57635); 7 sonnet builders dispatched; CLI-SUITES-REG waits on START-REPO-DIR-FIX, TODO-PLURAL (HIGH) waits on COUNCIL-TEST-TMP.
 - W1-S2 r11 opus BLOCK (unicode names in plain import list leak; r10 same); r12 fix building. SEAL r7 11019f987 113/0, in opus re-review.
+
+## 2026-10-03T12:50Z CoS
+- train/98 reds were two HELP-row test pins (cli.ts:47); fixed by 6c894fce1 and 2e1d79095, no slice dropped.
+- Ten slices merged (PO3-QS-MATCH, nine PO5); train/99 pushed at 12:47Z (2e6613aac), CI pending.
+- PO5-HELP-READONLY merged as 4eba90e3f for train/100.
+- P0-CORE-BUDGET TL r2 BLOCK not reproduced: test-engine10-dist.sh 18/0 on main.
+- Opus HIGH re-reviews running: W1-S2 r15 (f9dc7d67b), D61-11 r2 (535552d74). SEAL r8 builder running. W1-S3 waits on W1-S2 (shares wall.ts).
