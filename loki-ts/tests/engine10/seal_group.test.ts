@@ -43,7 +43,7 @@ function ctxFor(repo: string, base: string, intake: Record<string, unknown> = {}
     intake: { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", title: "group task", resumed: false, ...intake },
     wall: { files: [] },
     implement: { exit: "done", tests_reverted: [], duration_s: 3, iteration_id: "e10-r1-impl" },
-    verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", duration_s: 1.5 }], flaky: [], wall_passed: true, duration_s: 2 },
+    verify: { checks: [{ name: "pytest", cmd: "pytest -q", result: "pass", n: 1, duration_s: 1.5 }], flaky: [], wall_passed: true, duration_s: 2 },
   };
   return {
     runId: "r1", repoDir: repo, runDir: join(repo, ".loki/runs/r1"), baseSha: base, branch: "loki/r1",

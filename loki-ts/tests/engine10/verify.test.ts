@@ -124,6 +124,7 @@ describe("engine10 verify: missing tool and flaky rerun", () => {
       `n=$(cat "${counter}")`,
       "n=$((n+1))",
       `echo "$n" > "${counter}"`,
+      'echo "1 passed in 0.01s"',
       '[ "$n" -ge 2 ]',
     ].join("\n") + "\n");
     chmodSync(script, 0o755);
@@ -306,7 +307,7 @@ describe("engine10 verify: pytest interpreter resolution (E-98a)", () => {
     writeFileSync(join(repoDir, "changed.txt"), "x\n");
     const shimDir = mkdtempSync(join(tmpdir(), "e10-verify-shim-"));
     cleanupDirs.push(shimDir);
-    writeFileSync(join(shimDir, "python3"), "#!/usr/bin/env bash\nexit 0\n");
+    writeFileSync(join(shimDir, "python3"), "#!/usr/bin/env bash\necho '1 passed in 0.01s'\n");
     chmodSync(join(shimDir, "python3"), 0o755);
     const map: TestMap = { runners: ["pytest"], tests: [{ runner: "pytest", path: "tests/test_x.py" }] };
     const { ctx } = fakeCtx({
@@ -347,7 +348,7 @@ describe("engine10 verify: pytest interpreter resolution (E-98a)", () => {
     chmodSync(outsideVenvPython, 0o755);
     const shimDir = mkdtempSync(join(tmpdir(), "e10-verify-shim-"));
     cleanupDirs.push(shimDir);
-    writeFileSync(join(shimDir, "python3"), "#!/usr/bin/env bash\nexit 0\n"); // the correct PATH fallback
+    writeFileSync(join(shimDir, "python3"), "#!/usr/bin/env bash\necho '1 passed in 0.01s'\n"); // the correct PATH fallback
     chmodSync(join(shimDir, "python3"), 0o755);
     const savedVenv = process.env["VIRTUAL_ENV"];
     const savedPath = process.env["PATH"];

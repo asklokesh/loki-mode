@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- FC-16 follow-ups: go test runs with -v (per package and in the deep full suite) and the count sums top-level `--- PASS|FAIL` across every package, with `[no test files]` zero only when no package ran tests; a non-verbose go summary is reported as unmeasured, never as "no tests executed". Runner summaries are read only from the last 12 output lines (a testless file printing "Tests: 5 passed" no longer counts), ANSI colour codes are stripped, and `python -m unittest` and Playwright summaries parse. User-visible: intake's closed-issue / already-done short-circuit now always ends PARTIAL (NOT PROVEN) because it has no Loki-executed check.
+
 ## v10.10.2 (2026-10-03)
 
 ### Added
