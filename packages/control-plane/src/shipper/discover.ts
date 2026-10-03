@@ -1,6 +1,7 @@
 // C2 CP-DEFAULT: find a running local Control Plane (docs/v10/CONTROL-PLANE.md section 6). Reads
 // ~/.loki/control/instance.json; returns its url only when the pid is alive and /health answers service=loki-control
 // within 300 ms. Never starts a server, never throws. LOKI_CONTROL=0 disables discovery.
+import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -49,4 +50,9 @@ export function discoveryRefusal(repoDir: string, originUrl: string | null, env:
   if (originUrl && FIXTURE_REPO.test(originUrl.trim())) return "origin is the fixture repo acme/widget";
   if (FIXTURE_REPO.test(`${basename(dirname(repoDir))}/${basename(repoDir)}`)) return "repo name is the fixture acme/widget";
   return null;
+}
+
+/** The repo's origin url (env is threaded so the spawn never inherits ambient state), or null. */
+export function gitOrigin(repoDir: string, env: NodeJS.ProcessEnv): string | null {
+  try { return execFileSync("git", ["-C", repoDir, "config", "--get", "remote.origin.url"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], env }).trim() || null; } catch { return null; }
 }

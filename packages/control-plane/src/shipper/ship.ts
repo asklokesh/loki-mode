@@ -93,3 +93,18 @@ export async function shipRun(o: ShipOpts): Promise<ShipResult> {
 
 export const shipEnabled = (env: NodeJS.ProcessEnv): string | null => env.LOKI_CONTROL_URL || null;
 export const hasSpool = (runDir: string): boolean => existsSync(join(runDir, "events.jsonl"));
+
+/** Fire-and-forget ship loop: an unref'd timer with backoff; never throws. */
+export function startShipLoop(o: Omit<ShipOpts, "timeoutMs">): void {
+  let failures = 0, nextAt = 0, busy = false;
+  const tick = async (): Promise<void> => {
+    if (busy || Date.now() < nextAt) return;
+    busy = true;
+    try {
+      const r = await shipRun({ ...o, timeoutMs: 5000 });
+      failures = r.ok ? 0 : failures + 1;
+      nextAt = r.ok ? 0 : Date.now() + backoffMs(failures);
+    } catch { failures++; } finally { busy = false; }
+  };
+  setInterval(() => void tick(), 300).unref();
+}
