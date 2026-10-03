@@ -992,6 +992,7 @@ run_test "Deploy receipt gate (--execute authorization)" "$SCRIPT_DIR/test-deplo
 run_test "Unified config-file (--config precedence + formats)" "$SCRIPT_DIR/test-config-file.sh"
 run_test "Config validate unknown-key detection (JSON/YAML parity)" "$SCRIPT_DIR/test-config-unknown-keys.sh"
 run_test "Enforcement claims in buyer-facing docs are scoped" "$SCRIPT_DIR/test-enforcement-doc-honesty.sh"
+run_test "Healing docs disclose unwired modify hooks (issue 200)" "timeout -k 10 120 $SCRIPT_DIR/test-heal-docs-honesty.sh"
 run_test "loki logs reads the log the runner writes" "$SCRIPT_DIR/test-logs-command.sh"
 run_test "report cost agrees with its own budget state file" "$SCRIPT_DIR/test-report-cost-budget.sh"
 run_test "loki stop is bounded regardless of provider timeout" "$SCRIPT_DIR/test-stop-latency.sh"

@@ -300,7 +300,7 @@ structured_fault_injection:
       - "What happens when a config file is missing?"
 
     4_document_everything:
-      - "Every failure mode goes into .loki/healing/failure-modes.json"
+      - "Every failure mode goes into .loki/healing/failure-modes.json (agent-maintained: NOT WIRED to code, issue #200)"
       - "After 3+ similar failures, consolidate into semantic memory"
 ```
 
@@ -408,7 +408,7 @@ When `loki heal` is active, the code review specialist pool includes:
 ```
 .loki/healing/
   friction-map.json              # All identified friction points
-  failure-modes.json             # Cataloged failure modes
+  failure-modes.json             # Seeded empty ({"modes":[]}) by loki heal; no code writes to it (NOT WIRED, issue #200), only the agent may
   institutional-knowledge.md     # Extracted tribal knowledge
   healing-progress.json          # Component-by-component healing status
   boundaries.json                # Observable system boundaries (archaeology writes)
