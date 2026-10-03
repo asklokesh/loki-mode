@@ -25,6 +25,20 @@
 # Exit: 0 when every matched suite passes (or none matched), 1 otherwise.
 set -uo pipefail
 
+case "${1:-}" in
+    -h|--help)
+        cat <<'USAGE'
+Usage:
+  bash scripts/guard-changed.sh              # vs origin/main
+  bash scripts/guard-changed.sh HEAD~3       # vs an explicit base
+  bash scripts/guard-changed.sh -h | --help  # this text
+Runs the test suites that reference files changed vs the base. Exit 0 when all
+matched suites pass (or none matched), 1 otherwise.
+USAGE
+        exit 0
+        ;;
+esac
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 

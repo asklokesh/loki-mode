@@ -23,6 +23,19 @@
 
 set -uo pipefail
 
+case "${1:-}" in
+    -h|--help)
+        cat <<'USAGE'
+Usage:
+  scripts/measure-run.sh [workspace]      # default: .
+  scripts/measure-run.sh --json [ws]      # machine-readable
+  scripts/measure-run.sh -h | --help      # this text
+Reads <workspace>/.loki/events.jsonl only; starts nothing, contacts no provider.
+USAGE
+        exit 0
+        ;;
+esac
+
 JSON=false
 if [ "${1:-}" = "--json" ]; then JSON=true; shift; fi
 WS="${1:-.}"
