@@ -44,14 +44,15 @@ Architect design, 2026-10-01, base 1dfc87103. Design only. Flag: `LOKI_CONTROL=1
 
 ## 5. Shipper and spool
 - events.jsonl is the spool. The shipper never writes to it (the supervisor treats outside writes as tamper). Its acked cursor lives in `.loki/runs/<id>/ship.json {acked_seq, url}`, written atomically.
-- Started by the supervisor next to the log (one hook line at supervisor.ts:194), it uses `tail()` (events.ts:155), batches up to 200 events or 1 s, and POSTs. Backoff 1, 2, 4 ... 60 s with jitter. It never blocks or fails the run: on supervisor exit it flushes for at most 5 s, then leaves the rest for replay.
+- Started by the supervisor next to the log (one hook line, skipped when `LOKI_CONTROL=0`; the url comes from `LOKI_CONTROL_URL` or local discovery, section 6), it uses `tail()` (events.ts:155), batches up to 200 events or 1 s, and POSTs. Backoff 1, 2, 4 ... 60 s with jitter. It never blocks or fails the run: on supervisor exit it flushes for at most 5 s, then leaves the rest for replay.
 - Every string in `data` goes through `redactSecrets` before sending.
 - Replay: `loki control backfill [--repo DIR]` and every `loki` start ship each run whose ship.json acked_seq is below its last seq. Backfill of old .loki/runs uses the same code path.
 
-## 6. Local auto-start and reuse
-- With LOKI_CONTROL=1 and no LOKI_CONTROL_URL, `loki` reads `~/.loki/control/instance.json {pid, port, version, install_path, db}`.
-- Reuse only when `/health` reports the same version and install_path and `/` returns HTML (the 10.5.34 P0-DASH-STATIC rule). Otherwise start a fresh one on a free port; never kill a process you did not record.
-- A dead pid or failed probe means restart, then replay. The DB defaults to `~/.loki/control/control.db`. Tests always pass a temp HOME, an ephemeral port and `LOKI_NO_BROWSER=1`, and stop by recorded PID.
+## 6. Local discovery (on by default)
+- `LOKI_CONTROL` defaults on; `LOKI_CONTROL=0` makes `loki control` print one "off" line and exit 0, and disables discovery.
+- `loki control serve` reads the child's "listening on" line and writes `~/.loki/control/instance.json {pid, port, url, version, install_path, db}` (mode 0600), removed when the CLI exits.
+- A run ships when `LOKI_CONTROL_URL` is set, or when `instance.json` names a live pid (`kill -0`) whose `/health` answers `service=loki-control` within 300 ms (`packages/control-plane/src/shipper/discover.ts`). A run never starts a server and never kills a process it did not record.
+- The server binds loopback by default; discovery only reads the url the local serve published. The DB defaults to `~/.loki/control/control.db`. Tests always pass a temp HOME, an ephemeral port and `LOKI_NO_BROWSER=1`, and stop by recorded PID.
 
 ## 7. Deploy
 - One image: `oven/bun` base, the service plus built UI assets, `bun packages/control-plane/dist/server.js`. Probes: liveness /health, readiness /ready.

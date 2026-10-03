@@ -1,11 +1,12 @@
-// CP-02: live shipping hook (docs/v10/CONTROL-PLANE.md section 5). Started by supervisor.ts only when LOKI_CONTROL_URL is set.
+// CP-02: live shipping hook (docs/v10/CONTROL-PLANE.md section 5). Started by supervisor.ts unless LOKI_CONTROL=0; ships when LOKI_CONTROL_URL is set or a live local instance is discovered.
 // Fire-and-forget: the timer is unref'd and nothing here throws or changes the run's exit code or output. Whatever is unshipped
 // at exit is replayed by `loki control backfill` (ship.json keeps the cursor).
 import { dirname } from "node:path";
+import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { backoffMs, shipEnabled, shipRun, sourceId } from "../../../packages/control-plane/src/shipper/ship.ts";
 
-export function startShip(repoDir: string, eventsPath: string, env: NodeJS.ProcessEnv): void {
-  const url = shipEnabled(env);
+export async function startShip(repoDir: string, eventsPath: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const url = shipEnabled(env) ?? (await discoverControlUrl(env)); // C2: a live local instance.json counts; never starts a server
   if (!url) return;
   const runDir = dirname(eventsPath);
   const source = sourceId(repoDir);

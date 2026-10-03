@@ -1,16 +1,17 @@
-// `loki control serve|backfill|status` (D56 Loki Control Plane, preview, gated behind LOKI_CONTROL=1).
+// `loki control serve|backfill|status` (D56 Loki Control Plane, on by default, LOKI_CONTROL=0 turns it off).
 // serve runs the bundled service (packages/control-plane/dist/server.js, or the TypeScript source in a checkout) on
 // 127.0.0.1. backfill ships .loki/runs through the same shipper the live hook uses. status probes /health.
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { instancePath } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { backfill } from "../../../packages/control-plane/src/shipper/backfill.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 
 export const DEFAULT_PORT = 47821;
-export const PREVIEW_LINE = "loki control is in preview. Enable it with: export LOKI_CONTROL=1";
+export const OFF_LINE = "loki control is off (LOKI_CONTROL=0). Unset it to turn the Control Plane back on.";
 
-const HELP = `Usage: loki control <command> [options]   (preview, requires LOKI_CONTROL=1)
+const HELP = `Usage: loki control <command> [options]   (on by default; LOKI_CONTROL=0 turns it off)
 
 Commands:
   serve [--port N] [--db PATH]   Run the control plane + UI on 127.0.0.1 (default port ${DEFAULT_PORT}, 0 = any free port)
@@ -18,7 +19,7 @@ Commands:
   status                         Show whether the control plane is reachable and how many runs it holds
 
 The control plane URL comes from LOKI_CONTROL_URL, else http://127.0.0.1:\${LOKI_CONTROL_PORT:-${DEFAULT_PORT}}.
-Set LOKI_CONTROL_URL on 'loki start' to ship runs live.
+Runs on this machine ship to a running control plane automatically (~/.loki/control/instance.json); LOKI_CONTROL_URL overrides.
 `;
 
 const baseUrl = (env: NodeJS.ProcessEnv): string => (env.LOKI_CONTROL_URL || `http://127.0.0.1:${env.LOKI_CONTROL_PORT || DEFAULT_PORT}`).replace(/\/+$/, "");
@@ -44,11 +45,29 @@ async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
   if (!cmd) { process.stderr.write("loki control: server not found (packages/control-plane is missing from this install)\n"); return 1; }
   mkdirSync(dirname(db), { recursive: true });
   // the default port falls back to any free port when taken (the printed URL is the real one); an explicit port never does
-  const child = Bun.spawn(cmd, { env: { ...env, PORT: port, LOKI_CONTROL_DB: db, LOKI_CONTROL_PORT_FALLBACK: explicit === undefined ? "1" : "0" }, stdio: ["inherit", "inherit", "inherit"] });
+  const child = Bun.spawn(cmd, { env: { ...env, PORT: port, LOKI_CONTROL_DB: db, LOKI_CONTROL_PORT_FALLBACK: explicit === undefined ? "1" : "0" }, stdio: ["inherit", "pipe", "inherit"] });
   // the service must not outlive this CLI: forward stop signals and also kill on any exit path
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => child.kill());
-  process.on("exit", () => child.kill());
-  return await child.exited;
+  const inst = instancePath(env);
+  const rmInst = (): void => { try { if ((JSON.parse(readFileSync(inst, "utf8")) as { pid?: number }).pid === process.pid) rmSync(inst, { force: true }); } catch { /* none */ } };
+  process.on("exit", () => { child.kill(); rmInst(); });
+  // tee the child's stdout; its "listening on" line publishes ~/.loki/control/instance.json for run discovery (C2)
+  const dec = new TextDecoder();
+  let buf = "";
+  for await (const chunk of child.stdout as unknown as AsyncIterable<Uint8Array>) {
+    process.stdout.write(chunk);
+    buf = (buf + dec.decode(chunk, { stream: true })).slice(-4096);
+    const m = /listening on (http:\/\/[^\s:]+:(\d+))/.exec(buf);
+    if (!m) continue;
+    let version = "unknown";
+    try { version = readFileSync(join(REPO_ROOT, "VERSION"), "utf8").trim(); } catch { /* keep */ }
+    mkdirSync(dirname(inst), { recursive: true });
+    writeFileSync(inst, `${JSON.stringify({ pid: process.pid, port: Number(m[2]), url: m[1], version, install_path: REPO_ROOT, db })}\n`, { mode: 0o600 });
+    buf = "";
+  }
+  const code = await child.exited;
+  rmInst();
+  return code;
 }
 
 async function status(env: NodeJS.ProcessEnv): Promise<number> {
@@ -68,7 +87,7 @@ async function status(env: NodeJS.ProcessEnv): Promise<number> {
 export async function runControl(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   const [sub, ...rest] = args;
   if (!sub || sub === "--help" || sub === "-h" || sub === "help") { process.stdout.write(HELP); return 0; }
-  if (env.LOKI_CONTROL !== "1") { process.stdout.write(`${PREVIEW_LINE}\n`); return 0; }
+  if (env.LOKI_CONTROL === "0") { process.stdout.write(`${OFF_LINE}\n`); return 0; }
   switch (sub) {
     case "serve": return serve(rest, env);
     case "status": return status(env);

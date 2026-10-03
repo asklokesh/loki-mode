@@ -57,8 +57,8 @@ cp -R "$REPO/packages/control-plane/test/fixtures/runs" "$T/repo/.loki/runs"
 WANT="$(grep -o '"run_count": *[0-9]*' "$REPO/packages/control-plane/test/fixtures/EXPECTED.json" | grep -o '[0-9]*$')"
 loki_env() { env -i HOME="$T/home" PATH="$PATH" LOKI_TELEMETRY_DISABLED=1 LOKI_NO_BROWSER=1 "$@"; }
 
-OUT="$(loki_env "$LOKI" control serve 2>&1)"
-t "ungated serve prints one preview line" "ungated serve output: $OUT" [ "$OUT" = "loki control is in preview. Enable it with: export LOKI_CONTROL=1" ]
+OUT="$(loki_env LOKI_CONTROL=0 "$LOKI" control serve 2>&1)"
+t "LOKI_CONTROL=0 serve prints one off line" "off serve output: $OUT" [ "$OUT" = "loki control is off (LOKI_CONTROL=0). Unset it to turn the Control Plane back on." ]
 
 # exec chain (subshell -> env -> bin/loki -> bun) keeps $! equal to the CLI pid
 ( exec env -i HOME="$T/home" PATH="$PATH" LOKI_TELEMETRY_DISABLED=1 LOKI_NO_BROWSER=1 LOKI_CONTROL=1 "$LOKI" control serve --port 0 --db "$T/control.db" >"$T/serve.log" 2>&1 ) &
