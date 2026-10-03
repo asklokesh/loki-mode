@@ -61,7 +61,24 @@ export function KpiTile({ label, value, icon, trend, trendTone = "neutral", seri
 }
 
 /* Badge and the verdict map */
-export const VERDICT_TONE: Record<string, Tone> = { VERIFIED: "success", PARTIAL: "warning", FAILED: "error", SPEC_CONFLICT: "info", BLOCKED: "info", running: "neutral" };
+export const VERDICT_TONE: Record<string, Tone> = {
+  VERIFIED: "success", PARTIAL: "warning", FAILED: "error", SPEC_CONFLICT: "info", BLOCKED: "info", running: "neutral",
+  TAMPERED: "error", UNSIGNED: "warning", NOT_VERIFIED: "warning", UNCHECKED: "warning",
+};
+
+/** Verdict names. UI code outside primitives refers to verdicts through this, never through a bare string. */
+export const VERDICT = { VERIFIED: "VERIFIED", PARTIAL: "PARTIAL", FAILED: "FAILED", SPEC_CONFLICT: "SPEC_CONFLICT", BLOCKED: "BLOCKED", TAMPERED: "TAMPERED", RUNNING: "running" } as const;
+export const FILTERABLE_VERDICTS: string[] = [VERDICT.VERIFIED, VERDICT.PARTIAL, VERDICT.FAILED, VERDICT.SPEC_CONFLICT]; // server-side filter values: TAMPERED is derived, not stored
+
+export interface VerdictSource { verdict?: string | null; tampered?: boolean | null; integrity?: string | null; receipt?: { verdict?: string | null } | null }
+
+/** The single place a verdict is derived (Engine Laws L3, L7): any tamper or integrity signal wins over the stored verdict. */
+export function effectiveVerdict(r: VerdictSource | null | undefined): string | null {
+  if (!r) return null;
+  if (r.tampered === true || r.integrity === VERDICT.TAMPERED || r.receipt?.verdict === VERDICT.TAMPERED || r.verdict === VERDICT.TAMPERED) return VERDICT.TAMPERED;
+  return r.verdict ?? null;
+}
+export const isVerified = (r: VerdictSource | null | undefined): boolean => effectiveVerdict(r) === VERDICT.VERIFIED;
 
 export function Badge({ tone = "neutral", pulse, children, ...rest }: HTMLAttributes<HTMLSpanElement> & { tone?: Tone; pulse?: boolean }) {
   return (
@@ -81,8 +98,11 @@ export function Badge({ tone = "neutral", pulse, children, ...rest }: HTMLAttrib
   );
 }
 
-export function VerdictBadge({ verdict }: { verdict: string }) {
-  return <Badge tone={VERDICT_TONE[verdict] ?? "neutral"} pulse={verdict === "running"}>{verdict}</Badge>;
+/** Pass `run` to apply the tamper rule; `verdict` alone renders that exact string. */
+export function VerdictBadge({ verdict, run }: { verdict?: string | null; run?: VerdictSource | null }) {
+  const v = run ? effectiveVerdict(run) : verdict ?? null;
+  if (!v) return <Badge pulse>running</Badge>;
+  return <Badge tone={VERDICT_TONE[v] ?? "neutral"} pulse={v === VERDICT.RUNNING} data-verdict={v}>{v}</Badge>;
 }
 
 /* Pill */

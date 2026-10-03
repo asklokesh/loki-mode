@@ -3,7 +3,7 @@
 import { Menu, Plus, Settings as Cog } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { listRuns, watchRuns, type RunRow } from "../api";
-import { Button, Drawer, EmptyState, GroupHead, NavItem, Spinner, StatusDot, VerdictBadge, type DotState } from "../design/primitives";
+import { Button, Drawer, EmptyState, GroupHead, NavItem, Spinner, StatusDot, VerdictBadge, VERDICT, effectiveVerdict, type DotState } from "../design/primitives";
 import { matchPage, pathOf, registryVersion, settingsPages, subscribeRegistry, type PageDef } from "../pages/registry";
 import { groupRuns } from "./grouping";
 import { openCommandPalette } from "./hooks";
@@ -36,7 +36,7 @@ export function useSessions(): { runs: RunRow[] | null; error: string | null } {
   return s;
 }
 
-const dotState = (r: RunRow): DotState => (r.status === "running" || (!r.verdict && !r.ended_at) ? "active" : r.verdict === "FAILED" ? "error" : "idle");
+const dotState = (r: RunRow): DotState => (r.status === "running" || (!r.verdict && !r.ended_at) ? "active" : r.verdict === VERDICT.FAILED || effectiveVerdict(r) === VERDICT.TAMPERED ? "error" : "idle");
 export const sessionTitle = (r: RunRow): string => r.issue_ref ?? r.run_id;
 const sessionHref = (r: RunRow) => `#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`;
 
@@ -52,7 +52,7 @@ function SessionRow({ run, active, onNavigate }: { run: RunRow; active: boolean;
         <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionTitle(run)}</span>
         {run.origin_repo ? <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: t("text-sm"), color: t("text-muted") }}>{run.origin_repo}</span> : null}
       </span>
-      {run.verdict ? <VerdictBadge verdict={run.verdict} /> : null}
+      {run.verdict ? <VerdictBadge run={run} /> : null}
     </a>
   );
 }

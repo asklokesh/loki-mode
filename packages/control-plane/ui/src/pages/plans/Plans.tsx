@@ -1,7 +1,7 @@
 // Plans and traceability: requirement -> plan step -> files changed -> evidence. A criterion with no evidence reads "not proven", never green.
 import { useEffect, useState } from "react";
 import { getRun, listRuns, type RunRow } from "../../api";
-import { Badge, Card, EmptyState, Spinner, Table, Timeline, type Tone } from "../../design/primitives";
+import { Badge, Card, EmptyState, Spinner, Table, Timeline, VerdictBadge, type Tone } from "../../design/primitives";
 import { loadPlan, type PlanData } from "./api";
 import type { RowStatus } from "./logic";
 
@@ -26,7 +26,7 @@ function RunPicker() {
     <div data-testid="plans-picker">
       <Table caption="Pick a run" columns={["Run", "Outcome", "Started"]} rows={rows.map((r) => [
         <a key="a" href={`#/plans/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} style={mono} data-testid="plans-pick">{r.run_id}</a>,
-        r.verdict ? <Badge key="v" tone={r.verdict === "VERIFIED" ? "success" : r.verdict === "FAILED" ? "error" : "warning"}>{r.verdict}</Badge> : "running",
+        r.verdict ? <VerdictBadge key="v" run={r} /> : "running",
         r.started_at ?? "not measured",
       ])} />
     </div>

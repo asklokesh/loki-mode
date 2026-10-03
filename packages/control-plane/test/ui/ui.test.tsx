@@ -12,7 +12,7 @@ const FIX = join(import.meta.dir, "fixtures");
 const load = (f: string) => JSON.parse(readFileSync(join(FIX, f), "utf8"));
 const expected = JSON.parse(readFileSync(join(import.meta.dir, "../fixtures/EXPECTED.json"), "utf8")) as {
   run_count: number;
-  runs: Record<string, { verdict: string; cost_usd: number | null; not_proven: string[]; pr_url: string | null }>;
+  runs: Record<string, { verdict: string; tampered: boolean; cost_usd: number | null; not_proven: string[]; pr_url: string | null }>;
 };
 
 function serve(map: Record<string, unknown>) {
@@ -33,7 +33,7 @@ test("runs list: row count and verdict badges equal EXPECTED.json", async () => 
   const rows = await screen.findAllByTestId("run-row");
   expect(rows.length).toBe(expected.run_count);
   const shown = rows.map((r) => within(r).getByTestId("verdict").textContent).sort();
-  expect(shown).toEqual(Object.values(expected.runs).map((r) => r.verdict).sort());
+  expect(shown).toEqual(Object.values(expected.runs).map((r) => (r.tampered ? "TAMPERED" : r.verdict)).sort());
 });
 
 test("runs list: unpriced run shows 'unpriced', never $0", async () => {

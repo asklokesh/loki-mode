@@ -6,6 +6,7 @@ import { wirePages } from "./pages/wired";
 import { CommandPalette } from "./palette";
 import { AppShell } from "./shell/AppShell";
 import { EmptyState, SettingsPage, StartRun } from "./Shell";
+import { effectiveVerdict, FILTERABLE_VERDICTS, VERDICT, type VerdictSource } from "./design/primitives";
 import { getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 const MISSING = "not recorded";
@@ -25,13 +26,15 @@ const fmtSecs = (s: number | null | undefined): string => (typeof s === "number"
 const fmtTime = (t: string | null | undefined): string => (t ? t.replace("T", " ").replace(/\.\d+Z$/, "Z") : MISSING);
 
 const VERDICT_CLASS: Record<string, string> = {
-  VERIFIED: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-emerald-500/30",
-  PARTIAL: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
-  FAILED: "bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30",
-  SPEC_CONFLICT: "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-violet-500/30",
+  [VERDICT.VERIFIED]: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 ring-emerald-500/30",
+  [VERDICT.PARTIAL]: "bg-amber-500/15 text-amber-700 dark:text-amber-300 ring-amber-500/30",
+  [VERDICT.FAILED]: "bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30",
+  [VERDICT.TAMPERED]: "bg-red-500/15 text-red-700 dark:text-red-300 ring-red-500/30",
+  [VERDICT.SPEC_CONFLICT]: "bg-violet-500/15 text-violet-700 dark:text-violet-300 ring-violet-500/30",
 };
 
-export function VerdictBadge({ verdict }: { verdict: string | null }) {
+export function VerdictBadge({ verdict: stored, run }: { verdict?: string | null; run?: VerdictSource }) {
+  const verdict = run ? effectiveVerdict(run) : stored ?? null;
   const cls = verdict ? (VERDICT_CLASS[verdict] ?? "bg-slate-500/15 text-slate-600 dark:text-slate-300 ring-slate-500/30") : "bg-slate-500/15 text-slate-600 dark:text-slate-300 ring-slate-500/30";
   return <span data-testid="verdict" className={`inline-block rounded px-2 py-0.5 text-xs font-medium ring-1 ${cls}`}>{verdict ?? "in progress"}</span>;
 }
@@ -99,7 +102,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
         <label className="flex flex-col gap-1">Verdict
           <select aria-label="Verdict" className={inp} value={verdict} onChange={(e) => setVerdict(e.target.value)}>
             <option value="">All</option>
-            {["VERIFIED", "PARTIAL", "FAILED", "SPEC_CONFLICT"].map((v) => <option key={v}>{v}</option>)}
+            {FILTERABLE_VERDICTS.map((v) => <option key={v}>{v}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">Repo
@@ -121,7 +124,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
             <tbody>
               {data.runs.map((r) => (
                 <tr key={`${r.source_id}/${r.run_id}`} data-testid="run-row" className="border-t border-slate-200 dark:border-slate-800">
-                  <td className="p-2"><VerdictBadge verdict={r.verdict} />{r.tampered && <span className="ml-1 text-xs text-red-600">tampered</span>}</td>
+                  <td className="p-2"><VerdictBadge run={r} />{r.tampered && <span className="ml-1 text-xs text-red-600">tampered</span>}</td>
                   <td className="p-2 font-mono text-xs">
                     <a href={`#/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`} onClick={() => onOpen?.(r)} className="inline-block break-all py-2 text-sky-600 hover:underline md:py-0 dark:text-sky-400">{r.run_id}</a>
                   </td>
@@ -185,7 +188,7 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
       <a href="#/runs" className="text-sm text-sky-600 hover:underline dark:text-sky-400">Back to runs</a>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="font-mono text-lg font-semibold">{r.run_id}</h1>
-        <VerdictBadge verdict={r.verdict} />
+        <VerdictBadge run={r} />
         {r.tampered && <span className="inline-flex items-center gap-1 text-sm text-red-600"><TriangleAlert size={14} />event log tampered</span>}
         {r.conflict && <span className="inline-flex items-center gap-1 text-sm text-amber-600"><TriangleAlert size={14} />conflicting events ingested</span>}
       </div>

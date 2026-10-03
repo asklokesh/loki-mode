@@ -33,9 +33,10 @@ export function computeStats(db: Db, since: string | null): Stats {
   let mUsd = 0, mRuns = 0, pUsd = 0, pRuns = 0;
   for (const r of all) {
     if (r.endedAt) finished++; else running++;
-    if (r.verdict) {
-      by[r.verdict] = (by[r.verdict] ?? 0) + 1;
-      if (r.endedAt) { withVerdict++; if (r.verdict === "VERIFIED") verified++; }
+    const verdict = r.tampered === 1 && r.verdict ? "TAMPERED" : r.verdict; // a tampered log is never VERIFIED (L3, L7)
+    if (verdict) {
+      by[verdict] = (by[verdict] ?? 0) + 1;
+      if (r.endedAt) { withVerdict++; if (verdict === "VERIFIED") verified++; }
     }
     if (r.verdict === "SPEC_CONFLICT") blocked++;
     if (r.costUsd !== null) { mUsd += r.costUsd; mRuns++; }

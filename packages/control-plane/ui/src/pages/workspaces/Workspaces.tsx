@@ -49,7 +49,7 @@ function WsCard({ w }: { w: WsView }) {
     <strong key="n">{r.name}</strong>,
     r.path ?? "not measured",
     r.after.length ? r.after.join(", ") : "none",
-    r.latest ? (r.latest.verdict ? <VerdictBadge key="v" verdict={r.latest.verdict} /> : <Badge key="v" tone="neutral" pulse>running</Badge>) : "not measured",
+    r.latest ? (r.latest.verdict ? <VerdictBadge key="v" run={r.latest} /> : <Badge key="v" tone="neutral" pulse>running</Badge>) : "not measured",
     r.latest ? String(r.runs) : "not measured",
   ]);
   return (

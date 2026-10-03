@@ -1,5 +1,6 @@
 // Live run view and Overview. Everything is derived from the runs API; a value the API does not carry shows "unmeasured".
 import { useEffect, useState, type ReactNode } from "react";
+import { effectiveVerdict, VERDICT } from "./design/primitives";
 import { getRun, listRuns, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 export const UNMEASURED = "unmeasured";
@@ -88,7 +89,7 @@ export function LiveRun({ source, run }: { source: string; run: string }) {
       {!running && (
         <div data-testid="live-outcome" className={card}>
           <h2 className="mb-1 text-sm font-semibold uppercase text-slate-500">Outcome</h2>
-          <p className="text-lg font-medium">{data.verdict ?? UNMEASURED}</p>
+          <p className="text-lg font-medium">{effectiveVerdict(data) ?? UNMEASURED}</p>
           <p className="mt-1 flex flex-wrap gap-4 text-sm">
             {pr ? <a data-testid="live-pr" href={pr} target="_blank" rel="noreferrer" className="text-sky-600 hover:underline dark:text-sky-400">Pull request</a> : <span data-testid="live-pr" className="text-slate-500">no PR</span>}
             {data.receipt ? <a data-testid="live-receipt" href={`#/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`} className="text-sky-600 hover:underline dark:text-sky-400">Receipt{data.receipt.signed ? " (signed)" : " (unsigned)"}</a> : <span data-testid="live-receipt" className="text-slate-500">no receipt</span>}
@@ -112,7 +113,8 @@ export function summarize(runs: RunRow[], now: number): OverviewStats {
   for (const r of runs) {
     const t = r.started_at ? Date.parse(r.started_at) : NaN;
     if (!Number.isNaN(t)) { if (t >= t0) s.today++; if (t >= t0 - 6 * 86400000) s.week++; }
-    if (r.verdict === "VERIFIED") s.verified++; else if (r.verdict === "PARTIAL") s.partial++; else if (r.verdict === "FAILED") s.failed++; else if (r.verdict) s.other++; else s.running++;
+    const v = effectiveVerdict(r);
+    if (v === VERDICT.VERIFIED) s.verified++; else if (v === VERDICT.PARTIAL) s.partial++; else if (v === VERDICT.FAILED) s.failed++; else if (v) s.other++; else s.running++;
     if (r.cost_usd !== null && r.cost_usd !== undefined) s.costUsd += r.cost_usd; else { s.unmeasuredRuns++; s.costUsd += r.partial_usd ?? 0; }
     if (r.pr_url) s.prsOpened++;
   }
@@ -133,9 +135,9 @@ export function Overview({ runs, now = Date.now() }: { runs: RunRow[]; now?: num
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Stat id="ov-today" label="Runs today" value={String(s.today)} />
         <Stat id="ov-week" label="Runs, last 7 days" value={String(s.week)} />
-        <Stat id="ov-verified" label="VERIFIED" value={String(s.verified)} />
-        <Stat id="ov-partial" label="PARTIAL" value={String(s.partial)} />
-        <Stat id="ov-failed" label="FAILED" value={String(s.failed)} />
+        <Stat id="ov-verified" label={VERDICT.VERIFIED} value={String(s.verified)} />
+        <Stat id="ov-partial" label={VERDICT.PARTIAL} value={String(s.partial)} />
+        <Stat id="ov-failed" label={VERDICT.FAILED} value={String(s.failed)} />
         <Stat id="ov-cost" label="Total cost" value={cost} />
         <Stat id="ov-pr-opened" label="PRs opened" value={String(s.prsOpened)} />
         <Stat id="ov-pr-merged" label="PRs merged" value={UNMEASURED} />

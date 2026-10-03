@@ -1,6 +1,7 @@
 // Traceability matrix logic (CPE-17): requirement -> plan step -> files changed -> evidence. Pure functions, no I/O.
 // Honesty rule: a row is "proven" only when a passing check is linked to it AND the receipt verdict is VERIFIED.
 // Everything else (no receipt, no linked check, partial receipt) reads "not proven"; a linked failing check reads "failed".
+import { isVerified } from "../../design/primitives";
 
 export type RowStatus = "proven" | "failed" | "not proven";
 export interface Check { name: string; cmd?: string; result: string }
@@ -69,7 +70,7 @@ export function buildMatrix(input: { issue: unknown; plan: unknown; receipt: Rec
   const { list, source } = criteriaOf(input.issue);
   const steps = stepsOf(input.plan);
   const checks = input.receipt?.checks ?? [];
-  const verified = input.receipt?.verdict === "VERIFIED";
+  const verified = isVerified(input.receipt);
   const changed = [...new Set([...input.changedFiles, ...(input.receipt?.wall?.files ?? [])])];
   const used = new Set<string>();
 

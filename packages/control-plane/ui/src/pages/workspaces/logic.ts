@@ -1,5 +1,6 @@
 // CPE-19: workspace data derived from GET /v1/config and GET /v1/runs. Anything not measured reads null, never a fake zero.
 import type { RunRow } from "../../api";
+import { isVerified } from "../../design/primitives";
 
 export interface WsRepo { repo?: string; path?: string; setup?: string; after?: string[] }
 export interface WsDef { repos?: WsRepo[]; integration?: { command?: string; timeout_s?: number } }
@@ -34,8 +35,8 @@ export function buildViews(config: unknown, runs: RunRow[]): WsView[] {
     const status = repos.length && measured.length === repos.length
       ? {
           total: repos.length,
-          verified: measured.filter((r) => r.latest!.verdict === "VERIFIED").length,
-          failed: measured.filter((r) => r.latest!.verdict !== null && r.latest!.verdict !== "VERIFIED").length,
+          verified: measured.filter((r) => isVerified(r.latest)).length,
+          failed: measured.filter((r) => r.latest!.verdict !== null && !isVerified(r.latest)).length,
           running: measured.filter((r) => r.latest!.verdict === null).length,
         }
       : null;

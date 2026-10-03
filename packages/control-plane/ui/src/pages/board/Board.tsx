@@ -1,7 +1,7 @@
 // Work board (CPE-18): a kanban of runs. Issue, Running, PR, then Verified or Not proven. Cards open the run thread.
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { listRuns, watchRuns, type RunRow } from "../../api";
-import { Badge, Card, EmptyState, Spinner, VerdictBadge } from "../../design/primitives";
+import { Badge, Card, EmptyState, Spinner, VerdictBadge, VERDICT } from "../../design/primitives";
 import { columnOf, type ColumnId } from "./columns";
 
 const TITLES: Record<ColumnId, string> = { issue: "Issue", running: "Running", pr: "PR open", verified: "Verified", notproven: "Not proven" };
@@ -14,7 +14,7 @@ function RunCard({ r }: { r: RunRow }) {
         <div style={{ fontWeight: 600, fontSize: "var(--cp-text-md)", overflowWrap: "anywhere" }}>{title}</div>
         <div style={{ color: "var(--cp-text-muted)", fontSize: "var(--cp-text-xs)", marginTop: 2 }}>{r.origin_repo ?? "repo not recorded"}</div>
         <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {r.verdict ? <VerdictBadge verdict={r.verdict} /> : r.pr_url ? <Badge tone="info">{r.pr_draft ? "draft PR" : "PR open"}</Badge> : r.status === "running" ? <VerdictBadge verdict="running" /> : <Badge>queued</Badge>}
+          {r.verdict ? <VerdictBadge run={r} /> : r.pr_url ? <Badge tone="info">{r.pr_draft ? "draft PR" : "PR open"}</Badge> : r.status === "running" ? <VerdictBadge verdict={VERDICT.RUNNING} /> : <Badge>queued</Badge>}
           {r.current_stage && !r.verdict ? <Badge>{r.current_stage}</Badge> : null}
         </div>
       </Card>

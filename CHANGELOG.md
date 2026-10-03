@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Control plane UI (CPE-27): a tampered run now renders a red TAMPERED verdict on every page and is never counted as verified; one shared `effectiveVerdict` and `VerdictBadge` in the design primitives derive it (also in /v1/stats), with a guard test against hard-coded verdict strings.
+
 - Control Plane Workspaces page (CPE-19): page "workspaces" (/workspaces) lists loki.yaml workspaces from GET /v1/config with each repo's latest run from GET /v1/runs and a group status that reads "not measured" unless every repo has a run. Run a workspace through POST /v1/runs with body.workspace (already accepted by the server); workspaces holding shell commands are read-only.
 - Control Plane Integrations (CPE-20): page "integrations" (/integrations, in settings) and GET /v1/integrations probe GitHub (gh auth status or git.token_env), GitLab, Slack (notifications.slack_webhook_env), Jira, Linear, Sentry and MCP by presence only (env var NAME plus a boolean, never a value); unprobeable reads "not measured". Connect writes only the env var NAME through PUT /v1/config with If-Match.
 - Control Plane merge queue and PR risk (CPE-25, CPE-26): pages "merge" (/merge) and "risk" (/risk) wrap `loki merge list|add|run [--dry-run]` and `loki review --risk --json`. Server routes GET/POST /v1/merge/queue, POST /v1/merge/run ({dryRun} required boolean) and GET /v1/review/risk (pr, staged=1 or since) run the CLI with execFile and a fixed argv, allowlisted arguments, a timeout and an output cap; every mutation and refusal is audited. A real merge needs an explicit confirm; an unparseable or failed risk run reads "not measured", never 0.

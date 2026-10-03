@@ -140,7 +140,7 @@ export function RunsPage({ subscribe = subscribeRunsStream }: { subscribe?: Subs
                   <td style={cell}>{r.origin_repo ?? <span style={{ color: "var(--cp-text-2)" }}>no repo</span>}{r.issue_ref ? <span style={{ color: "var(--cp-text-2)" }}> {r.issue_ref}</span> : null}</td>
                   <td style={cell}>{sourceOf(r)}</td>
                   <td style={cell}><Badge tone={statusOf(r) === "running" ? "info" : "neutral"} pulse={statusOf(r) === "running"}>{statusOf(r)}</Badge></td>
-                  <td style={cell}>{r.verdict ? <VerdictBadge verdict={r.verdict} /> : <span style={{ color: "var(--cp-text-2)" }}>none yet</span>}</td>
+                  <td style={cell}>{r.verdict ? <VerdictBadge run={r} /> : <span style={{ color: "var(--cp-text-2)" }}>none yet</span>}</td>
                   <td style={cell}>{fmtUsd(r.cost_usd)}</td>
                   <td style={cell}>{fmtDur(r.elapsed_s ?? r.wall_s)}</td>
                 </tr>

@@ -1,5 +1,6 @@
 // Palette data (CPE-22): pure builders for the three result groups and the matcher. No React here.
 import type { RunRow } from "../api";
+import { effectiveVerdict } from "../design/primitives";
 import type { PageDef } from "../pages/registry";
 
 export type ItemKind = "Pages" | "Runs" | "Actions";
@@ -33,7 +34,7 @@ export const runItems = (runs: RunRow[]): PaletteItem[] =>
     id: `run:${r.source_id}/${r.run_id}`,
     kind: "Runs" as const,
     label: r.run_id,
-    hint: [r.origin_repo, r.verdict ?? r.status].filter(Boolean).join(" / ") || undefined,
+    hint: [r.origin_repo, effectiveVerdict(r) ?? r.status].filter(Boolean).join(" / ") || undefined,
     to: `/runs/${encodeURIComponent(r.source_id)}/${encodeURIComponent(r.run_id)}`,
   }));
 

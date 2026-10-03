@@ -1,10 +1,9 @@
 // Receipts: finished runs, an in-place Verify (the engine's own verifier, run read-only on this machine), the public key, and the verified-rate trend.
 import { useEffect, useState } from "react";
 import { listRuns, type RunRow } from "../../api";
-import { Badge, Button, Card, EmptyState, KpiTile, Spinner, Table, type Tone } from "../../design/primitives";
+import { Badge, Button, Card, EmptyState, KpiTile, Spinner, Table, VerdictBadge, isVerified } from "../../design/primitives";
 import { getPublicKey, verifiedTrend, verifyRun, type PublicKey, type VerifyResult } from "./api";
 
-const VERDICT_TONE: Record<VerifyResult["verdict"], Tone> = { VERIFIED: "success", UNSIGNED: "warning", NOT_VERIFIED: "warning", UNCHECKED: "warning", TAMPERED: "error" };
 const key = (r: RunRow) => `${r.source_id}/${r.run_id}`;
 
 export function Receipts() {
@@ -30,7 +29,7 @@ export function Receipts() {
   if (!rows) return <Spinner label="Loading receipts" />;
   const finished = rows.filter((r) => r.verdict);
   const trend = verifiedTrend(finished);
-  const overall = finished.length ? Math.round((finished.filter((r) => r.verdict === "VERIFIED").length / finished.length) * 100) : null;
+  const overall = finished.length ? Math.round((finished.filter((r) => isVerified(r)).length / finished.length) * 100) : null;
 
   return (
     <div data-testid="receipts" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -56,14 +55,14 @@ export function Receipts() {
             const res = results[key(r)];
             return [
               <span key="run" style={{ fontFamily: "var(--cp-font-mono)" }}>{r.run_id}</span>,
-              <Badge key="out" tone={r.verdict === "VERIFIED" ? "success" : r.verdict === "FAILED" ? "error" : "warning"}>{r.verdict}</Badge>,
+              <VerdictBadge key="out" run={r} />,
               r.started_at ?? "not measured",
               <span key="v" style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
                 <Button size="sm" variant="secondary" disabled={res === "pending"} onClick={() => void verify(r)} data-testid="verify-btn">{res === "pending" ? "Verifying" : "Verify"}</Button>
                 {res && res !== "pending" ? (
                   "error" in res
                     ? <Badge tone="error" data-testid="verify-result">{res.error}</Badge>
-                    : <span data-testid="verify-result" data-verdict={res.verdict}><Badge tone={VERDICT_TONE[res.verdict]}>{res.verdict}</Badge>{res.reasons[0] ? <span style={{ marginLeft: 8, color: "var(--cp-text-2)", fontSize: 12 }}>{res.reasons[0]}</span> : null}</span>
+                    : <span data-testid="verify-result" data-verdict={res.verdict}><VerdictBadge run={{ verdict: res.verdict, tampered: r.tampered }} />{res.reasons[0] ? <span style={{ marginLeft: 8, color: "var(--cp-text-2)", fontSize: 12 }}>{res.reasons[0]}</span> : null}</span>
                 ) : null}
               </span>,
             ];

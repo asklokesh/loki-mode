@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { authToken, type RunRow } from "../../api";
 import { EmptyState } from "../../Shell";
-import { Badge, Card, KpiTile, Spinner, Table, VerdictBadge } from "../../design/primitives";
+import { Badge, Card, KpiTile, Spinner, Table, VerdictBadge, VERDICT } from "../../design/primitives";
 
 export const NOT_MEASURED = "not measured";
 const DAY = 86_400_000;
@@ -70,7 +70,7 @@ export function HomeView({ data }: { data: HomeData }) {
       <h1 style={{ fontFamily: "var(--cp-font-serif)", fontSize: "var(--cp-text-2xl)", margin: 0 }}>Home</h1>
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
         <div data-testid="kpi-today"><KpiTile label="Runs today" value={String(today.runs_total)} trend={today.runs_running ? `${today.runs_running} running` : undefined} /></div>
-        <div data-testid="kpi-verified"><KpiTile label="Verified rate, 7 days" value={rate === null ? NOT_MEASURED : `${Math.round(rate * 100)}%`} trend={rate === null ? undefined : `${week.by_verdict.VERIFIED ?? 0} of ${week.runs_finished} finished`} trendTone={rate === null ? "neutral" : rate >= 0.8 ? "success" : "warning"} /></div>
+        <div data-testid="kpi-verified"><KpiTile label="Verified rate, 7 days" value={rate === null ? NOT_MEASURED : `${Math.round(rate * 100)}%`} trend={rate === null ? undefined : `${week.by_verdict[VERDICT.VERIFIED] ?? 0} of ${week.runs_finished} finished`} trendTone={rate === null ? "neutral" : rate >= 0.8 ? "success" : "warning"} /></div>
         <div data-testid="kpi-cost"><KpiTile label="Cost, 7 days" value={cost.value} trend={cost.trend} trendTone={week.cost.label === "partial" ? "warning" : "neutral"} /></div>
         <div data-testid="kpi-blocked"><KpiTile label="BLOCKED waiting" value={String(blockedTotal)} trend={blockedTotal ? "needs your answer" : undefined} trendTone="info" /></div>
       </div>
@@ -104,7 +104,7 @@ export function HomeView({ data }: { data: HomeData }) {
               columns={["Run", "Verdict", "Cost", "Model"]}
               rows={runs.map((r) => [
                 <a key="l" data-testid="recent-run" href={runHref(r.source_id, r.run_id)} style={{ fontFamily: "var(--cp-font-mono)", color: "var(--cp-accent)" }}>{r.origin_repo ?? r.issue_ref ?? r.run_id}</a>,
-                r.verdict ? <VerdictBadge key="v" verdict={r.verdict} /> : <Badge key="v" pulse>running</Badge>,
+                r.verdict ? <VerdictBadge key="v" run={r} /> : <Badge key="v" pulse>running</Badge>,
                 runCost(r),
                 r.model ?? NOT_MEASURED,
               ])}

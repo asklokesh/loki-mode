@@ -2,7 +2,7 @@
 import { ExternalLink, FileDiff, GitPullRequest, Info, MessageCircleQuestion, ScrollText, ShieldCheck } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { getRun, postAnswer, type RunDetailResponse } from "../../api";
-import { Badge, Button, Card, Drawer, EmptyState, Message, Spinner, Textarea, VerdictBadge } from "../../design/primitives";
+import { Badge, Button, Card, Drawer, EmptyState, Message, Spinner, Textarea, VerdictBadge, VERDICT } from "../../design/primitives";
 import { fetchArtifact, fetchEvents, followStream, type RunEvent } from "./stream";
 
 export const NOT_MEASURED = "not measured";
@@ -102,7 +102,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
     <section data-testid="run-thread" style={{ maxWidth: 860, margin: "0 auto", padding: 16 }}>
       <header style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <h1 style={{ margin: 0, fontFamily: "var(--cp-font-serif)", fontWeight: 400, fontSize: "var(--cp-text-2xl)", flex: 1, minWidth: 0 }}>{title}</h1>
-        {blocked ? <VerdictBadge verdict="BLOCKED" /> : d.verdict ? <VerdictBadge verdict={d.verdict} /> : <Badge pulse>running</Badge>}
+        {blocked ? <VerdictBadge verdict={VERDICT.BLOCKED} /> : d.verdict ? <VerdictBadge run={d} /> : <Badge pulse>running</Badge>}
         <span data-testid="run-elapsed">{fmtS(d.elapsed_s ?? d.wall_s)}</span>
         <span data-testid="run-cost">{costLabel(d)}</span>
         <span data-testid="run-header-slot" style={{ display: "inline-flex", gap: 8 }}>{slot}{renderSlot ? renderSlot(d, load) : null}</span>

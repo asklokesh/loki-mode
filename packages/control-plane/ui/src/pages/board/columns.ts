@@ -1,5 +1,6 @@
 // Work board column rules, derived only from GET /v1/runs fields (issue_ref, status, pr_url, verdict).
 import type { RunRow } from "../../api";
+import { isVerified } from "../../design/primitives";
 
 export type ColumnId = "issue" | "running" | "pr" | "verified" | "notproven";
 
@@ -9,7 +10,7 @@ export type ColumnId = "issue" | "running" | "pr" | "verified" | "notproven";
  * that has not started (no started_at, not running) waits in the issue column.
  */
 export function columnOf(r: RunRow): ColumnId {
-  if (r.verdict) return r.verdict === "VERIFIED" ? "verified" : "notproven";
+  if (r.verdict) return isVerified(r) ? "verified" : "notproven";
   if (r.pr_url) return "pr";
   if (r.status === "running" || r.started_at) return "running";
   return "issue";

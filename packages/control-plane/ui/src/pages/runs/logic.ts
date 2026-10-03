@@ -1,5 +1,6 @@
 // Pure filter, sort and rollup logic for the runs table. No fetching, no DOM.
 import type { RunRow } from "../../api";
+import { effectiveVerdict, isVerified } from "../../design/primitives";
 
 export type SortKey = "started" | "repo" | "source" | "status" | "verdict" | "cost" | "elapsed";
 export interface Filters { status: string; verdict: string; repo: string; source: string; q: string }
@@ -9,7 +10,7 @@ export const NO_REPO = "no repo";
 export const repoOf = (r: RunRow): string => r.origin_repo ?? NO_REPO;
 export const statusOf = (r: RunRow): "running" | "completed" => r.status ?? (r.verdict ? "completed" : "running");
 export const sourceOf = (r: RunRow): string => r.task_source ?? r.source_id;
-export const verdictOf = (r: RunRow): string => r.verdict ?? "none";
+export const verdictOf = (r: RunRow): string => effectiveVerdict(r) ?? "none";
 
 export function applyFilters(rows: RunRow[], f: Filters): RunRow[] {
   const q = f.q.trim().toLowerCase();
@@ -18,7 +19,7 @@ export function applyFilters(rows: RunRow[], f: Filters): RunRow[] {
     if (f.verdict && verdictOf(r) !== f.verdict) return false;
     if (f.repo && repoOf(r) !== f.repo) return false;
     if (f.source && sourceOf(r) !== f.source) return false;
-    if (q && ![r.run_id, r.source_id, r.origin_repo, r.issue_ref, r.provider, r.model, r.verdict].some((v) => v && v.toLowerCase().includes(q))) return false;
+    if (q && ![r.run_id, r.source_id, r.origin_repo, r.issue_ref, r.provider, r.model, effectiveVerdict(r)].some((v) => v && v.toLowerCase().includes(q))) return false;
     return true;
   });
 }
@@ -29,7 +30,7 @@ const val = (r: RunRow, k: SortKey): string | number | null => {
     case "repo": return repoOf(r);
     case "source": return sourceOf(r);
     case "status": return statusOf(r);
-    case "verdict": return r.verdict;
+    case "verdict": return effectiveVerdict(r);
     case "cost": return r.cost_usd;
     case "elapsed": return r.elapsed_s ?? r.wall_s;
   }
@@ -58,7 +59,7 @@ export function rollupByRepo(rows: RunRow[]): Rollup[] {
     const g = m.get(k) ?? { repo: k, runs: 0, running: 0, verified: 0, cost: null, unpriced: 0 };
     g.runs++;
     if (statusOf(r) === "running") g.running++;
-    if (r.verdict === "VERIFIED") g.verified++;
+    if (isVerified(r)) g.verified++;
     if (r.cost_usd === null) g.unpriced++; else g.cost = (g.cost ?? 0) + r.cost_usd;
     m.set(k, g);
   }
