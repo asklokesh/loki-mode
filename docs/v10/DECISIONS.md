@@ -673,3 +673,8 @@ Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14
 1. 10.7.0 ships the LOKI_SPEED default flip with the D82-FIXREDS fix. D82-WALL0 is reverted for 10.7.0 because it fails the engine e2e done run (the stub writes no Wall file, so the run seals FAILED); it returns in 10.7.1 with the e2e stub writing a Wall check.
 2. The quiet-mode LiveLine moves from engine10/output.ts to e10ext/liveline.ts: it is presentation, and core was 5026 lines against the D29 5,000 cap. The cap is unchanged.
 3. Control Plane settings API (CPE-14): shell command fields (workspaces.*.integration.command, workspaces.*.repos[].setup) are read-only over HTTP and return 422; they are edited in loki.yaml directly. A browser must never be able to plant a command the engine later runs.
+
+## D85 (2026-10-03 16:30Z, CoS per D68/D69): train/102 reds fixed in place, not dropped
+1. train/102 Tests failed on registration and pin defects only: acp missing from help and completions, merge missing from zsh completion, `loki web --port` skipping the port validator after CP-LEGACY, a ProcessEnv type lost in CP-INGEST watch.ts, and the E-123 gitleaks baseline count after the reviewed Sentry fixture fingerprint.
+2. Dropping ACP, merge, CP-LEGACY and CP-INGEST would remove four headline 10.7.0 features and needs four reverts plus a dist rebuild, which is slower and riskier than five one-line registration fixes. The peer's "drop, do not fix forward" rule targets behaviour regressions; these are wiring gaps. Fixed in d9704dfc4 and every failing suite was rerun locally green before train/103.
+3. `loki web` routes to the Control Plane only in its bare form (optionally --no-open); any other flag reaches the classic validator.
