@@ -1514,7 +1514,7 @@ run_test "web-app CommandPalette file-search failure is not no-results (node --t
 # The moat runner's self-test builds and tags its own throwaway repos, so it is
 # safe in a depth-1 shard. The runner itself (tests/moat/run.sh) is NOT
 # registered here: it ratchets against the last release tag, which a depth-1
-# shard checkout does not have. It runs in its own "Moat suite" job instead.
+# shard checkout does not have. It runs in its own "Moat rules (no regression)" job instead.
 run_test "the moat runner enforces every ratchet rule" "$SCRIPT_DIR/test-moat-runner.sh"
 run_test "v10-pulse anti-drift status/violation reporter" "$SCRIPT_DIR/test-v10-pulse.sh"
 run_test "board-mark-released flips a slice's merged row once its tag ships (E-90)" "$SCRIPT_DIR/test-board-mark-released.sh"

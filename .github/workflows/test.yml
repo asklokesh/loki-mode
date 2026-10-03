@@ -277,7 +277,7 @@ jobs:
   # The toolchain mirrors shell-tests because the property scripts drive loki
   # on both routes (Bun and bash) and the signing checks import cryptography.
   moat-suite:
-    name: Moat suite
+    name: Moat rules (no regression)
     needs: [version-bump-gate]
     if: ${{ !cancelled() && needs.version-bump-gate.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
@@ -343,7 +343,7 @@ jobs:
           bash tests/moat/run.sh > "$RUNNER_TEMP/moat.out" 2>&1 || rc=$?
           cat "$RUNNER_TEMP/moat.out"
           {
-            echo '### Moat suite'
+            echo '### Moat rules (no regression)'
             echo '```'
             grep -E '^(P[1-9] |moat:|moat suite:|ratchet:|registry:)' "$RUNNER_TEMP/moat.out" || echo "no summary lines (exit $rc)"
             echo '```'
