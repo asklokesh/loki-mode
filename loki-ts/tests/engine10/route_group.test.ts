@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../../src/engine10/cli.ts";
-import { maybeRunGroup, MAX_SPEC_BYTES, type GroupCtx, type GroupRunner } from "../../src/features/speed/route.ts";
+import { maybeRunGroup, MAX_SEQ_TASK_BYTES, MAX_SPEC_BYTES, type GroupCtx, type GroupRunner } from "../../src/features/speed/route.ts";
 
 const SPEC = "- update src/a.ts to add alpha\n- update src/b.ts to add beta\n- update src/c.ts to add gamma\n";
 const files = ["src/a.ts", "src/b.ts", "src/c.ts"];
@@ -141,6 +141,33 @@ describe("flag on", () => {
     expect(r).toBeNull();
     expect(task).toContain("change src/a.ts");
   }));
+  test("a 200 KB spec falls back with a task of at most 64 KB (E2BIG guard)", () => withDir(async (d) => {
+    const one = "- change src/a.ts\n" + "- also touch src/a.ts again\n".repeat(8000);
+    writeFileSync(join(d, "big.md"), one);
+    const { r, task } = await run("big.md", ON, undefined, d, d);
+    expect(r).toBeNull();
+    expect(Buffer.byteLength(task)).toBeLessThanOrEqual(MAX_SEQ_TASK_BYTES);
+    expect(task).toBe("big.md");
+  }));
+  test("a 200 KB single-item spec also stays under the cap", () => withDir(async (d) => {
+    writeFileSync(join(d, "big.md"), "x".repeat(200_000));
+    const { task } = await run("big.md", ON, async () => 0, d, d);
+    expect(Buffer.byteLength(task)).toBeLessThanOrEqual(MAX_SEQ_TASK_BYTES);
+  }));
+  test("flag unset returns the task unchanged even for an existing spec path", () => withDir(async (d) => {
+    writeFileSync(join(d, "spec.md"), SPEC);
+    const { r, task, err } = await run("spec.md", {}, async () => 0, d, d);
+    expect(r).toBeNull();
+    expect(task).toBe("spec.md");
+    expect(err).toBe("");
+  }));
+  test("an unreadable path-like argument writes one stderr note and stays literal", async () => {
+    const { r, task, err } = await run("nope/missing.md", ON, async () => 0, "/x", "/x");
+    expect(r).toBeNull();
+    expect(task).toBe("nope/missing.md");
+    expect(err.trim().split("\n").length).toBe(1);
+    expect(err).toContain("spec path not readable");
+  });
   test("default selection uses engine10 selectRelevantFiles, not a local copy", () => {
     expect(readFileSync(join(import.meta.dir, "../../src/features/speed/route.ts"), "utf8")).toContain('from "../../engine10/relevant_files.ts"');
   });
