@@ -1,6 +1,6 @@
 // CPE-15: GET /v1/providers. The probe timeout is honored and no secret value ever reaches the response.
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
@@ -19,6 +19,9 @@ afterAll(() => {
 const bin = (name: string, body: string) => { const p = join(dir, name); writeFileSync(p, `#!/bin/sh\n${body}\n`); chmodSync(p, 0o755); };
 const mk = (token?: string) => createApp({ dbPath: ":memory:", answerDir: mkdtempSync(join(tmpdir(), "cp-prov-a-")), token });
 
+const lo = (path: string, o: { ip?: string; host?: string; headers?: Record<string, string> } = {}) => (app: { fetch: (r: Request, e?: unknown) => Response | Promise<Response> }) =>
+  app.fetch(new Request(`http://127.0.0.1:1234${path}`, { headers: { host: o.host ?? "127.0.0.1:1234", ...(o.headers ?? {}) } }), { requestIP: () => ({ address: o.ip ?? "127.0.0.1" }) });
+
 test("slow binary: probe stops at the timeout and the request returns promptly", async () => {
   bin("codex", "sleep 20");
   bin("claude", "echo 'claude 2.1.7 (Claude Code)'");
@@ -26,7 +29,7 @@ test("slow binary: probe stops at the timeout and the request returns promptly",
   process.env.LOKI_PROVIDER_PROBE_TIMEOUT_MS = "300";
   const { app } = mk();
   const t0 = Date.now();
-  const j = (await (await app.request("/v1/providers")).json()) as any;
+  const j = (await (await lo("/v1/providers")(app)).json()) as any;
   expect(Date.now() - t0).toBeLessThan(5000);
   const by = (id: string) => j.providers.find((p: any) => p.id === id);
   expect(by("codex")).toMatchObject({ installed: true, version: null, probe: "timeout" });
@@ -43,7 +46,7 @@ test("no secret value appears in the response, only env var names", async () => 
   process.env.PATH = `${dir}:/usr/bin:/bin`;
   process.env.LOKI_PROVIDER_PROBE_TIMEOUT_MS = "300";
   const { app } = mk();
-  const text = await (await app.request("/v1/providers")).text();
+  const text = await (await lo("/v1/providers")(app)).text();
   expect(text).not.toContain("SECRETVALUE");
   expect(text).not.toContain("TOPSECRET");
   const j = JSON.parse(text);
@@ -56,6 +59,28 @@ test("token guard: 401 without the bearer token", async () => {
   process.env.PATH = `${dir}:/usr/bin:/bin`;
   process.env.LOKI_PROVIDER_PROBE_TIMEOUT_MS = "300";
   const { app } = mk("tok123");
-  expect((await app.request("/v1/providers")).status).toBe(401);
+  expect((await lo("/v1/providers")(app)).status).toBe(401);
   expect((await app.request("/v1/providers", { headers: { authorization: "Bearer tok123" } })).status).toBe(200);
+});
+
+test("no token: non-loopback peer or non-loopback Host is refused before any spawn", async () => {
+  const log = join(dir, "spawns.log");
+  rmSync(log, { force: true });
+  bin("claude", `echo x >> ${log}\necho 'claude 2.1.7'`);
+  process.env.PATH = `${dir}:/usr/bin:/bin`;
+  const { app } = mk();
+  expect((await lo("/v1/providers", { ip: "192.168.1.9" })(app)).status).toBe(403);
+  expect((await lo("/v1/providers", { host: "evil.example" })(app)).status).toBe(403);
+  expect((await lo("/v1/providers", { ip: "127.0.0.1" })(app)).status).toBe(200);
+  expect(existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean).length : 0).toBe(1);
+});
+
+test("spawn results are cached for 60s: repeat calls do not re-probe", async () => {
+  const log = join(dir, "spawns2.log");
+  rmSync(log, { force: true });
+  bin("claude", `echo x >> ${log}\necho 'claude 2.1.7'`);
+  process.env.PATH = `${dir}:/usr/bin:/bin`;
+  const { app } = mk();
+  for (let i = 0; i < 3; i++) expect((await lo("/v1/providers")(app)).status).toBe(200);
+  expect(readFileSync(log, "utf8").split("\n").filter(Boolean).length).toBe(1);
 });

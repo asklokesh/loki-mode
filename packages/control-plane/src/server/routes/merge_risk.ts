@@ -6,6 +6,7 @@ import { basename, resolve } from "node:path";
 import type { Context } from "hono";
 import { audit } from "../audit.ts";
 import { childEnv, registryRepos } from "../spawn.ts";
+import { isLoopbackHost } from "../auth.ts";
 import { originOk } from "./start.ts";
 import type { RouteCtx } from "./index.ts";
 
@@ -116,8 +117,11 @@ export function mount(ctx: RouteCtx): void {
     } catch { return refuse(c, kind, undefined, 400, "invalid JSON"); }
   };
 
+  /** Spawning reads (no body, so no JSON check): loopback peer AND loopback Host, so DNS rebinding cannot drive a CLI spawn. Origin is checked after. */
+  const readGuard = (c: Context): boolean => ctx.peerIsLoopback(c) && isLoopbackHost(c.req.header("host"));
+
   act.get("/v1/merge/queue", async (c) => {
-    if (!ctx.peerIsLoopback(c)) return refuse(c, "merge.list", undefined, 403, "loopback only");
+    if (!readGuard(c)) return refuse(c, "merge.list", undefined, 403, "loopback only");
     if (!originOk(c.req.header("origin"))) return refuse(c, "merge.list", undefined, 403, "origin not allowed");
     const cwd = repoFor(c.req.query("repo"));
     if (!cwd) return refuse(c, "merge.list", undefined, 422, "repo is not a known project");
@@ -177,7 +181,7 @@ export function mount(ctx: RouteCtx): void {
   });
 
   act.get("/v1/review/risk", async (c) => {
-    if (!ctx.peerIsLoopback(c)) return refuse(c, "risk.read", undefined, 403, "loopback only");
+    if (!readGuard(c)) return refuse(c, "risk.read", undefined, 403, "loopback only");
     if (!originOk(c.req.header("origin"))) return refuse(c, "risk.read", undefined, 403, "origin not allowed");
     const pr = c.req.query("pr"), since = c.req.query("since"), staged = c.req.query("staged");
     const given = [pr !== undefined, since !== undefined, staged !== undefined].filter(Boolean).length;

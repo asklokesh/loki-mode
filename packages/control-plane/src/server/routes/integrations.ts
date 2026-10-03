@@ -5,7 +5,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { parseDocument } from "yaml";
 import { resolveConfigFile } from "./config.ts";
-import type { RouteCtx } from "./index.ts";
+import { probeAllowed, ttlCache, type RouteCtx } from "./index.ts";
 
 const GH_TIMEOUT_MS = 3000;
 const isSet = (n: string | null | undefined): boolean => !!n && (process.env[n] ?? "") !== "";
@@ -115,5 +115,9 @@ export async function listIntegrations(repoDir: string, gh: () => Promise<boolea
 }
 
 export function mount(ctx: RouteCtx): void {
-  ctx.app.get("/v1/integrations", async (c) => c.json({ integrations: await listIntegrations(ctx.repoDir) }));
+  const cached = ttlCache<Awaited<ReturnType<typeof listIntegrations>>>();
+  ctx.app.get("/v1/integrations", async (c) => {
+    if (!probeAllowed(ctx, c)) return c.json({ error: "loopback only without a token" }, 403);
+    return c.json({ integrations: await cached(ctx.repoDir, () => listIntegrations(ctx.repoDir)) });
+  });
 }

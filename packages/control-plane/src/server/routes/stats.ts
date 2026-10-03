@@ -3,7 +3,7 @@
 import { eq } from "drizzle-orm";
 import type { Db } from "../../db/migrate.ts";
 import { events, runs } from "../../db/schema.ts";
-import { effectiveVerdict } from "../integrity.ts";
+import { effectiveVerdict, pubkeysFromEnv } from "../integrity.ts";
 import type { RouteCtx } from "./index.ts";
 
 export interface Stats {
@@ -15,6 +15,10 @@ export interface Stats {
   blocked_waiting: number;
   /** Plain VERIFIED (attested, signature-checked) over finished runs that carry a verdict; null when there are none. */
   verified_rate: number | null;
+  /** Finished successes whose signature could not be checked (VERIFIED (signature not checked)); a rate of 0 with these is "not measured", not "failing". */
+  verified_unchecked: number;
+  /** At least one receipt verification key is configured (LOKI_CP_RECEIPT_PUBKEYS). */
+  keys_configured: boolean;
   cost: {
     /** Sum over runs whose cost is fully measured; null when no run in the window is. */
     measured_usd: number | null;
@@ -30,7 +34,7 @@ export interface Stats {
 export function computeStats(db: Db, since: string | null): Stats {
   const all = db.select().from(runs).all().filter((r) => !since || (r.startedAt !== null && r.startedAt >= since));
   const by: Record<string, number> = {};
-  let finished = 0, running = 0, blocked = 0, withVerdict = 0, verified = 0;
+  let finished = 0, running = 0, blocked = 0, withVerdict = 0, verified = 0, unchecked = 0;
   let mUsd = 0, mRuns = 0, pUsd = 0, pRuns = 0;
   for (const r of all) {
     if (r.endedAt) finished++; else running++;
@@ -38,7 +42,7 @@ export function computeStats(db: Db, since: string | null): Stats {
     const verdict = r.verdict ? effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 }) : null;
     if (verdict) {
       by[verdict] = (by[verdict] ?? 0) + 1;
-      if (r.endedAt) { withVerdict++; if (verdict === "VERIFIED") verified++; }
+      if (r.endedAt) { withVerdict++; if (verdict === "VERIFIED") verified++; else if (verdict === "VERIFIED (signature not checked)") unchecked++; }
     }
     if (r.verdict === "SPEC_CONFLICT") blocked++;
     if (r.costUsd !== null) { mUsd += r.costUsd; mRuns++; }
@@ -54,7 +58,7 @@ export function computeStats(db: Db, since: string | null): Stats {
   const r6 = (n: number): number => Math.round(n * 1e6) / 1e6;
   return {
     since, runs_total: all.length, runs_finished: finished, runs_running: running, by_verdict: by, blocked_waiting: blocked,
-    verified_rate: withVerdict ? verified / withVerdict : null,
+    verified_rate: withVerdict ? verified / withVerdict : null, verified_unchecked: unchecked, keys_configured: pubkeysFromEnv().configured === true,
     cost: {
       measured_usd: mRuns ? r6(mUsd) : null, measured_runs: mRuns, partial_usd: pRuns ? r6(pUsd) : null, partial_runs: pRuns,
       label: pRuns ? "partial" : mRuns ? "measured" : "not measured",

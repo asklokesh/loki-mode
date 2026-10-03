@@ -37,6 +37,8 @@ test("all eight fixtures: counts, verified rate, receipts equal the hand fold", 
   expect(j.runs_running).toBe(0);
   expect(j.by_verdict).toEqual({ "VERIFIED (signature not checked)": 3, TAMPERED: 1, FAILED: 2, PARTIAL: 1, SPEC_CONFLICT: 1 });
   expect(j.verified_rate).toBe(0);
+  expect(j.verified_unchecked).toBe(3);
+  expect(j.keys_configured).toBe(false);
   expect(j.blocked_waiting).toBe(1);
   // One receipt.sealed per fixture.
   const sealed = readdirSync(FIX).flatMap((n) => evs(n)).filter((e) => e.type === "receipt.sealed");

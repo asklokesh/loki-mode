@@ -3,6 +3,7 @@
 import type { Context, Hono } from "hono";
 import type { Db } from "../../db/migrate.ts";
 import type { spawnStart } from "../spawn.ts";
+import { isLoopbackHost } from "../auth.ts";
 import { mountRepos } from "../repos.ts";
 import { mount as artifacts } from "./artifacts.ts";
 import { mount as audit } from "./audit.ts";
@@ -23,6 +24,8 @@ export interface RouteCtx {
   act: Hono;
   db: Db;
   repoDir: string;
+  /** Bearer token when one is set (tokenGuard already enforces it on /v1/*). */
+  token?: string;
   /** The real socket peer is loopback (not the spoofable Host header; unknown peer fails closed). */
   peerIsLoopback: (c: Context) => boolean;
   /** peerIsLoopback plus a loopback Host plus a JSON content type: the guard for state-changing actions. */
@@ -39,4 +42,24 @@ export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, 
 export function registerRoutes(ctx: RouteCtx): void {
   mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback);
   for (const m of routeModules) m(ctx);
+}
+
+/** Spawning/probing read routes: with a token set the bearer (enforced by tokenGuard) is the gate; without one they are loopback-only (peer and Host), like the act routes. */
+export function probeAllowed(ctx: Pick<RouteCtx, "token" | "peerIsLoopback">, c: Context): boolean {
+  return !!ctx.token || (ctx.peerIsLoopback(c) && isLoopbackHost(c.req.header("host")));
+}
+
+export const PROBE_CACHE_MS = 60_000;
+
+/** One cached value per key for ttlMs; concurrent callers share the in-flight promise so a burst spawns once. */
+export function ttlCache<T>(ttlMs = PROBE_CACHE_MS, now: () => number = Date.now): (key: string, load: () => Promise<T>) => Promise<T> {
+  const m = new Map<string, { at: number; p: Promise<T> }>();
+  return (key, load) => {
+    const hit = m.get(key);
+    if (hit && now() - hit.at < ttlMs) return hit.p;
+    const p = load();
+    m.set(key, { at: now(), p });
+    p.catch(() => { if (m.get(key)?.p === p) m.delete(key); });
+    return p;
+  };
 }

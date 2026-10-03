@@ -1,6 +1,6 @@
 // CPE-20: GET /v1/integrations. Presence-only probes; no secret value ever reaches a response body.
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
@@ -25,11 +25,15 @@ afterEach(() => {
   rmSync(bins, { recursive: true, force: true });
 });
 
+
+const lo = (path: string, o: { ip?: string; host?: string; headers?: Record<string, string> } = {}) => (app: { fetch: (r: Request, e?: unknown) => Response | Promise<Response> }) =>
+  app.fetch(new Request(`http://127.0.0.1:1234${path}`, { headers: { host: o.host ?? "127.0.0.1:1234", ...(o.headers ?? {}) } }), { requestIP: () => ({ address: o.ip ?? "127.0.0.1" }) });
+
 const gh = (code: number) => { const p = join(bins, "gh"); writeFileSync(p, `#!/bin/sh\nexit ${code}\n`); chmodSync(p, 0o755); };
 const list = async () => {
   const { app, close } = createApp({ dbPath: ":memory:", repoDir: dir });
   cleanups.push(close);
-  const text = await (await app.request("/v1/integrations")).text();
+  const text = await (await lo("/v1/integrations")(app)).text();
   const rows = JSON.parse(text).integrations as Array<Record<string, any>>;
   return { text, by: (id: string) => rows.find((r) => r.id === id)!, rows };
 };
@@ -82,4 +86,22 @@ test("token guard: 401 without the bearer token", async () => {
   cleanups.push(close);
   expect((await app.request("/v1/integrations")).status).toBe(401);
   expect((await app.request("/v1/integrations", { headers: { authorization: "Bearer tok123" } })).status).toBe(200);
+});
+
+test("no token: non-loopback peer or Host is refused; with a token the bearer is the gate", async () => {
+  const { app, close } = createApp({ dbPath: ":memory:", repoDir: dir });
+  cleanups.push(close);
+  expect((await lo("/v1/integrations", { ip: "10.0.0.5" })(app)).status).toBe(403);
+  expect((await lo("/v1/integrations", { host: "evil.example" })(app)).status).toBe(403);
+  expect((await lo("/v1/integrations")(app)).status).toBe(200);
+});
+
+test("gh probe result is cached for 60s per app", async () => {
+  const log = join(dir, "gh.log");
+  rmSync(log, { force: true });
+  writeFileSync(join(bins, "gh"), `#!/bin/sh\necho x >> ${log}\nexit 0\n`); chmodSync(join(bins, "gh"), 0o755);
+  const { app, close } = createApp({ dbPath: ":memory:", repoDir: dir });
+  cleanups.push(close);
+  for (let i = 0; i < 3; i++) expect((await lo("/v1/integrations")(app)).status).toBe(200);
+  expect(readFileSync(log, "utf8").split("\n").filter(Boolean).length).toBe(1);
 });

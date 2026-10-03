@@ -78,3 +78,18 @@ test("fully measured cost has no plus sign; an empty store shows the empty state
   render(<Home now={NOW} />);
   expect((await screen.findByText("No runs yet")).textContent).toBe("No runs yet");
 });
+
+test("no verification key: a zero rate reads not measured with the unchecked count, never a warning 0%", () => {
+  const week = stats({ runs_total: 3, runs_finished: 3, by_verdict: { "VERIFIED (signature not checked)": 3 }, verified_rate: 0, verified_unchecked: 3, keys_configured: false });
+  render(<HomeView data={{ today: stats({}) as never, week: week as never, runs: [], blocked: [], blockedTotal: 0 }} />);
+  const t = screen.getByTestId("kpi-verified").textContent!;
+  expect(t).toContain("not measured: no verification key");
+  expect(t).toContain("3 signature not checked");
+  expect(t).not.toContain("0%");
+});
+
+test("with a key configured the rate shows as a percentage", () => {
+  const week = stats({ runs_total: 2, runs_finished: 2, by_verdict: { VERIFIED: 1 }, verified_rate: 0.5, verified_unchecked: 0, keys_configured: true });
+  render(<HomeView data={{ today: stats({}) as never, week: week as never, runs: [], blocked: [], blockedTotal: 0 }} />);
+  expect(screen.getByTestId("kpi-verified").textContent).toContain("50%");
+});

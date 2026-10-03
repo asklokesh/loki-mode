@@ -3,7 +3,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import type { RouteCtx } from "./index.ts";
+import { probeAllowed, ttlCache, type RouteCtx } from "./index.ts";
 
 const ORDER = ["claude", "codex", "cline", "aider", "opencode"] as const;
 const DEPRECATED = ["gemini"] as const;
@@ -101,8 +101,11 @@ export async function listProviders(timeoutMs = DEFAULT_TIMEOUT_MS): Promise<unk
 }
 
 export function mount(ctx: RouteCtx): void {
+  const cached = ttlCache<unknown>();
   ctx.app.get("/v1/providers", async (c) => {
+    if (!probeAllowed(ctx, c)) return c.json({ error: "loopback only without a token" }, 403);
     const t = Number.parseInt(process.env.LOKI_PROVIDER_PROBE_TIMEOUT_MS ?? "", 10);
-    return c.json(await listProviders(t > 0 ? t : DEFAULT_TIMEOUT_MS));
+    const ms = t > 0 ? t : DEFAULT_TIMEOUT_MS;
+    return c.json(await cached(String(ms), () => listProviders(ms)));
   });
 }

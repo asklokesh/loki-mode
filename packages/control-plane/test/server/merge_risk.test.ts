@@ -282,3 +282,11 @@ test("two long real merges do not 429 the queue list, and the risk GET has its o
   expect(rs.map((r) => r.status).sort()).toEqual([200, 200, 429]);
   a.close();
 });
+
+test("GET queue and risk refuse a non-loopback Host (DNS rebinding) before spawning anything", async () => {
+  for (const path of ["/v1/merge/queue", "/v1/review/risk?pr=1"]) {
+    const r = await app.fetch(new Request(`http://evil.example:1234${path}`, { headers: { host: "evil.example:1234" } }), peer("127.0.0.1"));
+    expect(r.status).toBe(403);
+  }
+  expect(calls()).toEqual([]);
+});
