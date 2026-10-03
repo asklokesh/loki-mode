@@ -27,7 +27,7 @@ Shell: legacy-ui/scripts/build-standalone.js (generates legacy-ui-static/index.h
 | Overview (spec, tasks, RARV timeline, diff) | components/loki-overview.js, loki-spec-panel.js, loki-rarv-timeline.js, loki-session-diff.js, loki-task-board.js; build-standalone.js:1358-1415 | REWORK | Home (KPI row, recent runs, BLOCKED inbox). RARV timeline becomes the v10 stage timeline in the run thread. Task board DROP (no v10 task queue). Diff KEEP inside the run thread. |
 | First-run hero ("loki quickstart") | build-standalone.js:1365-1387 | REWORK | Empty state of the New run composer (one action: paste an issue). |
 | App Runner | loki-app-preview.js, loki-app-status.js (/api/app-runner/*) | DROP | Screenshots and evidence in the run thread replace it. |
-| Checkpoints | loki-checkpoint-viewer.js (/api/checkpoints, rollback) | DROP | No v10 checkpoints; rollback deleted (LEGACY-REMOVAL.md:37). |
+| Checkpoints | loki-checkpoint-viewer.js (/api/checkpoints, rollback) | REWORK | Served by the Control Plane: /v1/checkpoints read routes, plus create and rollback on the loopback-only action path (CPE24-P2). |
 | Context | loki-context-tracker.js (/api/context) | DROP | Token counts per run (input_tokens, output_tokens) shown in the run cost card. |
 | Fleet | loki-fleet.js (/api/fleet/*) | REWORK | Runs table (all repos, filters, group_id rollup). Its table styling is the Table primitive. |
 | Quality (score, gates, prompt optimizer) | loki-quality-score.js, loki-quality-gates.js, loki-prompt-optimizer.js | DROP | v10 verify stage plus NOT PROVEN list in the run thread. |
@@ -352,8 +352,8 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | POST `/api/enterprise/tokens` | none | none | UNUSED | 410 with notice |
 | GET `/api/enterprise/tokens` | none | none | UNUSED | 410 with notice |
 | DELETE `/api/enterprise/tokens/{identifier}` | none | none | UNUSED | 410 with notice |
-| GET `/api/enterprise/audit` | none | none | UNUSED | 410 with notice |
-| GET `/api/enterprise/audit/summary` | none | none | UNUSED | 410 with notice |
+| GET `/api/enterprise/audit` | none | /v1/audit (CPE24-P2) | PARTIAL (read-only; the operator audit table, no hash chain access) | map |
+| GET `/api/enterprise/audit/summary` | none | /v1/audit/summary (CPE24-P2) | PARTIAL (read-only; success, failure and resource-type counts are null, not measured) | map |
 | GET `/api/compliance` | none | none | UNUSED | 410 with notice |
 | GET `/api/memory/summary` | none | none | UNUSED | 410 with notice |
 | GET `/api/memory/episodes` | vscode-extension/src/views/memoryViewProvider.ts:152 | none | MISSING | 501 not yet supported |
@@ -402,10 +402,10 @@ First hit per process, each route logs one line: `legacy dashboard route <path> 
 | PUT `/api/notifications/triggers` | vscode-extension/media/loki-dashboard.js:496, vscode-extension/media/loki-dashboard.js:6802 | none | MISSING | 501 not yet supported |
 | POST `/api/notifications/{notification_id}/acknowledge` | none | none | UNUSED | 410 with notice |
 | POST `/api/notifications/{notification_id}/unacknowledge` | none | none | UNUSED | 410 with notice |
-| GET `/api/checkpoints` | vscode-extension/src/views/checkpointProvider.ts:108, vscode-extension/src/views/checkpointProvider.ts:134 | none | MISSING | 501 not yet supported |
-| GET `/api/checkpoints/{checkpoint_id}` | none | none | UNUSED | 410 with notice |
-| POST `/api/checkpoints` | vscode-extension/media/loki-dashboard.js:5960 | none | MISSING | 501 not yet supported |
-| POST `/api/checkpoints/{checkpoint_id}/rollback` | vscode-extension/media/loki-dashboard.js:5960 | none | MISSING | 501 not yet supported |
+| GET `/api/checkpoints` | vscode-extension/src/views/checkpointProvider.ts:108, vscode-extension/src/views/checkpointProvider.ts:134 | /v1/checkpoints (CPE24-P2) | PARTIAL (reads the same .loki/state/checkpoints store; unmeasured values are null) | map |
+| GET `/api/checkpoints/{checkpoint_id}` | none | /v1/checkpoints/{id} (CPE24-P2) | PARTIAL (reads the same .loki/state/checkpoints store; unmeasured values are null) | map |
+| POST `/api/checkpoints` | vscode-extension/media/loki-dashboard.js:5960 | /v1/checkpoints (CPE24-P2) | PARTIAL (loopback peer, loopback Host and JSON required; audited) | map |
+| POST `/api/checkpoints/{checkpoint_id}/rollback` | vscode-extension/media/loki-dashboard.js:5960 | /v1/checkpoints/{id}/rollback (CPE24-P2) | PARTIAL (loopback peer, loopback Host and JSON required; forced pre-rollback snapshot; audited) | map |
 | GET `/api/agents` | none | none | UNUSED | 410 with notice |
 | POST `/api/agents/{agent_id}/kill` | vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |
 | POST `/api/agents/{agent_id}/pause` | vscode-extension/media/loki-dashboard.js:4312 | none | MISSING | 501 not yet supported |

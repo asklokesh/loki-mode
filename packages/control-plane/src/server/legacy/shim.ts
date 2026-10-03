@@ -10,6 +10,7 @@ import { audit, runs } from "../../db/schema.ts";
 import { peerIsLoopback, tokenMatches } from "../auth.ts";
 import { liveInfo, listRuns, loadEvents, runDetail } from "../runs.ts";
 import { LEGACY_ROUTES, type LegacyRoute } from "./routes.ts";
+import { auditCheckpointMapped } from "./routes-audit.ts";
 import { metricsMapped } from "./routes-metrics.ts";
 
 export interface LegacyShimOpts {
@@ -102,7 +103,7 @@ export function legacyShim(opts: LegacyShimOpts) {
     return { rows: queryAudit(db, { start_date: q.start_date, end_date: q.end_date, action: q.action, limit, offset }), limit, offset };
   };
 
-  const mapped: Record<string, (c: Context) => Response> = {
+  const mapped: Record<string, (c: Context) => Response | Promise<Response>> = {
     "GET /.well-known/agent.json": (c) => c.json({
       name: "Loki Mode", version, url: "https://www.autonomi.dev/",
       description: "Multi-agent autonomous system by Autonomi. Served by the Loki Control Plane.",
@@ -152,6 +153,7 @@ export function legacyShim(opts: LegacyShimOpts) {
     },
     "GET /api/v2/audit": (c) => { const r = auditList(c); return r.err ?? c.json(r.rows); },
     ...metricsMapped(opts.repoDir ?? process.cwd()),
+    ...auditCheckpointMapped(db, opts.repoDir ?? process.cwd(), auditList),
   };
 
   // /lab/api/* is data, not a page: 501 JSON on every method (a 308 to the SPA would hand a client HTML). Registered before the /lab mount.
@@ -165,11 +167,11 @@ export function legacyShim(opts: LegacyShimOpts) {
     // On the CP app itself "/" is the UI already; redirecting it would loop. Only a separately mounted shim (uiBase set) redirects it.
     if (r.action === "308" && uiBase === "" && r.path === "/") continue;
     const hp = toHono(r.path);
-    const handle = (c: Context): Response => {
+    const handle = (c: Context): Response | Promise<Response> => {
       if (!r.open) { const d = denied(c); if (d) return d; }
       once(r);
       const body = { legacy_route: r.path, method: r.method };
-      if (r.action === "map") return (mapped[`${r.method} ${r.path}`] as (c: Context) => Response)(c);
+      if (r.action === "map") return (mapped[`${r.method} ${r.path}`] as (c: Context) => Response | Promise<Response>)(c);
       if (r.action === "308") return c.redirect(`${uiBase}/`, 308);
       if (r.action === "410") return c.json({ error: "gone", detail: "This legacy dashboard route was retired; nothing consumes it.", ...body }, 410);
       return c.json({ error: NOT_SUPPORTED, detail: "The legacy dashboard route exists, but the Control Plane has no data or mechanism for it yet.", ...body }, 501);
