@@ -2008,6 +2008,9 @@ _loki_control_ui() {
 
 cmd_ui() {
     _loki_control_ui "$@" && return 0
+    # CP-LEGACY: callers that must never start the classic server (run.sh
+    # auto-open) set LOKI_UI_NO_CLASSIC=1.
+    [ "${LOKI_UI_NO_CLASSIC:-0}" = "1" ] && return 1
     local port="" pid=""
     if [ -f "$DASHBOARD_PID_FILE" ]; then
         pid=$(cat "$DASHBOARD_PID_FILE" 2>/dev/null)
@@ -7454,14 +7457,28 @@ _loki_dashboard_bind_is_safe() {
     return 1
 }
 
+_loki_dashboard_args_need_classic() {
+    local a
+    for a in "$@"; do
+        case "$a" in
+            --host|--host=*|--tls-cert|--tls-cert=*|--tls-key|--tls-key=*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 cmd_dashboard() {
     local subcommand="${1:-}"
 
-    # The Control Plane is the default UI; LOKI_CONTROL_DEFAULT=0 restores the classic dashboard.
-    # Only the bare forms are taken over; `start --port ...` and friends keep the classic server.
+    # CP-LEGACY (D57): the Control Plane is the default UI for `dashboard`,
+    # `dashboard start` and `dashboard open`, with or without flags. The legacy
+    # Python dashboard stays reachable only by explicit opt-in:
+    # LOKI_LEGACY_DASHBOARD=1 or LOKI_CONTROL_DEFAULT=0. Enterprise bind/TLS
+    # flags (--host, --tls-cert, --tls-key) are classic-server concepts and
+    # keep the classic server.
     case "$subcommand" in
         ""|start|open)
-            if [ $# -le 1 ] || { [ $# -eq 2 ] && [ "$2" = "--no-open" ]; }; then
+            if [ "${LOKI_LEGACY_DASHBOARD:-0}" != "1" ] && ! _loki_dashboard_args_need_classic "${@:2}"; then
                 _loki_control_ui "${@:2}" && return 0
             fi
             ;;
@@ -8319,6 +8336,9 @@ cmd_web_redirect_to_dashboard() {
         echo "Note: --prd '${_web_dropped_prd}' was NOT loaded. The dashboard does not take a PRD;" >&2
         echo "      it watches runs that are already going. To build from that spec:" >&2
         echo "        loki start '${_web_dropped_prd}'" >&2
+    fi
+    if [ "${LOKI_LEGACY_DASHBOARD:-0}" != "1" ] && _loki_control_ui; then
+        return 0
     fi
     cmd_dashboard_start ${dash_args[@]+"${dash_args[@]}"}
 }
@@ -38248,18 +38268,28 @@ cmd_docker() {
         # the port-in-use check, so the picked port is ignored on reuse). Run in
         # a subshell so its internal `exit` paths (already-running -> exit 0,
         # errors -> exit 1) never abort the blocking docker run.
-        local _dash_port="57374"
-        if declare -F loki_docker_pick_host_port >/dev/null 2>&1; then
-            _dash_port="$(loki_docker_pick_host_port 2>/dev/null || echo 57374)"
-        fi
-        ( cmd_dashboard_start --port "$_dash_port" ) || true
+        # CP-LEGACY (D57): open the Control Plane, never the classic server,
+        # unless LOKI_LEGACY_DASHBOARD=1 opts back in. Same open gate as before.
+        if [ "${LOKI_LEGACY_DASHBOARD:-0}" != "1" ]; then
+            local _cp_args=()
+            if [ ! -t 1 ] || [ "$_docker_bg" = "1" ] || [ "${LOKI_NO_AUTO_OPEN:-0}" = "1" ]; then
+                _cp_args=(--no-open)
+            fi
+            ( _loki_control_ui ${_cp_args[@]+"${_cp_args[@]}"} ) >&2 || true
+        else
+            local _dash_port="57374"
+            if declare -F loki_docker_pick_host_port >/dev/null 2>&1; then
+                _dash_port="$(loki_docker_pick_host_port 2>/dev/null || echo 57374)"
+            fi
+            ( cmd_dashboard_start --port "$_dash_port" ) || true
 
-        # Auto-open the dashboard in the browser, gated EXACTLY like
-        # run.sh:~10088: a TTY on stdout, not background, and not opted out via
-        # LOKI_NO_AUTO_OPEN=1. cmd_dashboard_open reads the persisted port file,
-        # so the URL is correct even when an existing dashboard was reused.
-        if [ -t 1 ] && [ "$_docker_bg" != "1" ] && [ "${LOKI_NO_AUTO_OPEN:-0}" != "1" ]; then
-            ( cmd_dashboard_open ) || true
+            # Auto-open the dashboard in the browser, gated EXACTLY like
+            # run.sh:~10088: a TTY on stdout, not background, and not opted out via
+            # LOKI_NO_AUTO_OPEN=1. cmd_dashboard_open reads the persisted port file,
+            # so the URL is correct even when an existing dashboard was reused.
+            if [ -t 1 ] && [ "$_docker_bg" != "1" ] && [ "${LOKI_NO_AUTO_OPEN:-0}" != "1" ]; then
+                ( cmd_dashboard_open ) || true
+            fi
         fi
 
         # F4 FIX-DOCKER-STOP (write side): record this run's container/state so

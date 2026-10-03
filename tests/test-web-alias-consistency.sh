@@ -77,6 +77,43 @@ else
 fi
 
 echo
+echo "T4 -- CP-LEGACY: 'loki dashboard start' routes to the Control Plane, not the legacy server"
+
+SBX="$(mktemp -d "${TMPDIR:-/tmp}/loki-cplegacy.XXXXXX")" || exit 1
+STUB_PID=""
+_t4_cleanup() { [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; rm -rf -- "$SBX"; }
+trap _t4_cleanup EXIT
+mkdir -p "$SBX/home/.loki/control"
+cat >"$SBX/stub.py" <<'PY'
+import json, os, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        b = json.dumps({"service": "loki-control"}).encode()
+        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b)
+    def log_message(self, *a): pass
+srv = HTTPServer(("127.0.0.1", 0), H)
+json.dump({"pid": os.getpid(), "url": "http://127.0.0.1:%d" % srv.server_port}, open(sys.argv[1], "w"))
+srv.serve_forever()
+PY
+python3 "$SBX/stub.py" "$SBX/home/.loki/control/instance.json" &
+STUB_PID=$!
+for _ in $(seq 1 50); do [ -s "$SBX/home/.loki/control/instance.json" ] && break; sleep 0.1; done
+STUB_URL="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["url"])' "$SBX/home/.loki/control/instance.json" 2>/dev/null)"
+OUT="$(cd "$SBX" && timeout -k 5 30 env HOME="$SBX/home" LOKI_NO_BROWSER=1 LOKI_DIR="$SBX/.loki" bash "$LOKI" dashboard start --port 1 2>&1)"
+if [ -n "$STUB_URL" ] && printf '%s' "$OUT" | grep -qF "$STUB_URL"; then
+    ok "dashboard start printed the Control Plane URL (no browser: LOKI_NO_BROWSER=1)"
+else
+    bad "dashboard start did not route to the Control Plane: $OUT"
+fi
+if [ ! -f "$SBX/home/.loki/dashboard/dashboard.pid" ]; then
+    ok "the legacy dashboard was not started"
+else
+    bad "the legacy dashboard was started"
+    kill "$(cat "$SBX/home/.loki/dashboard/dashboard.pid")" 2>/dev/null
+fi
+
+echo
 echo "==============================================================="
 echo "Results: $PASS passed, $FAIL failed, $((PASS+FAIL)) total"
 [ "$FAIL" -eq 0 ]

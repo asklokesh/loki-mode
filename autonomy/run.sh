@@ -19558,8 +19558,14 @@ start_dashboard() {
         # Auto-open the dashboard in the browser, but ONLY for an interactive
         # foreground session. loki_open_url (lib/browser-open.sh) refuses on
         # no TTY, CI, test runners, LOKI_NO_BROWSER=1 or LOKI_NO_AUTO_OPEN=1.
+        # CP-LEGACY (D57): open the Control Plane, not this legacy server,
+        # unless LOKI_LEGACY_DASHBOARD=1 opts back in.
         if [ "${BACKGROUND_MODE:-false}" != "true" ]; then
-            loki_open_url "${url_scheme}://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null || true
+            if [ "${LOKI_LEGACY_DASHBOARD:-0}" = "1" ]; then
+                loki_open_url "${url_scheme}://127.0.0.1:$DASHBOARD_PORT/" 2>/dev/null || true
+            elif [ -t 1 ] && [ "${LOKI_NO_AUTO_OPEN:-0}" != "1" ] && [ -x "${skill_dir}/autonomy/loki" ]; then
+                LOKI_UI_NO_CLASSIC=1 "${skill_dir}/autonomy/loki" ui >/dev/null 2>&1 || true
+            fi
         fi
         return 0
     else

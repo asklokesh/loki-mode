@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 - The Control Plane now ingests with zero setup: on start it backfills the current repo and every registered project, then tails each `.loki/runs/*/events.jsonl`, so live and already-running runs appear without `LOKI_CONTROL_URL` or `loki control backfill` (set `LOKI_CONTROL_AUTOINGEST=0` to opt out).
+- CP-LEGACY (D57): `loki dashboard start|open` (with or without flags), `loki web`, the host side of `loki docker start` and the run.sh auto-open now open the Control Plane instead of the legacy Python dashboard. The legacy server is reachable only with `LOKI_LEGACY_DASHBOARD=1` (or `LOKI_CONTROL_DEFAULT=0`, or `--host`/`--tls-*` flags); `LOKI_NO_BROWSER=1` is respected everywhere.
+
 - Fixed the loki-seal r7 honest-run test failing on Node 22, whose runner rejects `--test-isolation=none`; the fixture now uses that flag only where Node supports it (test-only, product fail-closed behaviour unchanged).
 ### Changed
 - Cost cap defaults: subscription runs (no API key in the environment) get no dollar cap and print "subscription: no dollar cap; usage counts against your plan limits"; runs with an API key default to $100. `--max-cost` and `budgets.per_run` in loki.yaml override both, and a cap hit still ends the run BUDGET_STOP (exit 3).
