@@ -13,7 +13,7 @@ import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
 import { runPackageSuites } from "../../project_model/package_suite.ts";
-import { classifyCheck, NO_TESTS_REASON } from "../../util/check_result.ts";
+import { classifyCheck, goJsonText, NO_TESTS_REASON } from "../../util/check_result.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
@@ -97,7 +97,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
       notProven.add(`not run: ${name} (aborted)`);
       continue;
     }
-    const out = `${r.stdout}\n${r.stderr}`, lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
+    const out = `${r.stdout}\n${r.stderr}`, lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out: goJsonText(out), cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
     const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out });
     checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS }); // FC-16: exit 0 with no executed tests is not a pass
