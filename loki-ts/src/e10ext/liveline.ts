@@ -1,5 +1,6 @@
 // D82-LIVELINE: quiet-mode live status line. Presentation only, kept in e10ext so the D29 core budget holds.
 import { formatDuration } from "../engine10/output.ts";
+import { terminalWidth } from "../util/term_width.ts";
 const LIVE_LABELS: Record<string, string> = { intake: "reading the task", plan: "planning", wall: "writing acceptance checks", implement: "implementing", verify: "verifying", fix: "fixing failures", commit: "committing", seal: "sealing the receipt", pr: "opening the PR", deep: "deep review" };
 export interface LiveLineOpts { tty: boolean; write: (s: string) => void; now?: () => number; columns?: number; graceS?: number }
 /** D82: quiet-mode progress. TTY: one status line rewritten in place (\r + clear-line), cleared before the summary. Non-TTY: one plain line per stage that stays open past graceS (fast stages print nothing, so the D48 line budget holds). */
@@ -32,7 +33,7 @@ export class LiveLine {
   private render(): void {
     const t = this.text(); if (!t || !this.cur) return;
     if (this.o.tty) {
-      const w = Math.max(20, (this.o.columns ?? 80) - 1);
+      const w = terminalWidth({ columns: this.o.columns }) - 1;
       this.o.write(`\r\x1b[2K${t.length > w ? t.slice(0, w) : t}`); this.shown = true;
     } else if (!this.cur.announced && (this.now() - this.cur.at) / 1000 >= (this.o.graceS ?? 3)) {
       this.cur.announced = true; this.o.write(`${t}\n`);

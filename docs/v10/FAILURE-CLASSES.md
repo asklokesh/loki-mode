@@ -125,6 +125,18 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: one runner-config registry for each runner. Any added or changed file that it names (configs, preloads, setup files, conftest) caps the verdict below VERIFIED, with NOT PROVEN naming the file.
 - Fixture: a stub-provider repro for each runner (bun preload, vitest setupFiles, jest moduleNameMapper, pytest conftest).
 
+## FC-10 Live line truncated to ~20 columns on a pty with no size
+- User saw: on a pty with no column size (script -q, CI, tmux before a resize, IDE terminals) the quiet-mode live status line was cut to about 20 characters, for example "[implement] implemen". Raw: the stage events were complete; only the rendering was wrong.
+- Law: L7 (outputs are contracts).
+- Siblings (every terminal width read, with its old fallback):
+  - loki-ts/src/engine10/supervisor.ts:334 passed process.stdout.columns straight to LiveLine (undefined or 0);
+  - loki-ts/src/e10ext/liveline.ts:35 used Math.max(20, (columns ?? 80) - 1), so 0 became 20 (the bug);
+  - loki-ts/src/cockpit/cli.ts:73 used columns || $COLUMNS || 0 with no 80 default and accepted widths of 5 or more;
+  - autonomy/tui.sh:27 used `tput cols || echo 80`, which accepts tput printing 0 or nothing;
+  - packages/*/src: no terminal width reads.
+- Mechanism: one shared terminalWidth() helper (loki-ts/src/util/term_width.ts): a finite columns >= 40, else a valid $COLUMNS >= 40, else 80. Every TS read goes through it and the bash read applies the same rule.
+- Fixture: loki-ts/tests/engine10/term_width.test.ts (columns undefined, 0 and 20 give >= 80; the live line shows the full "[implement] implementing" text; a guard fails on any raw .columns read in src outside the helper).
+
 ## FC-11 Repo-wide structural guards went red after slices passed narrowed reviews
 - User saw: nothing yet; the 10.7.1 train was blocked on main 51e02b229 (2 failures in the full loki-ts bun test).
 - Law: L7 (the release is a contract), and the D44 gate.

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Fix (D86, FC-10, L7): the quiet-mode live status line no longer truncates to about 20 columns on a pty with no size (script -q, CI, tmux before a resize, IDE terminals). One terminalWidth() helper (columns >= 40, else $COLUMNS, else 80) now backs the live line, the cockpit and autonomy/tui.sh, and a guard test fails on any raw terminal width read in loki-ts/src.
+
 ## v10.9.0 (2026-10-03)
 
 Legacy dashboard removal release: the classic dashboard UI is deleted (the browser UI is the Control Plane), two guards keep it gone, and the Control Plane now serves the audit, checkpoint, memory, context, focus, tasks, session control and Completion Council routes the legacy dashboard answered. Also fixes the Python 3.10 pricing pin that turned 10.8.0 Tests red. Shipped under the founder CI waiver (D88); new tests for these slices are owed after the Oct 7 reset.
