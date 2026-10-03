@@ -1,0 +1,107 @@
+// FC-16: a check that executed zero tests is NOT a pass. One shared classifier, every runner fixture, plus the verdict gate.
+import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { classifyCheck, hasExecutedProof, testCount } from "../../src/util/check_result.ts";
+import { runCheck, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
+import { classify } from "../../src/engine10/stages/wall.ts";
+import { verdictOf } from "../../src/engine10/stages/seal.ts";
+import type { RunContext } from "../../src/engine10/types.ts";
+
+const VITEST_NO_FILES = "\n No test files found, exiting with code 0\n";
+const VITEST_FILES_ZERO = " Test Files  0 passed (0)\n      Duration  120ms\n";
+const VITEST_REAL = " ✓ a.test.ts (3 tests) 4ms\n\n Test Files  1 passed (1)\n      Tests  3 passed (3)\n   Duration  300ms\n";
+const PYTEST_NONE = "\nno tests ran in 0.01s\n";
+const PYTEST_REAL = "...\n3 passed in 0.02s\n";
+const JEST_NONE = "No tests found, exiting with code 0\n";
+const GO_UNPARSED = "ok  \texample.com/pkg\t0.003s\n";
+const GO_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.com/pkg\t0.003s\n";
+const CARGO_NONE = "running 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n";
+const BUN_REAL = "bun test v1\n\n 2 pass\n 0 fail\n 2 expect() calls\nRan 2 tests across 1 file. [3.00ms]\n";
+const MOCHA_REAL = "  3 passing (5ms)\n";
+const MOCHA_NONE = "  0 passing (1ms)\n";
+
+describe("testCount parses each supported runner", () => {
+  test("zero", () => {
+    for (const o of [VITEST_NO_FILES, VITEST_FILES_ZERO, PYTEST_NONE, JEST_NONE, CARGO_NONE, MOCHA_NONE]) expect(testCount(o)).toBe(0);
+  });
+  test("real counts", () => {
+    expect(testCount(VITEST_REAL)).toBe(3);
+    expect(testCount(PYTEST_REAL)).toBe(3);
+    expect(testCount(GO_V)).toBe(1);
+    expect(testCount(MOCHA_REAL)).toBe(3);
+    expect(testCount(BUN_REAL)).toBe(2);
+  });
+  test("unparsed is null, never zero or a pass", () => {
+    expect(testCount(GO_UNPARSED)).toBeNull();
+    expect(testCount("whatever\n")).toBeNull();
+  });
+});
+
+describe("classifyCheck", () => {
+  test("exit 0 with zero executed tests is not_run with the no-tests reason", () => {
+    for (const out of [VITEST_NO_FILES, VITEST_FILES_ZERO, PYTEST_NONE, JEST_NONE, CARGO_NONE]) {
+      const c = classifyCheck({ kind: "test", ok: true, out });
+      expect(c.result).toBe("not_run");
+      expect(c.reason).toContain("no tests executed");
+    }
+  });
+  test("exit 0 with an unparsed count is not_run, never pass", () => {
+    const c = classifyCheck({ kind: "test", ok: true, out: GO_UNPARSED });
+    expect(c.result).toBe("not_run");
+    expect(c.reason).toContain("unknown");
+  });
+  test("real pass keeps n", () => {
+    expect(classifyCheck({ kind: "test", ok: true, out: VITEST_REAL })).toEqual({ result: "pass", n: 3 });
+    expect(classifyCheck({ kind: "test", ok: true, out: PYTEST_REAL })).toEqual({ result: "pass", n: 3 });
+  });
+  test("a failing run stays fail, a static check is decided by exit", () => {
+    expect(classifyCheck({ kind: "test", ok: false, out: "1 failed, 2 passed in 0.1s\n" }).result).toBe("fail");
+    expect(classifyCheck({ kind: "static", ok: true, out: "" }).result).toBe("pass");
+    expect(classifyCheck({ kind: "static", ok: false, out: "" }).result).toBe("fail");
+  });
+});
+
+describe("runCheck routes through the shared classifier", () => {
+  const ctxFor = (dir: string): RunContext => ({ repoDir: dir, emit: () => {} }) as unknown as RunContext;
+  const sig = new AbortController().signal;
+  async function check(out: string, kind?: "static"): Promise<VerifyCheck> {
+    const dir = mkdtempSync(join(tmpdir(), "fc16-"));
+    try { return await runCheck(ctxFor(dir), "t", "bash", ["-c", 'printf %s "$1"', "_", out], sig, [], kind ? { kind } : {}); } finally { rmSync(dir, { recursive: true, force: true }); }
+  }
+  test("vitest No test files found, exit 0 -> not_run, no pass n:0", async () => {
+    const c = await check(VITEST_NO_FILES);
+    expect(c.result).toBe("not_run"); expect(c.n).toBeUndefined(); expect(c.reason).toContain("no tests executed");
+  });
+  test("vitest Test Files 0 -> not_run", async () => { expect((await check(VITEST_FILES_ZERO)).result).toBe("not_run"); });
+  test("pytest no tests ran -> not_run", async () => { expect((await check(PYTEST_NONE)).result).toBe("not_run"); });
+  test("real pass -> pass with n>0", async () => { const c = await check(PYTEST_REAL); expect(c.result).toBe("pass"); expect(c.n).toBe(3); });
+  test("static check passes without a count", async () => { expect((await check("", "static")).result).toBe("pass"); });
+});
+
+describe("wall base classify", () => {
+  const f = { path: "w.test.ts", runner: "vitest" } as never;
+  test("exit 0 with zero tests is not_run", () => { expect(classify(f, 0, VITEST_NO_FILES, "/tmp")).toBe("not_run"); });
+  test("exit 0 with tests is pass", () => { expect(classify(f, 0, VITEST_REAL, "/tmp")).toBe("pass"); });
+});
+
+describe("verdict gate", () => {
+  const pass0 = { name: "vitest:a", cmd: "x", result: "pass" as const, duration_s: 1 };
+  const o = (extra: Record<string, unknown> = {}) => ({ implement: { exit: "done" }, intake: {}, ...extra }) as never;
+  test("hasExecutedProof needs pass with n>0", () => {
+    expect(hasExecutedProof([{ result: "pass", n: 0 }])).toBe(false);
+    expect(hasExecutedProof([{ result: "pass" }])).toBe(false);
+    expect(hasExecutedProof([{ result: "not_run", n: 3 }])).toBe(false);
+    expect(hasExecutedProof([{ result: "pass", n: 1 }])).toBe(true);
+  });
+  test("VERIFIED needs proof, else PARTIAL", () => {
+    expect(verdictOf(o(), [pass0], false, false, false, false)).toBe("PARTIAL");
+    expect(verdictOf(o(), [pass0], false, false, false, true)).toBe("VERIFIED");
+  });
+  test("ALREADY_SATISFIED with zero executed checks (FC-16) is PARTIAL", () => {
+    const a = o({ implement: { exit: "already_done" } });
+    expect(verdictOf(a, [], true, false, false, false)).toBe("PARTIAL");
+    expect(verdictOf(a, [pass0], true, false, false, true)).toBe("ALREADY_SATISFIED");
+  });
+});

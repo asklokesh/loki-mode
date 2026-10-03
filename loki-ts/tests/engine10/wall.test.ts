@@ -634,7 +634,7 @@ describe("engine10 wall base run, D42 (3)", () => {
     const repoDir = repo();
     expect(classify({ runner: "pytest", path: "x" }, 0, "", repoDir, "system")).toBe("not_run");
     expect(classify({ runner: "pytest", path: "x" }, 1, "F", repoDir, "system")).toBe("not_run");
-    expect(classify({ runner: "pytest", path: "x" }, 0, "", repoDir, "project")).toBe("pass");
+    expect(classify({ runner: "pytest", path: "x" }, 0, "1 passed in 0.01s", repoDir, "project")).toBe("pass");
     rmSync(repoDir, { recursive: true, force: true });
   });
 });

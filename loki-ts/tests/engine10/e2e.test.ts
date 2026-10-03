@@ -175,12 +175,12 @@ describe("engine10 e2e (stub claude)", () => {
     expect(r.out).toContain("PR:         none");
   }, 90_000);
 
-  test("already-done run seals ALREADY_SATISFIED with no second implement session", () => {
+  test("already-done run with no executed check is NOT PROVEN (FC-16), with no second implement session", () => {
     const r = runEngine("already");
-    if (r.code !== 0) console.error(r.out);
-    expect(r.code).toBe(0);
     const receipt = JSON.parse(readFileSync(join(r.runDir, "receipt.json"), "utf8"));
-    expect(receipt.verdict).toBe("ALREADY_SATISFIED");
+    expect(receipt.verdict).toBe("PARTIAL");
+    expect(receipt.not_proven).toContain("no tests executed");
+    expect(r.out).not.toContain("Outcome:    ALREADY_SATISFIED");
     expect(receipt.head_sha).toBe(receipt.base_sha);
     expect(r.stubCalls.filter((s) => s === "implement")).toEqual(["implement"]);
     expect(r.events.some((e) => e.stage === "fix" && e.type === "stage.started")).toBe(false);

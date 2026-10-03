@@ -11,6 +11,7 @@ import { run } from "../../util/shell.ts";
 import { assertWorkerEnv } from "../worker.ts";
 import { canonicalJson, sha256, signReceipt } from "./seal.ts";
 import { changedFiles } from "./verify.ts";
+import { classifyCheck, NO_TESTS_REASON } from "../../util/check_result.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
@@ -93,7 +94,9 @@ async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: DeepOpti
       notProven.add(`not run: ${name} (aborted)`);
       continue;
     }
-    checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: r.exitCode === 0 ? "pass" : "fail", duration_s: durationS });
+    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out: `${r.stdout}\n${r.stderr}` });
+    checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS }); // FC-16: exit 0 with no executed tests is not a pass
+    if (cls.result === "not_run") notProven.add(`not run: ${name} (${NO_TESTS_REASON})`);
   }
 }
 /** ENGINE.md section 4: "app boot (via project_graph.ts discoverProjectGraph)".

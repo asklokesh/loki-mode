@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
+import { classifyCheck, ran, skipped } from "../../util/check_result.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
@@ -73,26 +74,9 @@ interface RunOpts {
   stdin?: string;
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
   interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
+  kind?: "test" | "static"; // FC-16: "test" (default) needs a parsed executed count n>0 to pass; "static" (lint, typecheck, selector) is decided by exit code
 }
-/** Executed-test count from the runner's FINAL summary only (node TAP/spec trailer, pytest last line, jest/vitest "Tests"
- *  line, cargo "test result:", go "[no test"), never test names or captured stdout above it; null = no summary. 0 = empty or
- *  all skipped, never a pass (A-111). Node counts a testless file as one pseudo-test named after the file: discounted only when its name is the path under test (A-111b). */
-export function ran(out: string, path?: string): number | null {
-  const n = (s: string, re: RegExp): number => +(s.match(re)?.[1] ?? 0);
-  const blk = out.trimEnd().match(/(?:^|\n)((?:(?:#|\u2139) \w+ [\d.]+(?:\n|$)){5,})$/)?.[1];
-  if (blk) { const c = n(blk, /(?:#|\u2139) pass (\d+)/) + n(blk, /(?:#|\u2139) fail (\d+)/); const nm = out.match(/^(?:ok \d+ - |\u2714 )(\S+\.[cm]?[jt]s)(?: \(|$)/m)?.[1]; return c === 1 && nm && (!path || basename(nm) === basename(path)) ? 0 : c; }
-  const cg = out.split("\n").filter((l) => l.startsWith("test result: "));
-  if (cg.length) return cg.reduce((t, l) => t + n(l, /(\d+) passed/) + n(l, /(\d+) failed/), 0);
-  const l = out.split("\n").filter((x) => /^(?:=+ )?(?:\d+ \w+.*|no tests ran) in [\d.]+s|^\s*Tests?:?\s+\d|^No tests found|^(?:ok|\?)\s+\S+\s/.test(x)).pop();
-  if (!l || /^(?:ok|\?)\s/.test(l)) return l && /\[no test/.test(l) ? 0 : null;
-  return /^(?:=+ )?no tests (?:ran|found)|^No tests found|skipped/i.test(l) || /\d+ (?:passed|failed|errors?)/.test(l) ? n(l, /(\d+) passed/) + n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : null;
-}
-/** Skipped or deselected tests from the runner's FINAL summary lines only: pytest "N skipped|deselected", jest/vitest "Tests: N skipped",
- *  node "# skipped N". Test names and captured output above the summary never count (A-115). */
-export function skipped(out: string): number {
-  return out.split("\n").filter((l) => /^(?:=+ )?\d+ \w+.* in [\d.]+s|^\s*Tests?:?\s+\d|^(?:#|ℹ) skipped \d/.test(l.trim()))
-    .reduce((t, l) => t + [...l.matchAll(/(\d+) (?:skipped|deselected|xfailed)|skipped (\d+)/g)].reduce((u, m) => u + +(m[1] ?? m[2]!), 0), 0);
-}
+export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one shared count parser and classifier live in check_result.ts
 const CFG_ALWAYS = /(^|\/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
 const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json)$/;
 const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|addopts|testpaths)/im;
@@ -135,19 +119,22 @@ export async function runCheck(
 ): Promise<VerifyCheck> {
   const started = Date.now();
   const cmdStr = [cmd, ...args].join(" ");
-  const skip = (a: Awaited<ReturnType<typeof runOnce>>): string | undefined =>
-    a.missing ? `${cmd} not found on PATH`
-    : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`)
-    : ran(a.out, /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined) === 0 ? "ran 0 tests (empty or all skipped)" : undefined;
+  const kind = opts.kind ?? "test";
+  const one = (a: Awaited<ReturnType<typeof runOnce>>) => {
+    const c = classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined });
+    const reason = a.missing ? `${cmd} not found on PATH` : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`) : c.reason;
+    return { ...c, ...(reason ? { reason } : {}) };
+  };
   let attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-  let reason = skip(attempt);
-  let result: VerifyCheck["result"] = reason ? "not_run" : "pass";
-  if (!reason && !attempt.ok) {
+  let c = one(attempt);
+  let result: VerifyCheck["result"] = c.result;
+  if (c.result === "fail") {
     attempt = await runOnce(cmd, args, ctx.repoDir, signal, opts);
-    reason = skip(attempt);
-    result = reason ? "not_run" : attempt.ok ? "flaky" : "fail";
+    c = one(attempt);
+    result = c.result === "not_run" ? "not_run" : c.result === "pass" ? "flaky" : "fail";
   }
-  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" ? { n: ran(attempt.out) ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
+  const reason = c.reason;
+  const check: VerifyCheck = { name, cmd: cmdStr, result, duration_s: (Date.now() - started) / 1000, ...(result === "fail" ? { first_error: firstError(attempt.out), ids: failIds(attempt.out) } : result === "pass" && kind === "test" ? { n: c.n ?? 0, sk: skipped(attempt.out) } : {}), ...(reason ? { reason } : {}), ...(opts.interpreter ? { interpreter: opts.interpreter } : {}) };
   checks.push(check);
   ctx.emit("test.result", "verify", { ...check });
   return check;
@@ -211,20 +198,20 @@ export async function runLintChecks(
   const py = changed.filter((f) => f.endsWith(".py"));
   if (py.length) {
     const [ruffCmd, interpreter] = resolveTool(ctx.repoDir, "ruff", "ruff"); // E-98a: same project-first resolution as pytest
-    await runCheck(ctx, "lint:ruff", ruffCmd, ["check", ...py], signal, checks, { ...opts, interpreter });
+    await runCheck(ctx, "lint:ruff", ruffCmd, ["check", ...py], signal, checks, { ...opts, interpreter, kind: "static" });
   }
   const sh = changed.filter((f) => f.endsWith(".sh"));
   if (sh.length) {
-    await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, opts);
-    await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, opts);
+    await runCheck(ctx, "lint:bash-n", "bash", ["-c", 'for f in "$@"; do bash -n "$f" || exit 1; done', "_", ...sh], signal, checks, { ...opts, kind: "static" });
+    await runCheck(ctx, "lint:shellcheck", "shellcheck", sh, signal, checks, { ...opts, kind: "static" });
   }
   const tsjs = changed.filter((f) => /\.(ts|tsx|js|jsx)$/.test(f));
   if (tsjs.length) {
     if (existsSync(join(ctx.repoDir, "tsconfig.json"))) {
-      await runCheck(ctx, "lint:tsc", "npx", ["tsc", "--noEmit", "-p", "."], signal, checks, opts);
+      await runCheck(ctx, "lint:tsc", "npx", ["tsc", "--noEmit", "-p", "."], signal, checks, { ...opts, kind: "static" });
     }
     if (ESLINT_CONFIGS.some((f) => existsSync(join(ctx.repoDir, f)))) {
-      await runCheck(ctx, "lint:eslint", "npx", ["eslint", ...tsjs], signal, checks, opts);
+      await runCheck(ctx, "lint:eslint", "npx", ["eslint", ...tsjs], signal, checks, { ...opts, kind: "static" });
     }
   }
 }
@@ -272,6 +259,7 @@ export const verifyStage: Stage = {
       // Self-hosting only: also run the repo's own fast-gate selector (section 4).
       if (isLokiModeRepo(ctx.repoDir)) {
         await runCheck(ctx, "select-tests", "bash", ["scripts/select-tests.sh", "--files", "-", "--run"], signal, checks, {
+          kind: "static", // the selector reruns tests whose counts are not parsed here; per-file test checks carry the proof
           stdin: changed.join("\n") + "\n",
         });
       }

@@ -193,14 +193,19 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - A dirty or foreign checkout is noted in the output.
 - Fixture: owed. A repo whose checkout is a prior run's branch with a receipt must yield the unmerged-work outcome.
 
-## FC-16 ALREADY_SATISFIED with zero Loki-executed checks
-- User saw: the same run had verify "checks": [] and changed_files []. The verdict rested only on the implement agent's self-report ("10/10 named impacted tests pass ... via npx vitest run").
-- Law: L0 and L3 (the model never grades its own work), L5; Seal accuracy.
-- Siblings: every outcome that is reachable with an empty checks list.
-- Mechanism:
-  - A success-class outcome requires harness-executed evidence against the target base: the impacted tests run through the Project Model commands, plus each acceptance point of the issue checked.
-  - With zero executed checks the outcome is NOT VERIFIED.
-- Fixture: owed. A verify with checks [] and a self-reported pass must yield NOT VERIFIED.
+## FC-16 ALREADY_SATISFIED / VERIFIED with zero Loki-executed checks (n=0 counted as pass)
+- User saw: FireLater#17 on 10.7.1 recorded checks `"result":"pass","n":0` (zero tests executed counted as PASS). The same run had verify "checks": [] and changed_files []; the verdict rested only on the implement agent's self-report ("10/10 named impacted tests pass ... via npx vitest run").
+- Law: L0 and L3 (the model never grades its own work), L5 (not a pass: NOT PROVEN, owner harness); Seal accuracy.
+- Rule: a test check with n=0 executed, or a count that cannot be parsed, is not_run with reason "no tests executed". VERIFIED and ALREADY_SATISFIED require at least one Loki-executed check with n>0 and a pass; otherwise the seal verdict is PARTIAL (the engine's existing NOT PROVEN label) and `no tests executed` is listed in NOT PROVEN.
+- Mechanism (one shared module, loki-ts/src/util/check_result.ts): `testCount` (vitest, jest, bun test, pytest, go test -v or "[no test", cargo test, node --test, mocha; null = unknown), `classifyCheck` (kind test needs n>0 to pass; kind static = lint/typecheck/scan, decided by exit code), `hasExecutedProof`.
+- Sibling sweep (every site that set or consumed "pass"):
+  - stages/verify.ts runCheck (was `n: ran(out) ?? 0` on a pass, and a null count passed): now classifyCheck. Lint, tsc, eslint, ruff, bash -n, shellcheck and select-tests are kind static.
+  - stages/wall.ts classify (exit 0 was an unconditional pass, feeding base_run.pass and wallGreenOnBase): now classifyCheck; zero or unknown count is not_run.
+  - stages/deep.ts runFullSuite (exit 0 was a pass): now classifyCheck, not_run lists NOT PROVEN. Council and secret-scan pass entries are static (no tests exist to count).
+  - stages/seal.ts verdictOf (VERIFIED and every ALREADY_SATISFIED route: intake.already_satisfied, wallGreenOnBase, implement exit already_done): gated on `proof` (hasExecutedProof over verify's raw checks, or a Wall base run with n>0).
+  - Consumers unchanged and now correct by construction: e10ext/select.ts, e10ext/reviewer_body.ts, features/pr_criteria.ts (they read result "pass", which now implies n>0 for test checks).
+  - Not applicable: modernize/presealed_wall.ts (red-base proof, never a pass), runner/quality_gates.ts (gate stubs, not test runs).
+- Fixture: loki-ts/tests/engine10/check_result.test.ts (vitest `No test files found` and `Test Files 0`, pytest `no tests ran`, jest, cargo, mocha zero; go unparsed is unknown; real pass keeps n; verdict gate: VERIFIED and ALREADY_SATISFIED without proof are PARTIAL).
 
 ## FC-17 The Wall spends time and money and writes nothing
 - User saw: the same run's Wall produced "files": [] in 1m42s, with base_run 0/0/0. This is the D82-WALL0 class again.
