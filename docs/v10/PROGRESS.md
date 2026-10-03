@@ -2110,3 +2110,23 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Fast gate on main: rc=124 (590s timeout under load). There is one real failure: the structural emoji scan flags U+2713, U+2714 and U+2716 in the SEAL code, tests and README. The r13 escape-only fix is building. train/101 is held for it.
 - P0-P9-DEFAULT-PUSH: root cause found. The region guard in autonomy/lib/engine10-push.sh, `printf | grep -q` under pipefail, gets SIGPIPE 141 under load, so the post-session push is refused. The fix (b2eebc22f) uses a pipe-free bash match. Repro under docker load: 5/18 failed before the fix, 0/10 after. Opus HIGH review is running. The engineer also saw P2 and P7 moat FAILs in that worktree, with the cause unknown; the reviewer will bisect them.
 - Drift audit (turn 2244): BOARD has ready=18, 14 of them dependency-blocked. The pulse git and ps probes are still timing out, so UNKNOWN metrics there are not regressions. Opus share is 37% against its 30% budget, and opus is used for HIGH reviews only.
+
+## 2026-10-03T14:35Z (CoS)
+- v10.6.14 is on npm latest. `npm view loki-mode dist-tags` at 14:33Z returned latest=10.6.14 and next=10.6.14 (D49 auto-promote). The peer was messaged with the version and what users can now do.
+- train/101 (e14834e53): CI as of 14:34Z.
+  - Passed: First-run gate, Bun Parity, Tier A and Security Audit.
+  - In progress: Tests and Coverage (baseline).
+- ADV-PUSH-RC3 merged at 511937aec after sonnet TL APPROVE.
+  - `/bin/bash tests/test-engine10-push.sh` gives 43/0 on main.
+  - Both reviewer mutations go red at 41/2: the region check forced true, and the guard loop deleted.
+- ADV-T99-SED built at 41d9223a6, and TL review is in flight.
+  - The builder also converted three section extractors to sed -E, because BSD sed lacks `\|` in BREs.
+  - The reviewer must prove GNU output is unchanged.
+- ADV-SEAL-JEST-E2E is still building.
+- Drift audit (turn 2250):
+  - Only the main checkout pushes.
+  - BOARD and commit steps were run in separate calls.
+  - Builders and TL reviewers are on sonnet.
+  - No product code was written by the CoS.
+  - The ready queue is still dependency-blocked: 14 of 18 rows.
+  - The weekly projection of 141% is overridden by the D68 85% live floor.
