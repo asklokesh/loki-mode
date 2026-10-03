@@ -28,7 +28,7 @@ carries a `reason`, an unmeasured number reads `None` rather than `0`, and
 | `source` | 10 of 43 | Most rows cannot be audited back to the file they came from |
 
 ```bash
-cd dashboard-ui
+cd legacy-ui
 grep -l "freshness_s" components/*.js core/*.js | wc -l   # 0
 grep -l "measured"    components/*.js core/*.js | wc -l   # 0
 ```

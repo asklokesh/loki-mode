@@ -24,8 +24,8 @@ cd loki-mode
 ### Install Dependencies
 
 ```bash
-# Install dashboard frontend dependencies
-cd dashboard-ui && npm install && cd ..
+# Install web app dependencies
+cd web-app && npm install && cd ..
 
 # Install dashboard backend dependencies (optional, for API development)
 pip install -r dashboard/requirements.txt
@@ -55,7 +55,7 @@ loki-mode/
   references/            # Detailed documentation
   memory/                # Memory system (Python)
   dashboard/             # Dashboard backend (FastAPI)
-  dashboard-ui/          # Dashboard frontend (web components)
+  packages/control-plane/ # Control Plane (browser UI)
   events/                # Event bus (Python, TypeScript, Bash)
   tests/                 # Test suites
   benchmarks/            # Benchmark harnesses
@@ -89,8 +89,8 @@ bash -n autonomy/loki
 # Shell unit tests
 bash tests/test-provider-loader.sh
 
-# Dashboard E2E tests (Playwright -- requires dashboard on port 57374)
-cd dashboard-ui && npx playwright test && cd ..
+# Control Plane tests
+cd packages/control-plane && bun test ./test/ && cd ..
 ```
 
 ### Commit Changes
@@ -142,7 +142,7 @@ gh pr create
 |----------|------|---------|
 | Shell syntax | `bash -n` | `bash -n autonomy/run.sh` |
 | Shell unit | bash | `bash tests/test-provider-loader.sh` |
-| Dashboard E2E | Playwright | `cd dashboard-ui && npx playwright test` |
+| Control Plane | bun test | `cd packages/control-plane && bun test ./test/` |
 
 ### Shell Syntax Validation
 
@@ -163,11 +163,11 @@ bash tests/test-provider-loader.sh
 
 ### Dashboard E2E Tests (Playwright)
 
-Requires the dashboard running on port 57374:
+Control Plane tests:
 
 ```bash
-cd dashboard-ui
-npx playwright test
+cd packages/control-plane
+bun test ./test/
 ```
 
 Currently 32 Playwright E2E tests covering API endpoints, sidebar navigation, task queue, logs, memory, learnings, council, and page integration.

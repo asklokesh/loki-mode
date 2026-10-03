@@ -68,7 +68,7 @@ Change the `open` URL from `http://127.0.0.1:${PURPLE_LAB_DEFAULT_PORT}/` to `ht
 ## Release Pipeline Wiring
 
 ### 7. Root `package.json` `prepublishOnly` (line ~106)
-Append `&& cd ../web-app && npm ci && npm run build && test -f dist/index.html` after the existing dashboard-ui build.
+Append `&& cd ../web-app && npm ci && npm run build && test -f dist/index.html` after the existing legacy-ui build.
 
 ### 8. `Dockerfile`
 Add `COPY` for web-app build artifacts + server files. Mirror the `dashboard/` COPY pattern. (Merge-4 owns the actual import; Merge-3 ensures files are in the image.)
@@ -109,7 +109,7 @@ run_check "web-app build produces /lab/-prefixed assets" \
 ## NOT Done In This Phase
 
 - Auto-spawn web-app subprocess from `loki dashboard` (Merge-4).
-- Sidebar entry in `dashboard/static/index.html` (Merge-6).
+- Sidebar entry in `legacy-ui-static/index.html` (Merge-6).
 - Deep state dedup (Merge-5).
 - Deprecation of `loki web` (Merge-7).
 - `vite-plugin-html` dev `/` -> `/lab/` redirect (nice-to-have, not blocking).

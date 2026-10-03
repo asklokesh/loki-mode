@@ -36,15 +36,14 @@ Because the product's central promise is verified completion ("Loki does not lie
 ### End-to-end tests
 
 - `tests/e2e/` and `tests/live/` contain end-to-end and live-path scenarios.
-- Dashboard E2E uses Playwright from `dashboard-ui/` (`npx playwright test`), requiring the dashboard running on port 57374.
+- Control Plane UI E2E lives in `packages/control-plane/test/e2e/` (Playwright, headless, loopback stub API).
 - Docker E2E lives under `tests/docker/` with dedicated images (`Dockerfile.test-runner`, `Dockerfile.sandbox`).
 - Post-release distribution E2E is run after a release ships: install from the npm tarball, pull the Docker image, and exercise both the Bun and legacy-Bash routes on each channel.
 
 ### Specialized test layers
 
 - Mutation testing (`loki-ts`): Stryker mutates trust-surface modules (`src/runner/state.ts`, `build_prompt.ts`, `providers.ts`, `budget.ts`, `checkpoint.ts`, `src/util/shell.ts`). Config: `loki-ts/stryker.config.json`. Thresholds: break 50%, low 60%, high 80%.
-- Parity tests: `dashboard-ui/scripts/check-parity.js` (`npm run test:parity`) plus the `bun-parity` and `parity-drift` workflows verify the Bun and Bash routes agree.
-- Visual regression: `dashboard-ui/tests/visual-regression.test.js` via Jest (`npm run test:visual`).
+- Parity tests: the `bun-parity` and `parity-drift` workflows verify the Bun and Bash routes agree.
 - Integrity and quality detectors: shell scripts under `tests/` that detect mock-only tests, semantic test problems, test mutations, and invariant violations.
 
 ## How to Run Tests
@@ -84,13 +83,8 @@ npm run test:integration
 # or
 bash tests/integration/run_integration_suite.sh
 
-# Dashboard checks (visual + parity)
-npm run test:dashboard
-npm run test:parity        # parity only
-npm run test:visual        # visual regression only
-
-# Dashboard E2E (needs dashboard on port 57374)
-cd dashboard-ui && npx playwright test
+# Control Plane tests
+cd packages/control-plane && bun test ./test/
 ```
 
 ### Mutation testing (local)
@@ -134,8 +128,7 @@ Note: never run `rm -rf /tmp/loki-*` while a live `loki` run is in progress; the
 | Node/Deno | `node --test` | `*_test.ts`, `*.test.js` |
 | Mutation | Stryker | `loki-ts/stryker.config.json` |
 | Coverage | bun test --coverage | `.github/workflows/coverage.yml` |
-| Dashboard E2E | Playwright | `dashboard-ui/` |
-| Visual regression | Jest | `dashboard-ui/tests/visual-regression.test.js` |
+| Control Plane UI E2E | Playwright | `packages/control-plane/test/e2e/` |
 | Pre-push gate | bash | `scripts/local-ci.sh` |
 
 Python test dependencies commonly required: `fastapi`, `httpx`, `pydantic`, `sqlalchemy[asyncio]`, `aiosqlite`, `uvicorn`. Install with pip before running the Python suite.

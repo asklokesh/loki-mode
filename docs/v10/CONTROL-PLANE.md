@@ -3,7 +3,7 @@
 Architect design, 2026-10-01, base 1dfc87103. Design only. Flag: `LOKI_CONTROL=1` until acceptance (slice CP-17).
 
 ## 1. Goal
-1. One service plus one UI, `loki control`, replaces dashboard/, dashboard-ui/ and engine10/dashboard. Zero config locally; deployed once for hundreds of runs.
+1. One service plus one UI, `loki control`, replaces dashboard/, legacy-ui/ and engine10/dashboard. Zero config locally; deployed once for hundreds of runs.
 2. Stateless processes, all state in one DB (SQLite by default, Postgres via DATABASE_URL), self-healing, horizontally scalable on Postgres.
 3. Every number is folded from ingested run events. A panel with no data says "no data ingested", never 0.
 
@@ -22,7 +22,7 @@ Architect design, 2026-10-01, base 1dfc87103. Design only. Flag: `LOKI_CONTROL=1
 | engine10 dashboard | engine10/dashboard/server.ts:30-57 (fold-based), routes :116-125 | REAL, but one repo, one process, 127.0.0.1 |
 | Python dashboard, 168 routes | dashboard/server.py (13,171 lines); cost reads `.loki/metrics/efficiency` server.py:7869 | REAL but legacy: reads run.sh state that v10 runs never write |
 | Pricing table | dashboard/server.py:7748, :8582 ("Unverified placeholder rate") | INVENTED |
-| dashboard-ui /api/v2 activity, agents/leaderboard, cost/breakdown, memory/graph, pipeline/status, providers/health | dashboard-ui/index.js:100-105, issue #203 | INVENTED (no server route) |
+| legacy-ui /api/v2 activity, agents/leaderboard, cost/breakdown, memory/graph, pipeline/status, providers/health | legacy-ui/index.js:100-105, issue #203 | INVENTED (no server route) |
 | Secret redaction | util/redact.ts:4-14 `redactSecrets`; seal.ts:30 `sanitizeReason`; output.ts:79 Reason line | REAL. Reuse. |
 
 ## 3. Data model (Drizzle, one schema for SQLite and Postgres)
@@ -63,7 +63,7 @@ Architect design, 2026-10-01, base 1dfc87103. Design only. Flag: `LOKI_CONTROL=1
 ## 8. Migration and deletion
 1. Build in packages/control-plane/ behind LOKI_CONTROL=1. The old UIs keep running; old-dashboard bug work is retired (D56.6).
 2. Acceptance (CP-17): real runs in, correct counts out, on SQLite and Postgres; first-run gate passes with the flag on.
-3. Flip the default. One release later, delete dashboard/, dashboard-ui/, engine10/dashboard/ (and its registry.ts:19 line), `loki dashboard` becomes an alias of `loki control`, and the dashboard tests are removed (CP-18).
+3. Flip the default. One release later, delete dashboard/, legacy-ui/, engine10/dashboard/ (and its registry.ts:19 line), `loki dashboard` becomes an alias of `loki control`, and the dashboard tests are removed (CP-18).
 
 ## 9. v0 (ships in 1 to 2 hours on a D46 train)
 CP-00 corpus, then CP-01, CP-02 and CP-03 in parallel, then CP-04 to wire them: SQLite service with ingest, the shipper with backfill, and a UI with the Runs list and detail, all behind the flag.
@@ -91,7 +91,7 @@ Rules for every card: file sets do not overlap; only CP-02 touches supervisor.ts
 | CP-15 | Deploy: `packages/control-plane/Dockerfile`, `deploy/helm/loki-control/` | image boots, /ready 200 after migrations; `helm template` renders probes; replicas>1 without DATABASE_URL fails render | MEDIUM | CP-07 |
 | CP-16 | Self-heal: /ready gating, stale-run derivation, replay on boot | DB file removed while up: /ready 503, recovers; stale run flagged after heartbeat gap | LOW | 01,05 |
 | CP-17 | Acceptance + flag flip | full corpus and one real first-run demo run on SQLite and Postgres: every view's counts equal EXPECTED.json | HIGH | all above |
-| CP-18 | Delete dashboard/, dashboard-ui/, engine10/dashboard/, their tests and references | `rg` finds no imports; local-ci fast tier green; first-run gate opens the control UI | HIGH | CP-17 + 1 release |
+| CP-18 | Delete dashboard/, legacy-ui/, engine10/dashboard/, their tests and references | `rg` finds no imports; local-ci fast tier green; first-run gate opens the control UI | HIGH | CP-17 + 1 release |
 
 Dependencies to add (none present today; web-app/package.json pins react 19, vite 6, tailwind 3, so align): hono, drizzle-orm, drizzle-kit (dev), react, react-dom, vite, @vitejs/plugin-react, tailwindcss. SQLite uses built-in `bun:sqlite`. Postgres uses drizzle's `bun-sql` driver if the pinned drizzle-orm exports it, otherwise `postgres` is the one extra. No hard blocker found: Bun is already the runtime (bin/loki:94).
 

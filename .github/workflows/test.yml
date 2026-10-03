@@ -82,7 +82,7 @@ jobs:
         continue-on-error: true
         env:
           WF_FILE: test.yml
-          CACHE_KEY_FILES: loki-ts/bun.lock requirements-test.txt dashboard-ui/package-lock.json
+          CACHE_KEY_FILES: loki-ts/bun.lock requirements-test.txt
           BEFORE: ${{ github.event.before }}
           SHA: ${{ github.sha }}
           REF: ${{ github.ref }}
@@ -399,41 +399,6 @@ jobs:
             exit 1
           fi
           echo "OK: invalid worker.mode rejected by values.schema.json"
-
-  dashboard-build:
-    name: Dashboard build verification
-    needs: [version-bump-gate]
-    if: ${{ !cancelled() && needs.version-bump-gate.outputs.skip != 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: dashboard-ui/package-lock.json
-
-      - name: Install dependencies
-        run: cd dashboard-ui && npm ci
-
-      - name: Build dashboard
-        run: cd dashboard-ui && npm run build:all
-
-      - name: Verify build output
-        run: |
-          if [ ! -f dashboard/static/index.html ]; then
-            echo "ERROR: dashboard/static/index.html not found after build"
-            exit 1
-          fi
-          size=$(wc -c < dashboard/static/index.html)
-          echo "Dashboard build output size: $size bytes"
-          if [ "$size" -lt 100000 ]; then
-            echo "ERROR: Build output smaller than expected (${size} < 100000 bytes)"
-            exit 1
-          fi
 
   bun-tests:
     name: Bun tests on ${{ matrix.os }} bun=${{ matrix.bun-version }}

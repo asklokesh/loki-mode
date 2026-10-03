@@ -362,7 +362,7 @@ class FileEventDebouncer(FileSystemEventHandler):
 ### What Was NOT Audited (and Why)
 
 1. **Frontend code duplication** (TypeScript/React):
-   - Dashboard UI (`dashboard-ui/src/`) and Lab UI (`web-app/dist/` or source) likely have overlapping components (session cards, status displays, log viewers).
+   - Dashboard UI (`legacy-ui/src/`) and Lab UI (`web-app/dist/` or source) likely have overlapping components (session cards, status displays, log viewers).
    - Scope: This audit covers Python backend only. Frontend audit deferred to UI design review in Merge-3 (Vite rebuild).
 
 2. **Database schema migrations and compatibility:**

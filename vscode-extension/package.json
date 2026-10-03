@@ -373,8 +373,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "prebuild:dashboard": "cd ../dashboard-ui && npm run build",
-    "compile": "npm run prebuild:dashboard && node esbuild.js --production",
+    "compile": "node esbuild.js --production",
     "compile:extension-only": "node esbuild.js --production",
     "watch": "node esbuild.js --watch",
     "pretest": "npm run compile",

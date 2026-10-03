@@ -14,11 +14,8 @@ dashboard/migration_engine.py, per S-150 scope):
 - dashboard/server.py's GET /api/migration/{id}/status returns
   pipeline.get_progress() with no response_model/Pydantic schema, so a
   None count serializes to JSON null without a validation error.
-- dashboard-ui/components/loki-migration-dashboard.js's _renderFeatureStats
-  and _renderStepProgress both guard on `!total || x == null` before doing
-  the passing/total division, so a null total already falls into the
-  existing "No features recorded" / "No plan recorded" branch and never
-  reaches `null / null`. No JS change needed for this slice.
+- The legacy dashboard UI that consumed this (removed in CPE-24) guarded on
+  `!total || x == null` before dividing; any client must treat null as unknown.
 """
 
 from __future__ import annotations

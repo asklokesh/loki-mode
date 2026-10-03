@@ -2032,12 +2032,11 @@ cmd_ui() {
             LOKI_DASHBOARD_CORS="http://localhost:$port,http://127.0.0.1:$port" \
             cmd_dashboard_start --host 127.0.0.1 --port "$port" >&2 || return 1
     fi
-    local url="http://127.0.0.1:${port}/start"
-    if [ "${LOKI_HEADLESS:-0}" = "1" ] || [ "${1:-}" = "--no-open" ]; then
-        echo "$url"
-    else
-        loki_open_url "$url" || echo "$url"
-    fi
+    # The classic server is API-only; the UI is the Control Plane.
+    local url="http://127.0.0.1:${port}"
+    echo "loki: the classic dashboard at $url serves the API only (the browser UI moved to the Control Plane)." >&2
+    echo "loki: start the Control Plane UI with: loki ui (needs bun)" >&2
+    echo "$url"
 }
 
 # Tight newcomer landing for the bare `loki` invocation (no args).
@@ -3915,18 +3914,9 @@ cmd_start() {
                 # + cockpit, honoring the card's "open dashboard" promise. The
                 # cockpit hint is printed by _loki_start_handoff for the Both path.
                 args+=("--bg")
-                # Open the URL the runner PUBLISHES for the port it actually bound
-                # or reused (it walks past refused ports); never guess the default
-                # 57374, which may be a foreign or stale dashboard. stdout must
-                # stay unredirected: loki_open_url checks the TTY.
-                local _dfile="${PWD}/.loki/dashboard/url"
-                rm -f "$_dfile" 2>/dev/null
-                (
-                    for _ in $(seq 1 120); do
-                        if [ -s "$_dfile" ]; then loki_open_url "$(head -1 "$_dfile")" 2>/dev/null; exit 0; fi
-                        sleep 0.5
-                    done
-                ) &
+                # The browser UI is the Control Plane; open it (guarded by
+                # loki_open_url: no-op headless and in tests).
+                ( LOKI_UI_NO_CLASSIC=1 cmd_ui 2>/dev/null || true ) &
                 ;;
             launch-bg-watch)
                 # Watch (cockpit only) detaches without opening the browser.
@@ -7561,7 +7551,7 @@ cmd_dashboard_help() {
     echo "  loki dashboard start --tls-cert cert.pem --tls-key key.pem"
     echo "  loki dashboard status                 # Check if running"
     echo "  loki dashboard url --format json      # Get URL as JSON"
-    echo "  loki dashboard open                   # Open in browser"
+    echo "  loki dashboard open                   # Print the Control Plane hint (no browser)"
     echo "  loki dashboard stop                   # Stop server"
 }
 
@@ -7789,7 +7779,7 @@ cmd_dashboard_start() {
         # a second port.
         echo -e "${DIM}Want to submit a spec in the browser? Open the 'Lab' tab in this dashboard.${NC}"
         echo ""
-        echo -e "Open in browser: ${CYAN}loki dashboard open${NC}"
+        echo -e "Control Plane UI: ${CYAN}loki ui${NC}"
         echo -e "Check status:    ${CYAN}loki dashboard status${NC}"
         echo -e "Stop server:     ${CYAN}loki dashboard stop${NC}"
     else
@@ -7907,7 +7897,7 @@ cmd_dashboard_status() {
         fi
 
         echo ""
-        echo -e "Open in browser: ${CYAN}loki dashboard open${NC}"
+        echo -e "Control Plane UI: ${CYAN}loki ui${NC}"
         echo -e "Stop server:     ${CYAN}loki dashboard stop${NC}"
     else
         echo -e "${YELLOW}Status: Not running (stale PID file)${NC}"
@@ -8040,14 +8030,10 @@ cmd_dashboard_open() {
 
     local url="${scheme}://${host}:${port}"
 
-    echo -e "${GREEN}Opening dashboard: $url${NC}"
-
-    # Open in browser (cross-platform, guarded: no-op in tests/CI/non-TTY)
-    if ! loki_open_url "$url" 2>/dev/null; then
-        echo ""
-        echo "Browser not opened (headless, test, or no opener)."
-        echo "Please open in browser: $url"
-    fi
+    # The legacy browser UI was removed; this server is API-only. Never open a
+    # browser here: point at the Control Plane instead.
+    echo -e "${YELLOW}The dashboard server at $url serves the API only; the browser UI is now the Control Plane.${NC}"
+    echo -e "Open the Control Plane with: ${CYAN}loki ui${NC}"
 }
 
 # Welcome opener (the "magic opener"). Shows a branded welcome page in the
@@ -18401,8 +18387,7 @@ print(json.dumps({'id': manifest.id, 'dir': str(pipeline.migration_dir)}))
 
                     sleep 2
                     if kill -0 "$migrate_dashboard_pid" 2>/dev/null; then
-                        echo -e "  Dashboard:   ${CYAN}${url_scheme}://127.0.0.1:${dashboard_port}/${NC}"
-                        loki_open_url "${url_scheme}://127.0.0.1:${dashboard_port}/" 2>/dev/null || true
+                        echo -e "  Dashboard API: ${CYAN}${url_scheme}://127.0.0.1:${dashboard_port}/${NC} (UI: loki ui)"
                         echo ""
                     else
                         echo -e "  ${YELLOW}Dashboard failed to start (check logs)${NC}"

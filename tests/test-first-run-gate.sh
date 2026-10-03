@@ -114,7 +114,7 @@ run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && 
 run_gate skiprc0;    expect skiprc0 skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skiprc0: 9b needs rc 3" || bad "skiprc0: exit 0"
 run_gate skipver;    expect skipver skip-not-verified FAIL;  expect skipver skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
 
-# P0-DASH-STATIC: dashboard-root assertion (needs fastapi+uvicorn; otherwise the gate prints SKIP, never FAIL)
+# P0-DASH-STATIC: dashboard-root assertion (GET / is a 410 page naming the Control Plane) (needs fastapi+uvicorn; otherwise the gate prints SKIP, never FAIL)
 DPY=""
 for p in "${LOKI_REAL_HOME:-$HOME}/.loki/dashboard-venv/bin/python" python3; do
     if command -v "$p" >/dev/null 2>&1 && "$p" -c 'import fastapi, uvicorn' >/dev/null 2>&1; then DPY="$p"; break; fi
@@ -122,12 +122,6 @@ done
 run_gate clean
 if [ -n "$DPY" ]; then
     expect clean dashboard-root PASS
-    # a package whose dashboard/static is EMPTY must fail the assertion (the "frontend not found" regression)
-    NOFE="$T/nofe"; mkdir -p "$NOFE/dashboard/static"
-    for e in "$SCRIPT_DIR"/../*; do b="$(basename "$e")"; case "$b" in dashboard|dashboard-ui) ;; *) ln -s "$e" "$NOFE/$b" ;; esac; done
-    for e in "$SCRIPT_DIR"/../dashboard/*; do b="$(basename "$e")"; [ "$b" = static ] || ln -s "$e" "$NOFE/dashboard/$b"; done
-    OUT=$(env -u LOKI_RUN_TMP FAKE_MODE=clean FRG_LOKI="$T/fake-loki" FRG_DASH_PKG="$NOFE" FRG_REPORT="$T/report-nofe.txt" bash "$GATE" --stub 2>&1); RC=$?
-    expect nofe dashboard-root FAIL; [ "$RC" -ne 0 ] && ok "nofe: exits non-zero" || bad "nofe: exit 0"
 else
     printf '%s\n' "$OUT" | grep -q '^SKIP dashboard-root' && ok "dashboard-root: skipped without fastapi" || bad "dashboard-root: neither ran nor skipped"
 fi

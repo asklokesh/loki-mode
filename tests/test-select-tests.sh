@@ -328,16 +328,6 @@ out="$(sel 'dashboard/api_keys.py')"
 expect_contains "repro2: top-level tests/ import match" "$out" "$(printf 'py_test\ttests/test_api_keys.py')"
 expect_contains "repro2: R5 area rule still present too" "$out" "$(printf 'R5\tpytest\ttests/dashboard')"
 
-# Repro 3: dashboard-ui has its own recognized shape, an area rule that runs
-# its node --test suite (mirroring run-all-tests.sh's own 4 registrations),
-# and its tests are in the R3 collector so a direct import reference
-# (loki-audit-viewer.js, imported by ui-components.test.js) is also matched
-# per-file, correctly kinded as node_test (never bash).
-out="$(sel 'dashboard-ui/components/loki-audit-viewer.js')"
-expect_contains "repro3: dashboard-ui area rule (node_test)" "$out" "$(printf 'R5\tnode_test\tdashboard-ui/tests/ui-components.test.js')"
-expect_contains "repro3: dashboard-ui per-file import match" "$out" "$(printf 'R3\tnode_test\tdashboard-ui/tests/ui-components.test.js')"
-expect_not_contains "repro3: never bash-kinded" "$out" "$(printf 'shell_test\tdashboard-ui/tests/ui-components.test.js')"
-
 # Guard: for a fixed, deterministic sample of 5 real .py files under
 # autonomy/lib and dashboard (SAMPLE_PY_FILES, set above -- the same 5 files
 # the repro assertions already exercise, see the fixture-reuse note there),

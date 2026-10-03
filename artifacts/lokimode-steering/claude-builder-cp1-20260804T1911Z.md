@@ -133,7 +133,7 @@ Mutant removed (`rm -rf /tmp/loki-mut`).
 
 Pre-existing dirty files left untouched exactly as found, none staged:
 `coverage/clover.xml`, `coverage/lcov-report/index.html`,
-`dashboard-ui/dist/loki-dashboard-standalone.html`, deleted `f.txt`,
+`legacy-ui/dist/loki-dashboard-standalone.html`, deleted `f.txt`,
 untracked `benchmarks/results/prompt-ablation.jsonl`.
 
 No dependency added. No product runtime change. No push, workflow, release,

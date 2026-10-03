@@ -410,7 +410,7 @@ harder.
 |---|---|---|---|---|
 | 1 | MCP registry staleness guard | drift, 7.34.1 vs 9.50.1 | registry was already current | iterated `servers[]`, took the FIRST name match; the registry keeps every published version as an `active` row |
 | 2 | "any stale version string left after the bump" | OK on every file | measured nothing at all | shell arithmetic comparison errored on every file; the error text printed alongside the OK lines |
-| 3 | `grep -c '9.50.1' dashboard/static/index.html` | no match, rc=1 | the string class IS present | file contains NUL bytes, so grep treats it as binary and silently reports nothing |
+| 3 | `grep -c '9.50.1' legacy-ui-static/index.html` | no match, rc=1 | the string class IS present | file contains NUL bytes, so grep treats it as binary and silently reports nothing |
 | 4 | competitor benchmark | 0/3 | harness never reached the tool | missing `--skip-git-repo-check` and `</dev/null` (2026-08-08) |
 | 5 | `git push` wrapped in `timeout 180` | `[exited with code 0]` | origin never moved | the timeout killed the pre-push hook mid-pytest; the WRAPPER's exit code replaced the operation's |
 | 6 | `grep -rn ... --include=*.sh` for a precedent | no output, `rc=0` | the search never ran | zsh expanded `--include=*.sh` as a glob, found no match, and aborted the command before grep started |
@@ -438,8 +438,8 @@ For 3, measured on this checkout, three tools give three answers for the same
 question on the same file:
 
 ```
-grep -c  'Loki' dashboard/static/index.html   ->  (nothing), rc=1
-grep -ac 'Loki' dashboard/static/index.html   ->  27,       rc=0
+grep -c  'Loki' legacy-ui-static/index.html   ->  (nothing), rc=1
+grep -ac 'Loki' legacy-ui-static/index.html   ->  27,       rc=0
 python3  ... .read().count('Loki')            ->  91
 ```
 

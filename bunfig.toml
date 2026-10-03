@@ -4,7 +4,6 @@
 #   - api/*_test.ts                   -- Deno-style (https:// imports)
 #   - tests/**/*.test.{ts,js}         -- node --test runner
 #   - vscode-extension/test/**/*.ts   -- @vscode/test-electron runner
-#   - dashboard-ui/tests/*.test.js    -- jsdom / Playwright
 #   - sdk/typescript/tests/*.test.js  -- node --test runner
 #
 # Without this scope, repo-root `bun test` reports ~207 fail / 13 errors out

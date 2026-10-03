@@ -20,7 +20,7 @@ Package: packages/control-plane (server in src/server, UI in ui/src). Sources ci
 
 ## 1. Legacy inventory (KEEP / REWORK / DROP)
 
-Shell: dashboard-ui/scripts/build-standalone.js (generates dashboard/static/index.html). Nav groups at build-standalone.js:1266-1347 (Build, Quality and Trust, Insights, Ops, Wiki). Pages at :1358-1882. RARV, Council, gates, checkpoints and app runner are legacy engine concepts with no v10 producer (docs/v10/LEGACY-REMOVAL.md:36-37), so they DROP or remap to v10 stages (events stage.started/completed/failed/skipped, loki-ts/src/engine10/status.ts:9).
+Shell: legacy-ui/scripts/build-standalone.js (generates legacy-ui-static/index.html). Nav groups at build-standalone.js:1266-1347 (Build, Quality and Trust, Insights, Ops, Wiki). Pages at :1358-1882. RARV, Council, gates, checkpoints and app runner are legacy engine concepts with no v10 producer (docs/v10/LEGACY-REMOVAL.md:36-37), so they DROP or remap to v10 stages (events stage.started/completed/failed/skipped, loki-ts/src/engine10/status.ts:9).
 
 | Legacy page or control | Source | Decision | v10 home |
 |---|---|---|---|
@@ -31,13 +31,13 @@ Shell: dashboard-ui/scripts/build-standalone.js (generates dashboard/static/inde
 | Context | loki-context-tracker.js (/api/context) | DROP | Token counts per run (input_tokens, output_tokens) shown in the run cost card. |
 | Fleet | loki-fleet.js (/api/fleet/*) | REWORK | Runs table (all repos, filters, group_id rollup). Its table styling is the Table primitive. |
 | Quality (score, gates, prompt optimizer) | loki-quality-score.js, loki-quality-gates.js, loki-prompt-optimizer.js | DROP | v10 verify stage plus NOT PROVEN list in the run thread. |
-| Trust trajectory and receipts panel | dashboard/static/trust.html, proofs.html; build-standalone.js:1811-1828 | KEEP on v10 data | Receipts page (list, inline verify, verified-rate trend from runs). |
+| Trust trajectory and receipts panel | legacy-ui-static/trust.html, proofs.html; build-standalone.js:1811-1828 | KEEP on v10 data | Receipts page (list, inline verify, verified-rate trend from runs). |
 | Completion Council | loki-council-dashboard.js, loki-council-transcripts.js | DROP | Remapped: the v10 verify stage and receipt verdict. |
 | Spec Checklist | loki-checklist-viewer.js (/api/checklist) | REWORK | Plans and traceability (plan.json, issue.json, receipt claims). |
 | Insights: logs | loki-log-stream.js (/api/logs) | KEEP | Streaming log inside the run thread (events.jsonl). |
 | Insights: memory, learnings, USAGE.md | loki-memory-browser.js, loki-learning-dashboard.js; build-standalone.js:1427-1590 | DROP now | Memory page deferred until a v10 memory read API exists (section 3.2). USAGE.md becomes a Help link. |
 | Analytics | loki-analytics.js (/api/activity) | REWORK | Home trends (runs per day, verified rate) from the runs table. |
-| Cost | loki-cost-dashboard.js, loki-cost-waterfall.js, dashboard/static/cost.html; spend-cap banner build-standalone.js:1800-1806 | KEEP on v10 data | Cost and usage page; the "no cap" banner is kept and fed by loki.yaml budgets. |
+| Cost | loki-cost-dashboard.js, loki-cost-waterfall.js, legacy-ui-static/cost.html; spend-cap banner build-standalone.js:1800-1806 | KEEP on v10 data | Cost and usage page; the "no cap" banner is kept and fed by loki.yaml budgets. |
 | Notifications | loki-notification-center.js | REWORK | Derived from events: BLOCKED, FAILED, budget.hit, tampered, conflict. |
 | Escalations | loki-escalations.js | REWORK | BLOCKED inbox on Home plus the reply prompt in the thread. |
 | Migration | loki-migration-dashboard.js | REWORK | Runs filtered to `loki modernize` runs once they ship events (engine10/modernize); hidden until then. |
@@ -55,11 +55,11 @@ Shell: dashboard-ui/scripts/build-standalone.js (generates dashboard/static/inde
 | Budget banner | build-standalone.js:1200-1203 | KEEP | Top banner when a budget is hit (budget.hit event). |
 | Run manager, audit viewer | loki-run-manager.js, loki-audit-viewer.js | REWORK | Runs table actions; Audit log page (control-plane actions). |
 | API keys, tenant switcher, managed memory | loki-api-keys.js, loki-tenant-switcher.js, loki-managed-memory-panel.js | DROP | Local single user; the bearer token is set by env (src/server/auth.ts). |
-| Onboarding (start.html) | dashboard/static/start.html (/api/onboarding/*, /api/backlog/*) | REWORK | Integrations page (GitHub connect status) plus the composer empty state. |
+| Onboarding (start.html) | legacy-ui-static/start.html (/api/onboarding/*, /api/backlog/*) | REWORK | Integrations page (GitHub connect status) plus the composer empty state. |
 
 ## 2. Design system (extracted, binding)
 
-Two legacy layers exist and disagree on ground colors. The SHELL layer in build-standalone.js:113-185 is documented as the founder-approved identity (light-grey ground, comment at :113) and is what users saw around every page; the COMPONENT layer in dashboard-ui/core/loki-unified-styles.js:20-146 (also loki-theme.js:44-124) supplies the scales, status colors and component specs. Decision: shell ground and accent per theme from the shell layer; scales, radii, shadows, model colors and component recipes from the component layer. (Open question 1.)
+Two legacy layers exist and disagree on ground colors. The SHELL layer in build-standalone.js:113-185 is documented as the founder-approved identity (light-grey ground, comment at :113) and is what users saw around every page; the COMPONENT layer in legacy-ui/core/loki-unified-styles.js:20-146 (also loki-theme.js:44-124) supplies the scales, status colors and component specs. Decision: shell ground and accent per theme from the shell layer; scales, radii, shadows, model colors and component recipes from the component layer. (Open question 1.)
 
 Package: packages/control-plane/ui/src/design/ with tokens.css (custom properties below), fonts.css (Google Fonts link, build-standalone parity: Fraunces opsz 9..144 wght 400/500/600, Inter 300-700, JetBrains Mono 400/500; static/index.html:11), tailwind.preset.ts (maps Tailwind colors, radius, spacing, fontFamily to the vars, so existing Tailwind classes keep working), and primitives/*.tsx.
 
@@ -527,7 +527,7 @@ Rules: one writer per file; UI pages register through ui/src/pages/registry.ts a
 | CPE-21 | Notifications and Audit log: derived notifications, actions view | src/server/routes/notify.ts, src/server/routes/audit.ts, ui/src/pages/notifications/**, ui/src/pages/audit/**, test/server/notify.test.ts | `bun test test/server/notify.test.ts` | 03 | LOW |
 | CPE-22 | Cmd+K palette, global search, shortcuts (Cmd+Enter, Cmd+N, Cmd+Shift+D, Esc) | ui/src/palette/**, test/ui/palette.test.tsx | `bun test test/ui/palette.test.tsx` | 02 | LOW |
 | CPE-23 | Accessibility, mobile and visual parity: axe, keyboard path, 375 px layout, light and dark screenshot comparison to legacy captures | test/e2e/cp-ui.spec.ts, test/e2e/legacy-baseline/**, ui/playwright.config.ts | `bunx playwright test test/e2e/cp-ui.spec.ts` (headless, LOKI_NO_BROWSER=1) | 06, 08, 12 | MEDIUM |
-| CPE-24 | Delete legacy dashboard at parity: dashboard-ui/, dashboard/static/, legacy server routes, their tests and package entries | dashboard-ui/**, dashboard/static/**, dashboard/server.py (UI routes), package.json files list, tests naming them | section 5 checklist all green plus `bash scripts/local-ci.sh` | all, section 5 | MEDIUM |
+| CPE-24 | Delete legacy dashboard at parity: legacy-ui/, legacy-ui-static/, legacy server routes, their tests and package entries | legacy-ui/**, legacy-ui-static/**, dashboard/server.py (UI routes), package.json files list, tests naming them | section 5 checklist all green plus `bash scripts/local-ci.sh` | all, section 5 | MEDIUM |
 
 Parallelism: CPE-01 and CPE-03 start at once; after them up to 12 builders run in parallel (04, 05, 07, 09, 11, 12, 13, 14, 15, 18, 21, 22). HIGH slices (04, 07, 09, 14) carry the security review the founder asked for.
 

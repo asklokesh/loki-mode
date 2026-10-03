@@ -2,12 +2,11 @@
 // Never reaches a provider or a real control service. The only process it starts is the stub server and one
 // `vite build`; both are owned and stopped here. Run from packages/control-plane:
 //   bunx playwright test -c ui/playwright.config.ts test/e2e/cp-ui.spec.ts
-// Refresh the legacy baseline: LOKI_E2E_UPDATE_LEGACY=1 bunx playwright test -c ui/playwright.config.ts test/e2e/cp-ui.spec.ts -g legacy
 import { test, expect, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,9 +17,7 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const CP = resolve(HERE, "../..");
 const UI = join(CP, "ui");
 const FIXTURES = join(CP, "test/ui/fixtures");
-const LEGACY_STATIC = resolve(CP, "../../dashboard/static");
 const BASELINE = join(HERE, "legacy-baseline");
-const UPDATE_LEGACY = process.env.LOKI_E2E_UPDATE_LEGACY === "1";
 
 const MIME: Record<string, string> = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".woff2": "font/woff2", ".json": "application/json", ".png": "image/png", ".ico": "image/x-icon" };
 const fx = (name: string) => JSON.parse(readFileSync(join(FIXTURES, name), "utf8"));
@@ -83,7 +80,6 @@ const stop = (s: Stub | undefined) => new Promise<void>((done) => { if (!s) retu
 
 let tmp = "";
 let cp: Stub;
-let legacy: Stub;
 const CPU = () => `http://127.0.0.1:${cp.port}/index.html`;
 
 test.beforeAll(() => {
@@ -93,11 +89,9 @@ test.beforeAll(() => {
 });
 test.beforeAll(async () => {
   cp = await startStub(join(tmp, "dist"), join(tmp, "none"), true);
-  legacy = await startStub(LEGACY_STATIC, LEGACY_STATIC, false);
 });
 test.afterAll(async () => {
   await stop(cp);
-  await stop(legacy);
   if (tmp && tmp.includes("loki-run.cpui-")) rmSync(tmp, { recursive: true, force: true });
 });
 
@@ -252,33 +246,7 @@ test.describe("visual parity", () => {
     });
   }
 
-  const probe = (p: Page) => p.evaluate(() => {
-    const cs = (el: Element | null, props: string[]) => el ? Object.fromEntries(props.map((k) => [k, getComputedStyle(el).getPropertyValue(k)])) : null;
-    const first = (s: string) => document.querySelector(s);
-    const fam = (el: Element | null) => (el ? getComputedStyle(el).fontFamily.split(",")[0]!.trim().replace(/["']/g, "") : null);
-    return { body: cs(document.body, ["background-color", "color"]), bodyFont: fam(document.body), headingFont: fam(first("h1, h2, h3")), monoFont: fam(first("code, pre, kbd")), button: cs(first("button"), ["background-color", "color"]) };
-  });
-
-  test("legacy baseline: capture or compare computed tokens", async ({ browser }) => {
-    const out: Record<string, unknown> = {};
-    for (const theme of ["light", "dark"] as const) {
-      const page = await (await browser.newContext({ colorScheme: theme, viewport: { width: 1280, height: 720 } })).newPage();
-      await page.goto(`http://127.0.0.1:${legacy.port}/index.html`);
-      await page.waitForTimeout(1200);
-      // the legacy dashboard themes through data-loki-theme on the root element
-      await page.evaluate((t) => document.documentElement.setAttribute("data-loki-theme", t), theme);
-      await page.waitForTimeout(200);
-      out[theme] = await probe(page);
-      if (UPDATE_LEGACY) await page.screenshot({ path: join(BASELINE, `legacy-${theme}.png`) });
-      await page.context().close();
-    }
-    if (UPDATE_LEGACY) { writeFileSync(join(BASELINE, "tokens.json"), JSON.stringify(out, null, 2) + "\n"); return; }
-    const base = JSON.parse(readFileSync(join(BASELINE, "tokens.json"), "utf8"));
-    // the committed baseline is the contract: the live legacy page must still match it
-    expect(out).toEqual(base);
-  });
-
-  test("CP tokens match the legacy dashboard tokens (computed style, not pixels)", async ({ browser }) => {
+  test("CP tokens match the committed legacy token baseline (computed style, not pixels)", async ({ browser }) => {
     type Tok = { body: { "background-color": string; color: string }; bodyFont: string; headingFont: string; monoFont: string };
     const base = JSON.parse(readFileSync(join(BASELINE, "tokens.json"), "utf8")) as Record<"light" | "dark", Tok>;
     for (const theme of ["light", "dark"] as const) {

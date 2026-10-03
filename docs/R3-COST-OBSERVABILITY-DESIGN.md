@@ -90,7 +90,7 @@ Read-only. Returns two honest series plus a budget block:
 `/api/cost` and `/api/budget` are left UNCHANGED (existing frontend + tests
 depend on them). The new endpoint is additive.
 
-### 2. Dashboard panel: `dashboard/static/cost.html`
+### 2. Dashboard panel: `legacy-ui-static/cost.html`
 
 Self-contained, zero-build, all CSS+JS inlined (mirrors `proofs.html`). Fetches
 `/api/cost/timeline`. Shows: project total, budget gauge with a colored
@@ -144,7 +144,7 @@ Add a non-pausing warn when crossing 80%, keep the 100% pause:
 ## Files (for the integrator to cherry-pick)
 
 - `dashboard/server.py` (add `/api/cost/timeline`)
-- `dashboard/static/cost.html` (new)
+- `legacy-ui-static/cost.html` (new)
 - `autonomy/loki` (add `cmd_cost` + dispatch + help)
 - `autonomy/run.sh` (warn-at-80% in `check_budget_limit`)
 - `loki-ts/src/runner/budget.ts` (warn flag)

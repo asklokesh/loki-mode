@@ -1,5 +1,5 @@
 # Loki Mode Dashboard - Docker Image
-# Python backend with the repository-tracked/npm-shipped static frontend
+# Python backend (API only; the UI is served by the Control Plane)
 #
 # Build:
 #   docker build -f dashboard/Dockerfile -t loki-dashboard .
@@ -49,11 +49,6 @@ COPY dashboard/*.py ./dashboard/
 # Keep this one proven external dependency in its real package path rather than
 # stubbing or duplicating it inside the dashboard package.
 COPY autonomy/lib/deadline.py ./autonomy/lib/
-
-# Copy the same repository-tracked static frontend shipped by the npm package.
-# This standalone image is therefore deterministic and does not depend on the
-# separate legacy frontend source tree or a registry-backed build at image time.
-COPY dashboard/static/ ./dashboard/static/
 
 # Create data directories with correct ownership
 RUN mkdir -p /home/appuser/.loki/dashboard/audit && \

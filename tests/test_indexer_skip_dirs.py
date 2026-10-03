@@ -60,7 +60,7 @@ class SkipDirsMatchComponentsNotSubstrings(unittest.TestCase):
     def test_real_skip_dirs_are_still_skipped(self):
         """The opposite error: a loosened filter that indexes node_modules."""
         files = [str(f) for f, _ in self.m.collect_files()]
-        for bad in ("node_modules", "__pycache__", "dashboard-ui"):
+        for bad in ("node_modules", "__pycache__"):
             with self.subTest(skip=bad):
                 self.assertFalse(
                     [f for f in files if "/{}/".format(bad) in f],

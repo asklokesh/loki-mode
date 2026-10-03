@@ -1,6 +1,6 @@
 """Read-only phase history for a run, derived from real `phase_change` events.
 
-WHY THIS EXISTS. dashboard-ui/components/loki-session-timeline.js SYNTHESIZED
+WHY THIS EXISTS. The legacy dashboard session timeline (removed in CPE-24) SYNTHESIZED
 its timeline. It took a scalar status (uptime, current phase, iteration count),
 rotated a fixed list `['planning','building','testing','reviewing']`, and gave
 each invented segment a randomized duration:

@@ -393,7 +393,7 @@ Design tokens are the shared vocabulary that keeps generated components visually
 
 `loki magic tokens extract` scans:
 
-- `web-app/src/` and `dashboard-ui/` for Tailwind config and CSS variables
+- `web-app/src/` for Tailwind config and CSS variables
 - `web-app/src/**/*.css` for `:root` declarations
 - Existing React components for recurring inline style values
 
@@ -491,7 +491,7 @@ Extract design tokens from the codebase.
 
 ```python
 magic_tokens_extract(
-    sources: list[str] | None = None,  # default: web-app/src, dashboard-ui
+    sources: list[str] | None = None,  # default: web-app/src
     overwrite: bool = False,
 ) -> {
     "tokens_written": int,

@@ -94,7 +94,7 @@ is always recomputable from `.loki/proofs/`. Deleting it loses nothing.
    `/api/cost/timeline`). Reads `.loki/proofs/*/proof.json`, returns the
    per-run series + per-axis direction + insufficient flag.
 
-3. Dashboard panel: standalone `dashboard/static/trust.html` + `/trust` route
+3. Dashboard panel: standalone `legacy-ui-static/trust.html` + `/trust` route
    (mirrors `cost.html` + `/cost`), plus a nav entry and SPA section in
    `build-standalone.js` (mirrors the cost panel wiring exactly).
 

@@ -100,10 +100,10 @@ opt-in advisor path.
   with allowlist haiku|sonnet|opus|fable (already does). Add start-time selection: `start_build`
   (server.py:3234) accepts an optional `model` that writes the override file BEFORE launch (so iteration
   1 picks it up). Validate against the same allowlist + clamp.
-- Frontend (dashboard-ui/src): add an accessible model selector (haiku/sonnet/opus) on the start/new-run
+- Frontend (legacy-ui/src): add an accessible model selector (haiku/sonnet/opus) on the start/new-run
   surface AND a mid-run switcher that calls POST /api/session/model. Real design-system tokens, keyboard
   accessible, no AI-aesthetic. Show current effective model + that switch applies at next iteration.
-  Rebuild dashboard/static per CLAUDE.md release step 2.
+  Rebuild legacy-ui-static per CLAUDE.md release step 2.
 
 ### Lane E - Catalog IDs, pricing note, parity tests [engineer 5]
 - model_catalog.json: opus-4-7 -> claude-opus-4-8 (3 occurrences), sonnet-4-6 -> claude-sonnet-5

@@ -63,7 +63,7 @@
   - Add an optional `(?:React\.)?useMemo\(\s*\(\)\s*=>\s*` prefix ahead of the fabricator-call pattern.
   - The comment stops listing this shape as a ceiling.
 - Branch: run the widened arm on main first.
-  - On any live hit in dashboard-ui or web-app, the slice becomes report-only.
+  - On any live hit in legacy-ui or web-app, the slice becomes report-only.
   - Never add an allowlist. cases.txt stays unchanged.
 - Wall:
   - `bash tests/moat/p7-no-fabricated-data.sh` prints PASS for every P7 case and flags the composed fixture.
@@ -207,9 +207,9 @@
 ### S-223: notification triggers read "No triggers configured" after a failed read (BACKLOG 114 and 118)
 - Files:
   - dashboard/server.py: `get_notification_triggers` only.
-  - dashboard-ui/components/loki-notification-center.js: `_loadTriggers` and the triggers empty branch only.
+  - legacy-ui/components/loki-notification-center.js: `_loadTriggers` and the triggers empty branch only.
   - tests/dashboard/test_notification_triggers_unreadable.py (new)
-  - dashboard-ui/tests/loki-notification-triggers-error.node.test.mjs (new)
+  - legacy-ui/tests/loki-notification-triggers-error.node.test.mjs (new)
 - Tier: LOW
 - Red:
   - A corrupt triggers.json answers `{"triggers": []}`.
@@ -220,7 +220,7 @@
   - A missing file still answers `[]`.
 - Wall:
   - `python3 -m pytest -q tests/dashboard/test_notification_triggers_unreadable.py` passes.
-  - `node --test dashboard-ui/tests/loki-notification-triggers-error.node.test.mjs` passes: an error lacks "No triggers configured", and an empty list keeps it.
+  - `node --test legacy-ui/tests/loki-notification-triggers-error.node.test.mjs` passes: an error lacks "No triggers configured", and an empty list keeps it.
 
 ### S-224: the web-app receipt and cost trend show a partly priced run as a complete cost (BACKLOG 118)
 - Files:
@@ -240,7 +240,7 @@
 
 ### S-225: the standalone receipts list shows a partly priced run as a complete cost (BACKLOG 118)
 - Files:
-  - dashboard-ui/scripts/build-standalone.js (the `loadReceipts` cost cell only)
+  - legacy-ui/scripts/build-standalone.js (the `loadReceipts` cost cell only)
   - tests/test-receipts-panel.sh (one new leg)
 - Tier: LOW
 - Green:
@@ -382,7 +382,7 @@
   - S-220: tests/test-untrack-keeps-force-staged.sh
   - S-221: tests/dashboard/test_audit_verify_cli_nothing_checked.py
   - S-222: tests/dashboard/test_skill_session_ws_running_agents.py
-  - S-223: tests/dashboard/test_notification_triggers_unreadable.py and dashboard-ui/tests/loki-notification-triggers-error.node.test.mjs
+  - S-223: tests/dashboard/test_notification_triggers_unreadable.py and legacy-ui/tests/loki-notification-triggers-error.node.test.mjs
   - S-224: web-app/src/components/EvidenceReceiptPanel.cost.test.mjs
   - S-226: tests/test-stats-unmeasured-cost.sh and loki-ts/tests/commands/stats_unmeasured.test.ts
   - S-227: tests/test-status-budget-unmeasured.sh
@@ -394,7 +394,7 @@
   - loki-ts/dist: S-226, S-227.
   - web-app/dist: S-224, S-228, S-229, S-230.
   - dashboard static: S-225.
-  - dashboard-ui dist and dashboard static: S-223.
+  - legacy-ui dist and dashboard static: S-223.
 - **Merge order:**
   - run.sh: S-217, S-218, S-219, S-220 and S-233, plus S-194 and S-195 in flight. They name regions that do not overlap, anchor on function names, and merge one at a time.
   - autonomy/loki: S-226 and S-227, plus S-197 in flight, one at a time.
@@ -427,9 +427,9 @@
 | S-220 | BACKLOG 109: untrack step's global reset drops force-staged agent files from the session commit | autonomy/run.sh (_loki_untrack_agent_committed_user_files only), tests/test-untrack-keeps-force-staged.sh (new) | MEDIUM | bash tests/test-untrack-keeps-force-staged.sh exits 0: git add -f dist/bundle.js lands in the session commit while the pre-existing user file stays untracked on disk; restoring git reset -q in a scratch copy fails it; bash tests/test-branch-lifecycle.sh exits 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
 | S-221 | BACKLOG 123: audit.py verify exits 0 when it checked nothing | dashboard/audit.py (_unified_cli verify branch and docstring only; tip and prefix untouched), tests/dashboard/test_audit_verify_cli_nothing_checked.py (new) | MEDIUM | python3 -m pytest -q tests/dashboard/test_audit_verify_cli_nothing_checked.py: empty dir exits 2, valid chain 0, tampered 1, tip on an empty dir still 0; bash tests/test-audit-chain-honesty.sh and bash tests/test-audit-js-suites.sh exit 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
 | S-222 | BACKLOG 118: skill-session WebSocket status push hardcodes running_agents 0 | dashboard/server.py (skill-session broadcast payload ~1030-1047 only), tests/dashboard/test_skill_session_ws_running_agents.py (new) | LOW | python3 -m pytest -q tests/dashboard/test_skill_session_ws_running_agents.py shows running_agents None on the skill-session push; restoring 0 fails it | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
-| S-223 | BACKLOG 114/118: notification triggers read No triggers configured after a failed read | dashboard/server.py (get_notification_triggers only), dashboard-ui/components/loki-notification-center.js (_loadTriggers and triggers empty branch only), tests/dashboard/test_notification_triggers_unreadable.py (new), dashboard-ui/tests/loki-notification-triggers-error.node.test.mjs (new) | LOW | python3 -m pytest -q tests/dashboard/test_notification_triggers_unreadable.py shows triggers null with error on a corrupt file and [] on a missing one; node --test dashboard-ui/tests/loki-notification-triggers-error.node.test.mjs shows an error lacks No triggers configured and an empty list keeps it | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
+| S-223 | BACKLOG 114/118: notification triggers read No triggers configured after a failed read | dashboard/server.py (get_notification_triggers only), legacy-ui/components/loki-notification-center.js (_loadTriggers and triggers empty branch only), tests/dashboard/test_notification_triggers_unreadable.py (new), legacy-ui/tests/loki-notification-triggers-error.node.test.mjs (new) | LOW | python3 -m pytest -q tests/dashboard/test_notification_triggers_unreadable.py shows triggers null with error on a corrupt file and [] on a missing one; node --test legacy-ui/tests/loki-notification-triggers-error.node.test.mjs shows an error lacks No triggers configured and an empty list keeps it | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
 | S-224 | BACKLOG 118: web-app receipt and cost trend show a partly priced run as a complete cost | web-app/src/components/EvidenceReceiptPanel.tsx (Cost field only), web-app/src/api/client.ts (ProofDetail cost type and cost/timeline runs type only), web-app/src/pages/MetricsPage.tsx (costTrend only), web-app/src/components/EvidenceReceiptPanel.cost.test.mjs (new) | MEDIUM | node --test web-app/src/components/EvidenceReceiptPanel.cost.test.mjs: cost_partial true renders at least $1.20, absent keeps $1.20, a partial run's trend label carries (partial); cd web-app && npx tsc -b exits 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
-| S-225 | BACKLOG 118: standalone receipts list shows a partly priced run as a complete cost | dashboard-ui/scripts/build-standalone.js (loadReceipts cost cell only), tests/test-receipts-panel.sh (one new leg) | LOW | bash tests/test-receipts-panel.sh exits 0 with the new leg asserting at least $X.XX only when cost_partial is true; bash tests/test-budget-banner-dedup.sh exits 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
+| S-225 | BACKLOG 118: standalone receipts list shows a partly priced run as a complete cost | legacy-ui/scripts/build-standalone.js (loadReceipts cost cell only), tests/test-receipts-panel.sh (one new leg) | LOW | bash tests/test-receipts-panel.sh exits 0 with the new leg asserting at least $X.XX only when cost_partial is true; bash tests/test-budget-banner-dedup.sh exits 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
 | S-226 | BACKLOG 106 class: loki stats reads unmeasured cost as $0.00 on both routes | autonomy/loki (cmd_stats only), loki-ts/src/commands/stats.ts, loki-ts/tests/commands/stats_unmeasured.test.ts (new), tests/test-stats-unmeasured-cost.sh (new) | MEDIUM | bash tests/test-stats-unmeasured-cost.sh exits 0 (all-zero records give cost_usd null and not recorded, same on both routes); cd loki-ts && bun test tests/commands/stats.test.ts tests/commands/stats_unmeasured.test.ts exits 0; bash tests/test-bash-bun-parity.sh exits 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
 | S-227 | BACKLOG 106 class: loki status prints Budget $0 for a run it never measured, on both routes | autonomy/loki (cmd_status budget block only), loki-ts/src/commands/status.ts (readBudgetField and its budget caller only), loki-ts/tests/commands/status.test.ts (budget legs only), tests/test-status-budget-unmeasured.sh (new) | MEDIUM | bash tests/test-status-budget-unmeasured.sh exits 0 (budget_used 0, null or absent prints not recorded on both routes, a positive value prints as today); cd loki-ts && bun test tests/commands/status.test.ts exits 0; bash tests/test-status-cli-provider-parity.sh exits 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |
 | S-228 | BACKLOG 121: DeployConnections pushes default not-connected states upward after its own fetch failed | web-app/src/components/DeployConnections.tsx (connect and disconnect handlers only), web-app/src/components/DeployConnections.propagate.test.mjs (new) | LOW | node --test web-app/src/components/DeployConnections.propagate.test.mjs shows no synthesized statuses reach onStatusChange after a failed fetch; node --test web-app/src/components/DeployConnections.state.test.mjs and cd web-app && npx tsc -b exit 0 | ready@2026-09-27T20:59Z | Source: 20:59Z cut. |

@@ -168,7 +168,7 @@ Reasons:
 
 ### Phase 3: Build/release tooling
 - Replace npm publish with `bun publish` in CI
-- Replace dashboard-ui esbuild with `bun build` (already 4-5x faster)
+- Replace legacy-ui esbuild with `bun build` (already 4-5x faster)
 - Replace pytest where possible with `bun test` for non-Python tests
 - Measure: full CI wall time, npm install time
 

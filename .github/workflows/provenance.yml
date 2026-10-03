@@ -78,7 +78,6 @@ jobs:
 
       - name: Build the npm tarball
         run: |
-          cd dashboard-ui && npm ci && npm run build:all && cd ..
           npm pack
           ls -la loki-mode-*.tgz
 

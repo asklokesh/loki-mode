@@ -22,8 +22,8 @@ cd loki-mode
 # loki-ts (TypeScript runner; Bun)
 cd loki-ts && bun install && cd ..
 
-# Dashboard frontend (npm)
-cd dashboard-ui && npm install && cd ..
+# Web app frontend (npm)
+cd web-app && npm install && cd ..
 
 # Dashboard backend + memory system (Python; optional unless touching those areas)
 pip install -r dashboard/requirements.txt
@@ -75,7 +75,7 @@ python3.12 -m pytest -q
 
 ```bash
 loki dashboard start   # boots on http://127.0.0.1:57374
-cd dashboard-ui && npx playwright test
+cd packages/control-plane && bun test ./test/
 ```
 
 ## Adding a new ported command
@@ -149,7 +149,7 @@ skills/               # On-demand skill modules
 references/           # Detailed documentation
 memory/               # Memory system (Python)
 dashboard/            # Dashboard backend (FastAPI)
-dashboard-ui/         # Dashboard frontend (web components)
+packages/control-plane/ # Control Plane (browser UI)
 events/               # Event bus (Python, TypeScript, Bash)
 tests/                # Test suites
 benchmarks/           # SWE-bench and HumanEval benchmarks

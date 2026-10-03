@@ -343,7 +343,7 @@ GIVEN the release workflow's publish-docker job runs
   AND DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets are configured
 WHEN the job builds the Docker image
 THEN dashboard frontend is rebuilt first (npm ci && npm run build:all)
-  AND dashboard/static/index.html existence is verified
+  AND legacy-ui-static/index.html existence is verified
   AND the image is pushed with three tags:
      - asklokesh/loki-mode:v<VERSION>
      - asklokesh/loki-mode:<VERSION>
@@ -410,7 +410,7 @@ Source: `deploy/helm/autonomi/templates/secret.yaml:1` (conditional on existingS
 GIVEN the test.yml workflow has dashboard-build job
   AND it uses actions/setup-node with cache: npm
 WHEN the job runs
-THEN npm dependencies are cached via cache-dependency-path: dashboard-ui/package-lock.json
+THEN npm dependencies are cached via cache-dependency-path: legacy-ui/package-lock.json
   AND subsequent runs skip "npm ci" download phase
   AND build verification checks output size > 100KB
 ```

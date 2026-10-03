@@ -3,7 +3,7 @@
  * Embeds the Loki Mode dashboard Web Components in a VS Code sidebar panel
  * Provides task board, session control, log stream, memory browser, and learning dashboard
  *
- * Refactored in v5.19.0 to use dashboard-ui Web Components
+ * Refactored in v5.19.0 to use prebuilt dashboard Web Components (media/loki-dashboard.js)
  * Reduced from 1,339 lines to ~390 lines (71% reduction) by delegating UI to reusable components
  */
 

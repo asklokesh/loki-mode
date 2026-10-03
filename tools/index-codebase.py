@@ -99,7 +99,7 @@ OTHER_GLOBS = [
 # Skip patterns
 SKIP_DIRS = {
     "node_modules", ".git", ".loki", "__pycache__", "dist",
-    "dashboard-ui", "vscode-extension", ".claude",
+    "vscode-extension", ".claude",
 }
 
 

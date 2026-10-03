@@ -1,6 +1,6 @@
 """Console panels that called routes which never existed now reach real data.
 
-Moat cases P7.dashboard-client-routes-exist and P7.webapp-client-routes-exist
+Moat case P7.webapp-client-routes-exist (and the since-removed legacy UI case)
 found client calls with no server route. Three are now real routes over the
 existing stores (the others were orphan components, deleted):
 

@@ -159,8 +159,8 @@ shrink for pending), `CHANGELOG.md`, `docs/v10/BACKLOG.md`,
 
 **Generated bundles** (never edited by hand by a builder; the Captain
 rebuilds all three after every merge that could touch their sources):
-`loki-ts/dist/loki.js` (from `loki-ts/src`), `dashboard/static/index.html`
-and `dashboard-ui/dist` (from `dashboard-ui/scripts/build-standalone.js` and
+`loki-ts/dist/loki.js` (from `loki-ts/src`), `legacy-ui-static/index.html`
+and `legacy-ui/dist` (from `legacy-ui/scripts/build-standalone.js` and
 components), `web-app/dist` (from `web-app/src`).
 
 **Cross-wave exclusion:** a promise chain only serializes within one

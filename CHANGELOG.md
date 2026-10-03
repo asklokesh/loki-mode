@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+- Removed (CPE-24, L6): the legacy dashboard UI. dashboard-ui/ and dashboard/static/ are deleted (107 files), along with the tests, harnesses and build steps that only served them. dashboard/server.py keeps every /api/* route; its `/` now returns a 410 page naming the Control Plane, and `loki dashboard open` prints the Control Plane hint instead of opening a browser. The browser UI is the Control Plane (`loki ui`).
+
 ## v10.8.0 (2026-10-03)
 
 Enterprise Control Plane release: the new Control Plane UI replaces the classic dashboard UI, the legacy /api shim is mounted, metrics, cost and fleet routes are ported, and test runs use a hermetic HOME. Shipped under the founder CI waiver (D88, "skip all CIs for next 10 releases"): this release did not wait for the Tests, Bun Parity or Security Audit workflows, and new tests for these slices are owed after the Oct 7 reset.

@@ -66,7 +66,7 @@ Evidence: `grep -rn autonomy/|providers/` over loki-ts/src/engine10, packages/co
 | loki-ts/src/runner, commands, providers (v8 loop) | PORT subset | engine10 imports runner/github_token, types, retry_class, providers, budget; providers/claude_flags, mcp_config; delete the rest |
 | council/, quality gates scripts, swarm/, agents/ | DELETE (6e) | no engine10 refs |
 | dashboard/ (Python) | KEEP until D56 flip, then DELETE | D57 item 3 |
-| dashboard-ui/ | KEEP until D56 flip, then DELETE | same |
+| legacy-ui/ | KEEP until D56 flip, then DELETE | same |
 | engine10/dashboard | KEEP until D56 flip | engine10/cli.ts TABLE |
 | web-app/ (Purple Lab) | DELETE | no engine10 or CP ref; 55k lines |
 | mcp/ | DELETE (6d) | mcp/server.py has 0 engine10 calls; loki-ts refs are v8 runner only |
@@ -94,7 +94,7 @@ Wall check for every slice: v10 suite, Bun Parity (redefined in W2-01), first-ru
 10. W2-10 providers/*.sh (~3k).
 11. W2-11 autonomy/run.sh, autonomy/loki, autonomy/lib except KEEP rows (~125k). Last code slice; depends on 01, 02, 08, 09.
 12. W2-12 legacy docs/ plans and wiki pages (~1000 mentions).
-13. W2-13 dashboard/ + dashboard-ui/ (~113k), only after D56 default flip.
+13. W2-13 dashboard/ + legacy-ui/ (~113k), only after D56 default flip.
 
 ## 5. Guard spec (D57 item 4)
 

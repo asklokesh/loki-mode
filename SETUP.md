@@ -264,12 +264,14 @@ cd loki-mode
 bun install        # or: npm install
 ```
 
-### Build the dashboard frontend
+### Build the web app
 
 ```bash
-cd dashboard-ui && npm ci && npm run build:all && cd ..
-ls -la dashboard/static/index.html   # verify it exists and is >100KB
+cd web-app && npm ci && npm run build && cd ..
+ls -la web-app/dist/index.html   # verify it exists
 ```
+
+The legacy dashboard UI was removed. The browser UI is the Control Plane: run `loki ui`.
 
 ### Run the test suites
 
@@ -329,7 +331,7 @@ LOKI_DASHBOARD_PORT=8080 loki start --api ./prd.md
 The frontend was not built before running. Rebuild it:
 
 ```bash
-cd dashboard-ui && npm ci && npm run build:all && cd ..
+cd web-app && npm ci && npm run build && cd ..
 ```
 
 ### `loki: command not found`

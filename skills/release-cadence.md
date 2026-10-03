@@ -345,7 +345,7 @@ three other instances measured in the same session.
 
 Applies to the artifact greps in this section too: a built artifact can contain
 NUL bytes, which makes plain `grep` report no matches and exit 1 on a file that
-demonstrably contains the string. Measured on `dashboard/static/index.html`:
+demonstrably contains the string. Measured on `legacy-ui-static/index.html`:
 `grep -c 'Loki'` finds nothing, `grep -ac 'Loki'` finds 27, Python finds 91.
 Always pair a dist grep with a control string known to be present.
 

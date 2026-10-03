@@ -232,11 +232,11 @@ if [ "$MODE" = stub ]; then
     else res FAIL skip-not-verified-legacy "legacy skipped target: rc=$LRC, headline: ${LH:-none}"; fi
 fi
 
-# 10. P0-DASH-STATIC: the dashboard of the package under test serves the real UI at GET /: 200 text/html carrying the
-#     app element (<loki-overview>), not the "frontend not found" page. Runs in both legs (the package is the installed
+# 10. P0-DASH-STATIC: the dashboard of the package under test starts and answers GET / honestly: 410 text/html naming the
+#     Control Plane (the legacy UI was removed, CPE-24), never a blank page. Runs in both legs (the package is the installed
 #     one with --installed). Needs fastapi+uvicorn from the caller's HOME venv or python3; otherwise SKIP (not a FAIL).
 PKG="$REPO_ROOT"; [ -n "$SPEC" ] && PKG="$T/prefix/node_modules/loki-mode"
-PKG="${FRG_DASH_PKG:-$PKG}" # test hook: point at a package copy whose frontend is missing
+PKG="${FRG_DASH_PKG:-$PKG}" # test hook: point at another package copy
 DPY=""
 for p in "$ORIG_HOME/.loki/dashboard-venv/bin/python" python3; do
     if command -v "$p" >/dev/null 2>&1 && "$p" -c 'import fastapi, uvicorn' >/dev/null 2>&1; then DPY="$p"; break; fi
@@ -258,9 +258,9 @@ else
         res FAIL dashboard-root "dashboard did not start: $(tail -2 "$T/dashboard.log" | tr '\n' ' ')"
     else
         DCODE=$(curl -s -o "$T/dash-index.html" -w '%{http_code} %{content_type}' --max-time 5 "http://127.0.0.1:$DPORT/")
-        if [[ "$DCODE" == "200 text/html"* ]] && python3 -c 'import sys;sys.exit(0 if "<loki-overview" in open(sys.argv[1]).read() else 1)' "$T/dash-index.html"; then
-            res PASS dashboard-root "GET / = $DCODE with the app element"
-        else res FAIL dashboard-root "GET / = $DCODE (expected 200 text/html with <loki-overview>)"; fi
+        if [[ "$DCODE" == "410 text/html"* ]] && python3 -c 'import sys;sys.exit(0 if "Control Plane" in open(sys.argv[1]).read() else 1)' "$T/dash-index.html"; then
+            res PASS dashboard-root "GET / = $DCODE naming the Control Plane"
+        else res FAIL dashboard-root "GET / = $DCODE (expected 410 text/html naming the Control Plane)"; fi
     fi
     kill "$DPID" 2>/dev/null
     wait "$DPID" 2>/dev/null

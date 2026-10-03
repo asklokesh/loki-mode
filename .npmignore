@@ -15,7 +15,6 @@ __pycache__/
 **/node_modules/
 
 # Build artifacts
-dashboard-ui/dist/
 **/.next/
 **/build/
 

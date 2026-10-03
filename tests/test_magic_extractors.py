@@ -4,7 +4,7 @@ Covers two bugs reported in the v6.76.1 honest audit:
 
 1. DesignTokens.extract_from_codebase() returned 0 colors / 0 spacing when
    run against a generic project layout, because its globs were hardcoded
-   to loki-mode paths (web-app/, dashboard-ui/).
+   to loki-mode paths (web-app/).
 
 2. _extract_compound_name() produced DashboardIncludesNavigation from
    the phrase "dashboard includes navigation", because "includes" was
