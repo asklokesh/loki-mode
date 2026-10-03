@@ -559,3 +559,10 @@ The $20.00 default per-run cap stays. It is a hard stop on priced sessions only;
 - Evidence: the gitleaks full-history scan took 8-15 min on trains 83-87 and was cancelled at the 15 min limit on trains 86, 88, 89 and 90 ("gitleaks scan (all reachable history) ##[error]The operation was canceled", run 37104195817 attempt 2). Every other Security Audit job passed.
 - Decision: raise timeout-minutes to 30. Same scan, same config, same blocking posture; nothing is narrowed or skipped, so this is not a gate weakening.
 - Follow-up slice: make the scan scale (incremental scan against a reviewed baseline commit) before history doubles again. Any change to scan scope needs a CTO pass.
+
+## D75: gitleaks range scan on train/** pushes, full scan stays the release authority (CTO, 07:45Z 2026-10-03)
+- Decision: train/** pushes scan merge-base(origin/main)..SHA through scripts/security-audit-gitleaks.sh (release-tag config, net .gitleaks.toml refusal, first-parent merges); any doubt falls back to the full scan.
+- Gap found: E-160 reuse (train-verdict-reuse.sh:53-64) plus parent reuse in release.yml required-ci (fetch_runs:423, no branch filter) would let a range-only train verdict reach npm; train-cycle.sh:53 Phase C never waits on Security Audit.
+- Conditions: secret-scan on main always runs full (no E-160 skip); required-ci reuses only main-branch or dispatch audit verdicts; the weekly cron becomes daily and a red daily scan halts releases.
+- No base-config fallback (r3 class). PR, slice-*, main, schedule and dispatch stay full. HIGH tier, unanimous opus review. Proposed by peer autonomi-dev-76; decided by the CTO advisor.
+- Saves about 15 min per promotion; release latency may still include the main full scan, accepted (moat over speed). Unmeasured hypothesis for a later CTO pass: --all on a fetch-depth 0 checkout also scans stale remote slice branches.
