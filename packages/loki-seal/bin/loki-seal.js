@@ -91,42 +91,43 @@ function treeHash(files) {
   return h.digest('hex').slice(0, 16);
 }
 
-// D80 (amended): runner output is trusted for coverage only when the WHOLE npm test script is `node --test`
-// followed by allowlisted flags and plain path arguments, so no chained command, wrapper, redirect or other flag can
-// stand in for the runner or change its isolation. Anything else, a pretest or posttest script, a project .npmrc
-// that sets node-options or script-shell, or NODE_OPTIONS in the hook environment gives NOT VERIFIED with a reason.
-// A node test file that calls process.exit, reallyExit, abort or kill stays an integrity finding (defense in depth).
-// jest and vitest scripts are held to the same shape (the runner name plus plain flags and paths) and hygiene checks.
-const ALLOWED_FLAG = /^--(?:test-reporter=[\w.-]+|test-reporter-destination=stdout|test-isolation=process|test-concurrency=\d+|test-timeout=\d+)$/;
-const PLAIN_PATH = /^[\w@./-]+$/;
+// D80 amendment 2: coverage is granted only from a runner loki-seal launches itself. The npm test script must be
+// exactly `node --test` plus allowlisted flags and plain relative file paths; loki-seal then does NOT run npm. It
+// spawns process.execPath (absolute, no PATH lookup) with those arguments, cwd at the project root, and NODE_OPTIONS,
+// NODE_PATH, NODE_TEST_CONTEXT and every npm_* variable removed. No npm config (project, user, global) is read.
+// Anything else (a chained script, another flag, a pretest or posttest script, jest, vitest or any project-resolved
+// runner) still runs through npm test so red and green count, but coverage is withheld with a stated reason.
+// A test file that calls process.exit, reallyExit, abort or kill is withheld too (defense in depth, not the boundary).
+const BUILTIN_REPORTERS = ['spec', 'tap', 'dot', 'junit', 'lcov'];
 const SHELL_META = /[;&|$`'"#<>\\(){}*?~!\n\r]/;
-function scriptShape(script, kind) {
+const PLAIN_REL_PATH = /^(?!\/)[\w@.-][\w@./-]*$/;
+// Returns { args } for a script loki-seal may launch itself, or { reason } when it may not.
+function parseNodeTest(root, script, pkgScripts) {
   const t = script.trim();
-  if (SHELL_META.test(t)) return 'the npm test script contains a shell metacharacter';
+  if (SHELL_META.test(t)) return { reason: 'the npm test script contains a shell metacharacter' };
   const tok = t.split(/\s+/);
-  if (kind === 'node --test') {
-    if (tok[0] !== 'node' || tok[1] !== '--test') return `the npm test script ("${t.slice(0, 80)}") is not exactly node --test with allowlisted flags`;
-    for (const a of tok.slice(2)) {
-      if (a.startsWith('-') ? !ALLOWED_FLAG.test(a) : !PLAIN_PATH.test(a)) return `the npm test script has the token "${a.slice(0, 40)}", which is not an allowlisted node --test flag or a plain path`;
+  if (/^(npx\s+)?(jest|vitest)\b/.test(t)) return { reason: `${/vitest/.test(t) ? 'vitest' : 'jest'} is a project-resolved runner (node_modules/.bin, config, reporters and setup files), so it grants no coverage; its red or green result still counts` };
+  if (tok[0] !== 'node' || tok[1] !== '--test') return { reason: `the npm test script ("${t.slice(0, 80)}") is not exactly node --test plus allowlisted flags and plain relative file paths` };
+  if (pkgScripts && (pkgScripts.pretest || pkgScripts.posttest)) return { reason: 'a pretest or posttest script exists and could change what npm test runs' };
+  const args = ['--test'];
+  for (const a of tok.slice(2)) {
+    let m;
+    if ((m = /^--test-reporter=(.+)$/.exec(a))) {
+      if (!BUILTIN_REPORTERS.includes(m[1])) return { reason: `the test reporter "${m[1].slice(0, 40)}" is not a built-in reporter (spec, tap, dot, junit, lcov), so it could be project code` };
+    } else if (a.startsWith('-')) {
+      if (!/^--(?:test-reporter-destination=stdout|test-isolation=process|test-concurrency=\d+|test-timeout=\d+)$/.test(a)) return { reason: `the flag "${a.slice(0, 40)}" is not an allowlisted node --test flag` };
+    } else {
+      if (!PLAIN_REL_PATH.test(a) || a.split('/').includes('..')) return { reason: `the argument "${a.slice(0, 40)}" is not a plain relative file path` };
+      let st = null;
+      try { st = fs.statSync(path.join(root, a)); } catch { /* missing */ }
+      if (!st || !st.isFile()) return { reason: `the path "${a.slice(0, 40)}" is not an existing file (a directory or missing path does not run tests under node --test)` };
     }
-    return null;
+    args.push(a);
   }
-  const i = tok[0] === 'npx' ? 1 : 0;
-  if (tok[i] !== kind) return `the npm test script ("${t.slice(0, 80)}") is not exactly ${kind} with plain flags and paths`;
-  for (const a of tok.slice(i + 1)) if (!/^-{0,2}[\w@./=:,-]+$/.test(a)) return `the npm test script has the token "${a.slice(0, 40)}", which is not a plain flag or path`;
-  return null;
+  return { args };
 }
 
-function coverageBlock(root, files, script, kind, pkgScripts) {
-  if (kind === 'script') return `the npm test script ("${script.trim().slice(0, 80)}") is not positively classified as node --test`;
-  const shape = scriptShape(script, kind);
-  if (shape) return shape;
-  if (pkgScripts && (pkgScripts.pretest || pkgScripts.posttest)) return 'a pretest or posttest script exists and could change what npm test runs';
-  try {
-    if (/^\s*(?:node[-_]options|script[-_]shell)\s*=/im.test(fs.readFileSync(path.join(root, '.npmrc'), 'utf8'))) return 'the project .npmrc sets node-options or script-shell';
-  } catch { /* no .npmrc */ }
-  if (process.env.NODE_OPTIONS) return 'NODE_OPTIONS is set in the hook environment';
-  if (kind !== 'node --test') return null;
+function exitFinding(root, files) {
   for (const p of Object.keys(files).filter((f) => isTest(f) && /\.[cm]?[jt]sx?$/.test(f))) {
     let c = '';
     try { c = fs.readFileSync(path.join(root, p), 'utf8'); } catch { continue; }
@@ -141,8 +142,12 @@ function detect(root, files) {
     let s = '', pkgScripts = null;
     try { pkgScripts = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).scripts; s = pkgScripts.test || ''; } catch { /* no script */ }
     if (s && !/no test specified/.test(s)) {
-      const kind = /vitest/.test(s) ? 'vitest' : /jest/.test(s) ? 'jest' : /node\s+--test/.test(s) ? 'node --test' : 'script';
-      return { name: `npm test (${kind})`, cmd: ['npm', 'test', '--silent'], coverageBlock: coverageBlock(root, files, s, kind, pkgScripts) };
+      const parsed = parseNodeTest(root, s, pkgScripts);
+      if (parsed.args) {
+        return { name: 'npm test (node --test)', cmd: [process.execPath, ...parsed.args], clean: true, coverageBlock: exitFinding(root, files) };
+      }
+      const kind = /vitest/.test(s) ? 'vitest' : /jest/.test(s) ? 'jest' : 'script';
+      return { name: `npm test (${kind})`, cmd: ['npm', 'test', '--silent'], coverageBlock: parsed.reason };
     }
   }
   if (has('go.mod')) return { name: 'go test', cmd: ['go', 'test', './...', '-v'] };
@@ -323,6 +328,7 @@ function failing(out) {
 function runSuite(root, runner, timeout) {
   const env = { ...process.env, CI: '1', NO_COLOR: '1', FORCE_COLOR: '0', PYTHONDONTWRITEBYTECODE: '1' };
   delete env.NODE_TEST_CONTEXT; // set when we are launched inside another node --test run
+  if (runner.clean) for (const k of Object.keys(env)) if (k === 'NODE_OPTIONS' || k === 'NODE_PATH' || /^npm_/i.test(k)) delete env[k];
   return new Promise((resolve) => {
     let out = '', timedOut = false, done = false, truncated = false;
     const child = spawn(runner.cmd[0], runner.cmd.slice(1), { cwd: root, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });

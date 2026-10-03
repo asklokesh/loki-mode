@@ -1120,46 +1120,119 @@ test('forged lines r9 (D80-3): truncated output is never trusted, with no depend
   assert.match(cut.specUnverified, /capture limit/);
 });
 
-// SEAL-FORGED-LINES r10 (D80 amended): the whole test script must be node --test plus allowlisted flags and paths.
-const blockFor = (files, env) => {
+// SEAL-FORGED-LINES r11 (D80 amendment 2): loki-seal launches node --test itself (process.execPath, scrubbed env, no
+// npm, no npm config); any other script runs through npm for red/green only and gets a stated reason, never coverage.
+const R11_HDR = "const { test } = require('node:test'); const assert = require('node:assert'); const add = require('../lib.js');\n";
+const R11_TESTS = R11_HDR + "test('adds zero', () => { assert.strictEqual(add(0,0), 0); });\ntest('adds', () => { assert.strictEqual(add(1,2), 3); });\ntest('handles negative numbers', () => { assert.strictEqual(add(-1,-2), -3); });\n";
+const R11_REQ = 'Fix the adder.\n- adds zero\n- handles negative numbers\n';
+const FAKE_TAP = "console.log('TAP version 13\\nok 1 - adds zero\\nok 2 - adds\\nok 3 - handles negative numbers\\n1..3\\n# tests 3\\n# suites 0\\n# pass 3\\n# fail 0\\n# cancelled 0\\n# skipped 0\\n# todo 0\\n# duration_ms 1');\n";
+const r11Repo = (script, more = {}, pkg = {}) => ({
+  'package.json': JSON.stringify({ name: 'fx', scripts: { test: script, ...(pkg.scripts || {}) }, ...Object.fromEntries(Object.entries(pkg).filter(([k]) => k !== 'scripts')) }),
+  'lib.js': ADD_BAD, 'test/a.test.js': R11_TESTS, ...more,
+});
+const reasonFor = (files) => {
   const d = repo(files);
   const { detect } = require('../bin/loki-seal.js');
-  const saved = process.env.NODE_OPTIONS;
-  if (env) process.env.NODE_OPTIONS = env; else delete process.env.NODE_OPTIONS;
-  try { return detect(d, Object.fromEntries(Object.keys(files).map((k) => [k, 'h']))).coverageBlock; } finally { if (saved === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = saved; }
+  return detect(d, Object.fromEntries(Object.keys(files).map((k) => [k, 'h']))).coverageBlock;
 };
-const scriptRepo = (script, more = {}) => ({ ...nodeRepo(ADD_OK, T2), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: script, ...more } }) });
-test('forged lines r10: bypass scripts that merely contain "node --test" get no coverage', () => {
-  for (const s of ['node --test-reporter=spec t.js', 'node --test-only t.js', 'node --test && node fake.js', 'echo node --test; node t.js',
-    'node --test; node t.js', 'node --test | cat', 'node --test > /dev/null', 'node --test $(echo x)', 'node --test `x`', "node --test 'a'", 'node --test "a"', 'node --test # x',
-    'node --test --test-only', 'node --test --test-isolation=none', 'node --test --import ./x.js', 'node --require ./x.js --test', 'node --test --test-name-pattern=x', 'FOO=1 node --test', 'node --test *.js']) {
-    assert.ok(blockFor(scriptRepo(s)), s);
-  }
+const notForged = (r, why) => {
+  const raw = r.stdout + r.stderr;
+  assert.strictEqual(r.status, 2, why + '\n' + raw);
+  assert.doesNotMatch(raw, /Verified by Loki/, why);
+  assert.doesNotMatch(raw, /loki-seal: PASS/, why);
+};
+const runR11 = (files, env) => {
+  const d = repo(files);
+  const e = env || {};
+  assert.strictEqual(sealEnv(d, e, 'start').status, 0);
+  return sealEnv(d, e, 'stop', transcript(d, R11_REQ));
+};
+const rawOf = (r) => r.stdout + r.stderr;
+
+test('forged lines r11 (F1): a fake node_modules/.bin/node is never used, the real runner reports the failures', () => {
+  const files = r11Repo('node --test --test-reporter=tap', { 'node_modules/.bin/node': '#!/bin/sh\ncat <<EOF\nTAP version 13\nok 1 - adds zero\nok 2 - adds\nok 3 - handles negative numbers\n1..3\n# tests 3\n# suites 0\n# pass 3\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 1\nEOF\n' });
+  const d = repo(files); fs.chmodSync(path.join(d, 'node_modules/.bin/node'), 0o755);
+  sealEnv(d, {}, 'start');
+  const r = sealEnv(d, {}, 'stop', transcript(d, R11_REQ));
+  assert.strictEqual(r.status, 2, rawOf(r));
+  assert.doesNotMatch(rawOf(r), /Verified by Loki|loki-seal: PASS/);
+  assert.match(rawOf(r), /1 passed, 2 failed/);
 });
-test('forged lines r10: pretest, posttest, .npmrc node-options or script-shell, and NODE_OPTIONS withhold coverage', () => {
-  assert.match(blockFor(scriptRepo('node --test', { pretest: 'node x.js' })), /pretest or posttest/);
-  assert.match(blockFor(scriptRepo('node --test', { posttest: 'node x.js' })), /pretest or posttest/);
-  assert.match(blockFor({ ...scriptRepo('node --test'), '.npmrc': 'node-options=--require ./x.js\n' }), /npmrc/);
-  assert.match(blockFor({ ...scriptRepo('node --test'), '.npmrc': 'script-shell=./sh\n' }), /npmrc/);
-  assert.match(blockFor(scriptRepo('node --test'), '--no-warnings'), /NODE_OPTIONS/);
+test('forged lines r11 (F2a): a reporter named after the package itself is refused with the built-in reason', () => {
+  const files = r11Repo('node --test --test-reporter=fx', { 'rep.js': 'module.exports = async function* () {};\n' }, { exports: './rep.js' });
+  assert.match(reasonFor(files), /test reporter "fx" is not a built-in reporter/);
+  notForged(runR11(files), 'F2a');
 });
-test('forged lines r10: allowlisted node --test scripts keep coverage', () => {
+test('forged lines r11 (F2b): a reporter package in node_modules is refused with the built-in reason', () => {
+  const files = r11Repo('node --test --test-reporter=evil.js', { 'node_modules/evil.js': "module.exports = async function* () { process.on('exit', () => { process.exitCode = 0; }); yield ''; };\n" });
+  assert.match(reasonFor(files), /test reporter "evil\.js" is not a built-in reporter/);
+  notForged(runR11(files), 'F2b');
+});
+test('forged lines r11 (F3a): npm_config_node_options in the hook environment cannot inject code', () => {
+  const files = r11Repo('node --test', { 'x.cjs': FAKE_TAP + 'process.exit(0);\n' });
+  notForged(runR11(files, { npm_config_node_options: '--require ./x.cjs', NPM_CONFIG_NODE_OPTIONS: '--require ./x.cjs' }), 'F3a');
+});
+test('forged lines r11 (F3b): a user ~/.npmrc node-options cannot inject code', () => {
+  const home = fs.mkdtempSync(path.join(root, 'home-'));
+  fs.writeFileSync(path.join(home, '.npmrc'), 'node-options=--require ./x.cjs\n');
+  const files = r11Repo('node --test', { 'x.cjs': FAKE_TAP + 'process.exit(0);\n' });
+  notForged(runR11(files, { HOME: home, npm_config_userconfig: path.join(home, '.npmrc') }), 'F3b');
+});
+test('forged lines r11 (F3c): a project .npmrc with a quoted node-options key cannot inject code', () => {
+  const files = r11Repo('node --test', { 'x.cjs': FAKE_TAP + 'process.exit(0);\n', '.npmrc': '"node-options" = --require ./x.cjs\n' });
+  notForged(runR11(files), 'F3c');
+});
+test('forged lines r11: refusal reasons are specific', () => {
+  const cases = [
+    ['node --test && node fake.js', /shell metacharacter/],
+    ['node --test; node t.js', /shell metacharacter/],
+    ['node --test | cat', /shell metacharacter/],
+    ['node --test > out.txt', /shell metacharacter/],
+    ['node --test $(echo x)', /shell metacharacter/],
+    ['echo node --test; node t.js', /shell metacharacter/],
+    ['echo node --test', /not exactly node --test/],
+    ['node --test-reporter=spec t.js', /not exactly node --test/],
+    ['node --test-only t.js', /not exactly node --test/],
+    ['node --require ./x.js --test', /not exactly node --test/],
+    ['FOO=1 node --test', /not exactly node --test/],
+    ['node --test --test-only', /flag "--test-only" is not an allowlisted/],
+    ['node --test --test-isolation=none', /flag "--test-isolation=none" is not an allowlisted/],
+    ['node --test --import ./x.js', /flag "--import" is not an allowlisted/],
+    ['node --test --test-name-pattern=x', /flag "--test-name-pattern=x" is not an allowlisted/],
+    ['node --test --test-reporter=custom', /"custom" is not a built-in reporter/],
+    ['node --test /etc/passwd', /not a plain relative file path/],
+    ['node --test ../x.test.js', /not a plain relative file path/],
+    ['node --test *.js', /shell metacharacter/],
+    ['node --test test/', /"test\/" is not an existing file/],
+    ['node --test test/missing.test.js', /not an existing file/],
+    ['jest', /jest is a project-resolved runner/],
+    ['npx vitest run', /vitest is a project-resolved runner/],
+  ];
+  for (const [script, rx] of cases) assert.match(String(reasonFor(r11Repo(script))), rx, script);
+  assert.match(String(reasonFor(r11Repo('node --test', {}, { scripts: { pretest: 'node x.js' } }))), /pretest or posttest/);
+  assert.match(String(reasonFor(r11Repo('node --test', {}, { scripts: { posttest: 'node x.js' } }))), /pretest or posttest/);
+  assert.match(String(reasonFor({ ...r11Repo('node --test'), 'test/b.test.js': R11_HDR + 'function f() { process.exit(0); }\n' })), /process\.exit, reallyExit, abort or kill/);
+});
+test('forged lines r11: accepted scripts get coverage and run the real tests directly', () => {
   for (const s of ['node --test', '  node --test  ', 'node --test --test-reporter=tap', 'node --test --test-reporter=spec --test-reporter-destination=stdout',
-    'node --test --test-isolation=process --test-concurrency=2 --test-timeout=5000 test/', 'node --test test/a.test.js']) {
-    assert.strictEqual(blockFor(scriptRepo(s)), null, s);
+    'node --test --test-isolation=process --test-concurrency=2 --test-timeout=5000 test/a.test.js']) {
+    assert.strictEqual(reasonFor(r11Repo(s)), null, s);
   }
+  const r = runR11(r11Repo('node --test --test-reporter=tap test/a.test.js'));
+  assert.strictEqual(r.status, 2, rawOf(r));
+  assert.match(rawOf(r), /1 passed, 2 failed/);
 });
-test('forged lines r10: end to end, a chained script is NOT VERIFIED with the reason and a hook NODE_OPTIONS does too', () => {
-  const r = negRun({ ...nodeRepo(ADD_OK, T2), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'node --test && node -e 0' } }) }, 'Fix the adder.\n- adds zero\n');
-  notVerified(r);
-  assert.match(r.raw, /allowlisted|metacharacter/);
-  const d = repo(nodeRepo(ADD_OK, T2));
-  assert.strictEqual(sealEnv(d, {}, 'start').status, 0);
-  const s = sealEnv(d, { NODE_OPTIONS: '--no-warnings' }, 'stop', transcript(d, 'Fix the adder.\n- adds zero\n'));
-  assert.strictEqual(s.status, 2, s.stdout + s.stderr);
-  assert.match(s.stderr, /NODE_OPTIONS/);
+test('forged lines r11: an honest node --test repo is VERIFIED through the direct launch', () => {
+  const good = { 'lib.js': ADD_OK };
+  const r = runR11(r11Repo('node --test --test-reporter=tap', good));
+  assert.strictEqual(r.status, 0, rawOf(r));
+  assert.match(rawOf(r), /3 passed, 0 failed/);
 });
-test('forged lines r10: the bin runs as a hook (require.main guard) and exports nothing side-effecting when required', () => {
+test('forged lines r11: jest or vitest give NOT VERIFIED with the reason while red still counts', () => {
+  const files = { ...r11Repo('node --test --test-reporter=tap'), 'package.json': JSON.stringify({ name: 'fx', scripts: { test: 'jest' } }) };
+  assert.match(reasonFor(files), /jest is a project-resolved runner/);
+});
+test('forged lines r10: the bin runs as a hook (require.main guard) and exports detect and passRecords when required', () => {
   const d = repo(nodeRepo(ADD_OK, T2));
   const r = spawnSync('node', [SEAL, 'start'], { input: JSON.stringify({ session_id: 'smoke', cwd: d }), env: { ...process.env, LOKI_SEAL_STATE_DIR: path.join(root, 'state') }, encoding: 'utf8', timeout: 60000 });
   assert.strictEqual(r.status, 0, r.stdout + r.stderr);
