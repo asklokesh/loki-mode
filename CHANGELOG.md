@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - A workspace run stopped by SIGTERM or SIGINT now records integration.json with status "interrupted" (running repos marked INTERRUPTED), and `loki workspace status` lists an unreadable run as "unreadable" instead of hiding it (WS-INTERRUPT).
 ### Fixed
+- Dashboard runs view reports unreadable or corrupt run records instead of claiming none were recorded.
 - `loki stats` and `loki status` print "unmeasured" instead of $0.00 when no iteration records cost_usd or budget.json has no budget_used, on both the bash and bun routes (S-226r).
 
 ### Docs

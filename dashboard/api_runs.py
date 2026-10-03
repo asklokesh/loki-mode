@@ -158,6 +158,44 @@ def _efficiency_module():
 # per-iteration cost, from the current run's efficiency records
 # ---------------------------------------------------------------------------
 
+def _errno_text(exc: OSError) -> str:
+    return "errno %s %s" % (exc.errno, exc.strerror or type(exc).__name__)
+
+
+def _events_read_error(loki_dir: str) -> Optional[str]:
+    """errno text when trust-events.jsonl exists but cannot be read, else None.
+
+    A missing file (ENOENT) is not an error: it means nothing was recorded.
+    """
+    try:
+        with open(_p(loki_dir, *_TRUST_EVENTS), "r", encoding="utf-8") as fh:
+            fh.read(1)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return _errno_text(exc)
+    return None
+
+
+def _iterations_read_error(loki_dir: str) -> Optional[str]:
+    """Why iteration records are unreadable or corrupt, else None.
+
+    None means the directory is absent or holds no iteration-*.json files at
+    all, i.e. genuinely nothing recorded.
+    """
+    eff_dir = _p(loki_dir, *_EFFICIENCY_DIR)
+    try:
+        names = os.listdir(eff_dir)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        return _errno_text(exc)
+    cands = [n for n in names if n.startswith("iteration-") and n.endswith(".json")]
+    if cands and not _iteration_records(loki_dir):
+        return "%d iteration file(s) present but none parsed" % len(cands)
+    return None
+
+
 def _iteration_records(loki_dir: str) -> list:
     """[(iteration_int, record_dict, path)] sorted by iteration.
 
@@ -399,6 +437,13 @@ def list_runs(loki_dir: str, now: Optional[float] = None) -> dict:
     if current_id and current_id not in ids:
         ids.append(current_id)
 
+    if not ids and _events_read_error(loki_dir):
+        envelope["reason"] = (
+            "unreadable: .loki/metrics/trust-events.jsonl could not be read (%s)"
+            % _events_read_error(loki_dir)
+        )
+        return envelope
+
     if not ids:
         envelope["reason"] = (
             "no run id found: .loki/state/trust-run-id is absent and "
@@ -463,6 +508,13 @@ def get_run(loki_dir: str, run_id: str, now: Optional[float] = None) -> dict:
 
     mod = _efficiency_module()
     recs = _iteration_records(loki_dir)
+    if not recs and _iterations_read_error(loki_dir):
+        envelope["reason"] = (
+            "per-iteration records unreadable or corrupt at "
+            ".loki/metrics/efficiency/iteration-*.json (%s)"
+            % _iterations_read_error(loki_dir)
+        )
+        return envelope
     if not recs:
         envelope["reason"] = (
             "no per-iteration records at .loki/metrics/efficiency/iteration-*.json"

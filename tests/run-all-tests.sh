@@ -1579,6 +1579,7 @@ run_test "Web redirects to dashboard" "$SCRIPT_DIR/test-web-redirects-to-dashboa
 run_test "Audit chain cross-file verification" "$SCRIPT_DIR/test-audit-chain-cross-file.sh"
 run_test "Cline provider E2E" "$SCRIPT_DIR/test-cline-e2e.sh"
 run_test "Dashboard hook events (Live Tool Activity)" "$SCRIPT_DIR/test-dashboard-hook-events.sh"
+run_test "Dashboard api_runs unreadable reads (HONEST-READ-2)" "timeout -k 10 120 python3 -m pytest -q $SCRIPT_DIR/dashboard/test_api_runs_unreadable.py"
 run_test "Learning aggregator" "$SCRIPT_DIR/test-learning-aggregator.sh"
 run_test "Learning signal emission" "$SCRIPT_DIR/test-learning-emit.sh"
 run_test "Learning suggestions" "$SCRIPT_DIR/test-learning-suggestions.sh"

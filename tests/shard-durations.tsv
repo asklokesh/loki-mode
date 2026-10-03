@@ -732,3 +732,4 @@ corrupt or denied proofs and memory files give 503 or an error row, never empty 
 Stats unmeasured cost reads unmeasured (S-226r)	6
 Status budget unmeasured reads unmeasured (S-226r)	6
 verify readers ignore a planted json.py in the reviewed tree (-I -S, S-216)	2
+Dashboard api_runs unreadable reads (HONEST-READ-2)	5
