@@ -35,7 +35,7 @@ Run the relevant `tests/integration/` script locally with real credentials in a 
 
 **Manual procedure that closes the gap:**
 
-Install on a Windows host with WSL2 + Ubuntu, run `loki doctor` and the smoke commands, file an issue with the output. Document any divergence in `docs/PLATFORM-SUPPORT.md` (file does not exist yet -- create it on first finding).
+Install on a Windows host with WSL2 + Ubuntu, run `loki doctor` and the smoke commands, file an issue with the output. Document any divergence in the issue, and see `docs/INSTALLATION.md` and `docs/alternative-installations.md` for supported install paths.
 
 **Partial substitute we ship:**
 

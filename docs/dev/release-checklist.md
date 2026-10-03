@@ -141,6 +141,11 @@ brew update && brew info loki-mode
 gh release view vX.Y.Z
 ```
 
+### Train cycle: previous release must be on npm
+`scripts/train-cycle.sh` (phase C) refuses to cut release N+1 until the previous `release: vX` version is visible on npm (`npm_has_version`). While it is missing, the cycle logs `PREV_NOT_ON_NPM X` and returns 0 (waiting is not a failure). An unreachable registry fails closed and adds `reason=NPM_UNREACHABLE`. After `LOKI_TC_NPM_WAIT_MIN` minutes (default 45) since the previous release commit the log becomes `PREV_NOT_ON_NPM_STALE ... refusing release, needs a human`; the release stays refused either way.
+
+Operator action: wait for the Release workflow publish to land and for the D49 auto-promote to run. Never manually promote or move the `latest` dist-tag, and never unpublish. If the STALE line appears, investigate the failed or stuck publish run rather than bypassing the check.
+
 ### Distribution Channel Checklist
 
 | Channel | Dashboard API | Dashboard Frontend | Memory System | Skills/References |
