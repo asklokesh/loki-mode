@@ -461,9 +461,11 @@ jobs:
         working-directory: loki-ts
         run: bun run typecheck
 
-      - name: Run loki-ts unit tests
+      # coverage.yml was removed in v10.10.1; the coverage table is printed here
+      # for visibility only (no floor is enforced).
+      - name: Run loki-ts unit tests (with coverage report)
         working-directory: loki-ts
-        run: bun test
+        run: bun test --coverage
 
       - name: Build loki-ts bundle (for the SDK bridge tests + bin/loki)
         working-directory: loki-ts
