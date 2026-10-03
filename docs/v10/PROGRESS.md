@@ -2214,3 +2214,11 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Usage reading relayed by Loki steering (`claude -p "/usage"`, peer-stamped about 18:10Z, recorded at 17:43Z local clock): session 28%, week 71%, resets Oct 7 12:59 ET. The pulse's 518% projection extrapolates today's burst rate; recalibrated from this reading.
 - Governor plan until Oct 7: ONE lane (sonnet builder, opus review only on trust paths), stop at 81% weekly (4% reserve below the 85% floor). Order: (1) 10.7.1 guard fix-forward and release, (2) EL-W1-01 Project Model, (3) EL-W1-06 failure ownership (absorbs FC-02), (4) EL-W1-00 static L0 guard. In-flight agents finish; no other dispatch. Pending reviews (FC-09, EL-W0-06, FC-10) wait for the reset.
 - Main 08bf593f2: L0 recorded (ENGINE-LAWS, L0-WAVE1.md, FC-11). Full bun test after merges: 3353 pass, 2 fail (the two known guards only).
+
+## 2026-10-03T22:26Z (CoS)
+- 10.10.3 published and promoted: release run 37156522424 success; `npm view loki-mode dist-tags` latest=10.10.3 next=10.10.3 (18:10 local).
+- FC-15 merged on main 87965225f after the scoped opus re-check APPROVE (c59035fbc); budget+intake 57/0, tsc rc=0 on the merge; e10ext 1499/1500. Pushed.
+- Founder 22:03Z: CP home box is Ask Loki (read-only async search/compare over runs, receipts, repos, issues, METRICS), not a build prompt. CP-START rescoped to the 404, CP-ASK row (HIGH, Architect first). 7b02aafa5.
+- FireLater#17 gate on 10.10.3 (steering): PARTIAL $2.27, full migration, 5855/5858 green; implement hit the 900s cap and verify was skipped. FC-21 filed (8d17b8c59); sonnet fix-fc21 seated 22:24Z under D87.
+- FC-16 narrowed (Go exit 0 always not_run) at 1f3c97831: 1504/0, red-then-green 4/6 against c35bc2d62; opus re-review in flight.
+- Next: FC-16 APPROVE + FC-21 green, then one train FC-15+FC-16+FC-21, then the gate rerun.
