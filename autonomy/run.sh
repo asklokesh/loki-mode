@@ -10650,7 +10650,11 @@ _loki_untracked_status() {
     gittool="$(_loki_snapshot_git_tool)" || return 1
     top="$("$gittool" rev-parse --show-toplevel 2>/dev/null)" || return 1
     prefix="$("$gittool" rev-parse --show-prefix 2>/dev/null)" || return 1
-    "$gittool" -C "$top" --no-optional-locks status --porcelain -z --no-renames -uall \
+    # BACKLOG 131c: a repo-local core.fsmonitor is a command git runs on
+    # status; the agent can write .git/config, so disable it (and the
+    # untracked cache it could have poisoned) for this one call.
+    "$gittool" -C "$top" -c core.fsmonitor=false -c core.untrackedCache=false \
+        --no-optional-locks status --porcelain -z --no-renames -uall \
         --ignored=matching --ignore-submodules=all -- ":(exclude,literal)${prefix}.loki" \
         > "$1" 2>/dev/null && return 0
     rm -f "$1"
