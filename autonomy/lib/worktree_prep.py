@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 DEP_DIRS = ("node_modules", ".venv", "venv", "vendor")
 
@@ -65,16 +66,57 @@ def _cow_copy(src, dst):
 
 
 def _escapes_source(path):
-    """True if a dep dir has an absolute symlink or an editable finder."""
+    """True if a dep dir links or points outside itself.
+
+    Flags absolute symlinks, relative symlinks resolving outside the dep dir,
+    editable finders, and bin/* scripts whose shebang names the source path.
+    """
+    base = os.path.realpath(path)
+    sources = {os.path.dirname(base).encode(), os.path.dirname(os.path.abspath(path)).encode()}
     for root, dirs, files in os.walk(path):
         for name in dirs + files:
             p = os.path.join(root, name)
             if os.path.islink(p):
-                if os.path.isabs(os.readlink(p)):
+                target = os.readlink(p)
+                if os.path.isabs(target):
+                    return True
+                real = os.path.realpath(os.path.join(root, target))
+                if real != base and not real.startswith(base + os.sep):
                     return True
             elif name.endswith(".pth") or name.startswith("__editable__"):
                 return True
+        if os.path.basename(root) == "bin":
+            for name in files:
+                p = os.path.join(root, name)
+                if os.path.islink(p):
+                    continue
+                try:
+                    with open(p, "rb") as f:
+                        first = f.readline(4096)
+                except OSError:
+                    continue
+                if first.startswith(b"#!") and any(x in first for x in sources):
+                    return True
     return False
+
+
+def _lock_timeout():
+    try:
+        return float(os.environ.get("LOKI_PREP_LOCK_TIMEOUT", "120"))
+    except ValueError:
+        return 120.0
+
+
+def _acquire_lock(lock):
+    deadline = time.monotonic() + _lock_timeout()
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("FAILED: lock contention")
+            time.sleep(0.1)
 
 
 def _copy_deps(source, dest, start):
@@ -100,7 +142,7 @@ def prepare_worktree(source_repo, dest, branch, setup=None, base=None):
     dest = os.path.abspath(dest)
     lock = open(_lock_path(source_repo), "w")
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        _acquire_lock(lock)
         left_out = _left_out_changes(source_repo)
         start = _start_point(source_repo, base)
         base_sha = _git(source_repo, "rev-parse", start + "^{commit}").stdout.strip()

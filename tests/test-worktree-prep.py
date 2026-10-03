@@ -71,6 +71,44 @@ class WorktreePrepTest(unittest.TestCase):
         self.assertEqual(res["deps"], "setup")
         self.assertTrue((Path(res["path"]) / "setup-ran").exists())
 
+    def test_lock_contention_times_out(self):
+        import fcntl
+        held = open(worktree_prep._lock_path(str(self.repo)), "w")
+        fcntl.flock(held, fcntl.LOCK_EX)
+        old = os.environ.get("LOKI_PREP_LOCK_TIMEOUT")
+        os.environ["LOKI_PREP_LOCK_TIMEOUT"] = "1"
+        try:
+            with self.assertRaises(RuntimeError) as cm:
+                worktree_prep.prepare_worktree(str(self.repo), self.dest("wt4"), "b4")
+            self.assertIn("lock contention", str(cm.exception))
+            self.assertIn("FAILED", str(cm.exception))
+        finally:
+            fcntl.flock(held, fcntl.LOCK_UN)
+            held.close()
+            if old is None:
+                os.environ.pop("LOKI_PREP_LOCK_TIMEOUT", None)
+            else:
+                os.environ["LOKI_PREP_LOCK_TIMEOUT"] = old
+
+    def test_relative_symlink_escape_refused(self):
+        nm = self.repo / "node_modules"
+        nm.mkdir()
+        (nm / "ok.js").write_text("1\n")
+        os.symlink("../../outside", nm / "escape")
+        self.assertTrue(worktree_prep._escapes_source(str(nm)))
+        with self.assertRaises(RuntimeError):
+            worktree_prep.prepare_worktree(str(self.repo), self.dest("wt5"), "b5")
+
+    def test_relative_symlink_inside_allowed_and_shebang_refused(self):
+        nm = self.repo / "node_modules"
+        (nm / "pkg").mkdir(parents=True)
+        (nm / "pkg" / "real.js").write_text("1\n")
+        os.symlink("pkg/real.js", nm / "link.js")
+        self.assertFalse(worktree_prep._escapes_source(str(nm)))
+        (nm / "bin").mkdir()
+        (nm / "bin" / "tool").write_text("#!%s/node_modules/.bin/node\n" % self.repo)
+        self.assertTrue(worktree_prep._escapes_source(str(nm)))
+
 
 if __name__ == "__main__":
     unittest.main()
