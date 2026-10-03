@@ -32,6 +32,35 @@
 # every optional tool is `command -v`-guarded. All print paths `return 0` so a
 # sourced call cannot abort the caller under set -e.
 
+# S-215: callers render from the agent's repo, and a bare `python3 -` puts the
+# cwd first on sys.path, so a committed json.py forged the headline. The
+# renderer resolves its interpreter through _loki_snapshot_py_tool and runs it
+# -I -S. The copy below only serves callers that source this file on its own;
+# run.sh's definition is the source of truth: keep this copy byte-identical to
+# it. Pinned by tests/test-proof-pr-no-cwd-shadow.sh and
+# tests/test-council-py-tool-identity.sh.
+declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
+_loki_snapshot_py_tool() {
+    local c
+    for c in /usr/bin/python3 /bin/python3; do
+        [ -x "$c" ] && [ ! -d "$c" ] && "$c" -I -S -c '' >/dev/null 2>&1 && { printf '%s\n' "$c"; return 0; }
+    done
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        case "$dir" in
+            /*) ;;
+            *) continue ;;
+        esac
+        if [ -x "$dir/python3" ] && [ ! -d "$dir/python3" ] \
+           && "$dir/python3" -I -S -c '' >/dev/null 2>&1; then
+            printf '%s\n' "$dir/python3"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Double-source guard.
 [ -n "${_PROOF_PR_SH:-}" ] && return 0
 _PROOF_PR_SH=1
@@ -52,8 +81,10 @@ render_evidence_receipt_md() {
     local _expected_base_sha="${3:-}"
     : "$_expected_base_sha"
 
-    # No python3 -> degrade honestly, never crash.
-    if ! command -v python3 >/dev/null 2>&1; then
+    # No isolated python3 -> degrade honestly, never crash.
+    local _pr_py=""
+    _pr_py="$(_loki_snapshot_py_tool)" || _pr_py=""
+    if [ -z "$_pr_py" ]; then
         printf '%s\n' "Evidence Receipt: unavailable for this run."
         return 0
     fi
@@ -67,7 +98,7 @@ render_evidence_receipt_md() {
     # resort (interpreter crash) -> print the single honest line.
     local _receipt_out=""
     local _receipt_rc=0
-    _receipt_out="$(python3 - "$proof_json_path" "$expected_head_sha" <<'PROOF_PR_PY' 2>/dev/null
+    _receipt_out="$("$_pr_py" -I -S - "$proof_json_path" "$expected_head_sha" <<'PROOF_PR_PY' 2>/dev/null
 import json
 import sys
 
