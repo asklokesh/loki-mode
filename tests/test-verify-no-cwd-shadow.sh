@@ -170,6 +170,40 @@ check "emit: report.md does not claim VERIFIED" "0" \
 bare="$(grep -nE '^[^#]*(^|[^A-Za-z0-9_./-])python3[[:space:]]+-([[:space:]]|c[[:space:]]|$)' "$VERIFY_SH" | grep -v '^[0-9]*:[[:space:]]*#' | wc -l | tr -d ' ')"
 check "static: no bare python3 - or python3 -c call site in verify.sh" "0" "$bare"
 
+# verify_gate_static runs py_compile from the reviewed tree's cwd. A planted
+# py_compile.py or traceback.py must not turn a real syntax error into a pass.
+static_run() { # <control|py_compile|traceback>
+    local tree="$SCRATCH/tree-static-$1"
+    mkdir -p "$tree"
+    printf '%s\n' 'def f(:' >"$tree/bad.py"
+    case "$1" in
+        py_compile) printf '%s\n' 'import sys; sys.exit(0)' >"$tree/py_compile.py" ;;
+        traceback) printf '%s\n' 'import os; os._exit(0)' >"$tree/traceback.py" ;;
+    esac
+    (
+        cd "$tree" || exit 1
+        # shellcheck source=/dev/null
+        . "$VERIFY_SH" || exit 1
+        _VERIFY_GATES_FILE="$SCRATCH/gates-static-$1"
+        _VERIFY_FINDINGS_FILE="$SCRATCH/findings-static-$1"
+        : >"$_VERIFY_GATES_FILE"
+        : >"$_VERIFY_FINDINGS_FILE"
+        export VERIFY_DIFF_NAMES=bad.py
+        verify_gate_static .
+        cut -f1,2 "$_VERIFY_GATES_FILE"
+    ) 2>/dev/null
+}
+echo "planted stdlib module: static gate"
+for m in control py_compile traceback; do
+    check "static gate: syntax error in bad.py fails (planted: $m)" \
+        "$(printf 'static_analysis\tfail')" "$(static_run "$m")"
+done
+
+# Static: bare `python3 -m` is also banned, except the unittest run, which
+# executes the reviewed tree's own tests by design.
+barem="$(grep -nE '^[^#]*(^|[^A-Za-z0-9_./-])python3[[:space:]]+-m[[:space:]]' "$VERIFY_SH" | grep -v 'unittest' | wc -l | tr -d ' ')"
+check "static: no bare python3 -m call site besides unittest" "0" "$barem"
+
 # Vacuity guard: every expected value above is the REAL reading, so a missing
 # interpreter would fail loudly rather than pass for the wrong reason.
 if ! command -v python3 >/dev/null 2>&1; then

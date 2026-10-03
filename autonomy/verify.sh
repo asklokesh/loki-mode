@@ -78,8 +78,8 @@ VERIFY_SCHEMA_VERSION="1.0"
 # This module does not source run.sh, so it carries a guarded copy; run.sh is
 # the source of truth: keep it byte-identical. Pinned by
 # tests/test-verify-no-cwd-shadow.sh and tests/test-council-py-tool-identity.sh.
-# The unittest and py_compile runs stay on bare python3: they run the user's
-# own code on purpose.
+# Only the unittest run stays on bare python3: it runs the reviewed tree's own
+# tests on purpose. py_compile is a stdlib verdict, so it runs isolated too.
 declare -F _loki_snapshot_py_tool >/dev/null 2>&1 || \
 _loki_snapshot_py_tool() {
     local c
@@ -958,7 +958,7 @@ verify_gate_static() {
             [ -z "$f" ] && continue
             [ -f "$tree/$f" ] || continue
             checked=$((checked + 1))
-            python3 -m py_compile "$tree/$f" >/dev/null 2>&1 || {
+            _verify_py -m py_compile "$tree/$f" >/dev/null 2>&1 || {
                 findings=$((findings + 1))
                 details="${details}Python syntax error: $f. "
                 _verify_add_finding "Medium" "lint" "deterministic:py_compile" "$f" "null" \
