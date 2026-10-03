@@ -76,6 +76,25 @@ test("since filters by run start; a bad since is a 400", async () => {
   expect((await app.request("/v1/stats?since=banana")).status).toBe(400);
 });
 
+test("breakdown: the rate is over verifiable outcomes; ALREADY_SATISFIED is its own bucket and never lowers it", async () => {
+  const { app, db } = mk();
+  await loadAll(app);
+  const j = await stats(app);
+  expect(j.breakdown).toEqual({ verified: 0, failed: 4, already_satisfied: 0, other: 1 }); // FAILED x2, PARTIAL, TAMPERED; SPEC_CONFLICT; the 3 unchecked successes are in verified_unchecked
+  const { runs } = await import("../../src/db/schema.ts");
+  const base = db.select().from(runs).all()[0]!;
+  const row = (id: string, verdict: string) => ({ ...base, runId: id, verdict, endedAt: "2026-10-01T16:00:00Z", tampered: 0, attested: 1, sigChecked: 1 });
+  const fresh = mk();
+  fresh.db.insert(runs).values([row("a", "ALREADY_SATISFIED"), row("b", "ALREADY_SATISFIED"), row("c", "ALREADY_SATISFIED"), row("d", "ALREADY_SATISFIED")]).run();
+  const only = await stats(fresh.app);
+  expect(only.breakdown).toEqual({ verified: 0, failed: 0, already_satisfied: 4, other: 0 });
+  expect(only.verified_rate).toBeNull(); // zero verifiable outcomes: not 0%
+  fresh.db.insert(runs).values([row("e", "VERIFIED"), row("f", "FAILED")]).run();
+  const mixed = await stats(fresh.app);
+  expect(mixed.breakdown).toEqual({ verified: 1, failed: 1, already_satisfied: 4, other: 0 });
+  expect(mixed.verified_rate).toBe(0.5);
+});
+
 test("behind the token guard", async () => {
   const { app } = mk("tok");
   expect((await app.request("/v1/stats")).status).toBe(401);

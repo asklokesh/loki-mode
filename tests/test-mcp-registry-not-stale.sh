@@ -41,8 +41,7 @@
 #   1  drift, ONLY when LOKI_MCP_REGISTRY_STRICT=1 asks for a hard signal
 #   2  a local precondition is broken (missing VERSION, unparseable server.json)
 #
-# The nightly parity-drift workflow sets STRICT so it can branch on rc and open
-# an issue. Nothing on the push path sets it.
+# No workflow sets STRICT today; it is for operators who want a hard signal.
 
 set -uo pipefail
 

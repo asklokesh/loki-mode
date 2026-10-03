@@ -92,7 +92,7 @@ export function Badge({ tone = "neutral", pulse, children, ...rest }: HTMLAttrib
       data-cp="badge"
       data-tone={tone}
       style={{
-        display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: t("radius-sm"),
+        display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 10px", borderRadius: t("radius-full"),
         fontSize: t("text-xs"), textTransform: "uppercase", letterSpacing: "0.025em", fontWeight: 500,
         background: TONE_BG[tone], color: TONE_FG[tone], ...rest.style,
       }}
@@ -104,10 +104,10 @@ export function Badge({ tone = "neutral", pulse, children, ...rest }: HTMLAttrib
 }
 
 /** Pass `run` to apply the tamper rule; `verdict` alone renders that exact string. */
-export function VerdictBadge({ verdict, run }: { verdict?: string | null; run?: VerdictSource | null }) {
+export function VerdictBadge({ verdict, run, style }: { verdict?: string | null; run?: VerdictSource | null; style?: CSSProperties }) {
   const v = run ? effectiveVerdict(run) : verdict ?? null;
-  if (!v) return <Badge pulse>running</Badge>;
-  return <Badge tone={VERDICT_TONE[v] ?? "neutral"} pulse={v === VERDICT.RUNNING} data-verdict={v}>{v}</Badge>;
+  if (!v) return <Badge pulse style={style}>running</Badge>;
+  return <Badge tone={VERDICT_TONE[v] ?? "neutral"} pulse={v === VERDICT.RUNNING} data-verdict={v} title={style ? v : undefined} style={style}>{v}</Badge>;
 }
 
 /* Pill */
@@ -144,7 +144,7 @@ const BTN: Record<ButtonVariant, CSSProperties> = {
   danger: { background: t("error"), color: "#ffffff", border: "1px solid transparent" },
 };
 export function Button({ variant = "primary", size = "md", style, type = "button", ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ButtonVariant; size?: "sm" | "md" | "lg" }) {
-  const pad = size === "sm" ? "4px 8px" : size === "lg" ? "12px 18px" : "8px 12px";
+  const pad = size === "sm" ? "4px 12px" : size === "lg" ? "12px 24px" : "8px 18px";
   return (
     <button
       {...rest}
@@ -152,7 +152,7 @@ export function Button({ variant = "primary", size = "md", style, type = "button
       data-cp="button"
       data-variant={variant}
       data-size={size}
-      style={{ padding: pad, borderRadius: t("radius-md"), fontSize: size === "sm" ? t("text-base") : t("text-md"), fontWeight: 500, cursor: rest.disabled ? "not-allowed" : "pointer", opacity: rest.disabled ? 0.5 : 1, ...BTN[variant], ...style }}
+      style={{ padding: pad, borderRadius: t("radius-full"), fontSize: size === "sm" ? t("text-base") : t("text-md"), fontWeight: 500, cursor: rest.disabled ? "not-allowed" : "pointer", opacity: rest.disabled ? 0.5 : 1, ...BTN[variant], ...style }}
     />
   );
 }

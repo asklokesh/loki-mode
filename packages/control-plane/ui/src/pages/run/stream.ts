@@ -15,12 +15,22 @@ export async function fetchArtifact(s: string, r: string, name: string): Promise
   } catch { return null; }
 }
 
+/** Every stored event with seq > after, paged until the server says there are no more. The first page sends no `after` (the server rejects a negative one). */
 export async function fetchEvents(s: string, r: string, after = -1): Promise<RunEvent[]> {
+  const all: RunEvent[] = [];
   try {
-    const res = await fetch(`${base()}${runPath(s, r)}/events?after=${after}`, { headers: headers() });
-    if (!res.ok) return [];
-    return ((await res.json()) as { events?: RunEvent[] }).events ?? [];
-  } catch { return []; }
+    for (let cursor = after, guard = 0; guard < 200; guard++) {
+      const q = cursor >= 0 ? `?after=${cursor}&limit=1000` : "?limit=1000";
+      const res = await fetch(`${base()}${runPath(s, r)}/events${q}`, { headers: headers() });
+      if (!res.ok) break;
+      const j = (await res.json()) as { events?: RunEvent[]; has_more?: boolean };
+      const page = j.events ?? [];
+      all.push(...page);
+      if (!j.has_more || page.length === 0) break;
+      cursor = page[page.length - 1]!.seq;
+    }
+  } catch { /* keep what was read */ }
+  return all;
 }
 
 /** Parses SSE text into `event` frames; returns the unparsed remainder. */

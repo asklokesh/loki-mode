@@ -19,6 +19,7 @@ export interface RunRow {
   run_id: string;
   origin_repo: string | null;
   issue_ref: string | null;
+  title?: string | null; // intake task title (or issue title); null until intake completes
   task_source: string | null;
   provider: string | null;
   model: string | null;
@@ -48,13 +49,15 @@ export interface RunRow {
   elapsed_s?: number | null;
   current_stage?: string | null;
   files_touched?: string[];
+  /** Receipt base..head numstat (server-side git); null when unmeasurable or the run is still running. */
+  diff_stat?: { base: string; head: string; files: { path: string; added: number | null; removed: number | null }[]; added: number; removed: number } | null;
 }
 
 /** GET /v1/runs: total is the filtered count, next_cursor an opaque offset. */
 export interface RunsResponse { runs: RunRow[]; total: number; next_cursor: string | null }
 
 /** status is the stage event suffix: "started" while open, else "completed" / "failed" / ... */
-export interface TimelineStage { stage: string; started_at: string | null; ended_at: string | null; status: string }
+export interface TimelineStage { stage: string; started_at: string | null; ended_at: string | null; status: string; reason?: string | null }
 
 /** GET /v1/runs/:source/:run: the summary row, flat, plus the folded detail. */
 export interface RunDetailResponse extends RunRow {
@@ -124,7 +127,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 /** Import the server's own repo (.loki/runs) through the existing backfill. */
 export const importRuns = (): Promise<{ runs: number; sent: number; failed: string[] }> => postJson("/v1/import", {});
-export const listRepos = (): Promise<{ repos: string[] }> => get("/v1/repos");
+export const listRepos = (): Promise<{ repos: string[]; default_repo?: string | null }> => get("/v1/repos");
 
 /** Subscribe to the runs-list SSE stream (GET /v1/stream). Uses fetch so the bearer header can be sent; reconnects until stop() is called. */
 export function watchRuns(onChange: () => void, retryMs = 3000): () => void {

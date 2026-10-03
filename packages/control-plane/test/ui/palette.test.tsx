@@ -6,6 +6,7 @@ const realFetch = globalThis.fetch;
 const { act, cleanup, fireEvent, render, screen } = await import("@testing-library/react");
 const { CommandPalette, COMPOSER_SUBMIT_EVENT } = await import("../../ui/src/palette");
 const { openCommandPalette } = await import("../../ui/src/shell/hooks");
+const { setTheme } = await import("../../ui/src/shell/theme");
 const { registerPage, unregisterPage } = await import("../../ui/src/pages/registry");
 const { search, runItems, pageItems, actionItems } = await import("../../ui/src/palette/items");
 
@@ -68,6 +69,7 @@ test("Cmd+N opens a new run, Cmd+Shift+D toggles the theme", () => {
   render(<CommandPalette />);
   key({ key: "n", metaKey: true });
   expect(location.hash).toBe("#/new");
+  setTheme("dark"); // pin the store so the toggle result does not depend on the system preference
   const before = document.documentElement.getAttribute("data-theme");
   key({ key: "D", metaKey: true, shiftKey: true });
   expect(document.documentElement.getAttribute("data-theme")).not.toBe(before);

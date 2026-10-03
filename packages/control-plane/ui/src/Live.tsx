@@ -1,5 +1,6 @@
 // Live run view and Overview. Everything is derived from the runs API; a value the API does not carry shows "unmeasured".
 import { useEffect, useState, type ReactNode } from "react";
+import { fmtUsd } from "./format";
 import { effectiveVerdict, VERDICT } from "./design/primitives";
 import { getRun, listRuns, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
@@ -30,7 +31,7 @@ export function buildStages(stages: TimelineStage[], now: number): StageView[] {
 
 const fmtS = (s: number | null) => (s === null ? UNMEASURED : s >= 60 ? `${Math.floor(s / 60)}m ${Math.floor(s % 60)}s` : `${s.toFixed(1)}s`);
 export const costText = (r: Pick<RunRow, "cost_usd" | "partial_usd">): string =>
-  r.cost_usd !== null && r.cost_usd !== undefined ? `$${r.cost_usd.toFixed(4)}` : r.partial_usd ? `at least $${r.partial_usd.toFixed(4)} (rest ${UNMEASURED})` : UNMEASURED;
+  r.cost_usd !== null && r.cost_usd !== undefined ? fmtUsd(r.cost_usd) : r.partial_usd ? `at least ${fmtUsd(r.partial_usd)} (rest ${UNMEASURED})` : UNMEASURED;
 
 function usePoll<T>(fn: () => Promise<T>, deps: unknown[], again: (d: T) => boolean) {
   const [st, set] = useState<{ data: T | null; error: string | null }>({ data: null, error: null });
@@ -127,7 +128,7 @@ function Stat({ id, label, value }: { id: string; label: string; value: string }
 
 export function Overview({ runs, now = Date.now() }: { runs: RunRow[]; now?: number }) {
   const s = summarize(runs, now);
-  const cost = s.unmeasuredRuns === 0 ? `$${s.costUsd.toFixed(4)}` : `$${s.costUsd.toFixed(4)} measured, ${s.unmeasuredRuns} run${s.unmeasuredRuns === 1 ? "" : "s"} ${UNMEASURED}`;
+  const cost = s.unmeasuredRuns === 0 ? `${fmtUsd(s.costUsd)}` : `${fmtUsd(s.costUsd)} measured, ${s.unmeasuredRuns} run${s.unmeasuredRuns === 1 ? "" : "s"} ${UNMEASURED}`;
   return (
     <section data-testid="overview" className="space-y-4">
       <h1 className="text-xl font-semibold">Overview</h1>

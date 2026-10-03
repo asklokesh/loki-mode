@@ -48,7 +48,7 @@ TO="$(command -v timeout || command -v gtimeout || true)"
 run_b() { (cd "$T/cwd" && env -i HOME="$T/cwd" PATH="$PATH" LOKI_NO_BROWSER=1 LOKI_TELEMETRY_DISABLED=1 \
     ${TO:+"$TO" -k 10 30} "$@"); }
 out="$(run_b bun "$B" engine10 status 2>&1)"; rc=$?
-case "$rc:$out" in 1:*"no runs found"*) ok "engine10 status runs from dist" ;; *) bad "engine10 status runs from dist (rc=$rc: $out)" ;; esac
+case "$rc:$out" in 0:*"No Loki 10 runs here yet"*) ok "engine10 status runs from dist" ;; *) bad "engine10 status runs from dist (rc=$rc: $out)" ;; esac
 # The session child route: an unknown provider is rejected by resolveProvider inside
 # session.ts, which proves the route loaded without starting any provider.
 out="$(run_b env LOKI_E10_PROVIDER=e32-none bun "$B" engine10 session 2>&1)"; rc=$?

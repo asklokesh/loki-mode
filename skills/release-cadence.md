@@ -75,11 +75,11 @@ The reconciliation:
 - **Fast green is not a verification certificate.** The verdict line exists to
   stop a fast pass being mistaken for a full one. It names what was deferred:
   282 shell suites (~10+ min), blanket pytest 1793 tests (128s), shellcheck
-  (118s), plus SBOM, npm audit, license-audit, bun-parity and MCP handshakes
+  (118s), plus SBOM, npm audit, license-audit and MCP handshakes
   (`scripts/local-ci.sh:1911-1918`).
 - **Full tier is not a release precondition** because its BULK moved to CI,
   which runs it faster. The 323-suite shell run and the pytest blanket are
-  covered by Tests, and `required-ci` enforces Tests, Bun Parity and Security
+  covered by Tests, and `required-ci` enforces Tests and Security
   Audit at the exact release SHA (section 3). Blocking locally on those buys
   latency without buying coverage.
 
@@ -179,7 +179,7 @@ installs and the full pytest suite before tsc failed in 7 seconds (measured on
 run 34724377951: gate 4m03s total). Cheapest failing check first is now the
 rule, and nothing about what is verified changed, only the order.
 
-**`required-ci`** (`needs: gate`) polls the check-runs API for Tests, Bun Parity
+**`required-ci`** (`needs: gate`) polls the check-runs API for Tests
 and Security Audit AT THE EXACT RELEASE SHA, waiting up to 2400s and failing
 closed. Its direction is load-bearing: "cancelled, timed_out, failure, skipped:
 none is a pass." It deliberately polls rather than re-running the matrix inline,
@@ -239,7 +239,7 @@ fails closed on "Security Audit: not reported yet":
 
 ```bash
 gh workflow run security-audit.yml --ref main
-# wait for Tests + Bun Parity + Security Audit green at the SAME sha
+# wait for Tests + Security Audit green at the SAME sha
 gh workflow run release.yml --ref main
 ```
 

@@ -13,7 +13,7 @@ Because the product's central promise is verified completion ("Loki does not lie
 ## Test Strategy
 
 1. Test the trust surface hardest. Completion detection, override councils, the verified-completion evidence gate, and the RARV-C closure loop are the highest-risk paths. They get unit tests plus mutation testing plus cross-route parity checks.
-2. Cross-route parity is a first-class concern. Behavior must match between the legacy Bash route and the Bun (`loki-ts`) route. The `bun-parity` and `parity-drift` workflows exist specifically to catch divergence (for example, doctor-output text drift).
+2. Cross-route parity is a first-class concern. Behavior must match between the legacy Bash route and the Bun (`loki-ts`) route. Parity is checked by `tests/test-bash-bun-parity.sh` and the per-command parity suites under `tests/` (for example, doctor-output text drift); there is no continuous parity workflow.
 3. Prefer real verification over mocked assertions. Dedicated detectors (`tests/detect-mock-problems.sh`, `tests/detect-semantic-test-problems.sh`, `tests/detect-test-mutations.sh`, `tests/detect-invariant-violations.sh`) flag tests that pass without exercising real logic.
 4. Local CI is the canonical pre-push gate. `scripts/local-ci.sh` mirrors the GitHub Actions workflows so failures are discovered on the developer machine, not after push. GitHub Actions is the post-push verifier.
 5. Run tests in matrices. Python runs across 3.10 through 3.13; the Node suite runs across the supported Node versions. Version-specific breakage (for example, a Python 3.13-only inode race) must be caught by the matrix.
@@ -43,7 +43,7 @@ Because the product's central promise is verified completion ("Loki does not lie
 ### Specialized test layers
 
 - Mutation testing (`loki-ts`): Stryker mutates trust-surface modules (`src/runner/state.ts`, `build_prompt.ts`, `providers.ts`, `budget.ts`, `checkpoint.ts`, `src/util/shell.ts`). Config: `loki-ts/stryker.config.json`. Thresholds: break 50%, low 60%, high 80%.
-- Parity tests: the `bun-parity` and `parity-drift` workflows verify the Bun and Bash routes agree.
+- Parity tests: `tests/test-bash-bun-parity.sh` and the per-command parity suites verify the Bun and Bash routes agree.
 - Integrity and quality detectors: shell scripts under `tests/` that detect mock-only tests, semantic test problems, test mutations, and invariant violations.
 
 ## How to Run Tests
@@ -127,7 +127,6 @@ Note: never run `rm -rf /tmp/loki-*` while a live `loki` run is in progress; the
 | Bun runner | bun test | `loki-ts/package.json`, `loki-ts/bunfig.toml` |
 | Node/Deno | `node --test` | `*_test.ts`, `*.test.js` |
 | Mutation | Stryker | `loki-ts/stryker.config.json` |
-| Coverage | bun test --coverage | `.github/workflows/coverage.yml` |
 | Control Plane UI E2E | Playwright | `packages/control-plane/test/e2e/` |
 | Pre-push gate | bash | `scripts/local-ci.sh` |
 
@@ -135,10 +134,9 @@ Python test dependencies commonly required: `fastapi`, `httpx`, `pydantic`, `sql
 
 ## Coverage Goals
 
-- Coverage is collected for the `loki-ts` Bun runner via `bun test --coverage` (text + lcov reporters). The lcov artifact is uploaded by the coverage workflow.
-- A minimum line-coverage gate of 70% is enforced for `loki-ts` (`MIN_LINE_PCT=70` in `.github/workflows/coverage.yml`). If the coverage summary cannot be parsed, the gate fails closed rather than silently passing.
+- No CI workflow collects or enforces a numeric line-coverage percentage. `bun test --coverage` can be run locally in `loki-ts`.
 - Mutation-score thresholds for trust-surface modules: break at 50%, low at 60%, high at 80% (`loki-ts/stryker.config.json`).
-- The Bash and Python suites do not currently enforce a numeric coverage percentage. Coverage of trust-surface logic is asserted through targeted unit tests, parity checks, and the mock/semantic/mutation detectors rather than a global percentage.
+- The Bash, Python and Bun suites do not currently enforce a numeric coverage percentage. Coverage of trust-surface logic is asserted through targeted unit tests, parity checks, and the mock/semantic/mutation detectors rather than a global percentage.
 
 ## CI Integration
 
@@ -147,9 +145,6 @@ GitHub Actions workflows (under `.github/workflows/`) run on push and pull reque
 | Workflow | File | What it runs |
 |---|---|---|
 | Tests | `test.yml` | Node suite (`npm test`), Python suite (`pytest`) across 3.10-3.13, shell suite (`tests/run-all-tests.sh`), Helm lint |
-| Coverage | `coverage.yml` | `bun test --coverage` for `loki-ts`, enforces 70% line minimum, uploads lcov |
-| Bun parity | `bun-parity.yml` | Bun-route vs Bash-route behavior parity |
-| Parity drift | `parity-drift.yml` | Detects output/behavior drift between routes |
 | Integrity audit | `integrity-audit.yml` | Repository and artifact integrity checks |
 | Post-release smoke | `post-release-smoke.yml` | Smoke tests against published artifacts after a release |
 | Security audit | `security-audit.yml` | Dependency and security scanning |
@@ -157,7 +152,7 @@ GitHub Actions workflows (under `.github/workflows/`) run on push and pull reque
 
 ### Local CI mirrors GitHub Actions
 
-`scripts/local-ci.sh` is the canonical pre-push gate. It mirrors every GitHub Actions workflow: bun typecheck/test, the full `tests/run-all-tests.sh` shell suite (matching CI exactly, not a cherry-picked subset), the bun-parity matrix, npm pack contents, SBOM, license audit, npm audit, shellcheck, YAML parse, the no-emoji check, the no-`git add -A` check, and a cleanup probe.
+`scripts/local-ci.sh` is the canonical pre-push gate. It mirrors every GitHub Actions workflow: bun typecheck/test, the full `tests/run-all-tests.sh` shell suite (matching CI exactly, not a cherry-picked subset), npm pack contents, SBOM, license audit, npm audit, shellcheck, YAML parse, the no-emoji check, the no-`git add -A` check, and a cleanup probe.
 
 Run it before every push. The Mac (developer machine) is the discovery channel; GitHub Actions is the post-push verifier. Distinguish real failures from local-environment false alarms (for example a missing `pytest-asyncio` in a Homebrew Python) before acting on a red result.
 

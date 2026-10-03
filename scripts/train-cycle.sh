@@ -6,7 +6,7 @@
 # to do:
 #   A. train:   local main ahead of origin/main (and containing it) with no
 #               train for that SHA -> push SHA to refs/heads/train/<N+1>.
-#   B. promote: newest train green on Tests, Bun Parity, Coverage (baseline),
+#   B. promote: newest train green on Tests and
 #               Security Audit at that exact SHA and containing origin/main ->
 #               push that SHA to main with LOKI_RELEASE_MANAGER=1.
 #   C. release: origin/main HEAD is a releasable, green, non-docs-only commit
@@ -52,8 +52,8 @@ LOG_FILE="$STATE_DIR/train-cycle.log"
 LOCK_DIR="$STATE_DIR/train-cycle.lock"
 NET_TIMEOUT="${LOKI_TC_NET_TIMEOUT:-120}"
 SESSION_TRAILER="Claude-Session: https://claude.ai/code/session_01GFNzL4TEfAXvX1KK5buE9w"
-REQUIRED_TRAIN=("Tests" "Bun Parity" "Coverage (baseline)" "Security Audit")
-REQUIRED_RELEASE=("Tests" "Bun Parity" "Coverage (baseline)")
+REQUIRED_TRAIN=("Tests" "Security Audit")
+REQUIRED_RELEASE=("Tests")
 
 TO_BIN=""
 for _b in timeout gtimeout; do

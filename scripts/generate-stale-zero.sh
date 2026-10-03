@@ -53,7 +53,7 @@ bun loki-ts/scripts/gen-command-lists.ts inline >"$WORK/inline.md"
 replace_block SKILL.md commands "$WORK/inline.md"
 
 {
-    printf 'Current release: **v%s** (generated from `VERSION` by `scripts/generate-stale-zero.sh`; the badge above tracks npm).\n' "$VERSION"
+    printf 'The npm badge above tracks the current release; see [CHANGELOG.md](CHANGELOG.md) for release notes.\n'
     printf '\nCLI reference: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md) (generated from the command registry).\n'
 } >"$WORK/facts.md"
 replace_block README.md facts "$WORK/facts.md"

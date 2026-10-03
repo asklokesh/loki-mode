@@ -4,6 +4,7 @@ import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 import type { Db } from "../db/migrate.ts";
 import { events, runs } from "../db/schema.ts";
 import { blockedQuestion } from "./answer.ts";
+import { diffStatFor } from "./diffstat.ts";
 import { effectiveVerdict, pubkeysFromEnv, sealedPrefix, SUCCESS_VERDICTS, verifyRunIntegrity } from "./integrity.ts";
 
 const str = (x: unknown): string | null => (typeof x === "string" ? x : null);
@@ -55,10 +56,18 @@ const parseRun = (r: typeof runs.$inferSelect) => ({
   effective_verdict: effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 }),
   status: r.endedAt ? "completed" : "running", elapsed_s: elapsedS(r),
 });
+/** The task title the intake stage recorded (its `title`, else the first line of `task`), for sidebar rows of runs that have no issue ref. Null when intake has not completed. */
+export function taskTitle(db: Db, sourceId: string, runId: string): string | null {
+  const d = db.select({ data: events.data }).from(events).where(and(eq(events.sourceId, sourceId), eq(events.runId, runId), eq(events.type, "stage.completed"), eq(events.stage, "intake"))).orderBy(asc(events.seq)).limit(1).get()?.data as Record<string, unknown> | undefined;
+  const raw = str(d?.["title"]) ?? str(d?.["task"]);
+  const t = raw?.split("\n")[0]?.trim();
+  return t ? (t.length > 140 ? `${t.slice(0, 139)}...` : t) : null;
+}
 // A run with no run.completed yet is running: add its live fields (stage, files) from the stored events.
 const withLive = (db: Db, r: typeof runs.$inferSelect) => {
-  const p = parseRun(r);
-  return r.endedAt ? { ...p, current_stage: null, files_touched: [] as string[] } : { ...p, ...liveInfo(loadEvents(db, r.sourceId, r.runId)) };
+  const p = { ...parseRun(r), title: taskTitle(db, r.sourceId, r.runId) };
+  // A finished run's events carry no diff; its receipt's base and head give one (git numstat, null when unmeasurable).
+  return r.endedAt ? { ...p, current_stage: null, files_touched: [] as string[], diff_stat: diffStatFor(db, r.sourceId, r.runId) } : { ...p, ...liveInfo(loadEvents(db, r.sourceId, r.runId)), diff_stat: null };
 };
 
 /** Live view of one run from its events so far: current stage, files touched. Elapsed is computed per request. */
@@ -139,13 +148,18 @@ export function runDetail(db: Db, sourceId: string, runId: string) {
   const r = db.select().from(runs).where(and(eq(runs.sourceId, sourceId), eq(runs.runId, runId))).get();
   if (!r) return null;
   const evs = loadEvents(db, sourceId, runId);
-  const stages: { stage: string; started_at: string | null; ended_at: string | null; status: string }[] = [];
+  const stages: { stage: string; started_at: string | null; ended_at: string | null; status: string; reason: string | null }[] = [];
   for (const e of evs) {
     if (e.stage === null || !e.type.startsWith("stage.")) continue;
     let s = stages.find((x) => x.stage === e.stage);
-    if (!s) stages.push((s = { stage: e.stage, started_at: null, ended_at: null, status: "started" }));
+    if (!s) stages.push((s = { stage: e.stage, started_at: null, ended_at: null, status: "started", reason: null }));
     if (e.type === "stage.started") s.started_at = e.ts;
-    else { s.ended_at = e.ts; s.status = e.type.slice("stage.".length); }
+    else {
+      s.ended_at = e.ts; s.status = e.type.slice("stage.".length);
+      // The engine records why a stage was skipped or failed (stage.skipped data.reason); nothing is invented when it did not.
+      const why = (e.data as Record<string, unknown> | null)?.reason;
+      s.reason = typeof why === "string" && why ? why : null;
+    }
   }
   const f = fold(evs);
   const done = f.run.completed?.data;

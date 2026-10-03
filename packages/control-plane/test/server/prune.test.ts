@@ -26,10 +26,16 @@ function seed(path: string): void {
   for (const [s, r, repo, at] of rows) { run.run(s, r, repo, at); ev.run(s, r, at, at); }
   sqlite.close();
 }
+/** The startup fixture cleanup (FC-07b) removes acme/widget; server tests need the seeded rows to survive a start. */
+function keepAtStart(path: string): void {
+  const { sqlite } = openDb(path);
+  sqlite.query("update runs set origin_repo = 'acme/gadget' where origin_repo = 'acme/widget'").run();
+  sqlite.close();
+}
 const counts = (path: string) => {
   const d = new Database(path, { readonly: true });
   const q = (sql: string) => (d.query(sql).get() as { n: number }).n;
-  const o = { runs: q("select count(*) n from runs"), events: q("select count(*) n from events"), sources: q("select count(*) n from sources"), audit: q("select count(*) n from audit") };
+  const o = { runs: q("select count(*) n from runs"), events: q("select count(*) n from events"), sources: q("select count(*) n from sources"), audit: q("select count(*) n from audit where action not like 'fixture.cleanup%'") };
   d.close();
   return o;
 };
@@ -119,6 +125,7 @@ type Srv = { fetch: (r: Request, env?: unknown) => Response | Promise<Response> 
 function served(opts: { token?: string } = {}) {
   const p = join(tmp, `srv-${Math.random().toString(36).slice(2)}.db`);
   seed(p);
+  keepAtStart(p);
   const c = createApp({ dbPath: p, loopbackOnly: true, ...opts });
   return { ...c, p };
 }
@@ -133,7 +140,7 @@ test("DELETE 200 returns resulting state and audits first; run is gone", async (
   expect(await r.json()).toEqual({ ok: true, removed: { runs: 1, events: 1, sources: 0 }, remaining_runs: 3 });
   expect((await get(app, "/v1/runs/srcA/w-old")).status).toBe(404);
   const d = new Database(p, { readonly: true });
-  const row = d.query("select action, detail from audit").get() as { action: string; detail: string };
+  const row = d.query("select action, detail from audit where action not like 'fixture.cleanup%'").get() as { action: string; detail: string };
   expect(row.action).toBe("run.remove");
   expect(JSON.parse(row.detail)).toMatchObject({ source_id: "srcA", run_id: "w-old" });
   d.close();
@@ -171,7 +178,7 @@ test("DELETE refuses cross-origin, non-JSON, a non-loopback peer, a foreign Host
 
 test("DELETE is not registered on a non-loopback server", async () => {
   const p = join(tmp, "nonlo.db");
-  seed(p);
+  seed(p); keepAtStart(p);
   const { app } = createApp({ dbPath: p, token: "tok" });
   const r = await app.request("/v1/runs/srcA/w-old", { method: "DELETE", headers: { ...H, authorization: "Bearer tok" } });
   expect(r.status).toBe(404);

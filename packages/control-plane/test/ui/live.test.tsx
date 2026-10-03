@@ -55,7 +55,7 @@ test("live run: finished run shows outcome with PR and receipt links", async () 
   expect(out.textContent).toContain("VERIFIED");
   expect(screen.getByTestId("live-pr").getAttribute("href")).toBe("https://github.com/o/r/pull/7");
   expect(screen.getByTestId("live-receipt").textContent).toContain("signed");
-  expect(screen.getByTestId("live-cost").textContent).toBe("$0.1234");
+  expect(screen.getByTestId("live-cost").textContent).toBe("$0.12");
 });
 
 test("buildStages: unknown stage names are appended, never dropped", () => {
@@ -79,7 +79,7 @@ test("overview: counts, honest cost, unmeasured merged PRs, last 10", () => {
   expect(t("ov-verified")).toBe("13");
   expect(t("ov-partial")).toBe("1");
   expect(t("ov-failed")).toBe("1");
-  expect(t("ov-cost")).toBe("$2.2500 measured, 1 run unmeasured");
+  expect(t("ov-cost")).toBe("$2.25 measured, 1 run unmeasured");
   expect(t("ov-pr-opened")).toBe("1");
   expect(t("ov-pr-merged")).toBe("unmeasured");
   expect(screen.getAllByTestId("ov-run").length).toBe(10);

@@ -98,6 +98,9 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   const outcome = checkAttestation(jwt, computed, deps.pubkey);
   if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
   if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
+  // verification.kid is shown to readers but sits outside receipt_sha256; the signed JWT header kid is the truth, so a forged display kid is TAMPERED.
+  const shownKid = (verification as { kid?: unknown }).kid, signedKid = (JSON.parse(Buffer.from(jwt.split(".")[0]!, "base64url").toString()) as { kid?: unknown }).kid;
+  if (shownKid !== undefined && shownKid !== signedKid) return { verdict: "TAMPERED", reasons: ["verification.kid differs from the signing kid in the attestation header (metadata outside the signed digest was edited)"] };
   const seal = receipt["log_seal"] !== true ? null : checkLogSeal(receiptPath, computed, (JSON.parse(Buffer.from(jwt.split(".")[0]!, "base64url").toString()) as { kid?: unknown }).kid, deps.pubkey);
   if (seal) return { verdict: seal.verdict, reasons: [seal.reason] };
   if (gp) return { verdict: gp.verdict, reasons: [gp.reason] };

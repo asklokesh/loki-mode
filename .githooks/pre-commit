@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# Image allowlist guard (D26): staged images only
+repo_top="$(git rev-parse --show-toplevel)" || exit 1
+bash "$repo_top/tests/test-cp-redesign-images.sh" --staged || exit 1
+
 # Get the configured user.email for this repo, reading directly from .git/config
 # to avoid being overridden by `git -c user.email=...` invocations.
 git_dir="$(git rev-parse --git-dir)" || exit 1

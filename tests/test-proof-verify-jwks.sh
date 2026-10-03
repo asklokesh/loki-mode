@@ -50,9 +50,18 @@ body = {"run_id": "r1", "schema_version": 1, "facts": {"tests": "passed"}}
 h = hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 body["verification"] = {
     "hash": h, "algo": "sha256", "scope": "integrity",
-    "attestation": rj.sign_attestation(k, kid, job_id="j1", run_id="r1", receipt_hash=h),
+    "attestation": rj.sign_attestation(k, kid, job_id="j1", run_id="r1", receipt_hash=h,
+                                       verification={"hash": h, "algo": "sha256", "scope": "integrity"}),
     "attestation_kid": kid}
 json.dump(body, open(w + "/.loki/proofs/r1/proof.json", "w"))
+# A legacy seal.v1 receipt (token without signed metadata) in the wild.
+import os
+os.makedirs(w + "/.loki/proofs/r2", exist_ok=True)
+legacy = json.loads(json.dumps(body)); legacy["run_id"] = "r2"
+lh = hashlib.sha256(json.dumps({x: y for x, y in legacy.items() if x != "verification"}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+legacy["verification"] = {"hash": lh, "algo": "sha256", "scope": "integrity", "attestation_kid": kid,
+    "attestation": rj.sign_attestation(k, kid, job_id="j2", run_id="r2", receipt_hash=lh)}
+json.dump(legacy, open(w + "/.loki/proofs/r2/proof.json", "w"))
 json.dump(rj.build_jwks(private_key=k), open(w + "/jwks.json", "w"))
 # An attacker's key set: the token must NOT verify against keys we did not sign with.
 json.dump(rj.build_jwks(private_key=Ed25519PrivateKey.generate()), open(w + "/evil.json", "w"))
@@ -82,6 +91,14 @@ if grep -qxF "attestation: VERIFIED against $W/jwks.json" <<<"$_v1"; then
   ok "an auditor verifies provenance from a local jwks.json (no network, no token)"
 else
   bad "offline verification failed -- the third-party claim does not hold"
+fi
+
+# --- 1b. A legacy seal.v1 receipt still verifies but says its metadata is unsigned
+_v1b="$(_verdict r2 "$W/jwks.json")"
+if grep -qF "attestation: VERIFIED against $W/jwks.json (metadata not signed (legacy seal.v1)" <<<"$_v1b"; then
+  ok "a legacy seal.v1 receipt verifies and states: metadata not signed (legacy seal.v1)"
+else
+  bad "legacy seal.v1 receipt did not state that its metadata is not signed: $_v1b"
 fi
 
 # --- 2. An attacker's key set must NOT verify -------------------------------

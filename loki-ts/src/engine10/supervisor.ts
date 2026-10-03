@@ -6,8 +6,10 @@ import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { terminalWidth } from "../util/term_width.ts";
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
+export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
 import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts"; import { writeRunPid } from "../util/run_pid.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
@@ -69,28 +71,6 @@ export interface SupervisorResult {
   notProven: string[];
   prUrl: string | null;
   workerExit: number | null;
-}
-export function eventsRelPath(runId: string): string {
-  return `.loki/runs/${runId}/events.jsonl`;
-}
-export function writeEngineMarker(repoDir: string, runId: string): void { // EV-1 marker, atomic (temp file in the same dir, then rename)
-  const dir = join(repoDir, ".loki");
-  mkdirSync(dir, { recursive: true });
-  const tmp = join(dir, `.engine.json.${process.pid}.tmp`);
-  writeFileSync(tmp, JSON.stringify({ engine: "v10", run_id: runId, events: eventsRelPath(runId) }) + "\n");
-  renameSync(tmp, join(dir, "engine.json"));
-}
-export function readOriginUrl(repoDir: string): string | null {
-  try {
-    const url = execFileSync("git", ["-C", repoDir, "config", "--get", "remote.origin.url"], { encoding: "utf8", env: process.env }).trim();
-    return url || null;
-  } catch {
-    return null;
-  }
-}
-export function githubRepoFromUrl(url: string | null): string | null {
-  const m = url?.match(/^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/);
-  return m?.[1] ?? null;
 }
 export class SupervisorLog { // single writer with a running sha256 of the bytes it appended
   private readonly log: EventLog;

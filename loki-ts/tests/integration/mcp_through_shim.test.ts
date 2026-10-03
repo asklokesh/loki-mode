@@ -74,22 +74,15 @@ describe("MCP-through-shim contract", () => {
     const r = await runShim(["status", "--json"], tmpLokiDir);
     expect(r.exitCode).toBe(0);
     const parsed = JSON.parse(r.stdout);
-    // Schema MCP would surface as a session-state tool: exact field names are
-    // load-bearing because dashboard/control.py:get_status() and any future
-    // MCP wrapper share this contract.
-    expect(typeof parsed.version).toBe("string");
-    expect(typeof parsed.status).toBe("string");
-    // phase is nullable on first run (no orchestrator state yet); MCP wrapper
-    // must tolerate either string or null.
-    expect(["string", "object"]).toContain(typeof parsed.phase);
-    if (parsed.phase !== null) expect(typeof parsed.phase).toBe("string");
-    expect(typeof parsed.iteration).toBe("number");
-    expect(typeof parsed.provider).toBe("string");
-    // task_counts is the field MCP-side aggregators would map to a "queue"
-    // resource; assert shape but not values (hermetic dir has no queue).
-    expect(typeof parsed.task_counts).toBe("object");
-    expect(parsed.task_counts).not.toBeNull();
-    expect(typeof parsed.task_counts.total).toBe("number");
+    // Loki 10 status contract (schemas/status-result.schema.json): every
+    // required key is present; nullable fields are null in an empty dir.
+    expect(parsed.engine).toBe("loki10");
+    for (const k of ["run_id", "ref", "stage", "elapsed_s", "cost_usd", "outcome", "pr_url", "receipt_path"]) {
+      expect(k in parsed).toBe(true);
+      expect(parsed[k]).toBeNull();
+    }
+    // control_plane_url is the CP address when one is configured, else null.
+    expect(parsed.control_plane_url === null || typeof parsed.control_plane_url === "string").toBe(true);
   });
 
   it("doctor --json returns the dependency-check contract", async () => {

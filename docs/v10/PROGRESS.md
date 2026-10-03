@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-10-03T20:09Z: v10.10.0 pushed, P0/P1 lanes staffed (CoS)
+- v10.10.0 pushed at 0240a0a00 (release run 37150219461 in progress). It carries the status renderer, the CLI registry and completions, STALE-ZERO SZ-01..03, W1-02/W1-03, the moat P7 retarget and the fx-tests reds. Evidence in main: bun tests 1576/2 (the 2 are A-130 load flakes, 16/0 alone), p7 rc=0, test-release-dist-guard rc=0.
+- Main CI RED on Bun Parity: the status and status-json cases diff the Loki 10 status against the legacy bash box. Fix is in the W1-01b lane (W2-01).
+- Lanes per the 20:05Z steer, in order:
+  - P0: n=0 not pass + FC-16, FC-15, moat P1 metadata signed, opus review of CPE item 1.
+  - P1: FC-01 Project Model default, FC-02 + FC-17.
+  - P3: W1-01b, MCP-MODERN plan.
+- Usage: peer reading 77% weekly at 19:40Z; the governor projection (316%) is disputed by that reading.
+
 ## OPEN ITEMS (completion ledger; ranked by D54 v1 scope, docs/PRODUCT.md; updated each train; done needs evidence)
 | Rank | Item | Status | Evidence or gap | Next slice |
 |---|---|---|---|---|

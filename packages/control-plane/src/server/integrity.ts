@@ -5,6 +5,8 @@
 // TAMPERED means positive evidence of forgery. A log the CP cannot check (redacted before ingest) is UNVERIFIED, never TAMPERED and never VERIFIED.
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 
 export interface RunIntegrity {
@@ -16,10 +18,10 @@ export interface RunIntegrity {
   sig_checked: boolean;
   reasons: string[];
 }
-export type KeyResolver = ((kid: string) => KeyObject | undefined) & { configured?: boolean; fingerprint?: string };
+export type KeyResolver = ((kid: string) => KeyObject | undefined) & { configured?: boolean; strict?: boolean; reason?: string; fingerprint?: string };
 export interface IntegrityOpts {
   pubkeyFor?: KeyResolver;
-  /** At least one key is configured: an unknown kid is then TAMPERED, as in the engine's checkLogSeal. Defaults to pubkeyFor.configured. */
+  /** Strict key set (LOKI_CP_RECEIPT_PUBKEYS declared): an unknown kid is TAMPERED, as in the engine's checkLogSeal. Defaults to pubkeyFor.strict, else pubkeyFor.configured. */
   keysConfigured?: boolean;
 }
 
@@ -36,14 +38,51 @@ const normVerdict = (v: string | null | undefined): string | null => (typeof v =
 /** Same derivation as loki-ts/src/engine10/stages/seal.ts kidOf (parity-tested). */
 export const kidOf = (pub: KeyObject): string => createHash("sha256").update(`{"crv":"Ed25519","kty":"OKP","x":"${pub.export({ format: "jwk" }).x}"}`).digest("base64url");
 
-/** Public keys from LOKI_CP_RECEIPT_PUBKEYS (colon-separated PEM files, like `loki verify` retired keys), by kid. Unreadable files are skipped. */
-export function pubkeysFromEnv(env: Record<string, string | undefined> = process.env): KeyResolver {
-  const keys = (env["LOKI_CP_RECEIPT_PUBKEYS"] ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
-    try { return [createPublicKey(readFileSync(f))]; } catch { return []; }
-  });
+type Env = Record<string, string | undefined>;
+const isEd25519 = (k: KeyObject): boolean => k.asymmetricKeyType === "ed25519";
+
+/** The local signer's PUBLIC half, found in the order seal.ts loadSigningKey uses: inline LOKI_RECEIPT_SIGNING_KEY, then LOKI_RECEIPT_SIGNING_KEY_FILE,
+ *  then $HOME/.loki/keys/receipt-ed25519.pem. There is no separate public file on disk, so the public KeyObject is derived in memory (createPublicKey)
+ *  and only that derived object is kept. Unlike loadSigningKey this never chmods, creates or generates anything, and never retains, logs or returns
+ *  private material. An absent default-path key means no key and no reason; one that is named but unreadable or not Ed25519 is reported in `reason`. */
+export function localKeyInfo(env: Env = process.env): { key?: KeyObject; reason?: string } {
+  const inline = env["LOKI_RECEIPT_SIGNING_KEY"]?.trim();
+  const given = env["LOKI_RECEIPT_SIGNING_KEY_FILE"]?.trim();
+  try {
+    let pub: KeyObject;
+    if (inline) pub = createPublicKey(inline);
+    else {
+      const file = given || join(env["HOME"] || homedir(), ".loki", "keys", "receipt-ed25519.pem");
+      try { pub = createPublicKey(readFileSync(file)); } catch (e) {
+        if (!given && (e as NodeJS.ErrnoException).code === "ENOENT") return {};
+        throw e;
+      }
+    }
+    return isEd25519(pub) ? { key: pub } : { reason: "local signing key is not an Ed25519 key" };
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    return { reason: `local signing key ${inline ? "(LOKI_RECEIPT_SIGNING_KEY)" : given ? "file" : "default file"} could not be used: ${code ?? "malformed PEM"}` };
+  }
+}
+export const localPublicKey = (env: Env = process.env): KeyObject | undefined => localKeyInfo(env).key;
+
+const pemList = (raw: string | undefined): KeyObject[] => (raw ?? "").split(":").map((f) => f.trim()).filter(Boolean).flatMap((f) => {
+  try { const k = createPublicKey(readFileSync(f)); return isEd25519(k) ? [k] : []; } catch { return []; }
+});
+
+/** Verification keys by kid: the local signer's public half (automatic), LOKI_RECEIPT_RETIRED_PUBKEYS (trusted, as `loki verify` honours them) and
+ *  LOKI_CP_RECEIPT_PUBKEYS (colon-separated Ed25519 public PEM files for remote/team keys). Unreadable or non-Ed25519 files are skipped.
+ *  `strict` is true only when LOKI_CP_RECEIPT_PUBKEYS names at least one usable key: then an unknown kid is TAMPERED (the operator declared the key set).
+ *  With only implicit keys an unknown kid (CI, another machine, a rotation) is NOT CHECKED, as `loki verify` treats it. */
+export function pubkeysFromEnv(env: Env = process.env): KeyResolver {
+  const info = localKeyInfo(env);
+  const explicit = pemList(env["LOKI_CP_RECEIPT_PUBKEYS"]);
+  const keys = [...(info.key ? [info.key] : []), ...pemList(env["LOKI_RECEIPT_RETIRED_PUBKEYS"]), ...explicit];
   const fn: KeyResolver = (kid) => keys.find((k) => kidOf(k) === kid);
   fn.configured = keys.length > 0;
-  fn.fingerprint = createHash("sha256").update(keys.map(kidOf).sort().join(",")).digest("hex").slice(0, 16); // identifies the key set a row was judged under
+  fn.strict = explicit.length > 0;
+  if (info.reason) fn.reason = info.reason;
+  fn.fingerprint = createHash("sha256").update(keys.map(kidOf).sort().join(",") + (fn.strict ? "|strict" : "")).digest("hex").slice(0, 16); // key set and mode a row was judged under
   return fn;
 }
 
@@ -63,7 +102,7 @@ export function verifyRunIntegrity(evs: readonly EventEnvelope[], opts: Integrit
   const sealedAt = evs.map((e, i) => (e.type === "receipt.sealed" ? i : -1)).filter((i) => i >= 0);
   const finalised = doneAt >= 0 || sealedAt.length > 0;
   const lines = evs.map(line);
-  const keysConfigured = opts.keysConfigured ?? opts.pubkeyFor?.configured ?? false;
+  const keysConfigured = opts.keysConfigured ?? opts.pubkeyFor?.strict ?? opts.pubkeyFor?.configured ?? false;
   let sigChecked = false;
 
   if (finalised) { // a live run may still be missing a batch; once it claims an end, every seq must be present

@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-## v10.10.0 (2026-10-03)
+## v10.10.2 (2026-10-03)
+
+### Added
+- Control Plane redesign (CP-REDESIGN): the run page uses the autonomi.dev design tokens, the home page is composer-first, and sessions show as a card grid. The receipt badge reads "Receipt signed" only when the signature was actually checked (`sig_checked` true), "Receipt unchecked" when it was not, and "receipt unmeasured" when the receipt carries no check result.
+- Project Model on by default (FC-01): Loki detects the packages in a repo and runs each package's checks from that package's own directory, through one shared command resolver.
+
+### Changed
+- Engine core size: the already-done evidence search, the engine origin helpers and the dashboard page renderer moved out of `loki-ts/src/engine10` into `loki-ts/src/util`. Behavior is unchanged; the engine core is back under its 5,000-line cap (4,719 lines).
+
+### CI
+- The bun unit-test job in `test.yml` prints the coverage table (`bun test --coverage`). It replaces the removed `coverage.yml` and enforces no floor.
+- New guard on `docs/v10/cp-redesign` images: only files listed in `ALLOWED-IMAGES.txt` may be committed there, and the pre-commit hook rejects an unlisted staged image (tests/test-cp-redesign-images.sh).
+
+## v10.10.1 (2026-10-03)
+
+Release-gate fix for 10.10.0: the 10.10.0 publish was blocked at its gate (spawn env guard and the MCP status contract test), and ten CI checks were red on its commit, so nothing reached npm as 10.10.0. 10.10.1 ships everything listed under v10.10.0 below, plus the items here.
+
+### Added
+- Moat P1 seal.v2: receipts now sign the verification metadata (verdict, checks run, not-proven list); a v2 receipt is never downgraded to v1 verification. P1.verification-metadata-signed promoted out of tests/moat/pending.txt.
+- Control Plane polish (CPE items 1 to 7): signature checked by default, one cost formatter, sidebar and theme toggle, verified rate, stage timeline, skip reasons shown, CP D1 (a finished run page loads its stored events, FC-06b) and D2 (one-time startup cleanup of leaked fixture runs, FC-07b).
+
+### Fixed
+- Release gate: loki-ts/src/cli/completions.ts spawn calls pass an explicit env (spawn env guard); the MCP-through-shim status test asserts the schemas/status-result.schema.json keys and accepts a null control_plane_url.
+- CI shard reds on 10.10.0: README no longer hand-carries a version line (generate-stale-zero writes it without a literal); release.sh skips generate-stale-zero.sh when it is not executable (fixture exit 127); UI bare-loki test expects the API-only URL; E-32 expects the Loki 10 status output; S-132 job floor matches the pruned test.yml; two SC2043 single-item loops in the moat suite replaced by assignments.
+
+### CI
+- Removed workflows: bun-parity (dist vs source drift is covered by the release dist guard), parity-drift, coverage (its 70% floor was never enforced), sentrux-real, soak-monitor and the example review workflow; tests/test-bun-parity-disk-tolerance.sh removed with them.
+- Required checks for release (release.yml, scripts/release.sh, scripts/train-cycle.sh, scripts/v10-pulse.sh) are now Tests and Security Audit only; the local-ci.sh bun-parity matrix (section 9) is removed.
+- Docs updated: TESTING.md, ARCHITECTURE.md, COMPONENTS.md, CONTRIBUTING.md, docs/SLO.md, docs/dev/release-checklist.md, skills/release-cadence.md.
+
+## v10.10.0 (2026-10-03, not published)
 
 ### Added
 - CLI registry (loki-ts/src/cli/registry.ts) is the single source for help, docs/v10/CLI-MODERN.md and shell completions. Completions install themselves on postinstall and on the first interactive run per version, into auto-load locations only (never rc files); skipped on CI, non-TTY or LOKI_NO_COMPLETIONS=1.

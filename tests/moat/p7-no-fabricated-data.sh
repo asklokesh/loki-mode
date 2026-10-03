@@ -378,14 +378,9 @@ PY
 
 # Resolve the typescript module from THIS checkout only (never a sibling tree).
 find_typescript() {
-    local d
-    for d in web-app; do
-        if [ -f "$REPO_ROOT/$d/node_modules/typescript/lib/typescript.js" ]; then
-            printf '%s\n' "$REPO_ROOT/$d/node_modules/typescript/lib/typescript.js"
-            return 0
-        fi
-    done
-    return 1
+    local ts="$REPO_ROOT/web-app/node_modules/typescript/lib/typescript.js"
+    [ -f "$ts" ] || return 1
+    printf '%s\n' "$ts"
 }
 
 # Common prerequisite gate for the two route cases. Prints a reason on failure.
