@@ -105,6 +105,12 @@ a legacy `.loki/proofs/<id>/proof.json`; for a legacy receipt signed elsewhere, 
 the signer's public key (PEM) to `LOKI_RECEIPT_RETIRED_PUBKEYS`. A token signed by
 the local key still verifies with exit 0.
 
+Run standalone (`bash autonomy/verify.sh`, outside the `loki` CLI), the script
+has no attestation verdict helper, so every receipt prints
+`attestation: UNCHECKED (run via loki verify)` and the receipt check fails. This
+holds even with `--allow-unsigned`, which accepts only a receipt the CLI has
+classified as UNSIGNED. Run `loki verify` to evaluate the attestation.
+
 A missing `.loki/state/last-proof-id.txt` no longer skips the receipt check. If
 proofs exist under `.loki/proofs` the run is `receipt: NOT VERIFIED` (exit 2); a
 pointer naming a missing proof is the same. A tree that never recorded a proof
