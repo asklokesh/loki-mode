@@ -11,7 +11,7 @@ import { taskBlock } from "../types.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
-import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallModel } from "../sizing.ts";
+import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTaskPath, wallEnabled, wallLimitS, wallModel } from "../sizing.ts";
 import { sha256 } from "./seal.ts";
 import { runnerCmd } from "./verify.ts";
 
@@ -165,7 +165,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
     tier: "development",
     model: wallModel(),
     iterationId: `${ctx.runId}-wall`,
-    limitS: wallStage.limitS,
+    limitS: wallLimitS(sz.size), // W1-S3
     signal,
     cwd,
   });
@@ -212,7 +212,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
 export const wallStage: Stage = {
   name: "wall",
   targetS: 45,
-  limitS: 90,
+  limitS: 300, // outer ceiling = the max session cap (sizing.ts wallLimitS)
   run: (ctx, signal) => runWall(ctx, signal),
 };
 export const stage = wallStage;

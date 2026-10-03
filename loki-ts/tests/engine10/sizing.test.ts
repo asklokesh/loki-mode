@@ -1,13 +1,13 @@
 // E-45 wall check: small tasks make 2 sessions (wall on sonnet, implement), normal 3;
 // the wall brief stays under a fixed size; the variant is recorded.
 import { afterAll, afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { readFileSync } from "node:fs";
-import { cascadeImplementModel, planMode, resolveModelAlias, sizeTask, wallModel } from "../../src/engine10/sizing.ts";
+import { loadRepoMap, cascadeImplementModel, planMode, wallLimitS, resolveModelAlias, sizeTask, wallModel } from "../../src/engine10/sizing.ts";
 import { planStage } from "../../src/engine10/stages/plan.ts";
 import { wallStage, buildWallBrief, WALL_MAP_MAX_LINES } from "../../src/engine10/stages/wall.ts";
 import { implementStage } from "../../src/engine10/stages/implement.ts";
@@ -16,7 +16,7 @@ import type { RunContext, SessionRunOptions, Stage, StageName, TestMap, TestRef 
 
 const dirs: string[] = [];
 const saved = { ...process.env };
-afterEach(() => { for (const k of ["LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER", "LOKI_E10_CASCADE", "LOKI_MODEL_OVERRIDE"]) delete process.env[k]; });
+afterEach(() => { for (const k of ["LOKI_E10_PLAN", "LOKI_E10_WALL", "LOKI_E10_WALL_TIER", "LOKI_E10_WALL_LIMIT_S", "LOKI_E10_CASCADE", "LOKI_MODEL_OVERRIDE"]) delete process.env[k]; });
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); process.env = saved; });
 
 const TM: TestMap = { runners: ["bun"], tests: [{ runner: "bun", path: "tests/a.test.ts" }] };
@@ -288,5 +288,33 @@ describe("engine10 E-45 sizing", () => {
     await runMachine(ctx, { load: async (n) => stages[n] ?? null });
     expect(calls.some((c) => c.stage === "fix")).toBe(false);
     expect(events.some((e) => e.type === "fix.round")).toBe(false);
+  });
+});
+
+describe("W1-S3 size-tied Wall time cap", () => {
+  it("small 90, normal 180, override clamps to 300, garbage falls back", () => {
+    expect(wallLimitS("small", {})).toBe(90);
+    expect(wallLimitS("normal", {})).toBe(180);
+    expect(wallLimitS("normal", { LOKI_E10_WALL_LIMIT_S: "999" })).toBe(300);
+    expect(wallLimitS("small", { LOKI_E10_WALL_LIMIT_S: "120" })).toBe(120);
+    for (const g of ["abc", "-5", "", "0", "NaN"]) expect(wallLimitS("small", { LOKI_E10_WALL_LIMIT_S: g })).toBe(90);
+  });
+
+  it("the Wall session gets the size cap and a timed-out session copies nothing and is never already_satisfied", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-w1s3-")); dirs.push(dir);
+    const ref = join(dir, "repomap.json"); writeFileSync(ref, JSON.stringify({ files: Array.from({ length: 30 }, (_, i) => `src/m${i}.ts`), entries: [], truncated: false }));
+    const seen: SessionRunOptions[] = [];
+    const ctx: RunContext = {
+      runId: "w1s3", repoDir: dir, runDir: dir, baseSha: "abc", branch: "b", provider: "claude", model: "m", deep: false, capS: 900,
+      emit: () => {},
+      sessions: { run: async (o) => { seen.push(o); writeFileSync(join(o.cwd, "loki_wall_x.test.ts"), "x"); return { exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true }; } },
+      tests: { detect: async () => TM, impacted: () => [] }, cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) },
+      clock: { now: () => Date.now() }, outputs: () => ({ intake: { task: "refactor mod1.ts mod2.ts mod3.ts mod4.ts mod5.ts across everything", repomap_ref: ref, testmap: TM } }),
+    };
+    const r = await wallStage.run(ctx, new AbortController().signal);
+    expect(seen[0]!.limitS).toBe(wallLimitS(sizeTask("refactor mod1.ts mod2.ts mod3.ts mod4.ts mod5.ts across everything", loadRepoMap(ref), TM).size));
+    expect(r.status).toBe("failed");
+    expect(r.data.already_satisfied).toBeUndefined();
+    expect(existsSync(join(dir, "tests", "loki_wall_x.test.ts"))).toBe(false);
   });
 });

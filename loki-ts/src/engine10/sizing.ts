@@ -46,15 +46,15 @@ export function hasRelevantTests(task: string, map: RepoMap | null, tests: TestM
 /** "lean" skips Plan+Wall (one implement session); "wall" keeps Wall (medium/large, or small with no relevant tests). */
 export type SmallTaskPath = "lean" | "wall";
 export const smallTaskPath = (size: "small" | "normal", relevantTests: boolean): SmallTaskPath => (size === "small" && relevantTests ? "lean" : "wall");
-
 const knob = (v: string | undefined, words: string[]): boolean => words.includes((v ?? "").toLowerCase());
 /** LOKI_E10_PLAN: 0/off/never skips, 1/on/always forces, anything else sizes. */
 export const planMode = (env = process.env): "auto" | "always" | "never" =>
   knob(env.LOKI_E10_PLAN, ["0", "off", "never", "false"]) ? "never" : knob(env.LOKI_E10_PLAN, ["1", "on", "always", "true"]) ? "always" : "auto";
 export const wallEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_WALL, ["0", "off", "false"]);
+/** W1-S3: Wall session cap, 90s small / 180s normal; LOKI_E10_WALL_LIMIT_S overrides (clamped to 300; garbage, zero or negative falls back). */
+export const wallLimitS = (size: "small" | "normal", env = process.env): number => { const n = Number(env.LOKI_E10_WALL_LIMIT_S); return Number.isFinite(n) && n > 0 ? Math.min(300, n) : size === "small" ? 90 : 180; };
 /** LOKI_E10_CASCADE=0/off/false: implement (and any fix round) stays on the run's configured model, as before E-64. */
 export const cascadeEnabled = (env = process.env): boolean => !knob(env.LOKI_E10_CASCADE, ["0", "off", "false"]);
-
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
 export function resolveModelAlias(want: string): string {
   try { return JSON.parse(readFileSync(join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers?.claude?.cli_aliases?.[want] ?? want; } catch { return want; }
