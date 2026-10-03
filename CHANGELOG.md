@@ -7,8 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## v10.10.0 (2026-10-03)
+
+### Added
+- CLI registry (loki-ts/src/cli/registry.ts) is the single source for help, docs/v10/CLI-MODERN.md and shell completions. Completions install themselves on postinstall and on the first interactive run per version, into auto-load locations only (never rc files); skipped on CI, non-TTY or LOKI_NO_COMPLETIONS=1.
+- `loki status` shows the current or latest Loki 10 run through one renderer shared with `loki engine10 status`; schemas/status-result.schema.json rewritten to match.
+- STALE-ZERO: scripts/generate-stale-zero.sh regenerates the SKILL.md command list, the README facts block, docs/CLI-REFERENCE.md and Helm appVersion on every release bump. tests/test-no-stale-facts.sh reports dead commands, dead env vars and old versions in docs (advisory unless LOKI_STALE_ZERO_STRICT=1).
+
+### Changed
+- loki-ts cli.ts: bash fall-through wording, the LOKI_LEGACY_BASH warning and util/bash_delegate.ts are removed; `loki report` serves kpis only and exits 2 on anything else (LEGACY-ZERO W1-02).
+- Superseded plans moved to docs/history/ with dated headers; four obsolete plan and wiki pages deleted.
+- Helm appVersion in all three charts now tracks VERSION (was 9.19.1, 10.6.7 and 7.93.0).
+
+### Fixed
+- Moat: P7.dashboard-client-routes-exist restored as a real check that every Control Plane UI /v1 call resolves to a createApp() route (registry ratchet red).
+- E-123 gitleaks baseline shape derived from .gitleaksignore; E-86 pre-push hook test sees the real HOME; leak2 opener check retargeted to the Control Plane opener; CP integrations test no longer leaks /usr/bin/gh.
+- tests/shard-durations.tsv: 30 orphan rows pruned; docs/v10/DEPS.md regenerated.
 - test(FC-18): legacy-shim route and doc counts, control-plane route module count and doctor JSON check count now derive from their source of truth instead of pinned literals.
-- CI prune: removed the always-failing or dead workflows loki-enterprise, mutation-testing, check-phase6-ready, arm64-runtime and provenance (release.yml already signs and attests the image); moved loki-issue-to-pr and loki-ci-example to docs/examples/*.yml.example as user-facing examples (the Rule of Two scan now covers them).
+
+### CI
+- Removed dead workflows loki-enterprise, mutation-testing, check-phase6-ready, arm64-runtime and provenance (release.yml already signs and attests the image); loki-issue-to-pr and loki-ci-example moved to docs/examples/*.yml.example.
+- test.yml jobs before: version-bump-gate, node-tests (20, 22, 24), python-tests (3.10, 3.11, 3.12, 3.13), shell-tests (8 shards), moat-suite, helm-lint, bun-tests, sdk-loop-e2e, sdk-tarball-no-binary.
+- test.yml jobs after: version-bump-gate, node-tests (20, 24), python-tests (3.10, 3.13), shell-tests (8 shards), moat-suite, helm-lint, bun-tests.
 
 ## v10.9.1 (2026-10-03)
 

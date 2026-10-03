@@ -10,7 +10,7 @@ An autonomous software factory that knows what it is supposed to deliver, and pr
 [Website](https://www.autonomi.dev/) | [Documentation](wiki/Home.md) | [Installation](docs/INSTALLATION.md) | [Changelog](CHANGELOG.md)
 
 <!-- generated:facts -->
-Current release: **v10.9.1** (generated from `VERSION` by `scripts/generate-stale-zero.sh`; the badge above tracks npm).
+Current release: **v10.10.0** (generated from `VERSION` by `scripts/generate-stale-zero.sh`; the badge above tracks npm).
 
 CLI reference: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md) (generated from the command registry).
 <!-- /generated -->
