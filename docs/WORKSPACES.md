@@ -32,3 +32,4 @@ loki workspace status <run-id>
 - After all repos finish, the `integration` command runs once from the run directory with `LOKI_WS_DIR_<OWNER>_<REPO>` pointing at each worktree. A timeout counts as failed. With no integration configured the status is `not_configured`.
 - Evidence is written to `.loki/workspaces/<name>/<run-id>/integration.json`: head SHA per repo, exit code, log sha256. It is not part of the Seal.
 - Without `path`, a repo is cloned to `~/.loki/repos/owner__name`.
+- After the integration step, a PR comment is posted on each repo PR that exists for its run branch, showing the integration status (PASSED, FAILED, TIMEOUT or NOT CONFIGURED) and every head SHA. It uses your own `gh` login or GH_TOKEN, skips silently when there is no PR, never fails the run, and is disabled with `LOKI_WORKSPACE_COMMENT=0`.

@@ -287,6 +287,12 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
         json.dump(ev, f, indent=2, sort_keys=True)
     os.replace(tmp, ev_path)
 
+    try:
+        import workspace_comment
+        workspace_comment.post_comments(name, run_id, run_dir, worktrees, ev, say)
+    except Exception as e:  # commenting must never fail the run
+        say("workspace: commenting skipped (%s)" % type(e).__name__)
+
     say("")
     say("Summary: workspace %s (%s)" % (name, run_id))
     for repo, res in outcome.items():
