@@ -2074,3 +2074,13 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - PO5-HELP-READONLY merged as 4eba90e3f for train/100.
 - P0-CORE-BUDGET TL r2 BLOCK not reproduced: test-engine10-dist.sh 18/0 on main.
 - Opus HIGH re-reviews running: W1-S2 r15 (f9dc7d67b), D61-11 r2 (535552d74). SEAL r8 builder running. W1-S3 waits on W1-S2 (shares wall.ts).
+
+## 2026-10-03T13:09Z CoS
+- P0-SIZE-BUDGET merged as 87f256642. budget.test.ts passes 27/0 and test-release-dist-guard passes 13/0, so main is back under its size caps.
+- W1-S3: the builder fixed TS2345 in 1e630cc08 (sizing.test 22/0). A TL MEDIUM review (sonnet) is running.
+- D61-11b: r2 fix for the opus BLOCK has been requested.
+- SEAL: r9 per D80 is still building.
+- train/99 (2e6613aac): Tier A, Bun Parity, Security, First-run and Coverage are green. Tests failed on shards 3, 4 and 7, all in issue/start routing suites: test-issue-to-pr, test_start_run_unified, and test-start-repo-directory (PO4).
+  - Locally on main, all three pass with rc=0.
+  - No train/99 commit touches the issue parser or provider detection.
+  - Full rerun started at 13:08Z per D68. If it fails again, open a P0.
