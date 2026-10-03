@@ -43,6 +43,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 - `loki legacy` (the pre-v10 engine) is deprecated as of v10.0.0 and remains fully supported; no removal date is set. Set `LOKI_ENGINE=legacy` to pin it. See docs/v10/GUIDE.md (E-35).
 
+## v10.6.11 (2026-10-03)
+
+loki workspace run now works across linked git worktrees (all 9 D65 stub E2E legs pass from a clean install), the delivery contract is frozen at intake so a later edit cannot change what the receipt proves, and train pushes scan only their own range for secrets while main keeps the full scan and a red daily scan halts releases.
+
+### Changes
+- fix(engine10): intake finds info/exclude via git in linked worktrees (D65-BUG7)
+- ci(security): D75 range-only secret scan on train pushes, full scan authority on main, daily cron
+- ci(release): block releases on a red daily scheduled Security Audit (D75 condition)
+- ci(release): scheduled-audit gate supersedes on newer main success, fails closed on API error (D75)
+- ci(release): D75b scheduled-audit gate reads the newest scheduled run and newer successes with separate queries
+- fix(contract): freeze .loki/contract.json at intake, flag post-intake changes (D65-SPEC-F2)
+- test(contract): cover the intake snapshot wiring, flag late replacement of an unreadable contract (D65-SPEC-F2)
+- build(dist): rebuild loki-ts dist after D65-SPEC-F2 cherry-pick (keeps D65-BUG7)
+- test(ci): P0-D75-PINS update required-ci harness and E-123 pins for the D75 scheduled-audit gate
+
 ## v10.6.10 (2026-10-03)
 
 Loki 10.6.10 ships the loki.yaml schema in the npm package so loki workspace run works from an install, fixes the Control Plane container build, and makes help text agree on one UI command: loki opens the Control Plane.
