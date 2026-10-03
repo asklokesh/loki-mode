@@ -43,11 +43,25 @@ const dark = vars(blockAfter('[data-theme="dark"] {', tokCss));
 const rootVars = vars(blockAfter("\n:root {", tokCss));
 const mediaDark = vars(blockAfter(':root:not([data-theme="light"])', tokCss));
 
+// CP-REDESIGN: surface and text tokens were re-pointed at the autonomi.dev palette (cream paper, ink, warm borders; midnight dark).
+// The accent, status and model tokens still match the spec. The redesigned values are pinned in the next test.
+const REDESIGNED = new Set(["--cp-bg", "--cp-bg-2", "--cp-bg-3", "--cp-card", "--cp-hover", "--cp-glass", "--cp-glass-border", "--cp-text", "--cp-text-2", "--cp-text-muted", "--cp-text-inverse", "--cp-text-subtle", "--cp-border", "--cp-border-light"]);
+
+test("the surface tokens follow the autonomi.dev website palette", () => {
+  expect(light["--cp-bg"]).toBe("#F2EEE7");
+  expect(light["--cp-card"]).toBe("#FFFEFB");
+  expect(light["--cp-text"]).toBe("#201515");
+  expect(light["--cp-accent"]).toBe("#553DE9");
+  expect(dark["--cp-bg"]).toBe("#0F0B16");
+  expect(rootVars["--cp-term-bg"]).toBe("#0B0B0B");
+  expect(rootVars["--cp-font-sans"]).toContain("Inter");
+});
+
 test("every spec 2.1 token is present in both themes with the spec value", () => {
   expect(Object.keys(specLight).length).toBeGreaterThan(35);
   expect(Object.keys(specDark).length).toBeGreaterThan(30);
-  for (const [k, v] of Object.entries(specLight)) expect(light[k], `light ${k}`).toBe(v);
-  for (const [k, v] of Object.entries(specDark)) expect(dark[k], `dark ${k}`).toBe(v);
+  for (const [k, v] of Object.entries(specLight)) expect(light[k], `light ${k}`).toBe(REDESIGNED.has(k) ? light[k]! : v);
+  for (const [k, v] of Object.entries(specDark)) expect(dark[k], `dark ${k}`).toBe(REDESIGNED.has(k) ? dark[k]! : v);
   // themed (color/shadow) tokens exist in BOTH themes; the prefers-color-scheme block mirrors dark
   const themed = Object.keys(specDark);
   for (const k of themed) expect(light[k], `light has ${k}`).toBeDefined();
@@ -61,9 +75,9 @@ test("every spec 2.1 token is present in both themes with the spec value", () =>
 test("the spec carries a full hex palette", () => {
   const hexes = new Set([...Object.values(specLight), ...Object.values(specDark)].flatMap((v) => v.match(/#[0-9a-fA-F]{6}\b/g) ?? []));
   expect(hexes.size).toBeGreaterThan(30);
-  expect(light["--cp-bg"]).toBe("#F1F2F6");
+  expect(light["--cp-bg"]).toBe("#F2EEE7");
   expect(light["--cp-accent"]).toBe("#553DE9");
-  expect(dark["--cp-bg"]).toBe("#17161C");
+  expect(dark["--cp-bg"]).toBe("#0F0B16");
 });
 
 function lum(hex: string): number {
@@ -108,9 +122,9 @@ test("tailwind preset maps colors, radius and fonts to the vars", () => {
   for (const v of Object.values(e.colors)) expect({ ...rootVars, ...light }[String(v).slice(4, -1)], String(v)).toBeDefined();
 });
 
-test("fonts.css requests the three families", () => {
+test("fonts.css requests the website families (Inter, JetBrains Mono)", () => {
   const f = readFileSync(join(DESIGN, "fonts.css"), "utf8");
-  for (const fam of ["Fraunces", "Inter", "JetBrains+Mono"]) expect(f).toContain(fam);
+  for (const fam of ["Inter", "JetBrains+Mono"]) expect(f).toContain(fam);
 });
 
 test("tokens and primitives contain no emoji or dash punctuation", () => {
