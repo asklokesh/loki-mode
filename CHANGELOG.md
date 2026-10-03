@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v10.10.5 (2026-10-03)
+
+Release-gate fix for 10.10.4: the 10.10.4 publish was blocked at its gate (release run 37160286619, spawn env guard), so nothing reached npm as 10.10.4. 10.10.5 ships everything listed under v10.10.4 below, plus the fix here.
+
+### Fixed
+- Spawn env guard: the run-cap file count (`loki-ts/src/util/run_cap.ts`, `git ls-files`) and the load-owner process-tree walk (`loki-ts/src/runner/load_owner.ts`, `pgrep -P`) now pass an explicit env, so they see the current environment rather than the one captured at process start.
+
 ## v10.10.4 (2026-10-03)
 
 Engine honesty train for the FireLater#17 gate: three failure classes (FC-15, FC-16, FC-21) plus FC-02 ship together. A success verdict now needs at least one Loki-executed test with a confirmed count, a run is never refused for its starting branch, and an implement time limit no longer skips verify. Behavior change: runs that previously ended VERIFIED or ALREADY_SATISFIED on unconfirmed test output (for example any Go run that exits 0, since go test output cannot be confirmed) now end PARTIAL with "test count could not be confirmed" in NOT PROVEN, and the CLI `--json` outcome reads PARTIAL where it read FAILED for a PARTIAL receipt (exit code stays 1).
