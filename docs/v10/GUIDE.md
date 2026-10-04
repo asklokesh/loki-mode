@@ -1,21 +1,19 @@
 # Loki 10 engine guide
 
-Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. Set LOKI_ENGINE=legacy or run `loki legacy <args>` for the previous engine. <!-- loki10-default -->
+Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. `loki legacy` and LOKI_ENGINE were removed in 11.0.0. <!-- loki10-default -->
 
 Loki 10 is the rewritten engine (docs/v10/ENGINE.md). Since the D48 flip it
-is the default for three entry points: `loki "<task>"`, `loki owner/repo#N`
-(issue mode) and `loki quick "<task>"`. Each prints one start line,
-`Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous
-engine)`, then the summary below. `loki start <issue ref | issue URL | "multi-word task">` takes the same
-v10 path as `loki <ref>`. Everything else (`loki start ./prd.md`, `loki
-status`, `loki dashboard` and the rest) is unchanged unless you set
-LOKI_ENGINE=v10 explicitly, which also routes status, verify and dashboard
-to the v10 commands. Bare `loki verify` (no LOKI_ENGINE) follows the newest
-run: when the newest entry in .loki/runs/ is a v10 run newer than the newest
-legacy proof it runs the v10 verify, otherwise the legacy verify. If bun is
-missing or LOKI_PROVIDER is unsupported, the default mode falls back to the
-legacy engine and prints one stderr line saying why. The previous engine stays one step away:
-`loki legacy <args>` and LOKI_ENGINE=legacy.
+runs `loki "<task>"`, `loki owner/repo#N` (issue mode) and `loki quick
+"<task>"`, each printing one start line beginning `Loki 10 engine`, then the
+summary below. `loki start <issue ref | issue URL | "multi-word task">` takes
+the same v10 path as `loki <ref>`. `loki keys` and `loki verify --pubkey`
+always run on Loki 10. Bare `loki verify` follows the newest run: when the
+newest entry in .loki/runs/ is a v10 run newer than the newest legacy proof
+it runs the v10 verify, otherwise the legacy verify. If bun is missing or
+LOKI_PROVIDER is unsupported, the default mode falls back to the bash path
+and prints one stderr line saying why. In 11.0.0 (LEGACY-ZERO W1-01) `loki
+legacy` was removed (it exits 2 with a removal message) and LOKI_ENGINE is no
+longer read; any value is ignored.
 
 `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word
 task>"` run Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`. A PRD
@@ -238,11 +236,8 @@ provider names (`claude`, `codex`, `cline`, `aider`); it is not supported.
 ## After the flip
 
 D48 made v10 the default for `loki "<task>"`, `loki owner/repo#N` and
-`loki quick "<task>"`. The previous engine stays fully reachable and
-unchanged: `loki legacy <args>` (prints a short deprecation notice to
-stderr, then runs exactly the pre-flip route for `<args>`) and
-`LOKI_ENGINE=legacy` (the same, without the notice, for scripts). Any
-LOKI_ENGINE value other than v10 or unset also keeps the legacy engine.
-Nothing is removed at the flip. The one place that records which state we
-are in is the marked line near the top of this file and of README.md's
-Loki 10 section; it changed in the same commit as the flip.
+`loki quick "<task>"`. 11.0.0 removed the engine switch: `loki legacy` exits
+2 with a removal message and LOKI_ENGINE is ignored. Remaining legacy paths
+(`loki start ./prd.md` and the no-bun fallback) are tracked in
+docs/v10/LEGACY-REMOVAL.md. The marked line near the top of this file and of
+README.md's Loki 10 section records the current state.
