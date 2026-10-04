@@ -85,6 +85,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   } else {
     notProvenOut.push("commit status loki/deep-verify not set (HEAD sha not resolvable)");
   }
+  await (await import("../../integrations/writeback.ts")).writeBack({ verdict, prUrl: url, receiptSha256: seal.receipt_sha256 ?? null, task: String((ctx.outputs().intake as { task?: unknown } | undefined)?.task ?? "") }); // B6: opt-in, never throws
   return { status: "completed", data: { pr_url: url, draft, existing, ...(notProvenOut.length ? { not_proven: notProvenOut } : {}) } };
 }
 export const stage: Stage = {
