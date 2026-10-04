@@ -276,7 +276,8 @@ describe("engine10 machine", () => {
     ctx.sessions = { run: async (o) => { seen.push(o.limitS); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0, killed: false }; } };
     const impl: Stage = { name: "implement", targetS: 180, limitS: 480, run: async (c, _s) => { await c.sessions.run({ stage: "implement", brief: "b", tier: "development", iterationId: "i", limitS: 480, signal: new AbortController().signal }); return { status: "completed", data: {} }; } };
     await runMachine(ctx, { load: loaderOf(all({ implement: impl })) });
-    expect(seen[0]).toBe(1800); // run 37171623026: CI saw a second session at 1799.999 (FC-21b A2 budget-left); assert the limit, not the call count or the elapsed ms
+    expect(seen[0]).toBeGreaterThan(1799); // runs 37171623026 and 37173985482: the budget-left limit (FC-21b A2) can read 1799.999 after 1ms elapsed; assert the deep limit, not the elapsed ms
+    expect(seen[0]).toBeLessThanOrEqual(1800);
     expect(seen.every((s) => s > 480 && s <= 1800)).toBe(true);
   });
 
