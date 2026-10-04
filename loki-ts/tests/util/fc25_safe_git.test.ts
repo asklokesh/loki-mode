@@ -1,6 +1,6 @@
 // FC-25: a git call from the token-holding supervisor must never run a core.fsmonitor plant in the agent's repo.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,5 +84,38 @@ test("FC-25b: a required=true filter is blanked: the command never runs and git 
   gc(r, "filter.evil.clean", rec); gc(r, "filter.evil.required", "true");
   // git 2.55 accepts a blanked required filter (no error, no run); if a git version errors instead, the throw propagates to callers (run_cap: unknown size; changedSince: fail-safe false)
   try { safeGit(r, ["add", "-A", "--", "."]); } catch { /* a throw is the documented fail-safe */ }
+  expect(existsSync(h)).toBe(false);
+});
+
+// FC-25b LFS regression: the USER's global lfs-style filter (required=true) and in-tree .gitattributes routing must keep working.
+// Blanking global keys or hiding .gitattributes (GIT_ATTR_SOURCE=empty tree) turned this into ` M big.bin` / "clean filter failed" / raw blobs staged.
+test("FC-25b LFS: a global pointer filter with required=true and in-tree routing still yields clean status and pointer blobs through safeGit", () => {
+  const d = mkdtempSync(join(root, "lfs-")), r = join(d, "repo"), store = join(d, "store"), gcfg = join(d, "global.cfg");
+  mkdirSync(r); mkdirSync(store);
+  const clean = join(d, "clean.sh"), smudge = join(d, "smudge.sh");
+  writeFileSync(clean, `#!/bin/sh\nf=$(mktemp); cat > "$f"; h=$(shasum -a 256 "$f" | cut -c1-64); cp "$f" "${store}/$h"; rm -f "$f"; printf 'version https://git-lfs.github.com/spec/v1\\noid sha256:%s\\n' "$h"\n`);
+  writeFileSync(smudge, `#!/bin/sh\nh=$(sed -n 's/^oid sha256://p'); cat "${store}/$h"\n`);
+  chmodSync(clean, 0o755); chmodSync(smudge, 0o755);
+  writeFileSync(gcfg, `[filter "lfs"]\n\tclean = ${clean}\n\tsmudge = ${smudge}\n\trequired = true\n[user]\n\temail = t@t\n\tname = t\n`);
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: gcfg };
+  const G = (...a: string[]): string => execFileSync("git", a, { cwd: r, encoding: "utf8", env });
+  G("init", "-q"); writeFileSync(join(r, ".gitattributes"), "*.bin filter=lfs -text\n"); writeFileSync(join(r, "big.bin"), `REAL-${"x".repeat(200)}\n`);
+  G("add", "-A"); G("commit", "-qm", "init");
+  expect(G("cat-file", "-p", "HEAD:big.bin")).toContain("version https://git-lfs");
+  const saved = process.env.GIT_CONFIG_GLOBAL; process.env.GIT_CONFIG_GLOBAL = gcfg;
+  try {
+    const t = new Date(Date.now() + 5000); utimesSync(join(r, "big.bin"), t, t);
+    expect(safeGit(r, ["status", "--porcelain"])).toBe("");
+    safeGit(r, ["add", "-A", "--", "."]);
+  } finally { if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = saved; }
+  expect(G("cat-file", "-p", ":big.bin")).toContain("version https://git-lfs");
+});
+test("FC-25b: a filter reached through a local include.path is still local scope and blanked", () => {
+  const r = mkdtempSync(join(root, "inc-")), h = join(root, "inc.hit"), rec = join(root, "inc-rec.sh");
+  writeFileSync(rec, `#!/bin/sh\necho fired >> "${h}"\ncat\n`); chmodSync(rec, 0o755);
+  const G = (...a: string[]): string => execFileSync("git", a, { cwd: r, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } });
+  G("init", "-q"); writeFileSync(join(r, ".gitattributes"), "* filter=evil\n"); writeFileSync(join(r, "a.txt"), "a\n");
+  writeFileSync(join(r, ".git", "inc.cfg"), `[filter "evil"]\n\tclean = ${rec}\n`); G("config", "include.path", "inc.cfg");
+  try { safeGit(r, ["add", "-A", "--", "."]); } catch { /* ok */ }
   expect(existsSync(h)).toBe(false);
 });

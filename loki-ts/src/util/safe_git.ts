@@ -12,7 +12,7 @@ export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c"
 const CREDENTIAL_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "protocol.ext.allow=never"];
 // External diff, commit signing and a global attributes file: repo-chosen commands on diff/commit paths.
 const DRIVER_CONFIG: readonly string[] = ["-c", "diff.external=", "-c", "commit.gpgSign=false", "-c", "core.attributesFile=/dev/null"];
-const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const REPO_SCOPES: ReadonlySet<string> = new Set(["local", "worktree", "command"]);
 const DRIVER_KEY_RE = "^(filter\\..*\\.(clean|smudge|process)|diff\\..*\\.textconv)$";
 const SECRET_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
 
@@ -28,16 +28,26 @@ export interface SafeGitOpts extends Omit<ExecFileSyncOptions, "cwd" | "env" | "
   allowToken?: boolean; // explicit opt-in for a call that needs a credential (push, authenticated fetch)
 }
 
-/** Env for a safe git child: token-free unless allowToken, no system config, attributes read from the empty tree (ignored by older git). */
-export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = false): NodeJS.ProcessEnv => ({ ...(allowToken ? base : tokenFreeEnv(base)), GIT_CONFIG_NOSYSTEM: "1", GIT_ATTR_SOURCE: EMPTY_TREE });
+/** Env for a safe git child: token-free unless allowToken, no system config. GIT_ATTR_SOURCE is removed: pointing it at the empty tree
+ *  hides the in-tree .gitattributes (LFS routing), so repo-local drivers are blanked by key instead. */
+export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = false): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...(allowToken ? base : tokenFreeEnv(base)), GIT_CONFIG_NOSYSTEM: "1" };
+  delete env.GIT_ATTR_SOURCE;
+  return env;
+};
 
-/** Every filter clean/smudge/process and diff textconv key the repo (or an include) defines. Enumeration runs hardened and token-free. Fails closed: an unreadable config throws. */
+/** Every filter clean/smudge/process and diff textconv key defined at local, worktree or command scope (a key reached through a local
+ *  include.path reports local). Global and system keys are the user's own (e.g. `git lfs install`) and stay live: blanking them breaks LFS
+ *  (the global-scope residual is FC-25c). Enumeration runs hardened and token-free. Fails closed: an unreadable config throws. */
 function driverKeys(repoDir: string): string[] {
-  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "-z", "--get-regexp", DRIVER_KEY_RE], { cwd: repoDir, env: safeGitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  const r = spawnSync("git", [...SAFE_GIT_CONFIG, "config", "--includes", "--show-scope", "-z", "--get-regexp", DRIVER_KEY_RE], { cwd: repoDir, env: safeGitEnv(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   if (r.error) throw r.error;
   if (r.status === 1) return []; // no match
   if (r.status !== 0) throw new Error(`safeGit: cannot enumerate git config drivers (status ${r.status})`);
-  return [...new Set(r.stdout.split("\0").filter(Boolean).map((e) => e.split("\n")[0]!).filter(Boolean))];
+  // -z --show-scope emits "<scope>\0<key>\n<value>\0" per entry
+  const t = r.stdout.split("\0"), keys: string[] = [];
+  for (let i = 0; i + 1 < t.length; i += 2) { const k = t[i + 1]!.split("\n")[0]!; if (REPO_SCOPES.has(t[i]!) && k) keys.push(k); }
+  return [...new Set(keys)];
 }
 
 /** Hardened argv for a git call: config flags first, then the caller's args. With repoDir, every repo-defined filter and
