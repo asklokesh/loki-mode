@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+- FC-16b (D86, L2/L3): Go test passes are reported as not run (they cannot be confirmed). A Go `test` check that exits 0 is never a pass: its output, including the `go test -json` event stream, is produced by the code under test, which can print the test2json framing marker (or exit early with `os.Exit(0)`) and forge run and pass events for any name, so no static check can confirm that a test executed. The reason recorded is "go test output is produced by the code under test and cannot confirm execution". `go test -json` is now used only for fail evidence (a fail event, failed test names in firstError) on a red run.
+- FC-16b: Go runner detection is one shared helper (`goRunner` in util/check_result.ts) used by verify, deep and the per-package suites; a wrapped command (`env X=1 go test`, `GOFLAGS=x go test`, a path to go) no longer falls to the generic path.
+- FC-16b: python unittest counts are never taken from the trailer alone: more than one "Ran" block (an atexit handler printing a forged `OK` after a real `FAILED` or after an all-skipped `OK (skipped=N)`) or a verdict contradicting the exit code makes the count unknown; `OK (skipped=N)` subtracts the skipped tests.
+- FC-16b: the load-owner base run is spawned in its own process group and killed as a group on a cut (only when the pid is an integer greater than 1; pgrep walk kept as fallback), so a descendant reparented to init no longer outlives the cut.
+
 ## v10.11.0 (2026-10-04)
 
 Engine honesty and Ask Loki foundations. FC-23 makes Wall compile failures harness-owned and matches Wall tests to the package's module system; FC-22 S1 adds the package graph and cited install command to the Project Model (not yet used for selection); CP-ASK slices 1, 4 and 8 land the read-only MCP mode, the Ask schema and the stream parser, all inert until `LOKI_CP_ASK` is enabled.

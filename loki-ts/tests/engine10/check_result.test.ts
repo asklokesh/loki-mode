@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyCheck, hasExecutedProof, testCount } from "../../src/util/check_result.ts";
+import { classifyCheck, GO_EXIT0_REASON, hasExecutedProof, testCount } from "../../src/util/check_result.ts";
 import { firstError, runCheck, type VerifyCheck } from "../../src/engine10/stages/verify.ts";
 import { classify } from "../../src/engine10/stages/wall.ts";
 import { verdictOf } from "../../src/engine10/stages/seal.ts";
@@ -66,7 +66,7 @@ describe("go zero and forged cases", () => {
     expect(testCount("Test Suites: 1 passed, 1 total\nTests:       4 passed, 4 total\nSnapshots:   0 total\nTime:        1 s\nRan all test suites.\n")).toBe(4);
   });
   test("classify: go never passes from parsing (count could not be confirmed)", () => {
-    expect(classifyCheck({ kind: "test", ok: true, out: GO_MULTI_V, runner: "go" })).toEqual({ result: "not_run", reason: "test count could not be confirmed" });
+    { const c = classifyCheck({ kind: "test", ok: true, out: GO_MULTI_V, runner: "go" }); expect(c.result).toBe("not_run"); expect(c.reason).toBe(GO_EXIT0_REASON); expect(c.reason).toStartWith("test count could not be confirmed"); }
     expect(classifyCheck({ kind: "test", ok: true, out: GO_NONV, runner: "go" }).reason).toContain("could not be confirmed");
   });
 });
@@ -219,7 +219,7 @@ describe("go: exit 0 is never a pass, a fail needs evidence", () => {
   const OK_V = "=== RUN   TestA\n--- PASS: TestA (0.00s)\nPASS\nok  \texample.com/ok\t0.095s\n", RF_V = "=== RUN   TestAdd\n    a_test.go:3: add: got 3 want 4\n--- FAIL: TestAdd (0.00s)\n=== RUN   TestOk\n--- PASS: TestOk (0.00s)\nFAIL\nFAIL\texample.com/f\t0.098s\nFAIL\n", B_V = "# example.com/b [example.com/b.test]\n./a.go:2:23: undefined: undefinedVar\nFAIL\texample.com/b [build failed]\nFAIL\n", G2 = "=== RUN   TestForged\n=== RUN   TestForged\n--- PASS: TestForged (0.00s)\n    a_test.go:3: x\n--- SKIP: TestForged (0.00s)\nPASS\nok  \texample.com/g2\t0.093s\n", G3 = "--- FAIL: TestX (0.00s)\nFAIL\texample.com/g3\t0.010s\nok  \texample.com/g3\t0.095s\n";
   const cls = (out: string, ok: boolean) => classifyCheck({ kind: "test", ok, out, runner: "go" });
   test("a passing -v package is not_run: test count could not be confirmed", () => {
-    const c = cls(OK_V, true); expect(c.result).toBe("not_run"); expect(c.reason).toBe("test count could not be confirmed");
+    const c = cls(OK_V, true); expect(c.result).toBe("not_run"); expect(c.reason).toBe(GO_EXIT0_REASON);
   });
   test("G2 and G3 (forged lines, exit 0) are not_run", () => {
     expect(cls(G2, true).result).toBe("not_run"); expect(cls(G3, true).result).toBe("not_run");

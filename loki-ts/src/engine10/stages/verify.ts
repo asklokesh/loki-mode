@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
-import { classifyCheck, ran, skipped } from "../../util/check_result.ts";
+import { classifyCheck, goRunner, ran, skipped } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -57,7 +57,7 @@ export function runnerCmd(t: TestRef, repoDir: string): [string, string[], Inter
     case "bun": return ["bun", ["test", t.path]];
     case "node": return ["node", ["--test", `./${t.path}`]];
     case "npm": return ["npm", ["test", "--silent"]];
-    case "go": return ["go", ["test", "-v", `./${dirname(t.path)}`]];
+    case "go": return ["go", ["test", "-json", `./${dirname(t.path)}`]];
     case "cargo": return ["cargo", ["test"]];
   }
 }
@@ -121,7 +121,8 @@ async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSi
   return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : tail };
 }
 export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
-  const lines = out.slice(-65536).split("\n").map((l) => l.trim()).filter(Boolean), l = lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
+  const goOut = (l: string): string => { try { const e = JSON.parse(l) as { Action?: string; Output?: string }; return typeof e.Action === "string" ? (e.Action === "output" ? (e.Output ?? "") : "") : l; } catch { return l; } }; // Go json event stream: the failing line is inside the event's Output
+  const lines = out.slice(-65536).split("\n").map((l) => (l.startsWith("{") ? goOut(l) : l).trim()).filter(Boolean), l =lines.find((x) => /^(FAILED\s|\u25cf\s.*\u203a|not ok\s|_{3,}\s.+\s_{3,}$)/.test(x)) ?? lines.find((x) => /^[\w./-]+\.go:\d+:\d+: \S/.test(x)) /* go compiler line, before "FAIL pkg [build failed]" */ ?? lines.find((x) => /fail|error/i.test(x) && !/^(=|\u2713|ok\b|PASS)/.test(x)) ?? "";
   return l.replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "").replace(/(^|\s)\/(?:[\w.@-]+\/)*[\w.@-]+/g, "$1<path>").replace(/:\d+(?::\d+)?/g, "").replace(/\[?\d+(?:\.\d+)?m?s\]?/g, "").replace(/\s+/g, " ").slice(0, 160);
 }
 /** Runs one check with a single retry: fail-then-pass is "flaky", not "fail". A missing tool, a
@@ -135,7 +136,7 @@ export async function runCheck(
   const kind = opts.kind ?? "test";
   const cwd = opts.cwd ?? ctx.repoDir;
   const one = async (a: Awaited<ReturnType<typeof runOnce>>) => {
-    let c: ReturnType<typeof classifyCheck> & { owner?: "harness" } = classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...(cmd === "go" ? { runner: "go" as const } : {}), path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined });
+    let c: ReturnType<typeof classifyCheck> & { owner?: "harness" } = classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner(cmd, args), path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined });
     const lr = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
     if (lr) c = { result: "not_run", reason: lr, owner: "harness" };
     if (!lr && kind === "static" && !a.ok && !a.cut && !a.missing && opts.wall?.size && wallOwnedFailure(a.out, cwd, ctx.repoDir, opts.wall)) c = { result: "not_run", reason: WALL_COMPILE_REASON, owner: "harness" }; // FC-23: never a fix round on a read-only Wall file // harness-owned load error: never retried, never a fix round

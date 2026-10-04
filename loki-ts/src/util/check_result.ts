@@ -6,6 +6,7 @@
 import { basename } from "node:path";
 
 export const NO_TESTS_REASON = "no tests executed";
+export const GO_EXIT0_REASON = "test count could not be confirmed: go test output is produced by the code under test and cannot confirm execution (a Go exit 0 is never a pass)";
 export const UNCONFIRMED_REASON = "test count could not be confirmed";
 /** Real failure evidence in a failed run: a failed test line, a go build or setup failure, a go compiler error line, or "N failed|errors". */
 const FAIL_EVIDENCE = /\[(?:build|setup) failed\]|^--- FAIL|^[\w./-]+\.go:\d+:\d+: \S|\b[1-9]\d* (?:failed|errors?)\b/m;
@@ -57,10 +58,14 @@ function bunCount(out: string): number | null {
   const last = (k: string): number => +(blk.map((x) => x.match(new RegExp(`^\\s*(\\d+) ${k}\\s*$`))?.[1]).filter(Boolean).pop() ?? 0);
   return last("pass") + last("fail");
 }
-/** python -m unittest: "Ran N tests in Xs" then OK / FAILED as the last two lines. Skipped and expected failures did not execute. */
-function unittestCount(out: string): number | null {
+/** python -m unittest: "Ran N tests in Xs" then OK / FAILED as the last two lines. Skipped and expected failures did not execute.
+ *  L3: user code (an atexit handler) can print a forged trailer after a real one, so the trailer is never trusted alone: an
+ *  second "Ran" block, or a verdict that contradicts the exit code, makes the count unknown (null). */
+function unittestCount(out: string, ok?: boolean): number | null {
   const ls = out.split("\n").filter((x) => x.trim()), v = ls[ls.length - 1] ?? "", r = ls[ls.length - 2]?.match(/^Ran (\d+) tests? in [\d.]+s$/);
   if (!r || !/^(?:OK|FAILED)\b/.test(v)) return null;
+  if (ls.filter((x) => /^Ran \d+ tests? in [\d.]+s$/.test(x)).length > 1) return null; // a second block may be an atexit forgery (also of an all-skipped "OK (skipped=N)")
+  if ((ok === true && v.startsWith("FAILED")) || (ok === false && v.startsWith("OK"))) return null; // verdict contradicts the exit code
   return Math.max(0, +r[1]! - +(v.match(/skipped=(\d+)/)?.[1] ?? 0) - +(v.match(/expected failures=(\d+)/)?.[1] ?? 0));
 }
 const GO_PKG_RE = /^(?:ok|FAIL|\?)\s+\S+\s+(?:\(cached\)|[\d.]+s\b|\[(?:no test files|build failed|setup failed)\])/;
@@ -82,6 +87,39 @@ function goCount(out: string, ok?: boolean): number | null | undefined {
   if (lines.some((x) => /^(?:=== RUN|PASS$|FAIL$|testing: warning: no tests to run)/.test(x))) return 0;
   return lines.filter((x) => GO_PKG_RE.test(x)).every((x) => /\[no tests? (?:files|to run)\]/.test(x)) ? 0 : null;
 }
+/** One shared Go-runner detection for every caller (verify, deep, per-package suites): a shell command line or an argv, with
+ *  leading env / command / exec / time wrappers, VAR=val assignments and a path to go (/usr/local/go/bin/go) all resolving to go.
+ *  Any `&&`, `;`, `||` or `|` segment that runs go counts. Chosen from the command, never from output. Detecting go too often
+ *  only fails closed (exit 0 is not_run), so a doubtful wrapper is classified as go. */
+export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" } | Record<string, never> {
+  const segs = args ? [[cmd, ...args]] : cmd.split(/&&|\|\||[;|\n]/).map((x) => x.trim().split(/\s+/).filter(Boolean));
+  for (const t0 of segs) {
+    const t = t0.map((x) => x.replace(/^["']|["']$/g, ""));
+    let k = 0;
+    for (; k < t.length; k++) {
+      const x = t[k]!;
+      if (/^[A-Za-z_]\w*=/.test(x) || /^(?:env|command|exec|time|nohup)$/.test(basename(x))) continue;
+      if (/^-/.test(x) && k > 0 && basename(t[k - 1]!) === "env") { if (x === "-u" || x === "-C" || x === "-S") k++; continue; }
+      break;
+    }
+    if (t[k] !== undefined && basename(t[k]!) === "go") return { runner: "go" };
+  }
+  return {};
+}
+/** go test -json, used for FAIL evidence only: every non-empty line is a test2json event (or a "go: " tool note), else null (parse
+ *  doubt). failed = a test or package reported fail. A pass is never read from this stream (see GO_EXIT0_REASON). */
+function goJson(out: string): { failed: boolean } | null {
+  let any = false, failed = false;
+  for (const x of out.split("\n")) {
+    if (!x.trim() || /^go: /.test(x)) continue;
+    let e: { Action?: unknown };
+    try { e = JSON.parse(x) as typeof e; } catch { return null; }
+    if (!e || typeof e !== "object" || typeof e.Action !== "string") return null;
+    any = true;
+    if (e.Action === "fail") failed = true;
+  }
+  return any ? { failed } : null;
+}
 /** Skipped or deselected tests from the runner's FINAL summary lines only: pytest "N skipped|deselected", jest/vitest "Tests: N skipped",
  *  node "# skipped N". Test names and captured output above the summary never count (A-115). */
 export function skipped(raw: string): number {
@@ -93,7 +131,7 @@ export function skipped(raw: string): number {
  *  null = unknown (never a pass). A vitest run with no files and no "Tests" summary is a real 0. */
 export function testCount(raw: string, path?: string, ok?: boolean): number | null {
   const out = stripAnsi(raw);
-  const bu = bunCount(out), ut = unittestCount(out);
+  const bu = bunCount(out), ut = unittestCount(out, ok);
   if (bu !== null) return bu;
   if (ut !== null) return ut;
   if (/^\s*(?:Test Files\s+0\b|No test files found)/m.test(out) && !/^\s*Tests?\s+\d/m.test(out)) return 0;
@@ -119,7 +157,10 @@ export function classifyCheck(i: ClassifyInput): Classified {
   // Go: the count comes from text a test can forge, so it is never trusted. Exit 0 is never a pass from parsing; a failed run is a
   // fail only when the output shows real failure evidence, else unconfirmed. A parse problem never fails the code and never passes.
   if (i.runner === "go") { // chosen from the command, never from output text a test can print
-    if (i.ok) return { result: "not_run", reason: UNCONFIRMED_REASON };
+    if (i.ok) return { result: "not_run", reason: GO_EXIT0_REASON };
+    const j = goJson(text); // go test -json: fail evidence (a fail event) on a red run
+    if (j) return j.failed ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
+    // no usable -json stream (plain or -v output): exit 0 is never a pass from parsing; a failed run is a fail only with real failure evidence
     return FAIL_EVIDENCE.test(text) || GO_FAIL_EVIDENCE.test(text) ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
   }
   const n = testCount(i.out, i.path, i.ok);

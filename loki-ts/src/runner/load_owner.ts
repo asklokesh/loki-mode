@@ -62,11 +62,12 @@ function sameLoadError(head: string, base: string, headRoots: string[], baseRoot
 
 /** Process ids under pid (inclusive), found through pgrep -P; every pid is one this call spawned. */
 function killTree(pid: number): void {
-  const all = [pid];
+  const all = [pid]; // snapshot the pgrep tree first, then kill the whole process group (the base run is spawned detached, so the group holds only this call's descendants, including ones reparented to init that pgrep -P cannot reach)
   for (let k = 0; k < all.length; k++) {
     const kids = spawnSync("pgrep", ["-P", String(all[k])], { encoding: "utf8", env: process.env }).stdout.split(/\s+/).filter(Boolean).map(Number);
     all.push(...kids.filter((x) => Number.isInteger(x) && !all.includes(x)));
   }
+  try { if (Number.isInteger(pid) && pid > 1) process.kill(-pid, "SIGKILL"); } catch { /* not a group leader (kill(-pid) throws ESRCH, never another group) or already gone */ }
   for (const p of all.reverse()) { try { process.kill(p, "SIGKILL"); } catch { /* already gone */ } }
 }
 
@@ -77,7 +78,7 @@ export async function runOnBase(i: LoadOwnerInput, dir: string): Promise<string 
   const stop = AbortSignal.any([i.signal, AbortSignal.timeout(i.timeoutMs ?? 60_000)]);
   try {
     const proc = Bun.spawn([sub(i.cmd), ...i.args.map(sub)], {
-      cwd: sub(i.cwd ?? i.repoDir), stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, ...(i.env ?? {}) },
+      cwd: sub(i.cwd ?? i.repoDir), stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env: { ...process.env, ...(i.env ?? {}) }, // detached: its own process group, killed as a group on a cut
     });
     let tail = ""; const rs = [proc.stdout, proc.stderr].map((x) => x.getReader());
     const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; tail = (tail + d.decode(c.value, { stream: true })).slice(-65536); } });
