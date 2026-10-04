@@ -49,8 +49,9 @@ Seats free up only after the Tier A rows. A B row is attempted only if a seat is
 Every row below shipped on tsc plus build only. Each line is a test or review that was skipped and is owed.
 - A1b: tests/util/fc25_safe_git.test.ts "FC-25b LFS" is skipped on GitHub Actions only (f4d223841). It was red in release run 37170767617 (` M big.bin`) but green in an ubuntu bun container (git 2.47.3) and on macOS (git 2.55.0). Root cause unknown; unskip and diagnose on the CI runner.
 - A2b: fc21b_verdict.test.ts for uncovered_changed (covered file gives VERIFIED, uncovered gives PARTIAL naming it), red-first, drop-condition mutation; rev-a2b verdict not finished.
-- A3: rev-a3 verdict not finished on 53d7fbf69.
-- A2a S5: rev-s5 verdict not finished on d1be73c18.
+- A3: rev-a3 APPROVE on 53d7fbf69 (02:11Z: CP 481/0, loki-ts 3691/0, 2 mutations red); nothing owed beyond the dist rebuild, done in main.
+- A2a S5: rev-s5 BLOCK on d1be73c18 (02:10Z) for a run_cap.ts merge conflict and stale fc25_safe_git callers, both resolved in train11 (tsc 0). Owed: readPlanScope (run_cap.ts) must drop absolute and ../ paths and cap the entry count (500 entries size to the 3600 ceiling); full bun test rerun.
+- A4a Ask page (rev-a4a 02:14Z): answers render raw markdown (`**bold**` shows literally); the answer said five runs where the DB had 7 (two FAILED runs unmentioned); the offer button path is unshown.
 - A4a/A4b fix-integ11: a render test that no raw enum (SPEC_CONFLICT, PARTIAL) reaches the sidebar or Work list; costOf no-session dash; prepublishOnly fails without dist/ask-tools-server.js.
 - A6b: full local-ci fast tier (timed out at 10 min); tests/test-issue-to-pr-action.sh and tests/test-engine10-docs.sh after the pin and GUIDE edits; supervisor_backstop load-flake triage.
 - B3: run the action with attest: true on a fixture, `gh attestation verify receipt.json --repo owner/repo` exits 0; step skipped when unset.
