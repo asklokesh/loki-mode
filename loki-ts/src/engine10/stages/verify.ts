@@ -11,7 +11,8 @@ import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
-import { classifyCheck, goRunner, ran, skipped } from "../../util/check_result.ts";
+import { isTestFile } from "../testmap.ts";
+import { classifyCheck, goRunner, hasExecutedProof, ran, skipped } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -90,6 +91,7 @@ interface RunOpts {
   wall?: ReadonlySet<string>; // FC-23: repo-relative Wall files; a static check failing only inside them is harness-owned
   kind?: "test" | "static"; // FC-16: "test" (default) needs a parsed executed count n>0 to pass; "static" (lint, typecheck, selector) is decided by exit code
 }
+const CODE_EXT = /\.(?:[cm]?[jt]sx?|py|go)$/; // the extensions testmap.ts maps (JS/TS, Python, Go)
 export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one shared count parser and classifier live in check_result.ts
 const CFG_ALWAYS = /(^|\/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
 const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json)$/;
@@ -284,6 +286,9 @@ export const verifyStage: Stage = {
         });
       }
     }
+    const cfgChanged = testConfigChanged(ctx.repoDir, ctx.baseSha, changed); // FC-21b: also feeds uncovered_changed
+    const covered = (f: string): boolean => ctx.tests.impacted(map, [f]).some((t) => checks.some((c) => c.name === `${t.runner}:${t.path}` && hasExecutedProof([c])));
+    const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
     const flaky = checks.filter((c) => c.result === "flaky").map((c) => c.name);
     // ponytail: real clustering is failures.ts, which depends on this stage; a naive 1:1
     // placeholder keeps the section-4 output key populated until that slice lands.
@@ -294,9 +299,9 @@ export const verifyStage: Stage = {
     // A-115: test configuration edits and relevant checks with more skips than base are listed, which makes the verdict PARTIAL at seal.
     const inBase = (f: string): boolean => { try { execFileSync("git", ["cat-file", "-e", `${ctx.baseSha}:${f}`], { cwd: ctx.repoDir, stdio: "ignore", env: process.env }); return true; } catch { return false; } };
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[`${t.runner}:${t.path}`]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
-    const weakened = [...modifiedRel, ...testConfigChanged(ctx.repoDir, ctx.baseSha, changed).map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
+    const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
     const notProven = [...weakened, ...checks.filter((c) => c.owner === "harness").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
-    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, test_counts: testCounts, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => c.name) } };
+    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => c.name) } };
   },
 };
 export const stage = verifyStage;

@@ -128,7 +128,7 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
-export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false): Verdict {
+export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false, uncovered: string[] = []): Verdict {
   const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
   if (o.commit?.failed !== true && strs(o.commit?.not_proven).length === 0 && (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done")) return proof ? "ALREADY_SATISFIED" : "PARTIAL";
@@ -136,7 +136,7 @@ export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptChe
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
   // FC-21b (1): a limit-killed implement is VERIFIED only when the harness itself ran every check green, a Wall or task-named test passed with n>0 (targetProof), and the limit was recorded.
-  if (exit === "killed") return typeof o.implement?.limit_s === "number" && targetProof && proof && !verifyNotProven && checks.length > 0 && checks.every((c) => c.result === "pass") ? "VERIFIED" : "PARTIAL";
+  if (exit === "killed") return typeof o.implement?.limit_s === "number" && targetProof && uncovered.length === 0 && proof && !verifyNotProven && checks.length > 0 && checks.every((c) => c.result === "pass") ? "VERIFIED" : "PARTIAL";
   if (typeof o.implement?.limit_s === "number") return "PARTIAL"; // A1: a limit that did not kill the session (an error or a throw) is never a clean verdict
   if (checks.some((c) => c.result === "fail")) return "FAILED";
   // E-98a B1: verify's own NOT PROVEN (e.g. a system interpreter) downgrades too -- never a silent VERIFIED.
@@ -214,7 +214,8 @@ export const sealStage: Stage = {
     for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
     const proof = wallGreenOnBase || hasExecutedProof(Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []); // FC-16: executed n>0 pass, from verify's raw checks or the Wall base run
-    const verdict = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify)), grp);
+    const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
+    const verdict = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
 
     const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...grp.notProven]);
     if (!proof && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; notProven.add(vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
@@ -234,6 +235,7 @@ export const sealStage: Stage = {
       const tc = tcs?.[t] as Obj | undefined; const mine = assertDeltaNotes(ctx.repoDir, ctx.baseSha, head, t, str(o.intake?.task) ?? "", cnt(tc?.b), cnt(tc?.h));
       if (!mine || mine.length !== vl.length || mine.some((n) => !vl.includes(n))) for (const v of vl) dropped.add(v);
     }
+    if (verdict !== "VERIFIED") for (const f of uncoveredAfterLimit) notProven.add(`changed, untested after limit: ${f}`);
     for (const c of checks) if (c.result === "not_run") notProven.add(`not run: ${c.name}`);
     for (const f of strs(o.verify?.flaky)) notProven.add(`flaky test: ${f}`);
     for (const n of verifyNotProven) if (!dropped.has(n)) notProven.add(n);
