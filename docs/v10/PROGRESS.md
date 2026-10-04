@@ -2237,3 +2237,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - FC-23 (Wall module system): first full bun test failed 3 (two L0 guards, one brief test); fixed by key-based reading. Commit and gate evidence requested.
 - Building: FC-16b, S1 (Project Model graph). Main CI on 04c8915a9 pending; npm latest=10.10.5.
 - Usage: week 83 percent, session 28 percent at 00:02Z. Stop new seats at 90 percent (D87).
+
+## 2026-10-04T00:53Z (CoS)
+- v10.11.0 released: release run 37165257915 success, promote.yml success, `npm view loki-mode dist-tags` = { latest: '10.11.0', next: '10.11.0' }. Steering smoke PASS 00:50Z (VERIFIED in 39s, $0.10). FC-23 released (549a14850).
+- P0 FC-25: the Tests moat job has been red on main since 4fa4e8015 (runs 37160286598 through 37165257952, REGRESSION P9.injection-cannot-reach-token: fsmonitor plant ran holding the canary token). Last green is 65ce2060b = v10.10.3. Suspect: run_cap.ts `git ls-files` from the token-holding supervisor (supervisor.ts:330); a local probe fired an fsmonitor plant on plain `git ls-files`. Row a79dc2f2a. Engineer fix-fc25-p9 (sonnet) is building safeGit() plus a sweep plus a guard; opus review next; 10.11.1 needs P9 green on the release commit (not waived by D88). Rollback is not via promote.yml (it refuses to go backwards); a manual dist-tag move needs the founder's direct word.
+- FC-24 (dc4671ee8): in-process runner forgery (pytest conftest repro at f28b15d78) is a known L2 limit; a pass is runner-reported.
+- In review: FC-16b round 3 8859584c7, FC-22 S2 a62aba7b2, FC-22 S3 d2e61c2ff (all opus). Building: FC-22 S5. Seats are frozen except P0 and FireLater#17 (week 84 percent at 00:43Z).
