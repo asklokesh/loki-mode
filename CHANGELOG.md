@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+- MCP server read-only mode (CP-ASK slice 1): `mcp/server.py --read-only` (or `LOKI_MCP_READ_ONLY=1`) registers only the 17-tool read allowlist (`READ_ONLY_TOOL_ALLOWLIST`); every other tool is absent, so a tool added later fails closed until classified. Default mode is unchanged.
+
 ## v10.10.5 (2026-10-03)
 
 Release-gate fix for 10.10.4: the 10.10.4 publish was blocked at its gate (release run 37160286619, spawn env guard), so nothing reached npm as 10.10.4. 10.10.5 ships everything listed under v10.10.4 below, plus the fix here.

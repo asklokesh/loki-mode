@@ -2979,6 +2979,43 @@ def _run_http_transport(port):
 
 
 # ============================================================
+# READ-ONLY MODE (CP-ASK slice 1)
+# ============================================================
+# `--read-only` (or LOKI_MCP_READ_ONLY=1) keeps ONLY the tools named here.
+# Everything else is removed from the registry, so a tool added later is absent
+# in read-only mode until someone classifies it and adds it to this list (fail
+# closed). Tools that spawn processes or write, even ones that sound like a
+# read (loki_verify_fast, loki_v10_verify), are deliberately excluded.
+READ_ONLY_TOOL_ALLOWLIST = frozenset({
+    "loki_memory_retrieve",
+    "loki_state_get",
+    "loki_metrics_efficiency",
+    "loki_v10_status",
+    "loki_project_status",
+    "loki_agent_metrics",
+    "loki_quality_report",
+    "loki_code_search",
+    "mem_search",
+    "mem_timeline",
+    "mem_get",
+    "loki_get_hotspots",
+    "loki_get_co_changes",
+    "loki_get_doc_coverage",
+    "loki_findings",
+    "loki_learnings",
+    "loki_graph_query",
+})
+
+
+def apply_read_only_mode(server=None):
+    """Remove every registered tool that is not in READ_ONLY_TOOL_ALLOWLIST."""
+    server = server if server is not None else mcp
+    for name in list(server._tool_manager._tools):
+        if name not in READ_ONLY_TOOL_ALLOWLIST:
+            server.remove_tool(name)
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -2997,6 +3034,10 @@ def main():
                              'server object built, non-zero otherwise. Used by '
                              '`loki mcp` to verify a venv before launching. '
                              'Does not start a server.'))
+    parser.add_argument('--read-only', action='store_true',
+                       help=('Register only the read allowlist '
+                             '(READ_ONLY_TOOL_ALLOWLIST). Also enabled by '
+                             'LOKI_MCP_READ_ONLY=1.'))
     args = parser.parse_args()
 
     # --check-sdk: if we reached here, the module-level loader already imported
@@ -3008,6 +3049,9 @@ def main():
             print("MCP SDK OK", file=sys.stderr)
             sys.exit(0)
         sys.exit(1)
+
+    if args.read_only or os.environ.get('LOKI_MCP_READ_ONLY') == '1':
+        apply_read_only_mode()
 
     # Register cleanup to prevent file handle leaks on shutdown/restart
     atexit.register(cleanup_mcp_singletons)
