@@ -1,6 +1,9 @@
 // CP-UI-SHELL: POST /v1/start validates strictly, exists only on a loopback bind, requires a loopback peer, allows one start per repo and strips server secrets from the child env.
 import { expect, test } from "bun:test";
-import { childEnv, planStart } from "../../src/server/spawn.ts";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { childEnv, planStart, repoRefusal } from "../../src/server/spawn.ts";
 import { createApp } from "../../src/server/app.ts";
 
 const calls: string[][] = [];
@@ -144,4 +147,21 @@ test("POST /v1/runs is not registered on a non-loopback bind", async () => {
   const { app, close } = mk(undefined, false);
   expect((await runs(app, { target: "a/b#1" })).status).toBe(404);
   close();
+});
+
+test("A3d: refuses HOME, /, and a non-repo dir with a human reason; allows a real repo", () => {
+  const home = mkdtempSync(join(tmpdir(), "cp-start-home-"));
+  const plain = join(home, "plain"), proj = join(home, "proj");
+  mkdirSync(plain); mkdirSync(join(proj, ".git"), { recursive: true });
+  const env = { HOME: home } as NodeJS.ProcessEnv;
+  expect(repoRefusal(home, env)).toContain("home directory");
+  expect(repoRefusal("/", env)).toContain("root");
+  expect(repoRefusal(plain, env)).toContain("not a git repository");
+  expect(repoRefusal(proj, env)).toBeNull();
+  const refused = (repo: string) => planStart({ target: "whats going on so far", repo }, [repo], "loki", env);
+  expect(refused(home)).toMatchObject({ ok: false, error: expect.stringContaining("home directory") });
+  expect(refused("/")).toMatchObject({ ok: false, error: expect.stringContaining("root") });
+  expect(refused(plain)).toMatchObject({ ok: false, error: expect.stringContaining("not a git repository") });
+  expect(planStart({ target: "fix it", repo: proj }, [proj], "loki", env)).toMatchObject({ ok: true });
+  rmSync(home, { recursive: true, force: true });
 });

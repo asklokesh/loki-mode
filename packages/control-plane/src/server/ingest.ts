@@ -4,7 +4,8 @@ import { validateEnvelope } from "../../../../loki-ts/src/engine10/events.ts";
 import type { EventEnvelope } from "../../../../loki-ts/src/engine10/types.ts";
 import { redactSecrets } from "../../../../loki-ts/src/util/redact.ts";
 import type { Db } from "../db/migrate.ts";
-import { events, runs, sources } from "../db/schema.ts";
+import { events, localRepos, runs, sources } from "../db/schema.ts";
+import { TEST_RUN_ID, tempRoots, underTemp } from "../db/fixture-cleanup.ts";
 import { rebuildRun } from "./runs.ts";
 
 export const MAX_EVENTS = 500;
@@ -20,6 +21,10 @@ export function ingest(db: Db, body: unknown): IngestResult {
   const sourceId = b?.source ?? b?.source_id;
   if (typeof sourceId !== "string" || !sourceId || typeof b?.run_id !== "string" || !b.run_id) return { status: 400, body: { error: "source and run_id required" } };
   const runId = b.run_id;
+  // A3b: test suites once leaked fixture runs into a real control.db. A source rooted under a temp dir, or a test run-id prefix, is never real history.
+  if (TEST_RUN_ID.test(runId)) return { status: 400, body: { error: `run_id ${runId} looks like a test fixture (e37-, e10-sig, e10-sg); refusing to ingest it` } };
+  const repoPath = db.select({ p: localRepos.realpath }).from(localRepos).where(eq(localRepos.sourceId, sourceId)).get()?.p;
+  if (repoPath && process.env.LOKI_CONTROL_ALLOW_TEMP_SOURCES !== "1" && underTemp(repoPath, tempRoots())) return { status: 400, body: { error: "source is a repo under a temp directory (a test fixture); refusing to ingest it" } };
   if (!Array.isArray(b.events) || b.events.length > MAX_EVENTS) return { status: 400, body: { error: `events must be an array of at most ${MAX_EVENTS}` } };
 
   const rows: { e: EventEnvelope; json: string; sha: string }[] = [];

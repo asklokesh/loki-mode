@@ -110,3 +110,11 @@ test("landing: live view when a run is active, overview otherwise", async () => 
   render(<Landing fallback={<p>empty</p>} />);
   expect(await screen.findByTestId("overview")).toBeTruthy();
 });
+
+test("A3a: the out-of-date banner shows only when the started and installed versions differ", async () => {
+  const { isStaleServer } = await import("../../ui/src/Live");
+  expect(isStaleServer({ version: "1.0.0", installed_version: "2.0.0" })).toBe(true);
+  expect(isStaleServer({ version: "2.0.0", installed_version: "2.0.0" })).toBe(false);
+  expect(isStaleServer({ service: "loki-control" })).toBe(false);
+  expect(isStaleServer(null)).toBe(false);
+});

@@ -2,7 +2,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { fmtUsd } from "./format";
 import { effectiveVerdict, VERDICT } from "./design/primitives";
-import { getRun, listRuns, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
+import { getHealth, getRun, listRuns, type Health, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
 export const UNMEASURED = "unmeasured";
 const POLL = 3000;
@@ -47,6 +47,15 @@ function usePoll<T>(fn: () => Promise<T>, deps: unknown[], again: (d: T) => bool
   return st;
 }
 
+/** FC-26: the server started as one version while another is installed on disk (it was left running across an upgrade). */
+export const isStaleServer = (h: Health | null | undefined): boolean => !!h && !!h.version && !!h.installed_version && h.version !== h.installed_version && h.installed_version !== "unknown";
+
+export function StaleBanner() {
+  const { data } = usePoll<Health | null>(() => getHealth().catch(() => null), [], () => true);
+  if (!isStaleServer(data)) return null;
+  return <p role="status" data-testid="cp-out-of-date" className="rounded border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">Control Plane is out of date, restarting. Run <code>loki control serve</code> if it does not come back (running {data!.version}, installed {data!.installed_version}).</p>;
+}
+
 const card = "rounded border border-slate-200 p-4 dark:border-slate-800";
 const tag: Record<StageView["status"], string> = { pending: "text-slate-400", running: "text-sky-600 dark:text-sky-400", done: "text-emerald-600 dark:text-emerald-400", failed: "text-red-600" };
 
@@ -64,6 +73,7 @@ export function LiveRun({ source, run }: { source: string; run: string }) {
   const pr = webUrl(data.pr_url);
   return (
     <section data-testid="live-run" className="space-y-4">
+      <StaleBanner />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{running ? "Live run" : "Run finished"}</h1>
         <span className="break-all font-mono text-xs text-slate-500">{data.run_id}</span>
@@ -165,5 +175,5 @@ export function Landing({ fallback, overview }: { fallback: ReactNode; overview?
   if (data.runs.length === 0) return <>{fallback}</>;
   const active = data.runs.find((r) => r.status === "running");
   if (active && !overview) return <LiveRun source={active.source_id} run={active.run_id} />;
-  return <Overview runs={data.runs} />;
+  return <><StaleBanner /><Overview runs={data.runs} /></>;
 }

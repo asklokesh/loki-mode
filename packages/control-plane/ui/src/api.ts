@@ -99,6 +99,9 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface Health { service?: string; version?: string; installed_version?: string }
+export const getHealth = (): Promise<Health> => get<Health>("/health");
+
 export function listRuns(f: RunFilters = {}): Promise<RunsResponse> {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(f)) if (v) q.set(k, v);
