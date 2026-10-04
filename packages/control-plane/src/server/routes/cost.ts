@@ -3,6 +3,7 @@
 // Unmeasured = no priced session (subscription or local provider): never summed as 0.
 import { gte } from "drizzle-orm";
 import { runs } from "../../db/schema.ts";
+import { effectiveVerdict, SUCCESS_VERDICTS } from "../integrity.ts";
 import type { RouteCtx } from "./index.ts";
 
 export const COST_DIMS = ["day", "model", "repo", "provider"] as const;
@@ -29,6 +30,24 @@ const round = (n: number) => Math.round(n * 1e6) / 1e6;
 const out = (a: Acc) => ({ ...a.key, runs: a.runs, measured_runs: a.measured_runs, partial_runs: a.partial_runs, unmeasured_runs: a.unmeasured_runs, measured_usd: round(a.measured_usd), partial_usd: round(a.partial_usd), input_tokens: a.input_tokens, output_tokens: a.output_tokens });
 
 export function mount(ctx: RouteCtx): void {
+  // B8: per-repo breakdown. total_usd sums measured runs only (never invents a zero); avg_usd is over measured runs; verified = plain attested success display verdict.
+  ctx.app.get("/v1/cost/repos", (c) => {
+    const g = new Map<string, { runs: number; priced: number; usd: number; verified: number }>();
+    for (const r of ctx.db.select().from(runs).all()) {
+      const k = r.originRepo ?? "(unknown)";
+      const a = g.get(k) ?? { runs: 0, priced: 0, usd: 0, verified: 0 };
+      a.runs++;
+      if (r.costUsd !== null) { a.priced++; a.usd += r.costUsd; }
+      const ev = effectiveVerdict({ verdict: r.verdict, tampered: r.tampered === 1, attested: r.attested === 1, sig_checked: r.sigChecked === 1 });
+      if (ev !== null && SUCCESS_VERDICTS.has(ev)) a.verified++;
+      g.set(k, a);
+    }
+    const rows = [...g.entries()].sort((x, y) => x[0].localeCompare(y[0])).map(([repo, a]) => ({
+      repo, runs: a.runs, total_usd: round(a.usd), avg_usd: a.priced ? round(a.usd / a.priced) : null,
+      verified_runs: a.verified, usd_per_verified: a.verified ? round(a.usd / a.verified) : null,
+    }));
+    return c.json({ rows });
+  });
   ctx.app.get("/v1/stats/cost", (c) => {
     const dims = (c.req.query("group") ?? "day").split(",").map((s) => s.trim()).filter(Boolean) as CostDim[];
     if (dims.length === 0 || dims.some((d) => !COST_DIMS.includes(d))) {
