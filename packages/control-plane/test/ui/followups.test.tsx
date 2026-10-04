@@ -6,7 +6,8 @@ const realFetch = globalThis.fetch;
 const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
 const { RunThread } = await import("../../ui/src/pages/run");
 const { Composer } = await import("../../ui/src/pages/compose");
-const { whyLine, receiptFacts, changedFilesFor } = await import("../../ui/src/pages/run/model");
+const { whyLine, changedFilesFor } = await import("../../ui/src/pages/run/model");
+const { receiptFacts } = await import("../../ui/src/pages/run/facts");
 const { outcome } = await import("../../ui/src/pages/home/cardtext");
 
 const STAT = { base: "b".repeat(40), head: "a".repeat(40), files: [{ path: "src/x.ts", added: 5, removed: 2 }, { path: "logo.png", added: null, removed: null }], added: 5, removed: 2 };
@@ -62,11 +63,14 @@ test("1: the home card counts files from diff_stat", () => {
   expect(outcome({ ...(row as object), diff_stat: null } as never)[1]).toStartWith("files unmeasured");
 });
 
-test("2: a non-VERIFIED run states why from real events; a VERIFIED run has no Why line", async () => {
-  serve(detail());
+test("2: the Why is the terminal stop reason; the verify failures sit behind Show raw; a VERIFIED run has no Why line", async () => {
+  serve(detail({ verdict: "FAILED", stop_reason: "The run failed in the verify stage: empty diff." }));
   render(<RunThread source="s1" run="r1" />);
-  await waitFor(() => expect(screen.getByTestId("run-why").textContent).toContain("2 fix rounds hit time limits"));
-  expect(screen.getByTestId("run-why").textContent).toContain("verify: bun:backend/tests/unit/validation.test.ts failed to load (Failed Suites 1)");
+  await waitFor(() => expect(screen.getByTestId("run-why").textContent).toBe("Why: The run failed in the verify stage: empty diff."));
+  expect(screen.queryByTestId("run-why-raw")).toBeNull();
+  fireEvent.click(screen.getByTestId("run-why-raw-toggle"));
+  expect(screen.getByTestId("run-why-raw").textContent).toContain("verify: bun:backend/tests/unit/validation.test.ts failed to load (Failed Suites 1)");
+  expect(screen.getByTestId("run-why-raw").textContent).toContain("2 fix rounds hit time limits");
   cleanup();
   serve(detail({ verdict: "VERIFIED" }));
   render(<RunThread source="s1" run="r1" />);
@@ -75,7 +79,8 @@ test("2: a non-VERIFIED run states why from real events; a VERIFIED run has no W
   cleanup();
   serve(detail({ verdict: "FAILED" }), []);
   render(<RunThread source="s1" run="r1" />);
-  await waitFor(() => expect(screen.getByTestId("run-why").textContent).toContain("unmeasured"));
+  await screen.findByTestId("run-thread");
+  expect(screen.queryByTestId("run-why")).toBeNull();
 });
 
 test("2: whyLine uses the last result per check and stage failure reasons", () => {
@@ -92,7 +97,7 @@ test("3: receipt facts render as rows, and the raw text is behind Show raw", asy
   serve(detail());
   render(<RunThread source="s1" run="r1" />);
   await waitFor(() => expect(screen.getByTestId("rr-checks").textContent).toContain("4 run: 2 passed, 1 failed, 1 not run"));
-  expect(screen.getByTestId("rr-verdict").textContent).toContain("PARTIAL");
+  expect(screen.getByTestId("rr-verdict").textContent).toContain("receipt says Partly verified");
   expect(screen.getByTestId("rr-diff").textContent).toContain("d".repeat(16));
   expect(screen.getByTestId("rr-base").textContent).toContain("b".repeat(12));
   expect(screen.getByTestId("rr-head").textContent).toContain("a".repeat(12));
@@ -102,7 +107,7 @@ test("3: receipt facts render as rows, and the raw text is behind Show raw", asy
   await waitFor(() => expect(screen.getByTestId("receipt-raw").textContent).toContain("raw receipt text"));
 });
 
-test("3: missing receipt facts read unmeasured; unchecked signature is stated", async () => {
+test("3: an unreachable receipt file is said so (never unmeasured); unchecked signature is stated", async () => {
   expect(receiptFacts("not json")).toBeNull();
   expect(receiptFacts("{}")?.checks).toBeNull();
   serve(detail({ sig_checked: false, diff_stat: null }));
@@ -110,8 +115,9 @@ test("3: missing receipt facts read unmeasured; unchecked signature is stated", 
   render(<RunThread source="s1" run="r1" />);
   await screen.findByTestId("run-thread");
   expect(screen.getByTestId("rr-sig").textContent).toEndWith("signed, signature not checked");
-  await waitFor(() => expect(screen.getByTestId("rr-checks").textContent).toEndWith("unmeasured"));
-  expect(screen.getByTestId("rr-diff").textContent).toEndWith("unmeasured");
+  await waitFor(() => expect(screen.getByTestId("rr-checks").textContent).toEndWith("0 passed, 1 failed"));
+  expect(screen.getByTestId("rr-diff").textContent).toEndWith("receipt file not reachable from this Control Plane");
+  expect(screen.getByTestId("run-receipt").textContent).not.toContain("unmeasured");
 });
 
 test("4: NOT PROVEN and the pull request sit in the right column, above the terminal panel", async () => {

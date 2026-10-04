@@ -61,8 +61,8 @@ test("runs list shows TAMPERED and the rollup does not count it as verified", as
 test("run page shows TAMPERED", async () => {
   render(<RunThread source="s1" run="t1" />);
   await screen.findByTestId("run-elapsed");
-  expect(screen.getAllByText("TAMPERED").length).toBeGreaterThan(0);
-  expect(screen.queryByText("VERIFIED")).toBeNull();
+  expect(screen.getByTestId("run-outcome").textContent).toBe("Tampered");
+  expect(screen.queryByText("Verified")).toBeNull();
 });
 
 test("home shows TAMPERED in recent runs", () => {
