@@ -1,4 +1,4 @@
-import { index, integer, primaryKey, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const sources = sqliteTable("sources", {
   id: text("id").primaryKey(),
@@ -87,3 +87,45 @@ export const actions = sqliteTable("actions", {
   result: text("result").notNull(),
   detail: text("detail"),
 }, (t) => [index("actions_ts").on(t.ts)]);
+
+// Ask Loki: async read-only Q&A jobs over runs, receipts, repos and issues (CP-ASK).
+export const askThreads = sqliteTable("ask_threads", {
+  id: text("id").primaryKey(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+  repo: text("repo"), // the repo chip; null = all repos
+  provider: text("provider").notNull(),
+  model: text("model"),
+  title: text("title"),
+});
+
+// role: user | assistant. status: queued | running | done | failed | timeout | over_budget | interrupted
+export const askMessages = sqliteTable("ask_messages", {
+  id: text("id").primaryKey(),
+  threadId: text("thread_id").notNull().references(() => askThreads.id),
+  seq: integer("seq").notNull(),
+  role: text("role").notNull(),
+  text: text("text").notNull(),
+  status: text("status").notNull(),
+  workerPid: integer("worker_pid"),
+  pgid: integer("pgid"),
+  costUsd: real("cost_usd"),
+  error: text("error"),
+  startedAt: text("started_at"),
+  finishedAt: text("finished_at"),
+}, (t) => [
+  uniqueIndex("ask_messages_thread_seq").on(t.threadId, t.seq),
+  index("ask_messages_status").on(t.status),
+]);
+
+// kind: delta | tool_use | tool_result | result | error. payload is a JSON string.
+export const askEvents = sqliteTable("ask_events", {
+  id: text("id").primaryKey(),
+  messageId: text("message_id").notNull().references(() => askMessages.id),
+  seq: integer("seq").notNull(),
+  kind: text("kind").notNull(),
+  payload: text("payload").notNull(),
+  ts: text("ts").notNull(),
+}, (t) => [
+  uniqueIndex("ask_events_message_seq").on(t.messageId, t.seq),
+]);
