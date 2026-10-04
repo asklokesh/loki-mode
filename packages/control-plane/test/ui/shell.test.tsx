@@ -1,4 +1,4 @@
-// CPE-02: lean shell. Session grouping, page registry, Settings area and the empty state.
+// Shell: navigation-only sidebar, page registry, Settings area, Ask history and the Cmd+K routing.
 import "./dom";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -6,77 +6,78 @@ import { join } from "node:path";
 
 const realFetch = globalThis.fetch;
 const { act, cleanup, fireEvent, render, screen, waitFor, within } = await import("@testing-library/react");
-const { groupRuns } = await import("../../ui/src/shell/grouping");
 const { AppShell } = await import("../../ui/src/shell/AppShell");
 const { registerPage, unregisterPage, matchPage, settingsPages } = await import("../../ui/src/pages/registry");
 const { setCommandPaletteHandler } = await import("../../ui/src/shell/hooks");
+const { resetAskState, refreshAsk } = await import("../../ui/src/pages/ask/api");
+const { closeNewRun, getNewRun } = await import("../../ui/src/pages/compose/store");
 await import("../../ui/src/App"); // registers the built-in pages
 
 const FIX = join(import.meta.dir, "fixtures");
 const load = (f: string) => JSON.parse(readFileSync(join(FIX, f), "utf8"));
-const base = load("runs.json").runs[0] as Record<string, unknown>;
 
 function serve(map: Record<string, unknown>) {
   globalThis.fetch = (async (url: string) => {
     const body = map[String(url).split("?")[0]!];
-    return body === undefined ? new Response("nope", { status: 404 }) : new Response(JSON.stringify(body));
+    return body === undefined ? new Response(JSON.stringify({ error: "nope" }), { status: 404 }) : new Response(JSON.stringify(body));
   }) as unknown as typeof fetch;
 }
 
-// Local-time anchors so the grouping is independent of the machine timezone.
-const NOW = new Date(2026, 9, 3, 14, 30).getTime();
-const at = (daysBack: number, h = 10) => new Date(2026, 9, 3 - daysBack, h, 0).toISOString();
-const run = (id: string, started: string | null, extra: Record<string, unknown> = {}) =>
-  ({ ...base, run_id: id, started_at: started, last_event_at: started, ...extra }) as never;
-
 beforeAll(() => { (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE = ""; });
-beforeEach(() => { location.hash = ""; });
+beforeEach(() => { location.hash = ""; resetAskState(); closeNewRun(); });
 afterEach(cleanup);
-afterAll(() => { globalThis.fetch = realFetch; location.hash = ""; });
+afterAll(() => { globalThis.fetch = realFetch; location.hash = ""; resetAskState(); });
 
-test("grouping: Today and Earlier from local days, newest first, empty groups omitted", () => {
-  const runs = [
-    run("old", at(5)),
-    run("today-early", at(0, 1)),
-    run("yesterday-late", at(1, 23)),
-    run("today-late", at(0, 14)),
-    run("two-days", at(2)),
-    run("undated", null),
-  ];
-  const g = groupRuns(runs, NOW);
-  expect(g.map((x) => x.name)).toEqual(["Today", "Earlier"]);
-  expect(g[0]!.runs.map((r) => r.run_id)).toEqual(["today-late", "today-early"]);
-  expect(g[1]!.runs.map((r) => r.run_id)).toEqual(["yesterday-late", "two-days", "old", "undated"]);
-  expect(groupRuns([run("only", at(0))], NOW).map((x) => x.name)).toEqual(["Today"]);
-  expect(groupRuns([], NOW)).toEqual([]);
-});
-
-test("sidebar renders the grouped sessions from GET /v1/runs", async () => {
-  const now = Date.now();
-  const today = new Date(now).toISOString();
-  serve({ "/v1/runs": { runs: [run("run-today", today, { issue_ref: "o/r#7" }), run("run-earlier", "2020-01-01T00:00:00Z")], total: 2, next_cursor: null } });
+test("sidebar is navigation only: six entries, a New run button, and no run list", async () => {
+  serve({ "/v1/runs": load("runs.json") });
   render(<AppShell />);
-  const list = await screen.findByTestId("session-list");
-  expect(within(list).getByText("Today")).toBeTruthy();
-  expect(within(list).getByText("Earlier")).toBeTruthy();
-  expect(within(list).queryByText("Yesterday")).toBeNull();
-  const rows = within(list).getAllByTestId("session-row");
-  expect(rows.map((r) => r.textContent)).toEqual([expect.stringContaining("o/r#7"), expect.stringContaining("run-earlier")]);
-  expect(rows[0]!.getAttribute("href")).toContain("#/runs/");
+  const nav = screen.getByTestId("nav");
+  const links = within(screen.getByTestId("nav-links")).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")]);
+  expect(links).toEqual([["Overview", "#/"], ["Runs", "#/runs"], ["Pull requests", "#/pulls"], ["Repos", "#/repos"], ["Receipts", "#/receipts"]]);
+  expect(within(nav).getByText("Settings").closest("a")?.getAttribute("href")).toBe("#/settings");
+  expect(within(nav).queryByTestId("session-row")).toBeNull();
+  expect(within(nav).queryByTestId("session-list")).toBeNull();
+  expect(within(nav).getByTestId("sidebar-new-run")).toBeTruthy();
   expect(screen.getByTestId("mascot")).toBeTruthy();
 });
 
-test("sidebar row without an issue ref shows the task title and repo, and the badge truncates instead of wrapping", async () => {
-  const today = new Date().toISOString();
-  serve({ "/v1/runs": { runs: [run("run-title", today, { issue_ref: null, title: "add a multiply function", origin_repo: "acme/calc", verdict: "VERIFIED", attested: true, sig_checked: false, tampered: false })], total: 1, next_cursor: null } });
+test("the sidebar New run button opens the picker; it never starts a run", async () => {
+  let posted = 0;
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    if (init?.method === "POST") posted++;
+    const u = String(url);
+    if (u.startsWith("/v1/repos")) return new Response(JSON.stringify({ repos: ["alpha"] }));
+    if (u.startsWith("/v1/runs")) return new Response(JSON.stringify({ runs: [], total: 0, next_cursor: null }));
+    return new Response("{}", { status: 404 });
+  }) as unknown as typeof fetch;
   render(<AppShell />);
-  const row = await screen.findByTestId("session-row");
-  expect(row.textContent).toContain("add a multiply function");
-  expect(row.textContent).toContain("acme/calc");
-  expect(row.textContent).not.toContain("run-title");
-  const badge = row.querySelector("[data-cp='badge']") as HTMLElement;
-  expect([badge.style.whiteSpace, badge.style.textOverflow, badge.style.overflow]).toEqual(["nowrap", "ellipsis", "hidden"]);
-  expect(badge.getAttribute("title")).toBe(badge.textContent!);
+  fireEvent.click(within(screen.getByTestId("nav")).getByTestId("sidebar-new-run"));
+  expect(getNewRun().open).toBe(true);
+  expect((await screen.findByTestId("picker-repo"))).toBeTruthy();
+  expect(posted).toBe(0);
+});
+
+test("the home route is the Overview, not a composer", async () => {
+  serve({ "/v1/runs": load("runs.json") });
+  render(<AppShell />);
+  expect(await screen.findByTestId("overview")).toBeTruthy();
+  expect(screen.queryByText("What should Loki build?")).toBeNull();
+  expect(screen.queryByTestId("hero")).toBeNull();
+});
+
+test("Ask history lists past threads under an Ask Loki section, and is absent when Ask is off", async () => {
+  serve({ "/v1/runs": load("empty.json") });
+  const off = render(<AppShell />);
+  await waitFor(() => expect(within(screen.getByTestId("nav")).queryByTestId("ask-history")).toBeNull());
+  off.unmount();
+  resetAskState();
+  serve({ "/v1/runs": load("empty.json"), "/v1/ask/threads": { threads: [{ id: "t1", title: "Why did FireLater#17 fail", updated_at: "2026-10-03T10:00:00Z" }] } });
+  render(<AppShell />);
+  const hist = await screen.findByTestId("ask-history");
+  expect(within(hist).getByText("Ask Loki")).toBeTruthy();
+  const link = within(hist).getByTestId("ask-thread-link");
+  expect(link.textContent).toBe("Why did FireLater#17 fail");
+  expect(link.getAttribute("href")).toBe("#/ask/t1");
 });
 
 test("registry: a registered page renders in the outlet with its params", async () => {
@@ -109,38 +110,42 @@ test("Settings entry lists inSettings pages and opens the chosen one", async () 
     expect(settingsPages().map((p) => p.id)).toContain("t-keys");
     expect(settingsPages().map((p) => p.id)).not.toContain("t-hidden");
     render(<AppShell />);
-    const entry = within(screen.getByTestId("nav")).getByText("Settings");
-    expect(entry.closest("a")?.getAttribute("href")).toBe("#/settings");
     location.hash = "#/settings";
     const sn = await screen.findByTestId("settings-nav");
     expect(within(sn).getByText("General")).toBeTruthy();
     expect(within(sn).getByText("Keys")).toBeTruthy();
     expect(within(sn).queryByText("Hidden")).toBeNull();
-    expect(screen.getByText(/Switch to (light|dark) theme/)).toBeTruthy(); // first settings page (General) shows by default
     location.hash = "#/settings/keys";
     expect((await screen.findByTestId("keys-page")).textContent).toBe("keys body");
   } finally { unregisterPage("t-keys"); unregisterPage("t-hidden"); }
 });
 
-test("empty state: no runs shows the import-repo state and an empty session list", async () => {
-  const zero = { since: null, runs_total: 0, runs_finished: 0, runs_running: 0, by_verdict: {}, verified_rate: null, cost: { measured_usd: null, measured_runs: 0, partial_usd: null, partial_runs: 0, label: "not measured" } };
-  serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] }, "/v1/stats": zero, "/v1/notifications": { notifications: [], total: 0 } });
+test("empty state: no runs shows the import state on the Overview", async () => {
+  serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
   render(<AppShell />);
   const empty = await screen.findByTestId("empty-state");
   expect(within(empty).getByText("Import runs from this folder")).toBeTruthy();
   expect(within(empty).getByText("loki start owner/repo#N")).toBeTruthy();
-  expect((await screen.findByTestId("sessions-empty")).textContent).toContain("No sessions yet");
 });
 
-test("home is composer-first and the sidebar has no lone New run button; Cmd+K calls the reserved hook only when set", async () => {
-  serve({ "/v1/runs": load("empty.json"), "/v1/repos": { repos: [] } });
+test("Cmd+K opens the palette when Ask is off, Ask Loki when it is on; Cmd+/ always opens the palette", async () => {
+  serve({ "/v1/runs": load("empty.json") });
   render(<AppShell />);
-  expect(screen.queryByTestId("new-run")).toBeNull();
-  expect(await screen.findByTestId("hero")).toBeTruthy();
-  expect(screen.getByText("What should Loki build?")).toBeTruthy();
-  const press = () => { const e = new KeyboardEvent("keydown", { key: "k", metaKey: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
-  expect(press()).toBe(false);
+  const press = (key: string) => { const e = new KeyboardEvent("keydown", { key, metaKey: true, cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; };
+  expect(press("k")).toBe(false); // no palette handler registered
   let n = 0;
   setCommandPaletteHandler(() => { n++; });
-  try { expect(press()).toBe(true); expect(n).toBe(1); } finally { setCommandPaletteHandler(null); }
+  try {
+    await refreshAsk(); // /v1/ask/threads is 404: Ask is off
+    expect(press("k")).toBe(true);
+    expect(n).toBe(1);
+    expect(location.hash).toBe("");
+    serve({ "/v1/runs": load("empty.json"), "/v1/ask/threads": { threads: [] } });
+    await refreshAsk();
+    expect(press("k")).toBe(true);
+    expect(n).toBe(1);
+    expect(location.hash).toBe("#/ask");
+    expect(press("/")).toBe(true);
+    expect(n).toBe(2);
+  } finally { setCommandPaletteHandler(null); }
 });

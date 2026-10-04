@@ -6,7 +6,7 @@ import { registerPage } from "./pages/registry";
 import { wirePages } from "./pages/wired";
 import { CommandPalette } from "./palette";
 import { AppShell } from "./shell/AppShell";
-import { EmptyState, SettingsPage, StartRun } from "./Shell";
+import { EmptyState, SettingsPage } from "./Shell";
 import { effectiveVerdict, FILTER_OPTIONS, VERDICT, type VerdictSource } from "./design/primitives";
 import { deleteRun, getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
@@ -260,11 +260,10 @@ export function RunDetail({ source, run }: { source: string; run: string }) {
   );
 }
 
-const home = <><StartRun /><RunsList /></>;
+const home = <RunsList />;
 
 registerPage({ id: "home", path: "/", title: "Home", component: () => <Landing fallback={home} /> });
 registerPage({ id: "overview", path: "/overview", title: "Overview", component: () => <Landing overview fallback={home} /> });
-registerPage({ id: "new-run", path: "/new", title: "New run", component: () => <section><h1 className="mb-4 text-xl font-semibold">New run</h1><StartRun /></section> });
 registerPage({ id: "runs", path: "/runs", title: "Runs", component: () => home });
 registerPage({ id: "run-detail", path: "/runs/:source/:run", title: "Run", component: ({ params }) => <RunDetail source={params.source!} run={params.run!} /> });
 registerPage({ id: "live-run", path: "/live/:source/:run", title: "Live run", component: ({ params }) => <LiveRun source={params.source!} run={params.run!} /> });

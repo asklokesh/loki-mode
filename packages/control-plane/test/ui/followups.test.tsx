@@ -5,9 +5,7 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 const realFetch = globalThis.fetch;
 const { cleanup, fireEvent, render, screen, waitFor } = await import("@testing-library/react");
 const { RunThread } = await import("../../ui/src/pages/run");
-const { Composer } = await import("../../ui/src/pages/compose");
 const { whyLine, receiptFacts, changedFilesFor } = await import("../../ui/src/pages/run/model");
-const { outcome } = await import("../../ui/src/pages/home/cardtext");
 
 const STAT = { base: "b".repeat(40), head: "a".repeat(40), files: [{ path: "src/x.ts", added: 5, removed: 2 }, { path: "logo.png", added: null, removed: null }], added: 5, removed: 2 };
 const detail = (o: Record<string, unknown> = {}) => ({
@@ -54,12 +52,6 @@ test("1: with no patch and no range the section still says unmeasured", async ()
   serve(detail({ diff_stat: null }));
   render(<RunThread source="s1" run="r1" />);
   await waitFor(() => expect(screen.getByTestId("changed-files-unmeasured").textContent).toContain("unmeasured"));
-});
-
-test("1: the home card counts files from diff_stat", () => {
-  const row = { source_id: "s", run_id: "r", verdict: "VERIFIED", attested: true, sig_checked: true, tampered: false, files_touched: [], diff_stat: STAT, cost_usd: 1, wall_s: 5 } as never;
-  expect(outcome(row)[1]).toStartWith("2 files touched, +5 -2");
-  expect(outcome({ ...(row as object), diff_stat: null } as never)[1]).toStartWith("files unmeasured");
 });
 
 test("2: a non-VERIFIED run states why from real events; a VERIFIED run has no Why line", async () => {
@@ -122,17 +114,4 @@ test("4: NOT PROVEN and the pull request sit in the right column, above the term
   expect(aside.contains(screen.getByTestId("run-pr"))).toBe(true);
   const panel = screen.getByTestId("run-panel");
   expect(screen.getByTestId("run-summary").compareDocumentPosition(panel) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-});
-
-test("5: the composer repo chip shows the server directory folder name and keeps the picker", async () => {
-  serve(detail());
-  render(<Composer />);
-  await waitFor(() => expect(screen.getByTestId("chip-repo").textContent).toContain("lokimode-anthropic"));
-  fireEvent.click(screen.getByTestId("chip-repo").querySelector("button")!);
-  expect((await screen.findAllByRole("menuitem")).map((m) => m.textContent)).toEqual(["lokimode-anthropic (server directory)", "alpha"]);
-  cleanup();
-  serve(detail(), [], { repos: [] });
-  render(<Composer />);
-  await waitFor(() => expect(screen.getByTestId("no-repos")).toBeTruthy());
-  expect(screen.getByTestId("chip-repo").textContent).toContain("server directory");
 });
