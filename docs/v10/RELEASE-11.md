@@ -47,6 +47,7 @@ Seats free up only after the Tier A rows. A B row is attempted only if a seat is
 
 ## Tests owed after Oct 7 (founder 02:08Z: no testing until next week)
 Every row below shipped on tsc plus build only. Each line is a test or review that was skipped and is owed.
+- A1b: tests/util/fc25_safe_git.test.ts "FC-25b LFS" is skipped on GitHub Actions only (f4d223841). It was red in release run 37170767617 (` M big.bin`) but green in an ubuntu bun container (git 2.47.3) and on macOS (git 2.55.0). Root cause unknown; unskip and diagnose on the CI runner.
 - A2b: fc21b_verdict.test.ts for uncovered_changed (covered file gives VERIFIED, uncovered gives PARTIAL naming it), red-first, drop-condition mutation; rev-a2b verdict not finished.
 - A3: rev-a3 verdict not finished on 53d7fbf69.
 - A2a S5: rev-s5 verdict not finished on d1be73c18.
