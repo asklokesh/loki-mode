@@ -431,7 +431,8 @@ ro_check() {  # $1 = tree
 M6="$WORK/m6"
 mkdir -p "$M6/autonomy" && cp -R "$REPO_ROOT/mcp" "$M6/mcp" && cp -R "$REPO_ROOT/autonomy/lib" "$M6/autonomy/lib" \
     && cp -R "$REPO_ROOT/memory" "$M6/memory" && cp -R "$REPO_ROOT/state" "$M6/state" \
-    && rm -rf "$M6/mcp/tests" "$M6/mcp/__pycache__" || { bad "seed m6"; exit 1; }
+    && rm -rf "$M6/mcp/tests" "$M6/mcp/__pycache__"
+[ -f "$M6/mcp/server.py" ] || { bad "seed m6"; exit 1; }
 if ro_check "$M6" >"$WORK/m6-control.txt" 2>&1; then
     ok "read-only surface: unmutated server lists no write tool (positive control)"
 else
