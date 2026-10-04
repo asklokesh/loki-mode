@@ -129,3 +129,5 @@ acb76a1913ee5bb0f725832db3f192ea52a1ddb2:docs/CONFIG-FILE-PLAN.md:generic-api-ke
 # Deleted legacy dashboard-ui maskToken test fixture: sk_live_ followed by the sequential alphabet (16 chars), a synthetic value, never a real Stripe key.
 f1aac14d33fe4bef7622848b24bb721e4800ad1d:dashboard-ui/tests/ui-components.test.js:stripe-access-token:322
 dcca5ebb5ca767b4b1358c66fc7d5d724f82251b:dashboard-ui/tests/ui-components.test.js:stripe-access-token:322
+# .gitleaksignore:123 is the comment above naming a public PEM file path; no key material.
+dd61901dc34ca13c107c7f9800171f6cec2efe45:.gitleaksignore:generic-api-key:123
