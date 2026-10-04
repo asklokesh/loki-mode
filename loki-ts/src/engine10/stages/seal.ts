@@ -128,17 +128,26 @@ export const commitStage: Stage = {
 // Stage outputs read by seal. Only keys in the ENGINE.md section 4 table (plus duration_s
 // from section 5) are trusted; any other key seal reads puts a "not recorded" entry on
 // NOT PROVEN when absent, so a producer cannot silently shape the receipt.
-export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean): Verdict {
+export function verdictOf(o: Partial<Record<StageName, Obj>>, checks: ReceiptCheck[], emptyDiff: boolean, verifyNotProven: boolean, wallGreenOnBase: boolean, proof: boolean, targetProof = false): Verdict {
   const exit = o.implement?.exit;
   // FC-16: no success verdict without a Loki-executed check with n>0 and a pass; otherwise PARTIAL (NOT PROVEN, "no tests executed").
   if (o.commit?.failed !== true && strs(o.commit?.not_proven).length === 0 && (o.intake?.already_satisfied === true || wallGreenOnBase || exit === "already_done")) return proof ? "ALREADY_SATISFIED" : "PARTIAL";
   if (exit === "spec_conflict") return "SPEC_CONFLICT"; if (o.commit?.failed === true || strs(o.commit?.not_proven).length > 0) return "FAILED"; // r3: an unrestored user file is never a clean verdict; A-104b r2: a failed commit never seals VERIFIED
   // Section 2: an empty diff without the LOKI_ALREADY_DONE marker is FAILED, never VERIFIED.
   if (emptyDiff) return "FAILED";
+  // FC-21b (1): a limit-killed implement is VERIFIED only when the harness itself ran every check green, a Wall or task-named test passed with n>0 (targetProof), and the limit was recorded.
+  if (exit === "killed") return typeof o.implement?.limit_s === "number" && targetProof && proof && !verifyNotProven && checks.length > 0 && checks.every((c) => c.result === "pass") ? "VERIFIED" : "PARTIAL";
+  if (typeof o.implement?.limit_s === "number") return "PARTIAL"; // A1: a limit that did not kill the session (an error or a throw) is never a clean verdict
   if (checks.some((c) => c.result === "fail")) return "FAILED";
   // E-98a B1: verify's own NOT PROVEN (e.g. a system interpreter) downgrades too -- never a silent VERIFIED.
   if (exit === "killed" || checks.length === 0 || checks.some((c) => c.result !== "pass") || verifyNotProven || !proof) return "PARTIAL";
   return "VERIFIED";
+}
+
+/** FC-21b: verify's target_checks (Wall and task-named relevant tests) names a test that ran n>0 and passed; read from verify's raw checks, never from prose. */
+export function targetProofOf(v: Obj | undefined): boolean {
+  const names = new Set(strs(v?.target_checks)), raw = Array.isArray(v?.checks) ? (v.checks as Obj[]) : [];
+  return raw.some((c) => names.has(String(c.name)) && hasExecutedProof([c]));
 }
 
 function checksOf(v: unknown): ReceiptCheck[] {
@@ -205,7 +214,7 @@ export const sealStage: Stage = {
     for (let i = 0; i + 1 < rawDiff.length; i += 2) if ((rawDiff[i]!.trim().split(" ").pop() ?? "") !== "A" && isTestFile(rawDiff[i + 1]!)) weakTests.push(rawDiff[i + 1]!);
     const grp = sealGroup(ctx.runDir, receiptSha256 as never); // D61-13: inert without group/manifest.json
     const proof = wallGreenOnBase || hasExecutedProof(Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []); // FC-16: executed n>0 pass, from verify's raw checks or the Wall base run
-    const verdict = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof), grp);
+    const verdict = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify)), grp);
 
     const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...grp.notProven]);
     if (!proof && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; notProven.add(vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
@@ -265,7 +274,7 @@ export const sealStage: Stage = {
       wall: { files: wallFiles.map((f) => ({ path: String(f.path), sha256: String(f.sha256) })), passed: wallPassed },
       checks,
       not_proven: [],
-      verdict, ...(grp.section ? { group: grp.section } : {}),
+      verdict, ...(typeof o.implement?.limit_s === "number" ? { implement_limit: { limit_s: o.implement.limit_s, elapsed_s: typeof o.implement.elapsed_s === "number" ? o.implement.elapsed_s : 0 } } : {}), ...(grp.section ? { group: grp.section } : {}),
       ...(str(o.implement?.spec_conflict_reason) !== null
         ? { spec_conflict_reason: sanitizeReason(str(o.implement?.spec_conflict_reason)!) }
         : {}),

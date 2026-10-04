@@ -190,7 +190,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const workerExit = worker.killed ? null : worker.code;
   const sealedData = sealed as Record<string, unknown> | null;
   const v = sealedData?.verdict;
-  const verdict: Verdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v) ? (v as Verdict) : "FAILED";
+  const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
   if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN);
   let prUrl: string | null = null;
@@ -222,7 +222,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
   const stopRaw = folded.run.escalated?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
-  const outcome = outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered), blocked = outcome === "BLOCKED";
+  const outcome = outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered, receiptVerdict), blocked = outcome === "BLOCKED";
   if (blocked || (verdict === "FAILED" && prUrl === null)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = allEvents.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
     const reason = blocked ? `spec conflict: ${String(why ?? "see the receipt").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500)}` : notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"];
@@ -239,7 +239,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     pc = partialCost(allEvents, log.tampered),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: [] as string[], wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: allEvents.some((e) => e.type === "cost") ? folded.cost.inputTokens + folded.cost.outputTokens : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s` }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
-  return { verdict, outcome, stop, receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
+  return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
 /** E-66: a text run confirmed already-done has no issue to comment on (no comment_argv, intake.ts);
  *  main() prints intake's comment body instead so the no-change decision is not swallowed. */

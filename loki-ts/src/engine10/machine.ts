@@ -2,10 +2,10 @@
 // stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through
 // RunContext; stages come from ./stages/<name>.ts.
 import { existsSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
-import { timeBudgetNote } from "../util/run_cap.ts";
+import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
 import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
@@ -24,6 +24,8 @@ export interface MachineOptions {
   stagesDir?: string;
   /** Run order override; the worker passes FLOW without "pr" (Rule of Two: pr runs in the supervisor). */
   flow?: typeof FLOW;
+  /** FC-21b: called once after plan||wall (or wall alone); returns the sized cap in seconds. */
+  resize?: () => number;
   /** Run start in epoch ms; the cap counts from here. Defaults to now. */
   startedAtMs?: number;
 }
@@ -59,17 +61,26 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const outputs: Partial<Record<StageName, Obj>> = {};
   let capHit = false, fatal: string | null = null;
   const startMs = opts.startedAtMs ?? ctx.clock.now();
-  const capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
+  let capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
-  const capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
+  let capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
+  let implementStartMs: number | null = null;
+  const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
   const sessions = { run: async (o: Parameters<typeof ctx.sessions.run>[0]) => {
-    const imp = o.stage === "implement" ? { ...o, limitS: Math.max(o.limitS, implementBudgetS) } : o, r = await ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 ? { ...imp, brief: `${imp.brief}\n\n${timeBudgetNote(imp.limitS)}` } : imp); // FC-21 (c): the dynamic time note goes AFTER the byte-stable prefix and body
+    const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
     const t = (r as { stderrTail?: string }).stderrTail ?? "", sdk = /\[sdk-loop error: [^\n]*?(?:(Failed to authenticate|API key is invalid|Not logged in)|(credit balance))/.exec(t); // the SDK's real wording, matched only on its own error line
     const k = r.exit === 0 ? null : sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason; if (k === "auth" || k === "quota_exhausted") fatal ??= `fatal:${k}`; if (ctx.overCap?.()) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     return r;
   } };
   const sctx: MachineRunContext = { ...ctx, sessions, outputs: () => ({ ...outputs }), capHit: () => capHit };
   const elapsedS = (): number => (ctx.clock.now() - startMs) / 1000;
+  /** FC-21b: the one post-plan resize. Never below the current cap or the elapsed time; recomputes capAtMs and re-arms the soft-cap timer. */
+  const applyResize = (proposedS: number): void => {
+    if (!(proposedS > ctx.capS) || proposedS <= elapsedS() || capCtl.signal.aborted) return;
+    ctx.capS = sctx.capS = proposedS; capAtMs = startMs + softCapS(proposedS) * 1000; clearTimeout(capTimer);
+    capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
+    ctx.emit("cap.sized", null, { cap_s: proposedS });
+  };
   // The timer alone can miss a cap that has just passed (it fires a tick later), so check the clock too.
   const capReached = (): boolean => capCtl.signal.aborted || ctx.clock.now() >= capAtMs || ctx.overCap?.() === true;
   /** Marks the cap; emits cap.hit once per run even when a parallel group is killed. */
@@ -87,7 +98,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       return null;
     }
     if (underCap && capReached()) { markCap(name); return null; }
-    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : st.limitS; if (name === "implement") implementBudgetS = limitS; // FC-19: implement gets the run budget left, not a fixed 480s
+    const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : st.limitS; if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
     ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS });
     const t0 = ctx.clock.now();
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
@@ -125,7 +136,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         clearTimeout(graceTimer);
       }
       r = { status: "failed", data: {}, reason: why, killed: true };
-      if (name === "implement" && why === "limit") outputs.implement = { exit: "killed" }; // FC-21 (a): the work that exists is verified, and seal reads exit=killed so the verdict can never be VERIFIED
+      if (name === "implement" && why === "limit") { const ro = (outputs.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [], reverted = restoreReadOnly(ro).map((f) => relative(ctx.repoDir, f)); outputs.implement = { exit: "killed", limit_s: limitS, elapsed_s: dur(), ...(reverted.length ? { tests_reverted: reverted } : {}) }; } // FC-21 (a): the work that exists is verified, and seal reads exit=killed so the verdict can never be VERIFIED
     }
     const res = r as StageResult;
     if (res.status === "completed") {
@@ -146,7 +157,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
   try {
-    let jumped = false, stopped: string | null = null;
+    let jumped = false, resized = false, stopped: string | null = null;
     const sigs: string[] = [];
     const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify(((d?.failures_grouped ?? []) as { signature?: string }[]).map((g) => g.signature).sort()); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
     for (const step of opts.flow ?? FLOW) {
@@ -161,6 +172,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
         return { outputs, capHit, stopped: "intake failed" };
       }
       if (results[todo.indexOf("commit")]?.status === "failed") return { outputs: { ...outputs, commit: { failed: true } }, capHit, stopped: "commit failed" }; // A-104b r2: a failed commit never advances to seal
+      if (opts.resize && !resized && (todo.includes("plan") || todo.includes("wall"))) { resized = true; try { applyResize(opts.resize()); } catch { /* an unreadable plan scope keeps the current cap */ } }
       if (fatal) { stopped = fatal; jumped = true; continue; }
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
       if (todo[0] === "verify") {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { GITHUB_TOKEN_VARS } from "../runner/github_token.ts";
 import { sumResultCosts } from "./cost.ts";
 import { capMeter } from "../e10ext/budget_cap.ts";
+import { resizeCap } from "../util/run_cap.ts"; import { loadProjectApi } from "../project_model/resolve.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 import { FLOW, runMachine } from "./machine.ts";
 import { createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
@@ -62,7 +63,8 @@ export async function main(args: string[]): Promise<number> {
       outputs: () => ({}), // replaced by the machine
     };
     // Rule of Two: pr is never loaded here; the supervisor runs it after this process exits.
-    const { stopped } = await runMachine(ctx, { flow: FLOW.filter((s) => s !== "pr") });
+    const resize = deep ? undefined : (): number => resizeCap(ctx.runDir, loadProjectApi(repoDir), !(Number(parseCapUsd(process.env.LOKI_E10_MAX_COST_USD)) > 0), Number(process.env.LOKI_E10_CAP_FIXED_S) || undefined); // FC-21b: one resize after plan||wall; the machine never shrinks the cap
+    const { stopped } = await runMachine(ctx, { flow: FLOW.filter((s) => s !== "pr"), ...(resize ? { resize } : {}) });
     if (stopped) emit("escalated", null, { stop: stopped }); // A-110: the supervisor maps the stop reason to an outcome
   });
   return 0;

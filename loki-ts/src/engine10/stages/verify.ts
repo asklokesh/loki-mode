@@ -271,6 +271,7 @@ export const verifyStage: Stage = {
       const tc = commandFor(t, ctx.repoDir, api);
       await runCheck(ctx, `${t.runner}:${t.path}`, tc.cmd, tc.args, signal, checks, { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), protect: [...wallTests, ...relevant].includes(t), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) });
     }
+    const targetNames = new Set([...wallTests, ...relevant].map((t) => `${t.runner}:${t.path}`)); // FC-21b: Wall and task-named tests, the proof a limit-stopped run needs
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), new Set(relevant.map((t) => `${t.runner}:${t.path}`)), signal);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
@@ -295,7 +296,7 @@ export const verifyStage: Stage = {
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[`${t.runner}:${t.path}`]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
     const weakened = [...modifiedRel, ...testConfigChanged(ctx.repoDir, ctx.baseSha, changed).map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
     const notProven = [...weakened, ...checks.filter((c) => c.owner === "harness").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
-    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, test_counts: testCounts } };
+    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, test_counts: testCounts, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => c.name) } };
   },
 };
 export const stage = verifyStage;

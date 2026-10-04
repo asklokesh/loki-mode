@@ -40,7 +40,7 @@ export function buildImplementBrief(task: string, plan: string | null, impactedT
 }
 
 /** Restores any read-only file the session changed or deleted; returns the paths restored, in order given. */
-function restoreReadOnly(files: ReadOnlyFile[]): string[] {
+export function restoreReadOnly(files: ReadOnlyFile[]): string[] {
   const reverted: string[] = [];
   for (const f of files) {
     const current = existsSync(f.path) ? readFileSync(f.path, "utf8") : null;
