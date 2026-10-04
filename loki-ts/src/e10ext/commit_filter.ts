@@ -2,6 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import { untouchedSinceIntake } from "./preexisting_dirty.ts";
+import { safeGit } from "../util/safe_git.ts";
 
 export type Staged = { st: string; f: string };
 
@@ -18,12 +19,11 @@ export function dropSet(repoDir: string, staged: Staged[], preexistingDirty: unk
  *  that was never committed. Withheld-token env, hooks/fsmonitor off (repoDir/.git is agent-writable).
  *  A clean tree, or add/reset failing, is a no-op: best-effort, never the reason a run fails. */
 export function backstopCommit(repoDir: string, workerEnv: NodeJS.ProcessEnv, runId: string, base: string, preexistingDirty: unknown): void {
-  const gArgs = (args: string[]) => ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args];
-  const g = (args: string[]) => execFileSync("git", gArgs(args), { cwd: repoDir, env: workerEnv, stdio: "ignore" });
+  const g = (args: string[]) => safeGit(repoDir, args, { env: workerEnv, stdio: "ignore" });
   try {
     g(["add", "-A", "--", "."]);
     // same exclusions as the commit stage (A-104c): pre-run dirt, Wall files, stray lockfiles, .loki
-    const staged = parseStaged(execFileSync("git", gArgs(["diff", "--cached", "--name-status", "--no-renames", "-z", base]), { cwd: repoDir, env: workerEnv, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
+    const staged = parseStaged(safeGit(repoDir, ["diff", "--cached", "--name-status", "--no-renames", "-z", base], { env: workerEnv }));
     const drop = dropSet(repoDir, staged, preexistingDirty, workerEnv);
     if (drop.length > 0) g(["--literal-pathspecs", "reset", "-q", base, "--", ...drop.map(({ f }) => f)]);
     g(["diff", "--cached", "--quiet"]);

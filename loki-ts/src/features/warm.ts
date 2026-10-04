@@ -2,7 +2,7 @@
 // intake results keyed by (repoDir, HEAD^{tree}, dirty-file hash), served over a unix socket (never
 // a TCP port). On by default; LOKI_SPEED=0 turns it off. The cold path stays the reference: a miss or a dead daemon never changes a result, it only costs time.
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { safeGit } from "../util/safe_git.ts";
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { dirname, resolve } from "node:path";
@@ -21,8 +21,7 @@ export function warmSocketPath(): string {
 }
 
 function git(repoDir: string, args: string[]): string | null {
-  const r = spawnSync("git", ["-C", repoDir, ...args], { encoding: "utf8", env: process.env });
-  return r.status === 0 ? r.stdout : null;
+  try { return safeGit(repoDir, args); } catch { return null; } // FC-25: CLI process holds the token
 }
 const MAX_HASHED_BYTES = 1_000_000;
 /** sha256 over the sorted `git status --porcelain` lines plus the content of each dirty file, so

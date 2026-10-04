@@ -9,6 +9,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { classifyRunnerOutput } from "./runner_errors.ts";
+import { safeGit } from "../util/safe_git.ts";
 
 export interface LoadOwnerInput {
   repoDir: string;
@@ -92,7 +93,7 @@ export async function runOnBase(i: LoadOwnerInput, dir: string): Promise<string 
 
 /** Tracked changes against baseSha plus untracked files (same set as verify.ts changedFiles); unknown diff throws. */
 function changedSince(repoDir: string, baseSha: string): string[] {
-  const g = (a: string[]): string[] => execFileSync("git", a, { cwd: repoDir, encoding: "utf8", env: process.env }).split("\n").map((l) => l.trim()).filter(Boolean);
+  const g = (a: string[]): string[] => safeGit(repoDir, a).split("\n").map((l) => l.trim()).filter(Boolean);
   return [...new Set([...g(["diff", "--name-only", baseSha]), ...g(["ls-files", "--others", "--exclude-standard"])])].filter((f) => !f.startsWith(".loki/"));
 }
 
@@ -102,9 +103,9 @@ export async function loadErrorIsHarnessOwned(i: LoadOwnerInput): Promise<boolea
   if (changedFilesNamed(i.out, i.repoDir, changed).length > 0) return false;
   if (i.args.some((a) => changed.includes(a.replace(/^\.\//, "")))) return false; // the target test file is the agent's own
   const dir = mkdtempSync(join(tmpdir(), "e10-loadown-"));
-  const git = (args: string[]): void => { execFileSync("git", args, { cwd: i.repoDir, stdio: "ignore", env: process.env }); };
+  const git = (args: string[]): void => { safeGit(i.repoDir, args, { stdio: "ignore" }); };
   try {
-    git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, i.baseSha]);
+    git(["worktree", "add", "--detach", dir, i.baseSha]);
     const base = await runOnBase(i, dir);
     return base !== null && classifyRunnerOutput(base).kind === "load_error" && sameLoadError(i.out, base, [i.repoDir, ...(i.cwd ? [i.cwd] : [])], [dir]);
   } catch { return false; } finally {

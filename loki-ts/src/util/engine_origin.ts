@@ -3,6 +3,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeGit } from "./safe_git.ts";
 
 export function eventsRelPath(runId: string): string {
   return `.loki/runs/${runId}/events.jsonl`;
@@ -16,7 +17,7 @@ export function writeEngineMarker(repoDir: string, runId: string): void { // EV-
 }
 export function readOriginUrl(repoDir: string): string | null {
   try {
-    const url = execFileSync("git", ["-C", repoDir, "config", "--get", "remote.origin.url"], { encoding: "utf8", env: process.env }).trim();
+    const url = safeGit(repoDir, ["config", "--get", "remote.origin.url"]).trim();
     return url || null;
   } catch {
     return null;
