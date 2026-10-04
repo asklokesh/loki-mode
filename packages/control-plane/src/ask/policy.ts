@@ -2,11 +2,21 @@
 // The provider never gets a shell, a file tool or the web; its only tools are the read-only TS tools server.
 import { chmodSync, existsSync, lstatSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, parse } from "node:path";
 
 /** Name of the TS tools server (packages/control-plane/src/ask/tools_server.ts); its tools surface as mcp__<name>__*. */
 export const MCP_SERVER_NAME = "loki-ask";
 export const MCP_SERVER_SCRIPT = "packages/control-plane/src/ask/tools_server.ts";
+export const MCP_SERVER_BUNDLE = "ask-tools-server.js";
+
+/** Find the tools server by walking up from startDir. The dist bundle (deps inlined) wins over the TypeScript source of a dev checkout. */
+export function resolveToolsServer(startDir: string): string | null {
+  const dirs: string[] = [];
+  for (let d = startDir; ; d = dirname(d)) { dirs.push(d); if (d === parse(d).root) break; }
+  const bundles = dirs.flatMap((d) => [join(d, MCP_SERVER_BUNDLE), join(d, "dist", MCP_SERVER_BUNDLE), join(d, "packages/control-plane/dist", MCP_SERVER_BUNDLE)]);
+  const sources = dirs.flatMap((d) => [join(d, "src/ask/tools_server.ts"), join(d, MCP_SERVER_SCRIPT)]);
+  return [...bundles, ...sources].find((f) => existsSync(f)) ?? null;
+}
 
 export const ALLOWED_TOOLS = `mcp__${MCP_SERVER_NAME}__*`;
 
@@ -18,9 +28,9 @@ export const DENIED_TOOLS = [
 ].join(",");
 
 /** The mcp.json for one job. The tools server reads control.db directly (read-only), so no CP URL or token exists anywhere in the job. */
-export function buildMcpConfig(repoRoot: string, dbPath: string): Record<string, unknown> {
+export function buildMcpConfig(serverScript: string, dbPath: string): Record<string, unknown> {
   const env: Record<string, string> = { LOKI_CONTROL_DB: dbPath };
-  return { mcpServers: { [MCP_SERVER_NAME]: { command: "bun", args: [join(repoRoot, MCP_SERVER_SCRIPT)], env } } };
+  return { mcpServers: { [MCP_SERVER_NAME]: { command: "bun", args: [serverScript], env } } };
 }
 
 const PREFIX = "loki-ask.";

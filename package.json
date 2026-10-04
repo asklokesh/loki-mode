@@ -89,6 +89,7 @@
     "packages/control-plane/drizzle/",
     "packages/control-plane/package.json",
     "packages/control-plane/dist/server.js",
+    "packages/control-plane/dist/ask-tools-server.js",
     "packages/control-plane/ui/dist/",
     "api/",
     "events/",

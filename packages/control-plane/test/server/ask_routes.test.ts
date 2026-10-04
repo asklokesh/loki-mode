@@ -85,10 +85,10 @@ test("validation: JSON only, question required and capped at 4000, unknown repo,
   expect((await ask(app, { question: "x".repeat(4001) })).status).toBe(400);
   expect((await ask(app, { question: "hi", repo: "no-such-repo" })).status).toBe(400);
   expect((await ask(app, { question: "hi" }, { headers: { origin: "http://evil.example" } })).status).toBe(403);
-  for (const provider of ["cline", "aider"]) {
+  for (const provider of ["cline", "aider", "opencode"]) {
     const r = await ask(app, { question: "hi", provider });
     expect(r.status).toBe(400);
-    expect(((await r.json()) as { error: string }).error).toBe("Ask needs a provider with MCP; use claude, codex or opencode");
+    expect(((await r.json()) as { error: string }).error).toBe("Ask needs claude or codex for now");
   }
   close();
 });

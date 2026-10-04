@@ -1,7 +1,7 @@
 // CP-ASK slice 10: Ask Loki HTTP surface, behind LOKI_CP_ASK=1 (flag off: every /v1/ask* route is 404).
 // Free text goes ONLY to the read-only Ask worker; it never reaches the run-start path (this file has no import from the run-start module).
 // Gate: a bearer token (enforced by tokenGuard on /v1/*) or, without one, a loopback peer and Host. POST needs JSON, a same-host Origin and questions up to 4000 chars.
-import { basename, resolve } from "node:path";
+import { basename } from "node:path";
 import type { Context } from "hono";
 import { localRepos } from "../../db/schema.ts";
 import { buildInvocation, MODEL_RE } from "../../ask/invoke.ts";
@@ -13,12 +13,10 @@ import type { RouteCtx } from "./index.ts";
 import { createSse } from "./stream.ts";
 
 export const MAX_QUESTION = 4000;
-const PROVIDERS = new Set(["claude", "codex", "cline", "aider", "opencode"]);
+const PROVIDERS = new Set(["claude", "codex", "cline", "aider", "opencode"]); // opencode and cline and aider are refused by buildInvocation
 const num = (v: string | undefined, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
 export const askEnabled = (): boolean => process.env.LOKI_CP_ASK === "1";
 
-// routes/ -> server/ -> src/ -> control-plane/ -> packages/ -> repo root
-const defaultRepoRoot = () => process.env.LOKI_ASK_REPO_ROOT || resolve(import.meta.dir, "../../../../..");
 
 export function mount(ctx: RouteCtx): void {
   const { app, db } = ctx;
@@ -64,7 +62,7 @@ export function mount(ctx: RouteCtx): void {
       threadId = t.id; provider = t.provider; model = t.model; repo = t.repo;
     } else {
       provider = typeof body.provider === "string" && body.provider ? body.provider : process.env.LOKI_ASK_PROVIDER || "claude";
-      if (!PROVIDERS.has(provider)) return c.json({ error: "provider must be one of: claude, codex, opencode" }, 400);
+      if (!PROVIDERS.has(provider)) return c.json({ error: "provider must be one of: claude, codex" }, 400);
       model = typeof body.model === "string" && body.model ? body.model : null;
       if (model !== null && !MODEL_RE.test(model)) return c.json({ error: "model must match [A-Za-z0-9][A-Za-z0-9._/-]{0,79}" }, 400);
       repo = typeof body.repo === "string" && body.repo ? body.repo : null;
@@ -79,7 +77,7 @@ export function mount(ctx: RouteCtx): void {
     const { assistantId } = addTurn(db, threadId, question);
     audit(db, { kind: "ask.start", target: threadId, result: "queued", detail: `provider ${provider}; ${question.length} chars` });
     void runAskJob(db, assistantId, {
-      repoRoot: defaultRepoRoot(), dbPath: dbPath(), bin: process.env.LOKI_ASK_BIN || undefined,
+      toolsServer: process.env.LOKI_ASK_TOOLS_SERVER || undefined, dbPath: dbPath(), bin: process.env.LOKI_ASK_BIN || undefined,
       timeoutMs: num(process.env.LOKI_ASK_TIMEOUT_S, 600) * 1000, maxUsd: num(process.env.LOKI_ASK_MAX_USD, 1),
     }).catch(() => { /* runAskJob records its own failures on the row */ });
     return c.json({ thread_id: threadId, message_id: assistantId }, 202);

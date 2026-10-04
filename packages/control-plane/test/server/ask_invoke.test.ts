@@ -39,9 +39,9 @@ test("codex runs in a read-only sandbox in the scratch dir", () => {
 });
 
 test("cline and aider are refused with the MCP message; unknown providers too", () => {
-  for (const p of ["cline", "aider"]) {
+  for (const p of ["cline", "aider", "opencode"]) {
     const r = buildInvocation({ ...base, provider: p });
-    expect(r).toEqual({ ok: false, error: "Ask needs a provider with MCP; use claude, codex or opencode" });
+    expect(r).toEqual({ ok: false, error: "Ask needs claude or codex for now" });
   }
   expect(buildInvocation({ ...base, provider: "gemini" }).ok).toBe(false);
 });

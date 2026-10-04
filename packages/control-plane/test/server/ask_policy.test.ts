@@ -1,8 +1,9 @@
 // CP-ASK slice 6: tool policy, read-only mcp.json and the per-job scratch dir.
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { ALLOWED_TOOLS, DENIED_TOOLS, MCP_SERVER_NAME, buildMcpConfig, createJobDir, removeJobDir } from "../../src/ask/policy.ts";
+import { ALLOWED_TOOLS, DENIED_TOOLS, MCP_SERVER_NAME, buildMcpConfig, createJobDir, removeJobDir, resolveToolsServer } from "../../src/ask/policy.ts";
 
 const REPO = resolve(import.meta.dir, "../../../..");
 
@@ -20,7 +21,7 @@ test("the allow list is only the one TypeScript tools server", () => {
 });
 
 test("mcp.json launches only the TS tools server (bun, no python, no server.py) with the db path and no token", () => {
-  const cfg = buildMcpConfig(REPO, "/data/control.db") as { mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }> };
+  const cfg = buildMcpConfig(join(REPO, "packages/control-plane/src/ask/tools_server.ts"), "/data/control.db") as { mcpServers: Record<string, { command: string; args: string[]; env?: Record<string, string> }> };
   expect(Object.keys(cfg.mcpServers)).toEqual([MCP_SERVER_NAME]);
   const s = cfg.mcpServers[MCP_SERVER_NAME]!;
   expect(s.command).toBe("bun");
@@ -43,4 +44,23 @@ test("removeJobDir refuses a path that is not a marked scratch dir", () => {
   expect(() => removeJobDir(REPO)).toThrow();
   expect(() => removeJobDir("/tmp")).toThrow();
   expect(existsSync(join(REPO, "package.json"))).toBe(true);
+});
+
+test("the tools server resolves from a dist-shaped dir, prefers the bundle, falls back to src, and is null when absent", () => {
+  const root = mkdtempSync(join(tmpdir(), "ask-resolve-test-"));
+  try {
+    const dist = join(root, "install/packages/control-plane/dist");
+    mkdirSync(dist, { recursive: true });
+    expect(resolveToolsServer(dist)).toBeNull();
+    const src = join(root, "install/packages/control-plane/src/ask");
+    mkdirSync(src, { recursive: true });
+    writeFileSync(join(src, "tools_server.ts"), "");
+    expect(resolveToolsServer(dist)).toBe(join(src, "tools_server.ts"));
+    writeFileSync(join(dist, "ask-tools-server.js"), "");
+    expect(resolveToolsServer(dist)).toBe(join(dist, "ask-tools-server.js"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("from the real source tree the tools server resolves to the checkout's tools_server.ts", () => {
+  expect(resolveToolsServer(join(REPO, "packages/control-plane/src/ask"))).toMatch(/tools_server\.ts$|ask-tools-server\.js$/);
 });

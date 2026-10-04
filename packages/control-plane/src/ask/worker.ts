@@ -8,12 +8,13 @@ import type { Db } from "../db/migrate.ts";
 import { childEnv } from "../server/spawn.ts";
 import { buildInvocation } from "./invoke.ts";
 import { type AskProvider, finish, markComplete, newState, parseLine } from "./parse.ts";
-import { buildMcpConfig, createJobDir, MCP_SERVER_SCRIPT, removeJobDir } from "./policy.ts";
+import { buildMcpConfig, createJobDir, removeJobDir, resolveToolsServer } from "./policy.ts";
 import { buildPrompt } from "./prompt.ts";
 import { type AskStatus, appendEvent, finishMessage, getMessage, getThread, listMessages, setRunning } from "./store.ts";
 
 export interface WorkerOpts {
-  repoRoot: string;
+  /** Tools server script; resolved from the running bundle or checkout when omitted. */
+  toolsServer?: string;
   dbPath: string;
   /** Provider binary override (tests, pinned path). */
   bin?: string;
@@ -58,12 +59,14 @@ export async function runAskJob(db: Db, messageId: string, o: WorkerOpts): Promi
   const maxUsd = o.maxUsd ?? DEFAULT_MAX_USD;
   let jobDir: string | undefined;
   try {
+    const toolsServer = o.toolsServer ?? resolveToolsServer(import.meta.dir);
+    if (!toolsServer) return fail("Ask tools server not found (expected ask-tools-server.js in dist/ or src/ask/tools_server.ts); rebuild with bun run build:server");
     jobDir = createJobDir();
     const mcpConfigPath = join(jobDir, "mcp.json");
-    writeFileSync(mcpConfigPath, JSON.stringify(buildMcpConfig(o.repoRoot, o.dbPath)), { mode: 0o600 });
+    writeFileSync(mcpConfigPath, JSON.stringify(buildMcpConfig(toolsServer, o.dbPath)), { mode: 0o600 });
     const inv = buildInvocation({
       provider: thread.provider, model: thread.model, mcpConfigPath, jobDir, maxUsd, bin: o.bin,
-      mcpCommand: { command: "bun", args: [join(o.repoRoot, MCP_SERVER_SCRIPT)] },
+      mcpCommand: { command: "bun", args: [toolsServer] },
     });
     if (!inv.ok) return fail(inv.error);
     const provider = thread.provider as AskProvider;

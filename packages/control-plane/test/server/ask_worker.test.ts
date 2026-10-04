@@ -46,7 +46,7 @@ function setup(question = "whats going on so far") {
   const { assistantId } = addTurn(db, thread, question);
   return { db, thread, id: assistantId };
 }
-const opts = (extra: Record<string, unknown> = {}) => ({ repoRoot: REPO, dbPath: "/data/control.db", bin, timeoutMs: 10_000, maxUsd: 1, ...extra });
+const opts = (extra: Record<string, unknown> = {}) => ({ dbPath: "/data/control.db", bin, timeoutMs: 10_000, maxUsd: 1, ...extra });
 const mode = (m: string) => { process.env.FAKE_MODE = m; rmSync(out, { recursive: true, force: true }); };
 
 test("a good run is done, stores events and tool calls as citations, and removes the scratch dir", async () => {
@@ -144,7 +144,7 @@ test("an unsupported provider fails before spawning anything", async () => {
   const t = createThread(db, { provider: "aider" });
   const { assistantId } = addTurn(db, t, "hi");
   expect(await runAskJob(db, assistantId, opts())).toBe("failed");
-  expect(getMessage(db, assistantId)!.error).toContain("Ask needs a provider with MCP");
+  expect(getMessage(db, assistantId)!.error).toContain("Ask needs claude or codex for now");
   expect(existsSync(out)).toBe(false);
 });
 
