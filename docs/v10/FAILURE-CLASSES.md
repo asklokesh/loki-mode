@@ -319,3 +319,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: `selectRelevantFiles` (plan hints, decompose, implement brief context) still counts every overlapping token, on purpose. The only caller that turns that list into a skipped Wall is `speedLikelyFiles` via `hasRelevantTests` (plan.ts and wall.ts). `namedFiles` (basename in the task text) is unchanged and still lean-eligible.
 - Mechanism: one selector, `selectSpecificFiles`, drops tokens that occur in more than half the repo-map entries before scoring. `speedLikelyFiles` uses it. A distinctive symbol still selects its file. Plan hints stay on `selectRelevantFiles`.
 - Fixture: loki-ts/tests/engine10/sizing_lean.test.ts, "FC-27: a token on most paths is not a relevant test, so the Wall stays".
+
+## FC-28 A short brief skips the Wall because a common word sits inside a longer symbol
+- User saw: the same one-line brief, rerun e10-20261004T210509Z-9f4f after 11.0.2, still skipped the Wall ("small task with a relevant test") and ended FAILED with no PR. The jest failure was a different test in the same file. FC-27 only dropped tokens that hit most of the tree. A shorter word still matched as a substring of one symbol, and that one file with a test was enough to skip the Wall. Raw Claude Code does not treat a common word inside a longer name as proof the change is already covered.
+- Law: L0 (the harness must not decide that an unnamed brief already names its files), L2 (when the signal is not an exact name, keep the Wall).
+- Siblings: `selectRelevantFiles` still uses substring overlap for plan hints. `namedFiles` still matches a basename written out in the task. FC-27's half-repo drop stays on the same selector.
+- Mechanism: `selectSpecificFiles` counts a task word only when it equals a path segment or a symbol. A word inside a longer name does not. `speedLikelyFiles` is still the only caller that can skip the Wall.
+- Fixture: loki-ts/tests/engine10/sizing_lean.test.ts, "FC-28: a word inside a longer symbol is not a relevant test, so the Wall stays".

@@ -59,4 +59,23 @@ describe("D61-03 lean eligibility without a named file", () => {
     expect(selectSpecificFiles("fix the rounding in renderInvoice totals for acme", wide)).toEqual(["acme-web/d.tsx"]);
     expect(hasRelevantTests("fix the rounding in renderInvoice totals for acme", wide, TM, one)).toBe(true);
   });
+
+  it("FC-28: a word inside a longer symbol is not a relevant test, so the Wall stays", () => {
+    process.env["LOKI_SPEED"] = "1";
+    const repo: RepoMap = {
+      files: ["src/card.tsx", "src/theme.tsx", "src/page.tsx", "src/list.tsx"],
+      entries: [
+        { path: "src/card.tsx", symbols: ["formatPrice"] },
+        { path: "src/theme.tsx", symbols: ["ThemeProvider"] },
+        { path: "src/page.tsx", symbols: [] },
+        { path: "src/list.tsx", symbols: [] },
+      ],
+      truncated: false,
+    };
+    const brief = "upgrade the format for a modern alternative";
+    expect(selectRelevantFiles(brief, repo)).toContain("src/card.tsx");
+    expect(selectSpecificFiles(brief, repo)).toEqual([]);
+    expect(hasRelevantTests(brief, repo, TM, one)).toBe(false);
+    expect(smallTaskPath(sizeTask(brief, repo, TM).size, false)).toBe("wall");
+  });
 });
