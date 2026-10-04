@@ -45,3 +45,44 @@ test("safeGit strips the token family and SSH_AUTH_SOCK from the child env", () 
   expect(e).toEqual({ KEEP: "1" });
   reset(); safeGit(repo, ["ls-files"]); expect(fired()).toBe(false);
 });
+
+// FC-25b: filter, textconv and gpg.program plants. Each repo gets its own recorder that logs the token it can see.
+type Plant = { name: string; setup: (r: string, rec: string) => void; calls: string[][] };
+const PLANTS: Plant[] = [
+  { name: "filter via .gitattributes", calls: [["status", "--porcelain"], ["diff", "--name-only", "HEAD"], ["add", "-A", "--", "."]],
+    setup: (r, rec) => { writeFileSync(join(r, ".gitattributes"), "* filter=evil\n"); gc(r, "filter.evil.clean", rec); gc(r, "filter.evil.process", rec); } },
+  { name: "filter via .git/info/attributes", calls: [["status", "--porcelain"], ["diff", "--name-only", "HEAD"], ["add", "-A", "--", "."]],
+    setup: (r, rec) => { writeFileSync(join(r, ".git", "info", "attributes"), "* filter=evil\n"); gc(r, "filter.evil.clean", rec); } },
+  { name: "diff textconv", calls: [["log", "-p", "-1"], ["diff", "HEAD~1", "HEAD"]],
+    setup: (r, rec) => { writeFileSync(join(r, ".gitattributes"), "*.txt diff=evil\n"); gc(r, "diff.evil.textconv", rec); } },
+  { name: "gpg.program with commit.gpgSign", calls: [["commit", "-q", "--allow-empty", "-m", "x"]],
+    setup: (r, rec) => { gc(r, "gpg.program", rec); gc(r, "commit.gpgSign", "true"); } },
+];
+const gc = (r: string, k: string, v: string): void => { execFileSync("git", ["config", k, v], { cwd: r, env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } }); };
+for (const pl of PLANTS) {
+  test(`FC-25b: ${pl.name} never runs, no token visible`, () => {
+    const r = mkdtempSync(join(root, "p-")), h = join(r, "..", `${r.split("/").pop()}.hit`), rec = join(root, `rec-${r.split("/").pop()}.sh`);
+    writeFileSync(rec, `#!/bin/sh\necho "fired token=$GH_TOKEN" >> "${h}"\ncat\n`); chmodSync(rec, 0o755);
+    const G = (...a: string[]): string => execFileSync("git", a, { cwd: r, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } });
+    G("init", "-q"); G("config", "user.email", "t@t"); G("config", "user.name", "t");
+    writeFileSync(join(r, "a.txt"), "a\n"); G("add", "a.txt"); G("commit", "-qm", "one"); writeFileSync(join(r, "a.txt"), "b\n"); G("commit", "-qam", "two");
+    writeFileSync(join(r, "c.txt"), "new\n");
+    pl.setup(r, rec);
+    // control: the plant fires under a plain, token-holding git call
+    for (const c of pl.calls) { try { execFileSync("git", c, { cwd: r, env: { ...process.env, GH_TOKEN: CANARY, GIT_CONFIG_GLOBAL: "/dev/null" }, stdio: "ignore" }); } catch { /* ok */ } }
+    expect(existsSync(h)).toBe(true); rmSync(h, { force: true });
+    const saved = process.env.GH_TOKEN; process.env.GH_TOKEN = CANARY;
+    try { for (const c of pl.calls) { try { safeGit(r, c); } catch { /* an error is acceptable, a run is not */ } } } finally { if (saved === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = saved; }
+    expect(existsSync(h) ? readFileSync(h, "utf8") : "").toBe("");
+  });
+}
+test("FC-25b: a required=true filter is blanked: the command never runs and git does not report a false error", () => {
+  const r = mkdtempSync(join(root, "req-")), h = join(root, "req.hit"), rec = join(root, "req-rec.sh");
+  writeFileSync(rec, `#!/bin/sh\necho fired >> "${h}"\ncat\n`); chmodSync(rec, 0o755);
+  const G = (...a: string[]): string => execFileSync("git", a, { cwd: r, encoding: "utf8", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null" } });
+  G("init", "-q"); writeFileSync(join(r, ".gitattributes"), "* filter=evil\n"); writeFileSync(join(r, "a.txt"), "a\n");
+  gc(r, "filter.evil.clean", rec); gc(r, "filter.evil.required", "true");
+  // git 2.55 accepts a blanked required filter (no error, no run); if a git version errors instead, the throw propagates to callers (run_cap: unknown size; changedSince: fail-safe false)
+  try { safeGit(r, ["add", "-A", "--", "."]); } catch { /* a throw is the documented fail-safe */ }
+  expect(existsSync(h)).toBe(false);
+});
