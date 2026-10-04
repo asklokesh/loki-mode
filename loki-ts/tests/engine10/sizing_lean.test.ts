@@ -1,5 +1,6 @@
 // D61-03: lean eligibility without a named file; fail-safe to Wall.
 import { afterEach, describe, expect, it } from "bun:test";
+import { selectRelevantFiles, selectSpecificFiles } from "../../src/engine10/relevant_files.ts";
 import { hasRelevantTests, smallTaskPath, sizeTask } from "../../src/engine10/sizing.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 import type { TestMap, TestRef } from "../../src/engine10/types.ts";
@@ -36,5 +37,26 @@ describe("D61-03 lean eligibility without a named file", () => {
     process.env["LOKI_SPEED"] = "1";
     expect(hasRelevantTests("zzz qqq", map, TM, one)).toBe(false);
     expect(hasRelevantTests(task, null, TM, one)).toBe(false);
+  });
+
+  it("FC-27: a token on most paths is not a relevant test, so the Wall stays", () => {
+    process.env["LOKI_SPEED"] = "1";
+    const wide: RepoMap = {
+      files: ["acme-web/a.tsx", "acme-web/b.tsx", "acme-web/c.tsx", "acme-web/d.tsx"],
+      entries: [
+        { path: "acme-web/a.tsx", symbols: [] },
+        { path: "acme-web/b.tsx", symbols: [] },
+        { path: "acme-web/c.tsx", symbols: [] },
+        { path: "acme-web/d.tsx", symbols: ["renderInvoice"] },
+      ],
+      truncated: false,
+    };
+    const brief = "upgrade the acme experience";
+    expect(selectRelevantFiles(brief, wide).length).toBe(4); // plan hints may still list the tree
+    expect(selectSpecificFiles(brief, wide)).toEqual([]);
+    expect(hasRelevantTests(brief, wide, TM, one)).toBe(false);
+    expect(smallTaskPath(sizeTask(brief, wide, TM).size, false)).toBe("wall");
+    expect(selectSpecificFiles("fix the rounding in renderInvoice totals for acme", wide)).toEqual(["acme-web/d.tsx"]);
+    expect(hasRelevantTests("fix the rounding in renderInvoice totals for acme", wide, TM, one)).toBe(true);
   });
 });
