@@ -31,12 +31,12 @@ printf "const test=require('node:test');const assert=require('node:assert');cons
     && git add package.json sum.js sum.test.js && git commit -q -m init )
 
 PYTHONUSERBASE="$(python3 -m site --user-base 2>/dev/null)"; export PYTHONUSERBASE
-export HOME="$T/home" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_ENGINE=legacy
+export HOME="$T/home" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1
 unset LOKI_PROVIDER
 export PATH="$T/bin:$PATH"
 LOKI="$REPO_ROOT/bin/loki"
 
-( cd "$d" && timeout -k 5 300 "$LOKI" quick "fix the bug in sum.js" ) < /dev/null > "$T/quick.log" 2>&1
+( cd "$d" && timeout -k 5 300 "$REPO_ROOT/autonomy/loki" quick "fix the bug in sum.js" ) < /dev/null > "$T/quick.log" 2>&1
 QRC=$?
 # Legacy quick ladder (docs/exit-codes.md): 0 ok, 3 tests weakened, other nonzero passed through.
 if [ "$QRC" = 0 ] || [ "$QRC" = 3 ] || { [ "$QRC" -gt 3 ] && [ "$QRC" -lt 256 ]; }; then ok "quick rc=$QRC is on the documented ladder"; else bad "quick rc=$QRC off ladder"; fi

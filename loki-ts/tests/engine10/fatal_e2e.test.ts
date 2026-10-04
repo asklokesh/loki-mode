@@ -47,7 +47,7 @@ function run(env: Record<string, string>) {
   writeFileSync(join(bin, "claude"), STUB, { mode: 0o755 });
   const plugin = join(tmp, "plugin.ts"); writeFileSync(plugin, PLUGIN);
   const e: Record<string, string | undefined> = {
-    ...process.env, LOKI_ENGINE: "v10", LOKI_TS_ENTRY: join(LOKI_TS, "src", "cli.ts"), LOKI_E10_INVOKER: "cli",
+    ...process.env, LOKI_TS_ENTRY: join(LOKI_TS, "src", "cli.ts"), LOKI_E10_INVOKER: "cli",
     LOKI_CLAUDE_CLI: join(bin, "claude"), PATH: `${bin}:${process.env.PATH ?? ""}`, LOKI_NO_BROWSER: "1",
     HOME: tmp, LOKI_RECEIPT_SIGNING_KEY_FILE: join(tmp, "k.pem"), BUN_OPTIONS: `--preload ${plugin}`, ...env,
   };

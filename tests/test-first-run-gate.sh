@@ -47,7 +47,7 @@ quick)
         echo '{"cost":{"usd":null}}' > .loki/runs/r/receipt.json; echo '{"type":"cost","data":{"usd":null}}' > .loki/runs/r/events.jsonl
     else echo '{"type":"cost","data":{"usd":0,"source":"cli-unmetered"}}' > .loki/runs/r/events.jsonl; fi
     # the v10 quiet summary: start line then Outcome, PR, Receipt, NOT PROVEN, Cost, Time (7 lines)
-    if [ "$FAKE_MODE" = nostart ]; then echo "Loki engine starting"; else echo "Loki 10 engine (set LOKI_ENGINE=legacy to use the old engine)"; fi
+    if [ "$FAKE_MODE" = nostart ]; then echo "Loki engine starting"; else echo "Loki 10 engine"; fi
     echo "Outcome:    VERIFIED"
     echo "PR:         none (local)"
     if [ "$FAKE_MODE" = prefix ]; then echo "Receipt:    receipt ${D:0:12}"; else echo "Receipt:    receipt_sha256: $D"; fi
@@ -87,7 +87,7 @@ expect() { # expect <mode> <assertion> <PASS|FAIL>
 }
 
 run_gate clean
-for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time engine-start-line cost-non-null engine-fallback skip-not-verified skip-bare-verify skip-not-verified-legacy; do expect clean $a PASS; done
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines wall-time engine-start-line cost-non-null engine-fallback skip-not-verified skip-bare-verify; do expect clean $a PASS; done
 [ "$RC" -eq 0 ] && ok "clean: gate exits 0" || bad "clean: gate exit $RC"
 [ -s "$T/report-clean.txt" ] && ok "clean: report written" || bad "clean: no report"
 
@@ -111,8 +111,7 @@ printf '%s\n' "$OUT" | grep -q 'no v10 run dir' && ok "fallback: cost reports no
 printf '%s\n' "$OUT" | grep -q 'IndexError' && bad "fallback: IndexError crash" || ok "fallback: no IndexError"
 run_gate nocost;     expect nocost cost-non-null FAIL;       [ "$RC" -ne 0 ] && ok "nocost: exits non-zero" || bad "nocost: exit 0"
 run_gate skipbare;   expect skipbare skip-bare-verify FAIL;  [ "$RC" -ne 0 ] && ok "skipbare: exits non-zero" || bad "skipbare: exit 0"
-run_gate skiprc0;    expect skiprc0 skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skiprc0: 9b needs rc 3" || bad "skiprc0: exit 0"
-run_gate skipver;    expect skipver skip-not-verified FAIL;  expect skipver skip-not-verified-legacy FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
+run_gate skipver;    expect skipver skip-not-verified FAIL;  [ "$RC" -ne 0 ] && ok "skipver: exits non-zero" || bad "skipver: exit 0"
 
 # P0-DASH-STATIC: dashboard-root assertion (GET / is a 410 page naming the Control Plane) (needs fastapi+uvicorn; otherwise the gate prints SKIP, never FAIL)
 DPY=""
@@ -128,10 +127,9 @@ fi
 
 # legacy (no-bun) leg
 run_legacy clean
-for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines legacy-fallback-line skip-not-verified-legacy; do expect legacy-clean $a PASS; done
+for a in exit-honest tests-green no-stray-files digest-matches verify-ok receipt-signed output-lines legacy-fallback-line; do expect legacy-clean $a PASS; done
 [ "$RC" -eq 0 ] && ok "legacy-clean: gate exits 0" || bad "legacy-clean: gate exit $RC"
 printf '%s\n' "$OUT" | grep -Eq 'engine-start-line|cost-non-null|skip-not-verified:|skip-bare-verify' && bad "legacy-clean: v10-only check ran" || ok "legacy-clean: v10-only checks skipped"
-run_legacy skipver;    expect legacy-skip skip-not-verified-legacy FAIL; [ "$RC" -ne 0 ] && ok "legacy-skip: exits non-zero" || bad "legacy-skip: exit 0"
 run_legacy nofb;       expect legacy-nofb legacy-fallback-line FAIL;     [ "$RC" -ne 0 ] && ok "legacy-nofb: exits non-zero" || bad "legacy-nofb: exit 0"
 run_legacy legacylong; expect legacy-long output-lines FAIL;             [ "$RC" -ne 0 ] && ok "legacy-long: exits non-zero" || bad "legacy-long: exit 0"
 # the v10 leg still rejects the legacy fallback and still enforces 8 lines

@@ -279,7 +279,7 @@ def main(argv):
     wt_root = top.rstrip("/") + "-backlog"
     os.makedirs(os.path.join(wt_root, "logs"), exist_ok=True)
     launcher = os.environ.get("LOKI_BACKLOG_LAUNCHER") or os.path.join(REPO_ROOT, "bin", "loki")
-    child_env = dict(env, LOKI_ENGINE="v10", LOKI_NO_BROWSER="1")
+    child_env = dict(env, LOKI_NO_BROWSER="1")
     for key, var in (("models.default", "LOKI_MODEL_DEVELOPMENT"), ("models.cheap", "LOKI_MODEL_FAST")):
         sect, name = key.split(".")
         if cfg.get(sect, {}).get(name):

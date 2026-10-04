@@ -205,7 +205,7 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     run_dir = os.path.join(base_dir, ".loki", "workspaces", name, run_id)
     os.makedirs(run_dir, exist_ok=True)
     launcher = launcher or os.environ.get("LOKI_WORKSPACE_LAUNCHER") or os.path.join(REPO_ROOT, "bin", "loki")
-    child_env_base = dict(os.environ, LOKI_ENGINE="v10", LOKI_NO_BROWSER="1")
+    child_env_base = dict(os.environ, LOKI_NO_BROWSER="1")
 
     outcome, worktrees, heads, kind = {}, {}, {}, {}
     timing = {}  # repo -> {started_at, finished_at} epoch seconds

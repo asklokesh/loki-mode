@@ -87,7 +87,7 @@ else
 fi
 [ -x "$LOKI" ] || die "no executable loki at $LOKI"
 
-START_LINE_RE='^Loki 10 engine \('   # the v10 start banner legitimately names LOKI_ENGINE=legacy
+START_LINE_RE='^Loki 10 engine'
 TABLE="" LINES_OUT="" NPASS=0 NFAIL=0 NSKIP=0
 
 # run_repo <spec> <expected> <allowed> <max_seconds>; sets VERDICT=PASS|FAIL|SKIP, DETAIL

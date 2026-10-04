@@ -41,8 +41,8 @@ chmod +x "$T/bin/claude"
 
 (
     cd "$FIX" || exit 2
-    STUB_PROMPTS="$T/prompts.log" HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_ENGINE=legacy \
-        "$REPO_ROOT/bin/loki" quick "fix the bug that makes the failing test in sum.test.js fail" < /dev/null > "$T/out.log" 2>&1
+    STUB_PROMPTS="$T/prompts.log" HOME="$T/home" PATH="$T/bin:$PATH" LOKI_NO_BROWSER=1 LOKI_SKIP_AUTH_PREFLIGHT=1 \
+        "$REPO_ROOT/autonomy/loki" quick "fix the bug that makes the failing test in sum.test.js fail" < /dev/null > "$T/out.log" 2>&1
 )
 echo "loki quick rc=$?"
 
