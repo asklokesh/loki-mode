@@ -5,16 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v10.11.0 (2026-10-04)
 
-### Fixed
-- Read-only MCP mode follow-ups: every public `MemoryStorage` mutator now calls one shared `_check_writable()` and raises `PermissionError` under `MemoryStorage.READ_ONLY` (previously save_pattern, update_pattern, update_timeline, set_active_context, delete_episode, delete_file, ensure_directory and the namespace copy/merge wrote unguarded); the code-search auto-reindex gate is now covered by a test that arms `LOKI_CODE_INDEX_AUTOREINDEX=1` against a stale manifest and asserts no spawn.
+Engine honesty and Ask Loki foundations. FC-23 makes Wall compile failures harness-owned and matches Wall tests to the package's module system; FC-22 S1 adds the package graph and cited install command to the Project Model (not yet used for selection); CP-ASK slices 1, 4 and 8 land the read-only MCP mode, the Ask schema and the stream parser, all inert until `LOKI_CP_ASK` is enabled.
 
 ### Added
 - MCP server read-only mode (CP-ASK slice 1): `mcp/server.py --read-only` (or `LOKI_MCP_READ_ONLY=1`) registers only the 16-tool read allowlist (`READ_ONLY_TOOL_ALLOWLIST`); every other tool is absent, so a tool added later fails closed until classified. In this mode the event and learning-signal emitters, code-search auto-reindex, the StateManager and the memory store (new `MemoryStorage.READ_ONLY`: no directories, no init, no lock files, writes raise) do no filesystem work, and code search refuses a non-loopback `LOKI_CHROMA_HOST`. `LOKI_MCP_READ_ONLY` accepts 1, true, yes. Default mode is unchanged.
 - Project Model (FC-22a/FC-22b, S1): each package may declare `dependsOn` (roots of the packages it builds on) and `install` (its cited dependency-install command), both decided by the discovery model from manifests (no import parsing). An unknown `dependsOn` root is rejected; an absent field means edges are unknown. New `project_model/graph.ts` (`dependentsOf`, transitive and cycle-safe) and `util/yaml_key.ts` (a two-level yaml key reader that ignores deeper same-named keys and reads CRLF). The cache key is salted with `model-rev:2`, so a cached older model is rediscovered once.
+- Control-plane Ask schema (CP-ASK slice 4): new `ask_threads`, `ask_messages` and `ask_events` tables (migration `0005_ask`) for the coming async Ask Loki box. Existing `runs` rows migrate byte-equal. Nothing reads or writes them yet; the feature stays behind `LOKI_CP_ASK` (default off).
+- Control-plane Ask stream parser (CP-ASK slice 8): a pure parser for the provider's streamed output (claude stream-json, codex degraded) that joins text deltas, captures tool calls as citations, takes cost from the result line, and marks a truncated stream failed, never done. Not wired yet; behind `LOKI_CP_ASK`.
 
 ### Fixed
+- Read-only MCP mode follow-ups: every public `MemoryStorage` mutator now calls one shared `_check_writable()` and raises `PermissionError` under `MemoryStorage.READ_ONLY` (previously save_pattern, update_pattern, update_timeline, set_active_context, delete_episode, delete_file, ensure_directory and the namespace copy/merge wrote unguarded); the code-search auto-reindex gate is now covered by a test that arms `LOKI_CODE_INDEX_AUTOREINDEX=1` against a stale manifest and asserts no spawn.
 - FC-23: the Wall now matches the package it writes for. The Wall brief states the package's module system (package.json "type" and the tsconfig "module", read with a JSONC-aware parser, relative "extends" followed), so a CommonJS package is told never to use import.meta. A generated Wall file that the package's own compiler would reject (import.meta under CommonJS) is discarded and listed in NOT PROVEN instead of entering the tree. A lint or type error whose every location is inside a Wall file (tsc and eslint output parsed) is harness-owned: the check is not_run with "wall test did not compile under the package config", never a fix round. A real failure in the user's code, or any mix with user code, still gets fix rounds (FireLater#17 on 10.10.5 spent fix round 1 on a read-only Wall file).
 
 ## v10.10.5 (2026-10-03)
