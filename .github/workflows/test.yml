@@ -414,7 +414,8 @@ jobs:
         os: [ubuntu-latest]
         bun-version: ["1.3.13"]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    # 20, not 10: since e594e3a43 the unit tests run with coverage (about 6 min), and run 37173354311 hit the 10-min cap mid funnel-privacy.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
