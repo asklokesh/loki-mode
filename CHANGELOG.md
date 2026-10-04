@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
-- MCP server read-only mode (CP-ASK slice 1): `mcp/server.py --read-only` (or `LOKI_MCP_READ_ONLY=1`) registers only the 17-tool read allowlist (`READ_ONLY_TOOL_ALLOWLIST`); every other tool is absent, so a tool added later fails closed until classified. Default mode is unchanged.
+- MCP server read-only mode (CP-ASK slice 1): `mcp/server.py --read-only` (or `LOKI_MCP_READ_ONLY=1`) registers only the 16-tool read allowlist (`READ_ONLY_TOOL_ALLOWLIST`); every other tool is absent, so a tool added later fails closed until classified. In this mode the event and learning-signal emitters, code-search auto-reindex, the StateManager and the memory store (new `MemoryStorage.READ_ONLY`: no directories, no init, no lock files, writes raise) do no filesystem work, and code search refuses a non-loopback `LOKI_CHROMA_HOST`. `LOKI_MCP_READ_ONLY` accepts 1, true, yes. Default mode is unchanged.
 
 ## v10.10.5 (2026-10-03)
 

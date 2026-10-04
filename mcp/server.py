@@ -112,7 +112,9 @@ def _get_mcp_state_manager():
     has disappeared (e.g., project changed) to prevent stale file handle errors.
     """
     global _state_manager
-    if not STATE_MANAGER_AVAILABLE:
+    if not STATE_MANAGER_AVAILABLE or _READ_ONLY_MODE:
+        # Read-only mode: StateManager creates .loki dirs on construction, so
+        # callers use their direct-file-read fallbacks instead.
         return None
     loki_dir = os.path.join(os.getcwd(), '.loki')
     if _state_manager is not None:
@@ -329,6 +331,10 @@ logger = logging.getLogger('loki-mcp')
 # EVENT EMISSION - Non-blocking tool call events
 # ============================================================
 
+# Set by apply_read_only_mode(). Every emitter checks it and returns before any
+# filesystem work, so a read-only server never writes .loki/events or signals.
+_READ_ONLY_MODE = False
+
 # Track tool call start times for duration calculation (per-tool stack)
 _tool_call_start_times: Dict[str, List[float]] = {}
 _tool_call_times_lock = threading.Lock()
@@ -344,6 +350,9 @@ def _emit_tool_event_async(tool_name: str, action: str, **kwargs) -> None:
         **kwargs: Additional payload fields (parameters, result_status, error)
     """
     import time
+
+    if _READ_ONLY_MODE:
+        return
 
     # Track timing for learning signals using a per-tool-name stack (thread-safe)
     if action == 'start':
@@ -411,7 +420,7 @@ def _emit_learning_signal_async(
         error: Error message if failed
         parameters: Tool parameters for context
     """
-    if not LEARNING_COLLECTOR_AVAILABLE:
+    if _READ_ONLY_MODE or not LEARNING_COLLECTOR_AVAILABLE:
         return
 
     def emit():
@@ -475,7 +484,7 @@ def _emit_context_relevance_signal(
         retrieved_ids: IDs of retrieved items
         context: Additional context
     """
-    if not LEARNING_COLLECTOR_AVAILABLE:
+    if _READ_ONLY_MODE or not LEARNING_COLLECTOR_AVAILABLE:
         return
 
     def emit():
@@ -1792,6 +1801,8 @@ def _maybe_autoreindex_code() -> None:
     Default behavior is warn-if-stale (the tools just report the staleness
     fields). Best-effort: never raises into the caller.
     """
+    if _READ_ONLY_MODE:
+        return
     if os.environ.get("LOKI_CODE_INDEX_AUTOREINDEX", "0") != "1":
         return
     if not _code_index_staleness().get("stale"):
@@ -1807,6 +1818,12 @@ def _maybe_autoreindex_code() -> None:
                        capture_output=True, timeout=300)
     except Exception as e:
         logger.warning(f"Auto-reindex (LOKI_CODE_INDEX_AUTOREINDEX) failed: {e}")
+
+
+def _chroma_host_is_loopback() -> bool:
+    """True when LOKI_CHROMA_HOST is unset or a loopback name or address."""
+    host = os.environ.get("LOKI_CHROMA_HOST", "").strip().strip("[]").lower()
+    return host in ("", "localhost", "127.0.0.1", "::1")
 
 
 def _get_chroma_collection():
@@ -1878,6 +1895,12 @@ async def loki_code_search(
     # freeze the MCP event loop while the indexer runs.
     await asyncio.to_thread(_maybe_autoreindex_code)
     _staleness = _code_index_staleness()
+
+    if _READ_ONLY_MODE and not _chroma_host_is_loopback():
+        return json.dumps({
+            "error": "read-only mode: code search refuses a non-loopback "
+                     "LOKI_CHROMA_HOST; set it to localhost or unset it"
+        })
 
     collection = _get_chroma_collection()
     if collection is None:
@@ -3003,12 +3026,28 @@ READ_ONLY_TOOL_ALLOWLIST = frozenset({
     "loki_get_doc_coverage",
     "loki_findings",
     "loki_learnings",
-    "loki_graph_query",
 })
 
 
+def read_only_env_enabled() -> bool:
+    """LOKI_MCP_READ_ONLY accepts 1, true, yes (case-insensitive)."""
+    return os.environ.get('LOKI_MCP_READ_ONLY', '').strip().lower() in (
+        '1', 'true', 'yes')
+
+
 def apply_read_only_mode(server=None):
-    """Remove every registered tool that is not in READ_ONLY_TOOL_ALLOWLIST."""
+    """Remove every registered tool that is not in READ_ONLY_TOOL_ALLOWLIST.
+
+    Also sets _READ_ONLY_MODE, which the event and learning-signal emitters
+    check so no call writes .loki/events or .loki/learning.
+    """
+    global _READ_ONLY_MODE
+    _READ_ONLY_MODE = True
+    try:
+        from memory.storage import MemoryStorage
+        MemoryStorage.READ_ONLY = True
+    except ImportError:
+        pass
     server = server if server is not None else mcp
     for name in list(server._tool_manager._tools):
         if name not in READ_ONLY_TOOL_ALLOWLIST:
@@ -3050,7 +3089,7 @@ def main():
             sys.exit(0)
         sys.exit(1)
 
-    if args.read_only or os.environ.get('LOKI_MCP_READ_ONLY') == '1':
+    if args.read_only or read_only_env_enabled():
         apply_read_only_mode()
 
     # Register cleanup to prevent file handle leaks on shutdown/restart
