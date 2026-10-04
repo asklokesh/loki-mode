@@ -3,6 +3,7 @@
 // ("not_run"), never a failure; a failing check gets one rerun, fail-then-pass is "flaky". An empty diff with
 // the already_done marker seals ALREADY_SATISFIED; without it, FAILED (ENGINE.md 2). Reaches testmap.ts/
 // machine.ts only through RunContext's `tests: TestMapProvider`, injected as a fake in tests, never imported here.
+import { scopedOutOf } from "../../project_model/scope.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -263,6 +264,8 @@ export const verifyStage: Stage = {
     // A-114: the relevant tests of the task-named files are always selected, whatever the diff touches.
     const intake = ctx.outputs().intake as { task?: string; repomap_ref?: string } | undefined, relevant = ctx.tests.impacted(map, namedFiles(intake?.task ?? "", loadRepoMap(intake?.repomap_ref)));
     const tests = dedupeTests([...impacted, ...changedTestFiles, ...wallTests, ...relevant]);
+    const scopedOut = scopedOutOf(map); // FC-22: audit trail for package-scoped selection (LOKI_E10_SCOPE=1)
+    if (scopedOut.length) ctx.emit("test.scoped_out", "verify", { tests: scopedOut });
     for (const t of tests) {
       if (signal.aborted) break;
       const tc = commandFor(t, ctx.repoDir, api);
