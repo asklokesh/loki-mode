@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.0.3 (2026-10-04)
+
+Patch release. A one-line product brief no longer skips the Wall because a common word sits inside a longer name.
+
+### Fixed
+- The lean path counts a task word only when it equals a path segment or a symbol (FC-28). A word inside a longer name, such as "format" inside formatPrice, is not a relevant test, so the Wall stays. Naming a real symbol still can take the short path. Plan file hints are unchanged.
+- Shell test shards now have 15 minutes. Run 37235292758 killed shard 0 at the 10-minute cap while ShellCheck was still running, after the other shards had passed.
+
 ## v11.0.2 (2026-10-04)
 
 Patch release. A one-line product brief no longer skips the Wall just because a token appears on most paths in the repo.
