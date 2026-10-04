@@ -403,5 +403,58 @@ else
     fi
 fi
 
+# --- mutant 6: READ-ONLY SURFACE lists a write tool (CP-ASK slice 1) ---------
+# `server.py --read-only` must expose only the read allowlist. The checker below
+# lists the tools a read-only server registers and rejects any known write tool.
+# Positive control first (unmutated copy passes), then the mutant (a write tool
+# added to READ_ONLY_TOOL_ALLOWLIST) must be rejected with exit 1.
+RO_WRITE_TOOLS="loki_memory_store_pattern loki_task_queue_add loki_task_queue_update loki_memory_capture_session_summary loki_consolidate_memory loki_complete_task loki_v10_run loki_v10_verify loki_start_project loki_checkpoint_restore loki_verify_fast loki_graph_query"
+RO_CHECK_PY="$WORK/ro_check.py"
+cat > "$RO_CHECK_PY" <<'PY'
+import asyncio, sys
+sys.path.insert(0, ".")
+from mcp import server
+server.apply_read_only_mode()
+tools = {t.name for t in asyncio.run(server.mcp.list_tools())}
+if not tools:
+    print("no tools registered (probe is inert)")
+    sys.exit(2)
+bad = sorted(tools & set(sys.argv[1].split()))
+if bad:
+    print("write tool(s) in read-only list: " + " ".join(bad))
+    sys.exit(1)
+PY
+ro_check() {  # $1 = tree
+    ( cd "$1" && LOKI_NO_BROWSER=1 PYTHONDONTWRITEBYTECODE=1 timeout -k 5 120 \
+        python3 "$RO_CHECK_PY" "$RO_WRITE_TOOLS" )
+}
+M6="$WORK/m6"
+mkdir -p "$M6/autonomy" && cp -R "$REPO_ROOT/mcp" "$M6/mcp" && cp -R "$REPO_ROOT/autonomy/lib" "$M6/autonomy/lib" \
+    && cp -R "$REPO_ROOT/memory" "$M6/memory" && cp -R "$REPO_ROOT/state" "$M6/state" \
+    && rm -rf "$M6/mcp/tests" "$M6/mcp/__pycache__"
+[ -f "$M6/mcp/server.py" ] || { bad "seed m6"; exit 1; }
+if ro_check "$M6" >"$WORK/m6-control.txt" 2>&1; then
+    ok "read-only surface: unmutated server lists no write tool (positive control)"
+else
+    bad "read-only surface: positive control failed"
+    head -8 "$WORK/m6-control.txt" | sed 's/^/    /'
+fi
+python3 - "$M6/mcp/server.py" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+anchor = '    "loki_learnings",\n})'
+assert anchor in s
+open(p, "w").write(s.replace(anchor, '    "loki_learnings",\n    "loki_memory_store_pattern",\n})', 1))
+PY
+ro_check "$M6" >"$WORK/m6-out.txt" 2>&1
+M6RC=$?
+if [ "$M6RC" -eq 1 ] && grep -q "loki_memory_store_pattern" "$WORK/m6-out.txt"; then
+    ok "read-only surface: a write tool in the allowlist is rejected (exit $M6RC)"
+else
+    bad "read-only surface: mutant not rejected (exit $M6RC)"
+    head -8 "$WORK/m6-out.txt" | sed 's/^/    /'
+fi
+
 echo "  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

@@ -71,6 +71,12 @@ class MemoryStorage:
     Supports namespace-based project isolation for memory separation.
     """
 
+    # Process-wide read-only switch, set by mcp/server.py apply_read_only_mode.
+    # When True, constructing a store creates nothing (no directories, no
+    # index/timeline init, no cleanup), reads take no lock file, and any write
+    # raises. A missing store simply reads as empty.
+    READ_ONLY = False
+
     VERSION = "1.1.0"
 
     def __init__(
@@ -112,9 +118,10 @@ class MemoryStorage:
         # called on the same path from nested operations in the same thread.
         self._held_locks: threading.local = threading.local()
 
-        self._ensure_directories()
-        self._ensure_index()
-        self._ensure_timeline()
+        if not MemoryStorage.READ_ONLY:
+            self._ensure_directories()
+            self._ensure_index()
+            self._ensure_timeline()
 
     @property
     def namespace(self) -> Optional[str]:
@@ -316,6 +323,11 @@ class MemoryStorage:
         Yields:
             File handle with lock held
         """
+        if MemoryStorage.READ_ONLY:
+            # No lock file may be created; reads proceed unlocked.
+            yield
+            return
+
         lock_path = path.with_suffix(path.suffix + ".lock")
         lock_key = str(lock_path)
 
@@ -364,6 +376,8 @@ class MemoryStorage:
             path: Target file path
             data: Dictionary to serialize as JSON
         """
+        if MemoryStorage.READ_ONLY:
+            raise PermissionError("memory store is read-only in this process")
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
