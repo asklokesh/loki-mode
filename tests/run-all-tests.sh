@@ -1613,6 +1613,7 @@ run_test "Loki 10 gate report generator (E-33)" "$SCRIPT_DIR/../eval/loki10/test
 run_test "Loki 10 engine trusted push and PR (E-11)" "$SCRIPT_DIR/test-engine10-push.sh"
 run_test "Loki 10 engine dispatch hook (E-12)" "$SCRIPT_DIR/test-engine10-dispatch.sh"
 run_test "loki verify --pubkey=FILE routes to v10 through bin/loki (P0-VERIFY-ARG)" "$SCRIPT_DIR/test-verify-pubkey-cli.sh"
+run_test "Loki Receipt check action posts success for a valid receipt and failure for a tampered one (B2)" "timeout -k 10 300 bash $SCRIPT_DIR/test-receipt-check-action.sh"
 run_test "metrics-usage-append arg parsing, block format, repeat append (PO-TEST-1)" "timeout -k 10 120 $SCRIPT_DIR/test-metrics-usage-append.sh"
 run_test "Loki 10 live PR smoke on a sandbox repo (E-40)" "$SCRIPT_DIR/test-engine10-live-pr.sh"
 run_test "Loki control plane wiring: serve, backfill, UI (CP-04)" "$SCRIPT_DIR/test-control-plane.sh"
