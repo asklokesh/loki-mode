@@ -84,4 +84,40 @@ describe("loki status (Loki 10)", () => {
     expect(j.run_id).toBeNull();
     expect(j.hint).toBe(NO_RUN_HINT);
   });
+
+  describe("Control Plane URL (A6a)", () => {
+    let srv: ReturnType<typeof Bun.serve>;
+    beforeEach(() => { srv = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => Response.json({ service: "loki-control", pid: process.pid }) }); });
+    afterEach(() => { srv.stop(true); });
+    async function runWith(e: NodeJS.ProcessEnv, args: string[]): Promise<string> {
+      const orig = process.stdout.write.bind(process.stdout);
+      let out = "";
+      process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+      try { await runModernStatus(args, e); } finally { process.stdout.write = orig; }
+      return out;
+    }
+
+    test("prints the URL the running CP listens on when instance.json is absent (LOKI_CONTROL_PORT)", async () => {
+      writeRun("e10-20261003T000000Z-cccc", { done: true });
+      const out = await runWith({ LOKI_E10_REPO_DIR: dir, HOME: dir, LOKI_CONTROL_PORT: String(srv.port) }, []);
+      expect(out).toContain(`Control Plane: http://127.0.0.1:${srv.port}`);
+    });
+
+    test("a stale instance.json (dead pid) does not hide a live CP", async () => {
+      mkdirSync(join(dir, ".loki", "control"), { recursive: true });
+      writeFileSync(join(dir, ".loki", "control", "instance.json"), JSON.stringify({ pid: 2147483646, url: "http://127.0.0.1:1" }));
+      const j = JSON.parse(await runWith({ LOKI_E10_REPO_DIR: dir, HOME: dir, LOKI_CONTROL_PORT: String(srv.port) }, ["--json"]));
+      expect(j.control_plane_url).toBe(`http://127.0.0.1:${srv.port}`);
+    });
+
+    test("no runs: the text output still names the CP URL", async () => {
+      const out = await runWith({ LOKI_E10_REPO_DIR: dir, HOME: dir, LOKI_CONTROL_PORT: String(srv.port) }, []);
+      expect(out).toContain(`Control Plane: http://127.0.0.1:${srv.port}`);
+    });
+
+    test("nothing listening: no Control Plane line", async () => {
+      const out = await runWith({ LOKI_E10_REPO_DIR: dir, HOME: dir, LOKI_CONTROL_PORT: "1" }, []);
+      expect(out).not.toContain("Control Plane:");
+    });
+  });
 });

@@ -1,5 +1,5 @@
 // D62-FIX: end-to-end proof of the per-run cost cap through the real CLI entry.
-// bin/loki (LOKI_ENGINE=v10, LOKI_TS_ENTRY=src/cli.ts) runs a task with a stub claude that writes a priced
+// bin/loki (LOKI_TS_ENTRY=src/cli.ts) runs a task with a stub claude that writes a priced
 // result-cost file for its session; the total crosses a tiny --max-cost, so the run must end BUDGET_STOP, exit 3.
 // Headless, no network, no real provider.
 import { afterAll, describe, expect, test } from "bun:test";
@@ -55,7 +55,6 @@ describe("engine10 cost cap e2e (stub claude, real CLI entry)", () => {
     chmodSync(stub, 0o755);
     const env: Record<string, string | undefined> = {
       ...process.env,
-      LOKI_ENGINE: "v10",
       LOKI_TS_ENTRY: ENTRY,
       LOKI_E10_INVOKER: "cli",
       LOKI_CLAUDE_CLI: stub,

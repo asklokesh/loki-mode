@@ -89,6 +89,20 @@ export function render(s: ModernStatus): string {
   return lines.join("\n");
 }
 
+const CONTROL_DEFAULT_PORT = 47821; // mirrors commands/control.ts DEFAULT_PORT
+
+/** Fallback when instance.json is missing or stale (a CP started outside `loki control serve`): probe the configured loopback port and accept it only if /health says loki-control. */
+async function probeConfiguredControl(env: NodeJS.ProcessEnv): Promise<string | null> {
+  if (env.LOKI_CONTROL === "0") return null;
+  const port = env.LOKI_CONTROL_PORT || String(CONTROL_DEFAULT_PORT);
+  if (!/^\d+$/.test(port)) return null;
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    const h = (await (await fetch(`${url}/health`, { signal: AbortSignal.timeout(300) })).json()) as { service?: string };
+    return h.service === "loki-control" ? url : null;
+  } catch { return null; }
+}
+
 export async function runModernStatus(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
   let json = false;
   let wanted: string | null = null;
@@ -109,10 +123,11 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   }
   let cp: string | null = null;
   try { cp = await discoverControlUrl(env); } catch { cp = null; }
+  if (cp === null) cp = await probeConfiguredControl(env);
   if (!hit) {
     process.stdout.write(json
       ? `${JSON.stringify({ engine: "loki10", run_id: null, ref: null, stage: null, elapsed_s: null, cost_usd: null, outcome: null, pr_url: null, receipt_path: null, control_plane_url: cp, hint: NO_RUN_HINT })}\n`
-      : `${NO_RUN_HINT}\n`);
+      : `${NO_RUN_HINT}\n${cp ? `  Control Plane: ${cp}\n` : ""}`);
     return 0;
   }
   const s: ModernStatus = { ...summarize(hit.id, hit.events, root, now), control_plane_url: cp };
