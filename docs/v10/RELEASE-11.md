@@ -59,6 +59,7 @@ Every row below shipped on tsc plus build only. Each line is a test or review th
 - B6: stubbed fetch: Jira ADF body and Linear mutation carry verdict, PR URL, receipt digest; unset config makes no call; a failed fetch leaves the stage result unchanged.
 - B7: resolvePrAuthor plus runPr env: me leaves GH_TOKEN untouched; bot with token sets it; bot without token warns and leaves it.
 - B2/B8: rev-b2 and rev-b8 verdicts not finished.
+- FC-19 deep-limit test (machine.test.ts) relaxed in 6f1e595b8 after release run 37171623026 saw a second implement session at 1799.999 on CI; confirm why a second session runs there and whether the count should be pinned.
 - Screenshots (fea1 run detail, Overview, Ask thread, refused /v1/start for HOME): steering reviews after release.
 - Moat P9 on the 11.0.0 release commit: CI only.
 
