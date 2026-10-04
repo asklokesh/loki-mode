@@ -16,6 +16,7 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `loki-ts/tests/engine10/fixtures/testmap/package.json` | `vitest` | `^2.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
 | `loki-ts/tests/fixtures/monorepo-fc01/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
 | `loki-ts/tests/fixtures/project-model/firelater-17/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
+| `loki-ts/tests/fixtures/monorepo-fc22/backend/package.json` | `vitest` | `^1.0.0` | `5.0.3` | MAJOR | test fixture, not a real dependency |
 | `package.json` | `@resvg/resvg-wasm` | `^2.6.2` | `2.6.2` | up-to-date |  |
 | `package.json` | `@types/node` | `^25.2.0` | `26.6.4` | MAJOR |  |
 | `package.json` | `jest` | `^29.7.0` | `30.5.2` | MAJOR |  |
@@ -75,6 +76,8 @@ Inventory only. No dependency, lockfile, workflow or image was changed to produc
 | `web-app/package.json` | `vite` | `^6.2.0` | `8.3.2` | MAJOR |  |
 | `loki-ts/tests/fixtures/monorepo-fc01/frontend/package.json` | `(none found)` | `` | `-` | n/a | test fixture; no dependencies or devDependencies declared |
 | `loki-ts/tests/fixtures/project-model/firelater-17/frontend/package.json` | `(none found)` | `` | `-` | n/a | test fixture; no dependencies or devDependencies declared |
+| `loki-ts/tests/fixtures/monorepo-fc22/package.json` | `(none found)` | `` | `-` | n/a | test fixture; no dependencies or devDependencies declared |
+| `loki-ts/tests/fixtures/monorepo-fc22/frontend/package.json` | `(none found)` | `` | `-` | n/a | test fixture; no dependencies or devDependencies declared |
 
 ## Python (requirements*.txt)
 
