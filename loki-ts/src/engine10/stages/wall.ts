@@ -16,6 +16,7 @@ import { sha256 } from "./seal.ts";
 import { commandFor } from "./verify.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyCheck } from "../../util/check_result.ts";
+import { conventionViolation, conventionsBrief, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
 
@@ -96,7 +97,7 @@ export interface WallOptions { baseRunner?: BaseTestRunner; }
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
 
-export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false): string {
+export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = ""): string {
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
     `You cannot see the repository. This directory holds only task.md and repomap.txt${hasManifest ? " and wall_manifest.txt (signatures, runner config, test layout and test-style examples)" : ""}.`,
@@ -104,6 +105,7 @@ export function buildWallBrief(task: string, repomapText = "", runners: RunnerNa
     ...taskBlock(task),
     "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded.",
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
+    ...(conventions ? [conventions] : []),
     `Name every file you write starting with "${WALL_PREFIX}". Write nothing else.`,
   ].join("\n\n"));
 }
@@ -159,13 +161,15 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const tree = prior.intake?.tree as string | undefined;
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);
 
+  const targetDir = wallTargetDir(ctx.repoDir, existingTests), pkg = loadProjectApi(ctx.repoDir)?.packageOf(`${relative(ctx.repoDir, targetDir)}/x`); // FC-23: the target package's own module system, read by a parser
+  const conv = readPackageConventions(join(ctx.repoDir, pkg?.root ?? "."), pkg?.runner ?? null);
   const cwd = mkdtempSync(join(tmpdir(), "loki-e15-wall-"));
   const wm = wallManifestFor(ctx.repoDir, tree, task); // D77: flag-gated, null (as if off) on any failure
   for (const [n, c] of [["task.md", task], ["repomap.txt", repomapText], ...(wm ? [["wall_manifest.txt", wm.text]] : [])] as [string, string][]) writeFileSync(join(cwd, n), c, "utf8");
 
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm),
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv)),
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model: wallModel(),
@@ -177,23 +181,24 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return { status: "failed", data: {}, reason: "wall session aborted, killed, or timed out", killed: true }; } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
 
   const generated = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX));
-  const targetDir = wallTargetDir(ctx.repoDir, existingTests);
   const sealedDir = join(ctx.runDir, "wall");
   if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); mkdirSync(sealedDir, { recursive: true }); }
 
   const sealedFiles: WallSealedFile[] = [];
   const readOnlyFiles: ReadOnlyFile[] = [];
   const wallTests: TestRef[] = [];
+  const discarded: { file: string; reason: string }[] = []; // FC-23: a file the package's own compiler would reject is harness-owned: sealed copy only, never in the tree
 
   for (const name of generated) {
-    const content = readFileSync(join(cwd, name), "utf8"), dest = join(targetDir, name), runner = guessRunner(name, runners);
+    const content = readFileSync(join(cwd, name), "utf8"), dest = join(targetDir, name), runner = guessRunner(name, runners), bad = conventionViolation(conv, name, content);
+    if (bad) { writeFileSync(join(sealedDir, name), content, "utf8"); discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); continue; }
     writeFileSync(dest, content, "utf8"); writeFileSync(join(sealedDir, name), content, "utf8");
     sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
   }
   rmSync(cwd, { recursive: true, force: true });
   ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(wm ? { manifest_sha256: wm.sha256 } : {}) });
-  const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: 0 }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
+  const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: discarded.length }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
   for (const t of wallTests) {
     const r = baseRunner.run(ctx.repoDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
   }
@@ -210,6 +215,7 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
       base_run: baseRun,
       iteration_ids: [`${ctx.runId}-wall`],
       already_satisfied: alreadySatisfied,
+      ...(discarded.length ? { discarded } : {}),
     },
   };
 }

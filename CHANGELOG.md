@@ -5,6 +5,12 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- FC-23: the Wall now matches the package it writes for. The Wall brief states the package's module system (package.json "type" and the tsconfig "module", read with a JSONC-aware parser, relative "extends" followed), so a CommonJS package is told never to use import.meta. A generated Wall file that the package's own compiler would reject (import.meta under CommonJS) is discarded and listed in NOT PROVEN instead of entering the tree. A lint or type error whose every location is inside a Wall file (tsc and eslint output parsed) is harness-owned: the check is not_run with "wall test did not compile under the package config", never a fix round. A real failure in the user's code, or any mix with user code, still gets fix rounds (FireLater#17 on 10.10.5 spent fix round 1 on a read-only Wall file).
+
 ## v10.10.5 (2026-10-03)
 
 Release-gate fix for 10.10.4: the 10.10.4 publish was blocked at its gate (release run 37160286619, spawn env guard), so nothing reached npm as 10.10.4. 10.10.5 ships everything listed under v10.10.4 below, plus the fix here.

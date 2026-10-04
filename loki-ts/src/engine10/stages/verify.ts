@@ -11,6 +11,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failId
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { classifyCheck, ran, skipped } from "../../util/check_result.ts";
+import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi, siteFor } from "../../project_model/resolve.ts";
@@ -85,6 +86,7 @@ interface RunOpts {
   timeoutMs?: number; // per-attempt timeout override, tests only; defaults to CHECK_TIMEOUT_MS
   interpreter?: Interpreter; // E-98a: recorded on the resulting VerifyCheck as-is
   cwd?: string; // FC-01: directory the check runs in (the owning package); defaults to ctx.repoDir
+  wall?: ReadonlySet<string>; // FC-23: repo-relative Wall files; a static check failing only inside them is harness-owned
   kind?: "test" | "static"; // FC-16: "test" (default) needs a parsed executed count n>0 to pass; "static" (lint, typecheck, selector) is decided by exit code
 }
 export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one shared count parser and classifier live in check_result.ts
@@ -135,7 +137,8 @@ export async function runCheck(
   const one = async (a: Awaited<ReturnType<typeof runOnce>>) => {
     let c: ReturnType<typeof classifyCheck> & { owner?: "harness" } = classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...(cmd === "go" ? { runner: "go" as const } : {}), path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined });
     const lr = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
-    if (lr) c = { result: "not_run", reason: lr, owner: "harness" }; // harness-owned load error: never retried, never a fix round
+    if (lr) c = { result: "not_run", reason: lr, owner: "harness" };
+    if (!lr && kind === "static" && !a.ok && !a.cut && !a.missing && opts.wall?.size && wallOwnedFailure(a.out, cwd, ctx.repoDir, opts.wall)) c = { result: "not_run", reason: WALL_COMPILE_REASON, owner: "harness" }; // FC-23: never a fix round on a read-only Wall file // harness-owned load error: never retried, never a fix round
     const reason = a.missing ? `${cmd} not found on PATH` : a.cut ? (signal.aborted ? "aborted" : `timed out after ${(opts.timeoutMs ?? CHECK_TIMEOUT_MS) / 1000}s`) : c.reason;
     return { ...c, ...(reason ? { reason } : {}) };
   };
@@ -267,7 +270,7 @@ export const verifyStage: Stage = {
     const preRed = await subtractBase(ctx, api, checks, tests, changed, new Set(wallTests.map((t) => `${t.runner}:${t.path}`)), new Set(relevant.map((t) => `${t.runner}:${t.path}`)), signal);
     if (!signal.aborted) {
       // Lint/typecheck of changed files only (ENGINE.md section 4's named tool per language).
-      await runLintChecks(ctx, changed, signal, checks, { api });
+      await runLintChecks(ctx, changed, signal, checks, { api, wall: wallPaths });
       // Self-hosting only: also run the repo's own fast-gate selector (section 4).
       if (isLokiModeRepo(ctx.repoDir)) {
         await runCheck(ctx, "select-tests", "bash", ["scripts/select-tests.sh", "--files", "-", "--run"], signal, checks, {
