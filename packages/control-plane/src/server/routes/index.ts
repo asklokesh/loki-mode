@@ -6,6 +6,7 @@ import type { spawnStart } from "../spawn.ts";
 import { isLoopbackHost } from "../auth.ts";
 import { mountRepos } from "../repos.ts";
 import { mount as artifacts } from "./artifacts.ts";
+import { mount as ask } from "./ask.ts";
 import { mount as audit } from "./audit.ts";
 import { mount as checkpoints } from "./checkpoints.ts";
 import { mount as config } from "./config.ts";
@@ -43,7 +44,7 @@ export interface RouteCtx {
   answerDir?: string;
 }
 
-export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, costLedger, fleet, metrics, checkpoints, memory, sessionControl, config, providers, verify, integrations, notify, audit, mergeRisk];
+export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, ask, stream, start, control, stats, cost, costLedger, fleet, metrics, checkpoints, memory, sessionControl, config, providers, verify, integrations, notify, audit, mergeRisk];
 
 export function registerRoutes(ctx: RouteCtx): void {
   mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback, ctx.repoDir);
