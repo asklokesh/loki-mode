@@ -1,5 +1,12 @@
 # Progress
 
+## 2026-10-04T02:21Z: 11.0.0 pushed, release run 37170767617 in progress (CoS)
+- Founder 01:35Z: one MAJOR 11.0.0 in 1-2 hours; 02:08Z: no tests until next week, only tsc, build and dist guard. Source of truth: docs/v10/RELEASE-11.md.
+- train11 merged into main (44839e531): A1b, A2a, A2b, A3a-f, A4a, A4b, A4-ASK-2, A5, A6a, A6b, B2-B8, Tier C docs in docs/v11/ (c7bc9378a, unverified claims stripped).
+- Gates in main: loki-ts tsc rc=0, dist build rc=0, tests/test-release-dist-guard.sh 13/0. Release commit ca4968c6c, gitleaks baseline f880c575c (comment line in .gitleaksignore, a file path), pushed 962efc4b2..f880c575c.
+- B1 DEFERRED (accepted by steering 02:16Z). B9 numbers pending, run by CoS after release with steering's rows. A7 FireLater#17 runs by steering on 11.0.0 from npm.
+- Skipped tests and reviews are listed under "Tests owed after Oct 7" in RELEASE-11.md.
+
 ## 2026-10-03T21:26Z: v10.10.1 latest, v10.10.2 on next (CoS)
 - v10.10.1: release run 37152525535 success. Smoke passed (peer, 20:58Z); promote moved latest (`npm view loki-mode dist-tags` = latest 10.10.1). The MCP registry publish was skipped: the publisher token expired and the MCP content is unchanged since 10.9.1.
 - v10.10.2 at 78dc27a45: release run 37154153167 success; dist-tags next 10.10.2. Ships CP-REDESIGN, FC-01 Project Model default, the coverage step in test.yml, the cp-redesign image guard, and core-budget (engine10 core 4719; engine suites 1431/0, tsc rc=0 on merged main).
