@@ -50,6 +50,10 @@ inputs:
     description: 'loki-mode version to install. Pin this for reproducible runs.'
     required: false
     default: 'latest'
+  attest:
+    description: 'Opt-in. When true, sign a GitHub build attestation (Sigstore, DSSE) over receipt.json after the run. Needs id-token: write and attestations: write on the calling job, which breaks the read-only Rule of Two job; see docs/AGENT-CHANGE-RECEIPT.md for the split.'
+    required: false
+    default: 'false'
 
 outputs:
   patch:
@@ -58,6 +62,9 @@ outputs:
   pr_body:
     description: 'Path to a PR body carrying the evidence receipt.'
     value: ${{ steps.run.outputs.pr_body }}
+  receipt:
+    description: 'Path to the sealed receipt.json copied out of the run (empty when the run produced none).'
+    value: ${{ steps.run.outputs.receipt }}
   pr_url:
     description: 'Always empty. This action no longer opens the pull request; open it from a job that runs no agent.'
     value: ''
@@ -246,6 +253,7 @@ runs:
         } > "$OUT/pr-body.md"
         echo "patch=$OUT/loki.patch" >> "$GITHUB_OUTPUT"
         echo "pr_body=$OUT/pr-body.md" >> "$GITHUB_OUTPUT"
+        if [ -f "$OUT/receipt.json" ]; then echo "receipt=$OUT/receipt.json" >> "$GITHUB_OUTPUT"; fi
 
         echo "::warning::This action does not open the pull request (Rule of Two). Upload outputs.patch and open the PR from a job that holds the write token and runs no agent; see docs/examples/loki-issue-to-pr.yml.example in asklokesh/loki-mode."
         if [ -n "$RUN_DIR" ]; then
@@ -253,3 +261,12 @@ runs:
         fi
 
         exit "$RC"
+
+    # Opt-in (attest: true). Needs `id-token: write` and `attestations: write` on the
+    # calling job. The subject is the receipt.json file itself, so
+    # `gh attestation verify receipt.json --repo OWNER/REPO` matches its sha256.
+    - name: Attest the receipt
+      if: ${{ inputs.attest == 'true' && steps.run.outputs.receipt != '' && !cancelled() }}
+      uses: actions/attest-build-provenance@v2
+      with:
+        subject-path: ${{ steps.run.outputs.receipt }}
