@@ -81,6 +81,7 @@ src/runner/trim.ts	package.json
 src/runner/trim.ts	pytest
 src/util/check_result.ts	cargo test
 src/util/check_result.ts	go test
+src/util/check_result.ts	go.mod
 src/util/check_result.ts	jest
 src/util/check_result.ts	pytest
 src/util/check_result.ts	vitest

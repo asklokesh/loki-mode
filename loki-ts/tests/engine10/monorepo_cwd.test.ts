@@ -210,6 +210,15 @@ describe("FC-16 C1 per-package suites route through classifyCheck", () => {
     expect(r.checks[0]!.result).toBe("not_run");
     expect(r.notProven.some((n) => n.startsWith("not run: full suite: backend") && n.includes("could not be confirmed"))).toBe(true);
   });
+  test("FC-16b: a wrapped go command (env X=1 go ...) is still runner go, so a forged -v pass on exit 0 is not_run", async () => {
+    const { dir, base } = monorepo(true);
+    const m = loadProjectApi(dir)!.model as ProjectModel;
+    writeFileSync(join(dir, "backend", "go.out"), GO_V);
+    m.packages[0]!.commands.test = cmd("env X=1 go version >/dev/null; cat go.out", "backend", "backend/package.json");
+    writeFileSync(join(dir, PROJECT_FILE), JSON.stringify(m));
+    const checks: DeepCheck[] = []; await runFullSuite(ctxFor(dir, base, []), sig(), {}, checks, new Set<string>());
+    expect(checks[0]!.result).toBe("not_run");
+  });
   test("exit 0 with [no test files] only is not_run (no tests executed)", async () => {
     const r = await suite("?   \texample.com/a\t[no test files]\n");
     expect(r.checks[0]!.result).toBe("not_run");

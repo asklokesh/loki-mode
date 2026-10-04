@@ -3,7 +3,7 @@
 // absent or single-root, so the caller keeps its legacy per-runner path unchanged.
 import { join } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
-import { classifyCheck, NO_TESTS_REASON } from "../util/check_result.ts";
+import { classifyCheck, goRunner, NO_TESTS_REASON } from "../util/check_result.ts";
 import { run } from "../util/shell.ts";
 import { isMultiRoot, loadProjectApi } from "./resolve.ts";
 
@@ -30,7 +30,7 @@ export async function runPackageSuites(
     const out = `${r.stdout}\n${r.stderr}`;
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, out, cmd: "bash", args: ["-c", tc.cmd], signal, cwd: join(repoDir, tc.cwd), ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
-    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...(tc.cmd.trim().split(/\s+/)[0] === "go" ? { runner: "go" as const } : {}) });
+    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(tc.cmd), goRoot: join(repoDir, tc.cwd) });
     checks.push({ name, cmd, result: cls.result, duration_s });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
