@@ -49,9 +49,9 @@ test("fixture run: title header, terminal panel, and every section; missing data
   expect(screen.getByTestId("run-retry").textContent).toContain("Retry");
   expect(screen.getByTestId("run-progress").textContent).toBe("stage 2 / 2");
   expect(screen.getByTestId("run-pr").textContent).toContain("pull/7");
-  // NOT PROVEN is a list with an owner tag per item; this item names none, so the owner is unmeasured
+  // NOT PROVEN is a list; this item records no owner, so no owner tag is shown
   expect(screen.getByTestId("run-not-proven").textContent).toContain("perf budget not checked");
-  expect(screen.getByTestId("not-proven-owner").textContent).toBe("owner: unmeasured");
+  expect(screen.queryByTestId("not-proven-owner")).toBeNull();
   // timeline row: time, stage, description, duration, model, cost
   await waitFor(() => expect(screen.getByTestId("run-timeline").textContent).toContain("plan"));
   expect(screen.getByTestId("tl-time").textContent).toBe("10:00:00");
@@ -88,7 +88,7 @@ test("Verify calls the verify route and shows the verdict; a run with no receipt
   await screen.findByTestId("run-thread");
   fireEvent.click(screen.getByTestId("run-verify"));
   await waitFor(() => expect(posts.some((p) => p.url.endsWith("/v1/runs/s1/r1/verify"))).toBe(true));
-  await waitFor(() => expect(screen.getByTestId("run-verify-result").textContent).toContain("VERIFIED"));
+  await waitFor(() => expect(screen.getByTestId("run-verify-result").textContent).toContain("Verified"));
   cleanup();
   serve(detail({ receipt: null }));
   render(<RunThread source="s1" run="r1" />);
@@ -107,7 +107,7 @@ test("running run shows a live indicator; a failed run states why there is no PR
   serve(detail({ verdict: "FAILED", pr_url: null }));
   render(<RunThread source="s1" run="r1" />);
   await screen.findByTestId("run-thread");
-  expect(screen.getByTestId("run-pr").textContent).toContain("ended FAILED");
+  expect(screen.getByTestId("run-pr").textContent).toContain("ended as failed");
   expect(screen.queryByTestId("run-live")).toBeNull();
 });
 

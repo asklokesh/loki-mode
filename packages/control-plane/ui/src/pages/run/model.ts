@@ -1,5 +1,5 @@
 // Pure helpers for the run page. Each one reads only what the API returned; a missing value stays null and the view prints "unmeasured".
-import { effectiveVerdict, type RunRow } from "../../api";
+import { displayOutcome } from "../../display";
 import type { TimelineLine } from "./timeline";
 
 export const UNMEASURED = "unmeasured";
@@ -22,7 +22,7 @@ export function describeLine(l: TimelineLine): string {
   if (l.kind === "run") return `Run started${l.detail ? ` for ${l.detail}` : ""}`;
   if (l.kind === "pr") return `Opened a ${l.outcome === "draft" ? "draft " : ""}pull request${tail}`;
   if (l.kind === "receipt") return `Sealed the receipt, ${l.outcome}`;
-  if (l.kind === "verdict") return `Run finished with verdict ${l.outcome}`;
+  if (l.kind === "verdict") return `Run finished: ${l.outcome === "no verdict" ? l.outcome : displayOutcome(l.outcome).label}`;
   const base = STAGE_BLURB[l.label] ?? `Stage ${l.label}`;
   if (l.outcome === "failed") return `${base}: failed${tail}`;
   if (l.outcome === "skipped") return `${base}: skipped${tail}`;
@@ -120,28 +120,3 @@ export function whyLine(events: WhyEvent[]): string | null {
   return parts.length ? parts.join("; ") : null;
 }
 
-export interface ReceiptFacts {
-  verdict: string | null; diffSha: string | null; base: string | null; head: string | null;
-  checks: { total: number; pass: number; fail: number; notRun: number } | null;
-}
-
-/** Facts from a parsed receipt.json; any field the receipt lacks is null. */
-export function receiptFacts(raw: string | null | undefined): ReceiptFacts | null {
-  if (!raw) return null;
-  let j: Record<string, unknown>;
-  try { const x = JSON.parse(raw); if (!x || typeof x !== "object") return null; j = x as Record<string, unknown>; } catch { return null; }
-  const cs = Array.isArray(j["checks"]) ? (j["checks"] as unknown[]).map(evObj) : null;
-  const n = (r: string) => (cs ?? []).filter((c) => c["result"] === r).length;
-  return {
-    verdict: evStr(j["verdict"]), diffSha: evStr(j["diff_sha256"]), base: evStr(j["base_sha"]), head: evStr(j["head_sha"]),
-    checks: cs ? { total: cs.length, pass: n("pass") + n("flaky"), fail: n("fail"), notRun: n("not_run") } : null,
-  };
-}
-
-/** The Why line for a finished run whose display verdict is not VERIFIED or ALREADY_SATISFIED; null for a good or unfinished run. A non-good run whose events name no cause says so. */
-export function whyForRun(d: RunRow, events: WhyEvent[]): string | null {
-  const ev = d.verdict ? effectiveVerdict(d) ?? d.verdict : null;
-  if (!ev || ev.startsWith("VERIFIED") || ev.startsWith("ALREADY_SATISFIED")) return null;
-  const integrity = d.integrity_reasons?.[0];
-  return ((ev === "TAMPERED" || ev === "UNVERIFIED") && integrity ? `integrity: ${integrity}` : whyLine(events)) ?? `${UNMEASURED}: the run's events name no failing check or stage reason`;
-}
