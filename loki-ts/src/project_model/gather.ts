@@ -78,9 +78,10 @@ export function shallowDirs(repoDir: string): string[] {
  *  that is not a regular file inside the repo is never opened (no FIFO or device can block a read). */
 /** Bumped when the model shape grows (rev 2: dependsOn and install), so a cached older model is rediscovered once. */
 export const MODEL_REV = "model-rev:2";
-export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: string[]): string {
+export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: string[], committedHash: string | null = null): string {
   const h = createHash("sha256");
   h.update(`${MODEL_REV}\n`);
+  if (committedHash !== null) h.update(`committed:${committedHash}\n`);
   for (const f of [...fingerprintFiles].sort()) {
     h.update(`file:${f}\n`);
     try {
@@ -97,4 +98,23 @@ export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: st
   }
   for (const d of dirs) h.update(`dir:${d}\n`);
   return h.digest("hex");
+}
+
+/** True only when `relPath` is git-tracked (git ls-files, not mere existence): an untracked or
+ *  gitignored cache file is never treated as a committed, shared model. */
+export function isGitTracked(repoDir: string, relPath: string): boolean {
+  try {
+    const out = execFileSync("git", ["ls-files", "--error-unmatch", "--", relPath], { cwd: repoDir, stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
+    return out.toString().trim() !== "";
+  } catch {
+    return false;
+  }
+}
+
+/** Content hash of a committed model, ignoring the volatile cache fields (key, expiresAt) so only a
+ *  real edit to the shared model changes it. Returns null when the JSON is not an object. */
+export function committedModelHash(raw: unknown): string | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const { key: _key, expiresAt: _exp, ...rest } = raw as Record<string, unknown>;
+  return createHash("sha256").update(JSON.stringify(rest)).digest("hex");
 }
