@@ -183,7 +183,7 @@ function Evidence({ d, source, run, receipt, receiptJson, events }: { d: RunDeta
   const base = facts.base ?? (state === "read" ? null : d.diff_stat?.base ?? null), head = facts.head ?? (state === "read" ? null : d.diff_stat?.head ?? null);
   const shown = (v: string | null, n: number): string => (v ? v.slice(0, n) : factText(null, state));
   const rv = facts.verdict ?? d.receipt?.verdict ?? null;
-  const sig = !d.receipt ? UNMEASURED : !d.receipt.signed ? "unsigned" : d.sig_checked ? "signed, signature checked" : "signed, signature not checked";
+  const sig = !d.receipt ? "no receipt sealed in the run's events" : !d.receipt.signed ? "unsigned" : d.sig_checked ? "signed, signature checked" : "signed, signature not checked";
   const ck = facts.checks;
   return (
     <Section title="Evidence and receipt" testid="run-receipt" meta={sha ? `sha256 ${sha.slice(0, 16)}` : "no receipt"}>
@@ -198,7 +198,7 @@ function Evidence({ d, source, run, receipt, receiptJson, events }: { d: RunDeta
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Button variant="secondary" size="sm" data-testid="run-verify" disabled={!sha || v.busy} onClick={() => void go()}><ShieldCheck size={13} aria-hidden="true" /> {v.busy ? "Verifying" : "Verify"}</Button>
         <Button variant="ghost" size="sm" data-testid="receipt-raw-toggle" aria-pressed={showRaw} onClick={() => setShowRaw((x) => !x)}>{showRaw ? "Hide raw" : "Show raw"}</Button>
-        {!sha ? <span style={{ color: "var(--cp-text-muted)" }}>No receipt to verify {UNMEASURED}.</span> : null}
+        {!sha ? <span style={{ color: "var(--cp-text-muted)" }}>No receipt to verify.</span> : null}
         {v.res ? <span data-testid="run-verify-result" role="status"><OutcomeBadge verdict={v.res.verdict} /> {stripAnsi(v.res.reasons[0] ?? "")}</span> : null}
         {v.error ? <span role="alert" data-testid="run-verify-error" style={{ color: "var(--cp-error-ink)" }}>{v.error}</span> : null}
       </div>
@@ -285,12 +285,13 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
   if (!d) return <Spinner label="Loading run" />;
 
   const title = d.title ?? d.issue_ref ?? d.origin_repo ?? `Title ${UNMEASURED}`;
-  const blocked = !!d.blocked_question;
+  const tamperedRun = !!d.verdict && runOutcome(d).label === "Tampered";
+  const blocked = !!d.blocked_question && !tamperedRun;
   const running = d.status === "running" || (d.verdict === null && !d.ended_at);
   const prog = stageProgress(d.stages);
   const why = running ? null : whyForRun(d);
   const whyRawText = why ? rawWhy(events) : null;
-  const ownRules = !running && d.own_rules_block === true;
+  const ownRules = !running && !tamperedRun && d.own_rules_block === true;
   const canRetry = !running && !!d.issue_ref;
   const doOwnRetry = async () => {
     setOwnRetry({ busy: true });
@@ -333,7 +334,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
         </div>
       ) : null}
 
-      {d.blocked_question && !ownRules ? <ReplyPrompt source={source} run={run} question={stripAnsi(d.blocked_question)} onSent={load} /> : null}
+      {blocked && !ownRules && d.blocked_question ? <ReplyPrompt source={source} run={run} question={stripAnsi(d.blocked_question)} onSent={load} /> : null}
 
       <div data-testid="run-summary" style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 440px), 1fr))", alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>

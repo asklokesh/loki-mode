@@ -14,8 +14,9 @@ const fx = (p: string) => readFileSync(join(import.meta.dir, "../fixtures/compat
 const events = (p: string) => fx(p).trim().split("\n").map((l) => JSON.parse(l));
 
 // Real server projection behind the page; receipt.json is served as the artifact file (or 404 when the CP cannot reach it, as for FireLater).
-async function serve(eventsPath: string, receiptPath: string | null, source = "abcdef0123456789") {
-  const evs = events(eventsPath);
+// unsealed drops the seal events: the committed fea1 events carry a redacted signature, so their hash chain cannot verify and the run reads as tampered.
+async function serve(eventsPath: string, receiptPath: string | null, source = "abcdef0123456789", unsealed = false) {
+  const evs = events(eventsPath).filter((e: any) => !unsealed || (e.type !== "log.sealed" && e.type !== "receipt.sealed")).map((e: any, k: number) => (unsealed ? { ...e, seq: k } : e));
   const run = evs[0].run as string;
   const { app } = createApp({ dbPath: ":memory:" });
   await app.request("/v1/ingest", { method: "POST", body: JSON.stringify({ source, run_id: run, events: evs }) });
@@ -56,7 +57,7 @@ for (const v of ["10.6.14", "10.7.1", "10.9.1", "10.10.5"]) {
 }
 
 test("fea1 (FireLater#17, receipt file out of reach): one clean Why, Needs your answer, own-rules Retry, no reply box, no false unmeasured", async () => {
-  const { source, run, posts } = await serve("10.9.1-fea1/events.jsonl", null);
+  const { source, run, posts } = await serve("10.9.1-fea1/events.jsonl", null, "abcdef0123456789", true);
   render(<RunThread source={source} run={run} />);
   await screen.findByTestId("run-thread");
   expect(screen.getByTestId("run-outcome").textContent).toBe("Needs your answer");
@@ -77,6 +78,16 @@ test("fea1 (FireLater#17, receipt file out of reach): one clean Why, Needs your 
   expect(screen.getByTestId("run-not-proven").textContent).toContain("full suite");
   expect(screen.getByTestId("run-thread").textContent).not.toMatch(ENUM);
   expect(screen.getByTestId("run-pr").textContent).toContain("pull/26");
+});
+
+test("a tampered log reads Tampered in the header, never Needs your answer, and offers neither the own-rules Retry banner nor a reply box", async () => {
+  const { source, run } = await serve("10.9.1-fea1/events.jsonl", null);
+  render(<RunThread source={source} run={run} />);
+  await screen.findByTestId("run-thread");
+  expect(screen.getByTestId("run-outcome").textContent).toBe("Tampered");
+  expect(screen.queryByTestId("run-own-rules")).toBeNull();
+  expect(screen.queryByTestId("run-reply-card")).toBeNull();
+  expect(screen.getByTestId("run-why").textContent).toContain("integrity check");
 });
 
 test("a spec conflict that is not an own-rules block keeps the reply box and a clean one-sentence Why behind Show raw", async () => {
