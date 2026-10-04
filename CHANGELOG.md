@@ -5,6 +5,44 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.0.0 (2026-10-04)
+
+Major release. The legacy engine is gone: every `loki` run uses the Loki 10 engine, and the signed receipt is the single source of truth for a run's outcome. The Control Plane gets a new information architecture, truthful run detail and an opt-in Ask Loki page. Per the founder's 02:08Z directive, the tests and reviews for this release were deferred; each is listed under "Tests owed after Oct 7" in docs/v10/RELEASE-11.md. tsc, the dist build and the dist guard ran; moat P9 runs in CI.
+
+### Removed (BREAKING)
+- `loki legacy` and the `LOKI_ENGINE` variable. `loki legacy` now exits with a removal message, and the issue-to-PR Action no longer pins `LOKI_ENGINE` (A6b).
+
+### Changed (BREAKING)
+- When a receipt is sealed, the CLI outcome equals the receipt verdict and the exit code follows that verdict. Exit code 3 (BUDGET_STOP) is returned only when no receipt was sealed; a cap stop is shown on the Reason line and as `stop: "cap"` in `--json` (A2b, FC-21b L7). Scripts keyed on exit code 3 should read the verdict instead.
+- A run stopped by its time limit can seal VERIFIED only when every check passed and a Wall or task-named test passed with at least one test run; otherwise it is PARTIAL. The receipt records `implement_limit` (A2b).
+- The per-run cap is sized from the plan's file scope and package count instead of task-text length (A2a, FC-22 S5).
+
+### Added
+- Control Plane information architecture: navigation-only sidebar, Overview with KPI tiles and a NEEDS YOU inbox, Runs grouped by issue, a New run picker backed by real gh issues with explicit confirm (A4a).
+- Ask Loki (behind `LOKI_CP_ASK=1`): a read-only, asynchronous chat over runs, receipts and repos on the user's provider, with threads stored in control.db, SSE streaming and run-id citations. It never starts a build; it can only offer a confirm dialog (A4-ASK-1, A4-ASK-2).
+- First-run onboarding checklist in the Control Plane showing each real `loki doctor` check (A5).
+- "Loki Receipt" GitHub check: the existing Action runs `loki verify --pubkey` and posts success or failure (B2).
+- Opt-in `gh attestation` of the receipt, plus the Agent Change Receipt spec in docs/AGENT-CHANGE-RECEIPT.md (B3).
+- Opt-in cross-lab review before seal (`review: codex` or `claude`, or `LOKI_REVIEW_PROVIDER`). The second provider can only downgrade a verdict, never upgrade it (B4).
+- A committed `.loki/project.json` is loaded as the shared Project Model and is part of the cache key; Loki never overwrites the tracked file (B5).
+- Opt-in Jira and Linear write-back after a PR, carrying the outcome, PR and receipt digest (B6).
+- `pr.author: me` or `bot` (`LOKI_PR_AUTHOR`); bot mode uses `LOKI_PR_BOT_TOKEN` only in the push child (B7).
+- Per-repo cost analytics: `GET /v1/cost/repos` aggregates real run rows by origin repo (B8).
+- Design notes for the deferred Tier C items in docs/v11/.
+
+### Fixed
+- Run detail tells the truth: one shared display mapping for verdicts, the Why line comes from the terminal stop reason with raw output behind "Show raw", receipt.json is the source of truth with an adapter for older receipts, and "unmeasured" appears only when the receipt lacks the field (A4b).
+- A stale Control Plane is restarted when the installed version differs, and the UI says so (A3a).
+- Fixture and test-run ingest is refused, and test rows are cleaned at startup (A3b).
+- Run summaries show the real stop reason for runs that die before verify (A3c).
+- `/v1/start` refuses HOME, `/` and non-git or unregistered repos; a dead-PID reconciler marks orphaned runs STOPPED (A3d-f).
+- `safeGit` blanks filter, textconv and gpg configuration (A1b, FC-25b).
+- `loki status` prints the URL the running Control Plane actually listens on (A6a).
+
+### Not in this release
+- `--attempts N` best-of-N (B1) is deferred: the selector has no caller yet, and wiring it untested would risk Seal accuracy.
+- Scoreboard v1 (B9): numbers pending, run by the CoS after release against raw `claude -p` on the same bases.
+
 ## v10.11.2 (2026-10-04)
 
 This republishes the v10.11.1 fixes. The v10.11.1 publish never reached npm because its release gate timed out on a cold Go compile, so FC-25 (safeGit hardening, moat P9 green) and FC-16b ship here.
