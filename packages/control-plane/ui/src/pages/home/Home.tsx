@@ -1,9 +1,9 @@
 // Overview: four honest KPI tiles, the NEEDS YOU inbox, and one row per issue (Latest by issue).
 // No composer: starting a run is the New run picker. A field with no data renders nothing.
-import { useMemo, type CSSProperties, type ReactNode } from "react";
-import type { RunRow } from "../../api";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
+import { getDoctor, type DoctorCheck, type RunRow } from "../../api";
 import { fmtUsd } from "../../format";
-import { Button, Card, EmptyState, KpiTile, Spinner } from "../../design/primitives";
+import { Badge, Button, Card, EmptyState, KpiTile, Spinner } from "../../design/primitives";
 import { EmptyState as FirstRun } from "../../Shell"; // no runs at all: import and CLI first-run state
 import { openNewRun } from "../compose/store";
 import { PrLink } from "../runs";
@@ -85,7 +85,35 @@ export function LatestByIssue({ groups, now }: { groups: IssueGroup[]; now: numb
   );
 }
 
-export function HomeView({ runs, now = Date.now() }: { runs: RunRow[]; now?: number }) {
+/** null = still loading (renders nothing), {error} = the route failed, {checks} = real `loki doctor` results. */
+export type DoctorState = { checks: DoctorCheck[] } | { error: string } | null;
+
+const DOCTOR_TONE = { pass: "success", warn: "warning", fail: "error" } as const;
+const DOCTOR_LABEL = { pass: "Pass", warn: "Warning", fail: "Failing" } as const;
+
+export function GettingStarted({ doctor, noRuns }: { doctor: DoctorState; noRuns: boolean }) {
+  if (!doctor) return null;
+  const failing = "checks" in doctor && doctor.checks.some((c) => c.status !== "pass");
+  if (!("error" in doctor) && !failing && !noRuns) return null;
+  return (
+    <section data-testid="getting-started" aria-label="Getting started" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <h2 style={h2}>Getting started</h2>
+      <Card style={{ padding: 0 }}>
+        {"error" in doctor ? (
+          <p data-testid="getting-started-error" role="alert" style={{ ...muted, margin: 0, padding: 16 }}>Could not run the setup checks: {doctor.error}</p>
+        ) : doctor.checks.map((c, i) => (
+          <div key={c.name} data-testid="doctor-check" data-status={c.status} style={{ display: "flex", gap: 12, alignItems: "center", padding: "10px 16px", borderTop: i ? "1px solid var(--cp-border-light)" : undefined }}>
+            <Badge tone={DOCTOR_TONE[c.status]}>{DOCTOR_LABEL[c.status]}</Badge>
+            <span style={{ flex: 1, minWidth: 0 }}>{c.name}</span>
+            <span style={muted}>{c.detail}</span>
+          </div>
+        ))}
+      </Card>
+    </section>
+  );
+}
+
+export function HomeView({ runs, now = Date.now(), doctor = null }: { runs: RunRow[]; now?: number; doctor?: DoctorState }) {
   const groups = useMemo(() => groupByIssue(runs), [runs]);
   const tiles = useMemo(() => kpiTiles(kpisOf(runs, groups, now)), [runs, groups, now]);
   return (
@@ -97,6 +125,7 @@ export function HomeView({ runs, now = Date.now() }: { runs: RunRow[]; now?: num
       <div data-testid="kpis" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
         {tiles.map((t) => <div key={t.id} data-testid={t.id}><KpiTile label={t.label} value={t.value} trend={t.trend} /></div>)}
       </div>
+      <GettingStarted doctor={doctor} noRuns={runs.length === 0} />
       <NeedsYou groups={groups} now={now} />
       <LatestByIssue groups={groups} now={now} />
     </div>
@@ -105,6 +134,12 @@ export function HomeView({ runs, now = Date.now() }: { runs: RunRow[]; now?: num
 
 export function Home(): ReactNode {
   const { runs, error } = useAllRuns();
+  const [doctor, setDoctor] = useState<DoctorState>(null);
+  useEffect(() => {
+    let live = true;
+    getDoctor().then((d) => live && setDoctor(d), (e: Error) => live && setDoctor({ error: e.message }));
+    return () => { live = false; };
+  }, []);
   if (runs === null) return error ? <EmptyState title="Could not load runs" hint={error} /> : <Spinner label="Loading overview" />;
-  return <HomeView runs={runs} />;
+  return <HomeView runs={runs} doctor={doctor} />;
 }
