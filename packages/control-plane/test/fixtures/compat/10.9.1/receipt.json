@@ -1,0 +1,92 @@
+{
+ "schema": "loki.v10.receipt/1",
+ "run_id": "e10-20261003T150744Z-59b1",
+ "task": {
+  "source": "issue",
+  "sha256": "54e03f29acc1f96a1680205c96186ebf236ee125c45423f272ec243bfc85de88"
+ },
+ "repo": "asklokesh/FireLater",
+ "base_sha": "be0799f0c5eb8af00e9a0f0236bd5186e7c2996f",
+ "head_sha": "eda184e59472f057e9eaa1d5e826d94df2930bea",
+ "tree": "2a26628b35ff1f854325988f542092ce0411cf1a",
+ "diff_sha256": "fefb3412073f665102dce766fccd41b37cbea6cc1280b4aba50e0752c5e29b66",
+ "wall": {
+  "files": [],
+  "passed": null
+ },
+ "checks": [
+  {
+   "name": "vitest:backend/tests/unit/middleware/sanitization-escape.test.ts",
+   "cmd": "npx vitest run backend/tests/unit/middleware/sanitization-escape.test.ts",
+   "result": "pass",
+   "duration_s": 0.729
+  },
+  {
+   "name": "vitest:backend/tests/unit/middleware/sanitization.test.ts",
+   "cmd": "npx vitest run backend/tests/unit/middleware/sanitization.test.ts",
+   "result": "pass",
+   "duration_s": 0.762
+  },
+  {
+   "name": "vitest:backend/tests/unit/sanitization.test.ts",
+   "cmd": "npx vitest run backend/tests/unit/sanitization.test.ts",
+   "result": "pass",
+   "duration_s": 0.765
+  },
+  {
+   "name": "vitest:backend/tests/integration/applications.test.ts",
+   "cmd": "npx vitest run backend/tests/integration/applications.test.ts",
+   "result": "pass",
+   "duration_s": 0.929
+  },
+  {
+   "name": "vitest:backend/tests/unit/routes/applications.test.ts",
+   "cmd": "npx vitest run backend/tests/unit/routes/applications.test.ts",
+   "result": "pass",
+   "duration_s": 0.784
+  },
+  {
+   "name": "vitest:backend/tests/unit/schemas/validation-middleware.test.ts",
+   "cmd": "npx vitest run backend/tests/unit/schemas/validation-middleware.test.ts",
+   "result": "pass",
+   "duration_s": 0.847
+  }
+ ],
+ "not_proven": [
+  "full suite",
+  "app boot",
+  "council",
+  "security scan",
+  "unrelated edit reverted: backend/src/routes/applications.ts",
+  "unrelated edit reverted: backend/src/routes/assets.ts",
+  "unrelated edit reverted: backend/src/routes/attachments.ts",
+  "visual evidence skipped: no package.json"
+ ],
+ "verdict": "FAILED",
+ "evidence": [],
+ "cost": {
+  "usd": 2.6600015999999997,
+  "input_tokens": 218,
+  "output_tokens": 48161,
+  "measured_sessions": 6,
+  "total_sessions": 6,
+  "partial_usd": 2.6600015999999997
+ },
+ "time": {
+  "wall_s": 387.42699999999996,
+  "stages": {
+   "plan": 14.597,
+   "implement": 372.83
+  }
+ },
+ "provider": "claude",
+ "model": "sonnet",
+ "resumed": false,
+ "events_sha256": "fe1f3bf7f2724ff02ba9c14c3bdf1f1602da6317a75bf202d3015b0a420dbd23",
+ "log_seal": true,
+ "receipt_sha256": "1f5fabb51786b8fc085884932d271fac099cf43200e9ef91e6f500c4277655ff",
+ "verification": {
+  "jwt": "redacted",
+  "kid": "IUFr9MMJ5FssipVZvu1GbESFZ_noO9mNfI5u5J19l_s"
+ }
+}

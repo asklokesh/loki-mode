@@ -1,5 +1,5 @@
 // D62-FIX: end-to-end proof of the per-run cost cap through the real CLI entry.
-// bin/loki (LOKI_ENGINE=v10, LOKI_TS_ENTRY=src/cli.ts) runs a task with a stub claude that writes a priced
+// bin/loki (LOKI_TS_ENTRY=src/cli.ts) runs a task with a stub claude that writes a priced
 // result-cost file for its session; the total crosses a tiny --max-cost, so the run must end BUDGET_STOP, exit 3.
 // Headless, no network, no real provider.
 import { afterAll, describe, expect, test } from "bun:test";
@@ -55,7 +55,6 @@ describe("engine10 cost cap e2e (stub claude, real CLI entry)", () => {
     chmodSync(stub, 0o755);
     const env: Record<string, string | undefined> = {
       ...process.env,
-      LOKI_ENGINE: "v10",
       LOKI_TS_ENTRY: ENTRY,
       LOKI_E10_INVOKER: "cli",
       LOKI_CLAUDE_CLI: stub,
@@ -76,25 +75,27 @@ describe("engine10 cost cap e2e (stub claude, real CLI entry)", () => {
     expect(events.some((e) => e.type === "cost" && typeof e.data.usd === "number" && e.data.usd > 0.01)).toBe(true);
     expect(events.some((e) => e.type === "cap.hit")).toBe(true);
   }
-  test("priced cost events over a tiny --max-cost end BUDGET_STOP with exit 3", () => {
+  test("priced cost events over a tiny --max-cost end with the sealed receipt verdict (L7), exit 1, and the cap on the Reason line", () => {
     const r = runCapped(["--max-cost", "0.01"], null);
-    if (r.rc !== 3) console.error(r.out);
-    expect(r.rc).toBe(3);
-    expect(r.out).toContain("BUDGET_STOP");
+    if (r.rc !== 1) console.error(r.out);
+    expect(r.rc).toBe(1);
+    expect(r.out).toMatch(/Outcome: +(PARTIAL|FAILED)/);
+    expect(r.out).toContain("cost/time cap reached");
     expect(r.out).toContain("cap $0.01 (--max-cost)");
     expectCapHit(r.repo);
   }, 120_000);
   test("loki.yaml budgets.per_run sets the cap with no flag, and the start line names loki.yaml", () => {
     const r = runCapped([], "budgets:\n  per_run: 0.02\n");
-    if (r.rc !== 3) console.error(r.out);
-    expect(r.rc).toBe(3);
-    expect(r.out).toContain("BUDGET_STOP");
+    if (r.rc !== 1) console.error(r.out);
+    expect(r.rc).toBe(1);
+    expect(r.out).toMatch(/Outcome: +(PARTIAL|FAILED)/);
+    expect(r.out).toContain("cost/time cap reached");
     expect(r.out).toContain("cap $0.02 (loki.yaml)");
     expectCapHit(r.repo);
   }, 120_000);
   test("--max-cost beats loki.yaml per_run on the start line", () => {
     const r = runCapped(["--max-cost", "0.03"], "budgets:\n  per_run: 500\n");
-    expect(r.rc).toBe(3);
+    expect(r.rc).toBe(1);
     expect(r.out).toContain("cap $0.03 (--max-cost)");
     expect(r.out).not.toContain("(loki.yaml)");
   }, 120_000);

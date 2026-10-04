@@ -110,7 +110,7 @@ test("brand is Loki Mode with one Settings entry and no lone New run button", as
   expect(nav.textContent).toContain("Loki Mode");
   expect(nav.textContent).not.toContain("Loki Control");
   expect(within(nav).getByText("Settings")).toBeTruthy();
-  expect(within(nav).queryByText("New run")).toBeNull();
+  expect(within(nav).getByTestId("sidebar-new-run")).toBeTruthy(); // opens the picker, never a composer
   expect(readFileSync(join(import.meta.dir, "../../ui/index.html"), "utf8")).toContain("<title>Loki Mode</title>");
 });
 
@@ -142,7 +142,7 @@ test("mobile layout: sidebar is desktop-only with a drawer button, wide columns 
   const { App } = await import("../../ui/src/App");
   location.hash = "#/runs"; // the Runs page; the bare route is the landing view
   const { container } = render(<App />);
-  await screen.findAllByTestId("run-row");
+  await screen.findAllByTestId("issue-row");
   const nav = within(container as HTMLElement).getByTestId("nav");
   expect(nav.className).toContain("hidden");
   expect(nav.className).toContain("md:flex");
@@ -150,7 +150,7 @@ test("mobile layout: sidebar is desktop-only with a drawer button, wide columns 
   // CPE-11 runs table keeps every column and scrolls inside its own container instead of hiding columns
   const table = within(container as HTMLElement).getByTestId("runs-table");
   expect(table.parentElement?.style.overflow).toBe("auto");
-  const heads = Array.from(container.querySelectorAll("th")).filter((h) => /^(Started|Repo)/.test(h.textContent ?? ""));
+  const heads = Array.from(container.querySelectorAll("th")).filter((h) => /^(When|Repo)/.test(h.textContent ?? ""));
   expect(heads.length).toBe(2);
 });
 

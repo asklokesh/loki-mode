@@ -28,7 +28,7 @@ import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE
 import { baseLine, noteOf } from "../util/base_guard.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
-export const START_LINE = "Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)";
+export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../e10ext/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../e10ext/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
 const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened", "log.sealed"]); // types only the supervisor may write; same types from the worker are dropped
@@ -63,6 +63,7 @@ export interface SupervisorOptions {
   started?: Record<string, unknown>; // extra run.started data (task_source, provider, model, issue_ref, ...)
   pr?: PrStep; deepArgv?: string[]; // pr absent means no PR; deepArgv absent means no detached deep verify after pr.opened
   comment?: CommentStep; // absent means no issue-comment fallback (a FAILED, no-diff issue run then only prints)
+  capCeilingS?: number; // FC-21b: the backstop is set here (the most the worker's resized cap can reach), not at the initial cap
   capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap minus grace
   graceS?: number; // default BACKSTOP_GRACE_S
 }
@@ -178,8 +179,9 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   withholdGithubTokens(workerEnv);
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
-  const backstopMs = backstopS(capS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
-  const escalateMs = Math.max(0, Math.min(2000, capS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
+  const ceilingS = Math.max(capS, opts.capCeilingS ?? capS);
+  const backstopMs = backstopS(ceilingS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
+  const escalateMs = Math.max(0, Math.min(2000, ceilingS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
   let sealed: Record<string, unknown> | null = null; const origBranch = currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
@@ -188,7 +190,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const workerExit = worker.killed ? null : worker.code;
   const sealedData = sealed as Record<string, unknown> | null;
   const v = sealedData?.verdict;
-  const verdict: Verdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v) ? (v as Verdict) : "FAILED";
+  const receiptVerdict = workerExit === 0 && typeof v === "string" && VERDICTS.has(v), verdict: Verdict = receiptVerdict ? (v as Verdict) : "FAILED"; // FC-21b (3): a sealed receipt is the one source of truth for the outcome
   const notProven = Array.isArray(sealedData?.not_proven) ? (sealedData.not_proven as unknown[]).map(String) : [];
   if (worker.killed) notProven.push(BACKSTOP_NOT_PROVEN);
   let prUrl: string | null = null;
@@ -220,7 +222,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   }
   const allEvents = readEvents(log.path), folded = fold(allEvents), costUsd = log.tampered ? null : folded.cost.usd, wallS = (Date.now() - t0) / 1000; // one read, reused for cost and the Slack summary; unknown cost stays null
   const stopRaw = folded.run.escalated?.data.stop, stop = typeof stopRaw === "string" ? stopRaw : null;
-  const outcome = outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered), blocked = outcome === "BLOCKED";
+  const outcome = outcomeOf(verdict, allEvents.some((e) => e.type === "cap.hit"), stop, log.tampered, receiptVerdict), blocked = outcome === "BLOCKED";
   if (blocked || (verdict === "FAILED" && prUrl === null)) { // E-67: never vanish silently -- an issue run gets a comment naming the reason, anything else is printed. A-110: BLOCKED always posts its one question
     const why = allEvents.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
     const reason = blocked ? `spec conflict: ${String(why ?? "see the receipt").replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500)}` : notProven.join("; ") || "run failed", issueRef = opts.started?.["issue_ref"];
@@ -237,7 +239,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
     pc = partialCost(allEvents, log.tampered),
     summary = { pr: prUrl ? { url: prUrl, draft: verdict !== "VERIFIED" } : null, verdict, outcome, notProven, flaky: [] as string[], wallS, stages, cost: { usd: costUsd, provider: String(opts.started?.provider ?? ""), tokens: allEvents.some((e) => e.type === "cost") ? folded.cost.inputTokens + folded.cost.outputTokens : null, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total } };
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s` }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
-  return { verdict, outcome, stop, receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
+  return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
 /** E-66: a text run confirmed already-done has no issue to comment on (no comment_argv, intake.ts);
  *  main() prints intake's comment body instead so the no-change decision is not swallowed. */
@@ -327,12 +329,13 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     const wait = setInterval(() => { if (existsSync(eventsPath)) { clearInterval(wait); stopLiveTail = tail(eventsPath, (e) => liveLine.onEvent(e), { intervalMs: 250 }); } }, 100);
     liveStop = () => { clearInterval(wait); clearInterval(tick); stopLiveTail(); liveLine.clear(); };
   }
-  const capS = deep ? DEEP_CAP_S : resolveRunCapS(repoDir, runDir, task, cap.usd <= 0, env); if (!deep) env.LOKI_E10_CAP_S = String(capS); // FC-21 (b): scaled by task size; the worker reads the same value
+  const sized = deep ? null : resolveRunCapS(repoDir, cap.usd <= 0, env), capS = sized?.capS ?? DEEP_CAP_S;
+  if (sized) { env.LOKI_E10_CAP_S = String(capS); if (sized.fixedS) env.LOKI_E10_CAP_FIXED_S = String(sized.fixedS); else delete env.LOKI_E10_CAP_FIXED_S; } // FC-21b: starts at DEFAULT_CAP_S; the worker resizes once after plan from plan-scope.json unless the cap is fixed
   const res = await runSupervisor({
-    runId, repoDir, env, capS,
+    runId, repoDir, env, capS, capCeilingS: sized?.ceilingS,
     workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model],
     started: {
-      task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, max_cost_usd: cap.usd,
+      task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
       ...(downgrades.length ? { downgrades } : {}),
     },

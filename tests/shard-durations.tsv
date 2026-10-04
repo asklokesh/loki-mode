@@ -730,3 +730,4 @@ legacy dashboard stays deleted: dirs, package files, npm pack, references (CPE24
 Control Plane starts from a fresh npm pack install and serves /health and its UI (CPE24-L7)	20
 Docs carry no stale commands, dead env vars or old versions (SZ-03, advisory)	3
 cp-redesign image allowlist guard (D26)	2
+Loki Receipt check action posts success for a valid receipt and failure for a tampered one (B2)	10

@@ -137,7 +137,7 @@ def test_complete_selected_calls_launcher_with_args_and_respects_concurrency(env
     assert len(calls["launch"]) == 1
     repo, number, workdir, env_ = calls["launch"][0]
     assert (repo, number) == ("octo/app", 1) and workdir.endswith("wt1")
-    assert env_["GH_TOKEN"] == PAT and env_["LOKI_ENGINE"] == "v10"
+    assert env_["GH_TOKEN"] == PAT
     assert env_["LOKI_NO_BROWSER"] == "1"
 
 

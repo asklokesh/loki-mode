@@ -4,13 +4,14 @@ import { afterAll, afterEach, beforeAll, expect, test } from "bun:test";
 
 const realFetch = globalThis.fetch;
 const { act, cleanup, fireEvent, render, screen } = await import("@testing-library/react");
-const { CommandPalette, COMPOSER_SUBMIT_EVENT } = await import("../../ui/src/palette");
-const { openCommandPalette } = await import("../../ui/src/shell/hooks");
+const { CommandPalette } = await import("../../ui/src/palette");
+const { closeNewRun, getNewRun } = await import("../../ui/src/pages/compose/store");
+const { openCommandPalette } =await import("../../ui/src/shell/hooks");
 const { setTheme } = await import("../../ui/src/shell/theme");
 const { registerPage, unregisterPage } = await import("../../ui/src/pages/registry");
 const { search, runItems, pageItems, actionItems } = await import("../../ui/src/palette/items");
 
-const run = (id: string, at: string) => ({ source_id: "s1", run_id: id, origin_repo: "o/r", verdict: "VERIFIED", status: "done", started_at: at, last_event_at: null });
+const run = (id: string, at: string) => ({ source_id: "s1", run_id: id, origin_repo: "o/r", title: id, issue_ref: null, verdict: "VERIFIED", status: "done", started_at: at, last_event_at: null });
 const Page = () => null;
 
 beforeAll(() => {
@@ -65,24 +66,23 @@ test("arrow keys wrap and mark the highlighted option selected", async () => {
   expect(opts[0]!.getAttribute("aria-selected")).toBe("false");
 });
 
-test("Cmd+N opens a new run, Cmd+Shift+D toggles the theme", () => {
+test("Cmd+N opens the New run picker (not a route), Cmd+Shift+D toggles the theme", () => {
   render(<CommandPalette />);
+  closeNewRun();
   key({ key: "n", metaKey: true });
-  expect(location.hash).toBe("#/new");
+  expect(getNewRun().open).toBe(true);
+  expect(getNewRun().preset).toBeNull();
+  expect(location.hash).toBe("");
+  closeNewRun();
   setTheme("dark"); // pin the store so the toggle result does not depend on the system preference
   const before = document.documentElement.getAttribute("data-theme");
   key({ key: "D", metaKey: true, shiftKey: true });
   expect(document.documentElement.getAttribute("data-theme")).not.toBe(before);
 });
 
-test("Cmd+Enter dispatches the documented composer submit event", () => {
-  render(<CommandPalette />);
-  let n = 0;
-  const h = () => { n++; };
-  window.addEventListener(COMPOSER_SUBMIT_EVENT, h);
-  key({ key: "Enter", ctrlKey: true });
-  window.removeEventListener(COMPOSER_SUBMIT_EVENT, h);
-  expect(n).toBe(1);
+test("a run without a title is labelled by its issue ref or Untitled task, never its run id", () => {
+  const items = runItems([{ ...run("hidden-id", "2026-10-03T00:00:00Z"), title: null, issue_ref: "o/r#9" }, { ...run("hidden-2", "2026-10-02T00:00:00Z"), title: null, issue_ref: null }] as never);
+  expect(items.map((i) => i.label)).toEqual(["o/r#9", "Untitled task"]);
 });
 
 test("search: empty query lists all, no match is empty, runs capped", () => {

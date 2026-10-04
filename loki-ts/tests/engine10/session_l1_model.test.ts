@@ -89,7 +89,7 @@ function runDefault(): { argv: string[]; out: string; started: Record<string, un
   git("add", "calc.ts", "calc.test.ts", "bunfig.toml"); git("commit", "-q", "-m", "base");
   const argvLog = join(tmp, "argv-stub.log");
   const env: Record<string, string | undefined> = {
-    ...process.env, LOKI_ENGINE: "v10", LOKI_TS_ENTRY: join(LOKI_TS, "src", "cli.ts"), LOKI_E10_INVOKER: "cli",
+    ...process.env, LOKI_TS_ENTRY: join(LOKI_TS, "src", "cli.ts"), LOKI_E10_INVOKER: "cli",
     LOKI_CLAUDE_CLI: join(E2E, "bin", "claude"), PATH: `${join(E2E, "bin")}:${process.env.PATH ?? ""}`,
     E2E_STUB_MODE: "done", E2E_STUB_ARGV_LOG: argvLog, LOKI_NO_BROWSER: "1", LOKI_E10_PLAN: "1",
     LOKI_RECEIPT_SIGNING_KEY_FILE: join(tmp, "k.pem"),

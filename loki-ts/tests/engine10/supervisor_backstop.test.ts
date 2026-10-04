@@ -337,8 +337,14 @@ describe("A-110 exit ladder", () => {
     expect((await ladder(() => sealedAs("VERIFIED"))).exit).toBe(0);
     expect((await ladder(() => sealedAs("ALREADY_SATISFIED"))).exit).toBe(0);
   });
-  test("a cap.hit run exits 3 as BUDGET_STOP", async () => {
+  test("a cap.hit run with a sealed receipt keeps the receipt verdict (L7), exit 1, and reports stop cap", async () => {
     const { r, exit } = await ladder(() => `${ev("cap.hit", "implement", {})}${sealedAs("PARTIAL")}`);
+    expect(r.outcome).toBe("PARTIAL");
+    expect(r.stop).toBe("cap");
+    expect(exit).toBe(1);
+  });
+  test("a cap.hit run with no sealed receipt is still BUDGET_STOP, exit 3", async () => {
+    const { r, exit } = await ladder(() => `${ev("cap.hit", "implement", {})}`);
     expect(r.outcome).toBe("BUDGET_STOP");
     expect(exit).toBe(3);
   });

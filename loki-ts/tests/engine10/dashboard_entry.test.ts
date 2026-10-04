@@ -1,8 +1,7 @@
 // E-49: loki dashboard reachable through the real entry (docs/v10/ENGINE.md
 // section 12). E-24 already unit-tests startServer()/summarizeRun() directly
-// (dashboard.test.ts); this proves the CLI route actually reaches them: `bin/
-// loki dashboard` under LOKI_ENGINE=v10 (bin/loki's engine10 case, cli.ts's
-// "engine10" dispatch, cli.ts's TABLE["dashboard"] route) starts the real
+// (dashboard.test.ts); this proves the CLI route actually reaches them: `cli.ts
+// engine10 dashboard` (cli.ts's "engine10" dispatch, TABLE["dashboard"] route) starts the real
 // Bun.serve and serves a run folded from a fixture events.jsonl written
 // straight to disk, with no engine run behind it. Test only, per the BOARD row.
 import { afterAll, describe, expect, test } from "bun:test";
@@ -11,7 +10,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const LOKI_TS = resolve(import.meta.dir, "../..");
-const BIN_LOKI = resolve(LOKI_TS, "../bin/loki");
 const ENTRY = process.env.E2E_LOKI_TS_ENTRY ?? join(LOKI_TS, "src", "cli.ts");
 
 const temps: string[] = [];
@@ -49,8 +47,8 @@ async function waitFor(pred: () => Promise<boolean>, timeoutMs: number): Promise
   }
 }
 
-describe("engine10 dashboard entry e2e (real bin/loki, real Bun.serve)", () => {
-  test("bin/loki dashboard serves a run folded from a fixture event log", async () => {
+describe("engine10 dashboard entry e2e (real cli.ts, real Bun.serve)", () => {
+  test("engine10 dashboard serves a run folded from a fixture event log", async () => {
     const repoDir = mkRepo();
     writeRun(repoDir, "r1", [
       ev(0, "run.started", null, {}),
@@ -67,7 +65,6 @@ describe("engine10 dashboard entry e2e (real bin/loki, real Bun.serve)", () => {
     const url = `http://127.0.0.1:${port}/`;
     const env: Record<string, string | undefined> = {
       ...process.env,
-      LOKI_ENGINE: "v10",
       LOKI_TS_ENTRY: ENTRY,
       LOKI_E10_DASHBOARD_PORT: String(port),
       LOKI_NO_BROWSER: "1",
@@ -75,7 +72,7 @@ describe("engine10 dashboard entry e2e (real bin/loki, real Bun.serve)", () => {
     delete env.LOKI_LEGACY_BASH; // would skip the engine10 route entirely
 
     const proc = Bun.spawn({
-      cmd: ["bash", BIN_LOKI, "dashboard"],
+      cmd: [process.execPath, ENTRY, "engine10", "dashboard"],
       cwd: repoDir,
       env,
       stdout: "ignore",

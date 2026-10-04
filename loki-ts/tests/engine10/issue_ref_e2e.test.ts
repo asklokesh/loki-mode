@@ -1,5 +1,5 @@
 // E-47: issue-ref end to end (docs/v10/ENGINE.md sections 4 and 6). Runs the
-// real engine from the real entry (bin/loki, LOKI_ENGINE=v10,
+// real engine from the real entry (bin/loki,
 // LOKI_TS_ENTRY=src/cli.ts, stub claude via LOKI_E10_INVOKER=cli) on a task
 // that is an issue reference, in both accepted forms (owner/repo#N and a
 // GitHub issue URL). A stub gh serves fixture issue JSON, so the run needs no
@@ -66,7 +66,6 @@ function runEngine(ref: string, issueNumber: number): Run {
   const ghLog = join(tmp, "gh.log");
   const env: Record<string, string | undefined> = {
     ...process.env,
-    LOKI_ENGINE: "v10",
     LOKI_TS_ENTRY: ENTRY,
     LOKI_E10_INVOKER: "cli",
     LOKI_CLAUDE_CLI: join(STUB_DIR, "claude"),

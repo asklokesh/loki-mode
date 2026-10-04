@@ -8,6 +8,7 @@ import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smal
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { taskBlock } from "../types.ts";
+import { PLAN_SCOPE_FILE } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
 
 const MAX_PLAN_LINES = 10;
@@ -23,7 +24,7 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
   return lines.slice(0, max).join("\n");
 }
 
-export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string): string {
+export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE)): string {
   return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
@@ -31,6 +32,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
       ? `Relevant files (by keyword overlap with the task):\n${relevantFiles.join("\n")}`
       : "No relevant files were found by keyword overlap; use your own judgement.",
     `Write a plan of at most ${MAX_PLAN_LINES} short lines, no other prose, to this exact file path: ${outputPath}`,
+    `Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: ${scopePath}`,
     "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n"));
 }
@@ -62,7 +64,7 @@ export const planStage: Stage = {
     const iterationId = `${ctx.runId}-plan`;
     const session = await ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE)),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,

@@ -4,15 +4,25 @@ import { ExternalLink, GitPullRequest, MessageCircleQuestion, RotateCcw, ShieldC
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { fmtUsd } from "../../format";
 import { getRun, postAnswer, type RunDetailResponse } from "../../api";
-import { Badge, Button, Card, EmptyState, Spinner, Textarea, VerdictBadge, VERDICT } from "../../design/primitives";
+import { Badge, Button, Card, EmptyState, Spinner, Textarea } from "../../design/primitives";
+import { displayOutcome, stripAnsi, type OutcomeTone } from "../../display";
+import { postControl } from "../run-controls";
 import { postRun } from "../compose/api";
 import { verifyRun, type VerifyResult } from "../receipts/api";
 import { fetchArtifact, fetchEvents, followStream, type RunEvent } from "./stream";
 import { buildTimeline } from "./timeline";
-import { changedFilesFor, clock, describeLine, elapsedLabel, notProvenItem, receiptFacts, stageProgress, UNMEASURED, whyForRun } from "./model";
+import { changedFilesFor, clock, describeLine, elapsedLabel, notProvenItem, stageProgress, UNMEASURED } from "./model";
+import { evidenceFacts, factText, OWN_RULES_TEXT, rawWhy, runOutcome, whyForRun, type RunDetail } from "./facts";
 
 export const NOT_MEASURED = UNMEASURED;
 const LOG_CAP = 2000;
+
+const TONE: Record<OutcomeTone, "success" | "warning" | "error" | "neutral"> = { good: "success", warn: "warning", bad: "error", neutral: "neutral" };
+/** A verdict badge that prints the one display label, never the enum. */
+function OutcomeBadge({ verdict, label, tone, testid }: { verdict?: string | null; label?: string; tone?: OutcomeTone; testid?: string }) {
+  const o = label ? { label, tone: tone ?? "neutral" } : displayOutcome(verdict);
+  return <Badge tone={TONE[o.tone]} pulse={o.label === "Running"} data-testid={testid} style={{ textTransform: "none", letterSpacing: 0 }}>{o.label}</Badge>;
+}
 
 export function costLabel(r: Pick<RunDetailResponse, "cost_usd" | "partial_usd" | "measured_sessions" | "total_sessions">): string {
   if (r.cost_usd !== null && r.cost_usd !== undefined) return fmtUsd(r.cost_usd);
@@ -98,8 +108,8 @@ function Timeline({ events, awaiting }: { events: RunEvent[]; awaiting: boolean 
             {isStage ? (
               <span className="cp-tl-meta">
                 <span data-testid="tl-duration">{typeof l.duration_s === "number" ? elapsedLabel(l.duration_s) : l.outcome === "running" ? "running" : UNMEASURED}</span>
-                <span data-testid="tl-model">{l.model ?? UNMEASURED}</span>
-                <span data-testid="tl-cost">{l.cost_usd === null ? UNMEASURED : fmtUsd(l.cost_usd)}</span>
+                <span data-testid="tl-model">{l.model ?? (l.cost_usd === "no-session" ? "-" : UNMEASURED)}</span>
+                <span data-testid="tl-cost">{l.cost_usd === "no-session" ? "-" : l.cost_usd === null ? UNMEASURED : fmtUsd(l.cost_usd)}</span>
               </span>
             ) : null}
           </li>
@@ -152,8 +162,6 @@ function ChangedFiles({ d, patch }: { d: RunDetailResponse; patch: string | null
   );
 }
 
-const short = (x: string | null | undefined, n = 12): string => (x ? x.slice(0, n) : UNMEASURED);
-
 function Row({ k, children, testid }: { k: string; children: ReactNode; testid: string }) {
   return (
     <div data-testid={testid} style={{ display: "flex", gap: 12, alignItems: "baseline", padding: "3px 0", borderBottom: "1px solid var(--cp-border)" }}>
@@ -163,33 +171,35 @@ function Row({ k, children, testid }: { k: string; children: ReactNode; testid: 
   );
 }
 
-function Evidence({ d, source, run, receipt, receiptJson }: { d: RunDetailResponse; source: string; run: string; receipt: string | null | undefined; receiptJson: string | null | undefined }) {
+function Evidence({ d, source, run, receipt, receiptJson, events }: { d: RunDetailResponse; source: string; run: string; receipt: string | null | undefined; receiptJson: string | null | undefined; events: RunEvent[] }) {
   const [v, setV] = useState<{ busy: boolean; res?: VerifyResult; error?: string }>({ busy: false });
   const [showRaw, setShowRaw] = useState(false);
   const sha = d.receipt?.sha256 ?? null;
-  const facts = receiptFacts(receiptJson);
+  const { facts, state } = evidenceFacts(receiptJson, events);
   const go = async () => {
     setV({ busy: true });
     try { setV({ busy: false, res: await verifyRun(source, run) }); } catch (e) { setV({ busy: false, error: (e as Error).message }); }
   };
-  const base = facts?.base ?? d.diff_stat?.base ?? null, head = facts?.head ?? d.diff_stat?.head ?? null;
-  const sig = !d.receipt ? UNMEASURED : !d.receipt.signed ? "unsigned" : d.sig_checked ? "signed, signature checked" : "signed, signature not checked";
-  const ck = facts?.checks;
+  const base = facts.base ?? (state === "read" ? null : d.diff_stat?.base ?? null), head = facts.head ?? (state === "read" ? null : d.diff_stat?.head ?? null);
+  const shown = (v: string | null, n: number): string => (v ? v.slice(0, n) : factText(null, state));
+  const rv = facts.verdict ?? d.receipt?.verdict ?? null;
+  const sig = !d.receipt ? "no receipt sealed in the run's events" : !d.receipt.signed ? "unsigned" : d.sig_checked ? "signed, signature checked" : "signed, signature not checked";
+  const ck = facts.checks;
   return (
     <Section title="Evidence and receipt" testid="run-receipt" meta={sha ? `sha256 ${sha.slice(0, 16)}` : "no receipt"}>
       <div data-testid="receipt-rows" style={{ display: "flex", flexDirection: "column", fontSize: "var(--cp-text-base)" }}>
-        <Row k="Verdict" testid="rr-verdict">{facts?.verdict ?? d.receipt?.verdict ? `receipt says ${facts?.verdict ?? d.receipt?.verdict}` : UNMEASURED}</Row>
-        <Row k="Diff hash" testid="rr-diff"><code title={facts?.diffSha ?? undefined}>{short(facts?.diffSha, 16)}</code></Row>
-        <Row k="Base" testid="rr-base"><code title={base ?? undefined}>{short(base)}</code></Row>
-        <Row k="Head" testid="rr-head"><code title={head ?? undefined}>{short(head)}</code></Row>
+        <Row k="Verdict" testid="rr-verdict">{rv ? `receipt says ${displayOutcome(rv).label}` : factText(null, state)}</Row>
+        <Row k="Diff hash" testid="rr-diff"><code title={facts.diffSha ?? undefined}>{shown(facts.diffSha, 16)}</code></Row>
+        <Row k="Base" testid="rr-base"><code title={base ?? undefined}>{shown(base, 12)}</code></Row>
+        <Row k="Head" testid="rr-head"><code title={head ?? undefined}>{shown(head, 12)}</code></Row>
         <Row k="Signature" testid="rr-sig">{sig}</Row>
-        <Row k="Checks run" testid="rr-checks">{ck ? (ck.total === 0 ? "none recorded" : `${ck.total} run: ${ck.pass} passed, ${ck.fail} failed${ck.notRun ? `, ${ck.notRun} not run` : ""}`) : UNMEASURED}</Row>
+        <Row k="Checks run" testid="rr-checks">{ck ? (ck.total === 0 ? "none recorded" : `${ck.total} run: ${ck.pass} passed, ${ck.fail} failed${ck.notRun ? `, ${ck.notRun} not run` : ""}`) : factText(null, state)}</Row>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
         <Button variant="secondary" size="sm" data-testid="run-verify" disabled={!sha || v.busy} onClick={() => void go()}><ShieldCheck size={13} aria-hidden="true" /> {v.busy ? "Verifying" : "Verify"}</Button>
         <Button variant="ghost" size="sm" data-testid="receipt-raw-toggle" aria-pressed={showRaw} onClick={() => setShowRaw((x) => !x)}>{showRaw ? "Hide raw" : "Show raw"}</Button>
-        {!sha ? <span style={{ color: "var(--cp-text-muted)" }}>No receipt to verify {UNMEASURED}.</span> : null}
-        {v.res ? <span data-testid="run-verify-result" role="status"><VerdictBadge verdict={v.res.verdict} /> {v.res.reasons[0] ?? ""}</span> : null}
+        {!sha ? <span style={{ color: "var(--cp-text-muted)" }}>No receipt to verify.</span> : null}
+        {v.res ? <span data-testid="run-verify-result" role="status"><OutcomeBadge verdict={v.res.verdict} /> {stripAnsi(v.res.reasons[0] ?? "")}</span> : null}
         {v.error ? <span role="alert" data-testid="run-verify-error" style={{ color: "var(--cp-error-ink)" }}>{v.error}</span> : null}
       </div>
       {showRaw ? (receipt === undefined ? <Spinner label="Loading receipt" /> : receipt === null ? <div data-testid="receipt-raw">Receipt text not available for this run.</div> : (
@@ -209,7 +219,7 @@ function NotProven({ d }: { d: RunDetailResponse }) {
             return (
               <li key={i} data-testid="not-proven-item" style={{ display: "flex", gap: 10, alignItems: "flex-start", justifyContent: "space-between" }}>
                 <span style={{ minWidth: 0 }}>{it.text}</span>
-                <Badge tone={it.owner ? "info" : "neutral"} data-testid="not-proven-owner" style={{ flexShrink: 0, textTransform: "none" }}>owner: {it.owner ?? UNMEASURED}</Badge>
+                {it.owner ? <Badge tone="info" data-testid="not-proven-owner" style={{ flexShrink: 0, textTransform: "none" }}>owner: {it.owner}</Badge> : null}
               </li>
             );
           })}
@@ -228,7 +238,7 @@ function ReplyPrompt({ source, run, question, onSent }: { source: string; run: s
     catch (e) { setState({ busy: false, error: (e as Error).message }); }
   };
   return (
-    <Section title="Needs your answer" testid="run-reply-card" meta={<Badge tone="info"><MessageCircleQuestion size={11} aria-hidden="true" /> BLOCKED</Badge>}>
+    <Section title="Needs your answer" testid="run-reply-card" meta={<MessageCircleQuestion size={16} aria-hidden="true" />}>
       <div>{question}</div>
       <div data-testid="run-reply" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <Textarea aria-label="Your reply" rows={3} value={answer} onChange={(e) => setAnswer(e.target.value)} disabled={state.busy || state.sent} />
@@ -246,15 +256,17 @@ function PullRequest({ d }: { d: RunDetailResponse }) {
   let body: ReactNode;
   if (d.pr_url) body = /^https?:\/\//.test(d.pr_url) ? <a href={d.pr_url} target="_blank" rel="noreferrer" style={{ color: "var(--cp-accent-ink)", wordBreak: "break-all" }}>{d.pr_url} <ExternalLink size={12} aria-hidden="true" /></a> : <span>{d.pr_url}</span>;
   else if (!d.verdict) body = <span>No PR yet: the run is still in progress.</span>;
-  else if (d.verdict === VERDICT.VERIFIED || d.verdict === "ALREADY_SATISFIED") body = <span>No PR opened {UNMEASURED}: the run recorded no PR address.</span>;
-  else body = <span>No PR opened: the run ended {d.verdict}, and a PR opens only after the run verifies.</span>;
+  else if (displayOutcome(d.verdict).tone === "good") body = <span>No PR opened {UNMEASURED}: the run recorded no PR address.</span>;
+  else body = <span>No PR opened: the run ended as {displayOutcome(d.verdict).label.toLowerCase()}, and a PR opens only after the run verifies.</span>;
   return <Section title="Pull request" testid="run-pr" meta={d.pr_draft ? "draft" : undefined}><div style={{ display: "flex", gap: 8, alignItems: "center" }}><GitPullRequest size={14} aria-hidden="true" />{body}</div></Section>;
 }
 
 export function RunThread({ source, run, slot, renderSlot }: { source: string; run: string; slot?: ReactNode; renderSlot?: (d: RunDetailResponse, reload: () => void) => ReactNode }) {
-  const [d, setD] = useState<RunDetailResponse | null>(null);
+  const [d, setD] = useState<RunDetail | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [raw, setRaw] = useState(false);
+  const [whyRaw, setWhyRaw] = useState(false);
+  const [ownRetry, setOwnRetry] = useState<{ busy: boolean; msg?: string; error?: boolean }>({ busy: false });
   const [retry, setRetry] = useState<{ busy: boolean; msg?: string; error?: boolean }>({ busy: false });
   const events = useEvents(source, run);
   const patch = useArtifact(source, run, "diff.patch");
@@ -273,11 +285,19 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
   if (!d) return <Spinner label="Loading run" />;
 
   const title = d.title ?? d.issue_ref ?? d.origin_repo ?? `Title ${UNMEASURED}`;
-  const blocked = !!d.blocked_question;
+  const tamperedRun = !!d.verdict && runOutcome(d).label === "Tampered";
+  const blocked = !!d.blocked_question && !tamperedRun;
   const running = d.status === "running" || (d.verdict === null && !d.ended_at);
   const prog = stageProgress(d.stages);
-  const why = running ? null : whyForRun(d, events);
+  const why = running ? null : whyForRun(d);
+  const whyRawText = why ? rawWhy(events) : null;
+  const ownRules = !running && !tamperedRun && d.own_rules_block === true;
   const canRetry = !running && !!d.issue_ref;
+  const doOwnRetry = async () => {
+    setOwnRetry({ busy: true });
+    try { await postControl(source, run, "retry"); setOwnRetry({ busy: false, msg: "Retry started as a new run." }); load(); }
+    catch (e) { setOwnRetry({ busy: false, msg: (e as Error).message, error: true }); }
+  };
   const doRetry = async () => {
     setRetry({ busy: true });
     try { await postRun({ target: d.issue_ref! }); setRetry({ busy: false, msg: "Started a new run." }); }
@@ -290,21 +310,36 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
           <div className="cp-eyebrow">{d.origin_repo ?? `repo ${UNMEASURED}`}{d.issue_ref && d.title ? ` / ${d.issue_ref}` : ""}</div>
           <h1 data-testid="run-title" className="cp-display" style={{ margin: "4px 0 0", fontSize: 30, overflowWrap: "anywhere" }}>{title}</h1>
         </div>
-        {blocked ? <VerdictBadge verdict={VERDICT.BLOCKED} /> : d.verdict ? <VerdictBadge run={d} /> : <Badge pulse>running</Badge>}
+        {blocked ? <OutcomeBadge verdict="BLOCKED" testid="run-outcome" /> : d.verdict ? <OutcomeBadge label={runOutcome(d).label} tone={runOutcome(d).tone} testid="run-outcome" /> : <OutcomeBadge verdict={null} testid="run-outcome" />}
         <span data-testid="run-elapsed" style={{ fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>{elapsedLabel(d.elapsed_s ?? d.wall_s)}</span>
         <span data-testid="run-cost" style={{ fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>{costLabel(d)}</span>
-        <span data-testid="run-header-slot" style={{ display: "inline-flex", gap: 8 }}>{slot}{renderSlot ? renderSlot(d, load) : null}</span>
-        {renderSlot ? null : <Button variant="secondary" size="sm" data-testid="run-retry" disabled={!canRetry || retry.busy} title={running ? "The run is still in progress" : d.issue_ref ? "Start this issue again" : `No issue reference recorded ${UNMEASURED}`} onClick={() => void doRetry()}><RotateCcw size={13} aria-hidden="true" /> Retry</Button>}
+        <span data-testid="run-header-slot" style={{ display: "inline-flex", gap: 8 }}>{slot}{renderSlot ? renderSlot(ownRules ? { ...d, blocked_question: null } : d, load) : null}</span>
+        {renderSlot ? null : <Button variant={ownRules ? "primary" : "secondary"} size="sm" data-testid="run-retry" disabled={!canRetry || retry.busy} title={running ? "The run is still in progress" : d.issue_ref ? "Start this issue again" : `No issue reference recorded ${UNMEASURED}`} onClick={() => void doRetry()}><RotateCcw size={13} aria-hidden="true" /> Retry</Button>}
         {retry.msg ? <span role={retry.error ? "alert" : "status"} data-testid="run-retry-msg" style={{ color: retry.error ? "var(--cp-error-ink)" : "var(--cp-text-2)", fontSize: "var(--cp-text-base)" }}>{retry.msg}</span> : null}
       </header>
-      {why ? <p data-testid="run-why" style={{ margin: "-8px 0 0", fontSize: "var(--cp-text-md)", color: "var(--cp-text-2)", overflowWrap: "anywhere" }}><strong style={{ color: "var(--cp-text)" }}>Why:</strong> {why}</p> : null}
+      {ownRules ? (
+        <Section title="Loki's own rules stopped this run" testid="run-own-rules">
+          <p data-testid="run-own-rules-text" style={{ margin: 0 }}>{OWN_RULES_TEXT}</p>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <Button data-testid="run-own-rules-retry" disabled={ownRetry.busy} onClick={() => void doOwnRetry()}><RotateCcw size={13} aria-hidden="true" /> Retry</Button>
+            {ownRetry.msg ? <span role={ownRetry.error ? "alert" : "status"} style={{ color: ownRetry.error ? "var(--cp-error-ink)" : "var(--cp-text-2)" }}>{ownRetry.msg}</span> : null}
+          </div>
+        </Section>
+      ) : null}
+      {why && !ownRules ? (
+        <div style={{ margin: "-8px 0 0" }}>
+          <p data-testid="run-why" style={{ margin: 0, fontSize: "var(--cp-text-md)", color: "var(--cp-text-2)", overflowWrap: "anywhere" }}><strong style={{ color: "var(--cp-text)" }}>Why:</strong> {why}</p>
+          {whyRawText ? <Button variant="ghost" size="sm" data-testid="run-why-raw-toggle" aria-pressed={whyRaw} onClick={() => setWhyRaw((x) => !x)}>{whyRaw ? "Hide raw" : "Show raw"}</Button> : null}
+          {whyRaw && whyRawText ? <pre data-testid="run-why-raw" style={{ margin: "6px 0 0", whiteSpace: "pre-wrap", overflowWrap: "anywhere", fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-sm)", maxHeight: 280, overflow: "auto", color: "var(--cp-text-2)" }}>{whyRawText}</pre> : null}
+        </div>
+      ) : null}
 
-      {d.blocked_question ? <ReplyPrompt source={source} run={run} question={d.blocked_question} onSent={load} /> : null}
+      {blocked && !ownRules && d.blocked_question ? <ReplyPrompt source={source} run={run} question={stripAnsi(d.blocked_question)} onSent={load} /> : null}
 
       <div data-testid="run-summary" style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 440px), 1fr))", alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
           <ChangedFiles d={d} patch={patch} />
-          <Evidence d={d} source={source} run={run} receipt={receipt} receiptJson={receiptJson} />
+          <Evidence d={d} source={source} run={run} receipt={receipt} receiptJson={receiptJson} events={events} />
         </div>
         <div data-testid="run-aside" style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
           <NotProven d={d} />

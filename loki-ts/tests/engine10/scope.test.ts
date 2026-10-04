@@ -27,7 +27,7 @@ function runEngine(mode: string, plan: "1" | "0") {
   git(repo, "init", "-q", "-b", "main"); git(repo, "config", "user.name", "e2e"); git(repo, "config", "user.email", "e2e@example.invalid");
   git(repo, "add", "calc.ts", "calc.test.ts", "bunfig.toml", "settings.py"); git(repo, "commit", "-q", "-m", "base");
   const base = git(repo, "rev-parse", "HEAD");
-  const env: Record<string, string | undefined> = { ...process.env, LOKI_ENGINE: "v10", LOKI_TS_ENTRY: ENTRY, LOKI_E10_INVOKER: "cli", LOKI_CLAUDE_CLI: join(STUB_DIR, "claude"), PATH: `${STUB_DIR}:${process.env.PATH ?? ""}`, E2E_STUB_MODE: mode, LOKI_NO_BROWSER: "1", LOKI_E10_PLAN: plan, LOKI_RECEIPT_SIGNING_KEY_FILE: join(keyDir, "k.pem") };
+  const env: Record<string, string | undefined> = { ...process.env, LOKI_TS_ENTRY: ENTRY, LOKI_E10_INVOKER: "cli", LOKI_CLAUDE_CLI: join(STUB_DIR, "claude"), PATH: `${STUB_DIR}:${process.env.PATH ?? ""}`, E2E_STUB_MODE: mode, LOKI_NO_BROWSER: "1", LOKI_E10_PLAN: plan, LOKI_RECEIPT_SIGNING_KEY_FILE: join(keyDir, "k.pem") };
   delete env.LOKI_LEGACY_BASH; delete env.LOKI_RECEIPT_SIGNING_KEY; delete env.LOKI_MODEL_OVERRIDE;
   const r = Bun.spawnSync(["bash", BIN_LOKI, "add a multiply(a, b) function to calc.ts", "--no-pr"], { cwd: repo, env, timeout: 60_000 });
   const m = JSON.parse(readFileSync(join(repo, ".loki", "engine.json"), "utf8")) as { run_id: string };

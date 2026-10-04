@@ -43,6 +43,34 @@ function serverCmd(): string[] | null {
   return existsSync(src) ? ["bun", "--install=fallback", "run", src] : null;
 }
 
+const pidAlive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const installedVersion = (): string => { try { return readFileSync(join(REPO_ROOT, "VERSION"), "utf8").trim() || "unknown"; } catch { return "unknown"; } };
+
+/** FC-26: a Control Plane left running across an upgrade keeps serving the old code. Reads the PID that CP recorded in instance.json
+ *  (never a name or pattern match), and when its recorded version differs from the installed one and /health still answers as loki-control,
+ *  SIGTERMs that one PID (the serve wrapper, which stops its child) and waits for it to exit. Returns the restarted PID or null. */
+export async function restartStaleControlPlane(env: NodeJS.ProcessEnv, current: string = installedVersion(), opts: { alive?: (pid: number) => boolean; waitMs?: number } = {}): Promise<number | null> {
+  const alive = opts.alive ?? pidAlive;
+  let inst: { pid?: unknown; url?: unknown; version?: unknown };
+  try { inst = JSON.parse(readFileSync(instancePath(env), "utf8")); } catch { return null; }
+  if (!Number.isInteger(inst.pid) || (inst.pid as number) <= 1 || (inst.pid as number) === process.pid || typeof inst.url !== "string") return null;
+  const pid = inst.pid as number;
+  if (!alive(pid)) return null;
+  let running = typeof inst.version === "string" ? inst.version : "unknown";
+  try {
+    const h = (await (await fetch(`${inst.url}/health`, { signal: AbortSignal.timeout(3000) })).json()) as { service?: string; version?: string };
+    if (h.service !== "loki-control") return null; // the recorded pid now belongs to something else
+    if (typeof h.version === "string") running = h.version;
+  } catch { return null; }
+  if (running === current) return null;
+  process.stderr.write(`loki control: Control Plane is out of date (running ${running}, installed ${current}), restarting\n`);
+  try { process.kill(pid, "SIGTERM"); } catch { return null; }
+  const until = Date.now() + (opts.waitMs ?? 8000);
+  while (alive(pid) && Date.now() < until) await sleep(50);
+  return alive(pid) ? null : pid;
+}
+
 async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
   const explicit = flag(args, "--port") ?? env.LOKI_CONTROL_PORT;
   const port = explicit ?? String(DEFAULT_PORT);
@@ -51,8 +79,9 @@ async function serve(args: string[], env: NodeJS.ProcessEnv): Promise<number> {
   const cmd = serverCmd();
   if (!cmd) { process.stderr.write("loki control: server not found (packages/control-plane is missing from this install)\n"); return 1; }
   mkdirSync(dirname(db), { recursive: true });
+  await restartStaleControlPlane(env);
   // the default port falls back to any free port when taken (the printed URL is the real one); an explicit port never does
-  const child = Bun.spawn(cmd, { env: { ...env, PORT: port, LOKI_CONTROL_DB: db, LOKI_CONTROL_PORT_FALLBACK: explicit === undefined ? "1" : "0" }, stdio: ["inherit", "pipe", "inherit"] });
+  const child = Bun.spawn(cmd, { env: { ...env, PORT: port, LOKI_CONTROL_DB: db, LOKI_CONTROL_VERSION: installedVersion(), LOKI_VERSION_FILE: join(REPO_ROOT, "VERSION"), LOKI_CONTROL_PORT_FALLBACK: explicit === undefined ? "1" : "0" }, stdio: ["inherit", "pipe", "inherit"] });
   // the service must not outlive this CLI: forward stop signals and also kill on any exit path
   for (const sig of ["SIGINT", "SIGTERM"] as const) process.on(sig, () => child.kill());
   const inst = instancePath(env);

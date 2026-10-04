@@ -10,8 +10,9 @@ import { page as home } from "./home";
 import { page as work } from "./board";
 import { page as receipts } from "./receipts";
 import { page as runs } from "./runs";
+import { prsPage, reposPage } from "./runs/Lists";
+import { askPage, askThreadPage } from "./ask";
 import { page as models } from "./models";
-import { page as compose } from "./compose";
 import { RunControls } from "./run-controls";
 import { page as plans, pickerPage as plansPicker } from "./plans";
 import { page as merge } from "./merge";
@@ -34,7 +35,7 @@ function adapt(p: SlicePage): PageDef {
 
 export function wirePages(): void {
   unregisterPage("run-detail");
-  unregisterPage("new-run");
+  unregisterPage("new-run"); // starting a run is the New run dialog now, not a route
   registerPage(adapt({ ...home, path: "/" }));
   // Home links runs as /r/:source/:run (spec 3.1); serve it with the run thread.
   registerPage({ ...run, id: "run-short", path: "/r/:source/:run" });
@@ -42,5 +43,7 @@ export function wirePages(): void {
   // Plans reads route params itself, so it registers as-is.
   registerPage(plans);
   registerPage(plansPicker);
-  for (const p of [cost, work, receipts, runs, models, compose, merge, risk, config, workspaces, integrations]) registerPage(adapt(p));
+  registerPage(askPage);
+  registerPage(askThreadPage);
+  for (const p of [cost, work, receipts, runs, prsPage, reposPage, models, merge, risk, config, workspaces, integrations]) registerPage(adapt(p));
 }

@@ -6,7 +6,7 @@
     "test": "bun test ./test/",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:ui": "cd ui && bun install --frozen-lockfile && bun run build",
-    "build:server": "bun build src/server/serve.ts --target=bun --outfile dist/server.js",
+    "build:server": "bun build src/server/serve.ts --target=bun --outfile dist/server.js && bun build src/ask/tools_server.ts --target=bun --outfile dist/ask-tools-server.js",
     "build:all": "bun run build:ui && bun run build:server",
     "db:generate": "drizzle-kit generate --dialect sqlite --schema ./src/db/schema.ts --out ./drizzle"
   },

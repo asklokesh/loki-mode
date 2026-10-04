@@ -40,7 +40,7 @@ test("first start removes fixture runs and audits each; second start removes not
     expect(count(path, "select count(*) n from runs where run_id in ('e10-t1','e10-t2','tmp-run')")).toBe(0);
     expect(count(path, "select count(*) n from events where run_id in ('e10-t1','e10-t2','tmp-run')")).toBe(0);
     expect(count(path, "select count(*) n from audit where action = 'fixture.cleanup'")).toBe(3);
-    expect(count(path, "select count(*) n from audit where action = 'fixture.cleanup.done'")).toBe(1);
+    expect(count(path, "select count(*) n from audit where action = 'fixture.cleanup.v2.done'")).toBe(1);
     expect(count(path, "select count(*) n from runs where run_id = 'real-1'")).toBe(1);
     expect(count(path, "select count(*) n from events where run_id = 'real-1'")).toBe(1);
     expect(count(path, "select count(*) n from sources where id in ('aaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbb')")).toBe(0);
@@ -52,6 +52,6 @@ test("first start removes fixture runs and audits each; second start removes not
     createApp({ dbPath: path });
     expect(count(path, "select count(*) n from runs where run_id = 'late'")).toBe(1);
     expect(count(path, "select count(*) n from audit where action = 'fixture.cleanup'")).toBe(3);
-    expect(count(path, "select count(*) n from audit where action = 'fixture.cleanup.done'")).toBe(1);
+    expect(count(path, "select count(*) n from audit where action = 'fixture.cleanup.v2.done'")).toBe(1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

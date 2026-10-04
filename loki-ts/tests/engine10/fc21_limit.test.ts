@@ -32,7 +32,8 @@ describe("FC-21 (a): an implement limit still verifies", () => {
     expect(events.find((e) => e.type === "stage.failed" && e.stage === "implement")?.data.reason).toBe("limit");
     expect(started.indexOf("verify")).toBeGreaterThan(started.indexOf("implement"));
     expect(started.indexOf("verify")).toBeLessThan(started.indexOf("seal"));
-    expect(r.outputs.implement?.exit).toBe("killed"); // seal reads this and can never call the run VERIFIED
+    expect(r.outputs.implement?.exit).toBe("killed"); // seal reads this: VERIFIED only when earned (FC-21b: fc21b_verdict.test.ts)
+    expect(r.outputs.implement?.limit_s).toBe(1); // FC-21b: the limit is recorded so seal can set implement_limit
   });
   test("a limit in implement with failing verify still runs fix rounds", async () => {
     const { events, ctx } = harness();
@@ -72,5 +73,9 @@ describe("FC-21 (d): one outcome", () => {
     expect(line("FAILED").outcome).toBe("FAILED");
     expect(line("SPEC_CONFLICT").outcome).toBe("BLOCKED");
     expect(EXIT.PARTIAL).toBe(1);
+  });
+  test("FC-21b (3): a cap stop with a sealed receipt keeps the receipt verdict and its exit code", () => {
+    expect(outcomeOf("PARTIAL", true, null, false, true)).toBe("PARTIAL");
+    expect(EXIT[outcomeOf("PARTIAL", true, null, false, true)]).toBe(EXIT.PARTIAL);
   });
 });

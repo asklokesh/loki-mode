@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { getRun, listRuns, type RunRow } from "../../api";
 import { Badge, Card, EmptyState, Spinner, Table, Timeline, VerdictBadge, type Tone } from "../../design/primitives";
+import { displayOutcome } from "../../display";
 import { loadPlan, type PlanData } from "./api";
 import type { RowStatus } from "./logic";
 
@@ -58,7 +59,7 @@ function MatrixView({ source, run }: { source: string; run: string }) {
         <div style={{ fontFamily: "var(--cp-font-mono)" }}>{run}</div>
         <div data-testid="plans-summary" style={{ color: "var(--cp-text-2)" }}>
           {matrix.rows.length ? `${proven} of ${matrix.rows.length} criteria proven` : "not measured: no criteria"}
-          {data.verdict ? ` - verdict ${data.verdict}` : have.receipt ? " - verdict unavailable" : " - no receipt"}
+          {data.verdict ? ` - verdict ${displayOutcome(data.verdict).label}` : have.receipt ? " - verdict unavailable" : " - no receipt"}
         </div>
         {missing.length ? <div data-testid="plans-missing" style={{ color: "var(--cp-text-2)" }}>not available: {missing.map((m) => `${m}.json`).join(", ")}</div> : null}
       </Card>

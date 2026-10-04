@@ -1676,7 +1676,6 @@ show_help() {
     echo "  loki start ./prd.md       Build from a spec (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
     echo "  quickstart = guided first build; quick = one small task (Loki 10 engine, no PR)."
     echo "  loki \"<task>\", loki owner/repo#N and loki quick run on the Loki 10 engine by default."
-    echo "  Previous engine: set LOKI_ENGINE=legacy or run 'loki legacy <args>'."
     echo "  Docs: https://github.com/asklokesh/loki-mode  |  Report a problem: loki crash"
     echo ""
     # CLI consolidation (Phase A): the front page presents ~17 canonical
@@ -1778,7 +1777,7 @@ show_help() {
     echo "  loki start PROJ-456           # Jira issue"
     echo "  loki start --bg ./prd.md      # Start in background"
     echo "  loki start --parallel ./prd.md   # Parallel mode (git worktrees)"
-    echo "  loki quick \"add dark mode\"  # Single-task mode (Loki 10 engine; LOKI_ENGINE=legacy for 3 iters max)"
+    echo "  loki quick \"add dark mode\"  # Single-task mode (Loki 10 engine)"
     echo "  loki tour                     # See a real sample result (no provider, no key, no spend)"
     echo "  loki demo                     # Build a sample todo app end to end"
     echo "  loki init -t saas-starter     # Scaffold from template"
@@ -16641,10 +16640,8 @@ cmd_quick() {
             echo ""
             echo "Usage: loki quick \"description of what to do\""
             echo ""
-            echo "Runs the Loki 10 engine on one small task (no PR is opened). Set"
-            echo "LOKI_ENGINE=legacy or run 'loki legacy quick ...' for the previous engine:"
-            echo "a lightweight profile, 3 iterations max, no quality council, no completion"
-            echo "gate. Best for tiny tasks. The options below apply to the previous engine."
+            echo "Runs the Loki 10 engine on one small task (no PR is opened). Best for"
+            echo "tiny tasks."
             echo ""
             echo "Examples:"
             echo "  loki quick \"add dark mode to this React app\""
@@ -18885,7 +18882,7 @@ cmd_verify() {
     local _pk_arg
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
-            --pubkey|--pubkey=*) LOKI_ENGINE=v10 exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
+            --pubkey|--pubkey=*) exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
         esac
     done
     # --fast: deterministic checks only, in milliseconds. Measured on this repo
@@ -22215,7 +22212,7 @@ main() {
             ;;
         keys)
             # D48: public-key export lives in the Bun v10 engine; re-enter the shim on that route.
-            LOKI_ENGINE=v10 exec "$_LOKI_SCRIPT_DIR/../bin/loki" keys "$@"
+            exec "$_LOKI_SCRIPT_DIR/../bin/loki" keys "$@"
             ;;
         spec)
             cmd_spec "$@"

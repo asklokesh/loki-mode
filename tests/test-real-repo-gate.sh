@@ -37,7 +37,7 @@ start)
     [ "$FAKE_MODE" = timeout ] && sleep 30
     mkdir -p .loki/runs/r1; echo '{"type":"run.started"}' > .loki/runs/r1/events.jsonl
     [ "$FAKE_MODE" = norecept ] || echo '{"outcome":"x"}' > .loki/runs/r1/receipt.json
-    echo "Loki 10 engine (set LOKI_ENGINE=legacy or run 'loki legacy' for the previous engine)"
+    echo "Loki 10 engine, PR target: main"
     [ "$FAKE_MODE" = legacy ] && echo "Running the legacy engine via autonomy/run.sh"
     if [ "$corpus" = 1 ]; then
         echo "y = 2" >> src/mod.py
@@ -80,7 +80,7 @@ run_gate timeout "$AQ" RRG_TIMEOUT=1
 expect "timeout fails" 1 'FAIL.*timeout: killed'
 run_gate legacy "$AQ"
 expect "legacy output fails" 1 'FAIL.*legacy engine or run.sh'
-run_gate pass "$AQ" # banner naming LOKI_ENGINE=legacy alone must not trip the rule
+run_gate pass "$AQ" # the start banner alone must not trip the rule
 expect "start banner naming legacy is not a failure" 0 'GATE PASS'
 run_gate unrelated "$CO"
 expect "unrelated file in diff fails" 1 'FAIL.*unrelated file in diff: notes_junk.txt'

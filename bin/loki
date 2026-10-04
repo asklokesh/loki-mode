@@ -292,7 +292,7 @@ _loki_bun_why() {
 
 # M-08 (docs/v10/MODERNIZE.md section 2): the NEW `loki modernize <repo> --to
 # <target>` form always reaches the Loki 10 (Bun) modernize CLI, regardless of
-# LOKI_ENGINE or the default engine flip. Ahead of the v10 block below so
+# the default engine flip. Ahead of the v10 block below so
 # tonight's legacy default never blocks it; $1 is already "modernize" so "$@"
 # reproduces it as the router's own first argument without a shift.
 #
@@ -319,32 +319,35 @@ if [ "${1:-}" = "modernize" ]; then
     unset _loki_mod_a
 fi
 
-# `loki legacy <args>` (D29/D48): the previous engine, exactly as LOKI_ENGINE=legacy.
-# Re-runs this shim with the pin so every route below is the pre-flip route.
+# `loki legacy` was removed in 11.0.0 (LEGACY-ZERO W1-01): there is one engine.
 case "${1:-}" in
     legacy)
-        shift
-        [ -f "$REPO_ROOT/autonomy/lib/engine10-legacy-notice.txt" ] && cat "$REPO_ROOT/autonomy/lib/engine10-legacy-notice.txt" >&2
-        LOKI_ENGINE=legacy exec "$SCRIPT_PATH" "$@"
+        echo "loki: 'loki legacy' was removed in Loki Mode 11.0.0. The previous engine and its engine-selection variable no longer exist; use the Loki 10 engine: loki \"<task>\", loki owner/repo#N, loki quick \"<task>\"." >&2
+        exit 2
         ;;
 esac
 
-# Loki 10 engine (D29, flipped to the default by D48 rows 7-9). LOKI_ENGINE unset
-# or v10 routes `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` to
-# engine10; LOKI_ENGINE=v10 (explicit) also routes status/verify/dashboard. Any
-# other value (legacy, v9, ...) skips this block: the previous engine, unchanged.
-_loki_engine_default="v10"
-case "${LOKI_ENGINE:-$_loki_engine_default}" in
+# Loki 10 engine (D29, the only engine from 11.0.0). Routes `loki "<task>"`,
+# `loki owner/repo#N`, `loki quick "<task>"`, `keys` and `verify --pubkey` to engine10.
+# shellcheck disable=SC2194
+case "v10" in
     v10)
         _e10=0
+        _e10_hard=0
         _e10_args=("$@")
         case "${1:-}" in
-            status|verify|dashboard|keys)
-                [ "${LOKI_ENGINE:-}" = "v10" ] && _e10=1
+            keys) _e10=1; _e10_hard=1 ;;
+            status|verify|dashboard)
+                if [ "$1" = "verify" ]; then
+                    for _pk in "$@"; do
+                        case "$_pk" in --pubkey|--pubkey=*) _e10=1; _e10_hard=1 ;; esac
+                    done
+                    unset _pk
+                fi
                 # Bare `loki verify` follows the newest run: a v10 run newer than the newest
                 # legacy proof is verified by v10, so a FAILED default run is never VERIFIED.
                 # Only a bare call or a v10 run id (e10-*) goes there; any flag (--fast, --pr, --json, unknown) stays on legacy verify.
-                if [ "$1" = "verify" ] && [ "$_e10" = "0" ] && [ -z "${LOKI_ENGINE:-}" ] && case "${2:-}" in ""|e10-*) true ;; *) false ;; esac; then
+                if [ "$1" = "verify" ] && [ "$_e10" = "0" ] && case "${2:-}" in ""|e10-*) true ;; *) false ;; esac; then
                     _r10=""; _p10=""
                     for _d in "${LOKI_DIR:-.loki}"/runs/e10-*/; do [ -d "$_d" ] && _r10="$_d"; done
                     for _d in "${LOKI_DIR:-.loki}"/proofs/*/proof.json; do [ -f "$_d" ] && { [ -z "$_p10" ] || [ "$_d" -nt "$_p10" ]; } && _p10="$_d"; done
@@ -380,7 +383,7 @@ case "${LOKI_ENGINE:-$_loki_engine_default}" in
         esac
         # Default (unset) mode never breaks a host: no bun, or a provider engine10 has no
         # invoker for, falls through to the legacy engine. Explicit v10 keeps its hard error.
-        if [ "$_e10" = "1" ] && [ "${LOKI_ENGINE:-}" != "v10" ]; then
+        if [ "$_e10" = "1" ] && [ "$_e10_hard" = "0" ]; then
             case "${LOKI_PROVIDER:-claude}" in
                 claude|codex|cline|aider) ;;
                 *)
@@ -404,10 +407,10 @@ case "${LOKI_ENGINE:-$_loki_engine_default}" in
         fi
         if [ "$_e10" = "1" ]; then
             _lb=$(_loki_bun)
-            [ -n "$_lb" ] || { echo "Error: LOKI_ENGINE=v10 needs bun. Install bun from https://bun.sh, or set LOKI_ENGINE=legacy to use the previous engine." >&2; exit 1; }
+            [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
             exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
         fi
-        unset _e10 _e10_args
+        unset _e10 _e10_args _e10_hard
         ;;
 esac
 

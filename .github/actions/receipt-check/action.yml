@@ -1,0 +1,38 @@
+name: 'Loki Receipt'
+description: 'Verify a Loki receipt against a public key and post a "Loki Receipt" check run'
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  receipt:
+    description: 'Path to receipt.json (default: newest .loki/runs/*/receipt.json)'
+    required: false
+    default: ''
+  pubkey:
+    description: 'Path to the Ed25519 public key (JWK or PEM) the receipt must verify against'
+    required: true
+  sha:
+    description: 'Commit SHA the check attaches to (default: the workflow SHA)'
+    required: false
+    default: ''
+  github-token:
+    description: 'Token with checks: write'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install Loki Mode
+      shell: bash
+      run: command -v loki >/dev/null 2>&1 || npm install -g loki-mode@latest
+
+    - name: Verify receipt and post check
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        LOKI_RECEIPT_CHECK_RECEIPT: ${{ inputs.receipt }}
+        LOKI_RECEIPT_CHECK_PUBKEY: ${{ inputs.pubkey }}
+        LOKI_RECEIPT_CHECK_SHA: ${{ inputs.sha }}
+      run: bash "${{ github.action_path }}/check.sh"

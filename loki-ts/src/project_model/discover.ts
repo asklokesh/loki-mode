@@ -6,8 +6,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { STAGE_BUDGETS, type RunContext } from "../engine10/types.ts";
-import { computeKey, gather, shallowDirs, type Gathered } from "./gather.ts";
-import { parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
+import { committedModelHash, computeKey, gather, isGitTracked, shallowDirs, type Gathered } from "./gather.ts";
+import { PROJECT_MODEL_SCHEMA, parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
 
 /** Default ON; LOKI_E10_PROJECT_MODEL=0 is the opt-out (discovery is skipped and consumers see no model). */
 export function projectModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -35,7 +35,33 @@ export function loadCached(repoDir: string, now: number = Date.now()): ProjectMo
   }
 }
 
+/** A git-tracked .loki/project.json is the team's shared Project Model (B5). It is validated with the
+ *  same validator as a fresh answer; an invalid one is ignored (reason logged to stderr) and discovery
+ *  runs as if it were absent. Share a discovered model with: `git add -f .loki/project.json` (the
+ *  cache file IS the committed file; edit it by hand or re-run discovery, then commit it). */
+export function loadCommitted(repoDir: string): { model: ProjectModel; hash: string } | null {
+  if (!isGitTracked(repoDir, PROJECT_FILE)) return null;
+  const ignore = (why: string): null => {
+    process.stderr.write(`loki: ignoring committed ${PROJECT_FILE}: ${why}; falling back to discovery\n`);
+    return null;
+  };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(join(repoDir, PROJECT_FILE), "utf8"));
+  } catch (e) {
+    return ignore(`unreadable JSON (${e instanceof Error ? e.message : String(e)})`);
+  }
+  const hash = committedModelHash(raw);
+  if (hash === null) return ignore("not a JSON object");
+  const r = raw as Record<string, unknown>;
+  if (r["schema"] !== PROJECT_MODEL_SCHEMA || r["status"] !== "ok") return ignore(`needs schema "${PROJECT_MODEL_SCHEMA}" and status "ok"`);
+  const v = validateAnswer(repoDir, raw);
+  if (!v.ok) return ignore(v.errors.slice(0, 3).join("; "));
+  return { model: { ...v.model, key: "" }, hash };
+}
+
 function save(repoDir: string, model: ProjectModel): void {
+  if (isGitTracked(repoDir, PROJECT_FILE)) return; // never overwrite the team's committed model
   mkdirSync(join(repoDir, ".loki"), { recursive: true });
   writeFileSync(join(repoDir, PROJECT_FILE), `${JSON.stringify(model, null, 2)}\n`);
 }
@@ -73,6 +99,11 @@ function readAnswer(answerPath: string, summary: string | undefined): unknown {
 /** `budgetS` is the time this call may use in total (the caller derives it from the stage budget). */
 export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal, opts: { force?: boolean; budgetS?: number } = {}): Promise<Discovery> {
   const dirs = shallowDirs(ctx.repoDir);
+  const committed = loadCommitted(ctx.repoDir);
+  if (committed) {
+    const model: ProjectModel = { ...committed.model, key: computeKey(ctx.repoDir, committed.model.fingerprintFiles, dirs, committed.hash) };
+    return { model, cached: true, attempts: 0 };
+  }
   const cached = opts.force ? null : loadCached(ctx.repoDir);
   if (cached && computeKey(ctx.repoDir, cached.fingerprintFiles, dirs) === cached.key) return { model: cached, cached: true, attempts: 0, ...(cached.status === "unknown" ? { owner: "model" as const } : {}) };
 

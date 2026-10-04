@@ -99,6 +99,9 @@ async function get<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface Health { service?: string; version?: string; installed_version?: string }
+export const getHealth = (): Promise<Health> => get<Health>("/health");
+
 export function listRuns(f: RunFilters = {}): Promise<RunsResponse> {
   const q = new URLSearchParams();
   for (const [k, v] of Object.entries(f)) if (v) q.set(k, v);
@@ -166,3 +169,6 @@ export async function deleteRun(source: string, run: string): Promise<{ ok: true
   if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
   return { ok: true, removed: j.removed ?? { runs: 0, events: 0, sources: 0 }, remaining_runs: j.remaining_runs ?? 0 };
 }
+
+export interface DoctorCheck { name: string; status: "pass" | "warn" | "fail"; detail: string }
+export const getDoctor = (): Promise<{ checks: DoctorCheck[] }> => get("/v1/doctor");

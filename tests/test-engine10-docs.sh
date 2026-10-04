@@ -120,7 +120,7 @@ fi
 
 echo
 echo "T5 -- the opt-in marker line matches bin/loki's current default"
-if grep -q '_loki_engine_default="v10"' "$BIN_LOKI" 2>/dev/null; then
+if grep -q -e '_loki_engine_default="v10"' -e '^case "v10" in' "$BIN_LOKI" 2>/dev/null; then
     flipped=1
 else
     flipped=0
