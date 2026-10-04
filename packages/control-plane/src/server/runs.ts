@@ -143,6 +143,30 @@ export function listRuns(db: Db, q: ListQuery) {
   return { runs: rows.map((r) => withLive(db, r)), total, next_cursor: offset + rows.length < total ? String(offset + rows.length) : null };
 }
 
+const ANSI = /\u001b\[[0-9;?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]|\[\d{1,3}(?:;\d{1,3})*m/g;
+const oneLine = (s: string, max: number) => s.replace(ANSI, "").replace(/[\x00-\x1f\x7f\s]+/g, " ").trim().slice(0, max);
+// FC-19: Loki's own stage rules talked the model into a false spec conflict. The engine records no version or classifier, so this reads the model's own words.
+const OWN_RULES = /\bstage rules\b|\bstage-rules\b/i;
+
+/** The terminal stop reason as one ANSI-free sentence, from the run's own end (never from verify output); null when the run did not stop short. */
+export function stopReason(evs: EventEnvelope[], verdict: string | null): { reason: string | null; ownRules: boolean } {
+  if (verdict === "SPEC_CONFLICT") {
+    const why = evs.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data.spec_conflict_reason;
+    const text = typeof why === "string" ? oneLine(why, 4000) : "";
+    const first = text.split(/(?<=[.!?])\s+(?=[A-Z])/)[0] ?? "";
+    const reason = `The run stopped on a spec conflict: ${first ? first.slice(0, 240) : "the task and the repository disagree"}`;
+    return { reason: /[.!?]$/.test(reason) ? reason : `${reason}.`, ownRules: OWN_RULES.test(text) };
+  }
+  if (verdict === "FAILED") {
+    const failed = [...evs].reverse().find((e) => e.type === "stage.failed");
+    const why = typeof failed?.data?.reason === "string" ? oneLine(failed.data.reason as string, 240) : "";
+    if (failed && failed.stage) return { reason: `The run failed in the ${failed.stage} stage${why ? `: ${why}` : ""}.`, ownRules: false };
+    const bad = evs.filter((e) => e.type === "test.result" && (e.data as Record<string, unknown>).result === "fail").length;
+    return { reason: bad ? `The run failed: ${bad} check${bad === 1 ? "" : "s"} did not pass.` : "The run failed and did not record a reason.", ownRules: false };
+  }
+  return { reason: null, ownRules: false };
+}
+
 /** Summary row plus the folded detail: stage timeline, receipt, not_proven. Null when the run is unknown. */
 export function runDetail(db: Db, sourceId: string, runId: string) {
   const r = db.select().from(runs).where(and(eq(runs.sourceId, sourceId), eq(runs.runId, runId))).get();
@@ -164,9 +188,12 @@ export function runDetail(db: Db, sourceId: string, runId: string) {
   const f = fold(evs);
   const done = f.run.completed?.data;
   const sealed = evs.find((e) => e.type === "receipt.sealed")?.data;
+  const stop = stopReason(evs, r.verdict);
   return {
     ...withLive(db, r),
     blocked_question: blockedQuestion(evs, r.verdict),
+    stop_reason: stop.reason,
+    own_rules_block: stop.ownRules,
     stages,
     stages_completed: f.completed,
     receipt: sealed ? { sha256: str(sealed.receipt_sha256), signed: sealed.signed === true, verdict: str(sealed.verdict), path: str(sealed.path) } : null,
