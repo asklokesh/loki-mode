@@ -3,10 +3,10 @@
 // reported as unknown. A success verdict (VERIFIED or ALREADY_SATISFIED) needs at least one Loki-executed check with n>0 and a
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
-import { readdirSync, readFileSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename } from "node:path";
 
 export const NO_TESTS_REASON = "no tests executed";
+export const GO_EXIT0_REASON = "test count could not be confirmed: go test output is produced by the code under test and cannot confirm execution (a Go exit 0 is never a pass)";
 export const UNCONFIRMED_REASON = "test count could not be confirmed";
 /** Real failure evidence in a failed run: a failed test line, a go build or setup failure, a go compiler error line, or "N failed|errors". */
 const FAIL_EVIDENCE = /\[(?:build|setup) failed\]|^--- FAIL|^[\w./-]+\.go:\d+:\d+: \S|\b[1-9]\d* (?:failed|errors?)\b/m;
@@ -106,65 +106,19 @@ export function goRunner(cmd: string, args?: readonly string[]): { runner: "go" 
   }
   return {};
 }
-interface GoJson { tests: Array<{ pk: string; name: string }>; failed: boolean; pkgPass: boolean; doubt: boolean; noTests: Set<string> }
-/** go test -json: every non-empty line is a test2json event (or a "go: " tool note); anything else is parse doubt (null). A test
- *  counts through its own top-level "run" then "pass" events (never a test that skipped). The stream itself is NOT trusted: the test
- *  binary can print the framing marker (\x16) and forge run and pass events for a test that does not exist, so goConfirm() checks
- *  every counted name against the package's *_test.go source, and a package whose Output says "no tests to run", or a name with more
- *  than one run event, is never counted (L2/L3). */
-function goJson(out: string): GoJson | null {
-  const last = new Map<string, string>(), runs = new Map<string, number>(), skip = new Set<string>(), pkgs = new Map<string, string>(), noTests = new Set<string>();
-  let any = false, doubt = false;
+/** go test -json, used for FAIL evidence only: every non-empty line is a test2json event (or a "go: " tool note), else null (parse
+ *  doubt). failed = a test or package reported fail. A pass is never read from this stream (see GO_EXIT0_REASON). */
+function goJson(out: string): { failed: boolean } | null {
+  let any = false, failed = false;
   for (const x of out.split("\n")) {
     if (!x.trim() || /^go: /.test(x)) continue;
-    let e: { Action?: unknown; Package?: unknown; Test?: unknown; Output?: unknown };
+    let e: { Action?: unknown };
     try { e = JSON.parse(x) as typeof e; } catch { return null; }
     if (!e || typeof e !== "object" || typeof e.Action !== "string") return null;
     any = true;
-    const a = e.Action, pk = typeof e.Package === "string" ? e.Package : "";
-    if (a === "output" && typeof e.Output === "string" && /no tests to run/.test(e.Output)) noTests.add(pk);
-    if (typeof e.Test === "string") {
-      const key = `${pk}\u0000${e.Test}`;
-      if (a === "run" && !e.Test.includes("/")) { runs.set(key, (runs.get(key) ?? 0) + 1); if (runs.get(key)! > 1) doubt = true; }
-      else if (a === "pass" || a === "fail" || a === "skip") { if (!e.Test.includes("/") && (runs.has(key) || a === "fail")) last.set(key, a); if (a === "skip") skip.add(key); }
-    } else if (a === "pass" || a === "fail" || a === "skip") pkgs.set(pk, a);
+    if (e.Action === "fail") failed = true;
   }
-  if (!any) return null;
-  for (const k of skip) last.set(k, "skip");
-  const entries = [...last.entries()];
-  return {
-    tests: entries.filter(([, v]) => v === "pass").map(([k]) => { const [pk, name] = k.split("\u0000"); return { pk: pk!, name: name! }; }),
-    failed: entries.some(([, v]) => v === "fail") || [...pkgs.values()].includes("fail"),
-    pkgPass: pkgs.size > 0 && [...pkgs.values()].every((x) => x === "pass" || x === "skip"), doubt, noTests,
-  };
-}
-/** Static, harness-owned check of a Go pass: the number of counted tests that are real top-level `func TestX(` declarations in a
- *  *_test.go file of their package directory (package path resolved through the go.mod above root). null = not confirmable. */
-function goConfirm(j: GoJson, root: string | undefined): number | null {
-  if (!root || j.doubt) return null;
-  const mods: Array<{ dir: string; mod: string }> = [], seenDir = new Set<string>();
-  const addMod = (dir: string): void => { if (seenDir.has(dir)) return; seenDir.add(dir); try { const m = readFileSync(join(dir, "go.mod"), "utf8").match(/^module\s+(\S+)/m)?.[1]?.replace(/^"|"$/g, ""); if (m) mods.push({ dir, mod: m }); } catch { /* none here */ } };
-  for (let d = resolve(root); ; d = dirname(d)) { addMod(d); if (dirname(d) === d) break; } // go.mod at or above root
-  const down = (d: string, depth: number): void => { if (depth > 3) return; try { for (const e of readdirSync(d, { withFileTypes: true })) if (e.isDirectory() && !/^(?:\.|node_modules$|vendor$)/.test(e.name)) { addMod(join(d, e.name)); down(join(d, e.name), depth + 1); } } catch { /* unreadable */ } };
-  down(resolve(root), 1); // a nested module (backend/go.mod) when root is the repo
-  if (!mods.length) return null;
-  const declared = new Map<string, Set<string>>();
-  const namesIn = (pk: string): Set<string> | null => {
-    if (declared.has(pk)) return declared.get(pk)!;
-    const m = mods.filter((x) => pk === x.mod || pk.startsWith(`${x.mod}/`)).sort((p, q) => q.mod.length - p.mod.length)[0];
-    if (!m) return null;
-    const dir = join(m.dir, pk.slice(m.mod.length + 1)), set = new Set<string>();
-    try { for (const f of readdirSync(dir)) if (f.endsWith("_test.go")) for (const mm of readFileSync(join(dir, f), "utf8").matchAll(/^func (Test\w*)\(/gm)) set.add(mm[1]!); } catch { return null; }
-    declared.set(pk, set); return set;
-  };
-  let n = 0;
-  for (const t of j.tests) {
-    if (j.noTests.has(t.pk)) continue; // the package itself said no tests ran: its events are forged
-    const d = namesIn(t.pk);
-    if (!d || !d.has(t.name)) return null; // a pass for a name no *_test.go declares
-    n++;
-  }
-  return n;
+  return any ? { failed } : null;
 }
 /** Skipped or deselected tests from the runner's FINAL summary lines only: pytest "N skipped|deselected", jest/vitest "Tests: N skipped",
  *  node "# skipped N". Test names and captured output above the summary never count (A-115). */
@@ -192,7 +146,7 @@ export function testCount(raw: string, path?: string, ok?: boolean): number | nu
   return null;
 }
 
-export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go"; goRoot?: string }
+export interface ClassifyInput { kind: "test" | "static"; ok: boolean; cut?: boolean; missing?: boolean; out: string; path?: string; runner?: "go" }
 export interface Classified { result: "pass" | "fail" | "not_run"; n?: number; reason?: string }
 /** One attempt of one check. static = lint/typecheck/scan (exit code decides, no count). test = a test runner: pass needs n>0. */
 export function classifyCheck(i: ClassifyInput): Classified {
@@ -203,19 +157,10 @@ export function classifyCheck(i: ClassifyInput): Classified {
   // Go: the count comes from text a test can forge, so it is never trusted. Exit 0 is never a pass from parsing; a failed run is a
   // fail only when the output shows real failure evidence, else unconfirmed. A parse problem never fails the code and never passes.
   if (i.runner === "go") { // chosen from the command, never from output text a test can print
-    const j = goJson(text); // go test -json: a count that only go's own event stream can produce
-    if (j) {
-      const zero = { result: "not_run" as const, n: 0, reason: `${NO_TESTS_REASON} (ran 0 tests, empty or all skipped)` };
-      if (i.ok) {
-        if (j.failed || !j.pkgPass || j.doubt) return { result: "not_run", reason: UNCONFIRMED_REASON };
-        if (j.tests.length === 0) return zero;
-        const n = goConfirm(j, i.goRoot);
-        return n === null ? { result: "not_run", reason: UNCONFIRMED_REASON } : n > 0 ? { result: "pass", n } : zero;
-      }
-      return j.failed ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
-    }
+    if (i.ok) return { result: "not_run", reason: GO_EXIT0_REASON };
+    const j = goJson(text); // go test -json: fail evidence (a fail event) on a red run
+    if (j) return j.failed ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
     // no usable -json stream (plain or -v output): exit 0 is never a pass from parsing; a failed run is a fail only with real failure evidence
-    if (i.ok) return { result: "not_run", reason: UNCONFIRMED_REASON };
     return FAIL_EVIDENCE.test(text) || GO_FAIL_EVIDENCE.test(text) ? { result: "fail" } : { result: "not_run", reason: UNCONFIRMED_REASON };
   }
   const n = testCount(i.out, i.path, i.ok);

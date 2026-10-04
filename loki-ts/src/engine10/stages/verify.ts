@@ -136,7 +136,7 @@ export async function runCheck(
   const kind = opts.kind ?? "test";
   const cwd = opts.cwd ?? ctx.repoDir;
   const one = async (a: Awaited<ReturnType<typeof runOnce>>) => {
-    let c: ReturnType<typeof classifyCheck> & { owner?: "harness" } = classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner(cmd, args), goRoot: cwd, path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined });
+    let c: ReturnType<typeof classifyCheck> & { owner?: "harness" } = classifyCheck({ kind, ok: a.ok, cut: a.cut, missing: a.missing, out: a.out, ...goRunner(cmd, args), path: /\.[cm]?[jt]s$/.test(args[args.length - 1] ?? "") ? args[args.length - 1] : undefined });
     const lr = kind === "test" && !a.ok && !a.cut && !a.missing ? await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out: a.out, cmd, args, signal, cwd, protect: opts.protect, ...(opts.path ? { env: { PATH: opts.path } } : {}) }) : undefined; // FC-02: only kind "test"; lint/tsc/selector (kind "static") never reach it
     if (lr) c = { result: "not_run", reason: lr, owner: "harness" };
     if (!lr && kind === "static" && !a.ok && !a.cut && !a.missing && opts.wall?.size && wallOwnedFailure(a.out, cwd, ctx.repoDir, opts.wall)) c = { result: "not_run", reason: WALL_COMPILE_REASON, owner: "harness" }; // FC-23: never a fix round on a read-only Wall file // harness-owned load error: never retried, never a fix round

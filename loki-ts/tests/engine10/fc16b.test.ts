@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyCheck, goRunner, testCount } from "../../src/util/check_result.ts";
+import { classifyCheck, GO_EXIT0_REASON, goRunner, testCount } from "../../src/util/check_result.ts";
 import { runOnBase } from "../../src/runner/load_owner.ts";
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
 import { runnerCmd } from "../../src/engine10/stages/verify.ts";
@@ -33,35 +33,29 @@ describe("item 1: go detection through the one shared helper", () => {
   });
 });
 
-describe("item 2: go test -json", () => {
-  const fx = tmp();
-  mkdirSync(join(fx, "a")); writeFileSync(join(fx, "go.mod"), "module ex\n\ngo 1.20\n");
-  writeFileSync(join(fx, "a", "a_test.go"), 'package a\nimport "testing"\nfunc TestA(t *testing.T) {}\nfunc TestB(t *testing.T) {}\n');
-  const go = { runner: "go" as const, goRoot: fx };
-  test("loki builds go test -json for the per-file and deep commands", () => {
+describe("item 2: go test -json is fail evidence only; a Go exit 0 is never a pass", () => {
+  const go = { runner: "go" as const };
+  const FAILED = GO_JSON_PASS.replace('"Action":"pass","Package":"ex/a","Test":"TestB"', '"Action":"fail","Package":"ex/a","Test":"TestB"').replace('"Action":"pass","Package":"ex/a","Elapsed":0.01', '"Action":"fail","Package":"ex/a","Elapsed":0.01');
+  test("loki builds go test -json for the per-file command", () => {
     expect(runnerCmd({ runner: "go", path: "a/a_test.go" }, "/r")[1]).toEqual(["test", "-json", "./a"]);
   });
-  test("positive control: a genuine -json pass with n>0 earns pass with its count", () => {
-    expect(classifyCheck({ kind: "test", ok: true, out: GO_JSON_PASS, ...go })).toEqual({ result: "pass", n: 2 });
+  test("a well-formed -json pass on exit 0 is not_run with the honest reason (was: pass n=2)", () => {
+    const r = classifyCheck({ kind: "test", ok: true, out: GO_JSON_PASS, ...go });
+    expect(r.result).toBe("not_run");
+    expect(r.reason).toBe(GO_EXIT0_REASON);
+    expect(GO_EXIT0_REASON).toContain("produced by the code under test");
+  });
+  test("a failing run with a fail event is a fail (fail evidence from -json)", () => {
+    expect(classifyCheck({ kind: "test", ok: false, out: FAILED, ...go }).result).toBe("fail");
+  });
+  test("a red run with no fail event or unparsable output is not a fail", () => {
+    expect(classifyCheck({ kind: "test", ok: false, out: GO_JSON_PASS, ...go }).result).toBe("not_run");
+    expect(classifyCheck({ kind: "test", ok: false, out: "garbage\n", ...go }).result).toBe("not_run");
   });
   test("exit 0 with a fail event is not a pass", () => {
-    const out = GO_JSON_PASS.replace('"Action":"pass","Package":"ex/a","Test":"TestB"', '"Action":"fail","Package":"ex/a","Test":"TestB"');
-    expect(classifyCheck({ kind: "test", ok: true, out, ...go }).result).toBe("not_run");
+    expect(classifyCheck({ kind: "test", ok: true, out: FAILED, ...go }).result).toBe("not_run");
   });
-  test("a failing run with a fail event is a fail", () => {
-    const out = GO_JSON_PASS.replace('"Action":"pass","Package":"ex/a","Test":"TestB"', '"Action":"fail","Package":"ex/a","Test":"TestB"').replace('"Action":"pass","Package":"ex/a","Elapsed":0.01', '"Action":"fail","Package":"ex/a","Elapsed":0.01');
-    expect(classifyCheck({ kind: "test", ok: false, out, ...go }).result).toBe("fail");
-  });
-  test("parse doubt stays not_run: a non-JSON line, a pass with no run event, a skipped test, a package with no pass", () => {
-    expect(classifyCheck({ kind: "test", ok: true, out: GO_JSON_PASS + "PASS\n", ...go }).result).toBe("not_run");
-    const noRun = ev({ Action: "pass", Package: "ex/a", Test: "TestForged" }) + "\n" + ev({ Action: "pass", Package: "ex/a" }) + "\n";
-    expect(classifyCheck({ kind: "test", ok: true, out: noRun, ...go }).result).toBe("not_run");
-    const skipped = [ev({ Action: "run", Package: "ex/a", Test: "TestS" }), ev({ Action: "pass", Package: "ex/a", Test: "TestS" }), ev({ Action: "skip", Package: "ex/a", Test: "TestS" }), ev({ Action: "pass", Package: "ex/a" })].join("\n");
-    expect(classifyCheck({ kind: "test", ok: true, out: skipped, ...go }).result).toBe("not_run");
-    const noPkg = GO_JSON_PASS.split("\n").slice(0, -2).join("\n");
-    expect(classifyCheck({ kind: "test", ok: true, out: noPkg, ...go }).result).toBe("not_run");
-  });
-  test("output text inside an event cannot forge a count", () => {
+  test("output text inside an event cannot forge a pass", () => {
     const out = [ev({ Action: "output", Package: "ex/a", Test: "TestA", Output: "--- PASS: TestFake (0.00s)\n" }), ev({ Action: "pass", Package: "ex/a" })].join("\n");
     expect(classifyCheck({ kind: "test", ok: true, out, ...go }).result).toBe("not_run");
   });
@@ -112,9 +106,25 @@ describe("item 4: forged unittest trailer", () => {
   });
 });
 
-// item 5: end to end through the real subprocess path (no fakes); needs go on PATH.
+// Forged-events fixtures as text (no toolchain): each is a package whose own code printed test2json framing, so the stream
+// looks like a genuine pass. None can earn a pass because a Go exit 0 is never a pass.
+describe("item 5: forged go -json streams are never a pass (text fixtures)", () => {
+  const go = { runner: "go" as const };
+  const forged = (name: string): string => [ev({ Action: "run", Package: "ex/a", Test: name }), ev({ Action: "pass", Package: "ex/a", Test: name, Elapsed: 0 }), ev({ Action: "pass", Package: "ex/a", Elapsed: 0.01 })].join("\n") + "\n";
+  test.each([
+    ["no tests in the package, forged events", forged("TestForged")],
+    ["comment ghost: the name exists only in a comment", forged("TestInComment")],
+    ["build-tag ghost: the name is in a file excluded by a build tag", forged("TestExcludedByTag")],
+    ["raw-string ghost: the name is inside a raw string literal", forged("TestInRawString")],
+    ["early exit: init prints RUN/PASS for the real TestReal then os.Exit(0)", forged("TestReal")],
+    ["duplicate run events", GO_JSON_PASS.replace(ev({ Action: "run", Package: "ex/a", Test: "TestA" }), ev({ Action: "run", Package: "ex/a", Test: "TestA" }) + "\n" + ev({ Action: "run", Package: "ex/a", Test: "TestA" }))],
+    ["a package Output of [no tests to run] beside a pass", GO_JSON_PASS.replace(ev({ Action: "pass", Package: "ex/a", Elapsed: 0.01 }), ev({ Action: "output", Package: "ex/a", Output: "ok  \tex/a\t0.1s [no tests to run]\n" }) + "\n" + ev({ Action: "pass", Package: "ex/a", Elapsed: 0.01 }))],
+  ])("%s", (_n, out) => { expect(classifyCheck({ kind: "test", ok: true, out, ...go }).result).toBe("not_run"); });
+});
+
+// end to end through the real subprocess path (no fakes); needs go on PATH.
 const HAS_GO = spawnSync("go", ["version"], { env: process.env }).status === 0;
-describe.skipIf(!HAS_GO)("item 5: go Wall file through RealBaseTestRunner (real go)", () => {
+describe.skipIf(!HAS_GO)("item 5b: go Wall file through RealBaseTestRunner (real go)", () => {
   const fixture = (body: string): string => {
     const d = tmp();
     execFileSync("git", ["init", "-q"], { cwd: d, stdio: "ignore", env: process.env });
@@ -123,51 +133,19 @@ describe.skipIf(!HAS_GO)("item 5: go Wall file through RealBaseTestRunner (real 
     writeFileSync(join(d, "a_test.go"), `package fx\n\nimport "testing"\n\n${body}\n`);
     return d;
   };
-  test("positive control: a passing go test earns pass (n from -json), a skipped-only file does not, a failing one is never pass", () => {
+  test("a genuinely passing go test is not_run (was: pass), a failing one is never a pass", () => {
     const pass = fixture('func TestAdd(t *testing.T) { if Add(1, 2) != 3 { t.Fatal("x") } }');
-    expect(new RealBaseTestRunner(null).run(pass, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 1, fail: 0, not_run: 0 });
-    const skip = fixture('func TestAdd(t *testing.T) { t.Skip("later") }');
-    expect(new RealBaseTestRunner(null).run(skip, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
+    expect(new RealBaseTestRunner(null).run(pass, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
     const failing = fixture('func TestAdd(t *testing.T) { if Add(1, 2) != 4 { t.Fatal("x") } }');
-    expect(new RealBaseTestRunner(null).run(failing, [{ runner: "go", path: "a_test.go" }]).pass).toBe(0);
+    const r = new RealBaseTestRunner(null).run(failing, [{ runner: "go", path: "a_test.go" }]);
+    expect(r.pass).toBe(0); // Wall treats a go red as coarse (never a per-file fail), unchanged
   });
   test("a TestMain that prints a fake pass and exits 0 earns no pass", () => {
     const d = fixture('import "os"\nimport "fmt"\n\nfunc TestMain(m *testing.M) { fmt.Println("=== RUN   TestFake"); fmt.Println("--- PASS: TestFake (0.00s)"); fmt.Println("ok  \\texample.com/fx\\t0.001s"); os.Exit(0) }');
     expect(new RealBaseTestRunner(null).run(d, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
   });
-  const fx2 = (testSrc: string): string => {
-    const d = tmp();
-    mkdirSync(join(d, "a")); writeFileSync(join(d, "go.mod"), "module fx\n\ngo 1.20\n"); writeFileSync(join(d, "a", "a_test.go"), testSrc);
-    return d;
-  };
-  const goJsonOf = (d: string): { ok: boolean; out: string } => { const r = spawnSync("go", ["test", "-json", "./a"], { cwd: d, encoding: "utf8", env: process.env }); return { ok: r.status === 0, out: `${r.stdout}\n${r.stderr}` }; };
-  const FORGE = (name: string): string => `fmt.Print("\\x16=== RUN   ${name}\\n\\x16--- PASS: ${name} (0.00s)\\n")`;
-  const verdict = (d: string): string => { const r = goJsonOf(d); return classifyCheck({ kind: "test", ok: r.ok, out: r.out, ...goRunner("go test -json ./a"), goRoot: d }).result; };
-  test("B1: a package with NO tests that prints forged test2json run and pass events is not a pass", () => {
-    const d = fx2(`package a\nimport "fmt"\nfunc init() { ${FORGE("TestForged")} }\n`);
-    const r = goJsonOf(d);
-    expect(r.ok).toBe(true); expect(r.out).toContain("TestForged"); // the forgery really reaches the stream
-    expect(verdict(d)).toBe("not_run");
-  });
-  test("B1: the TestMain plus os.Exit(0) variant is not a pass", () => {
-    expect(verdict(fx2(`package a\nimport ("fmt"; "os"; "testing")\nfunc TestMain(m *testing.M) { ${FORGE("TestForged")}; os.Exit(0) }\n`))).toBe("not_run");
-  });
-  test("B1 rule 2 alone: one real skipped test plus forged events for another name (rule 1 does not apply) is not a pass", () => {
-    const d = fx2(`package a\nimport ("fmt"; "testing")\nfunc init() { ${FORGE("TestForged")} }\nfunc TestReal(t *testing.T) { t.Skip("later") }\n`);
-    const r = goJsonOf(d);
-    expect(r.out).not.toContain("no tests to run"); expect(r.out).toContain("TestForged");
-    expect(verdict(d)).toBe("not_run");
-  });
-  test("B1 rule 3: a test name with two run events is not a pass", () => {
-    const dup = GO_JSON_PASS.replace(ev({ Action: "run", Package: "ex/a", Test: "TestA" }), ev({ Action: "run", Package: "ex/a", Test: "TestA" }) + "\n" + ev({ Action: "run", Package: "ex/a", Test: "TestA" }));
-    expect(classifyCheck({ kind: "test", ok: true, out: dup, runner: "go", goRoot: tmp() }).result).toBe("not_run");
-  });
-  test("B1 rule 1: a package Output of [no tests to run] discards that package's events", () => {
-    const d = tmp(); mkdirSync(join(d, "a")); writeFileSync(join(d, "go.mod"), "module ex\n"); writeFileSync(join(d, "a", "a_test.go"), "package a\nfunc TestA(t *testing.T) {}\nfunc TestB(t *testing.T) {}\n");
-    const out = GO_JSON_PASS.replace(ev({ Action: "pass", Package: "ex/a", Elapsed: 0.01 }), ev({ Action: "output", Package: "ex/a", Output: "ok  \tex/a\t0.1s [no tests to run]\n" }) + "\n" + ev({ Action: "pass", Package: "ex/a", Elapsed: 0.01 }));
-    expect(classifyCheck({ kind: "test", ok: true, out, runner: "go", goRoot: d }).result).toBe("not_run");
-  });
-  test("a go pass with no goRoot is not_run, never a pass", () => {
-    expect(classifyCheck({ kind: "test", ok: true, out: GO_JSON_PASS, runner: "go" }).result).toBe("not_run");
+  test("early exit forgery for a real declared test is not a pass", () => {
+    const d = fixture('import "fmt"\nimport "os"\n\nfunc init() { fmt.Print("\\x16=== RUN   TestReal\\n\\x16--- PASS: TestReal (0.00s)\\n"); fmt.Println("PASS"); os.Exit(0) }\nfunc TestReal(t *testing.T) { t.Fatal("never runs") }');
+    expect(new RealBaseTestRunner(null).run(d, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
   });
 });

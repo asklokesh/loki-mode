@@ -99,7 +99,7 @@ export async function runFullSuite(ctx: RunContext, signal: AbortSignal, opts: D
     }
     const out = `${r.stdout}\n${r.stderr}`, lr = r.exitCode === 0 ? undefined : await harnessLoadReason({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, out, cmd: spec.cmd, args: spec.args, signal, ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: "not_run", duration_s: durationS }); notProven.add(`${lr} (${name}; harness-owned)`); continue; } // FC-02: harness-owned, never a code failure
-    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(spec.cmd, spec.args), goRoot: ctx.repoDir });
+    const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(spec.cmd, spec.args) });
     checks.push({ name, cmd: [spec.cmd, ...spec.args].join(" "), result: cls.result, duration_s: durationS }); // FC-16: exit 0 with no executed tests is not a pass
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
