@@ -7,6 +7,7 @@ import { wirePages } from "./pages/wired";
 import { CommandPalette } from "./palette";
 import { AppShell } from "./shell/AppShell";
 import { EmptyState, SettingsPage } from "./Shell";
+import { displayOutcome } from "./display";
 import { effectiveVerdict, FILTER_OPTIONS, VERDICT, type VerdictSource } from "./design/primitives";
 import { deleteRun, getRun, listRuns, postAnswer, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
 
@@ -106,7 +107,7 @@ export function RunsList({ onOpen }: { onOpen?: (r: RunRow) => void }) {
         <label className="flex flex-col gap-1">Verdict
           <select aria-label="Verdict" className={inp} value={verdict} onChange={(e) => setVerdict(e.target.value)}>
             <option value="">All</option>
-            {FILTER_OPTIONS.map((v) => <option key={v}>{v}</option>)}
+            {FILTER_OPTIONS.map((v) => <option key={v} value={v}>{displayOutcome(v).label}</option>)}
           </select>
         </label>
         <label className="flex flex-col gap-1">Repo

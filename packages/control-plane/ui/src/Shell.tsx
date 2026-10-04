@@ -1,5 +1,6 @@
 // App shell pieces: empty-state import, and the Work, Cost and Settings pages.
 import { useEffect, useState } from "react";
+import { displayOutcome } from "./display";
 import { fmtUsd } from "./format";
 import { Button } from "./design/primitives";
 import { toggleTheme, useTheme } from "./shell/theme";
@@ -57,7 +58,7 @@ export function WorkPage() {
         {rows.map((r) => (
           <li key={`${r.source_id}/${r.run_id}`} data-testid="work-row" className="flex flex-wrap items-center gap-3 rounded border border-slate-200 p-3 dark:border-slate-800">
             <span className="font-mono">{r.issue_ref}</span>
-            <span className="text-slate-500">{effectiveVerdict(r) ?? "in progress"}</span>
+            <span className="text-slate-500">{displayOutcome(effectiveVerdict(r)).label}</span>
             {r.pr_url ? <a className="text-sky-600 hover:underline dark:text-sky-400" href={r.pr_url} target="_blank" rel="noreferrer">PR</a> : <span className="text-slate-500">no PR yet</span>}
           </li>
         ))}

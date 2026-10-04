@@ -1,5 +1,6 @@
 // Live run view and Overview. Everything is derived from the runs API; a value the API does not carry shows "unmeasured".
 import { useEffect, useState, type ReactNode } from "react";
+import { displayOutcome } from "./display";
 import { fmtUsd } from "./format";
 import { effectiveVerdict, VERDICT } from "./design/primitives";
 import { getHealth, getRun, listRuns, type Health, type RunDetailResponse, type RunRow, type TimelineStage } from "./api";
@@ -100,7 +101,7 @@ export function LiveRun({ source, run }: { source: string; run: string }) {
       {!running && (
         <div data-testid="live-outcome" className={card}>
           <h2 className="mb-1 text-sm font-semibold uppercase text-slate-500">Outcome</h2>
-          <p className={`text-lg font-medium${data.tampered ? " text-red-600" : ""}`}>{effectiveVerdict(data) ?? UNMEASURED}</p>
+          <p className={`text-lg font-medium${data.tampered ? " text-red-600" : ""}`}>{displayOutcome(effectiveVerdict(data)).label}</p>
           <p className="mt-1 flex flex-wrap gap-4 text-sm">
             {pr ? <a data-testid="live-pr" href={pr} target="_blank" rel="noreferrer" className="text-sky-600 hover:underline dark:text-sky-400">Pull request</a> : <span data-testid="live-pr" className="text-slate-500">no PR</span>}
             {data.receipt ? <a data-testid="live-receipt" href={`#/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`} className="text-sky-600 hover:underline dark:text-sky-400">Receipt{data.receipt.signed ? " (signed)" : " (unsigned)"}</a> : <span data-testid="live-receipt" className="text-slate-500">no receipt</span>}

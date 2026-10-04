@@ -9,7 +9,7 @@ export interface TimelineLine {
   label: string;
   duration_s: number | null;
   model: string | null;
-  cost_usd: number | null;
+  cost_usd: number | null | "no-session"; // "no-session": the stage ran no model session (verify, commit, seal)
   outcome: string;
   detail?: string;
 }
@@ -24,9 +24,11 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
   const open = new Map<string, TimelineLine & { startedMs: number | null }>();
   const costs = new Map<string, { usd: number; unmeasured: boolean; seen: boolean }>();
   const models = new Map<string, string>();
+  const sessions = new Set<string>();
   for (const e of events) {
     const d = obj(e.data);
     const st = e.stage ?? "";
+    if (e.type === "session.started" && st) sessions.add(st);
     if (e.type === "session.started" && st && str(d.model)) models.set(st, str(d.model)!);
     if (e.type === "cost" && st) {
       const c = costs.get(st) ?? { usd: 0, unmeasured: false, seen: false };
@@ -37,7 +39,7 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
       if (str(d.model) && !models.has(st)) models.set(st, str(d.model)!);
     }
   }
-  const costOf = (st: string): number | null => { const c = costs.get(st); return c && c.seen && !c.unmeasured ? c.usd : null; };
+  const costOf = (st: string): number | null | "no-session" => { const c = costs.get(st); if (!c && !sessions.has(st) && !models.has(st)) return "no-session"; return c && c.seen && !c.unmeasured ? c.usd : null; };
   for (const e of events) {
     const d = obj(e.data);
     if (e.type === "run.started") {

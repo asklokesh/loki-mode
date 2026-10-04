@@ -108,8 +108,8 @@ function Timeline({ events, awaiting }: { events: RunEvent[]; awaiting: boolean 
             {isStage ? (
               <span className="cp-tl-meta">
                 <span data-testid="tl-duration">{typeof l.duration_s === "number" ? elapsedLabel(l.duration_s) : l.outcome === "running" ? "running" : UNMEASURED}</span>
-                <span data-testid="tl-model">{l.model ?? UNMEASURED}</span>
-                <span data-testid="tl-cost">{l.cost_usd === null ? UNMEASURED : fmtUsd(l.cost_usd)}</span>
+                <span data-testid="tl-model">{l.model ?? (l.cost_usd === "no-session" ? "-" : UNMEASURED)}</span>
+                <span data-testid="tl-cost">{l.cost_usd === "no-session" ? "-" : l.cost_usd === null ? UNMEASURED : fmtUsd(l.cost_usd)}</span>
               </span>
             ) : null}
           </li>
