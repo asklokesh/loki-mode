@@ -4,6 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "../../util/shell.ts";
+import { safeGitArgv, safeGitEnv } from "../../util/safe_git.ts";
 import type { RunContext, Verdict } from "../types.ts";
 
 export type ReviewProvider = "codex" | "claude";
@@ -54,7 +55,7 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
 export async function crossReview(ctx: RunContext, verdict: Verdict, head: string): Promise<CrossReview | null> {
   const p = reviewProvider(ctx.repoDir); if (!p) return null;
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
-  const d = await run(["git", "diff", "--no-ext-diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { cwd: ctx.repoDir, timeoutMs: 20000 }).catch(() => null);
+  const d = await run(safeGitArgv(["diff", "--no-ext-diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], false, ctx.repoDir), { cwd: ctx.repoDir, env: safeGitEnv() as Record<string, string>, timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] };
   const prompt = ["You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");

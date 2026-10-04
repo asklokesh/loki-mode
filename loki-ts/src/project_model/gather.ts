@@ -104,7 +104,7 @@ export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: st
  *  gitignored cache file is never treated as a committed, shared model. */
 export function isGitTracked(repoDir: string, relPath: string): boolean {
   try {
-    const out = execFileSync("git", ["ls-files", "--error-unmatch", "--", relPath], { cwd: repoDir, stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
+    const out = execFileSync("git", ["ls-files", "--error-unmatch", "--", relPath], { cwd: repoDir, env: process.env, stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
     return out.toString().trim() !== "";
   } catch {
     return false;

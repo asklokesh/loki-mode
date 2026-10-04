@@ -156,7 +156,8 @@ describe("discovery", () => {
     const m = mock([RECORDED]);
     await discoverProjectModel(ctxFor(d, m.runner), sig);
     cpSync(join(d, "frontend"), join(d, "admin"), { recursive: true });
-    execFileSync("git", ["add", "-A", "-f"], { cwd: d, stdio: "pipe", env: process.env });
+    // stage only the new package: force-adding .loki/project.json would make it the committed shared model (B5)
+    execFileSync("git", ["add", "-A", "-f", "--", "admin"], { cwd: d, stdio: "pipe", env: process.env });
     expect((await discoverProjectModel(ctxFor(d, m.runner), sig)).cached).toBe(false);
   });
 });
