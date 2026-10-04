@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { classifyCheck, GO_EXIT0_REASON, goRunner, testCount } from "../../src/util/check_result.ts";
 import { runOnBase } from "../../src/runner/load_owner.ts";
 import { RealBaseTestRunner } from "../../src/engine10/stages/wall.ts";
-import { runnerCmd } from "../../src/engine10/stages/verify.ts";
+import { firstError, runnerCmd } from "../../src/engine10/stages/verify.ts";
 
 const roots: string[] = [];
 afterAll(() => { for (const r of roots) rmSync(r, { recursive: true, force: true }); });
@@ -59,6 +59,19 @@ describe("item 2: go test -json is fail evidence only; a Go exit 0 is never a pa
     const out = [ev({ Action: "output", Package: "ex/a", Test: "TestA", Output: "--- PASS: TestFake (0.00s)\n" }), ev({ Action: "pass", Package: "ex/a" })].join("\n");
     expect(classifyCheck({ kind: "test", ok: true, out, ...go }).result).toBe("not_run");
   });
+  test("go 1.24+ compile error: firstError carries the compiler line from build-output events, not the build-failed summary", () => {
+    const out = [
+      ev({ Action: "build-output", ImportPath: "fx/bad [fx/bad.test]", Output: "# fx/bad [fx/bad.test]\n" }),
+      ev({ Action: "build-output", ImportPath: "fx/bad [fx/bad.test]", Output: "bad/a_test.go:5:9: cannot use \"x\" (untyped string constant) as int value in assignment\n" }),
+      ev({ Action: "build-fail", ImportPath: "fx/bad [fx/bad.test]" }),
+      ev({ Action: "start", Package: "fx/bad" }),
+      ev({ Action: "output", Package: "fx/bad", Output: "FAIL\tfx/bad [build failed]\n" }),
+      ev({ Action: "fail", Package: "fx/bad", Elapsed: 0 }),
+    ].join("\n") + "\n";
+    expect(firstError(out)).toContain("cannot use");
+    expect(firstError(out)).not.toContain("build failed");
+    expect(classifyCheck({ kind: "test", ok: false, out, ...go }).result).toBe("fail");
+  });
   test("plain -v output stays not_run on exit 0 (unchanged FC-16 rule)", () => {
     expect(classifyCheck({ kind: "test", ok: true, out: "=== RUN   TestA\n--- PASS: TestA (0.00s)\nok  \tex/a\t0.004s\n", ...go }).result).toBe("not_run");
   });
@@ -92,7 +105,7 @@ describe("item 4: forged unittest trailer", () => {
     expect(testCount("Ran 3 tests in 0.002s\n\nOK\n", undefined, false)).toBeNull();
     expect(testCount("Ran 3 tests in 0.002s\n\nFAILED (failures=1)\n", undefined, true)).toBeNull();
   });
-  test("positive control: a genuine OK run keeps its count, also after an earlier OK block", () => {
+  test("positive control: a genuine OK run keeps its count; a second Ran block (even after an OK block) is never trusted", () => {
     expect(classifyCheck({ kind: "test", ok: true, out: "Ran 3 tests in 0.002s\n\nOK\n" })).toEqual({ result: "pass", n: 3 });
     // B2: a second "Ran" block is never trusted (it may be an atexit forgery), including after an all-skipped OK
     expect(classifyCheck({ kind: "test", ok: true, out: "Ran 3 tests in 0.002s\n\nOK (skipped=3)\nRan 3 tests in 0.000s\n\nOK\n" }).result).toBe("not_run");
