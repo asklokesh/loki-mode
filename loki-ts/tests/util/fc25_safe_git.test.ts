@@ -32,12 +32,12 @@ test("control: the plant fires on a plain git ls-files", () => {
   expect(fired()).toBe(true); reset();
 });
 test("resolveRunCapS never runs the fsmonitor plant", () => {
-  reset(); resolveRunCapS(repo, runDir, "task", false, { ...process.env, GH_TOKEN: CANARY });
+  reset(); resolveRunCapS(repo, false, { ...process.env, GH_TOKEN: CANARY });
   expect(fired() ? readFileSync(hit, "utf8") : "").toBe("");
 });
 test("repomap, restoreBranch and the cap never fire the plant with the canary in process.env", () => {
   reset(); const saved = process.env.GH_TOKEN; process.env.GH_TOKEN = CANARY;
-  try { resolveRunCapS(repo, runDir, "task", false); listRepoFiles(repo); restoreBranch(repo, "other"); } finally { if (saved === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = saved; }
+  try { resolveRunCapS(repo, false); listRepoFiles(repo); restoreBranch(repo, "other"); } finally { if (saved === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = saved; }
   expect(fired()).toBe(false);
 });
 test("safeGit strips the token family and SSH_AUTH_SOCK from the child env", () => {

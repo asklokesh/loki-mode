@@ -5,6 +5,7 @@
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { yamlKey } from "../util/yaml_key.ts";
 export const DEFAULT_MAX_COST_USD = 100;
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
 export type CapSource = "--max-cost" | "loki.yaml" | "default" | "subscription";
@@ -17,11 +18,7 @@ export function parseCapUsd(raw: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 /** budgets.per_run from loki.yaml text (a two-level read; no YAML dependency). */
-export function yamlPerRun(text: string): number | null {
-  const m = /^budgets:[ \t]*(?:#.*)?\n((?:[ \t]+.*\n?|[ \t]*\n)*)/m.exec(text);
-  const v = m ? /^[ \t]+per_run:[ \t]*([^\s#]+)/m.exec(m[1]!)?.[1] : undefined;
-  return v === undefined ? null : parseCapUsd(v);
-}
+export function yamlPerRun(text: string): number | null { return parseCapUsd(yamlKey(text, "budgets", "per_run")); }
 /** usd 0 means no dollar cap (subscription run). */
 export function resolveCap(cli: string | null, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number; source: CapSource } | { error: string } {
   if (cli !== null) { const n = parseCapUsd(cli); return n === null ? { error: "--max-cost must be a positive number of US dollars" } : { usd: n, source: "--max-cost" }; }
