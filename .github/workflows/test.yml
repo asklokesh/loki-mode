@@ -170,7 +170,10 @@ jobs:
     needs: [version-bump-gate]
     if: ${{ !cancelled() && needs.version-bump-gate.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 15, not 10: run 37235292758 attempt 1 and 2 both killed shard 0 at the
+    # 10-minute cap while ShellCheck was still running. The other seven shards
+    # were already green. The cap is the job clock, not a failing suite.
+    timeout-minutes: 15
     # SHARDED because this job WAS the pipeline. Measured 2026-07-30 at 4
     # shards / 289 suites: Shell tests 13m01s, next slowest job 2m17s.
     #
