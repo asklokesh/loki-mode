@@ -2260,3 +2260,11 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - A7 FireLater#17 gate on 11.0.0: owed (steering, after release).
 - Open rows: BOARD ready=21 (14 dependency-blocked M/G/S41 rows), building=2 (stale, stopped), merged=70 rows not yet marked released. BOARD was not rewritten at handoff; reconcile it on resume.
 - Seats: 0. rev-a2b told to stop. No loops or wakeups armed. Cleanup owed: train11 worktree and scratchpad/integ11 (remove by recorded path only).
+
+## 2026-10-04T03:35Z (CoS) 11.0.1: Tests green patch, then stop until Wednesday
+- 11.0.0 landed: release 37172046684 success; npm latest=11.0.0 and next=11.0.0 after Promote.
+- Founder: "fix all tests and release one last patch and make it green". Tests run 37172048345 on 6f1e595b8 was red on 5 guards, fixed in 31efd8bdf: CP-04 Dockerfile xreview COPY plus 5 control-plane UI tests stale after f26deef50 (bun 515/0, CP-04 25/0 locally), DEPS receipt-check row, S-134 shard rows for the removed legacy suites, CPE24-L7 .gitleaksignore allowlist, DOC-02 historical `loki legacy` allowlist.
+- Tests run 37173354311 on 31efd8bdf: every job green except bun-tests, cancelled at its 10-min cap (coverage makes the unit tests about 6 min). 22a5701e1 raises the cap to 20 min.
+- Tests run 37173985482 on 22a5701e1: the cap held but FC-19 read 1799.999 on the first session; 559d3e604 asserts 1799 < limit <= 1800. Tests run 37174422458 on 559d3e604: success (all jobs).
+- 11.0.1 = the bump commit on top of 559d3e604 (release.sh patch --bump-only rc=0). Check `gh run list --workflow release.yml --limit 1` and `npm view loki-mode dist-tags` on resume.
+- Branch and worktree cleanup (founder ask, one agent): 177 merged worktrees removed (187 kept: 150 unmerged, 25 dirty, 8 locked, live, protected), 1015 merged local branches deleted (338 kept), 119 merged remote branches deleted. Unmerged remote branches left for the founder: auto/model-catalog-probe (1 ahead), dep-wave1 (5), slice-A-121b (1), train/66 (1).

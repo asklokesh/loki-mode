@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.0.1 (2026-10-04)
+
+Patch release. No product behavior changes: this release brings the Tests workflow on main back to green after 11.0.0 (run 37172048345) and ships the Control Plane container closure fix.
+
+### Fixed
+- Control Plane container: `Dockerfile.control-plane` now copies `engine10/stages/xreview.ts`, which the CP routes import since 11.0.0. Without it the image build missed a value import (CP-04).
+- Control Plane UI tests assert the plain-language outcome labels (`Verified`, `Needs your answer`, `Tampered`) and the dash shown for stages that ran no model session, matching the 11.0.0 display contract (bun 515 pass, 0 fail).
+- Engine timing test (FC-19 deep limit) asserts the session limit rather than the call count or elapsed milliseconds, so a resumed implement session with 1799.999s left no longer fails on CI (run 37171623026).
+- Test guards updated for the `loki legacy` removal: shard duration rows for the removed legacy suites are dropped (S-134), the historical `loki legacy` mentions in GUIDE, LEGACY-REMOVAL and RELEASE-11 are allowlisted (DOC-02), and the gitleaks fingerprint file is allowlisted for the legacy dashboard guard (CPE24-L7).
+- Dependency inventory lists the `receipt-check` composite action (docs/v10/DEPS.md).
+- CI: the Bun tests job cap is 20 minutes instead of 10. With coverage on, the unit tests take about 6 minutes and the job hit the cap mid-suite (run 37173354311).
+
 ## v11.0.0 (2026-10-04)
 
 Major release. The legacy engine is gone: every `loki` run uses the Loki 10 engine, and the signed receipt is the single source of truth for a run's outcome. The Control Plane gets a new information architecture, truthful run detail and an opt-in Ask Loki page. Per the founder's 02:08Z directive, the tests and reviews for this release were deferred; each is listed under "Tests owed after Oct 7" in docs/v10/RELEASE-11.md. tsc, the dist build and the dist guard ran; moat P9 runs in CI.
