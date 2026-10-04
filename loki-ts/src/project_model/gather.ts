@@ -76,8 +76,11 @@ export function shallowDirs(repoDir: string): string[] {
 
 /** Cache key: the content of the fingerprint files plus the shallow directory set. A fingerprint
  *  that is not a regular file inside the repo is never opened (no FIFO or device can block a read). */
+/** Bumped when the model shape grows (rev 2: dependsOn and install), so a cached older model is rediscovered once. */
+export const MODEL_REV = "model-rev:2";
 export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: string[]): string {
   const h = createHash("sha256");
+  h.update(`${MODEL_REV}\n`);
   for (const f of [...fingerprintFiles].sort()) {
     h.update(`file:${f}\n`);
     try {

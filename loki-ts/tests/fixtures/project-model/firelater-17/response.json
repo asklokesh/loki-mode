@@ -11,7 +11,9 @@
         "build": { "cmd": "npm run build", "cwd": "backend", "cite": ["backend/package.json"] },
         "start": { "cmd": "npm start", "cwd": "backend", "cite": ["backend/package.json"] }
       },
-      "ui": { "present": false, "boot": null, "cite": ["backend/package.json"] }
+      "ui": { "present": false, "boot": null, "cite": ["backend/package.json"] },
+      "dependsOn": [],
+      "install": { "cmd": "npm ci", "cwd": "backend", "cite": ["backend/package-lock.json", ".github/workflows/ci.yml"] }
     },
     {
       "name": "frontend", "root": "frontend", "runner": "vitest", "cite": ["frontend/package.json"],
@@ -21,7 +23,9 @@
         "build": { "cmd": "npm run build", "cwd": "frontend", "cite": ["frontend/package.json"] },
         "start": null
       },
-      "ui": { "present": true, "boot": { "cmd": "npm run dev", "cwd": "frontend", "cite": ["frontend/package.json"] }, "cite": ["frontend/package.json"] }
+      "ui": { "present": true, "boot": { "cmd": "npm run dev", "cwd": "frontend", "cite": ["frontend/package.json"] }, "cite": ["frontend/package.json"] },
+      "dependsOn": [],
+      "install": { "cmd": "npm ci", "cwd": "frontend", "cite": ["frontend/package-lock.json"] }
     }
   ]
 }

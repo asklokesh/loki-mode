@@ -18,6 +18,10 @@ export interface ProjectApi {
   commandFor(pkg: string, kind: CommandKind): ModelCommand | null;
   hasUI(): boolean;
   uiBoot(): { pkg: ModelPackage; boot: ModelCommand } | null;
+  /** The package's declared dependency roots; null when edges are unknown (field absent). */
+  dependsOn(pkg: string): string[] | null;
+  /** The model's install command for the package; null when none is known. */
+  installFor(pkg: string): ModelCommand | null;
 }
 
 const clean = (p: unknown): string => (typeof p === "string" ? posix.normalize(p.replace(/\\/g, "/")).replace(/^\.\//, "") : "");
@@ -50,6 +54,14 @@ export function projectApi(model: ProjectModel): ProjectApi {
       return p ? (p.root === "." ? clean(file) : clean(file).slice(p.root.length + 1)) : null;
     },
     commandFor: (pkg, kind) => (packages.find((p) => p.root === clean(pkg) || p.name === pkg) ?? null)?.commands?.[kind] ?? null,
+    dependsOn: (pkg) => {
+      const d = (packages.find((p) => p.root === clean(pkg) || p.name === pkg) ?? null)?.dependsOn;
+      return Array.isArray(d) ? d.filter((x): x is string => typeof x === "string") : null;
+    },
+    installFor: (pkg) => {
+      const i = (packages.find((p) => p.root === clean(pkg) || p.name === pkg) ?? null)?.install;
+      return isRec(i) && typeof i.cmd === "string" ? (i as unknown as ModelCommand) : null;
+    },
     hasUI: () => packages.some((p) => isRec(p.ui) && p.ui.present === true),
     uiBoot: () => {
       for (const p of packages) if (isRec(p.ui) && p.ui.present === true && isRec(p.ui.boot)) return { pkg: p, boot: p.ui.boot };

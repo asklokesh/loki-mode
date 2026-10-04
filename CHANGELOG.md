@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+- Project Model (FC-22a/FC-22b, S1): each package may declare `dependsOn` (roots of the packages it builds on) and `install` (its cited dependency-install command), both decided by the discovery model from manifests (no import parsing). An unknown `dependsOn` root is rejected; an absent field means edges are unknown. New `project_model/graph.ts` (`dependentsOf`, transitive and cycle-safe) and `util/yaml_key.ts` (a two-level yaml key reader that ignores deeper same-named keys and reads CRLF). The cache key is salted with `model-rev:2`, so a cached older model is rediscovered once.
+
 ## v10.10.5 (2026-10-03)
 
 Release-gate fix for 10.10.4: the 10.10.4 publish was blocked at its gate (release run 37160286619, spawn env guard), so nothing reached npm as 10.10.4. 10.10.5 ships everything listed under v10.10.4 below, plus the fix here.
