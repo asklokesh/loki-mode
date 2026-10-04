@@ -21,7 +21,38 @@ sys.dont_write_bytecode = True
 
 from mcp import server  # noqa: E402
 
-server.apply_read_only_mode()
+# F1: arm the opt-in auto-reindex and point the manifest at a stale fixture
+# kept OUTSIDE the project dir, so the gate in _maybe_autoreindex_code is the
+# only thing standing between a call and a spawn. subprocess.run is replaced
+# by a recorder so the control run (default mode) never starts a real indexer.
+import json as _json  # noqa: E402
+import pathlib  # noqa: E402
+import subprocess  # noqa: E402
+import atexit  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+os.environ["LOKI_CODE_INDEX_AUTOREINDEX"] = "1"
+_manifest_dir = tempfile.mkdtemp(prefix="ro-manifest-")
+atexit.register(shutil.rmtree, _manifest_dir, True)
+_manifest = pathlib.Path(_manifest_dir) / "code-index-manifest.json"
+_manifest.write_text(_json.dumps({"files": {"does-not-exist.py": {"mtime": 1}}}))
+server.CODE_INDEX_MANIFEST_PATH = _manifest
+assert server._code_index_staleness()["stale"] is True, "fixture is not stale"
+
+_spawned = []
+
+
+def _recording_run(*a, **k):
+    _spawned.append((current["name"], str(a[0] if a else k.get("args"))[:200]))
+    return subprocess.CompletedProcess(a[0] if a else [], 0, b"", b"")
+
+
+subprocess.run = _recording_run
+
+DEFAULT_MODE = len(sys.argv) > 3 and sys.argv[3] == "default"
+if not DEFAULT_MODE:
+    server.apply_read_only_mode()
 
 CALLS = {
     "loki_memory_retrieve": {"query": "auth"},
@@ -97,14 +128,15 @@ async def run():
     results = {}
     before = snapshot()
     sys.addaudithook(hook)
-    for name, args in CALLS.items():
+    calls = {"loki_code_search": CALLS["loki_code_search"]} if DEFAULT_MODE else CALLS
+    for name, args in calls.items():
         current["name"] = name
         try:
             await server.mcp.call_tool(name, args)
             results[name] = "ok"
         except Exception as e:  # tool errors are fine; writes are not
             results[name] = "raised %s" % type(e).__name__
-    for uri in RESOURCES:
+    for uri in ([] if DEFAULT_MODE else RESOURCES):
         current["name"] = uri
         try:
             await server.mcp.read_resource(uri)
@@ -112,6 +144,8 @@ async def run():
         except Exception as e:
             results[uri] = "raised %s" % type(e).__name__
     current["name"] = None
+    for who, cmd in _spawned:
+        events.append({"tool": who, "kind": "spawn", "detail": cmd})
     time.sleep(0.5)  # let any stray emitter thread surface
     after = snapshot()
     return results, sorted(after - before)

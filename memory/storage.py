@@ -74,8 +74,15 @@ class MemoryStorage:
     # Process-wide read-only switch, set by mcp/server.py apply_read_only_mode.
     # When True, constructing a store creates nothing (no directories, no
     # index/timeline init, no cleanup), reads take no lock file, and any write
-    # raises. A missing store simply reads as empty.
+    # raises (every public mutator calls _check_writable). A missing store
+    # simply reads as empty.
     READ_ONLY = False
+
+    @staticmethod
+    def _check_writable() -> None:
+        """Raise PermissionError when the process-wide READ_ONLY flag is set."""
+        if MemoryStorage.READ_ONLY:
+            raise PermissionError("memory store is read-only in this process")
 
     VERSION = "1.1.0"
 
@@ -496,6 +503,7 @@ class MemoryStorage:
         Returns:
             Episode ID
         """
+        self._check_writable()
         # Handle both dict and object
         if hasattr(episode, "to_dict"):
             episode_data = episode.to_dict()
@@ -634,6 +642,7 @@ class MemoryStorage:
         Returns:
             True if deleted, False if not found
         """
+        self._check_writable()
         episodic_dir = self.base_path / "episodic"
         if not episodic_dir.exists():
             return False
@@ -704,6 +713,7 @@ class MemoryStorage:
         Returns:
             Pattern ID
         """
+        self._check_writable()
         # Handle both dict and object
         if hasattr(pattern, "to_dict"):
             pattern_data = pattern.to_dict()
@@ -840,6 +850,7 @@ class MemoryStorage:
         Returns:
             True if updated, False if not found
         """
+        self._check_writable()
         # Handle both dict and object
         if hasattr(pattern, "to_dict"):
             pattern_data = pattern.to_dict()
@@ -920,6 +931,7 @@ class MemoryStorage:
             True if the pattern was found and the merged record written, False if
             the pattern id was not present (caller should fall back to a create).
         """
+        self._check_writable()
         if not pattern_id:
             return False
 
@@ -982,6 +994,7 @@ class MemoryStorage:
         Returns:
             Skill ID
         """
+        self._check_writable()
         # Handle both dict and object
         if hasattr(skill, "to_dict"):
             skill_data = skill.to_dict()
@@ -1067,6 +1080,7 @@ class MemoryStorage:
 
         Scans all memory stores and builds a topic index for efficient lookup.
         """
+        self._check_writable()
         index = {
             "version": self.VERSION,
             "last_updated": datetime.now(timezone.utc).isoformat(),
@@ -1140,6 +1154,7 @@ class MemoryStorage:
         Args:
             action: Action dictionary with type, description, timestamp, etc.
         """
+        self._check_writable()
         timeline_path = self.base_path / "timeline.json"
 
         with self._file_lock(timeline_path, exclusive=True):
@@ -1221,6 +1236,7 @@ class MemoryStorage:
         Args:
             context: Dictionary of current context variables
         """
+        self._check_writable()
         timeline_path = self.base_path / "timeline.json"
 
         with self._file_lock(timeline_path, exclusive=True):
@@ -1277,6 +1293,7 @@ class MemoryStorage:
 
     def ensure_directory(self, subpath: str) -> None:
         """Create directory if it doesn't exist."""
+        self._check_writable()
         path = os.path.join(self.base_path, subpath)
         os.makedirs(path, exist_ok=True)
 
@@ -1300,6 +1317,7 @@ class MemoryStorage:
 
     def write_json(self, filepath: str, data: dict) -> None:
         """Write JSON file atomically."""
+        self._check_writable()
         full_path = self._resolve_path(filepath)
         self._atomic_write(full_path, data)
 
@@ -1312,6 +1330,7 @@ class MemoryStorage:
 
     def delete_file(self, filepath: str) -> bool:
         """Delete file, return True if deleted."""
+        self._check_writable()
         full_path = self._resolve_path(filepath)
         try:
             os.remove(full_path)
@@ -1559,6 +1578,7 @@ class MemoryStorage:
         Returns:
             True if a record was found and persisted, False otherwise.
         """
+        self._check_writable()
         memory_id = memory.get("id")
         if not memory_id:
             return False
@@ -1670,6 +1690,7 @@ class MemoryStorage:
         Returns:
             True if the pattern was found and incremented, False otherwise.
         """
+        self._check_writable()
         patterns_path = self.base_path / "semantic" / "patterns.json"
         if not patterns_path.exists():
             return False
@@ -1720,6 +1741,7 @@ class MemoryStorage:
         Returns:
             Number of memories updated
         """
+        self._check_writable()
         updated_count = 0
 
         collections_to_process = []
@@ -1940,6 +1962,7 @@ class MemoryStorage:
         Returns:
             Dictionary with counts of copied items
         """
+        self._check_writable()
         target = self.with_namespace(target_namespace)
         copied = {"episodes": 0, "patterns": 0, "skills": 0}
 
@@ -1984,6 +2007,7 @@ class MemoryStorage:
         Returns:
             Dictionary with counts of merged items
         """
+        self._check_writable()
         source = self.with_namespace(source_namespace)
         merged = {"episodes": 0, "patterns": 0, "skills": 0}
 
