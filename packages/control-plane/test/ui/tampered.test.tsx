@@ -7,8 +7,8 @@ import { join, relative } from "node:path";
 const realFetch = globalThis.fetch;
 const { cleanup, render, screen, within } = await import("@testing-library/react");
 const { effectiveVerdict, isVerified, VERDICT_TONE } = await import("../../ui/src/design/primitives");
-const { RunsPage } = await import("../../ui/src/pages/runs");
-const { rollupByRepo } = await import("../../ui/src/pages/runs/logic");
+const { RunsView } = await import("../../ui/src/pages/runs");
+const { kpisOf, groupByIssue } = await import("../../ui/src/pages/runs/issues");
 const { RunThread } = await import("../../ui/src/pages/run");
 const { HomeView } = await import("../../ui/src/pages/home/Home");
 const { Receipts } = await import("../../ui/src/pages/receipts/Receipts");
@@ -49,13 +49,14 @@ test("effectiveVerdict: any tamper or integrity signal wins over the stored verd
   expect(VERDICT_TONE.TAMPERED).toBe("error");
 });
 
-test("runs list shows TAMPERED and the rollup does not count it as verified", async () => {
-  render(<RunsPage subscribe={null} />);
-  const rows = await screen.findAllByTestId("run-row");
-  const t = rows.find((r) => r.getAttribute("data-run") === "t1")!;
-  expect(within(t).getByText("TAMPERED")).toBeTruthy();
-  expect(within(t).queryByText("VERIFIED")).toBeNull();
-  expect(rollupByRepo([tampered, clean])[0]!.verified).toBe(1);
+test("runs list shows Tampered and the KPI does not count it as verified", () => {
+  const now = Date.parse("2026-10-03T12:00:00Z");
+  render(<RunsView runs={[tampered, clean]} now={now} />);
+  const rows = screen.getAllByTestId("issue-row");
+  expect(rows.length).toBe(2);
+  const t = rows.find((r) => r.textContent!.includes("Tampered"))!;
+  expect(within(t).queryByText("Verified")).toBeNull();
+  expect(kpisOf([tampered, clean], groupByIssue([tampered, clean]), now).verifiedWeek).toBe(1);
 });
 
 test("run page shows TAMPERED", async () => {
@@ -65,11 +66,10 @@ test("run page shows TAMPERED", async () => {
   expect(screen.queryByText("Verified")).toBeNull();
 });
 
-test("home shows TAMPERED in recent runs", () => {
-  const stats = { since: null, runs_total: 1, runs_finished: 1, runs_running: 0, by_verdict: { TAMPERED: 1 }, blocked_waiting: 0, verified_rate: 0, cost: { measured_usd: null, measured_runs: 0, partial_usd: null, partial_runs: 0, label: "not measured" }, receipts: { total: 0, signed: 0 } };
-  render(<HomeView data={{ today: stats as never, week: stats as never, runs: [tampered as never], blocked: [], blockedTotal: 0 }} />);
-  expect(screen.getByText("TAMPERED")).toBeTruthy();
-  expect(screen.queryByText("VERIFIED")).toBeNull();
+test("overview shows Tampered in latest by issue", () => {
+  render(<HomeView runs={[tampered]} now={Date.parse("2026-10-03T12:00:00Z")} />);
+  expect(within(screen.getByTestId("latest-by-issue")).getByText("Tampered")).toBeTruthy();
+  expect(screen.queryByText("Verified")).toBeNull();
 });
 
 test("receipts list shows TAMPERED and the rate excludes it", async () => {
