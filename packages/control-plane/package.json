@@ -11,9 +11,11 @@
     "db:generate": "drizzle-kit generate --dialect sqlite --schema ./src/db/schema.ts --out ./drizzle"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "drizzle-orm": "^0.45.3",
     "hono": "^4.13.12",
-    "yaml": "^2.9.1"
+    "yaml": "^2.9.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@playwright/test": "1.58.1",

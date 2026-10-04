@@ -14,7 +14,7 @@ export const EVENTS_DEFAULT = 500;
 export const EVENTS_MAX = 1000;
 
 const ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const NAME = /^(?:issue\.json|plan\.json|receipt\.json|receipt\.md|report\.md|task\.md|diff\.patch|evidence\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.png)$/;
+export const NAME = /^(?:issue\.json|plan\.json|receipt\.json|receipt\.md|report\.md|task\.md|diff\.patch|evidence\/[A-Za-z0-9][A-Za-z0-9._-]{0,99}\.png)$/;
 
 const TYPES: Record<string, string> = {
   json: "application/json; charset=utf-8",
@@ -23,10 +23,10 @@ const TYPES: Record<string, string> = {
   png: "image/png",
 };
 
-const safeId = (s: string) => ID.test(s) && !s.includes("..");
+export const safeId = (s: string) => ID.test(s) && !s.includes("..");
 
 /** Reads a regular file up to the cap through one descriptor (the size check and the read see the same file). */
-function readCapped(path: string): { status: 200; body: Buffer } | { status: 404 | 413 } {
+export function readCapped(path: string): { status: 200; body: Buffer } | { status: 404 | 413 } {
   let fd: number;
   try { fd = openSync(path, "r"); } catch { return { status: 404 }; }
   try {
