@@ -12,7 +12,7 @@ test("verified-pr fixture: one line per stage with duration, model, cost and out
   const impl = tl.find((l) => l.label === "implement")!;
   expect(impl).toMatchObject({ outcome: "completed", duration_s: 0.089, model: "claude-sonnet-5", cost_usd: 0 });
   expect(tl.find((l) => l.label === "plan")!.model).toBe("sonnet");
-  expect(tl.find((l) => l.label === "intake")!.cost_usd).toBeNull();
+  expect(tl.find((l) => l.label === "intake")!.cost_usd).toBe("no-session"); // f26deef50: intake ran no model session
   expect(tl.find((l) => l.label === "Run completed")!.outcome).toBe("VERIFIED");
   expect(tl.find((l) => l.label === "Receipt sealed")!.outcome).toBe("signed");
 });

@@ -149,7 +149,7 @@ test("Card, KpiTile, Badge, Pill, StatusDot render", () => {
   expect(screen.getByText("card body")).toBeDefined();
   expect(screen.getByText("$1.20").style.fontFamily).toContain("font-mono");
   expect(container.querySelectorAll('[data-cp="sparkline"]').length).toBe(1);
-  expect(container.querySelector('[data-cp="badge"][data-tone="info"]')?.textContent).toBe("SPEC_CONFLICT");
+  expect(container.querySelector('[data-cp="badge"][data-tone="info"]')?.textContent).toBe("Needs your answer");
   expect(container.querySelector('[data-cp="badge"][data-tone="neutral"] .cp-pulse')).not.toBeNull();
   expect(screen.getByLabelText("active").getAttribute("data-state")).toBe("active");
 });

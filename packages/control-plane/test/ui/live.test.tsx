@@ -52,7 +52,7 @@ test("live run: finished run shows outcome with PR and receipt links", async () 
   }) });
   render(<LiveRun source="s1" run="r1" />);
   const out = await screen.findByTestId("live-outcome");
-  expect(out.textContent).toContain("VERIFIED");
+  expect(out.textContent).toContain("Verified");
   expect(screen.getByTestId("live-pr").getAttribute("href")).toBe("https://github.com/o/r/pull/7");
   expect(screen.getByTestId("live-receipt").textContent).toContain("signed");
   expect(screen.getByTestId("live-cost").textContent).toBe("$0.12");

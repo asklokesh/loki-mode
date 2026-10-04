@@ -57,8 +57,8 @@ test("fixture run: title header, terminal panel, and every section; missing data
   expect(screen.getByTestId("tl-time").textContent).toBe("10:00:00");
   expect(screen.getByTestId("tl-desc").textContent).toContain("Named the files and tests in scope");
   expect(screen.getByTestId("tl-duration").textContent).toBe("running");
-  expect(screen.getByTestId("tl-model").textContent).toBe("unmeasured");
-  expect(screen.getByTestId("tl-cost").textContent).toBe("unmeasured");
+  expect(screen.getByTestId("tl-model").textContent).toBe("-");
+  expect(screen.getByTestId("tl-cost").textContent).toBe("-");
   // changed files come from the diff
   await waitFor(() => expect(screen.getByTestId("run-diff").textContent).toContain("a.ts"));
   expect(screen.getByTestId("run-diff").textContent).toContain("+1");

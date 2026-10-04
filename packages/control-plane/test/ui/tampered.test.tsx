@@ -75,7 +75,7 @@ test("overview shows Tampered in latest by issue", () => {
 test("receipts list shows TAMPERED and the rate excludes it", async () => {
   render(<Receipts />);
   await screen.findAllByTestId("verify-btn");
-  expect(screen.getAllByText("TAMPERED").length).toBe(1);
+  expect(screen.getAllByText("Tampered").length).toBe(1);
   expect(screen.getByText("50%")).toBeTruthy();
   expect(verifiedTrend([{ started_at: "2026-10-03T10:00:00Z", verdict: "VERIFIED", tampered: true }])[0]!.rate).toBe(0);
 });

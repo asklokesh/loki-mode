@@ -42,3 +42,6 @@ docs/certification/certification-exam.md	--new-token	wrong-answer distractor in 
 docs/certification/certification-exam.md	--enterprise	wrong-answer distractor in the exam
 docs/certification/certification-exam.md	--max-cost	wrong-answer distractor in the exam
 docs/v10/D63-CARDS.md	loki foo	D63 card C5 routing example of an unknown one-word arg, not a command
+docs/v10/GUIDE.md	loki legacy	states that 11.0.0 removed the command
+docs/v10/LEGACY-REMOVAL.md	loki legacy	the removal plan for the command
+docs/v10/RELEASE-11.md	loki legacy	11.0.0 release record of the removal
