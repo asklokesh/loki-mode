@@ -157,14 +157,14 @@ def _make_seeded(root):
     _git(root, "commit", "-q", "-m", "seed")
 
 
-def _wall(maker, extra_env=None):
+def _wall(maker, extra_env=None, mode=""):
     with tempfile.TemporaryDirectory(prefix="ro-wall-") as root:
         root = os.path.realpath(root)
         maker(root)
         env = {k: v for k, v in os.environ.items()
                if not k.startswith("LOKI_CHROMA")}
         env.update(extra_env or {})
-        out = subprocess.run([sys.executable, _PROBE, _REPO_ROOT, root],
+        out = subprocess.run([sys.executable, _PROBE, _REPO_ROOT, root] + ([mode] if mode else []),
                              capture_output=True, text=True, timeout=300,
                              env=env)
         assert out.returncode == 0, out.stderr[-2000:]
@@ -187,9 +187,82 @@ class WallTests(unittest.TestCase):
     def test_seeded_memory_store(self):
         self._assert_floor(_wall(_make_seeded))
 
+    def test_autoreindex_gate_blocks_spawn_in_read_only(self):
+        # Positive control: with the stale manifest and the opt-in armed, the
+        # DEFAULT mode does reach the indexer spawn, so the probe can see it.
+        control = _wall(_make_empty, mode="default")
+        self.assertTrue([e for e in control["events"] if e["kind"] == "spawn"],
+                        "control: default mode never reached the indexer spawn")
+        # Read-only: the same setup must spawn nothing.
+        ro = _wall(_make_empty)
+        self.assertEqual([e for e in ro["events"] if e["kind"] == "spawn"], [])
+
     def test_non_loopback_chroma_host_is_refused_without_connecting(self):
         report = _wall(_make_empty, {"LOKI_CHROMA_HOST": "chroma.example.com"})
         self.assertEqual(report["events"], [])
+
+
+# F2: every public mutator of MemoryStorage refuses under READ_ONLY.
+MUTATORS = {
+    "save_episode": (None,), "delete_episode": ("ep-1",),
+    "save_pattern": (None,), "update_pattern": (None,),
+    "update_pattern_with_merge": ("p-1", lambda x: x),
+    "save_skill": (None,), "update_index": (), "update_timeline": ({},),
+    "set_active_context": ({},), "ensure_directory": ("newdir",),
+    "write_json": ("new.json", {}), "delete_file": ("index.json",),
+    "persist_boost": ({},), "increment_pattern_usage": ("p-1",),
+    "batch_apply_decay": (), "copy_to_namespace": ("other",),
+    "merge_from_namespace": ("other",),
+}
+# Public members that only read or compute in memory. A new public member that
+# is in neither set fails test_every_public_method_is_classified.
+READERS = {
+    "namespace", "root_path", "with_namespace", "load_episode", "list_episodes",
+    "load_pattern", "list_patterns", "load_skill", "list_skills", "get_index",
+    "get_timeline", "get_active_context", "read_json", "list_files",
+    "calculate_importance", "apply_decay", "boost_on_retrieval",
+    "list_namespaces", "get_namespace_stats",
+}
+
+
+def _tree(base):
+    return sorted(os.path.relpath(os.path.join(r, n), base)
+                  for r, ds, fs in os.walk(base) for n in ds + fs)
+
+
+class StorageReadOnlyTests(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, _REPO_ROOT)
+        from memory.storage import MemoryStorage
+        self.cls = MemoryStorage
+        self.tmp = tempfile.TemporaryDirectory(prefix="ro-store-")
+        self.store = MemoryStorage(self.tmp.name)  # created in default mode
+
+    def tearDown(self):
+        self.cls.READ_ONLY = False
+        self.tmp.cleanup()
+
+    def test_every_public_method_is_classified(self):
+        public = {n for n in dir(self.cls) if not n.startswith("_")}
+        public -= {"VERSION", "READ_ONLY"}
+        unknown = public - set(MUTATORS) - READERS
+        self.assertEqual(unknown, set(), "classify new MemoryStorage members")
+
+    def test_every_mutator_raises_and_creates_nothing(self):
+        before = _tree(self.tmp.name)
+        self.cls.READ_ONLY = True
+        for name, args in MUTATORS.items():
+            with self.subTest(method=name):
+                with self.assertRaises(PermissionError):
+                    getattr(self.store, name)(*args)
+        self.assertEqual(_tree(self.tmp.name), before)
+
+    def test_default_mode_mutators_still_work(self):
+        self.store.write_json("x.json", {"a": 1})
+        self.assertEqual(self.store.read_json("x.json"), {"a": 1})
+        self.assertTrue(self.store.delete_file("x.json"))
+        self.store.ensure_directory("newdir")
+        self.assertTrue(os.path.isdir(os.path.join(self.tmp.name, "newdir")))
 
 
 if __name__ == "__main__":
