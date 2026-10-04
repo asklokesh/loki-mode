@@ -4,6 +4,8 @@
 // is unsafe). Pure read. EngineTestMap extends types.ts TestMap without editing it.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, relative, sep } from "node:path";
+import { loadProjectApi } from "../project_model/resolve.ts";
+import { attachScope, scopeRefs } from "../project_model/scope.ts";
 import type { RunnerName, TestMap, TestMapProvider, TestRef } from "./types.ts";
 /** One command shape per runner (ENGINE.md section 8 table). `<files>` is a placeholder the
  *  caller (E-09 verify) fills with the selected paths. `coarse: true` means the command always
@@ -194,7 +196,9 @@ export function buildTestMap(root: string): EngineTestMap {
   const runners = RUNNER_ORDER.filter((r) => r in evidence);
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = r === "pytest" ? { ...COMMANDS.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` } : COMMANDS[r];
-  return { runners, tests, evidence, commands, sourceRefs };
+  const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs };
+  attachScope(map, loadProjectApi(root));
+  return map;
 }
 /** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps
  *  to every test that imports/references its basename (built by `buildTestMap`'s grep, read back from `map.sourceRefs`). */
@@ -221,7 +225,7 @@ export function impactedRefs(map: TestMap, changedFiles: readonly string[]): Tes
       add(map.tests.find((t) => t.path === p));
     }
   }
-  return out;
+  return scopeRefs(map, changedFiles.map(normalizeRel), out);
 }
 /** Implements the E-01 contract so RunContext can inject this as `tests`. */
 export class RealTestMapProvider implements TestMapProvider {
