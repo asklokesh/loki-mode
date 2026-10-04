@@ -152,13 +152,13 @@ describe.skipIf(!HAS_GO)("item 5b: go Wall file through RealBaseTestRunner (real
     const failing = fixture('func TestAdd(t *testing.T) { if Add(1, 2) != 4 { t.Fatal("x") } }');
     const r = new RealBaseTestRunner(null).run(failing, [{ runner: "go", path: "a_test.go" }]);
     expect(r.pass).toBe(0); // Wall treats a go red as coarse (never a per-file fail), unchanged
-  });
+  }, 60_000); // real go compiles cold on CI runners (8.7s seen on release run 37168233387)
   test("a TestMain that prints a fake pass and exits 0 earns no pass", () => {
     const d = fixture('import "os"\nimport "fmt"\n\nfunc TestMain(m *testing.M) { fmt.Println("=== RUN   TestFake"); fmt.Println("--- PASS: TestFake (0.00s)"); fmt.Println("ok  \\texample.com/fx\\t0.001s"); os.Exit(0) }');
     expect(new RealBaseTestRunner(null).run(d, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
-  });
+  }, 60_000); // real go compiles cold on CI runners (8.7s seen on release run 37168233387)
   test("early exit forgery for a real declared test is not a pass", () => {
     const d = fixture('import "fmt"\nimport "os"\n\nfunc init() { fmt.Print("\\x16=== RUN   TestReal\\n\\x16--- PASS: TestReal (0.00s)\\n"); fmt.Println("PASS"); os.Exit(0) }\nfunc TestReal(t *testing.T) { t.Fatal("never runs") }');
     expect(new RealBaseTestRunner(null).run(d, [{ runner: "go", path: "a_test.go" }])).toEqual({ pass: 0, fail: 0, not_run: 1 });
-  });
+  }, 60_000); // real go compiles cold on CI runners (8.7s seen on release run 37168233387)
 });
