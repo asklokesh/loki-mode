@@ -186,8 +186,11 @@ export function buildTestMap(root: string): EngineTestMap {
   // Object.create(null): keys come from grep'd file content, so a source
   // named e.g. "constructor" must not collide with Object.prototype.
   const sourceRefs: Record<string, string[]> = Object.create(null);
+  const specs: Record<string, string[]> = Object.create(null);
   for (const t of tests) {
-    const names = referencedBasenames(readText(join(root, t.path)));
+    const text = readText(join(root, t.path));
+    specs[t.path] = [...text.matchAll(JS_SPEC_RE)].map((m) => m[1] ?? "");
+    const names = referencedBasenames(text);
     names.add(coveredStem(t.path));
     for (const n of names) {
       (sourceRefs[n] ??= []).push(t.path);
@@ -197,7 +200,7 @@ export function buildTestMap(root: string): EngineTestMap {
   const commands: Partial<Record<RunnerName, CommandSpec>> = {};
   for (const r of runners) commands[r] = r === "pytest" ? { ...COMMANDS.pytest, cmd: `${pytestPython(root)} -m pytest -q <files>` } : COMMANDS[r];
   const map: EngineTestMap = { runners, tests, evidence, commands, sourceRefs };
-  attachScope(map, loadProjectApi(root));
+  attachScope(map, loadProjectApi(root), specs);
   return map;
 }
 /** Test refs impacted by `changedFiles`: a changed test maps to itself; a changed source maps

@@ -26,7 +26,7 @@ export const MAX_FIX_ROUNDS = 2;
 export const EVENT_TYPES = [
   "run.started", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
   "heartbeat", "session.started", "session.ended", "cost", "wall.sealed",
-  "tests.restored", "test.result", "fix.round", "already.satisfied", "spec.conflict",
+  "tests.restored", "test.result", "test.scoped_out", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "tamper.detected", "receipt.sealed", "pr.opened",
   "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant",
 ] as const;
