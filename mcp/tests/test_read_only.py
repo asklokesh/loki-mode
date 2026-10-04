@@ -257,6 +257,26 @@ class StorageReadOnlyTests(unittest.TestCase):
                     getattr(self.store, name)(*args)
         self.assertEqual(_tree(self.tmp.name), before)
 
+    def test_every_mutator_calls_check_writable_directly(self):
+        # A mutator relying only on a downstream _atomic_write re-check would
+        # survive a mutation of its own guard; require the direct call.
+        import ast
+        import inspect
+        tree = ast.parse(inspect.getsource(self.cls))
+        funcs = {n.name: n for n in ast.walk(tree)
+                 if isinstance(n, ast.FunctionDef)}
+        for name in MUTATORS:
+            with self.subTest(method=name):
+                calls = [
+                    c for c in ast.walk(funcs[name])
+                    if isinstance(c, ast.Call)
+                    and isinstance(c.func, ast.Attribute)
+                    and c.func.attr == "_check_writable"
+                    and isinstance(c.func.value, ast.Name)
+                    and c.func.value.id == "self"
+                ]
+                self.assertTrue(calls, "%s lacks self._check_writable()" % name)
+
     def test_default_mode_mutators_still_work(self):
         self.store.write_json("x.json", {"a": 1})
         self.assertEqual(self.store.read_json("x.json"), {"a": 1})

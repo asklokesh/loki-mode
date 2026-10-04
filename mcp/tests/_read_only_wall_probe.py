@@ -28,10 +28,13 @@ from mcp import server  # noqa: E402
 import json as _json  # noqa: E402
 import pathlib  # noqa: E402
 import subprocess  # noqa: E402
+import atexit  # noqa: E402
+import shutil  # noqa: E402
 import tempfile  # noqa: E402
 
 os.environ["LOKI_CODE_INDEX_AUTOREINDEX"] = "1"
 _manifest_dir = tempfile.mkdtemp(prefix="ro-manifest-")
+atexit.register(shutil.rmtree, _manifest_dir, True)
 _manifest = pathlib.Path(_manifest_dir) / "code-index-manifest.json"
 _manifest.write_text(_json.dumps({"files": {"does-not-exist.py": {"mtime": 1}}}))
 server.CODE_INDEX_MANIFEST_PATH = _manifest
@@ -41,7 +44,7 @@ _spawned = []
 
 
 def _recording_run(*a, **k):
-    _spawned.append(str(a[0] if a else k.get("args"))[:200])
+    _spawned.append((current["name"], str(a[0] if a else k.get("args"))[:200]))
     return subprocess.CompletedProcess(a[0] if a else [], 0, b"", b"")
 
 
@@ -141,8 +144,8 @@ async def run():
         except Exception as e:
             results[uri] = "raised %s" % type(e).__name__
     current["name"] = None
-    for cmd in _spawned:
-        events.append({"tool": "loki_code_search", "kind": "spawn", "detail": cmd})
+    for who, cmd in _spawned:
+        events.append({"tool": who, "kind": "spawn", "detail": cmd})
     time.sleep(0.5)  # let any stray emitter thread surface
     after = snapshot()
     return results, sorted(after - before)

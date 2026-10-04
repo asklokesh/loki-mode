@@ -503,8 +503,8 @@ class MemoryStorage:
         Returns:
             Episode ID
         """
-        # Handle both dict and object
         self._check_writable()
+        # Handle both dict and object
         if hasattr(episode, "to_dict"):
             episode_data = episode.to_dict()
         elif hasattr(episode, "__dict__"):
@@ -713,8 +713,8 @@ class MemoryStorage:
         Returns:
             Pattern ID
         """
-        # Handle both dict and object
         self._check_writable()
+        # Handle both dict and object
         if hasattr(pattern, "to_dict"):
             pattern_data = pattern.to_dict()
         elif hasattr(pattern, "__dict__"):
@@ -850,8 +850,8 @@ class MemoryStorage:
         Returns:
             True if updated, False if not found
         """
-        # Handle both dict and object
         self._check_writable()
+        # Handle both dict and object
         if hasattr(pattern, "to_dict"):
             pattern_data = pattern.to_dict()
         elif hasattr(pattern, "__dict__"):
@@ -994,8 +994,8 @@ class MemoryStorage:
         Returns:
             Skill ID
         """
-        # Handle both dict and object
         self._check_writable()
+        # Handle both dict and object
         if hasattr(skill, "to_dict"):
             skill_data = skill.to_dict()
         elif hasattr(skill, "__dict__"):
