@@ -2,7 +2,7 @@
 
 The flagship product of [Autonomi](https://www.autonomi.dev/). Loki Mode is a spec-driven autonomous builder with a built-in trust layer that takes any spec to a deployed product and verifies completion with evidence (quality gates plus a completion council), not just a "done" claim. Complete installation instructions for all platforms and use cases.
 
-**Version:** v10.11.0
+**Version:** v10.11.1
 
 **Engine note:** `loki "<task>"`, `loki owner/repo#N` and `loki quick` run the Loki 10 engine. `loki start` still routes to the legacy engine, which is being removed (planned work resumes 2026-10-07); prefer `loki owner/repo#N`. See [docs/v10/GUIDE.md](v10/GUIDE.md).
 

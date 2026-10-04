@@ -5,14 +5,25 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v10.11.1 (2026-10-04)
+
+Moat P9 is green again, and Go and unittest passes can no longer be forged. FC-25 routes every git call that the token-holding supervisor and CLI make inside the agent's repo through one hardened helper, so a planted fsmonitor, hook, sshCommand, ext:: transport or credential helper no longer runs with the real GitHub token. This closes the P9 regression open since v10.10.4. FC-16b stops reporting a Go exit 0 or a forged unittest trailer as a pass. FC-22 S2 and S3 land package-scoped test selection, which is opt-in behind `LOKI_E10_SCOPE=1`, and the install pre-step library, which S4 will wire into verify.
+
+### Added
+- FC-22 S2: impacted-test selection can be scoped to the touched packages plus their declared dependents (`project_model/scope.ts`). It is opt-in with `LOKI_E10_SCOPE=1` (default off). A test owned by the root package, or one that imports a changed file, is always kept, and the tests scoped out are emitted as a `test.scoped_out` verify event.
+- FC-22 S3: install pre-step library (`project_model/install.ts`, not yet wired into verify). It runs the Project Model's own install command once per package per run, records the result as a check with its cwd, restores tracked files the install changed that were clean before it ran, and lists everything else it could not restore. Every destructive git path in loki-ts is now listed, with a trust or work class, in a static L2 registry test.
 
 ### Fixed
+- FC-16b: the Go `-json` first-error line now also reads `build-output` events, so a compile failure reports the compiler line instead of "FAIL pkg [build failed]".
+- FC-25: the FC-22 install library runs its git calls through `safeGit` too.
 - FC-16b (D86, L2/L3): Go test passes are reported as not run (they cannot be confirmed). A Go `test` check that exits 0 is never a pass: its output, including the `go test -json` event stream, is produced by the code under test, which can print the test2json framing marker (or exit early with `os.Exit(0)`) and forge run and pass events for any name, so no static check can confirm that a test executed. The reason recorded is "go test output is produced by the code under test and cannot confirm execution". `go test -json` is now used only for fail evidence (a fail event, failed test names in firstError) on a red run.
 - FC-16b: Go runner detection is one shared helper (`goRunner` in util/check_result.ts) used by verify, deep and the per-package suites; a wrapped command (`env X=1 go test`, `GOFLAGS=x go test`, a path to go) no longer falls to the generic path.
 - FC-16b: python unittest counts are never taken from the trailer alone: more than one "Ran" block (an atexit handler printing a forged `OK` after a real `FAILED` or after an all-skipped `OK (skipped=N)`) or a verdict contradicting the exit code makes the count unknown; `OK (skipped=N)` subtracts the skipped tests.
 - FC-16b: the load-owner base run is spawned in its own process group and killed as a group on a cut (only when the pid is an integer greater than 1; pgrep walk kept as fallback), so a descendant reparented to init no longer outlives the cut.
 - FC-25 (moat P9): git calls made by the token-holding supervisor and CLI inside the agent's repo no longer run a planted `core.fsmonitor` or hook with the real GitHub token in the environment. A new `safeGit()` helper (`loki-ts/src/util/safe_git.ts`) disables fsmonitor, hooks, `core.sshCommand`, `ext::` and the credential helper, sets `GIT_CONFIG_NOSYSTEM=1`, and strips the token family and `SSH_AUTH_SOCK` unless a call opts in (authenticated fetch). `resolveRunCapS` (the regression since v10.10.4), repomap, stop-restore, preflight, base resolution, the backstop commit, PR head lookup, load-owner and warm/contract lookups use it. A static guard fails on any new raw git spawn outside an allowlist with a reason.
+
+### Known issues
+- FC-25b: under safeGit, repo-configured filter drivers, diff textconv and gpg.program still execute, although without the token in their env. The fix is in review for 10.11.2.
 
 ## v10.11.0 (2026-10-04)
 
