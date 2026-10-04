@@ -25,6 +25,8 @@ export interface ModelPackage {
   commands: Record<CommandKind, ModelCommand | null>;
   ui: ModelUi;
   cite: string[];
+  dependsOn?: string[]; // package roots this package depends on (model-decided); absent = edges unknown, [] = none
+  install?: ModelCommand | null; // how to install this package's dependencies (cited); absent or null = none known
 }
 export interface ProjectModel {
   schema: typeof PROJECT_MODEL_SCHEMA;
@@ -118,6 +120,20 @@ function checkCommand(repoDir: string, v: unknown, where: string, errs: string[]
   return { cmd: v.cmd.trim(), cwd, cite: checkCites(repoDir, v.cite, `${where}.cite`, errs) };
 }
 
+function rawDeps(v: unknown, where: string, errs: string[]): string[] {
+  if (!Array.isArray(v)) {
+    errs.push(`${where}: must be an array of package roots`);
+    return [];
+  }
+  const out: string[] = [];
+  for (const d of v) {
+    const rel = isStr(d) ? safeRel(d) : null;
+    if (rel === null) errs.push(`${where}: "${String(d)}" is not a repo-relative package root`);
+    else if (!out.includes(rel)) out.push(rel);
+  }
+  return out;
+}
+
 /** Validates the model's raw answer. Returns the typed model (key set by the caller) or every
  *  error found, so the one retry can show the model all of them at once. */
 export function validateAnswer(repoDir: string, raw: unknown): { ok: true; model: Omit<ProjectModel, "key"> } | { ok: false; errors: string[] } {
@@ -147,8 +163,12 @@ export function validateAnswer(repoDir: string, raw: unknown): { ok: true; model
       commands,
       ui: { present: ui.present === true, boot: checkCommand(repoDir, ui.boot, `${w}.ui.boot`, errs), cite: checkCites(repoDir, ui.cite, `${w}.ui.cite`, errs) },
       cite: checkCites(repoDir, p.cite, `${w}.cite`, errs),
+      ...(p.install === undefined ? {} : { install: checkCommand(repoDir, p.install, `${w}.install`, errs) }),
+      ...(p.dependsOn === undefined ? {} : { dependsOn: rawDeps(p.dependsOn, `${w}.dependsOn`, errs) }),
     });
   }
+  const roots = new Set(packages.map((p) => p.root));
+  for (const p of packages) for (const d of p.dependsOn ?? []) if (!roots.has(d)) errs.push(`package "${p.name}".dependsOn: "${d}" is not the root of any listed package`);
   if (!Array.isArray(raw.fingerprintFiles)) errs.push("fingerprintFiles: required array of the manifest and lockfile paths");
   const fingerprintFiles = (Array.isArray(raw.fingerprintFiles) ? raw.fingerprintFiles : []).filter((f) => {
     const e = checkFingerprint(repoDir, f);
