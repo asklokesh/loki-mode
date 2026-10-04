@@ -1,7 +1,7 @@
 // FC-22 S3: the install pre-step library. Fake installers are tiny shell scripts (tests/fixtures/install-fc22); no network.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
@@ -76,7 +76,7 @@ describe("prepareDeps", () => {
   });
   test("a failed install is not_run owned by the harness, never fail", async () => {
     const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/fail.sh` }), failed: failed("a") });
-    expect(r.checks[0]).toMatchObject({ name: "install:a", result: "not_run", owner: "harness", reason: "install exited 3" });
+    expect(r.checks[0]).toMatchObject({ name: "install:a", result: "not_run", owner: "harness", reason: "install exited 3: boom" });
     expect(r.checks.some((c) => (c.result as string) === "fail")).toBe(false);
     expect(r.notProven.join("\n")).toContain("install:a");
   });
@@ -108,5 +108,72 @@ describe("prepareDeps", () => {
     expect(r.restored).toEqual([]);
     expect(r.unrestored).toEqual(["a/package-lock.json"]);
     expect(readFileSync(join(repo, "a/package-lock.json"), "utf8")).toContain("agent edit");
+  });
+  test("a glob-looking path is restored literally and never takes the agent's own file with it", async () => {
+    mkdirSync(join(repo, "pages"));
+    const odd = "pages/we ird\nname.txt";
+    writeFileSync(join(repo, "pages/[id].tsx"), "base\n"); writeFileSync(join(repo, "pages/d.tsx"), "base\n"); writeFileSync(join(repo, odd), "base\n");
+    git("add", "."); git("commit", "-qm", "pages");
+    writeFileSync(join(repo, "pages/d.tsx"), "agent edit\n");
+    const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/glob.sh` }), failed: failed("a") });
+    expect(r.restored.sort()).toEqual([odd, "pages/[id].tsx"].sort());
+    expect(readFileSync(join(repo, "pages/d.tsx"), "utf8")).toBe("agent edit\n");
+    expect(readFileSync(join(repo, "pages/[id].tsx"), "utf8")).toBe("base\n");
+    expect(readFileSync(join(repo, odd), "utf8")).toBe("base\n");
+    expect(r.unrestored).toEqual([]);
+  });
+  test("a non-git repo: the guard did not run and NOT PROVEN says so", async () => {
+    const plain = mkdtempSync(join(tmpdir(), "loki-fc22p-"));
+    try {
+      mkdirSync(join(plain, "a"));
+      const r = await prepareDeps({ ...base(), repoDir: plain, model: model({ a: `sh ${FIX}/ok.sh` }), failed: failed("a") });
+      expect(r.checks[0]!.result).toBe("pass");
+      expect(r.notProven.join("\n")).toContain("install:a tree guard not run (git status failed)");
+    } finally { rmSync(plain, { recursive: true, force: true }); }
+  });
+  test("a before-snapshot failure (install creates the repo) is reported", async () => {
+    const plain = mkdtempSync(join(tmpdir(), "loki-fc22p-"));
+    try {
+      mkdirSync(join(plain, "a"));
+      const r = await prepareDeps({ ...base(), repoDir: plain, model: model({ a: `sh ${FIX}/initgit.sh` }), failed: failed("a") });
+      expect(r.notProven.join("\n")).toContain("tree guard not run");
+    } finally { rmSync(plain, { recursive: true, force: true }); }
+  });
+  test("an after-snapshot failure (install destroys the repo) is reported", async () => {
+    const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/breakgit.sh` }), failed: failed("a") });
+    expect(r.notProven.join("\n")).toContain("install:a tree guard not run (git status failed)");
+  });
+  test("a clean guard has no guard note", async () => {
+    const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/ok.sh` }), failed: failed("a") });
+    expect(r.notProven).toEqual([]);
+  });
+  test("an install cwd that is a link out of the repo is not run", async () => {
+    const out = mkdtempSync(join(tmpdir(), "loki-fc22o-"));
+    try {
+      rmSync(join(repo, "b"), { recursive: true, force: true });
+      symlinkSync(out, join(repo, "b"));
+      const r = await prepareDeps({ ...base(), model: model({ b: `sh ${FIX}/ok.sh` }), failed: failed("b") });
+      expect(r.checks[0]).toMatchObject({ result: "not_run", owner: "harness" });
+      expect(r.checks[0]!.reason).toMatch(/outside the repo/);
+      expect(existsSync(join(out, "node_modules"))).toBe(false);
+    } finally { rmSync(out, { recursive: true, force: true }); }
+  });
+  test("a backgrounded orphan cannot write after the guard", async () => {
+    const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/orphan.sh` }), failed: failed("a") });
+    expect(r.checks[0]!.result).toBe("pass");
+    await new Promise((res) => setTimeout(res, 1500));
+    expect(existsSync(join(repo, "late.txt"))).toBe(false);
+  });
+  test("a pre-existing untracked file the install changed is listed as unrestored", async () => {
+    writeFileSync(join(repo, "notes.txt"), "mine\n");
+    const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/touch_untracked.sh` }), failed: failed("a") });
+    expect(r.unrestored).toEqual(["notes.txt"]);
+    expect(readFileSync(join(repo, "notes.txt"), "utf8")).toContain("changed");
+  });
+  test("a failed install carries a short output excerpt; the timeout shows a decimal", async () => {
+    const r = await prepareDeps({ ...base(), model: model({ a: `sh ${FIX}/fail.sh` }), failed: failed("a") });
+    expect(r.checks[0]!.reason).toBe("install exited 3: boom");
+    const t = await prepareDeps({ ...base(), timeoutMs: 400, model: model({ b: `sh ${FIX}/slow.sh` }), failed: failed("b") });
+    expect(t.checks[0]!.reason).toContain("timed out after 0.4s");
   });
 });
