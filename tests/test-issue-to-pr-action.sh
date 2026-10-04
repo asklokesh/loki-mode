@@ -113,10 +113,10 @@ fi
 # 9. The published root action must run Loki 10, never the legacy --simple path.
 if ! grep -q -e '--simple' action.yml && ! grep -q -e '--budget' action.yml \
     && [ "$(grep -c 'loki start "[$]TASK"' action.yml)" -eq 3 ] \
-    && [ "$(grep -c "LOKI_ENGINE: 'v10'" action.yml)" -eq 3 ]; then
+    && ! grep -q LOKI_ENGINE action.yml; then
     pass "root action.yml routes all three modes to Loki 10 (no --simple, no --budget)"
 else
-    fail "root action.yml still calls the legacy --simple/--budget path or is not pinned to LOKI_ENGINE v10"
+    fail "root action.yml still calls the legacy --simple/--budget path or still sets the removed LOKI_ENGINE"
 fi
 
 echo "  $PASS passed, $FAIL failed"

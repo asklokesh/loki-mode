@@ -245,7 +245,6 @@ runs:
         LOKI_PROVIDER: ${{ inputs.provider }}
         LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
         LOKI_DASHBOARD: 'false'
-        LOKI_ENGINE: 'v10'
         LOKI_COMPLEXITY: 'simple'
         LOKI_BUDGET_LIMIT: ${{ inputs.budget || inputs.budget_limit }}
         LOKI_COUNCIL_ENABLED: 'false'
@@ -292,7 +291,6 @@ runs:
         LOKI_PROVIDER: ${{ inputs.provider }}
         LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
         LOKI_DASHBOARD: 'false'
-        LOKI_ENGINE: 'v10'
         LOKI_COMPLEXITY: 'simple'
         LOKI_BUDGET_LIMIT: ${{ inputs.budget || inputs.budget_limit }}
         LOKI_COUNCIL_ENABLED: 'false'
@@ -340,7 +338,6 @@ runs:
         LOKI_PROVIDER: ${{ inputs.provider }}
         LOKI_MAX_ITERATIONS: ${{ inputs.max_iterations }}
         LOKI_DASHBOARD: 'false'
-        LOKI_ENGINE: 'v10'
         LOKI_COMPLEXITY: 'simple'
         LOKI_BUDGET_LIMIT: ${{ inputs.budget || inputs.budget_limit }}
         LOKI_COUNCIL_ENABLED: 'false'
