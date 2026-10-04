@@ -1,0 +1,5 @@
+{"type":"system","subtype":"init","session_id":"s-1","model":"sonnet","tools":["Read","Grep"]}
+{"type":"assistant","message":{"id":"msg_1","content":[{"type":"text","text":"Let me look at the runs. "},{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":".loki/state/runs.json"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"{\"runs\":2}"}]}}
+{"type":"assistant","message":{"id":"msg_2","content":[{"type":"text","text":"There are 2 runs."}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"Let me look at the runs. There are 2 runs.","total_cost_usd":0.0421,"session_id":"s-1"}

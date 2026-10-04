@@ -1,0 +1,5 @@
+{"type":"thread.started","thread_id":"t-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"command_execution","command":"ls","aggregated_output":"a.ts\n","exit_code":0}}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"There is one file."}}
+{"type":"turn.completed","usage":{"input_tokens":100,"output_tokens":10}}
