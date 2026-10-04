@@ -4,7 +4,7 @@ import type { Context, Hono } from "hono";
 import type { Db } from "../../db/migrate.ts";
 import type { spawnStart } from "../spawn.ts";
 import { isLoopbackHost } from "../auth.ts";
-import { mountRepos } from "../repos.ts";
+import { mountRepos, type GhRunner } from "../repos.ts";
 import { mount as artifacts } from "./artifacts.ts";
 import { mount as audit } from "./audit.ts";
 import { mount as checkpoints } from "./checkpoints.ts";
@@ -41,12 +41,14 @@ export interface RouteCtx {
   spawnImpl?: typeof spawnStart;
   /** Where BLOCKED answers are written (createApp answerDir). */
   answerDir?: string;
+  /** gh seam for GET /v1/repos/issues (tests stub it). */
+  ghImpl?: GhRunner;
 }
 
 export const routeModules: ReadonlyArray<(ctx: RouteCtx) => void> = [artifacts, stream, start, control, stats, cost, costLedger, fleet, metrics, checkpoints, memory, sessionControl, config, providers, verify, integrations, notify, audit, mergeRisk];
 
 export function registerRoutes(ctx: RouteCtx): void {
-  mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback, ctx.repoDir);
+  mountRepos(ctx.act, ctx.db, ctx.peerIsLoopback, ctx.repoDir, ctx.ghImpl);
   for (const m of routeModules) m(ctx);
 }
 

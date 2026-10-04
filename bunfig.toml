@@ -11,3 +11,4 @@
 # scripts/local-ci.sh already does `cd loki-ts && bun test`.
 [test]
 root = "loki-ts/tests"
+preload = ["./loki-ts/tests/preload.ts"] # hermetic HOME + LOKI_CONTROL=0 for a root-level bun test too
