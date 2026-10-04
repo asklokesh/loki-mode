@@ -2230,3 +2230,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Main CI fix 65ce2060b (CP-04 Dockerfile, DEP-01 DEPS rows): Tests 37159323291 success.
 - Follow-ups ready: FC-21b (HIGH, next train: earned VERIFIED after a limit, Project Model cap sizing, L7 outcome on cap stop), FC-16b.
 - Steering running the FireLater#17 gate on 10.10.5 defaults. Seats: 0 active (week 82 percent at 22:43Z, D87 stop at 95).
+
+## 2026-10-04T00:12Z (CoS)
+- Plans pushed: FC21B-FC22-PLAN.md (5 slices: S1, then S2/S3/S5, then S4) at f1ab77d1e; CP-ASK-PLAN.md (15 slices behind LOKI_CP_ASK) at 04c8915a9. FOUNDER-QUEUE rows 19-20 hold the CoS decisions for veto.
+- CP-ASK slice 1 (MCP read-only, a2bb8b4ad): opus review BLOCK. Allowlisted tools still write events/signals (B1), graph_query spawns graphify (B2), code_search can reindex (B3), memory tools create an empty store (B4). Fix round sent, with an audit-hook zero-write Wall check. Priority stays below FC-22/FC-23 (steering 00:02Z).
+- FC-23 (Wall module system): first full bun test failed 3 (two L0 guards, one brief test); fixed by key-based reading. Commit and gate evidence requested.
+- Building: FC-16b, S1 (Project Model graph). Main CI on 04c8915a9 pending; npm latest=10.10.5.
+- Usage: week 83 percent, session 28 percent at 00:02Z. Stop new seats at 90 percent (D87).
