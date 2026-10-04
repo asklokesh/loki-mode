@@ -20,7 +20,7 @@ export async function postControl(source: string, run: string, kind: ControlKind
 const PENDING: Record<ControlKind, string> = { stop: "Stopping...", retry: "Retrying...", resume: "Resuming..." };
 const DONE: Record<ControlKind, string> = { stop: "Stop signal sent.", retry: "Retry started as a new run.", resume: "Resume started." };
 
-export function RunControls({ source, run, status, onChanged }: { source: string; run: string; status: string; onChanged?: () => void }) {
+export function RunControls({ source, run, status, ownRules, onChanged }: { source: string; run: string; status: string; ownRules?: boolean; onChanged?: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [pending, setPending] = useState<ControlKind | null>(null);
   const [stopped, setStopped] = useState(false);
@@ -31,7 +31,8 @@ export function RunControls({ source, run, status, onChanged }: { source: string
   // Optimistic view: a pending or accepted stop reads as stopping, a pending or accepted resume reads as running. A failure restores the prop status.
   const stopping = pending === "stop" || stopped;
   const running = !stopping && (pending === "resume" || resumed || s === "RUNNING");
-  const blocked = s === "BLOCKED" && !running && !stopping;
+  // A block caused by Loki's own rules (FC-19) is retried on the latest version, never resumed with an answer.
+  const blocked = s === "BLOCKED" && !running && !stopping && !ownRules;
 
   const act = async (kind: ControlKind) => {
     if (pending) return;
@@ -62,7 +63,7 @@ export function RunControls({ source, run, status, onChanged }: { source: string
         </span>
       ) : null}
       {blocked && !pending ? <Button size="sm" onClick={() => void act("resume")}>Resume</Button> : null}
-      {!running && !stopping && !pending && s !== "" ? <Button variant="secondary" size="sm" onClick={() => void act("retry")}>Retry</Button> : null}
+      {!running && !stopping && !pending && s !== "" ? <Button variant={ownRules ? "primary" : "secondary"} size="sm" onClick={() => void act("retry")}>Retry</Button> : null}
       {pending ? <span role="status">{PENDING[pending]}</span> : null}
       {!pending && note ? <span role={note.tone === "error" ? "alert" : "status"} style={note.tone === "error" ? { color: "var(--cp-error)" } : undefined}>{note.text}</span> : null}
     </div>

@@ -1,8 +1,8 @@
 // Start-a-run planning and spawning for the UI (CPE-07). A run is started by spawning the same `loki start` path an operator would type (argv array, no shell).
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 const ISSUE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}\/[A-Za-z0-9._-]{1,100}#[1-9][0-9]{0,8}$/;
 // A free-text task: letters, digits, spaces and a small punctuation set. No colon, quotes, backticks, $, ;, &, |, <, >, parens, braces, backslash or control chars.
@@ -22,6 +22,17 @@ const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const BUDGET = /^(?:[1-9][0-9]{0,5}|0)(?:\.[0-9]{1,2})?$/;
 const WORKSPACE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
 
+/** A run may only start in a git repo, never in HOME or "/" (a "whats going on" composer message once started a coding run in the home directory). Null = allowed. */
+export function repoRefusal(cwd: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const real = (p: string): string => { try { return realpathSync(p); } catch { return resolve(p); } };
+  const dir = real(cwd);
+  const home = real(env.HOME || homedir());
+  if (dir === "/" || dir === resolve("/")) return "refusing to start a run in the filesystem root; pick a git repository";
+  if (dir === home) return "refusing to start a run in your home directory; pick a project repository (a folder with its own .git)";
+  for (let d = dir; d !== "/" && d !== home && d !== dirname(d); d = dirname(d)) if (existsSync(join(d, ".git"))) return null;
+  return `${cwd} is not a git repository; pick a registered project repository`;
+}
+
 export type StartPlan = { ok: true; argv: string[]; cwd: string; env: Record<string, string> } | { ok: false; error: string };
 
 /** Registered project paths from ~/.loki/dashboard/projects.json (the `loki projects` registry), existing directories only. */
@@ -33,7 +44,7 @@ export function registryRepos(env: NodeJS.ProcessEnv = process.env): string[] {
 }
 
 /** Validate a start request. The repo must be one the server already knows (registry or cwd), never an arbitrary path. */
-export function planStart(body: unknown, known: string[], bin = "loki"): StartPlan {
+export function planStart(body: unknown, known: string[], bin = "loki", env: NodeJS.ProcessEnv = process.env): StartPlan {
   const b = (body && typeof body === "object" ? body : {}) as { target?: unknown; repo?: unknown; model?: unknown; provider?: unknown; budget?: unknown; workspace?: unknown };
   if (typeof b.target !== "string") return { ok: false, error: "target must be a string" };
   const target = b.target.trim();
@@ -51,6 +62,8 @@ export function planStart(body: unknown, known: string[], bin = "loki"): StartPl
     if (!hit) return { ok: false, error: named.length > 1 ? "repo name is ambiguous" : "repo is not a known project" };
     cwd = hit;
   }
+  const refusal = repoRefusal(cwd, env);
+  if (refusal) return { ok: false, error: refusal };
   const opt = (v: unknown): string | undefined => (v === undefined || v === null || v === "" ? undefined : typeof v === "number" && Number.isFinite(v) ? String(v) : typeof v === "string" ? v : "\0bad");
   const provider = opt(b.provider), model = opt(b.model), budget = opt(b.budget), workspace = opt(b.workspace);
   if (provider !== undefined && !PROVIDERS.has(provider)) return { ok: false, error: "provider must be one of: " + [...PROVIDERS].join(", ") };
@@ -58,11 +71,11 @@ export function planStart(body: unknown, known: string[], bin = "loki"): StartPl
   if (budget !== undefined && (!BUDGET.test(budget) || Number(budget) <= 0)) return { ok: false, error: "budget must be a positive USD amount such as 5 or 5.00" };
   if (workspace !== undefined && !WORKSPACE.test(workspace)) return { ok: false, error: "workspace must be a workspace name from loki.yaml (letters, digits, _ -)" };
   if (workspace !== undefined && (provider !== undefined || budget !== undefined)) return { ok: false, error: "workspace runs do not take provider or budget; set them per repo in loki.yaml" };
-  const env: Record<string, string> = model !== undefined ? { LOKI_SESSION_MODEL: model } : {};
+  const runEnv: Record<string, string> = model !== undefined ? { LOKI_SESSION_MODEL: model } : {};
   // A workspace run is `loki workspace run <name> <ref>` (the existing multi-repo path). Otherwise free text goes as an explicit brief, never auto-detected as a PRD path.
-  if (workspace !== undefined) return { ok: true, argv: [bin, "workspace", "run", workspace, target], cwd, env };
+  if (workspace !== undefined) return { ok: true, argv: [bin, "workspace", "run", workspace, target], cwd, env: runEnv };
   const flags = [...(provider !== undefined ? ["--provider", provider] : []), ...(budget !== undefined ? ["--budget", budget] : [])];
-  return { ok: true, argv: issue ? [bin, "start", target, ...flags] : [bin, "start", "--brief", target, ...flags], cwd, env };
+  return { ok: true, argv: issue ? [bin, "start", target, ...flags] : [bin, "start", "--brief", target, ...flags], cwd, env: runEnv };
 }
 
 /** Spawn detached with no shell; resolves with the pid once the process exists, or an error if it cannot be launched. */

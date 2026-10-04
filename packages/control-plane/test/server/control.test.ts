@@ -12,6 +12,7 @@ const FIX = join(import.meta.dir, "../fixtures/runs");
 const SRC = "abcdef0123456789";
 const tmp = mkdtempSync(join(tmpdir(), "cp-control-"));
 const repo = join(tmp, "repo");
+mkdirSync(join(repo, ".git"), { recursive: true }); // a run may only start in a repo (A3d)
 const answers = join(tmp, "answers");
 const spawned: string[][] = [];
 const { app, db, close } = createApp({ dbPath: ":memory:", loopbackOnly: true, startBin: "/bin/loki-test", answerDir: answers, spawnImpl: async (argv, _cwd, onExit) => { spawned.push(argv); onExit?.(); return { pid: 4242 }; } });

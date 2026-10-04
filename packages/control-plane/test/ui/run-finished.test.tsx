@@ -41,5 +41,5 @@ test("a completed run page shows its stored timeline, not No events yet", async 
   const tl = await screen.findByTestId("run-timeline");
   await waitFor(() => expect(tl.textContent).not.toContain("No events yet"));
   expect(tl.textContent).toContain("implement");
-  expect(tl.textContent).toContain("VERIFIED");
+  expect(tl.textContent).toContain("Run finished: Verified");
 });

@@ -7,19 +7,17 @@ import type { RouteCtx } from "./index.ts";
 
 const num = (v: string | undefined, d: number) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : d; };
 
-export function mount(ctx: RouteCtx): void {
-  const pollMs = num(process.env.LOKI_CONTROL_STREAM_POLL_MS, 1000);
-  const heartbeatMs = num(process.env.LOKI_CONTROL_STREAM_HEARTBEAT_MS, 15000);
-  const maxStreams = num(process.env.LOKI_CONTROL_STREAM_MAX, 32);
-  const { db } = ctx;
+/** A tick returns frames to send, or frames plus end:true to send them and close the stream. */
+export type SseTick = () => string[] | { frames: string[]; end: true };
+
+/** Bounded SSE responder (shared by the run streams and the Ask stream). Each instance has its own slot count; a slot is freed exactly once on abort, cancel, end or error. */
+export function createSse(opts: { pollMs: number; heartbeatMs: number; maxStreams: number }) {
   const enc = new TextEncoder();
   let open = 0;
-
   const headers = { "content-type": "text/event-stream", "cache-control": "no-cache, no-transform", connection: "keep-alive", "x-accel-buffering": "no" };
 
-  /** Open one SSE response. tick() runs each poll and returns frames to send; the slot is freed exactly once on abort, cancel or error. */
-  const sse = (signal: AbortSignal, hello: string, tick: () => string[]): Response => {
-    if (open >= maxStreams) return Response.json({ error: "too many streams" }, { status: 429, headers: { "retry-after": "5" } });
+  return (signal: AbortSignal, hello: string, tick: SseTick): Response => {
+    if (open >= opts.maxStreams) return Response.json({ error: "too many streams" }, { status: 429, headers: { "retry-after": "5" } });
     open++;
     let freed = false;
     let poll: ReturnType<typeof setInterval> | undefined;
@@ -30,14 +28,27 @@ export function mount(ctx: RouteCtx): void {
         const send = (s: string) => { try { ctrl.enqueue(enc.encode(s)); } catch { free(); } };
         const close = () => { free(); try { ctrl.close(); } catch { /* already closed */ } };
         send(hello);
-        poll = setInterval(() => { try { for (const f of tick()) send(f); } catch { close(); } }, pollMs);
-        beat = setInterval(() => send(": heartbeat\n\n"), heartbeatMs);
+        poll = setInterval(() => {
+          try {
+            const r = tick();
+            if (Array.isArray(r)) { for (const f of r) send(f); } else { for (const f of r.frames) send(f); close(); }
+          } catch { close(); }
+        }, opts.pollMs);
+        beat = setInterval(() => send(": heartbeat\n\n"), opts.heartbeatMs);
         if (signal.aborted) close(); else signal.addEventListener("abort", close, { once: true });
       },
       cancel: free,
     });
     return new Response(body, { headers });
   };
+}
+
+export function mount(ctx: RouteCtx): void {
+  const pollMs = num(process.env.LOKI_CONTROL_STREAM_POLL_MS, 1000);
+  const heartbeatMs = num(process.env.LOKI_CONTROL_STREAM_HEARTBEAT_MS, 15000);
+  const maxStreams = num(process.env.LOKI_CONTROL_STREAM_MAX, 32);
+  const { db } = ctx;
+  const sse = createSse({ pollMs, heartbeatMs, maxStreams });
 
   const maxSeq = (source: string, run: string): number =>
     db.select({ m: sql<number | null>`max(${events.seq})` }).from(events).where(and(eq(events.sourceId, source), eq(events.runId, run))).get()?.m ?? -1;

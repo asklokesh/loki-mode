@@ -1,4 +1,4 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { Hono, type Context } from "hono";
 import { cleanupLeakedFixtures } from "../db/fixture-cleanup.ts";
@@ -10,7 +10,8 @@ import { hostGuard, isLoopbackHost, peerIsLoopback, tokenGuard } from "./auth.ts
 import { backfill } from "../shipper/backfill.ts";
 import { removeRun } from "../db/prune.ts";
 import type { spawnStart } from "./spawn.ts";
-import { syncLocalRepos } from "./repos.ts";
+import { reconcileDeadRuns } from "./reconcile.ts";
+import { syncLocalRepos, type GhRunner } from "./repos.ts";
 import { registerRoutes } from "./routes/index.ts";
 import { legacyShim } from "./legacy/shim.ts";
 
@@ -20,11 +21,14 @@ const MAX_BODY = 1_000_000;
 const defaultUiDir = () => [join(import.meta.dir, "../../ui/dist"), join(import.meta.dir, "../ui/dist")].find((d) => existsSync(join(d, "index.html")));
 
 /** dbPath ":memory:" for tests. Migrations run here, so /ready is true as soon as this returns. uiDir overrides the built-UI location. */
-export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart }) {
+export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: string; token?: string; loopbackOnly?: boolean; repoDir?: string; startBin?: string; spawnImpl?: typeof spawnStart; ghImpl?: GhRunner }) {
   const uiDir = opts.uiDir ?? defaultUiDir();
   const { db, sqlite } = openDb(opts.dbPath);
   cleanupLeakedFixtures(sqlite);
   recomputeLegacy(db);
+  reconcileDeadRuns(db);
+  const reconciler = setInterval(() => { try { reconcileDeadRuns(db); } catch { /* best effort */ } }, 60_000);
+  reconciler.unref();
   let ready = true;
   const answerDir = opts.answerDir ?? defaultAnswerDir();
   const app = new Hono();
@@ -37,7 +41,10 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     await next();
   });
 
-  app.get("/health", (c) => c.json({ service: "loki-control", pid: process.pid, install_path: import.meta.dir }));
+  // version = what this process started as; installed_version = what is on disk now. They differ after an upgrade while the CP kept running.
+  const readInstalled = (): string => { for (const f of [process.env.LOKI_VERSION_FILE, join(import.meta.dir, "../../../../VERSION")]) { try { if (f) return readFileSync(f, "utf8").trim() || "unknown"; } catch { /* next */ } } return "unknown"; };
+  const startVersion = process.env.LOKI_CONTROL_VERSION || readInstalled();
+  app.get("/health", (c) => c.json({ service: "loki-control", pid: process.pid, install_path: import.meta.dir, version: startVersion, installed_version: readInstalled() }));
   app.get("/ready", (c) => {
     try { sqlite.query("select 1").get(); } catch { ready = false; }
     return ready ? c.json({ ready: true }) : c.json({ ready: false }, 503);
@@ -108,7 +115,7 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
   });
   // Local discovery fills local_repos (never /v1/ingest). GET /v1/repos (names only, loopback guard) is mounted by routes/index.ts.
   syncLocalRepos(db, repoDir);
-  registerRoutes({ app, act, db, repoDir, token: opts.token, peerIsLoopback, local, startBin: opts.startBin, spawnImpl: opts.spawnImpl, answerDir });
+  registerRoutes({ app, act, db, repoDir, token: opts.token, peerIsLoopback, local, startBin: opts.startBin, spawnImpl: opts.spawnImpl, ghImpl: opts.ghImpl, answerDir });
   // :id is `source:run` (run ids never contain a colon)
   app.get("/v1/runs/:id", (c) => {
     const id = c.req.param("id");
@@ -131,5 +138,5 @@ export function createApp(opts: { dbPath: string; uiDir?: string; answerDir?: st
     return new Response(Bun.file(join(root, "index.html")));
   });
 
-  return { app, db, close: () => sqlite.close() };
+  return { app, db, close: () => { clearInterval(reconciler); sqlite.close(); } };
 }

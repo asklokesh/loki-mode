@@ -1,6 +1,5 @@
-// Command palette (CPE-22). Cmd+K opens it through the CPE-02 hook; it also owns the global shortcuts:
-//   Cmd+Enter       dispatches COMPOSER_SUBMIT_EVENT on window (CPE-08's composer listens and submits)
-//   Cmd+N           opens a new run (#/new)
+// Command palette (CPE-22). Cmd+/ opens it (Cmd+K too when Ask Loki is off) through the shell hook; it also owns the global shortcuts:
+//   Cmd+N           opens the New run picker (never starts a run)
 //   Cmd+Shift+D     toggles the theme
 //   Esc             closes the palette
 // ARIA: combobox input controlling a listbox, aria-activedescendant tracks the highlighted option.
@@ -10,9 +9,9 @@ import { Kbd } from "../design/primitives";
 import { listPages, registryVersion, subscribeRegistry } from "../pages/registry";
 import { setCommandPaletteHandler } from "../shell/hooks";
 import { toggleTheme } from "../shell/theme";
-import { COMPOSER_SUBMIT_EVENT, actionItems, pageItems, runItems, search, type PaletteItem } from "./items";
-
-export { COMPOSER_SUBMIT_EVENT } from "./items";
+import { getAskState } from "../pages/ask/api";
+import { openNewRun } from "../pages/compose/store";
+import { actionItems, pageItems, runItems, search, type PaletteItem } from "./items";
 
 const t = (n: string) => `var(--cp-${n})`;
 const goto = (path: string) => { location.hash = `#${path}`; };
@@ -48,8 +47,7 @@ export function CommandPalette() {
       const mod = e.metaKey || e.ctrlKey;
       const k = e.key.toLowerCase();
       if (e.key === "Escape" && open) { e.preventDefault(); close(); }
-      else if (mod && e.key === "Enter") { e.preventDefault(); window.dispatchEvent(new CustomEvent(COMPOSER_SUBMIT_EVENT)); if (open) close(); }
-      else if (mod && !e.shiftKey && k === "n") { e.preventDefault(); goto("/new"); if (open) close(); }
+      else if (mod && !e.shiftKey && k === "n") { e.preventDefault(); openNewRun(); if (open) close(); }
       else if (mod && e.shiftKey && k === "d") { e.preventDefault(); toggleTheme(); }
     };
     window.addEventListener("keydown", f);
@@ -57,7 +55,7 @@ export function CommandPalette() {
   }, [open]);
 
   const items = useMemo(
-    () => search(query, pageItems(listPages()), runItems(runs), actionItems()),
+    () => search(query, pageItems(listPages().filter((p) => getAskState().enabled || !p.id.startsWith("ask"))), runItems(runs), actionItems()),
     // regVersion re-lists pages when the registry changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [query, runs, regVersion],
@@ -66,6 +64,7 @@ export function CommandPalette() {
 
   const pick = (it: PaletteItem) => {
     if (it.action === "toggle-theme") toggleTheme();
+    else if (it.action === "new-run") openNewRun();
     else if (it.to) goto(it.to);
     close();
   };

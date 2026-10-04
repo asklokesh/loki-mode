@@ -1,4 +1,5 @@
 // Control Plane design primitives (CPE-01). Every value is a --cp-* token from ../tokens.css.
+import { displayOutcome } from "../../display";
 import { useEffect, useId, useRef, useState } from "react";
 import { effectiveVerdict as integrityVerdict } from "../../api";
 import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
@@ -107,7 +108,7 @@ export function Badge({ tone = "neutral", pulse, children, ...rest }: HTMLAttrib
 export function VerdictBadge({ verdict, run, style }: { verdict?: string | null; run?: VerdictSource | null; style?: CSSProperties }) {
   const v = run ? effectiveVerdict(run) : verdict ?? null;
   if (!v) return <Badge pulse style={style}>running</Badge>;
-  return <Badge tone={VERDICT_TONE[v] ?? "neutral"} pulse={v === VERDICT.RUNNING} data-verdict={v} title={style ? v : undefined} style={style}>{v}</Badge>;
+  return <Badge tone={VERDICT_TONE[v] ?? "neutral"} pulse={v === VERDICT.RUNNING} data-verdict={v} title={style ? displayOutcome(v).label : undefined} style={style}>{displayOutcome(v).label}</Badge>;
 }
 
 /* Pill */
