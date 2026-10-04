@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v10.11.2 (2026-10-04)
+
+This republishes the v10.11.1 fixes. The v10.11.1 publish never reached npm because its release gate timed out on a cold Go compile, so FC-25 (safeGit hardening, moat P9 green) and FC-16b ship here.
+
+### Fixed
+- The real-go RealBaseTestRunner tests in fc16b.test.ts now have a 60s timeout. Release run 37168233387 timed out at 8.7s against the 5s default, which skipped the publish.
+- Dockerfile.control-plane now copies project_model/graph.ts, project_model/scope.ts, util/check_result.ts and util/safe_git.ts. The control plane image imports all four (CP-04).
+- docs/v10/DEPS.md now lists the monorepo-fc22 test fixture manifests (DEP-01).
+
+### Added (off by default)
+- Ask Loki read-only data tools and a stdio MCP server in TypeScript (`packages/control-plane/src/ask/tools_server.ts`): runs_search, run_get, run_events, run_artifact, runs_compare, stats, cost and repos_list. There is no write tool, and artifact reads are allowlisted. Nothing calls it until LOKI_CP_ASK ships.
+
 ## v10.11.1 (2026-10-04)
 
 Moat P9 is green again, and Go and unittest passes can no longer be forged. FC-25 routes every git call that the token-holding supervisor and CLI make inside the agent's repo through one hardened helper, so a planted fsmonitor, hook, sshCommand, ext:: transport or credential helper no longer runs with the real GitHub token. This closes the P9 regression open since v10.10.4. FC-16b stops reporting a Go exit 0 or a forged unittest trailer as a pass. FC-22 S2 and S3 land package-scoped test selection, which is opt-in behind `LOKI_E10_SCOPE=1`, and the install pre-step library, which S4 will wire into verify.
