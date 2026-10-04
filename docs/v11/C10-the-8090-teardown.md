@@ -25,4 +25,4 @@
 - How to test MCP server compatibility without access?
 
 ## Why deferred from 11.0.0
-Research task, not product feature. Estimated 4-8 hours. No blocking dependency. Scheduled 11.2 to support sales enablement and product strategy.
+Research task, not product feature. No blocking dependency.

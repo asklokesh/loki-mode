@@ -28,4 +28,4 @@ Credentials are passed via env vars (AWS_ACCESS_KEY, GITHUB_TOKEN, etc.). Risk:
 - How to test secret redaction without real credentials?
 
 ## Why deferred from 11.0.0
-Scope: secrets backend integration + redaction + audit = 1-2 weeks. No tier-A demand. Security review required. Scheduled 11.6 when compliance requirements clear.
+Scope: secrets backend integration, redaction and audit together. No tier-A demand. Security review required.

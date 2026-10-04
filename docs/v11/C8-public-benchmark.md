@@ -27,4 +27,4 @@ No standardized benchmark for Loki Mode. Claimed metrics (30-60 releases/day, 10
 - Competitor data: public (Cursor, Devin) or private agreement?
 
 ## Why deferred from 11.0.0
-Benchmark design requires domain expertise. Cost per run unclear. Competitor data agreements needed. Scheduled 11.8 when v10.x is production-ready.
+Benchmark design requires domain expertise. Cost per run unclear. Competitor data agreements needed.x is production-ready.

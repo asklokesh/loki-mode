@@ -26,4 +26,4 @@ Loki Mode integrates with GitHub only: issue parsing, webhook dispatch, status u
 - How to test without paid Bitbucket/ADO accounts?
 
 ## Why deferred from 11.0.0
-No tier-A demand. Requires test accounts and API key management. Scheduled 11.4 when VCS abstraction strategy documented.
+No tier-A demand. Requires test accounts and API key management.

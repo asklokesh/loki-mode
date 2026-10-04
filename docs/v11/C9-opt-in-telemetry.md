@@ -18,10 +18,10 @@ Without telemetry, product decisions are guesses.
 ## Proposed v1 scope
 - Event schema: run_start, run_end, gate_failure, error, UI action
 - Collector endpoint: HTTP POST to telemetry backend
-- Opt-in flag: `--telemetry=on` (default off, error-only always on)
+- Opt-in only: default off, nothing sent unless the user turns it on
 - PII redaction: no file paths, user email, or secrets in events
 - Client library: shared across CLI, dashboard, API
-- Data retention: 90 days, no PII storage
+- Data retention: not decided (open question)
 
 ## Open questions
 - Which backend? (self-hosted, Segment, Datadog, Amplitude?)
@@ -30,4 +30,4 @@ Without telemetry, product decisions are guesses.
 - GDPR/SOC2: does telemetry require compliance review?
 
 ## Why deferred from 11.0.0
-Privacy and compliance review required. Requires backend infrastructure. Data retention policy needs legal. Scheduled 11.9 when privacy framework documented.
+Privacy and compliance review required. Requires backend infrastructure. Data retention policy needs legal.

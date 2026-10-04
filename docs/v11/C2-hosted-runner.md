@@ -27,4 +27,4 @@ Loki Mode runs only on the user's local machine. Enterprises need:
 - Secret injection: per-runner vault, or shared secret store?
 
 ## Why deferred from 11.0.0
-Infra dependency: requires managed runner service outside repo scope. Licensing cost unclear. No tier-A demand. Scheduled 11.2 when deployment strategy confirmed.
+Infra dependency: requires managed runner service outside repo scope. Licensing cost unclear. No tier-A demand.

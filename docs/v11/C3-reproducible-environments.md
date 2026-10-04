@@ -27,4 +27,4 @@ Build outputs depend on local environment state: npm versions, Go compiler, Pyth
 - How to handle transitive dependencies that vary per OS?
 
 ## Why deferred from 11.0.0
-Design work needed: pin strategy, validation rules. No current receipt validation. Scheduled 11.3 when receipt format is stable.
+Design work needed: pin strategy, validation rules. No current receipt validation.

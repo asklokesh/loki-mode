@@ -27,4 +27,4 @@ Loki Mode is tested on macOS and Linux only. Windows users face:
 - CI cost: GitHub Windows runners are 2x cost of Linux
 
 ## Why deferred from 11.0.0
-Low adoption: <2% of current userbase. Cross-platform testing complexity. CI cost. Scheduled 11.7 when tier-A Windows demand confirmed.
+Windows demand is not measured. Cross-platform testing complexity. CI cost.

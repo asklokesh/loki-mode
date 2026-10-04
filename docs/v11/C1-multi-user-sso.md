@@ -27,4 +27,4 @@ Loki Mode dashboard and agent invocation assume a single user per machine. Enter
 - Audit log scope: login, runs, secret access, or all mutations?
 
 ## Why deferred from 11.0.0
-Scope creep risk: OIDC + RBAC + session management = 2-3 week task. Authentication security review required. Blocking no tier-A customer. Scheduled for 11.1 when auth infrastructure documented.
+Scope: OIDC, RBAC and session management together. Authentication security review required.

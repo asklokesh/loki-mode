@@ -26,4 +26,4 @@ Loki Mode ships with Claude, Codex, and Gemini APIs only. Customers want:
 - How to test CI without hosting local models?
 
 ## Why deferred from 11.0.0
-Adds infrastructure cost and complexity. No tier-A demand. Requires Ollama/vLLM hosting. Scheduled 11.5 as opt-in experimental feature.
+Adds infrastructure cost and complexity. No tier-A demand. Requires Ollama/vLLM hosting.
