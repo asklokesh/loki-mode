@@ -12,6 +12,7 @@ import { pushArgv } from "../types.ts";
 import { renderReviewerBody } from "../../e10ext/reviewer_body.ts";
 import { draftReason } from "../pr_body.ts"; import { evidenceSection } from "../../features/visual_evidence.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
+import { safeGit } from "../../util/safe_git.ts";
 /** RunContext plus the pinned origin and the cap signal from the supervisor. */
 export type PrContext = RunContext & {
   /** remote.origin.url, read once by the supervisor before any provider ran. */
@@ -71,7 +72,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   // Unknown, not fabricated: see the contract-gap note above.
   const existing: boolean | null = null;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
-  const headSha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ctx.repoDir, encoding: "utf8", env: process.env }).trim();
+  const headSha = safeGit(ctx.repoDir, ["rev-parse", "HEAD"]).trim();
   const notProvenOut: string[] = [];
   if (localOk) {
     // A local bare origin (the eval harness) has no commit status API.

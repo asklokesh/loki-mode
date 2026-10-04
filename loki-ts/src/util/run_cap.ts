@@ -1,8 +1,8 @@
 // FC-21 (b): the run wall-clock cap scales with task size. Pure; the CLI gathers the signals.
 // An explicit cap (LOKI_E10_CAP_S) is returned untouched, so it is never shrunk or grown.
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeGit } from "./safe_git.ts";
 import { DEFAULT_CAP_S } from "../engine10/types.ts";
 
 export interface RunCapInput {
@@ -32,7 +32,7 @@ export function yamlRunCapS(text: string): number | null {
 export function resolveRunCapS(repoDir: string, runDir: string, task: string, subscription: boolean, env: NodeJS.ProcessEnv = process.env): number {
   let text = task, fileCount = 0, yamlS: number | null = null;
   try { const i = JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { title?: string; body?: string }; text += `\n${i.title ?? ""}\n${i.body ?? ""}`; } catch { /* no issue */ }
-  try { fileCount = execFileSync("git", ["ls-files"], { cwd: repoDir, encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"], env: process.env }).split("\n").length; } catch { /* unknown size */ }
+  try { fileCount = (safeGit(repoDir, ["ls-files"], { maxBuffer: 64 << 20 })).split("\n").length; } catch { /* unknown size */ }
   for (const f of ["loki.yaml", "loki.yml"]) { const p = join(repoDir, f); if (existsSync(p)) try { yamlS = yamlRunCapS(readFileSync(p, "utf8")); } catch { /* unreadable */ } }
   return runCapS({ text, fileCount, subscription, explicitS: Number(env.LOKI_E10_CAP_S) || undefined, yamlS });
 }

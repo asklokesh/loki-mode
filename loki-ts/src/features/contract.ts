@@ -3,8 +3,8 @@
 // to changed files and checks by keyword overlap. The `loki contract <spec.md>` subcommand prints the
 // contract and writes .loki/contract.json. The receipt field is strictly additive (seal.ts).
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { safeGit } from "../util/safe_git.ts";
 import { dirname, join } from "node:path";
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 export interface Criterion { id: string; text: string; source_line: number }
@@ -146,8 +146,8 @@ export function renderContract(c: Contract): string {
 }
 /** seal reads ctx.repoDir/.loki/contract.json, so write to the repo root, not the bare cwd. */
 export function repoRoot(cwd: string): string {
-  const r = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", env: process.env });
-  const top = r.status === 0 ? r.stdout.trim() : "";
+  let top = "";
+  try { top = safeGit(cwd, ["rev-parse", "--show-toplevel"]).trim(); } catch { /* not a repo */ }
   return top !== "" ? top : cwd;
 }
 

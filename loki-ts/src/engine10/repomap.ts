@@ -6,7 +6,7 @@
 // the file count and the per-file read so a huge repo cannot blow up Intake's
 // 15s target / 60s limit.
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { safeGit } from "../util/safe_git.ts";
 import { join } from "node:path";
 export interface RepoMapEntry {
   path: string;
@@ -26,7 +26,7 @@ const PY_SYMBOL_RE = /^(?:(?:async\s+)?def|class)\s+([A-Za-z_][A-Za-z0-9_]*)/gm;
 export function listRepoFiles(repoDir: string, maxFiles: number = MAX_FILES): { files: string[]; truncated: boolean } {
   let out: string;
   try {
-    out = execFileSync("git", ["ls-files"], { cwd: repoDir, encoding: "utf8", env: process.env });
+    out = safeGit(repoDir, ["ls-files"], { stdio: ["ignore", "pipe", "pipe"] });
   } catch {
     return { files: [], truncated: false };
   }

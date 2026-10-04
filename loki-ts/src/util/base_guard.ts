@@ -4,10 +4,11 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeGit } from "./safe_git.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
   try {
-    return execFileSync("git", args, { cwd: repoDir, encoding: "utf8", env: { ...process.env, ...extraEnv }, stdio: ["ignore", "pipe", "ignore"], timeout }).trim();
+    return safeGit(repoDir, args, { env: { ...process.env, ...extraEnv }, timeout, allowToken: args[0] === "fetch" }).trim(); // fetch may need credentials; everything else is token-free
   } catch { return null; }
 }
 const exists = (repoDir: string, ref: string): boolean => git(repoDir, ["rev-parse", "--verify", "-q", `${ref}^{commit}`]) !== null;
