@@ -7,7 +7,8 @@
 // guardTree is the only destructive call: it restores a tracked file (literal pathspec) only when the file was clean before the
 // install and the install changed it, and counts it restored only if a re-snapshot shows it clean. A file that was already dirty
 // (the agent's work) is never touched, only listed. If a snapshot fails the guard did not run and NOT PROVEN says so.
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
+import { safeGit } from "../util/safe_git.ts";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
@@ -62,7 +63,7 @@ function optedOut(repoDir: string, env: Record<string, string>): boolean {
 }
 
 const git = (repoDir: string, env: Record<string, string>, args: string[]): string =>
-  execFileSync("git", ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", ...args], { cwd: repoDir, env, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: STATUS_MAX_BUFFER });
+  safeGit(repoDir, args, { env, maxBuffer: STATUS_MAX_BUFFER }); // FC-25: supervisor-side, hardened and token-free
 
 /** Content identity of a path without following links or opening anything that is not a regular file. */
 function fingerprint(repoDir: string, path: string): string {

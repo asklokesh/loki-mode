@@ -67,4 +67,8 @@ describe("L2 destructive call registry", () => {
     const f = scan([["x.ts", '// git(["checkout", "--"])\n  git(root, ["checkout", base, "--", p]);\n  g(["--literal-pathspecs", "reset", "-q"]);']]);
     expect(f).toEqual({ "x.ts|checkout": 1, "x.ts|reset": 1 });
   });
+  test("positive control: destructive verbs are still seen through safeGit calls (FC-25)", () => {
+    const f = scan([["y.ts", 'safeGit(repoDir, ["checkout", orig], { stdio: "ignore" });\n  safeGit(opts.repoDir, ["--literal-pathspecs", "reset", "-q", base, "--", f]);']]);
+    expect(f).toEqual({ "y.ts|checkout": 1, "y.ts|reset": 1 });
+  });
 });
