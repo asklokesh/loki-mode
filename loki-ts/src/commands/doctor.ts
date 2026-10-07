@@ -1,4 +1,5 @@
-// Port of autonomy/loki:cmd_doctor (line 6216) and cmd_doctor_json (line 6534).
+// The single doctor implementation. autonomy/loki cmd_doctor delegates here via
+// _loki_bun_delegate and keeps only a minimal "bun route unavailable" fallback.
 //
 // Behavioral parity targets:
 //   - Text mode: sectioned PASS/FAIL/WARN output, summary footer, exit 1 on
@@ -10,8 +11,8 @@
 // Network probes (ChromaDB, MiroFish) use AbortSignal.timeout(2000) so a slow
 // probe never hangs the CLI. Secret env vars are checked for presence only --
 // the value is never read or echoed.
-import { existsSync, lstatSync, readFileSync, readlinkSync, statfsSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { accessSync, constants as fsConstants, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync, statfsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
@@ -19,6 +20,8 @@ import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { getVersion } from "../version.ts";
+import { detectProtocol } from "../cockpit/capability.ts";
+import { rasterAvailable } from "../cockpit/raster.ts";
 import { probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 
@@ -437,9 +440,8 @@ async function runAllToolChecks(): Promise<ToolRow[]> {
 
 // Both of these shell out to autonomy/provider-offer.sh rather than reading
 // providers/loader.sh from TypeScript. That is deliberate and load-bearing:
-// doctor stdout is compared byte for byte between the two routes
-// (tests/test-doctor-blocker-parity.sh + the bun-parity workflow), and the
-// auto-selection priority order lives in ONE bash function. A TypeScript
+// doctor stdout used to be compared byte for byte between two routes; bun is now
+// the only doctor, and the auto-selection priority order lives in ONE bash function. A TypeScript
 // reimplementation would be a second copy of that order, free to drift.
 //
 // Both fail closed and silently: a missing script, a spawn error, or any
@@ -767,6 +769,34 @@ function printHelp(): void {
   process.stdout.write(`            each. Exits non-zero while a required egress remains.\n\n`);
   process.stdout.write(`Checks: node, python3, jq, git, curl, bash version,\n`);
   process.stdout.write(`        claude/codex CLIs, and disk space.\n`);
+}
+
+// Adoption signal: which CLASS of dependency stopped this first run. Mapped to a
+// bounded enum here (never the blocker text, so no path or version can leak) and
+// emitted through the shared bash helper (autonomy/telemetry.sh), which honors
+// every opt-out. Detached and best-effort: it must never delay or fail doctor.
+function emitFirstRunBlocked(blockers: string): void {
+  let key = "other";
+  if (blockers.includes("No AI provider CLI")) key = "no_provider";
+  else if (blockers.includes("Node.js is not installed") || blockers.includes("Node.js must be")) key = "node";
+  else if (blockers.includes("Python 3 is not installed") || blockers.includes("Python 3 must be")) key = "python3";
+  else if (blockers.includes("jq is not installed")) key = "jq";
+  else if (blockers.includes("git is not installed")) key = "git";
+  else if (blockers.includes("curl is not installed")) key = "curl";
+  else if (blockers.includes("Free up disk")) key = "disk";
+  else if (blockers.includes("broken symlink")) key = "skill_symlink";
+  try {
+    const script = resolve(REPO_ROOT, "autonomy", "telemetry.sh");
+    if (!existsSync(script)) return;
+    const child = spawn(
+      "bash",
+      ["-c", 'source "$1" >/dev/null 2>&1 && loki_emit_first_run_blocked "$2" >/dev/null 2>&1', "_", script, key],
+      { detached: true, stdio: "ignore", env: { ...process.env } },
+    );
+    child.unref();
+  } catch {
+    // telemetry is best-effort
+  }
 }
 
 async function runText(): Promise<number> {
@@ -1266,6 +1296,40 @@ async function runText(): Promise<number> {
   }
   process.stdout.write(`\n`);
 
+  // Cockpit capability: what `loki cockpit` will actually do in this terminal.
+  // Informational only (does not touch the tally). Uses the same detection code
+  // the renderer uses, so this report cannot drift from behavior. Ported from
+  // the removed bash doctor; this is now the only implementation.
+  process.stdout.write(`${CYAN}Cockpit:${NC}\n`);
+  const colorterm = process.env["COLORTERM"] ?? "";
+  if (colorterm === "truecolor" || colorterm === "24bit") {
+    process.stdout.write(`  ${badge("pass")}  Truecolor: yes (COLORTERM=${colorterm})\n`);
+  } else {
+    process.stdout.write(`  ${DIM}  --  ${NC}  Truecolor: not signalled (COLORTERM unset) -- colors may be approximate\n`);
+  }
+  {
+    const proto = detectProtocol();
+    const resvg = await rasterAvailable().catch(() => false);
+    const renderPath = proto !== "none" && resvg ? "image" : "text+dashboard";
+    process.stdout.write(`  ${badge("pass")}  Bun present -- cockpit renderer available\n`);
+    if (proto === "none") {
+      process.stdout.write(`  ${DIM}  --  ${NC}  Inline-image protocol: none (this terminal has no iTerm2/Kitty graphics)\n`);
+    } else {
+      process.stdout.write(`  ${badge("pass")}  Inline-image protocol: ${proto}\n`);
+    }
+    if (resvg) {
+      process.stdout.write(`  ${badge("pass")}  SVG rasterizer: ready (bundled wasm; renders the frame to an image)\n`);
+    } else {
+      process.stdout.write(`  ${DIM}  --  ${NC}  SVG rasterizer: unavailable (cockpit uses text+dashboard)\n`);
+    }
+    if (renderPath === "image") {
+      process.stdout.write(`  ${badge("pass")}  Render path: inline image ('loki cockpit' draws the frame in-terminal)\n`);
+    } else {
+      process.stdout.write(`  ${DIM}  --  ${NC}  Render path: text + browser dashboard ('loki cockpit' prints a summary; open 'loki dashboard')\n`);
+    }
+  }
+  process.stdout.write(`\n`);
+
   // Install integrity. The bash route has checked this since v8.38.0; the Bun
   // route -- the DEFAULT runtime -- did not, so the users most likely to hit
   // the failure were the ones who could not see it.
@@ -1300,11 +1364,73 @@ async function runText(): Promise<number> {
       `  ${badge("fail")}  Quality-gate detectors MISSING: ${missingDetectors.join(" ")}\n`,
     );
     tally.fail++;
+    process.stdout.write(`${DIM}      These gates fail-closed, so every iteration will be blocked.${NC}\n`);
     tally.blockers.push(
-      `Reinstall loki-mode: ${missingDetectors.length} quality-gate detector(s) missing, so every iteration fails closed`,
+      `Incomplete install: quality-gate detectors are missing. Reinstall: bun install -g loki-mode`,
     );
   }
   process.stdout.write(`\n`);
+
+  // PATH shadowing: an older `loki` earlier on PATH defeats upgrading, because a
+  // reinstall updates the copy that is NOT winning. A blocker, not a warning.
+  // Paths are compared by realpath so two entries for one install do not count.
+  {
+    const resolveReal = (p: string): string => {
+      try {
+        return realpathSync(p);
+      } catch {
+        return p;
+      }
+    };
+    const isExec = (p: string): boolean => {
+      try {
+        accessSync(p, fsConstants.X_OK);
+        return statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    };
+    const pathDirs = (process.env["PATH"] ?? "").split(":").filter((d) => d !== "");
+    const firstOnPath = pathDirs.map((d) => `${d}/loki`).find(isExec);
+    if (firstOnPath !== undefined) {
+      const runningReal = resolveReal(firstOnPath);
+      const seen = new Set<string>();
+      const others: string[] = [];
+      for (const d of pathDirs) {
+        const cand = `${d}/loki`;
+        if (!isExec(cand)) continue;
+        const real = resolveReal(cand);
+        if (seen.has(real)) continue;
+        seen.add(real);
+        if (real === runningReal) continue;
+        const pj = resolve(real, "..", "..", "package.json");
+        let ver = "";
+        try {
+          ver = String((JSON.parse(readFileSync(pj, "utf8")) as { version?: unknown }).version ?? "");
+        } catch {
+          ver = "";
+        }
+        if (ver === "") continue;
+        others.push(`${ver} at ${d}/loki`);
+      }
+      if (others.length > 0) {
+        process.stdout.write(
+          `  ${badge("fail")}  Multiple loki installs on PATH; you are running ${getVersion() || "unknown"}\n`,
+        );
+        process.stdout.write(`  ${DIM}      Running: ${runningReal}${NC}\n`);
+        process.stdout.write(`  ${DIM}      Others:${NC}\n`);
+        for (const o of others) process.stdout.write(`  ${DIM}      ${o}${NC}\n`);
+        process.stdout.write(`  ${DIM}      Reinstalling updates a copy that is not winning on PATH.${NC}\n`);
+        tally.fail++;
+        tally.blockers.push(
+          "Multiple loki installs on PATH. Run 'which -a loki', then remove or re-point every entry EARLIER than the one you want. Reinstalling alone will not fix this.",
+        );
+      } else {
+        process.stdout.write(`  ${GREEN}OK${NC}    Single loki install on PATH\n`);
+      }
+      process.stdout.write(`\n`);
+    }
+  }
 
   // Summary
   process.stdout.write(
@@ -1335,6 +1461,7 @@ async function runText(): Promise<number> {
     process.stdout.write(
       `Meanwhile 'loki tour' works right now -- no provider, no key, no spend.\n`,
     );
+    emitFirstRunBlocked(tally.blockers.join("\n"));
     // A-123: the LAST line is the one blocking reason, exactly.
     process.stdout.write(`${tally.blockers[0]}\n`);
     return 1;
@@ -1348,12 +1475,19 @@ async function runText(): Promise<number> {
   // first build with a copy-paste command, so they never dead-end here. The
   // fail branch returns above, so a failing setup is never told to build.
   process.stdout.write(`\n`);
-  process.stdout.write(
-    `Next: loki quickstart (guided first build from your idea, no PRD needed)\n`,
-  );
-  process.stdout.write(
-    `      or loki demo (builds a sample todo app end to end) or loki start ./prd.md\n`,
-  );
+  if (sdkOnly) {
+    // SDK-only host: quickstart and demo need a binary on PATH, so recommending
+    // them here would be a green doctor pointing at an exit 2.
+    process.stdout.write(`Next: loki start ./prd.md (runs on the bundled SDK, no CLI install needed)\n`);
+    process.stdout.write(`      For loki quickstart/demo: npm install -g @anthropic-ai/claude-code\n`);
+  } else {
+    process.stdout.write(
+      `Next: loki quickstart (guided first build from your idea, no PRD needed)\n`,
+    );
+    process.stdout.write(
+      `      or loki demo (builds a sample todo app end to end) or loki start ./prd.md\n`,
+    );
+  }
   // A-123: the last stdout line. Byte-mirrors cmd_doctor. The key state is read
   // WITHOUT creating a key (auto_generate=False).
   const id = process.env["LOKI_PROVIDER"] || readEffectiveProvider() || "claude";

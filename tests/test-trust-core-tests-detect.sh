@@ -584,16 +584,15 @@ probe_case "loki start still calls the update hint" \
 # had before v8.38.0 -- reported healthy while four gates fail-closed on every
 # iteration.
 probe_case "an incomplete install still blocks in doctor" \
-    "autonomy/loki" \
-    '        _doctor_block "Incomplete install: quality-gate detectors are missing. Reinstall: bun install -g loki-mode"
-        fail_count=$((fail_count + 1))' \
-    '        :' \
+    "loki-ts/src/commands/doctor.ts" \
+    '      `Incomplete install: quality-gate detectors are missing. Reinstall: bun install -g loki-mode`,' \
+    '      `x`,' \
     bash tests/test-doctor-install-integrity.sh
 
 probe_case "doctor actually checks for the detector files" \
-    "autonomy/loki" \
-    '        if [ -f "${_LOKI_SCRIPT_DIR}/../tests/${_det}.sh" ]; then' \
-    '        if true; then' \
+    "loki-ts/src/commands/doctor.ts" \
+    '    if (existsSync(resolve(REPO_ROOT, "tests", `${det}.sh`))) {' \
+    '    if (true) {' \
     bash tests/test-doctor-install-integrity.sh
 
 # F2: a feedback loop that stops feeding back must say so. Research puts "the

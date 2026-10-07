@@ -24,6 +24,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOKI="$REPO_ROOT/autonomy/loki"
+TS_DOCTOR="$REPO_ROOT/loki-ts/src/commands/doctor.ts"
 
 PASS=0
 FAIL=0
@@ -50,6 +51,10 @@ esac
 # --- broken: tests/ present but EMPTY (the shape 8.8.0 actually shipped) ------
 D="$(mktemp -d "${TMPDIR:-/tmp}/loki-integrity-XXXXXX")"
 cp -R "$REPO_ROOT/autonomy" "$D/autonomy" 2>/dev/null
+# The delegator needs the single (bun) doctor in the copy, so it can report.
+mkdir -p "$D/loki-ts"
+cp -R "$REPO_ROOT/loki-ts/dist" "$D/loki-ts/dist" 2>/dev/null
+cp "$REPO_ROOT/package.json" "$D/package.json" 2>/dev/null || true
 mkdir -p "$D/tests"
 cp "$REPO_ROOT/VERSION" "$D/VERSION" 2>/dev/null || true
 
@@ -92,16 +97,22 @@ rm -rf "$D"
 # --- WIRING -------------------------------------------------------------------
 # The behaviour above is driven through the real CLI, so these guard the pieces
 # that a refactor could quietly drop.
-if grep -q 'Quality-gate detectors present' "$LOKI"; then
-    ok "WIRING: the integrity check is present in the CLI"
+if grep -q 'Quality-gate detectors present' "$TS_DOCTOR"; then
+    ok "WIRING: the integrity check is present in doctor.ts"
 else
     bad "WIRING: the integrity check was removed"
 fi
 
-if grep -q '_doctor_block "Incomplete install' "$LOKI"; then
+if grep -q 'Incomplete install: quality-gate detectors are missing' "$TS_DOCTOR"; then
     ok "WIRING: an incomplete install registers as a hard blocker"
 else
     bad "WIRING: an incomplete install no longer blocks -- doctor would report healthy"
+fi
+
+if grep -q 'existsSync(resolve(REPO_ROOT, "tests", `${det}.sh`))' "$TS_DOCTOR"; then
+    ok "WIRING: the check looks for each detector file on disk"
+else
+    bad "WIRING: doctor no longer checks for the detector files"
 fi
 
 echo ""

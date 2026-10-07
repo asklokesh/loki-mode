@@ -15,8 +15,7 @@
 # README covers it -- adding a required tool to doctor without a README entry
 # fails here.
 #
-# BOTH routes carry the list (loki-ts/src/commands/doctor.ts TOOL_SPECS and
-# autonomy/loki doctor_check), so a tool added to only one of them is a gap the
+# doctor.ts TOOL_SPECS is the single doctor and carries the list, so a gap the
 # README could not reveal. The two lists are asserted equal as well.
 
 set -uo pipefail
@@ -24,7 +23,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 README="$REPO_ROOT/README.md"
 DOCTOR_TS="$REPO_ROOT/loki-ts/src/commands/doctor.ts"
-DOCTOR_SH="$REPO_ROOT/autonomy/loki"
 
 PASS=0; FAIL=0
 ok()  { echo "  [PASS] $1"; PASS=$((PASS+1)); }
@@ -37,12 +35,6 @@ bun_required=$(
     grep -oE '\{ displayName: "[^"]+", jsonName: "[^"]+", cmd: "[^"]+", required: "required"' \
         "$DOCTOR_TS" 2>/dev/null |
         sed -E 's/.*cmd: "([^"]+)".*/\1/' | sort -u
-)
-
-# The bash route's required set, from the doctor_check call sites.
-bash_required=$(
-    grep -oE 'doctor_check "[^"]+"[[:space:]]+[a-z0-9]+[[:space:]]+required' "$DOCTOR_SH" 2>/dev/null |
-        awk '{print $(NF-1)}' | sort -u
 )
 
 echo "T1 -- the required set was actually extracted"
@@ -59,15 +51,6 @@ else
 fi
 
 echo
-echo "T2 -- both routes agree on which tools are required"
-
-if [ "$bun_required" = "$bash_required" ]; then
-    ok "doctor.ts and autonomy/loki require the same tools"
-else
-    bad "routes disagree on the required set:"
-    diff <(echo "$bun_required") <(echo "$bash_required") | sed 's/^/         /'
-fi
-
 echo
 echo "T3 -- every required tool is in the README's Required block"
 

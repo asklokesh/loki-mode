@@ -106,36 +106,33 @@ done
 
 rm -f "$DOCTOR_STDOUT_F" "$DOCTOR_STDERR_F" 2>/dev/null || true
 
-# --- C3: no "(instant)" mislabel remains anywhere in autonomy/loki. -----------
-if grep -q "(instant)" "$LOKI"; then
-    bad "C3: '(instant)' mislabel still present in autonomy/loki"
-    grep -n "(instant)" "$LOKI"
+# --- C3: no "(instant)" mislabel remains in either doctor source. -------------
+TS_DOCTOR="$REPO_ROOT/loki-ts/src/commands/doctor.ts"
+if grep -q "(instant)" "$LOKI" "$TS_DOCTOR"; then
+    bad "C3: '(instant)' mislabel still present"
 else
-    ok "C3: no '(instant)' mislabel in autonomy/loki"
+    ok "C3: no '(instant)' mislabel in autonomy/loki or doctor.ts"
 fi
 
-# Positive pairing so the negative check above cannot be vacuous: the corrected
-# timing label must be present.
+# Positive pairing so the negative check above cannot be vacuous.
 if grep -q "a few seconds" "$LOKI"; then
     ok "C3: corrected '(a few seconds)' timing label present"
 else
     bad "C3: corrected '(a few seconds)' timing label missing (negative check may be vacuous)"
 fi
 
-# --- C3: slow network probes are bounded (have curl timeouts). ----------------
-# The ChromaDB and MiroFish heartbeat probes must carry --connect-timeout and
-# --max-time so a dead host fails fast instead of hanging on curl defaults.
-if grep -q "api/v2/heartbeat" "$LOKI" && \
-   grep -E "curl -sf --connect-timeout [0-9]+ --max-time [0-9]+ http://localhost:8100/api/v2/heartbeat" "$LOKI" >/dev/null; then
-    ok "C3: ChromaDB probe is bounded with connect/max timeouts"
+# --- C3: slow network probes are bounded (single doctor lives in doctor.ts). --
+if grep -q "api/v2/heartbeat" "$TS_DOCTOR" && grep -q "AbortSignal.timeout(timeoutMs)" "$TS_DOCTOR" && \
+   grep -Eq "timeoutMs = [0-9]+" "$TS_DOCTOR"; then
+    ok "C3: ChromaDB probe is bounded by httpReachable's abort timeout"
 else
-    bad "C3: ChromaDB network probe is NOT bounded with curl timeouts"
+    bad "C3: ChromaDB network probe is NOT bounded with a timeout"
 fi
 
-if grep -E 'curl -sf --connect-timeout [0-9]+ --max-time [0-9]+ "\$_mf_url/health"' "$LOKI" >/dev/null; then
-    ok "C3: MiroFish probe is bounded with connect/max timeouts"
+if grep -q 'httpReachable(`${mfUrl}/health`)' "$TS_DOCTOR"; then
+    ok "C3: MiroFish probe goes through the bounded httpReachable"
 else
-    bad "C3: MiroFish network probe is NOT bounded with curl timeouts"
+    bad "C3: MiroFish network probe is NOT bounded with a timeout"
 fi
 
 # --- Cleanup ------------------------------------------------------------------

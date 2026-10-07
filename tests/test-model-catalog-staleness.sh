@@ -11,7 +11,7 @@
 # catalog and requiring the STALE run to produce the identical code -- not by
 # hardcoding 0. On a bare CI runner with no provider CLI, doctor legitimately
 # exits 1; a test that asserted 0 would be flaky by host, which is exactly the
-# failure shape tests/test-doctor-blocker-parity.sh was written to catch.
+# failure shape tests/test-doctor-ci-gateable.sh also guards against.
 #
 # Uses the existing LOKI_MODEL_CATALOG override (providers/models.sh) so the
 # real catalog is never mutated.

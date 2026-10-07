@@ -360,3 +360,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism (this slice, minimal): the parity test discovers greps with `type -ap grep ggrep` (no absolute paths); the three files are added to Dockerfile.control-plane. 11.2.2 follow-up (root fix): replace the hand-maintained COPY list with a directory COPY or a generated list, make CP-04 build the image and import the bundle, and extend scripts/select-tests.sh so a touched tests/*.sh selects the hardcoded-path and structural-checks suites and a loki-ts/src file reachable from packages/control-plane selects CP-04.
 - Siblings swept: tests/test-no-hardcoded-paths.sh scans every tests/ file (3 passed, 0 failed after the fix); the CP-04 closure guard covers every loki-ts/src value import (25 passed, 0 failed); no other hits.
 - Fixture: the two existing guards, red on 6a01413bd and green here.
+
+## FC-33 Duplicate implementations kept in sync by tests (FC-DUP)
+- User saw: `loki doctor` printed different checks, counts and verdicts depending on the route (bash vs bun), which `bin/loki` picks from bun on PATH, LOKI_LEGACY_BASH, a missing dist, LOKI_TS_ENTRY or `--airgap`. Two parity tests (test-doctor-blocker-parity.sh, test-doctor-install-integrity-parity.sh) existed only to keep the two copies equal, and each new doctor check had to be written twice. Raw Claude Code has one doctor.
+- Law: L2 (one verdict has one author), L0 (the harness must not hold two answers to one question).
+- Siblings (twin sweep):
+  - Command twins and their guards: version, provider, memory (loki-ts/tests/all-ported.test.ts); stats (tests/test-bash-bun-parity.sh check 6); proof verify (loki-ts/tests/proof_verify_parity.test.ts); crash (crash.test.ts:308); status (status.test.ts:398); rollback, trust, wiki (unguarded).
+  - Runner twins: run.sh vs loki-ts/src/runner, guarded by test-bash-bun-parity.sh, test-parity-*.sh, the gate-failures-cap parity test and test-pricing-parity. goal_score.ts vs run.sh has NO guard. These collapse when the D57 default-loop flip lands.
+- Mechanism: `_loki_bun_delegate <cmd> "$@"` in autonomy/loki (bun resolved PATH then @oven/bun-*, dist then src, `version` preflight under 5s, then exec). Doctor is the first command moved onto it; bash keeps only a minimal "bun route unavailable" diagnostic. `cmd_control` is the precedent. Remaining twins move onto the same helper as their slices land.
+- Fixture: tests/test-doctor-single-impl.sh.

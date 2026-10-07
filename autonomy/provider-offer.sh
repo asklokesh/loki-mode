@@ -401,10 +401,10 @@ _provider_gate_emit_blocked() {
 
 # render_provider_availability: print the "Provider Availability" doctor section.
 #
-# WHY IT LIVES HERE. `loki doctor` stdout is compared byte for byte between the
-# bash route and the Bun route (tests/test-doctor-blocker-parity.sh, and the
-# bun-parity workflow). Two independent renderers drift; one shared renderer
-# cannot. This is the same parity-by-construction seam the install offer and the
+# WHY IT LIVES HERE. The provider priority order lives in ONE bash function;
+# doctor (the Bun implementation, loki-ts/src/commands/doctor.ts) calls this
+# rather than carrying a second copy. Two independent renderers drift; one shared
+# renderer cannot. This is the same parity-by-construction seam the install offer and the
 # detect-sdk probe already use, so doctor.ts calls this instead of reimplementing
 # the priority list in TypeScript.
 #
