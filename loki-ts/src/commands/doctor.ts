@@ -19,6 +19,7 @@ import { commandExists, run } from "../util/shell.ts";
 import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { getVersion } from "../version.ts";
+import { probeAdvisor } from "../runner/router/advisor_probe.ts";
 
 // ---------- Types (mirror cmd_doctor_json shape) ------------------------------
 
@@ -240,6 +241,34 @@ type PythonImportOk = (module: string, useMlPython?: boolean) => Promise<boolean
 const pyImpl = { fn: pythonImportOk as PythonImportOk };
 export function _setPythonImportOkForTest(fn: PythonImportOk | null): void {
   pyImpl.fn = fn ?? pythonImportOk;
+}
+
+// ---------- Router advisor (ROUTER-1 R1-20) -----------------------------------
+
+// Version of the Claude Code binary bundled with the Agent SDK. The SDK
+// manifest records it; there is no other source in the tree.
+export function bundledClaudeCodeVersion(): string | null {
+  const rel = "node_modules/@anthropic-ai/claude-agent-sdk/manifest.json";
+  for (const base of [resolve(REPO_ROOT, "loki-ts"), REPO_ROOT]) {
+    try {
+      const v = JSON.parse(readFileSync(resolve(base, rel), "utf8"))?.version;
+      if (typeof v === "string" && v !== "") return v;
+    } catch {
+      // Not installed under this root; try the next one.
+    }
+  }
+  return null;
+}
+
+// Informational only: an unavailable advisor never flips the doctor exit code.
+export function advisorStatusLine(
+  env: Record<string, string | undefined>,
+  provider: string,
+  claudeCodeVersion: string,
+  runDir: string,
+): string {
+  const probe = probeAdvisor(env, provider, claudeCodeVersion, runDir);
+  return probe.available ? "advisor: available" : `advisor: unavailable (${probe.reason})`;
 }
 
 // ---------- Skills check ------------------------------------------------------
@@ -954,6 +983,18 @@ async function runText(): Promise<number> {
     }
   }
   process.stdout.write(`\n`);
+
+  // Router: advisor availability and the bundled Claude Code version. Not
+  // tallied; the advisor is optional and falls back to plan-on-Opus.
+  {
+    const provider = process.env["LOKI_PROVIDER"] || readEffectiveProvider() || "none";
+    const ccVersion = bundledClaudeCodeVersion();
+    const runDir = process.env["LOKI_DIR"] ?? ".loki";
+    process.stdout.write(`${CYAN}Router:${NC}\n`);
+    process.stdout.write(`  ${advisorStatusLine(process.env, provider, ccVersion ?? "", runDir)}\n`);
+    process.stdout.write(`  Bundled Claude Code: ${ccVersion ?? "unknown"}\n`);
+    process.stdout.write(`\n`);
+  }
 
   // Skills
   process.stdout.write(`${CYAN}Skills:${NC}\n`);
