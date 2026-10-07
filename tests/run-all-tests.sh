@@ -1463,6 +1463,7 @@ run_test "every opencode dispatch path passes --auto" "$SCRIPT_DIR/test-provider
 run_test "a dropped event is visible" "$SCRIPT_DIR/test-event-drop-visible.sh"
 run_test "events carry the source the dashboard reads" "$SCRIPT_DIR/test-event-source-attribution.sh"
 run_test "proof verify --human explains a failure" "$SCRIPT_DIR/test-proof-verify-human.sh"
+run_test "tests that spawn the verifier pin TARGET_DIR (FC-29)" "timeout -k 10 60 $SCRIPT_DIR/test-verifier-spawn-sets-target-dir.sh"
 run_test "the verification demo runs the real tools" "$SCRIPT_DIR/test-verify-demo.sh"
 run_test "cost and estimate are reachable from the CLI" "$SCRIPT_DIR/test-cost-cli.sh"
 run_test "quickstart names the provider that will run" "$SCRIPT_DIR/test-quickstart-provider-detect.sh"

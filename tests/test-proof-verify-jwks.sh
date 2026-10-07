@@ -78,7 +78,7 @@ PY
 # every assertion below into a false red -- the exact trap recorded in
 # feedback-pipefail-sigpipe-inverts-probe.
 _verdict() {
-  LOKI_DIR="$W/.loki" bash "$LOKI_BIN" proof verify "$1" --jwks "$2" \
+  LOKI_DIR="$W/.loki" TARGET_DIR="$W" bash "$LOKI_BIN" proof verify "$1" --jwks "$2" \
     >/dev/null 2>"$W/err.txt" || true
   grep -i "attestation:" "$W/err.txt" 2>/dev/null || true
 }
@@ -177,7 +177,7 @@ fi
 # aborted the command, and the attestation block never ran. Asserted on the
 # observable symptom -- any attestation line at all on a receipt that carries
 # one -- so it catches the failure however it is reintroduced.
-LOKI_DIR="$W/.loki" bash "$LOKI_BIN" proof verify r1 --jwks "$W/jwks.json" \
+LOKI_DIR="$W/.loki" TARGET_DIR="$W" bash "$LOKI_BIN" proof verify r1 --jwks "$W/jwks.json" \
   >/dev/null 2>"$W/e5.txt" || true
 if grep -qi "attestation:" "$W/e5.txt"; then
   ok "the attestation block runs even when the base verifier exits non-zero"
@@ -194,7 +194,7 @@ fi
 # "plain" is the unsigned receipt from test 3.
 _m6() {  # <label> <args...>
   local label="$1" rc; shift
-  LOKI_DIR="$W/.loki" bash "$LOKI_BIN" proof verify plain "$@" >/dev/null 2>"$W/e6.txt"
+  LOKI_DIR="$W/.loki" TARGET_DIR="$W" bash "$LOKI_BIN" proof verify plain "$@" >/dev/null 2>"$W/e6.txt"
   rc=$?
   if [ "$rc" = 64 ] && ! grep -q "attestation: VERIFIED" "$W/e6.txt"; then
     ok "$label exits 64 (usage)"
@@ -211,7 +211,7 @@ _m6 "--jwks '' --jwks <real>" --jwks '' --jwks "$W/jwks.json"
 # --- 7. stdout stays machine-readable ---------------------------------------
 # Machine consumers pipe this verbatim. A verdict leaking into stdout would
 # break every one of them.
-LOKI_DIR="$W/.loki" bash "$LOKI_BIN" proof verify r1 --jwks "$W/jwks.json" \
+LOKI_DIR="$W/.loki" TARGET_DIR="$W" bash "$LOKI_BIN" proof verify r1 --jwks "$W/jwks.json" \
   >"$W/out.json" 2>/dev/null || true
 if python3 -c "import json,sys; json.load(open('$W/out.json'))" 2>/dev/null; then
   ok "stdout remains valid JSON with --jwks in play"
@@ -905,7 +905,7 @@ if command -v jq >/dev/null 2>&1; then
   mkdir -p "$W/srv/.well-known" && cp "$W/gjwks.json" "$W/srv/.well-known/jwks.json"
   sed -n '/^loki_remote_attestation_status() {/,/^}/p' "$LOKI_BIN" >"$W/remote.sh"
   _remote() {
-    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" TARGET_DIR="$R" bash -c "
       source '$W/remote.sh'; loki_remote_attestation_status '$R/.loki/proofs/g1/proof.json' 'file://$W/srv'"
   }
   _r_ok="$(_remote)"
@@ -920,7 +920,7 @@ if command -v jq >/dev/null 2>&1; then
   # mislabel a signed build and point at the wrong fix) and never TAMPERED.
   sed -n '/^loki_remote_verify_receipt() {/,/^}/p' "$LOKI_BIN" >>"$W/remote.sh"
   _render() {
-    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" TARGET_DIR="$R" bash -c "
       source '$W/remote.sh'; loki_remote_verify_receipt '$R/.loki/proofs/g1/proof.json' 'file://$W/srv'"
   }
   _v_ok="$(_render 2>&1)"
@@ -939,7 +939,7 @@ if command -v jq >/dev/null 2>&1; then
   # attestation is TAMPERED (return 1). It used to crash the helper, which read
   # as NOT CHECKED with "install python3 cryptography" (return 0).
   _render_id() {  # <id> -> return code; output in $W/render.out
-    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" TARGET_DIR="$R" bash -c "
       source '$W/remote.sh'; loki_remote_verify_receipt '$R/.loki/proofs/$1/proof.json' 'file://$W/srv'" \
       >"$W/render.out" 2>&1
     echo "$?"
@@ -970,7 +970,7 @@ if command -v jq >/dev/null 2>&1; then
   # inability to check, not evidence against the receipt.
   mkdir -p "$W/srv-empty/.well-known"
   printf '%s' '{"keys": []}' >"$W/srv-empty/.well-known/jwks.json"
-  _r_empty="$(_LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+  _r_empty="$(_LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" TARGET_DIR="$R" bash -c "
     source '$W/remote.sh'; loki_remote_attestation_status '$R/.loki/proofs/g1/proof.json' 'file://$W/srv-empty'")"
   if [ -z "$_r_empty" ]; then
     ok "remote check: an empty key set yields no verdict (not 'bad')"
@@ -978,7 +978,7 @@ if command -v jq >/dev/null 2>&1; then
     bad "remote check: an empty key set produced '$_r_empty', want '' (NOT CHECKED)"
   fi
   _render_srv() {  # <id> <srv-dir> -> return code; output in $W/render.out
-    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" bash -c "
+    _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" TARGET_DIR="$R" bash -c "
       source '$W/remote.sh'; loki_remote_verify_receipt '$R/.loki/proofs/$1/proof.json' 'file://$2'" \
       >"$W/render.out" 2>&1
     echo "$?"

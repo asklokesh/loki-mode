@@ -326,3 +326,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings: `selectRelevantFiles` still uses substring overlap for plan hints. `namedFiles` still matches a basename written out in the task. FC-27's half-repo drop stays on the same selector.
 - Mechanism: `selectSpecificFiles` counts a task word only when it equals a path segment or a symbol. A word inside a longer name does not. `speedLikelyFiles` is still the only caller that can skip the Wall.
 - Fixture: loki-ts/tests/engine10/sizing_lean.test.ts, "FC-28: a word inside a longer symbol is not a relevant test, so the Wall stays".
+
+## FC-29 A test silently depends on the caller's cwd
+- User saw: tests/test-proof-verify-jwks.sh passed 108/0 in 33s in a fresh worktree and hung until killed when run from the main checkout. The CI-style run was green and the founder's own run was red, so the suite read as flaky.
+- Mechanism (measured): `loki proof verify` and `loki_remote_verify_receipt` run `proof-verify.py "$pj" "${TARGET_DIR:-.}"`. With TARGET_DIR unset the verifier runs `compute_tree_digest` on the caller's cwd, whose filesystem walk visited 1,054,266 paths (13.3s just to enumerate, then it hashes them) because `.claude/worktrees` (190 worktrees, 32G) sits inside the checkout. A fresh worktree has a few thousand files.
+- Law: L2 (a verdict is about the tree it names, never an ambient one), and the test hermeticity rule: a test owns its fixture tree.
+- Siblings: swept every tests/*.sh spawn of `proof verify` and `loki_remote_verify_receipt`; only the jwks test lacked TARGET_DIR. Direct `proof-verify.py` runs pass the repo as an argument. Other `${TARGET_DIR:-.}` readers in autonomy/loki (HANDOFF.md, failover.json, .loki dir) are not swept yet.
+- Mechanism of the fix: every verifier spawn in the jwks test sets TARGET_DIR to its fixture; tests/test-verifier-spawn-sets-target-dir.sh fails any test that spawns the verifier without TARGET_DIR or a cd into an owned directory.
+- Fixture: tests/test-verifier-spawn-sets-target-dir.sh, mutated against the pre-fix jwks test (7 hits). tests/test-proof-verify-jwks.sh run with cwd = the main checkout.

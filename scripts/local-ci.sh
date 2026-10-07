@@ -916,6 +916,53 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 0a. ENV-SETUP: install JS dependencies a fresh worktree does not have.
+# node_modules is gitignored, so a new worktree has none, and web-app
+# typescript, the moat P7 client-route scan and the loki-ts checks then fail for
+# a reason that has nothing to do with the code (read as product failures).
+# Each missing node_modules gets the lockfile-faithful install, announced. An
+# install that fails is an ENV-SETUP failure: it stops the run with exit 3 and
+# its own banner BEFORE any product check, so it can never be counted as one.
+# LOCAL_CI_NO_INSTALL=1 opts out (the missing-deps failures then return).
+# ---------------------------------------------------------------------------
+_lci_env_setup() {
+  local spec dir tool lock cmd out rc
+  local -a env_failed=()
+  [ "${LOCAL_CI_NO_INSTALL:-0}" = "1" ] && { echo "ENV-SETUP: skipped (LOCAL_CI_NO_INSTALL=1)"; return 0; }
+  for spec in \
+    "loki-ts|bun|bun.lock|bun install --frozen-lockfile" \
+    "web-app|npm|package-lock.json|npm ci" \
+    "dashboard-ui|npm|package-lock.json|npm ci" \
+    "dashboard/client|npm|package-lock.json|npm ci"; do
+    IFS='|' read -r dir tool lock cmd <<<"$spec"
+    [ -f "$dir/package.json" ] && [ -f "$dir/$lock" ] || continue
+    [ -d "$dir/node_modules" ] && continue
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      echo "ENV-SETUP: $dir/node_modules missing and '$tool' is not installed; not installing"
+      continue
+    fi
+    echo "ENV-SETUP: $dir/node_modules missing (fresh worktree); running: (cd $dir && $cmd)"
+    if out=$( (cd "$dir" && eval "$cmd") 2>&1 ); then
+      echo "ENV-SETUP: $dir installed"
+    else
+      rc=$?
+      echo "$out" | tail -15
+      env_failed+=("$dir: '$cmd' exited $rc")
+    fi
+  done
+  if [ "${#env_failed[@]}" -gt 0 ]; then
+    echo
+    echo "${RED}ENV-SETUP FAILURE: dependencies could not be installed. This is the environment, not a product check.${NC}"
+    local f
+    for f in "${env_failed[@]}"; do echo "  - $f"; done
+    echo "${RED}No product check was run. Fix the install (network, registry, lockfile) and re-run.${NC}"
+    return 1
+  fi
+  return 0
+}
+_lci_env_setup || exit 3
+
+# ---------------------------------------------------------------------------
 # 0. D44 structural checks: the defects CI caught only after a push. Serial and
 # first so a structural red fails fast; each inner check is timed and < 10s.
 # ---------------------------------------------------------------------------
