@@ -5,11 +5,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type RunExecutor, type RunOutcome, readRunHistory } from "../../e10ext/repomemory.ts";
+import { type RunExecutor, type RunOutcome, readRunHistory } from "./history_store.ts";
 import { type ProjectModel } from "../../project_model/schema.ts";
 import { loadCached } from "../../project_model/discover.ts";
 
-export { HISTORY_FILE, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "../../e10ext/repomemory.ts";
+export { HISTORY_FILE, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "./history_store.ts";
 
 /** A shipped shape default. "prior-default" means the LOKI_ROUTER=0 model for the stage; R1-11 resolves it to an id. */
 export type ShapeDefault = "sonnet" | "prior-default";
