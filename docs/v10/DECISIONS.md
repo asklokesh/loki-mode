@@ -715,7 +715,7 @@ Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14
 4. Usage readings are logged hourly in usage-readings.tsv from direct /usage readings. The pulse weekly projection is not used as a governor input while it reads 450%+.
 5. Order: 10.7.1, then 10.8.0 (UI, CPE-24 if green, else 10.8.1), then MW-1 to MW-3, which replace mods M0 to M3 per the research in autonomi-dev/research/2026-10-03-claude-mods, then EL-W1.
 
-## D88 (2026-10-07, founder directive, CoS records): Haiku 5.5 executes, Opus advises, router decides; L1 means outcome parity
+## D89 (2026-10-07, founder directive, CoS records): Haiku 5.5 executes, Opus advises, router decides; L1 means outcome parity
 1. Founder directive, verbatim: "haiku 5.5 is released today ... it's going to cut down all costs drastically ... opus can be the advisor and haiku doing all the engineering work inside loki mode's engine ... sonnet is optional and routed by opus if haiku isn't performing well enough ... have that router perfectly ... model decides."
 2. Engine Law L1 is amended (docs/v10/ENGINE-LAWS.md): "never below raw" means OUTCOME parity (solve rate, time and cost on the B9 corpus and the Parity Gate), not model identity.
 3. A Haiku executor is allowed only with the Opus advisor attached or a recorded fallback. It is printed on the start line and in the receipt, so nothing is silently reduced.
