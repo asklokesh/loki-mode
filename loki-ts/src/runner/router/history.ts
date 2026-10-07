@@ -13,8 +13,8 @@ import { computeKey, shallowDirs } from "../../project_model/gather.ts";
 export { HISTORY_FILE, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "./history_store.ts";
 
 /** A shipped shape default. "prior-default" means the LOKI_ROUTER=0 model for the stage; R1-11 resolves it to an id. */
-export type ShapeDefault = "sonnet" | "prior-default";
-const SHAPE_DEFAULT_VALUES: readonly string[] = ["sonnet", "prior-default"];
+export type ShapeDefault = "haiku" | "sonnet" | "prior-default";
+const SHAPE_DEFAULT_VALUES: readonly string[] = ["haiku", "sonnet", "prior-default"];
 
 const FLOOR_WINDOW = 3;
 const FLOOR_LOSSES = 2;
@@ -68,8 +68,9 @@ export function haikuFloorExecutor(repoKey: string, shape: string | null, cacheR
 }
 
 /**
- * The shipped per-shape default. "sonnet" and "prior-default" are the only legal values; any other
- * value, a shape absent from the file, or a missing or corrupt file returns null (Haiku default).
+ * The shipped per-shape default. "haiku" (the shape earned Haiku), "sonnet" and "prior-default" are the
+ * only legal values; any other value, a shape absent from the file, or a missing or corrupt file
+ * returns null (Sonnet default, no evidence).
  */
 export function shapeDefault(key: string | null, file: string = SHAPE_DEFAULTS_FILE): ShapeDefault | null {
   if (key === null || !existsSync(file)) return null;

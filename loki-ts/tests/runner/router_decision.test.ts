@@ -46,7 +46,7 @@ describe("parseRoute (4.1)", () => {
   for (const [name, bad] of bads) {
     test(`${name} -> default + NOT PROVEN`, () => {
       const p = parseRoute(bad, true);
-      expect(p.route).toEqual(defaultRoute(true)); expect(p.route.executor).toBe("haiku"); expect(p.route.source).toBe("default");
+      expect(p.route).toEqual(defaultRoute(true)); expect(p.route.executor).toBe("sonnet"); expect(p.route.source).toBe("default");
       expect(p.notProven).toContain("NOT PROVEN");
     });
   }
@@ -57,9 +57,26 @@ describe("parseRoute (4.1)", () => {
 
 describe("resolveExecutor (4.4, 4.6)", () => {
   const base = { route: { ...good }, advisorAvailable: true, priorDefaultModel: "claude-opus-5-5", env: {} };
-  test("haiku route with advisor stays haiku", () => expect(resolveExecutor(base).model).toBe("haiku"));
+  test("no evidence gives sonnet plus the advisor", () => {
+    const r = resolveExecutor(base); expect(r.model).toBe("sonnet"); expect(r.source).toBe("no-evidence");
+    expect(resolveExecutor({ ...base, route: defaultRoute(true) }).model).toBe("sonnet");
+  });
+  test("an earned haiku listing gives haiku", () => {
+    expect(resolveExecutor({ ...base, shapeDefault: "haiku" }).model).toBe("haiku");
+    expect(resolveExecutor({ ...base, shapeDefault: "haiku", historyFloor: "haiku" }).model).toBe("haiku");
+  });
+  test("an earned listing alone does not choose haiku: Opus must route it", () => {
+    expect(resolveExecutor({ ...base, route: defaultRoute(true), shapeDefault: "haiku" }).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, route: { ...good, executor: "sonnet" }, shapeDefault: "haiku" }).model).toBe("sonnet");
+  });
+  test("an earned listing plus a tripped floor gives sonnet", () => {
+    const r = resolveExecutor({ ...base, shapeDefault: "haiku", historyFloor: "sonnet" }); expect(r.model).toBe("sonnet");
+  });
+  test("an earned listing without the advisor still gives sonnet", () => {
+    expect(resolveExecutor({ ...base, shapeDefault: "haiku", advisorAvailable: false }).model).toBe("sonnet");
+  });
   test("advisor unavailable raises a haiku route to sonnet", () => {
-    const r = resolveExecutor({ ...base, advisorAvailable: false }); expect(r.model).toBe("sonnet"); expect(r.source).toBe("no-advisor-floor");
+    const r = resolveExecutor({ ...base, advisorAvailable: false }); expect(r.model).toBe("sonnet");
   });
   test("never haiku without the advisor, even from a default", () => {
     expect(resolveExecutor({ ...base, advisorAvailable: false, route: defaultRoute(false) }).model).not.toBe("haiku");
@@ -69,7 +86,7 @@ describe("resolveExecutor (4.4, 4.6)", () => {
     expect(r.model).toBe("claude-opus-5-5"); expect(r.source).toBe("shape-default");
   });
   test("shape default sonnet raises haiku", () => expect(resolveExecutor({ ...base, shapeDefault: "sonnet" }).model).toBe("sonnet"));
-  test("history floor raises haiku to sonnet", () => expect(resolveExecutor({ ...base, historyFloor: "sonnet" }).source).toBe("history"));
+  test("history floor raises haiku to sonnet", () => expect(resolveExecutor({ ...base, shapeDefault: "haiku", historyFloor: "sonnet" }).model).toBe("sonnet"));
   test("evidence only moves up: sonnet route is not lowered", () => {
     const r = resolveExecutor({ ...base, route: { ...good, executor: "sonnet" }, historyFloor: "haiku", shapeDefault: null });
     expect(r.model).toBe("sonnet");

@@ -263,7 +263,7 @@ describe("shapeDefault (shipped router-shape-defaults.json)", () => {
       file,
       JSON.stringify({
         shapes: {
-          "single:none": { executor: "haiku" },
+          "single:none": { executor: "fable" },
           "single:vitest": { executor: "opus" },
           "single:pytest": { executor: "claude-sonnet-4-5" },
           "single:jest": { executor: "Sonnet" },

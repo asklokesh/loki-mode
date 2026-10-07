@@ -14,9 +14,9 @@ const RISKS: readonly string[] = ["low", "medium", "high"];
 const SOURCES: readonly string[] = ["advisor", "opus-plan"];
 const MAX_REASON = 200;
 
-/** Fallback when no valid route came back; Sonnet when the advisor is unavailable (4.4). */
-export function defaultRoute(advisorAvailable: boolean, reason = "no route returned"): Route {
-  return { executor: advisorAvailable ? "haiku" : "sonnet", source: "default", risk: "medium", reason };
+/** Fallback when no valid route came back: the run default is Sonnet (founder refinement 21:45Z). */
+export function defaultRoute(_advisorAvailable: boolean, reason = "no route returned"): Route {
+  return { executor: "sonnet", source: "default", risk: "medium", reason };
 }
 
 /** Parse a route (JSON text, an object, or plan-scope.json content holding `route`). Invalid or missing -> default + NOT PROVEN (L2). */
@@ -37,7 +37,7 @@ export function parseRoute(input: unknown, advisorAvailable: boolean): ParsedRou
 const RANK = ["haiku", "sonnet", "opus"];
 const rankOf = (m: string): number => { const i = RANK.findIndex((t) => m.toLowerCase().includes(t)); return i < 0 ? RANK.length : i; };
 
-export type ResolvedSource = "override" | RouteSource | "shape-default" | "no-advisor-floor";
+export type ResolvedSource = "override" | RouteSource | "shape-default" | "no-advisor-floor" | "no-evidence";
 export interface ResolveInput {
   route: Route;
   advisorAvailable: boolean;
@@ -63,6 +63,9 @@ export function resolveExecutor(i: ResolveInput): Resolved {
   if (ov) return { model: ov, source: "override", reason: "explicit model override" };
   let best: Resolved = { model: i.route.executor, source: i.route.source, reason: i.route.reason };
   const raise = (model: string, source: ResolvedSource, reason: string): void => { if (rankOf(model) > rankOf(best.model)) best = { model, source, reason }; };
+  // CTO 21:40Z + founder 21:45Z: Haiku only when Opus routed it, the shape earned it (shipped "haiku" listing, floor not tripped) and the advisor is attached.
+  const earnedHaiku = i.advisorAvailable && i.route.executor === "haiku" && i.route.source !== "default" && i.shapeDefault === "haiku" && i.historyFloor !== "sonnet";
+  if (rankOf(best.model) === 0 && !earnedHaiku) raise("sonnet", "no-evidence", "no evidence the shape earned haiku: executor sonnet");
   if (i.shapeDefault === "sonnet") raise("sonnet", "shape-default", "shipped shape default");
   else if (i.shapeDefault === "prior-default") raise(i.priorDefaultModel, "shape-default", "shipped shape default: prior-default");
   if (i.historyFloor === "sonnet") raise("sonnet", "history", "Haiku lost 2 of the last 3 runs on this shape");
