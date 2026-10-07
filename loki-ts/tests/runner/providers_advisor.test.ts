@@ -76,6 +76,18 @@ describe("buildSdkLoopOptions under the router", () => {
     expect(buildSdkLoopOptions(base()).fallbackModel).toBe("sonnet");
   });
 
+  test("any haiku model id (claude-haiku-5-5) is raised to sonnet when the advisor is unavailable", () => {
+    process.env["LOKI_ROUTER"] = "1";
+    process.env["LOKI_ROUTER_ADVISOR"] = "off";
+    const o = buildSdkLoopOptions({ ...base(), model: "claude-haiku-5-5" });
+    expect(o.model).toBe("sonnet");
+    expect(o.settings).toBeUndefined();
+    delete process.env["LOKI_ROUTER_ADVISOR"];
+    const on = buildSdkLoopOptions({ ...base(), model: "claude-haiku-5-5" });
+    expect(on.model).toBe("claude-haiku-5-5");
+    expect(on.fallbackModel).toBe("sonnet");
+  });
+
   test("a sonnet or opus model is never rewritten", () => {
     process.env["LOKI_ROUTER"] = "1";
     process.env["LOKI_ROUTER_ADVISOR"] = "off";

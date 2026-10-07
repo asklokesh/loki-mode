@@ -44,6 +44,7 @@ import { LEAN_PREFIX } from "../features/lean_prefix.ts";
 import { consumeSdkStream, type StreamMsg } from "./sdk_stream_parser.ts";
 import { createTrimHook } from "./trim.ts";
 import { probeAdvisor } from "./router/advisor_probe.ts";
+import { routerEnabled } from "./router/flag.ts";
 import type {
   ProviderInvocation,
   ProviderInvoker,
@@ -317,11 +318,6 @@ function hostGuardSettingsJson(): string {
 const ROUTER_ADVISOR_MODEL = "opus";
 const ROUTER_AUTO_COMPACT_WINDOW = 100000; // SDK minimum; keeps requests under the 100K price cliff
 
-export function routerEnabled(env: Record<string, string | undefined> = process.env): boolean {
-  const v = (env["LOKI_ROUTER"] ?? "").trim().toLowerCase();
-  return v === "1" || v === "on" || v === "true";
-}
-
 // Claude Code version bundled in the pinned Agent SDK. A test (providers_advisor.test.ts) asserts this equals the
 // installed SDK's claudeCodeVersion, so an SDK bump that forgets it fails CI instead of silently mis-probing.
 export const SDK_BUNDLED_CLAUDE_CODE = "2.1.293";
@@ -329,10 +325,19 @@ function bundledClaudeCodeVersion(): string {
   return SDK_BUNDLED_CLAUDE_CODE;
 }
 
+// Any haiku id ("haiku", "claude-haiku-5-5", ...) is a haiku executor.
+const isHaikuModel = (m: string): boolean => /haiku/i.test(m);
+
+// Cached per process and CLI path; only a successful read is cached so a transient failure is retried.
+const _installedVersionCache = new Map<string, string>();
 async function installedClaudeCodeVersion(cli: string): Promise<string> {
+  const hit = _installedVersionCache.get(cli);
+  if (hit !== undefined) return hit;
   try {
     const r = await shellRun([cli, "--version"], { timeoutMs: 10000 });
-    return r.exitCode === 0 ? r.stdout.trim() : "";
+    const v = r.exitCode === 0 ? r.stdout.trim() : "";
+    if (v) _installedVersionCache.set(cli, v);
+    return v;
   } catch {
     return "";
   }
@@ -361,7 +366,7 @@ export function planRouterSession(args: {
       settings: { advisorModel: ROUTER_ADVISOR_MODEL, autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW },
     };
   }
-  return { model: args.model === "haiku" ? "sonnet" : args.model, advisorReason: probe.reason };
+  return { model: isHaikuModel(args.model) ? "sonnet" : args.model, advisorReason: probe.reason };
 }
 
 // One --settings JSON for the CLI route: the host guard hooks (when required) merged with the router's
@@ -653,7 +658,7 @@ export function buildSdkLoopOptions(args: {
   // fallback model (rate-limit resilience), same derivation as the shell route.
   try {
     // fallbackForPrimary has no haiku arm; under the router a haiku 429 falls to sonnet.
-    const fb = router && router.model === "haiku" ? "sonnet" : fallbackForPrimary(args.model, args.allowHaiku);
+    const fb = router && isHaikuModel(router.model) ? "sonnet" : fallbackForPrimary(args.model, args.allowHaiku);
     if (fb) out.fallbackModel = fb;
   } catch {
     // omit
