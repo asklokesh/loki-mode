@@ -10,11 +10,14 @@ import { consumeSdkStream, type StreamMsg } from "../../src/runner/sdk_stream_pa
 import { sumResultCosts } from "../../src/engine10/cost.ts";
 
 let scratch: string;
+const savedFlag = process.env["LOKI_ROUTER"];
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "loki-r108-"));
+  process.env["LOKI_ROUTER"] = "1"; // telemetry is gated on the router flag; the flag-off block below unsets it
 });
 afterEach(() => {
   rmSync(scratch, { recursive: true, force: true });
+  if (savedFlag === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = savedFlag;
 });
 
 const ctx = () => ({ cwd: scratch, iteration: "7", hookEventsEnabled: true, write: (_s: string) => {} });
@@ -81,4 +84,22 @@ describe("R1-08 router usage telemetry", () => {
     expect(c.router?.advisor_output_tokens).toBe(5);
     expect(c.router?.over_100k_input_tokens).toBe(120000);
   });
+});
+
+describe("R1-08 flag off is byte-identical to pre-router", () => {
+  const PRE_KEYS = ["cache_creation_tokens", "cache_read_tokens", "input_tokens", "output_tokens", "total_cost_usd"];
+  for (const v of [undefined, "0", "off", "false"]) {
+    test(`LOKI_ROUTER=${v ?? "(unset)"}: no new result-cost keys, no CostResult.router`, async () => {
+      if (v === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = v;
+      await consumeSdkStream(stream(), ctx(), () => "t");
+      const rec = JSON.parse(readFileSync(costFile(), "utf8"));
+      expect(Object.keys(rec).sort()).toEqual([...PRE_KEYS, "first_turn_prompt_tokens"].sort());
+      // a file that already carries the keys (written under the flag) is not summed while the flag is off
+      mkdirSync(join(scratch, "metrics"), { recursive: true });
+      writeFileSync(join(scratch, "metrics", "result-cost-9.json"), JSON.stringify({ ...rec, requests_total: 5, advisor_calls: 2 }));
+      const c = sumResultCosts(scratch, ["9"]);
+      expect("router" in c).toBe(false);
+      expect(Object.keys(c).sort()).toEqual(["cache_creation_tokens", "cache_read_tokens", "input_tokens", "measuredCount", "missing", "model", "output_tokens", "partialUsd", "source", "totalCount", "usd"].sort());
+    });
+  }
 });

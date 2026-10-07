@@ -25,7 +25,7 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { num } from "../engine10/cost.ts";
+import { num, routerTelemetryOn } from "../engine10/cost.ts";
 import { partialUsagePath } from "./budget.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
@@ -509,6 +509,7 @@ function recordRouterUsage(
 }
 
 function routerTelemetry(reqs: Map<string, RequestUsage>, advisors: Map<string, AdvisorUsage>): Record<string, number> | undefined {
+  if (!routerTelemetryOn()) return undefined; // flag off: result-cost file stays byte-identical to pre-router
   if (reqs.size === 0 && advisors.size === 0) return undefined; // nothing streamed: keep the file shape unchanged
   let over = 0, maxSize = 0, overIn = 0, overOut = 0;
   for (const r of reqs.values()) {
