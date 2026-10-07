@@ -5,6 +5,39 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.2.0 (unreleased)
+
+Stub. The Release Manager fills this section in at release time.
+
+### Added
+- (placeholder) Model routing: Haiku 5.5 executor with the Opus advisor, opt-in with `LOKI_ROUTER=1`.
+- (placeholder) Receipt route block and the `loki doctor` advisor line.
+- (placeholder) `scripts/b9-scoreboard.sh` comparison harness.
+
+### Changed
+- (placeholder)
+
+### Fixed
+- (placeholder)
+
+## v11.1.0 (2026-10-07)
+
+Minor release. Prepares the model catalog, pricing and plumbing for model routing: the Agent SDK moves to 0.3.293, Haiku 5.5 and Sonnet 5.5 join the catalog, and the groundwork for the advisor probe and per-shape outcome memory lands. The router itself is not switched on by this release.
+
+### Added
+- Agent SDK 0.3.293, which bundles Claude Code 2.1.293, pinned in package.json and in every Dockerfile, with a version-floor guard test so a lower SDK fails the build.
+- Catalog entries for `claude-haiku-5-5` and `claude-sonnet-5-5` (ids verified by real calls on Claude Code 2.1.293). The `haiku` and `sonnet` CLI aliases and the fast and development tier defaults now point at the 5-5 ids; the previous ids stay catalogued as legacy (R1-03).
+- Claude Haiku 5.5 pricing on the exact model id: $0.10 in / $0.50 out per MTok up to 100K tokens, and $0.50 / $2.50 over 100K, with matching cache rates. The budget code resolves exact versioned ids, including dated suffixes, before the family match. The `haiku` family alias row stays at the Haiku 4.5 price of $1 / $5 (R1-02).
+- Advisor availability probe: the advisor is unavailable on a non-Claude provider, on Bedrock, Vertex or Foundry, on a non-Anthropic `ANTHROPIC_BASE_URL`, below Claude Code 2.1.293, or after an advisor tool error, which is remembered for the rest of the run. Unavailable never fails a run (R1-06).
+- Per-repo-shape outcome history. The shape key is the workspace kind plus the sorted runners. The haiku floor moves a shape to Sonnet after 2 code-owned losses in the last 3 Haiku runs; harness, environment and provider errors and NOT PROVEN outcomes never count. A shipped shape-defaults file starts empty and a corrupt or missing file is a cold read, never a crash (R1-16).
+- Opt-out golden test: with the router off, the models, session options, start line and run.started keys match 11.0.3 exactly (R1-21).
+
+### Fixed
+- Verifier spawns pin `TARGET_DIR`, and `scripts/local-ci.sh` installs dependencies in a fresh worktree (FC-29).
+- The dashboard tenant isolation suite accepts its TestClient Host under unittest.
+- Nightly deferred already-done tests wait on events instead of fixed sleeps.
+- Lockfile bumps the MCP SDK and proxy-addr for new security advisories.
+
 ## v11.0.3 (2026-10-04)
 
 Patch release. A one-line product brief no longer skips the Wall because a common word sits inside a longer name.
