@@ -137,7 +137,7 @@
     "linux"
   ],
   "optionalDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.288",
+    "@anthropic-ai/claude-agent-sdk": "0.3.293",
     "@oven/bun-darwin-aarch64": "1.4.2",
     "@oven/bun-darwin-x64": "1.4.2",
     "@oven/bun-linux-aarch64": "1.4.2",
