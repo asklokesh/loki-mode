@@ -1,8 +1,8 @@
 {
   "$schema_version": 1,
   "_comment": "Rolling pricing table consumed by loki-ts/src/runner/budget.ts. Update this file when Anthropic / OpenAI / others publish new prices; no code change required. Pricing is USD per 1 million tokens. Aliases (opus/sonnet/haiku) point to the latest model of that family per providers/model_catalog.json.",
-  "_updated": "2026-10-03",
-  "_source": "https://www.anthropic.com/pricing + provider docs. sonnet=claude-sonnet-5 and claude-sonnet-5-5, both $2/$10 per MTok (the Sonnet 5 intro price became the standard price; the 2026-09-01 increase to $3/$15 will not occur), cache write 5m $2.50, cache read $0.20, 1M context at standard pricing (platform.claude.com/docs/en/about-claude/pricing, read 2026-10-03). opus=claude-opus-5. codex=gpt-5.3-codex standard tier. Cache tiers: read 0.1x input, write 1.25x input (Anthropic + OpenAI published multipliers).",
+  "_updated": "2026-10-07",
+  "_source": "https://www.anthropic.com/pricing + provider docs. sonnet=claude-sonnet-5 and claude-sonnet-5-5, both $2/$10 per MTok (the Sonnet 5 intro price became the standard price; the 2026-09-01 increase to $3/$15 will not occur), cache write 5m $2.50, cache read $0.20, 1M context at standard pricing (platform.claude.com/docs/en/about-claude/pricing, read 2026-10-03). claude-haiku-5-5 (exact-id key; the haiku alias stays Haiku 4.5 at $1/$5): $0.10 in / $0.50 out / cache write 5m $0.125 / cache read $0.01 for prompts up to 100,000 tokens, and $0.50 / $2.50 / $0.625 / $0.05 over 100,000 tokens in over_100k (https://platform.claude.com/docs/en/about-claude/pricing, read 2026-10-07). opus=claude-opus-5. codex=gpt-5.3-codex standard tier. Cache tiers: read 0.1x input, write 1.25x input (Anthropic + OpenAI published multipliers).",
   "pricing": {
     "fable": {
       "input": 10.0,
@@ -27,6 +27,18 @@
       "output": 5.0,
       "cache_read": 0.1,
       "cache_write": 1.25
+    },
+    "claude-haiku-5-5": {
+      "input": 0.1,
+      "output": 0.5,
+      "cache_read": 0.01,
+      "cache_write": 0.125,
+      "over_100k": {
+        "input": 0.5,
+        "output": 2.5,
+        "cache_read": 0.05,
+        "cache_write": 0.625
+      }
     },
     "gpt-5.3-codex": {
       "input": 1.75,

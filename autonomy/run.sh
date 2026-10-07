@@ -7583,6 +7583,7 @@ _write_pricing_json() {
     "opus":            {"input": 5.00,  "output": 25.00, "label": "Opus (latest)",   "provider": "claude"},
     "sonnet":          {"input": 2.00,  "output": 10.00, "label": "Sonnet (latest)", "provider": "claude"},
     "haiku":           {"input": 1.00,  "output": 5.00,  "label": "Haiku (latest)",  "provider": "claude"},
+    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5", "provider": "claude"},
     "gpt-5.3-codex":   {"input": 1.75,  "output": 14.00, "label": "GPT-5.3 Codex", "provider": "codex"}
   }
 }
