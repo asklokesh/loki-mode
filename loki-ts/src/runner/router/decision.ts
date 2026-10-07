@@ -134,7 +134,7 @@ export function parseUnits(input: unknown, advisorAvailable: boolean): ParsedUni
   raw.forEach((u, idx) => {
     const r = (typeof u === "object" && u !== null ? u : {}) as Record<string, unknown>;
     const goodId = idOf(u);
-    const id = goodId ?? `unit-${idx}`;
+    const id = goodId ?? `#${idx}`; // "#" never matches UNIT_ID: no collision with a real id
     const kindOk = typeof r.kind === "string" && r.kind.length <= MAX_UNIT_FIELD;
     const dup = goodId !== null && (seen.get(goodId) ?? 0) > 1;
     const ok = goodId !== null && !dup && kindOk && typeof r.executor === "string" && EXECUTORS.includes(r.executor)

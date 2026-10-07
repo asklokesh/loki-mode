@@ -1,7 +1,7 @@
 // R1-10: plan-time route by Opus. Flag on: the plan brief asks for per-unit `units`, the stage parses them with
 // parseUnits and stores them on its output; flag off: brief and output are byte-identical to the pre-router path.
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildPlanBrief, planStage } from "../../src/engine10/stages/plan.ts";
@@ -115,6 +115,19 @@ describe("R1-10 plan stage routing", () => {
     const r = await planStage.run(s.ctx, sig());
     expect(r.data.units).toEqual([]);
     expect((r.data.route_not_proven as string[])[0]).toContain("NOT PROVEN");
+    rmSync(s.dir, { recursive: true, force: true });
+  });
+});
+
+describe("R1-10 N3 plan-scope.json must be a regular file", () => {
+  test("a symlink is rejected with NOT PROVEN, not read", async () => {
+    const s = setup({ LOKI_ROUTER: "1" }, null);
+    const target = join(s.dir, "real.json");
+    writeFileSync(target, JSON.stringify({ units: [unit("u1", "haiku")] }));
+    symlinkSync(target, join(s.dir, "plan-scope.json"));
+    const r = await planStage.run(s.ctx, sig());
+    expect(r.data.units).toEqual([]);
+    expect(String((r.data.route_not_proven as string[])[0])).toContain("NOT PROVEN");
     rmSync(s.dir, { recursive: true, force: true });
   });
 });

@@ -124,6 +124,14 @@ describe("per-unit routes (step 2)", () => {
     expect(p.units.map((x) => x.executor)).toEqual(["sonnet", "sonnet", "haiku"]);
     expect(p.notProven.length).toBe(2);
   });
+  test("B5: an invalid-id placeholder never collides with a real id", () => {
+    const p = parseUnits({ units: [u("unit-1", "haiku"), u("bad id", "haiku")] }, true);
+    const ids = p.units.map((x) => x.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(p.units[0]!.executor).toBe("haiku");
+    expect(p.units[1]!.executor).toBe("sonnet");
+    expect(/^[A-Za-z0-9_.-]+$/.test(p.units[1]!.id)).toBe(false);
+  });
   test("B3: caps fail closed to sonnet with NOT PROVEN", () => {
     const many = parseUnits({ units: Array.from({ length: 201 }, (_, i) => u(`u${i}`, "haiku")) }, true);
     expect(many.units).toEqual([]); expect(many.notProven[0]).toContain("NOT PROVEN");

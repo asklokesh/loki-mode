@@ -1,5 +1,5 @@
 // E-16: Plan (ENGINE.md 4). A fast-tier session sees up to 8 relevant files (keyword overlap with the repo map) and writes at most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it (missing/unreadable is an empty plan, never a crash).
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
 import { selectRelevantFiles } from "../relevant_files.ts";
@@ -103,11 +103,11 @@ export const planStage: Stage = {
     let route: Record<string, unknown> = {};
     if (routed) {
       const scopePath = join(ctx.runDir, PLAN_SCOPE_FILE);
-      let scope: string | null = null; let tooBig = false;
+      let scope: string | null = null; let tooBig = false; let notFile = false;
       try {
-        if (existsSync(scopePath)) { if (statSync(scopePath).size > MAX_SCOPE_BYTES) tooBig = true; else scope = readFileSync(scopePath, "utf8"); }
+        if (existsSync(scopePath)) { const st = lstatSync(scopePath); if (!st.isFile()) notFile = true; else if (st.size > MAX_SCOPE_BYTES) tooBig = true; else scope = readFileSync(scopePath, "utf8"); }
       } catch { scope = null; }
-      const parsed = tooBig ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} exceeds ${MAX_SCOPE_BYTES} bytes; default sonnet`] } : parseUnits(scope, advisorAvailable);
+      const parsed = notFile ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} is not a regular file; default sonnet`] } : tooBig ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} exceeds ${MAX_SCOPE_BYTES} bytes; default sonnet`] } : parseUnits(scope, advisorAvailable);
       route = { units: parsed.units, route_not_proven: parsed.notProven };
     }
 
