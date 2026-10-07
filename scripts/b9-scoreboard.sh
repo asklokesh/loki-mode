@@ -16,14 +16,18 @@
 #   --emit-shape-defaults OUT.json --results FILE
 #                           section 4.6: list every shape where arm 2 solved fewer runs than
 #                           arm 1. Arm 1 has no receipt, so a repo's shape comes from its arm 2
-#                           rows. No runs are made in this mode.
+#                           rows. No runs are made in this mode. Entries are `sonnet`, or
+#                           `prior-default` when --confirm-results FILE (the Sonnet rerun, same TSV
+#                           format) also solved fewer than raw on that shape.
+#   --timeout SEC           per-run limit via timeout -k (default 600)
+# Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
 # Test hook: B9_LOKI overrides the loki binary.
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="fix the bug that makes the failing test in sum.test.js fail"
-DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" RESULTS_IN=""
+DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
@@ -37,6 +41,8 @@ while [ $# -gt 0 ]; do
         --metrics-out) METRICS_OUT="${2:-}"; shift ;;
         --emit-shape-defaults) EMIT="${2:-}"; [ -n "$EMIT" ] || { echo "--emit-shape-defaults needs an output path" >&2; exit 2; }; shift ;;
         --results) RESULTS_IN="${2:-}"; shift ;;
+        --confirm-results) CONFIRM_IN="${2:-}"; shift ;;
+        --timeout) TIMEOUT="${2:-}"; shift ;;
         *) echo "usage: $0 --dry-run | --repo DIR --base SHA --test-cmd CMD | --emit-shape-defaults OUT.json --results FILE" >&2; exit 2 ;;
     esac
     shift
@@ -45,7 +51,11 @@ done
 # --- --emit-shape-defaults: pure computation over a results TSV ---------------
 if [ -n "$EMIT" ]; then
     [ -f "$RESULTS_IN" ] || { echo "--emit-shape-defaults needs --results FILE (a results TSV)" >&2; exit 2; }
-    awk -F '\t' -v src="$(basename "$RESULTS_IN")" -v day="$(date -u +%Y-%m-%d)" '
+    [ -z "$CONFIRM_IN" ] || [ -f "$CONFIRM_IN" ] || { echo "--confirm-results file not found: $CONFIRM_IN" >&2; exit 2; }
+    # The confirming rerun (seeded file present) is a second TSV of the same format; its arm 2 rows
+    # are the Sonnet run. A shape the rerun also loses is prior-default, otherwise sonnet.
+    awk -F '\t' -v src="$(basename "$RESULTS_IN")" -v day="$(date -u +%Y-%m-%d)" -v conf="$CONFIRM_IN" '
+        conf != "" && FILENAME == conf { if ($1 == 2 && $7 != "" && $7 != "unknown") { cs[$7] += ($4 == 1); cn[$7]++ }; next }
         $1 == 2 && $7 != "" && $7 != "unknown" { shape[$2] = $7 }
         $1 == 1 || $1 == 2 { n[$1, $2]++; s[$1, $2] += ($4 == 1); repos[$2] = 1 }
         END {
@@ -61,17 +71,22 @@ if [ -n "$EMIT" ]; then
             for (i = 1; i <= cnt; i++) {
                 k = order[i]
                 if (rt[k] < raw[k]) {
-                    printf "%s\"%s\":{\"executor\":\"sonnet\",\"evidence\":\"B9 %s: router %d/%d vs raw %d/%d\"}", (first ? "" : ","), k, src, rt[k], nt[k], raw[k], nr[k]
+                    ex = "sonnet"; ev = sprintf("B9 %s: router %d/%d vs raw %d/%d", src, rt[k], nt[k], raw[k], nr[k])
+                    if (k in cn) {
+                        ev = ev sprintf("; sonnet rerun %d/%d", cs[k], cn[k])
+                        if (cs[k] * nr[k] < raw[k] * cn[k]) ex = "prior-default"
+                    }
+                    printf "%s\"%s\":{\"executor\":\"%s\",\"evidence\":\"%s\"}", (first ? "" : ","), k, ex, ev
                     first = 0
                 }
             }
             printf "}}\n"
-        }' "$RESULTS_IN" > "$EMIT" || exit 1
+        }' ${CONFIRM_IN:+"$CONFIRM_IN"} "$RESULTS_IN" > "$EMIT" || exit 1
     exit 0
 fi
 
 # --- run mode ------------------------------------------------------------------
-# shellcheck source=../eval/loki10/lib-tmp.sh
+# shellcheck source=/dev/null
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
 loki_run_tmp_create || exit 2
 trap 'loki_run_tmp_cleanup' EXIT
@@ -109,7 +124,10 @@ STUB
     chmod +x "$T/bin/claude"
     export PATH="$T/bin:$PATH" LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_E10_INVOKER=cli
 fi
-export HOME="$T/home" LOKI_NO_BROWSER=1 LOKI_DASHBOARD=false
+# Only the dry-run gets a throwaway HOME. Real mode needs the user's own credentials, or every
+# arm runs unauthenticated, scores solved=0 and --emit-shape-defaults seeds false losses.
+[ "$DRY" -ne 1 ] || export HOME="$T/home"
+export LOKI_NO_BROWSER=1 LOKI_DASHBOARD=false
 unset LOKI_PROVIDER
 LOKI="${B9_LOKI:-$REPO_ROOT/bin/loki}"
 
@@ -147,11 +165,12 @@ while [ "$arm" -le 4 ]; do
         fi
         D="$W"; [ "$DRY" -eq 1 ] || D="$W/repo"
         S=$(date +%s)
+        OUT="$T/out-$arm-$run.log"
         case "$arm" in
-            1) ( cd "$D" && claude -p "$TASK" --dangerously-skip-permissions --output-format json ) < /dev/null > "$T/out-$arm-$run.log" 2>&1 ;;
-            2) ( cd "$D" && LOKI_ROUTER=1 "$LOKI" quick "$TASK" ) < /dev/null > "$T/out-$arm-$run.log" 2>&1 ;;
-            3) ( cd "$D" && LOKI_ROUTER=0 "$LOKI" quick "$TASK" ) < /dev/null > "$T/out-$arm-$run.log" 2>&1 ;;
-            4) ( cd "$D" && LOKI_ROUTER=1 LOKI_ROUTER_ADVISOR=off "$LOKI" quick "$TASK" ) < /dev/null > "$T/out-$arm-$run.log" 2>&1 ;;
+            1) ( cd "$D" && timeout -k 10 "$TIMEOUT" claude -p "$TASK" --dangerously-skip-permissions --output-format json ) < /dev/null > "$OUT" 2>&1 ;;
+            2) ( cd "$D" && timeout -k 10 "$TIMEOUT" env -u LOKI_ROUTER_ADVISOR LOKI_ROUTER=1 "$LOKI" quick "$TASK" ) < /dev/null > "$OUT" 2>&1 ;;
+            3) ( cd "$D" && timeout -k 10 "$TIMEOUT" env -u LOKI_ROUTER_ADVISOR LOKI_ROUTER=0 "$LOKI" quick "$TASK" ) < /dev/null > "$OUT" 2>&1 ;;
+            4) ( cd "$D" && timeout -k 10 "$TIMEOUT" env LOKI_ROUTER=1 LOKI_ROUTER_ADVISOR=off "$LOKI" quick "$TASK" ) < /dev/null > "$OUT" 2>&1 ;;
         esac
         WALL=$(( $(date +%s) - S ))
         SOLVED=0
