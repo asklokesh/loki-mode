@@ -173,6 +173,11 @@ export async function consumeSdkStream(
   // with a different id is a later turn and is never folded in.
   let firstTurnId: string | undefined;
   let firstTurnPromptTokens: number | undefined;
+  // R1-08: per-request size and advisor telemetry. Keyed by message.id like usageById (a growing
+  // snapshot is a max, not a second request). Advisor sub-inferences arrive as usage.iterations
+  // entries of type 'advisor_message' (BetaAdvisorMessageIterationUsage, @anthropic-ai/sdk).
+  const reqById = new Map<string, RequestUsage>();
+  const advisorById = new Map<string, AdvisorUsage>();
 
   for await (const data of asAsync(messages)) {
     const msgType = data.type ?? "";
@@ -210,6 +215,7 @@ export async function consumeSdkStream(
           cache_read_input_tokens: Math.max(prev["cache_read_input_tokens"] ?? 0, num(u["cache_read_input_tokens"])),
           cache_creation_input_tokens: Math.max(prev["cache_creation_input_tokens"] ?? 0, num(u["cache_creation_input_tokens"])),
         });
+        recordRouterUsage(reqById, advisorById, id, u);
         writePartialUsage(lokiRoot, ctx.iteration, usageById, data.model ?? sessionModel ?? null);
 
         if (firstTurnId === undefined) firstTurnId = id;
@@ -363,7 +369,8 @@ export async function consumeSdkStream(
       // authoritative per-iteration cost (best-effort; never throws to the loop)
       totalCostUsd = data.total_cost_usd ?? null;
       sessionId = data.session_id;
-      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens);
+      if (advisorById.size === 0) recordRouterUsage(new Map(), advisorById, "#result", data.usage ?? {}); // advisor seen only on the result
+      writeResultCost(lokiRoot, ctx.iteration, data, data.model ?? sessionModel, firstTurnPromptTokens, routerTelemetry(reqById, advisorById));
 
       exitCode = data.is_error ? 1 : 0;
       // do not break: a well-formed stream ends after result, but keep draining.
@@ -472,6 +479,56 @@ function appendHookEvent(
   }
 }
 
+// R1-08. A request is one assistant message; its size is input + cache_read + cache_creation (the
+// prompt the model saw). OVER_100K_TOKENS is the Haiku 5.5 long-prompt boundary (strictly above).
+const OVER_100K_TOKENS = 100_000;
+interface RequestUsage { size: number; output: number }
+interface AdvisorUsage { calls: number; input: number; output: number }
+
+function recordRouterUsage(
+  reqs: Map<string, RequestUsage>,
+  advisors: Map<string, AdvisorUsage>,
+  id: string,
+  u: Record<string, unknown>,
+): void {
+  const size = num(u["input_tokens"]) + num(u["cache_read_input_tokens"]) + num(u["cache_creation_input_tokens"]);
+  const prev = reqs.get(id);
+  reqs.set(id, { size: Math.max(prev?.size ?? 0, size), output: Math.max(prev?.output ?? 0, num(u["output_tokens"])) });
+  const its = u["iterations"];
+  if (!Array.isArray(its)) return;
+  let calls = 0, input = 0, output = 0;
+  for (const it of its as Array<Record<string, unknown>>) {
+    if (!it || it["type"] !== "advisor_message") continue;
+    calls++;
+    input += num(it["input_tokens"]) + num(it["cache_read_input_tokens"]) + num(it["cache_creation_input_tokens"]);
+    output += num(it["output_tokens"]);
+  }
+  if (calls === 0) return;
+  const old = advisors.get(id);
+  if (!old || calls >= old.calls) advisors.set(id, { calls, input, output });
+}
+
+function routerTelemetry(reqs: Map<string, RequestUsage>, advisors: Map<string, AdvisorUsage>): Record<string, number> | undefined {
+  if (reqs.size === 0 && advisors.size === 0) return undefined; // nothing streamed: keep the file shape unchanged
+  let over = 0, maxSize = 0, overIn = 0, overOut = 0;
+  for (const r of reqs.values()) {
+    maxSize = Math.max(maxSize, r.size);
+    if (r.size > OVER_100K_TOKENS) { over++; overIn += r.size; overOut += r.output; }
+  }
+  let calls = 0, aIn = 0, aOut = 0;
+  for (const a of advisors.values()) { calls += a.calls; aIn += a.input; aOut += a.output; }
+  return {
+    requests_total: reqs.size,
+    requests_over_100k: over,
+    max_request_tokens: maxSize,
+    over_100k_input_tokens: overIn,
+    over_100k_output_tokens: overOut,
+    advisor_calls: calls,
+    advisor_input_tokens: aIn,
+    advisor_output_tokens: aOut,
+  };
+}
+
 // model is the provider-reported model (E-59: from system/init or the result message itself, never
 // the caller's guess); shared with the legacy SDK loop, so this only ADDS the key, never touches an
 // existing one, and omits it entirely (rather than writing null) when no session reported one.
@@ -481,6 +538,7 @@ function writeResultCost(
   data: StreamMsg,
   model?: string,
   firstTurnPromptTokens?: number,
+  router?: Record<string, number>,
 ): void {
   try {
     const cost = data.total_cost_usd;
@@ -494,6 +552,7 @@ function writeResultCost(
       cache_creation_tokens: u["cache_creation_input_tokens"] ?? 0,
       ...(model ? { model } : {}),
       ...(firstTurnPromptTokens !== undefined ? { first_turn_prompt_tokens: firstTurnPromptTokens } : {}),
+      ...(router ?? {}),
     };
     const dir = join(lokiRoot, "metrics");
     mkdirSync(dir, { recursive: true });

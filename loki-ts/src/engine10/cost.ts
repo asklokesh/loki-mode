@@ -15,6 +15,16 @@ import { join } from "node:path";
  *  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
 export const UNMETERED = "cli-invoker-unmetered";
 
+export interface RouterUsage {
+  requests_total: number;
+  requests_over_100k: number;
+  over_100k_input_tokens: number;
+  over_100k_output_tokens: number;
+  advisor_calls: number;
+  advisor_input_tokens: number;
+  advisor_output_tokens: number;
+}
+
 export interface CostResult {
   unmetered?: boolean; // some session in this sum carried the UNMETERED marker
   usd: number | null;
@@ -27,6 +37,10 @@ export interface CostResult {
   output_tokens: number;
   cache_read_tokens: number;
   cache_creation_tokens: number;
+  // R1-08: summed router telemetry. over_100k_* are the input/output tokens of requests strictly over
+  // 100K prompt tokens, so a caller can apply the pricing over_100k tier (budget.ts); not applied here.
+  // Optional so other CostResult producers (budget.ts) need no change; sumResultCosts always sets it.
+  router?: RouterUsage;
   model: string | null; // E-50: provider-reported model from the result-cost file itself, never a guess
   source: string; // comma-joined result-cost file paths that were read
   missing: string[]; // iterations with no dollar figure: no file, a file with no total_cost_usd, or all-zero usage (see noUsage below)
@@ -46,6 +60,8 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
   const out: CostResult = {
     usd: null, partialUsd: 0, measuredCount: 0, totalCount: iterations.length,
     input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
+    router: { requests_total: 0, requests_over_100k: 0, over_100k_input_tokens: 0, over_100k_output_tokens: 0,
+      advisor_calls: 0, advisor_input_tokens: 0, advisor_output_tokens: 0 },
     model: null, source: "", missing: [],
   };
   const sources: string[] = [];
@@ -69,6 +85,13 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
     out.output_tokens += outTok;
     out.cache_read_tokens += cacheR;
     out.cache_creation_tokens += cacheC;
+    out.router!["requests_total"] += num(rec["requests_total"]);
+    out.router!["requests_over_100k"] += num(rec["requests_over_100k"]);
+    out.router!["over_100k_input_tokens"] += num(rec["over_100k_input_tokens"]);
+    out.router!["over_100k_output_tokens"] += num(rec["over_100k_output_tokens"]);
+    out.router!["advisor_calls"] += num(rec["advisor_calls"]);
+    out.router!["advisor_input_tokens"] += num(rec["advisor_input_tokens"]);
+    out.router!["advisor_output_tokens"] += num(rec["advisor_output_tokens"]);
     if (typeof rec["model"] === "string" && rec["model"]) out.model = rec["model"];
     sources.push(path);
     const c = rec["total_cost_usd"];
