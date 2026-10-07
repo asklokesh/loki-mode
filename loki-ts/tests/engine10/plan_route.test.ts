@@ -8,12 +8,12 @@ import { buildPlanBrief, planStage } from "../../src/engine10/stages/plan.ts";
 import type { RunContext, SessionResult, SessionRunOptions, SessionRunner } from "../../src/engine10/types.ts";
 
 const done: SessionResult = { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 1, killed: false };
-const KEYS = ["LOKI_ROUTER", "LOKI_ROUTER_ADVISOR", "LOKI_E10_PLAN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"];
+const KEYS = ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_ROUTER", "LOKI_ROUTER_ADVISOR", "LOKI_E10_PLAN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY"];
 const saved: Record<string, string | undefined> = {};
 for (const k of KEYS) saved[k] = process.env[k];
 afterEach(() => { for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
 
-function setup(env: Record<string, string>, scope: unknown | null) {
+function setup(env: Record<string, string>, scope: unknown | null, provider = "claude") {
   for (const k of KEYS) delete process.env[k];
   process.env.LOKI_E10_PLAN = "always";
   Object.assign(process.env, env);
@@ -27,7 +27,7 @@ function setup(env: Record<string, string>, scope: unknown | null) {
     },
   };
   const ctx = {
-    runId: "e10-r110", repoDir: "/tmp/none", runDir: dir, baseSha: "x", branch: "b", provider: "claude", model: "m", deep: false, capS: 900,
+    runId: "e10-r110", repoDir: "/tmp/none", runDir: dir, baseSha: "x", branch: "b", provider, model: "m", deep: false, capS: 900,
     emit: () => {}, sessions, tests: { async detect() { return { runners: [], tests: [] }; }, impacted: () => [] },
     cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => 0 },
     outputs: () => ({ intake: { task: "fix the bug" } }),
@@ -92,6 +92,29 @@ describe("R1-10 plan stage routing", () => {
     const s = setup({ LOKI_ROUTER: "0" }, { units: [unit("u1", "haiku")] });
     const r = await planStage.run(s.ctx, sig());
     expect("units" in r.data).toBe(false);
+    rmSync(s.dir, { recursive: true, force: true });
+  });
+  test("B1: a non-claude provider has no advisor: haiku is raised to sonnet and no opus pin is sent", async () => {
+    const s = setup({ LOKI_ROUTER: "1" }, { units: [unit("u1", "haiku")] }, "codex");
+    const r = await planStage.run(s.ctx, sig());
+    expect((r.data.units as Array<{ executor: string }>)[0]?.executor).toBe("sonnet");
+    expect("model" in (s.opts() as object)).toBe(false);
+    rmSync(s.dir, { recursive: true, force: true });
+  });
+  test("N2: the opus pin never overrides a user model bypass", async () => {
+    for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT"]) {
+      const s = setup({ LOKI_ROUTER: "1", LOKI_ROUTER_ADVISOR: "off", [k]: "claude-sonnet-5-5" }, { units: [unit("u1", "sonnet")] });
+      await planStage.run(s.ctx, sig());
+      expect("model" in (s.opts() as object)).toBe(false);
+      rmSync(s.dir, { recursive: true, force: true });
+    }
+  });
+  test("B3: an oversize scope file fails closed with NOT PROVEN", async () => {
+    const big = JSON.stringify({ units: [unit("u1", "haiku")], pad: "x".repeat(300 * 1024) });
+    const s = setup({ LOKI_ROUTER: "1" }, big);
+    const r = await planStage.run(s.ctx, sig());
+    expect(r.data.units).toEqual([]);
+    expect((r.data.route_not_proven as string[])[0]).toContain("NOT PROVEN");
     rmSync(s.dir, { recursive: true, force: true });
   });
 });

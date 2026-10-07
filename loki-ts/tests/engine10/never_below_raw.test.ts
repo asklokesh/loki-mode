@@ -108,7 +108,7 @@ export function guardViolations(files: Record<string, string>): string[] {
   const allowed: Record<string, RegExp> = {
     "stages/implement.ts": /^downgrade \? \{ model: downgrade\.to \}/,
     "stages/fix.ts": /^pinnedModel \? \{ model: pinnedModel \}/,
-    "stages/plan.ts": /^routed && !advisorAvailable \? \{ model: "opus" \} : \{\}\)/, // R1-10: only ever Opus, never weaker
+    "stages/plan.ts": /^pinOpus \? \{ model: "opus" \} : \{\}\),$/, // R1-10: only ever Opus, never weaker
     "stages/wall.ts": /^wallModel\(\),/,
     "already_done.ts": /^wallModel\(\),/,
   };
@@ -169,6 +169,12 @@ describe("L1 static guard", () => {
   it("mutation: a new stage pinning a cheap model unconditionally makes the guard fail", () => {
     const f = loadFiles();
     f["stages/implement.ts"] = f["stages/implement.ts"]!.replace("...(downgrade ? { model: downgrade.to } : {}),", "model: wallModel(),");
+    expect(guardViolations(f).length).toBeGreaterThan(0);
+  });
+
+  it("mutation: a same-line extra pin in plan.ts is rejected by the anchored allowlist", () => {
+    const f = loadFiles();
+    f["stages/plan.ts"] = f["stages/plan.ts"]!.replace("...(pinOpus ? { model: \"opus\" } : {}),", "...(pinOpus ? { model: \"opus\" } : {}), ...(x ? {model:\"haiku\"}:{}),");
     expect(guardViolations(f).length).toBeGreaterThan(0);
   });
 });

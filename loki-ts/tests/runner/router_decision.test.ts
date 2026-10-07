@@ -119,6 +119,22 @@ describe("per-unit routes (step 2)", () => {
   test("advisor unavailable raises haiku units to sonnet", () => {
     expect(parseUnits({ units: [u("a", "haiku")] }, false).units[0]!.executor).toBe("sonnet");
   });
+  test("B2: duplicate ids invalidate every unit with that id", () => {
+    const p = parseUnits({ units: [u("wall", "haiku"), u("wall", "sonnet"), u("x", "haiku")] }, true);
+    expect(p.units.map((x) => x.executor)).toEqual(["sonnet", "sonnet", "haiku"]);
+    expect(p.notProven.length).toBe(2);
+  });
+  test("B3: caps fail closed to sonnet with NOT PROVEN", () => {
+    const many = parseUnits({ units: Array.from({ length: 201 }, (_, i) => u(`u${i}`, "haiku")) }, true);
+    expect(many.units).toEqual([]); expect(many.notProven[0]).toContain("NOT PROVEN");
+    const long = parseUnits({ units: [u("a".repeat(65), "haiku"), u("b", "haiku", { kind: "k".repeat(65) })] }, true);
+    expect(long.units.every((x) => x.executor === "sonnet" && x.id.length <= 64 && x.kind.length <= 64)).toBe(true); expect(long.notProven.length).toBe(2);
+    const bad = parseUnits({ units: [u("__proto__", "haiku"), u("has space", "haiku")] }, true);
+    expect(bad.units.every((x) => x.executor === "sonnet")).toBe(true); expect(bad.notProven.length).toBe(2);
+  });
+  test("N1: an empty units array is NOT PROVEN", () => {
+    const p = parseUnits({ units: [] }, true); expect(p.units).toEqual([]); expect(p.notProven.length).toBe(1);
+  });
   test("code-owned failure redoes a haiku unit on sonnet; other owners never escalate", () => {
     expect(unitRedo("haiku", "code")).toBe("redo-sonnet");
     for (const o of ["harness", "env", "provider"] as const) expect(unitRedo("haiku", o)).toBe("none");

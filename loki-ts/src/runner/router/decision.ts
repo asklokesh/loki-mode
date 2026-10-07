@@ -53,7 +53,7 @@ export interface ResolveInput {
 export interface Resolved { model: string; source: ResolvedSource; reason: string }
 
 /** User bypass: these win over the router and are recorded with source "override". LOKI_ROUTER_EXECUTOR is NOT one; it is a route input that passes every floor. */
-function envOverride(env: Record<string, string | undefined>): string | null {
+export function envOverride(env: Record<string, string | undefined>): string | null {
   for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT"]) { const v = (env[k] ?? "").trim(); if (v) return v; }
   return null;
 }
@@ -111,19 +111,35 @@ export interface ParsedUnits { units: UnitRoute[]; notProven: string[] }
 /** The Wall acceptance-test unit has this fixed id; the id is a contract, not a wording match. */
 export const WALL_UNIT_ID = "wall";
 
-/** Parse `units` from route JSON (string or object). A missing or invalid unit becomes sonnet + NOT PROVEN; advisor unavailable raises haiku to sonnet. */
+export const MAX_UNITS = 200;
+export const MAX_UNIT_FIELD = 64;
+const UNIT_ID = /^[A-Za-z0-9_.-]+$/;
+const RESERVED_IDS: readonly string[] = ["__proto__", "constructor", "prototype"]; // the pattern alone admits these
+
+/** Parse `units` from route JSON (string or object). Missing, invalid, duplicate-id or over-cap units become sonnet + NOT PROVEN; advisor unavailable raises haiku to sonnet. */
 export function parseUnits(input: unknown, advisorAvailable: boolean): ParsedUnits {
   let v: unknown = input;
   if (typeof v === "string") { try { v = JSON.parse(v); } catch { return { units: [], notProven: ["NOT PROVEN (owner model): per-unit routes are not valid JSON; default sonnet"] }; } }
   const raw = typeof v === "object" && v !== null ? (v as Record<string, unknown>).units : undefined;
   if (!Array.isArray(raw)) return { units: [], notProven: ["NOT PROVEN (owner model): no per-unit routes returned; default sonnet"] };
+  if (raw.length === 0) return { units: [], notProven: ["NOT PROVEN (owner model): empty per-unit routes; default sonnet"] };
+  if (raw.length > MAX_UNITS) return { units: [], notProven: [`NOT PROVEN (owner model): ${raw.length} per-unit routes exceed the cap of ${MAX_UNITS}; default sonnet`] };
+  const idOf = (u: unknown): string | null => {
+    const id = typeof u === "object" && u !== null ? (u as Record<string, unknown>).id : undefined;
+    return typeof id === "string" && id.length <= MAX_UNIT_FIELD && UNIT_ID.test(id) && !RESERVED_IDS.includes(id) ? id : null;
+  };
+  const seen = new Map<string, number>();
+  for (const u of raw) { const id = idOf(u); if (id !== null) seen.set(id, (seen.get(id) ?? 0) + 1); }
   const units: UnitRoute[] = []; const notProven: string[] = [];
   raw.forEach((u, idx) => {
     const r = (typeof u === "object" && u !== null ? u : {}) as Record<string, unknown>;
-    const id = typeof r.id === "string" && r.id.trim() !== "" ? r.id : `unit-${idx}`;
-    const ok = typeof r.id === "string" && r.id.trim() !== "" && typeof r.kind === "string" && typeof r.executor === "string" && EXECUTORS.includes(r.executor)
+    const goodId = idOf(u);
+    const id = goodId ?? `unit-${idx}`;
+    const kindOk = typeof r.kind === "string" && r.kind.length <= MAX_UNIT_FIELD;
+    const dup = goodId !== null && (seen.get(goodId) ?? 0) > 1;
+    const ok = goodId !== null && !dup && kindOk && typeof r.executor === "string" && EXECUTORS.includes(r.executor)
       && typeof r.reason === "string" && r.reason.trim() !== "" && r.reason.length <= MAX_REASON;
-    if (!ok) { units.push({ id, kind: typeof r.kind === "string" ? r.kind : "", executor: "sonnet", reason: "invalid unit route" }); notProven.push(`NOT PROVEN (owner model): unit ${id} route invalid; sonnet`); return; }
+    if (!ok) { units.push({ id, kind: kindOk ? (r.kind as string) : "", executor: "sonnet", reason: dup ? "duplicate unit id" : "invalid unit route" }); notProven.push(`NOT PROVEN (owner model): unit ${id} route ${dup ? "has a duplicate id" : "invalid"}; sonnet`); return; }
     const raised = r.executor === "haiku" && !advisorAvailable;
     units.push({ id, kind: r.kind as string, executor: raised ? "sonnet" : (r.executor as RouteExecutor), reason: raised ? "advisor unavailable: raised to sonnet" : (r.reason as string) });
   });

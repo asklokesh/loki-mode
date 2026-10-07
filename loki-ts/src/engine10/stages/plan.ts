@@ -1,5 +1,5 @@
 // E-16: Plan (ENGINE.md 4). A fast-tier session sees up to 8 relevant files (keyword overlap with the repo map) and writes at most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it (missing/unreadable is an empty plan, never a crash).
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
 import { selectRelevantFiles } from "../relevant_files.ts";
@@ -11,11 +11,12 @@ import { taskBlock } from "../types.ts";
 import { PLAN_SCOPE_FILE } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
-import { parseUnits } from "../../runner/router/decision.ts";
+import { envOverride, parseUnits } from "../../runner/router/decision.ts";
 import { probeAdvisor } from "../../runner/router/advisor_probe.ts";
-import { SDK_BUNDLED_CLAUDE_CODE } from "../../runner/providers.ts";
+import { claudeCodeVersionForRoute } from "../../runner/providers.ts";
 
 const MAX_PLAN_LINES = 10;
+const MAX_SCOPE_BYTES = 256 * 1024;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
 
 function planOutputPath(runDir: string): string { return join(runDir, PLAN_OUTPUT_FILENAME); }
@@ -72,7 +73,9 @@ export const planStage: Stage = {
     const iterationId = `${ctx.runId}-plan`;
     // R1-10: flag off adds nothing (no probe, no model key, brief byte-identical). Advisor unavailable: Opus plans itself.
     const routed = routerEnabled(process.env);
-    const advisorAvailable = routed ? probeAdvisor(process.env, "claude", SDK_BUNDLED_CLAUDE_CODE, ctx.runDir).available : false;
+    const advisorAvailable = routed ? probeAdvisor(process.env, ctx.provider, await claudeCodeVersionForRoute(process.env), ctx.runDir).available : false;
+    // Opus plans itself only on a Claude run, and never over the user's model bypass.
+    const pinOpus = routed && !advisorAvailable && ctx.provider === "claude" && envOverride(process.env) === null;
     const session = await ctx.sessions.run({
       stage: "plan",
       brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), routed),
@@ -81,7 +84,7 @@ export const planStage: Stage = {
       limitS: planStage.limitS,
       signal,
       cwd: ctx.repoDir,
-      ...(routed && !advisorAvailable ? { model: "opus" } : {}),
+      ...(pinOpus ? { model: "opus" } : {}),
     });
 
     // E-61: a non-killed error exit fails this stage too (never silently read as an
@@ -100,9 +103,11 @@ export const planStage: Stage = {
     let route: Record<string, unknown> = {};
     if (routed) {
       const scopePath = join(ctx.runDir, PLAN_SCOPE_FILE);
-      let scope: string | null = null;
-      try { scope = existsSync(scopePath) ? readFileSync(scopePath, "utf8") : null; } catch { scope = null; }
-      const parsed = parseUnits(scope, advisorAvailable);
+      let scope: string | null = null; let tooBig = false;
+      try {
+        if (existsSync(scopePath)) { if (statSync(scopePath).size > MAX_SCOPE_BYTES) tooBig = true; else scope = readFileSync(scopePath, "utf8"); }
+      } catch { scope = null; }
+      const parsed = tooBig ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} exceeds ${MAX_SCOPE_BYTES} bytes; default sonnet`] } : parseUnits(scope, advisorAvailable);
       route = { units: parsed.units, route_not_proven: parsed.notProven };
     }
 

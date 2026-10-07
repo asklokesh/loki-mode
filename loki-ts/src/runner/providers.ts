@@ -325,6 +325,11 @@ function bundledClaudeCodeVersion(): string {
   return SDK_BUNDLED_CLAUDE_CODE;
 }
 
+// Claude Code version for advisor probing: the installed CLI when the engine10 CLI invoker is selected, else the SDK bundle.
+export async function claudeCodeVersionForRoute(env: Record<string, string | undefined>): Promise<string> {
+  return env["LOKI_E10_INVOKER"] === "cli" ? installedClaudeCodeVersion(resolveCli("LOKI_CLAUDE_CLI", "claude")) : bundledClaudeCodeVersion();
+}
+
 // Any haiku id ("haiku", "claude-haiku-5-5", ...) is a haiku executor.
 const isHaikuModel = (m: string): boolean => /haiku/i.test(m);
 
