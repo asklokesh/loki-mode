@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.2.1 (2026-10-07)
+
+Patch release. Adds per-unit plan routing and the route line on receipts and PRs (both active only when `LOKI_ROUTER` is on), fixes the router telemetry flag known issue from 11.2.0, and ships four failure-class fixes. With the router flag unset, run behavior is unchanged from 11.2.0.
+
+### Added
+- Plan-time per-unit routing (R1-10): with `LOKI_ROUTER` on, Opus assigns an executor to each plan unit. `resolveExecutor` takes an explicit env. The advisor probe is provider-aware, units are capped, duplicate ids are rejected, and an invalid unit id gets a placeholder that cannot collide with a real id. `plan-scope.json` must be a regular file.
+- Route visibility (R1-15): a route start line, a typed route block on the receipt and a per-unit route line in the real PR body. A route that was not recorded is reported as not recorded.
+
+### Fixed
+- The router telemetry gate now accepts only `1`, `true` and `on`, matching the single flag reader (R1-08c). This resolves the 11.2.0 known issue where `LOKI_ROUTER=yes` added telemetry fields while the router stayed off.
+- Verification resolves the verified tree through one resolver on both the bash and Bun proof routes, never the ambient working directory, and compares HOME canonically (FC-29).
+- Install, upgrade and first run repoint a stale Loki skill link instead of leaving it broken (FC-30).
+- The goal score in `run.sh` no longer trims the completion promise globally and detects comparator symbols the Bun route already detected. A behavioral bash/Bun parity guard covers 187 goals (RC-DOCTOR-ONE S5).
+- The impacted gate: changes under `loki-ts/src` now select the shell suites that guard them. A new `scripts/impacted-gate.sh` keeps its own run directory, fails closed and handles the bash 3.2 `wait` status (FC-31).
+
 ## v11.2.0 (2026-10-07)
 
 Minor release. Ships the model router core, off by default. With no flag set, behavior is byte-identical to 11.1.0. Set `LOKI_ROUTER=1` to opt in. Opus plans and assigns, Sonnet is the default executor, and Haiku runs a unit only when Opus assigns it and the shape history has earned it.
