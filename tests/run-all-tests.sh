@@ -1641,6 +1641,7 @@ run_test "SettingsPage has no Gemini (D44)" "$SCRIPT_DIR/test-settingspage-no-ge
 run_test "Trusted push agent config (D44)" "$SCRIPT_DIR/test-trusted-push-agent-config.sh"
 run_test "v10 guard rules (D44)" "$SCRIPT_DIR/test-v10-guard.sh"
 run_test "first-run gate assertion logic (A-02)" "$SCRIPT_DIR/test-first-run-gate.sh"
+run_test "b9 scoreboard dry-run rows and shape defaults (R1-17)" "timeout -k 10 120 $SCRIPT_DIR/test-b9-scoreboard.sh"
 run_test "real-repo acceptance gate logic (D58-GATE)" "timeout -k 10 120 $SCRIPT_DIR/test-real-repo-gate.sh"
 run_test "json schemas validate real why and status output (D48 r5)" "$SCRIPT_DIR/test-json-schemas.sh"
 run_test "Every test suite is registered in a runner (D44)" "$SCRIPT_DIR/test-registration-coverage.sh"
