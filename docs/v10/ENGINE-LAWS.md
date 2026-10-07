@@ -29,10 +29,10 @@ Each class has a law. Each law has one mechanism, plus one enforcement check tha
 - Review rule: reject any change that adds an `if` or a regex about the user's repo shape, language, framework or task wording. The fix is a prompt or schema change plus an execution check. Hardcoded tables are deleted once the model path is green on the Repo Shape Matrix. Slices: docs/v10/L0-WAVE1.md.
 
 ### L1. Never below raw
-A Loki run never gives the user less intelligence, a worse result or a meaningfully slower one than the same provider run raw.
-- The default implement model and effort are the provider's best default for the user's account (what bare `claude` would use), or higher. Cheap models are only for mechanical sub-steps (repo map summaries, PR body prose, docs).
-- Any downgrade (model, effort, context, time limit) is printed on the start line and recorded in the receipt. Nothing is silently reduced.
-- Escalation goes UP: a repeated code failure escalates to the strongest model and effort the provider offers, with the full failure output and the agent's own diagnosis. This happens before STALLED, for every provider.
+A Loki run never gives the user a worse result, a meaningfully slower one or a costlier one than the same provider run raw. "Never below raw" means OUTCOME parity (solve rate, wall time and cost on the B9 corpus and the Parity Gate). It does not mean model identity (amended by D88, 2026-10-07).
+- The default implement model and effort are chosen by the router (Opus decides, per ROUTER-1). A Haiku executor is allowed only with the Opus advisor attached or a recorded fallback (advisor unavailable, plan session pinned to Opus). The executor and advisor state is printed on the start line and recorded in the receipt. Nothing is silently reduced. `LOKI_ROUTER=0` restores the prior behavior (provider best default for the user's account, what bare `claude` would use), and per-shape Sonnet defaults keep parity on any shape where Haiku fails the Parity Gate.
+- Any downgrade (model, effort, context, time limit) is printed on the start line and recorded in the receipt, including the routed executor and the advisor status.
+- Escalation goes UP, always before STALLED, for every provider: Haiku -> Sonnet 5.5 for the rest of the run -> Opus for a repeated failure on Sonnet, with the full failure output and the agent's own diagnosis.
 - Enforcement: the Parity Gate (section 4) blocks promotion to `latest` when Loki is below raw on the corpus.
 
 ### L2. Fail closed on trust, fail open on work
@@ -79,6 +79,11 @@ Every sink reaches the same terminal state: events, receipt, PR, Control Plane, 
 ### L7. Outputs are contracts
 The PR body, receipt, `--json` envelope and CLI summary have schemas. "not recorded" when the data exists is a test failure.
 - Golden tests are built from real recorded runs (FireLater#17 included), not hand-made stubs.
+
+### H4. Self-improving routing (per repo, per shape; D88)
+- Every sealed run writes a per-repo, per-shape outcome record: executor, verdict, escalated (yes or no), cost in USD and wall time. Records are executed outcome data (L3 rung 1), never a heuristic about repo shape or task wording (L0).
+- The history is fed to the Opus routing prompt. As an evidence floor, a shape where Haiku lost 2 of the last 3 runs (failed or escalated) defaults to Sonnet 5.5 until Haiku wins again.
+- History only changes the starting executor. It never removes the advisor requirement, never disables escalation, and a missing or unreadable history yields the router default with a NOT PROVEN line (L2, fail open on work).
 
 ## 3. The learning system (how every future issue is handled at 100k feet)
 

@@ -714,3 +714,13 @@ Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14
 3. Never hold completed work. Every green slice ships on the next train, and nobody pushes during a running release.
 4. Usage readings are logged hourly in usage-readings.tsv from direct /usage readings. The pulse weekly projection is not used as a governor input while it reads 450%+.
 5. Order: 10.7.1, then 10.8.0 (UI, CPE-24 if green, else 10.8.1), then MW-1 to MW-3, which replace mods M0 to M3 per the research in autonomi-dev/research/2026-10-03-claude-mods, then EL-W1.
+
+## D88 (2026-10-07, founder directive, CoS records): Haiku 5.5 executes, Opus advises, router decides; L1 means outcome parity
+1. Founder directive, verbatim: "haiku 5.5 is released today ... it's going to cut down all costs drastically ... opus can be the advisor and haiku doing all the engineering work inside loki mode's engine ... sonnet is optional and routed by opus if haiku isn't performing well enough ... have that router perfectly ... model decides."
+2. Engine Law L1 is amended (docs/v10/ENGINE-LAWS.md): "never below raw" means OUTCOME parity (solve rate, time and cost on the B9 corpus and the Parity Gate), not model identity.
+3. A Haiku executor is allowed only with the Opus advisor attached or a recorded fallback. It is printed on the start line and in the receipt, so nothing is silently reduced.
+4. The escalation ladder goes up, always before STALLED: Haiku -> Sonnet 5.5 for the rest of the run -> Opus.
+5. H4 is defined in ENGINE-LAWS.md: self-improving per-repo, per-shape routing from recorded outcomes. Sonnet becomes the default on a shape where Haiku lost 2 of the last 3 runs.
+6. Opus makes the routing decision as schema-checked JSON (L0). The harness adds no repo-shape or task-wording logic.
+7. Rollback and parity: `LOKI_ROUTER=0` restores the prior behavior. Per-shape Sonnet defaults keep parity where Haiku fails the Parity Gate.
+8. Implementation: docs/v11/ROUTER-1.md (slices R1-01 to R1-21). This slice is R1-04.
