@@ -22698,16 +22698,24 @@ build_prompt() {
     # configuration there), or LOKI_GOAL_SCORING=0. Advisory only: it never
     # blocks a build and never rewrites the user's goal.
     local goal_sharpening_instruction=""
-    if [ -n "${COMPLETION_PROMISE:-}" ] \
+    # Bash-native trim, matching (goal ?? "").trim() in goal_score.ts: a
+    # whitespace-only promise is an absent goal, not an unmeasurable one.
+    local _goal_trim="${COMPLETION_PROMISE:-}"
+    _goal_trim="${_goal_trim#"${_goal_trim%%[![:space:]]*}"}"
+    _goal_trim="${_goal_trim%"${_goal_trim##*[![:space:]]}"}"
+    if [ -n "$_goal_trim" ] \
        && [ "${LOKI_GOAL_SCORING:-}" != "0" ] \
        && [ "${AUTONOMY_MODE:-}" != "perpetual" ] \
        && [ "${PERPETUAL_MODE:-}" != "true" ] && [ "${PERPETUAL_MODE:-}" != "1" ]; then
         local _goal_lc _goal_dims
-        _goal_lc="$(printf '%s' "$COMPLETION_PROMISE" | tr '[:upper:]' '[:lower:]')"
+        _goal_lc="$(printf '%s' "$_goal_trim" | tr '[:upper:]' '[:lower:]')"
         _goal_dims=0
         # Mirrors the four DIMENSIONS regexes in goal_score.ts, in the same order.
         printf '%s' "$_goal_lc" | grep -qE '[0-9]+(\.[0-9]+)?[[:space:]]*(%|ms|s\b|sec|second|min|minute|hour|day|kb|mb|gb|rps|qps|req|x\b|users?|items?|rows?)' && _goal_dims=$((_goal_dims + 1))
-        printf '%s' "$_goal_lc" | grep -qE '\b(under|below|less than|no more than|at most|over|above|greater than|at least|within|between|<=?|>=?)\b' && _goal_dims=$((_goal_dims + 1))
+        # The symbol alternatives (<, <=, >, >=) cannot use grep's \b: BSD and GNU
+        # disagree on it next to a non-word character. TS \b(<=?)\b means a word
+        # character on BOTH sides of the symbol, so spell that out explicitly.
+        printf '%s' "$_goal_lc" | grep -qE -e '\b(under|below|less than|no more than|at most|over|above|greater than|at least|within|between)\b' -e '[A-Za-z0-9_](<=?|>=?)[A-Za-z0-9_]' && _goal_dims=$((_goal_dims + 1))
         printf '%s' "$_goal_lc" | grep -qE '\b(latency|throughput|p50|p95|p99|uptime|error rate|conversion|coverage|score|accuracy|precision|recall|bundle size|load time|response time|memory|cpu|cost)\b' && _goal_dims=$((_goal_dims + 1))
         printf '%s' "$_goal_lc" | grep -qE '\b(tests? pass|builds? clean|endpoint|returns? [0-9]{3}|exit code|schema|migration|deploys?|renders?|compiles?)\b' && _goal_dims=$((_goal_dims + 1))
         # Only a goal with ZERO measurable dimensions is flagged (score == 0),

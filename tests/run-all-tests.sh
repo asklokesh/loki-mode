@@ -917,6 +917,7 @@ run_test "Uncertainty Escalation (2-of-3 proxies)" "$SCRIPT_DIR/test-uncertainty
 run_test "AGENTS.md Doc Walker (precedence + fallback)" "$SCRIPT_DIR/test-agents-md-walker.sh"
 run_test "AGENTS.md build_prompt Instruction (all blocks)" "$SCRIPT_DIR/test-agents-md-build-prompt.sh"
 run_test "AGENTS.md Instruction Parity (bash vs Bun)" "$SCRIPT_DIR/test-parity-agents-md.sh"
+run_test "goal_score bash vs Bun behavioral parity (RC-DOCTOR-ONE S5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-parity-goal-score.sh"
 run_test "Run-owned temp cleanup scope" "$SCRIPT_DIR/test-safe-cleanup-scope-188.sh"
 
 # F52: DOC_SCOPE instruction scales documentation to detected project complexity
