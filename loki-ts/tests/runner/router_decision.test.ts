@@ -152,9 +152,13 @@ describe("B1: LOKI_ROUTER_EXECUTOR is a route input, not a bypass", () => {
       expect(r).toMatchObject({ model: "claude-haiku-5-5", source: "override" });
     }
   });
-  test("env defaults to process.env", () => {
+  test("env is explicit: process.env is never read", () => {
     const prev = process.env.LOKI_MODEL_OVERRIDE; process.env.LOKI_MODEL_OVERRIDE = "opus";
-    try { expect(resolveExecutor({ route: defaultRoute(true), advisorAvailable: true, priorDefaultModel: "x" }).source).toBe("override"); }
-    finally { if (prev === undefined) delete process.env.LOKI_MODEL_OVERRIDE; else process.env.LOKI_MODEL_OVERRIDE = prev; }
+    try {
+      const noEnv = { route: defaultRoute(true), advisorAvailable: true, priorDefaultModel: "x" } as unknown as Parameters<typeof resolveExecutor>[0];
+      expect(resolveExecutor(noEnv).source).not.toBe("override"); // a missing env is empty, never process.env
+      expect(resolveExecutor({ ...noEnv, env: {} }).source).not.toBe("override");
+      expect(resolveExecutor({ route: defaultRoute(true), advisorAvailable: true, priorDefaultModel: "x", env: { LOKI_MODEL_OVERRIDE: "opus" } }).source).toBe("override");
+    } finally { if (prev === undefined) delete process.env.LOKI_MODEL_OVERRIDE; else process.env.LOKI_MODEL_OVERRIDE = prev; }
   });
 });

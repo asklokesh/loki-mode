@@ -98,7 +98,7 @@ describe("L1 behavior", () => {
  * Static guard. Returns violations for a set of {path: source}. Rules:
  * 1. cascadeEnabled must be an opt-in: defined with a ["1", "on", "true"] word list and never negated.
  * 2. A session model pin (`model:` inside a sessions.run options object) may only be `downgrade.to`,
- *    `pinnedModel`, or `wallModel()` in the check-only files wall.ts and already_done.ts.
+ *    `pinnedModel`, `wallModel()` in the check-only files wall.ts and already_done.ts, or plan.ts's Opus-only pin (R1-10).
  * 3. implement.ts and fix.ts must obtain their pin only through cascadeDowngrade / escalationModel.
  */
 export function guardViolations(files: Record<string, string>): string[] {
@@ -108,6 +108,7 @@ export function guardViolations(files: Record<string, string>): string[] {
   const allowed: Record<string, RegExp> = {
     "stages/implement.ts": /^downgrade \? \{ model: downgrade\.to \}/,
     "stages/fix.ts": /^pinnedModel \? \{ model: pinnedModel \}/,
+    "stages/plan.ts": /^routed && !advisorAvailable \? \{ model: "opus" \} : \{\}\)/, // R1-10: only ever Opus, never weaker
     "stages/wall.ts": /^wallModel\(\),/,
     "already_done.ts": /^wallModel\(\),/,
   };

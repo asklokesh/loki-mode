@@ -47,7 +47,8 @@ export interface ResolveInput {
   historyFloor?: "haiku" | "sonnet";
   /** The exact model LOKI_ROUTER=0 would use for this stage. */
   priorDefaultModel: string;
-  env?: Record<string, string | undefined>;
+  /** Explicit env; callers pass it (no process.env default, so the function stays pure). */
+  env: Record<string, string | undefined>;
 }
 export interface Resolved { model: string; source: ResolvedSource; reason: string }
 
@@ -59,7 +60,7 @@ function envOverride(env: Record<string, string | undefined>): string | null {
 
 /** Strongest of: route, shape default, history floor, no-advisor floor. Evidence rungs never lower a model; never Haiku without the advisor. */
 export function resolveExecutor(i: ResolveInput): Resolved {
-  const env = i.env ?? process.env;
+  const env = i.env ?? {};
   const ov = envOverride(env);
   if (ov) return { model: ov, source: "override", reason: "explicit model override" };
   let best: Resolved = { model: i.route.executor, source: i.route.source, reason: i.route.reason };

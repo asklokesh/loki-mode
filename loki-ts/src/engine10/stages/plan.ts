@@ -10,6 +10,10 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { taskBlock } from "../types.ts";
 import { PLAN_SCOPE_FILE } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
+import { routerEnabled } from "../../runner/router/flag.ts";
+import { parseUnits } from "../../runner/router/decision.ts";
+import { probeAdvisor } from "../../runner/router/advisor_probe.ts";
+import { SDK_BUNDLED_CLAUDE_CODE } from "../../runner/providers.ts";
 
 const MAX_PLAN_LINES = 10;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
@@ -24,7 +28,10 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
   return lines.slice(0, max).join("\n");
 }
 
-export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE)): string {
+// R1-10: Opus is the router. The model picks each unit's executor; the harness only validates the schema (L0).
+const ROUTER_UNITS_INSTRUCTION = 'In the same JSON file (<scope>) also add "units": [{"id":"<unit id>","kind":"<short kind>","executor":"sonnet"|"haiku","reason":"<=200 chars"}], one entry per work unit of your plan. The default executor is sonnet. Assign haiku to a unit only when you judge it safe for that unit and say why in reason. Give the Wall acceptance-test unit the id "wall".';
+
+export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false): string {
   return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
@@ -33,6 +40,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
       : "No relevant files were found by keyword overlap; use your own judgement.",
     `Write a plan of at most ${MAX_PLAN_LINES} short lines, no other prose, to this exact file path: ${outputPath}`,
     `Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: ${scopePath}`,
+    ...(router ? [ROUTER_UNITS_INSTRUCTION.replace("<scope>", scopePath)] : []),
     "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n"));
 }
@@ -62,14 +70,18 @@ export const planStage: Stage = {
     const outputPath = planOutputPath(ctx.runDir);
 
     const iterationId = `${ctx.runId}-plan`;
+    // R1-10: flag off adds nothing (no probe, no model key, brief byte-identical). Advisor unavailable: Opus plans itself.
+    const routed = routerEnabled(process.env);
+    const advisorAvailable = routed ? probeAdvisor(process.env, "claude", SDK_BUNDLED_CLAUDE_CODE, ctx.runDir).available : false;
     const session = await ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE)),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), routed),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,
       signal,
       cwd: ctx.repoDir,
+      ...(routed && !advisorAvailable ? { model: "opus" } : {}),
     });
 
     // E-61: a non-killed error exit fails this stage too (never silently read as an
@@ -85,6 +97,14 @@ export const planStage: Stage = {
 
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
     const plan = truncatePlan(rawPlan);
+    let route: Record<string, unknown> = {};
+    if (routed) {
+      const scopePath = join(ctx.runDir, PLAN_SCOPE_FILE);
+      let scope: string | null = null;
+      try { scope = existsSync(scopePath) ? readFileSync(scopePath, "utf8") : null; } catch { scope = null; }
+      const parsed = parseUnits(scope, advisorAvailable);
+      route = { units: parsed.units, route_not_proven: parsed.notProven };
+    }
 
     return {
       status: "completed",
@@ -93,6 +113,7 @@ export const planStage: Stage = {
         relevant_files: relevantFiles,
         iteration_ids: [iterationId],
         duration_s: session.durationS,
+        ...route,
       },
     };
   },
