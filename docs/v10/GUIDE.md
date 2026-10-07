@@ -233,6 +233,77 @@ NOT PROVEN line adds the literal entry `kill blocking not enforced`
 (`loki-ts/src/engine10/stages/seal.ts`). opencode is not one of engine10's
 provider names (`claude`, `codex`, `cline`, `aider`); it is not supported.
 
+## Model routing
+
+Model routing picks which Claude model does each stage of a run. It is OFF
+by default in 11.2.0. Set `LOKI_ROUTER=1` to opt in. `LOKI_ROUTER=0` is the
+explicit opt-out and keeps the exact pre-router model behavior, pins
+included (guarded by the opt-out golden test in
+`loki-ts/tests/engine10/router_optout_golden.test.ts`). Explicit
+`LOKI_MODEL_OVERRIDE` and `LOKI_CLAUDE_MODEL_DEVELOPMENT` still win and
+bypass the router. The other knobs are `LOKI_ROUTER_EXECUTOR` (default
+haiku), `LOKI_ROUTER_ESCALATE` (default sonnet) and `LOKI_ROUTER_ADVISOR`
+(default opus; `off` disables the advisor). The router engine itself lands in
+11.2.0; the pieces below marked "shipped in 11.1.0" are already in the code.
+
+### Executor and advisor
+
+With the router on, the executor is Haiku 5.5 (`claude-haiku-5-5`) and an
+Opus advisor is attached to it. The advisor needs Claude Code 2.1.293 or
+later, which the Agent SDK 0.3.293 bundles (shipped in 11.1.0). If the
+advisor is unavailable, the executor is fixed at Sonnet 5.5, and the run is
+never failed for it. The advisor is unavailable when the provider is not
+claude, when `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` or
+`CLAUDE_CODE_USE_FOUNDRY` is set, when `ANTHROPIC_BASE_URL` points at a
+non-Anthropic host, when Claude Code is older than 2.1.293, when
+`LOKI_ROUTER_ADVISOR=off`, or after a session reports an advisor tool error
+(remembered for the rest of the run). The probe is
+`loki-ts/src/runner/router/advisor_probe.ts` (shipped in 11.1.0).
+
+### Escalation
+
+Escalation is gated on evidence and only moves up: haiku, then sonnet, then
+opus. A repeated code-owned failure, an advisor escalation marker, or a spec
+conflict, stall or implement limit on Haiku moves the rest of the run to
+Sonnet, at most once per run. A repeated failure on Sonnet gets a fix round
+on Opus before the run can stall. A failure owned by the harness, the
+environment or the provider causes no transition and is reported as NOT
+PROVEN.
+
+### Per-repo-shape outcome memory
+
+Loki remembers how each kind of repo went. The shape key is the Project
+Model `workspaceKind` plus the sorted runners, for example
+`multi-root:pytest+vitest`; a package with no runner contributes `none`.
+Outcomes are stored in the per-repo cache. The haiku floor moves a shape to
+Sonnet after 2 code-owned losses in the last 3 Haiku runs. Only code-owned
+FAILs and escalations count; harness, environment and provider errors and
+NOT PROVEN outcomes never do. A missing or corrupt history file is a cold
+read, never a crash (shipped in 11.1.0, `loki-ts/src/runner/router/history.ts`).
+The shipped `loki-ts/data/router-shape-defaults.json` can only move a shape
+up and is empty in 11.1.0.
+
+### Pricing
+
+Haiku 5.5 is priced on its exact model id: $0.10 in and $0.50 out per MTok
+for prompts up to 100K tokens, and $0.50 in and $2.50 out over 100K, with
+the cache rates in `loki-ts/data/model-pricing.json`. The `haiku` family
+alias row in that file is still the Haiku 4.5 price of $1 and $5, because
+the exact-id key is matched first (`loki-ts/src/runner/budget.ts`).
+
+### What you see
+
+In 11.2.0 the receipt carries a `route` block (initial decision, each
+escalation with its trigger, advisor availability and the share of requests
+above 100K), and `loki doctor` prints an advisor line. The executor and any
+fallback reason are also printed on the start line.
+
+### Comparing models
+
+`scripts/b9-scoreboard.sh` is the comparison harness for routed against raw
+runs on the B9 corpus, and it can emit shape defaults from those runs
+(lands in 11.2.0).
+
 ## After the flip
 
 D48 made v10 the default for `loki "<task>"`, `loki owner/repo#N` and
