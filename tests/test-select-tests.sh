@@ -243,6 +243,14 @@ out="$(sel 'loki-ts/src/runner/council.ts')"
 expect_contains "R4 bun_test match" "$out" "$(printf 'R4\tbun_test\tloki-ts/tests/runner/council.test.ts')"
 expect_contains "R4 typecheck" "$out" "$(printf 'R4\tbun_typecheck\tloki-ts')"
 
+# R4 (FC-31): a changed loki-ts/src file must also select the SHELL suites that
+# guard it, by full path or by the command name (loki-ts/src/commands/X.ts is
+# run as "loki X"). Without this, a doctor.ts slice never ran
+# test-doctor-blocker-parity.sh and main went red in Tier B.
+out="$(sel 'loki-ts/src/commands/doctor.ts')"
+expect_contains "FC-31 doctor.ts selects doctor parity shell suite" "$out" "$(printf 'R3\tshell_test\ttests/test-doctor-blocker-parity.sh')"
+expect_contains "FC-31 doctor.ts keeps bun test" "$out" "$(printf 'R4\tbun_test\tloki-ts/tests/commands/doctor.test.ts')"
+
 # R5: changed dashboard/ or web-app/ runs their python + node tests.
 # (dashboard/*.py source files aren't themselves pytest-discoverable; the
 # actual suite lives under tests/dashboard.)

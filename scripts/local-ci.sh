@@ -43,6 +43,12 @@ export LOKI_CONTROL="${LOKI_CONTROL:-0}" # tests never ship to a developer's liv
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 2
 
+# FC-31: `local-ci.sh --impacted <base>` runs only the shell suites the diff can
+# affect (one shared mapping: scripts/select-tests.sh). A slice gate uses this.
+if [ "${1:-}" = "--impacted" ]; then
+  exec bash "$REPO_ROOT/scripts/impacted-gate.sh" "${2:-}" "${3:-HEAD}"
+fi
+
 # FC-07 / D86: the whole gate runs under a run-owned hermetic HOME (real HOME is
 # kept as LOKI_REAL_HOME; toolchain homes are pinned). Not LOKI_RUN_TMP: that
 # name stays free for every suite's own loki_run_tmp_create (E-154).

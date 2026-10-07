@@ -381,6 +381,21 @@ for f in "${CHANGED[@]}"; do
                 emit R4 bun_typecheck "loki-ts"
                 BUN_TYPECHECK_EMITTED=1
             fi
+            # FC-31: shell suites guard loki-ts/src files too. Select any shell
+            # suite that names the file's full path, or (for a command module,
+            # loki-ts/src/commands/X.ts) that runs it as "loki X". A bun-only
+            # selection let a doctor.ts slice skip tests/test-doctor-blocker-
+            # parity.sh and go red in Tier B.
+            grep_and_emit R3 shell_test "$f" "$(all_test_files)"
+            case "$rel" in
+                commands/*.ts)
+                    cmd="${stem##*/}"
+                    case "$cmd" in
+                        *[!A-Za-z0-9_-]* | "") ;;
+                        *) grep_word_and_emit R3 shell_test "loki\"? +${cmd}" "$(all_test_files)" ;;
+                    esac
+                    ;;
+            esac
             continue
             ;;
     esac
