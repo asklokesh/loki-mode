@@ -52,6 +52,12 @@ class TenantIsolationTests(unittest.TestCase):
         # module-level ENTERPRISE_AUTH_ENABLED flag reflects it; if auth was
         # already imported by another test, we patch the flag directly below.
         os.environ["LOKI_ENTERPRISE_AUTH"] = "true"
+        # Starlette TestClient sends Host: testserver, which the dashboard Host
+        # allowlist refuses by design. tests/dashboard/conftest.py allows it
+        # under pytest only; set it here so `python3 -m unittest` (local-ci)
+        # behaves the same.
+        cls._orig_allowed_hosts = os.environ.get("LOKI_DASHBOARD_ALLOWED_HOSTS")
+        os.environ["LOKI_DASHBOARD_ALLOWED_HOSTS"] = "testserver"
 
         from fastapi.testclient import TestClient
         from sqlalchemy.ext.asyncio import (
@@ -128,6 +134,10 @@ class TenantIsolationTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        if cls._orig_allowed_hosts is None:
+            os.environ.pop("LOKI_DASHBOARD_ALLOWED_HOSTS", None)
+        else:
+            os.environ["LOKI_DASHBOARD_ALLOWED_HOSTS"] = cls._orig_allowed_hosts
         cls.app.dependency_overrides.clear()
         cls.auth.ENTERPRISE_AUTH_ENABLED = cls._orig_enterprise
         cls.auth.OIDC_ENABLED = cls._orig_oidc
@@ -159,6 +169,15 @@ class TenantIsolationTests(unittest.TestCase):
 
     def tearDown(self):
         self._clear_token()
+
+    def test_unlisted_host_still_refused(self):
+        """The Host allowlist stays active: an unlisted Host gets 403."""
+        self._override_token(["read", self._tenant_scope(self.tenant_a_id)])
+        client = self.TestClient(self.app, base_url="http://evil.example",
+                                 raise_server_exceptions=False)
+        resp = client.get(f"/api/projects/{self.project_a_id}")
+        self.assertEqual(resp.status_code, 403, resp.text)
+        self.assertIn("host not allowed", resp.text)
 
     # -- server.py project endpoints --------------------------------------
 
