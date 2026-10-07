@@ -18,6 +18,9 @@ EXPECTED_ALLOWLIST = {
     "loki_quality_report", "loki_code_search", "mem_search", "mem_timeline",
     "mem_get", "loki_get_hotspots", "loki_get_co_changes",
     "loki_get_doc_coverage", "loki_findings", "loki_learnings",
+    # CP data tools (CP-ASK slice 2)
+    "cp_runs_search", "cp_run_get", "cp_run_events", "cp_run_artifact",
+    "cp_runs_compare", "cp_stats", "cp_cost", "cp_repos_list",
 }
 
 # Tools that write, spawn processes, or are otherwise not on the allowlist.
@@ -104,7 +107,7 @@ class ReadOnlyTests(unittest.TestCase):
         full = _tools(False)
         self.assertTrue(EXPECTED_ALLOWLIST <= full)
         self.assertTrue(EXCLUDED_TOOLS <= full)
-        self.assertGreaterEqual(len(full), 39)
+        self.assertGreaterEqual(len(full), 47)
 
     def test_resources_and_prompts_are_a_known_list(self):
         listing = _listing(True)
@@ -119,8 +122,8 @@ class ReadOnlyTests(unittest.TestCase):
             self.assertEqual(_main_tools([], value), EXPECTED_ALLOWLIST, value)
 
     def test_main_default_is_full_set(self):
-        self.assertGreaterEqual(len(_main_tools([])), 39)
-        self.assertGreaterEqual(len(_main_tools([], "0")), 39)
+        self.assertGreaterEqual(len(_main_tools([])), 47)
+        self.assertGreaterEqual(len(_main_tools([], "0")), 47)
 
 
 def _git(cwd, *args):

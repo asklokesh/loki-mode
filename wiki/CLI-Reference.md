@@ -177,7 +177,7 @@ loki demo --dry-run   # estimate only, never spends
 
 ### `loki mcp` (v7.30.0)
 
-Launch the Loki Mode MCP server (39 tools) over stdio from any project
+Launch the Loki Mode MCP server (47 tools) over stdio from any project
 directory. Checks python3 and the MCP SDK; when dependencies are missing it
 offers a consent-gated bootstrap into the project-local `.loki/mcp-venv`
 (interactive terminals only: non-TTY and CI runs never install, printing the

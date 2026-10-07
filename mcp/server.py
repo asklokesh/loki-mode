@@ -2910,6 +2910,18 @@ except Exception as _magic_err:
 
 
 # ============================================================
+# CP DATA TOOLS (CP-ASK slice 2, read-only, GET against the Control Plane)
+# ============================================================
+
+try:
+    from mcp.cp_tools import register_cp_tools
+    register_cp_tools(mcp)
+except Exception as _cp_err:
+    import sys as _sys
+    print(f"[warn] cp_tools registration skipped: {_cp_err}", file=_sys.stderr)
+
+
+# ============================================================
 # HTTP TRANSPORT (loopback bind + optional bearer-token auth)
 # ============================================================
 
@@ -3026,6 +3038,15 @@ READ_ONLY_TOOL_ALLOWLIST = frozenset({
     "loki_get_doc_coverage",
     "loki_findings",
     "loki_learnings",
+    # CP data tools (CP-ASK slice 2): GET-only over the Control Plane read API.
+    "cp_runs_search",
+    "cp_run_get",
+    "cp_run_events",
+    "cp_run_artifact",
+    "cp_runs_compare",
+    "cp_stats",
+    "cp_cost",
+    "cp_repos_list",
 })
 
 

@@ -17,7 +17,7 @@ CLI reference: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md) (generated from th
 
 Loki Mode is a free, source-available autonomous coding agent by [Autonomi](https://www.autonomi.dev/). Hand it a PRD, GitHub issue, OpenAPI doc or one-line brief. It derives a delivery contract (the acceptance criteria), builds against it, and ends with a signed Evidence Receipt that states what was proven and what was not. If the contract cannot be derived, it stops and asks one question instead of guessing.
 
-Before a build counts as done, a review council selects reviewers from a specialist pool (`agents/types.json`, scored by `run.sh:FOCUS_KEYWORDS`). The bundled MCP server exposes 39 tools over stdio (`mcp/server.py`), including `loki_v10_run`, `loki_v10_status` and `loki_v10_verify` to start a Loki 10 run in the background, read its phase, verdict and cost, and verify its receipt (`BLOCKED` runs report their question). Add it with `claude mcp add loki-mode -- python3 -m mcp.server` from the install directory.
+Before a build counts as done, a review council selects reviewers from a specialist pool (`agents/types.json`, scored by `run.sh:FOCUS_KEYWORDS`). The bundled MCP server exposes 47 tools over stdio (`mcp/server.py`), including `loki_v10_run`, `loki_v10_status` and `loki_v10_verify` to start a Loki 10 run in the background, read its phase, verdict and cost, and verify its receipt (`BLOCKED` runs report their question). Add it with `claude mcp add loki-mode -- python3 -m mcp.server` from the install directory.
 
 ## Contents
 

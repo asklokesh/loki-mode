@@ -57,10 +57,18 @@ MAIN_PID=$$
 trap cleanup EXIT
 
 # --- 0. THE FROZEN CONTRACT -------------------------------------------------
-# The 36 published tool names, sorted. Reviewed constant -- see header.
+# The 47 published tool names, sorted. Reviewed constant -- see header.
 # A tool added or renamed in mcp/*.py without an accompanying reviewed edit
 # here is contract drift and fails below, by name, on both sides.
 CONTRACT="$(cat <<'CONTRACT_EOF'
+cp_cost
+cp_repos_list
+cp_run_artifact
+cp_run_events
+cp_run_get
+cp_runs_compare
+cp_runs_search
+cp_stats
 loki_agent_metrics
 loki_checkpoint_restore
 loki_code_search
@@ -149,6 +157,17 @@ for node in ast.walk(mtree):
 # managed: registered unconditionally inside register_managed_tools
 gtree = ast.parse(open("mcp/managed_tools.py").read())
 for node in ast.walk(gtree):
+    if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+        continue
+    for dec in node.decorator_list:
+        f = dec.func if isinstance(dec, ast.Call) else dec
+        if isinstance(f, ast.Attribute) and f.attr == "tool":
+            names.append(node.name)
+            break
+
+# cp: CP data tools (CP-ASK slice 2), registered inside register_cp_tools
+ctree = ast.parse(open("mcp/cp_tools.py").read())
+for node in ast.walk(ctree):
     if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
         continue
     for dec in node.decorator_list:

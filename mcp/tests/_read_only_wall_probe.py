@@ -71,6 +71,16 @@ CALLS = {
     "loki_get_doc_coverage": {},
     "loki_findings": {},
     "loki_learnings": {},
+    # CP data tools (CP-ASK slice 2): unconfigured here, so they must refuse
+    # without opening a socket or touching disk.
+    "cp_runs_search": {},
+    "cp_run_get": {"source_id": "s", "run_id": "r"},
+    "cp_run_events": {"source_id": "s", "run_id": "r"},
+    "cp_run_artifact": {"source_id": "s", "run_id": "r", "name": "report.md"},
+    "cp_runs_compare": {"source_a": "s", "run_a": "r", "source_b": "s", "run_b": "q"},
+    "cp_stats": {},
+    "cp_cost": {},
+    "cp_repos_list": {},
 }
 RESOURCES = ["loki://state/continuity", "loki://memory/index",
              "loki://queue/pending"]

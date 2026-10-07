@@ -1,0 +1,1 @@
+{"runs":[{"source_id":"src-a","run_id":"e10-aaa111","verdict":"VERIFIED","cost_usd":0.42},{"source_id":"src-b","run_id":"e10-bbb222","verdict":"FAILED","cost_usd":1.25}],"total":2,"next_cursor":null}

@@ -29,7 +29,7 @@ Loki Mode is a free, source-available autonomous coding agent that:
 - **Executes complete SDLC phases** - From requirements to deployment
 - **Manages multiple AI agents** - Parallel execution across git worktrees
 - **Provider-agnostic** - runs on Claude Code (Tier 1), Cline (Tier 2), Codex / Aider (Tier 3 degraded), and opencode (model-agnostic); no vendor lock-in. Gemini CLI deprecated v7.5.18.
-- **MCP server** - 39 tools (38 always available; `loki_memory_redact` is gated on `LOKI_MANAGED_AGENTS`/`LOKI_MANAGED_MEMORY`) plus 3 resources and 2 prompts for integration with MCP-aware clients. Launch with `loki mcp`.
+- **MCP server** - 47 tools (46 always available; `loki_memory_redact` is gated on `LOKI_MANAGED_AGENTS`/`LOKI_MANAGED_MEMORY`) plus 3 resources and 2 prompts for integration with MCP-aware clients. Launch with `loki mcp`.
 - **Learns across projects** - Cross-project memory improves over time
 - **Provides enterprise controls** - Authentication, audit logging, sandboxing
 
