@@ -932,7 +932,6 @@ _lci_env_setup() {
   for spec in \
     "loki-ts|bun|bun.lock|bun install --frozen-lockfile" \
     "web-app|npm|package-lock.json|npm ci" \
-    "dashboard-ui|npm|package-lock.json|npm ci" \
     "dashboard/client|npm|package-lock.json|npm ci"; do
     IFS='|' read -r dir tool lock cmd <<<"$spec"
     [ -f "$dir/package.json" ] && [ -f "$dir/$lock" ] || continue
