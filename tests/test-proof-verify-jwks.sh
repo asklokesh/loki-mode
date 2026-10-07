@@ -918,6 +918,7 @@ if command -v jq >/dev/null 2>&1; then
   # Render the CONSUMER, not only the helper: a signed receipt whose attestation
   # could not be checked must read NOT CHECKED, never UNSIGNED (which would
   # mislabel a signed build and point at the wrong fix) and never TAMPERED.
+  sed -n '/^loki_verify_root() {/,/^}/p' "$LOKI_BIN" >>"$W/remote.sh"
   sed -n '/^loki_remote_verify_receipt() {/,/^}/p' "$LOKI_BIN" >>"$W/remote.sh"
   _render() {
     _LOKI_SCRIPT_DIR="$REPO_ROOT/autonomy" TARGET_DIR="$R" bash -c "

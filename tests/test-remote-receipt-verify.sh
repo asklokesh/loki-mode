@@ -54,6 +54,7 @@ trap 'rm -rf "$TMP"' EXIT
 # flags eval as a HIGH finding (see tests/test-verify-runner-selection.sh).
 sed -n '/^loki_remote_gpg_status()/,/^}/p' "$SRC" > "$TMP/fn.sh"
 sed -n '/^loki_remote_verify_receipt()/,/^}/p' "$SRC" >> "$TMP/fn.sh"
+sed -n '/^loki_verify_root()/,/^}/p' "$SRC" >> "$TMP/fn.sh"
 for _f in loki_remote_gpg_status loki_remote_verify_receipt; do
   # A helper that failed to extract would silently return empty and the
   # verdict would fall through to the wrong branch, so assert both landed

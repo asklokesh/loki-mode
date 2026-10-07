@@ -1150,6 +1150,34 @@ except Exception:
 PY
 }
 
+# loki_verify_root: the ONE place that decides which tree the receipt verifier
+# hashes (FC-29). The verifier walks and digests the directory it is given, so
+# an ambient cwd (a huge checkout, $HOME, a non-project directory) must never be
+# the default. Order: explicit TARGET_DIR; the parent of an absolute LOKI_DIR;
+# the cwd if it holds .loki; the repo top-level if it holds .loki. Anything else
+# prints one plain sentence on stderr and returns 1 (callers report NOT CHECKED).
+loki_verify_root() {
+    local d="${TARGET_DIR:-}" top=""
+    if [ -z "$d" ]; then
+        case "${LOKI_DIR:-}" in
+            /*) [ -d "$LOKI_DIR" ] && d="$(dirname "$LOKI_DIR")" ;;
+        esac
+    fi
+    if [ -z "$d" ]; then
+        if [ -d "$PWD/.loki" ]; then
+            d="$PWD"
+        else
+            top="$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null || true)"
+            if [ -n "$top" ] && [ -d "$top/.loki" ]; then d="$top"; fi
+        fi
+    fi
+    if [ -z "$d" ] || [ "$d" = "/" ] || [ "$d" = "${HOME:-}" ]; then
+        echo "Cannot tell which project tree to verify against: set TARGET_DIR or run from a project directory that contains .loki." >&2
+        return 1
+    fi
+    printf '%s\n' "$d"
+}
+
 loki_remote_verify_receipt() {
     local pj="$1"
     local verifier="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
@@ -1181,7 +1209,9 @@ loki_remote_verify_receipt() {
     # empty for a local receipt, which simply means no attestation is checked.
     local _attest_url="${2:-}" _attest=""
     _attest="$(loki_remote_attestation_status "$pj" "$_attest_url")"
-    out="$(python3 -E "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null)"
+    local _vroot
+    _vroot="$(loki_verify_root)" || { echo "  NOT VERIFIED: no project tree to check against" >&2; return 0; }
+    out="$(python3 -E "$verifier" "$pj" "$_vroot" 2>/dev/null)"
     hash_ok="$(printf '%s' "$out" | jq -r '.hash_ok // false' 2>/dev/null)"
     gpg_ok="$(printf '%s' "$out" | jq -r '.gpg_ok | tostring' 2>/dev/null)"
 
@@ -9547,8 +9577,9 @@ _deploy_receipt_verdict() {
         printf '%s' "UNCHECKED"; return 0
     fi
 
-    local out hash_ok
-    out="$(python3 -E "$verifier" "$pj" "${TARGET_DIR:-.}" 2>/dev/null || true)"
+    local out hash_ok _vroot
+    _vroot="$(loki_verify_root 2>/dev/null)" || { printf '%s' "UNCHECKED"; return 0; }
+    out="$(python3 -E "$verifier" "$pj" "$_vroot" 2>/dev/null || true)"
 
     # "The verifier did not RUN" and "the verifier says the hash is bad" are
     # different facts and must not collapse. If they do, a broken python3
@@ -37656,7 +37687,11 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
                 echo -e "${YELLOW}NOT CHECKED${NC}: python3 is not on PATH, so the verifier could not run (exit 2)." >&2
                 exit 2
             fi
-            local _pv_rc=0 _pv_out="" _pv_base_rc=0
+            local _pv_rc=0 _pv_out="" _pv_base_rc=0 _pv_root=""
+            _pv_root="$(loki_verify_root)" || {
+                echo -e "${YELLOW}NOT CHECKED${NC}: no project tree to verify against (exit 2)." >&2
+                exit 2
+            }
             # Captured, not printed directly, so that --jwks (below) can patch
             # it: BACKLOG 49 -- when --jwks later downgrades _pv_rc to 1
             # (ABSENT) or 2 (NOT CHECKED), this output's own "ok: true"/
@@ -37666,9 +37701,9 @@ print(json.dumps(json.load(open(os.environ['LOKI_PROOF_JSON'])), indent=2))
             # route (proof.ts verifyProof) -- ok already agrees with the exit
             # code there, so there is nothing to patch.
             if [ "$_pv_human" -eq 1 ]; then
-                _pv_out="$(python3 -E "$verifier" --human "$pj" "${TARGET_DIR:-.}")" || _pv_rc=$?
+                _pv_out="$(python3 -E "$verifier" --human "$pj" "$_pv_root")" || _pv_rc=$?
             else
-                _pv_out="$(python3 -E "$verifier" "$pj" "${TARGET_DIR:-.}")" || _pv_rc=$?
+                _pv_out="$(python3 -E "$verifier" "$pj" "$_pv_root")" || _pv_rc=$?
             fi
             _pv_base_rc="$_pv_rc"
 
