@@ -85,7 +85,7 @@ The PR body, receipt, `--json` envelope and CLI summary have schemas. "not recor
 An H-law is a harness learning rule: it lets recorded outcome evidence improve a decision over time, and it never overrides L0 to L7.
 - Every sealed run writes a per-repo, per-shape outcome record: executor, verdict, escalated (yes or no), cost in USD and wall time. Records are executed outcome data (L3 rung 1), never a heuristic about repo shape or task wording (L0).
 - The shape key comes from the Project Model (workspaceKind plus the package runner labels, L4), never from a file pattern or regex (L0). It is used only as a lookup key into executed outcome evidence (the per-repo history, or the shipped router-shape-defaults.json seeded from B9 rows), and it may only move the executor up, never down.
-- The history is fed to the Opus routing prompt. As an evidence floor, a shape where Haiku lost 2 of the last 3 runs (a code-owned FAIL or an escalation; harness, env and provider ERRORs and NOT PROVEN outcomes do not count, L5) defaults to Sonnet 5.5 until a B9 row or a later Opus-route trial shows Haiku at parity on that shape.
+- The history is fed to the Opus routing prompt. As an evidence floor, a shape where Haiku lost 2 of the last 3 runs (a code-owned FAIL or an escalation; harness, env and provider ERRORs and NOT PROVEN outcomes do not count, L5) defaults to Sonnet 5.5 until a B9 row shows Haiku at parity on that shape.
 - History only changes the starting executor. It never removes the advisor requirement, never disables escalation, and a missing or unreadable history yields the router default with a NOT PROVEN line (L2, fail open on work).
 
 ## 3. The learning system (how every future issue is handled at 100k feet)
