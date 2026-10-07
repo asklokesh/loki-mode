@@ -138,7 +138,7 @@ def _out(client: CpClient, value: Any) -> Any:
 
 
 def _ids_ok(*ids: Any) -> bool:
-    return all(isinstance(i, str) and _ID.match(i) and ".." not in i for i in ids)
+    return all(isinstance(i, str) and _ID.fullmatch(i) and ".." not in i for i in ids)
 
 
 def _iso_ok(s: Optional[str]) -> bool:
@@ -155,9 +155,9 @@ def runs_search(client: CpClient, verdict: str = "", repo: str = "", since: str 
         return _err("since and until must be ISO dates")
     if not _int_ok(limit, 1, 200):
         return _err("limit must be 1..200")
-    if verdict and not _VERDICT.match(verdict):
+    if verdict and not _VERDICT.fullmatch(verdict):
         return _err("invalid verdict")
-    if cursor and not re.match(r"^\d{1,9}$", cursor):
+    if cursor and not re.fullmatch(r"\d{1,9}", cursor):
         return _err("invalid cursor")
     q = {"verdict": verdict, "repo": repo[:200], "since": since, "until": until,
          "group_id": group_id[:128], "cursor": cursor, "limit": str(limit)}
@@ -187,7 +187,7 @@ def run_artifact(client: CpClient, source_id: str, run_id: str, name: str) -> di
     """One allowlisted artifact. Refused before any request when it is off the allowlist."""
     if not _ids_ok(source_id, run_id):
         return _err("invalid source_id or run_id")
-    if not isinstance(name, str) or not _ARTIFACT.match(name):
+    if not isinstance(name, str) or not _ARTIFACT.fullmatch(name):
         return _err("artifact is not on the allowlist")
     if name.endswith(".png"):
         return _err("binary artifacts are not readable through this tool")
@@ -225,7 +225,7 @@ def stats(client: CpClient, since: str = "") -> dict:
 
 
 def cost(client: CpClient, group: str = "day", since: str = "") -> dict:
-    if not _GROUP.match(group or ""):
+    if not _GROUP.fullmatch(group or ""):
         return _err("invalid group")
     if not _iso_ok(since):
         return _err("since must be an ISO date")

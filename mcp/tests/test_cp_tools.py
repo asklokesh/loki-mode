@@ -105,6 +105,14 @@ class RefusalTests(unittest.TestCase):
         self.assertEqual(r["content"], "# Report\n\nAll tests passed.\n")
         self.assertEqual(len(t.calls), 1)
 
+    def test_trailing_newline_is_refused_without_a_request(self):
+        c, t = _client()
+        self.assertIn("error", cp_tools.run_artifact(c, "src-a", "e10-aaa111", "report.md\n"))
+        self.assertIn("error", cp_tools.run_artifact(c, "src-a\n", "e10-aaa111", "report.md"))
+        self.assertIn("error", cp_tools.run_get(c, "src-a", "e10-aaa111\n"))
+        self.assertIn("error", cp_tools.run_events(c, "src-a\n", "e10-aaa111"))
+        self.assertEqual(t.calls, [])
+
     def test_bad_ids_are_refused_without_a_request(self):
         for sid, rid in (("../x", "r"), ("s", "a/b"), ("s", ".."), ("", "r"), ("s", "a b")):
             c, t = _client()
