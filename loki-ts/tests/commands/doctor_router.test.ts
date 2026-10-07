@@ -12,7 +12,7 @@ import {
   runDoctor,
 } from "../../src/commands/doctor.ts";
 
-const KEYS = ["LOKI_PROVIDER", "LOKI_ROUTER_ADVISOR", "LOKI_DIR"] as const;
+const KEYS = ["LOKI_ROUTER", "LOKI_PROVIDER", "LOKI_ROUTER_ADVISOR", "LOKI_DIR"] as const;
 
 let saved: Record<string, string | undefined> = {};
 let runDir = "";
@@ -78,7 +78,8 @@ describe("bundledClaudeCodeVersion", () => {
 });
 
 describe("runDoctor text mode router section", () => {
-  it("prints the advisor line and bundled Claude Code version", async () => {
+  it("prints the advisor line and bundled Claude Code version when LOKI_ROUTER=1", async () => {
+    process.env["LOKI_ROUTER"] = "1";
     process.env["LOKI_PROVIDER"] = "codex";
     process.env["LOKI_DIR"] = runDir;
     delete process.env["LOKI_ROUTER_ADVISOR"];
@@ -87,5 +88,15 @@ describe("runDoctor text mode router section", () => {
     expect(out).toContain("Router:\n");
     expect(out).toContain("  advisor: unavailable (provider is codex, not claude)\n");
     expect(out).toMatch(/Bundled Claude Code: \d+\.\d+\.\d+\n/);
+  });
+
+  it("prints no Router section when the flag is unset", async () => {
+    delete process.env["LOKI_ROUTER"];
+    process.env["LOKI_PROVIDER"] = "codex";
+    process.env["LOKI_DIR"] = runDir;
+    const { out: raw } = await captureStdout(() => runDoctor([]));
+    const out = raw.replace(/\x1b\[[0-9;]*m/g, "");
+    expect(out).not.toContain("Router:");
+    expect(out).not.toContain("Bundled Claude Code:");
   });
 });

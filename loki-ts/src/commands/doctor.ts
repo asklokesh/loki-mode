@@ -20,6 +20,7 @@ import { findPython3, runInline } from "../util/python.ts";
 import { BOLD, CYAN, DIM, GREEN, NC, RED, YELLOW } from "../util/colors.ts";
 import { getVersion } from "../version.ts";
 import { probeAdvisor } from "../runner/router/advisor_probe.ts";
+import { routerEnabled } from "../runner/router/flag.ts";
 
 // ---------- Types (mirror cmd_doctor_json shape) ------------------------------
 
@@ -985,8 +986,10 @@ async function runText(): Promise<number> {
   process.stdout.write(`\n`);
 
   // Router: advisor availability and the bundled Claude Code version. Not
-  // tallied; the advisor is optional and falls back to plan-on-Opus.
-  {
+  // tallied; the advisor is optional and falls back to plan-on-Opus. Printed
+  // only when the router flag is on: the router ships OFF and the default
+  // output must stay byte-identical to the bash route (bun-parity).
+  if (routerEnabled(process.env)) {
     const provider = process.env["LOKI_PROVIDER"] || readEffectiveProvider() || "none";
     const ccVersion = bundledClaudeCodeVersion();
     const runDir = process.env["LOKI_DIR"] ?? ".loki";
