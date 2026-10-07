@@ -1,7 +1,7 @@
 // FC-29 sweep: the Bun verifier route must resolve the verified tree the same
 // way as loki_verify_root in autonomy/loki, never default to the ambient cwd.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,5 +51,29 @@ describe("resolveVerifyRoot (FC-29)", () => {
     mkdirSync(join(p, "sub", "deep"), { recursive: true });
     Bun.spawnSync(["git", "-C", p, "init", "-q"]);
     expect(resolveRoot!({ HOME: "/nope" }, join(p, "sub", "deep"))).toBe(p);
+  });
+  it("refuses a symlinked HOME when the cwd is the real directory", () => {
+    const h = join(scratch, "home");
+    mkdirSync(join(h, ".loki"), { recursive: true });
+    symlinkSync(h, join(scratch, "homelink"));
+    expect(resolveRoot!({ HOME: join(scratch, "homelink") }, h)).toBeNull();
+    expect(resolveRoot!({ HOME: h }, join(scratch, "homelink"))).toBeNull();
+  });
+  it("strips every trailing slash on TARGET_DIR before the HOME check", () => {
+    const h = join(scratch, "home");
+    mkdirSync(h);
+    expect(resolveRoot!({ HOME: h, TARGET_DIR: h + "//" }, scratch)).toBeNull();
+  });
+  it("HOME with a trailing slash matches the same directory and spares others", () => {
+    const p = join(scratch, "proj");
+    mkdirSync(p);
+    expect(resolveRoot!({ HOME: p + "/", TARGET_DIR: p }, scratch)).toBeNull();
+    expect(resolveRoot!({ HOME: join(scratch, "nohome") + "/", TARGET_DIR: p }, scratch)).toBe(p);
+  });
+  it("a .loki that is a plain file is not a project", () => {
+    const p = join(scratch, "filecase");
+    mkdirSync(p);
+    writeFileSync(join(p, ".loki"), "");
+    expect(resolveRoot!({ HOME: "/nope" }, p)).toBeNull();
   });
 });

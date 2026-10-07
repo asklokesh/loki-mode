@@ -96,55 +96,29 @@ done
 out="$(_root "$SCRATCH/home" HOME="$SCRATCH/home" TARGET_DIR="$SCRATCH/home/")"; rc=$?
 if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok "TARGET_DIR=HOME/ is refused"; else bad "TARGET_DIR=HOME/ resolved to '$out'"; fi
 
-echo "Results: $PASS passed, $FAIL failed"
-    exit 1
-fi
 
-_root() { # <cwd> [env assignments...]
-    local cwd="$1"; shift
-    ( cd "$cwd" && env -u TARGET_DIR -u LOKI_DIR "$@" bash -c '. "$0"; loki_verify_root' "$_fn" 2>"$SCRATCH/err" )
-}
+# Canonicalization parity with resolveVerifyRoot (loki-ts proof.ts).
+# 7. HOME is a symlink and cwd is the real HOME holding .loki: refused.
+ln -s "$SCRATCH/home" "$SCRATCH/homelink"
+out="$(_root "$SCRATCH/home" HOME="$SCRATCH/homelink")"; rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok "symlinked HOME is refused"; else bad "symlinked HOME resolved to '$out'"; fi
+out="$(_root "$SCRATCH/homelink" HOME="$SCRATCH/home")"; rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok "cwd reached through a symlink to HOME is refused"; else bad "symlinked cwd resolved to '$out'"; fi
 
-BARE="$SCRATCH/bare"; mkdir -p "$BARE"
-PROJ="$SCRATCH/proj"; mkdir -p "$PROJ/.loki" "$PROJ/sub/deep"
-git -C "$PROJ" init -q 2>/dev/null
+# 8. Every trailing slash on TARGET_DIR is stripped before the HOME check.
+out="$(_root "$BARE" HOME="$SCRATCH/home" TARGET_DIR="$SCRATCH/home//")"; rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok "TARGET_DIR=HOME// is refused"; else bad "TARGET_DIR=HOME// resolved to '$out'"; fi
 
-# 1. A non-project cwd is refused with a sentence.
-out="$(_root "$BARE" HOME="$SCRATCH/nohome")"; rc=$?
-if [ "$rc" -ne 0 ] && [ -z "$out" ] && grep -q 'Cannot tell which project tree' "$SCRATCH/err"; then
-    ok "non-project cwd is refused with a plain sentence"
-else
-    bad "non-project cwd resolved to '$out' (rc=$rc)"
-fi
+# 9. HOME with a trailing slash does not make an unrelated project root null.
+out="$(_root "$BARE" HOME="$SCRATCH/nohome/" TARGET_DIR="$PROJ")"; rc=$?
+if [ "$rc" -eq 0 ] && [ "$out" = "$PROJ" ]; then ok "HOME with a trailing slash leaves a real project alone"; else bad "HOME/ case gave '$out' (rc=$rc)"; fi
+out="$(_root "$BARE" HOME="$PROJ/" TARGET_DIR="$PROJ")"; rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok "HOME with a trailing slash still matches the same directory"; else bad "HOME=proj/ resolved to '$out'"; fi
 
-# 2. $HOME is refused even when it holds a .loki dir.
-mkdir -p "$SCRATCH/home/.loki"
-out="$(_root "$SCRATCH/home" HOME="$SCRATCH/home")"; rc=$?
-if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok "HOME is never a verify root"; else bad "HOME resolved to '$out'"; fi
-
-# 3. A subdirectory of a project resolves to the project top-level.
-out="$(_root "$PROJ/sub/deep" HOME="$SCRATCH/nohome")"; rc=$?
-want="$(cd "$PROJ" && git rev-parse --show-toplevel)"
-if [ "$rc" -eq 0 ] && [ "$out" = "$want" ]; then ok "subdirectory resolves to the project top-level"; else bad "subdir gave '$out' (rc=$rc), want '$want'"; fi
-
-# 4. cwd holding .loki is used as is.
-out="$(_root "$PROJ" HOME="$SCRATCH/nohome")"
-[ "$out" = "$PROJ" ] && ok "cwd with .loki is the root" || bad "cwd with .loki gave '$out'"
-
-# 5. Explicit TARGET_DIR wins.
-out="$(_root "$BARE" HOME="$SCRATCH/nohome" TARGET_DIR="$PROJ")"
-[ "$out" = "$PROJ" ] && ok "explicit TARGET_DIR wins" || bad "TARGET_DIR gave '$out'"
-
-# 6. End to end: a bare cwd with a reachable proof exits 2 (NOT CHECKED), and
-# never runs the verifier on the cwd.
-mkdir -p "$BARE/p/.loki/proofs/r1"
-echo '{"verification":{"hash":"x"}}' > "$BARE/p/.loki/proofs/r1/proof.json"
-out="$(cd "$BARE" && env -u TARGET_DIR LOKI_DIR="p/.loki" HOME="$SCRATCH/nohome" LOKI_LEGACY_BASH=1 timeout -k 5 60 bash "$LOKI" proof verify r1 2>&1)"; rc=$?
-if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'NOT CHECKED'; then
-    ok "proof verify from a non-project cwd exits 2 NOT CHECKED"
-else
-    bad "proof verify from a non-project cwd gave rc=$rc: $out"
-fi
+# 10. .loki must be a directory.
+mkdir -p "$SCRATCH/filecase" && : > "$SCRATCH/filecase/.loki"
+out="$(_root "$SCRATCH/filecase" HOME="$SCRATCH/nohome")"; rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok ".loki as a plain file is not a project"; else bad ".loki file resolved to '$out'"; fi
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

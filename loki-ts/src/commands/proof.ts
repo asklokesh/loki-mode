@@ -22,7 +22,7 @@
 // LOKI_LEGACY_BASH=1 escape hatch, so this port is kept parity-correct with
 // it (see loki-ts/tests/commands/proof.test.ts for the bash-vs-Bun gate).
 
-import { existsSync, readdirSync, readFileSync, mkdtempSync, copyFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync, readFileSync, mkdtempSync, copyFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -581,11 +581,26 @@ export function resolveVerifyRoot(
   cwd: string = process.cwd(),
 ): string | null {
   const trim = (p: string): string => (p.length > 1 ? p.replace(/\/+$/, "") || "/" : p);
+  const canon = (p: string): string => {
+    const t = trim(p);
+    try {
+      return t ? realpathSync(t) : t;
+    } catch {
+      return t;
+    }
+  };
+  const isDir = (p: string): boolean => {
+    try {
+      return statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  };
   let d = env["TARGET_DIR"] ? trim(env["TARGET_DIR"] as string) : "";
   const ld = env["LOKI_DIR"] ?? "";
   if (!d && ld.startsWith("/") && existsSync(ld)) d = dirname(trim(ld));
   if (!d) {
-    if (existsSync(join(cwd, ".loki"))) {
+    if (isDir(join(cwd, ".loki"))) {
       d = cwd;
     } else {
       let top = "";
@@ -594,11 +609,12 @@ export function resolveVerifyRoot(
       } catch {
         top = "";
       }
-      if (top && existsSync(join(top, ".loki"))) d = top;
+      if (top && isDir(join(top, ".loki"))) d = top;
     }
   }
-  const home = env["HOME"] ? trim(env["HOME"] as string) : "";
-  if (!d || d === "/" || (home && d === home)) return null;
+  const home = env["HOME"] ? canon(env["HOME"] as string) : "";
+  const cd = d ? canon(d) : "";
+  if (!d || cd === "/" || (home && cd === home)) return null;
   return d;
 }
 

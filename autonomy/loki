@@ -1157,8 +1157,21 @@ PY
 # the cwd if it holds .loki; the repo top-level if it holds .loki. Anything else
 # prints one plain sentence on stderr and returns 1 (callers report NOT CHECKED).
 loki_verify_root() {
-    local d="${TARGET_DIR:-}" top=""
-    [ "${#d}" -gt 1 ] && d="${d%/}"
+    # Helpers live inside so callers that extract this one function stay whole.
+    _loki_verify_trim() {
+        local p="$1"
+        while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+        printf '%s' "$p"
+    }
+
+    _loki_verify_canon() {
+        local p r
+        p="$(_loki_verify_trim "$1")"
+        if [ -n "$p" ] && [ -d "$p" ] && r="$(cd "$p" 2>/dev/null && pwd -P)"; then p="$r"; fi
+        printf '%s' "$p"
+    }
+    local d="${TARGET_DIR:-}" top="" _cd _ch
+    d="$(_loki_verify_trim "$d")"
     if [ -z "$d" ]; then
         case "${LOKI_DIR:-}" in
             /*) [ -d "$LOKI_DIR" ] && d="$(dirname "$LOKI_DIR")" ;;
@@ -1172,7 +1185,12 @@ loki_verify_root() {
             if [ -n "$top" ] && [ -d "$top/.loki" ]; then d="$top"; fi
         fi
     fi
-    if [ -z "$d" ] || [ "$d" = "/" ] || [ "$d" = "${HOME:-}" ]; then
+    # Compare canonical paths: every trailing slash stripped, symlinks resolved,
+    # identically for the candidate and HOME (mirrored by resolveVerifyRoot in
+    # loki-ts/src/commands/proof.ts).
+    _cd="$(_loki_verify_canon "$d")"
+    _ch="$(_loki_verify_canon "${HOME:-}")"
+    if [ -z "$d" ] || [ "$_cd" = "/" ] || { [ -n "$_ch" ] && [ "$_cd" = "$_ch" ]; }; then
         echo "Cannot tell which project tree to verify against: set TARGET_DIR or run from a project directory that contains .loki." >&2
         return 1
     fi
