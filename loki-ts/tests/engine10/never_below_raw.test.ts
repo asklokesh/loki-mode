@@ -48,8 +48,8 @@ describe("L1 behavior", () => {
     process.stderr.write = ((c: string) => { written.push(String(c)); return true; }) as typeof process.stderr.write;
     try {
       const r = await implementStage.run(ctxFor("claude-opus-5-5", calls), new AbortController().signal);
-      expect(calls[0]!.model).toBe("claude-sonnet-5");
-      const note = "model downgraded by cascade: claude-opus-5-5 -> claude-sonnet-5 (opt-in)";
+      expect(calls[0]!.model).toBe("claude-sonnet-5-5");
+      const note = "model downgraded by cascade: claude-opus-5-5 -> claude-sonnet-5-5 (opt-in)";
       expect(written.join("")).toContain(note);
       expect(r.data.model_downgrade).toBe(note);
     } finally { process.stderr.write = orig; }
