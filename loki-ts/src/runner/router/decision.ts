@@ -99,3 +99,37 @@ export function nextState(s: ExecState, e: EscalationEvent): Transition {
   }
   return e.kind === "code_fail_repeat" || e.kind === "stall" ? stay("stalled") : stay();
 }
+
+// STEP 2 (founder 21:45Z): per-unit routing. Opus assigns an executor per work unit; the harness
+// never decides by task type, it only validates the schema and applies mechanism (L0).
+export interface UnitRoute { id: string; kind: string; executor: RouteExecutor; reason: string }
+export interface ParsedUnits { units: UnitRoute[]; notProven: string[] }
+/** The Wall acceptance-test unit has this fixed id; the id is a contract, not a wording match. */
+export const WALL_UNIT_ID = "wall";
+
+/** Parse `units` from route JSON (string or object). A missing or invalid unit becomes sonnet + NOT PROVEN; advisor unavailable raises haiku to sonnet. */
+export function parseUnits(input: unknown, advisorAvailable: boolean): ParsedUnits {
+  let v: unknown = input;
+  if (typeof v === "string") { try { v = JSON.parse(v); } catch { return { units: [], notProven: ["NOT PROVEN (owner model): per-unit routes are not valid JSON; default sonnet"] }; } }
+  const raw = typeof v === "object" && v !== null ? (v as Record<string, unknown>).units : undefined;
+  if (!Array.isArray(raw)) return { units: [], notProven: ["NOT PROVEN (owner model): no per-unit routes returned; default sonnet"] };
+  const units: UnitRoute[] = []; const notProven: string[] = [];
+  raw.forEach((u, idx) => {
+    const r = (typeof u === "object" && u !== null ? u : {}) as Record<string, unknown>;
+    const id = typeof r.id === "string" && r.id.trim() !== "" ? r.id : `unit-${idx}`;
+    const ok = typeof r.id === "string" && r.id.trim() !== "" && typeof r.kind === "string" && typeof r.executor === "string" && EXECUTORS.includes(r.executor)
+      && typeof r.reason === "string" && r.reason.trim() !== "" && r.reason.length <= MAX_REASON;
+    if (!ok) { units.push({ id, kind: typeof r.kind === "string" ? r.kind : "", executor: "sonnet", reason: "invalid unit route" }); notProven.push(`NOT PROVEN (owner model): unit ${id} route invalid; sonnet`); return; }
+    const raised = r.executor === "haiku" && !advisorAvailable;
+    units.push({ id, kind: r.kind as string, executor: raised ? "sonnet" : (r.executor as RouteExecutor), reason: raised ? "advisor unavailable: raised to sonnet" : (r.reason as string) });
+  });
+  return { units, notProven };
+}
+
+/** A haiku unit that fails a code-owned check is redone on sonnet; harness, env and provider failures never escalate (L5). */
+export function unitRedo(executor: RouteExecutor, owner: "harness" | "env" | "provider" | "code"): "redo-sonnet" | "none" {
+  return executor === "haiku" && owner === "code" ? "redo-sonnet" : "none";
+}
+
+/** Opus assigned the Wall acceptance tests to haiku: an Opus advisor review of the Wall must be recorded before implement. */
+export const wallReviewRequired = (units: readonly UnitRoute[]): boolean => units.some((u) => u.id === WALL_UNIT_ID && u.executor === "haiku");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { defaultRoute, nextState, parseRoute, resolveExecutor, type EscalationAction, type EscalationEvent, type ExecState } from "../../src/runner/router/decision.ts";
+import { defaultRoute, nextState, parseRoute, parseUnits, resolveExecutor, unitRedo, wallReviewRequired, type EscalationAction, type EscalationEvent, type ExecState } from "../../src/runner/router/decision.ts";
 import { routerEnabled, routerMode } from "../../src/runner/router/flag.ts";
 
 const H: ExecState = { model: "haiku", swapped: false };
@@ -100,4 +100,32 @@ describe("resolveExecutor (4.4, 4.6)", () => {
 describe("flag", () => {
   test("unset is off in this build", () => { expect(routerMode({})).toBe("off"); expect(routerEnabled({})).toBe(false); });
   test("0 opts out, 1 enables", () => { expect(routerMode({ LOKI_ROUTER: "0" })).toBe("opt-out"); expect(routerEnabled({ LOKI_ROUTER: "1" })).toBe(true); });
+});
+
+describe("per-unit routes (step 2)", () => {
+  const u = (id: string, executor: string, extra: object = {}) => ({ id, kind: "free text", executor, reason: "why", ...extra });
+  test("valid units pass through", () => {
+    const p = parseUnits({ default: "sonnet", units: [u("a", "haiku"), u("b", "sonnet")] }, true);
+    expect(p.units.map((x) => x.executor)).toEqual(["haiku", "sonnet"]); expect(p.notProven).toEqual([]);
+  });
+  test("an invalid unit becomes sonnet with NOT PROVEN", () => {
+    const p = parseUnits({ units: [u("a", "opus"), { id: "b" }, u("c", "haiku", { reason: "" })] }, true);
+    expect(p.units.every((x) => x.executor === "sonnet")).toBe(true); expect(p.notProven.length).toBe(3);
+  });
+  test("missing or non-JSON units -> empty + NOT PROVEN", () => {
+    expect(parseUnits({}, true).notProven.length).toBe(1);
+    expect(parseUnits("{bad", true).notProven.length).toBe(1);
+  });
+  test("advisor unavailable raises haiku units to sonnet", () => {
+    expect(parseUnits({ units: [u("a", "haiku")] }, false).units[0]!.executor).toBe("sonnet");
+  });
+  test("code-owned failure redoes a haiku unit on sonnet; other owners never escalate", () => {
+    expect(unitRedo("haiku", "code")).toBe("redo-sonnet");
+    for (const o of ["harness", "env", "provider"] as const) expect(unitRedo("haiku", o)).toBe("none");
+    expect(unitRedo("sonnet", "code")).toBe("none");
+  });
+  test("wall on haiku requires an Opus review; wall on sonnet does not", () => {
+    expect(wallReviewRequired(parseUnits({ units: [u("wall", "haiku")] }, true).units)).toBe(true);
+    expect(wallReviewRequired(parseUnits({ units: [u("wall", "sonnet"), u("x", "haiku")] }, true).units)).toBe(false);
+  });
 });
