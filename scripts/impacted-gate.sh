@@ -7,7 +7,8 @@
 # Selection is scripts/select-tests.sh (the one shared file-to-suite mapping).
 # Only shell_test and moat suites run here; static checks, bun and pytest stay
 # with the slice's own gate. Each suite runs under `timeout -k`, up to
-# IMPACTED_JOBS at a time, and its rc is printed. Exit 0 only if all are 0.
+# IMPACTED_JOBS at a time, and its rc is printed. Exit 0 only if all are 0 and
+# every selected suite recorded a result (fail closed).
 # R0 (run everything) is reported and NOT run: the full Tier B run owns that.
 set -uo pipefail
 export LOKI_NO_BROWSER=1
@@ -34,21 +35,30 @@ if command -v timeout >/dev/null 2>&1; then TB="timeout"; elif command -v gtimeo
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
 loki_run_tmp_create || exit 2
 trap 'loki_run_tmp_cleanup' EXIT
-
-SEL="$LOKI_RUN_TMP/selection.tsv"
-bash "$SCRIPT_DIR/select-tests.sh" --base "$BASE" --head "$HEAD_REF" >"$SEL" || { echo "impacted-gate: selector failed" >&2; exit 2; }
-
-if grep -q '^R0	ALL' "$SEL"; then
-    echo "impacted-gate: R0 (broad-blast-radius diff); the full run owns this, not run here:"
-    grep '^R0	ALL' "$SEL"
-    exit 0
-fi
+# loki_run_tmp_create exports LOKI_RUN_TMP. A suite that inherits it and calls
+# loki_run_tmp_cleanup deletes the gate's own run dir mid-run (measured: the
+# first such suite lost every later log and results.tsv). Keep it private.
+export -n LOKI_RUN_TMP
 
 SUITES="$LOKI_RUN_TMP/suites.txt"
-# The selector's own fixture suite names many source paths as test data, so R3
-# selects it for almost any diff and it takes minutes. It runs when it (R2) or
-# the selector changes; a plain R3 mention is not a reason to run it here.
-awk -F'\t' '($2=="shell_test" || $2=="moat") && !($1=="R3" && $3=="tests/test-select-tests.sh") && !seen[$3]++ {print $3}' "$SEL" >"$SUITES"
+if [ "${IMPACTED_TEST_MODE:-}" = "1" ] && [ -n "${IMPACTED_SUITES_FILE:-}" ]; then
+    # Test-only hook: the gate's own regression test supplies the suite list.
+    cp "$IMPACTED_SUITES_FILE" "$SUITES" || exit 2
+else
+    SEL="$LOKI_RUN_TMP/selection.tsv"
+    bash "$SCRIPT_DIR/select-tests.sh" --base "$BASE" --head "$HEAD_REF" >"$SEL" || { echo "impacted-gate: selector failed" >&2; exit 2; }
+
+    if grep -q '^R0	ALL' "$SEL"; then
+        echo "impacted-gate: R0 (broad-blast-radius diff); the full run owns this, not run here:"
+        grep '^R0	ALL' "$SEL"
+        exit 0
+    fi
+
+    # The selector's own fixture suite names many source paths as test data, so R3
+    # selects it for almost any diff and it takes minutes. It runs when it (R2) or
+    # the selector changes; a plain R3 mention is not a reason to run it here.
+    awk -F'\t' '($2=="shell_test" || $2=="moat") && !($1=="R3" && $3=="tests/test-select-tests.sh") && !seen[$3]++ {print $3}' "$SEL" >"$SUITES" || { echo "impacted-gate: FAIL (suite filter failed)"; exit 1; }
+fi
 N="$(wc -l <"$SUITES" | tr -d ' ')"
 echo "impacted-gate: $N shell suite(s) selected for $BASE..$HEAD_REF (jobs=$JOBS, ${LIMIT}s each)"
 [ "$N" -gt 0 ] || { echo "impacted-gate: PASS (nothing impacted)"; exit 0; }
@@ -57,8 +67,13 @@ log_of() { printf '%s/%s.log' "$LOKI_RUN_TMP" "$(printf '%s' "$1" | tr '/' '_')"
 
 run_suite() {
     local s="$1" rc
-    "$TB" -k 10 "$LIMIT" bash "$s" >"$(log_of "$s")" 2>&1
-    rc=$?
+    if [ -f "$s" ]; then
+        "$TB" -k 10 "$LIMIT" bash "$s" >"$(log_of "$s")" 2>&1
+        rc=$?
+    else
+        echo "suite file missing" >"$(log_of "$s")"
+        rc=127
+    fi
     printf '%s\t%s\n' "$rc" "$s" >>"$LOKI_RUN_TMP/results.tsv"
     echo "rc=$rc $s"
 }
@@ -66,17 +81,34 @@ run_suite() {
 : >"$LOKI_RUN_TMP/results.tsv"
 running=0
 while IFS= read -r s; do
-    [ -f "$s" ] || continue
-    run_suite "$s" &
+    # The EXIT trap above must fire in this parent only: a background subshell
+    # inherits it and would delete the run dir when its suite finishes.
+    ( trap - EXIT; run_suite "$s" ) &
     running=$((running + 1))
     if [ "$running" -ge "$JOBS" ]; then
-        wait -n 2>/dev/null || wait
-        running=$((running - 1))
+        if wait -n 2>/dev/null; then
+            running=$((running - 1))
+        else
+            # bash 3.2 has no wait -n: wait for every job, then start fresh.
+            wait
+            running=0
+        fi
     fi
 done <"$SUITES"
 wait
 
-FAILED="$(awk -F'\t' '$1!=0' "$LOKI_RUN_TMP/results.tsv")"
+# Fail closed: every selected suite must have reported exactly one result.
+RES="$LOKI_RUN_TMP/results.tsv"
+if [ ! -f "$RES" ]; then
+    echo "impacted-gate: FAIL (results file missing)"
+    exit 1
+fi
+GOT="$(wc -l <"$RES" | tr -d ' ')"
+if [ "$GOT" != "$N" ]; then
+    echo "impacted-gate: FAIL (selected $N suites, recorded $GOT results)"
+    exit 1
+fi
+FAILED="$(awk -F'\t' '$1!=0' "$RES")" || { echo "impacted-gate: FAIL (result parse failed)"; exit 1; }
 if [ -n "$FAILED" ]; then
     echo "impacted-gate: FAIL"
     while IFS=$'\t' read -r rc s; do

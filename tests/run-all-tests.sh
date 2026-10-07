@@ -1392,6 +1392,7 @@ run_test "version-bump-only push skips heavy Tests jobs (S-132)" "$SCRIPT_DIR/te
 run_test "train verdict reuse on main push (E-160, D55)" "$SCRIPT_DIR/test-train-verdict-reuse.sh"
 run_test "council gate readers use the resolved -I -S interpreter (S-141)" "$SCRIPT_DIR/test-council-gate-readers-pth.sh"
 run_test "Tier A test selector (S-91 rules R0-R7)" "$SCRIPT_DIR/test-select-tests.sh"
+run_test "impacted gate fails closed and survives suites that clean LOKI_RUN_TMP (FC-31)" "timeout -k 10 120 $SCRIPT_DIR/test-impacted-gate.sh"
 run_test "quarantine (non-blocking listed failure, rejects expired/moat/review/>7d)" "$SCRIPT_DIR/test-quarantine.sh"
 run_test "quickstart scorer works on macOS bash 3.2 (first-run path)" "$SCRIPT_DIR/test-quickstart-bash32.sh"
 run_test "first-run path works on macOS bash 3.2 (welcome, tour, quickstart)" "$SCRIPT_DIR/test-first-run-bash32.sh"

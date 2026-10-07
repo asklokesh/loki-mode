@@ -406,6 +406,7 @@ Time-to-first-preview metric (write-once, never invented)	0
 Session knobs stay default-OFF (gates the v8 SDK-flip audit)	0
 shards partition the suite list (no silently dropped suite)	8
 Tier A test selector (S-91 rules R0-R7)	45
+impacted gate fails closed and survives suites that clean LOKI_RUN_TMP (FC-31)	12
 quarantine (non-blocking listed failure, rejects expired/moat/review/>7d)	0
 quickstart scorer works on macOS bash 3.2 (first-run path)	1
 first-run path works on macOS bash 3.2 (welcome, tour, quickstart)	0
