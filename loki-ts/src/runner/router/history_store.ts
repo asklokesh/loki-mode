@@ -1,6 +1,6 @@
 // H4 (R1-16): per-repo, per-shape outcome history store. Moved out of e10ext/repomemory.ts to keep
 // e10ext under its D42 line budget; it lives in the same per-repo cache dir.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { repoCacheDir } from "../../engine10/cache.ts";
 
@@ -66,7 +66,16 @@ export function appendRunOutcome(key: string, outcome: RunOutcome, cacheRoot?: s
   try {
     const runs = [...readRunHistory(key, cacheRoot), outcome].slice(-HISTORY_CAP);
     mkdirSync(repoCacheDir(key, cacheRoot), { recursive: true });
-    writeFileSync(historyPath(key, cacheRoot), JSON.stringify({ runs }));
+    // Temp file in the same directory, then rename: a crash mid-write cannot truncate the history.
+    const target = historyPath(key, cacheRoot);
+    const tmp = `${target}.${process.pid}.tmp`;
+    try {
+      writeFileSync(tmp, JSON.stringify({ runs }));
+      renameSync(tmp, target);
+    } catch (e) {
+      rmSync(tmp, { force: true, recursive: false });
+      throw e;
+    }
     return true;
   } catch {
     return false;

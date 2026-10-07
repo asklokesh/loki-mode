@@ -7,7 +7,8 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type RunExecutor, type RunOutcome, readRunHistory } from "./history_store.ts";
 import { type ProjectModel } from "../../project_model/schema.ts";
-import { loadCached } from "../../project_model/discover.ts";
+import { loadCached, loadCommitted } from "../../project_model/discover.ts";
+import { computeKey, shallowDirs } from "../../project_model/gather.ts";
 
 export { HISTORY_FILE, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "./history_store.ts";
 
@@ -26,9 +27,22 @@ export function shapeKey(model: ProjectModel | null): string | null {
   return `${model.workspaceKind}:${[...runners].sort().join("+")}`;
 }
 
-/** Shape key of a repo from its cached Project Model (.loki/project.json); null when none is usable. */
+/**
+ * Shape key of a repo from its Project Model (.loki/project.json); null when none is usable or the
+ * cached model is stale. Freshness is the discover.ts cache-hit check: the key recomputed from the
+ * fingerprint files must equal the stored key. A committed model is always recomputed (as discovery does).
+ */
 export function shapeKeyForRepo(repoDir: string): string | null {
-  return shapeKey(loadCached(repoDir));
+  try {
+    const dirs = shallowDirs(repoDir);
+    const committed = loadCommitted(repoDir);
+    if (committed) return shapeKey({ ...committed.model, key: computeKey(repoDir, committed.model.fingerprintFiles, dirs, committed.hash) });
+    const cached = loadCached(repoDir);
+    if (!cached || computeKey(repoDir, cached.fingerprintFiles, dirs) !== cached.key) return null;
+    return shapeKey(cached);
+  } catch {
+    return null;
+  }
 }
 
 /**

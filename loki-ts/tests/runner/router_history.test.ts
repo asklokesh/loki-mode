@@ -2,7 +2,7 @@
 // Sonnet evidence floor (code-owned losses only), and the shipped shape-defaults reader.
 // Pure logic plus file IO on a temp cache root; no provider is called.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -17,6 +17,7 @@ import {
   shapeKeyForRepo,
 } from "../../src/runner/router/history.ts";
 import { repoCacheDir } from "../../src/engine10/cache.ts";
+import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
 
 function model(workspaceKind: string, runners: Array<string | null>): ProjectModel {
@@ -81,7 +82,19 @@ describe("shapeKeyForRepo", () => {
     expect(shapeKeyForRepo(root)).toBeNull();
   });
 
-  it("reads the cached Project Model and derives the key from it", () => {
+  it("a fingerprint file that changed after caching gives null (stale key)", () => {
+    cacheFreshModel();
+    writeFileSync(join(root, "package.json"), '{"changed":true}');
+    expect(shapeKeyForRepo(root)).toBeNull();
+  });
+
+  it("reads the cached Project Model and derives the key from it when it is fresh", () => {
+    cacheFreshModel();
+    expect(shapeKeyForRepo(root)).toBe("single:vitest");
+  });
+
+  /** A cached model whose key is the real, freshly computed key of the repo as it stands. */
+  function cacheFreshModel(): void {
     // The validator requires every claim to cite a real file, so the fixture writes one.
     writeFileSync(join(root, "package.json"), "{}");
     const cited = ["package.json"];
@@ -92,8 +105,26 @@ describe("shapeKeyForRepo", () => {
       packages: [{ ...model("single", ["vitest"]).packages[0]!, cite: cited, ui: { present: false, boot: null, cite: cited } }],
     };
     mkdirSync(join(root, ".loki"), { recursive: true });
-    writeFileSync(join(root, ".loki", "project.json"), JSON.stringify({ ...m, key: "abc" }));
-    expect(shapeKeyForRepo(root)).toBe("single:vitest");
+    writeFileSync(join(root, ".loki", "project.json"), JSON.stringify({ ...m, key: computeKey(root, cited, shallowDirs(root)) }));
+  }
+});
+
+describe("run history atomic write", () => {
+  it("a failed write leaves the previous history intact and returns false", () => {
+    appendRunOutcome(HISTORY_KEY, run({ executor: "haiku" }), root);
+    const file = join(repoCacheDir(HISTORY_KEY, root), HISTORY_FILE);
+    const before = readFileSync(file, "utf8");
+    // Block the temp file: a directory at its name makes the write fail.
+    mkdirSync(`${file}.${process.pid}.tmp`);
+    expect(appendRunOutcome(HISTORY_KEY, run({ executor: "sonnet" }), root)).toBe(false);
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(readRunHistory(HISTORY_KEY, root)).toHaveLength(1);
+  });
+
+  it("leaves no temp file behind on success and keeps the 200 cap", () => {
+    for (let i = 0; i < 205; i++) appendRunOutcome(HISTORY_KEY, run({ wallS: i }), root);
+    expect(readRunHistory(HISTORY_KEY, root)).toHaveLength(200);
+    expect(readdirSync(repoCacheDir(HISTORY_KEY, root)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 });
 
