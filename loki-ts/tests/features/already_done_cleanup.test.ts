@@ -20,7 +20,7 @@ describe("already-done pinned tree cleanup (D61-04-F)", () => {
       expect(r.status).toBe(0);
       expect(left(tmp)).toEqual([]);
     } finally { rmSync(tmp, { recursive: true, force: true }); }
-  });
+  }, 130_000); // the nested bun run is bounded by spawnSync's 120s; bun's default 5s test timeout flaked on slow runners
 
   test("process.exit(143) mid-flight removes the root", () => {
     const tmp = own(), repo = own(), script = join(tmp, "child.ts");

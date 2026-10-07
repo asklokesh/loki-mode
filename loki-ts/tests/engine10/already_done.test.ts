@@ -381,20 +381,27 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
     let release: () => void = () => {};
     let finishImpl: () => void = () => {};
     let implSignal: AbortSignal | null = null;
+    let intakeDone = false;
     const gate = new Promise<void>((r) => { release = r; });
     const sessions: SessionRunner = {
       run: async (o: Opts) => {
         calls.push({ stage: o.stage, aborted: o.signal.aborted });
-        if (o.stage === "intake") { await gate; return ok(confirm); }
+        if (o.stage === "intake") { await gate; intakeDone = true; return ok(confirm); }
         implSignal = o.signal;
         if (o.signal.aborted) return killed;
         await new Promise<void>((res) => { finishImpl = res; o.signal.addEventListener("abort", () => res(), { once: true }); });
         return o.signal.aborted ? killed : ok(null);
       },
     };
-    return { sessions, calls, release: () => release(), finishImpl: () => finishImpl(), implAborted: () => implSignal?.aborted === true };
+    return { sessions, calls, release: () => release(), finishImpl: () => finishImpl(), implAborted: () => implSignal?.aborted === true, intakeDone: () => intakeDone };
   }
   const tick = () => new Promise<void>((r) => setTimeout(r, 20));
+  /** Polls until cond holds. The intake check starts only after the pinned base tree is built (git archive + tar),
+   *  which is slower than any fixed sleep on a loaded CI runner, so ordering must wait on the event, not a delay. */
+  async function waitFor(cond: () => boolean, ms = 20_000): Promise<void> {
+    const t0 = Date.now();
+    while (!cond()) { if (Date.now() - t0 > ms) throw new Error("waitFor timed out"); await new Promise<void>((r) => setTimeout(r, 5)); }
+  }
   async function intakeWith(r: ReturnType<typeof rig>, task: string, dir: string) {
     const ctx = ctxWith(r.sessions, dir);
     ctx.runDir = mkdtempSync(join(tmpdir(), "e10-already-done-run-"));
@@ -440,7 +447,7 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
       expect(res.data.already_satisfied).toBe(false);
       expect(res.data.repomap_ref).toBeDefined();
       const impl = runImpl(ctx);
-      await tick(); await tick();
+      await waitFor(() => r.calls.length >= 2);
       expect(r.calls.map((c) => c.stage).sort()).toEqual(["implement", "intake"]); // concurrent (the pinned tree is built first)
       r.release();
       const out = await impl;
@@ -458,8 +465,10 @@ describe("deferred already-done check (LOKI_SPEED=1)", () => {
       const dir = freshRepo();
       const r = rig(CITE);
       const { ctx, res } = await intakeWith(r, TASK, dir);
+      await waitFor(() => r.calls.length >= 1); // the confirmation session has started (pinned tree built)
       r.release();
-      await tick();
+      await waitFor(() => r.intakeDone());
+      await tick(); // let the check's post-processing record the hit
       expect(res.data.already_satisfied).toBe(false); // nothing changes until implement is in flight
       const out = await runImpl(ctx);
       expect(r.calls[1]).toEqual({ stage: "implement", aborted: true });
