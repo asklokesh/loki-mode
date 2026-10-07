@@ -12,12 +12,12 @@
         },
         {
           "stage": "wall",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "Wall pin"
         },
         {
           "stage": "already_done",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "already-done check pin"
         }
       ],
@@ -45,13 +45,13 @@
             {
               "stage": "wall",
               "tier": "development",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5",
-                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -64,13 +64,13 @@
             {
               "stage": "intake",
               "tier": "fast",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5",
-                "LOKI_MODEL_FAST": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5-5",
+                "LOKI_MODEL_FAST": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -142,7 +142,7 @@
         }
       },
       "entry": {
-        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-sonnet-5 (Wall pin), already_done claude-sonnet-5 (already-done check pin)",
+        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin)",
         "run_started_keys": [
           "task_source",
           "issue_ref",
@@ -176,12 +176,12 @@
             },
             {
               "stage": "wall",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "Wall pin"
             },
             {
               "stage": "already_done",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "already-done check pin"
             }
           ],
@@ -191,7 +191,7 @@
           "implement <none>",
           "other <none>",
           "other <none>",
-          "other claude-sonnet-5",
+          "other claude-sonnet-5-5",
           "plan sonnet"
         ]
       }
@@ -201,7 +201,7 @@
       "downgrades": [
         {
           "stage": "implement,fix",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "LOKI_E10_CASCADE opt-in"
         },
         {
@@ -211,12 +211,12 @@
         },
         {
           "stage": "wall",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "Wall pin"
         },
         {
           "stage": "already_done",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "already-done check pin"
         }
       ],
@@ -244,13 +244,13 @@
             {
               "stage": "wall",
               "tier": "development",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5",
-                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -263,13 +263,13 @@
             {
               "stage": "intake",
               "tier": "fast",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5",
-                "LOKI_MODEL_FAST": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5-5",
+                "LOKI_MODEL_FAST": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -282,22 +282,22 @@
             {
               "stage": "implement",
               "tier": "development",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5",
-                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
             }
           ],
           "status": "completed",
-          "result_model": "claude-sonnet-5",
+          "result_model": "claude-sonnet-5-5",
           "cascade": true,
-          "model_downgrade": "model downgraded by cascade: claude (provider default) -> claude-sonnet-5 (opt-in)"
+          "model_downgrade": "model downgraded by cascade: claude (provider default) -> claude-sonnet-5-5 (opt-in)"
         },
         "fix_round_1": {
           "calls": [
@@ -342,7 +342,7 @@
         }
       },
       "entry": {
-        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: implement,fix claude-sonnet-5 (LOKI_E10_CASCADE opt-in), plan sonnet (fast tier), wall claude-sonnet-5 (Wall pin), already_done claude-sonnet-5 (already-done check pin)",
+        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: implement,fix claude-sonnet-5-5 (LOKI_E10_CASCADE opt-in), plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin)",
         "run_started_keys": [
           "task_source",
           "issue_ref",
@@ -371,7 +371,7 @@
           "downgrades": [
             {
               "stage": "implement,fix",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "LOKI_E10_CASCADE opt-in"
             },
             {
@@ -381,22 +381,22 @@
             },
             {
               "stage": "wall",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "Wall pin"
             },
             {
               "stage": "already_done",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "already-done check pin"
             }
           ],
           "origin_repo": null
         },
         "cli_model_flags": [
-          "implement claude-sonnet-5",
+          "implement claude-sonnet-5-5",
           "other <none>",
           "other <none>",
-          "other claude-sonnet-5",
+          "other claude-sonnet-5-5",
           "plan sonnet"
         ]
       }
@@ -411,12 +411,12 @@
         },
         {
           "stage": "wall",
-          "model": "claude-haiku-4-5",
+          "model": "claude-haiku-5-5",
           "reason": "Wall pin"
         },
         {
           "stage": "already_done",
-          "model": "claude-haiku-4-5",
+          "model": "claude-haiku-5-5",
           "reason": "already-done check pin"
         }
       ],
@@ -444,13 +444,13 @@
             {
               "stage": "wall",
               "tier": "development",
-              "model_arg": "claude-haiku-4-5",
+              "model_arg": "claude-haiku-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-haiku-4-5",
-                "LOKI_MODEL_DEVELOPMENT": "claude-haiku-4-5"
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-haiku-5-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-haiku-5-5"
               },
               "sdk": {
-                "model": "claude-haiku-4-5",
+                "model": "claude-haiku-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -463,13 +463,13 @@
             {
               "stage": "intake",
               "tier": "fast",
-              "model_arg": "claude-haiku-4-5",
+              "model_arg": "claude-haiku-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_FAST": "claude-haiku-4-5",
-                "LOKI_MODEL_FAST": "claude-haiku-4-5"
+                "LOKI_CLAUDE_MODEL_FAST": "claude-haiku-5-5",
+                "LOKI_MODEL_FAST": "claude-haiku-5-5"
               },
               "sdk": {
-                "model": "claude-haiku-4-5",
+                "model": "claude-haiku-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -541,7 +541,7 @@
         }
       },
       "entry": {
-        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-haiku-4-5 (Wall pin), already_done claude-haiku-4-5 (already-done check pin)",
+        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-haiku-5-5 (Wall pin), already_done claude-haiku-5-5 (already-done check pin)",
         "run_started_keys": [
           "task_source",
           "issue_ref",
@@ -575,12 +575,12 @@
             },
             {
               "stage": "wall",
-              "model": "claude-haiku-4-5",
+              "model": "claude-haiku-5-5",
               "reason": "Wall pin"
             },
             {
               "stage": "already_done",
-              "model": "claude-haiku-4-5",
+              "model": "claude-haiku-5-5",
               "reason": "already-done check pin"
             }
           ],
@@ -590,7 +590,7 @@
           "implement <none>",
           "other <none>",
           "other <none>",
-          "other claude-haiku-4-5",
+          "other claude-haiku-5-5",
           "plan sonnet"
         ]
       }
@@ -605,12 +605,12 @@
         },
         {
           "stage": "wall",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "Wall pin"
         },
         {
           "stage": "already_done",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "already-done check pin"
         }
       ],
@@ -638,13 +638,13 @@
             {
               "stage": "wall",
               "tier": "development",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5",
-                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -657,13 +657,13 @@
             {
               "stage": "intake",
               "tier": "fast",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5",
-                "LOKI_MODEL_FAST": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5-5",
+                "LOKI_MODEL_FAST": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -735,7 +735,7 @@
         }
       },
       "entry": {
-        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan haiku (fast tier), wall claude-sonnet-5 (Wall pin), already_done claude-sonnet-5 (already-done check pin)",
+        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan haiku (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin)",
         "run_started_keys": [
           "task_source",
           "issue_ref",
@@ -769,12 +769,12 @@
             },
             {
               "stage": "wall",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "Wall pin"
             },
             {
               "stage": "already_done",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "already-done check pin"
             }
           ],
@@ -784,7 +784,7 @@
           "implement <none>",
           "other <none>",
           "other <none>",
-          "other claude-sonnet-5",
+          "other claude-sonnet-5-5",
           "plan haiku"
         ]
       }
@@ -825,16 +825,16 @@
             {
               "stage": "wall",
               "tier": "development",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5",
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
                 "LOKI_CLAUDE_MODEL_FAST": "sonnet",
                 "LOKI_CLAUDE_MODEL_PLANNING": "sonnet",
-                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
                 "LOKI_MODEL_OVERRIDE": "sonnet"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -847,16 +847,16 @@
             {
               "stage": "intake",
               "tier": "fast",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
                 "LOKI_CLAUDE_MODEL_DEVELOPMENT": "sonnet",
-                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5",
+                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5-5",
                 "LOKI_CLAUDE_MODEL_PLANNING": "sonnet",
-                "LOKI_MODEL_FAST": "claude-sonnet-5",
+                "LOKI_MODEL_FAST": "claude-sonnet-5-5",
                 "LOKI_MODEL_OVERRIDE": "sonnet"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -974,7 +974,7 @@
         },
         "cli_model_flags": [
           "implement sonnet",
-          "other claude-sonnet-5",
+          "other claude-sonnet-5-5",
           "other sonnet",
           "other sonnet",
           "plan sonnet"
@@ -991,12 +991,12 @@
         },
         {
           "stage": "wall",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "Wall pin"
         },
         {
           "stage": "already_done",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "already-done check pin"
         }
       ],
@@ -1024,13 +1024,13 @@
             {
               "stage": "wall",
               "tier": "development",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5",
-                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -1043,14 +1043,14 @@
             {
               "stage": "intake",
               "tier": "fast",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
                 "LOKI_CLAUDE_MODEL_DEVELOPMENT": "opus",
-                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5",
-                "LOKI_MODEL_FAST": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5-5",
+                "LOKI_MODEL_FAST": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -1122,7 +1122,7 @@
         }
       },
       "entry": {
-        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-sonnet-5 (Wall pin), already_done claude-sonnet-5 (already-done check pin)",
+        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin)",
         "run_started_keys": [
           "task_source",
           "issue_ref",
@@ -1156,12 +1156,12 @@
             },
             {
               "stage": "wall",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "Wall pin"
             },
             {
               "stage": "already_done",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "already-done check pin"
             }
           ],
@@ -1169,7 +1169,7 @@
         },
         "cli_model_flags": [
           "implement opus",
-          "other claude-sonnet-5",
+          "other claude-sonnet-5-5",
           "other opus",
           "other opus",
           "plan sonnet"
@@ -1186,12 +1186,12 @@
         },
         {
           "stage": "wall",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "Wall pin"
         },
         {
           "stage": "already_done",
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "reason": "already-done check pin"
         }
       ],
@@ -1219,13 +1219,13 @@
             {
               "stage": "wall",
               "tier": "development",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5",
-                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_DEVELOPMENT": "claude-sonnet-5-5",
+                "LOKI_MODEL_DEVELOPMENT": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -1238,13 +1238,13 @@
             {
               "stage": "intake",
               "tier": "fast",
-              "model_arg": "claude-sonnet-5",
+              "model_arg": "claude-sonnet-5-5",
               "child_env": {
-                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5",
-                "LOKI_MODEL_FAST": "claude-sonnet-5"
+                "LOKI_CLAUDE_MODEL_FAST": "claude-sonnet-5-5",
+                "LOKI_MODEL_FAST": "claude-sonnet-5-5"
               },
               "sdk": {
-                "model": "claude-sonnet-5",
+                "model": "claude-sonnet-5-5",
                 "fallbackModel": null,
                 "settings": null
               }
@@ -1316,7 +1316,7 @@
         }
       },
       "entry": {
-        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-sonnet-5 (Wall pin), already_done claude-sonnet-5 (already-done check pin)",
+        "start_line": "Loki 10 engine, PR target: main, base: main, no dollar cap (subscription); downgrade: plan sonnet (fast tier), wall claude-sonnet-5-5 (Wall pin), already_done claude-sonnet-5-5 (already-done check pin)",
         "run_started_keys": [
           "task_source",
           "issue_ref",
@@ -1350,12 +1350,12 @@
             },
             {
               "stage": "wall",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "Wall pin"
             },
             {
               "stage": "already_done",
-              "model": "claude-sonnet-5",
+              "model": "claude-sonnet-5-5",
               "reason": "already-done check pin"
             }
           ],
@@ -1365,7 +1365,7 @@
           "implement <none>",
           "other <none>",
           "other <none>",
-          "other claude-sonnet-5",
+          "other claude-sonnet-5-5",
           "plan sonnet"
         ]
       }
