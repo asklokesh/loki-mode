@@ -6,13 +6,13 @@
   "providers": {
     "claude": {
       "latest_planning": "claude-opus-5-5",
-      "latest_development": "claude-sonnet-5",
-      "latest_fast": "claude-haiku-4-5",
+      "latest_development": "claude-sonnet-5-5",
+      "latest_fast": "claude-haiku-5-5",
       "cli_aliases": {
         "fable": "claude-fable-5-1",
         "opus": "claude-opus-5-5",
-        "sonnet": "claude-sonnet-5",
-        "haiku": "claude-haiku-4-5"
+        "sonnet": "claude-sonnet-5-5",
+        "haiku": "claude-haiku-5-5"
       },
       "models": [
         {
@@ -39,19 +39,34 @@
           "notes": "Superseded by claude-opus-5-5. Listed after it, so it is never the planning default (first match wins); not an alias target."
         },
         {
-          "id": "claude-sonnet-5",
+          "id": "claude-sonnet-5-5",
           "alias": "sonnet",
           "tier": "development",
           "context_window": 1000000,
           "max_output": 64000,
-          "notes": "Default execution model as of v7.104.0. Intro price $2/$10 per MTok through 2026-08-31; list price $3/$15 per MTok."
+          "notes": "Id confirmed 2026-10-07 by a real call (claude -p --model sonnet, Claude Code 2.1.293, modelUsage key claude-sonnet-5-5); the CLI sonnet alias resolves to it. ROUTER-1 R1-03."
         },
         {
-          "id": "claude-haiku-4-5",
+          "id": "claude-sonnet-5",
+          "tier": "legacy",
+          "context_window": 1000000,
+          "max_output": 64000,
+          "notes": "Superseded by claude-sonnet-5-5 (catalog-only, not an alias target). Was the default execution model as of v7.104.0. Intro price $2/$10 per MTok through 2026-08-31; list price $3/$15 per MTok."
+        },
+        {
+          "id": "claude-haiku-5-5",
           "alias": "haiku",
           "tier": "fast",
           "context_window": 200000,
-          "max_output": 64000
+          "max_output": 64000,
+          "notes": "Id confirmed 2026-10-07 by a real call (claude -p --model haiku, Claude Code 2.1.293, modelUsage key claude-haiku-5-5); the CLI haiku alias resolves to it. ROUTER-1 R1-03. Context window and max_output carried over from claude-haiku-4-5, not re-measured."
+        },
+        {
+          "id": "claude-haiku-4-5",
+          "tier": "legacy",
+          "context_window": 200000,
+          "max_output": 64000,
+          "notes": "Superseded by claude-haiku-5-5. Catalog-only, not an alias target; exact-id pricing keeps it at its own rate."
         },
         {
           "id": "claude-fable-5",
