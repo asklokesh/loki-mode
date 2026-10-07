@@ -715,6 +715,9 @@ Source: the founder's words, relayed by the peer session (autonomi-dev-76) at 14
 4. Usage readings are logged hourly in usage-readings.tsv from direct /usage readings. The pulse weekly projection is not used as a governor input while it reads 450%+.
 5. Order: 10.7.1, then 10.8.0 (UI, CPE-24 if green, else 10.8.1), then MW-1 to MW-3, which replace mods M0 to M3 per the research in autonomi-dev/research/2026-10-03-claude-mods, then EL-W1.
 
+## D88 (number reserved, stub recorded 2026-10-07 by the CoS at CTO request): CI waiver cited in PROGRESS.md, never written here
+PROGRESS.md (the FC-25 P9 entry) cites a D88 CI waiver that was never recorded in this log. This stub keeps the number taken, so D89 is unambiguous. The waiver's scope is only what that PROGRESS.md entry states. It never waived P9 on a release commit, and it grants nothing beyond that entry.
+
 ## D89 (2026-10-07, founder directive, CoS records): Haiku 5.5 executes, Opus advises, router decides; L1 means outcome parity
 1. Founder directive, verbatim excerpts: "haiku 5.5 is released today ... it's going to cut down all costs drastically ... opus can be the advisor and haiku doing all the engineering work inside loki mode's engine ... sonnet is optional and routed by opus if haiku isn't performing well enough ... have that router perfectly ... model decides."
 2. Engine Law L1 is amended (docs/v10/ENGINE-LAWS.md): "never below raw" means OUTCOME parity (solve rate, time and cost on the B9 corpus and the Parity Gate), not model identity.
