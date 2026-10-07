@@ -1158,6 +1158,7 @@ PY
 # prints one plain sentence on stderr and returns 1 (callers report NOT CHECKED).
 loki_verify_root() {
     local d="${TARGET_DIR:-}" top=""
+    [ "${#d}" -gt 1 ] && d="${d%/}"
     if [ -z "$d" ]; then
         case "${LOKI_DIR:-}" in
             /*) [ -d "$LOKI_DIR" ] && d="$(dirname "$LOKI_DIR")" ;;
