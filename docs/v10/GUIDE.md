@@ -241,34 +241,46 @@ explicit opt-out and keeps the exact pre-router model behavior, pins
 included (guarded by the opt-out golden test in
 `loki-ts/tests/engine10/router_optout_golden.test.ts`). Explicit
 `LOKI_MODEL_OVERRIDE` and `LOKI_CLAUDE_MODEL_DEVELOPMENT` still win and
-bypass the router. The other knobs are `LOKI_ROUTER_EXECUTOR` (default
-haiku), `LOKI_ROUTER_ESCALATE` (default sonnet) and `LOKI_ROUTER_ADVISOR`
+bypass the router. The other knobs are `LOKI_ROUTER_EXECUTOR` (post-flip
+default sonnet; haiku only by earned evidence), `LOKI_ROUTER_ESCALATE` (default sonnet) and `LOKI_ROUTER_ADVISOR`
 (default opus; `off` disables the advisor). The router engine itself lands in
 11.2.0; the pieces below marked "shipped in 11.1.0" are already in the code.
 
 ### Executor and advisor
 
-With the router on, the executor is Haiku 5.5 (`claude-haiku-5-5`) and an
-Opus advisor is attached to it. The advisor needs Claude Code 2.1.293 or
-later, which the Agent SDK 0.3.293 bundles (shipped in 11.1.0). If the
-advisor is unavailable, the executor is fixed at Sonnet 5.5, and the run is
-never failed for it. The advisor is unavailable when the provider is not
+When the router is on, the post-flip default executor is Sonnet 5.5;
+Haiku 5.5 per work unit when Opus assigns it. Opus 5.5 is the architect,
+router and advisor: it plans, assigns each work unit and is consulted on
+hard calls. Sonnet is the senior engineer and the default for
+implementation and fixes. Haiku does tests, docs and small low-risk changes
+only when Opus assigns them in the plan, and is never the blanket default.
+The harness never routes by task type or path regex; it only executes,
+verifies and escalates. Per-repo history is an input to Opus, not a harness
+rule. The per-unit route (`units: [{id, kind, executor, reason}]` plus a run
+default of sonnet) lands in 11.2.0 or 11.2.1 depending on what is merged. A
+missing or invalid unit route goes to Sonnet and is reported as NOT PROVEN.
+The receipt lists the executor, assigner and reason per unit.
+The advisor needs Claude Code 2.1.293 or later,
+which the Agent SDK 0.3.293 bundles (shipped in 11.1.0). If the advisor is
+unavailable, the executor is Sonnet 5.5 and the run is never failed for it.
+The advisor is unavailable when the provider is not
 claude, when `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_VERTEX` or
 `CLAUDE_CODE_USE_FOUNDRY` is set, when `ANTHROPIC_BASE_URL` points at a
 non-Anthropic host, when Claude Code is older than 2.1.293, when
 `LOKI_ROUTER_ADVISOR=off`, or after a session reports an advisor tool error
 (remembered for the rest of the run). The probe is
-`loki-ts/src/runner/router/advisor_probe.ts` (shipped in 11.1.0).
+`loki-ts/src/runner/router/advisor_probe.ts` (shipped in 11.1.0). The
+default-on flip happens after the CTO gate; 11.1.0 and 11.2.0 still ship the
+router off.
 
 ### Escalation
 
-Escalation is gated on evidence and only moves up: haiku, then sonnet, then
-opus. A repeated code-owned failure, an advisor escalation marker, or a spec
-conflict, stall or implement limit on Haiku moves the rest of the run to
-Sonnet, at most once per run. A repeated failure on Sonnet gets a fix round
-on Opus before the run can stall. A failure owned by the harness, the
-environment or the provider causes no transition and is reported as NOT
-PROVEN.
+Escalation is gated on evidence and only moves up: haiku to sonnet to opus,
+and sonnet to opus. A haiku unit that fails a code-owned check is redone on
+Sonnet, then escalates to Opus. A Wall assigned to Haiku gets an Opus review
+before implement. A repeated failure on Sonnet gets a fix round on Opus
+before the run can stall. A failure owned by the harness, the environment or
+the provider causes no transition and is reported as NOT PROVEN.
 
 ### Per-repo-shape outcome memory
 
@@ -280,8 +292,10 @@ Sonnet after 2 code-owned losses in the last 3 Haiku runs. Only code-owned
 FAILs and escalations count; harness, environment and provider errors and
 NOT PROVEN outcomes never do. A missing or corrupt history file is a cold
 read, never a crash (shipped in 11.1.0, `loki-ts/src/runner/router/history.ts`).
-The shipped `loki-ts/data/router-shape-defaults.json` can only move a shape
-up and is empty in 11.1.0.
+The shipped `loki-ts/data/router-shape-defaults.json` is empty in 11.1.0.
+After the flip a shape is listed as `haiku` once it has earned it with a B9
+row, and an absent listing means Sonnet. Shape history and the defaults file
+are inputs to Opus, not harness routing rules.
 
 ### Pricing
 
