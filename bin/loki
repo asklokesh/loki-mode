@@ -115,6 +115,14 @@ else
     exec "$BASH_CLI" "$@"
 fi
 
+# FC-30: an install artifact must not outlive the install that made it. If a provider
+# skill link Loki created is dangling or points at another Loki install, repoint it
+# to this one. A few lstat/readlink calls, no network, silent when already correct.
+if [ -f "$REPO_ROOT/autonomy/lib/skill-link-heal.sh" ]; then
+    # shellcheck source=../autonomy/lib/skill-link-heal.sh
+    source "$REPO_ROOT/autonomy/lib/skill-link-heal.sh" 2>/dev/null && loki_skill_link_heal "$REPO_ROOT" || true
+fi
+
 # Shell completions install themselves: once per VERSION, on the first interactive
 # run after an install or upgrade (stamp: ~/.loki/completions-version). Never needed
 # by the user; skipped under CI, LOKI_NO_COMPLETIONS=1 and non-TTY stdout. Failure
