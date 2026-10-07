@@ -23,6 +23,13 @@
 #                           changing anything, is recorded as BLOCKED with the reason, exit 3. BLOCKED
 #                           rows never count and never feed --emit-shape-defaults.
 #   --emit-shape-defaults requires --confirm-results (exit 2 without it).
+#   --emit-seed OUT.json --results FILE
+#                           provisional seed for the confirming rerun: unconfirmed loss shapes (BLOCKED
+#                           excluded), `"_provisional": true`. Exit 2, nothing written, for any path
+#                           resolving into loki-ts/data/ (so never the shipped router-shape-defaults.json).
+#                           The rerun must read the seed through a test-only path. NOTE: R1-16's
+#                           shapeDefault() has no override yet; R1-11 or R1-19 must add
+#                           LOKI_ROUTER_SHAPE_DEFAULTS_FILE (this script does not touch TS).
 #   --timeout SEC           per-run limit via timeout -k (default 600)
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
@@ -31,7 +38,7 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="fix the bug that makes the failing test in sum.test.js fail"
-DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600
+DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
@@ -45,6 +52,7 @@ while [ $# -gt 0 ]; do
         --metrics-out) METRICS_OUT="${2:-}"; shift ;;
         --emit-shape-defaults) EMIT="${2:-}"; [ -n "$EMIT" ] || { echo "--emit-shape-defaults needs an output path" >&2; exit 2; }; shift ;;
         --results) RESULTS_IN="${2:-}"; shift ;;
+        --emit-seed) SEED="${2:-}"; [ -n "$SEED" ] || { echo "--emit-seed needs an output path" >&2; exit 2; }; shift ;;
         --confirm-results) CONFIRM_IN="${2:-}"; shift ;;
         --timeout) TIMEOUT="${2:-}"; shift ;;
         *) echo "usage: $0 --dry-run | --repo DIR --base SHA --test-cmd CMD | --emit-shape-defaults OUT.json --results FILE" >&2; exit 2 ;;
@@ -53,6 +61,44 @@ while [ $# -gt 0 ]; do
 done
 
 # --- --emit-shape-defaults: pure computation over a results TSV ---------------
+if [ -n "$SEED" ]; then
+    # Provisional seed for the confirming rerun: every unconfirmed loss shape, BLOCKED excluded.
+    # Never written into the shipped data dir; the rerun reads it through a test-only path.
+    [ -f "$RESULTS_IN" ] || { echo "--emit-seed needs --results FILE (a results TSV)" >&2; exit 2; }
+    realp() { python3 -c 'import os,sys;print(os.path.realpath(sys.argv[1]))' "$1"; }
+    SEED_REAL="$(realp "$SEED")"
+    SHIPPED_DIR="$(realp "$REPO_ROOT/loki-ts/data")"
+    case "$SEED_REAL" in
+        "$SHIPPED_DIR"/* | */loki-ts/data/*)
+            echo "--emit-seed refuses a path inside loki-ts/data/ (the shipped router-shape-defaults.json is seeded only by R1-19 after a confirming rerun): $SEED" >&2
+            exit 2 ;;
+    esac
+    awk -F '\t' -v src="$(basename "$RESULTS_IN")" -v day="$(date -u +%Y-%m-%d)" '
+        ($1 == 1 || $1 == 2) && $4 == "BLOCKED" { blocked[$2] = 1; next }
+        $1 == 2 && $7 != "" && $7 != "unknown" { shape[$2] = $7 }
+        $1 == 1 || $1 == 2 { n[$1, $2]++; s[$1, $2] += ($4 == 1); repos[$2] = 1 }
+        END {
+            cnt = 0
+            for (r in repos) {
+                if (r in blocked) continue
+                k = shape[r]; if (k == "") continue
+                raw[k] += s[1, r]; rt[k] += s[2, r]; nr[k] += n[1, r]; nt[k] += n[2, r]
+                if (!(k in seen)) { seen[k] = 1; order[++cnt] = k }
+            }
+            for (i = 1; i <= cnt; i++) for (j = i + 1; j <= cnt; j++) if (order[j] < order[i]) { t = order[i]; order[i] = order[j]; order[j] = t }
+            printf "{\"$schema_version\":1,\"_provisional\":true,\"_source\":\"b9-scoreboard --emit-seed %s %s\",\"shapes\":{", src, day
+            first = 1
+            for (i = 1; i <= cnt; i++) {
+                k = order[i]
+                if (rt[k] < raw[k]) {
+                    printf "%s\"%s\":{\"executor\":\"sonnet\",\"evidence\":\"B9 %s (unconfirmed): router %d/%d vs raw %d/%d\"}", (first ? "" : ","), k, src, rt[k], nt[k], raw[k], nr[k]
+                    first = 0
+                }
+            }
+            printf "}}\n"
+        }' "$RESULTS_IN" > "$SEED" || exit 1
+    exit 0
+fi
 if [ -n "$EMIT" ]; then
     [ -f "$RESULTS_IN" ] || { echo "--emit-shape-defaults needs --results FILE (a results TSV)" >&2; exit 2; }
     [ -n "$CONFIRM_IN" ] || { echo "--emit-shape-defaults requires --confirm-results FILE: a single unconfirmed loss never seeds a default" >&2; exit 2; }

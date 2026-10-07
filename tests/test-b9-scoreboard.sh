@@ -169,6 +169,36 @@ bash "$B9" --emit-shape-defaults "$T/b2.json" --results "$T/fixture.tsv" --confi
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["shapes"]=={} else 1)' "$T/b2.json"
 check blocked-confirm-leaves-shape-unemitted $? "$(cat "$T/b2.json")"
 
+# 3e. --emit-seed: unconfirmed loss shapes, provisional, never BLOCKED, never the shipped path
+bash "$B9" --emit-seed "$T/seed.json" --results "$T/fixture.tsv"
+check emit-seed-rc $? "nonzero rc"
+python3 - "$T/seed.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["_provisional"] is True, d
+assert "emit-seed" in d["_source"] and "fixture.tsv" in d["_source"], d
+assert list(d["shapes"]) == ["multi-root:python+typescript"], d
+assert d["shapes"]["multi-root:python+typescript"]["executor"] == "sonnet", d
+PY
+check emit-seed-only-loss-shapes-provisional $? "$(cat "$T/seed.json")"
+bash "$B9" --emit-seed "$T/seed-b.json" --results "$T/blocked.tsv" 2>/dev/null
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["shapes"]=={} and d["_provisional"] is True else 1)' "$T/seed-b.json"
+check emit-seed-never-seeds-blocked $? "$(cat "$T/seed-b.json")"
+SHIPPED="$SCRIPT_DIR/../loki-ts/data/router-shape-defaults.json"
+BEFORE=$(if [ -e "$SHIPPED" ]; then cksum < "$SHIPPED"; else echo absent; fi)
+bash "$B9" --emit-seed "$SHIPPED" --results "$T/fixture.tsv" > /dev/null 2>&1
+RCS=$?
+AFTER=$(if [ -e "$SHIPPED" ]; then cksum < "$SHIPPED"; else echo absent; fi)
+check emit-seed-refuses-shipped-path "$(( RCS == 2 ? 0 : 1 ))" "rc=$RCS"
+check emit-seed-shipped-file-unchanged "$(if [ "$BEFORE" = "$AFTER" ]; then echo 0; else echo 1; fi)" "$BEFORE vs $AFTER"
+bash "$B9" --emit-seed "$SCRIPT_DIR/../loki-ts/data/b9-seed-probe.json" --results "$T/fixture.tsv" > /dev/null 2>&1
+RCD=$?
+check emit-seed-refuses-data-dir "$(( RCD == 2 ? 0 : 1 ))" "rc=$RCD"
+check emit-seed-data-dir-nothing-written "$(if [ -e "$SCRIPT_DIR/../loki-ts/data/b9-seed-probe.json" ]; then echo 1; else echo 0; fi)" "probe file exists"
+ln -s "$SHIPPED" "$T/link-seed.json"
+bash "$B9" --emit-seed "$T/link-seed.json" --results "$T/fixture.tsv" > /dev/null 2>&1
+check emit-seed-refuses-symlink-to-shipped "$(( $? == 2 ? 0 : 1 ))" "symlink not refused"
+
 # 4. no loss: empty map
 grep -v 'repoB' "$T/fixture.tsv" > "$T/noloss.tsv"
 bash "$B9" --emit-shape-defaults "$T/empty.json" --results "$T/noloss.tsv" --confirm-results "$T/confirm-win.tsv"
