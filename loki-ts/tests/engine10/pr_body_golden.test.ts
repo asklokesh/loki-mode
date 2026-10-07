@@ -100,7 +100,7 @@ describe("L7 guard: no producer prints 'not recorded' for a present source key",
     expect(sup).toContain("loadRunOutputs(runDir, events)");
   });
   it("every source file that can print 'not recorded' is a registered producer", () => {
-    const REGISTERED = new Set(["e10ext/reviewer_body.ts", "features/pr_criteria.ts", "engine10/stages/seal.ts", "engine10/session.ts", "runner/sdk_stream_parser.ts", "util/run_outputs.ts"]);
+    const REGISTERED = new Set(["e10ext/reviewer_body.ts", "features/pr_criteria.ts", "engine10/stages/seal.ts", "engine10/session.ts", "runner/sdk_stream_parser.ts", "util/run_outputs.ts", "runner/router/route_block.ts"]);
     const root = join(import.meta.dir, "..", "..", "src");
     const hits: string[] = [];
     const walk = (d: string): void => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith(".ts") && readFileSync(p, "utf8").includes("not recorded")) hits.push(p.slice(root.length + 1)); } };

@@ -19,12 +19,12 @@ export interface RouteBlock {
   shape_key: string | null;
   shape_parity: string;
   escalations: RouteEscalation[];
-  requests_total: number;
-  requests_over_100k: number;
+  requests_total: number | null; // null = no telemetry recorded (renders as not recorded, never 0)
+  requests_over_100k: number | null;
   over_100k_share: number | null; // requests_over_100k / requests_total, null when no request was recorded
-  advisor_calls: number;
-  advisor_input_tokens: number;
-  advisor_output_tokens: number;
+  advisor_calls: number | null;
+  advisor_input_tokens: number | null;
+  advisor_output_tokens: number | null;
 }
 const ALIAS: Record<string, string> = { haiku: "haiku-5.5", sonnet: "sonnet-5.5", opus: "opus-5.5" };
 const modelLabel = (m: string): string => ALIAS[m] ?? m;
@@ -45,7 +45,8 @@ export function routeStartLine(env: Record<string, string | undefined>, provider
   return `route: executor ${modelLabel((env["LOKI_ROUTER_EXECUTOR"] ?? "").trim() || "haiku")}, advisor opus: Opus routes at plan time`;
 }
 
-const n0 = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const nN = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+const rec = (v: number | null): string => (v === null ? "not recorded" : String(v));
 const s0 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 function toEsc(raw: unknown): RouteEscalation[] {
   const esc = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
@@ -64,8 +65,8 @@ export function buildRouteBlock(
   if (!routerEnabled(env)) return null;
   const executor = s0(route?.["executor"]);
   const unavailable = s0(route?.["advisor_unavailable_reason"]) ?? advisorUnavailableReason(env, provider);
-  const total = n0(telemetry?.requests_total);
-  const over = n0(telemetry?.requests_over_100k);
+  const total = nN(telemetry?.requests_total);
+  const over = nN(telemetry?.requests_over_100k);
   const shape = s0(route?.["shape_key"]);
   const escalations = toEsc(route?.["escalations"]);
   const source = s0(route?.["source"]);
@@ -87,20 +88,21 @@ export function buildRouteBlock(
     escalations: units.length > 0 ? units.flatMap((u) => u.escalations) : escalations,
     requests_total: total,
     requests_over_100k: over,
-    over_100k_share: total > 0 ? Math.round((over / total) * 10000) / 10000 : null,
-    advisor_calls: n0(telemetry?.advisor_calls),
-    advisor_input_tokens: n0(telemetry?.advisor_input_tokens),
-    advisor_output_tokens: n0(telemetry?.advisor_output_tokens),
+    over_100k_share: total !== null && over !== null && total > 0 ? Math.round((over / total) * 10000) / 10000 : null,
+    advisor_calls: nN(telemetry?.advisor_calls),
+    advisor_input_tokens: nN(telemetry?.advisor_input_tokens),
+    advisor_output_tokens: nN(telemetry?.advisor_output_tokens),
   };
 }
 
-const pct = (r: RouteBlock): string => (r.over_100k_share === null ? "n/a (no requests recorded)" : `${(r.over_100k_share * 100).toFixed(1)}%`);
+const over = (r: RouteBlock, unit: string): string => (r.requests_total === null || r.requests_over_100k === null ? "not recorded" : `${r.requests_over_100k} of ${r.requests_total}${unit} (${pct(r)})`);
+const pct = (r: RouteBlock): string => (r.over_100k_share === null ? "n/a (no requests)" : `${(r.over_100k_share * 100).toFixed(1)}%`);
 
 /** One line for the PR body: the route, advisor tokens and the over-100K share. */
 export function routePrLine(r: RouteBlock): string {
   if (!r.routed) return `Route: not routed (${r.reason})`;
   const adv = r.advisor ? `advisor ${r.advisor}` : "advisor unavailable";
-  return `Route: executor ${r.executor}, ${adv}; advisor tokens ${r.advisor_input_tokens} in / ${r.advisor_output_tokens} out; over 100K: ${r.requests_over_100k} of ${r.requests_total} requests (${pct(r)})`;
+  return `Route: executor ${r.executor}, ${adv}; advisor tokens ${rec(r.advisor_input_tokens)} in / ${rec(r.advisor_output_tokens)} out; over 100K: ${over(r, " requests")}`;
 }
 
 /** Receipt markdown lines for the route block. */
@@ -110,9 +112,9 @@ export function routeReceiptLines(r: RouteBlock): string[] {
     `- Route: executor ${r.executor}, ${r.advisor ? `advisor ${r.advisor}` : `advisor unavailable: ${r.advisor_unavailable_reason}`}: ${r.reason}`,
     `- Route shape_key: ${r.shape_key ?? "unknown"}  shape_parity: ${r.shape_parity}`,
     `- Route escalations: ${r.escalations.length === 0 ? "none" : r.escalations.map((e) => `${e.from} -> ${e.to} (${e.trigger}; evidence ${e.evidence})`).join("; ")}`,
-    `- Route advisor: ${r.advisor_calls} calls, ${r.advisor_input_tokens} in / ${r.advisor_output_tokens} out tokens`,
+    `- Route advisor: ${rec(r.advisor_calls)} calls, ${rec(r.advisor_input_tokens)} in / ${rec(r.advisor_output_tokens)} out tokens`,
     ...r.units.map((u) => `- Route unit ${u.id}: executor ${u.executor}, assigned by ${u.assigned_by}: ${u.reason}; escalation: ${u.escalations.length === 0 ? "none" : u.escalations.map((e) => `${e.from} -> ${e.to} (${e.trigger})`).join(", ")}`),
-    `- Route requests over 100K: ${r.requests_over_100k} of ${r.requests_total} (${pct(r)})`,
+    `- Route requests over 100K: ${over(r, "")}`,
   ];
 }
 
@@ -128,8 +130,13 @@ export function routeNotProven(r: RouteBlock): string[] {
 export function withRouteLine(body: string, line: string | null): string {
   if (!line) return body;
   const lines = body.split("\n");
-  const i = lines.findIndex((l) => l.startsWith("Verdict:"));
+  const i = lines.findIndex((l) => /^(- )?Verdict:/.test(l));
   if (i < 0) return body;
   lines.splice(i + 1, 0, line);
   return lines.join("\n");
+}
+
+/** pr.ts hook: the sealed route line (receipt.sealed output) goes into the real PR body only while the router is on. */
+export function withSealRoute(body: string, env: Record<string, string | undefined>, seal: { route_line?: unknown }): string {
+  return withRouteLine(body, routerEnabled(env) && typeof seal.route_line === "string" ? seal.route_line : null);
 }

@@ -56,4 +56,3 @@ export function renderPrBody(input: PrBodyInput): string {
     rows: input.criteria ?? deriveCriteria(input.outputs), legacy: !input.contract && !input.criteria && !task,
   }), input.routeLine ?? null);
 }
-

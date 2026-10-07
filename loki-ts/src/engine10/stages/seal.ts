@@ -12,7 +12,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { discar
 import { run } from "../../util/shell.ts"; import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts"; import { crossReview, minVerdict } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
-import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines, type RouteBlock } from "../../runner/router/route_block.ts"; import { routerEnabled } from "../../runner/router/flag.ts"; import { sumResultCosts } from "../cost.ts";
+import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts"; import { routerEnabled } from "../../runner/router/flag.ts"; import { sumResultCosts } from "../cost.ts";
 import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts"; import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
@@ -178,7 +178,7 @@ export function renderReceiptMd(r: Receipt): string {
     `- receipt_sha256: ${r.receipt_sha256}`,
     `- Signature: ${sig}`,
     `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s`,
-    ...((r as Receipt & { route?: RouteBlock }).route ? routeReceiptLines((r as Receipt & { route?: RouteBlock }).route!) : []), // R1-15: only when the router is on
+    ...(r.route ? routeReceiptLines(r.route) : []), // R1-15: only when the router is on
     "",
     "### Checks",
     ...(r.checks.length ? r.checks.map((c) => `- ${c.result}: ${c.name} (\`${c.cmd}\`, ${c.duration_s}s)`) : ["- none"]),
@@ -323,7 +323,7 @@ export const sealStage: Stage = {
     writeFileSync(join(ctx.runDir, "receipt.md"), renderReceiptMd(receipt));
 
     const signed = sig.jwt !== null;
-    const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven };
+    const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) };
     ctx.emit("receipt.sealed", "seal", { path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) });
     return { status: "completed", data: { ...data, summary: `${verdict} receipt ${hash.slice(0, 12)} ${signed ? `SIGNED kid ${sig.kid}` : "UNSIGNED"}` } };
   },

@@ -79,4 +79,12 @@ describe("byte stability when the router is off", () => {
     expect(withRoute).toContain("- Route: executor haiku-5.5, advisor opus-5.5:");
     expect(withRoute.replace(/- Route[^\n]*\n/g, "")).toBe(md);
   });
+
+  test("router on with no telemetry: advisor tokens and request counts render as not recorded, never 0", () => {
+    const b = buildRouteBlock(ON, "claude", { executor: "haiku" }, undefined)!;
+    expect(b.advisor_input_tokens).toBeNull();
+    expect(routePrLine(b)).toBe("Route: executor haiku-5.5, advisor opus-5.5; advisor tokens not recorded in / not recorded out; over 100K: not recorded");
+    expect(routeReceiptLines(b).join("\n")).toContain("Route advisor: not recorded calls, not recorded in / not recorded out tokens");
+    expect(routeReceiptLines(b).join("\n")).toContain("Route requests over 100K: not recorded");
+  });
 });

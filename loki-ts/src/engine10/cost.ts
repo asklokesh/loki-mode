@@ -9,7 +9,7 @@
 // autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which
 // always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join } from "node:path"; import { routerEnabled } from "../runner/router/flag.ts";
 
 /** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the
  *  stub provider) that has no provider-reported dollars. Recorded as 0, never null, and always disclosed in NOT PROVEN. */
@@ -49,7 +49,7 @@ export interface CostResult {
 /** R1-08: router telemetry is recorded only when the router flag is on (1/true/on, same as the router flag readers), so LOKI_ROUTER unset or 0
  *  leaves the result-cost file and CostResult byte-identical to pre-router. Shared by the stream parser. */
 export function routerTelemetryOn(env: Record<string, string | undefined> = process.env): boolean {
-  return /^(1|true|on)$/i.test((env["LOKI_ROUTER"] ?? "").trim());
+  return routerEnabled(env);
 }
 
 export function num(v: unknown): number {
