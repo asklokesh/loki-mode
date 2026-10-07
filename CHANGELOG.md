@@ -15,19 +15,19 @@ Minor release. Ships the model router core, off by default. With no flag set, be
 - Advisor wiring (R1-07): `advisorModel` and `autoCompactWindow` pass into both SDK and CLI sessions. Any Haiku id without a reachable advisor is raised to Sonnet. The bundled Claude Code version probe is cached.
 - Router telemetry (R1-08): per-request size and advisor usage are recorded in the result-cost file. They are written only when the router flag is on, so flag-off output is byte-identical (R1-08b).
 - `scripts/b9-scoreboard.sh` (R1-17): a B9 comparison harness with `--emit-shape-defaults` and `--emit-seed`, which writes a provisional loss-shape seed. It runs an auth preflight, reports BLOCKED instead of solved=0 when it cannot run, requires a confirm rerun, guards the arm env and keeps HOME in real mode.
-- `loki doctor` now prints the advisor status and the bundled Claude Code version (R1-20).
+- `loki doctor` now prints the advisor status and the bundled Claude Code version when `LOKI_ROUTER` is on (R1-20). With the flag unset the doctor output is unchanged from 11.1.0 (R1-20b).
 - MCP Control Plane data tools (CP-ASK slice 2): 8 read-only `cp_*` tools that issue GET requests against the Control Plane API. That brings the server to 47 tools. Id, artifact and filter checks use full matches.
 - A "Model routing" section in the guide (R1-18), and the routing decision record: CTO default plus the founder refinement, Sonnet by default, Haiku per unit when Opus assigns it (R1-19, D89).
 
 ### Changed
-- `LOKI_ROUTER_EXECUTOR` is now treated as a route input that must pass every floor, not as a bypass. `LOKI_MODEL_OVERRIDE` and `LOKI_CLAUDE_MODEL_DEVELOPMENT` remain the user bypass and are recorded with source `override` (R1-05 B1). `LOKI_ROUTER_EXECUTOR` is scheduled for removal in 11.2.1.
+- `LOKI_ROUTER_EXECUTOR` is now treated as a route input that must pass every floor, not as a bypass. `LOKI_MODEL_OVERRIDE` and `LOKI_CLAUDE_MODEL_DEVELOPMENT` remain the user bypass and are recorded with source `override` (R1-05 B1). `LOKI_ROUTER_EXECUTOR` is scheduled for removal in a following patch release.
 - The CLAUDE.md MCP tool count is updated from 39 to 47.
 
 ### Fixed
 - The shape-history key is computed fresh each time, and the history file is written atomically (R1-16b).
 
 ### Known issues
-- `LOKI_ROUTER=yes` leaves the router off but still adds the router telemetry fields to the result-cost file, because the telemetry gate reads the flag with its own word list. Only `1`, `true` and `on` are documented values. Fixed in 11.2.1, which moves the telemetry gate onto the single flag reader.
+- `LOKI_ROUTER=yes` leaves the router off but still adds the router telemetry fields to the result-cost file, because the telemetry gate reads the flag with its own word list. Only `1`, `true` and `on` are documented values. A following patch release moves the telemetry gate onto the single flag reader.
 
 ## v11.1.0 (2026-10-07)
 
