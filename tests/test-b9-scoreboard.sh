@@ -22,6 +22,7 @@ cat > "$T/fake-loki" <<'FAKE'
 #!/usr/bin/env bash
 [ -z "${B9_ENVLOG:-}" ] || echo "ROUTER=${LOKI_ROUTER-unset} ADVISOR=${LOKI_ROUTER_ADVISOR-unset} HOME=$HOME" >> "$B9_ENVLOG"
 [ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"
+[ -z "${FAKE_LOKI_FAIL:-}" ] || { echo "loki: internal error"; exit 1; }
 if ! { [ "${FAKE_LOSE_ROUTER:-}" = 1 ] && [ "${LOKI_ROUTER:-}" = 1 ] && [ -z "${LOKI_ROUTER_ADVISOR:-}" ]; }; then
     sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
 fi
@@ -63,7 +64,12 @@ RBASE=$(git -C "$T/realsrc" rev-parse HEAD)
 cat > "$T/bin/claude" <<'FC'
 #!/usr/bin/env bash
 echo "HOME=$HOME" >> "$B9_ENVLOG"
-sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+case " $* " in *"single word OK"*) PF=1 ;; *) PF=0 ;; esac
+case "${FAKE_CLAUDE_MODE:-}" in
+    auth) echo "Not logged in. Please run /login"; exit 1 ;;
+    workerr) [ "$PF" = 1 ] || { echo "API Error: boom"; exit 1; } ;;
+esac
+[ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
 echo '{"total_cost_usd": 0.01}'
 FC
 chmod +x "$T/bin/claude"
@@ -72,12 +78,33 @@ PATH="$T/bin:$PATH" env -u LOKI_RUN_TMP B9_ENVLOG="$T/real-envlog.txt" B9_LOKI="
     bash "$B9" --repo "$T/realsrc" --base "$RBASE" --test-cmd "node --test" --n 1 > "$T/real.txt" 2>&1
 check real-mode-rc $? "$(cat "$T/real.txt")"
 BADHOME=$(grep -vc "HOME=$HOME\$" "$T/real-envlog.txt")
-check real-mode-keeps-home "$(( BADHOME == 0 && $(wc -l < "$T/real-envlog.txt") == 4 ? 0 : 1 ))" "$(cat "$T/real-envlog.txt")"
+check real-mode-keeps-home "$(( BADHOME == 0 && $(wc -l < "$T/real-envlog.txt") == 8 ? 0 : 1 ))" "$(cat "$T/real-envlog.txt")"
 grep -c 'solved=1' "$T/real.txt" | grep -qx 4; check real-mode-solves-all-arms $? "$(cat "$T/real.txt")"
 PATH="$T/bin:$PATH" env -u LOKI_RUN_TMP FAKE_SLEEP=5 B9_ENVLOG="$T/real-envlog.txt" B9_LOKI="$T/fake-loki" \
     bash "$B9" --repo "$T/realsrc" --base "$RBASE" --test-cmd "node --test" --n 1 --timeout 1 > "$T/timeout.txt" 2>&1
 grep -q 'arm 2 router .*solved=0' "$T/timeout.txt" && grep -q 'arm 1 raw .*solved=1' "$T/timeout.txt"
 check real-run-timeout-cuts-stuck-arm $? "$(cat "$T/timeout.txt")"
+
+# 1d. BLOCKED, never solved=0: failed auth preflight, and an error before any work
+real_run() { # real_run outfile [extra env assignments...]
+    local out="$1"; shift
+    PATH="$T/bin:$PATH" env -u LOKI_RUN_TMP B9_ENVLOG="$T/real-envlog.txt" B9_LOKI="$T/fake-loki" "$@" \
+        bash "$B9" --repo "$T/realsrc" --base "$RBASE" --test-cmd "node --test" --n 1 --results-out "$out.tsv" > "$out" 2>&1
+}
+real_run "$T/auth.txt" FAKE_CLAUDE_MODE=auth
+AR=$?
+check auth-fail-exit-3 "$(( AR == 3 ? 0 : 1 ))" "rc=$AR"
+BL=$(grep -c 'BLOCKED reason=.*Not logged in' "$T/auth.txt")
+check auth-fail-all-arms-blocked "$(( BL == 4 ? 0 : 1 ))" "$(cat "$T/auth.txt")"
+grep -q 'solved=' "$T/auth.txt"; check auth-fail-no-solved-field "$(( $? == 0 ? 1 : 0 ))" "$(cat "$T/auth.txt")"
+real_run "$T/werr.txt" FAKE_CLAUDE_MODE=workerr
+grep -q 'arm 1 raw .*BLOCKED reason=.*boom' "$T/werr.txt" && grep -q 'arm 2 router .*solved=1' "$T/werr.txt"
+check error-before-work-blocked "$?" "$(cat "$T/werr.txt")"
+grep -q '^1	.*	BLOCKED	' "$T/werr.txt.tsv"; check blocked-recorded-in-results-tsv $? "$(cat "$T/werr.txt.tsv")"
+real_run "$T/lokierr.txt" FAKE_LOKI_FAIL=1
+grep -q 'arm 3 no-router .*BLOCKED' "$T/lokierr.txt"; check loki-error-before-work-blocked $? "$(cat "$T/lokierr.txt")"
+real_run "$T/ok.txt"
+NB=$(grep -c BLOCKED "$T/ok.txt"); check preflight-success-gives-normal-rows "$(( NB == 0 ? 0 : 1 ))" "$(cat "$T/ok.txt")"
 
 # 2. router loses: its row says solved=0, the control still solves
 env -u LOKI_RUN_TMP FAKE_LOSE_ROUTER=1 B9_LOKI="$T/fake-loki" bash "$B9" --dry-run > "$T/lose.txt" 2>&1
@@ -96,7 +123,9 @@ check losing-router-solved-0 $? "$(cat "$T/lose.txt")"
     printf '2\trepoB\t3\t0\t10\t0.05\tmulti-root:python+typescript\n'
     printf '3\trepoB\t1\t0\t10\t0.05\tmulti-root:python+typescript\n'
 } > "$T/fixture.tsv"
-bash "$B9" --emit-shape-defaults "$T/defaults.json" --results "$T/fixture.tsv"
+printf '2\trepoB\t1\t1\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t2\t1\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t3\t1\t10\t0.08\tmulti-root:python+typescript\n' > "$T/confirm-win.tsv"
+printf '2\trepoB\t1\t0\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t2\t1\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t3\t0\t10\t0.08\tmulti-root:python+typescript\n' > "$T/confirm-lose.tsv"
+bash "$B9" --emit-shape-defaults "$T/defaults.json" --results "$T/fixture.tsv" --confirm-results "$T/confirm-win.tsv"
 check emit-rc $? "nonzero rc"
 python3 - "$T/defaults.json" <<'PY'
 import json, sys
@@ -109,8 +138,6 @@ PY
 check emit-lists-exactly-the-losing-shape $? "$(cat "$T/defaults.json")"
 
 # 3b. confirming rerun (seeded file present): Sonnet wins -> sonnet; Sonnet also loses -> prior-default
-printf '2\trepoB\t1\t1\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t2\t1\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t3\t1\t10\t0.08\tmulti-root:python+typescript\n' > "$T/confirm-win.tsv"
-printf '2\trepoB\t1\t0\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t2\t1\t10\t0.08\tmulti-root:python+typescript\n2\trepoB\t3\t0\t10\t0.08\tmulti-root:python+typescript\n' > "$T/confirm-lose.tsv"
 bash "$B9" --emit-shape-defaults "$T/win.json" --results "$T/fixture.tsv" --confirm-results "$T/confirm-win.tsv"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if {k:v["executor"] for k,v in d["shapes"].items()}=={"multi-root:python+typescript":"sonnet"} else 1)' "$T/win.json"
 check emit-sonnet-when-rerun-wins $? "$(cat "$T/win.json")"
@@ -118,9 +145,33 @@ bash "$B9" --emit-shape-defaults "$T/lose.json" --results "$T/fixture.tsv" --con
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if {k:v["executor"] for k,v in d["shapes"].items()}=={"multi-root:python+typescript":"prior-default"} else 1)' "$T/lose.json"
 check emit-prior-default-when-rerun-loses $? "$(cat "$T/lose.json")"
 
+# 3c. an unconfirmed single loss never seeds a default: --confirm-results is required
+bash "$B9" --emit-shape-defaults "$T/unconf.json" --results "$T/fixture.tsv" > /dev/null 2> "$T/unconf.err"
+RCU=$?
+check emit-requires-confirm-results "$(( RCU == 2 ? 0 : 1 ))" "rc=$RCU"
+grep -q 'confirm-results' "$T/unconf.err"; check emit-confirm-message $? "$(cat "$T/unconf.err")"
+check emit-confirm-writes-nothing "$(if [ -e "$T/unconf.json" ]; then echo 1; else echo 0; fi)" "file written"
+
+# 3d. BLOCKED rows never feed a default: a BLOCKED Haiku arm (arm 2) must not seed sonnet,
+# and a BLOCKED confirming rerun leaves the shape unconfirmed (not emitted)
+{
+    for r in 1 2 3; do
+        printf '1\trepoC\t%s\t1\t10\t0.10\tunknown\n' "$r"
+        printf '2\trepoC\t%s\tBLOCKED\t0\tunknown\tblocked-shape\tnot logged in\n' "$r"
+    done
+} > "$T/blocked.tsv"
+{ cat "$T/confirm-win.tsv"; printf "2\trepoC\t1\t1\t10\t0.08\tblocked-shape\n2\trepoC\t2\t1\t10\t0.08\tblocked-shape\n2\trepoC\t3\t1\t10\t0.08\tblocked-shape\n"; } > "$T/confirm-c.tsv"
+bash "$B9" --emit-shape-defaults "$T/b1.json" --results "$T/blocked.tsv" --confirm-results "$T/confirm-c.tsv" 2>/dev/null
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["shapes"]=={} else 1)' "$T/b1.json"
+check blocked-arm-emits-no-default $? "$(cat "$T/b1.json")"
+printf '2\trepoB\t1\tBLOCKED\t0\tunknown\tunknown\tauth\n2\trepoB\t2\tBLOCKED\t0\tunknown\tunknown\tauth\n2\trepoB\t3\tBLOCKED\t0\tunknown\tunknown\tauth\n' > "$T/confirm-blocked.tsv"
+bash "$B9" --emit-shape-defaults "$T/b2.json" --results "$T/fixture.tsv" --confirm-results "$T/confirm-blocked.tsv" 2>/dev/null
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["shapes"]=={} else 1)' "$T/b2.json"
+check blocked-confirm-leaves-shape-unemitted $? "$(cat "$T/b2.json")"
+
 # 4. no loss: empty map
 grep -v 'repoB' "$T/fixture.tsv" > "$T/noloss.tsv"
-bash "$B9" --emit-shape-defaults "$T/empty.json" --results "$T/noloss.tsv"
+bash "$B9" --emit-shape-defaults "$T/empty.json" --results "$T/noloss.tsv" --confirm-results "$T/confirm-win.tsv"
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["shapes"]=={} else 1)' "$T/empty.json"
 check emit-empty-when-no-loss $? "$(cat "$T/empty.json")"
 

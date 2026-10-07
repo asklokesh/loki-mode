@@ -19,6 +19,10 @@
 #                           rows. No runs are made in this mode. Entries are `sonnet`, or
 #                           `prior-default` when --confirm-results FILE (the Sonnet rerun, same TSV
 #                           format) also solved fewer than raw on that shape.
+#   BLOCKED: an arm that fails its authenticated preflight, or errors (not a timeout) before
+#                           changing anything, is recorded as BLOCKED with the reason, exit 3. BLOCKED
+#                           rows never count and never feed --emit-shape-defaults.
+#   --emit-shape-defaults requires --confirm-results (exit 2 without it).
 #   --timeout SEC           per-run limit via timeout -k (default 600)
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
@@ -51,17 +55,22 @@ done
 # --- --emit-shape-defaults: pure computation over a results TSV ---------------
 if [ -n "$EMIT" ]; then
     [ -f "$RESULTS_IN" ] || { echo "--emit-shape-defaults needs --results FILE (a results TSV)" >&2; exit 2; }
-    [ -z "$CONFIRM_IN" ] || [ -f "$CONFIRM_IN" ] || { echo "--confirm-results file not found: $CONFIRM_IN" >&2; exit 2; }
+    [ -n "$CONFIRM_IN" ] || { echo "--emit-shape-defaults requires --confirm-results FILE: a single unconfirmed loss never seeds a default" >&2; exit 2; }
+    [ -f "$CONFIRM_IN" ] || { echo "--confirm-results file not found: $CONFIRM_IN" >&2; exit 2; }
     # The confirming rerun (seeded file present) is a second TSV of the same format; its arm 2 rows
     # are the Sonnet run. A shape the rerun also loses is prior-default, otherwise sonnet.
     awk -F '\t' -v src="$(basename "$RESULTS_IN")" -v day="$(date -u +%Y-%m-%d)" -v conf="$CONFIRM_IN" '
+        conf != "" && FILENAME == conf && $4 == "BLOCKED" { if ($1 == 2) cbr[$2] = 1; next }
         conf != "" && FILENAME == conf { if ($1 == 2 && $7 != "" && $7 != "unknown") { cs[$7] += ($4 == 1); cn[$7]++ }; next }
+        ($1 == 1 || $1 == 2) && $4 == "BLOCKED" { blocked[$2] = 1; next }
         $1 == 2 && $7 != "" && $7 != "unknown" { shape[$2] = $7 }
         $1 == 1 || $1 == 2 { n[$1, $2]++; s[$1, $2] += ($4 == 1); repos[$2] = 1 }
         END {
             cnt = 0
             for (r in repos) {
+                if (r in blocked) { print "b9-scoreboard: " r " has a BLOCKED arm 1/2 row; excluded" > "/dev/stderr"; continue }
                 k = shape[r]; if (k == "") continue
+                if (r in cbr) cbk[k] = 1
                 raw[k] += s[1, r]; rt[k] += s[2, r]; nr[k] += n[1, r]; nt[k] += n[2, r]
                 if (!(k in seen)) { seen[k] = 1; order[++cnt] = k }
             }
@@ -71,6 +80,7 @@ if [ -n "$EMIT" ]; then
             for (i = 1; i <= cnt; i++) {
                 k = order[i]
                 if (rt[k] < raw[k]) {
+                    if (!(k in cn) || (k in cbk)) { print "b9-scoreboard: " k " is unconfirmed (no valid Sonnet rerun rows); not emitted" > "/dev/stderr"; continue }
                     ex = "sonnet"; ev = sprintf("B9 %s: router %d/%d vs raw %d/%d", src, rt[k], nt[k], raw[k], nr[k])
                     if (k in cn) {
                         ev = ev sprintf("; sonnet rerun %d/%d", cs[k], cn[k])
@@ -154,10 +164,53 @@ emit_row() { # emit_row arm run solved wall usd shape
     [ -z "$RESULTS_OUT" ] || printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$NAME" "$2" "$3" "$4" "$5" "$6" >> "$RESULTS_OUT"
 }
 
-FAILS=0
+emit_blocked() { # emit_blocked arm run reason
+    local reason row
+    reason=$(printf '%s' "$3" | tr '\t\n|' '   ' | cut -c1-200)
+    row=$(printf '| %s | b9-scoreboard arm %s %s | %s run %s | BLOCKED reason=%s |' \
+        "$(date -u +%Y-%m-%dT%H:%MZ)" "$1" "$(arm_label "$1")" "$NAME" "$2" "$reason")
+    printf '%s\n' "$row"
+    [ -z "$METRICS_OUT" ] || printf '%s\n' "$row" >> "$METRICS_OUT"
+    [ -z "$RESULTS_OUT" ] || printf '%s\t%s\t%s\tBLOCKED\t0\tunknown\tunknown\t%s\n' "$1" "$NAME" "$2" "$reason" >> "$RESULTS_OUT"
+}
+
+# ARMENV is the exact env wrapper an arm runs under (preflight uses the same one, same HOME).
+set_armenv() {
+    case "$1" in
+        1) ARMENV=(env) ;;
+        2) ARMENV=(env -u LOKI_ROUTER_ADVISOR LOKI_ROUTER=1) ;;
+        3) ARMENV=(env -u LOKI_ROUTER_ADVISOR LOKI_ROUTER=0) ;;
+        *) ARMENV=(env LOKI_ROUTER=1 LOKI_ROUTER_ADVISOR=off) ;;
+    esac
+}
+
+# One trivial authenticated call under the arm's env. An arm that cannot authenticate is
+# BLOCKED, never scored: n=0 is not a pass (FC-16).
+PF_REASON=""
+preflight() { # preflight arm
+    local pd="$T/pf-$1" rc
+    mkdir -p "$pd"
+    set_armenv "$1"
+    ( cd "$pd" && timeout -k 10 "$TIMEOUT" "${ARMENV[@]}" claude -p "Reply with the single word OK" --output-format json ) < /dev/null > "$pd.out" 2>&1
+    rc=$?
+    if [ "$rc" -ne 0 ] || grep -Eq '"is_error": *true' "$pd.out"; then
+        PF_REASON="preflight rc=$rc: $(cat "$pd.out")"
+        return 1
+    fi
+    return 0
+}
+
+FAILS=0 BLOCKED=0
 arm=1
 while [ "$arm" -le 4 ]; do
     run=1
+    if ! preflight "$arm"; then
+        while [ "$run" -le "$N" ]; do
+            emit_blocked "$arm" "$run" "$PF_REASON"; BLOCKED=$((BLOCKED + 1)); run=$((run + 1))
+        done
+        arm=$((arm + 1)); continue
+    fi
+    set_armenv "$arm"
     while [ "$run" -le "$N" ]; do
         W="$T/work-$arm-$run"
         if ! prep_run "$W"; then
@@ -166,13 +219,19 @@ while [ "$arm" -le 4 ]; do
         D="$W"; [ "$DRY" -eq 1 ] || D="$W/repo"
         S=$(date +%s)
         OUT="$T/out-$arm-$run.log"
-        case "$arm" in
-            1) ( cd "$D" && timeout -k 10 "$TIMEOUT" claude -p "$TASK" --dangerously-skip-permissions --output-format json ) < /dev/null > "$OUT" 2>&1 ;;
-            2) ( cd "$D" && timeout -k 10 "$TIMEOUT" env -u LOKI_ROUTER_ADVISOR LOKI_ROUTER=1 "$LOKI" quick "$TASK" ) < /dev/null > "$OUT" 2>&1 ;;
-            3) ( cd "$D" && timeout -k 10 "$TIMEOUT" env -u LOKI_ROUTER_ADVISOR LOKI_ROUTER=0 "$LOKI" quick "$TASK" ) < /dev/null > "$OUT" 2>&1 ;;
-            4) ( cd "$D" && timeout -k 10 "$TIMEOUT" env LOKI_ROUTER=1 LOKI_ROUTER_ADVISOR=off "$LOKI" quick "$TASK" ) < /dev/null > "$OUT" 2>&1 ;;
-        esac
+        if [ "$arm" -eq 1 ]; then
+            ( cd "$D" && timeout -k 10 "$TIMEOUT" "${ARMENV[@]}" claude -p "$TASK" --dangerously-skip-permissions --output-format json ) < /dev/null > "$OUT" 2>&1
+        else
+            ( cd "$D" && timeout -k 10 "$TIMEOUT" "${ARMENV[@]}" "$LOKI" quick "$TASK" ) < /dev/null > "$OUT" 2>&1
+        fi
+        ARC=$?
         WALL=$(( $(date +%s) - S ))
+        # Errored (not a timeout) before changing anything: nothing was attempted, so it is not a score.
+        if [ "$ARC" -ne 0 ] && [ "$ARC" -ne 124 ] && [ "$ARC" -ne 137 ] \
+            && [ -z "$(git -C "$D" status --porcelain -- . ':!.loki' 2>/dev/null)" ]; then
+            emit_blocked "$arm" "$run" "exit $ARC before any work: $(tail -c 300 "$OUT")"
+            BLOCKED=$((BLOCKED + 1)); run=$((run + 1)); continue
+        fi
         SOLVED=0
         ( cd "$D" && bash -c "$TESTCMD" ) > "$T/test-$arm-$run.log" 2>&1 && SOLVED=1
         if [ "$arm" -eq 1 ]; then
@@ -193,4 +252,5 @@ while [ "$arm" -le 4 ]; do
     done
     arm=$((arm + 1))
 done
+[ "$BLOCKED" -eq 0 ] || { echo "b9-scoreboard: $BLOCKED BLOCKED run(s): this scoreboard does not count" >&2; exit 3; }
 [ "$FAILS" -eq 0 ]
