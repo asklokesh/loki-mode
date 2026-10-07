@@ -4,7 +4,7 @@
 // Known contract gap: machine.ts stores outputs[name] = res.data with no duration_s (only the
 // emitted event gets it), so "Stage times:" degrades honestly to nothing shown, never a fake 0s,
 // until machine.ts stores duration_s too.
-import { formatDuration } from "./output.ts";
+import { formatDuration } from "./output.ts"; import { withRouteLine } from "../runner/router/route_block.ts"; // R1-15 route block lives outside engine10 (size budget D29)
 import type { StageName, Verdict } from "./types.ts"; import { unitTableLines, type ReceiptGroup } from "../features/speed/seal_group.ts";
 import { deriveCriteria, intakeTask, layoutPrBody, type CriterionRow } from "../features/pr_criteria.ts";
 export { PR_BODY_LINE_BUDGET, type CriterionRow } from "../features/pr_criteria.ts";
@@ -22,6 +22,8 @@ export interface PrBodyInput {
   contract?: string;
   /** INTEL-3: explicit criterion rows; defaults to the intake task bullets mapped to verify/wall data. */
   criteria?: CriterionRow[];
+  /** R1-15: one-line route summary (routePrLine); absent when the router is off, so the body is byte-identical. */
+  routeLine?: string;
 }
 /** Section 4 PR: "DRAFT when the verdict is not VERIFIED, or when the cap fired." */
 export function isDraft(verdict: Verdict, capHit: boolean): boolean {
@@ -48,9 +50,10 @@ export function renderPrBody(input: PrBodyInput): string {
   const reason = draftReason(input.verdict, input.capHit);
   const task = intakeTask(input.outputs);
   const stages = stageTimes(input.outputs).map((s) => `- ${s.name}: ${formatDuration(s.seconds)}`);
-  return layoutPrBody({
+  return withRouteLine(layoutPrBody({
     contract: input.contract ?? (task.split("\n").find((l) => l.trim()) ?? ""), verdictLine: `Verdict: ${input.verdict}${draft ? ` (DRAFT: ${reason})` : ""}`,
     timing: stages, notProven: input.notProven, receipt: input.receiptPath, group: input.group ? unitTableLines(input.group) : [],
     rows: input.criteria ?? deriveCriteria(input.outputs), legacy: !input.contract && !input.criteria && !task,
-  });
+  }), input.routeLine ?? null);
 }
+

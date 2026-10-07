@@ -12,6 +12,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { discar
 import { run } from "../../util/shell.ts"; import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts"; import { crossReview, minVerdict } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
+import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines, type RouteBlock } from "../../runner/router/route_block.ts"; import { routerEnabled } from "../../runner/router/flag.ts"; import { sumResultCosts } from "../cost.ts";
 import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts"; import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
@@ -177,6 +178,7 @@ export function renderReceiptMd(r: Receipt): string {
     `- receipt_sha256: ${r.receipt_sha256}`,
     `- Signature: ${sig}`,
     `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s`,
+    ...((r as Receipt & { route?: RouteBlock }).route ? routeReceiptLines((r as Receipt & { route?: RouteBlock }).route!) : []), // R1-15: only when the router is on
     "",
     "### Checks",
     ...(r.checks.length ? r.checks.map((c) => `- ${c.result}: ${c.name} (\`${c.cmd}\`, ${c.duration_s}s)`) : ["- none"]),
@@ -265,6 +267,12 @@ export const sealStage: Stage = {
     const wallPassed = typeof o.verify?.wall_passed === "boolean" ? o.verify.wall_passed : null;
     if (wallFiles.length > 0 && wallPassed === null) notProven.add("wall result not recorded by verify");
 
+    // R1-15: router route block. Null (key omitted, hash stable) unless LOKI_ROUTER is on. Route facts come from the implement
+    // output when R1-11 records them; token telemetry from the R1-08 result-cost fields (the cost reader's own `router`, else the files).
+    const routeBlock = buildRouteBlock(process.env, ctx.provider, o.implement?.route as Record<string, unknown> | undefined,
+      (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), iterIds).router : undefined));
+    if (routeBlock) for (const l of routeNotProven(routeBlock)) notProven.add(l);
+
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
       schema: "loki.v10.receipt/1",
       run_id: ctx.runId,
@@ -295,6 +303,7 @@ export const sealStage: Stage = {
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true,
+      ...(routeBlock ? { route: routeBlock } : {}),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only
@@ -315,7 +324,7 @@ export const sealStage: Stage = {
 
     const signed = sig.jwt !== null;
     const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven };
-    ctx.emit("receipt.sealed", "seal", { path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven });
+    ctx.emit("receipt.sealed", "seal", { path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) });
     return { status: "completed", data: { ...data, summary: `${verdict} receipt ${hash.slice(0, 12)} ${signed ? `SIGNED kid ${sig.kid}` : "UNSIGNED"}` } };
   },
 };
