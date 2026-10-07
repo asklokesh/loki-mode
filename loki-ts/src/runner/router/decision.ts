@@ -51,20 +51,23 @@ export interface ResolveInput {
 }
 export interface Resolved { model: string; source: ResolvedSource; reason: string }
 
-/** Explicit overrides win and bypass the router. */
+/** User bypass: these win over the router and are recorded with source "override". LOKI_ROUTER_EXECUTOR is NOT one; it is a route input that passes every floor. */
 function envOverride(env: Record<string, string | undefined>): string | null {
-  for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT", "LOKI_ROUTER_EXECUTOR"]) { const v = (env[k] ?? "").trim(); if (v) return v; }
+  for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT"]) { const v = (env[k] ?? "").trim(); if (v) return v; }
   return null;
 }
 
 /** Strongest of: route, shape default, history floor, no-advisor floor. Evidence rungs never lower a model; never Haiku without the advisor. */
 export function resolveExecutor(i: ResolveInput): Resolved {
-  const ov = envOverride(i.env ?? {});
+  const env = i.env ?? process.env;
+  const ov = envOverride(env);
   if (ov) return { model: ov, source: "override", reason: "explicit model override" };
   let best: Resolved = { model: i.route.executor, source: i.route.source, reason: i.route.reason };
+  const routerExec = (env.LOKI_ROUTER_EXECUTOR ?? "").trim();
+  if (routerExec) best = { model: routerExec, source: "advisor", reason: "LOKI_ROUTER_EXECUTOR route input" };
   const raise = (model: string, source: ResolvedSource, reason: string): void => { if (rankOf(model) > rankOf(best.model)) best = { model, source, reason }; };
   // CTO 21:40Z + founder 21:45Z: Haiku only when Opus routed it, the shape earned it (shipped "haiku" listing, floor not tripped) and the advisor is attached.
-  const earnedHaiku = i.advisorAvailable && i.route.executor === "haiku" && i.route.source !== "default" && i.shapeDefault === "haiku" && i.historyFloor !== "sonnet";
+  const earnedHaiku = i.advisorAvailable && rankOf(best.model) === 0 && best.source !== "default" && i.shapeDefault === "haiku" && i.historyFloor !== "sonnet";
   if (rankOf(best.model) === 0 && !earnedHaiku) raise("sonnet", "no-evidence", "no evidence the shape earned haiku: executor sonnet");
   if (i.shapeDefault === "sonnet") raise("sonnet", "shape-default", "shipped shape default");
   else if (i.shapeDefault === "prior-default") raise(i.priorDefaultModel, "shape-default", "shipped shape default: prior-default");

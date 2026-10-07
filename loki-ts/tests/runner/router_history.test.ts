@@ -251,6 +251,12 @@ describe("shapeDefault (shipped router-shape-defaults.json)", () => {
     expect(shapeDefault(SHAPE, file)).toBe("sonnet");
   });
 
+
+  it("returns haiku when the shape earned it", () => {
+    const file = join(root, "earned.json");
+    writeFileSync(file, JSON.stringify({ shapes: { [SHAPE]: { executor: "haiku", evidence: "METRICS row" } } }));
+    expect(shapeDefault(SHAPE, file)).toBe("haiku");
+  });
   it("returns prior-default as a distinct value, not a model id", () => {
     const file = join(root, "defaults.json");
     writeFileSync(file, JSON.stringify({ shapes: { [SHAPE]: { executor: "prior-default", evidence: "METRICS row" } } }));

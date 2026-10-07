@@ -129,3 +129,32 @@ describe("per-unit routes (step 2)", () => {
     expect(wallReviewRequired(parseUnits({ units: [u("wall", "sonnet"), u("x", "haiku")] }, true).units)).toBe(false);
   });
 });
+
+describe("B1: LOKI_ROUTER_EXECUTOR is a route input, not a bypass", () => {
+  test("no advisor: haiku env never yields haiku", () => {
+    for (const v of ["haiku", "claude-haiku-5-5"]) {
+      const r = resolveExecutor({ route: defaultRoute(false), advisorAvailable: false, priorDefaultModel: "claude-opus-5-5", env: { LOKI_ROUTER_EXECUTOR: v } });
+      expect(r.model).toBe("sonnet");
+    }
+  });
+  test("tripped floor: haiku env never yields haiku", () => {
+    const r = resolveExecutor({ route: { ...good }, advisorAvailable: true, historyFloor: "sonnet", shapeDefault: "haiku", priorDefaultModel: "claude-opus-5-5", env: { LOKI_ROUTER_EXECUTOR: "claude-haiku-5-5" } });
+    expect(r.model).toBe("sonnet");
+  });
+  test("haiku env with no earned shape is sonnet; earned shape and advisor allows haiku", () => {
+    const base = { route: defaultRoute(true), advisorAvailable: true, priorDefaultModel: "claude-opus-5-5", env: { LOKI_ROUTER_EXECUTOR: "haiku" } };
+    expect(resolveExecutor(base).model).toBe("sonnet");
+    expect(resolveExecutor({ ...base, shapeDefault: "haiku" }).model).toBe("haiku");
+  });
+  test("LOKI_MODEL_OVERRIDE and LOKI_CLAUDE_MODEL_DEVELOPMENT stay a bypass recorded as override", () => {
+    for (const k of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT"]) {
+      const r = resolveExecutor({ route: defaultRoute(false), advisorAvailable: false, priorDefaultModel: "x", env: { [k]: "claude-haiku-5-5" } });
+      expect(r).toMatchObject({ model: "claude-haiku-5-5", source: "override" });
+    }
+  });
+  test("env defaults to process.env", () => {
+    const prev = process.env.LOKI_MODEL_OVERRIDE; process.env.LOKI_MODEL_OVERRIDE = "opus";
+    try { expect(resolveExecutor({ route: defaultRoute(true), advisorAvailable: true, priorDefaultModel: "x" }).source).toBe("override"); }
+    finally { if (prev === undefined) delete process.env.LOKI_MODEL_OVERRIDE; else process.env.LOKI_MODEL_OVERRIDE = prev; }
+  });
+});
