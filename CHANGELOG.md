@@ -26,6 +26,9 @@ Minor release. Ships the model router core, off by default. With no flag set, be
 ### Fixed
 - The shape-history key is computed fresh each time, and the history file is written atomically (R1-16b).
 
+### Known issues
+- `LOKI_ROUTER=yes` leaves the router off but still adds the router telemetry fields to the result-cost file, because the telemetry gate reads the flag with its own word list. Only `1`, `true` and `on` are documented values. Fixed in 11.2.1, which moves the telemetry gate onto the single flag reader.
+
 ## v11.1.0 (2026-10-07)
 
 Minor release. Prepares the model catalog, pricing and plumbing for model routing: the Agent SDK moves to 0.3.293, Haiku 5.5 and Sonnet 5.5 join the catalog, and the groundwork for the advisor probe and per-shape outcome memory lands. The router itself is not switched on by this release.
