@@ -51,6 +51,41 @@ describe("Agent SDK version floor (ROUTER-1 R1-01)", () => {
     }
   });
 
+  it("no tracked Dockerfile pins the SDK below the floor", () => {
+    const files = Bun.spawnSync(["git", "ls-files", "-z", "--", "Dockerfile", "**/Dockerfile", "**/Dockerfile.*", "Dockerfile.*"], {
+      cwd: repoRoot,
+    })
+      .stdout.toString()
+      .split("\0")
+      .filter(Boolean);
+    expect(files.length).toBeGreaterThan(0);
+    const re = /@anthropic-ai\/claude-agent-sdk@(\d+\.\d+\.\d+)/g;
+    for (const f of files) {
+      const text = readFileSync(resolve(repoRoot, f), "utf8");
+      for (const m of text.matchAll(re)) {
+        expect([f, atLeast(m[1]!, FLOOR_SDK)]).toEqual([f, true]);
+      }
+    }
+  });
+
+  it("no tracked package.json pins the SDK below the floor", () => {
+    const files = Bun.spawnSync(["git", "ls-files", "-z", "--", "package.json", "**/package.json"], {
+      cwd: repoRoot,
+    })
+      .stdout.toString()
+      .split("\0")
+      .filter(Boolean);
+    for (const f of files) {
+      const pkg = JSON.parse(readFileSync(resolve(repoRoot, f), "utf8"));
+      for (const sect of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
+        const pin: string | undefined = pkg[sect]?.[SDK];
+        if (pin === undefined) continue;
+        const v = pin.replace(/^[\^~>=\s]+/, "");
+        expect([f, sect, atLeast(v, FLOOR_SDK)]).toEqual([f, sect, true]);
+      }
+    }
+  });
+
   it("installed SDK is at or above the floor and bundles Claude Code >= 2.1.293", () => {
     const pkg = installedPkg();
     expect(atLeast(String(pkg.version), FLOOR_SDK)).toBe(true);
