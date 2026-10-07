@@ -9,7 +9,11 @@ import { type RunExecutor, type RunOutcome, readRunHistory } from "../../e10ext/
 import { type ProjectModel } from "../../project_model/schema.ts";
 import { loadCached } from "../../project_model/discover.ts";
 
-export { HISTORY_FILE, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome } from "../../e10ext/repomemory.ts";
+export { HISTORY_FILE, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "../../e10ext/repomemory.ts";
+
+/** A shipped shape default. "prior-default" means the LOKI_ROUTER=0 model for the stage; R1-11 resolves it to an id. */
+export type ShapeDefault = "sonnet" | "prior-default";
+const SHAPE_DEFAULT_VALUES: readonly string[] = ["sonnet", "prior-default"];
 
 const FLOOR_WINDOW = 3;
 const FLOOR_LOSSES = 2;
@@ -28,29 +32,39 @@ export function shapeKeyForRepo(repoDir: string): string | null {
 }
 
 /**
- * Evidence floor: Haiku is replaced by Sonnet when Haiku lost at least 2 of its last 3 runs on this
- * shape. Fewer than 3 Haiku runs on the shape is no evidence, so Haiku stays.
+ * A loss the router may count: a code-owned FAIL, or a code-owned run that escalated. Harness, env
+ * and provider outcomes, errors and NOT PROVEN never count, so an infrastructure fault cannot push
+ * a shape to Sonnet.
+ */
+export function isCodeLoss(r: RunOutcome): boolean {
+  if (r.owner !== "code" || r.verdict === "error" || r.verdict === "not_proven") return false;
+  return r.verdict === "fail" || r.escalated;
+}
+
+/**
+ * Evidence floor: Haiku is replaced by Sonnet when at least 2 of Haiku's last 3 runs on this shape
+ * are code-owned losses. Fewer than 3 Haiku runs on the shape is no evidence, so Haiku stays.
  */
 export function haikuFloorExecutor(repoKey: string, shape: string | null, cacheRoot?: string): RunExecutor {
   if (shape === null) return "haiku";
   const last = readRunHistory(repoKey, cacheRoot).filter((r) => r.shape === shape && r.executor === "haiku").slice(-FLOOR_WINDOW);
   if (last.length < FLOOR_WINDOW) return "haiku";
-  const losses = last.filter((r) => r.verdict === "fail").length;
+  const losses = last.filter(isCodeLoss).length;
   return losses >= FLOOR_LOSSES ? "sonnet" : "haiku";
 }
 
 /**
- * The shipped per-shape default. Only "sonnet" is a legal value; a shape absent from the file
- * (or a missing or corrupt file) returns null, meaning the Haiku default applies.
+ * The shipped per-shape default. "sonnet" and "prior-default" are the only legal values; any other
+ * value, a shape absent from the file, or a missing or corrupt file returns null (Haiku default).
  */
-export function shapeDefault(key: string | null, file: string = SHAPE_DEFAULTS_FILE): RunExecutor | null {
+export function shapeDefault(key: string | null, file: string = SHAPE_DEFAULTS_FILE): ShapeDefault | null {
   if (key === null || !existsSync(file)) return null;
   try {
     const shapes = (JSON.parse(readFileSync(file, "utf8")) as { shapes?: unknown } | null)?.shapes;
     if (typeof shapes !== "object" || shapes === null || Array.isArray(shapes)) return null;
     const entry = (shapes as Record<string, unknown>)[key];
     const executor = (entry as { executor?: unknown } | null | undefined)?.executor;
-    return executor === "sonnet" ? "sonnet" : null;
+    return typeof executor === "string" && SHAPE_DEFAULT_VALUES.includes(executor) ? (executor as ShapeDefault) : null;
   } catch {
     return null;
   }

@@ -46,17 +46,23 @@ const HISTORY_CAP = 200;
 
 export type RunExecutor = "haiku" | "sonnet";
 
+/** Who owns a non-pass outcome; "code" is the only owner whose losses count as router evidence. */
+export type RunOwner = "code" | "harness" | "env" | "provider";
+export type RunVerdict = "pass" | "fail" | "error" | "not_proven";
+
 export interface RunOutcome {
   shape: string;
   executor: RunExecutor;
-  verdict: "pass" | "fail";
+  verdict: RunVerdict;
+  owner: RunOwner | null;
   escalated: boolean;
   usd: number;
   wallS: number;
 }
 
 const EXECUTORS: readonly string[] = ["haiku", "sonnet"];
-const VERDICTS: readonly string[] = ["pass", "fail"];
+const VERDICTS: readonly string[] = ["pass", "fail", "error", "not_proven"];
+const OWNERS: readonly string[] = ["code", "harness", "env", "provider"];
 
 function validRun(v: unknown): v is RunOutcome {
   if (typeof v !== "object" || v === null) return false;
@@ -65,6 +71,7 @@ function validRun(v: unknown): v is RunOutcome {
     typeof r["shape"] === "string" &&
     typeof r["executor"] === "string" && EXECUTORS.includes(r["executor"]) &&
     typeof r["verdict"] === "string" && VERDICTS.includes(r["verdict"]) &&
+    (r["owner"] === null || (typeof r["owner"] === "string" && OWNERS.includes(r["owner"]))) &&
     typeof r["escalated"] === "boolean" &&
     typeof r["usd"] === "number" && Number.isFinite(r["usd"]) &&
     typeof r["wallS"] === "number" && Number.isFinite(r["wallS"])

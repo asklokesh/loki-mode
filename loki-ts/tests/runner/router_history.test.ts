@@ -1,6 +1,6 @@
 // Tests for src/runner/router/history.ts -- H4 per-repo, per-shape outcome history, the
-// Sonnet evidence floor, and the shipped shape-defaults reader. Pure logic plus file IO on a
-// temp cache root; no provider is called.
+// Sonnet evidence floor (code-owned losses only), and the shipped shape-defaults reader.
+// Pure logic plus file IO on a temp cache root; no provider is called.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +8,7 @@ import { join } from "node:path";
 
 import {
   HISTORY_FILE,
+  type RunOutcome,
   appendRunOutcome,
   haikuFloorExecutor,
   readRunHistory,
@@ -38,7 +39,13 @@ function model(workspaceKind: string, runners: Array<string | null>): ProjectMod
 }
 
 const HISTORY_KEY = "repo-under-test";
+const SHAPE = "multi-root:pytest+vitest";
 let root: string;
+
+/** A haiku run; the owner defaults to "code" so that a fail counts as a loss unless a test says otherwise. */
+function run(overrides: Partial<RunOutcome>): RunOutcome {
+  return { shape: SHAPE, executor: "haiku", verdict: "pass", owner: "code", escalated: false, usd: 0, wallS: 1, ...overrides };
+}
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "router-history-test-"));
@@ -97,16 +104,17 @@ describe("run history (H4)", () => {
     expect(readRunHistory(HISTORY_KEY, cache())).toEqual([]);
   });
 
-  it("append then read returns the outcomes in order", () => {
-    appendRunOutcome(HISTORY_KEY, { shape: "single:vitest", executor: "haiku", verdict: "pass", escalated: false, usd: 0.1, wallS: 12 }, cache());
-    appendRunOutcome(HISTORY_KEY, { shape: "single:vitest", executor: "sonnet", verdict: "fail", escalated: true, usd: 0.4, wallS: 30 }, cache());
+  it("append then read returns the outcomes in order, owner included", () => {
+    appendRunOutcome(HISTORY_KEY, run({ executor: "haiku", verdict: "pass", owner: null }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ executor: "sonnet", verdict: "fail", owner: "harness", escalated: true }), cache());
     const runs = readRunHistory(HISTORY_KEY, cache());
     expect(runs.map((r) => r.executor)).toEqual(["haiku", "sonnet"]);
+    expect(runs[1]?.owner).toBe("harness");
     expect(runs[1]?.escalated).toBe(true);
   });
 
   it("writes into the per-repo cache dir from engine10/cache.ts", () => {
-    appendRunOutcome(HISTORY_KEY, { shape: "single:vitest", executor: "haiku", verdict: "pass", escalated: false, usd: 0, wallS: 1 }, cache());
+    appendRunOutcome(HISTORY_KEY, run({ shape: "single:vitest" }), cache());
     expect(readFileSync(join(repoCacheDir(HISTORY_KEY, cache()), HISTORY_FILE), "utf8")).toContain("single:vitest");
   });
 
@@ -115,47 +123,83 @@ describe("run history (H4)", () => {
     mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, HISTORY_FILE), "{not json");
     expect(readRunHistory(HISTORY_KEY, cache())).toEqual([]);
-    // Appending onto a corrupt file recovers instead of throwing.
-    expect(() => appendRunOutcome(HISTORY_KEY, { shape: "s", executor: "haiku", verdict: "pass", escalated: false, usd: 0, wallS: 1 }, cache())).not.toThrow();
+    expect(() => appendRunOutcome(HISTORY_KEY, run({}), cache())).not.toThrow();
     expect(readRunHistory(HISTORY_KEY, cache())).toHaveLength(1);
   });
 
   it("drops entries of the wrong shape instead of crashing", () => {
     const dir = repoCacheDir(HISTORY_KEY, cache());
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, HISTORY_FILE), JSON.stringify({ runs: [{ shape: 3 }, null, { shape: "s", executor: "haiku", verdict: "pass", escalated: false, usd: 0, wallS: 1 }] }));
+    writeFileSync(join(dir, HISTORY_FILE), JSON.stringify({ runs: [{ shape: 3 }, null, run({ shape: "s" })] }));
     expect(readRunHistory(HISTORY_KEY, cache()).map((r) => r.shape)).toEqual(["s"]);
+  });
+
+  it("drops an entry with an unknown verdict or owner value", () => {
+    const dir = repoCacheDir(HISTORY_KEY, cache());
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, HISTORY_FILE), JSON.stringify({ runs: [run({ verdict: "maybe" as never }), run({ owner: "aliens" as never }), run({ shape: "ok" })] }));
+    expect(readRunHistory(HISTORY_KEY, cache()).map((r) => r.shape)).toEqual(["ok"]);
   });
 });
 
-describe("haiku floor", () => {
-  const base = { shape: "multi-root:pytest+vitest", escalated: false, usd: 0, wallS: 1 };
+describe("haiku floor (code-owned losses only)", () => {
   const cache = () => root;
 
-  it("routes to sonnet when haiku lost 2 of its last 3 runs on the shape", () => {
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "fail" }, cache());
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "pass" }, cache());
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "fail" }, cache());
-    expect(haikuFloorExecutor(HISTORY_KEY, base.shape, cache())).toBe("sonnet");
+  it("routes to sonnet when haiku lost 2 of its last 3 runs to code-owned FAILs", () => {
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "code" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "pass" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "code" }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("sonnet");
+  });
+
+  it("counts an escalation owned by the code as a loss", () => {
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "pass", owner: "code", escalated: true }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "pass", owner: "code", escalated: true }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "pass" }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("sonnet");
+  });
+
+  it("3 harness-owned FAILs do NOT trigger the floor", () => {
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "harness" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "harness" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "harness" }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("haiku");
+  });
+
+  it("env and provider FAILs never count, nor do error or NOT PROVEN outcomes", () => {
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "env" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "error", owner: "code" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "not_proven", owner: "code", escalated: true }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("haiku");
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "provider" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "provider" }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("haiku");
+  });
+
+  it("a FAIL with no recorded owner does not count", () => {
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: null }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: null }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: null }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("haiku");
   });
 
   it("keeps haiku when it lost only 1 of its last 3 runs", () => {
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "fail" }, cache());
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "pass" }, cache());
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "pass" }, cache());
-    expect(haikuFloorExecutor(HISTORY_KEY, base.shape, cache())).toBe("haiku");
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "code" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "pass" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "pass" }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("haiku");
   });
 
   it("ignores runs on other shapes and sonnet runs", () => {
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "fail" }, cache());
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "haiku", verdict: "fail" }, cache());
-    appendRunOutcome(HISTORY_KEY, { ...base, shape: "single:vitest", executor: "haiku", verdict: "fail" }, cache());
-    appendRunOutcome(HISTORY_KEY, { ...base, executor: "sonnet", verdict: "fail" }, cache());
-    expect(haikuFloorExecutor(HISTORY_KEY, base.shape, cache())).toBe("haiku");
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "code" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ verdict: "fail", owner: "code" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ shape: "single:vitest", verdict: "fail", owner: "code" }), cache());
+    appendRunOutcome(HISTORY_KEY, run({ executor: "sonnet", verdict: "fail", owner: "code" }), cache());
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("haiku");
   });
 
   it("is haiku with no history or a null shape", () => {
-    expect(haikuFloorExecutor(HISTORY_KEY, base.shape, cache())).toBe("haiku");
+    expect(haikuFloorExecutor(HISTORY_KEY, SHAPE, cache())).toBe("haiku");
     expect(haikuFloorExecutor(HISTORY_KEY, null, cache())).toBe("haiku");
   });
 });
@@ -170,11 +214,35 @@ describe("shapeDefault (shipped router-shape-defaults.json)", () => {
     expect(shapeDefault(null)).toBeNull();
   });
 
-  it("reads a listed sonnet shape and ignores any other executor value", () => {
+  it("reads a listed sonnet shape", () => {
     const file = join(root, "defaults.json");
-    writeFileSync(file, JSON.stringify({ shapes: { "multi-root:pytest+vitest": { executor: "sonnet", evidence: "METRICS row" }, "single:none": { executor: "haiku" } } }));
-    expect(shapeDefault("multi-root:pytest+vitest", file)).toBe("sonnet");
+    writeFileSync(file, JSON.stringify({ shapes: { [SHAPE]: { executor: "sonnet", evidence: "METRICS row" } } }));
+    expect(shapeDefault(SHAPE, file)).toBe("sonnet");
+  });
+
+  it("returns prior-default as a distinct value, not a model id", () => {
+    const file = join(root, "defaults.json");
+    writeFileSync(file, JSON.stringify({ shapes: { [SHAPE]: { executor: "prior-default", evidence: "METRICS row" } } }));
+    expect(shapeDefault(SHAPE, file)).toBe("prior-default");
+  });
+
+  it("ignores any other executor value", () => {
+    const file = join(root, "defaults.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        shapes: {
+          "single:none": { executor: "haiku" },
+          "single:vitest": { executor: "opus" },
+          "single:pytest": { executor: "claude-sonnet-4-5" },
+          "single:jest": { executor: "Sonnet" },
+        },
+      }),
+    );
     expect(shapeDefault("single:none", file)).toBeNull();
+    expect(shapeDefault("single:vitest", file)).toBeNull();
+    expect(shapeDefault("single:pytest", file)).toBeNull();
+    expect(shapeDefault("single:jest", file)).toBeNull();
     expect(shapeDefault("absent", file)).toBeNull();
   });
 
