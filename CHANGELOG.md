@@ -34,6 +34,7 @@ Minor release. Prepares the model catalog, pricing and plumbing for model routin
 
 ### Fixed
 - Verifier spawns pin `TARGET_DIR`, and `scripts/local-ci.sh` installs dependencies in a fresh worktree (FC-29).
+- The local-ci install step no longer names the deleted legacy dashboard directory, which the removal guard rejected (Tests run 37690949221).
 - The dashboard tenant isolation suite accepts its TestClient Host under unittest.
 - Nightly deferred already-done tests wait on events instead of fixed sleeps.
 - Lockfile bumps the MCP SDK and proxy-addr for new security advisories.

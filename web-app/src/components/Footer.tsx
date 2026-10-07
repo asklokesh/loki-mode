@@ -93,7 +93,7 @@ export function Footer() {
             <span>Built with care by Autonomi</span>
             <span className="hidden sm:inline text-[#ECEAE3]">|</span>
             <span className="px-2 py-0.5 rounded bg-[#553DE9]/10 text-[#553DE9] font-semibold text-[10px]">
-              v11.0.3
+              v11.1.0
             </span>
           </div>
           <div className="flex items-center gap-4 text-xs text-[#6B6960]">
