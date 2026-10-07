@@ -88,7 +88,7 @@ describe("R1-08 router usage telemetry", () => {
 
 describe("R1-08 flag off is byte-identical to pre-router", () => {
   const PRE_KEYS = ["cache_creation_tokens", "cache_read_tokens", "input_tokens", "output_tokens", "total_cost_usd"];
-  for (const v of [undefined, "0", "off", "false"]) {
+  for (const v of [undefined, "0", "off", "false", "yes"]) {
     test(`LOKI_ROUTER=${v ?? "(unset)"}: no new result-cost keys, no CostResult.router`, async () => {
       if (v === undefined) delete process.env["LOKI_ROUTER"]; else process.env["LOKI_ROUTER"] = v;
       await consumeSdkStream(stream(), ctx(), () => "t");

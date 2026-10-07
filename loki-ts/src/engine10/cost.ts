@@ -46,10 +46,10 @@ export interface CostResult {
   missing: string[]; // iterations with no dollar figure: no file, a file with no total_cost_usd, or all-zero usage (see noUsage below)
 }
 
-/** R1-08: router telemetry is recorded only when the router flag is on (1/on/true/yes), so LOKI_ROUTER unset or 0
+/** R1-08: router telemetry is recorded only when the router flag is on (1/true/on, same as the router flag readers), so LOKI_ROUTER unset or 0
  *  leaves the result-cost file and CostResult byte-identical to pre-router. Shared by the stream parser. */
 export function routerTelemetryOn(env: Record<string, string | undefined> = process.env): boolean {
-  return /^(1|true|on|yes)$/i.test((env["LOKI_ROUTER"] ?? "").trim());
+  return /^(1|true|on)$/i.test((env["LOKI_ROUTER"] ?? "").trim());
 }
 
 export function num(v: unknown): number {
