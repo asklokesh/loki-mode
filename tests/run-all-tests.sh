@@ -1665,6 +1665,7 @@ run_test "b9 scoreboard dry-run rows and shape defaults (R1-17)" "timeout -k 10 
 run_test "b9 trivial-sum fixture generator" "timeout -k 10 120 $SCRIPT_DIR/test-b9-fixture.sh"
 run_test "b9 claimed-done extraction (FCR-1)" "timeout -k 10 120 $SCRIPT_DIR/test-b9-claim.sh"
 run_test "real-run harness scenarios, dry install, doctored receipt" "timeout -k 10 600 $SCRIPT_DIR/test-real-run.sh"
+run_test "wall-executed guard, 11.3.1 vs 11.3.2 receipts (FC-68)" "timeout -k 10 120 $SCRIPT_DIR/test-wall-executed-guard.sh"
 run_test "b9 raw vs loki arms, ratios and bootstrap (B9-RAW-ARM)" "timeout -k 10 120 $SCRIPT_DIR/test-b9-ab.sh"
 run_test "40x scoreboard factors and efficiency (D92)" "timeout -k 10 120 $SCRIPT_DIR/test-scoreboard-40x.sh"
 run_test "real-repo acceptance gate logic (D58-GATE)" "timeout -k 10 120 $SCRIPT_DIR/test-real-repo-gate.sh"

@@ -633,3 +633,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: `gitleaks dir .gitleaksignore` over every other comment and fingerprint line: line 123 was the only finding. The three fixture copy sites all go through one helper now.
 - Mechanism: (1) the comment is reworded so it no longer trips a rule; (2) copy_real_gitleaksignore copies fingerprint lines only (comments carry no suppression), so a future prose comment cannot break fixtures; (3) a guard case scans the real .gitleaksignore with the pinned gitleaks and fails on any finding. No fingerprint added, hook untouched.
 - Fixture: tests/test-pre-push-gitleaks.sh "FC-66: the real .gitleaksignore scans clean as content". Red before the fix (suite rc=1 at c8, gitleaks reports 1 leak at line 123), green after.
+
+## FC-68 A release can drop a verification check silently and still smoke green (WALL-SMOKE-GUARD)
+- User saw: 11.3.2 receipts carried 1 executed check instead of 2. The Wall test was authored, then discarded before verify ("wall base run not_run: 1", "wall test discarded: loki_wall_sum.test.js (not_run)"). Nothing asserted the count, so the release and its smoke stayed green.
+- Law: evidence or it did not happen; a green that cannot go red is not a gate. Guard class: the root cause is FC-67 (WALL-NOTRUN holds that row); this row is the detection layer.
+- Siblings: any other check a receipt could lose without a failing exit (lint, mutation proof, cross review) is not yet counted; the guard asserts only checks[] executed >= 2 and the Wall test.
+- Mechanism: scripts/assert-wall-executed.sh reads the keys seal.ts writes (checks[].result, wall.files, wall.passed, not_proven[]). scripts/real-run.sh applies it to scenarios with SC_WALL_EXECUTED=1 (trivial-sum, two-bug). Post-Release Smoke npm-smoke runs it as a blocking step.
+- Limit: the real trivial-sum and two-bug runs are billed and CI has no provider key, so Post-Release Smoke cannot run them unattended; the blocking step proves the guard logic on the released commit and runs the real scenario when a key is supplied.
+- Fixture: tests/test-wall-executed-guard.sh (11.3.1 shape passes, 11.3.2 shape fails, each leg alone fails).

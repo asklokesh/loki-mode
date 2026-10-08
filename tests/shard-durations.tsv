@@ -757,4 +757,5 @@ OTel collector config and deterministic fixture (OTEL-2b)	3
 select-tests --run never a silent no-op (FC-47)	5
 workflows never mask a failed test leg (FC-57)	1
 pipe-to-grep-q under pipefail breaks on large output (FC-64)	3
+wall-executed guard, 11.3.1 vs 11.3.2 receipts (FC-68)	3
 main push scans previous-tag..SHA, nightly backstop scans full history (GITLEAKS-INCR)	8
