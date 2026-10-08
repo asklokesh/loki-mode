@@ -1,4 +1,4 @@
-// Rule of Two (moat P9) on the Bun route: GitHub tokens never reach an agent
+// Rule of Two (moat P9) on the Bun route: Loki never passes GitHub tokens into the environment of an agent
 // the runner spawns, unless the operator opts out with
 // LOKI_ALLOW_AGENT_GITHUB_TOKEN=1, which also prints one stderr warning.
 //

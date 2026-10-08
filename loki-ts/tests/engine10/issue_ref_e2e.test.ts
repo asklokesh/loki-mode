@@ -99,7 +99,7 @@ function runEngine(ref: string, issueNumber: number): Run {
 }
 
 describe("engine10 issue-ref e2e (stub gh, stub claude)", () => {
-  test("owner/repo#N: fetch child runs with credentials, intake uses title+body, worker never sees GH_TOKEN", () => {
+  test("owner/repo#N: fetch child runs with credentials, intake uses title+body, Loki never passes GH_TOKEN into the worker environment", () => {
     const r = runEngine("acme/widgets#101", 101);
     if (r.code !== 0) console.error(r.out);
     expect(r.code).toBe(0);

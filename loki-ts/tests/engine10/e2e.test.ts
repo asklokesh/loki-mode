@@ -187,7 +187,7 @@ describe("engine10 e2e (stub claude)", () => {
     expect(impl.length).toBe(1);
   }, 90_000);
 
-  test("Rule of Two: the worker never sees GH_TOKEN; the pr stage runs in the supervisor", () => {
+  test("Rule of Two: Loki never passes GH_TOKEN into the worker environment; the pr stage runs in the supervisor", () => {
     const r = runEngine("done", true);
     if (r.code !== 0) console.error(r.out);
     expect(r.code).toBe(0);
