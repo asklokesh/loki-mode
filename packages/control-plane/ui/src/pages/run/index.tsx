@@ -275,8 +275,9 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
   const [retry, setRetry] = useState<{ busy: boolean; msg?: string; error?: boolean }>({ busy: false });
   const events = useEvents(source, run);
   const patch = useArtifact(source, run, "diff.patch");
-  const receipt = useArtifact(source, run, "receipt.md");
+  const receiptMd = useArtifact(source, run, "receipt.md");
   const receiptJson = useArtifact(source, run, "receipt.json");
+  const receipt = receiptMd === undefined || receiptJson === undefined ? undefined : (receiptMd ?? receiptJson);
   const load = useCallback(() => { getRun(source, run).then((x) => { setD(x); setErr(null); }, (e: Error) => setErr(e.message)); }, [source, run]);
   const inProgress = !d || d.status === "running" || d.verdict === null;
   useEffect(() => {
@@ -312,7 +313,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
     <section data-testid="run-thread" style={{ maxWidth: 1100, margin: "0 auto", padding: "8px 0 32px", display: "flex", flexDirection: "column", gap: 20 }}>
       <header style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12 }}>
         <div style={{ flex: "1 1 320px", minWidth: 0 }}>
-          <div className="cp-eyebrow">{d.origin_repo ?? `repo ${UNMEASURED}`}{d.issue_ref && d.title ? ` / ${d.issue_ref}` : ""}</div>
+          <div className="cp-eyebrow">{d.origin_repo ?? d.source_id}{d.issue_ref && d.title ? ` / ${d.issue_ref}` : ""}</div>
           <h1 data-testid="run-title" className="cp-display" style={{ margin: "4px 0 0", fontSize: 30, overflowWrap: "anywhere" }}>{title}</h1>
         </div>
         {blocked ? <OutcomeBadge verdict="BLOCKED" testid="run-outcome" /> : d.verdict ? <OutcomeBadge label={runOutcome(d).label} tone={runOutcome(d).tone} testid="run-outcome" /> : <OutcomeBadge verdict={null} testid="run-outcome" />}

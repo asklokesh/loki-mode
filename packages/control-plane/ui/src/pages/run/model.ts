@@ -12,7 +12,7 @@ const STAGE_BLURB: Record<string, string> = {
   fix: "Fixed what the failing checks reported",
   verify: "Ran the repo tests against the change",
   commit: "Committed the change to the run branch",
-  wall: "Checked the run against its time budget",
+  wall: "Wrote acceptance checks",
   seal: "Signed a receipt with the diff hash",
   "deep-verify": "Full suite and secret scan after the PR opens",
 };
@@ -23,6 +23,10 @@ export function describeLine(l: TimelineLine): string {
   if (l.kind === "pr") return `Opened a ${l.outcome === "draft" ? "draft " : ""}pull request${tail}`;
   if (l.kind === "receipt") return `Sealed the receipt, ${l.outcome}`;
   if (l.kind === "verdict") return `Run finished: ${l.outcome === "no verdict" ? l.outcome : displayOutcome(l.outcome).label}`;
+  if (l.label === "wall") {
+    if (l.outcome === "skipped") return "Wall skipped: no checks written";
+    if (l.outcome === "completed" && typeof l.files === "number") return `Wrote acceptance checks (${l.files} ${l.files === 1 ? "file" : "files"})`;
+  }
   const base = STAGE_BLURB[l.label] ?? `Stage ${l.label}`;
   if (l.outcome === "failed") return `${base}: failed${tail}`;
   if (l.outcome === "skipped") return `${base}: skipped${tail}`;
