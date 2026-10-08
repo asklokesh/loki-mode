@@ -743,3 +743,4 @@ docs/ROUTING-EVIDENCE.md exists and providers cite it (issue 210)	2
 Usage governor seat formula and burn calibration (GOV-FORMULA)	5
 loki status prints the newest sealed receipt verdict on bash and Bun (133-F4)	20
 MCP server negotiates the requested protocol version (MCP-B)	5
+MCP 2026-07-28 spec doc cites sources and names each requirement (MCP-0)	2
