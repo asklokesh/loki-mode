@@ -130,6 +130,9 @@ async function captureStages(extra: Record<string, string>): Promise<Record<stri
   });
 }
 
+/** Cost-preview estimates split off the start lines, checked outside the fixture comparison. */
+const startEstimates: (string | null)[] = [];
+
 /** The real entry (bin/loki, stub claude CLI): the start line, the run.started data and the --model per stage. */
 function captureEntry(extra: Record<string, string>): Record<string, unknown> {
   const repo = mkdtempSync(join(scratch, "e2e-"));
@@ -148,7 +151,12 @@ function captureEntry(extra: Record<string, string>): Record<string, unknown> {
   const events = readFileSync(join(repo, marker.events), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { type: string; data: Record<string, unknown> });
   const started = { ...events.find((e) => e.type === "run.started")!.data };
   started["branch"] = "<branch>";
-  const startLine = (r.stdout.toString().split("\n")[0] ?? "");
+  const fullStart = (r.stdout.toString().split("\n")[0] ?? "");
+  // 11.3.0 T1 appends a cost-preview estimate to the start line. It is not pre-router model or option
+  // behavior, so it is compared on its own record; everything before it stays byte-for-byte.
+  const cut = fullStart.indexOf("; estimate: ");
+  const startLine = cut < 0 ? fullStart : fullStart.slice(0, cut);
+  startEstimates.push(cut < 0 ? null : fullStart.slice(cut + 2));
   const argv = existsSync(argvLog) ? readFileSync(argvLog, "utf8").trim().split("\n") : [];
   return {
     start_line: startLine,
@@ -178,5 +186,7 @@ describe("R1-21 opt-out golden: pre-router model behavior (11.0.3)", () => {
     expect(Object.keys(fixture.matrix)).toEqual(MATRIX.map((m) => m.name));
     expect(unset).toEqual(fixture.matrix);
     expect(await captureAll("0")).toEqual(fixture.matrix);
+    expect(startEstimates.length).toBeGreaterThan(0);
+    for (const e of startEstimates) expect(e === null || e.startsWith("estimate: ")).toBe(true);
   }, 300_000);
 });
