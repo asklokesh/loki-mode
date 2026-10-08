@@ -1,7 +1,8 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader,
 // stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through
 // RunContext; stages come from ./stages/<name>.ts.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
@@ -18,19 +19,12 @@ interface WallSplit {
 }
 const MANIFESTS = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|pyproject\.toml|poetry\.lock|Pipfile(\.lock)?|requirements[^/]*\.txt|setup\.py|setup\.cfg|go\.(mod|sum)|Cargo\.(toml|lock))$/;
 const wallConcurrent = (): boolean => process.env.LOKI_E10_WALL_CONCURRENT === "1";
-/** WC-01b: detached worktree at baseSha, deps (node_modules, .venv) symlinked from repoDir so Wall tests still resolve; null when unavailable. */
-function makeBaseTree(repoDir: string, baseSha: string): string | null {
-  const dir = mkdtempSync(join(tmpdir(), "e10-wallbase-"));
-  try {
-    safeGit(repoDir, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, baseSha], { stdio: "ignore", repoDrivers: true });
-    for (const d of ["node_modules", ".venv"]) if (existsSync(join(repoDir, d)) && !existsSync(join(dir, d))) symlinkSync(join(repoDir, d), join(dir, d));
-    return dir;
-  } catch { dropBaseTree(repoDir, dir); return null; }
-}
-function dropBaseTree(repoDir: string, dir: string): void {
-  try { safeGit(repoDir, ["worktree", "remove", "--force", dir], { stdio: "ignore", repoDrivers: true }); } catch { /* pruned below */ }
-  rmSync(dir, { recursive: true, force: true });
-  try { safeGit(repoDir, ["worktree", "prune"], { stdio: "ignore", repoDrivers: true }); } catch { /* best effort */ }
+/** WC-01b: a faithful copy of the pre-implement tree (ignored dep dirs, nested node_modules, untracked work, .git; not .loki), taken before implement starts. A clone copy where the filesystem has one. Relative links inside it resolve inside the copy, never into the live repo. */
+function snapshotTree(repoDir: string): Promise<string | null> {
+  const dir = mkdtempSync(join(tmpdir(), "e10-wallbase-")), names = readdirSync(repoDir).filter((n) => n !== ".loki");
+  if (!names.length) return Promise.resolve(dir);
+  const args = process.platform === "darwin" ? ["-cR"] : ["-a", "--reflink=auto"];
+  return new Promise((res) => execFile("cp", [...args, ...names.map((n) => join(repoDir, n)), dir], { maxBuffer: 1 << 20 }, (err) => { if (err) { rmSync(dir, { recursive: true, force: true }); res(null); } else res(dir); }));
 }
 /** Files changed against baseSha (tracked diff plus untracked); null when git cannot say. */
 function changedSinceBase(repoDir: string, baseSha: string): string[] | null {
@@ -188,10 +182,11 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
   // WC-01b: under LOKI_E10_WALL_CONCURRENT=1 the Wall is authored alongside plan and implement, then installed once before verify.
-  interface WallJob { split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: ReturnType<typeof setTimeout>; why: () => "limit" | "cap" | null; onCap: () => void; }
+  interface WallJob { snap: Promise<string | null>; split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: ReturnType<typeof setTimeout>; why: () => "limit" | "cap" | null; onCap: () => void; }
   let wallJob: WallJob | null = null;
   const closeWallJob = (j: WallJob): void => { clearTimeout(j.timer); capCtl.signal.removeEventListener("abort", j.onCap); };
-  const abortWall = (): void => { const j = wallJob; wallJob = null; if (!j) return; closeWallJob(j); j.ctl.abort(); j.promise.catch(() => {}); }; // an abort before install installs nothing (E-54)
+  const dropSnap = (j: WallJob): void => { j.snap.then((d) => { if (d) rmSync(d, { recursive: true, force: true }); }, () => {}); };
+  const abortWall = (): void => { const j = wallJob; wallJob = null; if (!j) return; closeWallJob(j); dropSnap(j); j.ctl.abort(); j.promise.catch(() => {}); }; // an abort before install installs nothing (E-54)
   const startWallAuthor = async (): Promise<boolean> => {
     const st = await load("wall") as (Stage & { split?: WallSplit }) | null;
     if (!st?.split) return false;
@@ -202,29 +197,34 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
     ctx.emit("stage.started", "wall", { target_s: st.targetS, limit_s: st.limitS });
     const promise = st.split.author(sctx, ctl.signal); promise.catch(() => {});
-    wallJob = { split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap };
+    wallJob = { snap: snapshotTree(ctx.repoDir), split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap };
     return true;
   };
-  /** Awaits the author, then installs once against a detached base worktree. Returns the wall result (also recorded in outputs/events). */
+  /** Awaits the author, then installs once against a pre-implement tree snapshot. Returns the wall result (also recorded in outputs/events). */
   const installWallJob = async (): Promise<void> => {
     const j = wallJob; if (!j) return; wallJob = null;
     const dur = (): number => (ctx.clock.now() - j.t0) / 1000;
     let r: StageResult;
     try {
       const a = await Promise.race([j.promise, j.aborted]); closeWallJob(j);
-      if (!a) r = { status: "failed", data: {}, reason: j.why() ?? "aborted", killed: true };
-      else if (a.kind === "done") r = a.result as StageResult;
+      if (!a) { dropSnap(j); r = { status: "failed", data: {}, reason: j.why() ?? "aborted", killed: true }; }
+      else if (a.kind === "done") { dropSnap(j); r = a.result as StageResult; }
       else {
-        const base = makeBaseTree(ctx.repoDir, ctx.baseSha);
-        if (!base) r = { status: "failed", data: {}, reason: "wall base worktree unavailable: nothing installed" };
+        const base = await j.snap; // unproven base run is never trusted: no snapshot, no install (nothing is dropped silently)
+        if (!base) r = { status: "failed", data: {}, reason: "wall base snapshot unavailable: nothing installed" };
         else try {
           const w = a as unknown as { contents: Map<string, string>; targetDir: string };
           mkdirSync(join(base, relative(ctx.repoDir, w.targetDir)), { recursive: true });
           for (const [n, c] of w.contents) writeFileSync(join(base, relative(ctx.repoDir, w.targetDir), n), c, "utf8");
           r = j.split.install(sctx, a as never, base);
           const changed = changedSinceBase(ctx.repoDir, ctx.baseSha);
-          if (r.status === "completed" && (changed === null || changed.some((f) => MANIFESTS.test(f)))) r = { ...r, data: { ...r.data, base_run: { ...(r.data.base_run as Obj), deps: "head" } } }; // implement may have moved the deps: the base run used head's
-        } finally { dropBaseTree(ctx.repoDir, base); }
+          if (r.status === "completed") {
+            const touched = (changed ?? []).filter((f) => !f.startsWith(".loki/") && !f.startsWith(`${relative(ctx.repoDir, w.targetDir)}/loki_wall_`));
+            // Fail closed: a base run that passes while implement changed files is not trusted as "already satisfied" (the base copy could still resolve into live code); verify decides.
+            const unsure = changed === null || touched.length > 0, d = r.data;
+            r = { ...r, data: { ...d, ...(unsure && d.already_satisfied === true ? { already_satisfied: false, already_satisfied_distrusted: true } : {}), ...(changed === null || changed.some((f) => MANIFESTS.test(f)) ? { base_run: { ...(d.base_run as Obj), deps: "head" } } : {}) } };
+          }
+        } finally { rmSync(base, { recursive: true, force: true }); }
       }
     } catch (err) { r = { status: "failed", data: {}, reason: err instanceof Error ? err.message : String(err) }; }
     if (r.status === "completed") { outputs.wall = r.data; ctx.emit("stage.completed", "wall", { ...r.data, duration_s: dur() }); }
@@ -244,6 +244,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
       if (wallConcurrent() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
+      if (wallJob && todo.includes("implement")) await (wallJob as WallJob).snap; // the base copy must be complete before implement edits the tree
       if (wallJob && todo[0] === "verify") {
         await installWallJob();
         if (outputs.wall?.already_satisfied === true) { jumped = true; continue; } // moved after implement by WC-01b; same exit as before
