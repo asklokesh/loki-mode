@@ -7743,18 +7743,16 @@ _DEFAULT_PRICING = {
     "claude-fable-5": {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20},
     "opus":   {"input": 4.00, "output": 20.00, "cache_read": 0.2, "cache_write": 5, "cache_write_1h": 8},
     "sonnet": {"input": 2.00, "output": 10.00, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4},
-    "haiku":  {"input": 1.00, "output": 5.00, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2},
+    # haiku = Haiku 5.5 up to 100K prompt tokens (no over-100K tier here)
+    "haiku":  {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2},
     # OpenAI Codex
-    "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
+    "gpt-5.3-codex": {"input": 1.75, "output": 14.00},
     # gpt-5.6 line: sol (high) / terra (medium, default) / luna (small).
-    # UNVERIFIED RATES. The model IDs are confirmed against
-    # developers.openai.com/api/docs/models, but OpenAI's published per-token
-    # prices for this line were not, so these are placeholders scaled from the
-    # gpt-5.3 rate. They drive a display estimate only, never a gate. Replace
-    # from the pricing page; tools/probe-model-catalog.py is the refresh path.
-    "gpt-5.6-sol":   {"input": 2.50, "output": 20.00},
-    "gpt-5.6-terra": {"input": 1.50, "output": 12.00},
-    "gpt-5.6-luna":  {"input": 0.50, "output": 4.00},
+    # Rates from developers.openai.com/api/docs/pricing (read 2026-10-08),
+    # Standard tier, short context (up to 272K). tests/test-pricing-parity.sh pins them.
+    "gpt-5.6-sol":   {"input": 4.00, "output": 20.00},
+    "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
+    "gpt-5.6-luna":  {"input": 0.20, "output": 1.20},
 }
 
 # Active pricing - starts with defaults, updated from .loki/pricing.json

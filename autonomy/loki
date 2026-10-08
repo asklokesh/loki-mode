@@ -20298,7 +20298,8 @@ pricing = {
     'Fable':  {'input': 10.00, 'output': 50.00},
     'Opus':   {'input': 4.00, 'output': 20.00},
     'Sonnet': {'input': 2.00, 'output': 10.00},
-    'Haiku':  {'input': 1.00, 'output': 5.00},
+    # Haiku = Haiku 5.5 up to 100K prompt tokens (alias target in the model catalog)
+    'Haiku':  {'input': 0.10, 'output': 0.50},
 }
 
 # Build per-iteration plan

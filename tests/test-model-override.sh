@@ -354,10 +354,10 @@ grep -Eq "LOKI_MODEL[^_A-Za-z]*=*.*fable" "$LOKI" \
 grep -q '"fable":.*"input": 10.00,.*"output": 50.00' "$RUN_SH" \
   && ok "run.sh pricing.json template has fable 10/50" || bad "run.sh pricing.json fable row missing"
 # run.sh check_budget_limit inline dict
-grep -q "'fable': {'input': 10.00, 'output': 50.00}" "$RUN_SH" \
+grep -q "'fable': {'input': 10.00, 'output': 50.00" "$RUN_SH" \
   && ok "run.sh check_budget_limit dict has fable 10/50" || bad "run.sh budget dict fable row missing"
 # dashboard _DEFAULT_PRICING
-grep -q '"fable":  {"input": 10.00, "output": 50.00}' "$SERVER_PY" \
+grep -q '"fable":  {"input": 10.00, "output": 50.00' "$SERVER_PY" \
   && ok "server.py _DEFAULT_PRICING has fable 10/50" || bad "server.py fable pricing missing"
 # estimator
 grep -q "'Fable':  {'input': 10.00, 'output': 50.00}" "$LOKI" \
@@ -366,7 +366,7 @@ grep -q "'Fable':  {'input': 10.00, 'output': 50.00}" "$LOKI" \
 grep -q "'Opus':   {'input': 4.00, 'output': 20.00}" "$LOKI" \
   && ok "loki estimator Opus at 4/20 (Opus 5.5)" || bad "loki estimator opus not corrected"
 
-# The cost arithmetic itself: fable must be exactly 2x opus per token.
+# The cost arithmetic itself: Fable 5.1 (10/50) is exactly 2.5x Opus 5.5 (4/20) per token.
 python3 - "$SERVER_PY" <<'PYEOF'
 import sys, ast
 src = open(sys.argv[1]).read()
@@ -377,11 +377,11 @@ ns = {}
 exec("_DEFAULT_PRICING = " + m.group(1), ns)
 p = ns["_DEFAULT_PRICING"]
 f, o = p["fable"], p["opus"]
-assert f["input"] == 2 * o["input"], f"input not 2x: {f} {o}"
-assert f["output"] == 2 * o["output"], f"output not 2x: {f} {o}"
+assert f["input"] == 2.5 * o["input"], f"input not 2.5x: {f} {o}"
+assert f["output"] == 2.5 * o["output"], f"output not 2.5x: {f} {o}"
 print("PRICING_2X_OK")
 PYEOF
-[ $? -eq 0 ] && ok "fable priced at exactly 2x opus in server.py" || bad "fable not 2x opus"
+[ $? -eq 0 ] && ok "fable priced at exactly 2.5x opus in server.py" || bad "fable not 2.5x opus"
 
 # ---------------------------------------------------------------------------
 # 4. Catalog: claude-fable-5 model + fable alias.
