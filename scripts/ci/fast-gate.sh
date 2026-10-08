@@ -137,6 +137,10 @@ cmd_plan() {
         write_matrix "$out"
         return 0
     fi
+    # R8: the global guard set (scripts/global-guards.tsv) runs on every plan, even when every changed
+    # path was R0-class and rest.txt is empty. The python step below dedups against the selector's own R8 rows.
+    bash scripts/select-tests.sh --guards-only >>"$out/raw.tsv" || {
+        printf 'FULL\tglobal-guards-unreadable\t0\t0\n' >"$out/plan.tsv"; write_matrix "$out"; return 0; }
     while IFS= read -r f; do
         [ -n "$f" ] || continue
         guards_for "$f" | sort -u | while IFS= read -r t; do
@@ -195,7 +199,7 @@ for line in open(os.path.join(out, "raw.tsv")):
     # A suite estimated over 80s cannot fit a 90s job. It is deferred to the
     # nightly full run (D90) unless its own file changed (R2) or a path guard
     # selected it (G); the deferral is listed, never silent.
-    if cost > 80 and p[0] not in ("R2", "G"):
+    if cost > 80 and p[0] not in ("R2", "G", "R8"):
         deferred.append("%s\t%s\t%g\n" % (kind, target_, cost))
         continue
     rows.append([kind, target_, cost])

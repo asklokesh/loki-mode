@@ -850,3 +850,21 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   6. `model_output_regex_guard.test.ts` (L0, FC-36 family): regex exec/match on model-output variables under engine10. Baselined: xreview VERDICT and session sentinel parsing (follow-up to schema-checked JSON).
 - **The test that proves it fires:** each file plants a violation in the working tree during review (mutation run recorded in the slice report); `full_env_spawn_guard` and `model_output_regex_guard` also carry in-file detector self-tests.
   Run: `cd loki-ts && bun test tests/util`.
+
+## 22. Repo-wide guards skipped by the diff-selected gate (GATE-GUARDS, FC-48)
+
+- **Incident:** the CI-FAST planner selects tests by diff, so a slice touching
+  only `loki-ts/src/runner/attempts.ts` never ran `fc25_raw_spawn_guard`, and a
+  raw git spawn passed 3 reviews.
+- **Root cause:** every guard was selected only when something it names
+  changed; repo-wide guards name nothing in a given diff.
+- **Guard:** `scripts/global-guards.tsv` is the single declared list of
+  repo-wide guards (loki-ts/tests/util, spawn_env_guard, never_below_raw,
+  l0_guard, structural checks, no-hardcoded-paths, moat P9).
+  `scripts/select-tests.sh` emits it as rule R8 on every non-empty diff,
+  docs-only included, and via `--guards-only`; `scripts/ci/fast-gate.sh plan`
+  and `scripts/impacted-gate.sh` consume it. Add a guard by editing that file
+  only.
+- **The test that proves it fires:** `tests/test-select-tests.sh` (R8 cases):
+  an attempts.ts-only diff and a docs-only diff each select every declared
+  guard. Run: `bash tests/test-select-tests.sh`.

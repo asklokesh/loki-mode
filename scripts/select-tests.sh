@@ -30,7 +30,11 @@
 #                tests/run-all-tests.sh suite untimed (that IS "everything");
 #                everything else is capped at 100s per suite.
 #
-# R0-R7 selection rules are implemented below, in order.
+# --guards-only print only the R8 global guard rows (scripts/global-guards.tsv) and exit.
+#
+# R0-R8 selection rules are implemented below, in order. R8 (always-on global
+# guards) is declared in scripts/global-guards.tsv and emitted for every
+# non-empty, non-R0 diff, docs-only included (GATE-GUARDS, FC-41).
 set -uo pipefail  # not -e: grep/diff "no match" is an expected rc 1 throughout
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,6 +46,7 @@ HEAD_REF=""
 FILES_FROM=""
 MODE="git"
 DO_RUN=0
+GUARDS_ONLY=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -50,8 +55,9 @@ while [ $# -gt 0 ]; do
         --files-from) MODE="files"; FILES_FROM="${2:-}"; shift 2 ;;
         --files) MODE="files"; FILES_FROM="${2:--}"; shift 2 ;;
         --run) DO_RUN=1; shift ;;
+        --guards-only) GUARDS_ONLY=1; shift ;;
         -h | --help)
-            sed -n '2,31p' "$0"
+            sed -n '2,36p' "$0"
             exit 0
             ;;
         *)
@@ -83,6 +89,22 @@ else
 fi
 
 emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
+
+# R8: the repo-wide guards, always selected. The list lives only in global-guards.tsv.
+emit_global_guards() {
+    local gk gt
+    [ -f "$SCRIPT_DIR/global-guards.tsv" ] || { emit R0 ALL "scripts/global-guards.tsv missing"; return 0; }
+    while IFS=$'\t' read -r gk gt; do
+        case "$gk" in '' | '#'*) continue ;; esac
+        [ -n "$gt" ] || continue
+        emit R8 "$gk" "$gt"
+    done <"$SCRIPT_DIR/global-guards.tsv"
+}
+
+if [ "$GUARDS_ONLY" -eq 1 ]; then
+    emit_global_guards
+    exit 0
+fi
 
 if [ "$UNPARSEABLE" -eq 1 ]; then
     emit R0 ALL "unparseable diff -- running everything"
@@ -165,6 +187,8 @@ for f in "${CHANGED[@]}"; do
         *.py) emit R1 py_syntax "$f" ;;
     esac
 done
+
+emit_global_guards
 
 if [ "$DOCS_ONLY" -eq 1 ]; then
     exit 0

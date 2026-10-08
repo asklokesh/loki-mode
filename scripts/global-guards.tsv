@@ -1,0 +1,11 @@
+# The global guard set (GATE-GUARDS, FC-48). One declared place: scripts/select-tests.sh emits every row
+# below as rule R8 on EVERY non-empty diff (docs-only included) and via --guards-only, whatever the diff
+# touches. scripts/ci/fast-gate.sh plan and scripts/impacted-gate.sh consume the selector, so adding a
+# repo-wide guard here is the only edit needed. Columns: kind<TAB>target. kind is bun_test, shell_test or moat.
+bun_test	loki-ts/tests/util
+bun_test	loki-ts/tests/runner/spawn_env_guard.test.ts
+bun_test	loki-ts/tests/engine10/never_below_raw.test.ts
+bun_test	loki-ts/tests/engine10/l0_guard.test.ts
+shell_test	tests/test-structural-checks.sh
+shell_test	tests/test-no-hardcoded-paths.sh
+moat	tests/moat/p9-rule-of-two.sh

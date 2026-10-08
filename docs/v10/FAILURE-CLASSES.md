@@ -521,3 +521,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Fixture: tests/test_release_required_ci.py::EveryWorkflowThatRunsThePythonSuiteInstallsGitleaks (red before the step existed).
 
 - Sibling instance (ALIAS-FWD): tests/cli/test-alias-forwarding.sh carried 3 stale reds on main: help entry bound 23 vs 27 shipped commands (test stale, no decision caps the page), a local-ci Dashboard-normalizer assertion for the bun-parity matrix removed in 5adff01a9 (test stale, assertion retired), and the main-parity export case whose extracted main script could not locate the skill dir (harness stale, fixed with SKILL_DIR). Product had not drifted in any of the three; the suite is not in the fast tier.
+
+## FC-48 The diff-selected gate skipped the repo-wide guards
+- User saw: nothing yet. Raw: a slice touching only loki-ts/src/runner/attempts.ts was gated by the impacted-test planner, which selects by diff, so fc25_raw_spawn_guard and the other repo-wide guards never ran; a raw git spawn passed 3 reviews.
+- Law: Engine Laws (a guard that only runs when its own file changes is a checklist, not a guard); D26 guard 5.
+- Siblings swept: scripts/select-tests.sh (fixed, rule R8), scripts/ci/fast-gate.sh plan (fixed, appends --guards-only even when every path is R0-class), scripts/impacted-gate.sh (fixed, runs R8 bun guards), scripts/local-ci.sh --impacted (goes through impacted-gate.sh).
+- Mechanism: scripts/global-guards.tsv is the one declared list; select-tests.sh emits it as R8 on every non-empty diff (docs-only included) and via --guards-only.
+- Fixture: tests/test-select-tests.sh (attempts.ts-only diff and docs-only diff both select every declared guard; --guards-only lists them).
