@@ -99,12 +99,43 @@ mkrepo() { # mkrepo <name>
     tar -C "$REPO" --exclude node_modules --exclude dist -cf - packages/control-plane loki-ts/src schemas Dockerfile.control-plane | tar -C "$d" -xf -
     echo "$d"
 }
-# Legacy model: the hand-kept per-file COPY list this guard replaced.
-legacy_dockerfile() { # legacy_dockerfile <dockerfile>: swap the tree COPY for the old list
-    local f="$1"
+# Legacy model: a per-file COPY list, the shape this guard replaced. FC-39: the list is DERIVED from the import
+# closure of the two bundle entry points at fixture time, never hand-kept, so it cannot drift from the import graph.
+# plant_import runs after the list is derived, so a new import still falls outside it (the red-first case).
+legacy_copy_list() { # legacy_copy_list <repo>: COPY lines (one per file) for every loki-ts file the bundles reach
+    python3 - "$1" <<'PY'
+import os, re, sys
+repo = os.path.normpath(sys.argv[1])
+rx = re.compile(r"""(?:from|import)\s*\(?\s*["'](\.[^"']+)["']""")
+def resolve(base, spec):
+    t = os.path.normpath(os.path.join(os.path.dirname(base), spec))
+    for c in (t, t + ".ts", os.path.join(t, "index.ts")):
+        if os.path.isfile(c):
+            return c
+    return None
+entries = [os.path.join(repo, "packages/control-plane/src/server/serve.ts"), os.path.join(repo, "packages/control-plane/src/ask/tools_server.ts")]
+seen, queue = set(entries), list(entries)
+while queue:
+    f = queue.pop()
+    for spec in rx.findall(open(f, encoding="utf-8").read()):
+        t = resolve(f, spec)
+        if t and t not in seen:
+            seen.add(t)
+            queue.append(t)
+root = os.path.join(repo, "loki-ts/src") + os.sep
+for f in sorted(seen):
+    if f.startswith(root):
+        rel = os.path.relpath(f, repo)
+        print("COPY " + rel + " /src/" + os.path.dirname(rel) + "/")
+PY
+}
+legacy_dockerfile() { # legacy_dockerfile <dockerfile>: swap the tree COPY for the derived per-file list
+    local f="$1" list
+    list="$(dirname "$f")/.legacy-copy-list.txt"
+    legacy_copy_list "$(dirname "$f")" >"$list" || return 1
     grep -v '^COPY loki-ts/src/ ' "$f" >"$f.tmp"
-    awk -v list="$REPO/tests/fixtures/cp04-legacy-copy-list.txt" '/^COPY schemas\// { while ((getline l < list) > 0) print l } { print }' "$f.tmp" >"$f"
-    rm -f "$f.tmp"
+    awk -v list="$list" '/^COPY schemas\// { while ((getline l < list) > 0) print l } { print }' "$f.tmp" >"$f"
+    rm -f "$f.tmp" "$list"
 }
 plant_import() { # plant_import <repo> <spec>: a brand new loki-ts file reached through redact.ts
     printf 'export const fc32Fresh = 1;\n' >"$1/loki-ts/src/util/fc32_fresh.ts"
