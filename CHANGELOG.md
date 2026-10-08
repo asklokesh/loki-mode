@@ -5,6 +5,22 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.3 (2026-10-08)
+
+Patch release that tightens the release path itself. Promotion of `latest` now requires a green nightly and a green Post-Release Smoke tied to the exact release, a new guard fails any workflow that masks a test failure, and a SIGPIPE guard keeps `| grep -q` from turning large output into a false red. No product behavior changes; `loki doctor` gets a test fix only.
+
+### Added
+- Security Audit scans only the new range (last tag to the pushed SHA) on main pushes, cutting the release gate from about 15 minutes; a nightly full-history gitleaks backstop keeps whole-history coverage (GITLEAKS-INCR).
+- Promote gate (D96-GATE): `latest` moves only when the newest covering nightly is green and a Post-Release Smoke run for the same release is green. Smoke runs are matched by their run title, which carries the Release run's head SHA (workflow_run) or `v<VERSION>` (dispatch), so a smoke for another release can never satisfy the gate.
+- Masked-failure guard (FC-57): `tests/test-workflow-no-masked-failures.sh` fails when a workflow step runs a test and then hides its failure (`|| true`, a capture that is reset before `exit`, a grouped test followed by `|| true`, `continue-on-error`). Common error idioms such as `echo "::error::..." >&2; exit 1` stay allowed. Contrived bypasses are logged as a LOW follow-up (FC-65).
+- SIGPIPE guard ratchet (FC-64): `tests/test-sigpipe-guard.sh` blocks new `<large output> | grep -q` shapes under pipefail, which die of SIGPIPE on large input and report a false failure.
+- D98: guard review standard (realistic findings block, contrived bypasses become LOW rows) and a 2-round limit on HIGH reviews.
+
+### Fixed
+- Pre-push gitleaks test failed on main: three fixtures copied the real `.gitleaksignore`, whose comment text matched a rule; fixtures now drop comment lines and a guard scans the real file with the pinned gitleaks (FC-66, PP-GITLEAKS-FIXTURE).
+- `loki doctor` nightly red: a subprocess test pinned PATH so tightly that the product under test never ran, and its host-dependent counter had no host-independent fixture (FC-63, NR-DOCTOR).
+- Post-Release Smoke run title strips a leading `v` from a dispatched version, so `v11.3.3` and `11.3.3` produce the same title.
+
 ## v11.3.2 (2026-10-08)
 
 Patch release that builds on the 11.3.1 feature set: `loki start --attempts N` can now open a PR, `loki undo`, `loki verify-pr`, `loki issues run` and `loki export --sarif` are added, receipts stop reporting unmeasured usage as zero, and the engine10 core is split so optional features live under contrib/. Most new behavior ships behind a flag that is OFF by default (LOKI_UNDO, LOKI_XVENDOR_DEFAULT, LOKI_AI_MARKING, LOKI_MCP_TASKS, LOKI_MCP_2026_07, LOKI_OTEL_GENAI, LOKI_E10_WALL_CONCURRENT, LOKI_LESSONS_REJECTED), and ER-01 effort right-sizing is off unless LOKI_E10_EFFORT_POLICY=rerun. Only opencode remains on the bash loop; the docs now say so.
