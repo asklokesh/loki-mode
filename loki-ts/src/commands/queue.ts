@@ -226,26 +226,32 @@ export async function defaultGovernor(): Promise<GovernorReading> {
   }
 }
 
-function newestProof(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null } {
-  const dir = join(lokiDir, "proofs");
-  let best: { t: number; p: string } | null = null;
-  try {
-    for (const name of readdirSync(dir)) {
-      const p = join(dir, name, "proof.json");
-      if (!existsSync(p)) continue;
-      const t = statSync(p).mtimeMs;
-      if (t >= since && (!best || t > best.t)) best = { t, p };
+// Engine10 writes .loki/runs/<id>/receipt.json; the legacy loops write .loki/proofs/<id>/proof.json.
+// Both carry a top-level verdict and cost.usd. Newest file modified since `since` wins; runs/ first.
+export function newestRecord(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null } {
+  for (const [sub, file] of [["runs", "receipt.json"], ["proofs", "proof.json"]] as const) {
+    const dir = join(lokiDir, sub);
+    let best: { t: number; p: string } | null = null;
+    try {
+      for (const name of readdirSync(dir)) {
+        const p = join(dir, name, file);
+        if (!existsSync(p)) continue;
+        const t = statSync(p).mtimeMs;
+        if (t >= since && (!best || t > best.t)) best = { t, p };
+      }
+      if (!best) continue;
+      const d = JSON.parse(readFileSync(best.p, "utf8")) as { verdict?: unknown; cost?: { usd?: unknown; source?: unknown } };
+      const usd = d.cost?.usd;
+      const unmetered = d.cost?.source === "cli-invoker-unmetered";
+      return {
+        verdict: typeof d.verdict === "string" ? d.verdict : null,
+        costUsd: !unmetered && typeof usd === "number" && Number.isFinite(usd) ? usd : null,
+      };
+    } catch {
+      continue;
     }
-    if (!best) return { verdict: null, costUsd: null };
-    const d = JSON.parse(readFileSync(best.p, "utf8")) as { verdict?: unknown; cost?: { usd?: unknown } };
-    const usd = d.cost?.usd;
-    return {
-      verdict: typeof d.verdict === "string" ? d.verdict : null,
-      costUsd: typeof usd === "number" && Number.isFinite(usd) ? usd : null,
-    };
-  } catch {
-    return { verdict: null, costUsd: null };
   }
+  return { verdict: null, costUsd: null };
 }
 
 export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
@@ -266,7 +272,7 @@ export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
     } catch {
       /* log is best effort */
     }
-    const proof = newestProof(lokiDir, since);
+    const proof = newestRecord(lokiDir, since);
     return { rc, output, verdict: proof.verdict, costUsd: proof.costUsd };
   };
 }
