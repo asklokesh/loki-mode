@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fixEffort, resolveEffort, stageEffort } from "../../src/engine10/effort_policy.ts";
+import { fixEffort, resolveEffort, stageEffort } from "../../src/contrib/effort_policy.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import type { SessionRunOptions } from "../../src/engine10/types.ts";
 

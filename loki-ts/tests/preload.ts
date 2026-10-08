@@ -6,7 +6,11 @@ import { afterAll, beforeAll } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerContrib } from "../src/contrib/index.ts";
 import { RECEIPT_SIGNER_BASENAME } from "../src/util/receipt_signer.ts";
+
+// D91: fill core's hook slots from contrib/, as src/cli.ts does at startup.
+registerContrib();
 
 // FC-01: the Project Model is ON by default in production; tests with a fake session runner opt out so discovery does not add a session. Tests of the default delete this.
 if (process.env["LOKI_E10_PROJECT_MODEL"] === undefined) process.env["LOKI_E10_PROJECT_MODEL"] = "0";

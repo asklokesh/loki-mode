@@ -1,4 +1,4 @@
-// loki-ts/src/engine10/eta.ts -- E-20 ETA (ENGINE.md section 16), optional module: machine.ts's
+// loki-ts/src/contrib/eta.ts -- E-20 ETA (ENGINE.md section 16), optional module: machine.ts's
 // optional() loader and output.ts's estimateEtaS() dynamically import this and call `estimate`
 // with exactly the two positional numbers below (output.ts's EtaEstimator type). "Cached history"
 // is the average actual/target ratio across stages recorded so far; the first estimate uses the

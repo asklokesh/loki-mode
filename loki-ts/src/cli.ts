@@ -360,6 +360,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "engine10": {
       const { runEngine10 } = await import("./engine10/cli.ts");
       const { registryLoader } = await import("./engine10/registry.ts");
+      (await import("./contrib/index.ts")).registerContrib();
       return runEngine10(rest, registryLoader);
     }
 

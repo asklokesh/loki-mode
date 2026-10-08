@@ -112,6 +112,8 @@ describe("static shape", () => {
     expect(lines[hits[1]!]!.trim()).toBe('const { runEngine10 } = await import("./engine10/cli.ts");');
     expect(lines[hits[2]!]!.trim()).toBe('const { registryLoader } = await import("./engine10/registry.ts");');
     expect(hits).toEqual([hits[0]!, hits[0]! + 1, hits[0]! + 2]);
-    expect(lines[hits[0]! + 3]!.trim()).toBe("return runEngine10(rest, registryLoader);");
+    // D91: contrib/index.ts fills core's hook slots before the engine runs; core never imports contrib.
+    expect(lines[hits[0]! + 3]!.trim()).toBe('(await import("./contrib/index.ts")).registerContrib();');
+    expect(lines[hits[0]! + 4]!.trim()).toBe("return runEngine10(rest, registryLoader);");
   });
 });

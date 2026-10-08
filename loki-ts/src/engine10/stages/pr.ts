@@ -9,8 +9,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PushArgs, RunContext, Stage, StageResult, Verdict } from "../types.ts";
 import { pushArgv } from "../types.ts";
-import { parseRiskDecls, renderBrief, reviewerBriefEnabled, type BriefFacts } from "../../util/reviewer_brief.ts";
-import { readScopeText } from "../../util/run_cap.ts";
+import { renderBrief, reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
+import { hooks } from "../hooks.ts";
 import { renderReviewerBody } from "../../e10ext/reviewer_body.ts";
 import { withSealRoute } from "../../runner/router/route_block.ts"; import { aiMarkerLine, draftReason, withAiMarker } from "../pr_body.ts"; import { evidenceSection } from "../../features/visual_evidence.ts"; import { beforeAfterBlock } from "../../integrations/before_after.ts";
 import { intentSection } from "../../util/intent_card.ts";
@@ -62,25 +62,7 @@ function briefSection(ctx: PrContext): string {
   if (!reviewerBriefEnabled()) return "";
   const o = ctx.outputs();
   const base = String((o.intake as { base_sha?: unknown } | undefined)?.base_sha ?? ctx.baseSha ?? "");
-  try { return "\n" + renderBrief({ repoDir: ctx.repoDir, baseSha: base, plan: (o.plan as { plan?: string } | undefined)?.plan ?? null, facts: briefFacts(ctx) }); } catch { return ""; }
-}
-/** V2: recorded facts only. Anything unreadable stays undefined so the brief prints NOT RECORDED. */
-function briefFacts(ctx: PrContext): BriefFacts {
-  const o = ctx.outputs();
-  const seal = (o.seal ?? {}) as { verdict?: string; receipt_path?: string; receipt_sha256?: string };
-  const facts: BriefFacts = { runId: ctx.runId, ...(seal.verdict ? { verdict: seal.verdict } : {}), receiptSha256: seal.receipt_sha256 ?? null };
-  try { if (seal.receipt_path) facts.receipt = JSON.parse(readFileSync(seal.receipt_path, "utf8")); } catch { /* unreadable receipt: NOT RECORDED */ }
-  const card = (o.plan as { intent_card?: unknown } | undefined)?.intent_card;
-  if (Array.isArray(card)) facts.intentCard = card.map(String);
-  const rd = readScopeText(ctx.runDir);
-  if (rd.status === "ok") {
-    try {
-      const j = JSON.parse(rd.text) as { files?: unknown };
-      if (Array.isArray(j.files)) facts.declaredFiles = j.files.filter((x): x is string => typeof x === "string");
-      facts.risks = parseRiskDecls(j);
-    } catch { /* malformed scope file: NOT RECORDED */ }
-  }
-  return facts;
+  try { return "\n" + renderBrief({ repoDir: ctx.repoDir, baseSha: base, plan: (o.plan as { plan?: string } | undefined)?.plan ?? null, facts: hooks.briefFacts?.(ctx.outputs(), ctx.runId, ctx.runDir) }); } catch { return ""; }
 }
 /** MASS-1: name the issue this run worked, so GitHub links the PR and `loki issues run` reruns find it. Only a strict
  *  owner/repo and an integer number from the supervisor-fetched issue.json reach the body; VERIFIED closes on merge. */

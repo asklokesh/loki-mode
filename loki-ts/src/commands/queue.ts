@@ -8,7 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
-import { printForecast, readingFromGovernorJson, recordWindowDelta, type UsageReading } from "../engine10/forecast.ts";
+import { printForecast, readingFromGovernorJson, recordWindowDelta, type UsageReading } from "../contrib/forecast.ts";
 
 export interface QueueItem {
   ref: string;

@@ -1,21 +1,12 @@
-// loki-ts/src/engine10/cost_records.ts -- RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44).
+// loki-ts/src/contrib/cost_records.ts -- RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44).
 // Per-model cost from the SDK result line's modelUsage (whole pipeline, subagents included), the main-loop-only 5m/1h cache
 // split labelled as such, and a per-session decision on whether a resumed session's total is cumulative. Anything that
 // cannot be established reads NOT RECORDED (the key is omitted, usd is unknown), never a guess.
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 export const RECONCILE = 0.01;
-export interface ModelRecord { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number }
-export interface CostRecords {
-  /** "all-models" = tokens come from modelUsage and its costUSD sums to total_cost_usd within 1%; "main-loop" = SDK usage, which excludes subagents. */
-  tokens_scope?: "all-models" | "main-loop";
-  per_model?: Record<string, ModelRecord>;
-  turns?: number;
-  /** usage.cache_creation split; main-loop scope only (modelUsage carries no split). */
-  cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number };
-  /** "ambiguous" = a resumed session's total cannot be shown cumulative or not, so dollars read NOT RECORDED. "separate" = every resume total is provably not cumulative. */
-  resume?: "ambiguous" | "separate";
-}
+import type { CostRecords, ModelRecord } from "../engine10/types.ts";
+export type { CostRecords, ModelRecord };
 type Rec = Record<string, unknown>;
 
 /** Decide per resumed file whether it is separate or ambiguous. A cumulative total is never below its predecessor's, so a

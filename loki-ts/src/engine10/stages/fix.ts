@@ -8,7 +8,7 @@ import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
-import { fixEffort } from "../effort_policy.ts";
+import { hooks } from "../hooks.ts";
 import { buildFixResumeBrief, runFixSession } from "../../runner/session_resume.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */
@@ -70,7 +70,7 @@ export const fixStage: Stage = {
     if (downgrade && pinnedModel === downgrade.to) process.stderr.write(`${downgrade.note}\n`);
     if (climbed) ctx.emit("route.escalated", "fix", { ...climbed });
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
-    const effort = fixEffort(round, testFailures.length > 0);
+    const effort = hooks.effort?.fix(round, testFailures.length > 0);
     const r = await runFixSession(ctx, { stage: "fix", tier: "development", limitS: fixStage.limitS, signal, cwd: ctx.repoDir,
       ...(effort ? { effort } : {}),
       ...(pinnedModel ? { model: pinnedModel } : {}),

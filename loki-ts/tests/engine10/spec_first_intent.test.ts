@@ -145,7 +145,7 @@ describe("CLI surface", () => {
     expect(route(["plan", "t", "--spec"])).toEqual({ module: "plan_cmd.ts", fn: "main", args: ["t", "--spec"] });
   });
   test("plan without --spec prints usage and exits 2", async () => {
-    const { main } = await import("../../src/engine10/plan_cmd.ts");
+    const { main } = await import("../../src/contrib/plan_cmd.ts");
     const out: string[] = []; const w = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((s: string | Uint8Array) => { out.push(String(s)); return true; }) as typeof process.stderr.write;
     try { expect(await main(["add", "x"])).toBe(2); } finally { process.stderr.write = w; }

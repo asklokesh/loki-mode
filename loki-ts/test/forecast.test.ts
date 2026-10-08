@@ -8,7 +8,7 @@ import {
   readingFromGovernorJson,
   readWindowDeltas,
   recordWindowDelta,
-} from "../src/engine10/forecast.ts";
+} from "../src/contrib/forecast.ts";
 import { governorReadingFromReport, runQueue } from "../src/commands/queue.ts";
 
 const mk = (): string => mkdtempSync(join(tmpdir(), "loki-forecast-"));

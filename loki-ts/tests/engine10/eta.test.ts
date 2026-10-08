@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { estimate, loadHistory, record, reset, saveHistory } from "../../src/engine10/eta.ts";
+import { estimate, loadHistory, record, reset, saveHistory } from "../../src/contrib/eta.ts";
 
 describe("estimate", () => {
   beforeEach(() => reset());

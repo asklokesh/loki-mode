@@ -9,8 +9,8 @@
 // autonomy/lib/cost-summary.py read (not ours to change). Unlike the legacy bash writer (autonomy/run.sh), which
 // always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import type { CostTotals } from "./types.ts";
-import { buildRecords, resumeVerdicts, type CostRecords } from "./cost_records.ts";
+import type { CostRecords, CostTotals } from "./types.ts";
+import { hooks } from "./hooks.ts";
 import { join } from "node:path"; import { routerEnabled } from "../runner/router/flag.ts";
 
 /** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the
@@ -94,7 +94,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
     if (own.has(iter)) continue;
     try { lookup.push({ iter, rec: JSON.parse(readFileSync(resultCostPath(lokiRoot, iter), "utf8")) as Record<string, unknown> }); } catch { /* absent predecessor stays ambiguous */ }
   }
-  const verdicts = resumeVerdicts(lookup);
+  const verdicts = hooks.costRecords?.resumeVerdicts(lookup) ?? { ambiguous: [], separate: [] };
   const rv = { ambiguous: verdicts.ambiguous.filter((i) => own.has(i)), separate: verdicts.separate.filter((i) => own.has(i)) };
   for (const iter of iterations) {
     const path = resultCostPath(lokiRoot, iter);
@@ -152,8 +152,8 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
   out.cache_creation_seen = iterations.length > 0 && creationSeen === iterations.length;
   if (iterations.length > 0 && tokenSessions < iterations.length) out.tokens_measured = { k: tokenSessions, n: iterations.length };
   if (durSeen !== iterations.length) delete out.duration_ms; // a partial duration is not the run's
-  if (rv.ambiguous.length > 0 || recs.length > 0) {
-    const r = buildRecords(recs, iterations.length, rv.ambiguous, rv.separate);
+  if (hooks.costRecords && (rv.ambiguous.length > 0 || recs.length > 0)) {
+    const r = hooks.costRecords.build(recs, iterations.length, rv.ambiguous, rv.separate);
     // whole-pipeline tokens replace the main-loop-only usage figures only when EVERY session carried modelUsage (R3-1)
     if (r.tokens_scope === "all-models" && r.per_model) {
       const v = Object.values(r.per_model);

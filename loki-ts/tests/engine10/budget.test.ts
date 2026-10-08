@@ -13,6 +13,15 @@ function count(list: string[], root: string = ROOT): number {
   return list.reduce((n, f) => n + readFileSync(join(root, f), "utf8").split("\n").length, 0);
 }
 
+/** Per-file line counts, largest first, so a cap failure names its owner. */
+function breakdown(list: string[], root: string = ROOT): string {
+  return list
+    .map((f) => [f, readFileSync(join(root, f), "utf8").split("\n").length] as const)
+    .sort((a, b) => b[1] - a[1])
+    .map(([f, n]) => `${n} ${f}`)
+    .join("\n");
+}
+
 function splitFiles(): { core: string[]; mod: string[] } {
   const files = (readdirSync(ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
   expect(files).toContain("machine.ts");
@@ -25,7 +34,9 @@ function splitFiles(): { core: string[]; mod: string[] } {
 describe("engine10 size budget", () => {
   it("core engine stays under 5,000 lines (D29, D33)", () => {
     const { core } = splitFiles();
-    expect(count(core)).toBeLessThan(5000);
+    const n = count(core);
+    if (n >= 5000) throw new Error(`core is ${n} lines (cap 5000); per file:\n${breakdown(core)}`);
+    expect(n).toBeLessThan(5000);
   });
 
   it("modernize stays under 4,000 lines (D33)", () => {
@@ -271,5 +282,67 @@ describe("features size and import budget (D66)", () => {
   it("the fence flags a value import and allows an import type", () => {
     expect(featuresViolations("x.ts", 'import { a } from "../engine10/stages/verify.ts";\n').length).toBe(1);
     expect(featuresViolations("x.ts", 'import type { A } from "../engine10/verify_cmd.ts";\n')).toEqual([]);
+  });
+});
+
+// D91 item 3 (docs/v11/REGISTRIES.md rule 5): contrib/ is the home for extracted non-verdict code, with its
+// own 1,200-line cap and the same fence as features/.
+const CONTRIB_ROOT = join(import.meta.dir, "..", "..", "src", "contrib");
+
+function contribFiles(): string[] {
+  const files = (readdirSync(CONTRIB_ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
+  expect(files.length).toBeGreaterThan(0);
+  return files;
+}
+
+describe("contrib size and import budget (D91)", () => {
+  it("contrib stays under 1,200 lines", () => {
+    const files = contribFiles();
+    const n = count(files, CONTRIB_ROOT);
+    if (n >= 1200) throw new Error(`contrib is ${n} lines (cap 1200); per file:\n${breakdown(files, CONTRIB_ROOT)}`);
+    expect(n).toBeLessThan(1200);
+  });
+
+  it("never imports stages/ or seal/verify/wall/verify_cmd except whole-statement `import type`", () => {
+    for (const f of contribFiles()) {
+      expect(featuresViolations(f, readFileSync(join(CONTRIB_ROOT, f), "utf8"))).toEqual([]);
+    }
+  });
+
+  it("the fence flags a planted value import of a stages/ module", () => {
+    expect(featuresViolations("x.ts", 'import { x } from "../engine10/stages/seal";\n').length).toBe(1);
+    expect(featuresViolations("x.ts", 'import type { X } from "../engine10/stages/seal";\n')).toEqual([]);
+  });
+});
+
+// CTO RG-06 condition 1: core never imports contrib/. contrib/index.ts registers into core's hook slots and lazy
+// registry at startup, called from the CLI entry (src/cli.ts) and tests/preload.ts.
+function contribImports(src: string): string[] {
+  const re = /(?:\bfrom\s*|\bimport\s*\(?\s*|\brequire\s*\(\s*)["']([^"']*)["']/g;
+  const out: string[] = [];
+  for (const m of src.matchAll(re)) if (/(^|\/)contrib(\/|$)/.test(m[1]!)) out.push(m[1]!);
+  return out;
+}
+
+describe("core never imports contrib (RG-06 condition 1)", () => {
+  it("no file under engine10 (modernize included) imports contrib/", () => {
+    const files = (readdirSync(ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
+    const bad = files.filter((f) => contribImports(readFileSync(join(ROOT, f), "utf8")).length > 0);
+    expect(bad).toEqual([]);
+  });
+
+  it("the scan flags static, dynamic, type and require forms of a contrib import", () => {
+    expect(contribImports('import { x } from "../contrib/forecast.ts";')).toHaveLength(1);
+    expect(contribImports('const m = await import("../contrib/eta.ts");')).toHaveLength(1);
+    expect(contribImports('import type { T } from "../../contrib/index.ts";')).toHaveLength(1);
+    expect(contribImports('const m = require("../contrib/x");')).toHaveLength(1);
+    expect(contribImports('export { y } from "../contrib";')).toHaveLength(1);
+    expect(contribImports('import { x } from "./hooks.ts";')).toEqual([]);
+  });
+
+  it("the bootstrap exists and is wired from the CLI entry and the test preload", () => {
+    const src = join(import.meta.dir, "..", "..", "src");
+    expect(readFileSync(join(src, "cli.ts"), "utf8")).toContain("registerContrib()");
+    expect(readFileSync(join(import.meta.dir, "..", "preload.ts"), "utf8")).toContain("registerContrib()");
   });
 });
