@@ -164,6 +164,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       flags: [str("--label", "<label>", "Only issues with this label"), { name: "--limit", type: "int", placeholder: "<n>", desc: "At most this many issues" }, { name: "--parallel", type: "int", placeholder: "<k>", desc: "Runs at once, at most 4 (separate worktrees)" }, bool("--draft", "Open every PR as a draft"), bool("--dry-run", "List, dedupe and show the plan; no model calls"), bool("--yes", "Skip the cost confirmation (CI)"), bool("--comment", "Comment the triage reason on skipped issues and the slice plan on split ones"), bool("--no-split", "Skip too-large issues instead of splitting them into stacked PRs")],
     })],
   }),
+  cmd("verify-pr", "KEEP-MODERN", "bun", "Verify a PR against its linked issue in a sandbox", "VPR-2: fail-to-pass check, LOKI_VERIFY_PR=1", { flags: [{ name: "--out", type: "path", desc: "Result directory" }], positionals: [{ name: "pr", type: "string" }] }),
   cmd("answer", "KEEP-MODERN", "bun", "Resume a BLOCKED run with an answer", "v10 blocked-run flow", { flags: [bool("--text", "Answer text inline")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("engine10", "KEEP-MODERN", "bun", "v10 engine router", "The v10 engine", {
     subcommands: [sub("run", "Run the v10 engine"), sub("status", "v10 status"), sub("verify", "v10 verify"), sub("keys", "v10 keys"), sub("dashboard", "v10 dashboard"), sub("modernize", "v10 modernize")],

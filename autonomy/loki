@@ -1691,6 +1691,22 @@ _help_answer() {
     echo "and sets LOKI_NO_BROWSER=1."
 }
 
+# `loki help verify-pr`: a Bun-only command (loki-ts), so its help lives here.
+_help_verify_pr() {
+    echo -e "${BOLD}loki verify-pr${NC} - Verify a PR against its linked issue (experimental, LOKI_VERIFY_PR=1)"
+    echo ""
+    echo "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR]"
+    echo ""
+    echo "Derives a check from the PR's linked issue (Check: \`cmd\` or a loki-check fence)."
+    echo "VERIFIED only if the check fails on the PR base, passes on its head, and the"
+    echo "touched packages' suites pass. A PR with no linked issue, no check, a removed"
+    echo "test or a non-discriminating check is NOT PROVEN. Writes verify-pr-result.json."
+    echo "PR code runs only in the container sandbox (scripts/verify-pr-sandbox.sh); set"
+    echo "LOKI_VPR_IMAGE to a locally present image."
+    echo ""
+    echo "Exit codes: 0 verified, 2 usage or sandbox blocked, 4 not proven."
+}
+
 # Appended to `loki help verify`: the v10 DSSE export flag (docs/exit-codes.md).
 _help_verify_dsse() {
     echo ""
@@ -1798,13 +1814,9 @@ show_help() {
     echo ""
     echo "Options for 'start':"
     echo "  --provider NAME  AI provider: claude (default), codex, cline, aider, opencode"
-    echo "  --parallel       Enable parallel mode with git worktrees"
-    echo "  --bg, --background  Run in background mode"
     echo "  --simple         Force simple complexity tier (3 phases)"
     echo "  --complex        Force complex complexity tier (8 phases)"
-    echo "  --github         Enable GitHub issue import"
     echo "  --no-dashboard   Disable web dashboard"
-    echo "  --sandbox        Run in Docker sandbox for isolation (default: off; requires Docker)"
     echo "  --isolation LVL  Per-run isolation dial: none (default) | worktree | docker"
     echo "  --skip-memory    Skip loading memory context at startup"
     echo "  --fresh-prd      Regenerate the PRD from the codebase (no-PRD runs; ignores the reusable generated PRD)"
@@ -1824,8 +1836,6 @@ show_help() {
     echo "  loki start ./prd.md           # Start with PRD file"
     echo "  loki start owner/repo#123     # GitHub issue (auto-fetches)"
     echo "  loki start PROJ-456           # Jira issue"
-    echo "  loki start --bg ./prd.md      # Start in background"
-    echo "  loki start --parallel ./prd.md   # Parallel mode (git worktrees)"
     echo "  loki quick \"add dark mode\"  # Single-task mode (Loki 10 engine)"
     echo "  loki tour                     # See a real sample result (no provider, no key, no spend)"
     echo "  loki demo                     # Build a sample todo app end to end"
@@ -2563,17 +2573,13 @@ cmd_start() {
                 echo "                        Token from LOKI_REMOTE_TOKEN / LOKI_REMOTE_TOKEN_FILE"
                 echo "                        (never an argument). Env: LOKI_REMOTE_URL."
                 echo "  --provider NAME       AI provider: claude (default), codex, cline, aider, opencode"
-                echo "  --parallel            Enable parallel mode with git worktrees"
                 echo "  --allow-haiku         Enable Haiku model for the fast tier (default: disabled)"
-                echo "  --bg, --background    Run in background mode"
                 echo "  --simple              Force simple complexity tier (3 phases)"
                 echo "  --complex             Force complex complexity tier (8 phases)"
-                echo "  --github              Enable GitHub issue import"
                 echo "  --no-dashboard        Disable web dashboard"
                 echo "  --api                 Start dashboard API server alongside the build"
-                echo "  --sandbox             Run in Docker sandbox (default: off; requires Docker)"
                 echo "  --isolation LEVEL     Per-run isolation: none (default) | worktree | docker."
-                echo "                        Unified dial; --parallel = worktree, --sandbox = docker."
+                echo "                        Unified dial."
                 echo "  --attempts N          Run N (1-5, default 1) independent attempts in separate git worktrees;"
                 echo "                        the most executed passing checks wins, losers are recorded on the receipt"
                 echo "  --skip-memory         Skip loading memory context at startup"
@@ -2608,7 +2614,6 @@ cmd_start() {
                 echo "  --worktree, -w        Git worktree isolation (separate branch)"
                 echo "  --pr                  Worktree + auto-create PR"
                 echo "  --ship                Worktree + PR + auto-merge"
-                echo "  --detach, -d          Run in background"
                 echo ""
                 echo "Preview without spending (any input mode):"
                 echo "  loki plan <PRD>       Analyze a spec WITHOUT executing: complexity,"
@@ -2637,7 +2642,6 @@ cmd_start() {
                 echo "  loki start 123                          # ISSUE mode (current repo GitHub issue)"
                 echo "  loki start PROJ-456                     # ISSUE mode (Jira)"
                 echo "  loki start owner/repo#789               # ISSUE mode (GitHub specific repo)"
-                echo "  loki start --prd ./prd.md --parallel    # Explicit PRD, parallel mode"
                 echo "  loki start --issue 123 --ship           # Explicit issue, full automation"
                 echo "  loki start --provider codex             # Use OpenAI Codex CLI"
                 echo "  loki start --bmad-project ./my-project  # Start from BMAD artifacts"
@@ -21426,6 +21430,8 @@ main() {
                             show_help
                         elif [ "$_help_target" = "answer" ]; then
                             _help_answer
+                        elif [ "$_help_target" = "verify-pr" ]; then
+                            _help_verify_pr
                         else
                             LOKI_HELP_ONLY=1 "$0" "$_help_target" --help "$@"
                             local _help_rc=$?

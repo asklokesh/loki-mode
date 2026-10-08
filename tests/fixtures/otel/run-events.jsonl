@@ -1,0 +1,6 @@
+{"v":1,"seq":0,"ts":"2026-10-08T10:00:00.000Z","run":"fixture-run","type":"run.started","stage":null,"data":{"provider":"claude","model":"claude-sonnet-5-5"}}
+{"v":1,"seq":1,"ts":"2026-10-08T10:00:01.000Z","run":"fixture-run","type":"stage.started","stage":"implement","data":{}}
+{"v":1,"seq":2,"ts":"2026-10-08T10:00:02.000Z","run":"fixture-run","type":"tool.called","stage":"implement","data":{"name":"Edit"}}
+{"v":1,"seq":3,"ts":"2026-10-08T10:00:03.000Z","run":"fixture-run","type":"cost","stage":"implement","data":{"model":"claude-sonnet-5-5","usd":0.5,"input_tokens":100,"output_tokens":20,"source":"fixture.json"}}
+{"v":1,"seq":4,"ts":"2026-10-08T10:00:04.000Z","run":"fixture-run","type":"stage.completed","stage":"implement","data":{}}
+{"v":1,"seq":5,"ts":"2026-10-08T10:00:05.000Z","run":"fixture-run","type":"run.completed","stage":null,"data":{"verdict":"VERIFIED"}}

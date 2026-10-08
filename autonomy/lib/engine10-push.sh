@@ -2,6 +2,7 @@
 # Loki 10 engine P4 push child (ENGINE.md sections 6 and 7).
 #
 #   engine10-push.sh push-pr <repo-dir> <branch> <title> <body-file> [--draft] [--base <branch>]
+#   engine10-push.sh check-origin   (exit 0 when the pinned origin is acceptable to push-pr, else the refusal; no network)
 #   engine10-push.sh comment <pr-number> <body-file>
 #   engine10-push.sh issue-comment <issue-ref> <body-file>
 #   engine10-push.sh status  <sha> <pending|success|failure|error> <description>
@@ -111,6 +112,10 @@ _e10_gh() { _loki_with_github_tokens _loki_run_neutral "$_e10_repo" command gh "
 mode="${1:-}"
 shift || true
 case "$mode" in
+    check-origin)
+        # The origin validation above already ran and died on a refusal; reaching here means push-pr would accept it.
+        exit 0
+        ;;
     push-pr)
         [ "$#" -ge 4 ] && [ "$#" -le 7 ] || die "usage: push-pr <repo-dir> <branch> <title> <body-file> [--draft] [--base <branch>]"
         dir="$1" branch="$2" title="$3" body="$4" draft=() base=()

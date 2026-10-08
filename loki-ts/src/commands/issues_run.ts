@@ -18,7 +18,6 @@ import { estimateFor, startText, type EstimateResult } from "../runner/router/co
 import { makeSessionDecompose, parseDecomposition, planComment, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
-import { githubSlug } from "../runner/attempts.ts";
 import { resolveModel } from "../engine10/session.ts";
 
 export interface GhIssue {
@@ -129,6 +128,14 @@ const clip = (s: string, n: number): string => {
 };
 
 const lastLine = (s: string): string => s.split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? "";
+
+const GITHUB_URL_RE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
+
+/** owner/name for a GitHub remote URL, else null (never guessed). */
+function githubSlug(url: string): string | null {
+  const m = GITHUB_URL_RE.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
 
 function originSlug(repoDir: string): string | null {
   try {
