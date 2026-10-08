@@ -5,20 +5,25 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { SRC, walk, rel, isComment, loadAllowlist, checkAllowlist } from "./_guard_lib.ts";
+import { SRC, walk, rel, isComment, loadAllowlist, checkCounts } from "./_guard_lib.ts";
 
 const V = "(?:stdout|stderr|output|out|transcript|reply|response|answer|completion|assistantText|modelText|text|raw)";
 export const PARSE = new RegExp(
   `/[^/\\n]+/[a-z]*\\.(?:exec|test)\\(\\s*${V}\\b|\\b${V}\\.(?:match|matchAll|replace|split)\\(\\s*/|\\bmatch\\(\\s*/[^/\\n]+/[a-z]*\\s*\\)\\s*.*${V}`,
 );
 
-export function hasModelRegex(src: string): boolean {
-  return src.split("\n").some((l) => !isComment(l) && PARSE.test(l));
+export function modelRegexSites(src: string): number {
+  return src.split("\n").filter((l) => !isComment(l) && PARSE.test(l)).length;
 }
+const hasModelRegex = (src: string): boolean => modelRegexSites(src) > 0;
 
 test("no new regex parsing of model output under engine10", () => {
-  const hits = walk(join(SRC, "engine10")).filter((f) => hasModelRegex(readFileSync(f, "utf8"))).map(rel);
-  expect(checkAllowlist(hits, loadAllowlist("model-output-regex.txt"))).toEqual({ unlisted: [], stale: [], noReason: [] });
+  const counts: Record<string, number> = {};
+  for (const f of walk(join(SRC, "engine10"))) {
+    const n = modelRegexSites(readFileSync(f, "utf8"));
+    if (n > 0) counts[rel(f)] = n;
+  }
+  expect(checkCounts(counts, loadAllowlist("model-output-regex.txt"))).toEqual({ unlisted: [], mismatched: [], noReason: [] });
 });
 
 test("the detector flags planted regex parses of model output", () => {

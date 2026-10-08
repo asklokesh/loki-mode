@@ -50,3 +50,18 @@ export function checkAllowlist(hits: string[], allow: Record<string, string>): {
     noReason: Object.entries(allow).filter(([, v]) => v.length < 10).map(([k]) => k),
   };
 }
+
+// Per-site variant: allowlist keys are `path@N` (N = permitted violating sites in that file). A new site in an allowlisted
+// file raises the count and fails; a fixed site lowers it and fails until the entry is tightened.
+export function checkCounts(counts: Record<string, number>, allow: Record<string, string>): { unlisted: string[]; mismatched: string[]; noReason: string[] } {
+  const want: Record<string, number> = {};
+  for (const k of Object.keys(allow)) {
+    const at = k.lastIndexOf("@");
+    want[at < 0 ? k : k.slice(0, at)] = at < 0 ? -1 : Number(k.slice(at + 1));
+  }
+  return {
+    unlisted: Object.keys(counts).filter((f) => !(f in want)),
+    mismatched: Object.keys(want).filter((f) => f in counts && counts[f] !== want[f]).concat(Object.keys(want).filter((f) => !(f in counts))),
+    noReason: Object.entries(allow).filter(([, v]) => v.length < 10).map(([k]) => k),
+  };
+}

@@ -14,8 +14,9 @@ function bashFlags(): Set<string> {
   const out = new Set<string>();
   for (const l of lines.slice(s, e)) {
     const m = l.match(/^\s+(-[-a-zA-Z0-9|=*]+)\)/);
-    if (!m) continue;
-    for (const alt of m[1].split("|")) out.add(alt.replace(/=\*$/, ""));
+    const labels = m?.[1];
+    if (!labels) continue;
+    for (const alt of labels.split("|")) out.add(alt.replace(/=\*$/, ""));
   }
   return out;
 }
@@ -25,10 +26,11 @@ function bunFlags(): Set<string> {
   const out = new Set<string>(["--help", "-h"]);
   for (const name of ["VALUE_FLAGS", "NOOP_BOOL_FLAGS"]) {
     const m = src.match(new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\)`));
-    expect(m).not.toBeNull();
-    for (const f of (m as RegExpMatchArray)[1].matchAll(/"(-[-a-zA-Z0-9]+)"/g)) out.add(f[1]);
+    const body = m?.[1] ?? "";
+    expect(body).not.toBe("");
+    for (const f of body.matchAll(/"(-[-a-zA-Z0-9]+)"/g)) out.add(f[1] ?? "");
   }
-  for (const f of src.matchAll(/BOOL_ENV_FLAGS\.set\(\s*"(-[-a-zA-Z0-9]+)"/g)) out.add(f[1]);
+  for (const f of src.matchAll(/BOOL_ENV_FLAGS\.set\(\s*"(-[-a-zA-Z0-9]+)"/g)) out.add(f[1] ?? "");
   return out;
 }
 
@@ -42,7 +44,8 @@ test("every loki start flag is declared in the parity table and matches its real
   for (const f of new Set([...bash, ...bun])) actual[f] = bash.has(f) && bun.has(f) ? "both" : bash.has(f) ? "bash-only" : "bun-only";
   const undeclared = Object.keys(actual).filter((f) => !(f in table));
   const stale = Object.keys(table).filter((f) => !(f in actual));
-  const wrong = Object.keys(actual).filter((f) => f in table && table[f].split(" ")[0] !== actual[f]);
-  const noReason = Object.keys(table).filter((f) => table[f].split(" ")[0] !== "both" && table[f].replace(/^\S+\s*/, "").length < 10);
+  const val = (f: string): string => table[f] ?? "";
+  const wrong = Object.keys(actual).filter((f) => f in table && val(f).split(" ")[0] !== actual[f]);
+  const noReason = Object.keys(table).filter((f) => val(f).split(" ")[0] !== "both" && val(f).replace(/^\S+\s*/, "").length < 10);
   expect({ undeclared, stale, wrong, noReason }).toEqual({ undeclared: [], stale: [], wrong: [], noReason: [] });
 });
