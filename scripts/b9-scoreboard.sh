@@ -51,8 +51,9 @@
 #                           RECEIPT-TRUTH receipt fields (time.total_s, cost.cache_read_tokens, cost.cache_creation_tokens;
 #                           time.wall_s and cost.input_tokens are never read). A missing field, or total_s differing from
 #                           the sum of time.stages by more than 1%, makes the row NOT RECORDED, never 0.
-#   --arms LIST             with --ab, comma list of arms: raw (claude -p), raw-codex (codex exec --full-auto, no Loki),
-#                           loki. Default raw,loki. A raw-codex preflight failure (no codex, not logged in) is BLOCKED
+#   --arms LIST             with --ab, comma list of arms: raw (claude -p), raw-codex (codex exec --sandbox workspace-write
+#                           --skip-git-repo-check, no Loki), loki. Default raw,loki. The ratio report needs both raw and
+#                           loki; raw-codex rows are written to the TSV but not yet reported per arm. A raw-codex preflight failure (no codex, not logged in) is BLOCKED
 #                           (rc 3, no scored row), never a failed solve. Codex reports no cost or wall here, so its
 #                           usd and wall read NOT RECORDED. A timed-out cell is recorded (solved 0), not dropped.
 #   --check-tasks TSV       no runs: validate the public FCR task set (id repo sha test_cmd license task): 40-hex SHA,
@@ -102,7 +103,7 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-# FCR-2: --arms selects the --ab arms (default raw,loki); raw-codex is `codex exec --full-auto` with no Loki.
+# FCR-2: --arms selects the --ab arms (default raw,loki); raw-codex is `codex exec --sandbox workspace-write --skip-git-repo-check` with no Loki.
 for _a in ${ARMS//,/ }; do
     case "$_a" in raw|raw-codex|loki) ;; *) echo "b9-scoreboard: unknown arm '$_a' (raw, raw-codex, loki)" >&2; exit 2 ;; esac
 done
@@ -384,7 +385,20 @@ STUB
     chmod +x "$T/bin/claude"
     cat > "$T/bin/codex" <<'STUB'
 #!/usr/bin/env bash
-# stub codex for CI: B9_STUB_CODEX_AUTH=fail fails the preflight; B9_STUB_CODEX_MODE=noop edits nothing, sleep hangs
+# stub codex for CI: B9_STUB_CODEX_AUTH=fail fails the preflight; B9_STUB_CODEX_MODE=noop edits nothing, sleep hangs.
+# Like current codex it rejects unknown flags (rc 2, e.g. --full-auto) and refuses a non-git cwd without --skip-git-repo-check.
+skip=0
+for a in "$@"; do
+    case "$a" in
+        exec|workspace-write|read-only|danger-full-access) ;;
+        --sandbox) ;;
+        --skip-git-repo-check) skip=1 ;;
+        -*) echo "error: unexpected argument '$a' found" >&2; exit 2 ;;
+    esac
+done
+if [ "$skip" -eq 0 ] && ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Not inside a trusted directory and --skip-git-repo-check was not specified." >&2; exit 1
+fi
 case " $* " in *" single word OK "*) [ "${B9_STUB_CODEX_AUTH:-}" = fail ] && { echo "codex: not logged in" >&2; exit 1; }; echo OK; exit 0;; esac
 [ "${B9_STUB_CODEX_MODE:-}" != sleep ] || sleep 30
 if [ "${B9_STUB_CODEX_MODE:-}" != noop ]; then
@@ -553,13 +567,13 @@ echo "Cost: \$0.0456"
 STUB
         chmod +x "$T/bin/loki-stub"; LOKI="$T/bin/loki-stub"
     fi
-    if [ "$DRY" -eq 0 ] && ! preflight 1; then
+    if [ "$DRY" -eq 0 ] && case ",$ARMS," in *,raw,*) true ;; *) false ;; esac && ! preflight 1; then
         echo "b9-scoreboard: raw arm BLOCKED: $PF_REASON" >&2; return 3
     fi
     local blocked=0
     case ",$ARMS," in *,raw-codex,*)
         mkdir -p "$T/pf-codex"
-        if ! ( cd "$T/pf-codex" && timeout -k 10 "$TIMEOUT" codex exec --full-auto "Reply with the single word OK" ) < /dev/null > "$T/pf-codex.out" 2>&1; then
+        if ! ( cd "$T/pf-codex" && timeout -k 10 "$TIMEOUT" codex exec --sandbox workspace-write --skip-git-repo-check "Reply with the single word OK" ) < /dev/null > "$T/pf-codex.out" 2>&1; then
             echo "b9-scoreboard: raw-codex arm BLOCKED: preflight failed: $(tail -c 200 "$T/pf-codex.out")" >&2; return 3
         fi ;;
     esac
@@ -575,7 +589,7 @@ STUB
                 esac
                 OUT="$T/ab-out-$LBL-$arm-$run.log"
                 if [ "$arm" = raw-codex ]; then
-                    ( cd "$D" && timeout -k 10 "$TIMEOUT" codex exec --full-auto "$TASKF" ) < /dev/null > "$OUT" 2>&1
+                    ( cd "$D" && timeout -k 10 "$TIMEOUT" codex exec --sandbox workspace-write --skip-git-repo-check "$TASKF" ) < /dev/null > "$OUT" 2>&1
                 elif [ "$arm" = raw ]; then
                     ( cd "$D" && timeout -k 10 "$TIMEOUT" claude -p "$TASKF" --dangerously-skip-permissions --output-format json ${MODEL:+--model "$MODEL"} ) < /dev/null > "$OUT" 2>&1
                 else
