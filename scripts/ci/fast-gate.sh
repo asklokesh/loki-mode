@@ -50,6 +50,22 @@ is_r0_path() {
     return 0
 }
 
+# has_baseline: stdin test paths -> those the full suite also runs (so they have a green
+# baseline). pytest files are collected by the python runners and always pass through.
+has_baseline() {
+    local t b
+    while IFS= read -r t; do
+        case "$t" in
+            *.py) printf '%s\n' "$t"; continue ;;
+        esac
+        b="${t##*/}"
+        if grep -qF -- "$b" tests/run-all-tests.sh scripts/local-ci.sh tests/shard-durations.tsv 2>/dev/null \
+            || grep -qF -- "$b" .github/workflows/full-suite.yml .github/workflows/nightly.yml 2>/dev/null; then
+            printf '%s\n' "$t"
+        fi
+    done
+}
+
 # guards_for FILE: print test files that guard that R0-class path.
 guards_for() {
     local f="$1" base
@@ -57,8 +73,22 @@ guards_for() {
     # FC-54: options BEFORE `--`; after it --include is a file operand and the filter is silently dropped.
     # tests that name the exact path or the basename (docker/Dockerfile.control-plane
     # selects tests/test-control-plane.sh this way)
-    grep -rlF --include='test-*.sh' --include='test_*.py' -- "$f" tests 2>/dev/null
-    grep -rlF --include='test-*.sh' --include='test_*.py' -- "$base" tests 2>/dev/null
+    # FC-73: the grep result is only a candidate set. VERSION and the root manifest names are mentioned by hundreds of
+    # tests (fixtures, prose) that do not guard the file (their guards are the explicit lists below), and a
+    # candidate with no green baseline (not run by the full suite) fails here for reasons
+    # unrelated to the change. Keep only baseline-registered .sh candidates.
+    case "$f" in
+        VERSION | package.json | requirements*.txt | requirements*.in) ;;
+        */package.json | */requirements*.txt | */requirements*.in)
+            # nested manifest: the basename is shared by every manifest, so only the exact path selects
+            grep -rlF --include='test-*.sh' --include='test_*.py' -- "$f" tests 2>/dev/null | has_baseline
+            ;;
+        *)
+        { grep -rlF --include='test-*.sh' --include='test_*.py' -- "$f" tests 2>/dev/null
+          grep -rlF --include='test-*.sh' --include='test_*.py' -- "$base" tests 2>/dev/null
+        } | has_baseline
+        ;;
+    esac
     case "$f" in
         .github/workflows/*)
             grep -rlF --include='test-*.sh' --include='test_*.py' -- ".github/workflows" tests 2>/dev/null
@@ -148,6 +178,7 @@ cmd_plan() {
             [ -f "$t" ] || continue
             case "$t" in
                 *.py) printf 'G\tpy_test\t%s\n' "$t" ;;
+                *.js) printf 'G\tnode_test\t%s\n' "$t" ;;
                 *) printf 'G\tshell_test\t%s\n' "$t" ;;
             esac
         done >>"$out/raw.tsv"
@@ -256,7 +287,13 @@ cmd_run() {
             py_test | pytest) timeout -k 10 "$SUITE_LIMIT" python3 -m pytest -q "$target"; rc=$? ;;
             bun_test) (cd loki-ts && timeout -k 10 "$SUITE_LIMIT" bun test "${target#loki-ts/}"); rc=$? ;;
             node_test) timeout -k 10 "$SUITE_LIMIT" node --test "$target"; rc=$? ;;
-            node_lint) (cd "$target" && timeout -k 10 "$SUITE_LIMIT" npm run lint); rc=$? ;;
+            node_lint)
+                # The shard installs only the root and loki-ts deps; install the target's own
+                # locked deps so the linter binary exists (FC-73), instead of failing rc=127.
+                if [ ! -x "$target/node_modules/.bin/eslint" ]; then
+                    (cd "$target" && timeout -k 10 "${FAST_GATE_INSTALL_LIMIT:-300}" npm ci --ignore-scripts --no-audit --no-fund) || echo "fast-gate: npm ci failed in $target"
+                fi
+                (cd "$target" && timeout -k 10 "$SUITE_LIMIT" npm run lint); rc=$? ;;
             *) echo "unknown kind: $kind" >&2; rc=2 ;;
         esac
         if [ "$rc" -ne 0 ]; then echo "FAIL rc=$rc: $kind $target"; fail=1; else echo "ok: $kind $target"; fi

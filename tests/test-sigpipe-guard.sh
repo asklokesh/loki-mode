@@ -19,7 +19,7 @@ bad() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 # The legacy form: echo/printf of a variable piped into grep -q.
 PATTERN='(echo|printf)[^|]*\$[{A-Za-z_][^|]*\| *grep +-[A-Za-z]*q'
 
-echo "=== sigpipe guard (FC-64) ==="
+echo "=== sigpipe guard (FC-64, FC-74) ==="
 
 # 1. Mechanism: a ~400KB captured value, legacy pipe form vs here-string form.
 big="$(yes 'npm line of onboard output' | head -n 15000)"
@@ -38,7 +38,8 @@ if [ "$herestr_rc" -eq 0 ]; then ok "here-string form passes on the same value";
 
 # 2. The onboard family (large-output command) must not use the legacy form.
 onboard_hits=0
-for f in "$TESTS_DIR"/test-onboard-*.sh; do
+# FC-74 adds test-verify-runner-selection.sh (large source-body captures piped into grep -q).
+for f in "$TESTS_DIR"/test-onboard-*.sh "$TESTS_DIR"/test-verify-runner-selection.sh; do
     [ -f "$f" ] || continue
     n=$(grep -cE "$PATTERN" "$f" || true)
     if [ "${n:-0}" -gt 0 ]; then
@@ -46,7 +47,7 @@ for f in "$TESTS_DIR"/test-onboard-*.sh; do
         bad "$(basename "$f"): $n legacy pipe-to-grep-q line(s); use grep -q ... <<<\"\$var\""
     fi
 done
-[ "$onboard_hits" -eq 0 ] && ok "onboard family uses here-strings only"
+[ "$onboard_hits" -eq 0 ] && ok "onboard family and verify-runner-selection use here-strings only"
 
 # 3. Repo-wide ratchet over suites that set pipefail.
 total=0
