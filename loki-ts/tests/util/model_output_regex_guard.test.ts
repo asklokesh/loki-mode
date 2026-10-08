@@ -1,3 +1,4 @@
+// select: walk-all-src
 // L0 guard (D91 finding class 6): the model emits schema-checked JSON and the harness reads it; the harness must not regex-parse
 // free-form model output in loki-ts/src/engine10 (stdout, transcript, reply, response text). Flags a regex exec/match/test applied to
 // a variable named like model output. Existing parsers are baselined in guard-allowlists/model-output-regex.txt with a follow-up

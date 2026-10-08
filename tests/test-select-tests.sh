@@ -446,6 +446,53 @@ expect_contains "R8 attempts.ts diff selects structural checks" "$out" "tests/te
 out="$(cd "$REPO_ROOT" && bash "$SELECT" --guards-only)"
 expect_contains "R8 --guards-only lists the guards with no diff" "$out" "$(printf 'R8\tmoat\ttests/moat/p9-rule-of-two.sh')"
 
+# FASTGATE-GLOBAL-GUARDS (FC-89): a bun test that walks the whole loki-ts/src tree names no src stem, so R4 never
+# selected it (WALL-COLOR, FC-69, shipped a red). Such tests carry the marker `// select: walk-all-src` and the
+# selector picks every marked file up for any diff, no hard-coded list. A diff touching only
+# loki-ts/src/engine10/stages/wall.ts must select all of them.
+out="$(cd "$REPO_ROOT" && bash "$SELECT" --files - <<<'loki-ts/src/engine10/stages/wall.ts')"
+for g in loki-ts/tests/util/full_env_spawn_guard.test.ts loki-ts/tests/util/fc25_raw_spawn_guard.test.ts \
+    loki-ts/tests/engine10/l0_guard.test.ts loki-ts/tests/runner/spawn_env_guard.test.ts \
+    loki-ts/tests/engine10/budget.test.ts loki-ts/tests/engine10/l2_destructive_registry.test.ts \
+    loki-ts/tests/engine10/never_below_raw.test.ts; do
+    case "$g" in
+        loki-ts/tests/util/*) want="$(printf 'R8\tbun_test\tloki-ts/tests/util\n')" ;;
+        *) want="$(printf 'R8\tbun_test\t%s' "$g")" ;;
+    esac
+    expect_contains "FC-89 wall.ts diff selects the src-walking guard $g" "$out" "$want"
+done
+# Every marked file is covered (directly, or by a declared directory row) on a src diff.
+while IFS= read -r mk; do
+    [ -n "$mk" ] || continue
+    if printf '%s\n' "$out" | grep -qxF -- "$(printf 'R8\tbun_test\t%s' "$mk")" || printf '%s\n' "$out" | grep -qxF -- "$(printf 'R8\tbun_test\t%s' "$(dirname "$mk")")"; then
+        PASS=$((PASS + 1))
+    else
+        FAIL=$((FAIL + 1)); echo "FAIL: FC-89 marked walker $mk is not selected for a loki-ts/src diff"
+    fi
+done < <(cd "$REPO_ROOT" && grep -rlF 'select: walk-all-src' loki-ts/tests --include='*.test.ts' | sort)
+
+# Completeness: a test that walks the src tree but carries neither marker fails here, so a new walker cannot ship
+# unselected. `// select: not-src-walker (reason)` is the audited opt-out for a false positive.
+unmarked="$(cd "$REPO_ROOT" && python3 -I - <<'PYEOF'
+import glob, re
+for f in sorted(glob.glob('loki-ts/tests/**/*.test.ts', recursive=True)):
+    t = open(f).read()
+    if 'select: walk-all-src' in t or 'select: not-src-walker' in t:
+        continue
+    src = (re.search(r'(?:const|let)\s+\w+\s*=\s*(?:resolve|join)\([^;\n]*?(?:"src"|\.\./src\b)[^;\n]*?\)', t)
+           or 'loki-ts/src"' in t or ('from "./_guard_lib' in t and re.search(r'\bSRC\b', t)))
+    rec = re.search(r'isDirectory\(\)|recursive:\s*true|\bwalk\w*\(', t) and re.search(r'\breaddirSync\(|\bwalk\w*\(', t)
+    if src and rec:
+        print(f)
+PYEOF
+)"
+if [ -z "$unmarked" ]; then
+    PASS=$((PASS + 1))
+else
+    FAIL=$((FAIL + 1)); echo "FAIL: FC-89 src-walking tests missing '// select: walk-all-src' (or an audited '// select: not-src-walker (reason)'):"
+    printf '%s\n' "$unmarked"
+fi
+
 # SEL-XARGS: the per-needle candidate scan must batch files into few grep calls, not spawn one grep per
 # candidate file (that made a 100-150 file diff take minutes).
 cnt_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-cnt.XXXXXX")"

@@ -1,3 +1,4 @@
+// select: walk-all-src
 // EL-W1-00: L0 static guard. No file under loki-ts/src may probe a manifest
 // file name or embed a runner command unless listed in l0_guard.allowlist.
 // The allowlist may only shrink: a stale entry fails the test too.

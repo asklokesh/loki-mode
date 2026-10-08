@@ -1,3 +1,4 @@
+// select: not-src-walker (tmp dir only)
 // Multi-process concurrency tests for atomicWriteFileSync.
 //
 // Verifies that the O_EXCL|O_CREAT advisory lockfile in

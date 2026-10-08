@@ -1,3 +1,4 @@
+// select: walk-all-src
 // loki-ts/tests/engine10/session.test.ts
 //
 // E-07 wall check. session.ts (SessionRunner, types.ts/E-01) spawns one

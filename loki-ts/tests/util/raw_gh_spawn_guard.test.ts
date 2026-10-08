@@ -1,3 +1,4 @@
+// select: walk-all-src
 // FC-25 / FC-40 guard (D91 finding class 1): a raw spawn of `gh` in loki-ts/src, or a raw `git push` / `gh pr create` in the
 // bash sources, must be allowlisted with a reason. Raw `git` in loki-ts/src is covered by fc25_raw_spawn_guard.test.ts.
 // Pushes in bash go through _loki_trusted_push (autonomy/run.sh). Allowlist: guard-allowlists/raw-gh-spawn.txt (TS) and

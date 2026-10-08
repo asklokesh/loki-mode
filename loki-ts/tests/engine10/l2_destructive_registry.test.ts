@@ -1,3 +1,4 @@
+// select: walk-all-src
 // ENGINE-LAWS L2 enforcement: every git call under loki-ts/src that can discard, rewrite or move user work (checkout, restore,
 // reset, clean, rm as an argv element) must be listed here with a class and a one-line reason. A new call, or a second call
 // of the same verb in a listed file, fails until it is classified. Class "work" paths may not hold destructive authority (L2),
