@@ -1,12 +1,12 @@
 # Git Workflow
 
-Branch protection and Git best practices for Loki Mode (v5.37.0).
+Branch protection and Git best practices for Loki Mode.
 
 ## Overview
 
 Loki Mode includes branch protection features that prevent direct commits to main/master branches and enforce a clean PR-based workflow. This ensures code review, quality gates, and audit trails for all changes made by autonomous agents.
 
-## Branch Protection (v5.37.0)
+## Branch Protection
 
 ### Enable Branch Protection
 
@@ -388,4 +388,4 @@ git log --show-signature
 - [Audit Logging](audit-logging.md) - Track Git operations
 - [GitHub Integration](../skills/github-integration.md) - Issue import and PR creation
 - [Enterprise Features](../wiki/Enterprise-Features.md) - Branch protection setup
-- [Contributing](../CONTRIBUTING.md) - Contribution guidelines
+- [Contributing](../.github/CONTRIBUTING.md) - Contribution guidelines

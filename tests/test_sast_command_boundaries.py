@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_REVIEWED_SINKS = {
     "dashboard/api_releases.py": 1,
     "dashboard/control.py": 1,
-    "api-examples/python-api.py": 1,
+    "examples/api/python-api.py": 1,
     "web-app/server.py": 2,
     "dashboard/server.py": 2,
 }

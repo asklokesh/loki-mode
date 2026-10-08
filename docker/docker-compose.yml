@@ -1,0 +1,285 @@
+# Loki Mode Docker Compose
+# Usage (from the repo root): docker compose -f docker/docker-compose.yml run loki start prd.md
+# Paths below are relative to this file: .. is the repo root, which is mounted
+# as /workspace, and ../.env is the env file.
+#
+# Auth (pick ONE):
+#   1. API key (default, recommended): copy docker/.env.example to .env and set
+#      ANTHROPIC_API_KEY. `env_file: .env` below loads it automatically, so you
+#      can edit .env and re-run `docker compose run loki ...` without retyping
+#      flags. This is why compose beats a long `docker run -e ...` command.
+#   2. Host OAuth (Claude Code Max/Pro subscribers, no API key): export your
+#      Claude Code credentials to a file and mount them -- see the commented
+#      `LOKI_OAUTH` volume below and docs/DOCKER.md "Option 2: host OAuth".
+#
+# Note: version key removed - deprecated in Docker Compose v2+
+#
+# ---------------------------------------------------------------------------
+# Two ways to run, and they are different products:
+#
+#   docker compose -f docker/docker-compose.yml run loki start prd.md
+#       One build, right now, in the repo root. The `loki` service below.
+#       Nothing is listening; nothing runs when you are not looking.
+#
+#   docker compose -f docker/docker-compose.yml --profile service up -d
+#       The single-node BUILD SERVICE: a webhook receiver that enqueues builds,
+#       a worker that consumes them, and Redis between the two. This is the
+#       docker-compose equivalent of helm/loki-mode, for one machine.
+#       See docs/DEPLOYMENT.md for what actually starts a build once it is up.
+#
+# The service profile needs two secrets in .env before it will do anything:
+#   GITHUB_WEBHOOK_SECRET=...   # same value you paste into the GitHub webhook
+#   ANTHROPIC_API_KEY=...       # the worker needs it; the receiver does not
+# Without the first, the receiver starts and rejects every webhook with 503. It
+# will not silently accept unauthenticated builds.
+# ---------------------------------------------------------------------------
+
+# Fixed project name: keeps the named volumes (redis-data, receiver-state,
+# worker-workspace) the same as when this file lived at the root of a
+# loki-mode clone.
+name: loki-mode
+
+services:
+  loki:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: loki-mode:latest
+    # .env in this directory is loaded automatically (ANTHROPIC_API_KEY etc.).
+    # Edit .env and re-run -- no need to rebuild or retype flags.
+    env_file:
+      - path: ../.env
+        required: false
+    volumes:
+      # Mount current directory as workspace. .loki/ state (memory, session,
+      # queue, checkpoints) is created here, so it persists across runs.
+      - ..:/workspace:rw
+      # Share git config for commits
+      - ~/.gitconfig:/home/loki/.gitconfig:ro
+      # Share SSH keys for git operations
+      - ~/.ssh:/home/loki/.ssh:ro
+      # Share GitHub CLI auth
+      - ~/.config/gh:/home/loki/.config/gh:ro
+      # Auth Option 2 (host OAuth, no API key): uncomment to reuse your Claude
+      # Code login. First export the token from the host (see docs/DOCKER.md):
+      #   security find-generic-password -s "Claude Code-credentials" -w \
+      #     | jq '{claudeAiOauth}' > .loki-oauth-credentials.json   # macOS
+      # NEVER commit that file (it holds a live token).
+      # - ../.loki-oauth-credentials.json:/home/loki/.claude/.credentials.json:rw
+    environment:
+      # Loki Mode configuration
+      - LOKI_NOTIFICATIONS=false  # No desktop notifications in container
+      - LOKI_DASHBOARD=true
+      - LOKI_DASHBOARD_PORT=57374
+      - LOKI_CHROMA_HOST=chroma
+      - LOKI_CHROMA_PORT=8000
+      # Auth Option 1 (default): API key, read from .env via env_file above.
+      # Listing it here also forwards a value already exported in your shell.
+      - ANTHROPIC_API_KEY
+      # Pass through GitHub token if set
+      - GITHUB_TOKEN
+      - GH_TOKEN
+    ports:
+      # Expose dashboard
+      - "57374:57374"
+    # BUG-DK-002: Health check for dashboard API when running
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:57374/health >/dev/null 2>&1 || loki version >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+
+  chroma:
+    image: chromadb/chroma:latest
+    profiles: ["search"]
+    volumes:
+      - chroma-data:/chroma/chroma
+    ports:
+      - "8100:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # =========================================================================
+  # Build service (profile: service). Receiver + worker + queue.
+  # =========================================================================
+
+  # Webhook receiver. Validates the GitHub HMAC and enqueues. Never builds.
+  receiver:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: loki-mode:latest
+    profiles: ["service"]
+    # The image ENTRYPOINT is `loki`, which does not start the webhook server,
+    # and `loki trigger start` nohups it into the background and returns --
+    # which would exit PID 1 immediately. Run the server in the foreground so
+    # the container lifecycle tracks the real process.
+    entrypoint: ["python3", "/opt/loki-mode/autonomy/trigger-server.py"]
+    command: ["--port", "7373", "--workers", "4", "--queue-size", "64"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # Read by trigger-server.py. Never passed as --secret: an argv secret is
+      # readable by any process on the host via /proc.
+      - GITHUB_WEBHOOK_SECRET
+      # Bearer token for POST /jobs. Separate value from the webhook HMAC on
+      # purpose: different callers, different rotation, and a leak of one does
+      # not compromise the other.
+      - LOKI_API_TOKEN
+      - LOKI_QUEUE_BACKEND=redis
+      - LOKI_QUEUE_KEY=loki-builds
+      - LOKI_QUEUE_URL=redis://redis:6379
+      - LOKI_NOTIFICATIONS=false
+      # Ed25519 key that attests each served Evidence Receipt, so a submitter
+      # can verify WHO produced a receipt against /.well-known/jwks.json --
+      # no gpg key import over a side channel. Points at the read-only mount
+      # below rather than carrying the PEM inline: a multi-line private key in
+      # an env var survives shells and process listings poorly.
+      #
+      # RECEIVER ONLY. The worker must never hold this: it runs model-directed
+      # code, so a key there would let a build sign its own receipt, and a
+      # self-attested receipt attests to nothing.
+      #
+      # Unset the mount and receipts are served UNSIGNED, which is honest --
+      # they keep their existing verdict. Generate a key with:
+      #   openssl genpkey -algorithm ed25519 -out ./receipt-signing-key.pem
+      # - LOKI_RECEIPT_SIGNING_KEY_FILE=/etc/loki/receipt-signing-key
+      # NOTE: the receiver holds NO provider credential. It cannot start a
+      # build directly, so a receiver compromise cannot spend your budget.
+    ports:
+      # Bound to loopback. Put a TLS-terminating reverse proxy in front before
+      # letting GitHub reach this; publishing 0.0.0.0:7373 puts an unencrypted
+      # webhook endpoint on every interface the host has.
+      - "127.0.0.1:7373:7373"
+    volumes:
+      # trigger-server.py resolves .loki/triggers relative to CWD and writes
+      # config.json, events.log and server.pid there at startup. Named volume,
+      # not a bind: receiver state has no business in your source tree.
+      - receiver-state:/workspace
+      # RECEIPT SIGNING (optional). Uncomment BOTH this mount and the
+      # LOKI_RECEIPT_SIGNING_KEY_FILE line above to attest served receipts.
+      #
+      # Left commented rather than made conditional because Docker has no
+      # optional bind mount: a bind to a missing path is a HARD START FAILURE
+      # ("bind source path does not exist"), verified here, and
+      # `create_host_path: false` prevents directory creation without making
+      # the mount optional. Shipping it enabled would stop the receiver from
+      # starting for every user who has not generated a key -- strictly worse
+      # than not offering the feature.
+      #
+      #   openssl genpkey -algorithm ed25519 -out ./receipt-signing-key.pem
+      #
+      # NEVER commit that file. Without it, receipts are served UNSIGNED and
+      # /.well-known/jwks.json returns an empty key set, which is honest: they
+      # keep their existing verdict.
+      # - ../receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro
+    working_dir: /workspace
+    # /health is a real route on this server and does not touch the queue.
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request;urllib.request.urlopen('http://localhost:7373/health').read()\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Worker. Pulls one item at a time and runs it. This is where builds happen.
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: loki-mode:latest
+    profiles: ["service"]
+    entrypoint: ["bash", "/opt/loki-mode/autonomy/queue-consumer.sh"]
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # NO LONG-LIVED CREDENTIALS IN THE IMAGE: injected at start from .env, so
+      # rotation is "edit .env, restart" and the image itself holds nothing.
+      - ANTHROPIC_API_KEY
+      - GITHUB_TOKEN
+      - GH_TOKEN
+      - LOKI_QUEUE_BACKEND=redis
+      - LOKI_QUEUE_KEY=loki-builds
+      - LOKI_QUEUE_URL=redis://redis:6379
+      - LOKI_QUEUE_ONESHOT=0
+      - LOKI_NOTIFICATIONS=false
+    volumes:
+      # ONE TENANT PER WORKER. A named volume per worker, NOT a bind of your
+      # source tree: each build gets a filesystem no other submitter's build
+      # has written to. Bind-mounting a shared host directory here would put
+      # every submitter's checkout in one place, which is the leak this avoids.
+      #
+      # `docker compose up --scale worker=N` is the scaling knob, and it is a
+      # tenancy decision before a performance one: any worker may claim any
+      # queue item, so scale within one trust boundary. Separate tenants want
+      # separate stacks with separate queue keys, not more replicas here.
+      - worker-workspace:/workspace
+    working_dir: /workspace
+    # GRACE PERIOD MUST EXCEED THE DRAIN BUDGET.
+    #
+    # queue-consumer.sh traps SIGTERM by letting the CURRENT BUILD FINISH, so
+    # the drain budget is a whole build -- minutes to hours. Docker's default
+    # stop_grace_period is 10s, after which it SIGKILLs regardless. On the
+    # redis backend the item was already popped, so a killed build is not
+    # requeued and not retried: it disappears with no error recorded anywhere.
+    # Raise this above your p99 build time.
+    stop_grace_period: 2h
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # Queue between the two halves.
+  #
+  # HONESTY (autonomy/queue-consumer.sh:29-40): the shipped redis consumer is
+  # AT-MOST-ONCE. It LPOPs an item and then runs it, with no visibility timeout
+  # and no dead-letter requeue. A worker that dies mid-build loses that build
+  # from the queue and nothing retries it. That is why stop_grace_period above
+  # is measured in hours rather than seconds.
+  redis:
+    image: redis:7-alpine
+    profiles: ["service"]
+    # No published ports: reachable only on the compose network. An unauthed
+    # Redis on a host interface is a remote-code-execution primitive.
+    expose:
+      - "6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+volumes:
+  chroma-data:
+  receiver-state:
+  worker-workspace:
+  redis-data:
+

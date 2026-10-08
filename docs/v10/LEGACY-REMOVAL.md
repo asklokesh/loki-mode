@@ -40,13 +40,12 @@ One-word bash commands (autonomy/loki main(), line 21621) and their fate:
 ## 2. Docs and help surface (existing Wave 1, no new work)
 
 `grep -rlE "run.sh|LOKI_ENGINE|loki legacy|legacy engine"` counts (files / mentions):
-- Root: README.md 19, SKILL.md 10, ARCHITECTURE.md 9, COMPONENTS.md 4, AGENTS.md 2, CONTRIBUTING.md 2, TESTING.md 2, CLAUDE.md 1, SETUP.md 1, Dockerfile 1.
+- Root: README.md 19, SKILL.md 10, AGENTS.md 2, CONTRIBUTING.md 2, CLAUDE.md 1, Dockerfile 1. ARCHITECTURE.md (9), COMPONENTS.md (4) and TESTING.md (2) live under docs/; there is no root SETUP.md.
 - docs/: 109 files, 1200 mentions. Shipped (package.json `docs/**/*.md`). Heaviest: v10/BOARD.md 72, BUG-AUDIT-v6.61.0.md 61, ONE-RUN-AUDIT.md 44, BRANCH-LIFECYCLE-PLAN.md 44, CONFIG-FILE-PLAN.md 41, architecture/STATE-MACHINES.md 33, test-scenarios/edge-cases.md 32, v10/ENGINE.md 30, V8-AGENT-SDK-PLAN.md 28, dev/project-structure.md 14. Most are legacy plans: delete, not edit. Keep docs/v10/ (internal records; exclude from `files`).
 - wiki/: 6 files, 13 mentions (Quality-Gates, Enterprise-Features, Enterprise, Contributing, Checkpoints, API-Reference). Quality-Gates and Checkpoints are legacy features: delete pages.
-- skills/ 9 files 33, references/ 7 files 16, vscode-extension/ 3 files 4, integrations/ 2 files 3, templates/ 1 file 2, agent-skills/ 1, packages/loki-seal 4 files 4 (wording only; loki-seal stays).
+- skills/ 9 files 33, references/ 7 files 16, vscode-extension/ 3 files 4, integrations/ 2 files 3, templates/ 1 file 2, examples/agent-skills/ 1, packages/loki-seal 4 files 4 (wording only; loki-seal stays).
 - CLI help: autonomy/loki help (goes with the file), loki-ts/src/cli.ts HELP, engine10/cli.ts USAGE, bin/loki error strings (lines 81, 92, 382, 388).
 - completions/_loki, completions/loki.bash: 0 pattern hits but list every bash command; regenerate from the v10 command list.
-- website/: 0 hits.
 
 ## 3. Directory classification
 
@@ -194,16 +193,15 @@ Row count: 6 rows, decisions: 4 DELETE, 1 KEEP, 1 MOVE.
 |---|---|---|---|
 | README.md version/legacy refs | README.md:3 (3 mentions of v8, v9, legacy), lines mentioning LOKI_ENGINE and `loki legacy` | public docs, npm landing page | DELETE LOKI_ENGINE=legacy hint; rewrite "legacy engine" sections to v10 info or migration note (MOVE history to docs/history/v9-engine.md) |
 | SKILL.md version refs | SKILL.md:28 (old command list, legacy engine description) | Claude Code CLI skill | REPLACE with v10 command list generated from registry (see J below); DELETE legacy engine section |
-| ARCHITECTURE.md | ARCHITECTURE.md:9 mentions | internal docs | audit and DELETE legacy references; KEEP v10 architecture |
+| docs/ARCHITECTURE.md | docs/ARCHITECTURE.md:9 mentions | internal docs | audit and DELETE legacy references; KEEP v10 architecture |
 | CLAUDE.md | CLAUDE.md:1 (v10 references) | developer instructions | KEEP; no cleanup needed |
 | docs/alternative-installations.md | mentions LOKI_ENGINE, legacy engine | shipped docs | DELETE or MOVE to history; rewrite for v10 only |
 | docs/exit-codes.md | mentions legacy command behavior | public API docs | REPLACE with v10 exit codes |
 | docs/ plan files (BUG-AUDIT, ONE-RUN-AUDIT, BRANCH-LIFECYCLE-PLAN, etc., 44 mentions) | grep -l "legacy\|LOKI_ENGINE\|run.sh" docs/ | team reference | MOVE to docs/history/ with dated header (use `git log -1 --format=%cs <file>`) |
 | wiki/ (6 files, 13 mentions) | wiki/Quality-Gates.md, wiki/Checkpoints.md | team docs | DELETE Quality-Gates, Checkpoints (legacy features); audit others |
 | version strings in CLI help | autonomy/loki help output (v8, v9, v10 mentions) | users | DELETE or hand-write to match package.json VERSION |
-| site/docs (if shipped) | website/ (0 legacy hits) | web presence | KEEP; audit for stale info |
 
-Row count: 11 rows, decisions: 3 KEEP, 5 DELETE, 3 MOVE to history, 1 REPLACE (SKILL.md).
+Row count: 10 rows, decisions: 2 KEEP, 5 DELETE, 3 MOVE to history, 1 REPLACE (SKILL.md).
 
 ## 12. I. Tests of legacy surfaces
 

@@ -14,7 +14,7 @@ node -e 'process.exit(require(process.argv[1]).optionalDependencies.bun?1:0)' "$
 # every per-platform pin must equal the Dockerfile version
 nbad="$(node -e 'const o=require(process.argv[1]).optionalDependencies;process.stdout.write(Object.keys(o).filter(k=>k.startsWith("@oven/bun-")&&o[k]!==process.argv[2]).join(","))' "$ROOT/package.json" "$want")"
 [ -z "$nbad" ] && ok "all @oven/bun-* pins equal $want" || bad "mismatched @oven/bun-* pins: $nbad"
-for f in Dockerfile Dockerfile.sandbox; do
+for f in docker/Dockerfile docker/Dockerfile.sandbox; do
   p="$ROOT/$f"
   got="$(sed -n 's/^ARG BUN_VERSION=//p' "$p" | head -1)"
   [ "$got" = "$want" ] && ok "$f BUN_VERSION=$got matches" || bad "$f BUN_VERSION='$got' != '$want'"

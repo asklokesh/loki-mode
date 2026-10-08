@@ -1860,7 +1860,7 @@ show_help() {
     echo "  #       only the OpenAI-shaped /v1/chat/completions. Use the aider or"
     echo "  #       cline route above for OpenRouter."
     echo ""
-    echo "  # Cross-project context (Phase F v7.5.23+)"
+    echo "  # Cross-project context (Phase F)"
     echo "  # Drop .loki/app.json with {schema_version:1,app_id:myapp,members:[ui,api]}"
     echo "  # at the parent of related repos for shared CLAUDE.md + memory."
     echo ""
@@ -1871,7 +1871,7 @@ show_help() {
     echo ""
     echo "  # Config + dashboard"
     echo "  loki config set maxTier sonnet   # Cap model cost"
-    echo "  loki dashboard start          # Web dashboard at localhost:57374"
+    echo "  loki dashboard start          # Open the Control Plane UI"
     echo "  loki watch                    # Auto-rerun on PRD changes"
     echo "  loki cockpit                  # Live multi-repo cockpit (terminal image)"
     echo "  loki remote                   # Remote session (phone/browser)"
@@ -1904,7 +1904,7 @@ show_help() {
     echo ""
     echo "Any command: loki <command> --help"
     echo ""
-    echo "Phase A-J features (v7.5.18 - v7.5.28) are default-on. See CHANGELOG."
+    echo "Phase A-J features are default-on. See CHANGELOG."
     echo ""
     echo "Environment variables an operator would set: docs/environment-variables.md"
     echo "Cost controls (budget, iteration and wall-clock caps): docs/cost-controls.md"
@@ -2534,7 +2534,7 @@ cmd_start() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
-                echo -e "${BOLD}loki start${NC} - Unified entry point for Loki Mode (v6.84.0)"
+                echo -e "${BOLD}loki start${NC} - Unified entry point for Loki Mode"
                 echo ""
                 echo "Usage: loki start [REPO|PRD|ISSUE-REF] [options]"
                 echo ""
@@ -2574,6 +2574,8 @@ cmd_start() {
                 echo "  --sandbox             Run in Docker sandbox (default: off; requires Docker)"
                 echo "  --isolation LEVEL     Per-run isolation: none (default) | worktree | docker."
                 echo "                        Unified dial; --parallel = worktree, --sandbox = docker."
+                echo "  --attempts N          Run N (1-5, default 1) independent attempts in separate git worktrees;"
+                echo "                        the most executed passing checks wins, losers are recorded on the receipt"
                 echo "  --skip-memory         Skip loading memory context at startup"
                 echo "  --fresh-prd           Regenerate the PRD from the codebase on a no-PRD run"
                 echo "                        (ignores the reusable generated PRD; aliases: --regen-prd,"
@@ -2726,6 +2728,17 @@ cmd_start() {
                 ;;
             --parallel)
                 args+=("--parallel")
+                shift
+                ;;
+            --attempts)
+                # 11.3.0 T5: N>=2 is routed to the Bun route by bin/loki; N=1 is today's behavior.
+                if [[ "${2:-}" != "1" ]]; then
+                    echo -e "${RED}--attempts N (2-5) needs the Bun route: run via bin/loki${NC}"
+                    exit 1
+                fi
+                shift 2
+                ;;
+            --attempts=1)
                 shift
                 ;;
             --allow-haiku)
@@ -4232,7 +4245,7 @@ cmd_stop() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
-                echo -e "${BOLD}loki stop${NC} - Stop running sessions (v7.7.30)"
+                echo -e "${BOLD}loki stop${NC} - Stop running sessions"
                 echo ""
                 echo "Usage: loki stop [session-id] [--all]"
                 echo ""
@@ -7085,7 +7098,7 @@ cmd_provider() {
             echo "  info     Show provider details"
             echo "  models   Show resolved model configuration for all providers"
             echo ""
-            echo "Precedence (v7.7.2 -- highest wins):"
+            echo "Precedence (highest wins):"
             echo "  1. loki start --provider NAME         CLI flag (per-invocation)"
             echo "  2. .loki/state/provider               saved value (per-project)"
             echo "  3. LOKI_PROVIDER env var              shell session default"
@@ -7591,13 +7604,14 @@ cmd_dashboard_help() {
     echo ""
     echo "Usage: loki dashboard <command> [options]"
     echo ""
-    echo "Note: 'loki dashboard' is the operations/observability UI (port ${DASHBOARD_DEFAULT_PORT})."
-    echo "      It is NOT the same as 'loki web' (Purple Lab, port ${PURPLE_LAB_DEFAULT_PORT}, deprecated v7.44.0)."
-    echo "      Use 'loki dashboard' to monitor agents, tasks, costs, council, escalations,"
-    echo "      and to submit a PRD via the embedded 'Lab' tab (replaces the deprecated 'loki web')."
+    echo "'loki dashboard', 'loki dashboard start' and 'loki dashboard open' open the Control Plane,"
+    echo "the browser UI for runs, cost, receipts and events (default port 47821; override with"
+    echo "LOKI_CONTROL_PORT). Needs bun; see 'loki control --help'."
+    echo "The commands below manage the classic dashboard server, which serves the API only."
+    echo "Setting LOKI_LEGACY_DASHBOARD=1, or passing --host, --tls-cert or --tls-key, selects it."
     echo ""
     echo "Commands:"
-    echo "  start    Start the dashboard server"
+    echo "  start    Open the Control Plane (or start the classic API server with the flags below)"
     echo "  stop     Stop the dashboard server"
     echo "  status   Show server status and URL"
     echo "  url      Get the dashboard URL"
@@ -7605,7 +7619,7 @@ cmd_dashboard_help() {
     echo "  help     Show this help"
     echo ""
     echo "Options for 'start':"
-    echo "  --port PORT        Port to listen on (default: $DASHBOARD_DEFAULT_PORT)"
+    echo "  --port PORT        Port for the classic API server (default: see LOKI_DASHBOARD_PORT)"
     echo "  --host HOST        Host to bind to (default: $DASHBOARD_DEFAULT_HOST)"
     echo "  --tls-cert PATH    Path to PEM certificate (enables HTTPS)"
     echo "  --tls-key PATH     Path to PEM private key (enables HTTPS)"
@@ -7614,7 +7628,7 @@ cmd_dashboard_help() {
     echo "  --format FMT   Output format: text (default) or json"
     echo ""
     echo "Environment:"
-    echo "  LOKI_DASHBOARD_PORT  Default port (overrides $DASHBOARD_DEFAULT_PORT)"
+    echo "  LOKI_DASHBOARD_PORT  Port for the classic API server"
     echo "  LOKI_DASHBOARD_HOST  Default host (overrides $DASHBOARD_DEFAULT_HOST)"
     echo "  LOKI_TLS_CERT        Path to PEM certificate (enables HTTPS)"
     echo "  LOKI_TLS_KEY         Path to PEM private key (enables HTTPS)"
@@ -7625,7 +7639,7 @@ cmd_dashboard_help() {
     echo "  loki dashboard start --tls-cert cert.pem --tls-key key.pem"
     echo "  loki dashboard status                 # Check if running"
     echo "  loki dashboard url --format json      # Get URL as JSON"
-    echo "  loki dashboard open                   # Print the Control Plane hint (no browser)"
+    echo "  loki dashboard open                   # Open the Control Plane"
     echo "  loki dashboard stop                   # Stop server"
 }
 
@@ -8409,39 +8423,29 @@ cmd_web_redirect_to_dashboard() {
 }
 
 cmd_web_help() {
-    echo -e "${BOLD}Purple Lab -- Loki Mode Web UI (deprecated -- use the dashboard)${NC}"
+    echo -e "${BOLD}loki web${NC} - Deprecated alias for the Control Plane"
     echo ""
     echo "Usage: loki web [command] [options]"
     echo ""
-    echo "DEPRECATED as of v7.44.0: Purple Lab is consolidated into the dashboard."
-    echo "  'loki web' (no subcommand) now LAUNCHES THE DASHBOARD"
-    echo "  (http://localhost:${DASHBOARD_DEFAULT_PORT}) instead of the deprecated Purple"
-    echo "  Lab, so the obvious command lands you on the working UI. Use the embedded"
-    echo "  'Lab' tab there to submit a PRD. For the hosted platform, see Autonomi Cloud."
-    echo ""
-    echo "Note: the canonical command is 'loki dashboard' (operations UI, port ${DASHBOARD_DEFAULT_PORT})."
-    echo "      Use it to monitor running agents, tasks, costs, council, escalations."
+    echo "The standalone web UI was folded into the Control Plane. 'loki web' with no"
+    echo "subcommand launches the Control Plane (default port 47821, override with"
+    echo "LOKI_CONTROL_PORT). The canonical command is 'loki dashboard'."
     echo ""
     echo "Commands:"
-    echo "  start    Launch the dashboard (default; Purple Lab is deprecated)"
-    echo "  stop     Stop the Purple Lab server (if one was started the old way)"
-    echo "  status   Show Purple Lab server status"
-    echo "  logs     Show Purple Lab server logs"
+    echo "  start    Launch the Control Plane (default)"
+    echo "  stop     Stop a standalone web server started the old way"
+    echo "  status   Show standalone web server status"
+    echo "  logs     Show standalone web server logs"
     echo "  help     Show this help"
     echo ""
     echo "Options (for start):"
-    echo "  --port PORT    Use custom port (default: ${DASHBOARD_DEFAULT_PORT})"
-    echo "  --no-open      Accepted for back-compat; ignored (no-op on the dashboard)"
+    echo "  --port PORT    Use custom port"
+    echo "  --no-open      Accepted for back-compat; ignored (no-op)"
     echo ""
     echo "Examples:"
-    echo "  loki web                  Launch the dashboard"
-    echo "  loki web --no-open        Launch the dashboard (--no-open is a no-op)"
-    echo "  loki web stop             Stop a Purple Lab server started the old way"
-    echo ""
-    echo "Note (since v7.5.30):"
-    echo "  The same PRD-input UI is embedded in the dashboard as a 'Lab' sidebar entry."
-    echo "  'loki web stop|status|logs' still operate on a standalone Purple Lab"
-    echo "  process so anyone who started one the old way is never stranded."
+    echo "  loki web                  Launch the Control Plane"
+    echo "  loki web --no-open        Same (--no-open is a no-op)"
+    echo "  loki web stop             Stop a standalone web server started the old way"
 }
 
 cmd_web_start() {
@@ -11836,7 +11840,7 @@ cmd_watch() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
-                echo -e "${BOLD}loki watch${NC} - Auto-rerun on PRD file changes (v6.33.0)"
+                echo -e "${BOLD}loki watch${NC} - Auto-rerun on PRD file changes"
                 echo ""
                 echo "Usage: loki watch [prd-path] [options]"
                 echo ""
@@ -12134,7 +12138,7 @@ cmd_cockpit() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
-                echo -e "${BOLD}loki cockpit${NC} - Live multi-repo status as a terminal inline image (v7.128.0)"
+                echo -e "${BOLD}loki cockpit${NC} - Live multi-repo status as a terminal inline image"
                 echo ""
                 echo "Usage: loki cockpit [options]"
                 echo ""
@@ -12380,7 +12384,7 @@ cmd_export() {
 
     case "$format" in
         --help|-h)
-            echo -e "${BOLD}loki export${NC} - Export session data (v6.0.0)"
+            echo -e "${BOLD}loki export${NC} - Export session data"
             echo ""
             echo "Usage: loki export <format> [output-path]"
             echo ""
@@ -12936,7 +12940,7 @@ cmd_config() {
             echo "  schema          Print the key -> env-var mapping table"
             echo "  validate [FILE] Validate loki.yaml (no FILE: repo root, then ~/.loki) or a --config file"
             echo ""
-            echo "Settable keys (v6.0.0):"
+            echo "Settable keys:"
             echo "  maxTier              Cost ceiling: opus, sonnet, haiku (default: opus)"
             echo "  model.planning       Model for planning tier"
             echo "  model.development    Model for development tier"
@@ -13291,7 +13295,7 @@ cmd_config_show() {
     echo "  max_iterations:   ${LOKI_MAX_ITERATIONS:-1000}"
     echo "  autonomy_mode:    ${LOKI_AUTONOMY_MODE:-perpetual}"
     echo ""
-    echo "v6.0.0 Settings:"
+    echo "Settings:"
     echo "  maxTier:              ${LOKI_MAX_TIER:-(unlimited)}"
     echo "  blind_validation:     ${LOKI_BLIND_VALIDATION:-true}"
     echo "  adversarial_testing:  ${LOKI_ADVERSARIAL_TESTING:-true}"
@@ -14396,7 +14400,7 @@ cmd_logs() {
     # Resolve the log the runner ACTUALLY writes.
     #
     # This read a logs/session.log path that nothing in the tree writes (other
-    # readers of it exist in web-app/ and api-examples/, all equally dead). So
+    # readers of it exist in web-app/ and examples/api/, all equally dead). So
     # `loki logs`, the
     # most natural "what is it doing?" command, reported "No log file found"
     # while the real logs sat in that same directory. run.sh:22409 writes
@@ -14585,7 +14589,7 @@ cmd_api() {
             echo "  status   Check if dashboard server is running"
             echo ""
             echo "Environment:"
-            echo "  LOKI_DASHBOARD_PORT  Port to listen on (default: 57374)"
+            echo "  LOKI_DASHBOARD_PORT  Port for the API server"
             echo ""
             echo "Endpoints:"
             echo "  GET  /api/health  - Health check"
@@ -17957,7 +17961,7 @@ cmd_mcp() {
 }
 
 cmd_heal_help() {
-    echo -e "${BOLD}loki heal${NC} - Legacy system healing (v6.67.0)"
+    echo -e "${BOLD}loki heal${NC} - Legacy system healing"
     echo ""
     echo "Heal legacy codebases by understanding their real behaviors -- the quirks,"
     echo "delays, error states, and invisible dependencies -- then modernizing"
@@ -18992,7 +18996,7 @@ cmd_cluster() {
 
     case "$subcmd" in
         --help|-h|help)
-            echo -e "${BOLD}loki cluster${NC} - Custom workflow templates (v6.3.0)"
+            echo -e "${BOLD}loki cluster${NC} - Custom workflow templates"
             echo ""
             echo "Usage: loki cluster <command> [options]"
             echo ""
@@ -19710,7 +19714,7 @@ with open(failover_file, 'w') as f: json.dump(d, f, indent=2)
                 shift
                 ;;
             --help|-h)
-                echo -e "${BOLD}loki failover${NC} - Cross-provider auto-failover management (v6.19.0)"
+                echo -e "${BOLD}loki failover${NC} - Cross-provider auto-failover management"
                 echo ""
                 echo "Usage: loki failover [options]"
                 echo ""
@@ -21017,13 +21021,13 @@ main() {
                     echo "Usage: loki serve [options]"
                     echo ""
                     echo "Alias for 'loki api start'. Starts the dashboard HTTP API"
-                    echo "server (FastAPI, port 57374 by default)."
+                    echo "server (FastAPI)."
                     echo ""
                     echo "For the UI, run 'loki' (opens the Control Plane) or 'loki control serve'."
                     echo ""
                     echo "Options:"
                     echo "  --host HOST    Bind host (default: 127.0.0.1)"
-                    echo "  --port PORT    Bind port (default: 57374)"
+                    echo "  --port PORT    Bind port (default: LOKI_DASHBOARD_PORT)"
                     echo "  --help, -h     Show this help and exit"
                     echo ""
                     echo "Side effects: starts a long-running HTTP server bound to a TCP port."
@@ -22449,7 +22453,7 @@ MERGE_VALIDATE_PY
             ;;
 
         --help|-h|help)
-            echo -e "${BOLD}loki worktree${NC} - Manage parallel worktrees (v6.7.0)"
+            echo -e "${BOLD}loki worktree${NC} - Manage parallel worktrees"
             echo ""
             echo "Usage: loki worktree <command>"
             echo ""
@@ -22475,7 +22479,7 @@ cmd_state() {
 
     case "$subcmd" in
         --help|-h|help)
-            echo -e "${BOLD}loki state${NC} - Query the SQLite state layer (v6.3.0)"
+            echo -e "${BOLD}loki state${NC} - Query the SQLite state layer"
             echo ""
             echo "Usage: loki state <command> [options]"
             echo ""
@@ -24356,7 +24360,7 @@ except Exception as e:
             echo "  skill [name]      Show skill by name or list all skills"
             echo "  vectors [rebuild] Show vector index stats or rebuild indices"
             echo ""
-            echo "Namespace Commands (v5.19.0):"
+            echo "Namespace Commands:"
             echo "  namespace detect       Auto-detect namespace from current directory"
             echo "  namespace list         List all available namespaces"
             echo "  namespace create NAME  Create a new namespace"
@@ -24384,14 +24388,14 @@ except Exception as e:
             echo "  loki memory vectors"
             echo "  loki memory vectors rebuild"
             echo ""
-            echo "  loki memory ingest --from-claude-transcript <path>  # v7.7.18"
-            echo "  loki memory ingest --from-stdin                     # v7.7.18"
-            echo "  loki memory replay <episode-id> [--json]            # v7.7.22"
-            echo "  loki memory crossproject --for 'build api'          # v7.7.20"
-            echo "  loki memory graph --export graph.json               # v7.7.20"
-            echo "  loki memory graph rebuild                           # v7.7.20"
-            echo "  loki memory enable-hook                             # v7.7.20"
-            echo "  loki memory disable-hook                            # v7.7.20"
+            echo "  loki memory ingest --from-claude-transcript <path>"
+            echo "  loki memory ingest --from-stdin"
+            echo "  loki memory replay <episode-id> [--json]"
+            echo "  loki memory crossproject --for 'build api'"
+            echo "  loki memory graph --export graph.json"
+            echo "  loki memory graph rebuild"
+            echo "  loki memory enable-hook"
+            echo "  loki memory disable-hook"
             echo ""
             echo "  loki memory namespace detect"
             echo "  loki memory namespace list"
@@ -27166,15 +27170,17 @@ TELEM_DISABLE_PY
             echo "  status              Show OTEL config + collection state + pending crash reports"
             echo "  enable [endpoint]   Enable OTEL (default: http://localhost:4318)"
             echo "  disable             Disable OTEL for current project"
-            echo "  on                  Opt in to anonymous diagnostics (off by default)"
+            echo "  on                  Opt in explicitly to anonymous diagnostics"
             echo "  off                 Opt out of all anonymous diagnostics (telemetry + crash)"
             echo "  start               Alias for 'on' (persistent opt-in across all sessions)"
             echo "  stop                Alias for 'off' (persistent opt-out across all sessions)"
             echo "  analytics on|off|status"
             echo "                      Opt in/out of build-outcome analytics (off by default)"
             echo ""
-            echo "Anonymous diagnostics are OFF by default. Nothing is collected or"
-            echo "sent unless you opt in. See docs/PRIVACY.md for the full disclosure."
+            echo "Anonymous diagnostics are ON by default for individual interactive installs,"
+            echo "and OFF in CI, enterprise, air-gapped and non-interactive contexts. An opt-out"
+            echo "(loki telemetry off, LOKI_TELEMETRY=off or DO_NOT_TRACK=1) always wins."
+            echo "See docs/PRIVACY.md for the full disclosure."
             echo ""
             ;;
         *)
@@ -29829,7 +29835,7 @@ PYEOF
             ;;
 
         --help|-h|help)
-            echo -e "${BOLD}loki agent${NC} - Agent type dispatch (v6.7.0)"
+            echo -e "${BOLD}loki agent${NC} - Agent type dispatch"
             echo ""
             echo "Usage: loki agent <command> [args]"
             echo ""
@@ -35029,7 +35035,7 @@ cmd_report_legacy() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --help|-h)
-                echo -e "${BOLD}loki report${NC} - Session report generator (v6.27.0)"
+                echo -e "${BOLD}loki report${NC} - Session report generator"
                 echo ""
                 echo "Usage: loki report [subcommand] [options]"
                 echo ""

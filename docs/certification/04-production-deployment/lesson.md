@@ -28,11 +28,11 @@ docker pull asklokesh/loki-mode:5.52.0
 docker run -it -v $(pwd):/workspace asklokesh/loki-mode:latest
 ```
 
-The Dockerfile is at the repository root (`Dockerfile`). A separate `Dockerfile.sandbox` exists for sandboxed execution.
+The Dockerfile is `docker/Dockerfile`. A separate `docker/Dockerfile.sandbox` exists for sandboxed execution.
 
 ### Docker Compose
 
-The `docker-compose.yml` at the repository root provides a ready-to-use configuration:
+`docker/docker-compose.yml` provides a ready-to-use configuration:
 
 ```yaml
 services:
@@ -59,7 +59,7 @@ services:
 Start with:
 
 ```bash
-docker-compose run loki start ./prd.md
+docker compose -f docker/docker-compose.yml run loki start ./prd.md
 ```
 
 Key volume mounts:
@@ -86,7 +86,7 @@ Or pass `--sandbox` to the start command:
 loki start --sandbox ./prd.md
 ```
 
-The sandbox uses `Dockerfile.sandbox` which adds additional isolation constraints.
+The sandbox uses `docker/Dockerfile.sandbox` which adds additional isolation constraints.
 
 ## Security Hardening
 

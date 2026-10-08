@@ -27,6 +27,7 @@ export const FIXED_RULES = [
   "- Never kill processes.",
   "- Write no documentation unless the task explicitly asks for it.",
   "- Do not commit or push.",
+  "- If you add a new third-party registry dependency, list it in .loki/supply-declared.json as a JSON array of {ecosystem,name,version_spec,registry}, leaving out workspace, path, git and local packages.",
   FINISH_LINE,
 ].join("\n");
 

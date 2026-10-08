@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""E-33: the Loki 10 gate report (run by EV-6 on real results).
+"""E-33: the Loki 10 report on the gates (run by EV-6 on real results).
 
 Usage: gate_report.py <results.jsonl> --metrics <path> --changelog <path>
 
@@ -72,7 +72,7 @@ def report(rows, sha):
             and x.get("arm") == V10 and x.get("completed") and x.get("task") not in invalid
             and x.get("time_to_pr_s") is not None and x["time_to_pr_s"] > P90_MAX_S]
 
-    out = ["### Loki 10 gate: %s" % ok(met).lower(), "",
+    out = ["### Loki 10 result: %s" % ok(met).lower(), "",
            "Results sha256 `%s`; model %s; harness %s. Completion, time to PR and cost come from "
            "harness.summarize_rows (nearest-rank percentiles over completed runs; cost is "
            "provider-reported, not measured when any evaluated run lacks a figure)." % (sha, g["model"], ", ".join(shas) or "none"),

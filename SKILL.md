@@ -3,7 +3,7 @@ name: loki-mode
 description: An autonomous software factory that knows what it is supposed to deliver, and proves it did. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
-# Loki Mode v11.2.2
+# Loki Mode v11.3.0
 
 **Current entry points (Loki 10 engine):** `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run the Loki 10 engine and end with a signed receipt (`loki verify`). `loki backlog owner/repo --all` runs many issues in parallel. Guide: `docs/v10/GUIDE.md`. The skill instructions below, and `loki start`, describe the legacy engine, which still ships and is being removed (`loki start owner/repo#N` still routes to it; prefer `loki owner/repo#N`).
 
@@ -15,7 +15,7 @@ description: An autonomous software factory that knows what it is supposed to de
 
 **Provider-agnostic (stable since v5.0.0):** runs on Claude/Codex/Cline/Aider with abstract model tiers and degraded mode for non-Claude providers; no vendor lock-in. Gemini deprecated v7.5.18. See `skills/providers.md`. **Legacy track (v8.0.0):** the Anthropic Agent SDK route (see below), spec-mode expansion for OpenAPI/GraphQL/Postman contracts, the runtime-boot and secret-leak evidence axes, and `loki steer` / `loki why` for mid-run control. Earlier tracks: LSP grounding as a first-class agent tool (v7.7.x) and Phase 1 RARV-C closure (real provider judges, gate-failure flock, synthetic PRD e2e, status `--json`).
 
-**Runtime migration:** Bash-to-Bun migration. `bin/loki` is the router: the commands in its Bun-route `case` (read-only ones such as `version`, `status`, `stats`, `doctor`, `provider`, `memory`, plus stateful ones such as `rollback`, `trust`, `proof`/`receipt`, `control`, `answer`) run through `loki-ts/src/cli.ts` on Bun; the rest, and some flag forms (for example `doctor --airgap`, `trust detail`), run on Bash (`autonomy/loki`). `start` is Bash by default and goes to Bun only for the SDK loop (`LOKI_SDK_LOOP=1`) or Loki 10 engine inputs (issue refs, multi-word tasks). Read `bin/loki` and `cli.ts` for the exact set rather than trusting a list here. Rollback: `LOKI_LEGACY_BASH=1`. See `UPGRADING.md` and `docs/architecture/ADR-001-runtime-migration.md`.
+**Runtime migration:** Bash-to-Bun migration. `bin/loki` is the router: the commands in its Bun-route `case` (read-only ones such as `version`, `status`, `stats`, `doctor`, `provider`, `memory`, plus stateful ones such as `rollback`, `trust`, `proof`/`receipt`, `control`, `answer`) run through `loki-ts/src/cli.ts` on Bun; the rest, and some flag forms (for example `doctor --airgap`, `trust detail`), run on Bash (`autonomy/loki`). `start` is Bash by default and goes to Bun only for the SDK loop (`LOKI_SDK_LOOP=1`) or Loki 10 engine inputs (issue refs, multi-word tasks). Read `bin/loki` and `cli.ts` for the exact set rather than trusting a list here. Rollback: `LOKI_LEGACY_BASH=1`. See `docs/architecture/ADR-001-runtime-migration.md`.
 
 **Anthropic Agent SDK route (v8.0.0, opt-in, default-off):** a claude-binary-free path where the RARV loop runs on `@anthropic-ai/claude-agent-sdk` `query()` and judges run on the raw `@anthropic-ai/sdk`. One operator switch `LOKI_SDK_MODE` (`off` default / `judges` / `full`), mirrored byte-for-byte in bash (`autonomy/lib/sdk-mode.sh`) and TypeScript (`loki-ts/src/runner/sdk_mode.ts`). Unset = byte-identical to the claude-CLI route. See `references/sdk-mode.md`.
 
@@ -483,4 +483,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v11.2.2 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**
+**v11.3.0 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**

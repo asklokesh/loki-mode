@@ -55,7 +55,7 @@ expect "start jira:ABC-1 reaches engine10 without start" "dist/loki.js engine10 
 expect "start linear:ENG-2 reaches engine10" "engine10 linear:ENG-2" start linear:ENG-2
 expect "start Linear URL reaches engine10" "engine10 https://linear.app/acme/issue/ENG-2" start https://linear.app/acme/issue/ENG-2
 expect "one-word foo stays legacy" "ROUTE=BASH" foo
-expect "start one-word stays legacy" "ROUTE=BASH" start prd.md
+expect "start one-word reaches the Bun start (engine10), never the legacy loop (FC-38)" "ROUTE=BUN args=$ROOT/loki-ts/dist/loki.js start prd.md" start prd.md
 
 # Real-CLI leg: no JIRA_* env must fail fast, name JIRA_BASE_URL, call no provider.
 if command -v bun >/dev/null 2>&1 && [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then

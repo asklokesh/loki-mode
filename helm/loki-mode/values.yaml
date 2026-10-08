@@ -264,7 +264,7 @@ queue:
 redis:
   enabled: true
 
-  # Same image as docker-compose.yml. Multi-arch, and it is not going anywhere.
+  # Same image as docker/docker-compose.yml. Multi-arch, and it is not going anywhere.
   image: redis:7-alpine
 
   resources:

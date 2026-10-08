@@ -55,12 +55,12 @@ run_start() {
     fi
 }
 
-# 1. default-off (unset) -> BASH route
+# 1. default (unset) -> BUN route (FC-38: start never reaches the legacy bash loop)
 out="$(run_start "")"
 case "$out" in
-    *ROUTE=BASH*) ok "default-off: start routes to bash (byte-identical cmd_start)" ;;
-    *ROUTE=BUN*)  bad "default-off WRONGLY routed to Bun: $out" ;;
-    *) bad "default-off produced no route marker: $out" ;;
+    *ROUTE=BUN*) ok "default: start routes to the Bun start (engine10), never bash" ;;
+    *ROUTE=BASH*) bad "default WRONGLY routed start to the legacy bash loop: $out" ;;
+    *) bad "default produced no route marker: $out" ;;
 esac
 
 # 2. LOKI_SDK_LOOP=1 -> BUN route
@@ -77,12 +77,13 @@ case "$out" in
     *) bad "LOKI_SDK_LOOP=true did not route to Bun: $out" ;;
 esac
 
-# 4. LOKI_SDK_LOOP=1 but LOKI_LEGACY_BASH=1 -> bash wins (legacy override precedes)
+# 4. LOKI_LEGACY_BASH=1 no longer reaches the bash loop for start: refused loudly (FC-38)
 # start-guard-allow: bin/loki is a copied shim whose autonomy/loki is a stub
-out="$(PATH="$WORK/bin:$PATH" LOKI_LEGACY_BASH=1 LOKI_SDK_LOOP=1 bash "$WORK/repo/bin/loki" start ./prd.md 2>/dev/null)"
+out="$(PATH="$WORK/bin:$PATH" LOKI_LEGACY_BASH=1 LOKI_SDK_LOOP=1 bash "$WORK/repo/bin/loki" start ./prd.md 2>&1)"
 case "$out" in
-    *ROUTE=BASH*) ok "LOKI_LEGACY_BASH=1 wins over LOKI_SDK_LOOP=1 (rollback precedence)" ;;
-    *) bad "legacy override did not win: $out" ;;
+    *ROUTE=BASH*) bad "LOKI_LEGACY_BASH=1 reached the legacy bash loop from start: $out" ;;
+    *"runs only the Loki 10 engine"*) ok "LOKI_LEGACY_BASH=1 start is refused, not routed to the legacy loop" ;;
+    *) bad "LOKI_LEGACY_BASH=1 start gave no refusal: $out" ;;
 esac
 
 # 5. a non-start command with LOKI_SDK_LOOP=1 is unaffected (still bash here)

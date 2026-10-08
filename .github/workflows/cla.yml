@@ -22,7 +22,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PERSONAL_ACCESS_TOKEN: ${{ secrets.CLA_TOKEN }}
         with:
-          path-to-signatures: 'signatures/version1/cla.json'
+          path-to-signatures: '.github/cla/version1/cla.json'
           path-to-document: 'https://github.com/asklokesh/loki-mode/blob/main/CLA.md'
           branch: 'main'
           allowlist: asklokesh,dependabot[bot],github-actions[bot]

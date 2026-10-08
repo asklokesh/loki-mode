@@ -213,7 +213,7 @@ class ContentCompareCannotBeHiddenByALineSeparatorSwap(unittest.TestCase):
     def _base_commit(self):
         _write(self.repo, "VERSION", "9.55.0\n")
         _write(self.repo, "package.json", '{"version": "9.55.0"}\n')
-        _write(self.repo, "Dockerfile",
+        _write(self.repo, "docker/Dockerfile",
                b"FROM alpine:3.20\nLABEL version=\"9.55.0\"\n# drop privileges\nUSER nobody\n")
         _write(self.repo, "mcp/__init__.py",
                b'# guard\nraise SystemExit("blocked")\n__version__ = "9.55.0"\n')
@@ -224,7 +224,7 @@ class ContentCompareCannotBeHiddenByALineSeparatorSwap(unittest.TestCase):
 
     def _bump_and_commit(self, mutate):
         _write(self.repo, "VERSION", "9.56.0\n")
-        for path in ("package.json", "Dockerfile", "mcp/__init__.py"):
+        for path in ("package.json", "docker/Dockerfile", "mcp/__init__.py"):
             full = pathlib.Path(self.repo) / path
             full.write_bytes(full.read_bytes().replace(b"9.55.0", b"9.56.0"))
         mutate()
@@ -245,7 +245,7 @@ class ContentCompareCannotBeHiddenByALineSeparatorSwap(unittest.TestCase):
         (round 2's splitlines()-based compare did)."""
         parent = self._base_commit()
         def mutate():
-            full = pathlib.Path(self.repo, "Dockerfile")
+            full = pathlib.Path(self.repo, "docker/Dockerfile")
             full.write_bytes(full.read_bytes().replace(
                 b"# drop privileges\nUSER nobody\n", b"# drop privileges\rUSER nobody\n"))
         sha = self._bump_and_commit(mutate)
@@ -426,6 +426,12 @@ def _required_ci_full_script():
     next_job_m = re.search(r"\n  \w[\w-]*:\n", src[job_m.end():])
     job_end = job_m.end() + (next_job_m.start() if next_job_m else len(src) - job_m.end())
     job_text = src[job_m.start():job_end]
+    # Select the step by name so extra steps before it (the D90 nightly
+    # block) cannot change which `run: |` block this harness exercises.
+    step_m = re.search(r"\n +- name: Require Tests / Security Audit green", job_text)
+    if not step_m:
+        return None
+    job_text = job_text[step_m.start():]
     run_m = re.search(r"\n( +)run: \|\n", job_text)
     if not run_m:
         return None

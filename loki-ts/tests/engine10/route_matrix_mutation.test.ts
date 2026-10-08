@@ -1,10 +1,24 @@
 // Proof that the semantic route matrix bites: each mutation edits a COPY of src/ and the matrix must report violations.
 // The first ten entries are the bypass forms that defeated the old line-regex guard; the rest are the standing mutation list.
 import { afterAll, describe, expect, it } from "bun:test";
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { matrixViolations } from "./route_matrix_lib.ts";
+
+// FC-34: the matrix imports the (mutated) src copy dynamically. Doing that in THIS process under `bun test --coverage` leaves the
+// coverage reporter holding rows for temp files that afterAll has already deleted, and it dies on Linux. So every evaluation runs in a
+// child bun process (no --coverage) and returns its violations as JSON. A child that fails never yields a result.
+const CHILD = join(import.meta.dir, "route_matrix_child.ts");
+async function matrixViolations(root: string): Promise<string[]> {
+  const proc = Bun.spawn([process.execPath, CHILD, root], { stdout: "pipe", stderr: "pipe", env: { ...process.env, LOKI_NO_BROWSER: "1" } });
+  const [out, err, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  if (code !== 0) throw new Error(`route matrix child exited ${code}: ${err.slice(0, 2000)}`);
+  const line = out.trim().split("\n").pop() ?? "";
+  let parsed: unknown;
+  try { parsed = JSON.parse(line); } catch { throw new Error(`route matrix child printed unparsable output: ${out.slice(0, 500)}`); }
+  if (!Array.isArray(parsed) || !parsed.every((x) => typeof x === "string")) throw new Error(`route matrix child printed a non-array: ${line.slice(0, 500)}`);
+  return parsed as string[];
+}
 
 const LOKI_TS = join(import.meta.dir, "../..");
 const HAIKU = '"claude-haiku-5-5"';
@@ -71,4 +85,22 @@ describe("route matrix mutation proof", () => {
       expect(found.length).toBeGreaterThan(0);
     }, 120_000);
   }
+});
+
+describe("FC-34 guard: the parent test process never loads temp src copies", () => {
+  it("no tests file builds a temp copy AND evaluates it in-process through route_matrix_lib", () => {
+    const offenders: string[] = [];
+    for (const f of readdirSync(import.meta.dir)) {
+      if (!f.endsWith(".ts") || f === "route_matrix_lib.ts" || f === "route_matrix_child.ts") continue;
+      const src = readFileSync(join(import.meta.dir, f), "utf8");
+      if (/from\s+["']\.\/route_matrix_lib(\.ts)?["']/.test(src) && /mkdtempSync|mkdtemp\(/.test(src)) offenders.push(f);
+      if (/await import\(\s*join\(\s*(root|base|tmp)/.test(src)) offenders.push(f);
+    }
+    expect(offenders).toEqual([]);
+  });
+  it("this file evaluates mutated copies through the child runner", () => {
+    const self = readFileSync(join(import.meta.dir, "route_matrix_mutation.test.ts"), "utf8");
+    expect(self).toContain("Bun.spawn([process.execPath, CHILD");
+    expect(self).not.toMatch(/import\s*\{[^}]*matrixViolations[^}]*\}\s*from/);
+  });
 });

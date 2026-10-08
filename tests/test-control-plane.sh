@@ -55,7 +55,7 @@ workdir, in_build = "/", False
 def dest_path(d):
     d = d if d.startswith("/") else os.path.join(workdir, d)
     return os.path.normpath(stage + os.path.normpath(d))
-for line in open(os.path.join(repo, "Dockerfile.control-plane")):
+for line in open(os.path.join(repo, "docker", "Dockerfile.control-plane")):
     parts = line.split()
     if not parts:
         continue
@@ -96,29 +96,93 @@ if stage_build "$REPO" "$SD" >"$T/stage-real.log" 2>&1; then ok "server bundles 
 mkrepo() { # mkrepo <name>
     local d="$T/gfx/$1"
     mkdir -p "$d"
-    tar -C "$REPO" --exclude node_modules --exclude dist -cf - packages/control-plane loki-ts/src schemas Dockerfile.control-plane | tar -C "$d" -xf -
+    tar -C "$REPO" --exclude node_modules --exclude dist -cf - packages/control-plane loki-ts/src schemas docker/Dockerfile.control-plane | tar -C "$d" -xf -
     echo "$d"
 }
-# Legacy model: the hand-kept per-file COPY list this guard replaced.
-legacy_dockerfile() { # legacy_dockerfile <dockerfile>: swap the tree COPY for the old list
-    local f="$1"
+# Legacy model: a per-file COPY list, the shape this guard replaced. FC-39: the list is DERIVED from the import
+# closure of the two bundle entry points at fixture time, never hand-kept, so it cannot drift from the import graph.
+# plant_import runs after the list is derived, so a new import still falls outside it (the red-first case).
+legacy_copy_list() { # legacy_copy_list <repo>: COPY lines (one per file) for every loki-ts file the bundles reach
+    python3 - "$1" <<'PY'
+import os, re, sys
+repo = os.path.normpath(sys.argv[1])
+rx = re.compile(r"""(?:from|import)\s*\(?\s*["'](\.[^"']+)["']""")
+JS_MAP = os.environ.get("CP04_WALK_NO_JS_MAP") != "1"  # test hook: disables the .js/.mjs mapping and the index.js candidate, the mutant used to prove the .js case is guarded
+def candidates(t):
+    yield t
+    for ext in (".js", ".mjs") if JS_MAP else ():
+        if t.endswith(ext):
+            yield t[: -len(ext)] + ".ts"
+    yield t + ".ts"
+    yield os.path.join(t, "index.ts")
+    if JS_MAP:
+        yield os.path.join(t, "index.js")
+def resolve(base, spec):
+    t = os.path.normpath(os.path.join(os.path.dirname(base), spec))
+    for c in candidates(t):
+        if os.path.isfile(c):
+            return c
+    return None
+def specs(path):  # specifiers in code; comment-only lines are skipped (they quote specifiers as prose)
+    code = [l for l in open(path, encoding="utf-8").read().split("\n") if not re.match(r"\s*(//|\*|/\*)", l)]
+    return rx.findall("\n".join(code))
+entries = [os.path.join(repo, "packages/control-plane/src/server/serve.ts"), os.path.join(repo, "packages/control-plane/src/ask/tools_server.ts")]
+seen, queue = set(entries), list(entries)
+while queue:
+    f = queue.pop()
+    for spec in specs(f):
+        t = resolve(f, spec)
+        if t is None:
+            sys.stderr.write("legacy_copy_list: cannot resolve relative import " + repr(spec) + " from " + os.path.relpath(f, repo) + "\n")
+            sys.exit(3)
+        if t not in seen:
+            seen.add(t)
+            queue.append(t)
+root = os.path.join(repo, "loki-ts/src") + os.sep
+for f in sorted(seen):
+    if f.startswith(root):
+        rel = os.path.relpath(f, repo)
+        print("COPY " + rel + " /src/" + os.path.dirname(rel) + "/")
+PY
+}
+legacy_dockerfile() { # legacy_dockerfile <dockerfile>: swap the tree COPY for the derived per-file list
+    local f="$1" list repo
+    repo="$(dirname "$(dirname "$f")")"
+    list="$repo/.legacy-copy-list.txt"
+    legacy_copy_list "$repo" >"$list" || return 1
     grep -v '^COPY loki-ts/src/ ' "$f" >"$f.tmp"
-    awk -v list="$REPO/tests/fixtures/cp04-legacy-copy-list.txt" '/^COPY schemas\// { while ((getline l < list) > 0) print l } { print }' "$f.tmp" >"$f"
-    rm -f "$f.tmp"
+    awk -v list="$list" '/^COPY schemas\// { while ((getline l < list) > 0) print l } { print }' "$f.tmp" >"$f"
+    rm -f "$f.tmp" "$list"
 }
 plant_import() { # plant_import <repo> <spec>: a brand new loki-ts file reached through redact.ts
     printf 'export const fc32Fresh = 1;\n' >"$1/loki-ts/src/util/fc32_fresh.ts"
     printf 'import { fc32Fresh } from "%s";\nexport const fc32Use = fc32Fresh;\n' "$2" >>"$1/loki-ts/src/util/redact.ts"
 }
-FX="$(mkrepo legacy-sanity)"; legacy_dockerfile "$FX/Dockerfile.control-plane"
+# FC-39: the closure walk must follow .js/.mjs specifiers (TS ESM style) and must fail loudly on an unresolvable one.
+walkrepo() { # walkrepo <name> <import-spec>: tiny repo whose serve.ts imports <import-spec> from loki-ts/src
+    local d="$T/walk/$1"
+    mkdir -p "$d/packages/control-plane/src/server" "$d/packages/control-plane/src/ask" "$d/loki-ts/src/runner"
+    printf 'import { a } from "%s";\nexport const s = a;\n' "$2" >"$d/packages/control-plane/src/server/serve.ts"
+    : >"$d/packages/control-plane/src/ask/tools_server.ts"
+    printf 'export const a = 1;\n' >"$d/loki-ts/src/runner/dev.ts"
+    echo "$d"
+}
+WD="$(walkrepo js "../../../../loki-ts/src/runner/dev.js")"
+if legacy_copy_list "$WD" 2>/dev/null | grep -q 'loki-ts/src/runner/dev.ts '; then ok "closure walk maps a .js specifier to its .ts file"; else bad ".js specifier dropped from the derived list"; fi
+if CP04_WALK_NO_JS_MAP=1 legacy_copy_list "$WD" >/dev/null 2>&1; then bad "RED-FIRST: removing the .js mapping did not fail the walk"; else ok "RED-FIRST: with the .js mapping removed the walk fails (guard is live)"; fi
+WD="$(walkrepo mjs "../../../../loki-ts/src/runner/dev.mjs")"
+if legacy_copy_list "$WD" 2>/dev/null | grep -q 'loki-ts/src/runner/dev.ts '; then ok "closure walk maps .mjs to <name>.ts"; else bad ".mjs specifier dropped from the derived list"; fi
+WD="$(walkrepo missing "../../../../loki-ts/src/runner/nope.js")"
+if MSG="$(legacy_copy_list "$WD" 2>&1 >/dev/null)"; then bad "unresolvable relative import did not fail the walk"; elif printf '%s' "$MSG" | grep -q 'nope.js'; then ok "unresolvable relative import fails the walk and names the specifier"; else bad "walk failed without naming the specifier: $MSG"; fi
+FX="$(mkrepo legacy-sanity)"; legacy_dockerfile "$FX/docker/Dockerfile.control-plane"
 if stage_build "$FX" "$T/stage-legacy-sanity" >"$T/s1.log" 2>&1; then ok "legacy list model bundles the unmodified tree (fixture sanity)"; else bad "legacy fixture sanity failed"; tail -10 "$T/s1.log"; fi
-FX="$(mkrepo legacy-plant)"; legacy_dockerfile "$FX/Dockerfile.control-plane"; plant_import "$FX" "./fc32_fresh.ts"
+FX="$(mkrepo legacy-plant)"; legacy_dockerfile "$FX/docker/Dockerfile.control-plane"; plant_import "$FX" "./fc32_fresh.ts"
 if stage_build "$FX" "$T/stage-legacy-plant" >"$T/s2.log" 2>&1; then bad "legacy list model absorbed a new import with no list edit (should need one)"; else ok "RED-FIRST: a new loki-ts import breaks the legacy hand-kept list until a COPY line is added"; fi
 FX="$(mkrepo tree-plant)"; plant_import "$FX" "./fc32_fresh.ts"
 if stage_build "$FX" "$T/stage-tree-plant" >"$T/s3.log" 2>&1; then ok "tree COPY absorbs a new loki-ts import with no Dockerfile edit"; else bad "tree COPY failed on a new import"; tail -10 "$T/s3.log"; fi
 FX="$(mkrepo tree-missing)"; plant_import "$FX" "./fc32_does_not_exist.ts"
 if stage_build "$FX" "$T/stage-tree-missing" >"$T/s4.log" 2>&1; then bad "bundle stayed green with a missing import target"; else ok "bundle goes red when an import target is really missing"; fi
-FX="$(mkrepo no-copy)"; grep -v '^COPY loki-ts/src/ ' "$FX/Dockerfile.control-plane" >"$FX/Dockerfile.tmp"; mv "$FX/Dockerfile.tmp" "$FX/Dockerfile.control-plane"
+FX="$(mkrepo no-copy)"; grep -v '^COPY loki-ts/src/ ' "$FX/docker/Dockerfile.control-plane" >"$FX/docker/Dockerfile.tmp"; mv "$FX/docker/Dockerfile.tmp" "$FX/docker/Dockerfile.control-plane"
 if stage_build "$FX" "$T/stage-no-copy" >"$T/s5.log" 2>&1; then bad "bundle stayed green with the loki-ts COPY deleted"; else ok "bundle goes red when the Dockerfile stops copying loki-ts/src"; fi
 step "install control-plane ui (frozen)" 120 bash -c "cd '$REPO/packages/control-plane/ui' && bun install --frozen-lockfile"
 step "install loki-ts (frozen)" 120 bash -c "cd '$REPO/loki-ts' && bun install --frozen-lockfile"

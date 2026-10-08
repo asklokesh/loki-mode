@@ -8,15 +8,28 @@ import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKey
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts"; import { RealBaseTestRunner } from "./wall.ts";
-import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { discardIfSatisfied } from "../../e10ext/discard.ts"; import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts"; import { flagOutsideScope } from "../../e10ext/scope.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
+import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
+import { RealBaseTestRunner } from "./wall.ts";
+import { assertDeltaNotes } from "../../e10ext/assert_delta.ts";
+import { discardIfSatisfied } from "../../e10ext/discard.ts";
+import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts";
+import { flagOutsideScope } from "../../e10ext/scope.ts";
+import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { recordRunVerdict } from "../../util/pr_lessons.ts";
-import { run } from "../../util/shell.ts"; import { sealEvidence } from "../../features/visual_evidence.ts";
-import { isTestFile } from "../testmap.ts"; import { crossReview, minVerdict } from "./xreview.ts";
+import { run } from "../../util/shell.ts";
+import { sealEvidence } from "../../features/visual_evidence.ts";
+import { isTestFile } from "../testmap.ts";
+import { crossReview, minVerdict } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
-import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts"; import { receiptBlock, recordRun } from "../../runner/router/cost_preview.ts"; import { routerEnabled } from "../../runner/router/flag.ts"; import { sumResultCosts } from "../cost.ts";
+import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
+import { loadRouteRecord } from "../../runner/router/route_record.ts";
+import { receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
+import { routerEnabled } from "../../runner/router/flag.ts";
+import { sumResultCosts } from "../cost.ts";
 import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
-import { type ContractSnapshot, sealContract } from "../../features/contract.ts"; import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
+import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
+import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
+import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
@@ -222,11 +235,14 @@ export const sealStage: Stage = {
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
 
-    const xr = await crossReview(ctx, verdict0, head), verdict1 = minVerdict(verdict0, xr); // B4: opt-in second-provider review, downgrade only
-    // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (T3 intent, never a harness heuristic). "yes" and inconclusive never change the verdict.
-    const mp = verdict1 === "VERIFIED" && mutationEnabled() ? mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
-    const verdict: Verdict = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true ? "PARTIAL" : verdict1;
-    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...grp.notProven, ...(xr?.notes ?? [])]);
+    // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
+    const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
+    const verdict1: Verdict = supplyVerdict(verdict0, supply);
+    const xr = await crossReview(ctx, verdict1, head), verdict2 = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
+    // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
+    const mp = verdict2 === "VERIFIED" && mutationEnabled() ? mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
+    const verdict: Verdict = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true ? "PARTIAL" : verdict2;
+    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? [])]);
     if (!proof && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; notProven.add(vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     for (const d of Array.isArray(o.wall?.discarded) ? (o.wall!.discarded as Obj[]) : []) notProven.add(`wall test discarded: ${String(d.file)} (${String(d.reason)})`); // FC-23
@@ -258,7 +274,7 @@ export const sealStage: Stage = {
     if (source !== "text" && source !== "issue") notProven.add("task source not recorded by intake");
     // Keys below are outside the section 4 table: absent means NOT PROVEN, never a default claim.
     const repo = str(o.intake?.repo);
-    if (mp?.outcome === "no") notProven.add(`Wall tests passed without the fix (mutation proof)${verdict !== verdict1 ? "; verdict downgraded to PARTIAL (LOKI_MUTATION_STRICT=1, declared behavior change)" : ""}`);
+    if (mp?.outcome === "no") notProven.add(`Wall tests passed without the fix (mutation proof)${verdict !== verdict2 ? "; verdict downgraded to PARTIAL (LOKI_MUTATION_STRICT=1, declared behavior change)" : ""}`);
     if (repo === null) notProven.add("repo not recorded by intake");
     if (typeof o.intake?.resumed !== "boolean") notProven.add("resume state not recorded by intake");
 
@@ -276,8 +292,8 @@ export const sealStage: Stage = {
 
     // R1-15: router route block. Null (key omitted, hash stable) unless LOKI_ROUTER is on. Route facts come from the implement
     // output when R1-11 records them; token telemetry from the R1-08 result-cost fields (the cost reader's own `router`, else the files).
-    const routeBlock = buildRouteBlock(process.env, ctx.provider, o.implement?.route as Record<string, unknown> | undefined,
-      (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), iterIds).router : undefined));
+    const routeBlock = buildRouteBlock(process.env, ctx.provider, (o.implement?.route ?? o.plan?.route_record ?? (routerEnabled(process.env) ? loadRouteRecord(ctx.runDir) : undefined)) as Record<string, unknown> | undefined,
+      (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), iterIds).router : undefined), ctx.model);
     if (routeBlock) for (const l of routeNotProven(routeBlock)) notProven.add(l);
 
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
@@ -313,6 +329,7 @@ export const sealStage: Stage = {
       ...receiptBlock(process.env, cost.usd, cost.unmetered === true, Object.values(stages).reduce((a, b) => a + (b ?? 0), 0)),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
+      ...(supply.block ? { supply: supply.block } : {}),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

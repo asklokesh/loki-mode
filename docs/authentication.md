@@ -9,7 +9,7 @@ Authentication and access control for Loki Mode dashboard and API.
 Loki Mode supports two authentication methods:
 
 1. **Token-based authentication** - API tokens with scopes and expiration
-2. **OIDC/SSO integration** (v5.36.0) - Google, Azure AD, Okta
+2. **OIDC/SSO integration** - Google, Azure AD, Okta
 
 Both methods can be enabled simultaneously and provide access to the dashboard API at `http://localhost:57374` (or `https://` with TLS enabled).
 
@@ -97,7 +97,7 @@ Scope hierarchy:
 - `control` includes `write` and `read`
 - `write` includes `read`
 
-### Roles (v5.37.0)
+### Roles
 
 Predefined roles map to common access patterns:
 
@@ -120,7 +120,7 @@ Generate token with custom scopes:
 loki enterprise token generate custom-bot --scopes "read,audit" --expires 30
 ```
 
-## OIDC/SSO Authentication (v5.36.0)
+## OIDC/SSO Authentication
 
 Enterprise identity provider integration for centralized authentication.
 

@@ -353,7 +353,7 @@ README.md
 wiki/Home.md
 wiki/CLI-Reference.md
 server.json
-COMPONENTS.md
+docs/COMPONENTS.md
 CLAUDE.md
 docs/WANG-PRINCIPLES-PLAN.md
 SURFACES_EOF

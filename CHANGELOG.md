@@ -5,6 +5,26 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- implement brief asks the model to declare new registry dependencies
+
+## v11.3.0 (2026-10-08)
+
+Minor release. Adds the model router's escalation chain and plan-time routing, both shipped OFF by default (LOKI_ROUTER unset or 0 is byte-identical to v11.2.2 across the 156-scenario differential), and hardens skill-link healing so it only heals from a durable global install. The remaining v1 features of the 11.3 program (cost preview, mutation proof, intent card, reviewer brief, attempts, memory with proof, overnight queue, before/after proof, provider failover, supply-chain guard) and the CI-FAST gate roll to 11.3.1.
+
+### Added
+- Router escalation chain (R1-09, R1-11, R1-12, R1-13): when LOKI_ROUTER=1, a failing unit climbs the model ladder with a recorded reason; plan-time per-unit routes (R1-10) are read through the bounded `readScopeText` reader, and any rejected scope file (symlink, oversized, missing, unreadable) records NOT PROVEN and defaults to sonnet, never haiku.
+- Semantic L1 guard and user override bypass: LOKI_MODEL_OVERRIDE and LOKI_CLAUDE_MODEL_DEVELOPMENT drop only router pins, so an override user sees identical behavior with the router on or off.
+
+### Changed
+- Session, implement and stall routing moved out of the engine10 core into `loki-ts/src/runner/router/` (session_route.ts, implement_route.ts, unit_model.stallClimb); the non-modernize engine10 core goes from 5010 to 4948 lines, under its 5000-line cap.
+
+### Fixed
+- Skill-link healing (FC-30 amendment, FC30-DURABLE): heals only from a durable global install and refuses npx cache, temp and arbitrary-prefix installs with one stderr line; `npm root -g` is bounded to 3s and fails closed.
+- Coverage run crash on Linux (FC-34): the route-matrix mutation test imported one temp copy of src per mutation (30) of src in-process, so `bun test --coverage` died after loading them; the mutations now run in a child bun process, a crashed child fails the test loudly, and a guard test asserts no temp src copy is ever imported in-process.
+
 ## v11.2.2 (2026-10-07)
 
 Patch release. Adds measured fields to the B9 router scoreboard, derives the usage-governor seat cap from a measured `claude -p /usage` read, collapses `loki doctor` onto a single implementation, and gives the router one guarded plan-scope reader. The router still ships off; with `LOKI_ROUTER` unset, run behavior is unchanged from 11.2.1.

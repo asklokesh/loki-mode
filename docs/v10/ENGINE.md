@@ -107,7 +107,7 @@ Every claim below comes from reading main at 84c22568. I edited no files.
   - The dry-run list contains the three files.
 - **Deps:** E-14, E-TG.
 
-### E-33: EV-6 gate report generator
+### E-33: gate report generator (EV-6)
 - **Files:** `eval/loki10/gate_report.py` (new), `eval/loki10/test-gate-report.sh` (new), `eval/loki10/fixtures/gate/` (new subdir).
 - **Tier:** HIGH. Its marker controls E-31.
 - **Contents:**

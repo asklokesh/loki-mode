@@ -333,7 +333,7 @@ seed_full_tree() {  # $1 = destination dir; leaves the tree at $1/package
     mkdir -p "$d/package/tests" || return 1
     cp "$REPO_ROOT/$GUARD" "$d/package/tests/" || return 1
     local f
-    for f in README.md wiki/Home.md wiki/CLI-Reference.md server.json COMPONENTS.md \
+    for f in README.md wiki/Home.md wiki/CLI-Reference.md server.json docs/COMPONENTS.md \
              CLAUDE.md docs/WANG-PRINCIPLES-PLAN.md; do
         mkdir -p "$d/package/$(dirname "$f")" || return 1
         cp "$REPO_ROOT/$f" "$d/package/$f" || return 1

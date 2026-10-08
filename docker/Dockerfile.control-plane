@@ -1,0 +1,44 @@
+# Loki Control Plane container (server + built UI only).
+# Build: docker build -f docker/Dockerfile.control-plane -t loki-control-plane .
+# Run:   docker run -p 47821:47821 -e LOKI_CONTROL_TOKEN -v loki-control:/data loki-control-plane
+# The image binds 0.0.0.0, so LOKI_CONTROL_TOKEN is REQUIRED at run time: without it the
+# server refuses to start (exit 2). Supply it from a secret store; it is never baked in.
+
+ARG BUN_VERSION=1.4.2
+
+FROM oven/bun:${BUN_VERSION} AS build
+WORKDIR /src/packages/control-plane
+COPY packages/control-plane/package.json packages/control-plane/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY packages/control-plane/ ./
+# The control plane imports loki-ts files via ../../../../loki-ts/src (resolves to /src/loki-ts/src).
+# Copy the whole source tree (2.4MB), never a hand-kept file list: a new import in any file the
+# control plane reaches is then included automatically (FC-32). bun build tree-shakes the rest.
+COPY loki-ts/src/ /src/loki-ts/src/
+# routes/config.ts imports schemas/loki-yaml.schema.json (resolves to /src/schemas).
+COPY schemas/ /src/schemas/
+RUN bun run build:all
+
+FROM oven/bun:${BUN_VERSION}-slim AS runtime
+LABEL org.opencontainers.image.title="loki-control-plane"
+LABEL org.opencontainers.image.source="https://github.com/asklokesh/loki-mode"
+LABEL url="https://www.autonomi.dev/"
+RUN groupadd --system --gid 10001 loki \
+    && useradd --system --uid 10001 --gid loki --home-dir /data --shell /usr/sbin/nologin loki \
+    && mkdir -p /app/dist /data \
+    && chown loki:loki /data
+WORKDIR /app
+# server.js resolves ../drizzle and ../ui/dist relative to dist/
+COPY --from=build /src/packages/control-plane/dist/server.js ./dist/server.js
+COPY --from=build /src/packages/control-plane/drizzle ./drizzle
+COPY --from=build /src/packages/control-plane/ui/dist ./ui/dist
+
+ENV PORT=47821 \
+    LOKI_CONTROL_HOST=0.0.0.0 \
+    LOKI_CONTROL_DB=/data/control.db
+VOLUME ["/data"]
+USER loki
+EXPOSE 47821
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["bun", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||47821)+'/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+CMD ["bun", "/app/dist/server.js"]

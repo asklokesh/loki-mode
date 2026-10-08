@@ -140,7 +140,6 @@ council cannot approve inconclusive evidence on the vote alone (S-116)	1
 done-recognition tests_axis: zero-test is unknown, failed_count is red (S-125)	2
 iteration 0 drops a stale static-analysis.pass (S-124)	1
 JWKS attestation fetch requires https, loopback http only (S-123)	1
-tier-a R0 step has no timeout tighter than its job (S-96)	1
 verify-path python3 hardening (canary verify, proof share/show)	0
 worker autoscaling on queue depth	3
 helm receipt signing (receiver only)	4
@@ -490,6 +489,7 @@ first_run_blocked signal (opt-out silent, enum-clamped)	3
 a green doctor never recommends a command that exits 2	0
 analytics opt-in has a writer (the funnel can fire)	0
 help discoverability (every command reachable)	29
+no help topic names a removed surface or a version stamp	10
 assess runtime detection (declared, never guessed)	0
 provider model scoping (global tier var must not leak)	0
 model catalog is a single source of truth	2
@@ -732,6 +732,8 @@ cp-redesign image allowlist guard (D26)	2
 Loki Receipt check action posts success for a valid receipt and failure for a tampered one (B2)	10
 tests that spawn the verifier pin TARGET_DIR (FC-29)	2
 b9 scoreboard dry-run rows and shape defaults (R1-17)	8
+b9 trivial-sum fixture generator	3
 the verifier never defaults to the caller cwd (FC-29 sweep)	5
 goal_score bash vs Bun behavioral parity (RC-DOCTOR-ONE S5)	6
 doctor has one implementation (FC-DUP delegator and minimal fallback)	3
+fast gate planner selects the suites that guard a diff (D90)	20

@@ -1,6 +1,6 @@
 # Alternative Installation Methods
 
-The recommended installation is via npm or Homebrew (see [README](../README.md#get-started-in-30-seconds)). These alternatives serve specific use cases.
+The recommended installation is via npm or Homebrew (see [INSTALLATION.md](INSTALLATION.md)). These alternatives serve specific use cases.
 
 ---
 
@@ -16,7 +16,7 @@ git clone https://github.com/asklokesh/loki-mode.git ~/.claude/skills/loki-mode
 ln -sf ~/.claude/skills/loki-mode ~/.codex/skills/loki-mode
 
 # Optionally add CLI to PATH:
-ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
+ln -sf ~/.claude/skills/loki-mode/bin/loki /usr/local/bin/loki
 ```
 
 **Update:** `cd ~/.claude/skills/loki-mode && git pull`
@@ -27,21 +27,21 @@ ln -sf ~/.claude/skills/loki-mode/autonomy/loki /usr/local/bin/loki
 
 ## Docker
 
-**Status:** Image exists on Docker Hub. Tags: `latest`, version-specific (e.g., `9.8.0`).
+**Status:** Image exists on Docker Hub. Tags: `latest`, one per release version (for example `X.Y.Z`, matching the npm version).
 
 ```bash
 docker pull asklokesh/loki-mode:latest
 ```
 
-**Limitation:** Claude Code is an interactive CLI that requires API keys and terminal access. Running it inside a Docker container is not the standard workflow. Docker is useful for:
+**Limitation:** The image ships the Claude Code CLI. Docker is useful for:
 
 - CI/CD sandbox execution (running `loki` in isolated environments)
 - Testing Loki Mode without modifying your local system
 - Air-gapped environments with pre-built images
 
-**Not recommended for:** Interactive Claude Code sessions. Use npm or Homebrew instead.
+`loki docker <command>` runs any loki command in the image with the current folder mounted, so `.loki/` state and resume behave like the local CLI.
 
-See [DOCKER_README.md](../DOCKER_README.md) for Docker-specific usage instructions.
+See [DOCKER.md](DOCKER.md) for Docker-specific usage instructions.
 
 ---
 
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: asklokesh/loki-mode@v8.0.0
+      - uses: asklokesh/loki-mode@vX.Y.Z   # pin a release tag
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           mode: review
@@ -75,7 +75,7 @@ jobs:
 ```
 
 **Prerequisites:**
-- API key for your provider (set as repository secret): `ANTHROPIC_API_KEY` (Claude, recommended) or `OPENAI_API_KEY` (Codex). `GOOGLE_API_KEY` was for the Gemini provider, which is DEPRECATED as of v7.5.18.
+- API key for your provider (set as repository secret): `ANTHROPIC_API_KEY` (Claude, recommended) or `OPENAI_API_KEY` (Codex).
 - The action auto-installs `loki-mode` and `@anthropic-ai/claude-code`
 
 **Action Inputs:**
@@ -83,13 +83,13 @@ jobs:
 | Input | Default | Description |
 |-------|---------|-------------|
 | `mode` | `review` | `review`, `fix`, or `test` |
-| `provider` | `claude` | `claude` (recommended), `cline`, `codex`, `aider`, or `opencode`. `gemini` was REMOVED in v7.5.18. |
+| `provider` | `claude` | `claude` (recommended), `cline`, `codex`, `aider`, or `opencode`. |
 | `budget_limit` | `5.00` | Max cost in USD (passed to the Loki 10 engine as `--max-cost`) |
 | `max_iterations` | `3` | Max RARV cycles |
 | `github_token` | (required) | GitHub token for PR comments |
 | `prd_file` | | Path to PRD file (for fix/test modes) |
 
-**Engine:** every mode runs the Loki 10 engine through `loki start "<task>" --no-pr --provider <name> --max-cost <usd>` (the same path as `loki start owner/repo#N`). The PRD file or PR diff is folded into the task text. The action never opens a PR itself (Rule of Two). A run that crosses the cap ends BUDGET_STOP (exit 3). The legacy `--simple` path is no longer used.
+**Engine:** every mode runs the Loki 10 engine through `loki start "<task>" --no-pr --provider <name> --max-cost <usd>` (the same path as `loki start owner/repo#N`). The PRD file or PR diff is folded into the task text. The action never opens a PR itself (Rule of Two). A run that crosses the cap ends BUDGET_STOP (exit 3).
 
 **Modes:**
 
@@ -108,20 +108,10 @@ jobs:
 **Status:** Working. Release assets available for each version.
 
 ```bash
-# Download and extract to skills directory
-curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v8.0.0.tar.gz | tar xz
-mv loki-mode-8.0.0 ~/.claude/skills/loki-mode
+# Download the latest release and extract to the skills directory
+VERSION=$(npm view loki-mode version)
+curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v${VERSION}.tar.gz | tar xz
+mv loki-mode-${VERSION} ~/.claude/skills/loki-mode
 ```
 
 **Best for:** Offline or air-gapped environments, pinned version deployments.
-
----
-
-## VS Code Extension (Deprecated)
-
-> **DEPRECATED as of v7.2.0.** The Loki Mode VS Code extension is no longer
-> maintained and is no longer published to the VS Code Marketplace. Use the
-> Control Plane instead (`loki dashboard`).
-> The `vscode-extension/` source remains in the repository for contributors who
-> want to build it locally. See
-> [INSTALLATION.md](INSTALLATION.md#vs-code-extension-deprecated) for details.
