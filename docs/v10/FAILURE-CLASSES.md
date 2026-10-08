@@ -519,3 +519,5 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every workflow with a bare `python3 -m pytest` step (only integrity-audit.yml lacked the install).
 - Mechanism: install step added before the test steps; a pytest guard requires the install in every workflow that runs bare pytest.
 - Fixture: tests/test_release_required_ci.py::EveryWorkflowThatRunsThePythonSuiteInstallsGitleaks (red before the step existed).
+
+- Sibling instance (ALIAS-FWD): tests/cli/test-alias-forwarding.sh carried 3 stale reds on main: help entry bound 23 vs 27 shipped commands (test stale, no decision caps the page), a local-ci Dashboard-normalizer assertion for the bun-parity matrix removed in 5adff01a9 (test stale, assertion retired), and the main-parity export case whose extracted main script could not locate the skill dir (harness stale, fixed with SKILL_DIR). Product had not drifted in any of the three; the suite is not in the fast tier.

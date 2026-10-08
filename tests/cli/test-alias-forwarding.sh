@@ -424,7 +424,7 @@ for grp in "Build:" "Session:" "Verify / trust:" "Observe:" "Report:" "Knowledge
     fi
 done
 
-# Front-page canonical command-entry count is bounded (<= 23). We count lines
+# Front-page canonical command-entry count is bounded (<= 27). We count lines
 # in the "Commands:" block (up to the first "Options for" section) that look
 # like a command entry: two-space indent + a lowercase token. Group headers end
 # in ':' and are excluded.
@@ -437,12 +437,16 @@ done
 # Net CANONICAL commands drop (four top-level commands become aliases, one noun
 # is added); the line-count guardrail just tracks the new noun. Later Phase B
 # slices (ui/new/admin) pull the front page back toward the ~17 target.
+# Later shipped features each added a real canonical entry (backlog, workspace,
+# next, steer, verify, keys, ultracode, acp, plan, trust); no decision caps the
+# page below its current 27 entries, so the bound tracks the shipped surface.
+# Growth past 27 still requires a deliberate edit here.
 CMD_BLOCK="$(echo "$HELP_OUT" | awk '/^Commands:/{f=1;next} /^Options for/{f=0} f')"
 ENTRY_COUNT="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | wc -l | tr -d ' ')"
-if [ "$ENTRY_COUNT" -le 23 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
-    log_pass "help: front-page entry count in [12,23] ($ENTRY_COUNT)"
+if [ "$ENTRY_COUNT" -le 27 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
+    log_pass "help: front-page entry count in [12,27] ($ENTRY_COUNT)"
 else
-    log_fail "help: front-page entry count in [12,23]" "got $ENTRY_COUNT"
+    log_fail "help: front-page entry count in [12,27]" "got $ENTRY_COUNT"
 fi
 
 # Deprecated alias tokens must NOT appear as command entries in the Commands
@@ -485,30 +489,9 @@ for tok in stats metrics cost export share dogfood kpis trust-metrics serve open
     fi
 done
 
-# ---------------------------------------------------------------------------
-# v7.31 finding 12: the bun-parity text normalizer in scripts/local-ci.sh must
-# strip the optional "Dashboard:" status line (environment-dependent, not
-# route-dependent) so the parity gate does not flake when the operator standalone
-# dashboard is up. We assert the exact sed deletion: a Dashboard line (with an
-# ANSI color prefix, as cmd_status / status.ts emit it) is removed while other
-# lines survive. This guards against the local-ci sed being dropped/altered.
-{
-    fixture="$(printf '%bDashboard:%b http://127.0.0.1:57374/\nPhase: build\nIteration: 2\n' '\033[0;36m' '\033[0m')"
-    stripped="$(printf '%s\n' "$fixture" | sed -E "/Dashboard:.*http/d")"
-    if ! printf '%s' "$stripped" | grep -q "Dashboard:" \
-        && printf '%s' "$stripped" | grep -q "Phase: build" \
-        && printf '%s' "$stripped" | grep -q "Iteration: 2"; then
-        log_pass "parity normalizer: Dashboard line stripped, other lines survive"
-    else
-        log_fail "parity normalizer Dashboard strip" "result: $(printf '%s' "$stripped" | tr '\n' '|')"
-    fi
-    # The local-ci script must actually contain this normalization rule.
-    if grep -q 'Dashboard:.*http' "$REPO_ROOT/scripts/local-ci.sh"; then
-        log_pass "parity normalizer: scripts/local-ci.sh has the Dashboard-line rule"
-    else
-        log_fail "parity normalizer rule present in local-ci.sh" "rule missing"
-    fi
-}
+# v7.31 finding 12 (bun-parity Dashboard-line normalizer in scripts/local-ci.sh)
+# was retired with the bun-parity matrix (5adff01a9); no parity gate remains
+# that needs it, so its fixture and local-ci rule assertion are removed.
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 6: `report dogfood` must degrade HONESTLY when
@@ -626,7 +609,9 @@ done
             # main dir (seed the same minimal session fixture the finding used)
             md="$(mktemp -d "${TMPDIR:-/tmp}/loki-main-export.XXXXXX")"
             mkdir -p "$md/.loki/state"; echo '{"phase":"act","iteration":3}' > "$md/.loki/state/session.json"
-            ( cd "$md" && env LOKI_LEGACY_BASH=1 bash "$MAIN_LOKI" report export json kpis >/dev/null 2>&1 ); m_code=$?
+            ( cd "$md" && env SKILL_DIR="$REPO_ROOT" LOKI_LEGACY_BASH=1 bash "$MAIN_LOKI" report export json kpis >/dev/null 2>&1 ); m_code=$?
+            # The extracted copy lives outside the install tree and cannot locate
+            # the skill dir on its own; SKILL_DIR points it at this checkout.
             # branch dir (via the same bash entrypoint to match main's invocation)
             bd="$(mktemp -d "${TMPDIR:-/tmp}/loki-branch-export.XXXXXX")"
             mkdir -p "$bd/.loki/state"; echo '{"phase":"act","iteration":3}' > "$bd/.loki/state/session.json"
