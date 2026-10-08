@@ -14396,7 +14396,7 @@ cmd_logs() {
     # Resolve the log the runner ACTUALLY writes.
     #
     # This read a logs/session.log path that nothing in the tree writes (other
-    # readers of it exist in web-app/ and api-examples/, all equally dead). So
+    # readers of it exist in web-app/ and examples/api/, all equally dead). So
     # `loki logs`, the
     # most natural "what is it doing?" command, reported "No log file found"
     # while the real logs sat in that same directory. run.sh:22409 writes

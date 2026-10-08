@@ -8,7 +8,7 @@
 #      flags. This is why compose beats a long `docker run -e ...` command.
 #   2. Host OAuth (Claude Code Max/Pro subscribers, no API key): export your
 #      Claude Code credentials to a file and mount them -- see the commented
-#      `LOKI_OAUTH` volume below and DOCKER_README.md "Option 2: host OAuth".
+#      `LOKI_OAUTH` volume below and docs/DOCKER.md "Option 2: host OAuth".
 #
 # Note: version key removed - deprecated in Docker Compose v2+
 #
@@ -52,7 +52,7 @@ services:
       # Share GitHub CLI auth
       - ~/.config/gh:/home/loki/.config/gh:ro
       # Auth Option 2 (host OAuth, no API key): uncomment to reuse your Claude
-      # Code login. First export the token from the host (see DOCKER_README.md):
+      # Code login. First export the token from the host (see docs/DOCKER.md):
       #   security find-generic-password -s "Claude Code-credentials" -w \
       #     | jq '{claudeAiOauth}' > .loki-oauth-credentials.json   # macOS
       # NEVER commit that file (it holds a live token).

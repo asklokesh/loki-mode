@@ -2,7 +2,7 @@
 
 > **Control Plane migration:** the classic dashboard UI and port 57374 are removed in Loki Mode 10.8; the UI is the Control Plane (`loki dashboard`, default port 47821). Examples below that use port 57374 or `/api/*` describe the legacy API server. See [control-plane-migration.md](control-plane-migration.md) for the `/v1/*` mapping and what is not yet available.
 
-Role-based access control (RBAC) for Loki Mode (v5.37.0).
+Role-based access control (RBAC) for Loki Mode.
 
 ## Overview
 

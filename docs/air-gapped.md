@@ -90,8 +90,7 @@ your network, but the audit still counts it as required egress.
 Telemetry is ON by default for an individual interactive install and auto-off
 in CI, non-interactive, `LOKI_ENTERPRISE=true` and `LOKI_AIRGAP=true`
 contexts. The audit shows its real state. Every opt-out wins (`DO_NOT_TRACK=1`,
-`LOKI_TELEMETRY=off`, `loki telemetry off`). The adoption instrumentation added
-in v8.6.0 requires a second explicit opt-in on top of that -- see
+`LOKI_TELEMETRY=off`, `loki telemetry off`). The adoption instrumentation requires a second explicit opt-in on top of that -- see
 [PRIVACY.md](./PRIVACY.md).
 
 ## Why `unknown` is the right answer offline

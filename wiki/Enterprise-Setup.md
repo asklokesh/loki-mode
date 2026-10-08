@@ -248,4 +248,4 @@ See [SDK Guide](../docs/enterprise/sdk-guide.md) for usage examples.
 - [Security Documentation](../docs/enterprise/security.md) -- Configure auth, TLS, and audit
 - [Integration Cookbook](../docs/enterprise/integration-cookbook.md) -- Connect to Jira, Linear, Slack, Teams
 - [Performance Tuning](../docs/enterprise/performance.md) -- Optimize for production workloads
-- [Migration Guide](../docs/enterprise/migration.md) -- Upgrade from previous versions
+- [Upgrading](../UPGRADING.md) -- Upgrade to the current version

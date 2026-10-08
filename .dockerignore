@@ -39,7 +39,6 @@ wiki/
 wiki-repo/
 demo/
 examples/
-api-examples/
 vscode-extension/
 .pytest_cache/
 .claude/

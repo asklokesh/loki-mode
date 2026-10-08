@@ -22,7 +22,6 @@ Loki Mode includes an enterprise layer (since v5.51.0) for organizations that ne
 
 ### Migration
 
-**[Migration Guide](../docs/enterprise/migration.md)** -- Upgrade guide from v5.50.0 to v5.51.0 covering new features, env var reference, API changes, database schema additions, and the step-by-step upgrade process.
 
 ### SDKs
 
