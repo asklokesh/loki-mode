@@ -56,7 +56,7 @@ export const planStage: Stage = {
     const sz = sizeTask(task, loaded, testMap); // E-45: a small task skips this session and the implementer plans
     const mode = planMode();
     const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10 (runner/router/plan_route.ts): flag off adds nothing
-    // FC-34: with the router on a small task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why.
+    // FC-35: with the router on a small task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why.
     const skip = mode === "never" || (mode === "auto" && sz.size === "small" && !pr.routed);
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));

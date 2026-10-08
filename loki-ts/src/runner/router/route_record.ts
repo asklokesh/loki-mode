@@ -1,4 +1,4 @@
-// FC-34: the ONE route record. The plan stage writes it (<runDir>/route.json and its stage output); the start line, the
+// FC-35: the ONE route record. The plan stage writes it (<runDir>/route.json and its stage output); the start line, the
 // receipt route block and the PR line are all derived from it, so what is advertised is what is recorded (L7). Pure
 // builders plus two tiny file helpers; no task-wording or path logic (L0).
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

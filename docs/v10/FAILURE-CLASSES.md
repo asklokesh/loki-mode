@@ -379,7 +379,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Known gap: the delegate preflight only runs `<cli> version`. A throw inside doctor.ts AFTER the CLI loads (during the doctor run itself) is not covered by the preflight and surfaces as that crash, not the minimal fallback.
 - Fixture: tests/test-doctor-single-impl.sh.
 
-## FC-34 The router start line, receipt and plan disagree about the route
+## FC-35 The router start line, receipt and plan disagree about the route
 - User saw: CTO smoke with LOKI_ROUTER=1 on a node off-by-one fixture. The start line said "route: executor haiku-5.5, advisor opus: Opus routes at plan time", the receipt said routed:false, units:[], executor:null, "no route recorded by implement", every session ran claude-sonnet-5-5, no plan-scope.json was written (plan logged "plan sonnet (fast tier)"), and shape_key was null.
 - Law: L7 (what is advertised is what is recorded); also L2 (a null shape key feeds no history, R1-16) and founder design (Opus routes; Sonnet is the default executor; Haiku only when Opus assigns it).
 - Cause (measured): routeStartLine ignored all run data and defaulted the executor to haiku; the plan stage skipped small tasks even with the router on and ran the router-on plan on the fast tier (Sonnet) unless the advisor was unavailable; nothing recorded a route when the plan returned none, and the receipt read only implement.route, which no stage writes; shapeKeyForRepo was never called and ignores the run's project-model.answer.json.

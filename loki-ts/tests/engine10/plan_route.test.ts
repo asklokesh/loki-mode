@@ -56,7 +56,7 @@ describe("R1-10 plan stage routing", () => {
     const r = await planStage.run(s.ctx, sig());
     expect(r.data.units).toEqual([unit("u1", "haiku"), unit("u2", "sonnet")]);
     expect(r.data.route_not_proven).toEqual([]);
-    expect(s.opts()?.model).toBe("opus"); // FC-34: Opus is the router, so the router-on plan runs on Opus even with the advisor attached
+    expect(s.opts()?.model).toBe("opus"); // FC-35: Opus is the router, so the router-on plan runs on Opus even with the advisor attached
     rmSync(s.dir, { recursive: true, force: true });
   });
   test("advisor unavailable: haiku is raised to sonnet and the plan session is pinned to opus", async () => {

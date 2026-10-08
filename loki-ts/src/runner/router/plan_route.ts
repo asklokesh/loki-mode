@@ -23,7 +23,7 @@ export interface PlanRoute {
 const SONNET_PIN: Pin = { model: "sonnet" };
 
 /**
- * routed: the flag. pinFor(onSonnet): FC-34 Opus is the router, so the router-on plan session runs on Opus (claude only, never over the
+ * routed: the flag. pinFor(onSonnet): FC-35 Opus is the router, so the router-on plan session runs on Opus (claude only, never over the
  * user's model bypass) and Sonnet only after the Opus session failed. units(): the parsed per-unit route stored on the plan output.
  * record(): writes <runDir>/route.json, the one route record the start line, receipt and PR line read.
  */

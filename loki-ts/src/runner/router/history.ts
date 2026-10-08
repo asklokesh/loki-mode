@@ -47,7 +47,7 @@ export function shapeKeyForRepo(repoDir: string): string | null {
 }
 
 /**
- * FC-34: shape key for a run. The run's own Project Model answer (<runDir>/project-model.answer.json, schema-checked
+ * FC-35: shape key for a run. The run's own Project Model answer (<runDir>/project-model.answer.json, schema-checked
  * by validateAnswer) wins; else the repo's cached/committed model. Null when neither is usable.
  */
 export function shapeKeyForRun(repoDir: string, runDir: string): string | null {
