@@ -499,7 +499,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: a change that touches a file a deferred suite reads (workflows, README, docs/v11, bin/loki, tests/real-run) must name that suite in its slice card Wall checks and run it before merge; the nightly is the backstop, not the first detector.
 - Fixture: the six suites themselves (tests/test-dep-inventory.sh, tests/test-docs-cli-drift.sh, tests/test-agent-types-loaded.sh, tests/test-telemetry-analytics-toggle.sh, tests/test-train-verdict-reuse.sh, shellcheck -S error tests/real-run/scenarios/*.sh).
 
-## FC-47 Cold wasm render inside bun's default 5s test budget reddens the nightly (NIGHTLY-COCKPIT)
+## FC-50 Cold wasm render inside bun's default 5s test budget reddens the nightly (NIGHTLY-COCKPIT)
 - User saw: the 11.3.1 cut blocked by D90 because Nightly was red since 10-04. Raw: run 37686475225, job "Bun tests on macos-latest bun=1.3.13 (nightly)", `(fail) cockpit render orchestration > renders a real inline image on a graphics terminal via the bundled wasm [5479.10ms]` followed by `this test timed out after 5000ms`; the next wasm test in the same file passed in 2142ms once warm.
 - Law: evidence or it did not happen (a red gate is read from the log, then reproduced); never weaken the assertion or skip on macOS to turn a timeout green.
 - Cause (measured): the first test in the file to rasterize pays the one-time cost of importing @resvg/resvg-wasm, reading the vendored .wasm, initWasm and loading the font (raster.ts caches all three per process), and a cold macOS runner spends over 5000ms on it, which is bun's default per-test timeout. No logic failed.
