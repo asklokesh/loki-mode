@@ -601,7 +601,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: nightly.yml pinned legs block; only matrix legs with `experimental: true` (bun=latest) use `continue-on-error: ${{ matrix.experimental == true }}`; first-run-gate blocks. tests/test-workflow-no-masked-failures.sh parses every workflow and fails on an unconditional continue-on-error outside a justified allowlist, an experimental pinned leg, `|| true` or an un-pipefailed pipe on a test command, and an unlisted `if: always()` job.
 - Fixture: tests/test-workflow-no-masked-failures.sh. Red on the train-1132 workflows (3 findings: nightly bun-tests-nightly, nightly first-run-gate, integrity-audit shell tests), green after; 5 single-rule mutations each go red.
 
-## FC-63 (LOW follow-up to FC-57) Contrived shell bypasses of the masked-failure guard (NIGHTLY-TRUTH)
+## FC-65 (LOW follow-up to FC-57) Contrived shell bypasses of the masked-failure guard (NIGHTLY-TRUTH)
 - User saw: nothing; found by adversarial review of tests/test-workflow-no-masked-failures.sh. No realistic workflow edit triggers these; each needs a deliberate hiding of the exit status.
 - Law: a guard blocks on what a realistic edit would do; the rest is tracked, not built (CTO ruling, round 7).
 - Cause (measured): the guard is a lexical interpreter of the `||` handler, not a shell. Covered and red: Y01 to Y11 shapes below the allowlist (echo, printf without -v, true, `:`, cat, grep between a `VAR=$?` capture and its exit; any other command voids the capture), grouped tests, redirections, exit codes 1..255.
