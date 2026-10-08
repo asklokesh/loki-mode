@@ -1,12 +1,12 @@
 // FC-21b (2): the run cap is sized from the plan scope (packages + dependents, file count), not task text or repo size.
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_CAP_S } from "../../src/engine10/types.ts";
 import { projectApi } from "../../src/project_model/api.ts";
 import type { ModelPackage, ProjectModel } from "../../src/project_model/schema.ts";
-import { capCeilingS, readPlanScope, resizeCap, resolveRunCapS, scopeCapS, yamlRunCapS } from "../../src/util/run_cap.ts";
+import { MAX_SCOPE_BYTES, capCeilingS, readPlanScope, readScopeText, resizeCap, resolveRunCapS, scopeCapS, yamlRunCapS } from "../../src/util/run_cap.ts";
 
 const pkg = (root: string, dependsOn?: string[]): ModelPackage => ({ name: root, root, runner: null, commands: { test: null, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: [] }, cite: [], ...(dependsOn ? { dependsOn } : {}) });
 const model = (packages: ModelPackage[]): ProjectModel => ({ schema: "loki.v10.project/1", status: "ok", key: "k", workspaceKind: "workspaces", workspaceCite: [], packages, fingerprintFiles: [] });
@@ -80,5 +80,37 @@ describe("plan brief", () => {
   test("asks the session for plan-scope.json next to the plan output", async () => {
     const { buildPlanBrief } = await import("../../src/engine10/stages/plan.ts");
     expect(buildPlanBrief("t", [], "/r/plan-output.txt")).toContain("/r/plan-scope.json");
+  });
+});
+
+describe("R1-10b: plan-scope.json guarded read (shared by run_cap and plan)", () => {
+  const mk = () => mkdtempSync(join(tmpdir(), "scope-guard-"));
+  const good = JSON.stringify({ files: ["a/x.ts"] });
+  test("a valid regular file is read", () => {
+    const d = mk(); writeFileSync(join(d, "plan-scope.json"), good);
+    expect(readScopeText(d)).toEqual({ status: "ok", text: good });
+    expect(readPlanScope(d)).toEqual(["a/x.ts"]);
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("a symlink to a regular file is rejected", () => {
+    const d = mk(); writeFileSync(join(d, "real.json"), good); symlinkSync(join(d, "real.json"), join(d, "plan-scope.json"));
+    expect(readScopeText(d).status).toBe("not_file");
+    expect(readPlanScope(d)).toEqual([]);
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("a directory is rejected", () => {
+    const d = mk(); mkdirSync(join(d, "plan-scope.json"));
+    expect(readScopeText(d).status).toBe("not_file");
+    expect(readPlanScope(d)).toEqual([]);
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("a file over the cap is rejected", () => {
+    const d = mk(); writeFileSync(join(d, "plan-scope.json"), JSON.stringify({ files: ["a/x.ts"], pad: "x".repeat(MAX_SCOPE_BYTES) }));
+    expect(readScopeText(d).status).toBe("too_big");
+    expect(readPlanScope(d)).toEqual([]);
+    rmSync(d, { recursive: true, force: true });
+  });
+  test("a missing file reports missing", () => {
+    const d = mk(); expect(readScopeText(d).status).toBe("missing"); rmSync(d, { recursive: true, force: true });
   });
 });

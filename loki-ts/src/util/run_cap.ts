@@ -1,6 +1,6 @@
 // FC-21b (2): the run wall-clock cap scales with the plan's scope, not the task text. Pure; the CLI gathers the signals.
 // An explicit cap (LOKI_E10_CAP_S or loki.yaml budgets.run_cap_s) is fixed: never shrunk or grown, and it wins over the ceiling.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CAP_S } from "../engine10/types.ts";
 import { dependentsOf } from "../project_model/graph.ts";
@@ -8,6 +8,7 @@ import type { ProjectApi } from "../project_model/api.ts";
 import { yamlKey } from "./yaml_key.ts";
 
 export const PLAN_SCOPE_FILE = "plan-scope.json";
+export const MAX_SCOPE_BYTES = 256 * 1024;
 const CEILING_SUBSCRIPTION_S = 3600, CEILING_DOLLAR_S = 2400, PER_PACKAGE_S = 450, PER_FILE_S = 20, FREE_FILES = 3;
 /** The most a sized cap can reach: 3600 on a subscription (time is the only guard), 2400 with a dollar cap. */
 export const capCeilingS = (subscription: boolean): number => (subscription ? CEILING_SUBSCRIPTION_S : CEILING_DOLLAR_S);
@@ -22,10 +23,24 @@ export function scopeCapS(files: string[], api: ProjectApi | null, subscription:
   const raw = DEFAULT_CAP_S + PER_PACKAGE_S * (p - 1) + PER_FILE_S * Math.max(0, files.length - FREE_FILES);
   return Math.min(capCeilingS(subscription), Math.max(DEFAULT_CAP_S, raw));
 }
-/** The files the plan session named in <runDir>/plan-scope.json ({"files":[...]}); empty when missing or malformed. Never reads model prose. */
-export function readPlanScope(runDir: string): string[] {
+export type ScopeRead = { status: "ok"; text: string } | { status: "missing" | "not_file" | "too_big" | "unreadable" };
+/** The ONE guarded reader of <runDir>/plan-scope.json: regular file only (no symlink, directory or device), at most MAX_SCOPE_BYTES. Never throws. */
+export function readScopeText(runDir: string): ScopeRead {
+  const p = join(runDir, PLAN_SCOPE_FILE);
   try {
-    const j = JSON.parse(readFileSync(join(runDir, PLAN_SCOPE_FILE), "utf8")) as { files?: unknown };
+    let st;
+    try { st = lstatSync(p); } catch (e) { return { status: (e as NodeJS.ErrnoException).code === "ENOENT" ? "missing" : "unreadable" }; }
+    if (!st.isFile()) return { status: "not_file" };
+    if (st.size > MAX_SCOPE_BYTES) return { status: "too_big" };
+    return { status: "ok", text: readFileSync(p, "utf8") };
+  } catch { return { status: "unreadable" }; }
+}
+/** The files the plan session named in <runDir>/plan-scope.json ({"files":[...]}); empty when missing, rejected by the guarded reader, or malformed. Never reads model prose. */
+export function readPlanScope(runDir: string): string[] {
+  const r = readScopeText(runDir);
+  if (r.status !== "ok") return [];
+  try {
+    const j = JSON.parse(r.text) as { files?: unknown };
     return Array.isArray(j.files) ? [...new Set(j.files.filter((f): f is string => typeof f === "string" && f.trim() !== "").map((f) => f.trim()))] : [];
   } catch { return []; }
 }

@@ -1,5 +1,5 @@
 // E-16: Plan (ENGINE.md 4). A fast-tier session sees up to 8 relevant files (keyword overlap with the repo map) and writes at most 10 lines to <runDir>/plan-output.txt; the engine reads and truncates it (missing/unreadable is an empty plan, never a crash).
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RepoMap } from "../repomap.ts";
 import { selectRelevantFiles } from "../relevant_files.ts";
@@ -8,7 +8,7 @@ import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smal
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { taskBlock } from "../types.ts";
-import { PLAN_SCOPE_FILE } from "../../util/run_cap.ts";
+import { MAX_SCOPE_BYTES, PLAN_SCOPE_FILE, readScopeText } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { envOverride, parseUnits } from "../../runner/router/decision.ts";
@@ -16,7 +16,6 @@ import { probeAdvisor } from "../../runner/router/advisor_probe.ts";
 import { claudeCodeVersionForRoute } from "../../runner/providers.ts";
 
 const MAX_PLAN_LINES = 10;
-const MAX_SCOPE_BYTES = 256 * 1024;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
 
 function planOutputPath(runDir: string): string { return join(runDir, PLAN_OUTPUT_FILENAME); }
@@ -102,11 +101,8 @@ export const planStage: Stage = {
     const plan = truncatePlan(rawPlan);
     let route: Record<string, unknown> = {};
     if (routed) {
-      const scopePath = join(ctx.runDir, PLAN_SCOPE_FILE);
-      let scope: string | null = null; let tooBig = false; let notFile = false;
-      try {
-        if (existsSync(scopePath)) { const st = lstatSync(scopePath); if (!st.isFile()) notFile = true; else if (st.size > MAX_SCOPE_BYTES) tooBig = true; else scope = readFileSync(scopePath, "utf8"); }
-      } catch { scope = null; }
+      const rd = readScopeText(ctx.runDir);
+      const scope: string | null = rd.status === "ok" ? rd.text : null; const tooBig = rd.status === "too_big"; const notFile = rd.status === "not_file";
       const parsed = notFile ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} is not a regular file; default sonnet`] } : tooBig ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} exceeds ${MAX_SCOPE_BYTES} bytes; default sonnet`] } : parseUnits(scope, advisorAvailable);
       route = { units: parsed.units, route_not_proven: parsed.notProven };
     }
