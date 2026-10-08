@@ -1140,7 +1140,8 @@ describe("D50-F1 already-satisfied discards run changes", () => {
     expect(reconciledTotalS(t)).toBe(36);
   });
 
-  // The consumer formula below is copied verbatim from scripts/b9-scoreboard.sh (slice-B9-RAW-ARM 96626a2e0, lines 418-441).
+  // Main does not ship this reader yet: 96626a2e0 (slice-B9-RAW-ARM) is not an ancestor of main and main's b9-scoreboard.sh has no receipt_fields.
+  // This test pins the FUTURE reader: the snippet below is byte-identical to 96626a2e0 scripts/b9-scoreboard.sh lines 418-441.
   // It reads time.total_s and adds every time.stages value; more than 1% apart makes the row NOT RECORDED.
   const B9_READER = `import glob, json, os, sys
 NR = "NOT RECORDED"
@@ -1168,7 +1169,7 @@ if fs:
 print("\\t".join([str(v)] + [str(x) for x in out]))
 `;
   const b9Row = (time: unknown): string => {
-    const d = mkdtempSync(join(tmpdir(), "loki-run.rt-b9-"));
+    const d = mkdtempSync(join(tmpdir(), "rt-b9-reader-"));
     try {
       mkdirSync(join(d, ".loki", "runs", "r1"), { recursive: true });
       writeFileSync(join(d, ".loki", "runs", "r1", "receipt.json"), JSON.stringify({ verdict: "VERIFIED", cost: { usd: 0.05, cache_read_tokens: 100, cache_creation_tokens: 10 }, time }));
