@@ -16,7 +16,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki memory list` | All learnings |
 | `loki memory index` | Show or rebuild the memory index |
 | `loki memory learn` | Learn lessons from a merged PR's review comments |
-| `loki memory lessons` | List PR review lessons with uses and outcomes |
+| `loki memory lessons` | List PR review lessons with uses and outcomes (`--json` for JSON) |
+| `loki memory forget` | Delete one PR lesson by id |
 | `loki memory show` | Show one learning |
 | `loki memory search` | Search learnings |
 | `loki memory stats` | Memory statistics |

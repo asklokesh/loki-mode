@@ -26,7 +26,8 @@ Bun-native commands:
   provider show [name]   Show current provider
   provider list          List available providers and install status
   memory list            Cross-project learnings counts
-  memory lessons         PR review lessons with their uses and outcomes
+  memory lessons [--json] PR review lessons with their uses and outcomes
+  memory forget <prl-id> Delete one PR lesson and print its text
   memory learn <o/r#PR>  Learn lessons from a merged PR's review comments
   memory index [rebuild] Show or rebuild memory index
   doctor [--json]        System prerequisites health check

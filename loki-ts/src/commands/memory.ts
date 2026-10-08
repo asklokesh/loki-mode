@@ -8,7 +8,7 @@ import { BOLD, GREEN, YELLOW, CYAN, NC } from "../util/colors.ts";
 import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
 import { run } from "../util/shell.ts";
-import { GhError, formatLessonList, learnFromPr, loadLessons } from "../util/pr_lessons.ts";
+import { GhError, type Lesson, formatLessonList, learnFromPr, loadLessons, removeLesson } from "../util/pr_lessons.ts";
 
 const LEARNINGS_DIR = resolve(homeLokiDir(), "learnings");
 
@@ -82,6 +82,13 @@ except Exception as e:
   return 0;
 }
 
+// verified_ratio is VERIFIED uses over uses with a settled verdict; null while none has settled.
+function lessonJson(l: Lesson): Record<string, unknown> {
+  const settled = l.uses.filter((u) => u.verdict !== null);
+  const verified = settled.filter((u) => u.verdict === "VERIFIED").length;
+  return { id: l.id, text: l.text, source: l.source, uses: l.uses.length, verified_ratio: settled.length ? verified / settled.length : null };
+}
+
 export async function runMemory(argv: readonly string[]): Promise<number> {
   if (argv.length === 0) {
     // Bare `loki memory`: the learnings summary followed by this repo's PR lessons.
@@ -91,9 +98,23 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
   }
   const sub = argv[0] ?? "list";
   switch (sub) {
-    case "lessons":
-      process.stdout.write(formatLessonList(loadLessons(process.cwd())));
+    case "lessons": {
+      const lessons = loadLessons(process.cwd());
+      if (argv.slice(1).includes("--json")) {
+        process.stdout.write(`${JSON.stringify(lessons.map(lessonJson), null, 2)}\n`);
+        return 0;
+      }
+      process.stdout.write(formatLessonList(lessons));
       return 0;
+    }
+    case "forget": {
+      const id = argv[1];
+      if (!id) { process.stderr.write("Usage: loki memory forget <prl-id>\n"); return 2; }
+      const gone = removeLesson(process.cwd(), id);
+      if (!gone) { process.stderr.write(`Error: no such lesson '${id}'\n`); return 1; }
+      process.stdout.write(`Forgot ${gone.id}: ${gone.text}\n`);
+      return 0;
+    }
     case "list":
     case "ls":
       return runMemoryList();
