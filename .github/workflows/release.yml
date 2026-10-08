@@ -1136,11 +1136,12 @@ jobs:
           # scripts, so build the web-app and control-plane dist here, fail closed.
           npm run prepublishOnly
           tgz="$(npm pack --silent | tail -n 1)"
+          tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
           for need in package/packages/control-plane/dist/server.js \
                       package/packages/control-plane/dist/ask-tools-server.js \
                       package/packages/control-plane/ui/dist/index.html \
                       package/web-app/dist/index.html; do
-            tar -tzf "$tgz" | grep -qx "$need" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
+            grep -qxF "$need" "$RUNNER_TEMP/tgz.list" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
           done
           mkdir -p "$RUNNER_TEMP/npm-tarball"
           cp "$tgz" "$RUNNER_TEMP/npm-tarball/"

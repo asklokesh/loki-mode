@@ -269,8 +269,8 @@ jobs:
 
   selected:
     name: Impacted suites (shard ${{ matrix.shard }})
-    needs: [plan, typecheck-build]
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.full != 'true' && needs.plan.outputs.has_shards == 'true' }}
+    needs: [version-bump-gate, plan, typecheck-build]
+    if: ${{ !cancelled() && needs.version-bump-gate.outputs.skip != 'true' && needs.plan.result == 'success' && needs.plan.outputs.full != 'true' && needs.plan.outputs.has_shards == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 6
     strategy:
