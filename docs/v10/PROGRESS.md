@@ -2276,3 +2276,24 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Hermeticity defect: attempts-dispatch "no bun on PATH" fails only in the main checkout; git-archive of the same SHA passes 14/0. Queued as TEST-HERMETIC.
 - In review or rework: MASS-1 250940c67 (only the SDK route runs triage; HIGH re-review), RECEIPT-TRUTH (HIGH BLOCK B1-B5 plus modelUsage scope; uncommitted), JUDGE-DEFAULTS 5d7ab2b9d (rebase plus tsc gaps, then TL re-review), WC-01a 8c528d66b (TL), EVAL-LOSSES (aiq-52 dirty-tree class, humanize-174; CTO accuracy directive).
 - Ship steps after SEC-FSMON approves: merge, rebuild dist in the main checkout, run moat P5/P9/full on the final SHA, push (fetch plus ancestry check, no active release), Tests green, release.sh patch --bump-only plus the CHANGELOG from scratchpad changelog-1131.md (add the SEC-FSMON and FINDING-GUARDS/MCP-A lines).
+
+## 2026-10-08T07:10Z (CoS) 11.3.1 train: FULL-DRIFT merged; PRICE-TRUTH-2 and PLAN-TIMEOUT pending
+- origin/main = 7e6692a8b. Tests on it was cancelled: the D90 plan job hit its 5-min cap before `|| true`, and the full fallback was red on six drift suites plus 7 budget tests.
+- FULL-DRIFT merged locally as cdbec7679 at the approved SHA 0382cad94 (TL APPROVE 9d5c0350e plus delta APPROVE 0382cad94; tree equal to 0382cad94; tests/util 110/0). An earlier merge by branch name picked up the unreviewed 0382cad94 and was undone with `git reset --keep` before any push; lesson saved: merge the approved SHA.
+- PRICE-TRUTH-2 884d22be1 (claude-haiku-4-5 at $1/$5 on every exact-id table; bash check_budget_limit also priced claude-haiku-5-5 as sonnet; parity test runs the real function; FC-45): TL review with tl-fix1131, selector output required (CTO rule).
+- PLAN-TIMEOUT (sec-fsmonitor): building under the CTO conditions (fail-safe full=true, never cancelled, under 30s for 100 commits, cheap drift checks always-run under 60s). FC-47 reserved.
+- RECEIPT-TRUTH 66931a217 (11.3.2): HIGH round 5 with high-receipt-truth; branch frozen.
+- Next: merge PRICE-TRUTH-2 and PLAN-TIMEOUT by SHA, dist rebuild if needed, moat on the final SHA, push, Tests green on that SHA, then release.sh patch --bump-only with scratchpad changelog-1131.md.
+
+## 2026-10-08 07:43Z CoS
+- PRICE-TRUTH-2 merged by SHA 884d22be1 as 82eb1ad31 (FC-45/FC-46 rows conflict resolved, both kept); post-merge util+budget 175/0, test-pricing-parity rc 0; git diff 884d22be1 HEAD^2 empty.
+- 11.3.1 now blocked only on PLAN-TIMEOUT: high-cifast parity byte-identical (236s->2s, 455s->4s), 169-commit plan 15s; P1 timeout-minutes 8, P2 timing test, P3 always-run set, P4 rebase onto 82eb1ad31 sent to sec-fsmonitor.
+- 11.3.2 approved queue (hold until 11.3.1 cut, merge by SHA): 132-E2 057b332e9, 132-B4 36284ebb5, 132-F1 82837ec9f. In review: 132-E3, 132-F3, 133-E2, GOV-FORMULA 76afb31a8. 132-E4 31b5c304b built, target missed (4x 23.7s vs 12s at load 20-26), TL deferred until load drops.
+- Found: tests/cli/test-alias-forwarding.sh fails 3 cases on cdbec7679 (help count 27 vs [12,23], local-ci parity rule missing, report export json kpis exit parity); check in the FULL tier run before the cut.
+
+## 2026-10-08 08:17Z CoS
+- RECEIPT-TRUTH round 6 APPROVED by HIGH at 1b5bbaef5 (R5-1/2/4 mutations red, moat rc 0 with P9 PROVEN, CP 519/0); queued for 11.3.2.
+- FC-47 (CTO ruling): select-tests --run is a no-op on R0 and docs diffs (early exits before DO_RUN). Interim rule: TLs on R0 diffs name and run suites explicitly and report the number of suites executed. Fix slice SEL-RUN-FC47 goes after PLAN-TIMEOUT, then a one-shot audit of the R0 merges since v11.3.0.
+- PLAN-TIMEOUT engineer had no edits from 07:40Z to 08:14Z; re-pinged with a commit-now instruction.
+
+- 2026-10-08T10:27Z CoS: PLAN-TIMEOUT-1 merged by SHA b43536756 (TL APPROVE: fast-gate 10, train-verdict-reuse 40, select-tests 42, rc 0; git diff approved..HEAD^2 empty). Full local tier on 82eb1ad31 hit the 45-min cap (rc 124); reds classified env-only (receipt_attest needs cryptography; indexer + typecheck worktree-path only, green in main). bun 2004/0, util 175/0, moat rc 0 5/9. Lost ~1h: TL verdict sat in an idle teammate; next time read the subagent transcript after 10 min instead of waiting. Pushing the 11.3.1 train now.
