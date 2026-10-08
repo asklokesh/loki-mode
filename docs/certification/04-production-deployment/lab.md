@@ -14,10 +14,10 @@ Deploy Loki Mode using Docker Compose, verify the dashboard is accessible, and c
 
 ## Step 1: Review the Docker Compose Configuration
 
-Examine the `docker-compose.yml` at the repository root:
+Examine `docker/docker-compose.yml`:
 
 ```bash
-cat docker-compose.yml
+cat docker/docker-compose.yml
 ```
 
 Key elements to note:
@@ -32,7 +32,7 @@ Key elements to note:
 docker-compose build
 ```
 
-This builds from the `Dockerfile` which installs:
+This builds from `docker/Dockerfile`, which installs:
 - Ubuntu 24.04 base
 - Node.js 20 LTS
 - Python 3 with venv support
@@ -68,7 +68,7 @@ Start the container (this will invoke the AI provider and may incur costs):
 
 ```bash
 # Pass your API key through to the container
-ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY docker-compose run \
+ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY docker compose -f docker/docker-compose.yml run \
   -e ANTHROPIC_API_KEY \
   loki start ./prd.md
 ```
@@ -96,7 +96,7 @@ Test resource configuration by modifying environment variables:
 
 ```bash
 # Run with budget limit and reduced parallel agents
-docker-compose run \
+docker compose -f docker/docker-compose.yml run \
   -e ANTHROPIC_API_KEY \
   -e LOKI_BUDGET_LIMIT=5.00 \
   -e LOKI_MAX_PARALLEL_AGENTS=3 \
@@ -141,7 +141,7 @@ loki secrets status
 ## Verification Checklist
 
 - [ ] `docker-compose build` completes without errors
-- [ ] `docker-compose run loki version` outputs the correct version
+- [ ] `docker compose -f docker/docker-compose.yml run loki version` outputs the correct version
 - [ ] The dashboard is accessible at `http://localhost:57374`
 - [ ] You can pass environment variables to configure resource limits
 - [ ] `loki sandbox` commands work (build, start, status, stop)

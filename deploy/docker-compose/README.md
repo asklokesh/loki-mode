@@ -102,7 +102,7 @@ docker compose up -d
 ```
 
 The build context points to the repository root (`../..`) and uses the
-top-level `Dockerfile`.
+`docker/Dockerfile`.
 
 ## Troubleshooting
 

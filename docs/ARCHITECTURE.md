@@ -252,7 +252,7 @@ plugins/                   Claude Code plugin packaging
 SKILL.md                   Slim core skill (progressive disclosure entry)
 CLAUDE.md                  Project + agent operating instructions
 VERSION / package.json     Single source of version truth
-Dockerfile* / docker-compose.yml   Container distribution
+docker/                            Container distribution (Dockerfiles, compose)
 ```
 
 ## Key Design Decisions

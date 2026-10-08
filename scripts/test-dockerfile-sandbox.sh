@@ -20,7 +20,7 @@ set -euo pipefail
 
 IMAGE_TAG="loki-sandbox-test:local"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DOCKERFILE="${REPO_ROOT}/Dockerfile.sandbox"
+DOCKERFILE="${REPO_ROOT}/docker/Dockerfile.sandbox"
 
 cleanup() {
   if command -v docker >/dev/null 2>&1; then

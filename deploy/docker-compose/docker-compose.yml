@@ -13,7 +13,7 @@ services:
     image: asklokesh/loki-mode:latest
     build:
       context: ../..
-      dockerfile: Dockerfile
+      dockerfile: docker/Dockerfile
     # Runs the Control Plane (packages/control-plane) on container port 47821.
     # LOKI_DASHBOARD_PORT is the host port and is kept for compatibility.
     command: ["control", "serve", "--port", "47821"]

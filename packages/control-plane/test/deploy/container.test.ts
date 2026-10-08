@@ -7,7 +7,7 @@ const root = join(import.meta.dir, "../../../..");
 const read = (p: string) => readFileSync(join(root, p), "utf8");
 
 test("Dockerfile.control-plane is non-root, exposes the port and has a healthcheck", () => {
-  const d = read("Dockerfile.control-plane");
+  const d = read("docker/Dockerfile.control-plane");
   expect(d).toContain("USER loki");
   expect(d).toContain("EXPOSE 47821");
   expect(d).toContain("HEALTHCHECK");
@@ -26,7 +26,7 @@ test("server bind host is overridable and defaults to loopback", () => {
 });
 
 test("Dockerfile documents the required token and never bakes one or opens the insecure bind", () => {
-  const d = read("Dockerfile.control-plane");
+  const d = read("docker/Dockerfile.control-plane");
   expect(d).not.toMatch(/no authentication/i);
   expect(d).toContain("LOKI_CONTROL_TOKEN");
   expect(d).not.toContain("ALLOW_INSECURE_BIND");

@@ -86,8 +86,8 @@ else
 fi
 
 # Test 5: both Dockerfiles COPY tools/ so Docker users get the benches too.
-if grep -q "COPY .*tools/ ./tools/" Dockerfile \
-   && grep -q "COPY .*tools/ ./tools/" Dockerfile.sandbox; then
+if grep -q "COPY .*tools/ ./tools/" docker/Dockerfile \
+   && grep -q "COPY .*tools/ ./tools/" docker/Dockerfile.sandbox; then
     ok "Dockerfile + Dockerfile.sandbox COPY tools/"
 else
     bad "a Dockerfile is missing COPY tools/"

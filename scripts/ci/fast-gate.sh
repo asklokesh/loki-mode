@@ -9,7 +9,7 @@
 # shared file-to-suite mapping). Files that make the selector answer R0 (a
 # broad-blast-radius or unknown-shape path) are NOT expanded to the full suite
 # here; they are mapped to the structural guards that name that path
-# (workflows, Dockerfiles, package manifests, tests/lib, dist). The rest of
+# (workflows, docker/Dockerfiles, package manifests, tests/lib, dist). The rest of
 # the diff still gets its normal R1-R6 selection. The ONLY full-set fallback
 # is a diff that cannot be computed (unparseable), which writes FULL.
 #
@@ -50,7 +50,7 @@ is_r0_path() {
 guards_for() {
     local f="$1" base
     base="${f##*/}"
-    # tests that name the exact path or the basename (Dockerfile.control-plane
+    # tests that name the exact path or the basename (docker/Dockerfile.control-plane
     # selects tests/test-control-plane.sh this way)
     grep -rlF -- "$f" tests --include='test-*.sh' --include='test_*.py' 2>/dev/null
     grep -rlF -- "$base" tests --include='test-*.sh' --include='test_*.py' 2>/dev/null
@@ -59,7 +59,7 @@ guards_for() {
             grep -rlF -- ".github/workflows" tests --include='test-*.sh' --include='test_*.py' 2>/dev/null
             printf '%s\n' tests/test-shard-coverage.sh tests/test-registration-coverage.sh
             ;;
-        Dockerfile*)
+        docker/Dockerfile*)
             printf '%s\n' tests/test-structural-checks.sh
             ;;
         package.json | */package.json | requirements*.txt | requirements*.in | */requirements*.txt | */requirements*.in)

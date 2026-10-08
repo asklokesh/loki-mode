@@ -2017,7 +2017,7 @@ run_check "Agent SDK is a resolvable root dependency (LOKI_SDK_LOOP packaging)" 
   root_ver=$(python3 -c "import json; d=json.load(open(\"package.json\")); print((d.get(\"dependencies\",{}) | d.get(\"optionalDependencies\",{})).get(\"@anthropic-ai/claude-agent-sdk\",\"\"))")
   src_ver=$(python3 -c "import json; print(json.load(open(\"loki-ts/package.json\"))[\"dependencies\"][\"@anthropic-ai/claude-agent-sdk\"])")
   [ -n "$root_ver" ] && [ "$root_ver" = "$src_ver" ] &&
-  grep -q "claude-agent-sdk" Dockerfile'
+  grep -q "claude-agent-sdk" docker/Dockerfile'
 
 # ---------------------------------------------------------------------------
 # 10b. Phase Merge-3: web-app dist must be built with base: '/lab/'

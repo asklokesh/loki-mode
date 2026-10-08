@@ -36,7 +36,7 @@ Loki Mode runs on two routes that share the same `.loki/` state contract:
 - **Bun route** (`bin/loki` shim -> `loki-ts/dist/loki.js`): handles 8 read-only commands (`version`, `status`, `stats`, `doctor`, `provider show/list`, `memory list/index`) plus the runner loop on `feat/bun-migration` after v7.4.x. ~3-5x faster than bash on these commands.
 - **Bash route** (`autonomy/loki`): handles every other command. The shim falls through silently when bun is not on PATH so npm-without-Bun installs keep working.
 
-`LOKI_LEGACY_BASH=1` forces the bash route for every command. See [docs/architecture/ADR-001-runtime-migration.md](docs/architecture/ADR-001-runtime-migration.md).
+`LOKI_LEGACY_BASH=1` forces the bash route for every command. See [docs/architecture/ADR-001-runtime-migration.md](../docs/architecture/ADR-001-runtime-migration.md).
 
 ## Running tests
 
@@ -142,8 +142,10 @@ In all other cases, the maintainer either merges the PR directly or rolls the ch
 
 ```
 SKILL.md              # Core skill definition
-autonomy/             # Runtime and CLI (run.sh, loki)
-providers/            # Multi-provider support (Claude, Codex, Gemini)
+bin/loki              # CLI entry point (routes to loki-ts or autonomy/)
+loki-ts/              # Bun runtime and the Loki 10 engine
+autonomy/             # Bash runtime and CLI (run.sh, loki)
+providers/            # Provider adapters (Claude, Codex, Cline, Aider, opencode)
 skills/               # On-demand skill modules
 references/           # Detailed documentation
 memory/               # Memory system (Python)
@@ -151,10 +153,11 @@ dashboard/            # Dashboard backend (FastAPI)
 packages/control-plane/ # Control Plane (browser UI)
 events/               # Event bus (Python, TypeScript, Bash)
 tests/                # Test suites
-benchmarks/           # SWE-bench and HumanEval benchmarks
+benchmarks/           # Benchmark harnesses
+docker/               # Dockerfiles and docker-compose.yml
 ```
 
-For full architectural details, see [CLAUDE.md](CLAUDE.md).
+For full architectural details, see [CLAUDE.md](../CLAUDE.md).
 
 ## Reporting Issues
 
@@ -162,4 +165,4 @@ Use the [issue templates](https://github.com/asklokesh/loki-mode/issues/new/choo
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [Business Source License 1.1](LICENSE) (BUSL-1.1) and that you accept the terms of the [Contributor License Agreement](CLA.md). See [docs/LICENSE-CHANGE-NOTICE.md](docs/LICENSE-CHANGE-NOTICE.md) for context on the March 2026 license change and the planned conversion to Apache 2.0 in 2030.
+By contributing, you agree that your contributions will be licensed under the [Business Source License 1.1](../LICENSE) (BUSL-1.1) and that you accept the terms of the [Contributor License Agreement](../CLA.md). See [docs/LICENSE-CHANGE-NOTICE.md](../docs/LICENSE-CHANGE-NOTICE.md) for context on the March 2026 license change and the planned conversion to Apache 2.0 in 2030.

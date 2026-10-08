@@ -1,8 +1,10 @@
 # Loki Mode Docker Compose
-# Usage: docker compose run loki start prd.md
+# Usage (from the repo root): docker compose -f docker/docker-compose.yml run loki start prd.md
+# Paths below are relative to this file: .. is the repo root, which is mounted
+# as /workspace, and ../.env is the env file.
 #
 # Auth (pick ONE):
-#   1. API key (default, recommended): copy .env.example to .env and set
+#   1. API key (default, recommended): copy docker/.env.example to .env and set
 #      ANTHROPIC_API_KEY. `env_file: .env` below loads it automatically, so you
 #      can edit .env and re-run `docker compose run loki ...` without retyping
 #      flags. This is why compose beats a long `docker run -e ...` command.
@@ -15,11 +17,11 @@
 # ---------------------------------------------------------------------------
 # Two ways to run, and they are different products:
 #
-#   docker compose run loki start prd.md
-#       One build, right now, in this directory. The `loki` service below.
+#   docker compose -f docker/docker-compose.yml run loki start prd.md
+#       One build, right now, in the repo root. The `loki` service below.
 #       Nothing is listening; nothing runs when you are not looking.
 #
-#   docker compose --profile service up -d
+#   docker compose -f docker/docker-compose.yml --profile service up -d
 #       The single-node BUILD SERVICE: a webhook receiver that enqueues builds,
 #       a worker that consumes them, and Redis between the two. This is the
 #       docker-compose equivalent of helm/loki-mode, for one machine.
@@ -32,19 +34,26 @@
 # will not silently accept unauthenticated builds.
 # ---------------------------------------------------------------------------
 
+# Fixed project name: keeps the named volumes (redis-data, receiver-state,
+# worker-workspace) the same as when this file lived at the root of a
+# loki-mode clone.
+name: loki-mode
+
 services:
   loki:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: loki-mode:latest
     # .env in this directory is loaded automatically (ANTHROPIC_API_KEY etc.).
     # Edit .env and re-run -- no need to rebuild or retype flags.
     env_file:
-      - path: .env
+      - path: ../.env
         required: false
     volumes:
       # Mount current directory as workspace. .loki/ state (memory, session,
       # queue, checkpoints) is created here, so it persists across runs.
-      - .:/workspace:rw
+      - ..:/workspace:rw
       # Share git config for commits
       - ~/.gitconfig:/home/loki/.gitconfig:ro
       # Share SSH keys for git operations
@@ -56,7 +65,7 @@ services:
       #   security find-generic-password -s "Claude Code-credentials" -w \
       #     | jq '{claudeAiOauth}' > .loki-oauth-credentials.json   # macOS
       # NEVER commit that file (it holds a live token).
-      # - ./.loki-oauth-credentials.json:/home/loki/.claude/.credentials.json:rw
+      # - ../.loki-oauth-credentials.json:/home/loki/.claude/.credentials.json:rw
     environment:
       # Loki Mode configuration
       - LOKI_NOTIFICATIONS=false  # No desktop notifications in container
@@ -104,7 +113,9 @@ services:
 
   # Webhook receiver. Validates the GitHub HMAC and enqueues. Never builds.
   receiver:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: loki-mode:latest
     profiles: ["service"]
     # The image ENTRYPOINT is `loki`, which does not start the webhook server,
@@ -114,7 +125,7 @@ services:
     entrypoint: ["python3", "/opt/loki-mode/autonomy/trigger-server.py"]
     command: ["--port", "7373", "--workers", "4", "--queue-size", "64"]
     env_file:
-      - path: .env
+      - path: ../.env
         required: false
     environment:
       # Read by trigger-server.py. Never passed as --secret: an argv secret is
@@ -170,7 +181,7 @@ services:
       # NEVER commit that file. Without it, receipts are served UNSIGNED and
       # /.well-known/jwks.json returns an empty key set, which is honest: they
       # keep their existing verdict.
-      # - ./receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro
+      # - ../receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro
     working_dir: /workspace
     # /health is a real route on this server and does not touch the queue.
     healthcheck:
@@ -190,12 +201,14 @@ services:
 
   # Worker. Pulls one item at a time and runs it. This is where builds happen.
   worker:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: loki-mode:latest
     profiles: ["service"]
     entrypoint: ["bash", "/opt/loki-mode/autonomy/queue-consumer.sh"]
     env_file:
-      - path: .env
+      - path: ../.env
         required: false
     environment:
       # NO LONG-LIVED CREDENTIALS IN THE IMAGE: injected at start from .env, so
