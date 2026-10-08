@@ -738,3 +738,4 @@ goal_score bash vs Bun behavioral parity (RC-DOCTOR-ONE S5)	6
 doctor has one implementation (FC-DUP delegator and minimal fallback)	3
 fast gate planner selects the suites that guard a diff (D90)	20
 real-run harness scenarios, dry install, doctored receipt	17
+docs/ROUTING-EVIDENCE.md exists and providers cite it (issue 210)	2

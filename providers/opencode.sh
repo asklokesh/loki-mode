@@ -21,9 +21,8 @@
 #       v0.86.0 from 2025-08-09, and Roo Code is archived, Continue read-only --
 #       so opencode, not aider, is the durable cheap-model route.)
 #
-#   Cost context (SWE-bench uniform scaffold, mini-swe-agent v2.0.0, 2026-02-17):
-#   MiniMax M2.5 resolved 75.8 at $36.64 total vs Claude Opus 4.6 at 75.6 for
-#   $275.76 -- an open model matching frontier accuracy at ~7.5x lower cost.
+#   Cost context: see docs/ROUTING-EVIDENCE.md (measurement source, date and
+#   caveats for the MiniMax M2.5 vs Claude Opus 4.6 cost-parity figures).
 #
 # CLI SURFACE (verified against the installed binary, v1.17.9, not assumed):
 #   opencode run [message..]     non-interactive run
