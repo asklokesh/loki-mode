@@ -729,9 +729,9 @@ function lastRunLine(dir: string): string {
   try {
     const d = JSON.parse(readFileSync(resolve(runs, newest, "receipt.json"), "utf-8")) as Record<string, unknown>;
     const v = d["verdict"];
-    let h = d["receipt_sha256"];
-    if (typeof v !== "string" || !/^[A-Z_]+$/.test(v) || typeof h !== "string") throw new Error("bad");
-    if (h.startsWith("sha256:")) h = h.slice(7);
+    const raw = d["receipt_sha256"];
+    if (typeof v !== "string" || !/^[A-Z_]+$/.test(v) || typeof raw !== "string") throw new Error("bad");
+    const h = raw.startsWith("sha256:") ? raw.slice(7) : raw;
     if (!/^[0-9a-f]{12,}$/.test(h)) throw new Error("bad");
     return `Last run: ${v} (receipt sha256:${h.slice(0, 12)})`;
   } catch {
