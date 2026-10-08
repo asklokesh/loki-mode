@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
-import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { routerEnabled } from "../runner/router/flag.ts"; import { routedFix } from "../runner/router/unit_model.ts";
+import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
 import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
@@ -186,7 +186,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           if (mustJump("verify", v)) break;
           if (hasFailures(outputs.verify) && sigs.length >= 3 && sigs.slice(-3).every((x) => x === sigs[sigs.length - 1])) {
             // A stall may climb once, only on a code-owned failure (a lint-only or harness-owned stall is unchanged); the same routedFix decides here and in the fix stage.
-            const up = routerEnabled() && !outputs.fix?.stall_escalated ? routedFix(ctx.model, outputs, { repeated: false, stall: true, groups: (outputs.verify?.failures_grouped as { signature: string }[] | undefined) ?? [], reason: sigs[sigs.length - 1] ?? "" }).climbed : null;
+            const up = stallClimb(ctx.model, outputs, sigs[sigs.length - 1] ?? "");
             if (up) {
               outputs.fix = { ...outputs.fix, stall_escalated: true, stall_pending: true }; extraRounds = 1;
               ctx.emit("route.escalated", "fix", { ...up });

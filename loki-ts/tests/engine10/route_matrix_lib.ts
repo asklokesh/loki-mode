@@ -79,6 +79,17 @@ export async function matrixViolations(root: string): Promise<string[]> {
   const groupsOf = (kind: string): { signature: string; count: number; sample: string }[] =>
     kind === "lint-only" ? [{ signature: "lint:eslint", count: 1, sample: "s" }] : [{ signature: "AssertionError: x", count: 1, sample: "s" }];
 
+  // A verify loop that stalls with a stubbed fix stage (so the fix stage does not climb first): only machine.ts's stall climb can move the model.
+  const stallRun = async (run: string, kind: string, plan: Record<string, unknown> | undefined): Promise<{ stalls: number; calls: Call[] }> => {
+    const rig: Rig = { calls: [], events: [] };
+    const groups = groupsOf(kind);
+    const stub = (name: string, fn?: (c: { outputs(): Outputs }) => Promise<unknown>) => ({ name, targetS: 1, limitS: 5, run: fn ?? (async () => ({ status: "completed", data: name === "plan" && plan ? plan : {} })) });
+    const load = async (n: string): Promise<unknown> => n === "verify" ? stub("verify", async () => ({ status: "completed", data: { failures_grouped: groups } }))
+      : n === "fix" ? stub("fix", async (c) => { rig.calls.push({ stage: "fix", model: undefined }); return { status: "completed", data: { round: 1, signatures: "stub", model: run === LABEL ? S : run, ...(c.outputs().fix?.["stall_escalated"] ? { stall_escalated: true } : {}) } }; }) : stub(n);
+    await mach.runMachine(makeCtx(run, () => ({}), [DONE], rig, dir), { load });
+    return { stalls: rig.events.filter((e) => e.type === "route.escalated" && e.data["trigger"] === "stall").length, calls: rig.calls };
+  };
+
   try {
     // 1. plan: an Opus pin is an upward move and allowed; anything below the run model is red.
     for (const run of RUNS) for (const adv of ["on", "off"]) {
@@ -156,27 +167,32 @@ export async function matrixViolations(root: string): Promise<string[]> {
         kind === "lint-only" && (stallEvents.length > 0 || fixCalls !== 2) ? ["lint-only stall climbed or granted an extra round"] : []);
     }
 
-    // 5. override axis: LOKI_MODEL_OVERRIDE or LOKI_CLAUDE_MODEL_DEVELOPMENT is the user bypass. No path may hand a model to a session
-    // (every router pin shows up as a defined model), and the child env must carry the user's model, never a router pin.
+    // 4b. stalled verify with a stubbed fix: a code-owned stall climbs exactly once (positive control for the stall path), a lint-only stall never does.
+    for (const run of [H, S]) for (const kind of ["code-owned", "lint-only"]) {
+      const want = kind === "code-owned" ? 1 : 0, r = await stallRun(run, kind, undefined);
+      if (r.stalls !== want) v.push(`machine stall run=${run} kind=${kind}: ${r.stalls} stall escalations, expected ${want}`);
+    }
+
+    // 5. override axis (R1-21 parity): LOKI_MODEL_OVERRIDE or LOKI_CLAUDE_MODEL_DEVELOPMENT is the user bypass. Only ROUTER pins drop; the pre-router
+    // per-call pins (Wall's wallModel, already_done, the fix-stage escalation) stay. So every path must behave identically with LOKI_ROUTER=0 and =1.
     const sess = (await import(join(root, "engine10/session.ts"))) as { createSessionRunner(c: unknown): { run(o: unknown): Promise<unknown> } };
-    for (const ov of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT"]) {
-      delete process.env["LOKI_MODEL_OVERRIDE"]; delete process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"];
-      process.env[ov] = O;
-      const none = (where: string, calls: Call[]): void => { for (const c of calls) if (c.model !== undefined) v.push(`override ${ov}: ${where}: ${c.stage} was pinned to ${c.model} over the user model`); };
+    const siz = (await import(join(root, "engine10/sizing.ts"))) as { wallModel(): string };
+    const snapshot = async (ov: string, router: string): Promise<Map<string, string>> => {
+      const seen = new Map<string, string>();
+      process.env["LOKI_ROUTER"] = router;
+      const note = (where: string, calls: Call[], extra = ""): void => { seen.set(where, calls.map((c) => `${c.stage}=${c.model ?? "-"}`).join(",") + extra); };
       for (const run of RUNS) for (const p of PLANS) {
         for (const [sn, seq] of SEQS) {
           const rig: Rig = { calls: [], events: [] };
           const ir = await imp.implementStage.run(makeCtx(run, () => ({ intake: { task: "t" }, ...(p.plan ? { plan: p.plan } : {}) }), seq, rig, dir), ac.signal);
-          none(`implement run=${run} route=${p.name} seq=${sn}`, rig.calls);
-          const rm = ir.data["route_model"];
-          if (typeof rm === "string" && rank(rm) < floorRank(run)) v.push(`override ${ov}: implement run=${run} route=${p.name} seq=${sn}: recorded route_model ${rm} below the run model`);
+          note(`implement run=${run} route=${p.name} seq=${sn}`, rig.calls, ` rm=${String(ir.data["route_model"])}`);
         }
         for (const kind of ["code-owned", "lint-only"]) for (const [pn, mk] of PRIORS) {
           const groups = groupsOf(kind), sig = groups.map((g) => g.signature).sort().join("|");
           const rig: Rig = { calls: [], events: [] };
           const prior = mk(sig);
           await fixm.fixStage.run(makeCtx(run, () => ({ intake: { task: "t" }, verify: { failures_grouped: groups }, ...(p.plan ? { plan: p.plan } : {}), ...prior }), [DONE], rig, dir), ac.signal);
-          none(`fix run=${run} route=${p.name} kind=${kind} prior=${pn}`, rig.calls);
+          note(`fix run=${run} route=${p.name} kind=${kind} prior=${pn}`, rig.calls);
         }
         for (const kind of ["code-owned", "lint-only"]) {
           const rig: Rig = { calls: [], events: [] };
@@ -185,29 +201,43 @@ export async function matrixViolations(root: string): Promise<string[]> {
           const real: Record<string, unknown> = { implement: imp.implementStage, fix: fixm.fixStage };
           const load = async (n: string): Promise<unknown> => real[n] ?? (n === "verify" ? stub("verify", async () => ({ status: "completed", data: { failures_grouped: groups } })) : stub(n));
           await mach.runMachine(makeCtx(run, () => ({}), [DONE], rig, dir), { load });
-          none(`machine run=${run} route=${p.name} kind=${kind}`, rig.calls);
+          note(`machine run=${run} route=${p.name} kind=${kind}`, rig.calls, ` esc=${rig.events.filter((e) => e.type === "route.escalated").length}`);
         }
       }
+      for (const run of [H, S]) for (const kind of ["code-owned", "lint-only"]) { const r = await stallRun(run, kind, PLANS[1]!.plan); note(`stall run=${run} kind=${kind}`, r.calls, ` stalls=${r.stalls}`); }
       process.env["LOKI_E10_PLAN"] = "always"; process.env["LOKI_ROUTER_ADVISOR"] = "off";
       for (const run of RUNS) {
         const { mkdirSync } = await import("node:fs");
-        const rig: Rig = { calls: [], events: [] }, pdir = join(dir, `plan-ov-${ov}-${run.length}`);
+        const rig: Rig = { calls: [], events: [] }, pdir = join(dir, `plan-ov-${ov}-${router}-${run.length}`);
         mkdirSync(pdir, { recursive: true });
         await plm.planStage.run(makeCtx(run, () => ({ intake: { task: "fix the bug" } }), [DONE], rig, pdir, () => { writeFileSync(join(pdir, "plan-scope.json"), JSON.stringify({ units: [unit("haiku")] })); }), ac.signal);
-        none(`plan run=${run}`, rig.calls);
+        note(`plan run=${run}`, rig.calls);
       }
       delete process.env["LOKI_E10_PLAN"]; delete process.env["LOKI_ROUTER_ADVISOR"];
-      // The session runner itself: a router-originated haiku pin (or any pin) must not overwrite the user's model in the child env.
-      for (const pin of [H, S, "opus"]) for (const advisor of [undefined, { available: false }]) {
-        const f = join(dir, `env-${ov}-${pin}-${advisor ? "noadv" : "adv"}.txt`);
+      // The session runner: per-call pins (Wall's wallModel() among them) reach the child env identically with the router on and off.
+      for (const pin of [H, S, "opus", siz.wallModel()]) for (const advisor of [undefined, { available: false }]) {
+        const f = join(dir, `env-${ov}-${router}-${pin}-${advisor ? "noadv" : "adv"}.txt`);
         process.env["MX_ENV_FILE"] = f;
         await sess.createSessionRunner({ provider: "claude", ...(advisor ? { advisor } : {}), childCommand: ["bash", ["-c", `env > "$MX_ENV_FILE"`]] })
-          .run({ stage: "implement", brief: "b", tier: "development", iterationId: "e10-mx-ov", limitS: 20, signal: ac.signal, model: pin });
-        const got = /^LOKI_CLAUDE_MODEL_DEVELOPMENT=(.*)$/m.exec(readFileSync(f, "utf8"))?.[1];
-        if (got !== O) v.push(`override ${ov}: session child env LOKI_CLAUDE_MODEL_DEVELOPMENT=${got} for pin ${pin}, expected the user model ${O}`);
+          .run({ stage: "wall", brief: "b", tier: "development", iterationId: "e10-mx-ov", limitS: 20, signal: ac.signal, model: pin });
+        const txt = readFileSync(f, "utf8");
+        note(`child-env pin=${pin} advisor=${advisor ? "off" : "on"}`, [], ` dev=${/^LOKI_CLAUDE_MODEL_DEVELOPMENT=(.*)$/m.exec(txt)?.[1]} default=${/^LOKI_E10_MODEL_DEFAULT=(.*)$/m.exec(txt)?.[1]}`);
       }
       delete process.env["MX_ENV_FILE"];
+      return seen;
+    };
+    for (const ov of ["LOKI_MODEL_OVERRIDE", "LOKI_CLAUDE_MODEL_DEVELOPMENT"]) {
+      delete process.env["LOKI_MODEL_OVERRIDE"]; delete process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"];
+      process.env[ov] = H;
+      const off = await snapshot(ov, "0"), on = await snapshot(ov, "1");
+      for (const [k, val] of off) if (on.get(k) !== val) v.push(`override ${ov}: ${k}: router off -> ${val}, router on -> ${on.get(k)} (an override user must see identical behavior)`);
+      // Wall parity (E-45): the Wall child keeps its sonnet pin under a haiku user override, with the router on and off.
+      for (const [name, snap] of [["off", off], ["on", on]] as const) {
+        const wallRow = snap.get(`child-env pin=${siz.wallModel()} advisor=on`) ?? "";
+        if (!wallRow.includes(`dev=${siz.wallModel()}`)) v.push(`override ${ov}: router ${name}: Wall child env is not the Wall model (${wallRow})`);
+      }
     }
+    process.env["LOKI_ROUTER"] = "1";
   } finally {
     for (const k of KEYS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
     rmSync(dir, { recursive: true, force: true });

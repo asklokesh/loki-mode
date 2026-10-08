@@ -3,8 +3,7 @@
 // calling this stage again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op
 // stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
 import { briefCtx, buildImplementBrief, impactedTests } from "./implement.ts";
-import { routerEnabled } from "../../runner/router/flag.ts";
-import { routedFix, routerPinsAllowed } from "../../runner/router/unit_model.ts";
+import { routedFix, routerActive } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
@@ -47,7 +46,7 @@ export const fixStage: Stage = {
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
     const priorRound = (prior.fix?.round as number | undefined) ?? 0;
-    const routed = routerEnabled(), stallEsc = routed && prior.fix?.stall_escalated === true; // R1-13: a stall escalation grants one extra round on the next rung
+    const routed = routerActive(), stallEsc = routed && prior.fix?.stall_escalated === true; // R1-13: a stall escalation grants one extra round on the next rung
     if (priorRound >= MAX_FIX_ROUNDS + (stallEsc ? 1 : 0)) {
       return { status: "skipped", data: { round: priorRound }, reason: "fix rounds exhausted" };
     }
@@ -64,7 +63,7 @@ export const fixStage: Stage = {
     const repeated = testFailures.length > 0 && prior.fix?.signatures === signatures;
     const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
     const reason = testFailures.map((g) => g.signature).join(", ");
-    const pinnedModel = routed && !routerPinsAllowed() ? undefined : repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;
+    const pinnedModel = repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;
     const { pin: routedPin, climbed } = routed ? routedFix(ctx.model, prior, { repeated, stall: prior.fix?.stall_pending === true, groups, reason }) : { pin: undefined, climbed: null };
     const actualModel = routedPin ?? pinnedModel ?? ctx.model;
     if (downgrade && pinnedModel === downgrade.to) process.stderr.write(`${downgrade.note}\n`);

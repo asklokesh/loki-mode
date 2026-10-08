@@ -135,13 +135,20 @@ export function guardViolations(files: Record<string, string>): string[] {
       if (!recorded) v.push(`${path}:${i + 1}: model assigned with no router route record (source plus reason): ${line.trim()}`);
     });
   }
+  // implement_route.ts is the only other place the implement pin is set: each assignment must sit beside its route event (source plus reason) or its route.escalated event.
+  const ir = (files["../runner/router/implement_route.ts"] ?? "").split("\n");
+  ir.forEach((line, i) => {
+    if (!/\b\w+\.model = /.test(line) || /^\s*\/\//.test(line)) return;
+    const recorded = (/first\.model = rr\.model;/.test(line) && /ctx\.emit\("route", "implement", \{[^}]*\bsource\b[^}]*\breason\b/.test(ir[i + 1] ?? "")) || (/first\.model = rt\.current;/.test(line) && /ctx\.emit\("route\.escalated"/.test(ir[i - 1] ?? ""));
+    if (!recorded) v.push(`implement_route.ts:${i + 1}: model assigned with no router route record (source plus reason): ${line.trim()}`);
+  });
   // Secondary: a haiku model token may appear only on the vetted lines (the router's single haiku producer lives in unit_model.ts).
   const HAIKU_OK: Record<string, RegExp[]> = {
     "../runner/router/plan_route.ts": [/^export const ROUTER_UNITS_INSTRUCTION/],
     "../runner/model_rank.ts": [/^export const modelRank/, /^\s*const model = k\.includes\("haiku"\)/],
-    "../runner/router/unit_model.ts": [/^const isHaiku = /, /^export function validHaikuRoute/, /r\["executor"\] !== "haiku"/, /^\s*return v \? \{ model: resolveModelAlias\("haiku"\), source: "opus-plan", reason: v\.reason, valid: true \} : \{ model: runFloor\(runModel\)/, /unitRedo\(isHaiku\(cur\) \? "haiku"/, /^\s*const v = (routerPinsAllowed\(\) \? )?validHaikuRoute\(plan\)( : null)?;$/, /^export const floorNoAdvisor/],
+    "../runner/router/unit_model.ts": [/^const isHaiku = /, /^export function validHaikuRoute/, /r\["executor"\] !== "haiku"/, /^\s*return v \? \{ model: resolveModelAlias\("haiku"\), source: "opus-plan", reason: v\.reason, valid: true \} : \{ model: runFloor\(runModel\)/, /unitRedo\(isHaiku\(cur\) \? "haiku"/, /^\s*const v = validHaikuRoute\(plan\);$/, /^export const floorNoAdvisor/],
   };
-  for (const path of ["stages/implement.ts", "stages/fix.ts", "stages/plan.ts", "machine.ts", "session.ts", "cost.ts", "../runner/model_rank.ts", "../runner/router/unit_model.ts", "../runner/router/plan_route.ts"]) {
+  for (const path of ["stages/implement.ts", "stages/fix.ts", "stages/plan.ts", "machine.ts", "session.ts", "cost.ts", "../runner/model_rank.ts", "../runner/router/unit_model.ts", "../runner/router/plan_route.ts", "../runner/router/implement_route.ts", "../runner/router/session_route.ts"]) {
     (files[path] ?? "").split("\n").forEach((line, i) => {
       const code = line.replace(/\s\/\/.*$/, "");
       if (/^\s*(\/\/|\*|\/\*)/.test(code) || !/haiku/i.test(code)) return;
@@ -150,7 +157,7 @@ export function guardViolations(files: Record<string, string>): string[] {
   }
   const fixSrc = files["stages/fix.ts"] ?? "";
   if (/routedPin/.test(fixSrc) && !FIX_ROUTED_DEF.test(fixSrc)) v.push("fix.ts: routedPin is not derived from routedFix under the router flag");
-  if (!fixSrc.includes("const pinnedModel = routed && !routerPinsAllowed() ? undefined : repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;")) v.push("fix.ts: pinnedModel is not computed from escalationModel/downgrade only");
+  if (!fixSrc.includes("const pinnedModel = repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;")) v.push("fix.ts: pinnedModel is not computed from escalationModel/downgrade only");
   const impl = files["stages/implement.ts"] ?? "";
   if (!impl.includes("cascadeDowngrade(ctx.model)")) v.push("implement.ts: pin does not come from cascadeDowngrade");
   const fix = files["stages/fix.ts"] ?? "";
@@ -168,7 +175,7 @@ function loadFiles(): Record<string, string> {
     }
   };
   walk(SRC, "");
-  for (const rel of ["runner/model_rank.ts", "runner/router/unit_model.ts", "runner/router/plan_route.ts"]) out[`../${rel}`] = readFileSync(join(SRC, "..", rel), "utf8");
+  for (const rel of ["runner/model_rank.ts", "runner/router/unit_model.ts", "runner/router/plan_route.ts", "runner/router/implement_route.ts", "runner/router/session_route.ts"]) out[`../${rel}`] = readFileSync(join(SRC, "..", rel), "utf8");
   return out;
 }
 
@@ -196,7 +203,7 @@ describe("L1 static guard", () => {
   it("mutation R1: an unconditional downgrade below the run model with no route record turns the guard red", () => {
     const f = loadFiles();
     const impl = f["stages/implement.ts"]!;
-    f["stages/implement.ts"] = impl.replace(/if \(rr\) \{ if \(routerPinsAllowed\(\)\) first\.model = current; ctx\.emit\("route".*\n/, 'first.model = "claude-haiku-4-5";\n');
+    f["stages/implement.ts"] = impl.replace(/const rt = routed \? routeStart\(.*\n/, 'first.model = "claude-haiku-4-5"; const rt = null;\n');
     expect(f["stages/implement.ts"]).not.toBe(impl);
     expect(guardViolations(f).some((x) => x.includes("no router route record"))).toBe(true);
     const g = loadFiles();
@@ -205,9 +212,9 @@ describe("L1 static guard", () => {
     expect(g["stages/fix.ts"]).not.toBe(fix);
     expect(guardViolations(g).length).toBeGreaterThan(0);
     const h = loadFiles();
-    const esc = h["stages/implement.ts"]!;
-    h["stages/implement.ts"] = esc.replace(/ctx\.emit\("route\.escalated", "implement", \{ \.\.\.esc \}\);\n/, "");
-    expect(h["stages/implement.ts"]).not.toBe(esc);
+    const esc = h["../runner/router/implement_route.ts"]!;
+    h["../runner/router/implement_route.ts"] = esc.replace(/ctx\.emit\("route\.escalated", "implement", \{ \.\.\.esc \}\);\n/, "");
+    expect(h["../runner/router/implement_route.ts"]).not.toBe(esc);
     expect(guardViolations(h).some((x) => x.includes("no router route record"))).toBe(true);
   });
 
