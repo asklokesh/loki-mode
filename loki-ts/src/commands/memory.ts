@@ -48,20 +48,30 @@ export async function runMemoryList(): Promise<number> {
 
 export async function runMemoryIndex(rebuild: boolean): Promise<number> {
   if (rebuild) {
-    // Mirror autonomy/loki:13399 -- import memory.layers, build, print.
+    // Mirror autonomy/loki memory index rebuild: MemoryEngine.rebuild_index()
+    // against the caller's .loki/memory, non-zero on failure.
     const py = `
+import sys
 try:
-    from memory.layers import IndexLayer
-    layer = IndexLayer('.loki/memory')
-    layer.update([])
-    print('Index rebuilt')
-except ImportError:
-    print('Error: memory.layers module not found')
+    from memory.engine import MemoryEngine
+    engine = MemoryEngine(base_path='.loki/memory')
+    engine.rebuild_index()
+    total = (engine.get_index() or {}).get('total_memories', 0)
 except Exception as e:
-    print(f'Error: {e}')
+    print(f'Error: index rebuild failed: {type(e).__name__}: {e}', file=sys.stderr)
+    sys.exit(1)
+print(f'Index rebuilt: {total} memories indexed')
 `.trim();
-    const r = await runInline(py, { cwd: REPO_ROOT });
+    const existing = process.env["PYTHONPATH"];
+    const r = await runInline(py, {
+      cwd: process.cwd(),
+      env: { PYTHONPATH: existing ? `${REPO_ROOT}:${existing}` : REPO_ROOT },
+    });
     process.stdout.write(r.stdout);
+    if (r.exitCode !== 0) {
+      process.stderr.write(r.stderr || `Error: index rebuild failed (exit ${r.exitCode})\n`);
+      return r.exitCode || 1;
+    }
     return 0;
   }
 
