@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- implement brief asks the model to declare new registry dependencies
+
 ## v11.3.0 (2026-10-08)
 
 Minor release. Adds the model router's escalation chain and plan-time routing, both shipped OFF by default (LOKI_ROUTER unset or 0 is byte-identical to v11.2.2 across the 156-scenario differential), and hardens skill-link healing so it only heals from a durable global install. The remaining v1 features of the 11.3 program (cost preview, mutation proof, intent card, reviewer brief, attempts, memory with proof, overnight queue, before/after proof, provider failover, supply-chain guard) and the CI-FAST gate roll to 11.3.1.

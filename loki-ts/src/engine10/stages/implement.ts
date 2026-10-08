@@ -1,5 +1,5 @@
 // E-08: Implement (ENGINE.md 4, 16). One session; the brief marks Wall tests read-only, names only the impacted tests. Afterwards any changed read-only file is restored (tests_reverted) and the exit is classified.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
@@ -61,6 +61,7 @@ export const implementStage: Stage = {
   limitS: 480,
 
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
+    rmSync(join(ctx.repoDir, ".loki", "supply-declared.json"), { force: true }); // T10 B3: never judge this run by a stale declaration
     const prior = ctx.outputs();
     const task = (prior.intake?.task as string | undefined) ?? "";
     const plan = (prior.plan?.plan as string | undefined) ?? null;
