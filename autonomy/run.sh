@@ -5386,7 +5386,7 @@ except Exception:
 }
 
 #===============================================================================
-# Rule of Two (moat P9): a GitHub token never reaches an agent session via the
+# Rule of Two (moat P9): Loki never passes the GitHub token into the agent's environment via the
 # IMPLICIT resolution paths this module withholds (env vars, gh config store,
 # git credential.helper, SSH agent/ssh command). Not an absolute claim -- see
 # the disclosed residuals at the end of this header (an explicit named-account
