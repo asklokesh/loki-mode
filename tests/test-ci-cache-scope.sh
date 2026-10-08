@@ -176,25 +176,27 @@ else
     bad "YAML parser failed on fixture: $(cat "$WORK/fixture.err")"
 fi
 
-# E-162: slice-* pushes skip the 8-shard Tests matrix (Tier A runs the
-# diff-selected suites instead); train/** and main keep it; only train/** refs
-# cancel superseded Tests runs, never main.
+# D90: test.yml is the fast gate (it absorbed Tier A, which no longer exists).
+# slice-*, train/** and main all run it; only train/** refs cancel superseded
+# runs, never main. The 8-shard shell matrix lives in full-suite.yml, which
+# nightly.yml calls.
 if python3 - "$REPO_ROOT/.github/workflows" <<'PY'
 import sys, yaml
 d = sys.argv[1]
 t = yaml.safe_load(open(d + '/test.yml'))
-a = yaml.safe_load(open(d + '/tier-a.yml'))
+f = yaml.safe_load(open(d + '/full-suite.yml'))
+n = yaml.safe_load(open(d + '/nightly.yml'))
 trig = lambda w: w.get(True) or w.get('on')
 tb = trig(t)['push']['branches']
-ab = trig(a)['push']['branches']
 errs = []
-if 'slice-*' in tb: errs.append('test.yml still triggers on slice-* (8-shard matrix)')
-if 'main' not in tb or 'train/**' not in tb: errs.append('test.yml lost main or train/**')
-if t['jobs']['shell-tests']['strategy']['matrix']['shard'] != list(range(8)): errs.append('shell-tests no longer 8 shards')
-if 'slice-*' not in ab: errs.append('tier-a.yml does not run on slice-*')
-steps = ' '.join(str(s.get('run', '')) for s in a['jobs']['select-and-run']['steps'])
-for need in ('select-tests.sh', 'structural-checks.sh', 'test-shard-coverage.sh'):
-    if need not in steps: errs.append('tier-a.yml missing ' + need)
+for need in ('main', 'train/**', 'slice-*'):
+    if need not in tb: errs.append('test.yml lost ' + need)
+if f['jobs']['shell-tests']['strategy']['matrix']['shard'] != list(range(8)): errs.append('full-suite shell-tests no longer 8 shards')
+if 'full' not in n['jobs'] or 'full-suite.yml' not in str(n['jobs']['full'].get('uses', '')): errs.append('nightly.yml does not call full-suite.yml')
+if 'schedule' not in trig(n): errs.append('nightly.yml lost its schedule')
+steps = ' '.join(str(s.get('run', '')) for j in t['jobs'].values() for s in j.get('steps', []))
+for need in ('fast-gate.sh plan', 'fast-gate.sh run', 'fast-gate.sh p9', 'structural-checks.sh', 'test-shard-coverage.sh', 'bun run typecheck'):
+    if need not in steps: errs.append('test.yml missing ' + need)
 c = t['concurrency']
 cip = str(c['cancel-in-progress'])
 if 'refs/heads/train/' not in cip: errs.append('train refs do not cancel in progress')
@@ -202,8 +204,8 @@ if 'refs/heads/main' in cip or 'slice-' in cip: errs.append('cancel-in-progress 
 if 'github.sha' not in str(c['group']) or 'refs/heads/train/' not in str(c['group']): errs.append('group is not per-ref for train and per-sha otherwise')
 print('\n'.join(errs)); sys.exit(1 if errs else 0)
 PY
-then ok "E-162: slice has Tier A not the 8-shard matrix; train/main keep 8 shards; only train cancels"
-else bad "E-162 workflow shape (see above)"; fi
+then ok "D90: Tests is the fast gate on slice/train/main; full 8-shard matrix is nightly via full-suite.yml; only train cancels"
+else bad "D90 workflow shape (see above)"; fi
 
 echo
 echo "==============================================================="

@@ -426,6 +426,12 @@ def _required_ci_full_script():
     next_job_m = re.search(r"\n  \w[\w-]*:\n", src[job_m.end():])
     job_end = job_m.end() + (next_job_m.start() if next_job_m else len(src) - job_m.end())
     job_text = src[job_m.start():job_end]
+    # Select the step by name so extra steps before it (the D90 nightly
+    # block) cannot change which `run: |` block this harness exercises.
+    step_m = re.search(r"\n +- name: Require Tests / Security Audit green", job_text)
+    if not step_m:
+        return None
+    job_text = job_text[step_m.start():]
     run_m = re.search(r"\n( +)run: \|\n", job_text)
     if not run_m:
         return None
