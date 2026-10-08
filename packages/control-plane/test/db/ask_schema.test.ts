@@ -21,7 +21,10 @@ function folderAt0004(root: string): string {
   return dir;
 }
 
-const dump = (s: Database, table: string, order: string) => JSON.stringify(s.query(`select * from ${table} order by ${order}`).all());
+// Columns a later additive migration (0006 token_sessions) may add are excluded so the 0004 rows are compared as seeded.
+const dump = (s: Database, table: string, order: string) => JSON.stringify(
+  (s.query(`select * from ${table} order by ${order}`).all() as Record<string, unknown>[]).map(({ token_sessions: _t, ...rest }) => rest),
+);
 const cols = (s: Database, table: string) => (s.query(`pragma table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
 
 function tmp<T>(fn: (root: string) => T): T {
@@ -81,6 +84,6 @@ test("a fresh db migrates cleanly to 0005 and re-opening is idempotent", () => t
   openDb(path).sqlite.close();
   const { sqlite } = openDb(path);
   const n = sqlite.query("select count(*) as n from __drizzle_migrations").get() as { n: number };
-  expect(n.n).toBe(6);
+  expect(n.n).toBe(7);
   sqlite.close();
 }));
