@@ -172,6 +172,8 @@ export interface Receipt {
   verdict: Verdict;
   /** T2: "test fails without the fix: yes | no | inconclusive (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
   mutation_proof?: string;
+  /** XV-1: cross-review judge and whether it is a different vendor than the builder (LOKI_XVENDOR_DEFAULT=1 only). */
+  review?: { provider: string | null; vendor_differs: boolean };
   /** T2: the counted outcome for METRICS: "yes" | "no" | "inconclusive". */
   mutation_outcome?: "yes" | "no" | "inconclusive";
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */

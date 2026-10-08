@@ -20,7 +20,7 @@ import { recordRunVerdict } from "../../util/pr_lessons.ts";
 import { run } from "../../util/shell.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
-import { crossReview, minVerdict } from "./xreview.ts";
+import { crossReview, minVerdict, reviewReceipt } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
 import { loadRouteRecord } from "../../runner/router/route_record.ts";
@@ -252,7 +252,7 @@ export const sealStage: Stage = {
     // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
     const mp = verdict2 === "VERIFIED" && mutationEnabled() ? mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
     const verdict: Verdict = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true ? "PARTIAL" : verdict2;
-    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? [])]);
+    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? []), ...reviewReceipt(ctx.provider, xr).notProven]);
     if (!proof && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; notProven.add(vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     for (const d of Array.isArray(o.wall?.discarded) ? (o.wall!.discarded as Obj[]) : []) notProven.add(`wall test discarded: ${String(d.file)} (${String(d.reason)})`); // FC-23
@@ -340,6 +340,7 @@ export const sealStage: Stage = {
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true,
       ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS),
+      ...(reviewReceipt(ctx.provider, xr).review ? { review: reviewReceipt(ctx.provider, xr).review } : {}),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
