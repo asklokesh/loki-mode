@@ -221,7 +221,7 @@ export const sealStage: Stage = {
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
-    const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.runDir), process.env);
+    const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
     const verdict1: Verdict = supplyVerdict(verdict0, supply);
     const xr = await crossReview(ctx, verdict1, head), verdict = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
     const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? [])]);

@@ -5,6 +5,11 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- implement brief asks the model to declare new registry dependencies
+
 ## v11.2.2 (2026-10-07)
 
 Patch release. Adds measured fields to the B9 router scoreboard, derives the usage-governor seat cap from a measured `claude -p /usage` read, collapses `loki doctor` onto a single implementation, and gives the router one guarded plan-scope reader. The router still ships off; with `LOKI_ROUTER` unset, run behavior is unchanged from 11.2.1.

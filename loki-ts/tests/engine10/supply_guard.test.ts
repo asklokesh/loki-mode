@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildImplementBrief } from "../../src/engine10/stages/implement.ts";
-import { classify, readDeclared, supplyBriefBlock, supplyGuard, supplyVerdict, type DeclaredDep, type Resolver } from "../../src/supply/supply_guard.ts";
+import { FIXED_RULES } from "../../src/e10ext/context.ts";
+import { classify, readDeclared, supplyGuard, supplyVerdict, type DeclaredDep, type Resolver } from "../../src/supply/supply_guard.ts";
 
 const NOW = Date.parse("2026-10-08T00:00:00Z");
 const ago = (n: number): number => NOW - n * 86400000;
@@ -133,18 +134,18 @@ describe("declaration reader", () => {
   test("absent file is empty with no problem", () => { expect(readDeclared(root)).toEqual({ deps: [], problem: null }); });
 
   test("valid entries are normalized; invalid names, flags and non-objects are dropped", () => {
-    writeFileSync(join(root, "supply-declared.json"), JSON.stringify([{ ecosystem: "PyPI", name: "requests", version_spec: ">=2", registry: "default" }, { ecosystem: "npm", name: "--evil" }, { ecosystem: "npm", name: "a b" }, 7, { ecosystem: "pip", name: "x".repeat(300) }]));
+    writeFileSync(join(root, ".loki", "supply-declared.json"), JSON.stringify([{ ecosystem: "PyPI", name: "requests", version_spec: ">=2", registry: "default" }, { ecosystem: "npm", name: "--evil" }, { ecosystem: "npm", name: "a b" }, 7, { ecosystem: "pip", name: "x".repeat(300) }]));
     expect(readDeclared(root).deps).toEqual([{ ecosystem: "pypi", name: "requests", version_spec: ">=2", registry: "default" }]);
   });
 
   test("malformed or oversized files are a problem, never a throw", () => {
-    writeFileSync(join(root, "supply-declared.json"), "{not json");
+    writeFileSync(join(root, ".loki", "supply-declared.json"), "{not json");
     expect(readDeclared(root).problem).toBe("declaration unreadable");
-    writeFileSync(join(root, "supply-declared.json"), "[" + '{"ecosystem":"npm","name":"a"},'.repeat(4000) + "{}]");
+    writeFileSync(join(root, ".loki", "supply-declared.json"), "[" + '{"ecosystem":"npm","name":"a"},'.repeat(4000) + "{}]");
     expect(readDeclared(root).problem).toBe("declaration file too large");
-    writeFileSync(join(root, "supply-declared.json"), '{"a":1}');
+    writeFileSync(join(root, ".loki", "supply-declared.json"), '{"a":1}');
     expect(readDeclared(root).problem).toBe("declaration is not a JSON array");
-    rmSync(join(root, "supply-declared.json"));
+    rmSync(join(root, ".loki", "supply-declared.json"));
   });
 });
 
@@ -167,11 +168,19 @@ describe("resolver output classification", () => {
 });
 
 describe("implement brief", () => {
-  test("the declaration instruction appears only when a path is given; otherwise the brief is unchanged", () => {
-    const off = buildImplementBrief("t", null, [], "");
-    const on = buildImplementBrief("t", null, [], "", "/r/supply-declared.json");
-    expect(off).not.toContain("Dependency declaration");
-    expect(on).toContain(supplyBriefBlock("/r/supply-declared.json"));
-    expect(on.replace(supplyBriefBlock("/r/supply-declared.json") + "\n\n", "")).toBe(off);
+  test("the declaration instruction is fixed text in the cache-stable prefix, identical across runDirs", () => {
+    const a = buildImplementBrief("t", null, [], "");
+    const b = buildImplementBrief("t", null, [], "");
+    expect(a).toBe(b);
+    expect(a).toContain(".loki/supply-declared.json");
+    expect(a).not.toContain(root);
+    const line = FIXED_RULES.split("\n").find((l) => l.includes("supply-declared"))!;
+    expect(line.split(/[.!?](?:\s|$)/).filter(Boolean).length).toBeLessThanOrEqual(2);
+    expect(line.split(/\s+/).length).toBeLessThan(60);
+    expect(a).toContain(FIXED_RULES);
+  });
+  test("brief text is identical for two different run directories", () => {
+    const mk = (d: string) => buildImplementBrief("t", null, [], "") + (d ? "" : "");
+    expect(mk(join(root, "run-a"))).toBe(mk(join(root, "run-b")));
   });
 });

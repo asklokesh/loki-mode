@@ -85,3 +85,4 @@ src/util/check_result.ts	jest
 src/util/check_result.ts	pytest
 src/util/check_result.ts	vitest
 src/util/update_check.ts	package.json
+src/supply/supply_guard.ts	Gemfile
