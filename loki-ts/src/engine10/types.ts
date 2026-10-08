@@ -153,6 +153,7 @@ export interface Receipt {
   checks: ReceiptCheck[];
   not_proven: string[];
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on
+  cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0
   verdict: Verdict;
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
   implement_limit?: { limit_s: number; elapsed_s: number };
