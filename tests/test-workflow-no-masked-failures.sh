@@ -118,10 +118,31 @@ def check_coe(where, value, matrix, allow_key):
 # nested group or control keyword makes the handler too complex to trust, which
 # counts as masked (fail safe). A handler that only captures (`|| rc=$?`) must be
 # followed by `exit $rc` with no reassignment in between.
+REDIR = re.compile(r"\d*(?:>&(?:\d+-?|-)|&>>?|>>|>\||>|<<<|<<|<)")
+
+def scan_word(text, i):
+    """Read one shell word starting at i; returns (word, kind, next index)."""
+    n, word, kind = len(text), "", "plain"
+    while i < n and text[i] not in " \t\n;|&<>" and not (text[i] in "()" and not word):
+        ch = text[i]
+        if ch == "'":
+            j = text.find("'", i + 1); j = n if j < 0 else j
+            word += text[i + 1:j]; kind = "single"; i = j + 1
+        elif ch == '"':
+            j = i + 1
+            while j < n and text[j] != '"':
+                j += 2 if text[j] == "\\" else 1
+            word += text[i + 1:j]; kind = "quoted" if kind == "plain" else kind; i = j + 1
+        else:
+            word += ch; i += 1
+    return word, kind, i
+
 def lex(text):
+    """Tokens: ("op", x) or ("word", text, kind). Redirections (>&2, 2>/dev/null, <<< x) are dropped."""
     toks, i, n = [], 0, len(text)
     while i < n:
         c = text[i]
+        m = REDIR.match(text, i)
         if c in " \t":
             i += 1
         elif c == "\n":
@@ -129,25 +150,21 @@ def lex(text):
         elif c == "#":
             while i < n and text[i] != "\n":
                 i += 1
+        elif m and (m.group(0)[-1:] != "&" and not text.startswith("&&", i)):
+            i = m.end()
+            if ">&" not in m.group(0):  # a file or here-string target belongs to the redirection
+                while i < n and text[i] in " \t":
+                    i += 1
+                _, _, i = scan_word(text, i)
         elif text.startswith("||", i) or text.startswith("&&", i):
             toks.append(("op", text[i:i + 2])); i += 2
         elif c in ";|&()":
             toks.append(("op", c)); i += 1
         else:
-            word, kind = "", "plain"
-            while i < n and text[i] not in " \t\n;|&" and not (text[i] in "()" and not word):
-                ch = text[i]
-                if ch == "'":
-                    j = text.find("'", i + 1); j = n if j < 0 else j
-                    word += text[i + 1:j]; kind = "single"; i = j + 1
-                elif ch == '"':
-                    j = i + 1
-                    while j < n and text[j] != '"':
-                        j += 2 if text[j] == "\\" else 1
-                    word += text[i + 1:j]; kind = "quoted" if kind == "plain" else kind; i = j + 1
-                else:
-                    word += ch; i += 1
-            toks.append(("word", word, kind))
+            w, k, j = scan_word(text, i)
+            if j == i:  # a lone character scan_word refuses; never loop forever
+                j = i + 1
+            toks.append(("word", w, k)); i = j
     return toks
 
 KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac", "!", "function", "time"}
@@ -175,18 +192,20 @@ def split_cmds(toks, ops=(";",)):
 def assign_only(cmd):
     return all(t[0] == "word" and t[2] != "single" and ASSIGN.fullmatch(t[1]) for t in cmd)
 
-def mentions(cmd, var):
-    pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(var) + r"(?![A-Za-z0-9_])")
-    return any(t[0] == "word" and pat.search(t[1]) for t in cmd)
+WRITING_WORD = re.compile(r"\$\(|`|\$\[|\$\{[^}]*=")
 
-def harmless(cmd):
-    """echo, true, :, false and printf without -v cannot write a variable."""
-    if cmd[0][2] != "plain":
+def inert(cmd):
+    """Allowlist: only commands that provably cannot write a shell variable."""
+    if cmd[0][2] != "plain" or cmd[0][0] != "word":
+        return False
+    if any(t[2] != "single" and WRITING_WORD.search(t[1]) for t in cmd):
         return False
     w = [t[1] for t in cmd]
-    if w[0] in ("echo", "true", ":", "false"):
-        return True
-    return w[0] == "printf" and not any(re.fullmatch(r"-\w*v\w*", x) for x in w[1:])
+    if w[0] in ("true", ":"):
+        return len(w) == 1
+    if w[0] == "printf":
+        return not any(re.fullmatch(r"-\w*v\w*", x) for x in w[1:])
+    return w[0] in ("echo", "cat", "grep")
 
 def handler_fails(handler):
     """True only when every path through the handler ends nonzero."""
@@ -225,9 +244,8 @@ def handler_fails(handler):
         elif w == ["false"]:
             last = "fail"
         else:
-            for v in list(state):
-                if mentions(cmd, v) and not harmless(cmd):
-                    state[v] = "zero"
+            if not inert(cmd):
+                state = {}  # fail closed: anything not on the allowlist voids every capture
             last = "zero"
     return last == "fail"
 
@@ -250,9 +268,30 @@ def exits_with(var, after):
             return False
         if w[0][1] == "exit" and w[0][2] == "plain":
             return len(w) == 2 and w[1][2] != "single" and var_of(w[1][1]) == var
-        if mentions(w, var) and not harmless(w):
+        if not inert(w):
             return False
     return False
+
+def is_open(t):
+    return t == ("op", "(") or t == ("word", "{", "plain")
+
+def is_close(t):
+    return t == ("op", ")") or t == ("word", "}", "plain")
+
+def stmt_start(toks, k):
+    """Index where the statement holding the || at k begins; a closed group before it belongs to the statement."""
+    depth = 0
+    for m in range(k - 1, -1, -1):
+        t = toks[m]
+        if is_close(t):
+            depth += 1
+        elif is_open(t):
+            depth -= 1
+            if depth < 0:
+                return m + 1
+        elif depth == 0 and t == ("op", ";"):
+            return m + 1
+    return 0
 
 def masked(lines, i):
     """True when any `||` after a test command in this statement can exit 0."""
@@ -263,12 +302,9 @@ def masked(lines, i):
         text += "\n" + lines[j]
     toks = lex(text)
     later = None
-    seg = 0
     for k, t in enumerate(toks):
-        if t[0] == "op" and t[1] in (";", "(", ")") or t[0] == "word" and t[2] == "plain" and t[1] in ("{", "}"):
-            seg = k + 1
-        elif t == ("op", "||"):
-            left = " ".join(x[1] for x in toks[seg:k] if x[0] == "word")
+        if t == ("op", "||"):
+            left = " ".join(x[1] for x in toks[stmt_start(toks, k):k] if x[0] == "word")
             if not TEST_CMD.search(left):
                 continue
             rest = toks[k + 1:]
@@ -442,6 +478,32 @@ cap X05-eval 'eval rc=0'
 cap X06-read 'read -r rc <<< 0'
 cap X07-printf-v 'printf -v rc 0'
 cap X08-assign-only 'x=1 rc=0'
+cap Y01-colon-arith ': $((rc=0))'
+cap Y02-echo-arith 'echo "$((rc=0))"'
+cap Y04-printf-arith "printf '%s\n' \$((rc=0))"
+cap Y09-printf-v-indirect 'n=rc; printf -v "$n" 0'
+mut Y05-indirect-printf-v nightly.yml "$STEP" '        run: |
+          n=rc
+          bun test || { rc=$?; printf -v "$n" 0; exit $rc; }
+'
+mut Y08-function-reset nightly.yml "$STEP" '        run: |
+          reset_rc() { rc=0; }
+          bun test || rc=$?
+          reset_rc
+          exit "$rc"
+'
+mut Y10-subshell-test nightly.yml "$STEP" '        run: |
+          ( cd . && bash scripts/first-run-gate.sh --stub ) || true
+'
+mut Y11-group-test nightly.yml "$STEP" '        run: |
+          { bash scripts/first-run-gate.sh --stub; } || true
+'
+ok F01-echo-stderr-exit nightly.yml "$STEP" '        run: bun test || { echo "::error::x" >&2; exit 1; }
+'
+ok F07-exit-redirect nightly.yml "$STEP" '        run: bun test || exit 1 2>/dev/null
+'
+ok F10-echo-1-to-2 nightly.yml "$STEP" '        run: bun test || { echo "gate failed" 1>&2; false; }
+'
 ok C05-capture-echo nightly.yml "$STEP" '        run: |
           bun test || rc=$?
           echo "rc is $rc"
