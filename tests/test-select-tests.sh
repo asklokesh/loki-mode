@@ -246,9 +246,9 @@ expect_contains "R4 typecheck" "$out" "$(printf 'R4\tbun_typecheck\tloki-ts')"
 # R4 (FC-31): a changed loki-ts/src file must also select the SHELL suites that
 # guard it, by full path or by the command name (loki-ts/src/commands/X.ts is
 # run as "loki X"). Without this, a doctor.ts slice never ran
-# test-doctor-blocker-parity.sh and main went red in Tier B.
+# its doctor shell suites and main went red in Tier B.
 out="$(sel 'loki-ts/src/commands/doctor.ts')"
-expect_contains "FC-31 doctor.ts selects doctor parity shell suite" "$out" "$(printf 'R3\tshell_test\ttests/test-doctor-blocker-parity.sh')"
+expect_contains "FC-31 doctor.ts selects doctor shell suite" "$out" "$(printf 'R3\tshell_test\ttests/test-doctor-single-impl.sh')"
 expect_contains "FC-31 doctor.ts keeps bun test" "$out" "$(printf 'R4\tbun_test\tloki-ts/tests/commands/doctor.test.ts')"
 
 # R5: changed dashboard/ or web-app/ runs their python + node tests.
@@ -405,6 +405,26 @@ if git -C "$REPO_ROOT" cat-file -e "e38e3029b^{commit}" 2>/dev/null && git -C "$
         PASS=$((PASS + 1)); echo "PASS: train/43 range emits no tests/lib helper as a test"
     fi
 fi
+
+# FC-32 B1: the selector must parse under the macOS system bash (3.2), which rejects a heredoc inside $( ).
+if [ -x /bin/bash ]; then
+    if /bin/bash -n "$SELECT" 2>/dev/null; then
+        PASS=$((PASS + 1)); echo "PASS: /bin/bash -n scripts/select-tests.sh parses"
+    else
+        FAIL=$((FAIL + 1)); echo "FAIL: /bin/bash -n scripts/select-tests.sh fails to parse"
+    fi
+else
+    echo "SKIP: /bin/bash absent, system-bash parse check not run"
+fi
+
+# FC-32 B2: python3 present but failing must fail safe (closure = ALL), so a loki-ts/src change still
+# selects the control-plane suite.
+stub_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-stub.XXXXXX")"
+printf '#!/bin/sh\nexit 1\n' > "$stub_dir/python3"
+chmod +x "$stub_dir/python3"
+out="$(cd "$REPO_ROOT" && PATH="$stub_dir:$PATH" bash "$SELECT" --files - <<<'loki-ts/src/commands/doctor.ts')"
+rm -rf "$stub_dir"
+expect_contains "FC-32 failing python3 still selects test-control-plane" "$out" "tests/test-control-plane.sh"
 
 echo ""
 echo "select-tests fixtures: $PASS passed, $FAIL failed"

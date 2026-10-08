@@ -183,7 +183,7 @@ fi
 #    never called is the built-and-unused pattern this session kept finding --
 #    loki_emit_funnel_once itself sat with a single call site for exactly that
 #    reason.
-if grep -q "loki_emit_first_run_blocked" "$REPO_ROOT/autonomy/loki"; then
+if grep -q "loki_emit_first_run_blocked" "$REPO_ROOT/loki-ts/src/commands/doctor.ts"; then
     ok "the doctor blocking path calls the emitter"
 else
     bad "nothing calls loki_emit_first_run_blocked -- the signal would never fire"

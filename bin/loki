@@ -537,6 +537,20 @@ if [ "${1:-}" = "doctor" ]; then
             exec "$BASH_CLI" "$@"
         fi
     done
+    # FC-DUP: bun is the single doctor. A crashing or missing Bun route must not
+    # leave the user with a stack trace and no verdict, so preflight it here and
+    # fall to bash, whose cmd_doctor prints the minimal diagnostic and exits 1.
+    # Uses the _loki_bun resolver (PATH, then @oven/bun-*), not bare `command -v`.
+    _doctor_bun="$(_loki_bun)"
+    if [ -z "$_doctor_bun" ] || [ -z "${BUN_CLI:-}" ]; then
+        exec "$BASH_CLI" "$@"
+    fi
+    _doctor_t=$(command -v timeout || command -v gtimeout || true)
+    if [ -n "$_doctor_t" ]; then
+        "$_doctor_t" -k 1 5 "$_doctor_bun" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
+    else
+        "$_doctor_bun" "$BUN_CLI" version >/dev/null 2>&1 || exec "$BASH_CLI" "$@"
+    fi
 fi
 
 # CLI consolidation (Phase B): `report kpis` is the canonical form of the
@@ -589,7 +603,7 @@ fi
 # Two-token routes (provider show/list, memory list/index) match on the first
 # token only; the Bun dispatcher handles subcommand routing internally.
 case "${1:-}" in
-    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|receipt|wiki|crash|control|contract|slack|answer|completion|__complete)
+    version|--version|-v|status|stats|doctor|provider|memory|rollback|internal|kpis|trust|proof|receipt|wiki|crash|control|contract|slack|queue|answer|completion|__complete)
         # v7.5.2: rollback added (wires loki-ts/src/commands/rollback.ts).
         # v7.5.3: internal added for autonomy/run.sh phase1-hooks calls.
         # v7.5.28: kpis added (Phase K MVP: read-only KPI snapshot).

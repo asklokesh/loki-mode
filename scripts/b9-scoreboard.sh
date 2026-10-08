@@ -30,6 +30,15 @@
 #                           The rerun must read the seed through a test-only path. NOTE: R1-16's
 #                           shapeDefault() has no override yet; R1-11 or R1-19 must add
 #                           LOKI_ROUTER_SHAPE_DEFAULTS_FILE (this script does not touch TS).
+#   --repeat N              alias of --n (runs per arm); the later of --n/--repeat wins
+#   --summarize FILE        no runs: print the per-arm summary (mean and min/max of wall, usd and the
+#                           token fields) for a results TSV, plus `router_cost_ratio=<arm2/arm3 usd>` and
+#                           `gate_1_05=PASS|FAIL` (D89 Amendment 2 / R1-19: router-on cost <= router-off x 1.05,
+#                           n>=3 recorded runs per arm). Any field a run did not record prints NOT RECORDED,
+#                           never 0; an unrecorded ratio is FAIL, never a false green. A real run prints
+#                           this summary for its own rows at the end.
+#   Per-run usage fields (TSV columns 8-12; from .loki/metrics/result-cost-*.json for arms 2-4, from the
+#   claude JSON `usage` for arm 1): cache_read, cache_create, fresh_in, out, advisor_calls.
 #   --timeout SEC           per-run limit via timeout -k (default 600)
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
@@ -38,7 +47,7 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="fix the bug that makes the failing test in sum.test.js fail"
-DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600
+DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
@@ -47,7 +56,8 @@ while [ $# -gt 0 ]; do
         --test-cmd) TESTCMD="${2:-}"; shift ;;
         --task) TASK="${2:-}"; shift ;;
         --name) NAME="${2:-}"; shift ;;
-        --n) N="${2:-}"; shift ;;
+        --n|--repeat) N="${2:-}"; shift ;;
+        --summarize) SUMMARIZE="${2:-}"; shift ;;
         --results-out) RESULTS_OUT="${2:-}"; shift ;;
         --metrics-out) METRICS_OUT="${2:-}"; shift ;;
         --emit-shape-defaults) EMIT="${2:-}"; [ -n "$EMIT" ] || { echo "--emit-shape-defaults needs an output path" >&2; exit 2; }; shift ;;
@@ -59,6 +69,112 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
+
+# --- per-arm summary over a results TSV (also printed at the end of a run) -----
+# Columns: 1 arm 2 repo 3 run 4 solved 5 wall 6 usd 7 shape 8 cache_read 9 cache_create 10 fresh_in 11 out 12 advisor_calls.
+# A missing, "unknown", non-numeric or absent value is NOT RECORDED and is excluded from the mean (never counted as 0).
+summarize_results() { # summarize_results FILE
+    awk -F '\t' '
+        function isnum(v) { return v ~ /^[0-9]+([.][0-9]+)?$/ }
+        function fmt(v, f) { return (f == "usd") ? sprintf("%.4f", v) : sprintf("%.1f", v) }
+        BEGIN {
+            nf = split("wall usd cache_read cache_create fresh_in out advisor_calls", F, " ")
+            col["wall"] = 5; col["usd"] = 6; col["cache_read"] = 8; col["cache_create"] = 9
+            col["fresh_in"] = 10; col["out"] = 11; col["advisor_calls"] = 12
+            nm[1] = "raw"; nm[2] = "router"; nm[3] = "no-router"; nm[4] = "no-advisor"
+        }
+        $1 ~ /^[1-4]$/ && $4 != "BLOCKED" {
+            a = $1; runs[a]++
+            for (i = 1; i <= nf; i++) {
+                f = F[i]; v = $(col[f])
+                if (isnum(v) && !(f == "usd" && v + 0 <= 0)) {
+                    c[a, f]++; sum[a, f] += v
+                    if (!((a, f) in mn) || v + 0 < mn[a, f]) mn[a, f] = v + 0
+                    if (!((a, f) in mx) || v + 0 > mx[a, f]) mx[a, f] = v + 0
+                }
+            }
+        }
+        END {
+            for (a = 1; a <= 4; a++) {
+                if (!(a in runs)) { printf "summary arm %d %s: n=0 NOT RECORDED\n", a, nm[a]; continue }
+                for (i = 1; i <= nf; i++) {
+                    f = F[i]
+                    if (c[a, f] == 0) { printf "summary arm %d %s %s: NOT RECORDED (0 of %d runs)\n", a, nm[a], f, runs[a]; continue }
+                    printf "summary arm %d %s %s: mean=%s min=%s max=%s (n=%d of %d runs)\n", a, nm[a], f, fmt(sum[a, f] / c[a, f], f), fmt(mn[a, f], f), fmt(mx[a, f], f), c[a, f], runs[a]
+                }
+            }
+            reason = ""
+            if (c[2, "usd"] < 3 || c[3, "usd"] < 3) reason = sprintf("need n>=3 recorded usd per arm (router=%d, no-router=%d)", c[2, "usd"] + 0, c[3, "usd"] + 0)
+            else if (sum[2, "usd"] <= 0 || sum[3, "usd"] <= 0) reason = "a mean usd is 0"
+            if (reason != "") { print "router_cost_ratio=NOT RECORDED"; print "gate_1_05=FAIL"; print "gate_reason=" reason; exit }
+            ratio = (sum[2, "usd"] / c[2, "usd"]) / (sum[3, "usd"] / c[3, "usd"])
+            printf "router_cost_ratio=%.4f\n", ratio
+            print (ratio <= 1.05 ? "gate_1_05=PASS" : "gate_1_05=FAIL")
+        }' "$1"
+}
+
+# usage_fields KIND PATH: one TAB line `usd cache_read cache_create fresh_in out advisor_calls`.
+# KIND=costdir: PATH is a .loki dir; sums its metrics/result-cost-*.json. KIND=claude: PATH is a claude -p JSON output.
+# A field absent from any contributing record is NOT RECORDED; so are tokens that are all zero beside a nonzero
+# dollar figure (the EV-8 failure mode).
+usage_fields() {
+    python3 -I - "$1" "$2" <<'PY'
+import glob, json, os, re, sys
+kind, path = sys.argv[1], sys.argv[2]
+NR = "NOT RECORDED"
+recs = []
+if kind == "costdir":
+    for f in sorted(glob.glob(os.path.join(path, "metrics", "result-cost-*.json"))):
+        try:
+            d = json.load(open(f))
+            if isinstance(d, dict):
+                recs.append(d)
+        except Exception:
+            pass
+else:
+    try:
+        txt = open(path, errors="replace").read()
+    except Exception:
+        txt = ""
+    for m in re.finditer(r"\{", txt):
+        try:
+            d, _ = json.JSONDecoder().raw_decode(txt[m.start():])
+        except Exception:
+            continue
+        if isinstance(d, dict) and "total_cost_usd" in d:
+            recs.append(d)
+    recs = recs[-1:]
+def num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+def tot(get):
+    vals = []
+    for r in recs:
+        v = get(r)
+        if not num(v):
+            return NR
+        vals.append(v)
+    return sum(vals) if vals else NR
+def usage(r, *ks):
+    u = r.get("usage") if kind == "claude" else r
+    if not isinstance(u, dict):
+        return None
+    for k in ks:
+        if k in u:
+            return u[k]
+    return None
+usd = tot(lambda r: r.get("total_cost_usd"))
+fields = [
+    tot(lambda r: usage(r, "cache_read_input_tokens", "cache_read_tokens")),
+    tot(lambda r: usage(r, "cache_creation_input_tokens", "cache_creation_tokens")),
+    tot(lambda r: usage(r, "input_tokens")),
+    tot(lambda r: usage(r, "output_tokens")),
+]
+if num(usd) and usd > 0 and all(num(x) for x in fields) and sum(fields) == 0:
+    fields = [NR] * 4
+adv = tot(lambda r: r.get("advisor_calls"))
+print("\t".join(str(round(x, 6)) if isinstance(x, float) else str(x) for x in [usd] + fields + [adv]))
+PY
+}
 
 # --- --emit-shape-defaults: pure computation over a results TSV ---------------
 if [ -n "$SEED" ]; then
@@ -141,6 +257,12 @@ if [ -n "$EMIT" ]; then
     exit 0
 fi
 
+if [ -n "$SUMMARIZE" ]; then
+    [ -f "$SUMMARIZE" ] || { echo "--summarize needs an existing results TSV: $SUMMARIZE" >&2; exit 2; }
+    summarize_results "$SUMMARIZE"
+    exit 0
+fi
+
 # --- run mode ------------------------------------------------------------------
 # shellcheck source=/dev/null
 . "$REPO_ROOT/eval/loki10/lib-tmp.sh"
@@ -148,6 +270,7 @@ loki_run_tmp_create || exit 2
 trap 'loki_run_tmp_cleanup' EXIT
 T="$LOKI_RUN_TMP"
 mkdir -p "$T/home" "$T/bin"
+RUN_TSV="$T/run-results.tsv"; : > "$RUN_TSV"
 
 if [ "$DRY" -eq 1 ]; then
     [ -n "$N" ] || N=1
@@ -201,13 +324,15 @@ arm_label() {
     case "$1" in 1) echo raw ;; 2) echo router ;; 3) echo no-router ;; *) echo no-advisor ;; esac
 }
 
-emit_row() { # emit_row arm run solved wall usd shape
-    local row
-    row=$(printf '| %s | b9-scoreboard arm %s %s | %s run %s | solved=%s wall=%ss usd=%s shape_key=%s |' \
-        "$(date -u +%Y-%m-%dT%H:%MZ)" "$1" "$(arm_label "$1")" "$NAME" "$2" "$3" "$4" "$5" "$6")
+emit_row() { # emit_row arm run solved wall usd shape cache_read cache_create fresh_in out advisor_calls
+    local row nr="NOT RECORDED" line
+    row=$(printf '| %s | b9-scoreboard arm %s %s | %s run %s | solved=%s wall=%ss usd=%s shape_key=%s cache_read=%s cache_create=%s fresh_in=%s out=%s advisor_calls=%s |' \
+        "$(date -u +%Y-%m-%dT%H:%MZ)" "$1" "$(arm_label "$1")" "$NAME" "$2" "$3" "$4" "$5" "$6" "${7:-$nr}" "${8:-$nr}" "${9:-$nr}" "${10:-$nr}" "${11:-$nr}")
+    line=$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$1" "$NAME" "$2" "$3" "$4" "$5" "$6" "${7:-$nr}" "${8:-$nr}" "${9:-$nr}" "${10:-$nr}" "${11:-$nr}")
+    printf '%s\n' "$line" >> "$RUN_TSV"
     printf '%s\n' "$row"
     [ -z "$METRICS_OUT" ] || printf '%s\n' "$row" >> "$METRICS_OUT"
-    [ -z "$RESULTS_OUT" ] || printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$1" "$NAME" "$2" "$3" "$4" "$5" "$6" >> "$RESULTS_OUT"
+    [ -z "$RESULTS_OUT" ] || printf '%s\n' "$line" >> "$RESULTS_OUT"
 }
 
 emit_blocked() { # emit_blocked arm run reason
@@ -281,6 +406,12 @@ while [ "$arm" -le 4 ]; do
         SOLVED=0
         ( cd "$D" && bash -c "$TESTCMD" ) > "$T/test-$arm-$run.log" 2>&1 && SOLVED=1
         if [ "$arm" -eq 1 ]; then
+            UF=$(usage_fields claude "$OUT")
+        else
+            UF=$(usage_fields costdir "$D/.loki")
+        fi
+        IFS=$'\t' read -r U_USD U_CR U_CC U_FR U_OUT U_ADV <<< "$UF"
+        if [ "$arm" -eq 1 ]; then
             USD=$(grep -Eo '"total_cost_usd": *[0-9.]+' "$T/out-$arm-$run.log" | sed -n 1p | grep -Eo '[0-9.]+$')
         else
             USD=$(sed 's/\x1b\[[0-9;]*m//g' "$T/out-$arm-$run.log" | grep -Eo 'Cost[: |]*\$[0-9.]+' | sed -n 1p | grep -Eo '[0-9.]+$')
@@ -293,10 +424,13 @@ while [ "$arm" -le 4 ]; do
                 SHAPE="${FOUND#*\"shape_key\"}"; SHAPE="${SHAPE#*\"}"; SHAPE="${SHAPE%\"*}"
             fi
         fi
-        emit_row "$arm" "$run" "$SOLVED" "$WALL" "${USD:-unknown}" "${SHAPE:-unknown}"
+        # Dollars: the result-cost/usage figure first, else the figure scraped from the output above.
+        case "${U_USD:-}" in ''|"NOT RECORDED") ;; *) USD="$U_USD" ;; esac
+        emit_row "$arm" "$run" "$SOLVED" "$WALL" "${USD:-unknown}" "${SHAPE:-unknown}" "$U_CR" "$U_CC" "$U_FR" "$U_OUT" "$U_ADV"
         run=$((run + 1))
     done
     arm=$((arm + 1))
 done
+summarize_results "$RUN_TSV"
 [ "$BLOCKED" -eq 0 ] || { echo "b9-scoreboard: $BLOCKED BLOCKED run(s): this scoreboard does not count" >&2; exit 3; }
 [ "$FAILS" -eq 0 ]

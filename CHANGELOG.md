@@ -5,6 +5,23 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.2.2 (2026-10-07)
+
+Patch release. Adds measured fields to the B9 router scoreboard, derives the usage-governor seat cap from a measured `claude -p /usage` read, collapses `loki doctor` onto a single implementation, and gives the router one guarded plan-scope reader. The router still ships off; with `LOKI_ROUTER` unset, run behavior is unchanged from 11.2.1.
+
+### Added
+- B9 scoreboard (`scripts/b9-scoreboard.sh`): per-run cache-read, cache-creation, fresh input and output tokens, dollars, wall seconds and advisor calls, read from result-cost files (arms 2-4) or the claude JSON usage (arm 1). Per-arm mean/min/max summary, `router_cost_ratio` and `gate_1_05` (requires n>=3 recorded runs per arm, else FAIL). New `--repeat` and `--summarize FILE` flags. Missing data prints NOT RECORDED, never 0.
+- Usage governor (GOV-MEASURE): the seat cap is now derived from real session and weekly percentages read via `claude -p /usage` (40s timeout, cached 15 min, failures cached 3 min under `~/.claude/usage-governor`). Up to 8 seats, hold above 70% session, zero at the 85/90 ceilings. The projection is only the fallback, and the pulse labels the basis as measured or projected with the failure reason.
+
+### Changed
+- `loki doctor` has one implementation, `loki-ts/src/commands/doctor.ts` (FC-33). The bash `cmd_doctor` and `cmd_doctor_json` are thin delegators through `_loki_bun_delegate`, with a minimal "bun route unavailable" fallback whose last line is the single reason (`--json` reports route "unavailable"). `--airgap` stays on bash. The Cockpit block, install-integrity wording, PATH shadowing blocker, `first_run_blocked` telemetry and the SDK-only Next recommendation were ported into doctor.ts. Under `LOKI_LEGACY_BASH=1`, doctor prints "Active runtime: Bash (autonomy/loki)" plus the existing WARN, matching 11.2.0.
+- Usage governor runtime readings append to the untracked `.loki/state/usage-readings.tsv`; `docs/v10/usage-readings.tsv` stays founder-only. One `/usage` read per refresh (no second claude call for `--read-usage`).
+- Rebuilt `loki-ts/dist` for this release.
+
+### Fixed
+- B9 scoreboard: a recorded usd of 0 is NOT RECORDED, so a missing cost can no longer read as a free router and green-wash `gate_1_05`.
+- Router (R1-10b): one guarded `plan-scope.json` reader (`readScopeText`) shared by run_cap and plan. It rejects symlinks and non-regular files and caps reads at 256 KB; a rejected file behaves as no scope file.
+
 ## v11.2.1 (2026-10-07)
 
 Patch release. Adds per-unit plan routing and the route line on receipts and PRs (both active only when `LOKI_ROUTER` is on), fixes the router telemetry flag known issue from 11.2.0, and ships four failure-class fixes. With the router flag unset, run behavior is unchanged from 11.2.0.

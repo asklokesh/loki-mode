@@ -14,7 +14,7 @@ describe("start line", () => {
     expect(routeStartLine({ LOKI_ROUTER: "0" }, "claude")).toBeNull();
     expect(routeStartLine({ LOKI_ROUTER: "off" }, "claude")).toBeNull();
   });
-  test("golden (FC-33 B2): pre-plan state only, never names a planned executor", () => {
+  test("golden (FC-34 B2): pre-plan state only, never names a planned executor", () => {
     expect(routeStartLine(ON, "claude")).toBe("route: decided at plan time, per-unit executors not applied (stages run the run model), advisor opus: Opus routes at plan time");
     expect(routeStartLine({ ...ON, LOKI_ROUTER_EXECUTOR: "haiku" }, "claude")).toContain("haiku-5.5 requested by LOKI_ROUTER_EXECUTOR");
   });

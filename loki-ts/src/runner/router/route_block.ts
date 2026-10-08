@@ -27,7 +27,7 @@ export interface RouteBlock {
   advisor_output_tokens: number | null;
   plan_model: string | null; // model the plan session ran on, from the route record
   not_proven: string[]; // NOT PROVEN lines carried by the route record (invalid unit, plan model fallback)
-  /** False when the record's executors were only assigned, not applied: every session ran the run model (FC-33 B1). */
+  /** False when the record's executors were only assigned, not applied: every session ran the run model (FC-34 B1). */
   applied: boolean;
   run_model: string | null;
 }
@@ -48,7 +48,7 @@ const s0 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v
 
 /**
  * Start-line fragment. The supervisor prints it before any stage runs, so the plan's route does not exist yet: it says the
- * route is decided at plan time and that per-unit executors are not applied (FC-33 B2), and never names a planned executor.
+ * route is decided at plan time and that per-unit executors are not applied (FC-34 B2), and never names a planned executor.
  * The receipt route block (derived from route.json) is the record of what was assigned. Null when the router is off.
  */
 export function routeStartLine(env: Record<string, string | undefined>, provider: string): string | null {

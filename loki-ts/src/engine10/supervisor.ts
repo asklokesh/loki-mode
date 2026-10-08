@@ -303,7 +303,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     }
   }
 
-  const routeStart = routeStartLine(process.env, provider); // FC-33: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
+  const routeStart = routeStartLine(process.env, provider); // FC-34: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
   if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   const t0 = Date.now();

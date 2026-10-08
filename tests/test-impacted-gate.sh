@@ -64,5 +64,25 @@ out="$(run_gate "$FIX/list-missing.txt")"
 rc=$?
 [ "$rc" -ne 0 ] && ok "missing suite file fails the gate (rc=$rc)" || bad "missing suite file passed the gate"
 
+# RC-SLICE-SHELL-GATE: selection fixtures through the real selector (--files-from mode).
+# A slice touching tests/*.sh must select the meta guards over tests; a slice touching a loki-ts/src file the
+# control plane reaches must select CP-04 (tests/test-control-plane.sh).
+SELECTOR="$REPO_ROOT/scripts/select-tests.sh"
+select_for() { # select_for <path>: prints the selected shell_test/moat suites
+    printf '%s\n' "$1" >"$FIX/changed.txt"
+    ( cd "$REPO_ROOT" && bash "$SELECTOR" --files-from "$FIX/changed.txt" 2>/dev/null ) | awk -F'\t' '$2=="shell_test" || $2=="moat" {print $3}'
+}
+sel="$(select_for tests/test-impacted-gate.sh)"
+printf '%s\n' "$sel" | grep -qx 'tests/test-no-hardcoded-paths.sh' && ok "tests/*.sh change selects the no-hardcoded-paths guard" || bad "tests/*.sh change did not select tests/test-no-hardcoded-paths.sh"
+printf '%s\n' "$sel" | grep -qx 'tests/test-structural-checks.sh' && ok "tests/*.sh change selects the D44-C structural-checks suite" || bad "tests/*.sh change did not select tests/test-structural-checks.sh"
+# engine10/cost.ts is reached transitively (seal.ts imports it); util/shell.ts too.
+sel="$(select_for loki-ts/src/engine10/cost.ts)"
+printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && ok "control-plane-reached loki-ts/src change selects CP-04" || bad "control-plane-reached loki-ts/src change did not select tests/test-control-plane.sh"
+sel="$(select_for loki-ts/src/util/shell.ts)"
+printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && ok "util/shell.ts change selects CP-04" || bad "util/redact.ts change did not select CP-04"
+# A loki-ts/src file the control plane cannot reach must not drag CP-04 in.
+sel="$(select_for loki-ts/src/commands/doctor.ts)"
+printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && bad "unreached doctor.ts selected CP-04" || ok "unreached loki-ts/src file does not select CP-04"
+
 echo "impacted-gate fixtures: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

@@ -105,7 +105,7 @@ echo "Test 2.7: doctor --json outputs valid JSON"
 # any warning the CLI writes, which is a different defect from "the JSON is
 # invalid" and hides which one actually occurred. Every other doctor --json
 # assertion in this repo already discards stderr (test-airgap-commands.sh:50,
-# test-doctor-blocker-parity.sh:129,132, test-doctor-ci-gateable.sh:46,84,86);
+# test-doctor-ci-gateable.sh:46,84,86);
 # this was the lone outlier. Measured on a provider-less host: stdout is 5176
 # bytes of valid JSON while stderr carries 108 bytes of bash warning, so the
 # merged stream failed to parse while the product's JSON was correct.

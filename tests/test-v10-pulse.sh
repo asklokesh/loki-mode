@@ -3008,6 +3008,46 @@ else
     printf '%s\n' "$OUT"
 fi
 
+GOV_MEASURED_JSON="$WORK/governor-measured.json"
+cat > "$GOV_MEASURED_JSON" <<'EOF'
+{
+  "calibration": {"opus_weight_assumption": 1.4},
+  "window": {"source": "measured", "current_pct": 5.0, "current_tokens_output": 100},
+  "weekly": {"source": "measured", "current_pct": 7.0, "current_tokens_output": 100},
+  "measured": {"status": "ok", "age_secs": 420},
+  "governor": {
+    "active_engineers_last_hour": 1,
+    "burn_per_engineer_output_last_hour": 1000.0,
+    "burn_per_engineer_opus_weighted_last_hour": 1000.0,
+    "max_engineers_next_hour": 8,
+    "cap_basis": "measured",
+    "last_hour_output_tokens": 999999,
+    "hours_to_weekly_reset": 100.0
+  }
+}
+EOF
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_MEASURED_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "Budget burn: 5h window used 5.0%, weekly used 7.0%, max engineers next hour 8 (measured, read 7m ago)" \
+    && ! printf '%s\n' "$OUT" | grep -q "^VIOLATION: BUDGET_BURN"; then
+    ok "T48m measured usage is shown unscaled, labeled (measured, read Nm ago)"
+else
+    bad "T48m measured case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
+GOV_MEASURE_FAILED_JSON="$WORK/governor-measure-failed.json"
+sed -e 's/"source": "measured"/"source": "estimate"/g' \
+    -e 's/"measured": {"status": "ok", "age_secs": 420}/"measured": {"status": "failed", "reason": "exit 3"}/' \
+    -e 's/"cap_basis": "measured"/"cap_basis": "projected"/' \
+    -e 's/"last_hour_output_tokens": 999999/"last_hour_output_tokens": 0/' "$GOV_MEASURED_JSON" > "$GOV_MEASURE_FAILED_JSON"
+if run_pulse "${COMMON_ARGS[@]}" "BOARD_MD=$BOARD_CLEAN" "PULSE_GOVERNOR_CMD=cat $GOV_MEASURE_FAILED_JSON"; then rc=0; else rc=$?; fi
+if printf '%s\n' "$OUT" | grep -qF "(projected; /usage read failed: exit 3)"; then
+    ok "T48n failed /usage read falls back to the projection with a visible label"
+else
+    bad "T48n measure-failed case: rc=$rc output follows"
+    printf '%s\n' "$OUT"
+fi
+
 GOV_WINDOW_86_JSON="$WORK/governor-window86.json"
 cat > "$GOV_WINDOW_86_JSON" <<'EOF'
 {

@@ -11,7 +11,6 @@ autonomy/loki: line 14066: status: command not found
 **Not user-affecting, and not a JSON defect.** stdout is 5176 bytes of valid
 JSON; only stderr is polluted. Every `doctor --json` assertion in the repo
 discards stderr (`tests/test-airgap-commands.sh:50`,
-`tests/test-doctor-blocker-parity.sh:129,132`,
 `tests/test-doctor-ci-gateable.sh:46,84,86`).
 `tests/test-e2e-features.sh:104` was the lone outlier using `2>&1` and has been
 brought into line.

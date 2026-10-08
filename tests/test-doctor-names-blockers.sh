@@ -29,14 +29,26 @@ PASS=0; FAIL=0
 ok()  { echo "  [PASS] $1"; PASS=$((PASS+1)); }
 bad() { echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
+_BUN_SRC="$(command -v bun 2>/dev/null || true)"
+if [ -z "$_BUN_SRC" ]; then
+    for _c in "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun "$REPO_ROOT"/node_modules/bun/bin/bun.exe; do
+        [ -x "$_c" ] && { _BUN_SRC="$_c"; break; }
+    done
+fi
+if [ -z "$_BUN_SRC" ]; then
+    echo "SKIP: bun is not available on this host (PATH or node_modules); doctor is bun-only, so this suite cannot run"
+    exit 0
+fi
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/loki-doctor-funnel.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/bunbin"
+ln -sf "$_BUN_SRC" "$WORK/bunbin/bun"
 
 echo "T1 -- a blocked user is told exactly what blocks them"
 
 # Simulate a bare machine: minimal PATH (no node, no provider CLI) and a fresh
 # HOME so no prior state leaks in.
-out=$(HOME="$WORK" PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+out=$(HOME="$WORK" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$WORK/bunbin" \
         bash "$LOKI" doctor 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
 
 if printf '%s' "$out" | grep -q "Blocking ("; then
@@ -78,7 +90,7 @@ fi
 
 # Doctor must still FAIL. Naming blockers nicely while returning 0 would be a
 # false green -- the exact thing this codebase exists to prevent.
-HOME="$WORK" PATH="/usr/bin:/bin:/usr/sbin:/sbin" bash "$LOKI" doctor >/dev/null 2>&1
+HOME="$WORK" PATH="/usr/bin:/bin:/usr/sbin:/sbin:$WORK/bunbin" bash "$LOKI" doctor >/dev/null 2>&1
 rc=$?
 if [ "$rc" -ne 0 ]; then
     ok "doctor still exits non-zero when blocked (rc=$rc)"

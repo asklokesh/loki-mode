@@ -1109,19 +1109,31 @@ else:
         _gov_g = governor_report.get("governor") or {}
         _last_hour_out = _gov_g.get("last_hour_output_tokens")
         _hours_to_weekly_reset = _gov_g.get("hours_to_weekly_reset")
-        window_pct = project_pct(_gov_window, _last_hour_out)
-        weekly_pct = project_pct(
-            _gov_weekly,
-            _last_hour_out * _hours_to_weekly_reset
-            if _last_hour_out is not None and _hours_to_weekly_reset is not None else None,
-        )
+        _gov_measured = governor_report.get("measured") or {}
+        _is_measured = _gov_g.get("cap_basis") == "measured"
+        if _is_measured:
+            # GOV-MEASURE: real /usage percentages, never scaled by a projection.
+            window_pct = _gov_window.get("current_pct")
+            weekly_pct = _gov_weekly.get("current_pct")
+            _basis_note = " (measured, read %dm ago)" % (int(_gov_measured.get("age_secs") or 0) // 60)
+        else:
+            window_pct = project_pct(_gov_window, _last_hour_out)
+            weekly_pct = project_pct(
+                _gov_weekly,
+                _last_hour_out * _hours_to_weekly_reset
+                if _last_hour_out is not None and _hours_to_weekly_reset is not None else None,
+            )
+            if _gov_measured.get("status") == "failed":
+                _basis_note = " (projected; /usage read failed: %s)" % (_gov_measured.get("reason") or "unknown")
+            else:
+                _basis_note = " (projected; /usage not read)"
         max_next = _gov_g.get("max_engineers_next_hour")
         active_engineers = _gov_g.get("active_engineers_last_hour")
         _burn_reasons = []
         if window_pct is not None and window_pct >= WINDOW_PCT_CEILING:
-            _burn_reasons.append("5h window projected at %.1f%% (ceiling %.0f%%)" % (window_pct, WINDOW_PCT_CEILING))
+            _burn_reasons.append("5h window %s at %.1f%% (ceiling %.0f%%)" % ("measured" if _is_measured else "projected", window_pct, WINDOW_PCT_CEILING))
         if weekly_pct is not None and weekly_pct >= WEEKLY_PCT_CEILING:
-            _burn_reasons.append("weekly window projected at %.1f%% (ceiling %.0f%%)" % (weekly_pct, WEEKLY_PCT_CEILING))
+            _burn_reasons.append("weekly window %s at %.1f%% (ceiling %.0f%%)" % ("measured" if _is_measured else "projected", weekly_pct, WEEKLY_PCT_CEILING))
         if max_next is not None and active_engineers is not None and max_next < active_engineers:
             _burn_reasons.append(
                 "max engineers for next hour (%d) is below the %d currently active" % (max_next, active_engineers)
@@ -1129,11 +1141,14 @@ else:
         if _burn_reasons:
             add_violation("BUDGET_BURN", "; ".join(_burn_reasons) + " (D39)")
         emit(
-            "Budget burn: 5h window projected %s, weekly projected %s, max engineers next hour %s%s"
+            "Budget burn: 5h window %s %s, weekly %s %s, max engineers next hour %s%s%s"
             % (
+                "used" if _is_measured else "projected",
                 "%.1f%%" % window_pct if window_pct is not None else "uncalibrated",
+                "used" if _is_measured else "projected",
                 "%.1f%%" % weekly_pct if weekly_pct is not None else "uncalibrated",
                 max_next if max_next is not None else "n/a",
+                _basis_note,
                 _gov_note,
             )
         )

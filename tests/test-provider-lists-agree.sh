@@ -106,19 +106,19 @@ else
 fi
 
 # --- the FIFTH list: doctor's own provider check ------------------------------
-# `_provider_cmds` in autonomy/loki backs `doctor --json`'s ai_provider verdict.
+# `providerCmds` in loki-ts/src/commands/doctor.ts backs `doctor --json`'s ai_provider verdict.
 # It omitted opencode, so doctor reported "No AI provider CLI. Fix: npm install
 # -g @anthropic-ai/claude-code" on a machine where the runner would have
 # selected opencode without complaint. Same drift as the pre-flight gate above,
 # on the surface a user consults FIRST when something looks wrong.
-_doc="$(sed -n 's/^_provider_cmds = (\(.*\))$/\1/p' "$REPO_ROOT/autonomy/loki" \
-        | tr -d "', " | head -1)"
+_doc="$(sed -n 's/^  const providerCmds = \[\(.*\)\];$/\1/p' "$REPO_ROOT/loki-ts/src/commands/doctor.ts" \
+        | tr -d '" ' | head -1)"
 _auto_squash="$(printf '%s' "$_auto" | tr -d ' ')"
 
 if [ -z "$_doc" ]; then
-    bad "could not read _provider_cmds from autonomy/loki; this check is inert"
-elif [ "$_doc" = "$_auto_squash" ]; then
-    ok "doctor's provider check matches the detector, membership and order"
+    bad "could not read providerCmds from doctor.ts; this check is inert"
+elif [ "$(printf '%s' "$_doc" | tr ',' '\n' | sort | tr -d '\n')" = "$(printf '%s\n' $_auto | sort | tr -d '\n')" ]; then
+    ok "doctor's provider check names exactly the detector's providers"
 else
     bad "doctor list drift -- doctor=[$_doc] detector=[$_auto_squash]"
 fi

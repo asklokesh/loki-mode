@@ -1,4 +1,4 @@
-// FC-33: the start line, the receipt route block and plan-scope.json/route.json must agree (L7). Drives the real plan
+// FC-34: the start line, the receipt route block and plan-scope.json/route.json must agree (L7). Drives the real plan
 // stage with fake sessions, then derives the start line and the receipt block from the run dir the way the supervisor and seal do.
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -57,7 +57,7 @@ function consumers(s: ReturnType<typeof setup>, planData: Record<string, unknown
   return { record, start, block };
 }
 
-describe("FC-33 R-A/R-B: start line, receipt and route.json agree", () => {
+describe("FC-34 R-A/R-B: start line, receipt and route.json agree", () => {
   test("routed by plan: Opus plan session, units recorded, start line and receipt show the same executor", async () => {
     const s = setup(ON, scopeWith([{ id: "u1", kind: "impl", executor: "sonnet", reason: "needs care" }, { id: "wall", kind: "wall", executor: "sonnet", reason: "tests" }]));
     const r = await planStage.run(s.ctx, sig());
@@ -145,7 +145,7 @@ describe("FC-33 R-A/R-B: start line, receipt and route.json agree", () => {
   });
 });
 
-describe("FC-33 R-C: shape key from project-model.answer.json", () => {
+describe("FC-34 R-C: shape key from project-model.answer.json", () => {
   const cmd = { cmd: "node --test", cwd: ".", cite: ["package.json"] };
   const answer = { workspaceKind: "single", workspaceCite: ["package.json"], packages: [{ name: "app", root: ".", runner: "node:test", commands: { test: cmd, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite: ["package.json"] }, cite: ["package.json"] }], fingerprintFiles: ["package.json"] };
   test("shapeKeyForRun reads the run dir answer", () => {
@@ -167,7 +167,7 @@ describe("FC-33 R-C: shape key from project-model.answer.json", () => {
   });
 });
 
-describe("FC-33 router off stays byte-identical", () => {
+describe("FC-34 router off stays byte-identical", () => {
   test("unset and 0: no route.json, no model pin, small task still skips, start line null", async () => {
     for (const env of [{} as Record<string, string>, { LOKI_ROUTER: "0" }]) {
       const s = setup(env, (_o, _d) => ok);
