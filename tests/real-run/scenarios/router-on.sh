@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # real-run scenario: the router on, trivial fixture; the receipt must carry a route block.
 SC_DESC="LOKI_ROUTER=1 run carries a route block"
 SC_BILLED=1

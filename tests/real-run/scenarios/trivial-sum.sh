@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # real-run scenario: the B9 trivial fixture, one bug, default settings. About $0.10.
 SC_DESC="trivial sum() fix verifies with a receipt"
 SC_BILLED=1

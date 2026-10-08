@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # real-run scenario: two independent bugs in one task.
 SC_DESC="two-bug fixture verifies with both fixed"
 SC_BILLED=1

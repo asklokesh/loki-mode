@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # real-run scenario: issue backlog planning without running anything. No model, no receipt; needs the network.
 SC_DESC="loki backlog --dry-run plans issues without spawning builds"
 SC_BILLED=0

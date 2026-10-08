@@ -7,25 +7,25 @@ docs/R3-COST-OBSERVABILITY-DESIGN.md	--cost	design text rejecting the loki metri
 docs/UNCERTAINTY-ESCALATION-PLAN.md	v7.19	dated plan titled for v7.19.2
 docs/history/v8-agent-sdk-plan.md	--reviewers-file	historical v8 plan, proposed flag
 docs/architecture/ADR-001-runtime-migration.md	loki ts-version	ADR phase 1 history, scaffold command
-docs/architecture/DASHBOARD_V2_ARCHITECTURE.md	--db	draft design (Status: Design Phase), never built
 docs/v10/ADOPTION-PLAN.md	loki legacy	v10 plan for the E-31 alias, not on main yet
 docs/v10/ENGINE.md	loki legacy	E-31 slice spec for the planned alias, not on main yet
 docs/v10/SCORECARD-PLAN.md	loki trimmed	output marker text [loki trimmed N lines], not a command
-docs/INSTALLATION.md	--pro	partial flag typed before TAB in the shell-completion example
 docs/TOOLS.md	loki tools	output text printed by tools/tool-index.py, not a command
 docs/authorization.md	--role	denial: names the removed --role option
-docs/siem-integration.md	--framework	denial: names the removed compliance --framework option
 docs/exit-codes.md	--no-such-flag	deliberate unknown flag documenting exit code 64
 docs/openclaw-integration.md	loki openclaw	denial: states the command does not exist
 docs/certification/02-enterprise-features/quiz.md	loki auth	wrong-answer distractor in a quiz
 docs/certification/02-enterprise-features/quiz.md	--new-token	wrong-answer distractor in a quiz
 docs/certification/02-enterprise-features/quiz.md	--enterprise	wrong-answer distractor in a quiz
-docs/certification/04-production-deployment/quiz.md	--max-cost	wrong-answer distractor in a quiz
 docs/certification/certification-exam.md	loki auth	wrong-answer distractor in the exam
 docs/certification/certification-exam.md	--new-token	wrong-answer distractor in the exam
 docs/certification/certification-exam.md	--enterprise	wrong-answer distractor in the exam
-docs/certification/certification-exam.md	--max-cost	wrong-answer distractor in the exam
 docs/v10/D63-CARDS.md	loki foo	D63 card C5 routing example of an unknown one-word arg, not a command
 docs/v10/GUIDE.md	loki legacy	states that 11.0.0 removed the command
 docs/v10/LEGACY-REMOVAL.md	loki legacy	the removal plan for the command
 docs/v10/RELEASE-11.md	loki legacy	11.0.0 release record of the removal
+docs/v11/MARKET-SLICES.md	--sarif	future slice card, flag not shipped yet
+docs/v11/MARKET-SLICES.md	--predicate	future slice card, flag not shipped yet
+docs/v11/MARKET-SLICES.md	--evidence-pack	future slice card, flag not shipped yet
+docs/v11/MARKET-SLICES.md	loki verify-pr	future slice card, command not shipped yet
+docs/v11/MARKET-SLICES.md	loki undo	future slice card, command not shipped yet

@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # real-run scenario: two independent attempts in separate worktrees (needs --no-pr in 11.3.1).
 SC_DESC="--attempts 2 --no-pr picks a verified winner"
 SC_BILLED=1
