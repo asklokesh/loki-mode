@@ -40,7 +40,7 @@ parent, sha = sys.argv[1], sys.argv[2]
 # version-literal byte compare).
 ALLOWLIST = {
     "VERSION", "package.json", "SKILL.md", "CHANGELOG.md", "CLAUDE.md",
-    "Dockerfile", "Dockerfile.sandbox", "dashboard/__init__.py",
+    "docker/Dockerfile", "docker/Dockerfile.sandbox", "dashboard/__init__.py",
     "mcp/__init__.py", "server.json",
     "plugins/loki-mode/.claude-plugin/plugin.json",
     "loki-ts/dist/loki.js", "loki-ts/dist/loki.js.map",

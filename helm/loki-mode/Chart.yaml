@@ -34,5 +34,5 @@ keywords:
 # Docker Hub -- Bitnami moved their catalog and only bitnamilegacy still
 # carries it. Every default install failed on ImagePullBackOff. Pinning the
 # legacy mirror would just defer the same breakage, so the queue now runs the
-# same image docker-compose.yml already uses. It also means no
+# same image docker/docker-compose.yml already uses. It also means no
 # `helm dependency build` step before `helm template`.

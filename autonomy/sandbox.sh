@@ -279,7 +279,7 @@ check_docker() {
 }
 
 build_sandbox_image() {
-    local dockerfile="$SKILL_DIR/Dockerfile.sandbox"
+    local dockerfile="$SKILL_DIR/docker/Dockerfile.sandbox"
 
     if [[ ! -f "$dockerfile" ]]; then
         log_error "Sandbox Dockerfile not found at $dockerfile"

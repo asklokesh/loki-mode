@@ -285,7 +285,7 @@ jobs:
           # version-literal byte compare).
           ALLOWLIST = {
               "VERSION", "package.json", "SKILL.md", "CHANGELOG.md", "CLAUDE.md",
-              "Dockerfile", "Dockerfile.sandbox", "dashboard/__init__.py",
+              "docker/Dockerfile", "docker/Dockerfile.sandbox", "dashboard/__init__.py",
               "mcp/__init__.py", "server.json",
               "plugins/loki-mode/.claude-plugin/plugin.json",
               "loki-ts/dist/loki.js", "loki-ts/dist/loki.js.map",
@@ -1300,6 +1300,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
+          file: docker/Dockerfile
           platforms: ${{ matrix.platform }}
           outputs: type=image,name=asklokesh/loki-mode,push-by-digest=true,name-canonical=true,push=true
 

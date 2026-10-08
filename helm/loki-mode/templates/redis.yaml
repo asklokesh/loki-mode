@@ -3,7 +3,7 @@
   The queue between the receiver and the worker pool.
 
   Deliberately minimal, and deliberately the stock redis:7-alpine image -- the
-  same one docker-compose.yml uses, so the two deployment paths cannot drift.
+  same one docker/docker-compose.yml uses, so the two deployment paths cannot drift.
   A subchart was tried first and its pinned image had been removed from the
   registry, which broke every default install. Fifty lines we control beats a
   dependency whose image tags disappear.

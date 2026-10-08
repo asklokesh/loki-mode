@@ -135,7 +135,7 @@ git clone https://github.com/asklokesh/loki-mode.git && cd loki-mode
 npm install && npm test
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md), [TESTING.md](docs/TESTING.md) and the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
+See [CONTRIBUTING.md](.github/CONTRIBUTING.md), [TESTING.md](docs/TESTING.md) and the [Code of Conduct](.github/CODE_OF_CONDUCT.md).
 
 ## License
 

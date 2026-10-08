@@ -69,7 +69,7 @@ Better, for anything real: set `secrets.create=false` and
 External Secrets Operator or a Vault injector. Values passed with `--set` land
 in Helm release history and often in a git-tracked values file.
 
-Compose: put both in `.env` next to `docker-compose.yml`.
+Compose: put both in `.env` at the repo root (`docker/docker-compose.yml` reads `../.env`).
 
 ```
 GITHUB_WEBHOOK_SECRET=<that value>
@@ -168,7 +168,7 @@ Then watch the worker:
 
 ```bash
 kubectl logs -l app.kubernetes.io/component=worker -f     # Kubernetes
-docker compose --profile service logs -f worker           # Compose
+docker compose -f docker/docker-compose.yml --profile service logs -f worker           # Compose
 ```
 
 You are looking for `[queue-consumer] starting build: spec=owner/repo#N`.
@@ -191,7 +191,7 @@ kubectl exec -it deploy/loki-redis-master -- \
 Compose:
 
 ```bash
-docker compose --profile service exec redis \
+docker compose -f docker/docker-compose.yml --profile service exec redis \
   redis-cli RPUSH loki-builds 'owner/repo#123'
 ```
 
@@ -256,7 +256,7 @@ ground manually today.
 ## Kubernetes (Helm)
 
 No `helm dependency build` step: the chart has no subchart dependencies. Redis
-is a plain Deployment on `redis:7-alpine`, the same image `docker-compose.yml`
+is a plain Deployment on `redis:7-alpine`, the same image `docker/docker-compose.yml`
 uses.
 
 The default image tag is the chart's `appVersion`, which tracks `VERSION` and so
@@ -457,21 +457,21 @@ cluster is a NAT gateway, firewall or proxy you run.
 ## Single node (Docker Compose)
 
 ```bash
-cp .env.example .env
+cp docker/.env.example .env
 # set GITHUB_WEBHOOK_SECRET and ANTHROPIC_API_KEY
 
-docker compose --profile service up -d
-docker compose --profile service ps
+docker compose -f docker/docker-compose.yml --profile service up -d
+docker compose -f docker/docker-compose.yml --profile service ps
 ```
 
 The `service` profile is what separates the build service from the one-shot
-path. Without it, `docker compose run loki start prd.md` still does exactly
+path. Without it, `docker compose -f docker/docker-compose.yml run loki start prd.md` still does exactly
 what it always did -- one build, right now, in the current directory.
 
 Scale workers:
 
 ```bash
-docker compose --profile service up -d --scale worker=4
+docker compose -f docker/docker-compose.yml --profile service up -d --scale worker=4
 ```
 
 Same tenancy caveat as Kubernetes: each worker gets its own named volume, and

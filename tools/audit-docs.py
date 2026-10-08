@@ -118,7 +118,7 @@ SKIP_DIRS = {"node_modules", ".git", "dist", "build", "__pycache__",
              ".venv", "venv", "coverage", ".loki"}
 
 # Repo-root files that are not under any SOURCE_DIRS entry but do read env.
-SOURCE_ROOT_FILES = ("docker-compose.yml", "Dockerfile", "Dockerfile.sandbox",
+SOURCE_ROOT_FILES = ("docker/docker-compose.yml", "docker/Dockerfile", "docker/Dockerfile.sandbox",
                      "package.json", "server.json")
 
 # Markdown trees excluded from the scan, each with the reason a reader can

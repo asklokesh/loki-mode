@@ -48,7 +48,7 @@ import os, re, sys
 repo = sys.argv[1]
 src = os.path.join(repo, "packages/control-plane/src")
 copied = set()
-for line in open(os.path.join(repo, "Dockerfile.control-plane")):
+for line in open(os.path.join(repo, "docker", "Dockerfile.control-plane")):
     parts = line.split()
     if parts and parts[0].upper() == "COPY":
         args = [p for p in parts[1:] if not p.startswith("--")]
@@ -99,8 +99,8 @@ t "Dockerfile.control-plane COPYs every loki-ts/src value import" "Dockerfile.co
 # Guard self-tests: each fixture tree must report the uncopied file. Type-only imports stay ignored.
 mkfx() { # mkfx <name>: fresh fake repo with a Dockerfile copying only loki-ts/src/a.ts
     local d="$T/gfx/$1"
-    mkdir -p "$d/packages/control-plane/src" "$d/loki-ts/src"
-    printf 'COPY loki-ts/src/a.ts /src/loki-ts/src/\n' >"$d/Dockerfile.control-plane"
+    mkdir -p "$d/packages/control-plane/src" "$d/loki-ts/src" "$d/docker"
+    printf 'COPY loki-ts/src/a.ts /src/loki-ts/src/\n' >"$d/docker/Dockerfile.control-plane"
     printf 'export const a = 1;\n' >"$d/loki-ts/src/a.ts"
     printf 'export const x = 1;\nexport type T = number;\n' >"$d/loki-ts/src/x.ts"
     echo "$d"
@@ -120,10 +120,10 @@ printf 'import { a } from "../../../loki-ts/src/a.ts";\n' >"$FX/packages/control
 printf 'import type { T } from "./x.ts";\nexport const a: T = 1;\n' >"$FX/loki-ts/src/a.ts"
 t "guard ignores type-only imports" "guard flagged a type-only import" [ -z "$(cp_guard "$FX")" ]
 FX="$T/gfx/mut"
-mkdir -p "$FX/packages/control-plane" "$FX/loki-ts"
+mkdir -p "$FX/packages/control-plane" "$FX/loki-ts" "$FX/docker"
 cp -R "$REPO/packages/control-plane/src" "$FX/packages/control-plane/src"
 cp -R "$REPO/loki-ts/src" "$FX/loki-ts/src"
-grep -v 'util/redact.ts' "$REPO/Dockerfile.control-plane" >"$FX/Dockerfile.control-plane"
+grep -v 'util/redact.ts' "$REPO/docker/Dockerfile.control-plane" >"$FX/docker/Dockerfile.control-plane"
 t "guard goes red when a real COPY line is deleted" "guard stayed green with a COPY line deleted" [ "$(cp_guard "$FX")" = "loki-ts/src/util/redact.ts" ]
 
 step "install control-plane (frozen)" 120 bash -c "cd '$REPO/packages/control-plane' && bun install --frozen-lockfile"

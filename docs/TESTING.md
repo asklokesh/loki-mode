@@ -37,7 +37,7 @@ Because the product's central promise is verified completion ("Loki does not lie
 
 - `tests/e2e/` and `tests/live/` contain end-to-end and live-path scenarios.
 - Control Plane UI E2E lives in `packages/control-plane/test/e2e/` (Playwright, headless, loopback stub API).
-- Docker E2E lives under `tests/docker/` with dedicated images (`Dockerfile.test-runner`, `Dockerfile.sandbox`).
+- Docker E2E lives under `tests/docker/` with the `docker/Dockerfile.sandbox` image.
 - Post-release distribution E2E is run after a release ships: install from the npm tarball, pull the Docker image, and exercise both the Bun and legacy-Bash routes on each channel.
 
 ### Specialized test layers
