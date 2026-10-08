@@ -68,9 +68,13 @@ test("no dev command: NOT CAPTURED and no worktree is created", async () => {
   expect(existsSync(join(RUN, "before_after", "base-tree"))).toBe(false);
 });
 
-test("no changed route: NOT CAPTURED", async () => {
-  const out = await beforeAfterBlock(REPO, RUN, ["README.md"], "HEAD", { env: {}, deps: fakeDeps() });
-  expect(out).toContain("NOT CAPTURED (no changed UI route identified)");
+test("non-UI change: empty section (PR body byte-identical), no worktree, no capture", async () => {
+  const trees: string[] = [];
+  const out = await beforeAfterBlock(REPO, RUN, ["README.md", "src/util/x.ts"], "HEAD", { env: {}, deps: fakeDeps({ trees }) });
+  expect(out).toBe("");
+  expect("BODY" + out).toBe("BODY");
+  expect(trees).toEqual([]);
+  expect(existsSync(join(RUN, "before_after", "base-tree"))).toBe(false);
 });
 
 test("recorded PIDs are stopped and the exact temp worktree is removed, also on failure", async () => {

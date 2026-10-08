@@ -74,7 +74,7 @@ export async function captureBeforeAfter(repoDir: string, runDir: string, change
 
 /** PR section. "" when opted out; otherwise a Before / After table or a single NOT CAPTURED line. */
 export function beforeAfterSection(r: BeforeAfterResult | null): string {
-  if (r === null) return "";
+  if (r === null || r.routes.length === 0) return ""; // no UI route changed: nothing to show, body stays byte-identical
   if (r.reason !== null || r.before.length === 0) return `\n## Before / After\nbefore/after: NOT CAPTURED (${r.reason ?? "no screenshot produced"})\n`;
   const name = (p: string): string => p.split("/").pop() ?? p;
   const byName = new Map(r.after.map((s) => [name(s.path), s]));
