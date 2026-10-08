@@ -10,14 +10,16 @@ export const CARD_MIN_LINES = 3;
 export const CARD_MAX_LINES = 5;
 export const INTENT_ANSWER_FILE = "intent-answer.txt";
 const HEADER_RE = /^\s*what i think you want\s*:/i;
-const BODY_RE = /^\s*(acceptance[^:]*:|[-*]\s+)/i;
+const BODY_RE = /^\s*(acceptance[^:]*:|out of scope\s*:|[-*]\s+)/i;
+const OOS_RE = /^out of scope\s*:/i;
+const OOS_MAX_CHARS = 200;
 
 /** LOKI_INTENT_CARD=0 is the only opt-out; anything else (including unset) is on. */
 export function intentCardEnabled(env: NodeJS.ProcessEnv = process.env): boolean { return (env.LOKI_INTENT_CARD ?? "").trim() !== "0"; }
 export function confirmRequested(env: NodeJS.ProcessEnv = process.env): boolean { return (env.LOKI_CONFIRM ?? "").trim() === "1"; }
 
 /** Extra brief paragraph, appended only when the card is on. */
-export const INTENT_CARD_INSTRUCTION = `After the plan lines, append an intent card of ${CARD_MIN_LINES} to ${CARD_MAX_LINES} lines: a first line starting "${INTENT_HEADER}" with one sentence on what you think the user wants, then ${CARD_MIN_LINES - 1} to ${CARD_MAX_LINES - 1} lines each starting "Acceptance:" naming one check you will hold yourself to.`;
+export const INTENT_CARD_INSTRUCTION = `After the plan lines, append an intent card of ${CARD_MIN_LINES} to ${CARD_MAX_LINES} lines: a first line starting "${INTENT_HEADER}" with one sentence on what you think the user wants, then ${CARD_MIN_LINES - 1} to ${CARD_MAX_LINES - 1} lines each starting "Acceptance:" naming one check you will hold yourself to. You may add one optional line starting "Out of scope:" naming what you will NOT do; it counts toward the ${CARD_MAX_LINES} lines.`;
 
 export interface ParsedPlan { card: string[] | null; rest: string }
 
@@ -28,7 +30,7 @@ export function parseIntentCard(raw: string): ParsedPlan {
   if (start < 0) return { card: null, rest: raw };
   let end = start + 1;
   while (end < lines.length && BODY_RE.test(lines[end] as string)) end++;
-  const block = lines.slice(start, end).map((l) => l.trim());
+  const block = lines.slice(start, end).map((l) => l.trim()).map((l) => (OOS_RE.test(l) ? l.slice(0, OOS_MAX_CHARS) : l));
   const rest = [...lines.slice(0, start), ...lines.slice(end)].join("\n");
   if (block.length < CARD_MIN_LINES) return { card: null, rest };
   return { card: block.slice(0, CARD_MAX_LINES), rest };
