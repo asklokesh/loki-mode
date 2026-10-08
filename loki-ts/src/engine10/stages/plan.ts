@@ -14,6 +14,8 @@ import { routerEnabled } from "../../runner/router/flag.ts";
 import { envOverride, parseUnits } from "../../runner/router/decision.ts";
 import { probeAdvisor } from "../../runner/router/advisor_probe.ts";
 import { claudeCodeVersionForRoute } from "../../runner/providers.ts";
+import { buildRouteRecord, writeRouteRecord } from "../../runner/router/route_record.ts";
+import { shapeKeyForRun } from "../../runner/router/history.ts";
 
 const MAX_PLAN_LINES = 10;
 const MAX_SCOPE_BYTES = 256 * 1024;
@@ -61,10 +63,14 @@ export const planStage: Stage = {
 
     const sz = sizeTask(task, loaded, testMap); // E-45: a small task skips this session and the implementer plans
     const mode = planMode();
-    const skip = mode === "never" || (mode === "auto" && sz.size === "small");
+    const routed = routerEnabled(process.env);
+    // FC-33: with the router on a small task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why.
+    const skip = mode === "never" || (mode === "auto" && sz.size === "small" && !routed);
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
+    const shapeKey = routed ? shapeKeyForRun(ctx.repoDir, ctx.runDir) : null;
+    if (skip && routed) writeRouteRecord(ctx.runDir, buildRouteRecord({ units: [], notProven: [], planModel: "none", planModelNote: null, shapeKey, skipReason: "plan stage skipped (LOKI_E10_PLAN=0)" }));
     if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" };
 
     const relevantFiles = selectRelevantFiles(task, repoMap);
@@ -72,11 +78,10 @@ export const planStage: Stage = {
 
     const iterationId = `${ctx.runId}-plan`;
     // R1-10: flag off adds nothing (no probe, no model key, brief byte-identical). Advisor unavailable: Opus plans itself.
-    const routed = routerEnabled(process.env);
     const advisorAvailable = routed ? probeAdvisor(process.env, ctx.provider, await claudeCodeVersionForRoute(process.env), ctx.runDir).available : false;
-    // Opus plans itself only on a Claude run, and never over the user's model bypass.
-    const pinOpus = routed && !advisorAvailable && ctx.provider === "claude" && envOverride(process.env) === null;
-    const session = await ctx.sessions.run({
+    // FC-33: Opus is the router, so the router-on plan session runs on Opus (Claude runs, never over the user's model bypass).
+    const pinOpus = routed && ctx.provider === "claude" && envOverride(process.env) === null;
+    const runPlan = (planOnSonnet: boolean) => ctx.sessions.run({
       stage: "plan",
       brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), routed),
       tier: "fast",
@@ -85,12 +90,21 @@ export const planStage: Stage = {
       signal,
       cwd: ctx.repoDir,
       ...(pinOpus ? { model: "opus" } : {}),
+      ...(planOnSonnet ? { model: "sonnet" } : {}),
     });
+    let session = await runPlan(false);
+    let planModel = pinOpus ? "opus" : ctx.provider === "claude" ? (envOverride(process.env) ?? "default") : "provider default";
+    let planModelNote: string | null = null;
+    if (pinOpus && !session.killed && session.exit !== 0) { // Opus unavailable: Sonnet plans, and the receipt says so
+      planModel = "sonnet"; planModelNote = `Opus plan session failed (exit ${session.exit}); the plan ran on sonnet`;
+      session = await runPlan(true);
+    }
 
     // E-61: a non-killed error exit fails this stage too (never silently read as an
     // empty-but-successful plan). mustJump (machine.ts) still lets the flow continue
     // past a failed plan: implement falls back to planning the change itself.
     if (!session.killed && session.exit !== 0) {
+      if (routed) writeRouteRecord(ctx.runDir, buildRouteRecord({ units: [], notProven: [], planModel, planModelNote, shapeKey, skipReason: `plan session failed (exit ${session.exit})` }));
       const stderrTail = (session as unknown as { stderrTail?: string }).stderrTail ?? "";
       mkdirSync(ctx.runDir, { recursive: true });
       const stderrPath = join(ctx.runDir, `${iterationId}.stderr.log`);
@@ -108,7 +122,9 @@ export const planStage: Stage = {
         if (existsSync(scopePath)) { const st = lstatSync(scopePath); if (!st.isFile()) notFile = true; else if (st.size > MAX_SCOPE_BYTES) tooBig = true; else scope = readFileSync(scopePath, "utf8"); }
       } catch { scope = null; }
       const parsed = notFile ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} is not a regular file; default sonnet`] } : tooBig ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} exceeds ${MAX_SCOPE_BYTES} bytes; default sonnet`] } : parseUnits(scope, advisorAvailable);
-      route = { units: parsed.units, route_not_proven: parsed.notProven };
+      const record = buildRouteRecord({ units: parsed.units, notProven: parsed.notProven, planModel, planModelNote, shapeKey });
+      writeRouteRecord(ctx.runDir, record);
+      route = { units: parsed.units, route_not_proven: parsed.notProven, route_record: record };
     }
 
     return {

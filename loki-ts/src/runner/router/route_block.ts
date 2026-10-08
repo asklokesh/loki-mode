@@ -25,6 +25,8 @@ export interface RouteBlock {
   advisor_calls: number | null;
   advisor_input_tokens: number | null;
   advisor_output_tokens: number | null;
+  plan_model: string | null; // model the plan session ran on, from the route record
+  not_proven: string[]; // NOT PROVEN lines carried by the route record (invalid unit, plan model fallback)
 }
 const ALIAS: Record<string, string> = { haiku: "haiku-5.5", sonnet: "sonnet-5.5", opus: "opus-5.5" };
 const modelLabel = (m: string): string => ALIAS[m] ?? m;
@@ -37,17 +39,20 @@ export function advisorUnavailableReason(env: Record<string, string | undefined>
   return null;
 }
 
-/** Start-line fragment: executor and advisor state, no silent reduction. Null when the router is off. */
-export function routeStartLine(env: Record<string, string | undefined>, provider: string): string | null {
-  if (!routerEnabled(env)) return null;
-  const why = advisorUnavailableReason(env, provider);
-  if (why) return `route: executor ${modelLabel((env["LOKI_ROUTER_EXECUTOR"] ?? "").trim() || "sonnet")}, advisor unavailable: ${why}`;
-  return `route: executor ${modelLabel((env["LOKI_ROUTER_EXECUTOR"] ?? "").trim() || "haiku")}, advisor opus: Opus routes at plan time`;
-}
-
 const nN = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const rec = (v: number | null): string => (v === null ? "not recorded" : String(v));
 const s0 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
+
+/** Start-line fragment derived from the route record (FC-33): no record, or a record that routed nothing, says so. Null when the router is off. */
+export function routeStartLine(env: Record<string, string | undefined>, provider: string, record?: Record<string, unknown>): string | null {
+  if (!routerEnabled(env)) return null;
+  const fixed = (env["LOKI_ROUTER_EXECUTOR"] ?? "").trim();
+  const why = advisorUnavailableReason(env, provider);
+  const routedExec = record && record["routed"] !== false ? s0(record["executor"]) : null;
+  const exec = routedExec ? `executor ${modelLabel(routedExec)}` : fixed ? `executor ${modelLabel(fixed)} (LOKI_ROUTER_EXECUTOR)` : "executor sonnet-5.5 (default, no plan route)";
+  if (why) return `route: ${exec}, advisor unavailable: ${why}`;
+  return `route: ${exec}, advisor opus${routedExec ? "" : ": Opus routes at plan time"}`;
+}
 function toEsc(raw: unknown): RouteEscalation[] {
   const esc = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
   return esc.map((e) => ({ trigger: s0(e["trigger"]) ?? "unknown", from: modelLabel(s0(e["from"]) ?? "?"), to: modelLabel(s0(e["to"]) ?? "?"), evidence: s0(e["evidence"]) ?? "none recorded" }));
@@ -74,9 +79,9 @@ export function buildRouteBlock(
   const rawUnits = Array.isArray(route?.["units"]) ? (route["units"] as Array<Record<string, unknown>>) : [];
   const units: RouteUnit[] = rawUnits.length > 0
     ? rawUnits.map((u, i) => ({ id: s0(u["id"]) ?? String(i + 1), executor: modelLabel(s0(u["executor"]) ?? "unknown"), assigned_by: assignedBy(s0(u["source"]) ?? source, u["assigned_by"]), reason: s0(u["reason"]) ?? "no reason recorded", escalations: toEsc(u["escalations"]) }))
-    : executor ? [{ id: "run", executor: modelLabel(executor), assigned_by: assignedBy(source, route?.["assigned_by"]), reason, escalations }] : [];
+    : executor && route?.["routed"] !== false ? [{ id: "run", executor: modelLabel(executor), assigned_by: assignedBy(source, route?.["assigned_by"]), reason, escalations }] : [];
   return {
-    routed: executor !== null || units.length > 0,
+    routed: route?.["routed"] === false ? false : executor !== null || units.length > 0,
     units,
     executor: executor ? modelLabel(executor) : units[0]?.executor ?? null,
     advisor: unavailable ? null : modelLabel(s0(route?.["advisor"]) ?? "opus"),
@@ -92,6 +97,8 @@ export function buildRouteBlock(
     advisor_calls: nN(telemetry?.advisor_calls),
     advisor_input_tokens: nN(telemetry?.advisor_input_tokens),
     advisor_output_tokens: nN(telemetry?.advisor_output_tokens),
+    plan_model: s0(route?.["plan_model"]),
+    not_proven: Array.isArray(route?.["route_not_proven"]) ? (route["route_not_proven"] as unknown[]).filter((x): x is string => typeof x === "string") : [],
   };
 }
 
@@ -123,6 +130,7 @@ export function routeNotProven(r: RouteBlock): string[] {
   return [
     ...(r.advisor_unavailable_reason ? [`advisor: NOT PROVEN (owner provider): ${r.advisor_unavailable_reason}`] : []),
     `route.shape_parity: ${r.shape_parity}`,
+    ...r.not_proven,
   ];
 }
 

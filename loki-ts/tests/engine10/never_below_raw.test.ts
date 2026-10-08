@@ -108,7 +108,7 @@ export function guardViolations(files: Record<string, string>): string[] {
   const allowed: Record<string, RegExp> = {
     "stages/implement.ts": /^downgrade \? \{ model: downgrade\.to \}/,
     "stages/fix.ts": /^pinnedModel \? \{ model: pinnedModel \}/,
-    "stages/plan.ts": /^pinOpus \? \{ model: "opus" \} : \{\}\),$/, // R1-10: only ever Opus, never weaker
+    "stages/plan.ts": /^(pinOpus \? \{ model: "opus" \}|planOnSonnet \? \{ model: "sonnet" \}) : \{\}\),$/, // R1-10: Opus; FC-33: Sonnet only after the Opus plan session failed (recorded NOT PROVEN)
     "stages/wall.ts": /^wallModel\(\),/,
     "already_done.ts": /^wallModel\(\),/,
   };

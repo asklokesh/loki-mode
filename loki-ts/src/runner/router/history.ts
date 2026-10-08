@@ -3,7 +3,8 @@
 // from file names or regexes (Engine Law L0). Missing or corrupt inputs degrade to "no evidence",
 // never a throw.
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { validateAnswer } from "../../project_model/schema.ts";
 import { fileURLToPath } from "node:url";
 import { type RunExecutor, type RunOutcome, readRunHistory } from "./history_store.ts";
 import { type ProjectModel } from "../../project_model/schema.ts";
@@ -43,6 +44,21 @@ export function shapeKeyForRepo(repoDir: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * FC-33: shape key for a run. The run's own Project Model answer (<runDir>/project-model.answer.json, schema-checked
+ * by validateAnswer) wins; else the repo's cached/committed model. Null when neither is usable.
+ */
+export function shapeKeyForRun(repoDir: string, runDir: string): string | null {
+  try {
+    const p = join(runDir, "project-model.answer.json");
+    if (existsSync(p)) {
+      const v = validateAnswer(repoDir, JSON.parse(readFileSync(p, "utf8")));
+      if (v.ok) return shapeKey({ ...v.model, key: "" });
+    }
+  } catch { /* fall through to the repo model */ }
+  return shapeKeyForRepo(repoDir);
 }
 
 /**
