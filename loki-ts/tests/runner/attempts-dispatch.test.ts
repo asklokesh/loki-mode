@@ -66,7 +66,9 @@ function run(f: ReturnType<typeof fixture>, args: string[], extra: { pathPrefix?
 function withOriginAndGh(f: ReturnType<typeof fixture>) {
   const origin = join(f.root, "origin.git");
   sh(f.root, "git", ["init", "-q", "--bare", origin]);
-  sh(f.repo, "git", ["remote", "add", "origin", origin]);
+  // A GitHub-shaped origin (the pin must parse as one) that insteadOf redirects to the local bare repo.
+  sh(f.repo, "git", ["remote", "add", "origin", "https://github.com/acme/widgets.git"]);
+  sh(f.repo, "git", ["config", `url.${origin}.insteadOf`, "https://github.com/acme/widgets.git"]);
   const bin = join(f.root, "ghbin");
   mkdirSync(bin);
   const ghLog = join(f.root, "gh.log");
