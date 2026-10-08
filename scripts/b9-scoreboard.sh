@@ -43,7 +43,7 @@
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
 # Dry-run fixture: scripts/b9-fixtures/trivial-sum.sh (also used for the T10 supply-guard cost measurement,
-# where the task is run as `loki start "$TASK" --no-pr`).
+# where the task is run as `loki start "$TASK"`; start has no --no-pr flag, PRs are opt-in via --pr).
 # Test hook: B9_LOKI overrides the loki binary.
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE

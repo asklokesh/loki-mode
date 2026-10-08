@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/b9-fixtures/trivial-sum.sh <dir> -- the B9 trivial fixture: a one-file repo whose sum()
 # skips the first element, so `node --test` fails until it is fixed. Three tracked files, one commit.
-# Task used with it: "sum() skips the first element; fix it" (loki start ... --no-pr).
+# Task used with it: "sum() skips the first element; fix it" (loki start; no PR unless --pr).
 set -euo pipefail
 [ $# -ge 1 ] && [ -n "$1" ] || { echo "usage: $0 <dir>" >&2; exit 2; }
 if [ -e "$1" ] && { [ ! -d "$1" ] || [ -n "$(ls -A "$1")" ]; }; then
