@@ -1,8 +1,8 @@
 // T10 (redesign): supply-chain guard v2. The model DECLARES the new third-party registry dependencies it added
-// (a run-dir file, bounded reader); the harness PROVES each one with the ecosystem's own resolver under the
+// (.loki/supply-declared.json in the repo, bounded reader); the harness PROVES each one with the ecosystem's own resolver under the
 // user's config (npm view, pip index versions, cargo search, go list). The harness never parses manifest or
 // lockfile formats (FC-36). Only a declared registry dep that does not resolve is FAILED; everything the
-// tooling cannot answer is NOT PROVEN. Off with LOKI_SUPPLY_GUARD=0 (receipt and brief unchanged).
+// tooling cannot answer is NOT PROVEN. Off with LOKI_SUPPLY_GUARD=0 (no receipt block; the brief rule is unconditional by CTO ruling).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { run } from "../util/shell.ts";
@@ -97,9 +97,36 @@ export const defaultResolver: Resolver = async (dep, cwd) => {
   } catch { return { status: "unproven" }; } // tool absent or timed out
 };
 
-const PUBLIC_REGISTRY = /^(|default|npm|npmjs|pypi|crates\.io|crates|go|https?:\/\/(registry\.npmjs\.org|registry\.yarnpkg\.com|pypi\.org|files\.pythonhosted\.org|crates\.io|index\.crates\.io|static\.crates\.io|proxy\.golang\.org)\/?.*)$/i;
-/** A declared registry that is not a known public one: the default resolvers cannot prove absence there. */
-export function privateRegistry(registry: string): boolean { return !PUBLIC_REGISTRY.test(registry.trim()); }
+const PUBLIC_HOSTS = new Set(["registry.npmjs.org", "registry.npmjs.com", "registry.yarnpkg.com", "npmjs.com", "npmjs.org", "pypi.org", "pypi.python.org", "files.pythonhosted.org", "crates.io", "index.crates.io", "static.crates.io", "proxy.golang.org", "golang.org", "pkg.go.dev"]);
+const hostOf = (u: string): string => u.trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^www\./, "").split(/[/?#\s]/)[0]!.replace(/^[^@]*@/, "").replace(/:\d+$/, "");
+const privateUrl = (u: string): boolean => /[a-z0-9]/i.test(u) && !PUBLIC_HOSTS.has(hostOf(u));
+const readSmall = (p: string): string => { try { return statSync(p).size <= MAX_FILE_BYTES ? readFileSync(p, "utf8") : ""; } catch { return ""; } };
+
+/** The ecosystem decides the default registry; only the USER's own config may move it. The model's declared `registry` text is never consulted. */
+export function userConfigPrivate(eco: string, repoDir: string, env: NodeJS.ProcessEnv, goEnv: Record<string, string> = {}): boolean {
+  const home = env["HOME"] ?? "";
+  const files = (...p: string[]): string[] => p.filter((x) => x !== "").map((x) => readSmall(x));
+  if (eco === "npm") {
+    if (privateUrlList([env["npm_config_registry"] ?? "", env["NPM_CONFIG_REGISTRY"] ?? ""])) return true;
+    return files(join(repoDir, ".npmrc"), home ? join(home, ".npmrc") : "").some((t) => t.split("\n").some((l) => { const m = /^\s*(?:@[^:\s]+:)?registry\s*=\s*(\S+)/.exec(l); return !!m && privateUrl(m[1]!); }));
+  }
+  if (eco === "pypi") {
+    if (privateUrlList([env["PIP_INDEX_URL"] ?? "", env["PIP_EXTRA_INDEX_URL"] ?? ""])) return true;
+    const cfg = [env["PIP_CONFIG_FILE"] ?? "", home ? join(home, ".config", "pip", "pip.conf") : "", home ? join(home, ".pip", "pip.conf") : "", join(repoDir, "pip.conf")];
+    return files(...cfg).some((t) => t.split("\n").some((l) => { const m = /^\s*(?:extra-)?index-url\s*[=:]\s*(.+)$/.exec(l); return !!m && m[1]!.split(/\s+/).some(privateUrl); }));
+  }
+  if (eco === "cargo") {
+    if (Object.keys(env).some((k) => /^CARGO_REGISTRIES_.+_INDEX$/.test(k) || /^CARGO_SOURCE_/.test(k))) return true;
+    return files(join(repoDir, ".cargo", "config.toml"), join(repoDir, ".cargo", "config"), home ? join(home, ".cargo", "config.toml") : "", home ? join(home, ".cargo", "config") : "").some((t) => /^\s*\[(registries\.|source\.)/m.test(t) || /replace-with\s*=/.test(t));
+  }
+  if (eco === "go") {
+    const gp = goEnv["GOPROXY"] ?? env["GOPROXY"] ?? "";
+    return gp.split(/[,|]/).map((x) => x.trim()).filter((x) => x && x !== "direct" && x !== "off").some(privateUrl);
+  }
+  return false;
+}
+const privateUrlList = (v: string[]): boolean => v.some((x) => x.split(/\s+/).some((u) => u !== "" && privateUrl(u)));
+
 /** Go module path matched by GOPRIVATE / GONOPROXY (comma-separated globs on path prefixes). */
 export function goPrivate(d: DeclaredDep, env: NodeJS.ProcessEnv): boolean {
   if (d.ecosystem !== "go") return false;
@@ -108,16 +135,26 @@ export function goPrivate(d: DeclaredDep, env: NodeJS.ProcessEnv): boolean {
   return pats.some((pat) => { const n = pat.split("/").length; const re = new RegExp(`^${pat.split("/").map((seg) => seg.replace(/[.+^${}()|\\[\]]/g, "\\$&").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]")).join("/")}$`); return re.test(parts.slice(0, n).join("/")); });
 }
 
+async function readGoEnv(cwd: string): Promise<Record<string, string>> {
+  try {
+    const r = await run(["go", "env", "-json", "GOPRIVATE", "GONOPROXY", "GOPROXY"], { cwd, timeoutMs: 10000 });
+    const j = JSON.parse(r.stdout) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(j).map(([k, v]) => [k, String(v)]));
+  } catch { return {}; }
+}
+
 let injected: Resolver | null = null;
 /** Test seam: replace the resolver (null restores the real tooling). */
 export function setSupplyResolver(f: Resolver | null): void { injected = f; }
 
-export async function supplyGuard(repoDir: string, changedFiles: string[], declared: { deps: DeclaredDep[]; problem: string | null }, env: NodeJS.ProcessEnv, opts: { resolver?: Resolver; now?: number } = {}): Promise<SupplyResult> {
+export async function supplyGuard(repoDir: string, changedFiles: string[], declared: { deps: DeclaredDep[]; problem: string | null }, env: NodeJS.ProcessEnv, opts: { resolver?: Resolver; now?: number; goEnv?: Record<string, string> } = {}): Promise<SupplyResult> {
   const none: SupplyResult = { block: null, notProven: [], blocked: false };
   if (!supplyEnabled(env)) return none;
   const touched = changedFiles.filter(isManifestPath);
   if (touched.length === 0) return none; // the diff adds or changes no dependency file
   const resolver = opts.resolver ?? injected ?? defaultResolver, now = opts.now ?? Date.now(), failAge = failAgeDays(env);
+  // `go env` so values set with `go env -w` count; only asked when a go dependency is declared and the real resolver is in use
+  const goEnv = opts.goEnv ?? (declared.deps.some((x) => x.ecosystem === "go") && !opts.resolver && !injected ? await readGoEnv(repoDir) : {});
   const notProven: string[] = []; let blocked = false;
   if (declared.problem) notProven.push(`supply guard NOT PROVEN: ${declared.problem}`);
   if (declared.deps.length === 0) {
@@ -135,7 +172,7 @@ export async function supplyGuard(repoDir: string, changedFiles: string[], decla
     const key = `${d.ecosystem}:${d.name}`;
     let h = cache.get(key); if (!h) { h = resolver(d, repoDir, env).catch((): Resolution => ({ status: "unproven" })); cache.set(key, h); }
     let res = await h;
-    if (res.status === "missing" && (privateRegistry(d.registry) || goPrivate(d, env))) res = { status: "unproven" }; // the resolver may have asked a different registry than the one declared
+    if (res.status === "missing" && (userConfigPrivate(d.ecosystem, repoDir, env, goEnv) || goPrivate(d, { ...env, ...goEnv }))) res = { status: "unproven" }; // user config points elsewhere than the public default
     if (res.status === "missing") entries.push({ ...base, status: "nonexistent" });
     else if (res.status === "unproven") entries.push({ ...base, status: "unreachable" });
     else if (res.firstPublish === undefined || !Number.isFinite(res.firstPublish)) entries.push({ ...base, status: "ok" });
