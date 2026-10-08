@@ -1,11 +1,11 @@
 // loki-ts/src/project_model/gather.ts -- EL-W1-01 (L0): the harness only GATHERS candidate file
 // contents for the discovery prompt, by a bounded generic walk. It never decides which file is a
 // manifest or what a repo is: files are ranked by depth and size alone, and the model reads the rest.
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, lstatSync, openSync, readFileSync, readSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { checkFingerprint } from "./schema.ts";
+import { safeGit } from "../util/safe_git.ts";
 
 export const GATHER_CAPS = {
   maxListFiles: 20_000, // tracked files considered at all
@@ -27,7 +27,7 @@ const depthOf = (p: string): number => p.split("/").length;
 /** Tracked paths within maxDepth (NUL-separated, so no path is ever quoted or split), never throws. */
 function listShallow(repoDir: string): string[] {
   try {
-    const out = execFileSync("git", ["ls-files", "-z"], { cwd: repoDir, encoding: "utf8", env: process.env, maxBuffer: 256 * 1024 * 1024 });
+    const out = safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }); // FC-25: the supervisor (cost preview) holds the token
     return out.split("\0").filter((p) => p !== "").slice(0, GATHER_CAPS.maxListFiles).filter((p) => depthOf(p) <= GATHER_CAPS.maxDepth);
   } catch {
     return [];
@@ -104,8 +104,8 @@ export function computeKey(repoDir: string, fingerprintFiles: string[], dirs: st
  *  gitignored cache file is never treated as a committed, shared model. */
 export function isGitTracked(repoDir: string, relPath: string): boolean {
   try {
-    const out = execFileSync("git", ["ls-files", "--error-unmatch", "--", relPath], { cwd: repoDir, env: process.env, stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
-    return out.toString().trim() !== "";
+    const out = safeGit(repoDir, ["ls-files", "--error-unmatch", "--", relPath], { timeout: 10_000 });
+    return out.trim() !== "";
   } catch {
     return false;
   }

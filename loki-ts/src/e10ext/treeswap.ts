@@ -9,7 +9,6 @@
 // Base is a git commit (the primary's HEAD before attempts started), not a filesystem snapshot: "clean" is defined by `git status`, and diffing
 // against a real commit is the only way to tell tracked-changed from ignored. Snapshots stay in memory; this module never uses `git stash` (the stash stack is shared across worktrees, D42).
 
-import { execFileSync } from "node:child_process";
 import {
   closeSync,
   constants as fsc,
@@ -26,6 +25,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { safeGit } from "../util/safe_git.ts";
 
 const UNDO_FILE = "treeswap-undo.json";
 export const DEFAULT_EXCLUDES = [".loki", ".venv", "venv", "attempts"];
@@ -56,7 +56,7 @@ export interface SwapOptions {
 // ---- git plumbing --------------------------------------------------------
 
 function git(root: string, args: string[]): string {
-  return execFileSync("git", ["-C", root, ...args], { encoding: "utf8", env: { ...process.env } });
+  return safeGit(root, args);
 }
 
 function pathspecs(excludes: string[]): string[] {
@@ -70,11 +70,7 @@ interface StatusEntry {
 
 // git diff --name-status against `base`, -z so paths with spaces are exact and unambiguous. --no-renames keeps every record a single status+path pair.
 function diffAgainstBase(root: string, base: string, excludes: string[]): StatusEntry[] {
-  const raw = execFileSync(
-    "git",
-    ["-C", root, "diff", "--name-status", "--no-renames", "-z", base, "--", ...pathspecs(excludes)],
-    { encoding: "utf8", env: { ...process.env } },
-  );
+  const raw = safeGit(root, ["diff", "--name-status", "--no-renames", "-z", base, "--", ...pathspecs(excludes)]);
   const parts = raw.split("\0").filter((p) => p.length > 0);
   const out: StatusEntry[] = [];
   for (let i = 0; i < parts.length; i += 2) {
@@ -87,11 +83,7 @@ function diffAgainstBase(root: string, base: string, excludes: string[]): Status
 }
 
 function untrackedFiles(root: string, excludes: string[]): string[] {
-  const raw = execFileSync(
-    "git",
-    ["-C", root, "ls-files", "-z", "--others", "--exclude-standard", "--", ...pathspecs(excludes)],
-    { encoding: "utf8", env: { ...process.env } },
-  );
+  const raw = safeGit(root, ["ls-files", "-z", "--others", "--exclude-standard", "--", ...pathspecs(excludes)]);
   return raw.split("\0").filter((p) => p.length > 0);
 }
 

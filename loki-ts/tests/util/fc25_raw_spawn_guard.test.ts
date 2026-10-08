@@ -1,60 +1,82 @@
-// FC-25 guard: a raw spawn of the git binary under loki-ts/src must go through safeGit()/safeGitArgv() (util/safe_git.ts)
-// unless the file is allowlisted below with a reason. A new raw spawn in a token-holding process (supervisor, CLI before
-// withholding, PR path) is what let a core.fsmonitor plant in the agent's repo run holding the real token (moat P9).
+// FC-25 guard: every git spawn in loki-ts/src, bin/ and autonomy/ (JS/TS) goes through util/safe_git.ts
+// (safeGit, safeGitSpawn, safeGitRun). There is NO allowlist: "this file only runs in the worker" was the
+// reasoning that let project_model/gather.ts run git ls-files in the supervisor holding the real token,
+// so a core.fsmonitor plant fired 4 times with it (moat P9 [planted], 2026-10-08). safe_git.ts is the
+// mechanism itself, not an exemption.
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-const SRC = join(import.meta.dir, "..", "..", "src");
-const WORKER = "worker process (engine10 stage or its helper), env already token-withheld via withholdGithubTokens(workerEnv)";
-const RUNNER = "bash-route TS runner, calls withholdGithubTokens() at startup (runner/autonomous.ts) before any of these run";
-const ALLOW: Record<string, string> = {
-  "engine10/worker.ts": WORKER,
-  "engine10/session.ts": WORKER,
-  "engine10/stages/intake.ts": WORKER,
-  "engine10/stages/verify.ts": WORKER,
-  "engine10/stages/deep.ts": WORKER + " (deep-worker is spawned with workerEnv)",
-  "engine10/stages/seal.ts": WORKER,
-  "e10ext/assert_delta.ts": WORKER,
-  "e10ext/discard.ts": WORKER + "; also needs Buffer stdout",
-  "e10ext/preexisting_dirty.ts": WORKER,
-  "e10ext/treeswap.ts": WORKER + "; operates on a private tree copy",
-  "features/speed/already_done_async.ts": WORKER + " (reached from intake)",
-  "features/wall_manifest_wire.ts": WORKER + " (reached from intake/seal); also needs Buffer stdout and stdin",
-  "project_model/gather.ts": "project discovery; follow-up: confirm every caller is worker-side or convert",
-  "runner/checkpoint.ts": RUNNER,
-  "runner/council.ts": RUNNER,
-  "runner/prd_reuse.ts": RUNNER,
-  "runner/quality_gates.ts": RUNNER,
-  "runner/github_token.ts": "git --version only, no repo cwd",
-  "cli/completions.ts": "tab completion for-each-ref, 150ms, read-only ref listing, never runs with a token-bearing task",
-};
-const RAW = /[(\[]\s*"git"\s*[,)]/;
+const ROOT = join(import.meta.dir, "..", "..", "..");
+const DIRS = ["loki-ts/src", "bin", "autonomy"].map((d) => join(ROOT, d));
+const MECHANISM = "loki-ts/src/util/safe_git.ts";
+
+// A spawn helper called with "git" (or a shell string starting with git), Bun.spawn(["git", ...]),
+// an argv array literal starting with "git", or an indirect `const GIT = "git"`.
+const PATTERNS: RegExp[] = [
+  /\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|run|runAsync|sh)\s*\(\s*["'`]git(?:["'`]|\s)/,
+  /\bBun\.spawn(?:Sync)?\s*\(\s*(?:\{\s*cmd\s*:\s*)?\[\s*["'`]git["'`]/,
+  /\[\s*["'`]git["'`]\s*,/,
+  /\b(?:const|let|var)\s+\w+\s*=\s*["'`]git["'`]\s*[;\n]/,
+];
+// Only safe_git.ts may build the hardened argv or env: safeGitArgs/safeGitEnv handed to a raw spawn or to
+// util/shell.ts run() (which MERGES opts.env over process.env) did not strip the token (preflight, xreview).
+const LEAK = /\b(?:safeGitEnv|safeGitArgs)\b/;
 
 function walk(d: string, out: string[] = []): string[] {
+  if (!existsSync(d)) return out;
   for (const n of readdirSync(d)) {
+    if (n === "node_modules" || n === "dist") continue;
     const p = join(d, n);
     if (statSync(p).isDirectory()) walk(p, out);
-    else if (p.endsWith(".ts")) out.push(p);
+    else if (/\.(?:ts|js|mjs|cjs)$/.test(p)) out.push(p);
   }
   return out;
 }
 
-test("no raw git spawn outside safe_git.ts unless allowlisted with a reason", () => {
-  const raw: string[] = [];
-  for (const f of walk(SRC)) {
-    const rel = relative(SRC, f);
-    if (rel === "util/safe_git.ts") continue;
-    if (readFileSync(f, "utf8").split("\n").some((l) => RAW.test(l) && !l.trim().startsWith("//"))) raw.push(rel);
+// Drop whole-line comments; keep everything else so a call split over lines still matches.
+const code = (f: string) => readFileSync(f, "utf8").split("\n").filter((l) => !/^\s*(?:\/\/|\*|\/\*)/.test(l)).join("\n");
+
+function rawGitSites(text: string): string[] {
+  return PATTERNS.flatMap((re) => {
+    const m = new RegExp(re.source, "g");
+    return [...text.matchAll(m)].map((x) => x[0].replace(/\s+/g, " "));
+  });
+}
+
+test("no raw git spawn in loki-ts/src, bin/ or autonomy/ outside safe_git.ts (no allowlist)", () => {
+  const hits: string[] = [];
+  for (const f of DIRS.flatMap((d) => walk(d))) {
+    const rel = relative(ROOT, f);
+    if (rel === MECHANISM) continue;
+    for (const s of rawGitSites(code(f))) hits.push(`${rel}: ${s}`);
   }
-  const unlisted = raw.filter((r) => !(r in ALLOW));
-  expect(unlisted).toEqual([]);
+  expect(hits).toEqual([]);
 });
 
-test("the allowlist has no stale entries and every entry has a reason", () => {
-  const raw = new Set(walk(SRC).filter((f) => readFileSync(f, "utf8").split("\n").some((l) => RAW.test(l))).map((f) => relative(SRC, f)));
-  for (const [k, why] of Object.entries(ALLOW)) {
-    expect(why.length).toBeGreaterThan(10);
-    expect(raw.has(k)).toBe(true);
-  }
+test("safeGitEnv and safeGitArgs are not used outside safe_git.ts", () => {
+  const hits = DIRS.flatMap((d) => walk(d))
+    .filter((f) => relative(ROOT, f) !== MECHANISM && LEAK.test(code(f)))
+    .map((f) => relative(ROOT, f));
+  expect(hits).toEqual([]);
+});
+
+test("the matcher catches every raw form and ignores a tool-name list", () => {
+  for (const s of [
+    `execFileSync("git", ["ls-files", "-z"], { env: process.env })`,
+    `execFileSync(\n  "git",\n  ["status"])`,
+    `spawnSync('git', args)`,
+    `execSync(\`git status --porcelain\`)`,
+    `exec("git diff")`,
+    `await run(["git", "diff"])`,
+    `Bun.spawn(["git", "archive"])`,
+    `Bun.spawn({ cmd: ["git", "rev-parse"] })`,
+    `const GIT = "git";`,
+  ]) expect(rawGitSites(s).length).toBeGreaterThan(0);
+  for (const s of [
+    `for (const t of ["node", "python3", "jq", "git", "curl"]) {}`,
+    `key = "git";`,
+    `safeGit(repoDir, ["ls-files", "-z"])`,
+    `const msg = "not a git repo";`,
+  ]) expect(rawGitSites(s)).toEqual([]);
 });

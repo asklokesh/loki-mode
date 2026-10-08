@@ -1,9 +1,9 @@
 // D77 (W1-S2): wires the Wall manifest to a git base tree. Reads only blobs of the intake tree (never the
 // worktree, diff or .loki/), builds wall_manifest.txt, and returns its sha256. Any failure or misalignment returns null so the Wall behaves as if the flag were off (fail closed).
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { basename, dirname } from "node:path";
 import { buildWallManifest, type ManifestFile } from "./wall_manifest.ts";
+import { safeGitSpawn } from "../util/safe_git.ts";
 
 export const wallManifestEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => ["1", "on", "true", "yes"].includes((env.LOKI_E10_WALL_MANIFEST ?? "").toLowerCase());
 const CONFIG = /^(package\.json|bunfig\.toml|(vitest|jest)\.config\.[cm]?[jt]s|pytest\.ini|pyproject\.toml|setup\.cfg|tox\.ini|go\.mod|Cargo\.toml)$/;
@@ -12,7 +12,7 @@ const SOURCE = /\.(py|[cm]?[jt]sx?)$/;
 const MAX_BLOB = 200_000, MAX_FILES = 300, MAX_NAMED = 5, GIT_TIMEOUT_MS = 5_000;
 // --no-replace-objects: a replace ref must never change what the sealed tree read returns.
 const git = (repoDir: string, args: string[], input?: string): Buffer | null => {
-  const r = spawnSync("git", ["--no-replace-objects", "-C", repoDir, ...args], { input, maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS, env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" } });
+  const r = safeGitSpawn(repoDir, ["--no-replace-objects", ...args], { input, maxBuffer: 64 * 1024 * 1024, timeout: GIT_TIMEOUT_MS, env: { ...process.env, GIT_NO_REPLACE_OBJECTS: "1" } });
   return r.error || r.status !== 0 ? null : r.stdout;
 };
 

@@ -5,7 +5,7 @@
 // and gets an env with the GitHub token family and SSH_AUTH_SOCK removed. A call that truly needs credentials
 // (fetch, push) opts in with allowToken: the token env and the user's credential/ssh config are then kept, but
 // the command-running classes stay off. Always returns stdout as a utf8 string.
-import { execFileSync, spawnSync, type ExecFileSyncOptions } from "node:child_process";
+import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
 export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=", "-c", "protocol.ext.allow=never", "-c", "credential.helper="];
 // allowToken keeps the user's credential helper and ssh command; fsmonitor, hooks and ext:: stay off.
@@ -13,11 +13,11 @@ const CREDENTIAL_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "co
 // External diff, commit signing and a global attributes file: repo-chosen commands on diff/commit paths.
 const DRIVER_CONFIG: readonly string[] = ["-c", "diff.external=", "-c", "commit.gpgSign=false", "-c", "core.attributesFile=/dev/null"];
 const REPO_SCOPES: ReadonlySet<string> = new Set(["local", "worktree", "command"]);
-const DRIVER_KEY_RE = "^(filter\\..*\\.(clean|smudge|process)|diff\\..*\\.textconv)$";
+const DRIVER_KEY_RE = "^(filter\\..*\\.(clean|smudge|process)|diff\\..*\\.(textconv|command))$";
 // Patch-producing subcommands. diff.external= (blank) makes these die with "external diff died", so --no-ext-diff
 // --no-textconv are injected right after the subcommand; a caller's --ext-diff/--textconv is dropped, never honoured.
 const PATCH_CMDS: ReadonlySet<string> = new Set(["diff", "show", "log", "whatchanged"]);
-const OPT_WITH_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
+const OPT_WITH_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--attr-source"]);
 const SECRET_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
 
 /** A copy of env without the token family and SSH_AUTH_SOCK. Never mutates its argument. */
@@ -30,6 +30,7 @@ export function tokenFreeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.Proce
 export interface SafeGitOpts extends Omit<ExecFileSyncOptions, "cwd" | "env" | "encoding"> {
   env?: NodeJS.ProcessEnv; // base env (default process.env); the token family is still stripped unless allowToken
   allowToken?: boolean; // explicit opt-in for a call that needs a credential (push, authenticated fetch)
+  repoDrivers?: boolean; // keep repo filter drivers on a content-writing call (add, checkout); see SafeGitRunOpts
 }
 
 /** Env for a safe git child: token-free unless allowToken, no system config. GIT_ATTR_SOURCE is removed: pointing it at the empty tree
@@ -74,12 +75,51 @@ function noExtDiff(args: readonly string[]): string[] {
   return [...args.slice(0, i + 1), "--no-ext-diff", "--no-textconv", ...opts, ...(end < 0 ? [] : rest.slice(end))];
 }
 
-/** argv form for the async run()/Bun.spawn helpers: the program, then hardened config, then args. Pair it with safeGitEnv(). */
-export const safeGitArgv = (args: readonly string[], allowToken = false, repoDir?: string): string[] => ["git", ...safeGitArgs(args, allowToken, repoDir)];
-
 /** git run in repoDir, hardened, token-free unless allowToken. Returns stdout. Throws like execFileSync. */
 export function safeGit(repoDir: string, args: readonly string[], opts: SafeGitOpts = {}): string {
-  const { env, allowToken, ...rest } = opts;
-  const out = execFileSync("git", safeGitArgs(args, allowToken, repoDir), { stdio: ["ignore", "pipe", "ignore"], ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken), encoding: "utf8" });
+  const { env, allowToken, repoDrivers, ...rest } = opts;
+  const out = execFileSync("git", safeGitArgs(args, allowToken, repoDrivers ? undefined : repoDir), { stdio: ["ignore", "pipe", "ignore"], ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken), encoding: "utf8" });
   return typeof out === "string" ? out : "";
+}
+
+export interface SafeGitSpawnOpts extends Omit<SpawnSyncOptions, "cwd" | "env"> {
+  env?: NodeJS.ProcessEnv;
+  allowToken?: boolean;
+}
+
+/** spawnSync form for callers that need the exit status, a Buffer stdout or stdin. Same hardening and env as safeGit. Never throws:
+ *  a config that cannot be enumerated comes back as a failed result (status null, error set). */
+export function safeGitSpawn(repoDir: string, args: readonly string[], opts: SafeGitSpawnOpts & { encoding: BufferEncoding }): SpawnSyncReturns<string>;
+export function safeGitSpawn(repoDir: string, args: readonly string[], opts?: SafeGitSpawnOpts): SpawnSyncReturns<Buffer>;
+export function safeGitSpawn(repoDir: string, args: readonly string[], opts: SafeGitSpawnOpts = {}): SpawnSyncReturns<string | Buffer> {
+  const { env, allowToken, ...rest } = opts;
+  let argv: string[];
+  try { argv = safeGitArgs(args, allowToken, repoDir); } catch (e) {
+    return { pid: 0, output: [], stdout: "", stderr: "", status: null, signal: null, error: e as Error };
+  }
+  return spawnSync("git", argv, { ...rest, cwd: repoDir, env: safeGitEnv(env ?? process.env, allowToken) });
+}
+
+export interface SafeGitRunOpts {
+  env?: NodeJS.ProcessEnv; allowToken?: boolean; timeoutMs?: number; signal?: AbortSignal;
+  // Keep the repo's own filter/textconv drivers (worker-side `git add`, so a repo-local LFS or clean filter still applies
+  // to what gets committed). The token is still stripped and fsmonitor, hooks and the other command classes stay off.
+  repoDrivers?: boolean;
+}
+
+/** Async form (Bun.spawn) with the same hardening. The env is passed exactly, never merged over process.env: util/shell.ts run()
+ *  overlays its env on process.env, so handing it safeGitEnv() kept the token. Never throws; a spawn failure is exitCode 127. */
+export async function safeGitRun(repoDir: string, args: readonly string[], opts: SafeGitRunOpts = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  let argv: string[];
+  try { argv = safeGitArgs(args, opts.allowToken, opts.repoDrivers ? undefined : repoDir); } catch (e) { return { stdout: "", stderr: String(e), exitCode: 128 }; }
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    proc = Bun.spawn({ cmd: ["git", ...argv], cwd: repoDir, env: safeGitEnv(opts.env ?? process.env, opts.allowToken) as Record<string, string>, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: opts.signal });
+  } catch (e) { return { stdout: "", stderr: String(e), exitCode: 127 }; }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (opts.timeoutMs && opts.timeoutMs > 0) timer = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { /* exited */ } }, opts.timeoutMs);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout as ReadableStream).text(), new Response(proc.stderr as ReadableStream).text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  } finally { if (timer) clearTimeout(timer); }
 }

@@ -111,7 +111,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { safeGit } from "../util/safe_git.ts";
 
 export const GITHUB_TOKEN_VARS = [
   "GH_TOKEN",
@@ -136,7 +136,7 @@ export const GIT_VERSION_FLOOR_WARNING =
 // (matching the bash route's fail-silent-on-unparseable behavior).
 function isGitVersionBelowFloor(): boolean {
   try {
-    const out = execFileSync("git", ["--version"], { env: { ...process.env }, encoding: "utf8" });
+    const out = safeGit(process.cwd(), ["--version"]);
     const m = /git version (\d+)\.(\d+)/.exec(out);
     if (!m) return false;
     const major = Number(m[1]);

@@ -22,7 +22,7 @@
 
 import { afterEach, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 
@@ -98,9 +98,9 @@ try { execFileSync("git", ["-c", "core.fsmonitor=" + ${JSON.stringify(controlHoo
   const r = spawnSync(process.execPath, [driver], { cwd: repo, env, encoding: "utf8" });
   expect(r.status).toBe(0);
 
-  const lines = readFileSync(rec, "utf8").trim().split("\n").filter(Boolean);
-  // Both production paths ran git status/diff, which invoke fsmonitor.
-  expect(lines.length).toBeGreaterThanOrEqual(2);
+  // Both production paths now run git through safeGit (core.fsmonitor= on every call), so the plant should not run
+  // at all; if it ever does, it must see neither credential.
+  const lines = (existsSync(rec) ? readFileSync(rec, "utf8") : "").trim().split("\n").filter(Boolean);
   for (const l of lines) {
     expect(l).not.toContain(CANARY_TOKEN);
     expect(l).not.toContain(CANARY_SOCK);

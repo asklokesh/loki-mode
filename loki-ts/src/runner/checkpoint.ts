@@ -33,8 +33,8 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { lokiDir } from "../util/paths.ts";
-import { run } from "../util/shell.ts";
 import { withFileLockSync } from "../util/atomic.ts";
+import { safeGitRun } from "../util/safe_git.ts";
 
 // Schema mirrors metadata.json exactly. Field names and types are load-bearing
 // (consumed by the rollback CLI path and the dashboard). Do not rename.
@@ -113,14 +113,14 @@ function indexPath(base: string): string {
 
 // Mirror bash autonomy/run.sh:6917 -- `git rev-parse HEAD || echo no-git`.
 async function gitSha(cwd: string): Promise<string> {
-  const r = await run(["git", "rev-parse", "HEAD"], { cwd, timeoutMs: 5000 });
+  const r = await safeGitRun(cwd, ["rev-parse", "HEAD"], { timeoutMs: 5000 });
   if (r.exitCode !== 0) return "no-git";
   return r.stdout.trim() || "no-git";
 }
 
 // Mirror bash autonomy/run.sh:6919 -- `git branch --show-current || echo unknown`.
 async function gitBranch(cwd: string): Promise<string> {
-  const r = await run(["git", "branch", "--show-current"], { cwd, timeoutMs: 5000 });
+  const r = await safeGitRun(cwd, ["branch", "--show-current"], { timeoutMs: 5000 });
   if (r.exitCode !== 0) return "unknown";
   return r.stdout.trim() || "unknown";
 }
@@ -129,8 +129,8 @@ async function gitBranch(cwd: string): Promise<string> {
 // Returns true if there is at least one uncommitted (worktree or staged) change.
 async function hasUncommittedChanges(cwd: string): Promise<boolean> {
   // `git diff --quiet` exits 1 if there are unstaged changes, 0 otherwise.
-  const wt = await run(["git", "diff", "--quiet"], { cwd, timeoutMs: 5000 });
-  const idx = await run(["git", "diff", "--cached", "--quiet"], { cwd, timeoutMs: 5000 });
+  const wt = await safeGitRun(cwd, ["diff", "--quiet"], { timeoutMs: 5000 });
+  const idx = await safeGitRun(cwd, ["diff", "--cached", "--quiet"], { timeoutMs: 5000 });
   // If git itself errored (not a repo), bash treats that as "no changes" via
   // `2>/dev/null && ...`. Match that behavior: only changes when both probes
   // ran cleanly (exit 0 or 1) and at least one returned 1.

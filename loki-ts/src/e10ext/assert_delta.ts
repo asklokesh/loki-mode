@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { basename } from "node:path";
+import { safeGit } from "../util/safe_git.ts";
 export interface AssertDeltaInput {
   path: string;
   base: string;
@@ -205,7 +206,7 @@ type Counts = { run: number; skipped: number };
 export function assertDeltaNotes(repoDir: string, baseSha: string, headRef: string | null, path: string, task: string, baseCounts?: Counts, headCounts?: Counts): string[] | null {
   if (!baseCounts || !headCounts) return null;
   try {
-    const show = (ref: string): string => execFileSync("git", ["show", `${ref}:${path}`], { cwd: repoDir, encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] });
+    const show = (ref: string): string => safeGit(repoDir, ["show", `${ref}:${path}`]);
     const head = headRef ? show(headRef) : readFileSync(join(repoDir, path), "utf8");
     const r = classifyTestEdit(path, show(baseSha), head, task, baseCounts, headCounts);
     return r[0]?.kind ==="literal-only" ? r.map((e) => `assertion value changed (not shown to be required by the task): ${e.file}:${e.line} ${e.old} -> ${e.new}`) : null;

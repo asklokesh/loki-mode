@@ -3,7 +3,7 @@
 // confirmation concurrently with the implement session and, once confirmed, stops that session and reports
 // the run as already done. The check's result only counts while implement is in flight: a check that is
 // cancelled, late or unconfirmed never changes the verdict, so the cold path stays the reference.
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +11,7 @@ import { checkAlreadyDone, findEvidence, type AlreadyDoneResult } from "../../en
 import type { RepoMap } from "../../engine10/repomap.ts";
 import type { RunContext, SessionResult, TestMap } from "../../engine10/types.ts";
 import { speedEnabled } from "../warm.ts";
+import { safeGit, safeGitRun } from "../../util/safe_git.ts";
 
 export { speedEnabled };
 /** True only when every path the model was shown exists at baseSha and the live tree still equals it (no edit,
@@ -19,7 +20,7 @@ export { speedEnabled };
  *  closed on an empty path list or an empty baseSha. */
 export function hitsUnchangedFromBase(repoDir: string, baseSha: string, paths: string[]): boolean {
   if (paths.length === 0 || !baseSha) return false;
-  const run = (args: string[]): void => { execFileSync("git", ["--literal-pathspecs", ...args], { cwd: repoDir, stdio: "pipe", env: process.env }); };
+  const run = (args: string[]): void => { safeGit(repoDir, ["--literal-pathspecs", ...args]); };
   try {
     for (const p of paths) run(["cat-file", "-e", `${baseSha}:${p}`]);
     run(["diff", "--quiet", baseSha, "--", ...paths]);
@@ -54,7 +55,7 @@ function pinBaseTree(ctx: RunContext, signal: AbortSignal): Promise<string | nul
   const step = (cmd: string, args: string[], cwd: string): Promise<boolean> =>
     new Promise((res) => { execFile(cmd, args, { env: process.env, signal, cwd }, (err) => res(!err)); });
   return (async () => {
-    if (!ctx.baseSha || !(await step("git", ["archive", "-o", tarball, ctx.baseSha], ctx.repoDir))
+    if (!ctx.baseSha || (await safeGitRun(ctx.repoDir, ["archive", "-o", tarball, ctx.baseSha], { signal })).exitCode !== 0
       || !(await step("tar", ["-x", "-f", tarball, "-C", join(root, "tree")], root))) {
       dropRoot(root);
       return null;
