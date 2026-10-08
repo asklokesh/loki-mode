@@ -792,3 +792,8 @@ Founder: "you are taking hours long for releases, I wanted 3 releases to 10 rele
 5. Slices are 20-40 minutes of build, one concern, with a user-visible line on the card. Large features ship as a sequence of small flag-gated slices.
 6. HIGH reviews run in pair mode. A TL reviews LOW and MEDIUM with the machine gate, and merge-gate is the hard check. There is no serial review queue.
 7. Every tick reports merge-to-`next` minutes for each release and releases per hour.
+
+## D98 (2026-10-08, CTO ruling relayed by steering at 19:22Z, RM records): guard review standard and the HIGH review round limit
+1. A guard (a test that fails a build on a shape it detects) blocks a merge only on findings that a realistic change would trigger: an ordinary workflow edit or an ordinary contributor mistake. A realistic finding always blocks.
+2. Contrived adversarial bypasses (exit 256, eval rc=0, writes hidden in arithmetic or through an indirect name, deliberately obfuscated shell) are logged as LOW follow-up rows in FAILURE-CLASSES.md and do not block. These guards protect against our own mistakes; an attacker who controls workflow files is covered by branch protection and review.
+3. HIGH reviews have a 2-round limit. Round 3 escalates to the CTO with the finding list, and the CTO decides. Reason: opus share was about 50% against the 30% budget (D13).

@@ -222,39 +222,6 @@ jobs:
         # PARENT..SHA first (see the poll loop). Same pinned binary as the audit.
         run: bash scripts/install-gitleaks.sh
 
-      # D90: the push gate is the fast gate, so the full suites run nightly as
-      # the backstop. A red nightly on main that is newer than the last release
-      # blocks THIS release until a FAILURE-CLASSES fix slice makes a newer
-      # nightly green (rerun it with workflow_dispatch after the fix lands).
-      - name: Block the release on a red nightly newer than the last release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          CUR="$(tr -d '[:space:]' < VERSION)"
-          PREV_TAG="$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -vx "v${CUR}" | head -n 1 || true)"
-          if [ -z "$PREV_TAG" ]; then
-            echo "nightly block: no previous release tag; nothing to compare against"
-            exit 0
-          fi
-          REL_AT="$(git log -1 --format=%cI "$PREV_TAG")"
-          RUNS="$(gh api "repos/${REPO}/actions/workflows/nightly.yml/runs?branch=main&status=completed&per_page=20" \
-            --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")] | .[0] // empty | [.id, .conclusion, .created_at, .html_url] | @tsv')" || {
-            echo "NIGHTLY-BLOCK: could not read the nightly runs from the API; rerun this job"
-            exit 1
-          }
-          if [ -z "$RUNS" ]; then
-            echo "nightly block: no completed nightly run on main yet; not blocking"
-            exit 0
-          fi
-          IFS=$'\t' read -r RID CONC CREATED URL <<< "$RUNS"
-          if [ "$CONC" != "success" ]; then
-            echo "NIGHTLY-BLOCK: the latest completed nightly on main is ${CONC}: ${URL}"
-            echo "Per D90 a red nightly blocks the NEXT release. Open a FAILURE-CLASSES fix slice, land the fix, then rerun Nightly (workflow_dispatch) to green before releasing."
-            exit 1
-          fi
-
       - name: Require Tests / Security Audit green, at the release SHA or an eligible parent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

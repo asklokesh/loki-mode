@@ -95,7 +95,7 @@ jobs:
 
   # D90: the blocking gate. Plan once, then run only what the diff can affect,
   # in parallel jobs that each target under 90s. Everything it skips runs in
-  # the nightly full suite, and a red nightly blocks the NEXT release.
+  # the nightly full suite, and a red nightly blocks PROMOTION to latest (D96).
   plan:
     name: Plan (diff to suites)
     needs: [version-bump-gate]

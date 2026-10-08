@@ -593,6 +593,14 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Fixture: tests/test-caveman-flags.sh section 5c is the regression (red on macOS before the strip).
 - Note: the other two Nightly 37790534786 reds (doctor hint, onboard) were already fixed by FC-53 (0c0069df3, in this train); re-verified green here (bun test gate-failures-cap-parity 3 pass; test-onboard-command.sh 11/11).
 
+## FC-63 A subprocess test pinned PATH so tightly the product under test never ran, and its host-dependent counter had no host-independent fixture (NR-DOCTOR)
+- User saw: the macOS bun Nightly leg (run 37790534786 on a0d599d0c) reported `doctor per-provider install hint goes to STDERR` "Expected: <= 1, Received: 2"; locally the same test passed, so the red looked unreproducible.
+- Law: evidence or it did not happen; an assertion must exercise the property it names; a green that cannot go red is not a gate.
+- Cause (measured): the red assertion was the bare "Install:" counter already fixed by FC-53 (0c0069df3 is not in a0d599d0c; HEAD f22648a11 contains it and the test passes). Remaining defect: the test ran `bin/loki doctor` with PATH=/usr/bin:/bin, which hides bun on hosts where bun lives elsewhere (here ~/.bun/bin), so the shim printed its minimal "Bun doctor is unavailable" report and the test passed vacuously; it only ran the real doctor where bun sat on the system PATH. On this host python3.12 is installed under /opt/homebrew, so the python hint never printed and the CI condition could not be reproduced.
+- Siblings swept: other loki-ts tests that spawn bin/loki with a pinned PATH were not found to assert on doctor output; only this test counted install hints.
+- Mechanism: the PATH keeps /usr/bin:/bin (providers stay absent) plus dirname(process.execPath) so the real Bun doctor always runs; the counting moved into providerInstallLines.
+- Fixture: gate-failures-cap-parity.test.ts "provider install-hint counter ignores the unrelated Python 3.12 hint" replays the CI stdout shape (python hint + claude fallback): the old bare counter yields 2 (red, asserted in the test), providerInstallLines yields 1 (green), and a leaked codex hint yields 2.
+
 ## FC-57 A continue-on-error job hides a real failure from the workflow conclusion and the D90 gate (NIGHTLY-TRUTH)
 - User saw: Nightly run 37780519439 (a0d599d0c, 2026-10-08) concluded SUCCESS while "Bun tests on macos-latest bun=1.3.13 (nightly)" and "bun=latest" both FAILED on `gate-failures cap head/tail parity (W4 L1) > doctor per-provider install hint goes to STDERR`; the same legs failed again in run 37790534786. release.yml required-ci and D90 read the run conclusion, so the release gate saw green on a deterministic failure.
 - Law: evidence or it did not happen; a red leg must reach the verdict that gates releases. Informational is a per-leg decision about upstream drift, never a job-wide switch over pinned code.
