@@ -20,6 +20,7 @@ import { isTestFile } from "../testmap.ts";
 import { crossReview, minVerdict } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
+import { loadRouteRecord } from "../../runner/router/route_record.ts";
 import { receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { sumResultCosts } from "../cost.ts";
@@ -280,8 +281,8 @@ export const sealStage: Stage = {
 
     // R1-15: router route block. Null (key omitted, hash stable) unless LOKI_ROUTER is on. Route facts come from the implement
     // output when R1-11 records them; token telemetry from the R1-08 result-cost fields (the cost reader's own `router`, else the files).
-    const routeBlock = buildRouteBlock(process.env, ctx.provider, o.implement?.route as Record<string, unknown> | undefined,
-      (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), iterIds).router : undefined));
+    const routeBlock = buildRouteBlock(process.env, ctx.provider, (o.implement?.route ?? o.plan?.route_record ?? (routerEnabled(process.env) ? loadRouteRecord(ctx.runDir) : undefined)) as Record<string, unknown> | undefined,
+      (cost as { router?: Record<string, number> }).router ?? (routerEnabled(process.env) ? sumResultCosts(join(ctx.repoDir, ".loki"), iterIds).router : undefined), ctx.model);
     if (routeBlock) for (const l of routeNotProven(routeBlock)) notProven.add(l);
 
     const body: Omit<Receipt, "receipt_sha256" | "verification"> = {
