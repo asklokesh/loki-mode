@@ -212,6 +212,7 @@ function _loki_commands {
         'verify-pr:Verify a PR against its linked issue in a sandbox'
         'queue:Overnight issue queue with a morning digest'
         'issues:Run every open issue in a repo and open PRs'
+        'undo:Show what undoing a run would do (read-only plan)'
         'control:Control plane (preview, LOKI_CONTROL=1)'
         'workspace:Multi-project workspaces (preview, LOKI_WORKSPACES=1)'
         'backlog:Run every matching open issue, N in parallel'

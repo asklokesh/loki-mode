@@ -33,6 +33,7 @@ Bun-native commands:
   doctor [--json]        System prerequisites health check
   rollback <subcmd>      Restore .loki/ state from a checkpoint
                          (subcmds: list | show <id> | to <id> | latest)
+  undo <run-id> [--plan] Plan or apply (LOKI_UNDO=1) an undo of a run; verifies the receipt first
   proof <subcmd>         Inspect/share proof-of-run artifacts
                          (subcmds: list | show <id> | open <id> | share <id>)
   wiki <subcmd>          Auto-generated, cited codebase wiki + Q&A
@@ -165,6 +166,12 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // v7.5.2: wire the checkpoint rollback API (was dead code per H4).
       const { runRollback } = await import("./commands/rollback.ts");
       return runRollback(rest);
+    }
+
+    case "undo": {
+      // UNDO-1/2: --plan is read-only; apply is behind LOKI_UNDO=1.
+      const { runUndo } = await import("./commands/undo.ts");
+      return runUndo(rest);
     }
 
     case "proof":

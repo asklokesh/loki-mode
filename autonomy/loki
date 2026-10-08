@@ -1779,6 +1779,7 @@ show_help() {
     echo "  review [opts]    Standalone code review with quality gates"
     echo "  ultracode \"task\" Run a task as a native Claude Code Dynamic Workflow (opt-in, Claude-only)"
     echo "  trust [cmd]      Visible trust trajectory; 'trust detail' for metrics"
+    echo "  undo <run> [--plan]  Plan or apply (LOKI_UNDO=1) an undo of a run; verifies the receipt"
     echo ""
     echo "Observe:"
     echo "  dashboard [cmd]  Operations UI server (start|stop|status|url|open)"
@@ -1908,7 +1909,7 @@ show_help() {
     echo "  merge resume review rollback run sandbox secrets secure self-update sentrux"
     echo "  serve setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
-    echo "  ultracode update verify version voice watch watchdog web welcome why"
+    echo "  ultracode undo update verify version voice watch watchdog web welcome why"
     echo "  wiki workspace worktree (wt)"
     echo "  control"
     echo ""
@@ -21217,6 +21218,11 @@ main() {
             ;;
         mcp)
             cmd_mcp "$@"
+            ;;
+        undo)
+            # UNDO-1: Bun-only (verifies the receipt with the Bun verifier); bin/loki routes here only when bun is absent.
+            echo "loki undo needs the Bun runtime (install bun, then re-run: loki undo <run-id> --plan)" >&2
+            exit 2
             ;;
         acp)
             # ACP agent over stdio; stdout is protocol-only. See docs/acp-editors.md.
