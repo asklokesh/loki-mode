@@ -108,6 +108,7 @@ export interface CostTotals {
   inputTokens: number;
   outputTokens: number;
   cacheReadTokens: number;
+  tokensMeasured?: { k: number; n: number }; // set only when some session was left out of the token sums (R3-2 follow-up)
   cacheReadSeen?: boolean; cacheCreationSeen?: boolean; // false = no measured file carried the key (NOT RECORDED); undefined = a fake reader, its numbers are taken as measured
   records?: import("./cost_records.ts").CostRecords; // COST-RECORDS / FIX-RESUME
   durationMs?: number; // SDK result-line duration_ms, summed
@@ -194,6 +195,7 @@ export interface Receipt {
     cache_creation_tokens?: number;
     tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, import("./cost_records.ts").ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate"; // COST-RECORDS / FIX-RESUME, additive
     sdk_duration_ms?: number; // SDK result line duration_ms, summed; absent = NOT RECORDED
+    tokens_measured?: { k: number; n: number }; // present only when k < n: input_tokens/output_tokens sum k of n sessions (a missing or ambiguous-resume session is left out), so they are partial
     // E-69: sessions with a provider-sourced dollar figure, out of the sessions this run recorded;
     // partial_usd is their dollar sum even when usd above is null (some sessions unpriced).
     measured_sessions: number;

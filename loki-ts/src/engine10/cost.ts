@@ -42,6 +42,7 @@ export interface CostResult {
   // RECEIPT-TRUTH: whether any read file actually carried the key. A sum of nothing is NOT RECORDED, not 0.
   cache_read_seen?: boolean;
   cache_creation_seen?: boolean;
+  tokens_measured?: { k: number; n: number }; // set only when k < n: sessions whose tokens went into the sums
   records?: CostRecords; // COST-RECORDS / FIX-RESUME: per-model, scope, turns, resume verdict; absent when no file was read
   duration_ms?: number; // sum of the SDK result line duration_ms over the files that carried one; absent when none did
   // R1-08: summed router telemetry. over_100k_* are the input/output tokens of requests strictly over
@@ -79,7 +80,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
   };
   const sources: string[] = [];
   const recs: { iter: string; rec: Record<string, unknown> }[] = [];
-  let usd = 0, readSeen = 0, creationSeen = 0, durSeen = 0;
+  let usd = 0, readSeen = 0, creationSeen = 0, durSeen = 0, tokenSessions = 0;
   // FIX-RESUME: decide ambiguity over every parsed file first; an ambiguous file (a resumed total that may already
   // include its predecessor) is excluded from EVERY summed figure, not just dollars (R3-2).
   const parsed = new Map<string, Record<string, unknown>>();
@@ -101,6 +102,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
     }
     // The file parsed, so its tokens are real even when total_cost_usd is absent (a codex/tokens-only
     // session): capture them regardless of a dollar figure below (dropping them was the E-06 bug).
+    tokenSessions++;
     const inTok = num(rec["input_tokens"]);
     const outTok = num(rec["output_tokens"]);
     const cacheR = num(rec["cache_read_tokens"]);
@@ -140,6 +142,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
   // RECEIPT-TRUTH: a cache total is published only when EVERY session carried the key; a partial sum is not the run total
   out.cache_read_seen = iterations.length > 0 && readSeen === iterations.length;
   out.cache_creation_seen = iterations.length > 0 && creationSeen === iterations.length;
+  if (iterations.length > 0 && tokenSessions < iterations.length) out.tokens_measured = { k: tokenSessions, n: iterations.length };
   if (durSeen !== iterations.length) delete out.duration_ms; // a partial duration is not the run's
   if (rv.ambiguous.length > 0 || recs.length > 0) {
     const r = buildRecords(recs, iterations.length, rv.ambiguous, rv.separate);
@@ -224,5 +227,5 @@ export function recordSessionCost(lokiRoot: string, iterationId: string, info: E
 
 /** Map the file-summed CostResult to the machine's CostTotals; a cache key no file carried stays unseen (NOT RECORDED), never 0. */
 export function costTotalsOf(c: CostResult): CostTotals {
-  return { usd: c.usd, inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens, cacheCreationTokens: c.cache_creation_tokens, cacheReadSeen: c.cache_read_seen === true, cacheCreationSeen: c.cache_creation_seen === true, ...(c.duration_ms !== undefined ? { durationMs: c.duration_ms } : {}), ...(c.records ? { records: c.records } : {}), measuredCount: c.measuredCount, totalCount: c.totalCount, partialUsd: c.partialUsd, unmetered: c.unmetered };
+  return { usd: c.usd, ...(c.tokens_measured ? { tokensMeasured: c.tokens_measured } : {}), inputTokens: c.input_tokens, outputTokens: c.output_tokens, cacheReadTokens: c.cache_read_tokens, cacheCreationTokens: c.cache_creation_tokens, cacheReadSeen: c.cache_read_seen === true, cacheCreationSeen: c.cache_creation_seen === true, ...(c.duration_ms !== undefined ? { durationMs: c.duration_ms } : {}), ...(c.records ? { records: c.records } : {}), measuredCount: c.measuredCount, totalCount: c.totalCount, partialUsd: c.partialUsd, unmetered: c.unmetered };
 }

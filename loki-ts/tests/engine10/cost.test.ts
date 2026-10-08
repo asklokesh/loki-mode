@@ -90,6 +90,7 @@ describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
       write(d, "a", { total_cost_usd: 1, input_tokens: 9, output_tokens: 1, cache_read_tokens: 7, cache_creation_tokens: 2, num_turns: 2, model_usage: { sonnet: { input_tokens: 9, output_tokens: 1, cache_read_tokens: 100, cache_creation_tokens: 5, cost_usd: 1 } } });
       const c = sumResultCosts(d, ["a", "missing"]);
       expect(c.usd).toBeNull();
+      expect(c.tokens_measured).toEqual({ k: 1, n: 2 });
       expect(c.cache_read_seen).toBe(false);
       expect(c.cache_creation_seen).toBe(false);
       expect(c.records?.per_model).toBeUndefined();
@@ -114,6 +115,16 @@ describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
       expect(c.cache_creation_seen).toBe(false);
       expect(c.duration_ms).toBeUndefined();
       expect(c.records).toEqual({ resume: "ambiguous" });
+      expect(c.tokens_measured).toEqual({ k: 1, n: 2 });
+      expect(costTotalsOf(c).tokensMeasured).toEqual({ k: 1, n: 2 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a complete run carries no tokens_measured", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "a", { total_cost_usd: 1, input_tokens: 9, output_tokens: 1 });
+      expect(sumResultCosts(d, ["a"]).tokens_measured).toBeUndefined();
+      expect("tokensMeasured" in costTotalsOf(sumResultCosts(d, ["a"]))).toBe(false);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
   test("resume: a predecessor outside the summed set is ambiguous; a plain run has no resume key", () => {

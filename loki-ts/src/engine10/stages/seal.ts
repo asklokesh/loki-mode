@@ -198,6 +198,7 @@ export function renderReceiptMd(r: Receipt): string {
     `- receipt_sha256: ${r.receipt_sha256}`,
     `- Signature: ${sig}`,
     `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s (stages)  Total to seal: ${reconciledTotalS(r.time) ?? "NOT RECORDED"}${reconciledTotalS(r.time) === null ? "" : "s"}`,
+    ...(r.cost.tokens_measured ? [`- Tokens: partial: ${r.cost.input_tokens} input / ${r.cost.output_tokens} output for ${r.cost.tokens_measured.k} of ${r.cost.tokens_measured.n} sessions`] : []),
     ...(r.mutation_proof ? [`- ${r.mutation_proof}`] : []),
     ...(r.route ? routeReceiptLines(r.route) : []), // R1-15: only when the router is on
     "",
@@ -321,6 +322,7 @@ export const sealStage: Stage = {
       evidence: strs(o.intake?.evidence), ...(o.intake?.preexisting_dirty ? { pre_existing_dirty: Object.keys(o.intake.preexisting_dirty as object) } : {}),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
+        ...(cost.tokensMeasured && cost.tokensMeasured.k < cost.tokensMeasured.n ? { tokens_measured: cost.tokensMeasured } : {}),
         ...(typeof cost.cacheReadTokens === "number" && cost.cacheReadSeen !== false ? { cache_read_tokens: cost.cacheReadTokens } : {}), ...(typeof cost.cacheCreationTokens === "number" && cost.cacheCreationSeen !== false ? { cache_creation_tokens: cost.cacheCreationTokens } : {}), ...(typeof cost.durationMs === "number" ? { sdk_duration_ms: cost.durationMs } : {}), ...(cost.records ?? {}),
         measured_sessions: cost.measuredCount ?? 0, total_sessions: cost.totalCount ?? 0, partial_usd: cost.partialUsd ?? 0,
         ...(cost.unmetered ? { source: "cli-invoker-unmetered" } : {}),

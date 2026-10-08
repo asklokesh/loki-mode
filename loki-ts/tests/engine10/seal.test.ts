@@ -1212,6 +1212,9 @@ print("\\t".join([str(v)] + [str(x) for x in out]))
       const cost = receiptOf(await sealStage.run(ctx, new AbortController().signal)).cost as unknown as Record<string, unknown>;
       for (const k of ["cache_read_tokens", "cache_creation_tokens", "per_model", "turns", "sdk_duration_ms", "tokens_scope", "cache_creation_main_loop"]) expect(k in cost).toBe(false);
       expect(cost["resume"]).toBe("ambiguous");
+      expect(cost["tokens_measured"]).toEqual({ k: 1, n: 2 });
+      expect(cost["input_tokens"]).toBe(100);
+      expect(renderReceiptMd({ ...receiptOf(await sealStage.run(ctx, new AbortController().signal)) })).toContain("Tokens: partial: 100 input / 1 output for 1 of 2 sessions");
       expect(cost["usd"]).toBeNull();
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 30000);
@@ -1223,6 +1226,7 @@ print("\\t".join([str(v)] + [str(x) for x in out]))
     const rec = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect("cache_read_tokens" in rec.cost).toBe(true); // ctxFor's fake reports cacheReadTokens: 0 (a measured zero)
     expect("cache_creation_tokens" in rec.cost).toBe(false);
+    expect("tokens_measured" in rec.cost).toBe(false); // complete runs and old receipts stay byte-identical
   }, 30000);
 
 });

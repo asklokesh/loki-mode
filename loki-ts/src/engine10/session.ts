@@ -134,9 +134,10 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const info = { status, durationMs: Math.round(durationS * 1000), model };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
   const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
+  const ambiguous = c.records?.resume === "ambiguous"; // FIX-RESUME: this resumed session's total may include its predecessor, so its figures are not emitted (NOT RECORDED), never summed on trust
   cfg.emit?.("cost", opts.stage, {
-    session_id: opts.iterationId, model, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
-    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.unmetered ? UNMETERED : c.source || "not measured", ...routedCostFields(dest),
+    session_id: opts.iterationId, model, usd: c.usd, ...(ambiguous ? { resume: "ambiguous" } : { input_tokens: c.input_tokens, output_tokens: c.output_tokens,
+    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), source: c.unmetered ? UNMETERED : c.source || "not measured", ...routedCostFields(dest),
   });
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
