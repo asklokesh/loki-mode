@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
+import { formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
@@ -69,7 +70,9 @@ export const implementStage: Stage = {
     const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
-    const repoMap = briefCtx(ctx); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
+    const lessons = retrieveLessons(ctx.repoDir, task); // T6: reviewer lessons from earlier merged PRs, tagged as used by this run
+    try { recordUse(ctx.repoDir, ctx.runId, lessons.map((l) => l.id)); } catch { /* memory is best-effort */ }
+    const repoMap = briefCtx(ctx) + formatLessonsForBrief(lessons); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
     const first: SessionRunOptions = {
       stage: "implement",

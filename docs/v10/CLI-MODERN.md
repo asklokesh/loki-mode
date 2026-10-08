@@ -11,7 +11,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 - DROP-LEGACY: 31
 - DELETE: 14
 - Total rows: 128
-- Registry paths (commands and nested subcommands): 175
+- Registry paths (commands and nested subcommands): 177
 
 ## Commands
 
