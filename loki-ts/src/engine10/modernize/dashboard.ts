@@ -1,6 +1,6 @@
 // loki-ts/src/engine10/modernize/dashboard.ts -- M-24: the dashboard's /modernize view
 // (docs/v10/MODERNIZE.md, D33: this view lives here, not dashboard/modernize.ts, so core's
-// dashboard/server.ts never needs a static import of modernize/ -- it reaches modernizeRoute
+// runner/engine10_dashboard.ts never needs a static import of modernize/ -- it reaches modernizeRoute
 // via a dynamic import(), the same pattern machine.ts/session.ts/supervisor.ts already use to
 // keep a module out of core's static graph).
 import { existsSync, readdirSync } from "node:fs";
@@ -72,7 +72,7 @@ function renderModernizePage(repoDir: string): string {
 `;
 }
 
-/** cli.ts routes `dashboard/server.ts`'s `/modernize` here via a dynamic import (see header). */
+/** cli.ts routes `runner/engine10_dashboard.ts`'s `/modernize` here via a dynamic import (see header). */
 export function modernizeRoute(repoDir: string): Response {
   return new Response(renderModernizePage(repoDir), { headers: { "content-type": "text/html; charset=utf-8" } });
 }

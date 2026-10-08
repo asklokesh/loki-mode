@@ -11,7 +11,7 @@ import {
   startServerReplacingOlder,
   summarizeRun,
   type DashboardServer,
-} from "../../src/engine10/dashboard/server.ts";
+} from "../../src/runner/engine10_dashboard.ts";
 import { getVersion } from "../../src/version.ts";
 
 function mkRepo(): string {

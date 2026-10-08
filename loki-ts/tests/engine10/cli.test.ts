@@ -24,7 +24,7 @@ describe("route", () => {
   test("named commands and hidden subcommands", () => {
     expect(route(["status", "r1"])).toEqual({ module: "status.ts", fn: "main", args: ["r1"] });
     expect(route(["verify"])?.module).toBe("verify_cmd.ts");
-    expect(route(["dashboard"])?.module).toBe("dashboard/server.ts");
+    expect(route(["dashboard"])?.module).toBe("../runner/engine10_dashboard.ts");
     expect(route(["worker", "x"])).toEqual({ module: "worker.ts", fn: "main", args: ["x"] });
     expect(route(["session"])?.module).toBe("session.ts");
     expect(route(["deep-supervise"])).toEqual({ module: "stages/deep.ts", fn: "deepSupervise", args: [] });
