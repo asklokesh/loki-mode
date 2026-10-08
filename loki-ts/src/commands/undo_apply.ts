@@ -30,8 +30,17 @@ export interface ApplyOpts {
 
 interface Step { step: string; ok: boolean; detail: string }
 
+// gh needs PATH, HOME and its own auth (token or config dir); nothing else from the parent env reaches the child.
+const GH_ENV_KEYS = ["PATH", "HOME", "GH_TOKEN", "GITHUB_TOKEN", "GH_HOST", "GH_CONFIG_DIR", "XDG_CONFIG_HOME", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
+
+export function ghCloseEnv(parent: NodeJS.ProcessEnv): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const k of GH_ENV_KEYS) { const v = parent[k]; if (typeof v === "string") env[k] = v; }
+  return env;
+}
+
 function defaultClosePr(url: string): { ok: boolean; message: string } {
-  const r = spawnSync("gh", ["pr", "close", url], { encoding: "utf8", env: process.env }); // the only call that keeps the token env
+  const r = spawnSync("gh", ["pr", "close", url], { encoding: "utf8", env: ghCloseEnv(process.env) });
   return { ok: r.status === 0, message: (r.stderr || r.stdout || r.error?.message || "").trim() };
 }
 

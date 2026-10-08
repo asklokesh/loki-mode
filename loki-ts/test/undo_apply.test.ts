@@ -252,3 +252,9 @@ describe("loki undo apply", () => {
     expect(record("r16").steps.find((s) => s.step === "close-pr")?.ok).toBe(false);
   });
 });
+
+test("gh pr close child env carries only gh auth keys, never the rest of the parent env", async () => {
+  const { ghCloseEnv } = await import("../src/commands/undo_apply.ts");
+  const env = ghCloseEnv({ PATH: "/bin", HOME: "/h", GH_TOKEN: "t", SSH_AUTH_SOCK: "/s", ANTHROPIC_API_KEY: "k", AWS_SECRET_ACCESS_KEY: "a" } as NodeJS.ProcessEnv);
+  expect(env).toEqual({ PATH: "/bin", HOME: "/h", GH_TOKEN: "t" });
+});
