@@ -49,6 +49,22 @@ _loki_bash_or_refuse() {
     exec "$BASH_CLI" "$@"
 }
 
+# T5-D2 (FC-38 sweep): quick, run, demo and tour have no attempts engine; --attempts there would
+# reach the legacy loop, so it is refused before any route split.
+case "${1:-}" in
+    quick|run|demo|tour)
+        for _loki_a1 in "${@:2}"; do
+            case "$_loki_a1" in
+                --attempts|--attempts=*)
+                    echo "loki: --attempts is only supported by 'loki start --attempts N --no-pr' (the Loki 10 engine). 'loki $1' would run the removed legacy loop; drop --attempts or use 'loki start --attempts N --no-pr'." >&2
+                    exit 2
+                    ;;
+            esac
+        done
+        unset _loki_a1
+        ;;
+esac
+
 # v8.1: resolve the one-switch SDK mode (LOKI_SDK_MODE=off|judges|full) into the
 # per-site LOKI_SDK_* flags HERE, in the outermost shim, BEFORE the `start`
 # routing fork below reads LOKI_SDK_LOOP. Without this, `LOKI_SDK_MODE=full loki

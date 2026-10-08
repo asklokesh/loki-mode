@@ -136,6 +136,47 @@ else
     expect "[no bun] 'fix x' -> bash" "BASH fix x" "$(run_loki "$NO_BUN" -- "fix x")"
 fi
 
+# 4b. T5-D2: --attempts never reaches the legacy loop through quick, run, demo, tour, or a direct
+#     cmd_start / run.sh entry. Each is refused with exit 2 and no route, no provider call, no .loki.
+for cmd in quick run demo; do
+    for form in "--attempts 2" "--attempts=2" "--attempts 1"; do
+        # shellcheck disable=SC2086
+        got="$(route_of "$(run_loki "$WITH_BUN" -- $cmd "fix x" $form)")"
+        expect "bin/loki $cmd $form: no route" "" "$got"
+        expect "bin/loki $cmd $form: exit 2" "2" "$(cat "$T/rc")"
+    done
+done
+# Real autonomy/loki and run.sh, a provider stub that leaves a marker if it is ever invoked.
+mkdir -p "$T/stubbin" "$T/real"
+printf '#!/usr/bin/env bash\n: >"%s/provider-called"\n' "$T" >"$T/stubbin/claude"
+chmod +x "$T/stubbin/claude"
+real_run() { # real_run <script> <args...>
+    local script="$1"; shift
+    rm -f "$T/provider-called"
+    (cd "$T/real" && env -i HOME="$T/home" PATH="$T/stubbin:/usr/bin:/bin" LOKI_TELEMETRY_DISABLED=1 \
+        LOKI_NO_BROWSER=1 LOKI_NO_SKILL_LINK_HEAL=1 ${TO[@]+"${TO[@]}"} bash "$script" "$@") >"$T/stdout" 2>"$T/stderr"
+    echo "$?" >"$T/rc"
+}
+for cmd in start quick run demo tour; do
+    for form in "--attempts 2" "--attempts 1" "--attempts=2"; do
+        # shellcheck disable=SC2086
+        real_run "$REPO/autonomy/loki" $cmd prd.md $form
+        expect "autonomy/loki $cmd $form: exit 2" "2" "$(cat "$T/rc")"
+        if grep -q -- "--attempts" "$T/stderr" && grep -q "loki start --attempts" "$T/stderr"; then ok "autonomy/loki $cmd $form: message"; else bad "autonomy/loki $cmd $form: message missing: $(cat "$T/stderr")"; fi
+        if [ -e "$T/provider-called" ] || [ -d "$T/real/.loki" ]; then bad "autonomy/loki $cmd $form: legacy loop ran"; else ok "autonomy/loki $cmd $form: legacy loop never ran"; fi
+    done
+done
+# run.sh is the dashboard spawn target (control.py, server.py) and the cmd_start exec target.
+for form in "--attempts 2" "--attempts=2" "--attempts 1"; do
+    # shellcheck disable=SC2086
+    real_run "$REPO/autonomy/run.sh" $form prd.md
+    expect "run.sh $form: exit 2" "2" "$(cat "$T/rc")"
+    # run.sh creates .loki scaffolding at source time; the loop is proven not run by the provider marker and the state files.
+    if [ -e "$T/provider-called" ] || [ -e "$T/real/.loki/loki.pid" ] || [ -e "$T/real/.loki/state/orchestrator.json" ]; then bad "run.sh $form: legacy loop ran"; else ok "run.sh $form: legacy loop never ran"; fi
+done
+# Plain invocations keep their route.
+expect "plain quick 'fix x' unchanged" "BUN $ENTRY engine10 --no-pr fix x" "$(run_loki "$WITH_BUN" -- quick "fix x")"
+
 # 5. engine10 appears only in the one cli.ts arm (and the one bin/loki block):
 #    the case line plus its two lazy imports (cli.ts, and E-32's registry.ts).
 cli="$REPO/loki-ts/src/cli.ts"
