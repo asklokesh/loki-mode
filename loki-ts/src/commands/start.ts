@@ -37,6 +37,7 @@ const VALUE_FLAGS = new Set([
   "--aider-model",
   "--aider-flags",
   "--cline-model",
+  "--attempts", // 11.3.0 T5: N independent attempts in separate worktrees (1-5, default 1)
 ]);
 
 // RUNNER boolean env-mapping flags: no value token; set an env var the runner
@@ -99,6 +100,7 @@ export interface ParsedStartOpts {
   completionPromise?: string;
   baseWaitSeconds?: number;
   maxWaitSeconds?: number;
+  attempts?: number;
 }
 
 const START_USAGE =
@@ -106,7 +108,9 @@ const START_USAGE =
   "                        [--provider claude|codex|cline|aider] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
-  "                        [--regen-prd] [--skip-memory]\n" +
+  "                        [--regen-prd] [--skip-memory] [--attempts N]\n" +
+  "  --attempts N  run N (1-5, default 1) independent attempts in separate git worktrees; the one with the most\n" +
+  "                executed passing checks is applied and every loser is recorded on the attempts receipt\n" +
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
   "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n";
 
@@ -210,7 +214,18 @@ export function parseStartArgs(
   // --budget is an alias of --budget-limit (bash divergence closed).
   const budget = posNum(argVal(args, "--budget-limit") ?? argVal(args, "--budget"));
 
+  let attempts: number | undefined;
+  const attemptsRaw = argVal(args, "--attempts") ?? args.find((a) => a.startsWith("--attempts="))?.slice("--attempts=".length);
+  if (attemptsRaw !== undefined) {
+    if (!/^[1-5]$/.test(attemptsRaw)) {
+      err(`start: --attempts must be an integer from 1 to 5, got '${attemptsRaw}'\n`);
+      return 2;
+    }
+    attempts = Number(attemptsRaw);
+  }
+
   return {
+    ...(attempts !== undefined ? { attempts } : {}),
     prdPath: resolvedSpec,
     provider: providerRaw as ProviderName | undefined,
     maxIterations: posNum(argVal(args, "--max-iterations")),
@@ -227,5 +242,22 @@ export async function runStart(args: readonly string[]): Promise<number> {
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;
   const { runAutonomous } = await import("../runner/autonomous.ts");
-  return runAutonomous(parsed);
+  const { attempts, ...runnerOpts } = parsed;
+  if (attempts === undefined || attempts <= 1) return runAutonomous(attempts === undefined ? parsed : runnerOpts);
+  const { runAttempts, productionDeps } = await import("../runner/attempts.ts");
+  const deps = productionDeps(
+    process.cwd(),
+    () => runAutonomous(runnerOpts),
+    async (_id, wt) => {
+      const prevDir = process.env["LOKI_DIR"];
+      process.env["LOKI_DIR"] = `${wt}/.loki`;
+      try {
+        return await runAutonomous({ ...runnerOpts, cwd: wt });
+      } finally {
+        if (prevDir === undefined) delete process.env["LOKI_DIR"];
+        else process.env["LOKI_DIR"] = prevDir;
+      }
+    },
+  );
+  return runAttempts(attempts, deps);
 }

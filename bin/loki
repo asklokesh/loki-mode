@@ -501,6 +501,18 @@ _loki_start_needs_bash() {
     [ "$effective_provider" = "opencode" ] && return 0
     return 1
 }
+# 11.3.0 T5: --attempts N (N>=2) is implemented on the Bun route only; divert there.
+if [ "${1:-}" = "start" ]; then
+    _loki_att_prev=""
+    for _loki_att_a in "${@:2}"; do
+        _loki_att_v=""
+        [ "$_loki_att_prev" = "--attempts" ] && _loki_att_v="$_loki_att_a"
+        case "$_loki_att_a" in --attempts=*) _loki_att_v="${_loki_att_a#--attempts=}" ;; esac
+        case "$_loki_att_v" in [2-5]) exec bun "$BUN_CLI" "$@" ;; esac
+        _loki_att_prev="$_loki_att_a"
+    done
+    unset _loki_att_prev _loki_att_a _loki_att_v
+fi
 if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
     if _loki_start_needs_bash "${@:2}"; then
         exec "$BASH_CLI" "$@"

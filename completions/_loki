@@ -264,6 +264,7 @@ function _loki_start {
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \
         '--max-iterations[Max iterations]:number:' \
+        '--attempts[Independent attempts in worktrees, 1-5]:number:(1 2 3 4 5)' \
         '*:spec file:_loki_spec_files'
 }
 
