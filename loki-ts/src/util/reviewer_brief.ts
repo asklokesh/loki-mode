@@ -23,7 +23,7 @@ export interface BriefInput {
 /** Added line numbers per changed path, from `git diff -U0 base HEAD`. Null when the diff is unavailable. */
 export function changedLines(repoDir: string, base: string): Map<string, number[]> | null {
   let out: string;
-  try { out = safeGit(repoDir, ["diff", "-U0", "--no-color", "--no-ext-diff", base, "HEAD"]); } catch { return null; }
+  try { out = safeGit(repoDir, ["diff", "-U0", "--no-color", base, "HEAD"]); } catch { return null; }
   const res = new Map<string, number[]>();
   let cur: string | null = null;
   for (const line of out.split("\n")) {

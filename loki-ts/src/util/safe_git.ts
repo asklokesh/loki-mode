@@ -14,6 +14,10 @@ const CREDENTIAL_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "co
 const DRIVER_CONFIG: readonly string[] = ["-c", "diff.external=", "-c", "commit.gpgSign=false", "-c", "core.attributesFile=/dev/null"];
 const REPO_SCOPES: ReadonlySet<string> = new Set(["local", "worktree", "command"]);
 const DRIVER_KEY_RE = "^(filter\\..*\\.(clean|smudge|process)|diff\\..*\\.textconv)$";
+// Patch-producing subcommands. diff.external= (blank) makes these die with "external diff died", so --no-ext-diff
+// --no-textconv are injected right after the subcommand; a caller's --ext-diff/--textconv is dropped, never honoured.
+const PATCH_CMDS: ReadonlySet<string> = new Set(["diff", "show", "log", "whatchanged"]);
+const OPT_WITH_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
 const SECRET_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
 
 /** A copy of env without the token family and SSH_AUTH_SOCK. Never mutates its argument. */
@@ -33,6 +37,7 @@ export interface SafeGitOpts extends Omit<ExecFileSyncOptions, "cwd" | "env" | "
 export const safeGitEnv = (base: NodeJS.ProcessEnv = process.env, allowToken = false): NodeJS.ProcessEnv => {
   const env: NodeJS.ProcessEnv = { ...(allowToken ? base : tokenFreeEnv(base)), GIT_CONFIG_NOSYSTEM: "1" };
   delete env.GIT_ATTR_SOURCE;
+  delete env.GIT_EXTERNAL_DIFF; // overrides diff.external and would run an arbitrary program
   return env;
 };
 
@@ -54,8 +59,20 @@ function driverKeys(repoDir: string): string[] {
  *  textconv driver is blanked too. A blanked driver with filter.<x>.required=true makes git error: callers see a throw, never a clean result. */
 export const safeGitArgs = (args: readonly string[], allowToken = false, repoDir?: string): string[] => [
   ...(allowToken ? CREDENTIAL_CONFIG : SAFE_GIT_CONFIG), ...DRIVER_CONFIG,
-  ...(repoDir ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...args,
+  ...(repoDir ? driverKeys(repoDir).flatMap((k) => ["-c", `${k}=`]) : []), ...noExtDiff(args),
 ];
+
+/** Inject --no-ext-diff --no-textconv after a patch-producing subcommand and drop --ext-diff/--textconv. Other commands pass through. */
+function noExtDiff(args: readonly string[]): string[] {
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("-")) i += OPT_WITH_VALUE.has(args[i]!) ? 2 : 1;
+  const cmd = args[i];
+  if (cmd === undefined || !PATCH_CMDS.has(cmd)) return [...args];
+  const rest = args.slice(i + 1);
+  const end = rest.indexOf("--");
+  const opts = (end < 0 ? rest : rest.slice(0, end)).filter((a) => a !== "--ext-diff" && a !== "--textconv");
+  return [...args.slice(0, i + 1), "--no-ext-diff", "--no-textconv", ...opts, ...(end < 0 ? [] : rest.slice(end))];
+}
 
 /** argv form for the async run()/Bun.spawn helpers: the program, then hardened config, then args. Pair it with safeGitEnv(). */
 export const safeGitArgv = (args: readonly string[], allowToken = false, repoDir?: string): string[] => ["git", ...safeGitArgs(args, allowToken, repoDir)];
