@@ -173,6 +173,18 @@ jobs:
             echo "PROMOTE-BLOCK: could not read the nightly runs from the API; not promoting ${VERSION} (fail closed)"
             exit 1
           }
+          # CTO ruling on P1: a descendant's green never covers a red at the
+          # promoted SHA itself. The newest nightly AT that SHA must not be red.
+          while IFS='|' read -r RID CONC RSHA URL; do
+            [ "${RSHA:-}" = "$GITHEAD" ] || continue
+            case "$CONC" in
+              failure | timed_out | startup_failure)
+                echo "PROMOTE-BLOCK: the newest nightly at the promoted SHA ${GITHEAD} is ${CONC}: ${URL}"
+                exit 1
+                ;;
+            esac
+            break
+          done <<< "$RUNS"
           while IFS='|' read -r RID CONC RSHA URL; do
             [ -n "${RID:-}" ] || continue
             if [ "$RSHA" = "$GITHEAD" ] || git merge-base --is-ancestor "$GITHEAD" "$RSHA" 2>/dev/null; then

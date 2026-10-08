@@ -287,6 +287,15 @@ class PromoteGateBehavior(unittest.TestCase):
     def test_side_branch_descendant_not_on_main_blocks(self):
         self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.SD)]))
 
+    def test_red_at_promoted_sha_blocks_despite_newer_green_descendant(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(2, "success", self.B), self._run_obj(1, "failure", self.A)]))
+
+    def test_red_at_promoted_sha_superseded_by_newer_green_at_same_sha_passes(self):
+        self.assertPass(self._n(self.A, [self._run_obj(2, "success", self.A), self._run_obj(1, "failure", self.A)]))
+
+    def test_cancelled_at_promoted_sha_does_not_mask_older_red_check(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(3, "success", self.B), self._run_obj(2, "cancelled", self.A), self._run_obj(1, "timed_out", self.A)]))
+
     def test_non_scheduled_event_is_ignored(self):
         self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.B, event="push")]))
 
