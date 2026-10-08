@@ -12,6 +12,7 @@ import { routeEscalate, routeStart } from "../../runner/router/implement_route.t
 import { routerActive } from "../../runner/router/unit_model.ts";
 import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
+import { DECLARED_FILE, supplyBriefBlock, supplyEnabled } from "../../supply/supply_guard.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
@@ -30,12 +31,13 @@ export function impactedTests(ctx: RunContext): string[] {
 }
 
 export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: (t, repoDir) => { const c = commandFor(t, repoDir, loadProjectApi(repoDir)); return [c.cmd, c.args, c.interpreter, c.pkgRoot]; } });
-export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
+export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", supplyPath?: string): string {
   return withStagePrefix([ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     FIXED_RULES,
     ...taskBlock(task),
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     ...(repoMap ? [repoMap] : []),
+    ...(supplyPath ? [supplyBriefBlock(supplyPath)] : []), // T10: only while the guard is on
     impactedTests.length ? `Impacted tests (a starting hint, not a limit): ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the project's full test command (a starting hint, not a limit).",
     FINISH_LINE,
   ].join("\n\n"));
@@ -73,7 +75,7 @@ export const implementStage: Stage = {
 
     const first: SessionRunOptions = {
       stage: "implement",
-      brief: buildImplementBrief(task, plan, impacted, repoMap),
+      brief: buildImplementBrief(task, plan, impacted, repoMap, supplyEnabled(process.env) ? join(ctx.runDir, DECLARED_FILE) : undefined),
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
       limitS: implementStage.limitS,

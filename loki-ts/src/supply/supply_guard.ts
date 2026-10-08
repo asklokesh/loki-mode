@@ -1,166 +1,59 @@
-// T10: supply-chain guard v1. Finds dependencies newly added by the change (manifest diff base..head)
-// and checks npm / PyPI that each exists and was first published at least 7 days ago.
-// Off with LOKI_SUPPLY_GUARD=0 (receipt byte-identical to before). Registry access is injectable.
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
+// T10 (redesign): supply-chain guard v2. The model DECLARES the new third-party registry dependencies it added
+// (a run-dir file, bounded reader); the harness PROVES each one with the ecosystem's own resolver under the
+// user's config (npm view, pip index versions, cargo search, go list). The harness never parses manifest or
+// lockfile formats (FC-35). Only a declared registry dep that does not resolve is FAILED; everything the
+// tooling cannot answer is NOT PROVEN. Off with LOKI_SUPPLY_GUARD=0 (receipt and brief unchanged).
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { run } from "../util/shell.ts";
 
 export type SupplyStatus = "ok" | "nonexistent" | "too_new" | "allowlisted" | "unreachable" | "unsupported" | "capped";
-export interface SupplyEntry { ecosystem: string; name: string; manifest: string; status: SupplyStatus; age_days?: number }
-export interface SupplyBlock { guard: "v1"; warn_age_days: number; fail_age_days: number | null; entries: SupplyEntry[] }
+export interface SupplyEntry { ecosystem: string; name: string; version_spec: string; registry: string; status: SupplyStatus; age_days?: number }
+export interface SupplyBlock { guard: "v2"; warn_age_days: number; fail_age_days: number | null; declared: number; entries: SupplyEntry[] }
 export interface SupplyResult { block: SupplyBlock | null; notProven: string[]; blocked: boolean }
-export interface RegistryReply { status: number; json?: unknown }
-export type RegistryFetcher = (url: string, timeoutMs: number) => Promise<RegistryReply>;
+export interface DeclaredDep { ecosystem: string; name: string; version_spec: string; registry: string }
+export type Resolution = { status: "exists"; firstPublish?: number } | { status: "missing" } | { status: "unproven" };
+export type Resolver = (dep: DeclaredDep, cwd: string, env: NodeJS.ProcessEnv) => Promise<Resolution>;
 
 export const MIN_AGE_DAYS = 7; // warning threshold; a hard fail on age needs LOKI_SUPPLY_MIN_AGE_DAYS
-const MAX_CHECKED = 50;
-const DAY_MS = 86400000;
-
-/** CTO ruling: age is a warning by default; a positive LOKI_SUPPLY_MIN_AGE_DAYS makes younger packages a hard fail. */
-export function failAgeDays(env: NodeJS.ProcessEnv): number | null { const n = Number(env["LOKI_SUPPLY_MIN_AGE_DAYS"]); return Number.isFinite(n) && n > 0 ? n : null; }
-
-/** Only a nonexistent package (or an opted-in age fail) changes the verdict; VERIFIED becomes FAILED, nothing else moves. */
-export function supplyVerdict<V extends string>(verdict: V, r: SupplyResult): V { return r.blocked && verdict === "VERIFIED" ? ("FAILED" as V) : verdict; }
+export const DECLARED_FILE = "supply-declared.json";
+const MAX_CHECKED = 50, MAX_DECLARED = 200, MAX_FILE_BYTES = 64 * 1024, DAY_MS = 86400000;
+const MANIFESTS = /^(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|requirements.*\.txt|pyproject\.toml|poetry\.lock|uv\.lock|Pipfile|Pipfile\.lock|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|Gemfile|Gemfile\.lock|composer\.json|composer\.lock|pom\.xml|build\.gradle(\.kts)?)$/;
 
 export function supplyEnabled(env: NodeJS.ProcessEnv): boolean { return env["LOKI_SUPPLY_GUARD"] !== "0"; }
+/** A positive LOKI_SUPPLY_MIN_AGE_DAYS makes a younger package a hard fail; otherwise age only warns. */
+export function failAgeDays(env: NodeJS.ProcessEnv): number | null { const n = Number(env["LOKI_SUPPLY_MIN_AGE_DAYS"]); return Number.isFinite(n) && n > 0 ? n : null; }
+/** Only a nonexistent declared dependency (or an opted-in age fail) changes the verdict; VERIFIED becomes FAILED, nothing else moves. */
+export function supplyVerdict<V extends string>(verdict: V, r: SupplyResult): V { return r.blocked && verdict === "VERIFIED" ? ("FAILED" as V) : verdict; }
+export function isManifestPath(path: string): boolean { return MANIFESTS.test(basename(path)); }
 
-export const defaultFetcher: RegistryFetcher = async (url, timeoutMs) => {
-  const r = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { accept: "application/json" } });
-  if (r.status === 200) return { status: 200, json: await r.json() };
-  return { status: r.status };
-};
-
-type Eco = "npm" | "pypi" | "go" | "cargo";
-export function manifestEcosystem(path: string): Eco | null {
-  const b = basename(path);
-  if (b === "package.json" || b === "package-lock.json") return "npm";
-  if (/^requirements.*\.txt$/.test(b) || b === "pyproject.toml") return "pypi";
-  if (b === "go.mod") return "go";
-  if (b === "Cargo.toml") return "cargo";
-  return null;
+/** The text appended to the implement brief when the guard is on. */
+export function supplyBriefBlock(path: string): string {
+  return `Dependency declaration: if you ADDED any new third-party package from a public or private registry (npm, PyPI, crates.io, Go modules), write a JSON array to ${path} with one object per package: {"ecosystem":"npm|pypi|cargo|go","name":"...","version_spec":"...","registry":"default or the registry URL"}. Do NOT list workspace, path, git, url or local packages, or packages that were already dependencies. If you added none, write nothing.`;
 }
 
-const pyNorm = (n: string): string => n.toLowerCase().replace(/[-_.]+/g, "-");
+const ECO: Record<string, string> = { npm: "npm", node: "npm", pypi: "pypi", pip: "pypi", python: "pypi", cargo: "cargo", crates: "cargo", go: "go", golang: "go" };
+const NAME = /^[A-Za-z0-9@][A-Za-z0-9@._/~+-]{0,213}$/;
 
-function npmDeps(text: string): string[] {
-  let j: Record<string, unknown>;
-  try { j = JSON.parse(text) as Record<string, unknown>; } catch { return []; }
-  const out: string[] = [];
-  for (const k of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
-    const d = j[k]; if (!d || typeof d !== "object") continue;
-    for (const [name, spec] of Object.entries(d as Record<string, unknown>)) {
-      const s = String(spec).trim();
-      if (/^(file|link|workspace|portal|catalog|git|git\+\w+|https?|github|gitlab|bitbucket):/.test(s) || /^[./~]/.test(s) || /^[\w.-]+\/[\w.-]+(#.*)?$/.test(s)) continue; // not a registry spec
-      const alias = /^npm:(@?[^@]+)(@.*)?$/.exec(s); // an alias installs the target package
-      out.push(alias ? alias[1]! : name);
+/** Bounded, validating reader: null means no usable declaration (absent, oversized or malformed), never a throw. */
+export function readDeclared(runDir: string): { deps: DeclaredDep[]; problem: string | null } {
+  const p = join(runDir, DECLARED_FILE);
+  if (!existsSync(p)) return { deps: [], problem: null };
+  try {
+    if (statSync(p).size > MAX_FILE_BYTES) return { deps: [], problem: "declaration file too large" };
+    const j = JSON.parse(readFileSync(p, "utf8")) as unknown;
+    if (!Array.isArray(j)) return { deps: [], problem: "declaration is not a JSON array" };
+    const deps: DeclaredDep[] = [];
+    for (const o of j.slice(0, MAX_DECLARED)) {
+      if (!o || typeof o !== "object") continue;
+      const r = o as Record<string, unknown>;
+      const eco = ECO[String(r["ecosystem"] ?? "").toLowerCase()] ?? String(r["ecosystem"] ?? "").toLowerCase().slice(0, 30);
+      const name = String(r["name"] ?? "");
+      if (!eco || !NAME.test(name)) continue;
+      deps.push({ ecosystem: eco, name, version_spec: String(r["version_spec"] ?? "").slice(0, 100), registry: String(r["registry"] ?? "default").slice(0, 200) });
     }
-  }
-  return out;
-}
-
-function lockDeps(text: string): string[] {
-  try { return Object.keys(((JSON.parse(text) as Record<string, unknown>)["packages"] ?? {}) as object).map((k) => k.replace(/^.*node_modules\//, "")).filter((k) => k && !k.startsWith("/")); } catch { return []; }
-}
-
-function reqLine(line: string): string | null {
-  const l = line.replace(/\s#.*$/, "").trim();
-  if (!l || l.startsWith("#") || l.startsWith("-") || /^(git\+|https?:|file:|\.|\/)/.test(l)) return null;
-  const m = /^([A-Za-z0-9][A-Za-z0-9._-]*)/.exec(l);
-  return m ? pyNorm(m[1]!) : null;
-}
-
-function pyprojectDeps(text: string): string[] {
-  const out: string[] = [];
-  let table = "", key = "", buf: string[] | null = null;
-  const take = (arr: string): void => { for (const m of arr.matchAll(/"([^"]+)"|'([^']+)'/g)) { const n = reqLine(m[1] ?? m[2] ?? ""); if (n) out.push(n); } };
-  const wanted = (t: string, k: string): boolean =>
-    (t === "project" && k === "dependencies") || t === "project.optional-dependencies" || t === "dependency-groups" || (t === "build-system" && k === "requires");
-  for (const line of text.split("\n")) {
-    if (buf) { buf.push(line); if (/\]\s*(#.*)?$/.test(line.trim())) { if (wanted(table, key)) take(buf.join("\n")); buf = null; } continue; }
-    const h = /^\s*\[([^\[\]]+)\]\s*(#.*)?$/.exec(line);
-    if (h) { table = h[1]!.trim(); continue; }
-    if (/^\s*\[\[/.test(line)) { table = ""; continue; }
-    const m = /^\s*([A-Za-z0-9_.-]+|"[^"]+")\s*=\s*(.*)$/.exec(line);
-    if (!m) { continue; }
-    key = m[1]!.replace(/"/g, ""); const rest = m[2]!;
-    if (table === "project" && key === "dependencies" || table === "project.optional-dependencies" || table === "dependency-groups" || (table === "build-system" && key === "requires")) {
-      if (rest.trim().startsWith("[")) { if (/\]\s*(#.*)?$/.test(rest.trim())) { take(rest); } else buf = [rest]; }
-    } else if (/^tool\.poetry\.(group\.[^.]+\.)?dependencies$|^tool\.poetry\.dev-dependencies$/.test(table)) {
-      if (key.toLowerCase() !== "python") out.push(pyNorm(key));
-      if (!/^["'{\[]/.test(rest.trim()) && !/^\d/.test(rest.trim())) continue;
-    } else if (rest.trim().startsWith("[") && !/\]\s*(#.*)?$/.test(rest.trim())) buf = [rest]; // skip other multi-line arrays
-  }
-  return out;
-}
-
-function goDeps(text: string): string[] {
-  const out: string[] = []; let block = false;
-  for (const line of text.split("\n")) {
-    const t = line.replace(/\/\/.*$/, "").trim();
-    if (/^require\s*\($/.test(t)) { block = true; continue; }
-    if (block && t === ")") { block = false; continue; }
-    const m = block ? /^(\S+)\s+v\S+/.exec(t) : /^require\s+(\S+)\s+v\S+/.exec(t);
-    if (m) out.push(m[1]!);
-  }
-  return out;
-}
-
-function cargoDeps(text: string): string[] {
-  const out: string[] = []; let inDeps = false;
-  for (const line of text.split("\n")) {
-    const h = /^\s*\[([^\]]+)\]/.exec(line);
-    if (h) {
-      const sec = h[1]!.trim();
-      const tbl = /(^|\.)(dev-|build-)?dependencies\.([A-Za-z0-9_-]+)$/.exec(sec);
-      if (tbl) out.push(tbl[3]!);
-      inDeps = /(^|\.)(dev-|build-)?dependencies$/.test(sec); continue;
-    }
-    if (!inDeps) continue;
-    const m = /^\s*([A-Za-z0-9_-]+)\s*=/.exec(line); if (m) out.push(m[1]!);
-  }
-  return out;
-}
-
-export function parseDeps(path: string, text: string): string[] {
-  const eco = manifestEcosystem(path);
-  if (eco === "npm") return basename(path) === "package-lock.json" ? lockDeps(text) : npmDeps(text);
-  if (eco === "go") return goDeps(text);
-  if (eco === "cargo") return cargoDeps(text);
-  if (eco === "pypi") return basename(path) === "pyproject.toml" ? pyprojectDeps(text) : text.split("\n").map(reqLine).filter((x): x is string => !!x);
-  return [];
-}
-
-async function show(cwd: string, sha: string, path: string): Promise<string> {
-  const r = await run(["git", "show", `${sha}:${path}`], { cwd, timeoutMs: 20000 });
-  return r.exitCode === 0 ? r.stdout : "";
-}
-
-/** A requirements file that names its own index cannot be judged against the public PyPI. */
-export function usesCustomIndex(path: string, text: string): boolean { return /^requirements.*\.txt$/.test(basename(path)) && /^\s*(--index-url|--extra-index-url|-i)\b/m.test(text); }
-
-export interface NewDep { ecosystem: Eco; name: string; manifest: string; customIndex?: boolean }
-/** Dependencies present at head and absent at base, per touched manifest. */
-export async function newDependencies(repoDir: string, baseSha: string, head: string, changedFiles: string[]): Promise<NewDep[]> {
-  const out: NewDep[] = [];
-  for (const f of [...new Set(changedFiles)]) {
-    const eco = manifestEcosystem(f); if (!eco) continue;
-    const before = new Set(parseDeps(f, await show(repoDir, baseSha, f)));
-    const headText = await show(repoDir, head, f), custom = usesCustomIndex(f, headText);
-    for (const n of new Set(parseDeps(f, headText))) if (!before.has(n)) out.push({ ecosystem: eco, name: n, manifest: f, ...(custom ? { customIndex: true } : {}) });
-  }
-  return out;
-}
-
-/** Names of every package.json in the head tree: workspace siblings are local, never registry lookups. */
-export async function localPackageNames(repoDir: string, head: string): Promise<Set<string>> {
-  const names = new Set<string>();
-  const ls = await run(["git", "ls-tree", "-r", "--name-only", "-z", head], { cwd: repoDir, timeoutMs: 20000 });
-  if (ls.exitCode !== 0) return names;
-  for (const f of ls.stdout.split("\0").filter((x) => basename(x) === "package.json" && !x.includes("node_modules/")).slice(0, 300)) {
-    try { const n = (JSON.parse(await show(repoDir, head, f)) as Record<string, unknown>)["name"]; if (typeof n === "string") names.add(n); } catch { /* unparsable manifest */ }
-  }
-  return names;
+    return { deps, problem: null };
+  } catch { return { deps: [], problem: "declaration unreadable" }; }
 }
 
 export function readAllowlist(repoDir: string): Set<string> {
@@ -169,99 +62,87 @@ export function readAllowlist(repoDir: string): Set<string> {
   try { return new Set(readFileSync(p, "utf8").split("\n").map((l) => l.replace(/#.*$/, "").trim()).filter(Boolean)); } catch { return new Set(); }
 }
 
-export interface RegistryConfig { npmDefault: string; npmScopes: Record<string, string>; pypiBase: string | null }
-function readConf(p: string): string { try { return existsSync(p) ? readFileSync(p, "utf8") : ""; } catch { return ""; } }
-const trimSlash = (u: string): string => u.replace(/\/+$/, "");
-/** The user's configured registries: env, then repo .npmrc, ~/.npmrc, pip.conf. Defaults are the public registries. */
-export function registryConfig(repoDir: string, env: NodeJS.ProcessEnv): RegistryConfig {
-  const c: RegistryConfig = { npmDefault: "https://registry.npmjs.org", npmScopes: {}, pypiBase: null };
-  const home = env["HOME"] || homedir();
-  for (const text of [readConf(join(home, ".npmrc")), readConf(join(repoDir, ".npmrc"))]) { // later (repo) wins
-    for (const line of text.split("\n")) {
-      const m = /^\s*(@[^:\s]+:)?registry\s*=\s*(\S+)/.exec(line.replace(/[;#].*$/, ""));
-      if (!m) continue;
-      if (m[1]) c.npmScopes[m[1].slice(0, -1)] = trimSlash(m[2]!); else c.npmDefault = trimSlash(m[2]!);
-    }
+/** Pure classifier for a resolver command's outcome. Anything not clearly "absent" is unproven. */
+export function classify(eco: string, name: string, exitCode: number, stdout: string, stderr: string): Resolution {
+  const err = `${stderr}\n${stdout}`;
+  if (eco === "npm") {
+    if (exitCode === 0) { const m = /"?(\d{4}-\d\d-\d\dT[\d:.]+Z)"?/.exec(stdout); return m ? { status: "exists", firstPublish: Date.parse(m[1]!) } : { status: "exists" }; }
+    return /E404|404 Not Found|is not in this registry/i.test(err) ? { status: "missing" } : { status: "unproven" };
   }
-  const e = env["npm_config_registry"] || env["NPM_CONFIG_REGISTRY"]; if (e) c.npmDefault = trimSlash(e);
-  let idx = env["PIP_INDEX_URL"] ?? "";
-  if (!idx) for (const p of [join(home, ".config", "pip", "pip.conf"), join(home, ".pip", "pip.conf"), join(repoDir, "pip.conf")]) { const m = /^\s*index-url\s*[=:]\s*(\S+)/m.exec(readConf(p)); if (m) idx = m[1]!; }
-  if (idx) c.pypiBase = trimSlash(idx).replace(/\/simple$/, "");
-  return c;
+  if (eco === "pypi") {
+    if (exitCode === 0) return /Available versions/i.test(stdout) ? { status: "exists" } : { status: "unproven" };
+    return /No matching distribution|from versions: none/i.test(err) ? { status: "missing" } : { status: "unproven" };
+  }
+  if (eco === "cargo") {
+    if (exitCode !== 0) return { status: "unproven" };
+    return stdout.split("\n").some((l) => l.startsWith(`${name} = `)) ? { status: "exists" } : { status: "missing" };
+  }
+  if (eco === "go") {
+    if (exitCode === 0) return { status: "exists" };
+    return /no matching versions|not found|404|410/i.test(err) && !/dial tcp|timeout|no such host|connection/i.test(err) ? { status: "missing" } : { status: "unproven" };
+  }
+  return { status: "unproven" };
 }
 
-type Probe = { kind: "nonexistent" } | { kind: "unreachable" } | { kind: "found"; firstPublish: number | null };
+/** Default resolver: the ecosystem's own tool, run in the repo so the user's .npmrc / pip.conf / cargo config apply. */
+export const defaultResolver: Resolver = async (dep, cwd) => {
+  const argv: Record<string, string[]> = {
+    npm: ["npm", "view", dep.name, "time.created", "--json"],
+    pypi: ["pip", "index", "versions", dep.name],
+    cargo: ["cargo", "search", dep.name, "--limit", "5"],
+    go: ["go", "list", "-m", "-json", `${dep.name}@latest`],
+  };
+  const cmd = argv[dep.ecosystem];
+  if (!cmd || dep.name.startsWith("-")) return { status: "unproven" };
+  try {
+    const r = await run(cmd, { cwd, timeoutMs: 10000 });
+    return classify(dep.ecosystem, dep.name, r.exitCode, r.stdout, r.stderr);
+  } catch { return { status: "unproven" }; } // tool absent or timed out
+};
 
-async function probe(eco: "npm" | "pypi", name: string, fetcher: RegistryFetcher, cfg: RegistryConfig): Promise<Probe> {
-  let url: string, custom = false;
-  if (eco === "npm") {
-    const scope = name.startsWith("@") ? name.split("/")[0]! : "";
-    const root = (scope && cfg.npmScopes[scope]) || cfg.npmDefault; custom = root !== "https://registry.npmjs.org";
-    url = `${root}/${name.startsWith("@") ? name.replace("/", "%2F") : name}`;
-  } else { custom = cfg.pypiBase !== null; url = `${cfg.pypiBase ?? "https://pypi.org"}/pypi/${encodeURIComponent(name)}/json`; }
-  let r: RegistryReply;
-  try { r = await fetcher(url, 10000); } catch { return { kind: "unreachable" }; }
-  // A configured private registry (.npmrc / pip.conf) may not mirror or expose the package: a 404 proves nothing about existence.
-  if (r.status === 404) return custom ? { kind: "unreachable" } : { kind: "nonexistent" };
-  if (r.status !== 200 || !r.json || typeof r.json !== "object") return { kind: "unreachable" };
-  const j = r.json as Record<string, unknown>;
-  const times: number[] = [];
-  if (eco === "npm") {
-    const t = (j["time"] ?? {}) as Record<string, unknown>;
-    if (t["unpublished"] || !j["versions"] || Object.keys(j["versions"] as object).length === 0) return custom ? { kind: "unreachable" } : { kind: "nonexistent" };
-    for (const [k, v] of Object.entries(t)) if (k !== "modified") { const n = Date.parse(String(v)); if (Number.isFinite(n)) times.push(n); }
-  } else {
-    for (const files of Object.values((j["releases"] ?? {}) as Record<string, unknown>)) {
-      if (!Array.isArray(files)) continue;
-      for (const f of files) { const o = f as Record<string, unknown>; const n = Date.parse(String(o["upload_time_iso_8601"] ?? o["upload_time"] ?? "")); if (Number.isFinite(n)) times.push(n); }
-    }
-  }
-  return { kind: "found", firstPublish: times.length ? Math.min(...times) : null };
-}
+let injected: Resolver | null = null;
+/** Test seam: replace the resolver (null restores the real tooling). */
+export function setSupplyResolver(f: Resolver | null): void { injected = f; }
 
-let injected: RegistryFetcher | null = null;
-/** Test seam: replace the registry fetcher (null restores the network default). */
-export function setSupplyFetcher(f: RegistryFetcher | null): void { injected = f; }
-
-export async function supplyGuard(repoDir: string, baseSha: string, head: string, changedFiles: string[], env: NodeJS.ProcessEnv, opts: { fetcher?: RegistryFetcher; now?: number } = {}): Promise<SupplyResult> {
+export async function supplyGuard(repoDir: string, changedFiles: string[], declared: { deps: DeclaredDep[]; problem: string | null }, env: NodeJS.ProcessEnv, opts: { resolver?: Resolver; now?: number } = {}): Promise<SupplyResult> {
   const none: SupplyResult = { block: null, notProven: [], blocked: false };
   if (!supplyEnabled(env)) return none;
-  const raw = opts.fetcher ?? injected ?? defaultFetcher, now = opts.now ?? Date.now();
-  const cache = new Map<string, Promise<RegistryReply>>(); // per-run lookup cache
-  const fetcher: RegistryFetcher = (u, t) => { let h = cache.get(u); if (!h) { h = raw(u, t); cache.set(u, h); } return h; };
-  const cfg = registryConfig(repoDir, env), failAge = failAgeDays(env);
-  let added: NewDep[];
-  try { added = await newDependencies(repoDir, baseSha, head, changedFiles); } catch { return none; }
-  if (added.length === 0) return none;
-  const allow = readAllowlist(repoDir), local = await localPackageNames(repoDir, head).catch(() => new Set<string>());
-  added = added.filter((d) => !(d.ecosystem === "npm" && local.has(d.name))); // workspace siblings
-  if (added.length === 0) return none;
+  const touched = changedFiles.filter(isManifestPath);
+  if (touched.length === 0) return none; // the diff adds or changes no dependency file
+  const resolver = opts.resolver ?? injected ?? defaultResolver, now = opts.now ?? Date.now(), failAge = failAgeDays(env);
   const notProven: string[] = []; let blocked = false;
-  const checkable = added.filter((d) => (d.ecosystem === "npm" || d.ecosystem === "pypi") && !allow.has(d.name));
-  const overflow = new Set(checkable.slice(MAX_CHECKED));
-  const entries = await Promise.all(added.map(async (d): Promise<SupplyEntry> => {
-    const base = { ecosystem: d.ecosystem, name: d.name, manifest: d.manifest };
-    if (d.ecosystem !== "npm" && d.ecosystem !== "pypi") return { ...base, status: "unsupported" };
-    if (allow.has(d.name)) return { ...base, status: "allowlisted" };
-    if (d.customIndex) return { ...base, status: "unreachable" };
-    if (overflow.has(d)) return { ...base, status: "capped" };
-    const p = await probe(d.ecosystem, d.name, fetcher, cfg);
-    if (p.kind === "nonexistent") return { ...base, status: "nonexistent" };
-    if (p.kind === "unreachable" || p.firstPublish === null) return { ...base, status: "unreachable" };
-    const age = Math.floor((now - p.firstPublish) / DAY_MS);
-    return { ...base, status: age < Math.max(MIN_AGE_DAYS, failAge ?? 0) ? "too_new" : "ok", age_days: age };
-  }));
+  if (declared.problem) notProven.push(`supply guard NOT PROVEN: ${declared.problem}`);
+  if (declared.deps.length === 0) {
+    if (!declared.problem) notProven.push(`supply guard WARNING: dependencies changed (${[...new Set(touched)].slice(0, 5).join(", ")}) but none declared; not checked`);
+    return { block: { guard: "v2", warn_age_days: MIN_AGE_DAYS, fail_age_days: failAge, declared: 0, entries: [] }, notProven, blocked: false };
+  }
+  const allow = readAllowlist(repoDir), cache = new Map<string, Promise<Resolution>>();
+  let checked = 0;
+  const entries: SupplyEntry[] = [];
+  for (const d of declared.deps) {
+    const base = { ecosystem: d.ecosystem, name: d.name, version_spec: d.version_spec, registry: d.registry };
+    if (!["npm", "pypi", "cargo", "go"].includes(d.ecosystem)) { entries.push({ ...base, status: "unsupported" }); continue; }
+    if (allow.has(d.name)) { entries.push({ ...base, status: "allowlisted" }); continue; }
+    if (++checked > MAX_CHECKED) { entries.push({ ...base, status: "capped" }); continue; }
+    const key = `${d.ecosystem}:${d.name}`;
+    let h = cache.get(key); if (!h) { h = resolver(d, repoDir, env).catch((): Resolution => ({ status: "unproven" })); cache.set(key, h); }
+    const res = await h;
+    if (res.status === "missing") entries.push({ ...base, status: "nonexistent" });
+    else if (res.status === "unproven") entries.push({ ...base, status: "unreachable" });
+    else if (res.firstPublish === undefined || !Number.isFinite(res.firstPublish)) entries.push({ ...base, status: "ok" });
+    else { const age = Math.floor((now - res.firstPublish) / DAY_MS); entries.push({ ...base, status: age < MIN_AGE_DAYS || (failAge !== null && age < failAge) ? "too_new" : "ok", age_days: age }); }
+  }
   for (const e of entries) {
-    const id = `${e.ecosystem}:${e.name} (${e.manifest})`;
-    if (e.status === "nonexistent") { blocked = true; notProven.push(`supply guard FAILED: ${id} does not exist on the registry (possible hallucinated package)`); }
+    const id = `${e.ecosystem}:${e.name}`;
+    if (e.status === "nonexistent") { blocked = true; notProven.push(`supply guard FAILED: declared dependency ${id} does not resolve in the registry (possible hallucinated package)`); }
     else if (e.status === "too_new") {
       if (failAge !== null && (e.age_days ?? 0) < failAge) { blocked = true; notProven.push(`supply guard FAILED: ${id} first published ${e.age_days} days ago (LOKI_SUPPLY_MIN_AGE_DAYS=${failAge}); allowlist in .loki/supply-allowlist to accept`); }
       else notProven.push(`supply guard WARNING: ${id} first published ${e.age_days} days ago (under ${MIN_AGE_DAYS}); verdict unchanged`);
     }
-    else if (e.status === "unreachable") notProven.push(`supply guard NOT PROVEN: registry unreachable or unreadable for ${id}`);
+    else if (e.status === "unreachable") notProven.push(`supply guard NOT PROVEN: resolver could not answer for ${id}`);
     else if (e.status === "capped") notProven.push(`supply guard: not checked: cap ${MAX_CHECKED} exceeded: ${id}`);
     else if (e.status === "unsupported") notProven.push(`supply guard: not checked (ecosystem unsupported in v1): ${id}`);
     else if (e.status === "allowlisted") notProven.push(`supply guard: allowlisted, not checked: ${id}`);
   }
-  return { block: { guard: "v1", warn_age_days: MIN_AGE_DAYS, fail_age_days: failAge, entries }, notProven, blocked };
+  return { block: { guard: "v2", warn_age_days: MIN_AGE_DAYS, fail_age_days: failAge, declared: declared.deps.length, entries }, notProven, blocked };
 }

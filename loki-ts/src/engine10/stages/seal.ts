@@ -15,7 +15,7 @@ import { STAGE_BUDGETS } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts"; import { routerEnabled } from "../../runner/router/flag.ts"; import { sumResultCosts } from "../cost.ts";
 import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts"; import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
-import { supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
+import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
@@ -221,7 +221,7 @@ export const sealStage: Stage = {
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
 
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
-    const supply = await supplyGuard(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), process.env);
+    const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.runDir), process.env);
     const verdict1: Verdict = supplyVerdict(verdict0, supply);
     const xr = await crossReview(ctx, verdict1, head), verdict = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
     const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? [])]);
