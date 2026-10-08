@@ -286,6 +286,28 @@ describe("engine10 pr stage", () => {
   });
 });
 
+describe("engine10 pr stage AI marker (MARK-1)", () => {
+  test("the marker lands under the verdict only while LOKI_AI_MARKING=1", async () => {
+    const prev = process.env.LOKI_AI_MARKING;
+    try {
+      process.env.LOKI_AI_MARKING = "1";
+      const on = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+      await runPr(on.ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+      const lines = readFileSync(join(runDir, "pr-body.md"), "utf8").split("\n");
+      const v = lines.findIndex((l) => /^- Verdict:/.test(l));
+      expect(v).toBeGreaterThan(-1);
+      expect(lines[v + 1]).toMatch(/^AI-Generated: true \(Loki Mode, .+, run .+\)$/);
+      expect(lines.filter((l) => l.startsWith("AI-Generated")).length).toBe(1);
+      delete process.env.LOKI_AI_MARKING;
+      const off = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+      await runPr(off.ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+      expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).not.toContain("AI-Generated");
+    } finally {
+      if (prev === undefined) delete process.env.LOKI_AI_MARKING; else process.env.LOKI_AI_MARKING = prev;
+    }
+  });
+});
+
 describe("engine10 pr stage reviewer brief (T4)", () => {
   async function body(env: string | undefined): Promise<string> {
     const prev = process.env.LOKI_REVIEWER_BRIEF;
