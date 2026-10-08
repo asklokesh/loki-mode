@@ -185,6 +185,7 @@ chk("steps.reuse.outputs.reuse == 'true'" in str(g["outputs"]["skip"]) and "step
     "test.yml: version-bump-gate skip output ORs both gates")
 rs = [s for s in g["steps"] if s.get("id") == "reuse"]
 chk(len(rs) == 1 and rs[0].get("continue-on-error") is True, "test.yml: reuse step is continue-on-error")
+chk(len(rs) == 1 and "train-verdict-reuse.sh gate" in str(rs[0].get("run", "")), "test.yml: reuse step runs train-verdict-reuse.sh gate")
 sys.exit(0 if ok else 1)
 PY
 [ $? -eq 0 ] && ok "workflow wiring assertions" || bad "workflow wiring assertions"
