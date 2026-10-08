@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.5 (2026-10-08)
+
+Patch release that makes the fast gate always run the guard tests that scan the whole source tree, and corrects a public isolation claim to what the code actually guarantees.
+
+### Changed
+- Public wording for GitHub token isolation: the environment-variable reference, code comments and test descriptions now say "Loki never passes the GitHub token into the agent's environment" instead of claiming the token never reaches the agent, and the reference states the remaining limit (the agent runs as your user, so the OS keychain and credential files are not yet isolated). The stronger claim stays withdrawn until full process isolation ships (P9-WORDING).
+
+### Fixed
+- The fast gate selected guard tests by the files a diff touched, so a guard that scans all of `loki-ts/src` (raw spawn, full-env spawn, credentialed push, hardcoded model IDs, regex and registration guards) could be skipped on a diff that added a new violation in a file it did not name. Every guard that walks the source tree now carries a content marker, and the fast gate selects all marked guards on any diff (FC-89, FASTGATE-GLOBAL-GUARDS).
+
 ## v11.3.4 (2026-10-08)
 
 Patch release that hardens the release path and clears every red on main. A release-only commit now reuses its parent's CI verdict, the fast gate selects only guards with a green baseline while keeping exact-path guards for nested manifests, Post-Release Smoke fails when a release drops a check or the Wall test, the promote gate recognizes a legacy-titled smoke run by its head SHA, and a dedupe-gated hourly full-suite backstop now measures main between releases. The Wall base run no longer misreads colored test output, and spec intake decides single-directory layout from the full tracked file list. Seven CI reds are fixed at their cause, and a test plan too large for its shard cap now falls back to the full suite. v11.3.3 was never published (its release run failed), so this is the first npm release since v11.3.2 and it also ships the v11.3.3 changes listed below that section.
