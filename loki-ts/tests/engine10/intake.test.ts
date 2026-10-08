@@ -8,7 +8,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { renderMainOutput } from "../../src/engine10/supervisor.ts";
@@ -152,6 +152,33 @@ describe("engine10 intake", () => {
     expect(result.status).toBe("failed");
     expect(result.reason).toContain("README.md");
     expect(result.reason).not.toContain("package-lock.json");
+  });
+
+  describe("FC-42: setup-written lockfiles of any ecosystem are the starting state", () => {
+    const dirtyAt = (rel: string): void => {
+      const abs = join(repoDir, rel);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, "{}\n");
+      git(repoDir, ["add", rel]);
+      git(repoDir, ["commit", "-q", "-m", `add ${rel}`]);
+      writeFileSync(abs, '{"setup":"install"}\n');
+    };
+    for (const rel of ["frontend/package-lock.json", "Gemfile.lock", "composer.lock", "Pipfile.lock", "uv.lock", "pubspec.lock", "npm-shrinkwrap.json", "mix.lock", "flake.lock", "deno.lock", "gradle.lockfile", "Package.resolved"]) {
+      test(`${rel} dirtied by setup does not refuse`, async () => {
+        dirtyAt(rel);
+        const result = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
+        expect(result.status).toBe("completed");
+        expect(Object.keys(result.data.preexisting_dirty as object)).toEqual([rel]);
+      });
+    }
+    for (const rel of ["package.json", "src/app.ts", "lockfile-notes.md", "block.lock.ts"]) {
+      test(`${rel} dirty (operator-shaped work) still refuses and is named`, async () => {
+        dirtyAt(rel);
+        const result = await runIntake(makeCtx(repoDir, runDir, fakeTests()), new AbortController().signal, { taskText: "do a thing" });
+        expect(result.status).toBe("failed");
+        expect(result.reason).toContain(rel);
+      });
+    }
   });
 
   test("untracked files do not block intake", async () => {

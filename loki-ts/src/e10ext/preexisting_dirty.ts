@@ -2,7 +2,8 @@
 // Lockfile-only modifications are allowed at intake and recorded as pre-existing; any other dirty tracked file still refuses. Lives outside engine10 core to keep it under its line cap.
 import { execFileSync } from "node:child_process"; import { lstatSync } from "node:fs"; import { join } from "node:path";
 
-const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;
+// FC-42: the machine-written lockfile family by name, not a hand-kept list of seven: *.lock, *.lockb, *.lockfile, *-lock.{json,yaml,yml}, go.sum, npm-shrinkwrap.json, Package.resolved.
+const LOCKFILE = /(^|\/)([^/]+\.lockb?|[^/]*\.lockfile|lockfile|[^/]+-lock\.(json|ya?ml)|go\.sum|npm-shrinkwrap\.json|Package\.resolved)$/;
 
 // --no-filters: never run a clean filter from the agent-writable .git/config; stderr silenced so a deleted recorded file prints no `fatal:`
 const blob = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string =>
