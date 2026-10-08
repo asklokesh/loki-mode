@@ -135,7 +135,7 @@ const START_USAGE =
   "       loki start <spec> --attempts N [--no-pr] [--provider P] [--budget USD] [--session-model T]\n" +
   "  --attempts N  run N (1-5) independent Loki 10 engine attempts in separate git worktrees; the one with\n" +
   "                the most executed passing checks is applied and every loser is recorded on the attempts\n" +
-  "                receipt. N > 1 requires --no-pr in 11.3.1. Runner-only flags are refused with --attempts.\n";
+  "                receipt. Without --no-pr the winner alone is pushed and opened as a draft PR. Runner-only flags are refused with --attempts.\n";
 
 // Parse the reconciled flag surface into RunnerOpts (+ apply env-mapping flags to
 // process.env), or return an error/terminal exit code. Value 0 = handled+exit
@@ -304,7 +304,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
     () => runEngine10(process.cwd(), runnerOpts, process.env, false),
     async (_id, wt) => {
       // Each attempt is one engine10 run in its own worktree: only engine10 seals the receipt the scorer reads.
-      // Attempts never open PRs themselves; the winner alone follows normal PR behavior (see productionDeps.openPr).
+      // Attempts never open PRs themselves; the winner alone is pushed and opened as a draft PR (see productionDeps.openPr).
       // Token-free: attempts never push (forced --no-pr; only push-pr after all attempts has credentials), so no attempt process needs GH_TOKEN or SSH_AUTH_SOCK.
       const env = tokenFreeEnv({ ...process.env, LOKI_DIR: `${wt}/.loki` });
       delete env["LOKI_RUN_TMP"];
