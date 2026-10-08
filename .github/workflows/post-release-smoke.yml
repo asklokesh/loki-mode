@@ -1,5 +1,12 @@
 name: Post-Release Smoke
 
+# D96: promote.yml finds the smoke run for a version by this title. A smoke
+# run's own head_sha is main HEAD when it started, NOT the released commit, so
+# the title carries the released SHA (workflow_run) or the version (dispatch).
+# A dispatch input with a leading v keeps it (no "vv"): Actions expressions
+# have no replace, so startsWith picks between the raw input and v<input>.
+run-name: "Post-Release Smoke ${{ github.event.workflow_run.head_sha || (startsWith(inputs.version, 'v') && inputs.version || format('v{0}', inputs.version)) }}"
+
 # Verifies that the PUBLISHED artifacts of a release actually work, closing
 # the manual post-release validation gap. Unlike a daily
 # adoption-signal heartbeat, this is a SMOKE TEST: it installs/pulls each
