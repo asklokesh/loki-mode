@@ -601,6 +601,14 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: the PATH keeps /usr/bin:/bin (providers stay absent) plus dirname(process.execPath) so the real Bun doctor always runs; the counting moved into providerInstallLines.
 - Fixture: gate-failures-cap-parity.test.ts "provider install-hint counter ignores the unrelated Python 3.12 hint" replays the CI stdout shape (python hint + claude fallback): the old bare counter yields 2 (red, asserted in the test), providerInstallLines yields 1 (green), and a leaked codex hint yields 2.
 
+## FC-64 A test piped a large captured value into grep -q under pipefail and died of SIGPIPE (NR-PIPE)
+- User saw: Nightly 37790534786 (a0d599d0c) full-suite shard 1 red. Raw: `tests/test-onboard-command.sh: line 51: echo: write error: Broken pipe`, then "Missing package manager detection" (rc 141 from `echo "$output" | grep -q npm`).
+- Law: an assertion must fail only on the property it names; a pipeline whose exit status depends on how fast the reader exits is not an assertion.
+- Cause (measured): grep -q exits at the first match while echo is still writing a value larger than the pipe buffer; pipefail reports 141. Reproduced deterministically with a 400KB value: legacy form rc=141, here-string rc=0 (tests/test-sigpipe-guard.sh section 1). The onboard fix itself was already in this train (FC-53, 0c0069df3).
+- Siblings swept: 1789 occurrences of the legacy form across pipefail suites (test-v10-pulse.sh 319, test-branch-lifecycle.sh 79, test-compound-cli.sh 65 ...); only commands with large output can trip it, and the onboard family is now zero. The rest are bounded outputs and are held by a ceiling, not bulk-rewritten.
+- Mechanism: grep -q ... <<<"$var" (no pipe, no writer to break). tests/test-sigpipe-guard.sh enforces it in test-onboard-*.sh and ratchets the repo-wide count (lower the ceiling as suites convert; never raise it).
+- Fixture: tests/test-sigpipe-guard.sh (red against the pre-fix test-onboard-command.sh from a0d599d0c: 11 legacy lines; green on this tree).
+
 ## FC-57 A continue-on-error job hides a real failure from the workflow conclusion and the D90 gate (NIGHTLY-TRUTH)
 - User saw: Nightly run 37780519439 (a0d599d0c, 2026-10-08) concluded SUCCESS while "Bun tests on macos-latest bun=1.3.13 (nightly)" and "bun=latest" both FAILED on `gate-failures cap head/tail parity (W4 L1) > doctor per-provider install hint goes to STDERR`; the same legs failed again in run 37790534786. release.yml required-ci and D90 read the run conclusion, so the release gate saw green on a deterministic failure.
 - Law: evidence or it did not happen; a red leg must reach the verdict that gates releases. Informational is a per-leg decision about upstream drift, never a job-wide switch over pinned code.
