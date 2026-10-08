@@ -335,7 +335,7 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       } catch {
         // nothing stageable
       }
-      const patch = git(wt, ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", base]);
+      const patch = git(wt, ["diff", "--cached", "--binary", base]);
       if (patch.trim() !== "") git(repoDir, ["apply", "--whitespace=nowarn"], patch);
     },
     ...(opts.noPr ? {} : {
