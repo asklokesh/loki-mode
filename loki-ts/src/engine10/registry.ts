@@ -13,7 +13,6 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./stages/seal.ts": () => import("./stages/seal.ts"),
   "./stages/pr.ts": () => import("./stages/pr.ts"),
   "./stages/deep.ts": () => import("./stages/deep.ts"),
-  "./status.ts": () => import("./status.ts"),
   "./verify_cmd.ts": () => import("./verify_cmd.ts"),
   "./keys_cmd.ts": () => import("./keys_cmd.ts"),
   "./../runner/engine10_dashboard.ts": () => import("../runner/engine10_dashboard.ts"),

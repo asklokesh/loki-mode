@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog, fold, readEvents } from "../../src/engine10/events.ts";
-import { buildStatus, eventsPath, findLatestRun, main, renderStatus, runsDir } from "../../src/engine10/status.ts";
+import { buildStatus, eventsPath, findLatestRun, main, renderStatus, runsDir } from "../../src/contrib/status.ts";
 
 function capture(stream: "stdout" | "stderr", fn: () => Promise<number>): Promise<{ code: number; out: string }> {
   const target = process[stream];

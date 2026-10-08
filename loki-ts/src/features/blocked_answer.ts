@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../engine10/events.ts";
-import { eventsPath, findLatestRun, listRunIds } from "../engine10/status.ts";
+import { eventsPath, findLatestRun, listRunIds } from "../contrib/status.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 
 export interface AnswerDeps {
