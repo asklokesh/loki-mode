@@ -18,6 +18,17 @@ function sh(cwd: string, cmd: string, args: string[]) {
   return spawnSync(cmd, args, { cwd, encoding: "utf8" });
 }
 
+// bin/loki falls back to $REPO_ROOT/node_modules/@oven/bun-*, so a no-bun test run
+// from a checkout that has npm-installed bun finds one. Run a copy of the tracked
+// script from a run-owned dir whose REPO_ROOT has no node_modules.
+function hermeticLoki(root: string): string {
+  const dir = join(root, "hermetic", "bin");
+  mkdirSync(dir, { recursive: true });
+  const dest = join(dir, "loki");
+  writeFileSync(dest, readFileSync(join(REPO, "bin/loki")), { mode: 0o755 });
+  return dest;
+}
+
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "loki-attempts-dispatch-"));
   const repo = join(root, "repo");
@@ -264,7 +275,7 @@ describe("FC-38 bin/loki start --attempts fallbacks refuse instead of reaching a
     const f = fixture();
     try {
       writeFileSync(join(f.repo, "prd.md"), "Fix sum.\n");
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md", "--attempts", "1"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(hermeticLoki(f.root), ["start", "prd.md", "--attempts", "1"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("not reachable from start");
       expect(existsSync(f.log)).toBe(false);
@@ -275,7 +286,7 @@ describe("FC-38 bin/loki start --attempts fallbacks refuse instead of reaching a
   it("no bun on PATH", () => {
     const f = fixture();
     try {
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(hermeticLoki(f.root), ["start", "fix the thing please", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("needs bun");
       expect(existsSync(f.log)).toBe(false);
