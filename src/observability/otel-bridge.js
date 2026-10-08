@@ -196,6 +196,51 @@ function processEventFile(filepath, tracer, traceId, otelRef) {
 }
 
 // ---------------------------------------------------------------------------
+// Engine10 gen_ai spans (LOKI_OTEL_GENAI=1): completed runs under .loki/runs/<id>/events.jsonl
+// ---------------------------------------------------------------------------
+
+const exportedRuns = new Set();
+
+function genaiEnabled() {
+  return /^(1|true|yes|on)$/i.test(String(process.env.LOKI_OTEL_GENAI || '').trim());
+}
+
+/** Emit the span tree for one run's envelopes. Returns the number of spans ended. */
+function exportEngine10Run(events, tracer, traceId, otelRef) {
+  const spans = require('./genai-spans').mapRunEvents(events);
+  const live = new Map();
+  for (const d of spans) {
+    const parent = d.parentKey ? live.get(d.parentKey) : null;
+    const span = tracer.startSpan(d.name, { traceId: traceId, parentSpanId: parent ? parent.spanId : undefined, attributes: Object.assign({}, d.attributes) });
+    span.startTimeUnixNano = String(d.startNs);
+    live.set(d.key, span);
+    if (d.status === 'ok') span.setStatus(otelRef.SpanStatusCode.OK);
+    else if (d.status === 'error') span.setStatus(otelRef.SpanStatusCode.ERROR);
+    span.end(d.endNs);
+  }
+  return spans.length;
+}
+
+function scanEngine10Runs(tracer, traceId, otelRef) {
+  if (!genaiEnabled()) return;
+  const runsDir = path.join(process.cwd(), lokiDir, 'runs');
+  try {
+    for (const id of fs.readdirSync(runsDir)) {
+      if (exportedRuns.has(id)) continue;
+      const f = path.join(runsDir, id, 'events.jsonl');
+      if (!fs.existsSync(f)) continue;
+      const events = [];
+      for (const line of fs.readFileSync(f, 'utf8').split('\n')) {
+        try { if (line.trim()) events.push(JSON.parse(line)); } catch (e) { /* torn line */ }
+      }
+      if (!events.some((e) => e && e.type === 'run.completed')) continue; // export complete trees only
+      exportedRuns.add(id);
+      exportEngine10Run(events, tracer, traceId, otelRef);
+    }
+  } catch (e) { /* no runs dir */ }
+}
+
+// ---------------------------------------------------------------------------
 // Polling loop
 // ---------------------------------------------------------------------------
 
@@ -229,7 +274,7 @@ function start() {
 
   // Bound versions that close over initialized dependencies
   const boundProcessEventFile = (filepath) => processEventFile(filepath, tracer, traceId, otelMod);
-  const boundScanPendingEvents = () => scanPendingEvents(tracer, traceId, otelMod);
+  const boundScanPendingEvents = () => { scanPendingEvents(tracer, traceId, otelMod); scanEngine10Runs(tracer, traceId, otelMod); };
 
   pollInterval = setInterval(boundScanPendingEvents, POLL_INTERVAL_MS);
 
@@ -275,6 +320,8 @@ function start() {
 module.exports = {
   start,
   processEventFile,
+  exportEngine10Run,
+  scanEngine10Runs,
   activeSpans,
   _getLastProcessedFile: function() { return lastProcessedFile; },
   _resetState: function() { lastProcessedFile = ''; },
