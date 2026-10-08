@@ -19953,7 +19953,7 @@ def _resolve_session_pin(alias):
         # fable unavailable, collapse to opus. Claude Fable 5 is not available at
         # the Claude API (advises use Opus 4.8); the runner dispatches opus for a
         # fable pin (claude.sh resolve_model_for_tier, run.sh dispatch backstop).
-        # Quote opus pricing (\$5/\$25) so the estimator agrees with dispatch and
+        # Quote opus pricing (\$4/\$20) so the estimator agrees with dispatch and
         # the dashboard (v7.39.1).
         _m = 'opus'
     else:  # development (and the '*' fallthrough)
@@ -20283,22 +20283,23 @@ tokens_per_tier = {
     'fast': {'input': 30000, 'output': 5000, 'model': 'Haiku'},
 }
 
-# Pricing per 1M tokens. Fable 5 is the top-tier advisory model at exactly 2x
-# Opus per token (published \$10/\$50 in/out vs Opus \$5/\$25). The Opus row was
-# corrected from a stale \$15/\$75 to the real Opus 4.8 \$5/\$25, and the Haiku
-# row from a stale \$0.25/\$1.25 (Haiku 3.5) to the published Claude Haiku 4.5
-# price of \$1/\$5 (anthropic.com/news/claude-haiku-4-5), so all four rows now
+# Pricing per 1M tokens. Fable 5 is the top-tier advisory model at 2.5x
+# Opus per token (published \$10/\$50 in/out vs Opus 5.5 \$4/\$20). The Opus row was
+# corrected to the published Opus 5.5 \$4/\$20 (platform.claude.com pricing, 2026-10-08), and the Haiku
+# row from a stale \$0.25/\$1.25 (Haiku 3.5) to Haiku 5.5 \$0.10/\$0.50 (the haiku alias target
+# in the model catalog, up to 100K prompt tokens), so all four rows now
 # match the three canonical model-keyed tables (run.sh pricing.json, run.sh
 # check_budget_limit, dashboard _DEFAULT_PRICING). The Fable row (\$10/\$50) is
 # kept as the reference price, but since v7.39.1 fable is unavailable at the API
 # and a fable pin RESOLVES to Opus everywhere -- so a fable-pinned run both
-# dispatches AND quotes Opus (\$5/\$25), matching the runner. The Fable price row
+# dispatches AND quotes Opus (\$4/\$20), matching the runner. The Fable price row
 # is only reachable as an explicit advisory reference, not via a session pin.
 pricing = {
     'Fable':  {'input': 10.00, 'output': 50.00},
-    'Opus':   {'input': 5.00, 'output': 25.00},
+    'Opus':   {'input': 4.00, 'output': 20.00},
     'Sonnet': {'input': 2.00, 'output': 10.00},
-    'Haiku':  {'input': 1.00, 'output': 5.00},
+    # Haiku = Haiku 5.5 up to 100K prompt tokens (alias target in the model catalog)
+    'Haiku':  {'input': 0.10, 'output': 0.50},
 }
 
 # Build per-iteration plan

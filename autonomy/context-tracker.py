@@ -38,10 +38,10 @@ from pathlib import Path
 # of this provider-keyed fallback.
 PRICING_BY_PROVIDER = {
     "claude": {
-        "input": 3.0,
-        "output": 15.0,
-        "cache_read": 0.30,
-        "cache_creation": 3.75,
+        "input": 2.0,
+        "output": 10.0,
+        "cache_read": 0.10,
+        "cache_creation": 2.5,
     },
     "codex": {
         "input": 2.0,

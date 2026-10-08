@@ -31,10 +31,13 @@ type PricingEntry = {
   output: number;
   cache_read?: number;
   cache_write?: number;
+  // Explicit write tiers (cache_write stays the 5m rate for legacy readers).
+  cache_write_5m?: number;
+  cache_write_1h?: number;
   // Rates for a prompt over 100,000 tokens (Haiku 5.5 only). Carried so
   // callers that know per-request size can price the tier; the aggregate
   // record paths cannot see request size and use the base rates.
-  over_100k?: { input: number; output: number; cache_read?: number; cache_write?: number };
+  over_100k?: { input: number; output: number; cache_read?: number; cache_write?: number; cache_write_5m?: number; cache_write_1h?: number };
 };
 type PricingMap = Record<string, PricingEntry>;
 
@@ -44,17 +47,22 @@ const _FALLBACK_PRICING: PricingMap = {
   // run never silently prices at the sonnet fallback (a 3.3x undercount).
   // Cache tiers included: without them the cost loop falls back to the input
   // rate for cache reads, a 10x overcharge on the dominant term.
-  fable: { input: 10.0, output: 50.0, cache_read: 1.0, cache_write: 12.5 },
-  opus: { input: 5.0, output: 25.0, cache_read: 0.5, cache_write: 6.25 },
-  sonnet: { input: 2.0, output: 10.0, cache_read: 0.2, cache_write: 2.5 },
-  haiku: { input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25 },
-  // Exact-id key: Haiku 5.5 is priced differently from the haiku family
-  // (Haiku 4.5), so it must never resolve through the family substring match.
+  fable: { input: 10.0, output: 50.0, cache_read: 0.25, cache_write: 12.5, cache_write_5m: 12.5, cache_write_1h: 20 },
+  opus: { input: 4.0, output: 20.0, cache_read: 0.2, cache_write: 5, cache_write_5m: 5, cache_write_1h: 8 },
+  sonnet: { input: 2.0, output: 10.0, cache_read: 0.1, cache_write: 2.5, cache_write_5m: 2.5, cache_write_1h: 4 },
+  // The haiku alias resolves to claude-haiku-5-5 (providers/model_catalog.json),
+  // so it carries the same row, over_100k tier included.
+  haiku: {
+    input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125, cache_write_5m: 0.125, cache_write_1h: 0.2,
+    over_100k: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625, cache_write_5m: 0.625, cache_write_1h: 1.0 },
+  },
+  // Exact-id key: kept so a dated id never resolves through the family
+  // substring match to a different row (Haiku 4.5 is priced differently).
   "claude-haiku-5-5": {
     input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125,
     over_100k: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 },
   },
-  "gpt-5.3-codex": { input: 1.5, output: 12.0, cache_read: 0.15, cache_write: 1.875 },
+  "gpt-5.3-codex": { input: 1.75, output: 14.0, cache_read: 0.175, cache_write: 2.1875 },
 };
 
 function _loadPricing(): PricingMap {
@@ -87,6 +95,8 @@ function _loadPricing(): PricingMap {
           output: _e.output,
           ...(typeof _e.cache_read === "number" ? { cache_read: _e.cache_read } : {}),
           ...(typeof _e.cache_write === "number" ? { cache_write: _e.cache_write } : {}),
+          ...(typeof _e.cache_write_5m === "number" ? { cache_write_5m: _e.cache_write_5m } : {}),
+          ...(typeof _e.cache_write_1h === "number" ? { cache_write_1h: _e.cache_write_1h } : {}),
           ...(_e.over_100k && typeof _e.over_100k.input === "number" && typeof _e.over_100k.output === "number"
             ? { over_100k: _e.over_100k }
             : {}),

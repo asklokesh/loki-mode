@@ -7578,12 +7578,12 @@ _write_pricing_json() {
   "updated": "${updated}",
   "source": "static",
   "models": {
-    "fable":           {"input": 10.00, "output": 50.00, "label": "Fable 5 (top, 2x Opus)", "provider": "claude"},
-    "claude-fable-5":  {"input": 10.00, "output": 50.00, "label": "Fable 5 (top, 2x Opus)", "provider": "claude"},
-    "opus":            {"input": 5.00,  "output": 25.00, "label": "Opus (latest)",   "provider": "claude"},
-    "sonnet":          {"input": 2.00,  "output": 10.00, "label": "Sonnet (latest)", "provider": "claude"},
-    "haiku":           {"input": 1.00,  "output": 5.00,  "label": "Haiku (latest)",  "provider": "claude"},
-    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5", "provider": "claude"},
+    "fable":           {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20, "label": "Fable 5 (top tier)", "provider": "claude"},
+    "claude-fable-5":  {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20, "label": "Fable 5 (top tier)", "provider": "claude"},
+    "opus":            {"input": 4.00,  "output": 20.00, "cache_read": 0.2, "cache_write": 5, "cache_write_1h": 8, "label": "Opus (latest)",   "provider": "claude"},
+    "sonnet":          {"input": 2.00,  "output": 10.00, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4, "label": "Sonnet (latest)", "provider": "claude"},
+    "haiku":           {"input": 0.10,  "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5 (latest)",  "provider": "claude"},
+    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5", "provider": "claude"},
     "gpt-5.3-codex":   {"input": 1.75,  "output": 14.00, "label": "GPT-5.3 Codex", "provider": "codex"}
   }
 }
@@ -20248,15 +20248,16 @@ check_budget_limit() {
 import json, glob
 total = 0.0
 pricing = {
-    'fable': {'input': 10.00, 'output': 50.00},
-    'claude-fable-5': {'input': 10.00, 'output': 50.00},
-    'opus': {'input': 5.00, 'output': 25.00},
-    'sonnet': {'input': 2.00, 'output': 10.00},
-    'haiku': {'input': 1.00, 'output': 5.00},
+    'fable': {'input': 10.00, 'output': 50.00, 'cache_read': 0.25, 'cache_write': 12.5, 'cache_write_1h': 20},
+    'claude-fable-5': {'input': 10.00, 'output': 50.00, 'cache_read': 0.25, 'cache_write': 12.5, 'cache_write_1h': 20},
+    'opus': {'input': 4.00, 'output': 20.00, 'cache_read': 0.2, 'cache_write': 5, 'cache_write_1h': 8},
+    'sonnet': {'input': 2.00, 'output': 10.00, 'cache_read': 0.1, 'cache_write': 2.5, 'cache_write_1h': 4},
+    # haiku = Haiku 5.5 up to 100K prompt tokens (no over-100K tier in this gate)
+    'haiku': {'input': 0.10, 'output': 0.50, 'cache_read': 0.01, 'cache_write': 0.125, 'cache_write_1h': 0.2},
     'gpt-5.3-codex': {'input': 1.75, 'output': 14.00},
-    'gpt-5.6-sol': {'input': 2.50, 'output': 20.00},
-    'gpt-5.6-terra': {'input': 1.50, 'output': 12.00},
-    'gpt-5.6-luna': {'input': 0.50, 'output': 4.00},
+    'gpt-5.6-sol': {'input': 4.00, 'output': 20.00},
+    'gpt-5.6-terra': {'input': 2.00, 'output': 12.00},
+    'gpt-5.6-luna': {'input': 0.20, 'output': 1.20},
 }
 for f in glob.glob('${efficiency_dir}/*.json'):
     try:
@@ -20273,8 +20274,9 @@ for f in glob.glob('${efficiency_dir}/*.json'):
             # DOMINATE real traffic: a measured iteration carried 797,496
             # cache-read tokens against 10,272 of plain input. Pricing them at
             # zero under-counted a real iteration 5.4x, so a breaker set to
-            # stop a runaway let it run far past the cap. Published multipliers:
-            # cache read 0.1x input, cache write 1.25x input.
+            # stop a runaway let it run far past the cap. Rates come from the
+            # table row (cache read is 0.05x on Opus 5.5 / Sonnet 5.5, 0.025x
+            # on Fable 5.1, 0.1x elsewhere); rows without them use 0.1x / 1.25x.
             #
             # This mirrors the TS route's calculateCostFromRecords
             # (loki-ts/src/runner/budget.ts). Both routes must agree or the
@@ -20282,7 +20284,7 @@ for f in glob.glob('${efficiency_dir}/*.json'):
             cr = d.get('cache_read_tokens', 0) or 0
             cw = d.get('cache_creation_tokens', 0) or 0
             total += (inp / 1_000_000) * p['input'] + (out / 1_000_000) * p['output']
-            total += (cr / 1_000_000) * (p['input'] * 0.1) + (cw / 1_000_000) * (p['input'] * 1.25)
+            total += (cr / 1_000_000) * p.get('cache_read', p['input'] * 0.1) + (cw / 1_000_000) * p.get('cache_write', p['input'] * 1.25)
     except: pass
 print(round(total, 4))
 " 2>/dev/null || echo "0")

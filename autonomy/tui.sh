@@ -390,16 +390,17 @@ display_token_cost() {
     local input_tokens="$2"
     local output_tokens="$3"
 
-    # Pricing per 1M tokens (March 2026 rates)
+    # Pricing per 1M tokens (2026-10-08 rates, loki-ts/data/model-pricing.json)
     local input_rate=0
     local output_rate=0
     case "$model" in
-        *opus*)   input_rate=15.0;  output_rate=75.0 ;;
-        *sonnet*) input_rate=3.0;   output_rate=15.0 ;;
-        *haiku*)  input_rate=0.25;  output_rate=1.25 ;;
+        *opus*)   input_rate=4.0;   output_rate=20.0 ;;
+        *sonnet*) input_rate=2.0;   output_rate=10.0 ;;
+        # Haiku 5.5 up to 100K prompt tokens (no over-100K tier here)
+        *haiku*)  input_rate=0.10;  output_rate=0.50 ;;
         *gpt-4o-mini*) input_rate=0.15; output_rate=0.6 ;;
         *gpt-4o*) input_rate=2.5;   output_rate=10.0 ;;
-        *)        input_rate=3.0;   output_rate=15.0 ;;  # default sonnet-like
+        *)        input_rate=2.0;   output_rate=10.0 ;;  # default sonnet-like
     esac
 
     local input_cost

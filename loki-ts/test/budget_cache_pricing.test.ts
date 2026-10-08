@@ -147,14 +147,14 @@ describe("budget: cache token pricing", () => {
     // Both routes price the SAME efficiency JSON. When they disagree, one run
     // reports two different spends and the budget breaker fires at the wrong
     // point. This is the exact arithmetic the bash route performs in
-    // check_budget_limit (run.sh): input + output + cache_read*0.1x +
-    // cache_write*1.25x, at the sonnet rate.
+    // check_budget_limit (run.sh): input + output + cache_read +
+    // cache_write at the sonnet row's own rates (0.05x read on Sonnet 5.5).
     const p = PRICING["sonnet"]!;
     const bash =
       (MEASURED.input_tokens / 1e6) * p.input +
       (MEASURED.output_tokens / 1e6) * p.output +
-      (MEASURED.cache_read_tokens / 1e6) * (p.input * 0.1) +
-      (MEASURED.cache_creation_tokens / 1e6) * (p.input * 1.25);
+      (MEASURED.cache_read_tokens / 1e6) * p.cache_read! +
+      (MEASURED.cache_creation_tokens / 1e6) * p.cache_write!;
     expect(calculateCostFromRecords([MEASURED])).toBeCloseTo(bash, 4);
   });
 });

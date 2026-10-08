@@ -7738,23 +7738,21 @@ async def stop_session(request: Request):
 # At runtime, overridden by .loki/pricing.json if available
 _DEFAULT_PRICING = {
     # Claude (Anthropic)
-    # Fable 5 is the top-tier advisory model at exactly 2x Opus per token.
-    "fable":  {"input": 10.00, "output": 50.00},
-    "claude-fable-5": {"input": 10.00, "output": 50.00},
-    "opus":   {"input": 5.00, "output": 25.00},
-    "sonnet": {"input": 2.00, "output": 10.00},
-    "haiku":  {"input": 1.00, "output": 5.00},
+    # Fable 5 is the top-tier advisory model at 2.5x Opus 5.5 per token.
+    "fable":  {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20},
+    "claude-fable-5": {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20},
+    "opus":   {"input": 4.00, "output": 20.00, "cache_read": 0.2, "cache_write": 5, "cache_write_1h": 8},
+    "sonnet": {"input": 2.00, "output": 10.00, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4},
+    # haiku = Haiku 5.5 up to 100K prompt tokens (no over-100K tier here)
+    "haiku":  {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2},
     # OpenAI Codex
-    "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
+    "gpt-5.3-codex": {"input": 1.75, "output": 14.00},
     # gpt-5.6 line: sol (high) / terra (medium, default) / luna (small).
-    # UNVERIFIED RATES. The model IDs are confirmed against
-    # developers.openai.com/api/docs/models, but OpenAI's published per-token
-    # prices for this line were not, so these are placeholders scaled from the
-    # gpt-5.3 rate. They drive a display estimate only, never a gate. Replace
-    # from the pricing page; tools/probe-model-catalog.py is the refresh path.
-    "gpt-5.6-sol":   {"input": 2.50, "output": 20.00},
-    "gpt-5.6-terra": {"input": 1.50, "output": 12.00},
-    "gpt-5.6-luna":  {"input": 0.50, "output": 4.00},
+    # Rates from developers.openai.com/api/docs/pricing (read 2026-10-08),
+    # Standard tier, short context (up to 272K). tests/test-pricing-parity.sh pins them.
+    "gpt-5.6-sol":   {"input": 4.00, "output": 20.00},
+    "gpt-5.6-terra": {"input": 2.00, "output": 12.00},
+    "gpt-5.6-luna":  {"input": 0.20, "output": 1.20},
 }
 
 # Active pricing - starts with defaults, updated from .loki/pricing.json
@@ -8567,9 +8565,9 @@ async def get_gate_policy():
 _PROVIDER_LABELS = {
     # v7.104.0: current model IDs (model_catalog.json): opus, sonnet (the default execution model), haiku: ids live in
     # the catalog cli_aliases, not here.
-    "opus": "Opus 4.8",
-    "sonnet": "Sonnet 5",
-    "haiku": "Haiku 4.5",
+    "opus": "Opus 5.5",
+    "sonnet": "Sonnet 5.5",
+    "haiku": "Haiku 5.5",
     "gpt-5.3-codex": "GPT-5.3 Codex",
     "gpt-5.6-sol": "GPT-5.6 Sol",
     "gpt-5.6-terra": "GPT-5.6 Terra",
@@ -8580,18 +8578,11 @@ _PROVIDER_LABELS = {
 # the UI WITHOUT changing any computed cost number. The Sonnet 5 intro price
 # ($2/$10 per MTok) became the standard price, so the 2026-09-01 increase to
 # $3/$15 will not occur (platform.claude.com pricing page, read 2026-10-03).
-_UNVERIFIED_RATE_NOTE = (
-    "Unverified placeholder rate, scaled from gpt-5.3; not from OpenAI's pricing page."
-)
 _MODEL_PRICING_NOTES = {
     "sonnet": (
         "Standard pricing: $2 / $10 per MTok. "
         "The intro price became the standard price; no increase to $3 / $15."
     ),
-    # See the UNVERIFIED RATES comment on the pricing table: shown, not hidden.
-    "gpt-5.6-sol": _UNVERIFIED_RATE_NOTE,
-    "gpt-5.6-terra": _UNVERIFIED_RATE_NOTE,
-    "gpt-5.6-luna": _UNVERIFIED_RATE_NOTE,
 }
 
 _MODEL_PROVIDERS = {

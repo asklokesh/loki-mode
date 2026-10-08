@@ -354,19 +354,19 @@ grep -Eq "LOKI_MODEL[^_A-Za-z]*=*.*fable" "$LOKI" \
 grep -q '"fable":.*"input": 10.00,.*"output": 50.00' "$RUN_SH" \
   && ok "run.sh pricing.json template has fable 10/50" || bad "run.sh pricing.json fable row missing"
 # run.sh check_budget_limit inline dict
-grep -q "'fable': {'input': 10.00, 'output': 50.00}" "$RUN_SH" \
+grep -q "'fable': {'input': 10.00, 'output': 50.00" "$RUN_SH" \
   && ok "run.sh check_budget_limit dict has fable 10/50" || bad "run.sh budget dict fable row missing"
 # dashboard _DEFAULT_PRICING
-grep -q '"fable":  {"input": 10.00, "output": 50.00}' "$SERVER_PY" \
+grep -q '"fable":  {"input": 10.00, "output": 50.00' "$SERVER_PY" \
   && ok "server.py _DEFAULT_PRICING has fable 10/50" || bad "server.py fable pricing missing"
 # estimator
 grep -q "'Fable':  {'input': 10.00, 'output': 50.00}" "$LOKI" \
   && ok "loki estimator has Fable 10/50" || bad "loki estimator fable pricing missing"
-# estimator corrected stale opus to 5/25
-grep -q "'Opus':   {'input': 5.00, 'output': 25.00}" "$LOKI" \
-  && ok "loki estimator Opus corrected to 5/25 (was stale 15/75)" || bad "loki estimator opus not corrected"
+# estimator carries Opus 5.5 at 4/20
+grep -q "'Opus':   {'input': 4.00, 'output': 20.00}" "$LOKI" \
+  && ok "loki estimator Opus at 4/20 (Opus 5.5)" || bad "loki estimator opus not corrected"
 
-# The cost arithmetic itself: fable must be exactly 2x opus per token.
+# The cost arithmetic itself: Fable 5.1 (10/50) is exactly 2.5x Opus 5.5 (4/20) per token.
 python3 - "$SERVER_PY" <<'PYEOF'
 import sys, ast
 src = open(sys.argv[1]).read()
@@ -377,11 +377,11 @@ ns = {}
 exec("_DEFAULT_PRICING = " + m.group(1), ns)
 p = ns["_DEFAULT_PRICING"]
 f, o = p["fable"], p["opus"]
-assert f["input"] == 2 * o["input"], f"input not 2x: {f} {o}"
-assert f["output"] == 2 * o["output"], f"output not 2x: {f} {o}"
+assert f["input"] == 2.5 * o["input"], f"input not 2.5x: {f} {o}"
+assert f["output"] == 2.5 * o["output"], f"output not 2.5x: {f} {o}"
 print("PRICING_2X_OK")
 PYEOF
-[ $? -eq 0 ] && ok "fable priced at exactly 2x opus in server.py" || bad "fable not 2x opus"
+[ $? -eq 0 ] && ok "fable priced at exactly 2.5x opus in server.py" || bad "fable not 2.5x opus"
 
 # ---------------------------------------------------------------------------
 # 4. Catalog: claude-fable-5 model + fable alias.
@@ -416,7 +416,7 @@ grep -q "SECURITY-REVIEW MODEL GUARD" "$RUN_SH" \
 #
 # Fable is unavailable at the Claude API, so the runner dispatches opus for a
 # fable pin / override / architect iteration. The estimator must quote the model
-# the runner actually dispatches (opus, $5/$25), NOT fable ($10/$50). The token
+# the runner actually dispatches (opus, $4/$20), NOT fable ($10/$50). The token
 # VOLUME stays the advisor work tier (50k/8k per iteration), but the priced model
 # is Opus. So by_model['Fable'] is 0 and by_model['Opus'] is nonzero on every
 # fable route.
