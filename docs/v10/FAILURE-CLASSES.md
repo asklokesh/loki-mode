@@ -656,3 +656,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Sibling sweep: the nightly and Tests gates in promote.yml already match by head_sha; only the smoke gate matched by display_title alone.
 - Shared mechanism: the smoke gate also accepts a completed workflow_run-event smoke run whose head_sha equals the released commit; newest matching run decides, API error stays fail closed.
 - Fixture: tests/test-promote-smoke-sha.sh (legacy-titled green passes, newer red blocks, no match blocks, API error blocks).
+
+## FC-72 A release named new commands and flags in its CHANGELOG that never reached `loki help` or Tab completion (HELP-DRIFT)
+- User saw: 11.3.2 listed `loki plan --spec`, `loki start --spec` and `loki memory forget` in the CHANGELOG, but none appeared in the 11.3.2 help output or in bash/zsh completion. (Number may renumber at merge.)
+- Law: every shipped command or flag appears in help and in Tab completion; a feature a user cannot find does not exist to them.
+- Cause (measured): the bash help text, `loki memory help` and both completion files are hand-maintained; tests/test-help-discoverability.sh checks top-level commands only, so subcommands and flags drifted. The Bun route help in loki-ts/src/cli.ts already listed them.
+- Siblings swept: `loki export --sarif` (11.3.2) was also missing from completion; added to bash and zsh, along with `plan` flag completion and `memory lessons|learn|forget` in `loki memory help`.
+- Mechanism: tests/test-help-changelog-drift.sh reads backticked `loki ...` invocations from the newest 2 CHANGELOG sections and fails when a subcommand or flag is absent from `loki help` / `loki <cmd> --help` / `loki <cmd> help`, or a flag is absent from completions/loki.bash. Prose is never read.
+- Fixture: tests/test-help-changelog-drift.sh. Red on origin/main (6 failures: memory forget, plan --spec, start --spec, their completions, export --sarif completion), green after (11 passed, 0 failed).
+

@@ -760,3 +760,4 @@ workflows never mask a failed test leg (FC-57)	1
 pipe-to-grep-q under pipefail breaks on large output (FC-64)	3
 wall-executed guard, 11.3.1 vs 11.3.2 receipts (FC-68)	3
 main push scans previous-tag..SHA, nightly backstop scans full history (GITLEAKS-INCR)	8
+help drift (CHANGELOG loki invocations in help and completion)	25
