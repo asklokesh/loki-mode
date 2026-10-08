@@ -2,7 +2,7 @@
 /**
  * Minimal HTTP API for loki-mode
  * Zero dependencies - uses only Deno built-ins
- * Usage: deno run --allow-all api-examples/deno-api.ts
+ * Usage: deno run --allow-all examples/api/deno-api.ts
  */
 
 const PORT = parseInt(Deno.env.get("LOKI_DASHBOARD_PORT") || "57374");

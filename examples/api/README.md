@@ -42,16 +42,16 @@ loki dashboard stop
 
 ```bash
 # Bash (zero deps)
-./api-examples/bash-api.sh
+./examples/api/bash-api.sh
 
 # Node.js (recommended)
-node api-examples/node-api.js
+node examples/api/node-api.js
 
 # Python
-python3 api-examples/python-api.py
+python3 examples/api/python-api.py
 
 # Deno
-deno run --allow-all api-examples/deno-api.ts
+deno run --allow-all examples/api/deno-api.ts
 ```
 
 ## API Endpoints
