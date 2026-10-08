@@ -1094,14 +1094,16 @@ describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
     const { repo, base } = makeRepo("hooks");
     const hooks = join(root, "hooks-dir"), hookRec = join(root, "hook.rec"), gpgRec = join(root, "gpg.rec");
     sh(["mkdir", "-p", hooks], root);
-    writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\nprintf '%s\\n' "\${GH_TOKEN:-absent}" >> '${hookRec}'\n`, { mode: 0o755 });
+    // The hook dumps its whole env; the canaries below must not appear in it.
+    writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\nenv >> '${hookRec}'\nprintf 'HOOK-RAN\\n' >> '${hookRec}'\n`, { mode: 0o755 });
     const gpg = join(root, "gpg-stub.sh");
     writeFileSync(gpg, `#!/bin/sh\nprintf '%s\\n' "\${GH_TOKEN:-absent}" >> '${gpgRec}'\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 0\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nstub\\n-----END PGP SIGNATURE-----\\n'\n`, { mode: 0o755 });
     sh(["git", "config", "core.hooksPath", hooks], repo);
     sh(["git", "config", "commit.gpgSign", "true"], repo);
     sh(["git", "config", "gpg.program", gpg], repo);
-    const saved = process.env["GH_TOKEN"];
-    process.env["GH_TOKEN"] = "ghp_SEALHOOKcanary0000000000000000000";
+    const SECRETS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
+    const saved = Object.fromEntries(SECRETS.map((k) => [k, process.env[k]]));
+    for (const k of SECRETS) process.env[k] = `sealhook-canary-${k}`;
     try {
       // Supervisor-side shape first: hooks and signing are off, so neither recorder fires and the commit is unsigned.
       const plain = await safeGitRun(repo, ["commit", "-q", "--allow-empty", "-m", "plain"]);
@@ -1114,9 +1116,13 @@ describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
       expect(c.status).toBe("completed");
       expect(c.data.committed).toBe(true);
     } finally {
-      if (saved === undefined) delete process.env["GH_TOKEN"]; else process.env["GH_TOKEN"] = saved;
+      for (const k of SECRETS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
     }
-    expect(readFileSync(hookRec, "utf8")).toBe("absent\n");
+    const dumped = readFileSync(hookRec, "utf8");
+    expect(dumped).toContain("HOOK-RAN");
+    expect(dumped).toContain("PATH="); // positive control: the dump really holds the hook's env
+    expect(dumped).not.toContain("sealhook-canary-");
+    for (const k of SECRETS) expect(dumped).not.toMatch(new RegExp(`^${k}=`, "m"));
     expect(readFileSync(gpgRec, "utf8")).toBe("absent\n");
     expect(sh(["git", "cat-file", "commit", "HEAD"], repo)).toContain("gpgsig -----BEGIN PGP SIGNATURE-----");
   }, 30000);

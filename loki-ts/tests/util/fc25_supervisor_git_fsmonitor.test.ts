@@ -17,6 +17,8 @@ setDefaultTimeout(60_000);
 const SRC = resolve(import.meta.dir, "../../src");
 const CANARY_TOKEN = "ghp_FC25SUPERVISORcanary000000000000";
 const CANARY_SOCK = "/tmp/loki-fc25-canary-agent.sock";
+const SECRETS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
+const canaryFor = (k: string): string => (k === "SSH_AUTH_SOCK" ? CANARY_SOCK : `${CANARY_TOKEN}_${k}`);
 
 let root: string;
 beforeEach(() => {
@@ -135,13 +137,14 @@ it("each safe_git entry point hands git a token-free env, recorded by a filter s
   const g = (...a: string[]) => execFileSync("git", a, { cwd: repo, env: { ...process.env }, stdio: "ignore" });
   execFileSync("git", ["init", "-q", repo], { env: { ...process.env }, stdio: "ignore" });
   const filt = resolve(root, "rec.sh");
-  writeFileSync(filt, `#!/bin/sh\nprintf '%s|%s|%s\\n' "$1" "\${GH_TOKEN:-absent}" "\${SSH_AUTH_SOCK:-absent}" >> '${rec}'\ncat\n`);
+  // One field per secret var safeGitEnv must strip; "absent" when unset in the child.
+  const fields = SECRETS.map((k) => `"\${${k}:-absent}"`).join(" ");
+  writeFileSync(filt, `#!/bin/sh\nprintf '%s${"|%s".repeat(SECRETS.length)}\\n' "$1" ${fields} >> '${rec}'\ncat\n`);
   chmodSync(filt, 0o755);
   writeFileSync(resolve(repo, ".gitattributes"), "*.txt filter=rec\n");
   writeFileSync(resolve(repo, "a.txt"), "one\n");
-  const saved = { t: process.env["GH_TOKEN"], s: process.env["SSH_AUTH_SOCK"] };
-  process.env["GH_TOKEN"] = CANARY_TOKEN;
-  process.env["SSH_AUTH_SOCK"] = CANARY_SOCK;
+  const saved = Object.fromEntries(SECRETS.map((k) => [k, process.env[k]]));
+  for (const k of SECRETS) process.env[k] = canaryFor(k);
   try {
     // hash-object --path applies the filter on every call (no index stat cache), so each call records exactly one line.
     const hash = (tag: string) => ["-c", `filter.rec.clean=${filt} ${tag}`, "hash-object", "--path", "a.txt", "a.txt"];
@@ -155,15 +158,15 @@ it("each safe_git entry point hands git a token-free env, recorded by a filter s
     // Positive control: allowToken is the one opt-in that keeps the token, so the recorder must see the canaries.
     await safeGitRun(repo, hash("control"), { repoDrivers: true, allowToken: true });
   } finally {
-    if (saved.t === undefined) delete process.env["GH_TOKEN"]; else process.env["GH_TOKEN"] = saved.t;
-    if (saved.s === undefined) delete process.env["SSH_AUTH_SOCK"]; else process.env["SSH_AUTH_SOCK"] = saved.s;
+    for (const k of SECRETS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }
   const lines = readFileSync(rec, "utf8").trim().split("\n");
+  const absent = "|absent".repeat(SECRETS.length);
   expect(lines).toEqual([
-    "safeGit|absent|absent", "safeGit-env|absent|absent",
-    "safeGitSpawn|absent|absent", "safeGitSpawn-env|absent|absent",
-    "safeGitRun|absent|absent", "safeGitRun-env|absent|absent",
-    `control|${CANARY_TOKEN}|${CANARY_SOCK}`,
+    `safeGit${absent}`, `safeGit-env${absent}`,
+    `safeGitSpawn${absent}`, `safeGitSpawn-env${absent}`,
+    `safeGitRun${absent}`, `safeGitRun-env${absent}`,
+    `control|${SECRETS.map(canaryFor).join("|")}`,
   ]);
 });
 
