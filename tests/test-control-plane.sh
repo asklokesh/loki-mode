@@ -107,7 +107,7 @@ legacy_copy_list() { # legacy_copy_list <repo>: COPY lines (one per file) for ev
 import os, re, sys
 repo = os.path.normpath(sys.argv[1])
 rx = re.compile(r"""(?:from|import)\s*\(?\s*["'](\.[^"']+)["']""")
-JS_MAP = os.environ.get("CP04_WALK_NO_JS_MAP") != "1"  # test hook: the mutant used to prove the .js case is guarded
+JS_MAP = os.environ.get("CP04_WALK_NO_JS_MAP") != "1"  # test hook: disables the .js/.mjs mapping and the index.js candidate, the mutant used to prove the .js case is guarded
 def candidates(t):
     yield t
     for ext in (".js", ".mjs") if JS_MAP else ():
