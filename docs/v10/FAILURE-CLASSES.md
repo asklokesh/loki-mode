@@ -633,3 +633,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: `gitleaks dir .gitleaksignore` over every other comment and fingerprint line: line 123 was the only finding. The three fixture copy sites all go through one helper now.
 - Mechanism: (1) the comment is reworded so it no longer trips a rule; (2) copy_real_gitleaksignore copies fingerprint lines only (comments carry no suppression), so a future prose comment cannot break fixtures; (3) a guard case scans the real .gitleaksignore with the pinned gitleaks and fails on any finding. No fingerprint added, hook untouched.
 - Fixture: tests/test-pre-push-gitleaks.sh "FC-66: the real .gitleaksignore scans clean as content". Red before the fix (suite rc=1 at c8, gitleaks reports 1 leak at line 123), green after.
+
+## FC-67 A release named new commands and flags in its CHANGELOG that never reached `loki help` or Tab completion (HELP-DRIFT)
+- User saw: 11.3.2 listed `loki plan --spec`, `loki start --spec` and `loki memory forget` in the CHANGELOG, but none appeared in the 11.3.2 help output or in bash/zsh completion. (Number may renumber at merge.)
+- Law: every shipped command or flag appears in help and in Tab completion; a feature a user cannot find does not exist to them.
+- Cause (measured): the bash help text, `loki memory help` and both completion files are hand-maintained; tests/test-help-discoverability.sh checks top-level commands only, so subcommands and flags drifted. The Bun route help in loki-ts/src/cli.ts already listed them.
+- Siblings swept: `loki export --sarif` (11.3.2) was also missing from completion; added to bash and zsh, along with `plan` flag completion and `memory lessons|learn|forget` in `loki memory help`.
+- Mechanism: tests/test-help-changelog-drift.sh reads backticked `loki ...` invocations from the newest 2 CHANGELOG sections and fails when a subcommand or flag is absent from `loki help` / `loki <cmd> --help` / `loki <cmd> help`, or a flag is absent from completions/loki.bash. Prose is never read.
+- Fixture: tests/test-help-changelog-drift.sh. Red on origin/main (6 failures: memory forget, plan --spec, start --spec, their completions, export --sarif completion), green after (11 passed, 0 failed).
+

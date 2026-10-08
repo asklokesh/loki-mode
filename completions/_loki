@@ -26,6 +26,12 @@ function _loki {
                 memory)
                     _loki_memory
                     ;;
+                plan)
+                    _loki_plan
+                    ;;
+                export)
+                    _arguments '--sarif[Write findings.sarif for a run]'
+                    ;;
                 config)
                     _loki_config
                     ;;
@@ -264,6 +270,8 @@ function _loki_start {
         '--no-dashboard[Disable web dashboard]' \
         '--sandbox[Run in Docker sandbox]' \
         '--skip-memory[Skip loading memory context]' \
+        '--spec[Run against an edited spec file]:spec file:_files' \
+        '--spec-first[Write an editable spec, then stop]' \
         '--yes[Skip confirmation prompts]' \
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \
@@ -319,6 +327,14 @@ function _loki_provider {
         'help:Provider help'
     )
     _describe -t cmds 'provider subcommand' cmds
+}
+
+function _loki_plan {
+    _arguments \
+        '--json[Machine-readable JSON output]' \
+        '--verbose[Detailed per-iteration breakdown]' \
+        '--spec[Write editable acceptance criteria to .loki/specs/<slug>.md]' \
+        '*:prd file:_files'
 }
 
 function _loki_memory {

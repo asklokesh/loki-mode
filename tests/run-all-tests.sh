@@ -1492,6 +1492,7 @@ run_test "first_run_blocked signal (opt-out silent, enum-clamped)" "$SCRIPT_DIR/
 run_test "a green doctor never recommends a command that exits 2" "$SCRIPT_DIR/test-doctor-next-recommendation.sh"
 run_test "analytics opt-in has a writer (the funnel can fire)" "$SCRIPT_DIR/test-telemetry-analytics-toggle.sh"
 run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help-discoverability.sh"
+run_test "help drift (CHANGELOG loki invocations in help and completion)" "$SCRIPT_DIR/test-help-changelog-drift.sh"
 run_test "no help topic names a removed surface or a version stamp" "timeout -k 10 240 bash $SCRIPT_DIR/test-help-no-removed-surfaces.sh"
 run_test "start help does not advertise refused flags" "timeout -k 10 120 bash $SCRIPT_DIR/test-help-start-flags.sh"
 run_test "assess runtime detection (declared, never guessed)" "$SCRIPT_DIR/test-assess-runtime-detection.sh"
