@@ -1,3 +1,4 @@
+// select: walk-all-src
 // D91 finding class 4 guard: product code (loki-ts/src, autonomy/) must never read swarm-internal tools or paths:
 // docs/v10/BOARD.md, scripts/v10-*, .loki/v10-leader (the company's own coordination files, absent from a user's install).
 // Comment lines are ignored. Exceptions: guard-allowlists/swarm-internal-reads.txt.

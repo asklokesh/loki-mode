@@ -1,3 +1,4 @@
+// select: walk-all-src
 // FC-25 guard: every git spawn in loki-ts/src, bin/ and autonomy/ (JS/TS) goes through util/safe_git.ts
 // (safeGit, safeGitSpawn, safeGitRun). There is NO allowlist: "this file only runs in the worker" was the
 // reasoning that let project_model/gather.ts run git ls-files in the supervisor holding the real token,

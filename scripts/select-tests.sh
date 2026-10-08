@@ -200,6 +200,24 @@ emit_global_guards() {
         [ -n "$gt" ] || continue
         emit R8 "$gk" "$gt"
     done <"$SCRIPT_DIR/global-guards.tsv"
+    emit_marked_walkers
+}
+
+# FC-89: bun tests that walk the whole loki-ts/src tree name no src stem, so R4 never selects them. Each carries
+# the marker "select: walk-all-src" and is found here by content, so a new walker needs no list edit. Files that a
+# declared tsv row already covers (exact path, or a bun_test directory row above them) are not repeated.
+emit_marked_walkers() {
+    local mf covered gk gt
+    [ -d loki-ts/tests ] || return 0
+    while IFS= read -r mf; do
+        [ -n "$mf" ] || continue
+        covered=0
+        while IFS=$'\t' read -r gk gt; do
+            case "$gk" in bun_test) ;; *) continue ;; esac
+            case "$mf" in "$gt" | "$gt"/*) covered=1; break ;; esac
+        done <"$SCRIPT_DIR/global-guards.tsv"
+        [ "$covered" -eq 1 ] || emit R8 bun_test "$mf"
+    done < <(grep -rlF 'select: walk-all-src' loki-ts/tests --include='*.test.ts' 2>/dev/null | LC_ALL=C sort)
 }
 
 if [ "$GUARDS_ONLY" -eq 1 ]; then

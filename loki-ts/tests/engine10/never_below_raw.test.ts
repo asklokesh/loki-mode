@@ -1,3 +1,4 @@
+// select: walk-all-src
 // Engine Law L1 "Never below raw" (supersedes the D31 sonnet-first cascade default).
 // Behavior tests plus a SECONDARY static guard: no stage may pass a model weaker than the run's model unless the
 // LOKI_E10_CASCADE opt-in is set. The PRIMARY router guard is semantic: route_matrix.test.ts runs implement, fix, plan and the

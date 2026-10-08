@@ -1,3 +1,4 @@
+// select: walk-all-src
 // BACKLOG 149 round 4 guard: every subprocess spawn under loki-ts/src must pass
 // an explicit `env`. In Bun (measured on 1.3.13) a spawn with no `env` option
 // inherits the environment from process START, so it silently undoes

@@ -1,3 +1,4 @@
+// select: walk-all-src
 // FC-40 guard (D91 finding class 5): a child process spawned with the full parent env hands the real GH_TOKEN, GITHUB_TOKEN and
 // SSH_AUTH_SOCK to whatever the child runs. In loki-ts/src every spawn call site (Bun.spawn, spawn, spawnSync, execFile*,
 // execSync) must either pass an explicit env that is not a bare process.env copy, or the file must be allowlisted with a reason in

@@ -1,3 +1,4 @@
+// select: not-src-walker (tmp dir only)
 // Tests for the `loki crash` command port (Crash Reporting Phase 0,
 // local-only, ZERO network egress).
 // Source-of-truth: loki-ts/src/commands/crash.ts.

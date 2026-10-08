@@ -1,3 +1,4 @@
+// select: walk-all-src
 // T5-ATTEMPTS-PR: every credentialed push in loki-ts/src goes through engine10-push.sh push-pr (_loki_trusted_push).
 // No TS source may run `git push`, `gh pr create`, or opt a git call into credentials for anything but fetch.
 import { describe, expect, it } from "bun:test";

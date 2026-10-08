@@ -1,3 +1,4 @@
+// select: walk-all-src
 // E-02/D33 wall check: engine10 core and modernize/ stay under their own line budgets
 // (docs/v10/ENGINE.md section 3, docs/v10/DECISIONS.md D29, D33).
 // D42 item 1: e10ext/ gets its own 1,500-line cap here, plus the stages/ and

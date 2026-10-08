@@ -1,3 +1,4 @@
+// select: walk-all-src
 // D91 finding class 3 guard: hand-kept lists that must match a directory. Derived or asserted equal here:
 //  (a) every module under src/commands and src/engine10/stages is imported by some other src file (a new command or stage that is
 //      never registered is dead code the dispatch silently never reaches); exceptions in guard-allowlists/unregistered-modules.txt

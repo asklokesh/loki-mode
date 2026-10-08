@@ -1,3 +1,4 @@
+// select: walk-all-src
 // FC-10 / L7: one terminal width helper; a pty with no size must not truncate the live line.
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";

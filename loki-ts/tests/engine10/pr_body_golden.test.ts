@@ -1,3 +1,4 @@
+// select: walk-all-src
 // L7 "Outputs are contracts": golden test from the real FireLater#17 recording (sanitised subset in tests/fixtures/pr-body-firelater17).
 // The recorded PR body printed "not recorded" for the issue, why, files in scope and tests although every one was in the run dir.
 import { describe, expect, it } from "bun:test";
