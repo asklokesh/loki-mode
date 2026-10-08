@@ -18,8 +18,8 @@ longer read; any value is ignored.
 `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word
 task>"` run Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`. A PRD
 file, a flag-first call (`loki start --simple prd.md`) and a one-word start still
-run on the previous bash loop (autonomy/run.sh), and so do the opencode and local-model
-providers, until FC38-SWEEP ports them. `loki legacy` and LOKI_ENGINE remain
+run on the previous bash loop (autonomy/run.sh), and so does the opencode
+provider, until FC38-SWEEP ports them. `loki legacy` and LOKI_ENGINE remain
 removed. The previous loop is being removed (see docs/v10/LEGACY-REMOVAL.md).
 
 Some pieces named in this guide are still being built. Each one below says
@@ -324,7 +324,7 @@ runs on the B9 corpus, and it can emit shape defaults from those runs
 D48 made v10 the default for `loki "<task>"`, `loki owner/repo#N` and
 `loki quick "<task>"`. 11.0.0 removed the engine switch: `loki legacy` exits
 2 with a removal message and LOKI_ENGINE is ignored. PRD-file starts
-(`loki start ./prd.md`), the opencode and local-model providers, and the no-bun
+(`loki start ./prd.md`), the opencode provider, and the no-bun
 fallback still run on the previous bash loop until FC38-SWEEP ports them; they are tracked in
 docs/v10/LEGACY-REMOVAL.md. The marked line near the top of this file and of
 README.md's Loki 10 section records the current state.
