@@ -13,6 +13,7 @@ import { loadTaskText } from "./wall.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { planRoute, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
 import { applyIntent, intentCardEnabled, INTENT_CARD_INSTRUCTION } from "../../util/intent_card.ts";
+import { behaviorChangeInstruction, mutationStrict, readBehaviorChange } from "../../util/mutation_proof.ts";
 
 const MAX_PLAN_LINES = 10;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
@@ -27,7 +28,7 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
   return lines.slice(0, max).join("\n");
 }
 
-export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intentCard: boolean = false): string {
+export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intentCard: boolean = false, behaviorChange: boolean = false): string {
   return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
@@ -38,6 +39,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
     `Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: ${scopePath}`,
     ...(router ? [ROUTER_UNITS_INSTRUCTION.replace("<scope>", scopePath)] : []),
     ...(intentCard ? [INTENT_CARD_INSTRUCTION] : []),
+    ...(behaviorChange ? [behaviorChangeInstruction(scopePath)] : []), // T2: strict only
     "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n"));
 }
@@ -73,7 +75,7 @@ export const planStage: Stage = {
     const cardOn = intentCardEnabled(process.env);
     const runPlan = (onSonnet: boolean) => ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed, cardOn),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed, cardOn, mutationStrict()),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,
@@ -116,6 +118,7 @@ export const planStage: Stage = {
         ...ic.data,
         ...pr.units(),
         ...(route_record ? { route_record } : {}),
+        ...readBehaviorChange(ctx.runDir), // T2: model-declared, strict only
       },
     };
   },

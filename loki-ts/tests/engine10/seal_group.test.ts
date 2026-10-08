@@ -310,7 +310,8 @@ describe("D61-13 single run is unchanged", () => {
     const ctx = ctxFor(repo, base);
     expect(sealGroup(ctx.runDir, receiptSha256 as never)).toEqual({ section: undefined, notProven: [], problems: 0, allUnitsPass: true });
     await commitStage.run(ctx, new AbortController().signal);
-    const s = await sealStage.run(ctx, new AbortController().signal);
+    process.env["LOKI_MUTATION_PROOF"] = "0"; // T2: opt-out keeps the receipt key set byte-identical
+    const s = await sealStage.run(ctx, new AbortController().signal).finally(() => { delete process.env["LOKI_MUTATION_PROOF"]; });
     const receipt = JSON.parse(readFileSync(s.data["receipt_path"] as string, "utf8")) as Record<string, unknown>;
     expect("group" in receipt).toBe(false);
     expect(Object.keys(receipt).sort()).toEqual(["base_sha", "checks", "cost", "cost_preview", "diff_sha256", "evidence", "events_sha256", "head_sha", "log_seal", "model", "not_proven", "provider", "receipt_sha256", "repo", "resumed", "run_id", "schema", "task", "time", "tree", "verdict", "verification", "wall"].sort());

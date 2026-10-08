@@ -60,10 +60,10 @@ type Emitted = { type: string; stage: string | null; data: Record<string, unknow
 function makeCtx(
   repoDir: string,
   runDir: string,
-  opts: { verdict?: Verdict; notProven?: string[]; pinnedOrigin?: string | null; capHit?: boolean; routeLine?: string } = {},
+  opts: { verdict?: Verdict; notProven?: string[]; pinnedOrigin?: string | null; capHit?: boolean; routeLine?: string; mutationLine?: string } = {},
 ): { ctx: RunContext & { pinnedOrigin?: string; capHit?(): boolean }; emitted: Emitted[] } {
   const emitted: Emitted[] = [];
-  const seal = { verdict: opts.verdict ?? "VERIFIED", not_proven: opts.notProven ?? [], receipt_path: `${runDir}/receipt.json`, ...(opts.routeLine ? { route_line: opts.routeLine } : {}) };
+  const seal = { verdict: opts.verdict ?? "VERIFIED", not_proven: opts.notProven ?? [], receipt_path: `${runDir}/receipt.json`, ...(opts.routeLine ? { route_line: opts.routeLine } : {}), ...(opts.mutationLine ? { mutation_line: opts.mutationLine } : {}) };
   const ctx: RunContext & { pinnedOrigin?: string; capHit?(): boolean } = {
     runId: "e10-test-run",
     repoDir,
@@ -273,6 +273,16 @@ describe("engine10 pr stage", () => {
     } finally {
       if (prev === undefined) delete process.env.LOKI_ROUTER; else process.env.LOKI_ROUTER = prev;
     }
+  });
+
+  test("T2: the sealed mutation_line (the key seal.ts writes) lands in the PR body, and is absent when seal wrote none", async () => {
+    const line = "test fails without the fix: yes";
+    const on = makeCtx(repoDir, runDir, { verdict: "VERIFIED", mutationLine: line });
+    await runPr(on.ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+    expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).toContain(`\n${line}\n`);
+    const off = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+    await runPr(off.ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+    expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).not.toContain(line);
   });
 });
 

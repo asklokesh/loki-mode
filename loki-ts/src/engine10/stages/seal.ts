@@ -8,6 +8,8 @@ import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKey
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { mutationEnabled, mutationProof, mutationStrict } from "../../util/mutation_proof.ts";
+import { RealBaseTestRunner } from "./wall.ts";
 import { assertDeltaNotes } from "../../e10ext/assert_delta.ts";
 import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts";
@@ -191,6 +193,7 @@ export function renderReceiptMd(r: Receipt): string {
     `- receipt_sha256: ${r.receipt_sha256}`,
     `- Signature: ${sig}`,
     `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s`,
+    ...(r.mutation_proof ? [`- ${r.mutation_proof}`] : []),
     ...(r.route ? routeReceiptLines(r.route) : []), // R1-15: only when the router is on
     "",
     "### Checks",
@@ -235,7 +238,10 @@ export const sealStage: Stage = {
     // T10: supply-chain guard. A nonexistent new dependency blocks VERIFIED (a too-new one only warns unless LOKI_SUPPLY_MIN_AGE_DAYS is set); an unreachable registry only records NOT PROVEN.
     const supply = await supplyGuard(ctx.repoDir, rawDiff.filter((_, i) => i % 2 === 1), readDeclared(ctx.repoDir), process.env);
     const verdict1: Verdict = supplyVerdict(verdict0, supply);
-    const xr = await crossReview(ctx, verdict1, head), verdict = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
+    const xr = await crossReview(ctx, verdict1, head), verdict2 = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
+    // T2: mutation proof always runs after VERIFIED. "no" (Wall passed without the fix) warns; it downgrades to PARTIAL only with LOKI_MUTATION_STRICT=1 AND a plan-declared behavior change (never a harness heuristic). "yes" and inconclusive never change the verdict.
+    const mp = verdict2 === "VERIFIED" && mutationEnabled() ? mutationProof({ repoDir: ctx.repoDir, baseSha: ctx.baseSha, runDir: ctx.runDir, wallFiles: Array.isArray(o.wall?.files) ? (o.wall.files as { path: string }[]) : [], checks: Array.isArray(o.verify?.checks) ? (o.verify.checks as { name: string }[]) : [], runner: (ms: number) => new RealBaseTestRunner(undefined, ms) }) : null;
+    const verdict: Verdict = mp?.outcome === "no" && mutationStrict() && o.plan?.behavior_change === true ? "PARTIAL" : verdict2;
     const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? [])]);
     if (!proof && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; notProven.add(vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
@@ -268,6 +274,7 @@ export const sealStage: Stage = {
     if (source !== "text" && source !== "issue") notProven.add("task source not recorded by intake");
     // Keys below are outside the section 4 table: absent means NOT PROVEN, never a default claim.
     const repo = str(o.intake?.repo);
+    if (mp?.outcome === "no") notProven.add(`Wall tests passed without the fix (mutation proof)${verdict !== verdict2 ? "; verdict downgraded to PARTIAL (LOKI_MUTATION_STRICT=1, declared behavior change)" : ""}`);
     if (repo === null) notProven.add("repo not recorded by intake");
     if (typeof o.intake?.resumed !== "boolean") notProven.add("resume state not recorded by intake");
 
@@ -320,6 +327,7 @@ export const sealStage: Stage = {
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true,
       ...receiptBlock(process.env, cost.usd, cost.unmetered === true, Object.values(stages).reduce((a, b) => a + (b ?? 0), 0)),
+      ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
     };
@@ -342,7 +350,7 @@ export const sealStage: Stage = {
 
     recordRun(process.env, ctx.repoDir, ctx.model, verdict, cost.usd, cost.unmetered === true, receipt.time.wall_s);
     const signed = sig.jwt !== null;
-    const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) };
+    const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(mp ? { mutation_line: mp.line } : {}), ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) };
     try { recordRunVerdict(ctx.repoDir, ctx.runId, verdict); } catch { /* memory is best-effort */ }
     ctx.emit("receipt.sealed", "seal", { path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) });
     return { status: "completed", data: { ...data, summary: `${verdict} receipt ${hash.slice(0, 12)} ${signed ? `SIGNED kid ${sig.kid}` : "UNSIGNED"}` } };
