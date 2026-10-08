@@ -320,6 +320,16 @@ class PromoteGateBehavior(unittest.TestCase):
     def test_run_with_no_full_suite_job_is_not_a_measurement(self):
         self.assertBlock(self._n(self.A, [self._run_obj(2, "success", self.A)], jobs={"2": []}))
 
+    def test_red_at_sha_then_dedupe_skip_then_green_descendant_blocks(self):
+        runs = [self._run_obj(3, "success", self.B), self._run_obj(2, "success", self.A), self._run_obj(1, "failure", self.A)]
+        self.assertBlock(self._n(self.A, runs, jobs={"2": self._SKIPPED}))
+
+    def test_non_success_at_promoted_sha_blocks(self):
+        for conc in ("neutral", "action_required", "stale"):
+            with self.subTest(conc=conc):
+                runs = [self._run_obj(2, "success", self.B), self._run_obj(1, conc, self.A)]
+                self.assertBlock(self._n(self.A, runs))
+
     def test_jobs_api_failure_blocks(self):
         self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.A)], jobs_fail=True))
 
@@ -348,29 +358,49 @@ class PromoteGateBehavior(unittest.TestCase):
     def test_empty_githead_blocks(self):
         self.assertBlock(self._n("", [self._run_obj(1, "success", self.B)]))
 
+    def _smk(self, rid, conc, title_sha=None, head_sha=None, title=None):
+        o = self._run_obj(rid, conc, head_sha or self.C, event="workflow_run")
+        o["display_title"] = title if title is not None else "Post-Release Smoke " + (title_sha or self.A)
+        return o
+
     def _s(self, runs, githead=None, **kw):
         return self._gate(self.smoke, githead or self.A, runs, **kw)
 
     def test_smoke_green_passes(self):
-        self.assertPass(self._s([self._run_obj(1, "success", self.A)]))
+        self.assertPass(self._s([self._smk(1, "success")]))
+
+    def test_smoke_head_sha_is_not_the_key(self):
+        # Real smoke runs carry main HEAD in head_sha; only the title names the release.
+        self.assertBlock(self._s([self._smk(1, "success", title_sha=self.B, head_sha=self.A)]))
+
+    def test_smoke_title_match_ignores_head_sha(self):
+        self.assertPass(self._s([self._smk(1, "success", title_sha=self.A, head_sha=self.U)]))
+
+    def test_smoke_untitled_runs_fail_closed(self):
+        o = self._run_obj(1, "success", self.A, event="workflow_run")
+        self.assertBlock(self._s([o]))
+
+    def test_smoke_dispatched_run_matches_by_version(self):
+        self.assertPass(self._s([self._smk(1, "success", title="Post-Release Smoke v1.2.3")]))
+        self.assertBlock(self._s([self._smk(1, "success", title="Post-Release Smoke v1.2.4")]))
 
     def test_smoke_newest_red_blocks_despite_older_green(self):
-        self.assertBlock(self._s([self._run_obj(2, "failure", self.A), self._run_obj(1, "success", self.A)]))
+        self.assertBlock(self._s([self._smk(2, "failure"), self._smk(1, "success")]))
 
     def test_smoke_skipped_newest_blocks(self):
-        self.assertBlock(self._s([self._run_obj(2, "skipped", self.A), self._run_obj(1, "success", self.A)]))
+        self.assertBlock(self._s([self._smk(2, "skipped"), self._smk(1, "success")]))
 
     def test_smoke_for_other_sha_does_not_count(self):
-        self.assertBlock(self._s([self._run_obj(1, "success", self.B)]))
+        self.assertBlock(self._s([self._smk(1, "success", title_sha=self.B)]))
 
     def test_smoke_none_blocks(self):
         self.assertBlock(self._s([]))
 
     def test_smoke_api_failure_blocks(self):
-        self.assertBlock(self._s([self._run_obj(1, "success", self.A)], fail=True))
+        self.assertBlock(self._s([self._smk(1, "success")], fail=True))
 
     def test_smoke_empty_githead_blocks(self):
-        self.assertBlock(self._gate(self.smoke, "", [self._run_obj(1, "success", self.A)]))
+        self.assertBlock(self._gate(self.smoke, "", [self._smk(1, "success")]))
 
 
 class PromoteNightlyGate(unittest.TestCase):

@@ -192,12 +192,10 @@ jobs:
           # promoted SHA itself. The newest nightly AT that SHA must not be red.
           while IFS='|' read -r RID CONC RSHA URL; do
             [ "${RSHA:-}" = "$GITHEAD" ] || continue
-            case "$CONC" in
-              failure | timed_out | startup_failure)
-                echo "PROMOTE-BLOCK: the newest nightly at the promoted SHA ${GITHEAD} is ${CONC}: ${URL}"
-                exit 1
-                ;;
-            esac
+            if [ "$CONC" != "success" ]; then
+              echo "PROMOTE-BLOCK: the newest nightly at the promoted SHA ${GITHEAD} is ${CONC}: ${URL}"
+              exit 1
+            fi
             break
           done <<< "$MEAS"
           while IFS='|' read -r RID CONC RSHA URL; do
@@ -217,8 +215,12 @@ jobs:
           exit 1
 
       # D96: the promoted version must have a green Post-Release Smoke. A smoke
-      # run's head_sha equals the Release run's head_sha, which is the gitHead
-      # stamped at publish. The newest completed smoke run for that SHA decides.
+      # run's own head_sha is main HEAD when it started, not the released
+      # commit, so runs are matched by display_title (run-name in
+      # post-release-smoke.yml): "Post-Release Smoke <gitHead>" for a
+      # Release-triggered run, "Post-Release Smoke v<version>" for a dispatched
+      # one. The newest completed matching run decides. Runs from before the
+      # run-name existed have no such title and fail closed.
       - name: Require a green Post-Release Smoke for this version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -228,7 +230,7 @@ jobs:
           set -euo pipefail
           [ -n "${GITHEAD:-}" ] || { echo "PROMOTE-BLOCK: no head SHA for ${VERSION}; not promoting (fail closed)"; exit 1; }
           SMOKE="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/post-release-smoke.yml/runs?status=completed&per_page=50" \
-            --jq '[.workflow_runs[] | select(.head_sha == "'"${GITHEAD}"'")] | .[0] | if . == null then "none|none" else [(.conclusion // "none"), (.html_url // "none")] | join("|") end')" || {
+            --jq '[.workflow_runs[] | select(.display_title == "Post-Release Smoke '"${GITHEAD}"'" or .display_title == "Post-Release Smoke v'"${VERSION}"'")] | .[0] | if . == null then "none|none" else [(.conclusion // "none"), (.html_url // "none")] | join("|") end')" || {
             echo "PROMOTE-BLOCK: could not read the Post-Release Smoke runs from the API; not promoting ${VERSION} (fail closed)"
             exit 1
           }
