@@ -4,12 +4,14 @@
 // pass (hasExecutedProof). Every site that sets result "pass" for a test run routes through classifyCheck.
 
 import { basename } from "node:path";
+import { tokenFreeEnv } from "./safe_git.ts";
 
 /** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
- *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is. */
+ *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is.
+ *  FC-87: the base is token-filtered (GH_TOKEN family and SSH_AUTH_SOCK dropped), so a test command never carries credentials whatever the parent. */
 export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const e: Record<string, string> = {};
-  for (const [k, v] of Object.entries(base)) if (typeof v === "string") e[k] = v;
+  for (const [k, v] of Object.entries(tokenFreeEnv(base))) if (typeof v === "string") e[k] = v;
   e["FORCE_COLOR"] = "0"; e["NO_COLOR"] = "1";
   delete e["CLICOLOR_FORCE"];
   return e;
