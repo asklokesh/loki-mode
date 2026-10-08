@@ -43,9 +43,12 @@ on:
       - 'slice-*'
   schedule:
     # D75: daily at 07:00 UTC (was Mondays). train/** pushes scan only their
-    # range (D74 follow-up), so the full-history scan runs on every main push
-    # and daily here; a red daily scan halts releases (release.yml required-ci,
-    # sched_audit_ok: any non-success conclusion of the newest scheduled run blocks).
+    # range (D74 follow-up) and, since GITLEAKS-INCR, a main push scans only
+    # <previous release tag>..SHA. The full-history scan runs daily here and in
+    # the Nightly backstop (nightly.yml job "gitleaks full history
+    # (backstop)"); a red daily scan halts releases (release.yml required-ci,
+    # sched_audit_ok: any non-success conclusion of the newest scheduled run
+    # blocks) and a red backstop blocks promotion to latest (promote.yml).
     - cron: '0 7 * * *'
   workflow_dispatch:
 
@@ -297,14 +300,17 @@ jobs:
   secret-scan:
     name: gitleaks (secrets, new-findings-blocking)
     needs: [train-reuse]
-    # D75: a main push ALWAYS runs the full-history scan. It ignores E-160
-    # train reuse because a train/** run only scanned its own range, so its
-    # verdict must never stand in for the full scan that gates npm publish.
+    # D75: a main push ALWAYS runs this job. It ignores E-160 train reuse
+    # because a train/** run only scanned its own range, so its verdict must
+    # never stand in for the main-push scan that gates npm publish. GITLEAKS-
+    # INCR: that main-push scan covers <previous release tag>..SHA only; the
+    # full-history scan is the backstop (nightly.yml) and gates PROMOTION.
     if: ${{ !cancelled() && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || needs.train-reuse.outputs.reuse != 'true') }}
     runs-on: ubuntu-latest
     # D74: the full-history scan grows with history and passed in 11-15 min on
-    # trains 83-87, then hit the old 15 min limit on trains 86/88/89/90. More
-    # time keeps the same coverage; it never narrows the scan.
+    # trains 83-87, then hit the old 15 min limit on trains 86/88/89/90. The
+    # limit stays 30 min because the daily schedule and workflow_dispatch still
+    # run the full-history scan here; a main push now takes the short range.
     timeout-minutes: 30
     permissions:
       contents: read
@@ -315,6 +321,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Install gitleaks (pinned)
         run: |
@@ -331,15 +338,38 @@ jobs:
           /tmp/gitleaks version
 
       - name: Select gitleaks scan mode (D75)
-        # train/** pushes scan only merge-base(origin/main)..SHA. Any doubt
-        # (fetch failure, no merge-base, empty range, non-push event) leaves
-        # GITLEAKS_RANGE empty, which is the full-history scan. The base
-        # CONFIG trust in scripts/security-audit-gitleaks.sh is unchanged:
-        # the release tag's .gitleaks.toml, never this merge-base's.
+        # train/** pushes scan only merge-base(origin/main)..SHA. A push to
+        # main scans only <previous release tag>..SHA (GITLEAKS-INCR): the
+        # newest v[0-9]* tag reachable from the PARENT of SHA, so a tag on the
+        # tip itself never yields an empty range. Any doubt (fetch failure, no
+        # merge-base or tag, tag not an ancestor, empty range, non-push event)
+        # leaves GITLEAKS_RANGE empty, which is the full-history scan. The
+        # base CONFIG trust in scripts/security-audit-gitleaks.sh is
+        # unchanged: the release tag's .gitleaks.toml, never this merge-base's.
         run: |
           set -uo pipefail
           range=""
           case "${GITHUB_REF:-}" in
+            refs/heads/main)
+              if [ "${GITHUB_EVENT_NAME:-}" != "push" ]; then
+                :
+              else
+                prev=""
+                if git fetch --tags --force origin >/dev/null 2>&1; then
+                  prev="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${GITHUB_SHA}^" 2>/dev/null || true)"
+                fi
+                cnt=""
+                if [ -n "$prev" ] \
+                  && git cat-file -e "${prev}^{commit}" 2>/dev/null \
+                  && git merge-base --is-ancestor "${prev}^{commit}" "${GITHUB_SHA}^" 2>/dev/null; then
+                  cnt="$(git rev-list --count "${prev}..${GITHUB_SHA}" 2>/dev/null || true)"
+                fi
+                case "$cnt" in
+                  '' | 0 | *[!0-9]*) ;;
+                  *) range="${prev}..${GITHUB_SHA}" ;;
+                esac
+              fi
+              ;;
             refs/heads/train/*)
               if [ "${GITHUB_EVENT_NAME:-}" = "push" ]; then
                 base=""

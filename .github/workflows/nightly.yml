@@ -38,6 +38,72 @@ jobs:
     name: Full suite (backstop)
     uses: ./.github/workflows/full-suite.yml
 
+  # GITLEAKS-INCR: a main push scans only <previous release tag>..SHA
+  # (security-audit.yml). The complete-history gitleaks scan lives here as the
+  # backstop. It has no continue-on-error, so a hit makes this run red, and
+  # promote.yml refuses to move latest while the newest nightly covering the
+  # promoted commit is red (a P0 fix-forward slice follows). Same pinned
+  # binary, checksum and script as security-audit.yml; GITLEAKS_RANGE is unset,
+  # which is the full-history scan.
+  gitleaks-full-history:
+    # The name must NOT start with "Full suite (backstop)": promote.yml counts
+    # a nightly as measured when any non-skipped job carries that prefix, so a
+    # dedupe-skipped run with this green job would be taken for a measurement.
+    name: gitleaks full history (backstop)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        # Full history and tags: a shallow checkout would turn this into a
+        # tip-only gate.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install gitleaks (pinned)
+        run: |
+          set -euo pipefail
+          curl -sSfL -o /tmp/gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz
+          printf '%s  %s\n' \
+            '79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e' \
+            /tmp/gitleaks.tar.gz | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks version
+
+      - name: gitleaks scan (all reachable history)
+        env:
+          GITLEAKS_BIN: /tmp/gitleaks
+          GITLEAKS_BEFORE: ''
+          GITLEAKS_TIP: ${{ github.sha }}
+          GITLEAKS_REPORT: /tmp/gitleaks-report.json
+        run: |
+          set -euo pipefail
+          bash scripts/security-audit-gitleaks.sh
+
+      - name: Assert the secret scan completed cleanly
+        run: |
+          set -euo pipefail
+          if [ ! -f /tmp/gitleaks-report.json ]; then
+            echo "FAIL: gitleaks produced no report -- the tree was NOT scanned"
+            exit 1
+          fi
+          n=$(python3 -c "import json,sys; print(len(json.load(open('/tmp/gitleaks-report.json'))))")
+          if [ "$n" -ne 0 ]; then
+            echo "FAIL: gitleaks reported $n unmatched finding(s)"
+            exit 1
+          fi
+          echo "gitleaks reported zero unmatched findings"
+
+      - name: Upload gitleaks report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gitleaks-full-history-report
+          path: /tmp/gitleaks-report.json
+          if-no-files-found: error
+
   # Moved from first-run-gate.yml (D90): stub provider, no keys. Deterministic
   # (pinned bun, no network, no billable call), so a red here is a real
   # first-run regression and must fail the run (FC-57).
