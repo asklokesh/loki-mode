@@ -210,6 +210,17 @@ describe("loki issues run", () => {
     expect(h.out.join("")).toContain("https://github.com/o/r/pull/9");
   });
 
+  test("issues_run source has no git push, no allowToken and no gh pr create (PRs come only from the engine10 PR stage)", () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/commands/issues_run.ts"), "utf8")
+      .split("\n")
+      .filter((l) => !l.trim().startsWith("//"))
+      .join("\n");
+    expect(src).not.toMatch(/["'`]push["'`]/);
+    expect(src).not.toContain("allowToken");
+    expect(src).not.toMatch(/["'`]pr["'`]\s*,\s*["'`]create["'`]/);
+    expect(src).not.toContain("engine10-push");
+  });
+
   test("a failed gh pr list fails closed instead of risking duplicate PRs", async () => {
     const h = harness({ issues: [issue(1)] });
     const gh = h.inject.gh!;
