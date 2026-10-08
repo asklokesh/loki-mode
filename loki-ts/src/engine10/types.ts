@@ -28,7 +28,7 @@ export const EVENT_TYPES = [
   "heartbeat", "session.started", "session.ended", "cost", "wall.sealed",
   "tests.restored", "test.result", "test.scoped_out", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "provider.failover",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -127,6 +127,7 @@ export interface RunContext {
   capS: number; overCap?: () => boolean; // D60-5: priced cost reached the per-run dollar cap
   emit(type: EventType, stage: StageName | null, data: Record<string, unknown>): void;
   sessions: SessionRunner;
+  failovers?: () => import("../runner/provider_failover.ts").FailoverRecord[]; // T9: read by seal
   tests: TestMapProvider;
   cost: CostReader;
   clock: Clock;
@@ -156,6 +157,8 @@ export interface Receipt {
   verdict: Verdict;
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
   implement_limit?: { limit_s: number; elapsed_s: number };
+  /** T9: provider failovers (stage, from, to, reason, evidence). Omitted when none happened so other receipts stay byte-stable. */
+  failover?: import("../runner/provider_failover.ts").FailoverRecord[];
   /** E-120: implement's reason for a SPEC_CONFLICT exit, sanitized (newlines/control chars
    *  collapsed to spaces, capped at 500 chars). Key is omitted entirely, never null, when
    *  implement did not record one, so receipt_sha256 for every other run stays byte-stable. */
