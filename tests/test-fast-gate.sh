@@ -3,7 +3,7 @@
 #
 # Mutation-style proof that a diff selects the suites that guard it:
 #   - loki-ts/src/commands/doctor.ts selects the doctor bun and shell suites;
-#   - Dockerfile.control-plane selects tests/test-control-plane.sh (CP-04),
+#   - docker/Dockerfile.control-plane selects tests/test-control-plane.sh (CP-04),
 #     which the selector alone sends to "R0 unknown path shape";
 #   - a workflow edit selects the workflow guards, not the full set;
 #   - an unrelated docs edit selects NO doctor suite (the selection is not
@@ -40,10 +40,10 @@ if has doctor loki-ts/tests/commands/doctor.test.ts && has doctor tests/test-doc
     ok "doctor.ts selects the doctor bun test and the doctor shell suites, not the full set"
 else bad "doctor.ts did not select the doctor suites ($(cut -f1,2 "$T/doctor/plan.tsv" | head -5 | tr '\n' ' '))"; fi
 
-plan_for cp Dockerfile.control-plane
+plan_for cp docker/Dockerfile.control-plane
 if has cp tests/test-control-plane.sh && ! grep -q '^FULL' "$T/cp/plan.tsv"; then
-    ok "Dockerfile.control-plane selects tests/test-control-plane.sh (CP-04)"
-else bad "Dockerfile.control-plane did not select tests/test-control-plane.sh"; fi
+    ok "docker/Dockerfile.control-plane selects tests/test-control-plane.sh (CP-04)"
+else bad "docker/Dockerfile.control-plane did not select tests/test-control-plane.sh"; fi
 
 plan_for wf .github/workflows/test.yml
 if has wf tests/test-ci-cache-scope.sh && has wf tests/test-registration-coverage.sh && ! grep -q '^FULL' "$T/wf/plan.tsv"; then
@@ -64,7 +64,7 @@ else bad "an uncomputable diff did not fail safe to FULL"; fi
 # every sample it does not must not be.
 parity=1
 for f in VERSION package.json web-app/package.json loki-ts/dist/loki.js tests/lib/x.sh .github/workflows/test.yml \
-         Dockerfile.control-plane loki-ts/src/commands/doctor.ts docs/a.md autonomy/loki; do
+         docker/Dockerfile.control-plane loki-ts/src/commands/doctor.ts docs/a.md autonomy/loki; do
     sel_r0=0
     printf '%s\n' "$f" | bash scripts/select-tests.sh --files - 2>/dev/null | grep -q '^R0' && sel_r0=1
     plan_r0=0
