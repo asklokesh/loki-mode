@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { checkAllowlist, loadAllowlist } from "./_guard_lib.ts";
 
 // Dated Claude model ids go stale (haiku-4-5 retires). Defaults must use catalog
 // aliases (providers/model_catalog.json cli_aliases) so one file owns the ids.
@@ -8,9 +9,10 @@ const ROOT = join(import.meta.dir, "../../..");
 // benchmarks/ is bench data and stays excluded.
 const SCAN = ["loki-ts/src", "autonomy", "providers", "mcp", "dashboard"];
 const ID = /claude-(haiku|sonnet|opus|fable)-\d/;
-// Whole files that legitimately name ids: the catalog itself, and the pricing
-// table owned by PRICE-TRUTH (budget.ts).
-const ALLOW_FILES = new Set(["providers/model_catalog.json", "loki-ts/src/runner/budget.ts"]);
+// Whole files that legitimately name ids live in guard-allowlists/hardcoded-model-ids.txt (shared FINDING-GUARDS format).
+// This guard is about model IDS in defaults; model_output_regex_guard.test.ts is about parsing model OUTPUT, so they do not overlap.
+const ALLOW = loadAllowlist("hardcoded-model-ids.txt");
+const ALLOW_FILES = new Set(Object.keys(ALLOW));
 // Pricing-table rows in other files. The row must START with the quoted id key,
 // so an id used as a value (`?? "claude-x"  "input":`) is still flagged.
 const ALLOW_ROWS: Record<string, RegExp> = {
@@ -47,6 +49,9 @@ test("no hardcoded dated Claude model id outside the catalog and pricing allowli
   const files: string[] = [];
   for (const d of SCAN) walk(join(ROOT, d), files);
   expect(findOffenders(files)).toEqual([]);
+  // Every allowlisted file must still name an id and carry a reason (no stale entries).
+  const naming = Object.keys(ALLOW).filter((f) => ID.test(readFileSync(join(ROOT, f), "utf8")));
+  expect(checkAllowlist(naming, ALLOW)).toEqual({ unlisted: [], stale: [], noReason: [] });
 });
 
 test("mutation: planted dated ids are flagged, including shapes a loose exemption would hide", () => {
