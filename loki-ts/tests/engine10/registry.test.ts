@@ -47,3 +47,25 @@ describe("engine10 registry", () => {
     expect(err.message).toContain("./nope.ts");
   });
 });
+
+describe("engine10 production routing through registryLoader", () => {
+  // src/cli.ts runs `runEngine10(rest, registryLoader)`; tests that call main() directly miss a missing row.
+  test("export-sarif resolves via the registry and --help exits 0", async () => {
+    const { runEngine10 } = await import("../../src/engine10/cli.ts");
+    const err: string[] = [];
+    const out: string[] = [];
+    const w1 = process.stderr.write.bind(process.stderr);
+    const w2 = process.stdout.write.bind(process.stdout);
+    process.stderr.write = ((s: string) => (err.push(String(s)), true)) as typeof process.stderr.write;
+    process.stdout.write = ((s: string) => (out.push(String(s)), true)) as typeof process.stdout.write;
+    let rc: number;
+    try {
+      rc = await runEngine10(["export-sarif", "--help"], registryLoader);
+    } finally {
+      process.stderr.write = w1;
+      process.stdout.write = w2;
+    }
+    expect(err.join("")).not.toContain("not built yet");
+    expect(rc).toBe(0);
+  });
+});
