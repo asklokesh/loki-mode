@@ -115,5 +115,57 @@ PY
 then ok "any non-success latest nightly blocks (overlap case: red nightly older than the release still blocks)"
 else bad "the nightly block still has a newer-than-release clause"; fi
 
+# PLAN-BOUND: the plan step is bounded and a nonzero planner rc forces FULL.
+if python3 - <<'PY'
+import yaml
+d = yaml.safe_load(open(".github/workflows/test.yml"))
+steps = d["jobs"]["plan"]["steps"]
+run = [s for s in steps if s.get("name") == "Compute the plan"][0]["run"]
+assert "timeout -k 10 240 bash scripts/ci/fast-gate.sh plan" in run, "planner not wrapped in timeout"
+assert run.index("rm -f") < run.index("timeout -k"), "stale outputs.txt not removed before the run"
+assert "|| PLAN_RC=$?" in run, "rc not captured under bash -e"
+i = run.index('if [ "$PLAN_RC" -ne 0 ]')
+seg = run[i:i + 400]
+assert "full=true" in seg and "has_shards=false" in seg, "nonzero rc does not force full=true"
+assert "plan.tsv" in seg, "no plan.tsv placeholder for the upload step"
+assert d["jobs"]["plan"]["timeout-minutes"] == 15
+PY
+then ok "the plan step bounds fast-gate.sh with timeout, clears outputs.txt first, and a nonzero rc forces full=true"
+else bad "the plan step is not bounded (timeout / rm -f outputs.txt / nonzero rc -> full=true)"; fi
+
+# PLAN-BOUND: more than 150 changed files goes FULL without calling the selector.
+seq 1 151 | sed 's#^#docs/gen-#; s#$#.md#' >"$T/many.files"
+FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/many.files" bash scripts/ci/fast-gate.sh plan test "$T/many" >"$T/many.log" 2>&1
+if grep -q '^FULL' "$T/many/plan.tsv" && grep -q 'full=true' "$T/many/outputs.txt" && [ ! -e "$T/many/raw.tsv" ]; then
+    ok "151 changed files fail safe to FULL without calling the selector"
+else bad "151 changed files did not short-circuit to FULL before selection"; fi
+seq 1 150 | sed 's#^#docs/gen-#; s#$#.md#' >"$T/edge.files"
+FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/edge.files" bash scripts/ci/fast-gate.sh plan test "$T/edge" >"$T/edge.log" 2>&1
+if [ -e "$T/edge/raw.tsv" ] && ! grep -q 'too-many-files' "$T/edge/plan.tsv"; then
+    ok "150 changed files go through normal selection"
+else bad "150 changed files were short-circuited"; fi
+
+# PLAN-BOUND: force a hang. Run the real step script with a stub planner that
+# sleeps and a 1s timeout; the step must exit 0 under bash -e with full=true.
+mkdir -p "$T/hang/scripts/ci" "$T/hang/rt"
+printf '#!/usr/bin/env bash\nsleep 30\n' >"$T/hang/scripts/ci/fast-gate.sh"
+mkdir -p "$T/hang/rt/plan"
+printf 'full=false\nshards=[0]\nhas_shards=true\n' >"$T/hang/rt/plan/outputs.txt" # stale output must not survive
+python3 - "$T/hang/step.sh" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(".github/workflows/test.yml"))
+run = [s for s in d["jobs"]["plan"]["steps"] if s.get("name") == "Compute the plan"][0]["run"]
+assert "timeout -k 10 240" in run
+open(sys.argv[1], "w").write(run.replace("timeout -k 10 240", "timeout -k 1 1"))
+PY
+: >"$T/hang/gh_out"; : >"$T/hang/gh_sum"
+( cd "$T/hang" && EVENT_NAME=push BASE_REF= REF_NAME=main RUNNER_TEMP="$T/hang/rt" \
+    GITHUB_OUTPUT="$T/hang/gh_out" GITHUB_STEP_SUMMARY="$T/hang/gh_sum" \
+    timeout -k 5 60 bash -e step.sh >"$T/hang/step.log" 2>&1 ); hang_rc=$?
+if [ "$hang_rc" -eq 0 ] && grep -q '^full=true$' "$T/hang/gh_out" && ! grep -q 'full=false' "$T/hang/gh_out" \
+    && [ -s "$T/hang/rt/plan/plan.tsv" ]; then
+    ok "a hung planner is cut by the timeout: step exits 0 under bash -e with full=true and a plan.tsv"
+else bad "a hung planner did not yield full=true with exit 0 (rc=$hang_rc)"; fi
+
 echo "fast-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

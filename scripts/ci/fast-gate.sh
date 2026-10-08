@@ -26,6 +26,10 @@ export LOKI_NO_BROWSER=1
 
 SHARD_TARGET_S="${FAST_GATE_SHARD_TARGET_S:-60}"
 MAX_SHARDS="${FAST_GATE_MAX_SHARDS:-12}"
+# PLAN-BOUND: above this many changed files, diff-to-suite selection picks
+# nearly everything anyway and its per-file greps are the slow part; go FULL
+# (the fail-safe direction) without calling the selector.
+MAX_PLAN_FILES="${FAST_GATE_MAX_PLAN_FILES:-150}"
 SUITE_LIMIT="${FAST_GATE_SUITE_LIMIT:-100}"
 
 # Mirrors the R0 case patterns in scripts/select-tests.sh. tests/test-fast-gate.sh
@@ -104,6 +108,14 @@ cmd_plan() {
         return 0
     fi
     printf '%s\n' "$files" >"$out/changed.txt"
+    local nfiles
+    nfiles="$(printf '%s\n' "$files" | grep -c .)"
+    if [ "$nfiles" -gt "$MAX_PLAN_FILES" ]; then
+        echo "fast-gate: ${nfiles} changed files exceed ${MAX_PLAN_FILES}: failing safe to the FULL set" >&2
+        printf 'FULL\ttoo-many-files\t0\t0\n' >"$out/plan.tsv"
+        write_matrix "$out"
+        return 0
+    fi
 
     : >"$out/r0.txt"
     : >"$out/rest.txt"
