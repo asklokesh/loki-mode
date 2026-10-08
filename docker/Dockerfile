@@ -1,5 +1,5 @@
 # Loki Mode Docker Image (multi-arch: amd64 + arm64)
-# Build: docker buildx build --platform linux/amd64,linux/arm64 -t loki-mode .
+# Build: docker buildx build --platform linux/amd64,linux/arm64 -f docker/Dockerfile -t loki-mode .   (from the repo root)
 # Run:   docker run -it -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" -v $(pwd):/workspace asklokesh/loki-mode start prd.md
 # Dash:  docker run -it -e ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" -p 57374:57374 -v $(pwd):/workspace asklokesh/loki-mode start --api prd.md
 

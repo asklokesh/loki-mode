@@ -73,16 +73,16 @@ Stopping a containerized build: the dashboard Stop button (and `loki stop`) sign
 If you prefer not to install loki on the host, `docker compose` runs Loki from the image directly. You set credentials once in a `.env` file and never retype long flags.
 
 ```bash
-# 1. Get the repo (provides docker-compose.yml and .env.example)
+# 1. Get the repo (provides docker/docker-compose.yml and docker/.env.example)
 git clone https://github.com/asklokesh/loki-mode.git
 cd loki-mode
 
 # 2. Copy the env template and set your key
-cp .env.example .env
+cp docker/.env.example .env
 # edit .env, set ANTHROPIC_API_KEY=sk-ant-...
 
 # 3. Run a build against a spec in the current directory
-docker compose run loki start prd.md
+docker compose -f docker/docker-compose.yml run loki start prd.md
 ```
 
 To change anything (budget, provider, max iterations), edit `.env` and run the command again. No flags to retype.
@@ -92,7 +92,7 @@ For a mounted config file instead of a long `.env`, pass `loki start --config /p
 With the dashboard UI:
 
 ```bash
-docker compose run --service-ports loki start --api prd.md
+docker compose -f docker/docker-compose.yml run --service-ports loki start --api prd.md
 # Dashboard at http://localhost:57374
 ```
 
@@ -171,7 +171,7 @@ docker run -it \
   asklokesh/loki-mode start prd.md
 ```
 
-For compose, uncomment the OAuth-mount volume line in `docker-compose.yml`.
+For compose, uncomment the OAuth-mount volume line in `docker/docker-compose.yml`.
 
 Notes for Method 2:
 - The mount must be `rw` so refreshed tokens persist back to the host file.
@@ -384,7 +384,7 @@ docker run -it \
 
 ## Docker Compose Reference
 
-The repo ships a ready-to-use `docker-compose.yml` with an `env_file: .env` and an `ANTHROPIC_API_KEY` passthrough, plus a commented OAuth-mount volume for Auth Method 2. Copy `.env.example` to `.env`, set your key, and run. For reference, the service looks like this:
+The repo ships a ready-to-use `docker/docker-compose.yml` with an `env_file: .env` and an `ANTHROPIC_API_KEY` passthrough, plus a commented OAuth-mount volume for Auth Method 2. Copy `.env.example` to `.env`, set your key, and run. For reference, the service looks like this:
 
 ```yaml
 services:
@@ -408,8 +408,8 @@ services:
 ```
 
 ```bash
-cp .env.example .env       # then edit .env and set ANTHROPIC_API_KEY
-docker compose run loki start prd.md
+cp docker/.env.example .env       # then edit .env and set ANTHROPIC_API_KEY
+docker compose -f docker/docker-compose.yml run loki start prd.md
 ```
 
 ## Security-Hardened Sandbox
@@ -418,7 +418,7 @@ For untrusted PRDs, enterprise, or CI/CD environments:
 
 ```bash
 # Build sandbox image
-docker build -t loki-mode:sandbox -f Dockerfile.sandbox .
+docker build -t loki-mode:sandbox -f docker/Dockerfile.sandbox .
 
 # Run with resource limits and security controls
 docker run -it \

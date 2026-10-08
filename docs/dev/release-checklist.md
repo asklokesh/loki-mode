@@ -45,7 +45,7 @@ VERSION                                  # Single line: X.Y.Z
 package.json                             # "version": "X.Y.Z"
 SKILL.md                                 # Header (line ~6) AND footer (last line)
 Dockerfile                               # LABEL version= AND org.opencontainers.image.version (both, or it drifts)
-Dockerfile.sandbox                       # Same two labels
+docker/Dockerfile.sandbox                # Same two labels
 plugins/loki-mode/.claude-plugin/plugin.json  # "version": "X.Y.Z" (marketplace.json carries no version)
 server.json                              # "version" AND packages[loki-mode].version (MCP registry manifest; enforced by tests/test-server-json-current.sh)
 vscode-extension/package.json            # DEPRECATED v7.2.0, no longer published; bump only if vendoring
@@ -55,7 +55,7 @@ mcp/__init__.py                          # __version__ = "X.Y.Z"
 CHANGELOG.md                             # Add new version entry at top
 docs/INSTALLATION.md                     # Version header
 wiki/Home.md, wiki/_Sidebar.md, wiki/API-Reference.md
-README.md, docker-compose.yml            # Docker image tags (MAJOR/MINOR bumps)
+README.md, docker/docker-compose.yml            # Docker image tags (MAJOR/MINOR bumps)
 ```
 
 The CHANGELOG.md entry must be a full section, not a one-line placeholder

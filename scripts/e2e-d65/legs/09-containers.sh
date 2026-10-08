@@ -3,14 +3,14 @@
 # on a random host port. Never PASS without a real /ready probe; SKIP(docker unavailable) otherwise.
 leg_09_containers() {
     local f img="loki-e2e-d65-cp:$$" cid="" port body code="" ok=0 n
-    for f in Dockerfile.control-plane deploy/helm/control-plane deploy/ecs/control-plane-task.json deploy/docker-compose/docker-compose.yml; do
+    for f in docker/Dockerfile.control-plane deploy/helm/control-plane deploy/ecs/control-plane-task.json deploy/docker-compose/docker-compose.yml; do
         [ -e "$REPO_ROOT/$f" ] || fail "deploy file missing: $f"
     done
     [ "$LEG_STATUS" = FAIL ] && return
     note "deploy files present"
     if ! command -v docker > /dev/null 2>&1; then skip "docker unavailable"; return; fi
     if ! timeout -k 2 10 docker info > /dev/null 2>&1; then skip "docker unavailable"; return; fi
-    if ! ( cd "$REPO_ROOT" && timeout -k 10 420 docker build --progress=plain -f Dockerfile.control-plane -t "$img" . ) > "$T/logs/leg9-build.log" 2>&1; then
+    if ! ( cd "$REPO_ROOT" && timeout -k 10 420 docker build --progress=plain -f docker/Dockerfile.control-plane -t "$img" . ) > "$T/logs/leg9-build.log" 2>&1; then
         fail "docker build of Dockerfile.control-plane failed: $(grep -m2 "error: Could not resolve\|ERROR" "$T/logs/leg9-build.log" | tr "\n" " ")"; return
     fi
     cid="$(timeout -k 2 30 docker run -d -p 127.0.0.1::47821 -e LOKI_CONTROL_TOKEN=e2e-fake-token "$img" 2> "$T/logs/leg9-run.log")"

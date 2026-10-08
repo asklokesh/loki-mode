@@ -388,4 +388,4 @@ git log --show-signature
 - [Audit Logging](audit-logging.md) - Track Git operations
 - [GitHub Integration](../skills/github-integration.md) - Issue import and PR creation
 - [Enterprise Features](../wiki/Enterprise-Features.md) - Branch protection setup
-- [Contributing](../CONTRIBUTING.md) - Contribution guidelines
+- [Contributing](../.github/CONTRIBUTING.md) - Contribution guidelines

@@ -122,8 +122,8 @@ if npm pack --dry-run 2>&1 | grep -q "assets/welcome/welcome.html"; then
 else
     bad "welcome.html missing from npm tarball"
 fi
-if grep -q "COPY .*assets/ ./assets/" Dockerfile \
-   && grep -q "COPY .*assets/ ./assets/" Dockerfile.sandbox; then
+if grep -q "COPY .*assets/ ./assets/" docker/Dockerfile \
+   && grep -q "COPY .*assets/ ./assets/" docker/Dockerfile.sandbox; then
     ok "Dockerfile + Dockerfile.sandbox COPY assets/"
 else
     bad "a Dockerfile is missing COPY assets/"

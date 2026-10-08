@@ -1,7 +1,7 @@
 # Run the Control Plane in a container
 
 The Control Plane (run ingest API plus UI) ships as its own small image built
-from `Dockerfile.control-plane`. It serves on port 47821, stores its SQLite
+from `docker/Dockerfile.control-plane`. It serves on port 47821, stores its SQLite
 database under `/data`, runs as a non-root user and contains no secrets.
 
 The image binds 0.0.0.0, so `LOKI_CONTROL_TOKEN` is required at run time. Without
@@ -13,7 +13,7 @@ server prints a warning when you do.
 ## Docker
 
 ```bash
-docker build -f Dockerfile.control-plane -t loki-control-plane .
+docker build -f docker/Dockerfile.control-plane -t loki-control-plane .
 docker run -d -p 47821:47821 -e LOKI_CONTROL_TOKEN="$(openssl rand -hex 32)" -v loki-control:/data loki-control-plane
 LOKI_CONTROL_URL=http://localhost:47821 loki control status
 ```

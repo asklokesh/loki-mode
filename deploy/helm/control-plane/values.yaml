@@ -1,4 +1,4 @@
-# Loki Control Plane chart. Build the image from Dockerfile.control-plane.
+# Loki Control Plane chart. Build the image from docker/Dockerfile.control-plane.
 image:
   repository: asklokesh/loki-control-plane
   tag: ""            # empty = Chart appVersion

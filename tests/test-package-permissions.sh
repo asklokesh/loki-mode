@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/loki-package-permissions.XXXXXX")"
 PRIVATE_PROBE="$REPO_ROOT/.packet368-private-probe"
 PYCACHE_PROBE="$REPO_ROOT/events/__pycache__/packet368.cpython-999.pyc"
-TRACKED_EXCLUDED="$REPO_ROOT/Dockerfile"
+TRACKED_EXCLUDED="$REPO_ROOT/docker/Dockerfile"
 TRACKED_MODE="$(python3 -c 'import os,stat,sys; print(f"{stat.S_IMODE(os.stat(sys.argv[1]).st_mode):o}")' "$TRACKED_EXCLUDED")"
 trap 'rm -rf "$WORK"; rm -f "$PRIVATE_PROBE"; rm -rf "$(dirname "$PYCACHE_PROBE")"; chmod "$TRACKED_MODE" "$TRACKED_EXCLUDED"' EXIT
 
@@ -86,7 +86,7 @@ for artifact in sys.argv[1:]:
                 )
 
 with tarfile.open(sys.argv[1], "r:gz") as root_archive:
-    if any(member.name == "package/Dockerfile" for member in root_archive.getmembers()):
+    if any(member.name == "package/docker/Dockerfile" for member in root_archive.getmembers()):
         failures.append("excluded tracked sentinel shipped in the root package")
     cli = root_archive.getmember("package/bin/loki")
     if cli.mode & 0o011 != 0o011:

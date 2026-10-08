@@ -2,7 +2,7 @@
 # Loki Mode Security-Hardened Sandbox Dockerfile
 # Multi-stage build for minimal attack surface
 #
-# Build:  docker build -t loki-mode:sandbox -f Dockerfile.sandbox .
+# Build:  docker build -t loki-mode:sandbox -f docker/Dockerfile.sandbox .
 # Run:    ./autonomy/sandbox.sh start
 #
 # Security Features:

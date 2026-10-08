@@ -22,7 +22,7 @@
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-COMPOSE="$REPO_ROOT/docker-compose.yml"
+COMPOSE="$REPO_ROOT/docker/docker-compose.yml"
 
 PASS=0; FAIL=0
 ok()  { echo "  PASS: $1"; PASS=$((PASS+1)); }
@@ -101,8 +101,8 @@ p = sys.argv[1]
 s = open(p).read()
 s = s.replace("      # - LOKI_RECEIPT_SIGNING_KEY_FILE=/etc/loki/receipt-signing-key",
               "      - LOKI_RECEIPT_SIGNING_KEY_FILE=/etc/loki/receipt-signing-key")
-s = s.replace("      # - ./receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro",
-              "      - ./receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro")
+s = s.replace("      # - ../receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro",
+              "      - ../receipt-signing-key.pem:/etc/loki/receipt-signing-key:ro")
 open(p, "w").write(s)
 PY
 _after="$(python3 - "$W/dc.yml" <<'PY'
@@ -142,20 +142,20 @@ fi
 
 # --- 6. Schema validity, both ways, when docker is available ---------------
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  if (cd "$REPO_ROOT" && docker compose --profile service config >/dev/null 2>&1); then
+  if (cd "$REPO_ROOT" && docker compose -f docker/docker-compose.yml --profile service config >/dev/null 2>&1); then
     ok "the shipped compose file validates against the docker schema"
   else
     bad "the shipped compose file does not validate"
   fi
   # The enabled variant must ALSO validate, or the instructions produce a
   # broken file. Copied beside the real one so relative paths still resolve.
-  cp "$W/dc.yml" "$REPO_ROOT/.dc-signtest.yml"
-  if (cd "$REPO_ROOT" && docker compose -f .dc-signtest.yml --profile service config >/dev/null 2>&1); then
+  cp "$W/dc.yml" "$REPO_ROOT/docker/.dc-signtest.yml"
+  if (cd "$REPO_ROOT" && docker compose -f docker/.dc-signtest.yml --profile service config >/dev/null 2>&1); then
     ok "the enabled variant validates too (the instructions produce a valid file)"
   else
     bad "uncommenting the documented lines yields an INVALID compose file"
   fi
-  rm -f "$REPO_ROOT/.dc-signtest.yml"
+  rm -f "$REPO_ROOT/docker/.dc-signtest.yml"
 else
   ok "skipped the docker schema check: docker compose unavailable (not a pass for validity)"
 fi
