@@ -159,7 +159,7 @@ assert "timeout -k 10 240" in run
 open(sys.argv[1], "w").write(run.replace("timeout -k 10 240", "timeout -k 1 1"))
 PY
 : >"$T/hang/gh_out"; : >"$T/hang/gh_sum"
-( cd "$T/hang" && EVENT_NAME=push BASE_REF= REF_NAME=main RUNNER_TEMP="$T/hang/rt" \
+( cd "$T/hang" && EVENT_NAME=push BASE_REF='' REF_NAME=main RUNNER_TEMP="$T/hang/rt" \
     GITHUB_OUTPUT="$T/hang/gh_out" GITHUB_STEP_SUMMARY="$T/hang/gh_sum" \
     timeout -k 5 60 bash -e step.sh >"$T/hang/step.log" 2>&1 ); hang_rc=$?
 if [ "$hang_rc" -eq 0 ] && grep -q '^full=true$' "$T/hang/gh_out" && ! grep -q 'full=false' "$T/hang/gh_out" \
