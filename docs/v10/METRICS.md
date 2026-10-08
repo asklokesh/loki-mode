@@ -599,7 +599,7 @@ Cost per completed task for sonnet arms measured before this date used the old 3
 ## B9 raw vs loki (D91 COST-HALF and 10x metric owner)
 
 `bash scripts/b9-scoreboard.sh --ab [--n 3] [--model M] --version V --json-out F --metrics-out docs/v10/METRICS.md`
-runs `claude -p` (raw) and `loki start` (loki) on the same task text. cost_ratio = (loki usd per VERIFIED task) /
+runs `claude -p` (raw) and `loki start` (loki) on the same task text. cost_ratio = (loki usd per VERIFIED and hidden-check passing task) /
 (raw usd per task solved), failed-run cost included; correctness_ratio = loki solve rate / raw solve rate, both judged by
 the same hidden checks; wall_ratio = mean loki wall / mean raw wall; 95% percentile bootstrap over runs within each
 (arm, fixture) cell. Raw cost and time come only from the claude SDK result line (`total_cost_usd`, `duration_ms`, cache read/creation tokens); loki cost and time only from the receipt (`cost.usd`, `time.total_s`, `cost.cache_read_tokens`, `cost.cache_creation_tokens`). The old `time.wall_s` and `cost.input_tokens` are never read as totals. A missing field, or `total_s` differing from the sum of `time.stages` by more than 1%, reads NOT RECORDED.

@@ -5,10 +5,10 @@ Input TSV, one loki run per line: task run verified solved wall_s usd human_min
   solved = hidden checks passed. A run is delivered only when verified AND solved; a false VERIFIED earns nothing.
   human_min = recorded human minutes for the run (interventions plus review time); NOT RECORDED when absent.
 Per task, current release vs the baseline release (11.3.1), improvement factor = baseline / current (above 1 is better):
-  cost_factor   cost per VERIFIED task          (total usd / verified count)
+  cost_factor   cost per delivered task (VERIFIED and hidden-check passing)   (total usd / delivered count)
   wall_factor   wall minutes per run            (mean)
   human_factor  human minutes per run           (mean)
-  EFFICIENCY    verified rate / (mean usd x mean wall_min x mean human_min); efficiency_factor = current / baseline
+  EFFICIENCY    delivered rate (VERIFIED and hidden-check passing) / (mean usd x mean wall_min x mean human_min); efficiency_factor = current / baseline
 Any input a factor needs that is missing in any run reads NOT RECORDED, never 0. A recorded human_min of 0 makes
 the human factor and EFFICIENCY NOT COMPUTABLE (division by zero); no estimate is substituted. A declared slot
 with no runs prints NOT RUN.
@@ -33,6 +33,10 @@ def load(path):
     out = {}
     with open(path, newline="") as fh:
         for row in csv.reader(fh, delimiter="\t"):
+            if row and len(row) == 6 and row[0].strip():
+                print("legacy 6-column TSV %s: the format is now task run verified solved wall_s usd human_min "
+                      "(add the solved column: hidden checks passed 1/0)" % path, file=sys.stderr)
+                sys.exit(2)
             if len(row) < 7 or not row[0].strip():
                 continue
             t, _r, ver, sol, wall, usd, hm = (c.strip() for c in row[:7])
@@ -126,7 +130,7 @@ def main():
             r["floor_note"] = "(floor %g min applied)" % a.human_floor_min
     rep = {"version": a.version, "baseline": a.baseline_version,
            "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"), "tasks": rows,
-           "human_floor_min": a.human_floor_min, "definitions": "factor = baseline / current, above 1 is better; EFFICIENCY = verified rate / (mean usd x mean wall min x mean human min); NOT RECORDED when a field is missing"}
+           "human_floor_min": a.human_floor_min, "definitions": "factor = baseline / current, above 1 is better; EFFICIENCY = delivered (VERIFIED and hidden-check passing) rate / (mean usd x mean wall min x mean human min); NOT RECORDED when a field is missing"}
     with open(a.json_out, "w") as fh:
         json.dump(rep, fh, indent=2)
         fh.write("\n")

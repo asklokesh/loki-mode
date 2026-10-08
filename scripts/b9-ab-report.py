@@ -155,7 +155,7 @@ def main():
            "fixtures": fixtures, "n": {"raw": len(raw), "loki": len(loki)}, "significant": significant,
            "cost_ratio": cost, "correctness_ratio": corr, "wall_ratio": wall,
            "seed": a.seed, "boots": a.boots,
-           "definitions": {"cost_ratio": "(loki usd per VERIFIED task) / (raw usd per task solved); failed-run cost included",
+           "definitions": {"cost_ratio": "(loki usd per VERIFIED and hidden-check passing task) / (raw usd per task solved); failed-run cost included",
                            "correctness_ratio": "loki hidden-check solve rate / raw hidden-check solve rate",
                            "wall_ratio": "mean loki wall / mean raw wall"}}
     with open(a.json_out, "w") as fh:

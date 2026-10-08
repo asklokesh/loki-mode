@@ -733,6 +733,7 @@ Loki Receipt check action posts success for a valid receipt and failure for a ta
 tests that spawn the verifier pin TARGET_DIR (FC-29)	2
 b9 scoreboard dry-run rows and shape defaults (R1-17)	8
 b9 trivial-sum fixture generator	3
+b9 claimed-done extraction (FCR-1)	2
 b9 raw vs loki arms, ratios and bootstrap (B9-RAW-ARM)	8
 40x scoreboard factors and efficiency (D92)	3
 the verifier never defaults to the caller cwd (FC-29 sweep)	5
