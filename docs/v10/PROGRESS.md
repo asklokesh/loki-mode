@@ -2297,3 +2297,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - PLAN-TIMEOUT engineer had no edits from 07:40Z to 08:14Z; re-pinged with a commit-now instruction.
 
 - 2026-10-08T10:27Z CoS: PLAN-TIMEOUT-1 merged by SHA b43536756 (TL APPROVE: fast-gate 10, train-verdict-reuse 40, select-tests 42, rc 0; git diff approved..HEAD^2 empty). Full local tier on 82eb1ad31 hit the 45-min cap (rc 124); reds classified env-only (receipt_attest needs cryptography; indexer + typecheck worktree-path only, green in main). bun 2004/0, util 175/0, moat rc 0 5/9. Lost ~1h: TL verdict sat in an idle teammate; next time read the subagent transcript after 10 min instead of waiting. Pushing the 11.3.1 train now.
+
+## 2026-10-08 12:21Z CoS
+- 11.3.1 (604145bbc, pushed) release run 37774482965 failed at required-ci NIGHTLY-BLOCK (D90): nightly 37686475225 red since 10-04 on one test, macOS bun cockpit "renders a real inline image ... via the bundled wasm" timed out after 5000ms (cold wasm+font load). npm 11.3.1 NOT published.
+- Fix-forward NIGHTLY-COCKPIT (row FC-50, beforeAll warm-up + 30s render timeout, assertions unchanged): built f7f48a120, cockpit 26/0; TL round 1 BLOCK only on FC-47 id collision, r2 is the rename, in review. Then: merge, push, dispatch nightly, FULL rerun of 37774482965.
+- 11.3.2 train on local main (unpushed), now e18e4ca11: 12 earlier slices plus 133-B4..ER-01-r2, 133-E3-r2, SIGS-DOC (run-all-tests.sh registration union by hand), VPR-1-r2. UNDO-2-r2 merge reverted locally (tripped raw-gh and full-env spawn guards), r3 in HIGH review.
+- Product-code conflicts sent to engineers: XV-1 (seal.ts), MARK-1 (pr.ts), MASS-2 (queue.ts/pr.ts). BLOCKs back to engineers: MCP-D (unauthenticated HTTP task creation), VPR-2-r2 (gh authorAssociation field does not exist), T5-ATTEMPTS-PR-r2 (stale help line, r3 in review).
