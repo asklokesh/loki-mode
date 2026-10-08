@@ -45,6 +45,18 @@ describe("buildSdkLoopOptions under the router", () => {
     expect(o.model).toBe("haiku");
   });
 
+  test("compact ceiling is keyed on the executor: haiku and unknown get it, sonnet and opus do not", () => {
+    process.env["LOKI_ROUTER"] = "1";
+    const w = (model: string) => buildSdkLoopOptions({ ...base(), model }).settings;
+    expect(w("haiku")).toEqual({ advisorModel: "opus", autoCompactWindow: 100000 });
+    expect(w("claude-haiku-5-5")).toEqual({ advisorModel: "opus", autoCompactWindow: 100000 });
+    expect(w("sonnet")).toEqual({ advisorModel: "opus" });
+    expect(w("claude-sonnet-5-5")).toEqual({ advisorModel: "opus" });
+    expect(w("opus")).toEqual({ advisorModel: "opus" });
+    expect(w("claude-opus-5-5")).toEqual({ advisorModel: "opus" });
+    expect(w("some-unknown-model")).toEqual({ advisorModel: "opus", autoCompactWindow: 100000 });
+  });
+
   test("advisor unavailable: both absent and the routed model is sonnet, never haiku", () => {
     process.env["LOKI_ROUTER"] = "1";
     process.env["LOKI_ROUTER_ADVISOR"] = "off";
@@ -132,7 +144,7 @@ describe("CLI argv", () => {
     mainLoop: false,
   });
 
-  test("LOKI_ROUTER=1 puts advisorModel and autoCompactWindow in a --settings JSON", async () => {
+  test("LOKI_ROUTER=1 puts advisorModel (no compact ceiling, sonnet executor) in a --settings JSON", async () => {
     const { cli, log } = stubCli();
     process.env["LOKI_CLAUDE_CLI"] = cli;
     process.env["LOKI_ROUTER"] = "1";
@@ -141,7 +153,7 @@ describe("CLI argv", () => {
     const argv = readFileSync(log, "utf8").split("\n");
     const i = argv.indexOf("--settings");
     expect(i).toBeGreaterThan(-1);
-    expect(JSON.parse(argv[i + 1] as string)).toEqual({ advisorModel: "opus", autoCompactWindow: 100000 });
+    expect(JSON.parse(argv[i + 1] as string)).toEqual({ advisorModel: "opus" });
   });
 
   test("advisor unavailable or flag off: no advisor in argv", async () => {

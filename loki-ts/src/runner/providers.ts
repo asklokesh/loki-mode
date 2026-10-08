@@ -317,6 +317,9 @@ function hostGuardSettingsJson(): string {
 // ---------------------------------------------------------------------------
 const ROUTER_ADVISOR_MODEL = "opus";
 const ROUTER_AUTO_COMPACT_WINDOW = 100000; // SDK minimum; keeps requests under the 100K price cliff
+// Only Haiku 5.5 has the cliff. Sonnet/Opus 5.5 have a 1M window at flat price, so compacting them at 100K only
+// loses context. Unknown models fail safe to the ceiling.
+const hasNoPriceCliff = (m: string): boolean => /sonnet|opus/i.test(m) && !/haiku/i.test(m);
 
 // Claude Code version bundled in the pinned Agent SDK. A test (providers_advisor.test.ts) asserts this equals the
 // installed SDK's claudeCodeVersion, so an SDK bump that forgets it fails CI instead of silently mis-probing.
@@ -349,7 +352,7 @@ async function installedClaudeCodeVersion(cli: string): Promise<string> {
 }
 
 export interface RouterSessionPlan {
-  settings?: { advisorModel: string; autoCompactWindow: number };
+  settings?: { advisorModel: string; autoCompactWindow?: number };
   model: string;
   advisorReason?: string;
 }
@@ -368,7 +371,10 @@ export function planRouterSession(args: {
   if (probe.available) {
     return {
       model: args.model,
-      settings: { advisorModel: ROUTER_ADVISOR_MODEL, autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW },
+      settings: {
+        advisorModel: ROUTER_ADVISOR_MODEL,
+        ...(hasNoPriceCliff(args.model) ? {} : { autoCompactWindow: ROUTER_AUTO_COMPACT_WINDOW }),
+      },
     };
   }
   return { model: isHaikuModel(args.model) ? "sonnet" : args.model, advisorReason: probe.reason };
@@ -583,7 +589,7 @@ export interface SdkLoopExtraOptions {
   fallbackModel?: string;
   tools?: string[];
   model?: string;
-  settings?: { advisorModel: string; autoCompactWindow: number };
+  settings?: { advisorModel: string; autoCompactWindow?: number };
   noAppend?: boolean;
   systemPrompt?: string;
 }
