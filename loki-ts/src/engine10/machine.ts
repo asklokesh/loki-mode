@@ -22,7 +22,7 @@ const wallConcurrent = (): boolean => process.env.LOKI_E10_WALL_CONCURRENT === "
 /** WC-01b: a faithful copy of the pre-implement tree (ignored dep dirs, nested node_modules, untracked work, .git; not .loki or .claude/worktrees), taken before implement starts. A clone copy where the filesystem has one. Relative links inside it resolve inside the copy, never into the live repo.
  *  Bounded: the signal (wall limit or run cap) and a timeout kill the copy, and a size ceiling refuses it up front. Every failure is null, which means the Wall fails and nothing is installed. */
 const run = (cmd: string, args: string[], signal: AbortSignal, timeout: number): Promise<{ ok: boolean; out: string }> =>
-  new Promise((res) => { try { execFile(cmd, args, { maxBuffer: 1 << 24, timeout, signal }, (err, out) => res({ ok: !err, out: String(out ?? "") })); } catch { res({ ok: false, out: "" }); } });
+  new Promise((res) => { try { execFile(cmd, args, { maxBuffer: 1 << 24, timeout, signal, env: process.env }, (err, out) => res({ ok: !err, out: String(out ?? "") })); } catch { res({ ok: false, out: "" }); } });
 export async function snapshotTree(repoDir: string, signal: AbortSignal, o: { timeoutMs?: number; maxMb?: number } = {}): Promise<string | null> {
   const timeoutMs = o.timeoutMs ?? (Number(process.env.LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S) || 120) * 1000, maxMb = o.maxMb ?? (Number(process.env.LOKI_E10_WALL_SNAPSHOT_MAX_MB) || 2048);
   if (signal.aborted) return null;
