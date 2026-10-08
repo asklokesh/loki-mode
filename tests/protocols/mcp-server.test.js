@@ -261,3 +261,70 @@ describe('Async tool execution', () => {
     tools.delete(fakeName);
   });
 });
+
+describe('MCP 2026-07-28 stateless profile (MCP-C)', () => {
+  const META_V = 'io.modelcontextprotocol/protocolVersion';
+  const saved = process.env.LOKI_MCP_2026_07;
+  const flag = (on) => { if (on) process.env.LOKI_MCP_2026_07 = '1'; else delete process.env.LOKI_MCP_2026_07; };
+  after(() => flag(false) || (saved !== undefined && (process.env.LOKI_MCP_2026_07 = saved)));
+
+  it('server/discover returns name, version, capabilities and the legacy versions with the flag off', () => {
+    flag(false);
+    const r = handleRequest({ jsonrpc: '2.0', method: 'server/discover', id: 1 });
+    assert.equal(r.error, undefined);
+    assert.equal(r.result.serverInfo.name, 'loki-mode');
+    assert.equal(r.result.serverInfo.version, getServerInfo().version);
+    assert.deepEqual(r.result.capabilities, { tools: {}, resources: {} });
+    assert.deepEqual(r.result.supportedVersions, SUPPORTED_PROTOCOL_VERSIONS);
+    assert.ok(!r.result.supportedVersions.includes('2026-07-28'));
+  });
+
+  it('server/discover includes 2026-07-28 and every legacy version with LOKI_MCP_2026_07=1', () => {
+    flag(true);
+    const r = handleRequest({ jsonrpc: '2.0', method: 'server/discover', id: 2 });
+    for (const v of [...SUPPORTED_PROTOCOL_VERSIONS, '2026-07-28']) assert.ok(r.result.supportedVersions.includes(v), v);
+  });
+
+  it('tools/list works with no prior initialize, with or without version metadata', () => {
+    flag(true);
+    const bare = handleRequest({ jsonrpc: '2.0', method: 'tools/list', id: 3 });
+    assert.equal(bare.result.tools.length, 5);
+    const meta = handleRequest({ jsonrpc: '2.0', method: 'tools/list', id: 4, params: { _meta: { [META_V]: '2026-07-28' } } });
+    assert.equal(meta.error, undefined);
+    assert.equal(meta.result.tools.length, 5);
+  });
+
+  it('metadata naming 2026-07-28 with the flag off is refused with -32022 and the supported list', () => {
+    flag(false);
+    const r = handleRequest({ jsonrpc: '2.0', method: 'tools/list', id: 5, params: { _meta: { [META_V]: '2026-07-28' } } });
+    assert.equal(r.error.code, -32022);
+    assert.deepEqual(r.error.data.supported, SUPPORTED_PROTOCOL_VERSIONS);
+  });
+
+  it('metadata naming an unknown version is refused with -32022 even with the flag on', () => {
+    flag(true);
+    const r = handleRequest({ jsonrpc: '2.0', method: 'tools/list', id: 6, params: { _meta: { [META_V]: '2099-01-01' } } });
+    assert.equal(r.error.code, -32022);
+  });
+
+  it('legacy stateful flow is unchanged and never falls back to 2026-07-28', () => {
+    flag(true);
+    const i = handleRequest({ jsonrpc: '2.0', method: 'initialize', id: 7, params: { protocolVersion: '2099-01-01' } });
+    assert.equal(i.result.protocolVersion, '2025-11-25');
+    const old = handleRequest({ jsonrpc: '2.0', method: 'initialize', id: 8, params: { protocolVersion: '2024-11-05' } });
+    assert.equal(old.result.protocolVersion, '2024-11-05');
+  });
+
+  it('unknown methods still return -32601', () => {
+    flag(true);
+    assert.equal(handleRequest({ jsonrpc: '2.0', method: 'server/nope', id: 9 }).error.code, -32601);
+  });
+
+  it('tools/call stays behind auth in stateless mode and the server stores no session id', () => {
+    flag(true);
+    const src = fs.readFileSync(path.resolve(__dirname, '../../src/protocols/mcp-server.js'), 'utf8');
+    assert.ok(!/session[-_ ]?id/i.test(src));
+    const r = handleRequest({ jsonrpc: '2.0', method: 'tools/call', id: 10, params: { name: 'nope', _meta: { [META_V]: '2026-07-28' } } });
+    assert.ok(r.result || r.error);
+  });
+});

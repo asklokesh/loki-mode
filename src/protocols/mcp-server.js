@@ -100,9 +100,18 @@ function getServerInfo() {
 // Oldest to newest; the last entry is the fallback offered to unknown clients.
 const SUPPORTED_PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
 
+// MCP-C: 2026-07-28 (stateless profile) is advertised only with LOKI_MCP_2026_07=1. It is never the initialize fallback,
+// because that profile removes the handshake and a legacy client must keep getting a stateful version.
+const STATELESS_VERSION = '2026-07-28';
+const META_PROTOCOL_VERSION = 'io.modelcontextprotocol/protocolVersion';
+
+function advertisedProtocolVersions() {
+  return process.env.LOKI_MCP_2026_07 === '1' ? SUPPORTED_PROTOCOL_VERSIONS.concat(STATELESS_VERSION) : SUPPORTED_PROTOCOL_VERSIONS.slice();
+}
+
 function negotiateProtocolVersion(params) {
   const requested = params && typeof params.protocolVersion === 'string' ? params.protocolVersion : null;
-  if (requested && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)) return requested;
+  if (requested && advertisedProtocolVersions().includes(requested)) return requested;
   return SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1];
 }
 
@@ -148,12 +157,29 @@ function handleRequest(request) {
     }
   }
 
+  // Stateless profile: a request may carry its protocol version in _meta. No session is created or stored.
+  const metaVersion = params && params._meta && typeof params._meta === 'object' ? params._meta[META_PROTOCOL_VERSION] : undefined;
+  if (metaVersion !== undefined && !advertisedProtocolVersions().includes(metaVersion)) {
+    if (isNotification) return null;
+    const err = makeError(-32022, 'Unsupported protocol version: ' + String(metaVersion), id);
+    err.error.data = { supported: advertisedProtocolVersions() };
+    return err;
+  }
+
   let result;
 
   switch (method) {
     case 'initialize':
       result = {
         protocolVersion: negotiateProtocolVersion(params),
+        serverInfo: getServerInfo(),
+        capabilities: getCapabilities()
+      };
+      break;
+
+    case 'server/discover':
+      result = {
+        supportedVersions: advertisedProtocolVersions(),
         serverInfo: getServerInfo(),
         capabilities: getCapabilities()
       };
