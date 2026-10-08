@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-sigpipe-guard.sh - FC-63 (NR-PIPE): `echo "$big" | grep -q` under
+# tests/test-sigpipe-guard.sh - FC-64 (NR-PIPE): `echo "$big" | grep -q` under
 # pipefail fails with "echo: write error: Broken pipe" once the captured output
 # outgrows the pipe buffer, because grep -q exits at the first match.
 # Section 1 proves the mechanism deterministically; section 2 enforces the
@@ -19,7 +19,7 @@ bad() { FAIL=$((FAIL + 1)); echo "  FAIL: $1"; }
 # The legacy form: echo/printf of a variable piped into grep -q.
 PATTERN='(echo|printf)[^|]*\$[{A-Za-z_][^|]*\| *grep +-[A-Za-z]*q'
 
-echo "=== sigpipe guard (FC-63) ==="
+echo "=== sigpipe guard (FC-64) ==="
 
 # 1. Mechanism: a ~400KB captured value, legacy pipe form vs here-string form.
 big="$(yes 'npm line of onboard output' | head -n 15000)"
