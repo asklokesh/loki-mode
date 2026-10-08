@@ -25,7 +25,17 @@ if [ ! -f "$LIB" ]; then
 fi
 
 # The running install: a fake Loki install named like an npm one.
-RUN="$T/new/node_modules/loki-mode"
+# npm is stubbed so "npm root -g" names a fake durable global root (FC-30 durable rule).
+STUB="$T/stubbin"; mkdir -p "$STUB"
+GROOT="$T/npmglobal/lib/node_modules"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\n[ "$1 $2" = "root -g" ] && echo "%s"\n' "$GROOT" >"$STUB/npm"
+chmod +x "$STUB/npm"
+export PATH="$STUB:$PATH"
+export HOMEBREW_PREFIX="$T/brewprefix"
+unset BUN_INSTALL NPM_CONFIG_PREFIX
+
+RUN="$GROOT/loki-mode"
 mkdir -p "$RUN/autonomy"
 : >"$RUN/SKILL.md"
 : >"$RUN/autonomy/run.sh"
@@ -115,6 +125,43 @@ if [ "$(readlink "$H7/.claude/skills/loki-mode")" = "$T/gone/node_modules/loki-m
 else
     bad "non-install running root does not repoint"
 fi
+
+# 8-12. FC-30 durable rule: only a durable global install may repoint a link.
+mkinst() { mkdir -p "$1/autonomy"; : >"$1/SKILL.md"; : >"$1/autonomy/run.sh"; }
+heal_from() { # home root
+    HOME="$1" bash -c '. "$1"; loki_skill_link_heal "$2"' _ "$LIB" "$2" 2>"$T/err" >"$T/out"
+}
+DANGLE="$T/gone/node_modules/loki-mode"
+refused() { # home label
+    if [ "$(readlink "$1/.claude/skills/loki-mode")" = "$DANGLE" ] && [ "$(wc -l <"$T/err" | tr -d ' ')" = "1" ] \
+        && grep -q 'not a durable\|npx' "$T/err"; then ok "$2"; else bad "$2"; fi
+}
+
+H8="$T/h8"; mkdir -p "$H8/.claude/skills"; ln -s "$DANGLE" "$H8/.claude/skills/loki-mode"
+NPX="$T/cache/_npx/abc123/node_modules/loki-mode"; mkinst "$NPX"
+heal_from "$H8" "$NPX"
+refused "$H8" "npx cache install refused, link untouched, one stderr line"
+
+H9="$T/h9"; mkdir -p "$H9/.claude/skills"; ln -s "$DANGLE" "$H9/.claude/skills/loki-mode"
+SCR="$T/scratch-prefix/lib/node_modules/loki-mode"; mkinst "$SCR"
+heal_from "$H9" "$SCR"
+refused "$H9" "temp or arbitrary prefix install refused, link untouched"
+
+H10="$T/h10"; mkdir -p "$H10/.claude/skills"; ln -s "$DANGLE" "$H10/.claude/skills/loki-mode"
+BREW="$T/brewprefix/Cellar/loki-mode/9.9.9"; mkinst "$BREW"
+heal_from "$H10" "$BREW"
+if [ "$(resolved "$H10/.claude/skills/loki-mode")" = "$(resolved "$BREW")" ]; then ok "brew prefix install heals"; else bad "brew prefix install heals"; fi
+
+H11="$T/h11"; mkdir -p "$H11/.claude/skills"; ln -s "$DANGLE" "$H11/.claude/skills/loki-mode"
+BUNR="$H11/.bun/install/global/node_modules/loki-mode"; mkinst "$BUNR"
+heal_from "$H11" "$BUNR"
+if [ "$(resolved "$H11/.claude/skills/loki-mode")" = "$(resolved "$BUNR")" ]; then ok "bun global install heals"; else bad "bun global install heals"; fi
+
+H12="$T/h12"; mkdir -p "$H12/.claude/skills" "$T/foreign2"; ln -s "$T/foreign2" "$H12/.claude/skills/loki-mode"
+heal_from "$H12" "$NPX"
+if [ "$(readlink "$H12/.claude/skills/loki-mode")" = "$T/foreign2" ] && [ ! -s "$T/err" ]; then
+    ok "foreign link untouched and silent when running from npx"
+else bad "foreign link untouched and silent when running from npx"; fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

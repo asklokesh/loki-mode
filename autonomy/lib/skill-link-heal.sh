@@ -13,6 +13,9 @@
 #   - its target is missing, or resolves to a different install than the running one
 #   - the running root is itself an install path with a SKILL.md, so a dev checkout
 #     or worktree never hijacks the user's global link
+#   - the running install is durable (npm global root, bun global dir, Homebrew
+#     prefix); an npx cache, temp dir or arbitrary prefix is refused with one
+#     stderr line and the link is left untouched
 
 _loki_skill_is_install_path() {
     case "${1%/}" in
@@ -21,9 +24,47 @@ _loki_skill_is_install_path() {
     return 1
 }
 
+# Durable-install rule (FC-30 amendment). A repoint writes a user-owned path, so
+# the running install must outlive this process: a one-off `npx loki-mode` run or
+# a scratch prefix would turn the link into a new dangling link. Durable means
+# the running root sits under the npm global root (`npm root -g`), the bun global
+# dir, or a Homebrew prefix. Prints a reason and returns 1 when it is not.
+_loki_skill_dir_p() { (cd "$1" 2>/dev/null && pwd -P); }
+
+_loki_skill_root_durable() {
+    local root_p="$1" cand cands="" npmroot prefix
+    case "$root_p" in
+        */_npx/*) printf 'running from an npx cache (%s)' "$root_p"; return 1 ;;
+    esac
+    npmroot="$(npm root -g 2>/dev/null)" || npmroot=""
+    [ -n "$npmroot" ] && cands="$cands
+$npmroot"
+    [ -n "${NPM_CONFIG_PREFIX:-}" ] && cands="$cands
+${NPM_CONFIG_PREFIX}/lib/node_modules"
+    cands="$cands
+${BUN_INSTALL:-${HOME:-}/.bun}/install/global/node_modules"
+    for prefix in "${HOMEBREW_PREFIX:-}" /opt/homebrew /usr/local /home/linuxbrew/.linuxbrew; do
+        [ -n "$prefix" ] || continue
+        cands="$cands
+$prefix/Cellar/loki-mode
+$prefix/opt/loki-mode
+$prefix/lib/node_modules"
+    done
+    while IFS= read -r cand; do
+        [ -n "$cand" ] || continue
+        cand="$(_loki_skill_dir_p "$cand")" || continue
+        [ "$root_p" = "$cand" ] && return 0
+        case "$root_p" in "$cand"/*) return 0 ;; esac
+    done <<EOT
+$cands
+EOT
+    printf 'running install %s is not a durable global install (npm global, bun global or Homebrew)' "$root_p"
+    return 1
+}
+
 loki_skill_link_heal() {
     [ "${LOKI_NO_SKILL_LINK_HEAL:-}" = "1" ] && return 0
-    local root="${1:-}" home="${HOME:-}" root_p rel link tgt live_p tmp
+    local root="${1:-}" home="${HOME:-}" root_p rel link tgt live_p tmp durable="" why
     [ -n "$root" ] && [ -n "$home" ] || return 0
     [ -f "$root/SKILL.md" ] || return 0
     root_p="$(cd "$root" 2>/dev/null && pwd -P)" || return 0
@@ -38,6 +79,14 @@ loki_skill_link_heal() {
         if [ -e "$link" ]; then
             live_p="$(cd "$link" 2>/dev/null && pwd -P)" || live_p=""
             [ "$live_p" = "$root_p" ] && continue
+        fi
+        if [ -z "$durable" ]; then
+            if why="$(_loki_skill_root_durable "$root_p")"; then
+                durable=yes
+            else
+                printf 'loki: not repointing skill links: %s\n' "$why" >&2
+                return 0
+            fi
         fi
         tmp="${link}.heal.$$"
         rm -f "$tmp" 2>/dev/null
