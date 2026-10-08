@@ -105,45 +105,164 @@ def check_coe(where, value, matrix, allow_key):
         if leg.get(m.group(1)) is True and str(leg.get("bun-version")) != "latest":
             fail(f"{where}: pinned leg {leg} is experimental, so its failure would not fail the run (R2)")
 
-# A test command followed by `||` is masked unless the handler FAILS. One
-# token-level rule: quoted strings are stripped first (so "exit 1" inside an
-# echo is text, not a command), then the handler must have, in command position
-# (start, or after ; { ( & | then do else), either `false`, `exit <nonzero
-# literal>`, `exit $?`, or `exit $VAR` where VAR was captured as `VAR=$?` in the
-# handler and the exit follows. Anything else (|| true, :, exit 0, exit $SOFT,
-# exit $((0)), echo ..., `true; next`) is a mask.
-def tokens(text):
-    text = re.sub(r'"\$\{?(\w+)\}?"', r"$\1", text)  # keep "$rc" as $rc
-    return re.sub(r'"[^"]*"|\'[^\']*\'', '""', text)
+# A test command followed by `||` is masked unless the WHOLE handler fails.
+# A small shell-aware tokenizer reads quotes (a quoted "exit 1" is one word, not
+# a command), comments and operators. The handler is the group after the first
+# top-level `||` up to the next `;` or newline (a `{ ... }` group is flattened).
+# It is then interpreted as a flat command list tracking the status `$?` would
+# hold: `false` -> nonzero; `true`, `:`, echo and any other command -> zero;
+# `VAR=$?` copies the current status into VAR; any other assignment overwrites
+# it. The handler fails only if it ends nonzero, or runs `exit` with a nonzero
+# literal, `exit $?` while the status is still nonzero, or `exit $VAR` while VAR
+# still holds the nonzero status. Any further `||`, `&&`, `|`, `&`, subshell,
+# nested group or control keyword makes the handler too complex to trust, which
+# counts as masked (fail safe). A handler that only captures (`|| rc=$?`) must be
+# followed by `exit $rc` with no reassignment in between.
+def lex(text):
+    toks, i, n = [], 0, len(text)
+    while i < n:
+        c = text[i]
+        if c in " \t":
+            i += 1
+        elif c == "\n":
+            toks.append(("op", ";")); i += 1
+        elif c == "#":
+            while i < n and text[i] != "\n":
+                i += 1
+        elif text.startswith("||", i) or text.startswith("&&", i):
+            toks.append(("op", text[i:i + 2])); i += 2
+        elif c in ";|&()":
+            toks.append(("op", c)); i += 1
+        else:
+            word, kind = "", "plain"
+            while i < n and text[i] not in " \t\n;|&" and not (text[i] in "()" and not word):
+                ch = text[i]
+                if ch == "'":
+                    j = text.find("'", i + 1); j = n if j < 0 else j
+                    word += text[i + 1:j]; kind = "single"; i = j + 1
+                elif ch == '"':
+                    j = i + 1
+                    while j < n and text[j] != '"':
+                        j += 2 if text[j] == "\\" else 1
+                    word += text[i + 1:j]; kind = "quoted" if kind == "plain" else kind; i = j + 1
+                else:
+                    word += ch; i += 1
+            toks.append(("word", word, kind))
+    return toks
 
-CMDPOS = r"(?:^|[;{&|(]|\bthen\b|\bdo\b|\belse\b)\s*"
-END = r"\s*(?:$|[;&|})])"
-FAIL_CMD = re.compile(CMDPOS + r"(?:false\b|exit\s+(?:[1-9]\d*|\$\?)" + END + ")")
+KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac", "!", "function", "time"}
+ASSIGN = re.compile(r"(\w+)=(.*)", re.S)
 
-def exits_var(text, var):
-    return re.search(CMDPOS + r"exit\s+\$\{?" + re.escape(var) + r"\}?" + END, text, re.M) is not None
+def var_of(word):
+    m = re.fullmatch(r"\$(\w+|\{\w+\})", word)
+    return m.group(1).strip("{}") if m else None
 
-def masked(line, run):
-    if not TEST_CMD.search(line):
-        return False
-    t = tokens(re.sub(r"\s+#.*$", "", line))
-    parts = t.split("||")
-    if len(parts) < 2:
-        return False
-    after = tokens(run[run.find(line) + len(line):])
-    for h in parts[1:]:
-        if FAIL_CMD.search(h):
+def commands(toks):
+    out, cur = [], []
+    for t in toks:
+        if t[0] == "op" and t[1] == ";":
+            out.append(cur); cur = []
+        else:
+            cur.append(t)
+    out.append(cur)
+    return [c for c in out if c]
+
+def handler_fails(handler):
+    """True only when every path through the handler ends nonzero."""
+    if handler and handler[0] == ("word", "{", "plain"):
+        if handler[-1] != ("word", "}", "plain"):
             return False
-        cap = re.search(r"(?:^|[;{])\s*(\w+)=\$\?", h)
-        if cap and (exits_var(h, cap.group(1)) or exits_var(after, cap.group(1))):
+        handler = handler[1:-1]
+    if not handler or any(t[0] == "op" and t[1] != ";" for t in handler):
+        return False
+    if any(t[0] == "word" and t[1] in ("{", "}") and t[2] == "plain" for t in handler):
+        return False
+    last, state = "fail", {}
+    for cmd in commands(handler):
+        w = [t[1] for t in cmd]
+        if w[0] in KEYWORDS or cmd[0][2] != "plain" and w[0] in ("exit", "false"):
             return False
-    return True
+        m = ASSIGN.fullmatch(w[0]) if cmd[0][2] == "plain" else None
+        if m and len(w) == 1:
+            val = m.group(2)
+            if val == "$?" or cmd[0][2] == "quoted" and val == "$?":
+                state[m.group(1)] = last
+            else:
+                state[m.group(1)] = "fail" if re.fullmatch(r"[1-9]\d*", val) else "zero"
+            last = "zero"
+        elif w[0] == "false" and len(w) == 1:
+            last = "fail"
+        elif w[0] == "exit":
+            if len(w) == 1:
+                return last == "fail"
+            if len(w) != 2:
+                return False
+            a = w[1]
+            if re.fullmatch(r"[1-9]\d*", a) and cmd[1][2] == "plain":
+                return True
+            if a == "$?" and cmd[1][2] != "single":
+                return last == "fail"
+            v = var_of(a) if cmd[1][2] != "single" else None
+            return v is not None and state.get(v) == "fail"
+        else:
+            last = "zero"
+    return last == "fail"
+
+def capture_var(handler):
+    """VAR for a handler that is exactly `VAR=$?`, else None."""
+    if len(handler) == 1 and handler[0][0] == "word" and handler[0][2] != "single":
+        m = ASSIGN.fullmatch(handler[0][1])
+        if m and m.group(2) == "$?":
+            return m.group(1)
+    return None
+
+def exits_with(var, after):
+    """Next exit in `after` must be `exit $var`, with no earlier write to var."""
+    for cmd in commands(lex(after)):
+        w = [t for t in cmd if not (t[0] == "word" and t[2] == "plain" and t[1] in ("{", "}", "then", "do", "else"))]
+        if any(t[0] == "word" and t[2] == "plain" and re.match(re.escape(var) + r"=", t[1]) for t in w):
+            return False
+        if w and w[0][0] == "word" and w[0][1] == "exit":
+            return len(w) == 2 and w[1][2] != "single" and var_of(w[1][1]) == var
+    return False
+
+def masked(lines, i):
+    """lines[i] holds a test command; masked when its `||` handler can exit 0."""
+    text = lines[i]
+    j = i
+    while lex(text).count(("word", "{", "plain")) > lex(text).count(("word", "}", "plain")) and j + 1 < len(lines):
+        j += 1
+        text += "\n" + lines[j]
+    toks = lex(text)
+    idx = [k for k, t in enumerate(toks) if t == ("op", "||")]
+    if not idx:
+        return False
+    rest = toks[idx[0] + 1:]
+    end = len(rest)
+    depth = 0
+    for k, t in enumerate(rest):
+        if t[0] == "word" and t[2] == "plain" and t[1] == "{":
+            depth += 1
+        elif t[0] == "word" and t[2] == "plain" and t[1] == "}":
+            depth -= 1
+        elif t == ("op", ";") and depth == 0:
+            end = k
+            break
+    handler = rest[:end]
+    if handler_fails(handler):
+        return False
+    var = capture_var(handler)
+    return not (var and exits_with(var, "\n".join(lines[j + 1:])))
 
 ALWAYS_COND = re.compile(r"\b(always|failure)\(\)")
 
 for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
     fn = os.path.basename(path)
-    doc = yaml.safe_load(open(path))
+    try:
+        doc = yaml.safe_load(open(path))
+    except yaml.YAMLError as e:
+        fail(f"{fn}: invalid YAML, cannot be checked (R0): {str(e).splitlines()[0]}")
+        continue
     jobs = (doc or {}).get("jobs") or {}
     for jname, job in jobs.items():
         matrix = (job.get("strategy") or {}).get("matrix")
@@ -157,11 +276,11 @@ for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
             if not isinstance(run, str) or not TEST_CMD.search(run):
                 continue
             pipefail = "pipefail" in run or st.get("shell") == "bash"
-            for line in run.replace("\\\n", " ").splitlines():
-                s = line.strip()
+            rlines = [x.strip() for x in run.replace("\\\n", " ").splitlines()]
+            for li, s in enumerate(rlines):
                 if s.startswith("#") or not TEST_CMD.search(s):
                     continue
-                if masked(s, run):
+                if masked(rlines, li):
                     fail(f"{fn}:{jname}: step {sname!r}: test command masked by '||': {s[:90]} (R3)")
                 if re.search(r"\|\s*(tee|head|grep|sed|awk|cat)\b", s) and not pipefail:
                     fail(f"{fn}:{jname}: step {sname!r}: test command piped without pipefail: {s[:90]} (R4)")
@@ -201,6 +320,19 @@ MP
     bash "$0" "$d" >/dev/null 2>&1
     if [ $? -eq 1 ]; then echo "  PASS: $1 turns the guard red"; else echo "  FAIL: $1 not caught"; SELF_FAIL=1; fi
 }
+ok() { # name file old new: a legitimate failing handler must stay green
+    local d="$SELF/$1"
+    mkdir -p "$d" && cp .github/workflows/*.yml "$d/"
+    python3 -I - "$d/$2" "$3" "$4" <<'MP'
+import sys
+p, a, b = sys.argv[1:4]
+s = open(p).read()
+assert a in s, "mutation anchor missing: " + a
+open(p, "w").write(s.replace(a, b, 1))
+MP
+    bash "$0" "$d" >/dev/null 2>&1
+    if [ $? -eq 0 ]; then echo "  PASS: $1 stays green"; else echo "  FAIL: $1 wrongly flagged"; SELF_FAIL=1; fi
+}
 JOB='    continue-on-error: ${{ matrix.experimental == true }}'
 STEP='        run: bun test
 '
@@ -230,6 +362,22 @@ mut N03-exit-var-zero nightly.yml "$STEP" '        run: |
           bun test || exit $SOFT
 '
 mut N08-exit-arith-zero nightly.yml "$STEP" '        run: bun test || exit $((0))
+'
+mut R01-false-or-true nightly.yml "$STEP" '        run: bun test || false || true
+'
+mut R02-group-false-or-true nightly.yml "$STEP" '        run: bun test || { false || true; }
+'
+mut R03-exit-after-echo nightly.yml "$STEP" '        run: bun test || { echo "gate failed"; exit $?; }
+'
+mut R04-capture-reassigned nightly.yml "$STEP" '        run: bun test || { rc=$?; rc=0; exit $rc; }
+'
+ok C01-capture-echo-exit nightly.yml "$STEP" '        run: bun test || { rc=$?; echo failed; exit $rc; }
+'
+ok C02-exit-status nightly.yml "$STEP" '        run: bun test || exit $?
+'
+ok C03-echo-false nightly.yml "$STEP" '        run: bun test || { echo "::error::gate failed"; false; }
+'
+ok C04-echo-exit-1 nightly.yml "$STEP" '        run: bun test || { echo "x"; exit 1; }
 '
 mut M12-always release.yml '    needs: [gate, required-ci]
 ' '    needs: [gate, required-ci]
