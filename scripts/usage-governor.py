@@ -415,7 +415,11 @@ def _kill_group(proc):
         pass
 
 
-def live_read_usage(readings_path: Path, now: datetime):
+def _fmt_pct(v):
+    return str(int(v)) if float(v).is_integer() else str(v)
+
+
+def live_read_usage(readings_path: Path, now: datetime, measured: dict | None = None):
     """E-163: read live plan usage from the local `/usage` slash command and
     append one row to the readings TSV (at most one per 10 minutes). Any
     failure returns status "uncalibrated" and invents nothing."""
@@ -423,6 +427,15 @@ def live_read_usage(readings_path: Path, now: datetime):
     existing = load_readings(readings_path)
     if existing and now - max(r[0] for r in existing) < LIVE_READ_MIN_GAP:
         return {"status": "recent"}
+    if measured is not None:
+        # GOV-MEASURE: one /usage read per refresh. The measured read feeds
+        # the readings row; a cached (not freshly read) result adds no row.
+        if measured.get("status") != "ok":
+            return bad
+        if measured.get("age_secs", 0) != 0:
+            return {"status": "recent"}
+        sess, week = _fmt_pct(measured["session_pct"]), _fmt_pct(measured["week_pct"])
+        return _append_reading(readings_path, now, sess, week, measured, bad)
     proc = None
     try:
         # Own process group so a timeout can reap grandchildren too.
@@ -448,20 +461,33 @@ def live_read_usage(readings_path: Path, now: datetime):
         return bad
     if not sm or not wm:
         return bad
+    return _append_reading(readings_path, now, sm.group(1), wm.group(1), {
+        "session_pct": float(sm.group(1)), "week_pct": float(wm.group(1)),
+        "session_resets": (sm.group(2) or "").strip() or None,
+        "week_resets": (wm.group(2) or "").strip() or None,
+    }, bad)
+
+
+def _append_reading(readings_path, now, sess, week, info, bad):
     try:
+        readings_path.parent.mkdir(parents=True, exist_ok=True)
         new_file = not readings_path.exists() or readings_path.stat().st_size == 0
         with open(readings_path, "a", encoding="utf-8") as fh:
             if new_file:
                 fh.write("utc_time\twindow_percent\tweekly_percent\n")
-            fh.write(f"{now.strftime('%Y-%m-%dT%H:%M:%SZ')}\t{sm.group(1)}\t{wm.group(1)}\n")
+            fh.write(f"{now.strftime('%Y-%m-%dT%H:%M:%SZ')}\t{sess}\t{week}\n")
     except OSError:
         return bad
+    return _live_result(sess, week, info)
+
+
+def _live_result(sess, week, info):
     return {
         "status": "ok",
-        "session_pct": float(sm.group(1)) if "." in sm.group(1) else int(sm.group(1)),
-        "week_pct": float(wm.group(1)) if "." in wm.group(1) else int(wm.group(1)),
-        "session_resets": (sm.group(2) or "").strip() or None,
-        "week_resets": (wm.group(2) or "").strip() or None,
+        "session_pct": float(sess) if "." in sess else int(sess),
+        "week_pct": float(week) if "." in week else int(week),
+        "session_resets": info.get("session_resets"),
+        "week_resets": info.get("week_resets"),
     }
 
 
@@ -693,10 +719,12 @@ def _valid_live_window(value):
     return value
 
 
-def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None, measured: dict | None = None):
+def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None, measured: dict | None = None, extra_readings_path: Path | None = None):
     window_start = now - timedelta(hours=WINDOW_HOURS)
     weekly_start = last_wednesday_reset(now)
     readings = load_readings(readings_path)
+    if extra_readings_path is not None:
+        readings = readings + load_readings(extra_readings_path)
 
     # Perf (E-109): min_mtime must be the EARLIEST start of every window this
     # function reads from all_records below, not just weekly_start. Bug found
@@ -1039,8 +1067,13 @@ def main(argv=None):
     parser.add_argument("--root", default=default_root, help="root to scan for */*.jsonl transcripts")
     parser.add_argument(
         "--readings",
-        default=str(Path(__file__).resolve().parent.parent / "docs" / "v10" / "usage-readings.tsv"),
-        help="path to the founder readings TSV",
+        default=None,
+        help="founder calibration TSV (tracked, read-only; default docs/v10/usage-readings.tsv)",
+    )
+    parser.add_argument(
+        "--readings-log", default=None,
+        help="untracked runtime readings log appended by --read-usage "
+             "(default .loki/state/usage-readings.tsv; with an explicit --readings, that file)",
     )
     parser.add_argument("--now", default=None, help="override 'now' as ISO8601 UTC, for tests")
     parser.add_argument(
@@ -1076,7 +1109,14 @@ def main(argv=None):
     if now is None:
         parser.error("--now must be a parseable ISO8601 timestamp")
 
-    live = live_read_usage(Path(args.readings), now) if args.read_usage else None
+    repo_root = Path(__file__).resolve().parent.parent
+    founder_path = Path(args.readings) if args.readings else repo_root / "docs" / "v10" / "usage-readings.tsv"
+    if args.readings_log:
+        log_path = Path(args.readings_log)
+    elif args.readings:
+        log_path = founder_path
+    else:
+        log_path = repo_root / ".loki" / "state" / "usage-readings.tsv"
     cache_path = None if args.no_cache else Path(args.cache_path)
     do_measure = args.measure
     if do_measure is None:
@@ -1084,8 +1124,12 @@ def main(argv=None):
     measured = None
     if do_measure:
         measured = measured_usage(None if args.no_cache else Path(args.measure_cache), now)
-    report = build_report(Path(args.root), Path(args.readings), now, Path(args.live_log),
-                          cache_path=cache_path, measured=measured)
+    live = None
+    if args.read_usage:
+        live = live_read_usage(log_path, now, measured=measured if do_measure else None)
+    report = build_report(Path(args.root), founder_path, now, Path(args.live_log),
+                          cache_path=cache_path, measured=measured,
+                          extra_readings_path=log_path if log_path != founder_path else None)
 
     if live is not None:
         report["live_reading"] = live

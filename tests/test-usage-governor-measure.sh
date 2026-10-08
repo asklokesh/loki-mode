@@ -133,6 +133,42 @@ PATH="$WORK/bin:$PATH" STUB_COUNT="$WORK/count" STUB_MODE=ok STUB_FIXTURE="$WORK
   python3 "$TOOL" --json --now "$NOW" --root "$EMPTY_ROOT" --readings "$NOREADINGS" --live-log "$NOLIVE" --no-cache >/dev/null 2>&1
 if [ "$(count)" = "0" ]; then ok "no claude call under --now without --measure"; else bad "T7 count=$(count)"; fi
 
+echo "T8 -- the pulse default (--read-usage plus measuring) makes exactly one claude call per refresh"
+rm -f "$WORK/count" "$WORK/m8.json" "$WORK/log8.tsv"
+make_fixture "$WORK/fx.json" 5 7
+PATH="$WORK/bin:$PATH" STUB_COUNT="$WORK/count" STUB_FIXTURE="$WORK/fx.json" STUB_MODE=ok \
+  python3 "$TOOL" --json --read-usage --measure --now "$NOW" --root "$EMPTY_ROOT" --readings "$NOREADINGS" \
+    --readings-log "$WORK/log8.tsv" --live-log "$NOLIVE" --cache-path "$WORK/tcache.json" \
+    --measure-cache "$WORK/m8.json" > "$WORK/out8.json" 2>/dev/null
+row="$(tail -n 1 "$WORK/log8.tsv" 2>/dev/null)"
+if [ "$(count)" = "1" ] && [ "$row" = "$(printf '2026-10-07T20:00:00Z\t5\t7')" ]; then
+  ok "1 claude call, readings row fed from the measured result"
+else bad "T8 count=$(count) row=$row"; fi
+
+echo "T9 -- is_error:true envelope falls back with 'usage command reported an error'"
+python3 -c "import json; json.dump({'is_error': True, 'result': 'Current session: 5% used'}, open('$WORK/fx.json','w'))"
+rm -f "$WORK/count"
+OUT="$(run_gov "$NOW" "$WORK/m9.json" ok)"
+got="$(printf '%s' "$OUT" | jq_ "(d['governor']['cap_basis'], d['measured']['reason'])")"
+if [ "$got" = "('projected', 'usage command reported an error')" ]; then ok "$got"; else bad "T9 got: $got"; fi
+make_fixture "$WORK/fx.json" 5 7
+
+echo "T10 -- guard: a refresh never dirties the tracked docs/v10/usage-readings.tsv"
+FAKE="$WORK/repo"
+mkdir -p "$FAKE/scripts" "$FAKE/docs/v10"
+cp "$TOOL" "$FAKE/scripts/usage-governor.py"
+printf 'utc_time\twindow_percent\tweekly_percent\n2026-09-01T00:00:00Z\t10\t10\n' > "$FAKE/docs/v10/usage-readings.tsv"
+git -C "$FAKE" init -q
+git -C "$FAKE" add docs/v10/usage-readings.tsv scripts/usage-governor.py
+git -C "$FAKE" -c user.name=t -c user.email=t@example.com commit -q -m seed
+PATH="$WORK/bin:$PATH" STUB_COUNT="$WORK/count" STUB_FIXTURE="$WORK/fx.json" STUB_MODE=ok \
+  python3 "$FAKE/scripts/usage-governor.py" --json --read-usage --measure --root "$EMPTY_ROOT" \
+    --live-log "$NOLIVE" --cache-path "$WORK/tcache10.json" --measure-cache "$WORK/m10.json" >/dev/null 2>&1
+dirty="$(git -C "$FAKE" status --porcelain docs/v10/usage-readings.tsv)"
+if [ -z "$dirty" ] && [ -s "$FAKE/.loki/state/usage-readings.tsv" ]; then
+  ok "tracked file clean; runtime row went to .loki/state/usage-readings.tsv"
+else bad "T10 dirty='$dirty' log=$(ls "$FAKE/.loki/state" 2>&1)"; fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
