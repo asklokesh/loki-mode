@@ -46,12 +46,16 @@
 #                           (default 3) on each fixture: trivial-sum, two-bug (generated, hidden checks copied in
 #                           after the arm finishes) and, when --repo/--base/--test-cmd are given, that real repo
 #                           as a third fixture. Raw usd is claude's total_cost_usd; loki usd and verdict come from
-#                           the run's receipt.json (cost.usd, verdict VERIFIED). A missing cost is NOT RECORDED.
+#                           the run's receipt.json (cost.usd, verdict VERIFIED). Wall and cost come ONLY from the SDK
+#                           result line (raw: total_cost_usd, duration_ms, cache_read/creation_input_tokens) or the
+#                           RECEIPT-TRUTH receipt fields (time.total_s, cost.cache_read_tokens, cost.cache_creation_tokens;
+#                           time.wall_s and cost.input_tokens are never read). A missing field, or total_s differing from
+#                           the sum of time.stages by more than 1%, makes the row NOT RECORDED, never 0.
 #   --dry                   alias of --dry-run; with --ab it uses recorded stubs (no keys, no network) for CI
 #   --model M               passed to the raw arm as --model and to loki as LOKI_SESSION_MODEL
 #   --version V             release label for the METRICS row and JSON
 #   --json-out FILE         the report JSON (cost, correctness and wall ratios, 95% bootstrap intervals, n)
-#   --ab-report TSV         no runs: report over an AB results TSV (arm fixture run solved verified wall usd);
+#   --ab-report TSV         no runs: report over an AB results TSV (arm fixture run solved verified wall usd cache_read cache_create);
 #                           with --json-out, --metrics-out, --version. Math lives in scripts/b9-ab-report.py.
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
@@ -328,7 +332,8 @@ case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --setting
 [ -f sum.js ] && sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
 [ -f stats.js ] && sed -i.bak -e 's/(xs.length-1)/xs.length/' -e 's/let m=0/let m=-Infinity/' stats.js && rm -f stats.js.bak
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
-case " $* " in *" json "*) echo '{"type":"result","total_cost_usd": 0.0123}';; *) echo "stub claude done";; esac
+CJ='{"type":"result","total_cost_usd": 0.0123,"duration_ms": 14000,"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":500,"cache_creation_input_tokens":100}}'
+case " $* " in *" json "*) echo "${B9_STUB_CLAUDE_JSON-$CJ}";; *) echo "stub claude done";; esac
 STUB
     chmod +x "$T/bin/claude"
     export PATH="$T/bin:$PATH" LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_E10_INVOKER=cli
@@ -403,23 +408,70 @@ preflight() { # preflight arm
 
 
 # --- --ab: raw vs loki on the same task text (B9-RAW-ARM) -----------------------
-# receipt_fields DIR: TAB line `verified usd` from the newest .loki/runs/*/receipt.json (verified 1 only for verdict
-# VERIFIED; usd is NOT RECORDED when cost.usd is null, absent, not a number or <= 0, e.g. the unmetered CLI invoker).
+# receipt_fields DIR: TAB line `verified usd wall_s cache_read cache_create` from the newest .loki/runs/*/receipt.json.
+# Cost and time come ONLY from the RECEIPT-TRUTH fields: time.total_s and cost.{usd,cache_read_tokens,cache_creation_tokens}.
+# The old time.wall_s (a stage sum) and cost.input_tokens are never read as totals. verified is 1 only for verdict
+# VERIFIED. The four measures read NOT RECORDED together (the row is unusable) when any new field is absent or not a
+# positive/non-negative number, or when time.stages exists and total_s differs from its sum by more than 1%.
 receipt_fields() {
     python3 -I - "$1" <<'PY'
 import glob, json, os, sys
+NR = "NOT RECORDED"
 fs = sorted(glob.glob(os.path.join(sys.argv[1], ".loki", "runs", "*", "receipt.json")), key=os.path.getmtime)
-v, u = 0, "NOT RECORDED"
+v, out = 0, [NR] * 4
+def num(x, pos):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and (x > 0 if pos else x >= 0)
 if fs:
     try:
         d = json.load(open(fs[-1]))
         v = 1 if d.get("verdict") == "VERIFIED" else 0
-        x = (d.get("cost") or {}).get("usd")
-        if isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0:
-            u = round(x, 6)
+        c, t = d.get("cost") or {}, d.get("time") or {}
+        ok = num(c.get("usd"), True) and num(t.get("total_s"), True) \
+            and num(c.get("cache_read_tokens"), False) and num(c.get("cache_creation_tokens"), False)
+        st = t.get("stages")
+        if ok and isinstance(st, dict) and st:
+            vals = [x for x in st.values() if num(x, False)]
+            ssum = sum(vals)
+            if len(vals) != len(st) or ssum <= 0 or abs(t["total_s"] - ssum) > 0.01 * ssum:
+                ok = False
+        if ok:
+            out = [round(c["usd"], 6), round(t["total_s"], 3), c["cache_read_tokens"], c["cache_creation_tokens"]]
     except Exception:
         pass
-print("%s\t%s" % (v, u))
+print("\t".join([str(v)] + [str(x) for x in out]))
+PY
+}
+
+# raw_fields PATH: TAB line `usd wall_s cache_read cache_create` from the claude -p SDK result line only
+# (total_cost_usd, duration_ms, usage.cache_read_input_tokens, usage.cache_creation_input_tokens). All four read
+# NOT RECORDED together when the result line lacks any of them (a timed-out run has no result line).
+raw_fields() {
+    python3 -I - "$1" <<'PY'
+import json, re, sys
+NR = "NOT RECORDED"
+try:
+    txt = open(sys.argv[1], errors="replace").read()
+except Exception:
+    txt = ""
+recs = []
+for m in re.finditer(r"\{", txt):
+    try:
+        d, _ = json.JSONDecoder().raw_decode(txt[m.start():])
+    except Exception:
+        continue
+    if isinstance(d, dict) and "total_cost_usd" in d:
+        recs.append(d)
+out = [NR] * 4
+def num(x, pos):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and (x > 0 if pos else x >= 0)
+if recs:
+    d = recs[-1]
+    u = d.get("usage") if isinstance(d.get("usage"), dict) else {}
+    if num(d.get("total_cost_usd"), True) and num(d.get("duration_ms"), True) \
+            and num(u.get("cache_read_input_tokens"), False) and num(u.get("cache_creation_input_tokens"), False):
+        out = [round(d["total_cost_usd"], 6), round(d["duration_ms"] / 1000.0, 3),
+               u["cache_read_input_tokens"], u["cache_creation_input_tokens"]]
+print("\t".join(str(x) for x in out))
 PY
 }
 
@@ -434,7 +486,8 @@ run_ab() {
 [ -f sum.js ] && sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
 [ -f stats.js ] && sed -i.bak -e 's/(xs.length-1)/xs.length/' -e 's/let m=0/let m=-Infinity/' stats.js && rm -f stats.js.bak
 mkdir -p .loki/runs/r1
-printf '{"schema":"loki.v10.receipt/1","verdict":"VERIFIED","cost":{"usd":0.0456},"time":{"wall_s":1}}\n' > .loki/runs/r1/receipt.json
+REC='{"schema":"loki.v10.receipt/1","verdict":"VERIFIED","cost":{"usd":0.0456,"cache_read_tokens":1000,"cache_creation_tokens":200},"time":{"wall_s":9,"total_s":42,"stages":{"plan":10,"implement":30,"verify":2}}}'
+printf '%s\n' "${B9_STUB_RECEIPT-$REC}" > .loki/runs/r1/receipt.json
 echo "Cost: \$0.0456"
 STUB
         chmod +x "$T/bin/loki-stub"; LOKI="$T/bin/loki-stub"
@@ -453,26 +506,28 @@ STUB
                     repo) mkdir -p "$W"; git clone -q --local "$REPO" "$W/repo" && git -C "$W/repo" checkout -q "$BASE"; D="$W/repo"; TASKF="$TASK"; TESTF="$TESTCMD"; LBL="${NAME:-repo}" ;;
                     *) echo "b9-scoreboard: unknown fixture $fx" >&2; return 2 ;;
                 esac
-                S=$(date +%s); OUT="$T/ab-out-$LBL-$arm-$run.log"
+                OUT="$T/ab-out-$LBL-$arm-$run.log"
                 if [ "$arm" = raw ]; then
                     ( cd "$D" && timeout -k 10 "$TIMEOUT" claude -p "$TASKF" --dangerously-skip-permissions --output-format json ${MODEL:+--model "$MODEL"} ) < /dev/null > "$OUT" 2>&1
                 else
                     ( cd "$D" && timeout -k 10 "$TIMEOUT" env ${MODEL:+LOKI_SESSION_MODEL="$MODEL"} "$LOKI" start "$TASKF" ) < /dev/null > "$OUT" 2>&1
                 fi
-                ARC=$?; WALL=$(( $(date +%s) - S ))
+                ARC=$?
                 if [ "$ARC" -ne 0 ] && [ "$ARC" -ne 124 ] && [ "$ARC" -ne 137 ] \
                     && [ -z "$(git -C "$D" status --porcelain -- . ':!.loki' 2>/dev/null)" ]; then
                     echo "b9-scoreboard: $arm run $run on $fx BLOCKED: exit $ARC before any work: $(tail -c 200 "$OUT")" >&2
                     blocked=$((blocked + 1)); continue
                 fi
                 SOLVED=0; ( cd "$D" && bash -c "$TESTF" ) > "$T/ab-test-$LBL-$arm-$run.log" 2>&1 && SOLVED=1
+                # Cost and time come from the SDK result line (raw) or the receipt (loki), never from our own clock.
                 if [ "$arm" = raw ]; then
-                    UF=$(usage_fields claude "$OUT"); USD="${UF%%$'\t'*}"; VERIFIED="$SOLVED"
+                    RF=$(raw_fields "$OUT"); VERIFIED="$SOLVED"
+                    IFS=$'\t' read -r USD WALLR CR CC <<< "$RF"
                 else
-                    RF=$(receipt_fields "$D"); VERIFIED="${RF%%$'\t'*}"; USD="${RF#*$'\t'}"
+                    RF=$(receipt_fields "$D")
+                    IFS=$'\t' read -r VERIFIED USD WALLR CR CC <<< "$RF"
                 fi
-                case "$USD" in ''|*[!0-9.]*) USD="NOT RECORDED" ;; esac
-                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$arm" "$LBL" "$run" "$SOLVED" "$VERIFIED" "$WALL" "$USD" >> "$AB_TSV"
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$arm" "$LBL" "$run" "$SOLVED" "$VERIFIED" "$WALLR" "$USD" "$CR" "$CC" >> "$AB_TSV"
             done
         done
     done

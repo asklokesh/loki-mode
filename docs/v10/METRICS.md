@@ -602,8 +602,8 @@ Cost per completed task for sonnet arms measured before this date used the old 3
 runs `claude -p` (raw) and `loki start` (loki) on the same task text. cost_ratio = (loki usd per VERIFIED task) /
 (raw usd per task solved), failed-run cost included; correctness_ratio = loki solve rate / raw solve rate, both judged by
 the same hidden checks; wall_ratio = mean loki wall / mean raw wall; 95% percentile bootstrap over runs within each
-(arm, fixture) cell. Raw usd is claude `total_cost_usd`; loki usd is receipt.json `cost.usd`. A missing cost reads NOT RECORDED.
+(arm, fixture) cell. Raw cost and time come only from the claude SDK result line (`total_cost_usd`, `duration_ms`, cache read/creation tokens); loki cost and time only from the receipt (`cost.usd`, `time.total_s`, `cost.cache_read_tokens`, `cost.cache_creation_tokens`). The old `time.wall_s` and `cost.input_tokens` are never read as totals. A missing field, or `total_s` differing from the sum of `time.stages` by more than 1%, reads NOT RECORDED.
 
 | Date | Run | Fixtures | Result |
 |---|---|---|---|
-| 2026-10-08T04:58Z | b9-ab n1-plumbing | trivial-sum | cost_ratio=0.92 correctness_ratio=1.00 wall_ratio=3.07 n=1/1, interval NOT COMPUTABLE. n=1 not significant: plumbing proof only (raw $0.1264 14s, loki $0.1157 43s, both solved, loki VERIFIED). |
+| 2026-10-08T04:58Z | b9-ab n1-plumbing (SUPERSEDED) | trivial-sum | SUPERSEDED, do not cite. Used our own clock for wall and the old receipt fields: its loki wall (43s) was not the receipt `time.wall_s`/`total_s` and `time.wall_s` is invalid as a total (it is a stage sum that excludes boot and seal). Rerun on SDK `duration_ms` and receipt `time.total_s` once RECEIPT-TRUTH ships. Former text: cost_ratio=0.92 wall_ratio=3.07 n=1/1, not significant. |

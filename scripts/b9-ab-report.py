@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """B9 raw-vs-loki report (B9-RAW-ARM). Called by scripts/b9-scoreboard.sh --ab-report.
 
-Input TSV, one run per line: arm fixture run solved verified wall usd
+Input TSV, one run per line: arm fixture run solved verified wall usd [cache_read cache_create]
   arm: raw | loki. solved: hidden checks passed (1/0). verified: loki receipt verdict VERIFIED (raw: equals solved).
-  usd: raw from claude -p total_cost_usd, loki from receipt.json cost.usd; "NOT RECORDED" when absent.
+  usd, wall: raw from the claude -p SDK result line (total_cost_usd, duration_ms), loki from receipt.json cost.usd and
+  time.total_s (never time.wall_s); "NOT RECORDED" when absent.
 Outputs a JSON file and one METRICS row:
   cost_ratio        (loki usd / loki verified tasks) / (raw usd / raw solved tasks); cost of failed runs is included
   correctness_ratio loki solve rate / raw solve rate
@@ -92,6 +93,8 @@ def metric(name, fn, runs, rng, boots, missing_reason=None):
     raw, loki = sums(runs, "raw"), sums(runs, "loki")
     if missing_reason:
         return {"value": NR, "ci95": NR, "reason": missing_reason}
+    if name == "wall" and any(r["wall"] is None for r in raw + loki):
+        return {"value": NR, "ci95": NR, "reason": "%d run(s) have no recorded duration" % sum(1 for r in raw + loki if r["wall"] is None)}
     point = fn(raw, loki)
     if point is None:
         return {"value": NC, "ci95": NC, "reason": "a denominator is zero (no solved/verified run or no raw baseline)"}

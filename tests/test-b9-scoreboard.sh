@@ -229,7 +229,7 @@ else
 fi
 FAKE
 chmod +x "$T/fake-loki-usage"
-env -u LOKI_RUN_TMP B9_LOKI="$T/fake-loki-usage" bash "$B9" --dry-run --repeat 3 --results-out "$T/u.tsv" > "$T/u.txt" 2> "$T/u.err"
+env -u LOKI_RUN_TMP B9_STUB_CLAUDE_JSON='{"type":"result","total_cost_usd": 0.0123}' B9_LOKI="$T/fake-loki-usage" bash "$B9" --dry-run --repeat 3 --results-out "$T/u.tsv" > "$T/u.txt" 2> "$T/u.err"
 check usage-repeat-rc $? "$(cat "$T/u.err")"
 UR=$(grep -c 'b9-scoreboard arm ' "$T/u.txt")
 check repeat-3-gives-12-rows "$(( UR == 12 ? 0 : 1 ))" "rows=$UR"

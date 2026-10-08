@@ -87,4 +87,44 @@ python3 -I -c 'import json,sys;d=json.load(open(sys.argv[1]));sys.exit(0 if isin
 check ab-dry-cost-ratio-numeric $? "$(cat "$T/d.json")"
 grep -q 'b9-ab' "$T/d.metrics"; check ab-dry-metrics-row $? "$(cat "$T/d.metrics")"
 
+# --- CTO: cost and time come only from SDK result totals / RECEIPT-TRUTH fields -------------------------------
+ab_one() { # ab_one tag [env assignments...]: --ab --dry, one trivial-sum run per arm; rows land in $T/<tag>.tsv
+    local tag="$1"; shift
+    env -u LOKI_RUN_TMP "$@" bash "$B9" --ab --dry --fixtures trivial-sum --n 1 --results-out "$T/$tag.tsv" --json-out "$T/$tag.json" > "$T/$tag.out" 2>&1
+}
+col() { awk -F '\t' -v a="$2" -v c="$3" '$1==a{print $c}' "$T/$1.tsv"; } # col tag arm column
+NRS='NOT RECORDED'
+# default stubs: raw wall is the SDK duration_ms (14000 ms -> 14.0 s), loki wall is receipt time.total_s (42)
+ab_one ok
+[ "$(col ok raw 6)" = "14.0" ] && [ "$(col ok loki 6)" = "42" ]; check wall-from-sdk-duration-and-receipt-total $? "$(cat "$T/ok.tsv")"
+[ "$(col ok raw 8)" = "500" ] && [ "$(col ok raw 9)" = "100" ] && [ "$(col ok loki 8)" = "1000" ] && [ "$(col ok loki 9)" = "200" ]; check cache-fields-recorded $? "$(cat "$T/ok.tsv")"
+# the old fields are never a total: a receipt with only time.wall_s and cost.input_tokens is NOT RECORDED
+OLD='{"verdict":"VERIFIED","cost":{"usd":0.5,"input_tokens":999},"time":{"wall_s":777,"stages":{"plan":777}}}'
+ab_one old B9_STUB_RECEIPT="$OLD"
+[ "$(col old loki 6)" = "$NRS" ] && [ "$(col old loki 7)" = "$NRS" ] && [ "$(col old loki 5)" = "1" ]; check old-receipt-fields-not-recorded $? "$(cat "$T/old.tsv")"
+! grep -q '777' "$T/old.tsv"; check wall_s-never-read-as-total $? "$(cat "$T/old.tsv")"
+# receipt lacking one cache field is NOT RECORDED
+NOCC='{"verdict":"VERIFIED","cost":{"usd":0.5,"cache_read_tokens":1},"time":{"total_s":40,"stages":{"plan":40}}}'
+ab_one nocc B9_STUB_RECEIPT="$NOCC"
+[ "$(col nocc loki 6)" = "$NRS" ] && [ "$(col nocc loki 7)" = "$NRS" ]; check missing-cache-creation-not-recorded $? "$(cat "$T/nocc.tsv")"
+# cross-check: total_s must equal the sum of stages within 1%
+mkrec() { printf '{"verdict":"VERIFIED","cost":{"usd":0.5,"cache_read_tokens":1,"cache_creation_tokens":1},"time":{"total_s":%s,"stages":{"plan":40,"implement":60}}}' "$1"; }
+ab_one in1 B9_STUB_RECEIPT="$(mkrec 100.9)"
+[ "$(col in1 loki 6)" = "100.9" ]; check crosscheck-within-1pct-recorded $? "$(cat "$T/in1.tsv")"
+ab_one out1 B9_STUB_RECEIPT="$(mkrec 101.5)"
+[ "$(col out1 loki 6)" = "$NRS" ] && [ "$(col out1 loki 7)" = "$NRS" ]; check crosscheck-over-1pct-not-recorded $? "$(cat "$T/out1.tsv")"
+ab_one big B9_STUB_RECEIPT="$(mkrec 150)"
+[ "$(col big loki 6)" = "$NRS" ]; check crosscheck-total-far-from-stages $? "$(cat "$T/big.tsv")"
+# a receipt without stages has nothing to cross-check and is recorded
+NOST='{"verdict":"VERIFIED","cost":{"usd":0.5,"cache_read_tokens":1,"cache_creation_tokens":1},"time":{"total_s":33}}'
+ab_one nost B9_STUB_RECEIPT="$NOST"
+[ "$(col nost loki 6)" = "33" ]; check no-stages-no-crosscheck $? "$(cat "$T/nost.tsv")"
+# raw: a result line without duration_ms or without a cache field is NOT RECORDED
+ab_one rnd B9_STUB_CLAUDE_JSON='{"type":"result","total_cost_usd":0.2,"usage":{"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}'
+[ "$(col rnd raw 6)" = "$NRS" ] && [ "$(col rnd raw 7)" = "$NRS" ]; check raw-missing-duration-not-recorded $? "$(cat "$T/rnd.tsv")"
+ab_one rnc B9_STUB_CLAUDE_JSON='{"type":"result","total_cost_usd":0.2,"duration_ms":5000,"usage":{"cache_read_input_tokens":1}}'
+[ "$(col rnc raw 6)" = "$NRS" ] && [ "$(col rnc raw 7)" = "$NRS" ]; check raw-missing-cache-not-recorded $? "$(cat "$T/rnc.tsv")"
+# the report then says NOT RECORDED for cost and wall, never a number
+[ "$(jget "$T/old.json" cost_ratio.value)" = "$NRS" ] && [ "$(jget "$T/old.json" wall_ratio.value)" = "$NRS" ]; check report-not-recorded-when-fields-missing $? "$(cat "$T/old.json")"
+
 [ "$FAILS" -eq 0 ]
