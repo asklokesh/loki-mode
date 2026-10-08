@@ -2,7 +2,7 @@
 // Findings are reported, never gating: the exit code does not depend on how many findings there are.
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { toSarif, type Finding } from "../features/sarif.ts";
+import { toSarif, type Finding } from "../contrib/sarif.ts";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { safeGitRun } from "../util/safe_git.ts";
 

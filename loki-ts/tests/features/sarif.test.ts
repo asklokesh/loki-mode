@@ -1,6 +1,6 @@
 // SARIF-1: findings to SARIF 2.1.0. Golden shape, required fields, NOT PROVEN as note, stable fingerprints, redaction.
 import { describe, expect, test } from "bun:test";
-import { findingFingerprint, sarifUri, toSarif, type Finding } from "../../src/features/sarif.ts";
+import { findingFingerprint, sarifUri, toSarif, type Finding } from "../../src/contrib/sarif.ts";
 
 const TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4";
 
