@@ -335,6 +335,40 @@ case "${1:-}" in
         ;;
 esac
 
+# FC-35: --attempts is handled HERE, once, before any route split (engine10 positional task, Bun
+# loop, bash cmd_start). A flag accepted on one route must be honored or refused loudly on every
+# other. N=1 is stripped so every route sees today's argv byte-for-byte; N=2..5 runs on the Bun
+# start command (loki-ts/src/commands/start.ts), which spawns one engine10 run per worktree.
+if [ "${1:-}" = "start" ]; then
+    _loki_att_args=()
+    _loki_att_n=""
+    _loki_att_skip=0
+    for _loki_att_a in "${@:2}"; do
+        if [ "$_loki_att_skip" = "1" ]; then _loki_att_n="$_loki_att_a"; _loki_att_skip=0; continue; fi
+        case "$_loki_att_a" in
+            --attempts) _loki_att_skip=1 ;;
+            --attempts=*) _loki_att_n="${_loki_att_a#--attempts=}" ;;
+            *) _loki_att_args+=("$_loki_att_a") ;;
+        esac
+    done
+    if [ "$_loki_att_skip" = "1" ]; then
+        echo "loki: --attempts requires a value from 1 to 5." >&2
+        exit 2
+    fi
+    if [ -n "$_loki_att_n" ]; then
+        case "$_loki_att_n" in
+            1) set -- start ${_loki_att_args[@]+"${_loki_att_args[@]}"} ;;
+            [2-5])
+                _lb=$(_loki_bun)
+                [ -n "$_lb" ] || { echo "loki: --attempts $_loki_att_n needs bun (install from https://bun.sh); refusing to run a single attempt silently." >&2; exit 1; }
+                exec "$_lb" "$BUN_CLI" "$@"
+                ;;
+            *) echo "loki: --attempts must be an integer from 1 to 5, got '$_loki_att_n'." >&2; exit 2 ;;
+        esac
+    fi
+    unset _loki_att_args _loki_att_n _loki_att_skip _loki_att_a
+fi
+
 # Loki 10 engine (D29, the only engine from 11.0.0). Routes `loki "<task>"`,
 # `loki owner/repo#N`, `loki quick "<task>"`, `keys` and `verify --pubkey` to engine10.
 # shellcheck disable=SC2194
@@ -376,7 +410,20 @@ case "v10" in
             # `loki <ref>`; any other start call (PRD file, flags first, one word) stays legacy.
             start)
                 case "${2:-}" in
-                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*) _e10=1; _e10_args=("${@:2}") ;;
+                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
+                        _e10=1; _e10_args=()
+                        # FC-35: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
+                        _e10_bnext=0
+                        for _e10_a in "${@:2}"; do
+                            if [ "$_e10_bnext" = "1" ]; then _e10_args+=("$_e10_a"); _e10_bnext=0; continue; fi
+                            case "$_e10_a" in
+                                --budget|--budget-limit) _e10_args+=(--max-cost); _e10_bnext=1 ;;
+                                --budget=*|--budget-limit=*) _e10_args+=("--max-cost=${_e10_a#*=}") ;;
+                                *) _e10_args+=("$_e10_a") ;;
+                            esac
+                        done
+                        unset _e10_a _e10_bnext
+                        ;;
                     *) _e10=0 ;;
                 esac
                 ;;
@@ -501,18 +548,6 @@ _loki_start_needs_bash() {
     [ "$effective_provider" = "opencode" ] && return 0
     return 1
 }
-# 11.3.0 T5: --attempts N (N>=2) is implemented on the Bun route only; divert there.
-if [ "${1:-}" = "start" ]; then
-    _loki_att_prev=""
-    for _loki_att_a in "${@:2}"; do
-        _loki_att_v=""
-        [ "$_loki_att_prev" = "--attempts" ] && _loki_att_v="$_loki_att_a"
-        case "$_loki_att_a" in --attempts=*) _loki_att_v="${_loki_att_a#--attempts=}" ;; esac
-        case "$_loki_att_v" in [2-5]) exec bun "$BUN_CLI" "$@" ;; esac
-        _loki_att_prev="$_loki_att_a"
-    done
-    unset _loki_att_prev _loki_att_a _loki_att_v
-fi
 if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
     if _loki_start_needs_bash "${@:2}"; then
         exec "$BASH_CLI" "$@"

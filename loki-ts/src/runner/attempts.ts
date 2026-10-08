@@ -4,9 +4,11 @@
 // applies the winner to the primary tree, and writes an attempts receipt that names every loser.
 // All side effects go through AttemptDeps so the selection, cleanup and receipt are unit-testable.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { verifyReceipt } from "../engine10/verify_cmd.ts";
+import { outcomeOf } from "../features/receipt_dsse.ts";
 
 export const MAX_ATTEMPTS = 5;
 
@@ -197,26 +199,32 @@ function git(cwd: string, args: string[], input?: string): string {
 }
 
 /** Checks from the attempt's own engine10 receipt. seal.ts writes join(runDir, "receipt.json") with runDir = <repo>/.loki/runs/<runId>
- *  (supervisor.ts), so the latest <worktree>/.loki/runs/<runId>/receipt.json. A pass there already means n>0 executed (FC-16).
- *  null = no receipt (NOT PROVEN). */
-export function readRecordedChecks(worktree: string): AttemptCheck[] | null {
+ *  (supervisor.ts). Only the NEWEST run dir is read (no fallback to an older run), and only when verifyReceipt says VERIFIED and the run
+ *  outcome is VERIFIED or ALREADY_SATISFIED: an unsigned, forged, tampered or BLOCKED receipt is NOT PROVEN.
+ *  A pass there already means n>0 executed (FC-16). null = NOT PROVEN. */
+export async function readRecordedChecks(worktree: string, verify: (receiptPath: string) => Promise<{ verdict: string }> = verifyReceipt): Promise<AttemptCheck[] | null> {
   const runs = join(worktree, ".loki", "runs");
   if (!existsSync(runs)) return null;
-  const dirs = readdirSync(runs).sort();
-  for (let i = dirs.length - 1; i >= 0; i--) {
-    const f = join(runs, dirs[i]!, "receipt.json");
-    if (!existsSync(f)) continue;
-    try {
-      const j = JSON.parse(readFileSync(f, "utf8")) as { checks?: AttemptCheck[] };
-      return Array.isArray(j.checks) ? j.checks : null;
-    } catch {
-      return null;
-    }
+  const dirs = readdirSync(runs).filter((d) => statSync(join(runs, d)).isDirectory()).sort();
+  const newest = dirs[dirs.length - 1];
+  if (newest === undefined) return null;
+  const f = join(runs, newest, "receipt.json");
+  if (!existsSync(f)) return null;
+  try {
+    if ((await verify(f)).verdict !== "VERIFIED") return null;
+    const j = JSON.parse(readFileSync(f, "utf8")) as Record<string, unknown> & { checks?: AttemptCheck[] };
+    const outcome = outcomeOf(j);
+    if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") return null;
+    return Array.isArray(j.checks) ? j.checks : null;
+  } catch {
+    return null;
   }
-  return null;
 }
 
 function defaultGovernorMax(): number | null {
+  // Test hook: a fixed integer replaces the live governor so dispatch tests are deterministic.
+  const fixed = process.env["LOKI_ATTEMPTS_GOVERNOR_MAX"];
+  if (fixed !== undefined && /^[0-9]+$/.test(fixed)) return Number(fixed);
   const script = resolve(import.meta.dir, "../../../scripts/usage-governor.py");
   if (!existsSync(script)) return null;
   const r = spawnSync("python3", [script, "--json"], { encoding: "utf8", timeout: 60_000 });
@@ -258,7 +266,7 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
     },
     runAttempt: async (id, wt) => {
       const exit = await runInWorktree(id, wt);
-      return { id, exit, checks: readRecordedChecks(wt) };
+      return { id, exit, checks: await readRecordedChecks(wt) };
     },
     applyWinner: (wt, base) => {
       // engine10 commits its edits on the attempt branch, so the result is base..working tree; stage stragglers too.

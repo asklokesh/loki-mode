@@ -3,6 +3,8 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { generateKeyPairSync } from "node:crypto";
+import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { readRecordedChecks, runAttempts, selectWinner, countChecks, type AttemptCheck, type AttemptDeps, type AttemptOutcome, type AttemptsReceipt } from "../../src/runner/attempts.ts";
 import { parseStartArgs } from "../../src/commands/start.ts";
 
@@ -192,30 +194,66 @@ describe("--attempts flag parsing", () => {
 });
 
 describe("receipt-path read and NOT PROVEN", () => {
-  it("reads checks from <worktree>/.loki/runs/<runId>/receipt.json (the path seal.ts writes), latest run wins", () => {
+  const sealed = (wt: string, id: string, o: { verdict?: string; signed?: boolean; checks?: unknown[]; forge?: boolean } = {}) => {
+    const dir = join(wt, ".loki", "runs", id);
+    mkdirSync(dir, { recursive: true });
+    const body: Record<string, unknown> = { run_id: id, verdict: o.verdict ?? "VERIFIED", checks: o.checks ?? [{ name: "t", result: "pass" }], verification: {} };
+    body["receipt_sha256"] = receiptSha256(body as never);
+    if (o.signed !== false) {
+      const { jwt, kid } = signReceipt(id, body["receipt_sha256"] as string);
+      body["verification"] = { jwt, kid };
+    }
+    if (o.forge) body["checks"] = [{ name: "x", result: "pass" }];
+    writeFileSync(join(dir, "receipt.json"), JSON.stringify(body));
+  };
+  const withKey = <T>(fn: (wt: string) => Promise<T>) => async () => {
     const wt = mkdtempSync(join(tmpdir(), "loki-attempts-test-"));
+    const keyFile = join(wt, "key.pem");
+    writeFileSync(keyFile, generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }));
+    const prev = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
     try {
-      for (const [id, checks] of [["r-01", [{ name: "old", result: "fail" }]], ["r-02", [{ name: "t", result: "pass" }]]] as const) {
-        mkdirSync(join(wt, ".loki", "runs", id), { recursive: true });
-        writeFileSync(join(wt, ".loki", "runs", id, "receipt.json"), JSON.stringify({ checks }));
-      }
-      expect(readRecordedChecks(wt)).toEqual([{ name: "t", result: "pass" }]);
+      await fn(wt);
     } finally {
+      if (prev === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"];
+      else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = prev;
       rmSync(wt, { recursive: true, force: true });
     }
-  });
+  };
 
-  it("no receipt is null (NOT PROVEN), a side file is not read", () => {
-    const wt = mkdtempSync(join(tmpdir(), "loki-attempts-test-"));
-    try {
-      expect(readRecordedChecks(wt)).toBeNull();
-      mkdirSync(join(wt, ".loki"), { recursive: true });
-      writeFileSync(join(wt, ".loki", "verify.json"), JSON.stringify({ checks: [{ name: "t", result: "pass" }] }));
-      expect(readRecordedChecks(wt)).toBeNull();
-    } finally {
-      rmSync(wt, { recursive: true, force: true });
-    }
-  });
+  it("reads checks from the newest <worktree>/.loki/runs/<runId>/receipt.json when it is signed and verified", withKey(async (wt) => {
+    sealed(wt, "r-01", { checks: [{ name: "old", result: "fail" }] });
+    sealed(wt, "r-02");
+    expect(await readRecordedChecks(wt)).toEqual([{ name: "t", result: "pass" }]);
+  }));
+
+  it("B1: a forged unsigned receipt is NOT PROVEN", withKey(async (wt) => {
+    sealed(wt, "r-01", { signed: false });
+    expect(await readRecordedChecks(wt)).toBeNull();
+  }));
+
+  it("B1: a signed receipt edited after sealing is NOT PROVEN", withKey(async (wt) => {
+    sealed(wt, "r-01", { forge: true });
+    expect(await readRecordedChecks(wt)).toBeNull();
+  }));
+
+  it("B1: a BLOCKED verdict is NOT PROVEN even when signed and its checks pass", withKey(async (wt) => {
+    sealed(wt, "r-01", { verdict: "BLOCKED" });
+    expect(await readRecordedChecks(wt)).toBeNull();
+  }));
+
+  it("B2: a newer run dir with no receipt does not fall back to an older receipt", withKey(async (wt) => {
+    sealed(wt, "r-01");
+    mkdirSync(join(wt, ".loki", "runs", "r-02"), { recursive: true });
+    expect(await readRecordedChecks(wt)).toBeNull();
+  }));
+
+  it("no receipt is null (NOT PROVEN), a side file is not read", withKey(async (wt) => {
+    expect(await readRecordedChecks(wt)).toBeNull();
+    mkdirSync(join(wt, ".loki"), { recursive: true });
+    writeFileSync(join(wt, ".loki", "verify.json"), JSON.stringify({ checks: [{ name: "t", result: "pass" }] }));
+    expect(await readRecordedChecks(wt)).toBeNull();
+  }));
 
   it("an attempt without a receipt loses as NOT PROVEN to one with a receipt, even at 0 passes", () => {
     const s = selectWinner([{ id: 1, exit: 0, checks: null }, { id: 2, exit: 0, checks: [pass("a")] }]);

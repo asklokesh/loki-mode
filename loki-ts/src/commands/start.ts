@@ -55,7 +55,7 @@ const BOOL_ENV_FLAGS = new Map<string, [string, string]>([
 
 // Accept-and-ignore no-op booleans (documented no-op on the non-interactive Bun
 // route). Accepted so scripts passing them do not hard-fail; they take no action.
-const NOOP_BOOL_FLAGS = new Set(["--yes", "-y", "--no-plan", "--no-mirofish", "--no-dashboard"]);
+const NOOP_BOOL_FLAGS = new Set(["--yes", "-y", "--no-plan", "--no-mirofish", "--no-dashboard", "--no-pr"]); // --no-pr: the Bun loop opens no PR; attempts runs always pass it to engine10
 
 const VALID_PROVIDERS = new Set(["claude", "codex", "cline", "aider"]);
 // The session-pin values run.sh's LOKI_SESSION_MODEL case accepts: the three
@@ -256,6 +256,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
       const task = existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
       const argv = [process.argv[1] ?? "", "engine10", task, "--no-pr"];
       if (runnerOpts.provider) argv.push("--provider", runnerOpts.provider);
+      if (runnerOpts.budgetLimit !== undefined) argv.push("--max-cost", String(runnerOpts.budgetLimit)); // FC-35: per-attempt cap, never dropped
       const env: NodeJS.ProcessEnv = { ...process.env, LOKI_DIR: `${wt}/.loki` };
       delete env["LOKI_RUN_TMP"];
       return await new Promise<number>((resolveExit) => {
