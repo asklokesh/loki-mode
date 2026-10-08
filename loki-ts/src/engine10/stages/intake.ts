@@ -3,7 +3,6 @@
 // test map build, plus one cached Project Model discovery session (EL-W1-01). No PRD. Task arrives as literal text (LOKI_E10_TASK_TEXT) or
 // issue.json (LOKI_E10_ISSUE_JSON, default <runDir>/issue.json); outputs task text, title, repo,
 // resumed for later stages.
-import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { STAGE_BUDGETS, type RunContext, type Stage, type StageResult } from "../types.ts";
@@ -14,6 +13,7 @@ import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_don
 import { snapshotContract } from "../../features/contract.ts";
 import { unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
+import { safeGit } from "../../util/safe_git.ts";
 export interface IntakeOptions {
   taskText?: string;
   issueJsonPath?: string;
@@ -27,7 +27,7 @@ function issueRefOf(raw: { repo?: unknown; number?: unknown }): string | null {
   return typeof raw.repo === "string" && raw.repo && typeof raw.number === "number" ? `${raw.repo}#${raw.number}` : null;
 }
 function git(repoDir: string, args: string[]): string {
-  return execFileSync("git", args, { cwd: repoDir, encoding: "utf8", env: process.env }).trim();
+  return safeGit(repoDir, args).trim();
 }
 /** Tracked-only dirty check: untracked files never block Intake. */
 function dirtyTrackedFiles(repoDir: string): string[] {
@@ -36,10 +36,10 @@ function dirtyTrackedFiles(repoDir: string): string[] {
 }
 function ensureBranch(repoDir: string, branch: string): void {
   try {
-    execFileSync("git", ["checkout", "-b", branch], { cwd: repoDir, stdio: "pipe", env: process.env });
+    safeGit(repoDir, ["checkout", "-b", branch], { repoDrivers: true });
   } catch {
     // Resume, or the branch already exists for another reason: reuse it.
-    execFileSync("git", ["checkout", branch], { cwd: repoDir, stdio: "pipe", env: process.env });
+    safeGit(repoDir, ["checkout", branch], { repoDrivers: true });
   }
 }
 /** Appends ".loki/" to .git/info/exclude, once. Not .gitignore, so it adds no diff. */

@@ -3,12 +3,13 @@
 // installer (npm postinstall + first interactive run after an upgrade).
 // Nothing here is hand-maintained: add a command to registry.ts and every shell
 // picks it up. Legacy (DROP-LEGACY), DELETE and hidden entries are never offered.
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync, accessSync, constants } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { GLOBAL_FLAGS, allNames, visibleCommands, type CmdSpec, type DynKind, type FlagSpec, type PositionalSpec } from "./registry.ts";
 import { REPO_ROOT } from "../util/paths.ts";
+import { safeGitSpawn } from "../util/safe_git.ts";
 
 export type Shell = "bash" | "zsh" | "fish";
 
@@ -291,7 +292,7 @@ export function completeKind(kind: string, opts: { home?: string; cwd?: string }
       } catch { return []; }
     }
     case "branches": {
-      const r = spawnSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"], { cwd, env: process.env, encoding: "utf8", timeout: 150 });
+      const r = safeGitSpawn(cwd, ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"], { encoding: "utf8", timeout: 150 });
       return r.status === 0 ? lines(r.stdout) : [];
     }
     case "runs": {

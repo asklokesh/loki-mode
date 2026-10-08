@@ -33,7 +33,6 @@ import {
   closeSync,
 } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 
 // RUN-25 iter 17 (Wave C #1/#3): read only the LAST `n` lines of a file by
@@ -78,6 +77,7 @@ export function tailLines(path: string, n: number, maxBytes = 65536): string[] |
 import type { CouncilHook, RunnerContext } from "./types.ts";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
 import { claudeFlagSupported } from "../providers/claude_flags.ts";
+import { safeGit } from "../util/safe_git.ts";
 
 // Local shim. Phase C dispatch path only checks support synchronously; the
 // help cache must be populated by the caller chain in production (the
@@ -175,12 +175,7 @@ const DONE_LANGUAGE_RE =
 function diffFingerprint(cwd: string): string {
   const part = (args: string[]): string => {
     try {
-      const out = execFileSync("git", args, {
-        env: { ...process.env },
-        cwd,
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const out = safeGit(cwd, args);
       return createHash("md5").update(out).digest("hex");
     } catch {
       return "unknown";
@@ -188,12 +183,7 @@ function diffFingerprint(cwd: string): string {
   };
   let commit = "unknown";
   try {
-    commit = execFileSync("git", ["log", "--oneline", "-1"], {
-      env: { ...process.env },
-      cwd,
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    })
+    commit = safeGit(cwd, ["log", "--oneline", "-1"])
       .trim()
       .split(/\s+/)[0] || "unknown";
   } catch {
@@ -400,12 +390,7 @@ export const defaultCouncil: CouncilHook = {
 
     let filesChanged = 0;
     try {
-      const out = execFileSync("git", ["diff", "--name-only", "HEAD"], {
-        env: { ...process.env },
-        cwd: targetDir,
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const out = safeGit(targetDir, ["diff", "--name-only", "HEAD"]);
       filesChanged = out.split("\n").filter((l) => l.trim() !== "").length;
     } catch {
       filesChanged = 0;

@@ -1,6 +1,6 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
-import { spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath, UNMETERED } from "./cost.ts";
@@ -8,6 +8,7 @@ import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
+import { safeGit } from "../util/safe_git.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
@@ -68,7 +69,7 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
 }
 function diffShortstat(cwd: string | undefined): { files: number; insertions: number; deletions: number } {
   try {
-    const out = execFileSync("git", ["diff", "--shortstat"], { cwd, encoding: "utf8", env: process.env, stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const out = safeGit(cwd ?? process.cwd(), ["diff", "--shortstat"]).trim();
     const files = /(\d+) files? changed/.exec(out);
     const ins = /(\d+) insertions?\(\+\)/.exec(out);
     const del = /(\d+) deletions?\(-\)/.exec(out);

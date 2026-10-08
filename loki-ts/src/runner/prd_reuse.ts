@@ -54,9 +54,9 @@ import {
   statSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { atomicWriteFileSync } from "./state.ts";
+import { safeGitSpawn } from "../util/safe_git.ts";
 
 // --- public types ----------------------------------------------------------
 
@@ -158,26 +158,14 @@ function generatedPrdFileHash(lokiDir: string): string {
 // this file). Never throws.
 function computeCodebaseSignature(dir: string): string {
   try {
-    const inside = spawnSync(
-      "git",
-      ["rev-parse", "--is-inside-work-tree"],
-      { env: { ...process.env }, cwd: dir, encoding: "utf8" },
-    );
+    const inside = safeGitSpawn(dir, ["rev-parse", "--is-inside-work-tree"], { encoding: "utf8" });
     if (inside.status === 0 && (inside.stdout || "").trim() === "true") {
-      const headR = spawnSync("git", ["rev-parse", "HEAD"], {
-        env: { ...process.env },
-        cwd: dir,
-        encoding: "utf8",
-      });
+      const headR = safeGitSpawn(dir, ["rev-parse", "HEAD"], { encoding: "utf8" });
       const head =
         headR.status === 0 && (headR.stdout || "").trim()
           ? (headR.stdout || "").trim()
           : "nohead";
-      const statusR = spawnSync("git", ["status", "--porcelain"], {
-        env: { ...process.env },
-        cwd: dir,
-        encoding: "utf8",
-      });
+      const statusR = safeGitSpawn(dir, ["status", "--porcelain"], { encoding: "utf8" });
       const porcelain = (statusR.stdout || "")
         .split("\n")
         // Mirror bash: drop .loki/ and .git/ churn lines.

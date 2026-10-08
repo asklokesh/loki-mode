@@ -31,6 +31,7 @@ import { type ContractSnapshot, sealContract } from "../../features/contract.ts"
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
+import { safeGitRun } from "../../util/safe_git.ts";
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
 export const DEEP_NOT_PROVEN = ["full suite", "app boot", "council", "security scan"] as const;
@@ -114,8 +115,8 @@ export function signReceipt(runId: string, hash: string): { jwt: string | null; 
   return { jwt: `${input}.${b64u(sign(null, Buffer.from(input), key))}`, kid };
 }
 
-async function git(ctx: RunContext, args: string[]): Promise<{ out: string; code: number }> {
-  const r = await run(["git", ...args], { cwd: ctx.repoDir, timeoutMs: 20000 });
+async function git(ctx: RunContext, args: string[], repoDrivers = false): Promise<{ out: string; code: number }> {
+  const r = await safeGitRun(ctx.repoDir, args, { timeoutMs: 20000, repoDrivers });
   return { out: r.stdout, code: r.exitCode };
 }
 
@@ -126,7 +127,7 @@ export const commitStage: Stage = {
   async run(ctx: RunContext): Promise<StageResult> {
     // A-104/G2: stage all, unstage .loki/, Wall files (sealed under runDir/wall) and a NEW lockfile with no manifest change in its own directory (judged against baseSha).
     if (!ctx.baseSha || (await git(ctx, ["rev-parse", "--verify", "-q", `${ctx.baseSha}^{commit}`])).code !== 0) return { status: "failed", data: {}, reason: "base commit not resolvable" }; // A-104b r2: fail closed, every later reset and diff is judged against the base
-    if ((await git(ctx, ["add", "-A", "--", "."])).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
+    if ((await git(ctx, ["add", "-A", "--", "."], true)).code !== 0) return { status: "failed", data: {}, reason: "git add failed" };
     const sd = await git(ctx, ["diff", "--cached", "--name-status", "--no-renames", "-z", ctx.baseSha]); if (sd.code !== 0) return { status: "failed", data: {}, reason: "git diff against base failed" };
     const staged = parseStaged(sd.out);
     const drop = dropSet(ctx.repoDir, staged, ctx.outputs().intake?.preexisting_dirty);
@@ -216,7 +217,7 @@ export const sealStage: Stage = {
     // Plumbing, so repo/global config (diff.noprefix, color, textconv, ext diff, quotepath) cannot
     // change the hash. A verifier recomputes it with exactly: git diff-tree -r -z --raw --no-renames
     // --no-abbrev -O/dev/null <base> <head> -- . ':(exclude).loki'
-    const diff = await run(["git", "diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "-O/dev/null", ctx.baseSha, head, "--", ".", EXCLUDE_LOKI], { cwd: ctx.repoDir, timeoutMs: 20000 });
+    const diff = await safeGitRun(ctx.repoDir, ["diff-tree", "-r", "-z", "--raw", "--no-renames", "--no-abbrev", "-O/dev/null", ctx.baseSha, head, "--", ".", EXCLUDE_LOKI], { timeoutMs: 20000 });
     const diffOk = diff.exitCode === 0 && /^[0-9a-f]{40,64}$/.test(head);
     const checks = checksOf(o.verify?.checks);
     const verifyNotProven = strs(o.verify?.not_proven); // E-98a B1: a section 4 key, trusted like checks/flaky below

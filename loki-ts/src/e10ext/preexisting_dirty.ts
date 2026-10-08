@@ -1,12 +1,13 @@
 // E-164: a task's own setup step (npm install) can rewrite a tracked lockfile before the run starts.
 // Lockfile-only modifications are allowed at intake and recorded as pre-existing; any other dirty tracked file still refuses. Lives outside engine10 core to keep it under its line cap.
-import { execFileSync } from "node:child_process"; import { lstatSync } from "node:fs"; import { join } from "node:path";
+import { lstatSync } from "node:fs"; import { join } from "node:path";
+import { safeGit } from "../util/safe_git.ts";
 
 const LOCKFILE = /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|poetry\.lock|Cargo\.lock|go\.sum)$/;
 
 // --no-filters: never run a clean filter from the agent-writable .git/config; stderr silenced so a deleted recorded file prints no `fatal:`
 const blob = (repoDir: string, path: string, env: NodeJS.ProcessEnv = process.env): string =>
-  execFileSync("git", ["hash-object", "-w", "--no-filters", "--", path], { cwd: repoDir, encoding: "utf8", env, stdio: ["ignore", "pipe", "ignore"] }).trim();
+  safeGit(repoDir, ["hash-object", "-w", "--no-filters", "--", path], { env }).trim();
 
 /** Splits `git status --porcelain` lines into blocking ones and {lockfile path: blob sha} for modified lockfiles. */
 export function splitDirty(repoDir: string, lines: string[]): { blocking: string[]; preexisting: Record<string, string> } {
@@ -24,7 +25,7 @@ export function splitDirty(repoDir: string, lines: string[]): { blocking: string
 /** Recorded lockfiles the run left byte-identical to intake: never attributed to the run, so Commit must not stage them. */
 /** D50-F1 r2: untracked, non-ignored paths present at intake. A discard must never delete or stage them. */
 export function untrackedAtIntake(repoDir: string): string[] {
-  return execFileSync("git", ["ls-files", "-o", "--exclude-standard", "-z"], { cwd: repoDir, encoding: "utf8", env: process.env }).split("\0").filter(Boolean);
+  return safeGit(repoDir, ["ls-files", "-o", "--exclude-standard", "-z"]).split("\0").filter(Boolean);
 }
 
 /** D50-F1 r3: path -> "<blob> <octal mode>" for every untracked file at intake (blob written to the object store);
