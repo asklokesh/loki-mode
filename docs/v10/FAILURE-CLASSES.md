@@ -702,6 +702,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: tests/docker/test_polling.py imports checked, no unguarded optional import of this kind.
 - Mechanism: pytest.importorskip for pytest_asyncio, requests, websockets plus a module-level skip when BASE_URL is unreachable.
 - Fixture: `python3 -m pytest -q tests/docker/test_purple_lab.py` with no server exits 0 reporting a skip; before the fix it exited 2 on a runner without requests.
+- r2 (main 4511d9f32): the module-level skip (importorskip / skip(allow_module_level=True)) collected zero tests, so pytest exited rc=5 (no tests collected) and the fast gate reported `FAIL rc=5: py_test`. The skip is now per-test: imports are guarded with try/except, the module collects all tests, and a pytestmark skipif (same reasons) skips each one, giving N skipped with rc=0. Assertions are unchanged and the tests run when deps and server are present.
 
 ## FC-84 A demo non-TTY test depended on a provider CLI being installed on the host (RED-PLAN)
 - User saw: Tests red on main 082cd57a4 (shard 9): tests/test-plan-command.sh `[FAIL] demo non-TTY refuse -- exit=2 (124=timeout/hang)`, 26 passed 1 failed. The exit was 2, not a hang; the label is misleading.
