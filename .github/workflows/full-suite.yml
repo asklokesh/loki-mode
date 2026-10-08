@@ -1,8 +1,8 @@
 name: Full suite
 
 # D90 (founder directive): the FULL suites no longer gate push or release.
-# They run nightly (nightly.yml) and on demand, and a red nightly blocks the
-# NEXT release (release.yml required-ci). The blocking gate is the fast gate
+# They run nightly (nightly.yml) and on demand, and a red nightly blocks
+# PROMOTION to latest (D96, promote.yml). The blocking gate is the fast gate
 # in test.yml. This file is the single home of the full matrix: Node 20/24,
 # the Python matrix, all 8 shell shards, the full moat suite, Helm, and the
 # full bun suite. test.yml also calls it as the fail-safe when the diff

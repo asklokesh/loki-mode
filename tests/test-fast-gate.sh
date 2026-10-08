@@ -114,17 +114,16 @@ PY
 then ok "publish-npm runs prepublishOnly before npm pack and asserts the four dist files"
 else bad "publish-npm does not run prepublishOnly before pack or lacks the dist assertions"; fi
 
-# B2: the nightly block does not depend on the nightly being newer than the release
+# B2 (D96): a red nightly no longer blocks the release; it blocks promotion.
 if python3 - "$rel" <<'PY'
 import sys
 s = open(sys.argv[1]).read()
-a = s.index('Block the release on a red nightly')
-seg = s[a:a + 4000]
-assert 'NEWER' not in seg, 'NEWER clause still present'
-assert 'if [ "$CONC" != "success" ]; then' in seg
+assert 'Block the release on a red nightly' not in s, 'release.yml still has the red-nightly block'
+assert 'NIGHTLY-BLOCK' not in s, 'NIGHTLY-BLOCK still present in release.yml'
+assert 'workflows/nightly.yml' not in s, 'release.yml still reads nightly runs'
 PY
-then ok "any non-success latest nightly blocks (overlap case: red nightly older than the release still blocks)"
-else bad "the nightly block still has a newer-than-release clause"; fi
+then ok "release.yml no longer blocks on a red nightly (D96: the gate moved to promote.yml)"
+else bad "release.yml still blocks the release on a red nightly"; fi
 
 # PLAN-BOUND: the plan step is bounded and a nonzero planner rc forces FULL.
 if python3 - <<'PY'
