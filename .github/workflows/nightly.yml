@@ -12,10 +12,17 @@ name: Nightly
 # while the latest completed nightly on main is red and newer than the last
 # release. The upstream-drift bun matrix is informational (continue-on-error)
 # so a macOS or bun=latest flake cannot hold a release.
+#
+# D96: the backstop runs hourly on main HEAD (a green backstop is what promotes
+# `next` to `latest`). `dedupe` makes an idle main free: a scheduled run whose
+# main HEAD already has a live or finished (not cancelled/skipped) nightly run
+# logs "nightly skip" and every other job is skipped. workflow_dispatch always
+# runs. NOTE: a skipped run still concludes success; read the `full` job (not
+# the run conclusion) to know whether a SHA was actually measured.
 
 on:
   schedule:
-    - cron: '0 7 * * *'
+    - cron: '7 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -26,15 +33,56 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  dedupe:
+    name: Skip when this SHA already has a nightly run
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Look for an earlier nightly run on this SHA
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          skip=false
+          if [ "$EVENT" = "schedule" ]; then
+            if runs=$(gh run list --workflow nightly.yml --commit "$SHA" --limit 50 --json databaseId,status,conclusion); then
+              prior=$(printf '%s' "$runs" | jq -r --argjson me "$RUN_ID" '[.[] | select(.databaseId != $me) | select(.status != "completed" or (.conclusion != "cancelled" and .conclusion != "skipped"))] | first // empty | "\(.databaseId) \(.status) \(.conclusion)"')
+              if [ -n "$prior" ]; then
+                skip=true
+                echo "nightly skip: $SHA already has nightly run ${prior%% *} (${prior#* }); nothing new to measure"
+              else
+                echo "nightly run: no earlier nightly run for $SHA"
+              fi
+            else
+              echo "nightly run: dedupe lookup failed, running anyway (fail open)"
+            fi
+          else
+            echo "nightly run: $EVENT always runs"
+          fi
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
+
   # D90 backstop: the complete suite set (Node 20/24, Python matrix, 8 shell
   # shards, full moat, Helm, full bun). Blocking for the NEXT release.
   full:
     name: Full suite (backstop)
+    needs: dedupe
+    if: needs.dedupe.outputs.skip != 'true'
     uses: ./.github/workflows/full-suite.yml
 
   # Moved from first-run-gate.yml (D90): stub provider, no keys, informational.
   first-run-gate:
     name: first-run gate (stub)
+    needs: dedupe
+    if: needs.dedupe.outputs.skip != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     continue-on-error: true
@@ -52,6 +100,8 @@ jobs:
         run: bash scripts/first-run-gate.sh --stub
 
   bun-tests-nightly:
+    needs: dedupe
+    if: needs.dedupe.outputs.skip != 'true'
     continue-on-error: true
     name: Bun tests on ${{ matrix.os }} bun=${{ matrix.bun-version }} (nightly)
     strategy:

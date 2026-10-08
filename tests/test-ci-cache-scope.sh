@@ -207,6 +207,55 @@ PY
 then ok "D90: Tests is the fast gate on slice/train/main; full 8-shard matrix is nightly via full-suite.yml; only train cancels"
 else bad "D90 workflow shape (see above)"; fi
 
+# D96: the backstop is hourly on main and idle main is free. Pins the cron, the concurrency group, the
+# dedupe job gating every other job, and the dedupe step itself run against a stub gh.
+if python3 - "$REPO_ROOT/.github/workflows" "$WORK" <<'PY'
+import os, subprocess, sys, json, yaml
+d, work = sys.argv[1], sys.argv[2]
+n = yaml.safe_load(open(d + '/nightly.yml'))
+on = n.get(True) or n.get('on')
+errs = []
+crons = [c.get('cron') for c in on.get('schedule', [])]
+parts = (crons[0] if crons else '').split()
+if len(crons) != 1 or len(parts) != 5 or not parts[0].isdigit() or parts[1:] != ['*', '*', '*', '*']: errs.append('nightly cron is not one hourly entry: %r' % crons)
+if 'workflow_dispatch' not in on: errs.append('nightly lost workflow_dispatch')
+c = n.get('concurrency', {})
+if 'github.workflow' not in str(c.get('group')) or c.get('cancel-in-progress') is not False: errs.append('nightly concurrency must be a single group with cancel-in-progress false')
+jobs = n['jobs']
+if 'dedupe' not in jobs: errs.append('nightly has no dedupe job')
+for name, j in jobs.items():
+    if name == 'dedupe': continue
+    if 'dedupe' not in ([j['needs']] if isinstance(j.get('needs'), str) else j.get('needs', [])) or 'dedupe.outputs.skip' not in str(j.get('if')): errs.append(name + ' is not gated on dedupe')
+run = next((s['run'] for s in jobs.get('dedupe', {}).get('steps', []) if s.get('id') == 'check'), '')
+if not run: errs.append('dedupe has no check step')
+else:
+    bindir = os.path.join(work, 'nbin'); os.makedirs(bindir, exist_ok=True)
+    def attempt(event, runs, gh_ok=True):
+        open(bindir + '/gh', 'w').write('#!/bin/sh\n' + ('printf %s \'' + json.dumps(runs) + '\'\n' if gh_ok else 'exit 1\n')); os.chmod(bindir + '/gh', 0o755)
+        out = os.path.join(work, 'gh-output'); open(out, 'w').close()
+        env = dict(os.environ, PATH=bindir + ':' + os.environ['PATH'], GITHUB_OUTPUT=out, EVENT=event, SHA='abc', RUN_ID='100', GH_TOKEN='x', GH_REPO='o/r')
+        r = subprocess.run(['bash', '-e', '-c', run], env=env, capture_output=True, text=True)
+        return r.returncode, open(out).read().strip(), r.stdout
+    done = lambda i, c: {'databaseId': i, 'status': 'completed', 'conclusion': c}
+    cases = [
+        ('schedule', [done(100, None), done(99, 'success')], 'skip=true', 'completed prior run'),
+        ('schedule', [{'databaseId': 98, 'status': 'in_progress', 'conclusion': ''}], 'skip=true', 'in-progress prior run'),
+        ('schedule', [done(97, 'failure')], 'skip=true', 'failed prior run still measured the SHA'),
+        ('schedule', [done(96, 'cancelled'), done(95, 'skipped')], 'skip=false', 'only cancelled or skipped prior runs'),
+        ('schedule', [{'databaseId': 100, 'status': 'in_progress', 'conclusion': ''}], 'skip=false', 'only this run'),
+        ('workflow_dispatch', [done(99, 'success')], 'skip=false', 'manual dispatch always runs'),
+    ]
+    for ev, runs, want, why in cases:
+        rc, got, out = attempt(ev, runs)
+        if rc != 0 or got != want: errs.append('dedupe %s: want %s got %r rc=%s' % (why, want, got, rc))
+        if want == 'skip=true' and 'nightly skip:' not in out: errs.append('dedupe %s: no explicit skip log line' % why)
+    rc, got, out = attempt('schedule', [], gh_ok=False)
+    if rc != 0 or got != 'skip=false': errs.append('dedupe must fail open when gh fails: %r rc=%s' % (got, rc))
+print('\n'.join(errs)); sys.exit(1 if errs else 0)
+PY
+then ok "D96: nightly is hourly, single-flight, and dedupes on main HEAD (stubbed gh: skip, run, dispatch, fail-open)"
+else bad "D96 nightly backstop shape (see above)"; fi
+
 echo
 echo "==============================================================="
 echo "Results: $PASS passed, $FAIL failed, $((PASS + FAIL)) total"
