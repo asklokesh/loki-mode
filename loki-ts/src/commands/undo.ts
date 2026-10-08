@@ -8,6 +8,7 @@ import { safeGitSpawn } from "../util/safe_git.ts";
 import { verifyReceipt, type Verdict } from "../engine10/verify_cmd.ts";
 import { readEvents } from "../engine10/events.ts";
 import { isEnvelope } from "../features/receipt_dsse.ts";
+import type { ApplyGit } from "./undo_apply.ts";
 
 /** The only git subcommands this file may run. None writes a ref, the index or the working tree. */
 export const READ_ONLY_GIT: ReadonlySet<string> = new Set(["rev-parse", "log", "merge-base", "for-each-ref", "symbolic-ref", "rev-list", "cat-file"]);
@@ -48,6 +49,11 @@ export interface UndoDeps {
   runsRoot?: string;
   out?: (s: string) => void;
   err?: (s: string) => void;
+  applyGit?: ApplyGit; // UNDO-2: mutating runner, injected in tests to record argv
+  confirm?: (prompt: string) => Promise<boolean>;
+  closePr?: (url: string) => { ok: boolean; message: string };
+  undoDir?: string;
+  env?: NodeJS.ProcessEnv;
 }
 
 function receiptRefs(path: string): { base: string; head: string } | null {
@@ -132,37 +138,48 @@ export function renderPlan(p: UndoPlan): string {
     "plan:",
     ...p.actions.map((a) => `  - ${a}`),
     ...p.warnings.map((w) => `warning: ${w}`),
-    "dry plan only: nothing was changed. Apply is not available yet.",
+    "plan only: nothing was changed. To apply: LOKI_UNDO=1 loki undo " + p.run_id,
   ];
   return o.join("\n") + "\n";
 }
 
-const USAGE = "Usage: loki undo <run-id> --plan [--json] [--allow-unsigned]\nVerify the run's receipt, then print what undoing the run would do. Changes nothing.\nExit: 0 plan printed, 1 receipt tampered, 2 usage or receipt unchecked, 3 receipt unsigned (refused), 66 unknown run.\n";
+const USAGE = "Usage: loki undo <run-id> --plan [--json] [--allow-unsigned]\n       LOKI_UNDO=1 loki undo <run-id> [--yes] [--close-pr]\nVerify the run's receipt, then print (--plan) or carry out (apply) what undoing the run does.\nApply reverts commits already on the default branch on a new branch and deletes an unmerged local run branch; it never rewrites history or force-pushes.\nWithout --yes apply asks first and, with no terminal, stays a dry run. A tampered or unsigned receipt is always refused.\nExit: 0 done or planned, 1 receipt tampered or undo failed, 2 usage, refusal or receipt unchecked, 3 receipt unsigned (refused), 66 unknown run.\n";
 const EXIT_BY_VERDICT: Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 };
+
+type Loaded = { plan: UndoPlan } | { rc: number };
+
+async function loadPlan(runId: string, allowUnsigned: boolean, deps: UndoDeps, git: GitRunner): Promise<Loaded> {
+  const err = deps.err ?? ((s: string) => void process.stderr.write(s));
+  if (!RUN_ID_RE.test(runId) || runId.includes("..")) { err(`loki undo: invalid run id '${runId}'\n`); return { rc: 2 }; }
+  const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
+  const receiptPath = join(runsRoot, runId, "receipt.json");
+  if (!existsSync(receiptPath)) { err(`loki undo: unknown run '${runId}' (no ${receiptPath})\n`); return { rc: 66 }; }
+  const result = await verifyReceipt(receiptPath);
+  if (!(result.verdict === "UNSIGNED" && allowUnsigned) && result.verdict !== "VERIFIED") {
+    err(`loki undo: receipt verdict ${result.verdict}; refusing\n${result.reasons.map((r) => `  ${r}\n`).join("")}`);
+    return { rc: EXIT_BY_VERDICT[result.verdict] };
+  }
+  const refs = receiptRefs(receiptPath);
+  if (!refs) { err("loki undo: receipt base_sha/head_sha missing or not hex object ids\n"); return { rc: 2 }; }
+  const repoDir = deps.repoDir ?? dirname(lokiDir());
+  return { plan: buildPlan(runId, result.verdict, refs, repoDir, prUrlOf(join(runsRoot, runId, "events.jsonl")), git) };
+}
 
 export async function runUndo(args: readonly string[], deps: UndoDeps = {}): Promise<number> {
   const out = deps.out ?? ((s: string) => void process.stdout.write(s)), err = deps.err ?? ((s: string) => void process.stderr.write(s));
   if (args[0] === "--help" || args[0] === "-h" || args.length === 0) { out(USAGE); return args.length === 0 ? 2 : 0; }
-  const flags = new Set(["--plan", "--json", "--allow-unsigned"]);
+  const flags = new Set(["--plan", "--json", "--allow-unsigned", "--yes", "--close-pr"]);
   const pos = args.filter((a) => !a.startsWith("--")), bad = args.filter((a) => a.startsWith("--") && !flags.has(a));
   if (bad.length > 0 || pos.length !== 1) { err(`loki undo: ${bad.length > 0 ? `unknown flag ${bad[0]}` : "exactly one run-id is required"}\n${USAGE}`); return 2; }
-  if (!args.includes("--plan")) { err("loki undo: only --plan is available; applying an undo is not implemented yet\n"); return 2; }
   const runId = pos[0]!;
-  if (!RUN_ID_RE.test(runId) || runId.includes("..")) { err(`loki undo: invalid run id '${runId}'\n`); return 2; }
-  const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
-  const receiptPath = join(runsRoot, runId, "receipt.json");
-  if (!existsSync(receiptPath)) { err(`loki undo: unknown run '${runId}' (no ${receiptPath})\n`); return 66; }
-
-  const result = await verifyReceipt(receiptPath);
-  if (result.verdict === "UNSIGNED" && args.includes("--allow-unsigned")) { /* accepted: integrity intact, attestation absent */ }
-  else if (result.verdict !== "VERIFIED") {
-    err(`loki undo: receipt verdict ${result.verdict}; refusing to plan\n${result.reasons.map((r) => `  ${r}\n`).join("")}`);
-    return EXIT_BY_VERDICT[result.verdict];
-  }
-  const refs = receiptRefs(receiptPath);
-  if (!refs) { err("loki undo: receipt base_sha/head_sha missing or not hex object ids\n"); return 2; }
-  const repoDir = deps.repoDir ?? dirname(lokiDir());
-  const plan = buildPlan(runId, result.verdict, refs, repoDir, prUrlOf(join(runsRoot, runId, "events.jsonl")), deps.git ?? defaultRunner);
-  out(args.includes("--json") ? JSON.stringify(plan, null, 2) + "\n" : renderPlan(plan));
-  return 0;
+  const planOnly = args.includes("--plan");
+  if (!planOnly && (args.includes("--allow-unsigned") || args.includes("--json"))) { err("loki undo: --allow-unsigned and --json apply to --plan only; apply never accepts an unsigned receipt\n"); return 2; }
+  if (planOnly && (args.includes("--yes") || args.includes("--close-pr"))) { err("loki undo: --yes and --close-pr cannot be combined with --plan\n"); return 2; }
+  if (!planOnly && (deps.env ?? process.env)["LOKI_UNDO"] !== "1") { err("loki undo: applying an undo is behind LOKI_UNDO=1 until reviewed; use --plan to preview\n"); return 2; }
+  const loaded = await loadPlan(runId, planOnly && args.includes("--allow-unsigned"), deps, deps.git ?? defaultRunner);
+  if ("rc" in loaded) return loaded.rc;
+  if (planOnly) { out(args.includes("--json") ? JSON.stringify(loaded.plan, null, 2) + "\n" : renderPlan(loaded.plan)); return 0; }
+  const { applyUndo } = await import("./undo_apply.ts");
+  const undoDir = deps.undoDir ?? join(lokiDir(), "undo");
+  return applyUndo(loaded.plan, { repoDir: deps.repoDir ?? dirname(lokiDir()), undoDir, yes: args.includes("--yes"), closePr: args.includes("--close-pr"), read: deps.git ?? defaultRunner, git: deps.applyGit, confirm: deps.confirm, closePrFn: deps.closePr, out, err });
 }

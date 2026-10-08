@@ -1763,7 +1763,7 @@ show_help() {
     echo "  review [opts]    Standalone code review with quality gates"
     echo "  ultracode \"task\" Run a task as a native Claude Code Dynamic Workflow (opt-in, Claude-only)"
     echo "  trust [cmd]      Visible trust trajectory; 'trust detail' for metrics"
-    echo "  undo <run> --plan  Show what undoing a run would do (read-only; verifies the receipt)"
+    echo "  undo <run> [--plan]  Plan or apply (LOKI_UNDO=1) an undo of a run; verifies the receipt"
     echo ""
     echo "Observe:"
     echo "  dashboard [cmd]  Operations UI server (start|stop|status|url|open)"

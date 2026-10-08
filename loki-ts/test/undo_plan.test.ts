@@ -142,7 +142,7 @@ describe("loki undo --plan", () => {
     expect((await plan("../x")).rc).toBe(2);
     let err = "";
     expect(await runUndo(["run-a"], { repoDir: repo, runsRoot, err: (s) => (err += s) })).toBe(2);
-    expect(err).toContain("only --plan");
+    expect(err).toContain("LOKI_UNDO=1");
   });
 
   test("--json is a parseable plan", async () => {
