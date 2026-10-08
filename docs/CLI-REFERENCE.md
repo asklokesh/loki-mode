@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.3.0. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.3.1. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -54,7 +54,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki trust detail` | Trust metrics detail |
 | `loki crash` | Inspect or submit scrubbed crash reports |
 | `loki contract` | Print the spec delivery contract |
-| `loki start` | Run the autonomous build (`--attempts N`, 1-5: N independent worktree attempts, the most executed passing checks wins, losers are recorded on the attempts receipt) |
+| `loki start` | Run the autonomous build |
 | `loki slack` | Slack inbound handler |
 | `loki slack serve` | Serve the Slack handler |
 | `loki queue` | Overnight issue queue with a morning digest |

@@ -5,11 +5,64 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## v11.3.1 (2026-10-08)
+
+Patch release that ships the ten v1 features of the 11.3 program: cost preview, mutation proof, intent card, reviewer brief, attempts, memory with proof, overnight queue, before/after proof, provider failover and the supply-chain guard. It also adds the CI-FAST gate, a docs cleanup and help-text truth fixes. The router still ships OFF, and so does the T2 downgrade.
+
+### Added
+- Cost preview v1 (T1): the start line prints an estimate built from per-shape history, and the receipt compares estimate with actual. A shape with no history prints "estimate: NOT AVAILABLE".
+- Mutation proof (T2): the seal records a mutation proof line for behavior-changing diffs, and that line reaches the PR body. Under LOKI_MUTATION_STRICT=1 a surviving mutation on a behavior change downgrades VERIFIED to PARTIAL; the downgrade is OFF by default.
+- Intent card v1 (T3): plan prints a parsed intent card and the PR carries an intent section. LOKI_CONFIRM asks for confirmation; LOKI_INTENT_CARD=0 turns the card off.
+- Reviewer brief (T4): the PR body gains a Reviewer brief section.
+- Attempts v1 (T5): `loki start --attempts N` runs N engine10 worktree attempts and scores each one by the executed passing checks in its verified receipt. The winner is applied, every sealed receipt is kept after its worktree is removed, and the run is BLOCKED when no attempt sealed. In 11.3.1 it requires --no-pr (PR support ships in 11.3.2), and no start path reaches the legacy loop (FC-37, FC-38).
+- Memory with proof (T6): lessons are learned from merged PR review comments, with use tags and outcomes. Quoted lessons are fenced as untrusted data, with every angle bracket stripped.
+- Overnight queue (T7): `loki queue add|list|run` runs queued issues overnight and writes a morning digest. It reads engine10 runs/<id>/receipt.json, and unmetered cost is reported as NOT RECORDED.
+- Before/After proof (T8): the PR gets a Before / After section with screenshots of the base and changed trees. The section is left out when no UI route changed.
+- Provider failover (T9): after a classified rate limit or outage, a stage retries once on the next provider.
+- Supply-chain guard (T10): the model declares the new registry dependencies it adds, and the harness proves each one with the ecosystem resolver. A hallucinated package on the default registry FAILS the seal. User config alone decides the registry (never the model's text), a scoped npm registry applies only to its own scope, and the declaration is cleared on every run (FC-36).
+- Warm resume (CH-03, opt-in): with LOKI_E10_FIX_RESUME=1, implement resumes the plan session (and each fix round the session before it) instead of starting cold, but only on the Claude SDK route, on the same model, and when the first turn stayed under 100K prompt tokens; otherwise it starts fresh and records why. A conflict or empty-done resume never inherits the plan session. The default is OFF, so with the flag unset every stage starts fresh as in 11.3.0.
+- CI-FAST (D90): a blocking fast gate that finishes in under 2 minutes; the full suites move to a nightly run.
+- B9 fixture: a shared, deterministic trivial-sum fixture generator wired into the B9 scoreboard.
 
 ### Changed
-- implement brief asks the model to declare new registry dependencies
-- Loki's own git calls run with hooks and commit signing off and with repo filter/textconv drivers blanked on reads (SEC-FSMON, FC-25d); the worker-side seal add and commit keep the repo's drivers and the user's core.attributesFile, and the seal commit keeps the user's hooks and commit signing.
+- MCP (MCP-A): the MCP server and client speak protocol 2025-11-25. An older client still gets its own version echoed back, and the client sends notifications/initialized (the server accepts the legacy name too).
+- Router cost (COMPACT-ONLY-HAIKU, CH-02): under LOKI_ROUTER=1, sonnet and opus sessions no longer get the 100k auto-compact ceiling, and the advisor is off outside plan and fix. With the router off, nothing changes.
+- implement brief asks the model to declare new registry dependencies.
+- The engine10 core is now under its 5000-line cap: worker process control moved to runner/worker_proc.ts (CAP-1131) and the dashboard server moved to runner/engine10_dashboard.ts (CAP2).
+- Router (R-A/R-B/R-C, FC-35): one route record feeds the start line, the receipt and the plan. With the router OFF, no route.json is written; overrides win; and the sonnet fallback happens only after a real opus failure.
+- Docs (DOCS-ZERO, DOCS-HELP): the repo root is slimmer, the README is rewritten, docs cover the current version only, help text matches current behavior (with a guard against listing removed surfaces), and SECURITY.md is added.
+- Wall (WC-01a): the Wall stage is split into an authoring step and an install step. Behavior is unchanged; this prepares the Wall to run before implement.
+- Repo root (ROOT-ZERO): the docker files moved under docker/, and the stale purplelab-test and test-runner entries were removed from DEPS.md.
+
+### Fixed
+- Control-plane CP-04 (FC-32, FC-39): the image copies the whole loki-ts/src tree and CP-04 builds the server. The legacy copy list is derived from the import closure, which follows .js/.mjs specifiers and fails loudly on an unresolvable import.
+- select-tests: the CP closure python was moved out of a $( ) heredoc, and a python failure now fails safe to ALL.
+- `loki doctor`: the failure count is derived from a single result list, and an inconclusive login probe reports UNKNOWN (FC-DOCTOR-COUNT).
+- The golden test compares the start line without the cost-preview estimate, and the joined imports in seal.ts are split back onto separate lines.
+- Before/After proof (BA-SPAWN, FC-25): its git call goes through safeGit, and the package.json script probe is consolidated in visual_evidence.ts.
+- Attempts token scope (FC-25): each attempt engine10 child is spawned with a token-free env (GH_TOKEN, GITHUB_TOKEN and SSH_AUTH_SOCK are stripped). Every attempt git call goes through safeGit. In 11.3.1, `--attempts` without `--no-pr` exits 2, so the attempts path never uses a credential; PR support ships in 11.3.2.
+- Start scoping (FC38-SCOPE, FC38-SCOPE2): the --attempts refusals apply only when --attempts is given. Plain `loki start`, on both the bash and Bun routes, behaves exactly as in 11.3.0.
+- Attempts sweep (T5-D2): quick, run, demo, tour, every cmd_start caller and the run.sh parser refuse --attempts with exit 2 and point to `loki start --attempts N --no-pr`.
+- safeGit (SAFEGIT-EXTDIFF, FC-41): patch-producing git calls pass --no-ext-diff and --no-textconv, so a repo-configured external diff or textconv driver cannot run.
+- Pre-existing dirt (EVAL-LOSSES, FC-42): every lockfile in the lockfile family (Gemfile.lock, uv.lock, *.lockb, go.sum and others) that was already dirty at intake is now treated as pre-existing, not as the agent's change, so the run is no longer refused for it.
+- Empty done (EVAL-LOSSES, FC-43): when implement reports done but changed nothing, the session is resumed once with a pointer at the empty tree, instead of failing verify straight away.
+- Pricing (PRICE-TRUTH): the haiku alias is priced as Haiku 5.5 ($0.10/$0.50 per MTok up to 100K prompt tokens) in every cost table: the budget, run.sh, the dashboard, the CLI and the TUI. A parity test keeps those tables in agreement. The OpenAI rows match OpenAI's published prices, the dashboard no longer marks them as unverified placeholders, and the model labels name the current Opus 5.5, Sonnet 5.5 and Haiku 5.5.
+- Pricing (PRICE-TRUTH-2, FC-45): the exact id claude-haiku-4-5 is priced at its own $1/$5 per MTok rate on both the Bun and bash routes. Before this fix, the Bun route priced it as the haiku alias (ten times too low) and the bash budget check priced it as Sonnet. The bash budget check also priced claude-haiku-5-5 as Sonnet (twenty times too high); it now uses the $0.10/$0.50 Haiku 5.5 rate, and a parity test runs the real budget function for both ids.
+- Model defaults (JUDGE-DEFAULTS): judge and text model aliases resolve to current catalog ids from one shared helper, including in the packaged dist, and a guard rejects new hardcoded model ids outside its allowlist.
+- Security (SEC-FSMON, FC-25d): every git call under loki-ts/src goes through safe_git with a token-free env, so a repo-configured fsmonitor or hook can no longer run holding the GitHub token. This closes a regression in unreleased code; v11.3.0 was not affected. Loki's own git calls run with hooks and commit signing off, and reads blank any repo-configured filter or textconv driver. The seal commit, which runs worker-side without the token, keeps your hooks, commit signing and attributes, so signed-commit branch protection still accepts sealed commits.
+- Guards (FINDING-GUARDS): counted per-site guards for full-env spawns, model-output regexes, raw gh and push calls, start-flag parity, registration lists, and swarm reads.
+- CI (PLAN-TIMEOUT-1): the fast gate's plan job gets 15 minutes instead of 5. A plan that times out or fails still runs the full suite, so a slow plan never skips tests.
+- CI (PLAN-BOUND): the plan step itself is bounded by a 4-minute timeout, and a change touching more than 150 files goes straight to the full suite instead of per-file selection. A plan that times out or fails always produces a FULL plan, so a large release diff can no longer hang the Tests workflow into a cancelled run that blocks the release.
+- Test drift (FULL-DRIFT, FC-46): six full-tier suites that had drifted from the 11.3.1 train are green again (dependency inventory, docs CLI drift, the reviewer-selection line in the README, the analytics funnel anchor, ShellCheck on the real-run scenarios, and train verdict reuse).
+
+### Known issues
+- Cost on resumed sessions: when a run resumes its Claude session after a spec conflict (as in 11.3.0) or after an empty done (new in this release), the receipt's cost and token totals for that run can count the resumed session's usage twice. The 11.3.2 fix (RECEIPT-TRUTH) reports such runs as cost NOT RECORDED with partial tokens instead.
+
+### Build
+- Rebuilt `loki-ts/dist` for this release.
+
+### Measured
+- B9 router delta: +11.1% cost (n=3, not significant; the CI spans -115% to +138%) and +21.3% tokens. A rerun at n>=8 is queued for 11.3.2.
 
 ## v11.3.0 (2026-10-08)
 
