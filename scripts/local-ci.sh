@@ -461,6 +461,7 @@ declare -a _FAST_KEEP=(
   # nothing else in CI can see this class. Measured 0.1s (one node graph walk).
   "tests/test-web-app-no-orphan-components.sh"
   "tests/test-release-sbom-attached.sh"       # 0.2s
+  "tests/test-promote-head-stamp.sh"          # FC-51, static workflow check
   "tests/test-release-dist-guard.sh"          # E-133, release.sh dist-map path guard
   # Guards two shipped behaviors no other suite covers: a pause must not wait
   # on a keypress that cannot arrive off a TTY (it either spun forever or was

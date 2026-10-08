@@ -1437,6 +1437,7 @@ run_test "npm artifacts have portable permissions" "$SCRIPT_DIR/test-package-per
 run_test "packaged MCP server exposes the exact tool surface" "$SCRIPT_DIR/test-mcp-tool-surface-packaged.sh"
 run_test "MCP contract guard rejects rename/deletion/missing prereqs" "$SCRIPT_DIR/test-mcp-tool-surface-guard-rejects.sh"
 run_test "npm SBOM is attached to the GitHub Release" "$SCRIPT_DIR/test-release-sbom-attached.sh"
+run_test "promote gitHead stamp and tag fallback (FC-51)" "timeout -k 10 120 bash $SCRIPT_DIR/test-promote-head-stamp.sh"
 run_test "release.sh version-bump preserves file mode (BACKLOG 22)" "$SCRIPT_DIR/test-release-sh.sh"
 run_test "loki why maps each error class to an action" "$SCRIPT_DIR/test-why-actions.sh"
 run_test "loki start surfaces a stale install" "$SCRIPT_DIR/test-start-update-hint.sh"
