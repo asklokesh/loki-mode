@@ -1,6 +1,8 @@
 // Engine Law L1 "Never below raw" (supersedes the D31 sonnet-first cascade default).
-// Behavior tests plus a static guard: no stage may pass a model weaker than the run's model unless the
-// LOKI_E10_CASCADE opt-in is set. The guard is a pure function over source text so a mutation test can prove it bites.
+// Behavior tests plus a SECONDARY static guard: no stage may pass a model weaker than the run's model unless the
+// LOKI_E10_CASCADE opt-in is set. The PRIMARY router guard is semantic: route_matrix.test.ts runs implement, fix, plan and the
+// machine's stall path through fake sessions and route_matrix_mutation.test.ts proves it red for every bypass form. This text
+// guard is a pure function over source so a mutation test can prove it bites; it also covers runner/model_rank.ts and runner/router/unit_model.ts.
 import { afterEach, describe, expect, it } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -98,9 +100,10 @@ describe("L1 behavior", () => {
  * Static guard. Returns violations for a set of {path: source}. Rules:
  * 1. cascadeEnabled must be an opt-in: defined with a ["1", "on", "true"] word list and never negated.
  * 2. A session model pin (`model:` inside a sessions.run options object) may only be `downgrade.to`,
- *    `pinnedModel`, `wallModel()` in the check-only files wall.ts and already_done.ts, or plan.ts's Opus-only pin (R1-10).
+ *    `pinnedModel`, `wallModel()` in the check-only files wall.ts and already_done.ts (plan.ts has no pin of its own: R1-10's Opus-only pin lives in plan_route.ts).
  * 3. implement.ts and fix.ts must obtain their pin only through cascadeDowngrade / escalationModel.
  */
+const FIX_ROUTED_DEF = /const \{ pin: routedPin, climbed \} = routed \? routedFix\(/;
 export function guardViolations(files: Record<string, string>): string[] {
   const v: string[] = [];
   const sizing = files["sizing.ts"] ?? "";
@@ -108,7 +111,6 @@ export function guardViolations(files: Record<string, string>): string[] {
   const allowed: Record<string, RegExp> = {
     "stages/implement.ts": /^downgrade \? \{ model: downgrade\.to \}/,
     "stages/fix.ts": /^pinnedModel \? \{ model: pinnedModel \}/,
-    "stages/plan.ts": /^pinOpus \? \{ model: "opus" \} : \{\}\),$/, // R1-10: only ever Opus, never weaker
     "stages/wall.ts": /^wallModel\(\),/,
     "already_done.ts": /^wallModel\(\),/,
   };
@@ -120,10 +122,41 @@ export function guardViolations(files: Record<string, string>): string[] {
       if (!m || /ctx\.model|^\s*(\/\/|\*)/.test(line) || !/sessions\.run|\.\.\.\(|^\s*model: (wallModel|downgrade|pinned)/.test(line)) return;
       const expr = line.slice(line.indexOf("model") === -1 ? 0 : 0).trim().replace(/^\.\.\.\(/, "").replace(/^model: /, "");
       const ok = allowed[path];
+      if (path === "stages/fix.ts" && /^routedPin \? \{ model: routedPin \} : \{\}\)/.test(expr) && FIX_ROUTED_DEF.test(src)) return; // evidence-backed router pin, checked structurally below
       if (!ok || !ok.test(expr)) v.push(`${path}:${i + 1}: unvetted session model pin: ${line.trim()}`);
     });
   }
+  // ROUTER-1: a model below the run model is allowed only when a router route record exists for that unit with its evidence (source plus reason).
+  for (const path of ["stages/implement.ts", "stages/fix.ts"]) {
+    const lines = (files[path] ?? "").split("\n");
+    lines.forEach((line, i) => {
+      if (!/\b\w+\.model = /.test(line) || /^\s*\/\//.test(line)) return;
+      const recorded = /ctx\.emit\("route", .*\bsource\b.*\breason\b/.test(line) || /ctx\.emit\("route\.escalated"/.test(lines[i - 1] ?? "");
+      if (!recorded) v.push(`${path}:${i + 1}: model assigned with no router route record (source plus reason): ${line.trim()}`);
+    });
+  }
+  // implement_route.ts is the only other place the implement pin is set: each assignment must sit beside its route event (source plus reason) or its route.escalated event.
+  const ir = (files["../runner/router/implement_route.ts"] ?? "").split("\n");
+  ir.forEach((line, i) => {
+    if (!/\b\w+\.model = /.test(line) || /^\s*\/\//.test(line)) return;
+    const recorded = (/first\.model = rr\.model;/.test(line) && /ctx\.emit\("route", "implement", \{[^}]*\bsource\b[^}]*\breason\b/.test(ir[i + 1] ?? "")) || (/first\.model = rt\.current;/.test(line) && /ctx\.emit\("route\.escalated"/.test(ir[i - 1] ?? ""));
+    if (!recorded) v.push(`implement_route.ts:${i + 1}: model assigned with no router route record (source plus reason): ${line.trim()}`);
+  });
+  // Secondary: a haiku model token may appear only on the vetted lines (the router's single haiku producer lives in unit_model.ts).
+  const HAIKU_OK: Record<string, RegExp[]> = {
+    "../runner/router/plan_route.ts": [/^export const ROUTER_UNITS_INSTRUCTION/],
+    "../runner/model_rank.ts": [/^export const modelRank/, /^\s*const model = k\.includes\("haiku"\)/],
+    "../runner/router/unit_model.ts": [/^const isHaiku = /, /^export function validHaikuRoute/, /r\["executor"\] !== "haiku"/, /^\s*return v \? \{ model: resolveModelAlias\("haiku"\), source: "opus-plan", reason: v\.reason, valid: true \} : \{ model: runFloor\(runModel\)/, /unitRedo\(isHaiku\(cur\) \? "haiku"/, /^\s*const v = validHaikuRoute\(plan\);$/, /^export const floorNoAdvisor/],
+  };
+  for (const path of ["stages/implement.ts", "stages/fix.ts", "stages/plan.ts", "machine.ts", "session.ts", "cost.ts", "../runner/model_rank.ts", "../runner/router/unit_model.ts", "../runner/router/plan_route.ts", "../runner/router/implement_route.ts", "../runner/router/session_route.ts"]) {
+    (files[path] ?? "").split("\n").forEach((line, i) => {
+      const code = line.replace(/\s\/\/.*$/, "");
+      if (/^\s*(\/\/|\*|\/\*)/.test(code) || !/haiku/i.test(code)) return;
+      if (!(HAIKU_OK[path] ?? []).some((re) => re.test(code))) v.push(`${path}:${i + 1}: unvetted haiku model token: ${line.trim()}`);
+    });
+  }
   const fixSrc = files["stages/fix.ts"] ?? "";
+  if (/routedPin/.test(fixSrc) && !FIX_ROUTED_DEF.test(fixSrc)) v.push("fix.ts: routedPin is not derived from routedFix under the router flag");
   if (!fixSrc.includes("const pinnedModel = repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;")) v.push("fix.ts: pinnedModel is not computed from escalationModel/downgrade only");
   const impl = files["stages/implement.ts"] ?? "";
   if (!impl.includes("cascadeDowngrade(ctx.model)")) v.push("implement.ts: pin does not come from cascadeDowngrade");
@@ -142,6 +175,7 @@ function loadFiles(): Record<string, string> {
     }
   };
   walk(SRC, "");
+  for (const rel of ["runner/model_rank.ts", "runner/router/unit_model.ts", "runner/router/plan_route.ts", "runner/router/implement_route.ts", "runner/router/session_route.ts"]) out[`../${rel}`] = readFileSync(join(SRC, "..", rel), "utf8");
   return out;
 }
 
@@ -166,15 +200,47 @@ describe("L1 static guard", () => {
     expect(guardViolations(f).length).toBeGreaterThan(0);
   });
 
+  it("mutation R1: an unconditional downgrade below the run model with no route record turns the guard red", () => {
+    const f = loadFiles();
+    const impl = f["stages/implement.ts"]!;
+    f["stages/implement.ts"] = impl.replace(/const rt = routed \? routeStart\(.*\n/, 'first.model = "claude-haiku-4-5"; const rt = null;\n');
+    expect(f["stages/implement.ts"]).not.toBe(impl);
+    expect(guardViolations(f).some((x) => x.includes("no router route record"))).toBe(true);
+    const g = loadFiles();
+    const fix = g["stages/fix.ts"]!;
+    g["stages/fix.ts"] = fix.replace(/const \{ pin: routedPin, climbed \} = routed \? routedFix\(.*\n/, 'const routedPin = "claude-haiku-4-5", climbed = null;\n');
+    expect(g["stages/fix.ts"]).not.toBe(fix);
+    expect(guardViolations(g).length).toBeGreaterThan(0);
+    const h = loadFiles();
+    const esc = h["../runner/router/implement_route.ts"]!;
+    h["../runner/router/implement_route.ts"] = esc.replace(/ctx\.emit\("route\.escalated", "implement", \{ \.\.\.esc \}\);\n/, "");
+    expect(h["../runner/router/implement_route.ts"]).not.toBe(esc);
+    expect(guardViolations(h).some((x) => x.includes("no router route record"))).toBe(true);
+  });
+
+  it("mutation: a haiku producer in model_rank.ts or unit_model.ts turns the secondary guard red", () => {
+    const a = loadFiles();
+    a["../runner/model_rank.ts"] = a["../runner/model_rank.ts"]!.replace("to: resolveModelAlias(next)", 'to: resolveModelAlias("haiku")');
+    expect(guardViolations(a).some((x) => x.includes("model_rank.ts") && x.includes("haiku"))).toBe(true);
+    const b = loadFiles();
+    b["../runner/router/unit_model.ts"] = b["../runner/router/unit_model.ts"]!.replace("model: runFloor(runModel), source", 'model: resolveModelAlias("haiku"), source');
+    expect(guardViolations(b).some((x) => x.includes("unit_model.ts") && x.includes("haiku"))).toBe(true);
+    const c = loadFiles();
+    c["stages/fix.ts"] = c["stages/fix.ts"]!.replace("const actualModel = routedPin ?? pinnedModel ?? ctx.model;", 'const actualModel = "claude-haiku-5-5";');
+    expect(guardViolations(c).some((x) => x.includes("fix.ts") && x.includes("haiku"))).toBe(true);
+  });
+
   it("mutation: a new stage pinning a cheap model unconditionally makes the guard fail", () => {
     const f = loadFiles();
     f["stages/implement.ts"] = f["stages/implement.ts"]!.replace("...(downgrade ? { model: downgrade.to } : {}),", "model: wallModel(),");
     expect(guardViolations(f).length).toBeGreaterThan(0);
   });
 
-  it("mutation: a same-line extra pin in plan.ts is rejected by the anchored allowlist", () => {
+  it("mutation: a same-line extra pin in plan_route.ts is rejected by the anchored allowlist", () => {
     const f = loadFiles();
-    f["stages/plan.ts"] = f["stages/plan.ts"]!.replace("...(pinOpus ? { model: \"opus\" } : {}),", "...(pinOpus ? { model: \"opus\" } : {}), ...(x ? {model:\"haiku\"}:{}),");
+    const before = f["../runner/router/plan_route.ts"]!;
+    f["../runner/router/plan_route.ts"] = before.replace("pin: pinOpus ? { model: \"opus\" } : {},", "pin: pinOpus ? { model: \"opus\" } : {}, ...(x ? {model:\"haiku\"}:{}),");
+    expect(f["../runner/router/plan_route.ts"]).not.toBe(before);
     expect(guardViolations(f).length).toBeGreaterThan(0);
   });
 });

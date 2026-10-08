@@ -8,12 +8,9 @@ import { cascadeEnabled, hasRelevantTests, loadRepoMap, planMode, sizeTask, smal
 import type { RunContext, Stage, StageResult, TestMap } from "../types.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { taskBlock } from "../types.ts";
-import { MAX_SCOPE_BYTES, PLAN_SCOPE_FILE, readScopeText } from "../../util/run_cap.ts";
+import { PLAN_SCOPE_FILE } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
-import { routerEnabled } from "../../runner/router/flag.ts";
-import { envOverride, parseUnits } from "../../runner/router/decision.ts";
-import { probeAdvisor } from "../../runner/router/advisor_probe.ts";
-import { claudeCodeVersionForRoute } from "../../runner/providers.ts";
+import { planRoute, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
 
 const MAX_PLAN_LINES = 10;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
@@ -27,9 +24,6 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
   const lines = raw.split("\n").filter((l) => l.trim().length > 0);
   return lines.slice(0, max).join("\n");
 }
-
-// R1-10: Opus is the router. The model picks each unit's executor; the harness only validates the schema (L0).
-const ROUTER_UNITS_INSTRUCTION = 'In the same JSON file (<scope>) also add "units": [{"id":"<unit id>","kind":"<short kind>","executor":"sonnet"|"haiku","reason":"<=200 chars"}], one entry per work unit of your plan. The default executor is sonnet. Assign haiku to a unit only when you judge it safe for that unit and say why in reason. Give the Wall acceptance-test unit the id "wall".';
 
 export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false): string {
   return withStagePrefix([
@@ -70,20 +64,16 @@ export const planStage: Stage = {
     const outputPath = planOutputPath(ctx.runDir);
 
     const iterationId = `${ctx.runId}-plan`;
-    // R1-10: flag off adds nothing (no probe, no model key, brief byte-identical). Advisor unavailable: Opus plans itself.
-    const routed = routerEnabled(process.env);
-    const advisorAvailable = routed ? probeAdvisor(process.env, ctx.provider, await claudeCodeVersionForRoute(process.env), ctx.runDir).available : false;
-    // Opus plans itself only on a Claude run, and never over the user's model bypass.
-    const pinOpus = routed && !advisorAvailable && ctx.provider === "claude" && envOverride(process.env) === null;
+    const pr = await planRoute(ctx.runDir, ctx.provider); // R1-10 (runner/router/plan_route.ts): flag off adds nothing; advisor unavailable pins Opus
     const session = await ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), routed),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,
       signal,
       cwd: ctx.repoDir,
-      ...(pinOpus ? { model: "opus" } : {}),
+      ...pr.pin,
     });
 
     // E-61: a non-killed error exit fails this stage too (never silently read as an
@@ -99,14 +89,6 @@ export const planStage: Stage = {
 
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
     const plan = truncatePlan(rawPlan);
-    let route: Record<string, unknown> = {};
-    if (routed) {
-      const rd = readScopeText(ctx.runDir);
-      const scope: string | null = rd.status === "ok" ? rd.text : null; const tooBig = rd.status === "too_big"; const notFile = rd.status === "not_file";
-      const parsed = notFile ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} is not a regular file; default sonnet`] } : tooBig ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} exceeds ${MAX_SCOPE_BYTES} bytes; default sonnet`] } : parseUnits(scope, advisorAvailable);
-      route = { units: parsed.units, route_not_proven: parsed.notProven };
-    }
-
     return {
       status: "completed",
       data: {
@@ -114,7 +96,7 @@ export const planStage: Stage = {
         relevant_files: relevantFiles,
         iteration_ids: [iterationId],
         duration_s: session.durationS,
-        ...route,
+        ...pr.units(),
       },
     };
   },

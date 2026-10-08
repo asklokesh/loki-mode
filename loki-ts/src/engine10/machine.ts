@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
-import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts";
+import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
 import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
@@ -177,13 +177,23 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));
-        for (let round = 1; round <= MAX_FIX_ROUNDS && hasFailures(outputs.verify); round++) {
+        let extraRounds = 0; // ROUTER-1 R1-13: one extra fix round on the next rung before STALLED
+        for (let round = 1; round <= MAX_FIX_ROUNDS + extraRounds && hasFailures(outputs.verify); round++) {
           const fx = await runStage("fix", true);
           if (!fx || mustJump("fix", fx) || fatal) break;
           const v = await runStage("verify", true);
           sigs.push(sigOf(outputs.verify, v));
           if (mustJump("verify", v)) break;
-          if (hasFailures(outputs.verify) && sigs.length >= 3 && sigs.slice(-3).every((x) => x === sigs[sigs.length - 1])) { stopped = "stalled"; break; }
+          if (hasFailures(outputs.verify) && sigs.length >= 3 && sigs.slice(-3).every((x) => x === sigs[sigs.length - 1])) {
+            // A stall may climb once, only on a code-owned failure (a lint-only or harness-owned stall is unchanged); the same routedFix decides here and in the fix stage.
+            const up = stallClimb(ctx.model, outputs, sigs[sigs.length - 1] ?? "");
+            if (up) {
+              outputs.fix = { ...outputs.fix, stall_escalated: true, stall_pending: true }; extraRounds = 1;
+              ctx.emit("route.escalated", "fix", { ...up });
+              continue;
+            }
+            stopped = "stalled"; break;
+          }
         }
         if (fatal) { stopped = fatal; jumped = true; }
         if (capHit) jumped = true;

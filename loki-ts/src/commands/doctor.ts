@@ -605,17 +605,8 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   const sentrux = await checkSentrux();
   const memory = await checkMemoryHealth();
 
-  let passed = 0;
-  let failed = 0;
-  let warnings = 0;
-  for (const c of checks) {
-    if (c.status === "pass") passed++;
-    else if (c.status === "fail") failed++;
-    else warnings++;
-  }
-  if (disk.status === "pass") passed++;
-  else if (disk.status === "fail") failed++;
-  else warnings++;
+  const statuses: Status[] = checks.map((c) => c.status);
+  statuses.push(disk.status);
 
   // AGGREGATE PROVIDER CHECK, mirroring autonomy/loki:cmd_doctor_json. Each
   // provider CLI is individually optional -- Claude, Codex, Cline, Aider, or opencode
@@ -635,8 +626,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
       ? null
       : "No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code",
   };
-  if (anyProviderFound) passed++;
-  else failed++;
+  statuses.push(aiProvider.status);
 
   // SKILL LINK INTEGRITY, mirroring autonomy/loki:cmd_doctor_json. The text
   // path on both routes fails closed on a broken skill symlink, but --json
@@ -644,11 +634,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
   // loki-mode had text exit 1 while --json reported failed 0 and ok true.
   // Counted per entry, exactly as the text path tallies them.
   const skills = skillsForJson();
-  for (const s of skills) {
-    if (s.status === "pass") passed++;
-    else if (s.status === "fail") failed++;
-    else warnings++;
-  }
+  for (const s of skills) statuses.push(s.status);
 
   return {
     loki_mode_version: getVersion(),
@@ -662,40 +648,19 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     // Advisory only: deliberately excluded from the passed/failed/warnings
     // tally and from `ok`, so a stale catalog can never flip the exit code.
     model_catalog: describeCatalogFreshness(),
-    summary: { passed, failed, warnings, ok: failed === 0 },
+    summary: summarizeStatuses(statuses),
   };
 }
 
 // ---------- Text mode rendering ----------------------------------------------
-
-// Zero-network check mirroring bash doctor + run.sh preflight: is the Claude
-// OAuth ACCESS token expired? Reads ${CLAUDE_CONFIG_DIR:-~/.claude}/.credentials
-// .json and compares claudeAiOauth.expiresAt (epoch ms) against now + 60s. Any
-// missing file / parse error / absent field returns false (never a false warn),
-// byte-faithful with the bash `python3` inline check. Deliberately does NOT try
-// a refresh (that needs a network call), so it warns whenever the access token
-// is past expiry -- the conservative behavior the bash route already ships.
-function claudeOauthExpired(): boolean {
-  try {
-    const dir = process.env["CLAUDE_CONFIG_DIR"] || `${homedir()}/.claude`;
-    const raw = readFileSync(`${dir}/.credentials.json`, "utf8");
-    if (!raw) return false;
-    const exp = JSON.parse(raw)?.claudeAiOauth?.expiresAt;
-    return (
-      typeof exp === "number" && exp > 0 && exp / 1000 <= Date.now() / 1000 + 60
-    );
-  } catch {
-    return false;
-  }
-}
 
 // v7.104.2 parity with bash doctor: the durable login signal is `claude auth
 // status` (local, zero-network, ~0.2s, JSON with "loggedIn"), which recognizes
 // BOTH the file-based AND the native/macOS-Keychain login (the native install
 // writes NO ~/.claude/.credentials.json, so the file-only check above misses a
 // genuine Keychain login). Returns "yes" | "no" | "" (unknown: older CLI / no
-// parseable output -> caller falls back to the file-expiry check, never a false
-// warn). Kept byte-faithful with autonomy/loki's inline `claude auth status`
+// parseable output -> caller reports UNKNOWN (warn), never a false
+// fail). Kept byte-faithful with autonomy/loki's inline `claude auth status`
 // parse so the bash and Bun doctor routes render the identical login line.
 function claudeAuthStatusLoggedIn(): "yes" | "no" | "" {
   try {
@@ -713,6 +678,36 @@ function claudeAuthStatusLoggedIn(): "yes" | "no" | "" {
   } catch {
     return "";
   }
+}
+
+export type ClaudeLoginResult = {
+  status: Status;
+  line: string;
+  fix: string | null;
+  blocker: string | null;
+};
+
+// Pure mapping from the `claude auth status` answer to one counted row. An
+// inconclusive probe ("") is UNKNOWN and always a warning, so a probe that
+// times out can neither flip the failure count nor be hidden from it.
+export function evaluateClaudeLogin(loggedIn: "yes" | "no" | ""): ClaudeLoginResult {
+  if (loggedIn === "yes") {
+    return { status: "pass", line: "Claude CLI is logged in (subscription/OAuth login)", fix: null, blocker: null };
+  }
+  if (loggedIn === "no") {
+    return {
+      status: "fail",
+      line: "Claude CLI is NOT logged in -- a build would stall instead of running",
+      fix: "Fix: claude login   (or set ANTHROPIC_API_KEY)",
+      blocker: "Claude CLI is not logged in. Fix: claude login (or set ANTHROPIC_API_KEY)",
+    };
+  }
+  return {
+    status: "warn",
+    line: "Claude login state UNKNOWN (claude auth status gave no answer); re-run to check",
+    fix: null,
+    blocker: null,
+  };
 }
 
 function badge(status: Status): string {
@@ -750,12 +745,53 @@ function formatToolLine(c: ToolRow): string {
 // The bash route has always named them; this route only counted, so its
 // trailer could say "some prerequisites are missing" without saying which --
 // the exact dead end a first-run user hits.
-type Tally = { pass: number; fail: number; warn: number; blockers: string[] };
+export type Tally = {
+  results: Status[];
+  blockers: string[];
+  readonly pass: number;
+  readonly fail: number;
+  readonly warn: number;
+};
 
-function bump(t: Tally, s: Status): void {
-  if (s === "pass") t.pass++;
-  else if (s === "fail") t.fail++;
-  else t.warn++;
+// The ONE counting mechanism (FC-DOCTOR-COUNT): every summary, text or JSON,
+// is derived from a list of per-check statuses. No counter is kept apart from
+// the list, so a count cannot disagree with the rows that were recorded.
+export function summarizeStatuses(list: readonly Status[]): {
+  passed: number;
+  failed: number;
+  warnings: number;
+  ok: boolean;
+} {
+  let passed = 0;
+  let failed = 0;
+  let warnings = 0;
+  for (const s of list) {
+    if (s === "pass") passed++;
+    else if (s === "fail") failed++;
+    else warnings++;
+  }
+  return { passed, failed, warnings, ok: failed === 0 };
+}
+
+export function makeTally(): Tally {
+  const results: Status[] = [];
+  return {
+    results,
+    blockers: [],
+    get pass() {
+      return summarizeStatuses(results).passed;
+    },
+    get fail() {
+      return summarizeStatuses(results).failed;
+    },
+    get warn() {
+      return summarizeStatuses(results).warnings;
+    },
+  };
+}
+
+export function bump(t: Tally, s: Status): void {
+  t.results.push(s);
 }
 
 function printHelp(): void {
@@ -803,7 +839,7 @@ async function runText(): Promise<number> {
   process.stdout.write(`${BOLD}Loki Mode Doctor${NC}\n\n`);
   process.stdout.write(`Checking system prerequisites...\n\n`);
 
-  const tally: Tally = { pass: 0, fail: 0, warn: 0, blockers: [] };
+  const tally: Tally = makeTally();
   const allChecks = await runAllToolChecks();
   const byCmd = new Map(allChecks.map((c) => [c.command, c]));
 
@@ -883,7 +919,7 @@ async function runText(): Promise<number> {
       process.stdout.write(
         `         ${YELLOW}      Install: npm install -g @anthropic-ai/claude-code${NC}\n`,
       );
-      tally.pass++;
+      bump(tally, "pass");
     } else {
       process.stdout.write(
         `  ${badge("fail")}  No AI provider CLI installed -- at least one is required\n`,
@@ -891,7 +927,7 @@ async function runText(): Promise<number> {
       process.stdout.write(
         `         ${YELLOW}Install: npm install -g @anthropic-ai/claude-code${NC}\n`,
       );
-      tally.fail++;
+      bump(tally, "fail");
       tally.blockers.push("No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code");
       // v7.29.0: consent-gated install offer. Parity by construction: rather than
       // re-implementing the prompt copy in TypeScript (which would drift from the
@@ -922,7 +958,7 @@ async function runText(): Promise<number> {
   ) {
     const install = providerInstall[explicitProvider] ?? `install ${explicitProvider}, or unset LOKI_PROVIDER`;
     process.stdout.write(`  ${badge("fail")}  Selected provider '${explicitProvider}' CLI not found\n`);
-    tally.fail++;
+    bump(tally, "fail");
     tally.blockers.push(`Selected provider ${explicitProvider} CLI not found. Fix: ${install}`);
   }
 
@@ -943,7 +979,7 @@ async function runText(): Promise<number> {
   const env = process.env;
   if (env["ANTHROPIC_API_KEY"]) {
     process.stdout.write(`  ${badge("pass")}  ANTHROPIC_API_KEY is set\n`);
-    tally.pass++;
+    bump(tally, "pass");
   } else if (claudeFound) {
     // Parity with bash doctor (autonomy/loki), v7.104.2: prefer the CLI's own
     // local auth-status (authoritative for both the file-based and the native/
@@ -951,42 +987,21 @@ async function runText(): Promise<number> {
     // This fixes the Bun route reporting "login EXPIRED" for a Keychain-logged-in
     // user (native install writes no .credentials.json). Zero-network, no refresh
     // attempt (that needs the network), mirroring run.sh's fail-fast preflight.
-    const loggedIn = claudeAuthStatusLoggedIn();
-    if (loggedIn === "yes") {
-      process.stdout.write(
-        `  ${badge("pass")}  Claude CLI is logged in (subscription/OAuth login)\n`,
-      );
-      tally.pass++;
-    } else if (loggedIn === "no") {
-      // BLOCKER, not a warning; byte-mirrors the bash route. As a warning this
-      // let a user pass doctor and confirm the spend before the auth preflight
-      // refused the build. A missing credential belongs at doctor time.
-      process.stdout.write(
-        `  ${badge("fail")}  Claude CLI is NOT logged in -- a build would stall instead of running\n`,
-      );
-      process.stdout.write(
-        `         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)\n`,
-      );
-      tally.blockers.push("Claude CLI is not logged in. Fix: claude login (or set ANTHROPIC_API_KEY)");
-      tally.fail++;
-    } else if (claudeOauthExpired()) {
-      process.stdout.write(
-        `  ${badge("fail")}  Claude login has EXPIRED -- a build would stall instead of running\n`,
-      );
-      process.stdout.write(
-        `         ${YELLOW}Fix: claude login${NC}   (or set ANTHROPIC_API_KEY)\n`,
-      );
-      tally.blockers.push("Claude login has expired. Fix: claude login (or set ANTHROPIC_API_KEY)");
-      tally.fail++;
-    } else {
-      process.stdout.write(
-        `  ${DIM}  --  ${NC}  ANTHROPIC_API_KEY not set (Claude CLI uses its own login)\n`,
-      );
-    }
+    // FC-DOCTOR-COUNT: one retry on an inconclusive probe, then an explicit
+    // UNKNOWN. The outcome depends only on what the probe said, never on the
+    // clock (the old fallback failed whenever the cached access token happened
+    // to be past expiry while the probe flaked).
+    let loggedIn = claudeAuthStatusLoggedIn();
+    if (loggedIn === "") loggedIn = claudeAuthStatusLoggedIn();
+    const login = evaluateClaudeLogin(loggedIn);
+    process.stdout.write(`  ${badge(login.status)}  ${login.line}\n`);
+    if (login.fix) process.stdout.write(`         ${YELLOW}${login.fix}${NC}\n`);
+    if (login.blocker) tally.blockers.push(login.blocker);
+    bump(tally, login.status);
   }
   if (env["OPENAI_API_KEY"]) {
     process.stdout.write(`  ${badge("pass")}  OPENAI_API_KEY is set\n`);
-    tally.pass++;
+    bump(tally, "pass");
   } else if (codexFound) {
     process.stdout.write(
       `  ${DIM}  --  ${NC}  OPENAI_API_KEY not set (Codex CLI uses its own login)\n`,
@@ -1000,17 +1015,17 @@ async function runText(): Promise<number> {
   if (env["ANTHROPIC_BASE_URL"]) {
     const url = env["ANTHROPIC_BASE_URL"];
     process.stdout.write(`  ${badge("pass")}  ANTHROPIC_BASE_URL: ${url}\n`);
-    tally.pass++;
+    bump(tally, "pass");
     if (!env["LOKI_MODEL_OVERRIDE"]) {
       process.stdout.write(
         `  ${badge("warn")}  LOKI_MODEL_OVERRIDE not set -- opus/sonnet/haiku aliases may not resolve on alt-provider\n`,
       );
-      tally.warn++;
+      bump(tally, "warn");
     } else {
       process.stdout.write(
         `  ${badge("pass")}  LOKI_MODEL_OVERRIDE: ${env["LOKI_MODEL_OVERRIDE"]}\n`,
       );
-      tally.pass++;
+      bump(tally, "pass");
     }
   }
   process.stdout.write(`\n`);
@@ -1034,16 +1049,16 @@ async function runText(): Promise<number> {
   for (const s of checkSkills()) {
     if (s.status === "pass") {
       process.stdout.write(`  ${badge("pass")}  ${s.name}  ${DIM}${s.path}${NC}\n`);
-      tally.pass++;
+      bump(tally, "pass");
     } else if (s.status === "fail") {
       process.stdout.write(`  ${badge("fail")}  ${s.name}  ${DIM}${s.detail}${NC}\n`);
       process.stdout.write(`         ${YELLOW}Fix: loki setup-skill${NC}\n`);
-      tally.fail++;
+      bump(tally, "fail");
       tally.blockers.push(`${s.name} is a broken symlink. Fix: loki setup-skill`);
     } else {
       process.stdout.write(`  ${badge("warn")}  ${s.name}  ${DIM}${s.detail}${NC}\n`);
       if (s.dangling) process.stdout.write(`         ${YELLOW}Fix: loki setup-skill${NC}\n`);
-      tally.warn++;
+      bump(tally, "warn");
     }
   }
   process.stdout.write(`\n`);
@@ -1062,35 +1077,35 @@ async function runText(): Promise<number> {
   ]);
   if (mcpOk) {
     process.stdout.write(`  ${badge("pass")}  MCP SDK (Python)\n`);
-    tally.pass++;
+    bump(tally, "pass");
   } else {
     process.stdout.write(`  ${badge("warn")}  MCP SDK - not installed (pip3 install mcp)\n`);
-    tally.warn++;
+    bump(tally, "warn");
   }
   if (numpyOk) {
     process.stdout.write(`  ${badge("pass")}  numpy (vector search)\n`);
-    tally.pass++;
+    bump(tally, "pass");
   } else {
     process.stdout.write(`  ${badge("warn")}  numpy - not installed (pip3 install numpy)\n`);
-    tally.warn++;
+    bump(tally, "warn");
   }
   if (stOk) {
     process.stdout.write(`  ${badge("pass")}  sentence-transformers (embeddings)\n`);
-    tally.pass++;
+    bump(tally, "pass");
   } else {
     process.stdout.write(
       `  ${badge("warn")}  sentence-transformers - not installed (loki memory vectors setup)\n`,
     );
-    tally.warn++;
+    bump(tally, "warn");
   }
   if (await httpReachable("http://localhost:8100/api/v2/heartbeat")) {
     process.stdout.write(`  ${badge("pass")}  ChromaDB server (port 8100)\n`);
-    tally.pass++;
+    bump(tally, "pass");
   } else {
     process.stdout.write(
       `  ${badge("warn")}  ChromaDB - not running (docker start loki-chroma)\n`,
     );
-    tally.warn++;
+    bump(tally, "warn");
   }
   // v7.7.0: LSP servers check (mirrors autonomy/loki cmd_doctor). The
   // mcp.lsp_proxy auto-detects these binaries; reporting here gives users
@@ -1114,12 +1129,12 @@ async function runText(): Promise<number> {
       process.stdout.write(
         `  ${badge("pass")}  LSP servers detected (${found.length}): ${found.join(", ")}\n`,
       );
-      tally.pass++;
+      bump(tally, "pass");
     } else {
       process.stdout.write(
         `  ${badge("warn")}  LSP servers - none on PATH (install for symbol grounding: npm i -g pyright typescript-language-server; brew install gopls)\n`,
       );
-      tally.warn++;
+      bump(tally, "warn");
     }
   }
   // MiroFish: only check if env var is set (we can't run docker inspect cheaply
@@ -1128,24 +1143,24 @@ async function runText(): Promise<number> {
   if (mfUrl) {
     if (await httpReachable(`${mfUrl}/health`)) {
       process.stdout.write(`  ${badge("pass")}  MiroFish server (${mfUrl})\n`);
-      tally.pass++;
+      bump(tally, "pass");
     } else {
       process.stdout.write(
         `  ${badge("warn")}  MiroFish - not running (loki start --mirofish-docker <image>)\n`,
       );
-      tally.warn++;
+      bump(tally, "warn");
     }
   }
   if (process.env["LOKI_OTEL_ENDPOINT"]) {
     process.stdout.write(
       `  ${badge("pass")}  OTEL endpoint: ${process.env["LOKI_OTEL_ENDPOINT"]}\n`,
     );
-    tally.pass++;
+    bump(tally, "pass");
   } else {
     process.stdout.write(
       `  ${badge("warn")}  OTEL - not configured (set LOKI_OTEL_ENDPOINT)\n`,
     );
-    tally.warn++;
+    bump(tally, "warn");
   }
   // sentrux check (v7.5.14, optional architectural-drift gate). Mirrors the
   // bash-route line at autonomy/loki:cmd_doctor so the bun-parity matrix
@@ -1162,12 +1177,12 @@ async function runText(): Promise<number> {
     process.stdout.write(
       `  ${badge("pass")}  sentrux ${sentruxVer} (architectural drift gate: loki sentrux help)\n`,
     );
-    tally.pass++;
+    bump(tally, "pass");
   } else {
     process.stdout.write(
       `  ${badge("warn")}  sentrux - not installed (optional, brew install sentrux/tap/sentrux)\n`,
     );
-    tally.warn++;
+    bump(tally, "warn");
   }
   // Receipt signing: Ed25519, auto-generated on first run. Byte-mirrors the
   // bash-route lines in cmd_doctor. WARN only, and only when something needs
@@ -1176,13 +1191,13 @@ async function runText(): Promise<number> {
     process.stdout.write(
       `  ${badge("warn")}  Receipt signing: LOKI_PROOF_GPG_KEY is no longer supported and is ignored; use LOKI_RECEIPT_SIGNING_KEY or LOKI_RECEIPT_SIGNING_KEY_FILE (docs/SIGNED-RECEIPTS.md)\n`,
     );
-    tally.warn++;
+    bump(tally, "warn");
   }
   if (spawnSync("python3", ["-c", "import cryptography"], { env: { ...process.env }, stdio: "ignore" }).status !== 0) {
     process.stdout.write(
       `  ${badge("warn")}  Receipt signing: python3 'cryptography' package missing, receipts will be UNSIGNED (pip install cryptography)\n`,
     );
-    tally.warn++;
+    bump(tally, "warn");
   }
   process.stdout.write(`\n`);
 
@@ -1208,23 +1223,23 @@ async function runText(): Promise<number> {
   const diskTextGb = disk.available_gb === null ? null : Math.floor(disk.available_gb);
   if (diskTextGb === null) {
     process.stdout.write(`  ${badge("warn")}  Disk space: unable to determine\n`);
-    tally.warn++;
+    bump(tally, "warn");
   } else if (disk.status === "fail") {
     process.stdout.write(
       `  ${badge("fail")}  Disk space: ${diskTextGb}GB available (need >= 1GB)\n`,
     );
-    tally.fail++;
+    bump(tally, "fail");
     tally.blockers.push(`Free up disk: ${diskTextGb}GB available, need >= 1GB`);
   } else if (disk.status === "warn") {
     process.stdout.write(
       `  ${badge("warn")}  Disk space: ${diskTextGb}GB available (low)\n`,
     );
-    tally.warn++;
+    bump(tally, "warn");
   } else {
     process.stdout.write(
       `  ${badge("pass")}  Disk space: ${diskTextGb}GB available\n`,
     );
-    tally.pass++;
+    bump(tally, "pass");
   }
   process.stdout.write(`\n`);
 
@@ -1355,7 +1370,7 @@ async function runText(): Promise<number> {
   const missingDetectors: string[] = [];
   for (const det of detectors) {
     if (existsSync(resolve(REPO_ROOT, "tests", `${det}.sh`))) {
-      tally.pass++;
+      bump(tally, "pass");
     } else {
       missingDetectors.push(`${det}.sh`);
     }
@@ -1368,7 +1383,7 @@ async function runText(): Promise<number> {
     process.stdout.write(
       `  ${badge("fail")}  Quality-gate detectors MISSING: ${missingDetectors.join(" ")}\n`,
     );
-    tally.fail++;
+    bump(tally, "fail");
     process.stdout.write(`${DIM}      These gates fail-closed, so every iteration will be blocked.${NC}\n`);
     tally.blockers.push(
       `Incomplete install: quality-gate detectors are missing. Reinstall: bun install -g loki-mode`,
@@ -1426,7 +1441,7 @@ async function runText(): Promise<number> {
         process.stdout.write(`  ${DIM}      Others:${NC}\n`);
         for (const o of others) process.stdout.write(`  ${DIM}      ${o}${NC}\n`);
         process.stdout.write(`  ${DIM}      Reinstalling updates a copy that is not winning on PATH.${NC}\n`);
-        tally.fail++;
+        bump(tally, "fail");
         tally.blockers.push(
           "Multiple loki installs on PATH. Run 'which -a loki', then remove or re-point every entry EARLIER than the one you want. Reinstalling alone will not fix this.",
         );

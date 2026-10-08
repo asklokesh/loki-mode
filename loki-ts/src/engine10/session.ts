@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, write
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
+import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
@@ -18,6 +19,8 @@ export interface SessionRunnerConfig {
   heartbeatMs?: number; // default 30_000 (E-68: at least every 30s); tests use a smaller value
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
   lokiRoot?: string; // where efficiency records and result-cost files live (the repo's .loki)
+  /** ROUTER-1 R1-09: advisor availability for this run (R1-06 probe). Only read under LOKI_ROUTER=1. */
+  advisor?: { available: boolean; reason?: string };
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export const PROVIDER_DEFAULT_MODEL = "claude (provider default)";
@@ -51,10 +54,11 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
   if (opts.effort) env["LOKI_E10_EFFORT"] = opts.effort;
-  if (opts.model && opts.model !== PROVIDER_DEFAULT_MODEL) { // the label is a record, never a --model value
+  const pin = routerSessionPin(env, cfg.provider, cfg.advisor, opts); // ROUTER-1 (runner/router/session_route.ts): identical to opts.model with the router off or a user override set
+  if (pin && pin !== PROVIDER_DEFAULT_MODEL) { // the label is a record, never a --model value
     const t = String(opts.tier).toUpperCase(); // E-45: pin wins over any inherited tier model
-    env[`LOKI_CLAUDE_MODEL_${t}`] = opts.model;
-    env[`LOKI_MODEL_${t}`] = opts.model;
+    env[`LOKI_CLAUDE_MODEL_${t}`] = pin;
+    env[`LOKI_MODEL_${t}`] = pin;
   }
   return env;
 }
@@ -71,7 +75,7 @@ function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.
   const doneMatch = /^\W*LOKI_ALREADY_DONE:\s*(.+)$/m.exec(stdout);
   const conflictMatch = /^\W*LOKI_SPEC_CONFLICT:\s*(.+)$/m.exec(stdout);
-  return { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null };
+  return routerMarkers(stdout, { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null });
 }
 function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers): ImplementExit | "error" {
   if (killed) return "killed";
@@ -127,7 +131,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
-    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.unmetered ? UNMETERED : c.source || "not measured",
+    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.unmetered ? UNMETERED : c.source || "not measured", ...routedCostFields(dest),
   });
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {

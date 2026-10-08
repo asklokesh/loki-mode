@@ -15,6 +15,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki memory` | Cross-project learnings |
 | `loki memory list` | All learnings |
 | `loki memory index` | Show or rebuild the memory index |
+| `loki memory learn` | Learn lessons from a merged PR's review comments |
+| `loki memory lessons` | List PR review lessons with uses and outcomes |
 | `loki memory show` | Show one learning |
 | `loki memory search` | Search learnings |
 | `loki memory stats` | Memory statistics |
@@ -55,6 +57,10 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki start` | Run the autonomous build (`--attempts N`, 1-5: N independent worktree attempts, the most executed passing checks wins, losers are recorded on the attempts receipt) |
 | `loki slack` | Slack inbound handler |
 | `loki slack serve` | Serve the Slack handler |
+| `loki queue` | Overnight issue queue with a morning digest |
+| `loki queue add` | Queue issue refs |
+| `loki queue list` | Show the queue |
+| `loki queue run` | Process the queue |
 | `loki answer` | Resume a BLOCKED run with an answer |
 | `loki engine10` | v10 engine router |
 | `loki engine10 run` | Run the v10 engine |

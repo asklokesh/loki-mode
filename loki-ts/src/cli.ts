@@ -26,6 +26,8 @@ Bun-native commands:
   provider show [name]   Show current provider
   provider list          List available providers and install status
   memory list            Cross-project learnings counts
+  memory lessons         PR review lessons with their uses and outcomes
+  memory learn <o/r#PR>  Learn lessons from a merged PR's review comments
   memory index [rebuild] Show or rebuild memory index
   doctor [--json]        System prerequisites health check
   rollback <subcmd>      Restore .loki/ state from a checkpoint
@@ -34,6 +36,8 @@ Bun-native commands:
                          (subcmds: list | show <id> | open <id> | share <id>)
   wiki <subcmd>          Auto-generated, cited codebase wiki + Q&A
                          (subcmds: generate | show [section] | ask "<question>")
+  queue <subcmd>         Overnight issue queue with a morning digest
+                         (subcmds: add <issue...> | list | run [--no-pr])
   answer [run] [--text]  Resume a BLOCKED run with an answer (--text, or the Control Plane answer file)
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
@@ -306,6 +310,11 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "slack": {
       const { runSlackCli } = await import("./features/slack_inbound.ts");
       return runSlackCli(rest);
+    }
+
+    case "queue": {
+      const { runQueue } = await import("./commands/queue.ts");
+      return runQueue(rest);
     }
 
     case "answer": {
