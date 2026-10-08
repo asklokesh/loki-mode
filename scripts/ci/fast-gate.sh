@@ -73,12 +73,16 @@ guards_for() {
     # FC-54: options BEFORE `--`; after it --include is a file operand and the filter is silently dropped.
     # tests that name the exact path or the basename (docker/Dockerfile.control-plane
     # selects tests/test-control-plane.sh this way)
-    # FC-67: the grep result is only a candidate set. VERSION and the manifest names are mentioned by hundreds of
+    # FC-73: the grep result is only a candidate set. VERSION and the root manifest names are mentioned by hundreds of
     # tests (fixtures, prose) that do not guard the file (their guards are the explicit lists below), and a
     # candidate with no green baseline (not run by the full suite) fails here for reasons
     # unrelated to the change. Keep only baseline-registered .sh candidates.
     case "$f" in
-        VERSION | package.json | */package.json | requirements*.txt | requirements*.in | */requirements*.txt | */requirements*.in) ;;
+        VERSION | package.json | requirements*.txt | requirements*.in) ;;
+        */package.json | */requirements*.txt | */requirements*.in)
+            # nested manifest: the basename is shared by every manifest, so only the exact path selects
+            grep -rlF --include='test-*.sh' --include='test_*.py' -- "$f" tests 2>/dev/null | has_baseline
+            ;;
         *)
         { grep -rlF --include='test-*.sh' --include='test_*.py' -- "$f" tests 2>/dev/null
           grep -rlF --include='test-*.sh' --include='test_*.py' -- "$base" tests 2>/dev/null
@@ -285,7 +289,7 @@ cmd_run() {
             node_test) timeout -k 10 "$SUITE_LIMIT" node --test "$target"; rc=$? ;;
             node_lint)
                 # The shard installs only the root and loki-ts deps; install the target's own
-                # locked deps so the linter binary exists (FC-67), instead of failing rc=127.
+                # locked deps so the linter binary exists (FC-73), instead of failing rc=127.
                 if [ ! -x "$target/node_modules/.bin/eslint" ]; then
                     (cd "$target" && timeout -k 10 "${FAST_GATE_INSTALL_LIMIT:-300}" npm ci --ignore-scripts --no-audit --no-fund) || echo "fast-gate: npm ci failed in $target"
                 fi

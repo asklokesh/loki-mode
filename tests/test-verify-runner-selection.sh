@@ -46,7 +46,7 @@ command -v python3 >/dev/null 2>&1 || { echo "  SKIPPED: python3 not installed (
 _gate_body="$(sed -n '/^verify_gate_tests()/,/^}/p' "$SRC")"
 _bad_greps=0
 for _r in vitest jest mocha; do
-  if printf '%s' "$_gate_body" | grep -q "grep -q '\"$_r\"' \"\$tree/package.json\""; then
+  if grep -q "grep -q '\"$_r\"' \"\$tree/package.json\"" <<<"$_gate_body"; then
     _bad_greps=$((_bad_greps+1))
   fi
 done
@@ -67,7 +67,7 @@ else
 fi
 
 # --- 3. THE GUARD: a declared script that names no known runner still RUNS --
-if printf '%s' "$_gate_body" | grep -q 'npm test'; then
+if grep -q 'npm test' <<<"$_gate_body"; then
   ok "a declared script naming no known runner is still run via npm test"
 else
   bad "a declared non-vitest/jest/mocha script is skipped -- verify would fall through to pytest"
@@ -133,7 +133,7 @@ RUNSH="$REPO_ROOT/autonomy/run.sh"
 _cov_body="$(sed -n '/^enforce_test_coverage()/,/^}/p' "$RUNSH")"
 if [ -z "$_cov_body" ]; then
   bad "could not extract enforce_test_coverage from run.sh"
-elif printf '%s' "$_cov_body" | grep -q 'if \[ -n "\$_declared_test_script" \]; then'; then
+elif grep -q 'if \[ -n "\$_declared_test_script" \]; then' <<<"$_cov_body"; then
   ok "run.sh checks the DECLARED script before any installed-package grep"
 else
   bad "run.sh still selects a runner before consulting scripts.test"
@@ -148,8 +148,8 @@ fi
 # than on the absence of `:`, which would be wording-matching again.
 _first_branch="$(printf '%s' "$_cov_body" | \
   sed -n '/if \[ -n "\$_declared_test_script" \]; then/,/elif grep -q/p')"
-if printf '%s' "$_first_branch" | grep -q 'npm test' \
-   && printf '%s' "$_first_branch" | grep -q 'test_runner='; then
+if grep -q 'npm test' <<<"$_first_branch" \
+   && grep -q 'test_runner=' <<<"$_first_branch"; then
   ok "the declared-script branch runs the command and sets a runner (no no-op fallthrough)"
 else
   bad "the declared-script branch does not invoke the test command -- gate reports runner=none"
