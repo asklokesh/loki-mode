@@ -249,4 +249,5 @@ export const wallStage: Stage = {
   limitS: 300, // outer ceiling = the max session cap (sizing.ts wallLimitS)
   run: (ctx, signal) => runWall(ctx, signal),
 };
-export const stage = wallStage;
+/** WC-01b: the split halves, read by the machine under LOKI_E10_WALL_CONCURRENT=1. */
+export const stage = Object.assign(wallStage, { split: { author: wallAuthor, install: installWall } });

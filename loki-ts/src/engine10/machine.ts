@@ -1,13 +1,44 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader,
 // stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through
 // RunContext; stages come from ./stages/<name>.ts.
-import { existsSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join, relative } from "node:path";
+import { safeGit } from "../util/safe_git.ts";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
 import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
+
+/** WC-01b: optional split halves a wall stage may carry (see wall.ts `stage.split`). */
+interface WallSplit {
+  author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>;
+  install(ctx: RunContext, a: never, baseDir: string): StageResult;
+}
+const MANIFESTS = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|pyproject\.toml|poetry\.lock|Pipfile(\.lock)?|requirements[^/]*\.txt|setup\.py|setup\.cfg|go\.(mod|sum)|Cargo\.(toml|lock))$/;
+const wallConcurrent = (): boolean => process.env.LOKI_E10_WALL_CONCURRENT === "1";
+/** WC-01b: detached worktree at baseSha, deps (node_modules, .venv) symlinked from repoDir so Wall tests still resolve; null when unavailable. */
+function makeBaseTree(repoDir: string, baseSha: string): string | null {
+  const dir = mkdtempSync(join(tmpdir(), "e10-wallbase-"));
+  try {
+    safeGit(repoDir, ["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, baseSha], { stdio: "ignore", repoDrivers: true });
+    for (const d of ["node_modules", ".venv"]) if (existsSync(join(repoDir, d)) && !existsSync(join(dir, d))) symlinkSync(join(repoDir, d), join(dir, d));
+    return dir;
+  } catch { dropBaseTree(repoDir, dir); return null; }
+}
+function dropBaseTree(repoDir: string, dir: string): void {
+  try { safeGit(repoDir, ["worktree", "remove", "--force", dir], { stdio: "ignore", repoDrivers: true }); } catch { /* pruned below */ }
+  rmSync(dir, { recursive: true, force: true });
+  try { safeGit(repoDir, ["worktree", "prune"], { stdio: "ignore", repoDrivers: true }); } catch { /* best effort */ }
+}
+/** Files changed against baseSha (tracked diff plus untracked); null when git cannot say. */
+function changedSinceBase(repoDir: string, baseSha: string): string[] | null {
+  try {
+    const tracked = safeGit(repoDir, ["diff", "--name-only", baseSha], { repoDrivers: true }), untracked = safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"], { repoDrivers: true });
+    return `${tracked}\n${untracked}`.split("\n").filter(Boolean);
+  } catch { return null; }
+}
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
 export const FLOW: readonly (StageName | readonly StageName[])[] = [
   "intake", ["plan", "wall"], "implement", "verify", "commit", "seal", "pr",
@@ -156,17 +187,67 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     if (r.status === "failed") return r.reason !== "limit" && name !== "plan" && name !== "wall" && name !== "verify" && name !== "fix";
     return r.status === "completed" && (earlyExit(r.data) || outputs.intake?.already_satisfied === true); // D61-04: a deferred already-done hit lands on intake's data mid-implement
   };
+  // WC-01b: under LOKI_E10_WALL_CONCURRENT=1 the Wall is authored alongside plan and implement, then installed once before verify.
+  interface WallJob { split: WallSplit; promise: Promise<{ kind: string } & Record<string, unknown>>; ctl: AbortController; aborted: Promise<null>; t0: number; timer: ReturnType<typeof setTimeout>; why: () => "limit" | "cap" | null; onCap: () => void; }
+  let wallJob: WallJob | null = null;
+  const closeWallJob = (j: WallJob): void => { clearTimeout(j.timer); capCtl.signal.removeEventListener("abort", j.onCap); };
+  const abortWall = (): void => { const j = wallJob; wallJob = null; if (!j) return; closeWallJob(j); j.ctl.abort(); j.promise.catch(() => {}); }; // an abort before install installs nothing (E-54)
+  const startWallAuthor = async (): Promise<boolean> => {
+    const st = await load("wall") as (Stage & { split?: WallSplit }) | null;
+    if (!st?.split) return false;
+    const ctl = new AbortController(); let why: "limit" | "cap" | null = null;
+    const kill = (w: "limit" | "cap"): void => { if (!why) { why = w; ctl.abort(); } };
+    const timer = setTimeout(() => kill("limit"), st.limitS * 1000), onCap = (): void => kill("cap");
+    if (capCtl.signal.aborted) onCap(); else capCtl.signal.addEventListener("abort", onCap);
+    const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
+    ctx.emit("stage.started", "wall", { target_s: st.targetS, limit_s: st.limitS });
+    const promise = st.split.author(sctx, ctl.signal); promise.catch(() => {});
+    wallJob = { split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap };
+    return true;
+  };
+  /** Awaits the author, then installs once against a detached base worktree. Returns the wall result (also recorded in outputs/events). */
+  const installWallJob = async (): Promise<void> => {
+    const j = wallJob; if (!j) return; wallJob = null;
+    const dur = (): number => (ctx.clock.now() - j.t0) / 1000;
+    let r: StageResult;
+    try {
+      const a = await Promise.race([j.promise, j.aborted]); closeWallJob(j);
+      if (!a) r = { status: "failed", data: {}, reason: j.why() ?? "aborted", killed: true };
+      else if (a.kind === "done") r = a.result as StageResult;
+      else {
+        const base = makeBaseTree(ctx.repoDir, ctx.baseSha);
+        if (!base) r = { status: "failed", data: {}, reason: "wall base worktree unavailable: nothing installed" };
+        else try {
+          const w = a as unknown as { contents: Map<string, string>; targetDir: string };
+          mkdirSync(join(base, relative(ctx.repoDir, w.targetDir)), { recursive: true });
+          for (const [n, c] of w.contents) writeFileSync(join(base, relative(ctx.repoDir, w.targetDir), n), c, "utf8");
+          r = j.split.install(sctx, a as never, base);
+          const changed = changedSinceBase(ctx.repoDir, ctx.baseSha);
+          if (r.status === "completed" && (changed === null || changed.some((f) => MANIFESTS.test(f)))) r = { ...r, data: { ...r.data, base_run: { ...(r.data.base_run as Obj), deps: "head" } } }; // implement may have moved the deps: the base run used head's
+        } finally { dropBaseTree(ctx.repoDir, base); }
+      }
+    } catch (err) { r = { status: "failed", data: {}, reason: err instanceof Error ? err.message : String(err) }; }
+    if (r.status === "completed") { outputs.wall = r.data; ctx.emit("stage.completed", "wall", { ...r.data, duration_s: dur() }); }
+    else if (r.status === "skipped") ctx.emit("stage.skipped", "wall", { ...r.data, reason: r.reason ?? "skipped by stage" });
+    else ctx.emit("stage.failed", "wall", { ...r.data, duration_s: dur(), reason: r.reason ?? "failed" });
+  };
   try {
     let jumped = false, resized = false, stopped: string | null = null;
     const sigs: string[] = [];
     const sigOf = (d: Obj | undefined, r?: StageResult | null): string => r && r.status !== "completed" ? `verify-crashed-${sigs.length}` : JSON.stringify(((d?.failures_grouped ?? []) as { signature?: string }[]).map((g) => g.signature).sort()); // a crashed or timed-out verify leaves outputs.verify stale: record a marker that never matches (A-113b)
     for (const step of opts.flow ?? FLOW) {
       const group = (typeof step === "string" ? [step] : [...step]) as StageName[];
-      const todo = group;
+      let todo = group;
+      if (wallJob && (jumped || capReached())) abortWall();
       const isTail = todo.every((n) => TAIL.includes(n));
       if (jumped && !isTail) continue;
       if (!isTail && capReached()) markCap(todo[0] as StageName);
       if (capHit && !isTail) { jumped = true; continue; }
+      if (wallConcurrent() && todo.includes("plan") && todo.includes("wall") && !wallJob && await startWallAuthor()) todo = todo.filter((n) => n !== "wall"); // the Wall is now a background job, joined before verify
+      if (wallJob && todo[0] === "verify") {
+        await installWallJob();
+        if (outputs.wall?.already_satisfied === true) { jumped = true; continue; } // moved after implement by WC-01b; same exit as before
+      }
       const results = await Promise.all(todo.map((n) => runStage(n, !isTail)));
       if (todo[0] === "intake" && results[0]?.status === "failed" && !capHit) {
         return { outputs, capHit, stopped: "intake failed" };
@@ -202,6 +283,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     }
     return { outputs, capHit, stopped };
   } finally {
+    abortWall();
     clearTimeout(capTimer);
   }
 }
