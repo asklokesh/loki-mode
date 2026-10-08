@@ -249,10 +249,8 @@ jobs:
             exit 0
           fi
           IFS=$'\t' read -r RID CONC CREATED URL <<< "$RUNS"
-          NEWER="$(python3 -c 'import sys; from datetime import datetime as d; f=lambda x: d.fromisoformat(x.replace("Z","+00:00")); print(int(f(sys.argv[1])>f(sys.argv[2])))' "$CREATED" "$REL_AT")"
-          echo "nightly block: latest completed nightly run ${RID} is ${CONC} (${CREATED}); last release ${PREV_TAG} at ${REL_AT}"
-          if [ "$CONC" != "success" ] && [ "$NEWER" = "1" ]; then
-            echo "NIGHTLY-BLOCK: the latest nightly on main is ${CONC} and newer than ${PREV_TAG}: ${URL}"
+          if [ "$CONC" != "success" ]; then
+            echo "NIGHTLY-BLOCK: the latest completed nightly on main is ${CONC}: ${URL}"
             echo "Per D90 a red nightly blocks the NEXT release. Open a FAILURE-CLASSES fix slice, land the fix, then rerun Nightly (workflow_dispatch) to green before releasing."
             exit 1
           fi
@@ -1134,7 +1132,16 @@ jobs:
           want="$(cat VERSION)"
           # prepack's bun build writes to stdout too: take the LAST line, which
           # is the tarball npm reports.
+          # `npm pack` skips prepublishOnly and `npm publish <tgz>` runs no
+          # scripts, so build the web-app and control-plane dist here, fail closed.
+          npm run prepublishOnly
           tgz="$(npm pack --silent | tail -n 1)"
+          for need in package/packages/control-plane/dist/server.js \
+                      package/packages/control-plane/dist/ask-tools-server.js \
+                      package/packages/control-plane/ui/dist/index.html \
+                      package/web-app/dist/index.html; do
+            tar -tzf "$tgz" | grep -qx "$need" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
+          done
           mkdir -p "$RUNNER_TEMP/npm-tarball"
           cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
           printf '%s\n' "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
@@ -1152,6 +1159,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: npm-tarball
+          overwrite: true
           path: ${{ runner.temp }}/npm-tarball/*.tgz
           if-no-files-found: error
           retention-days: 14

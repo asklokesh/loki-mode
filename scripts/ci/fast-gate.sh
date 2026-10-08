@@ -83,7 +83,9 @@ cmd_plan() {
     mkdir -p "$out" || return 2
     : >"$out/plan.tsv"
     if [ -z "$base" ]; then
-        base="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$head" 2>/dev/null || true)"
+        # "${head}^": when HEAD is itself the release tag commit, describing HEAD
+        # returns that tag and the diff is empty; start from its parent.
+        base="$(git describe --tags --abbrev=0 --match 'v[0-9]*' "${head}^" 2>/dev/null || true)"
     fi
     local files
     if [ -n "${FAST_GATE_FILES_FILE:-}" ] && [ "${FAST_GATE_TEST_MODE:-}" = "1" ]; then
@@ -92,6 +94,12 @@ cmd_plan() {
     elif [ -z "$base" ] || ! files="$(git diff --name-only "${base}...${head}" -- . 2>/dev/null)"; then
         echo "fast-gate: cannot compute a diff (base='${base}'): failing safe to the FULL set" >&2
         printf 'FULL\tunparseable-diff\t0\t0\n' >"$out/plan.tsv"
+        write_matrix "$out"
+        return 0
+    fi
+    if [ -z "$(printf '%s' "$files" | tr -d '[:space:]')" ]; then
+        echo "fast-gate: the diff file list is empty (base='${base}'): failing safe to the FULL set" >&2
+        printf 'FULL\tempty-diff\t0\t0\n' >"$out/plan.tsv"
         write_matrix "$out"
         return 0
     fi

@@ -65,15 +65,55 @@ else bad "an uncomputable diff did not fail safe to FULL"; fi
 parity=1
 for f in VERSION package.json web-app/package.json loki-ts/dist/loki.js tests/lib/x.sh .github/workflows/test.yml \
          Dockerfile.control-plane loki-ts/src/commands/doctor.ts docs/a.md autonomy/loki; do
-    # shellcheck disable=SC1090
     sel_r0=0
     printf '%s\n' "$f" | bash scripts/select-tests.sh --files - 2>/dev/null | grep -q '^R0' && sel_r0=1
     plan_r0=0
+    # shellcheck disable=SC1090
     ( . <(sed -n '/^is_r0_path()/,/^}/p' scripts/ci/fast-gate.sh); is_r0_path "$f" ) && plan_r0=1
     [ "$sel_r0" = "$plan_r0" ] || { parity=0; echo "  parity mismatch for $f: selector=$sel_r0 planner=$plan_r0"; }
 done
 if [ "$parity" = 1 ]; then ok "the planner's R0 path list agrees with scripts/select-tests.sh"
 else bad "the planner's R0 path list drifted from scripts/select-tests.sh"; fi
+
+# B3: an empty diff file list fails safe to FULL.
+: >"$T/empty.files"
+FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/empty.files" bash scripts/ci/fast-gate.sh plan test "$T/empty" >"$T/empty.log" 2>&1
+if grep -q '^FULL' "$T/empty/plan.tsv"; then ok "an empty diff file list fails safe to FULL"
+else bad "an empty diff file list did not fail safe to FULL"; fi
+
+# B3: the default base is described from HEAD^ (not HEAD)
+if grep -qF '"${head}^" 2>/dev/null' scripts/ci/fast-gate.sh; then
+    ok "the default base is the last release tag before HEAD (describe HEAD^)"
+else bad "the default base is not described from HEAD^"; fi
+
+# B1: the npm pack step runs prepublishOnly first and asserts the dist files
+rel=".github/workflows/release.yml"
+if python3 - "$rel" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+i = s.index('npm run prepublishOnly')
+j = s.index('npm pack --silent')
+assert i < j, 'prepublishOnly must run before npm pack'
+seg = s[j:j + 900]
+for n in ('packages/control-plane/dist/server.js', 'packages/control-plane/dist/ask-tools-server.js',
+          'packages/control-plane/ui/dist/index.html', 'web-app/dist/index.html'):
+    assert n in seg, n
+assert 'tar -tzf' in seg
+PY
+then ok "publish-npm runs prepublishOnly before npm pack and asserts the four dist files"
+else bad "publish-npm does not run prepublishOnly before pack or lacks the dist assertions"; fi
+
+# B2: the nightly block does not depend on the nightly being newer than the release
+if python3 - "$rel" <<'PY'
+import sys
+s = open(sys.argv[1]).read()
+a = s.index('Block the release on a red nightly')
+seg = s[a:a + 4000]
+assert 'NEWER' not in seg, 'NEWER clause still present'
+assert 'if [ "$CONC" != "success" ]; then' in seg
+PY
+then ok "any non-success latest nightly blocks (overlap case: red nightly older than the release still blocks)"
+else bad "the nightly block still has a newer-than-release clause"; fi
 
 echo "fast-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
