@@ -680,3 +680,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: the FC-64 ratchet covers the repo-wide count; this suite now joins the enforced family.
 - Mechanism: here-strings (`grep -q ... <<<"$var"`) at all five sites; tests/test-sigpipe-guard.sh section 2 now enforces the suite.
 - Fixture: tests/test-sigpipe-guard.sh against the pre-fix copy of the suite fails (5 legacy lines, 3 passed 1 failed); against the fixed suite 4 passed 0 failed.
+
+## FC-83 A privacy test spawned real runners and a dashboard install, riding its caps until the shard timed out (RED-FUNNEL)
+- User saw: Tests red on main 082cd57a4 (shard 9): tests/test-funnel-privacy.sh FAIL rc=124 past the item limit (est 8s); the log shows three 26s gaps (telemetry-off, DO_NOT_TRACK, analytics-off), a 13s gap on bare `loki`, then `rm: cannot remove .../fx/.loki: Directory not empty`.
+- Law: a test must not depend on the host's login state, network or a detached process; every child it starts must exit by its own means, not by the cap.
+- Cause (measured): (1) the stub `claude` exited 1 for every call, so on Linux the login state is "unknown" (fails open) and `loki start` entered the real runner, a retry loop that ignores SIGTERM: timeout -k 5 20 = 25s per case (reproduced locally with LOKI_SKIP_AUTH_PREFLIGHT=1: rc=137 elapsed=25s; the macOS keychain made the preflight refuse in 1s and hid it). The runner also bootstrapped caveman through npx (network). (2) bare `loki` runs cmd_ui: control serve, then the classic dashboard with a venv pip install on the fresh HOME and a detached dashboard server (rc=124 at the 20s cap, server left behind, racing the sandbox rm -rf). (3) the Bun route case rides its cap by design.
+- Siblings swept: every cap_command and run_cli call site in the suite (3 telemetry cases, disclosure_start, once, route_bash all go through the stub; route_bash already refuses at the preflight).
+- Mechanism: the stub `claude` answers `auth status` with loggedIn false so the preflight refuses at once on every platform; run_cli sets LOKI_CONTROL=0 and LOKI_UI_NO_CLASSIC=1 so bare loki starts nothing; cap_command takes CAP_SECS and the Bun route case uses 8s.
+- Fixture: tests/test-funnel-privacy.sh itself. Measured locally: bare loki rc=124 at 20s before, 0s after; suite 51s before, 19-20s after (3 runs, rc=0).

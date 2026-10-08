@@ -37,7 +37,7 @@ GREP=/usr/bin/grep
 # fallback kill the full invoked process group instead of leaving a runner child.
 cap_command() {
     if command -v timeout >/dev/null 2>&1; then
-        timeout -k 5 20 env "$@"
+        timeout -k 5 "${CAP_SECS:-20}" env "$@"
         return $?
     fi
 
@@ -49,7 +49,7 @@ import sys
 
 process = subprocess.Popen(["env", *sys.argv[1:]], start_new_session=True)
 try:
-    return_code = process.wait(timeout=20)
+    return_code = process.wait(timeout=int(os.environ.get("CAP_SECS", "20")))
 except subprocess.TimeoutExpired:
     os.killpg(process.pid, signal.SIGKILL)
     return_code = process.wait()
@@ -88,7 +88,17 @@ chmod +x "$BINDIR/curl"
 
 # E-165: every `loki start` runs in a throwaway git repo (never the repo root)
 # with a stub provider that exits at once, under cap_command (timeout -k).
-printf '#!/bin/sh\nexit 1\n' > "$BINDIR/claude"
+# `auth status` reports logged-out so run.sh's auth preflight refuses at once on
+# every platform. Without it, Linux (login state "unknown", fails open) enters
+# the real runner: a retry loop that ignores SIGTERM, burning the full 20s cap
+# plus the 5s kill grace per start case, and bootstrapping caveman through npx.
+cat > "$BINDIR/claude" <<'CLAUDE_STUB'
+#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+    echo '{"loggedIn": false}'
+fi
+exit 1
+CLAUDE_STUB
 chmod +x "$BINDIR/claude"
 FX="$SANDBOX/fx"
 mkdir -p "$FX"
@@ -114,6 +124,9 @@ settle() {
     return 1
 }
 
+# LOKI_CONTROL=0 and LOKI_UI_NO_CLASSIC=1 stop bare `loki` from starting a
+# detached Control Plane or a classic dashboard (venv + pip install on a fresh
+# HOME, a network call that outlives the 20s cap and races the sandbox rm -rf).
 # Run the real CLI shim with telemetry+analytics forced fully ON, so the
 # strictest gate is open and any leak has every chance to show itself.
 # The funnel emit happens in the shim BEFORE any exec, so no assertion here needs
@@ -126,6 +139,8 @@ run_cli() {
         LOKI_TELEMETRY=on \
         LOKI_ANALYTICS=on \
         LOKI_TTY_INTERACTIVE=1 \
+        LOKI_CONTROL=0 \
+        LOKI_UI_NO_CLASSIC=1 \
         "$REPO_ROOT/bin/loki" "$@" >"$SANDBOX/out.txt" 2>"$SANDBOX/err.txt" </dev/null ) || true
     return 0
 }
@@ -316,7 +331,10 @@ new_case route_bun
 # emit already happened in the shim, and the Bun runner it exec'd must not
 # outlive the test.
 (
-  ( cd "$FX" || exit 1; cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
+  # The Bun runner never exits on its own here (it sleeps between retries), so it
+  # always rides the cap to the end. A short cap bounds that dead time; the emit
+  # lands in the shim well before it.
+  ( cd "$FX" || exit 1; CAP_SECS=8 cap_command PATH="$BINDIR:$PATH" HOME="$HOME" LOKI_TEST_CAPTURE="$LOKI_TEST_CAPTURE" \
       LOKI_TELEMETRY=on LOKI_ANALYTICS=on LOKI_TTY_INTERACTIVE=1 LOKI_SDK_LOOP=1 \
       "$REPO_ROOT/bin/loki" start ./spec.md >/dev/null 2>&1 </dev/null ) || true
 ) 2>/dev/null
