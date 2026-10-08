@@ -20,6 +20,7 @@ export interface RunResult {
   output: string;
   verdict?: string | null;
   costUsd?: number | null;
+  runId?: string | null; // the engine10 run id (.loki/runs/<id>), so `loki issues run` can stack on loki/<id> (MASS-2)
 }
 
 export interface GovernorReading {
@@ -46,6 +47,9 @@ export interface RunOpts {
   draft?: boolean;
   cwd?: string; // run in this checkout (a per-issue worktree) with its own .loki
   env?: NodeJS.ProcessEnv;
+  prBase?: string; // MASS-2: the PR targets this branch (a stacked slice's parent), via LOKI_PR_BASE to the run's PR stage
+  prRefs?: string; // MASS-2: owner/repo#N the PR body refers to (the epic), via LOKI_PR_REFS
+  logName?: string; // queue-logs file name when the ref is long task text
 }
 
 export interface ItemResult {
@@ -292,16 +296,16 @@ export async function defaultGovernor(): Promise<GovernorReading> {
 
 // Engine10 writes .loki/runs/<id>/receipt.json; the legacy loops write .loki/proofs/<id>/proof.json.
 // Both carry a top-level verdict and cost.usd. Newest file modified since `since` wins; runs/ first.
-export function newestRecord(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null } {
+export function newestRecord(lokiDir: string, since: number): { verdict: string | null; costUsd: number | null; runId?: string | null } {
   for (const [sub, file] of [["runs", "receipt.json"], ["proofs", "proof.json"]] as const) {
     const dir = join(lokiDir, sub);
-    let best: { t: number; p: string } | null = null;
+    let best: { t: number; p: string; name: string } | null = null;
     try {
       for (const name of readdirSync(dir)) {
         const p = join(dir, name, file);
         if (!existsSync(p)) continue;
         const t = statSync(p).mtimeMs;
-        if (t >= since && (!best || t > best.t)) best = { t, p };
+        if (t >= since && (!best || t > best.t)) best = { t, p, name };
       }
       if (!best) continue;
       const d = JSON.parse(readFileSync(best.p, "utf8")) as { verdict?: unknown; cost?: { usd?: unknown; source?: unknown } };
@@ -310,6 +314,7 @@ export function newestRecord(lokiDir: string, since: number): { verdict: string 
       return {
         verdict: typeof d.verdict === "string" ? d.verdict : null,
         costUsd: !unmetered && typeof usd === "number" && Number.isFinite(usd) ? usd : null,
+        ...(sub === "runs" ? { runId: best.name } : {}),
       };
     } catch {
       continue;
@@ -324,7 +329,7 @@ export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
     const argv = [resolve(REPO_ROOT, "bin", "loki"), "start", ref, ...(opts.pr ? ["--pr"] : [])];
     // A per-issue worktree gets its own .loki so parallel runs never share run state (autonomy/loki refuses that).
     const runLoki = opts.cwd ? join(opts.cwd, ".loki") : lokiDir;
-    const env: NodeJS.ProcessEnv = { ...(opts.env ?? process.env), LOKI_NO_BROWSER: "1", ...(opts.cwd ? { LOKI_DIR: runLoki } : {}), ...(opts.draft ? { LOKI_PR_DRAFT: "1" } : {}) };
+    const env: NodeJS.ProcessEnv = { ...(opts.env ?? process.env), LOKI_NO_BROWSER: "1", ...(opts.cwd ? { LOKI_DIR: runLoki } : {}), ...(opts.draft ? { LOKI_PR_DRAFT: "1" } : {}), ...(opts.prBase ? { LOKI_PR_BASE: opts.prBase } : {}), ...(opts.prRefs ? { LOKI_PR_REFS: opts.prRefs } : {}) };
     const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", stdin: "ignore", env, ...(opts.cwd ? { cwd: opts.cwd } : {}) });
     const mins = Number(process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"]) || 120;
     const timer = setTimeout(() => proc.kill(), mins * 60_000);
@@ -335,12 +340,12 @@ export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
     try {
       const logDir = join(lokiDir, "queue-logs");
       mkdirSync(logDir, { recursive: true });
-      writeFileSync(join(logDir, `${ref.replace(/[^A-Za-z0-9_.-]/g, "_")}.log`), output);
+      writeFileSync(join(logDir, `${(opts.logName ?? ref).replace(/[^A-Za-z0-9_.-]/g, "_").slice(0, 120)}.log`), output);
     } catch {
       /* log is best effort */
     }
     const proof = newestRecord(runLoki, since);
-    return { rc, output, verdict: proof.verdict, costUsd: proof.costUsd };
+    return { rc, output, verdict: proof.verdict, costUsd: proof.costUsd, runId: proof.runId ?? null };
   };
 }
 

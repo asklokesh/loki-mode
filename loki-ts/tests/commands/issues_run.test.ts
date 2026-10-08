@@ -58,9 +58,10 @@ function harness(opts: {
     confirm: async () => opts.confirm ?? true,
     isTTY: opts.isTTY ?? true,
     worktree: {
-      create: (n) => {
-        worktrees.push(n);
-        return join(dir, `wt-${n}`);
+      create: (name, base) => {
+        expect(base).toBe("HEAD");
+        worktrees.push(Number(name.replace("issue-", "")));
+        return join(dir, `wt-${name}`);
       },
       remove: () => {},
     },

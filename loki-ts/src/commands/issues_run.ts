@@ -6,17 +6,20 @@
 //   4. run every actionable issue through the T7 queue (commands/queue.ts) as a normal `loki start owner/repo#N --pr`
 //      run, so verify, seal, receipt and the PR push are the single-run path, unchanged;
 //   5. print one live line per issue, then a digest table, also written to .loki/issues-run/<ts>/digest.md.
+// MASS-2: a too-large issue is split by the model into stacked slices (commands/issues_epic.ts) unless --no-split.
 // Every external effect (gh, triage, runner, worktrees, prompt) is injectable so tests never call a provider.
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { MAX_PARALLEL, makeDefaultRunner, queueAdd, queueRun, type ItemResult, type QueueDeps, type RunOpts, type RunResult } from "./queue.ts";
 import { estimateFor, startText, type EstimateResult } from "../runner/router/cost_preview.ts";
+import { makeSessionDecompose, parseDecomposition, planComment, renderEpicTree, runEpicSlices, sliceTask, type Decomposition, type Slice, type SliceResult } from "./issues_epic.ts";
 import { calculateRateLimitBackoff, isRateLimited, parseRetryAfter } from "../runner/budget.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { githubSlug } from "../runner/attempts.ts";
+import { resolveModel } from "../engine10/session.ts";
 
 export interface GhIssue {
   number: number;
@@ -42,11 +45,12 @@ export interface IssuesRunDeps {
   lokiDir: string;
   gh: (args: readonly string[]) => GhResult;
   triage: (slug: string, issue: GhIssue) => Promise<Triage>;
+  decompose: (slug: string, issue: GhIssue, triageReason: string) => Promise<string>; // the model's JSON split, validated here
   runner: QueueDeps["runner"];
   estimate: () => EstimateResult;
   confirm: (question: string) => Promise<boolean>;
   isTTY: boolean;
-  worktree: { create: (n: number) => string; remove: (n: number, path: string) => void };
+  worktree: { create: (name: string, base: string) => string; remove: (name: string, path: string) => void };
   sleep: (ms: number) => Promise<void>;
   now: () => Date;
   out: (s: string) => void;
@@ -62,15 +66,16 @@ export interface IssuesRunArgs {
   dryRun: boolean;
   yes: boolean;
   comment: boolean;
+  split: boolean;
 }
 
-const USAGE = "usage: loki issues run [owner/repo] [--label L] [--limit N] [--parallel K] [--draft] [--dry-run] [--yes] [--comment]\n";
+const USAGE = "usage: loki issues run [owner/repo] [--label L] [--limit N] [--parallel K] [--draft] [--dry-run] [--yes] [--comment] [--no-split]\n";
 const SLUG_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const DEFAULT_LIMIT = 100;
 const RATE_LIMIT_RETRIES = 2;
 
 export function parseIssuesArgs(args: readonly string[]): IssuesRunArgs | string {
-  const a: IssuesRunArgs = { slug: null, label: null, limit: DEFAULT_LIMIT, parallel: 1, draft: false, dryRun: false, yes: false, comment: false };
+  const a: IssuesRunArgs = { slug: null, label: null, limit: DEFAULT_LIMIT, parallel: 1, draft: false, dryRun: false, yes: false, comment: false, split: true };
   for (let i = 0; i < args.length; i++) {
     const t = args[i]!;
     const val = (): string | null => (i + 1 < args.length ? args[++i]! : null);
@@ -78,6 +83,7 @@ export function parseIssuesArgs(args: readonly string[]): IssuesRunArgs | string
     else if (t === "--dry-run") a.dryRun = true;
     else if (t === "--yes" || t === "-y") a.yes = true;
     else if (t === "--comment") a.comment = true;
+    else if (t === "--no-split") a.split = false;
     else if (t === "--label") {
       const v = val();
       if (!v) return "--label needs a value";
@@ -188,16 +194,18 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   for (const i of dupes) d.out(`  skip #${i.number} (open Loki PR exists): ${clip(i.title, 70)}\n`);
   for (const i of todo) d.out(`  plan #${i.number}: ${clip(i.title, 70)}\n`);
   const est = d.estimate();
-  const estLine = est.ok
-    ? `estimated total: $${(est.est.usd[0] * todo.length).toFixed(2)}-$${(est.est.usd[1] * todo.length).toFixed(2)} for ${todo.length} issue${todo.length === 1 ? "" : "s"} (${startText(est)} per issue), plus one triage call each`
-    : `estimated total: NOT AVAILABLE (${est.reason})`;
+  const per = perRun(est);
+  const extra = a.split ? ", plus one triage call each and one Opus split call per too-large issue" : ", plus one triage call each";
+  const estLine = per
+    ? `estimated total: ${per.tilde}$${(per.usd[0] * todo.length).toFixed(2)}-$${(per.usd[1] * todo.length).toFixed(2)} for ${todo.length} issue${todo.length === 1 ? "" : "s"} (${startText(est)} per issue)${extra}`
+    : `estimated total: NOT AVAILABLE (${est.ok ? "" : est.reason})`;
   d.out(`${estLine}\n`);
   if (todo.length === 0) {
     d.out("nothing to run\n");
     return 0;
   }
   if (a.dryRun) {
-    d.out(`dry run: no triage calls, nothing spawned; parallel ${a.parallel}${a.draft ? ", draft PRs" : ""}\n`);
+    d.out(`dry run: no triage calls, nothing spawned; parallel ${a.parallel}${a.draft ? ", draft PRs" : ""}${a.split ? "" : ", no split"}\n`);
     return 0;
   }
 
@@ -213,9 +221,10 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     }
   }
 
-  // 3. triage (one planning call per issue)
+  // 3. triage (one planning call per issue); MASS-2: a too-large issue gets one split call
   const rows = new Map<number, Row>();
   const actionable: GhIssue[] = [];
+  const epics: { issue: GhIssue; reason: string; plan: Extract<Decomposition, { ok: true }> }[] = [];
   for (const i of todo) {
     let t: Triage;
     try {
@@ -228,10 +237,49 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
       actionable.push(i);
       continue;
     }
-    rows.set(i.number, { issue: i.number, title: i.title, triage: t.decision, outcome: `skipped: ${clip(t.reason, 120)}`, pr: "none", cost: "-", time: "-" });
+    let skipReason = t.reason;
+    if (t.decision === "too-large" && a.split) {
+      let p: Decomposition;
+      try {
+        p = parseDecomposition(await d.decompose(slug, i, t.reason));
+      } catch (e) {
+        p = { ok: false, reason: `split call failed: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      if (p.ok) {
+        epics.push({ issue: i, reason: t.reason, plan: p });
+        d.out(`#${i.number} split into ${p.slices.length} slices: ${p.slices.map((s) => s.id + (p.parent[s.id] ? `<-${p.parent[s.id]}` : "")).join(", ")}\n`);
+        continue;
+      }
+      d.out(`#${i.number} split refused: ${clip(p.reason, 160)}\n`);
+      skipReason = `split refused: ${p.reason}`;
+    }
+    rows.set(i.number, { issue: i.number, title: i.title, triage: t.decision, outcome: `skipped: ${clip(skipReason, 120)}`, pr: "none", cost: "-", time: "-" });
     if (a.comment && t.decision !== "unknown") {
       const c = d.gh(["issue", "comment", String(i.number), "--repo", slug, "--body", `Loki triage: ${t.decision}. ${t.reason}`]);
       if (c.rc !== 0) d.err(`#${i.number}: triage comment failed (rc ${c.rc})\n`);
+    }
+  }
+
+  // MASS-2: per-epic estimate (slices x the per-run estimate) and a second consent before any slice runs
+  if (epics.length > 0) {
+    let slices = 0;
+    for (const e of epics) {
+      const n = e.plan.slices.length;
+      slices += n;
+      d.out(per
+        ? `epic #${e.issue.number}: ${n} slices x ${per.tilde}$${per.usd[0].toFixed(2)}-$${per.usd[1].toFixed(2)}${per.label} = ${per.tilde}$${(per.usd[0] * n).toFixed(2)}-$${(per.usd[1] * n).toFixed(2)}\n`
+        : `epic #${e.issue.number}: ${n} slices x NOT AVAILABLE (${est.ok ? "" : est.reason})\n`);
+    }
+    const q = `Run ${actionable.length} issue${actionable.length === 1 ? "" : "s"} and ${slices} slices in ${epics.length} epic${epics.length === 1 ? "" : "s"} on ${slug}? [y/N] `;
+    if (!a.yes && !(await d.confirm(q))) {
+      d.out("aborted after triage, nothing run\n");
+      return 1;
+    }
+    if (a.comment) {
+      for (const e of epics) {
+        const c = d.gh(["issue", "comment", String(e.issue.number), "--repo", slug, "--body", planComment(e.reason, e.plan.slices)]);
+        if (c.rc !== 0) d.err(`#${e.issue.number}: plan comment failed (rc ${c.rc})\n`);
+      }
     }
   }
 
@@ -241,21 +289,26 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   mkdirSync(runDir, { recursive: true });
   const byRef = new Map(actionable.map((i) => [`${slug}#${i.number}`, i]));
   const sink = (): void => {};
+  // One run with the rate-limit backoff; a worktree run keeps its receipt under runDir before the worktree goes.
+  const runWithRetry = async (label: string, ref: string, opts: RunOpts, wt: string | null): Promise<RunResult> => {
+    for (let attempt = 0; ; attempt++) {
+      const res = await d.runner(ref, { ...opts, ...(wt ? { cwd: wt } : {}) });
+      if (wt && res.runId) keepReceipt(wt, res.runId, runDir, d.err);
+      if (res.rc === 0 || attempt >= RATE_LIMIT_RETRIES || !isRateLimited(res.output)) return res;
+      const wait = calculateRateLimitBackoff(parseRetryAfter(res.output));
+      d.out(`${label} provider rate limit, retrying in ${wait}s\n`);
+      await d.sleep(wait * 1000);
+    }
+  };
   if (actionable.length > 0) {
     queueAdd([...byRef.keys()], { lokiDir: runDir, runner: d.runner, governor: noGovernor, now: d.now, out: sink, err: d.err });
     const runOne = async (ref: string, opts: RunOpts): Promise<RunResult> => {
       const n = byRef.get(ref)!.number;
-      const wt = a.parallel > 1 ? d.worktree.create(n) : null;
+      const wt = a.parallel > 1 ? d.worktree.create(`issue-${n}`, "HEAD") : null;
       try {
-        for (let attempt = 0; ; attempt++) {
-          const res = await d.runner(ref, { ...opts, ...(wt ? { cwd: wt } : {}) });
-          if (res.rc === 0 || attempt >= RATE_LIMIT_RETRIES || !isRateLimited(res.output)) return res;
-          const wait = calculateRateLimitBackoff(parseRetryAfter(res.output));
-          d.out(`#${n} provider rate limit, retrying in ${wait}s\n`);
-          await d.sleep(wait * 1000);
-        }
+        return await runWithRetry(`#${n}`, ref, opts, wt);
       } finally {
-        if (wt) d.worktree.remove(n, wt);
+        if (wt) d.worktree.remove(`issue-${n}`, wt);
       }
     };
     const onResult = (r: ItemResult): void => {
@@ -268,9 +321,50 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     await queueRun([], { lokiDir: runDir, runner: runOne, governor: noGovernor, now: d.now, out: sink, err: d.err, parallel: a.parallel, draft: a.draft, onResult });
   }
 
+  // MASS-2: each epic's slices, one at a time in dependency order, through the same runner and the run's own PR stage
+  const trees: string[] = [];
+  for (const e of epics) {
+    const n = e.issue.number;
+    const t0 = Date.now();
+    const runSlice = async (s: Slice, k: number, base: string | null): Promise<SliceResult> => {
+      const name = `epic-${n}-s${k + 1}`;
+      const parent = e.plan.parent[s.id] ?? null;
+      d.out(`#${n} ${s.id} running${base ? ` (stacked on ${base})` : ""}\n`);
+      let wt: string;
+      try {
+        wt = d.worktree.create(name, base ?? "HEAD");
+      } catch (err) {
+        return { id: s.id, title: s.title, parent, outcome: `FAILED (worktree: ${clip(err instanceof Error ? err.message : String(err), 100)})`, pr: null, cost: "-", branch: null };
+      }
+      let res: RunResult;
+      try {
+        const opts: RunOpts = { pr: true, draft: true, prRefs: `${slug}#${n}`, logName: name, ...(base ? { prBase: base } : {}) };
+        res = await runWithRetry(`#${n} ${s.id}`, sliceTask(slug, e.issue, s, k, e.plan.slices.length, parent), opts, wt);
+      } catch (err) {
+        res = { rc: 1, output: `runner threw: ${err instanceof Error ? err.message : String(err)}` };
+      } finally {
+        d.worktree.remove(name, wt);
+      }
+      const pr = PR_URL_RE.exec(res.output)?.[0] ?? null;
+      const verdict = res.verdict || (res.rc === 0 ? "COMPLETED (no proof verdict)" : `FAILED (exit ${res.rc})`);
+      const r: SliceResult = { id: s.id, title: s.title, parent, outcome: verdict, pr, cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED", branch: res.runId ? `loki/${res.runId}` : null };
+      d.out(`#${n} ${s.id} ${verdict}  pr ${pr ?? "none"}  cost ${r.cost}\n`);
+      return r;
+    };
+    const results = await runEpicSlices(e.plan, runSlice, (r) => d.out(`#${n} ${r.id} ${r.title}: ${r.outcome}\n`));
+    const prs = results.filter((r) => r.pr).length;
+    const failed = results.filter((r) => /^(FAILED|BLOCKED)/.test(r.outcome)).length;
+    const skipped = results.filter((r) => r.outcome.startsWith("SKIPPED")).length;
+    const usd = results.map((r) => /^\$(\d+\.\d+)$/.exec(r.cost)).filter((m): m is RegExpExecArray => m !== null).reduce((sum, m) => sum + Number(m[1]), 0);
+    const anyUnmetered = results.some((r) => r.cost === "NOT RECORDED");
+    const cost = results.length - skipped === 0 ? "-" : anyUnmetered ? `NOT RECORDED${usd > 0 ? ` (at least $${usd.toFixed(2)})` : ""}` : `$${usd.toFixed(2)}`;
+    rows.set(n, { issue: n, title: e.issue.title, triage: "too-large", outcome: `split: ${results.length} slices, ${prs} PRs, ${failed} failed, ${skipped} skipped`, pr: "see epic tree", cost, time: secs((Date.now() - t0) / 1000) });
+    trees.push(renderEpicTree(n, e.issue.title, results));
+  }
+
   // 5. digest
   const ordered = todo.map((i) => rows.get(i.number)).filter((r): r is Row => r !== undefined);
-  const text = renderIssuesDigest(slug, started, d.now(), ordered);
+  const text = renderIssuesDigest(slug, started, d.now(), ordered) + (trees.length ? `\n## Epics\n\n${trees.join("\n")}` : "");
   try {
     writeFileSync(join(runDir, "digest.md"), text);
   } catch (e) {
@@ -278,6 +372,25 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   }
   d.out(`\n${text}\ndigest: ${join(runDir, "digest.md")}\n`);
   return 0;
+}
+
+const PR_URL_RE = /https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/\d+/;
+
+/** The per-run USD band and its label: measured history, else the labelled rough prior (F2), else null (NOT AVAILABLE). */
+function perRun(est: EstimateResult): { usd: [number, number]; tilde: string; label: string } | null {
+  if (est.ok) return { usd: est.est.usd, tilde: "", label: "" };
+  return est.prior ? { usd: est.prior.usd, tilde: "~", label: " (rough prior)" } : null;
+}
+
+/** An engine10 run in a worktree writes its receipt under <wt>/.loki/runs/<id>; copy it out before the worktree is removed. */
+function keepReceipt(wt: string, runId: string, runDir: string, err: (s: string) => void): void {
+  const src = join(wt, ".loki", "runs", runId);
+  if (!/^[A-Za-z0-9_.-]+$/.test(runId) || !existsSync(src)) return;
+  try {
+    cpSync(src, join(runDir, "receipts", runId), { recursive: true });
+  } catch (e) {
+    err(`loki issues run: could not keep the receipt of ${runId}: ${e instanceof Error ? e.message : String(e)}\n`);
+  }
 }
 
 // This path never consults the swarm usage governor; the y/n cost gate above is the consent.
@@ -329,17 +442,18 @@ export function makeSessionTriage(repoDir: string, lokiDir: string, provider: st
 export function makeWorktrees(repoDir: string): IssuesRunDeps["worktree"] {
   let root: string | null = null;
   return {
-    create: (n) => {
+    create: (name, base) => {
       root ??= mkdtempSync(join(tmpdir(), "loki-issues-"));
-      const p = join(root, `issue-${n}`);
-      // engine10 refuses a detached HEAD; loki/issue-N is the throwaway base, engine10 moves onto loki/<runId> for the PR.
-      safeGit(repoDir, ["worktree", "add", "-B", `loki/issue-${n}`, p, "HEAD"]);
+      const p = join(root, name);
+      // engine10 refuses a detached HEAD; loki/<name> is the throwaway base, engine10 moves onto loki/<runId> for the PR.
+      // MASS-2: a stacked slice starts on its parent slice's run branch, which stays after the parent's worktree is gone.
+      safeGit(repoDir, ["worktree", "add", "-B", `loki/${name}`, p, base]);
       return p;
     },
-    remove: (n, p) => {
+    remove: (name, p) => {
       try {
         safeGit(repoDir, ["worktree", "remove", "--force", p]);
-        safeGit(repoDir, ["branch", "-D", `loki/issue-${n}`]);
+        safeGit(repoDir, ["branch", "-D", `loki/${name}`]);
       } catch {
         rmSync(p, { recursive: true, force: true }); // best effort; `git worktree prune` clears the record
       }
@@ -368,6 +482,7 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
   const userEnv: NodeJS.ProcessEnv = { ...process.env };
   if (!inject?.triage) (await import("../runner/github_token.ts")).withholdGithubTokens(process.env, () => {});
   const base = inject?.runner ?? makeDefaultRunner(lokiDir);
+  const provider = process.env["LOKI_PROVIDER"] ?? "claude";
   const d: IssuesRunDeps = {
     repoDir,
     lokiDir,
@@ -375,9 +490,10 @@ export async function runIssues(args: readonly string[], inject?: Partial<Issues
       const r = spawnSync("gh", [...ghArgs], { cwd: repoDir, env: userEnv, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       return { rc: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? (r.error ? String(r.error) : "") };
     }),
-    triage: inject?.triage ?? makeSessionTriage(repoDir, lokiDir, process.env["LOKI_PROVIDER"] ?? "claude"),
+    triage: inject?.triage ?? makeSessionTriage(repoDir, lokiDir, provider),
+    decompose: inject?.decompose ?? makeSessionDecompose(repoDir, lokiDir, provider),
     runner: inject?.runner ?? ((ref, opts) => base(ref, { ...opts, env: userEnv })),
-    estimate: inject?.estimate ?? (() => estimateFor(repoDir)),
+    estimate: inject?.estimate ?? (() => estimateFor(repoDir, undefined, { model: resolveModel(provider), env: process.env })), // F2: rough prior when no history
     confirm: inject?.confirm ?? askYesNo,
     isTTY: inject?.isTTY ?? (!!process.stdin.isTTY && !!process.stdout.isTTY),
     worktree: inject?.worktree ?? makeWorktrees(repoDir),

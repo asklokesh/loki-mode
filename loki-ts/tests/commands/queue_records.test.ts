@@ -41,7 +41,7 @@ async function runOne(res: { rc: number; verdict?: string | null; costUsd?: numb
 describe("run record reader", () => {
   test("reads verdict and cost from an engine10 runs/<id>/receipt.json", () => {
     put("runs", "receipt.json", receipt("VERIFIED", { usd: 2.5, measured_sessions: 1 }));
-    expect(newestRecord(dir, 0)).toEqual({ verdict: "VERIFIED", costUsd: 2.5 });
+    expect(newestRecord(dir, 0)).toEqual({ verdict: "VERIFIED", costUsd: 2.5, runId: "r1" });
   });
 
   test("cli-invoker-unmetered cost is NOT RECORDED, never $0.00", async () => {
