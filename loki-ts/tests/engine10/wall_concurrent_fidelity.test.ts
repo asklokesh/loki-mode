@@ -1,11 +1,13 @@
-// WC-01b regression: real installWall + RealBaseTestRunner, flag off vs on must agree (B1 dropped test, B2 false already_satisfied).
+// WC-01b regression: real installWall + RealBaseTestRunner, flag off vs on must agree (B1 dropped test, B2/B3 false already_satisfied incl. absolute links) and the snapshot is bounded (B4).
 import { afterEach, describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FLOW, runMachine } from "../../src/engine10/machine.ts";
+import { FLOW, runMachine, snapshotTree } from "../../src/engine10/machine.ts";
 import { installWall, type WallAuthored } from "../../src/engine10/stages/wall.ts";
+import { alreadySatisfied } from "../../src/e10ext/discard.ts";
+import { verdictOf } from "../../src/engine10/stages/seal.ts";
 import type { RunContext, Stage, StageName } from "../../src/engine10/types.ts";
 
 const git = (cwd: string, ...a: string[]): string => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, encoding: "utf8" });
@@ -23,7 +25,7 @@ function mkctx(repoDir: string, baseSha: string, outputsRef: { o: Record<string,
 }
 
 // scenario: "nested" = deps in a package-level gitignored node_modules; "workspace" = root node_modules links to a workspace package
-function repo(kind: "nested" | "workspace") {
+function repo(kind: "nested" | "workspace" | "abs") {
   const r = mkdtempSync(join(tmpdir(), "loki-rv-wc01b-")); dirs.push(r);
   git(r, "init", "-q");
   writeFileSync(join(r, ".gitignore"), "node_modules\n.loki\n");
@@ -37,7 +39,7 @@ function repo(kind: "nested" | "workspace") {
     mkdirSync(join(r, "packages", "dep"), { recursive: true }); mkdirSync(join(r, "tests"), { recursive: true });
     writeFileSync(join(r, "packages", "dep", "index.js"), "module.exports = (a, b) => a - b;\n");
     writeFileSync(join(r, "packages", "dep", "package.json"), "{\"name\":\"dep\",\"main\":\"index.js\"}\n");
-    mkdirSync(join(r, "node_modules"), { recursive: true }); symlinkSync("../packages/dep", join(r, "node_modules", "dep"));
+    mkdirSync(join(r, "node_modules"), { recursive: true }); symlinkSync(kind === "abs" ? join(r, "packages", "dep") : "../packages/dep", join(r, "node_modules", "dep"));
   }
   git(r, "add", "-A"); git(r, "commit", "-qm", "init");
   return { r, sha: git(r, "rev-parse", "HEAD").trim() };
@@ -45,7 +47,7 @@ function repo(kind: "nested" | "workspace") {
 const WALL_NESTED = "const test = require('node:test'); const assert = require('node:assert'); require('dep'); const sum = require('../src/sum.js');\ntest('sum', () => { assert.equal(sum(1, 2), 3); });\n";
 const WALL_WS = "const test = require('node:test'); const assert = require('node:assert'); const sum = require('dep');\ntest('sum', () => { assert.equal(sum(1, 2), 3); });\n";
 
-async function go(kind: "nested" | "workspace", concurrent: boolean) {
+async function go(kind: "nested" | "workspace" | "abs", concurrent: boolean) {
   const { r, sha } = repo(kind);
   const ref = { o: {} as Record<string, unknown> };
   const ctx = mkctx(r, sha, ref);
@@ -57,18 +59,46 @@ async function go(kind: "nested" | "workspace", concurrent: boolean) {
   const s: Partial<Record<StageName, Stage>> = { intake: mk("intake"), plan: mk("plan"), wall, implement: mk("implement", async () => { fix(); return { status: "completed", data: {} }; }), verify: mk("verify"), fix: mk("fix"), commit: mk("commit"), seal: mk("seal"), pr: mk("pr") };
   if (concurrent) process.env.LOKI_E10_WALL_CONCURRENT = "1";
   const res = await runMachine(ctx, { load: async (n) => s[n] ?? null, flow: FLOW });
-  return { wall: res.outputs.wall, verifyRan: res.outputs.verify !== undefined, wallFileInTree: existsSync(join(targetDir, "loki_wall_a.test.js")) };
+  return { outs: res.outputs, wall: res.outputs.wall, verifyRan: res.outputs.verify !== undefined, wallFileInTree: existsSync(join(targetDir, "loki_wall_a.test.js")) };
 }
 
+const leaked = (): string[] => readdirSync(tmpdir()).filter((n) => n.startsWith("e10-wallbase-"));
 describe("WC-01b base-run fidelity", () => {
-  for (const kind of ["nested", "workspace"] as const) {
-    it(`${kind}: concurrent base run equals sequential and keeps the failing test`, async () => {
+  for (const kind of ["nested", "workspace", "abs"] as const) {
+    it(`${kind}: concurrent base run is never green when it cannot be trusted; failing test kept`, async () => {
       const seq = await go(kind, false), con = await go(kind, true);
       expect(seq.wall?.base_run).toMatchObject({ pass: 0, fail: 1 });
-      expect(con.wall?.base_run).toMatchObject(seq.wall?.base_run as object);
       expect(con.wallFileInTree).toBe(true);
       expect(con.wall?.already_satisfied).toBe(false);
+      expect(alreadySatisfied(con.outs as never)).toBe(false); // discard.ts consumer
+      const b = (con.wall?.base_run ?? {}) as { pass?: number; fail?: number; not_run?: number };
+      const green = typeof b.pass === "number" && b.pass > 0 && b.fail === 0 && (b.not_run ?? 0) === 0; // seal wallGreenOnBase
+      expect(green).toBe(false);
+      expect(verdictOf(con.outs as never, [{ name: "w", cmd: "x", result: "pass", duration_s: 1 }], false, false, green, true)).not.toBe("ALREADY_SATISFIED");
+      if (kind !== "abs") expect(con.wall?.base_run).toMatchObject(seq.wall?.base_run as object);
       expect(con.verifyRan).toBe(true);
     }, 60_000);
   }
+});
+describe("WC-01b snapshot bounds", () => {
+  const mkrepo = (): string => { const r = mkdtempSync(join(tmpdir(), "loki-wc01b-snap-")); dirs.push(r); mkdirSync(join(r, ".claude", "worktrees", "w1"), { recursive: true }); mkdirSync(join(r, ".loki")); writeFileSync(join(r, ".claude", "worktrees", "w1", "f"), "x"); writeFileSync(join(r, ".claude", "keep"), "k"); writeFileSync(join(r, ".loki", "l"), "l"); writeFileSync(join(r, "a.txt"), "a".repeat(2048)); return r; };
+  it("copies the tree but not .loki or .claude/worktrees", async () => {
+    const r = mkrepo(), d = await snapshotTree(r, new AbortController().signal);
+    expect(d).not.toBeNull(); dirs.push(d!);
+    expect(existsSync(join(d!, "a.txt"))).toBe(true); expect(existsSync(join(d!, ".claude", "keep"))).toBe(true);
+    expect(existsSync(join(d!, ".loki"))).toBe(false); expect(existsSync(join(d!, ".claude", "worktrees"))).toBe(false);
+  });
+  it("a size ceiling fails closed and leaks nothing", async () => {
+    const before = leaked().length, r = mkrepo();
+    expect(await snapshotTree(r, new AbortController().signal, { maxMb: 0 })).toBeNull(); expect(leaked().length).toBe(before);
+  });
+  it("an aborted signal (cap or wall limit) fails closed and leaks nothing", async () => {
+    const before = leaked().length, r = mkrepo(), c = new AbortController(); c.abort();
+    expect(await snapshotTree(r, c.signal)).toBeNull(); expect(leaked().length).toBe(before);
+  });
+  it("a timeout fails closed and leaks nothing", async () => {
+    const before = leaked().length, r = mkrepo();
+    for (let i = 0; i < 4000; i++) writeFileSync(join(r, `f${i}.txt`), "x"); // enough entries that du cannot finish inside 1ms
+    expect(await snapshotTree(r, new AbortController().signal, { timeoutMs: 1 })).toBeNull(); expect(leaked().length).toBe(before);
+  });
 });
