@@ -139,4 +139,17 @@ describe("T3 behavior_change intent (strict only)", () => {
     expect(base).not.toContain("behavior_change");
     expect(buildPlanBrief("t", ["a.ts"], "/r/plan-output.txt", "/r/plan-scope.json", false, true)).toContain("behavior_change");
   });
+
+  test("strict intent puts the behavior_change instruction in the brief exactly once", () => {
+    const brief = buildPlanBrief("t", ["a.ts"], "/r/plan-output.txt", "/r/plan-scope.json", false, true);
+    expect(brief.split("also add \"behavior_change\"").length - 1).toBe(1);
+    expect(brief.split("behavior_change").length - 1).toBe(1);
+  });
+
+  test("strict unset: brief is byte-identical to the brief without the T2 parameter", () => {
+    const a = buildPlanBrief("t", ["a.ts"], "/r/plan-output.txt", "/r/plan-scope.json");
+    const b = buildPlanBrief("t", ["a.ts"], "/r/plan-output.txt", "/r/plan-scope.json", false, false);
+    expect(Buffer.from(b).equals(Buffer.from(a))).toBe(true);
+    expect(a).not.toContain("behavior_change");
+  });
 });

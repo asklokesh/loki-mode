@@ -35,7 +35,6 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
     `Write a plan of at most ${MAX_PLAN_LINES} short lines, no other prose, to this exact file path: ${outputPath}`,
     `Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: ${scopePath}`,
     ...(router ? [ROUTER_UNITS_INSTRUCTION.replace("<scope>", scopePath)] : []),
-    ...(intent ? [`In the same JSON object (${scopePath}) also add "behavior_change": true if this task changes observable behavior (a fix or a feature a new test can distinguish from the old code), false for a refactor, rename, docs or config-only change.`] : []), // T3 intent, read only under LOKI_MUTATION_STRICT=1
     ...(intent ? [behaviorChangeInstruction(scopePath)] : []), // T3 intent, strict only
     "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n"));
