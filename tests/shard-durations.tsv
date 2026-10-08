@@ -592,6 +592,7 @@ Browser-open guard (tests never open a browser, S-103)	1
 ShellCheck Linting	140
 shard-durations.tsv drift detector (S-134)	2
 version-bump-only push skips heavy Tests jobs (S-132)	3
+release gate does not repeat Tests work and keeps dist checks (WF-GATE-DEDUP)	3
 council gate readers use the resolved -I -S interpreter (S-141)	3
 Metrics JSON Unmeasured	1
 web-app workspace panels surface fetch failures (node --test)	1

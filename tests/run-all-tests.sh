@@ -1392,6 +1392,7 @@ run_test "Session knobs stay default-OFF (gates the v8 SDK-flip audit)" "$SCRIPT
 run_test "shards partition the suite list (no silently dropped suite)" "$SCRIPT_DIR/test-shard-coverage.sh"
 run_test "shard-durations.tsv drift detector (S-134)" "$SCRIPT_DIR/test-shard-durations-drift.sh"
 run_test "version-bump-only push skips heavy Tests jobs (S-132)" "$SCRIPT_DIR/test-version-bump-only.sh"
+run_test "release gate does not repeat Tests work and keeps dist checks (WF-GATE-DEDUP)" "timeout -k 10 120 bash $SCRIPT_DIR/test-release-gate-dedup.sh"
 run_test "train verdict reuse on main push (E-160, D55)" "$SCRIPT_DIR/test-train-verdict-reuse.sh"
 run_test "council gate readers use the resolved -I -S interpreter (S-141)" "$SCRIPT_DIR/test-council-gate-readers-pth.sh"
 run_test "Tier A test selector (S-91 rules R0-R7)" "$SCRIPT_DIR/test-select-tests.sh"
