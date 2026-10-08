@@ -680,3 +680,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: the FC-64 ratchet covers the repo-wide count; this suite now joins the enforced family.
 - Mechanism: here-strings (`grep -q ... <<<"$var"`) at all five sites; tests/test-sigpipe-guard.sh section 2 now enforces the suite.
 - Fixture: tests/test-sigpipe-guard.sh against the pre-fix copy of the suite fails (5 legacy lines, 3 passed 1 failed); against the fixed suite 4 passed 0 failed.
+
+## FC-82 A live-server E2E suite failed collection on a CI runner without its client libraries (RED-PURPLE)
+- User saw: Tests red on main 082cd57a4 (run 37848611813, shard 4): `FAIL rc=2: py_test tests/docker/test_purple_lab.py`, `ModuleNotFoundError: No module named 'requests'`.
+- Law: a test needing an optional dependency or a live service must skip honestly, never error at collection (same family as FC-73 baseline rule).
+- Cause (measured): the Purple Lab server still exists (web-app/server.py, autonomy/loki 'loki web', deprecated v7.44.0), so the suite is not stale. It hit `import requests` at module top on a runner without requests, and would also need a server on localhost:57375 that CI never starts.
+- Siblings swept: tests/docker/test_polling.py imports checked, no unguarded optional import of this kind.
+- Mechanism: pytest.importorskip for pytest_asyncio, requests, websockets plus a module-level skip when BASE_URL is unreachable.
+- Fixture: `python3 -m pytest -q tests/docker/test_purple_lab.py` with no server exits 0 reporting a skip; before the fix it exited 2 on a runner without requests.

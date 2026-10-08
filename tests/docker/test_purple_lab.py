@@ -8,12 +8,33 @@ import os
 import time
 import concurrent.futures
 
+import socket
+from urllib.parse import urlparse
+
 import pytest
-import pytest_asyncio
-import requests
-import websockets
+
+# Live-server E2E: skip honestly (visible in the report) when the optional
+# client libraries or the Purple Lab server are not present, instead of
+# failing collection with ModuleNotFoundError (FC-82).
+pytest.importorskip("pytest_asyncio", reason="pytest-asyncio not installed")
+requests = pytest.importorskip("requests", reason="requests not installed")
+websockets = pytest.importorskip("websockets", reason="websockets not installed")
 
 BASE_URL = os.environ.get("PURPLE_LAB_URL", "http://localhost:57375")
+
+
+def _server_reachable(url: str) -> bool:
+    u = urlparse(url)
+    try:
+        with socket.create_connection((u.hostname, u.port or 80), timeout=2):
+            return True
+    except OSError:
+        return False
+
+
+if not _server_reachable(BASE_URL):
+    pytest.skip(f"Purple Lab server not reachable at {BASE_URL}", allow_module_level=True)
+
 WS_URL = BASE_URL.replace("http://", "ws://").replace("https://", "wss://") + "/ws"
 
 SAMPLE_PRD = """# Test Project
