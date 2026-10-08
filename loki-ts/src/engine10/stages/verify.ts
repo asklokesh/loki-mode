@@ -11,7 +11,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failId
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
-import { classifyCheck, goRunner, hasExecutedProof, ran, skipped } from "../../util/check_result.ts";
+import { classifyCheck, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -114,14 +114,14 @@ async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSi
     stdout: "pipe",
     stderr: "pipe",
     signal: AbortSignal.any([signal, timeout]),
-    env: opts.path ? { ...process.env, PATH: opts.path } : process.env,
+    env: opts.path ? { ...plainTestEnv(), PATH: opts.path } : plainTestEnv(), // FC-69
   });
   let tail = ""; const rs = [proc.stdout, proc.stderr].map((s) => s.getReader());
   const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; tail = (tail + d.decode(c.value, { stream: true })).slice(-65536); } });
   const exitCode = await proc.exited;
   await Promise.race([Promise.all(pumps), new Promise((r) => setTimeout(r, 300))]); rs.forEach((r) => r.cancel().catch(() => {}));
   const cut = timeout.aborted || signal.aborted;
-  return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : tail };
+  return { ok: exitCode === 0 && !cut, missing: false, cut, out: cut ? "" : stripAnsi(tail) }; // FC-69
 }
 export function firstError(out: string): string { // the line naming the failing test, minus what varies between identical failures (A-113 stall signature)
   const goOut = (l: string): string => { try { const e = JSON.parse(l) as { Action?: string; Output?: string }; return typeof e.Action === "string" ? (e.Action === "output" || e.Action === "build-output" ? (e.Output ?? "") : "") : l; } catch { return l; } }; // Go json event stream: the failing line is inside the event's Output

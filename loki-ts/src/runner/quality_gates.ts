@@ -50,6 +50,7 @@ import { REPO_ROOT, lokiDir } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
+import { stripAnsi } from "../util/check_result.ts";
 import { safeGitRun } from "../util/safe_git.ts";
 
 // v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
@@ -526,7 +527,7 @@ export function summaryFailedCount(output: string): number | null {
     if (n > f) f = n;
     seen = true;
   };
-  for (const line of output.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").split(/\r?\n/)) {
+  for (const line of stripAnsi(output).split(/\r?\n/)) {
     if (
       /^Tests:[ \t]/.test(line) || /^[ \t]*Tests[ \t]+[0-9]/.test(line) ||
       /^Test Suites:[ \t]/.test(line) || /^[ \t]*Test Files[ \t]+[0-9]/.test(line) ||

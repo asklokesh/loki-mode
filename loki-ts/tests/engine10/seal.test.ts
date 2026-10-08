@@ -1296,3 +1296,27 @@ describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
     expect(sh(["git", "cat-file", "commit", "HEAD"], repo)).toContain("gpgsig -----BEGIN PGP SIGNATURE-----");
   }, 30000);
 });
+
+// FC-69: a Wall test that was not executed is never silent and never seals VERIFIED.
+describe("FC-69 not_run Wall is named and cannot seal VERIFIED", () => {
+  test("not_run_files lands on NOT PROVEN as 'Wall test not executed: <file>: <reason>' and the verdict is not VERIFIED", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-not-executed");
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [], base_run: { pass: 0, fail: 0, not_run: 1 }, not_run_files: [{ file: "tests/loki_wall_x.py", reason: "exit 1 but the runner output showed no readable failing test" }] },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).not.toBe("VERIFIED");
+    expect(receiptOf(s).not_proven).toContain("Wall test not executed: tests/loki_wall_x.py: exit 1 but the runner output showed no readable failing test");
+  }, 30000);
+  test("a not_run count with no recorded reason is still named", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-not-executed-bare");
+    const { ctx } = ctxFor(repo, base, "claude", { wall: { files: [], base_run: { pass: 0, fail: 0, not_run: 1 } } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).not.toBe("VERIFIED");
+    expect(receiptOf(s).not_proven.some((n: string) => n.startsWith("Wall test not executed:"))).toBe(true);
+  }, 30000);
+});
