@@ -314,7 +314,7 @@ describe("D61-13 single run is unchanged", () => {
     const s = await sealStage.run(ctx, new AbortController().signal).finally(() => { delete process.env["LOKI_MUTATION_PROOF"]; });
     const receipt = JSON.parse(readFileSync(s.data["receipt_path"] as string, "utf8")) as Record<string, unknown>;
     expect("group" in receipt).toBe(false);
-    expect(Object.keys(receipt).sort()).toEqual(["base_sha", "checks", "cost", "diff_sha256", "evidence", "events_sha256", "head_sha", "log_seal", "model", "not_proven", "provider", "receipt_sha256", "repo", "resumed", "run_id", "schema", "task", "time", "tree", "verdict", "verification", "wall"].sort());
+    expect(Object.keys(receipt).sort()).toEqual(["base_sha", "checks", "cost", "cost_preview", "diff_sha256", "evidence", "events_sha256", "head_sha", "log_seal", "model", "not_proven", "provider", "receipt_sha256", "repo", "resumed", "run_id", "schema", "task", "time", "tree", "verdict", "verification", "wall"].sort());
     sealedLog(ctx.runDir, String(receipt["receipt_sha256"]));
     expect((await verifyReceipt(s.data["receipt_path"] as string)).verdict).toBe("VERIFIED");
     expect(readdirSync(ctx.runDir)).not.toContain("group");

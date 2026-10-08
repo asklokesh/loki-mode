@@ -2,12 +2,15 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
+import { formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
 import { selectRelevantFiles } from "./plan.ts"; import { commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { resumeAfterConflict } from "../../util/conflict_resume.ts";
 import { readSessionId } from "../../runner/session_resume.ts";
+import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
+import { routerActive } from "../../runner/router/unit_model.ts";
 import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
 
@@ -63,10 +66,13 @@ export const implementStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
-    const downgrade = cascadeDowngrade(ctx.model);
+    const routed = routerActive();
+    const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
-    const repoMap = briefCtx(ctx); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
+    const lessons = retrieveLessons(ctx.repoDir, task); // T6: reviewer lessons from earlier merged PRs, tagged as used by this run
+    try { recordUse(ctx.repoDir, ctx.runId, lessons.map((l) => l.id)); } catch { /* memory is best-effort */ }
+    const repoMap = briefCtx(ctx) + formatLessonsForBrief(lessons); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
     const first: SessionRunOptions = {
       stage: "implement",
@@ -78,8 +84,11 @@ export const implementStage: Stage = {
       cwd: ctx.repoDir,
       ...(downgrade ? { model: downgrade.to } : {}),
     };
+    // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
+    const rt = routed ? routeStart(ctx, first, prior.plan) : null;
     let session = await ctx.sessions.run(first);
     const ids = [first.iterationId];
+    if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids); // triggers b/c: one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, first, session); session = r.session; ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
 
     const testsReverted = restoreReadOnly(readOnly);
@@ -106,7 +115,7 @@ export const implementStage: Stage = {
       impacted_tests: impacted,
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),
-      iteration_ids: ids, model: downgrade?.to ?? ctx.model, session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
+      iteration_ids: ids, model: rt ? rt.current : downgrade?.to ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS,
     };
 

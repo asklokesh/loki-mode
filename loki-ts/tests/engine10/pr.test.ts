@@ -275,3 +275,25 @@ describe("engine10 pr stage", () => {
     }
   });
 });
+
+describe("engine10 pr stage reviewer brief (T4)", () => {
+  async function body(env: string | undefined): Promise<string> {
+    const prev = process.env.LOKI_REVIEWER_BRIEF;
+    if (env === undefined) delete process.env.LOKI_REVIEWER_BRIEF; else process.env.LOKI_REVIEWER_BRIEF = env;
+    try {
+      const script = writeStub(stubDir, logPath);
+      const { ctx } = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+      await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+      return readFileSync(join(runDir, "pr-body.md"), "utf8");
+    } finally {
+      if (prev === undefined) delete process.env.LOKI_REVIEWER_BRIEF; else process.env.LOKI_REVIEWER_BRIEF = prev;
+    }
+  }
+  test("on by default; LOKI_REVIEWER_BRIEF=0 body is the brief-free prefix, byte for byte", async () => {
+    const on = await body(undefined);
+    const off = await body("0");
+    expect(on).toContain("## Reviewer brief");
+    expect(off).not.toContain("Reviewer brief");
+    expect(on.startsWith(off + "\n## Reviewer brief")).toBe(true);
+  });
+});

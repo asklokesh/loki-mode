@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { safeGit } from "./safe_git.ts";
+import { readScopeText } from "./run_cap.ts";
 
 export type MutationOutcome = "yes" | "no" | "inconclusive";
 export interface MutationProof { outcome: MutationOutcome; line: string; }
@@ -62,4 +63,13 @@ export function mutationProof(i: MutationInput): MutationProof {
     if (wt && added) git(i.repoDir, ["worktree", "remove", "--force", wt]);
     if (parent) rmSync(parent, { recursive: true, force: true });
   }
+}
+
+/** T3 intent: the plan brief line asking the model to declare whether the task changes observable behavior (asked for only under strict). */
+export const behaviorChangeInstruction = (scopePath: string): string => `In the same JSON object (${scopePath}) also add "behavior_change": true if this task changes observable behavior (a fix or a feature a new test can distinguish from the old code), false for a refactor, rename, docs or config-only change.`;
+/** The model-declared flag from plan-scope.json as plan output data; {} unless strict and a real boolean (undeclared never downgrades). */
+export function readBehaviorChange(runDir: string, env: NodeJS.ProcessEnv = process.env): { behavior_change?: boolean } {
+  if (!mutationStrict(env)) return {};
+  const rd = readScopeText(runDir); if (rd.status !== "ok") return {};
+  try { const bc = (JSON.parse(rd.text) as { behavior_change?: unknown }).behavior_change; return typeof bc === "boolean" ? { behavior_change: bc } : {}; } catch { return {}; }
 }

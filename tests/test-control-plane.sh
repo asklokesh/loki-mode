@@ -41,92 +41,85 @@ step() { # step <label> <seconds> <cmd...>
     if run_to "$secs" "$@" >"$T/step.log" 2>&1; then ok "$label"; else bad "$label"; tail -20 "$T/step.log"; fi
 }
 
-# Static guard: every value import from loki-ts/src in the control-plane source, including dynamic import(),
-# several imports on one line, and the transitive value-import closure of loki-ts files, must be a COPY source.
-cp_guard() { python3 - "$1" <<'PY'
-import os, re, sys
-repo = sys.argv[1]
-src = os.path.join(repo, "packages/control-plane/src")
-copied = set()
+# Structural guard (FC-32): never compare a hand-kept COPY list to the import graph. Stage exactly what the
+# build stage of Dockerfile.control-plane COPYs (honoring WORKDIR and the relative/absolute destinations) into a
+# scratch root, then run the real server bundle step there. A new import the Dockerfile does not deliver makes
+# `bun build` fail to resolve it; a Dockerfile that copies the source tree needs no list edit. This is the
+# docker-less equivalent of `docker build`; docker is not required.
+stage_build() { # stage_build <repo> <stage-dir>: prints bun build output; rc 0 only if both bundles build
+    local repo="$1" stage="$2"
+    python3 - "$repo" "$stage" <<'PY' || return 1
+import os, shutil, sys
+repo, stage = sys.argv[1], sys.argv[2]
+workdir, in_build = "/", False
+def dest_path(d):
+    d = d if d.startswith("/") else os.path.join(workdir, d)
+    return os.path.normpath(stage + os.path.normpath(d))
 for line in open(os.path.join(repo, "Dockerfile.control-plane")):
     parts = line.split()
-    if parts and parts[0].upper() == "COPY":
-        args = [p for p in parts[1:] if not p.startswith("--")]
-        copied.update(os.path.normpath(a) for a in args[:-1])
-# Static (import|export ... from "x"), bare import "x", and dynamic import("x"); several per line.
-pat = re.compile(r'(?:^|[;\n])\s*(?:import|export)(\s+type)?\b[^;]*?\bfrom\s*["\']([^"\']+)["\']|(?:^|[;\n])\s*import\s*["\']([^"\']+)["\']|\bimport\s*\(\s*["\']([^"\']+)["\']\s*\)')
-def resolve(d, spec):
-    base = os.path.normpath(os.path.join(d, spec))
-    for c in (base, re.sub(r"\.js$", ".ts", base), base + ".ts", os.path.join(base, "index.ts")):
-        if os.path.isfile(c):
-            return os.path.relpath(c, repo)
-    return os.path.relpath(base, repo)
-def value_specs(p):
-    for m in pat.finditer(open(p).read()):
-        if m.group(1):
-            continue
-        spec = m.group(2) or m.group(3) or m.group(4)
-        if spec and spec.startswith("."):
-            yield spec
-need = set()
-queue = []
-for d, _, files in os.walk(src):
-    for f in files:
-        if f.endswith((".ts", ".tsx")):
-            queue.append(os.path.join(d, f))
-seen = set()
-while queue:
-    p = queue.pop()
-    for spec in value_specs(p):
-        rel = resolve(os.path.dirname(p), spec)
-        if not rel.startswith("loki-ts/src/") or rel in need:
-            continue
-        need.add(rel)
-        full = os.path.join(repo, rel)
-        if os.path.isfile(full) and full not in seen:
-            seen.add(full)
-            queue.append(full)
-for r in sorted(need):
-    if r not in copied:
-        print(r)
-if not need:
-    print("NO-IMPORTS-FOUND")
+    if not parts:
+        continue
+    op = parts[0].upper()
+    if op == "FROM":
+        if in_build:
+            break
+        in_build = True
+    elif op == "WORKDIR" and in_build:
+        workdir = parts[1]
+    elif op == "COPY" and in_build:
+        args = [a for a in parts[1:] if not a.startswith("--")]
+        srcs, dst = args[:-1], args[-1]
+        dp = dest_path(dst)
+        for src in srcs:
+            sp = os.path.join(repo, src)
+            if not os.path.exists(sp):
+                print("COPY source missing: " + src); sys.exit(1)
+            if os.path.isdir(sp):
+                shutil.copytree(sp, dp, dirs_exist_ok=True, ignore=shutil.ignore_patterns("node_modules", "dist", "*.log"))
+            else:
+                os.makedirs(dp if dst.endswith("/") else os.path.dirname(dp), exist_ok=True)
+                shutil.copy(sp, dp)
 PY
+    # Frozen deps are installed by the real step above; reuse them rather than reinstalling per fixture.
+    ln -s "$REPO/packages/control-plane/node_modules" "$stage/src/packages/control-plane/node_modules" 2>/dev/null || true
+    ( cd "$stage/src/packages/control-plane" || exit 1
+      bun build src/server/serve.ts --target=bun --outfile dist/server.js \
+          && bun build src/ask/tools_server.ts --target=bun --outfile dist/ask-tools-server.js )
 }
-MISSING="$(cp_guard "$REPO")"
-t "Dockerfile.control-plane COPYs every loki-ts/src value import" "Dockerfile.control-plane lacks COPY for: $(echo "$MISSING" | tr '\n' ' ')" [ -z "$MISSING" ]
+step "install control-plane (frozen)" 120 bash -c "cd '$REPO/packages/control-plane' && bun install --frozen-lockfile"
 
-# Guard self-tests: each fixture tree must report the uncopied file. Type-only imports stay ignored.
-mkfx() { # mkfx <name>: fresh fake repo with a Dockerfile copying only loki-ts/src/a.ts
+# The real Dockerfile: bundle the server from exactly what it COPYs. No list to maintain.
+SD="$T/stage-real"; mkdir -p "$SD"
+if stage_build "$REPO" "$SD" >"$T/stage-real.log" 2>&1; then ok "server bundles from exactly what Dockerfile.control-plane COPYs"; else bad "server bundle from Dockerfile COPY set failed"; tail -15 "$T/stage-real.log"; fi
+
+# Red-first fixtures (FC-32). mkrepo: a scratch repo with the real control plane + loki-ts/src + Dockerfile.
+mkrepo() { # mkrepo <name>
     local d="$T/gfx/$1"
-    mkdir -p "$d/packages/control-plane/src" "$d/loki-ts/src"
-    printf 'COPY loki-ts/src/a.ts /src/loki-ts/src/\n' >"$d/Dockerfile.control-plane"
-    printf 'export const a = 1;\n' >"$d/loki-ts/src/a.ts"
-    printf 'export const x = 1;\nexport type T = number;\n' >"$d/loki-ts/src/x.ts"
+    mkdir -p "$d"
+    tar -C "$REPO" --exclude node_modules --exclude dist -cf - packages/control-plane loki-ts/src schemas Dockerfile.control-plane | tar -C "$d" -xf -
     echo "$d"
 }
-FX="$(mkfx dyn)"
-printf 'const m = await import("../../../loki-ts/src/x.ts");\n' >"$FX/packages/control-plane/src/d.ts"
-t "guard catches dynamic import()" "guard missed dynamic import()" [ "$(cp_guard "$FX")" = "loki-ts/src/x.ts" ]
-FX="$(mkfx two)"
-printf 'import { a } from "../../../loki-ts/src/a.ts"; import { x } from "../../../loki-ts/src/x.ts";\n' >"$FX/packages/control-plane/src/d.ts"
-t "guard catches a second import on one line" "guard missed second import on one line" [ "$(cp_guard "$FX")" = "loki-ts/src/x.ts" ]
-FX="$(mkfx chain)"
-printf 'import { a } from "../../../loki-ts/src/a.ts";\n' >"$FX/packages/control-plane/src/d.ts"
-printf 'import { x } from "./x.ts";\nexport const a = x;\n' >"$FX/loki-ts/src/a.ts"
-t "guard catches transitive loki-ts value import" "guard missed transitive loki-ts value import" [ "$(cp_guard "$FX")" = "loki-ts/src/x.ts" ]
-FX="$(mkfx typeonly)"
-printf 'import { a } from "../../../loki-ts/src/a.ts";\n' >"$FX/packages/control-plane/src/d.ts"
-printf 'import type { T } from "./x.ts";\nexport const a: T = 1;\n' >"$FX/loki-ts/src/a.ts"
-t "guard ignores type-only imports" "guard flagged a type-only import" [ -z "$(cp_guard "$FX")" ]
-FX="$T/gfx/mut"
-mkdir -p "$FX/packages/control-plane" "$FX/loki-ts"
-cp -R "$REPO/packages/control-plane/src" "$FX/packages/control-plane/src"
-cp -R "$REPO/loki-ts/src" "$FX/loki-ts/src"
-grep -v 'util/redact.ts' "$REPO/Dockerfile.control-plane" >"$FX/Dockerfile.control-plane"
-t "guard goes red when a real COPY line is deleted" "guard stayed green with a COPY line deleted" [ "$(cp_guard "$FX")" = "loki-ts/src/util/redact.ts" ]
-
-step "install control-plane (frozen)" 120 bash -c "cd '$REPO/packages/control-plane' && bun install --frozen-lockfile"
+# Legacy model: the hand-kept per-file COPY list this guard replaced.
+legacy_dockerfile() { # legacy_dockerfile <dockerfile>: swap the tree COPY for the old list
+    local f="$1"
+    grep -v '^COPY loki-ts/src/ ' "$f" >"$f.tmp"
+    awk -v list="$REPO/tests/fixtures/cp04-legacy-copy-list.txt" '/^COPY schemas\// { while ((getline l < list) > 0) print l } { print }' "$f.tmp" >"$f"
+    rm -f "$f.tmp"
+}
+plant_import() { # plant_import <repo> <spec>: a brand new loki-ts file reached through redact.ts
+    printf 'export const fc32Fresh = 1;\n' >"$1/loki-ts/src/util/fc32_fresh.ts"
+    printf 'import { fc32Fresh } from "%s";\nexport const fc32Use = fc32Fresh;\n' "$2" >>"$1/loki-ts/src/util/redact.ts"
+}
+FX="$(mkrepo legacy-sanity)"; legacy_dockerfile "$FX/Dockerfile.control-plane"
+if stage_build "$FX" "$T/stage-legacy-sanity" >"$T/s1.log" 2>&1; then ok "legacy list model bundles the unmodified tree (fixture sanity)"; else bad "legacy fixture sanity failed"; tail -10 "$T/s1.log"; fi
+FX="$(mkrepo legacy-plant)"; legacy_dockerfile "$FX/Dockerfile.control-plane"; plant_import "$FX" "./fc32_fresh.ts"
+if stage_build "$FX" "$T/stage-legacy-plant" >"$T/s2.log" 2>&1; then bad "legacy list model absorbed a new import with no list edit (should need one)"; else ok "RED-FIRST: a new loki-ts import breaks the legacy hand-kept list until a COPY line is added"; fi
+FX="$(mkrepo tree-plant)"; plant_import "$FX" "./fc32_fresh.ts"
+if stage_build "$FX" "$T/stage-tree-plant" >"$T/s3.log" 2>&1; then ok "tree COPY absorbs a new loki-ts import with no Dockerfile edit"; else bad "tree COPY failed on a new import"; tail -10 "$T/s3.log"; fi
+FX="$(mkrepo tree-missing)"; plant_import "$FX" "./fc32_does_not_exist.ts"
+if stage_build "$FX" "$T/stage-tree-missing" >"$T/s4.log" 2>&1; then bad "bundle stayed green with a missing import target"; else ok "bundle goes red when an import target is really missing"; fi
+FX="$(mkrepo no-copy)"; grep -v '^COPY loki-ts/src/ ' "$FX/Dockerfile.control-plane" >"$FX/Dockerfile.tmp"; mv "$FX/Dockerfile.tmp" "$FX/Dockerfile.control-plane"
+if stage_build "$FX" "$T/stage-no-copy" >"$T/s5.log" 2>&1; then bad "bundle stayed green with the loki-ts COPY deleted"; else ok "bundle goes red when the Dockerfile stops copying loki-ts/src"; fi
 step "install control-plane ui (frozen)" 120 bash -c "cd '$REPO/packages/control-plane/ui' && bun install --frozen-lockfile"
 step "install loki-ts (frozen)" 120 bash -c "cd '$REPO/loki-ts' && bun install --frozen-lockfile"
 # Run from the package so its bunfig.toml applies (it ignores the Playwright

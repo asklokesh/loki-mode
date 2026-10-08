@@ -47,7 +47,7 @@ export function checkScreens(runDir: string, screens: unknown): string | null {
   return null;
 }
 
-function pickScript(pkg: Record<string, unknown>): string | null {
+export function pickScript(pkg: Record<string, unknown>): string | null {
   const s = (pkg["scripts"] ?? {}) as Record<string, string>;
   return ["dev", "preview", "start"].find((k) => typeof s[k] === "string") ?? null;
 }
