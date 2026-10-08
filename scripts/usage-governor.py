@@ -607,15 +607,136 @@ def measured_usage(cache_path, now):
     return result
 
 
-def measured_cap(session_pct, week_pct, active_engineers):
-    """Seat policy: up to MEASURE_MAX_SEATS; no new seats (hold at the
-    engineers already active) while session usage is above 70%; zero at or
-    over the D39 ceilings. Returns (cap, reason)."""
+# GOV-FORMULA: the seat cap is explicit arithmetic over measured inputs, not a
+# flat number. Per-seat burn (plan percentage points per seat-hour) is derived
+# from recorded readings when they span >= BURN_MIN_SPAN_HOURS, else a stated
+# default. cap = min(seat ceiling, floor(session headroom / (session burn *
+# horizon)), floor(weekly headroom / (weekly burn * horizon))), where horizon
+# is the time to the session reset (at least 1h) and headroom is the D39
+# ceiling minus current usage.
+BURN_MIN_SPAN_HOURS = 3.0
+BURN_LOOKBACK_HOURS = 6.0
+DEFAULT_SEAT_BURN_WEEKLY = 0.15   # weekly points per seat-hour (1.5 pts/h at 10 seats, measured 2026-10-08)
+DEFAULT_SEAT_BURN_SESSION = 1.0   # session points per seat-hour (about 9 pts/h at 9 seats)
+SEAT_CEILING_DEFAULT = 8          # the pre-GOV-FORMULA flat cap, kept when burn is not measured
+SEAT_CEILING_MEASURED = 14        # operating-model seat cap
+_RESET_RE = re.compile(
+    r"(?:([A-Za-z]{3})[a-z]*\s+(\d{1,2})\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*(?:\(([^)]+)\))?", re.I)
+_MONTHS = {m: i + 1 for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"])}
+
+
+def parse_reset_text(text, now):
+    """Parse '/usage' reset text such as 'Oct 8 at 12:19am (America/New_York)'
+    into an aware UTC datetime strictly after now, or None."""
+    if not text:
+        return None
+    m = _RESET_RE.search(text)
+    if not m:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(m.group(6)) if m.group(6) else timezone.utc
+        hour = int(m.group(3)) % 12 + (12 if m.group(5).lower() == "pm" else 0)
+        minute = int(m.group(4) or 0)
+        local_now = now.astimezone(tz)
+        if m.group(1):
+            mon = _MONTHS.get(m.group(1).lower())
+            if mon is None:
+                return None
+            cand = datetime(local_now.year, mon, int(m.group(2)), hour, minute, tzinfo=tz)
+        else:
+            cand = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if cand <= local_now:
+                cand += timedelta(days=1)
+        cand = cand.astimezone(timezone.utc)
+        return cand if cand > now else None
+    except Exception:
+        return None
+
+
+def calibrate_seat_burn(readings, seats, now):
+    """Per-seat burn from recorded readings: sum of positive deltas (drops are
+    resets) over the span, divided by span hours and seats. Needs >= 2
+    readings spanning BURN_MIN_SPAN_HOURS inside the lookback and seats > 0.
+    Returns dict with weekly/session per-seat-hour burn and sources."""
+    out = {
+        "seats_assumed": seats,
+        "weekly_pct_per_seat_hour": DEFAULT_SEAT_BURN_WEEKLY,
+        "session_pct_per_seat_hour": DEFAULT_SEAT_BURN_SESSION,
+        "source": "default", "session_source": "default",
+        "readings_used": 0, "span_hours": 0.0,
+    }
+    lo = now - timedelta(hours=BURN_LOOKBACK_HOURS)
+    recent = sorted((r for r in readings if lo <= r[0] <= now), key=lambda r: r[0])
+    if len(recent) < 2 or not seats or seats <= 0:
+        return out
+    span = (recent[-1][0] - recent[0][0]).total_seconds() / 3600.0
+    out["readings_used"] = len(recent)
+    out["span_hours"] = round(span, 3)
+    if span < BURN_MIN_SPAN_HOURS:
+        return out
+
+    def rate(idx):
+        up = sum(max(b[idx] - a[idx], 0.0) for a, b in zip(recent, recent[1:]))
+        return up / span / seats
+
+    wk = rate(2)
+    if wk > 0:
+        out["weekly_pct_per_seat_hour"] = round(wk, 4)
+        out["source"] = "measured"
+    ss = rate(1)
+    if ss > 0:
+        out["session_pct_per_seat_hour"] = round(ss, 4)
+        out["session_source"] = "measured"
+    return out
+
+
+def seat_formula(session_pct, week_pct, minutes_to_session_reset, hours_to_weekly_reset, burn):
+    """Return the formula dict (inputs, burn, arithmetic, binding seats)."""
+    horizon_h = max((minutes_to_session_reset if minutes_to_session_reset is not None else 300.0) / 60.0, 1.0)
+    sess_head = WINDOW_PCT_CEILING - session_pct
+    week_head = WEEKLY_PCT_CEILING - week_pct
+    sb, wb = burn["session_pct_per_seat_hour"], burn["weekly_pct_per_seat_hour"]
+    sess_seats = max(int(sess_head // (sb * horizon_h)), 0) if sb > 0 else SEAT_CEILING_MEASURED
+    week_seats = max(int(week_head // (wb * horizon_h)), 0) if wb > 0 else SEAT_CEILING_MEASURED
+    ceiling = SEAT_CEILING_MEASURED if burn["source"] == "measured" else SEAT_CEILING_DEFAULT
+    seats = min(ceiling, sess_seats, week_seats)
+    binding = "seat_ceiling"
+    if seats == sess_seats and sess_seats < ceiling:
+        binding = "session"
+    elif seats == week_seats and week_seats < ceiling:
+        binding = "weekly"
+    return {
+        "session_pct": session_pct,
+        "minutes_to_session_reset": minutes_to_session_reset,
+        "weekly_pct": week_pct,
+        "days_to_weekly_reset": round(hours_to_weekly_reset / 24.0, 3),
+        "horizon_hours": round(horizon_h, 3),
+        "burn": burn,
+        "session_seats": sess_seats,
+        "weekly_seats": week_seats,
+        "seat_ceiling": ceiling,
+        "max_seats": seats,
+        "binding": binding,
+        "arithmetic": (
+            "min(ceiling %d, session floor((%g-%g)/(%g*%.2fh))=%d, weekly floor((%g-%g)/(%g*%.2fh))=%d) = %d"
+            % (ceiling, WINDOW_PCT_CEILING, session_pct, sb, horizon_h, sess_seats,
+               WEEKLY_PCT_CEILING, week_pct, wb, horizon_h, week_seats, seats)),
+    }
+
+
+def measured_cap(session_pct, week_pct, active_engineers, formula=None):
+    """Seat policy. Over a D39 ceiling: zero. With a GOV-FORMULA dict: the
+    formula's max_seats, held at the engineers already active while session
+    usage is above 70%. Without one (legacy callers): flat MEASURE_MAX_SEATS.
+    Returns (cap, reason)."""
     if session_pct >= WINDOW_PCT_CEILING or week_pct >= WEEKLY_PCT_CEILING:
         return 0, "over_ceiling"
+    top = formula["max_seats"] if formula else MEASURE_MAX_SEATS
     if session_pct > MEASURE_HOLD_ABOVE_SESSION_PCT:
-        return min(active_engineers, MEASURE_MAX_SEATS), "hold_above_70_session"
-    return MEASURE_MAX_SEATS, "ok"
+        return min(active_engineers, top), "hold_above_70_session"
+    return top, "ok"
 
 
 def _last_wednesday_reset_local(ref_utc: datetime) -> datetime:
@@ -719,7 +840,7 @@ def _valid_live_window(value):
     return value
 
 
-def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None, measured: dict | None = None, extra_readings_path: Path | None = None):
+def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None, measured: dict | None = None, extra_readings_path: Path | None = None, seats_override: int | None = None):
     window_start = now - timedelta(hours=WINDOW_HOURS)
     weekly_start = last_wednesday_reset(now)
     readings = load_readings(readings_path)
@@ -895,14 +1016,28 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     # still None because active_engineers == 0 (no engineer ran last hour),
     # which is a different, more specific reason to report.
     max_engineers_reason = None
+    formula = None
     measured_ok = isinstance(measured, dict) and measured.get("status") == "ok"
     if measured_ok:
         # GOV-MEASURE: real /usage percentages replace the projection.
         current_window_pct = measured["session_pct"]
         current_weekly_pct = measured["week_pct"]
         window_source = weekly_source = "measured"
+        seats_for_burn = seats_override if seats_override else active_engineers
+        burn_cal = calibrate_seat_burn(readings, seats_for_burn, now)
+        if live_five_hour and isinstance(live_five_hour.get("resets_at"), (int, float)):
+            session_reset_at = datetime.fromtimestamp(live_five_hour["resets_at"], tz=timezone.utc)
+        else:
+            session_reset_at = parse_reset_text(measured.get("session_resets"), now)
+        minutes_to_session = None
+        if session_reset_at is not None:
+            minutes_to_session = max((session_reset_at - now).total_seconds() / 60.0, 0.0)
+        week_reset_parsed = parse_reset_text(measured.get("week_resets"), now)
+        hours_for_formula = (week_reset_parsed - now).total_seconds() / 3600.0 if week_reset_parsed else hours_to_weekly_reset
+        formula = seat_formula(current_window_pct, current_weekly_pct, minutes_to_session,
+                               hours_for_formula, burn_cal)
         max_engineers_next_hour, max_engineers_reason = measured_cap(
-            current_window_pct, current_weekly_pct, active_engineers)
+            current_window_pct, current_weekly_pct, active_engineers, formula)
     over_window = current_window_pct is not None and current_window_pct >= WINDOW_PCT_CEILING
     over_weekly = current_weekly_pct is not None and current_weekly_pct >= WEEKLY_PCT_CEILING
     if measured_ok:
@@ -993,6 +1128,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "max_engineers_next_hour": max_engineers_next_hour,
             "max_engineers_reason": max_engineers_reason,
             "cap_basis": "measured" if measured_ok else "projected",
+            "formula": formula,
         },
         "measured": measured if isinstance(measured, dict) else None,
         "limit_events": {
@@ -1052,6 +1188,20 @@ def human_summary(report):
     else:
         lines.append("Max engineers for next hour: uncalibrated, cannot project")
 
+    f = g.get("formula")
+    if f:
+        b = f["burn"]
+        mins = f["minutes_to_session_reset"]
+        lines.append(
+            "Formula inputs: session %g%% (resets in %s min), weekly %g%% (resets in %.2f days)"
+            % (f["session_pct"], "unknown, assumed 300" if mins is None else "%.0f" % mins,
+               f["weekly_pct"], f["days_to_weekly_reset"]))
+        lines.append(
+            "Per-seat burn: weekly %g pts/h (%s), session %g pts/h (%s), %s seats assumed, %d readings over %.1fh"
+            % (b["weekly_pct_per_seat_hour"], b["source"], b["session_pct_per_seat_hour"],
+               b["session_source"], b["seats_assumed"], b["readings_used"], b["span_hours"]))
+        lines.append("Formula: " + f["arithmetic"] + " (binding: %s)" % f["binding"])
+
     le = report["limit_events"]
     if le["last_occurrence"]:
         lines.append(f"Limit events in last hour: {le['count_last_hour']} (last at {le['last_occurrence']})")
@@ -1094,6 +1244,8 @@ def main(argv=None):
         "--measure-cache", default=str(MEASURE_CACHE_PATH),
         help="path to the cached /usage read (15 min between real invocations)",
     )
+    parser.add_argument("--seats", type=int, default=None,
+                        help="seats assumed active over the burn calibration span (default: active engineers last hour)")
     parser.add_argument("--json", action="store_true", help="print JSON instead of a human summary")
     parser.add_argument(
         "--cache-path",
@@ -1129,7 +1281,8 @@ def main(argv=None):
         live = live_read_usage(log_path, now, measured=measured if do_measure else None)
     report = build_report(Path(args.root), founder_path, now, Path(args.live_log),
                           cache_path=cache_path, measured=measured,
-                          extra_readings_path=log_path if log_path != founder_path else None)
+                          extra_readings_path=log_path if log_path != founder_path else None,
+                          seats_override=args.seats)
 
     if live is not None:
         report["live_reading"] = live
