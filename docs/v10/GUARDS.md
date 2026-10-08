@@ -841,7 +841,7 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
 ## D91 finding guards (review BLOCK classes become tests)
 
 - **Incident:** the same six review BLOCK classes recurred across trains and were caught only by human or agent reviewers.
-- **Guards** (all in `loki-ts/tests/util/`, each under 2s, picked up by `bun test tests/util`; allowlists in `loki-ts/tests/util/guard-allowlists/`, one `path | reason` per line, stale entries and missing reasons fail):
+- **Guards** (all in `loki-ts/tests/util/`, each under 2s, picked up by `bun test tests/util`; allowlists in `loki-ts/tests/util/guard-allowlists/`, one `path | reason` per line (full-env-spawn and model-output-regex use `path@N` per-site counts, so a new site in a listed file fails), stale entries and missing reasons fail):
   1. `raw_gh_spawn_guard.test.ts` (FC-25, FC-40): raw `gh` spawn in loki-ts/src, and raw `git push` / `gh pr create` in autonomy bash, outside the allowlist. Raw `git` in TS stays with `fc25_raw_spawn_guard.test.ts`. Known follow-up: autonomy/loki auto-PR paths push raw.
   2. `start_flag_parity_guard.test.ts` (FC-37, FC-38): the `loki start` flag sets of bash `cmd_start` and Bun `start.ts` against the declared table `start-flags.txt`. Three real divergences are recorded (`--budget-limit`, `--no-pr`, `--session-model` are Bun-only).
   3. `registration_list_guard.test.ts` (FC-32, FC-39): every module under src/commands and src/engine10/stages is imported somewhere, and every literal package.json files[] entry exists. Test-runner and shard lists stay with `scripts/structural-checks.sh` and `tests/test-shard-coverage.sh`. Known orphan: commands/status.ts.
