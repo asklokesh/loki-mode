@@ -1,0 +1,4 @@
+# FCR public task set (FCR-2): pinned repo + 40-hex SHA + hidden test command, at least 20 rows. Validate with:
+#   bash scripts/b9-scoreboard.sh --check-tasks docs/v11/FCR-TASKS.tsv
+# Rows are added only after each SHA and test command is verified (NOT RECORDED until then; no invented rows).
+id	repo	sha	test_cmd	license	task

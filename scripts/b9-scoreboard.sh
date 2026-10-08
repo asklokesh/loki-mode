@@ -51,6 +51,12 @@
 #                           RECEIPT-TRUTH receipt fields (time.total_s, cost.cache_read_tokens, cost.cache_creation_tokens;
 #                           time.wall_s and cost.input_tokens are never read). A missing field, or total_s differing from
 #                           the sum of time.stages by more than 1%, makes the row NOT RECORDED, never 0.
+#   --arms LIST             with --ab, comma list of arms: raw (claude -p), raw-codex (codex exec --full-auto, no Loki),
+#                           loki. Default raw,loki. A raw-codex preflight failure (no codex, not logged in) is BLOCKED
+#                           (rc 3, no scored row), never a failed solve. Codex reports no cost or wall here, so its
+#                           usd and wall read NOT RECORDED. A timed-out cell is recorded (solved 0), not dropped.
+#   --check-tasks TSV       no runs: validate the public FCR task set (id repo sha test_cmd license task): 40-hex SHA,
+#                           license on the allowlist, unique ids. rc 1 invalid, rc 4 valid but under 20 rows (INCOMPLETE).
 #   --dry                   alias of --dry-run; with --ab it uses recorded stubs (no keys, no network) for CI
 #   --model M               passed to the raw arm as --model and to loki as LOKI_SESSION_MODEL
 #   --version V             release label for the METRICS row and JSON
@@ -66,7 +72,7 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="sum() skips the first element; fix it"
-DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE="" AB=0 ABREPORT="" JSONOUT="" VERSION_LABEL="unknown" MODEL="" ABFIX=""
+DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE="" AB=0 ABREPORT="" JSONOUT="" VERSION_LABEL="unknown" MODEL="" ABFIX="" ARMS="raw,loki" CHECKTASKS=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run|--dry) DRY=1 ;;
@@ -76,6 +82,8 @@ while [ $# -gt 0 ]; do
         --version) VERSION_LABEL="${2:-}"; shift ;;
         --model) MODEL="${2:-}"; shift ;;
         --fixtures) ABFIX="${2:-}"; shift ;;
+        --arms) ARMS="${2:-}"; shift ;;
+        --check-tasks) CHECKTASKS="${2:-}"; shift ;;
         --repo) REPO="${2:-}"; shift ;;
         --base) BASE="${2:-}"; shift ;;
         --test-cmd) TESTCMD="${2:-}"; shift ;;
@@ -93,6 +101,10 @@ while [ $# -gt 0 ]; do
         *) echo "usage: $0 --dry-run | --repo DIR --base SHA --test-cmd CMD | --emit-shape-defaults OUT.json --results FILE" >&2; exit 2 ;;
     esac
     shift
+done
+# FCR-2: --arms selects the --ab arms (default raw,loki); raw-codex is `codex exec --full-auto` with no Loki.
+for _a in ${ARMS//,/ }; do
+    case "$_a" in raw|raw-codex|loki) ;; *) echo "b9-scoreboard: unknown arm '$_a' (raw, raw-codex, loki)" >&2; exit 2 ;; esac
 done
 
 # --- per-arm summary over a results TSV (also printed at the end of a run) -----
@@ -287,6 +299,40 @@ ab_report() { # ab_report TSV
     python3 -I "$REPO_ROOT/scripts/b9-ab-report.py" "$1" --json-out "$JSONOUT" --version "$VERSION_LABEL" \
         ${METRICS_OUT:+--metrics-out "$METRICS_OUT"}
 }
+check_tasks() { # check_tasks TSV
+    python3 -I - "$1" <<'PY'
+import csv, re, sys
+OK = {"MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MPL-2.0", "Unlicense", "0BSD", "CC0-1.0"}
+rows, errs, seen = [], [], set()
+with open(sys.argv[1], newline="") as fh:
+    for i, r in enumerate(csv.reader(fh, delimiter="\t"), 1):
+        if not r or r[0].startswith("#") or r[0] == "id":
+            continue
+        if len(r) < 6:
+            errs.append("line %d: need 6 columns (id repo sha test_cmd license task)" % i); continue
+        id_, repo, sha, cmd, lic, task = [c.strip() for c in r[:6]]
+        if id_ in seen: errs.append("line %d: duplicate id %s" % (i, id_))
+        seen.add(id_)
+        if not re.fullmatch(r"[0-9a-f]{40}", sha): errs.append("line %d: %s sha is not a 40-hex SHA" % (i, id_))
+        if not repo.startswith("https://"): errs.append("line %d: %s repo must be an https URL" % (i, id_))
+        if not cmd: errs.append("line %d: %s has no hidden test command" % (i, id_))
+        if not task: errs.append("line %d: %s has no task text" % (i, id_))
+        if lic not in OK: errs.append("line %d: %s license %r is not on the allowlist" % (i, id_, lic))
+        rows.append(id_)
+for e in errs: print(e)
+n = len(rows)
+if errs:
+    print("tasks=%d INVALID" % n); sys.exit(1)
+if n < 20:
+    print("tasks=%d INCOMPLETE (need at least 20)" % n); sys.exit(4)
+print("tasks=%d complete" % n)
+PY
+}
+if [ -n "$CHECKTASKS" ]; then
+    [ -f "$CHECKTASKS" ] || { echo "--check-tasks needs an existing TSV: $CHECKTASKS" >&2; exit 2; }
+    check_tasks "$CHECKTASKS"; exit $?
+fi
+
 if [ -n "$ABREPORT" ]; then
     [ -f "$ABREPORT" ] || { echo "--ab-report needs an existing results TSV: $ABREPORT" >&2; exit 2; }
     ab_report "$ABREPORT"
@@ -336,6 +382,18 @@ CJ='{"type":"result","total_cost_usd": 0.0123,"duration_ms": 14000,"usage":{"inp
 case " $* " in *" json "*) echo "${B9_STUB_CLAUDE_JSON-$CJ}";; *) echo "stub claude done";; esac
 STUB
     chmod +x "$T/bin/claude"
+    cat > "$T/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+# stub codex for CI: B9_STUB_CODEX_AUTH=fail fails the preflight; B9_STUB_CODEX_MODE=noop edits nothing, sleep hangs
+case " $* " in *" single word OK "*) [ "${B9_STUB_CODEX_AUTH:-}" = fail ] && { echo "codex: not logged in" >&2; exit 1; }; echo OK; exit 0;; esac
+[ "${B9_STUB_CODEX_MODE:-}" != sleep ] || sleep 30
+if [ "${B9_STUB_CODEX_MODE:-}" != noop ]; then
+    [ -f sum.js ] && sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
+    [ -f stats.js ] && sed -i.bak -e 's/(xs.length-1)/xs.length/' -e 's/let m=0/let m=-Infinity/' stats.js && rm -f stats.js.bak
+fi
+echo "stub codex done"
+STUB
+    chmod +x "$T/bin/codex"
     export PATH="$T/bin:$PATH" LOKI_SKIP_AUTH_PREFLIGHT=1 LOKI_E10_INVOKER=cli
 fi
 # Only the dry-run gets a throwaway HOME. Real mode needs the user's own credentials, or every
@@ -499,9 +557,15 @@ STUB
         echo "b9-scoreboard: raw arm BLOCKED: $PF_REASON" >&2; return 3
     fi
     local blocked=0
+    case ",$ARMS," in *,raw-codex,*)
+        mkdir -p "$T/pf-codex"
+        if ! ( cd "$T/pf-codex" && timeout -k 10 "$TIMEOUT" codex exec --full-auto "Reply with the single word OK" ) < /dev/null > "$T/pf-codex.out" 2>&1; then
+            echo "b9-scoreboard: raw-codex arm BLOCKED: preflight failed: $(tail -c 200 "$T/pf-codex.out")" >&2; return 3
+        fi ;;
+    esac
     for fx in $fixtures; do
         for run in $(seq 1 "$N"); do
-            for arm in raw loki; do
+            for arm in ${ARMS//,/ }; do
                 W="$T/ab-$fx-$arm-$run"; H="$W.hidden"; D="$W"; LBL="$fx"
                 case "$fx" in
                     trivial-sum) bash "$REPO_ROOT/scripts/b9-fixtures/trivial-sum.sh" "$W" >/dev/null; TASKF="$TASK"; TESTF="node --test" ;;
@@ -510,7 +574,9 @@ STUB
                     *) echo "b9-scoreboard: unknown fixture $fx" >&2; return 2 ;;
                 esac
                 OUT="$T/ab-out-$LBL-$arm-$run.log"
-                if [ "$arm" = raw ]; then
+                if [ "$arm" = raw-codex ]; then
+                    ( cd "$D" && timeout -k 10 "$TIMEOUT" codex exec --full-auto "$TASKF" ) < /dev/null > "$OUT" 2>&1
+                elif [ "$arm" = raw ]; then
                     ( cd "$D" && timeout -k 10 "$TIMEOUT" claude -p "$TASKF" --dangerously-skip-permissions --output-format json ${MODEL:+--model "$MODEL"} ) < /dev/null > "$OUT" 2>&1
                 else
                     ( cd "$D" && timeout -k 10 "$TIMEOUT" env ${MODEL:+LOKI_SESSION_MODEL="$MODEL"} "$LOKI" start "$TASKF" ) < /dev/null > "$OUT" 2>&1
@@ -523,7 +589,9 @@ STUB
                 fi
                 SOLVED=0; ( cd "$D" && bash -c "$TESTF" ) > "$T/ab-test-$LBL-$arm-$run.log" 2>&1 && SOLVED=1
                 # Cost and time come from the SDK result line (raw) or the receipt (loki), never from our own clock.
-                if [ "$arm" = raw ]; then
+                if [ "$arm" = raw-codex ]; then
+                    VERIFIED="$SOLVED"; USD="NOT RECORDED"; WALLR="NOT RECORDED"; CR="NOT RECORDED"; CC="NOT RECORDED"
+                elif [ "$arm" = raw ]; then
                     RF=$(raw_fields "$OUT"); VERIFIED="$SOLVED"
                     IFS=$'\t' read -r USD WALLR CR CC <<< "$RF"
                 else
