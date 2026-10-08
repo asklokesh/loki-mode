@@ -403,6 +403,35 @@ class PromoteGateBehavior(unittest.TestCase):
         self.assertBlock(self._gate(self.smoke, "", [self._smk(1, "success")]))
 
 
+class SmokeRunNameContract(unittest.TestCase):
+    """D96: the writer (post-release-smoke.yml run-name) and the reader (the
+    display_title select in promote.yml) must agree on the title shape."""
+
+    RUN_NAME = ("Post-Release Smoke ${{ github.event.workflow_run.head_sha || "
+                "(startsWith(inputs.version, 'v') && inputs.version || format('v{0}', inputs.version)) }}")
+
+    def setUp(self):
+        self.smoke_doc = yaml.safe_load((_WF / "post-release-smoke.yml").read_text(encoding="utf-8"))
+        promote = yaml.safe_load(_PROMOTE.read_text(encoding="utf-8"))
+        step = next(s for s in promote["jobs"]["promote"]["steps"] if s.get("name", "").startswith("Require a green Post-Release Smoke"))
+        self.select = step["run"]
+
+    def test_run_name_is_exact(self):
+        self.assertEqual(self.smoke_doc["run-name"], self.RUN_NAME)
+
+    def test_reader_prefixes_derive_from_the_writer(self):
+        rn = self.smoke_doc["run-name"]
+        prefix = rn.split("${{")[0]
+        self.assertEqual(prefix, "Post-Release Smoke ")
+        expr = rn.split("${{")[1].split("}}")[0]
+        # workflow_run branch: the bare SHA follows the prefix; dispatch branch: v<version>.
+        self.assertTrue(expr.strip().startswith("github.event.workflow_run.head_sha ||"))
+        self.assertIn("format('v{0}', inputs.version)", expr)
+        self.assertIn('.display_title == "%s\'"${GITHEAD}"\'"' % prefix, self.select)
+        self.assertIn('.display_title == "%sv\'"${VERSION}"\'"' % prefix, self.select)
+        self.assertNotIn(".head_sha", self.select.split("--jq", 1)[1].split("select(", 1)[1])
+
+
 class PromoteNightlyGate(unittest.TestCase):
     """D96: structure of the gates; behavior is in PromoteGateBehavior."""
 
