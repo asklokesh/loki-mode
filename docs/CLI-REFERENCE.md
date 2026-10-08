@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.3.1. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.3.2. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -16,8 +16,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki memory list` | All learnings |
 | `loki memory index` | Show or rebuild the memory index |
 | `loki memory learn` | Learn lessons from a merged PR's review comments |
-| `loki memory lessons` | List PR review lessons with uses and outcomes (`--json` for JSON) |
-| `loki memory forget` | Delete one PR lesson by id |
+| `loki memory lessons` | List PR review lessons with uses and outcomes |
 | `loki memory show` | Show one learning |
 | `loki memory search` | Search learnings |
 | `loki memory stats` | Memory statistics |
@@ -56,8 +55,6 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki crash` | Inspect or submit scrubbed crash reports |
 | `loki contract` | Print the spec delivery contract |
 | `loki start` | Run the autonomous build |
-| `loki plan <task> --spec` | Write the intent card's acceptance criteria to `.loki/specs/<slug>.md` for you to edit (see [spec-first-intent.md](spec-first-intent.md)); `loki start --spec-first <task>` is the same step |
-| `loki start --spec FILE` | Run against the edited spec as the authoritative intent; a spec that does not parse exits 2 with the line number |
 | `loki slack` | Slack inbound handler |
 | `loki slack serve` | Serve the Slack handler |
 | `loki queue` | Overnight issue queue with a morning digest |
@@ -116,7 +113,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki share` | Share a run |
 | `loki assets` | Export team assets |
 | `loki assets export` | Export shareable assets |
-| `loki export` | Export session data; `loki export --sarif [run-id]` writes `.loki/runs/<id>/findings.sarif` (SARIF 2.1.0, report only, needs bun) |
+| `loki export` | Export session data |
 | `loki notify` | Notifications |
 | `loki tour` | See a sample result |
 | `loki welcome` | First-run opener |

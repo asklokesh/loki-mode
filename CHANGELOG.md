@@ -5,6 +5,56 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.2 (2026-10-08)
+
+Patch release that builds on the 11.3.1 feature set: `loki start --attempts N` can now open a PR, `loki undo`, `loki verify-pr`, `loki issues run` and `loki export --sarif` are added, receipts stop reporting unmeasured usage as zero, and the engine10 core is split so optional features live under contrib/. Most new behavior ships behind a flag that is OFF by default (LOKI_UNDO, LOKI_XVENDOR_DEFAULT, LOKI_AI_MARKING, LOKI_MCP_TASKS, LOKI_MCP_2026_07, LOKI_OTEL_GENAI, LOKI_E10_WALL_CONCURRENT, LOKI_LESSONS_REJECTED), and ER-01 effort right-sizing is off unless LOKI_E10_EFFORT_POLICY=rerun. Only opencode remains on the bash loop; the docs now say so.
+
+### Added
+- Attempts with PR (T5): the winning attempt's PR goes through `engine10-push.sh push-pr`, so the 11.3.1 `--no-pr` requirement is dropped. Preflight uses push-pr's own origin validation and is pinned before attempt 1, the winner branch name is trusted-derived, and identity falls back per field.
+- `loki undo <run-id>`: UNDO-1 adds a read-only plan (`--plan`) that validates receipt refs as hex object ids and ends option parsing. UNDO-2 applies the undo behind LOKI_UNDO=1, refuses hostile receipt refs before touching git, and closes PRs with an allowlisted env. The command is registered in the CLI registry and generated docs.
+- `loki verify-pr` (VPR-1, VPR-2): a fail-closed sandbox runner and contract, and a core that runs the fail-to-pass check through that sandbox. Issue checks are trust-gated, base and head suites are compared, and issue author association is read from the REST API with a failed trust lookup reported.
+- `loki issues run` (MASS-1, MASS-2): triages open issues and runs them through the T7 queue. MASS-2 splits a too-large issue into stacked slices (`--no-split` opts out) with a stacked PR base.
+- `loki export --sarif` (SARIF-1, SARIF-2): converts findings to SARIF 2.1.0 and writes findings.sarif per run, with repo-relative encoded artifact URIs and paths outside the repo omitted.
+- Per-change AI-BOM (MARK-2) as a CycloneDX 1.7 ML-BOM document, and AI commit trailers plus a PR marker behind LOKI_AI_MARKING (MARK-1).
+- Spec-first intent: `loki plan --spec` writes an editable .loki/specs/<slug>.md and `loki start --spec` runs against it. The intent card gains an optional "Out of scope" line, truncated to 200 characters (132-F1).
+- Reviewer brief v2: the brief gains a decision block.
+- Quota forecast (QF-1, QF-2): a reset-time parser and usage window model, and an advisory forecast line before `loki start` and `loki queue run`, shown only on an interactive stderr.
+- Memory: `loki memory forget <prl-id>` and `lessons --json` (133-F3); lessons are demoted after 3 or more decided uses with no VERIFIED run (132-F3); a lesson cites the receipt of its PR's run (MC-1); lessons can be learned from closed-unmerged Loki PRs behind LOKI_LESSONS_REJECTED (MC-2).
+- `loki status` shows the last run's sealed verdict (133-F4).
+- Cross-vendor review default (XV-1): with LOKI_XVENDOR_DEFAULT=1, cross-review uses the other vendor when installed. A review that was not run does not count as cross-vendor.
+- Effort right-sizing policy (ER-01): per-stage reasoning effort, enabled only with LOKI_E10_EFFORT_POLICY=rerun.
+- MCP: the Tasks extension for verify/run with traceparent propagation behind LOKI_MCP_TASKS (MCP-D), where tasks over HTTP need a token, a JSON content type and a loopback Origin; server/discover and the 2026-07-28 stateless profile behind LOKI_MCP_2026_07 (MCP-C); a handshake guard for the negotiated protocol version (MCP-B).
+- OpenTelemetry: engine10 events become gen_ai spans in the OTel bridge with LOKI_OTEL_GENAI=1 (OTEL-1), and a collector config for Grafana, Honeycomb and Datadog with a deterministic fixture (OTEL-2b).
+- Wall: LOKI_E10_WALL_CONCURRENT authors the Wall alongside plan and implement (WC-01b, flag off). The base run uses a pre-implement tree snapshot, fails closed, and reads as unproven to every consumer.
+- Receipt (RECEIPT-TRUTH): carries total_s, the stage partition, cache tokens, per-model cost, a resume verdict, and cost.tokens_measured to mark sessions left out of the input/output token totals.
+- Governor: shows the seat formula inputs and calibrates per-seat burn from readings (GOV-FORMULA).
+- B9 scoreboard: raw and loki arms with cost, correctness and wall ratios, a 40x scoreboard with a labelled human-review floor (`--human-floor-min`), a raw-codex arm with an `--arms` selector, claimed-done extraction for each arm, and an FCR task-set validator.
+- CI and release: a pinned gitleaks install in the weekly integrity audit (FC-49); gitHead stamped into the packed manifest with a verified tag fallback in Promote, which requires a Release run and a matching VERSION (FC-51); a flake tracker for the nightly run (FC-53).
+- Docs: a cited MCP 2026-07-28 conformance table and SDK probe (MCP-0), a draft in-toto agent-change predicate (SIGS-DOC), D94 train-branch release policy and the contrib cap (RG-06), and D96 (every approved slice releases to `next`, `latest` by backstop-green promotion).
+
+### Changed
+- Engine10 structure (EXT-CORE-2, EXT-FEAT): forecast, receipt time, cost records, plan command, effort policy, eta, wall snapshot, brief facts, verify_pr_f2p, status, sarif, ai_bom and slack_inbound moved out of core into contrib/. Core dependencies are inverted through typed hook slots filled by contrib/index.ts. Behavior is unchanged; the core is under its 5000-line cap (core 4933, features 2782).
+- Receipt cost reporting: unrecorded token usage reaches every reader as NOT RECORDED, never zero or a partial sum. A session without usage emits no token keys on its cost event, a killed session with no usage is NOT RECORDED, and an ambiguous resume leaves every summed figure out (FC-44).
+- B9 counts only VERIFIED and solved loki runs as delivered, and reads cost and time only from SDK totals and RECEIPT-TRUTH fields.
+- Gate: the global guard set is selected on every diff (FC-48). `select-tests --run` exits 1 with NOTHING RUN when zero suites executed (FC-47), and batches candidate greps with xargs -0.
+- Packaging: web-app/*.py ships by glob in the npm package and Docker image (132-E2).
+- Docs: the 7.5x cost-parity evidence moved to docs/ROUTING-EVIDENCE.md. Engine wording is corrected: PRD-file starts and local-model providers still run the previous loop, and only the opencode provider is named (DOCS-ENGINE-TRUTH).
+- Help: `loki help start` no longer advertises refused flags (133-E3), and start help no longer claims attempts N>1 requires `--no-pr`.
+- Tests: alias-forwarding runs independent checks as parallel units (issue 183).
+
+### Fixed
+- safe_git: caller `--no-ext-diff` and `--no-textconv` are deduplicated in central injection, with acceptance and canary tests (132-B1).
+- Token-free env: the Wall snapshot spawn and the verify_pr tar extract use tokenFreeEnv instead of bare process.env (FC-40).
+- Wall completion outputs are pinned exactly, and `duration_s` must be a number (WC-01b).
+- Memory: the Bun memory index rebuild calls MemoryEngine.rebuild_index (issue 204).
+- Engine10: spec-conflict resume is skipped with under 60s of the implement window left (FC-19b).
+- OTel: editing only the exporters list is true under inert defaults (OTEL-2b).
+- `loki onboard` survives a failing find under pipefail, and the doctor install-hint test counts only provider hints (FC-53).
+- Nightly: the cockpit wasm is warmed and real-render tests get an explicit timeout (FC-50); the caveman test normalises a trailing slash in its temp root (FC-62); nightly-flake fixture glyphs are stored as placeholders and materialised at test time (FC-53).
+- Fast gate: path guards no longer select non-test files under tests/ (FC-54); train guards for verify_pr, the help bound and structural test names are green (FC-60, FC-61).
+- Control plane: run page nits (Wall row text, folder name, receipt.json fallback) (CP-NITS1).
+- Quota forecast: the QF-2 forecast line no longer breaks A-130's failure-output line budget.
+
 ## v11.3.1 (2026-10-08)
 
 Patch release that ships the ten v1 features of the 11.3 program: cost preview, mutation proof, intent card, reviewer brief, attempts, memory with proof, overnight queue, before/after proof, provider failover and the supply-chain guard. It also adds the CI-FAST gate, a docs cleanup and help-text truth fixes. The router still ships OFF, and so does the T2 downgrade.
