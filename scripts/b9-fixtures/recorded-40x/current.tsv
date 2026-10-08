@@ -1,9 +1,9 @@
-trivial-sum	1	1	30	0.20	2
-two-bug	1	1	60	0.40	2
-trivial-sum	2	1	30	0.20	2
-two-bug	2	1	60	0.40	2
-trivial-sum	3	1	30	0.20	2
-two-bug	3	1	60	0.40	2
-medium	1	1	300	1.00	NOT RECORDED
-medium	2	1	300	1.00	NOT RECORDED
-medium	3	0	300	1.00	NOT RECORDED
+trivial-sum	1	1	1	30	0.20	2
+two-bug	1	1	1	60	0.40	2
+trivial-sum	2	1	1	30	0.20	2
+two-bug	2	1	1	60	0.40	2
+trivial-sum	3	1	1	30	0.20	2
+two-bug	3	1	1	60	0.40	2
+medium	1	1	1	300	1.00	NOT RECORDED
+medium	2	1	1	300	1.00	NOT RECORDED
+medium	3	0	0	300	1.00	NOT RECORDED

@@ -429,11 +429,14 @@ if fs:
         ok = num(c.get("usd"), True) and num(t.get("total_s"), True) \
             and num(c.get("cache_read_tokens"), False) and num(c.get("cache_creation_tokens"), False)
         st = t.get("stages")
-        if ok and isinstance(st, dict) and st:
-            vals = [x for x in st.values() if num(x, False)]
-            ssum = sum(vals)
-            if len(vals) != len(st) or ssum <= 0 or abs(t["total_s"] - ssum) > 0.01 * ssum:
+        if ok:
+            # same rule as the engine's reconciledTotalS: stages required, within 1% of total_s
+            if not (isinstance(st, dict) and st):
                 ok = False
+            else:
+                vals = [x for x in st.values() if num(x, False)]
+                if len(vals) != len(st) or abs(t["total_s"] - sum(vals)) > 0.01 * t["total_s"]:
+                    ok = False
         if ok:
             out = [round(c["usd"], 6), round(t["total_s"], 3), c["cache_read_tokens"], c["cache_creation_tokens"]]
     except Exception:

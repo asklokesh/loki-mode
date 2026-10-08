@@ -55,6 +55,23 @@ check interval-brackets-point $? "$(cat "$T/b.json")"
 bash "$B9" --ab-report "$T/b.tsv" --json-out "$T/b2.json" --version t > /dev/null 2>&1
 [ "$(jget "$T/b.json" cost_ratio)" = "$(jget "$T/b2.json" cost_ratio)" ]; check deterministic-seeded-bootstrap $? "differs between runs"
 
+# Delivered = VERIFIED AND solved: a false VERIFIED (hidden checks failed) must not earn COST-HALF.
+{
+    for r in 1 2 3; do printf 'raw\tt\t%s\t1\t1\t10\t1.0\t0\t0\n' "$r"; done
+    for r in 1 2 3; do printf 'loki\tt\t%s\t0\t1\t10\t0.5\t0\t0\n' "$r"; done
+} > "$T/fv.tsv"
+bash "$B9" --ab-report "$T/fv.tsv" --json-out "$T/fv.json" --version t > /dev/null 2>&1
+[ "$(jget "$T/fv.json" cost_ratio.value)" = "NOT COMPUTABLE" ]; check false-verified-not-delivered $? "$(cat "$T/fv.json")"
+# one of three truly delivered: $1.5 / 1 = 1.5 vs 1.0 -> 1.5 (the two false VERIFIED runs add cost, not deliveries)
+{
+    for r in 1 2 3; do printf 'raw\tt\t%s\t1\t1\t10\t1.0\t0\t0\n' "$r"; done
+    printf 'loki\tt\t1\t1\t1\t10\t0.5\t0\t0\n'
+    printf 'loki\tt\t2\t0\t1\t10\t0.5\t0\t0\n'
+    printf 'loki\tt\t3\t0\t1\t10\t0.5\t0\t0\n'
+} > "$T/fv2.tsv"
+bash "$B9" --ab-report "$T/fv2.tsv" --json-out "$T/fv2.json" --version t > /dev/null 2>&1
+[ "$(jget "$T/fv2.json" cost_ratio.value)" = "1.5" ]; check false-verified-excluded-from-denominator $? "$(cat "$T/fv2.json")"
+
 # A missing cost reads NOT RECORDED, never 0 (and never a ratio computed from the rest).
 {
     for r in 1 2 3; do printf 'raw\ttrivial-sum\t%s\t1\t1\t20\t0.10\n' "$r"; done
@@ -115,10 +132,10 @@ ab_one out1 B9_STUB_RECEIPT="$(mkrec 101.5)"
 [ "$(col out1 loki 6)" = "$NRS" ] && [ "$(col out1 loki 7)" = "$NRS" ]; check crosscheck-over-1pct-not-recorded $? "$(cat "$T/out1.tsv")"
 ab_one big B9_STUB_RECEIPT="$(mkrec 150)"
 [ "$(col big loki 6)" = "$NRS" ]; check crosscheck-total-far-from-stages $? "$(cat "$T/big.tsv")"
-# a receipt without stages has nothing to cross-check and is recorded
+# a receipt without stages cannot be reconciled: NOT RECORDED (same rule as the engine's reconciledTotalS)
 NOST='{"verdict":"VERIFIED","cost":{"usd":0.5,"cache_read_tokens":1,"cache_creation_tokens":1},"time":{"total_s":33}}'
 ab_one nost B9_STUB_RECEIPT="$NOST"
-[ "$(col nost loki 6)" = "33" ]; check no-stages-no-crosscheck $? "$(cat "$T/nost.tsv")"
+[ "$(col nost loki 6)" = "$NRS" ]; check no-stages-not-recorded $? "$(cat "$T/nost.tsv")"
 # raw: a result line without duration_ms or without a cache field is NOT RECORDED
 ab_one rnd B9_STUB_CLAUDE_JSON='{"type":"result","total_cost_usd":0.2,"usage":{"cache_read_input_tokens":1,"cache_creation_input_tokens":1}}'
 [ "$(col rnd raw 6)" = "$NRS" ] && [ "$(col rnd raw 7)" = "$NRS" ]; check raw-missing-duration-not-recorded $? "$(cat "$T/rnd.tsv")"

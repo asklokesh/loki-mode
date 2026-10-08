@@ -34,8 +34,8 @@ grep -q '^mass-10 .*NOT RUN' "$T/d.out"; check mass-slot-declared-not-run $? "$(
 grep -q 'scoreboard-40x v vs 11.3.1' "$T/d.metrics"; check metrics-row $? "$(cat "$T/d.metrics")"
 
 # recorded human_min of 0 is not divisible: NOT COMPUTABLE, never an invented floor
-printf 'trivial-sum\t1\t1\t60\t0.40\t4\n' > "$T/b.tsv"
-printf 'trivial-sum\t1\t1\t30\t0.20\t0\n' > "$T/c.tsv"
+printf 'trivial-sum\t1\t1\t1\t60\t0.40\t4\n' > "$T/b.tsv"
+printf 'trivial-sum\t1\t1\t1\t30\t0.20\t0\n' > "$T/c.tsv"
 bash "$SB" --current "$T/c.tsv" --baseline "$T/b.tsv" --version v --json-out "$T/z.json" > /dev/null 2>&1
 [ "$(jget "$T/z.json" tasks.trivial-sum.efficiency_factor)" = "NOT COMPUTABLE" ]; check zero-human-not-computable $? "$(cat "$T/z.json")"
 bash "$SB" --current "$T/c.tsv" > /dev/null 2>&1; [ $? -eq 2 ]; check usage-rc2 $? ""
@@ -52,6 +52,12 @@ bash "$SB" --dry --version v --human-floor-min 0.5 --json-out "$T/g.json" > "$T/
 # never applied to NOT RECORDED: medium stays NOT RECORDED even with a huge floor, labelled rows are only those lifted
 bash "$SB" --dry --version v --human-floor-min 100 --json-out "$T/h.json" > "$T/h.out" 2>&1
 [ "$(jget "$T/h.json" tasks.medium.human_factor)" = "NOT RECORDED" ] && [ "$(jget "$T/h.json" tasks.medium.efficiency_factor)" = "NOT RECORDED" ]; check floor-never-fills-not-recorded $? "$(cat "$T/h.out")"
+# a VERIFIED run that failed the hidden checks is not delivered: cost_per_verified and EFFICIENCY count verified AND solved
+printf 'trivial-sum\t1\t1\t1\t60\t0.40\t4\ntrivial-sum\t2\t1\t0\t60\t0.40\t4\n' > "$T/fb.tsv"
+printf 'trivial-sum\t1\t1\t1\t60\t0.20\t4\ntrivial-sum\t2\t1\t1\t60\t0.20\t4\n' > "$T/fc.tsv"
+bash "$SB" --current "$T/fc.tsv" --baseline "$T/fb.tsv" --version v --json-out "$T/fv.json" > /dev/null 2>&1
+# per delivered task: baseline 0.80/1, current 0.40/2 -> cost factor 4 (counting the false VERIFIED would give 2)
+[ "$(jget "$T/fv.json" tasks.trivial-sum.cost_factor)" = "4.0" ]; check false-verified-not-delivered-40x $? "$(cat "$T/fv.json")"
 # unset floor keeps today's behavior
 [ "$(jget "$T/d.json" human_floor_min)" = "None" ]; check floor-unset-default $? ""
 

@@ -3,6 +3,7 @@
 
 Input TSV, one run per line: arm fixture run solved verified wall usd [cache_read cache_create]
   arm: raw | loki. solved: hidden checks passed (1/0). verified: loki receipt verdict VERIFIED (raw: equals solved).
+  A loki run is delivered only when VERIFIED and solved (hidden-check passing); a false VERIFIED earns nothing.
   usd, wall: raw from the claude -p SDK result line (total_cost_usd, duration_ms), loki from receipt.json cost.usd and
   time.total_s (never time.wall_s); "NOT RECORDED" when absent.
 Outputs a JSON file and one METRICS row:
@@ -55,7 +56,7 @@ def stat_cost(raw, loki):
     if any(r["usd"] is None for r in raw + loki):
         return None
     ds = sum(1 for r in raw if r["solved"])
-    dv = sum(1 for r in loki if r["verified"])
+    dv = sum(1 for r in loki if r["verified"] and r["solved"])
     if ds == 0 or dv == 0:
         return None
     return (sum(r["usd"] for r in loki) / dv) / (sum(r["usd"] for r in raw) / ds)

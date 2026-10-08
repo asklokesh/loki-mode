@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """40x scoreboard (D92). Called by scripts/scoreboard-40x.sh.
 
-Input TSV, one loki run per line: task run verified wall_s usd human_min
+Input TSV, one loki run per line: task run verified solved wall_s usd human_min
+  solved = hidden checks passed. A run is delivered only when verified AND solved; a false VERIFIED earns nothing.
   human_min = recorded human minutes for the run (interventions plus review time); NOT RECORDED when absent.
 Per task, current release vs the baseline release (11.3.1), improvement factor = baseline / current (above 1 is better):
   cost_factor   cost per VERIFIED task          (total usd / verified count)
@@ -32,10 +33,10 @@ def load(path):
     out = {}
     with open(path, newline="") as fh:
         for row in csv.reader(fh, delimiter="\t"):
-            if len(row) < 6 or not row[0].strip():
+            if len(row) < 7 or not row[0].strip():
                 continue
-            t, _r, ver, wall, usd, hm = (c.strip() for c in row[:6])
-            out.setdefault(t, []).append({"verified": ver == "1", "wall": num(wall, True),
+            t, _r, ver, sol, wall, usd, hm = (c.strip() for c in row[:7])
+            out.setdefault(t, []).append({"verified": ver == "1" and sol == "1", "wall": num(wall, True),
                                           "usd": num(usd, True), "human": num(hm)})
     return out
 
