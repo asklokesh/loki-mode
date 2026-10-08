@@ -243,13 +243,13 @@ Node.js current stable: 26.10.0 (cycle 26); Python current stable: 3.14.8 (cycle
 
 | File | Name | Current | Latest stable | Bump | Note |
 |---|---|---|---|---|---|
-| `Dockerfile` | `oven/bun:${BUN_VERSION}` | `oven/bun:${BUN_VERSION}` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `Dockerfile` | `ubuntu:24.04` | `ubuntu:24.04` | `24.04.5 (newest line 26.04.1)` | MAJOR | EOL 2029-05-31 (not yet); patch in line; MAJOR to newest line |
-| `Dockerfile.control-plane` | `oven/bun:${BUN_VERSION}` | `oven/bun:${BUN_VERSION}` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `Dockerfile.control-plane` | `oven/bun:${BUN_VERSION}-slim` | `oven/bun:${BUN_VERSION}-slim` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
+| `docker/Dockerfile` | `oven/bun:${BUN_VERSION}` | `oven/bun:${BUN_VERSION}` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
+| `docker/Dockerfile` | `ubuntu:24.04` | `ubuntu:24.04` | `24.04.5 (newest line 26.04.1)` | MAJOR | EOL 2029-05-31 (not yet); patch in line; MAJOR to newest line |
+| `docker/Dockerfile.control-plane` | `oven/bun:${BUN_VERSION}` | `oven/bun:${BUN_VERSION}` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
+| `docker/Dockerfile.control-plane` | `oven/bun:${BUN_VERSION}-slim` | `oven/bun:${BUN_VERSION}-slim` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
 | `Dockerfile.purplelab-test` | `node:22-slim` | `node:22-slim` | `22.23.3 (newest line 26.10.0)` | MAJOR | EOL 2027-04-30 (not yet); minor in line; MAJOR to newest line |
-| `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
-| `Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
+| `docker/Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
+| `docker/Dockerfile.sandbox` | `debian:bookworm-slim` | `debian:bookworm-slim` | `12.15 (newest line 13.7)` | MAJOR | EOL 2028-06-30 (not yet); minor in line; MAJOR to newest line |
 | `Dockerfile.test-runner` | `python:3.12-slim` | `python:3.12-slim` | `3.12.15 (newest line 3.14.8)` | minor | EOL 2028-10-31 (not yet); patch in line; minor to newest line |
 | `artifacts/observability/Dockerfile` | `nginx:1.27-alpine` | `nginx:1.27-alpine` | `1.27.5 (newest line 1.31.6)` | EOL | EOL 2025-06-24 (past); EOL in current line; newest line is 1.31.6 |
 | `dashboard/Dockerfile` | `python:3.11-slim-bookworm` | `python:3.11-slim-bookworm` | `3.11.17 (newest line 3.14.8)` | minor | EOL 2027-10-31 (not yet); patch in line; minor to newest line |
@@ -259,11 +259,11 @@ Node.js current stable: 26.10.0 (cycle 26); Python current stable: 3.14.8 (cycle
 | `deploy/docker-compose/docker-compose.yml` | `asklokesh/loki-mode:latest` | `asklokesh/loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
 | `deploy/docker-compose/docker-compose.yml` | `otel/opentelemetry-collector-contrib:0.96.0` | `otel/opentelemetry-collector-contrib:0.96.0` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
 | `deploy/docker-compose/docker-compose.yml` | `jaegertracing/all-in-one:1.54` | `jaegertracing/all-in-one:1.54` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `docker-compose.yml` | `chromadb/chroma:latest` | `chromadb/chroma:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
-| `docker-compose.yml` | `redis:7-alpine` | `redis:7-alpine` | `7.4.11 (newest line 8.10.2)` | MAJOR | EOL 2029-12-01 (not yet); resolved floating tag '7' to cycle 7.4; minor in line; MAJOR to newest line |
+| `docker/docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
+| `docker/docker-compose.yml` | `chromadb/chroma:latest` | `chromadb/chroma:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
+| `docker/docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
+| `docker/docker-compose.yml` | `loki-mode:latest` | `loki-mode:latest` | `-` | unknown | floating tag or no endoflife.date product mapped for this image (own product image, or an unmapped base) |
+| `docker/docker-compose.yml` | `redis:7-alpine` | `redis:7-alpine` | `7.4.11 (newest line 8.10.2)` | MAJOR | EOL 2029-12-01 (not yet); resolved floating tag '7' to cycle 7.4; minor in line; MAJOR to newest line |
 | `web-app/docker-compose.purple-lab.yml` | `postgres:16-alpine` | `postgres:16-alpine` | `16.15 (newest line 18.6)` | MAJOR | EOL 2028-11-09 (not yet); minor in line; MAJOR to newest line |
 | `web-app/docker-compose.purple-lab.yml` | `redis:7-alpine` | `redis:7-alpine` | `7.4.11 (newest line 8.10.2)` | MAJOR | EOL 2029-12-01 (not yet); resolved floating tag '7' to cycle 7.4; minor in line; MAJOR to newest line |
 | `docker-compose.test.yml` | `(none found)` | `` | `-` | n/a | no `FROM` / `image:` line found (build-context-only service, or a multi-stage FROM this pass did not match) |
