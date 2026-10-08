@@ -246,6 +246,11 @@ export async function runStart(args: readonly string[]): Promise<number> {
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;
   const { attempts, ...runnerOpts } = parsed;
+  if ((attempts ?? 1) > 1 && runnerOpts.noPr !== true) {
+    // The credentialed winner push is not safe against a hostile attempt rewriting the shared .git/config yet (FC-40).
+    process.stderr.write("--attempts opens no PR yet in 11.3.1; rerun with --no-pr, PR support ships in 11.3.2\n");
+    return 2;
+  }
   const { runAttempts, productionDeps } = await import("../runner/attempts.ts");
   const deps = productionDeps(
     process.cwd(),

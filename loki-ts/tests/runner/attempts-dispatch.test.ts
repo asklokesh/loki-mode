@@ -178,28 +178,7 @@ describe("FC-37 --attempts on the positional start route", () => {
 });
 
 describe("--no-pr both ways through the real wiring", () => {
-  it("with --attempts and no --no-pr: children never open PRs, the winner's PR is opened once", () => {
-    const f = fixture();
-    try {
-      const g = withOriginAndGh(f);
-      const r = run(f, ["start", "sum skips the first element; fix it", "--attempts", "2"], { pathPrefix: g.bin });
-      expect(r.status).toBe(0);
-      const lines = readFileSync(f.log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { argv: string[] });
-      expect(lines.length).toBe(2);
-      for (const l of lines) expect(l.argv).toContain("--no-pr");
-      const calls = readFileSync(g.ghLog, "utf8").trim().split("\n");
-      expect(calls.length).toBe(1);
-      expect(calls[0]).toContain("pr create");
-      const att = join(f.repo, ".loki", "attempts");
-      const rc = JSON.parse(readFileSync(join(att, readdirSync(att)[0]!, "attempts-receipt.json"), "utf8")) as { winner: { attempt_id: number }; pr: { mode: string; url?: string } };
-      expect(rc.pr.mode).toBe("opened");
-      expect(calls[0]).toContain("--head loki-attempt/");
-      expect(calls[0]).toContain(`attempt-${rc.winner.attempt_id}`);
-      expect(r.stdout).toContain("PR:         https://example.invalid/pr/1");
-    } finally {
-      rmSync(f.root, { recursive: true, force: true });
-    }
-  });
+  // The PR-opening path is refused through the CLI in 11.3.1 (attempts-pr-refused.test.ts); openPr is covered directly by attempts-origin-pin.test.ts.
 
   it("with --attempts and --no-pr: gh is never called and the receipt says skipped_no_pr", () => {
     const f = fixture();
