@@ -21,15 +21,40 @@ export function minVerdict(verdict: Verdict, review: CrossReview | null): Verdic
 }
 
 const asProvider = (v: string | undefined): ReviewProvider | null => { const s = v?.trim().toLowerCase(); return s === "codex" || s === "claude" ? s : null; };
+const isOff = (v: string | undefined): boolean => /^(off|none|false|0)$/i.test(v?.trim() ?? "");
 
-/** Env wins over loki.yaml top-level `review:`. Unset or any other value: null (off). */
-export function reviewProvider(repoDir: string, env: NodeJS.ProcessEnv = process.env): ReviewProvider | null {
-  const e = asProvider(env["LOKI_REVIEW_PROVIDER"]); if (e) return e;
+/** Explicit setting: env wins over loki.yaml top-level `review:`. A provider, "off", or undefined (nothing set). */
+function explicitReview(repoDir: string, env: NodeJS.ProcessEnv): ReviewProvider | "off" | undefined {
+  const ev = env["LOKI_REVIEW_PROVIDER"], e = asProvider(ev); if (e) return e; if (isOff(ev)) return "off";
   for (const f of ["loki.yaml", "loki.yml"]) {
     const p = join(repoDir, f); if (!existsSync(p)) continue;
-    try { const m = /^review:[ \t]*["']?([A-Za-z]+)["']?[ \t]*(?:#.*)?$/m.exec(readFileSync(p, "utf8")); const v = asProvider(m?.[1]); if (v) return v; } catch { /* unreadable: off */ }
+    try { const m = /^review:[ \t]*["']?([A-Za-z]+)["']?[ \t]*(?:#.*)?$/m.exec(readFileSync(p, "utf8")); const v = asProvider(m?.[1]); if (v) return v; if (isOff(m?.[1])) return "off"; } catch { /* unreadable: nothing set */ }
   }
-  return null;
+  return undefined;
+}
+
+/** XV-1 flag: LOKI_XVENDOR_DEFAULT=1 turns on the other-vendor default. Off keeps the opt-in behaviour. */
+export const xvendorDefault = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|true|yes|on)$/i.test(env["LOKI_XVENDOR_DEFAULT"]?.trim() ?? "");
+
+/** The CLI for a provider is on PATH (same resolution as engine10/preflight.ts: LOKI_<NAME>_CLI override, else the provider name). */
+export function vendorAvailable(p: ReviewProvider, env: NodeJS.ProcessEnv = process.env): boolean {
+  const cli = env[`LOKI_${p.toUpperCase()}_CLI`]?.trim() || p;
+  return !!Bun.which(cli, { PATH: env["PATH"] ?? process.env["PATH"] ?? "" });
+}
+
+/** Explicit setting always wins (including `off`). With LOKI_XVENDOR_DEFAULT=1 and nothing set, the other vendor than the builder when its CLI is installed. Else null (off). */
+export function reviewProvider(repoDir: string, env: NodeJS.ProcessEnv = process.env, builder?: string): ReviewProvider | null {
+  const x = explicitReview(repoDir, env); if (x) return x === "off" ? null : x;
+  if (!xvendorDefault(env)) return null;
+  const other: ReviewProvider | null = builder === "claude" ? "codex" : builder === "codex" ? "claude" : null;
+  return other && vendorAvailable(other, env) ? other : null;
+}
+
+/** Receipt review block plus the NOT PROVEN line, only when the flag is on. vendor_differs compares the judge to the builder. */
+export function reviewReceipt(builder: string, xr: CrossReview | null, env: NodeJS.ProcessEnv = process.env): { review?: { provider: string | null; vendor_differs: boolean }; notProven: string[] } {
+  if (!xvendorDefault(env)) return { notProven: [] };
+  const differs = !!xr && xr.provider !== builder;
+  return { review: { provider: xr?.provider ?? null, vendor_differs: differs }, notProven: differs ? [] : ["judge shares builder vendor or none configured"] };
 }
 
 /** Read-only argv: codex runs in its read-only sandbox; claude gets read tools only with writers and shell denied. */
@@ -53,7 +78,7 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
 
 /** Runs the reviewer when enabled. Null when off. A missing CLI, a failure or a timeout is not_run with a NOT PROVEN note, never PASS. */
 export async function crossReview(ctx: RunContext, verdict: Verdict, head: string): Promise<CrossReview | null> {
-  const p = reviewProvider(ctx.repoDir); if (!p) return null;
+  const p = reviewProvider(ctx.repoDir, process.env, ctx.provider); if (!p) return null;
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] };
