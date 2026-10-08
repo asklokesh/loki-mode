@@ -7738,12 +7738,12 @@ async def stop_session(request: Request):
 # At runtime, overridden by .loki/pricing.json if available
 _DEFAULT_PRICING = {
     # Claude (Anthropic)
-    # Fable 5 is the top-tier advisory model at exactly 2x Opus per token.
-    "fable":  {"input": 10.00, "output": 50.00},
-    "claude-fable-5": {"input": 10.00, "output": 50.00},
-    "opus":   {"input": 5.00, "output": 25.00},
-    "sonnet": {"input": 2.00, "output": 10.00},
-    "haiku":  {"input": 1.00, "output": 5.00},
+    # Fable 5 is the top-tier advisory model at 2.5x Opus 5.5 per token.
+    "fable":  {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20},
+    "claude-fable-5": {"input": 10.00, "output": 50.00, "cache_read": 0.25, "cache_write": 12.5, "cache_write_1h": 20},
+    "opus":   {"input": 4.00, "output": 20.00, "cache_read": 0.2, "cache_write": 5, "cache_write_1h": 8},
+    "sonnet": {"input": 2.00, "output": 10.00, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4},
+    "haiku":  {"input": 1.00, "output": 5.00, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2},
     # OpenAI Codex
     "gpt-5.3-codex": {"input": 1.50, "output": 12.00},
     # gpt-5.6 line: sol (high) / terra (medium, default) / luna (small).

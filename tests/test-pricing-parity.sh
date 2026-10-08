@@ -102,6 +102,71 @@ for name in ("run.sh check_budget_limit", "dashboard _DEFAULT_PRICING", "autonom
         print(f"FAIL: sonnet missing from {name}")
         fails += 1
 
+# PRICE-TRUTH: pin the Claude rows to the published page (read 2026-10-08,
+# platform.claude.com/docs/en/about-claude/pricing) and require every table
+# that carries cache rates to agree with the JSON. Tuple order: input, output,
+# cache_read, cache_write_5m, cache_write_1h.
+PUBLISHED = {
+    "fable": (10.0, 50.0, 0.25, 12.5, 20.0),
+    "opus": (4.0, 20.0, 0.2, 5.0, 8.0),
+    "sonnet": (2.0, 10.0, 0.1, 2.5, 4.0),
+    "haiku": (1.0, 5.0, 0.1, 1.25, 2.0),
+    "claude-haiku-5-5": (0.1, 0.5, 0.01, 0.125, 0.2),
+}
+for k, want in PUBLISHED.items():
+    e = pj[k]
+    got = (e["input"], e["output"], e.get("cache_read"), e.get("cache_write_5m"), e.get("cache_write_1h"))
+    if got != want:
+        print(f"FAIL: model-pricing.json {k} {got} != published {want}")
+        fails += 1
+    if e.get("cache_write") != e.get("cache_write_5m"):
+        print(f"FAIL: model-pricing.json {k} legacy cache_write != cache_write_5m")
+        fails += 1
+
+
+def cache_rows(text, q):
+    """Per-row cache_read / cache_write for rows keyed by a known model."""
+    out = {}
+    for m in re.finditer(rf"{q}([A-Za-z0-9.\-]+){q}\s*:\s*\{{([^{{}}]*)\}}", text):
+        k = m.group(1).lower()
+        if k not in PUBLISHED:
+            continue
+        row = {}
+        for f in ("cache_read", "cache_write"):
+            n = re.search(rf"{q}?{f}{q}?\s*[:=]\s*{NUM}", m.group(2))
+            if n:
+                row[f] = float(n.group(1))
+        out.setdefault(k, row)
+    return out
+
+
+cache_tables = {
+    "budget.ts fallback": cache_rows(fb, '"?'),
+    "run.sh _write_pricing_json": cache_rows(window(run, '"fable":           {"input"', 900), '"'),
+    "run.sh check_budget_limit": cache_rows(window(run, "pricing = {\n    'fable'", 900), "'"),
+    "dashboard _DEFAULT_PRICING": cache_rows(window(read("dashboard/server.py"), '"fable":  {"input"', 900), '"'),
+}
+for name, t in cache_tables.items():
+    for k, row in t.items():
+        if k == "claude-haiku-5-5":
+            continue
+        for f, v in row.items():
+            want = pj[k]["cache_read"] if f == "cache_read" else pj[k]["cache_write_5m"]
+            if v != want:
+                print(f"FAIL: {name} {k} {f}={v} != json {want}")
+                fails += 1
+    for k in ("opus", "sonnet", "haiku", "fable"):
+        if k in tables[name] and not t.get(k, {}).get("cache_read"):
+            print(f"FAIL: {name} {k} carries no cache_read rate")
+            fails += 1
+
+# No other file may carry a stale price row.
+for rel in ("autonomy/tui.sh", "autonomy/context-tracker.py"):
+    txt = read(rel)
+    if re.search(r"opus\*\)\s+input_rate=15", txt) or '"input": 3.0,' in txt:
+        print(f"FAIL: {rel} still carries a stale price row")
+        fails += 1
+
 print("PRICING-PARITY-TEST:", "FAIL" if fails else "PASS")
 sys.exit(1 if fails else 0)
 PY

@@ -362,9 +362,9 @@ grep -q '"fable":  {"input": 10.00, "output": 50.00}' "$SERVER_PY" \
 # estimator
 grep -q "'Fable':  {'input': 10.00, 'output': 50.00}" "$LOKI" \
   && ok "loki estimator has Fable 10/50" || bad "loki estimator fable pricing missing"
-# estimator corrected stale opus to 5/25
-grep -q "'Opus':   {'input': 5.00, 'output': 25.00}" "$LOKI" \
-  && ok "loki estimator Opus corrected to 5/25 (was stale 15/75)" || bad "loki estimator opus not corrected"
+# estimator carries Opus 5.5 at 4/20
+grep -q "'Opus':   {'input': 4.00, 'output': 20.00}" "$LOKI" \
+  && ok "loki estimator Opus at 4/20 (Opus 5.5)" || bad "loki estimator opus not corrected"
 
 # The cost arithmetic itself: fable must be exactly 2x opus per token.
 python3 - "$SERVER_PY" <<'PYEOF'
@@ -416,7 +416,7 @@ grep -q "SECURITY-REVIEW MODEL GUARD" "$RUN_SH" \
 #
 # Fable is unavailable at the Claude API, so the runner dispatches opus for a
 # fable pin / override / architect iteration. The estimator must quote the model
-# the runner actually dispatches (opus, $5/$25), NOT fable ($10/$50). The token
+# the runner actually dispatches (opus, $4/$20), NOT fable ($10/$50). The token
 # VOLUME stays the advisor work tier (50k/8k per iteration), but the priced model
 # is Opus. So by_model['Fable'] is 0 and by_model['Opus'] is nonzero on every
 # fable route.
