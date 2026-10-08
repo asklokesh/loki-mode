@@ -465,6 +465,133 @@ def live_read_usage(readings_path: Path, now: datetime):
     }
 
 
+# GOV-MEASURE: the cap is derived from MEASURED plan usage (`claude -p /usage`),
+# not from a token-burn projection that was wrong three times in one day.
+# The read is cached (MEASURE_MIN_GAP between real invocations) so the pulse
+# and cloud-dispatch never hammer the CLI; a failed read is cached briefly
+# (MEASURE_FAIL_GAP) and reported visibly, then the projection is the fallback.
+MEASURE_CACHE_PATH = Path.home() / ".claude" / "usage-governor" / "measured-usage.json"
+MEASURE_MIN_GAP = timedelta(minutes=15)
+MEASURE_FAIL_GAP = timedelta(minutes=3)
+MEASURE_MAX_SEATS = 8
+MEASURE_HOLD_ABOVE_SESSION_PCT = 70.0
+
+
+def _parse_measure_timeout_secs():
+    try:
+        v = float(os.environ.get("LOKI_USAGE_MEASURE_TIMEOUT") or 40)
+        if math.isfinite(v) and v > 0:
+            return v
+    except (ValueError, TypeError):
+        pass
+    return 40
+
+
+def parse_usage_text(out):
+    """Parse `claude -p /usage` stdout (json envelope or plain text) into
+    {session_pct, week_pct, session_resets, week_resets}. Raises ValueError
+    with a short reason when the shape is not recognised."""
+    text = out
+    try:
+        env = json.loads(out)
+        if isinstance(env, dict):
+            if env.get("is_error"):
+                raise ValueError("usage command reported an error")
+            text = env.get("result")
+    except json.JSONDecodeError:
+        pass
+    if not isinstance(text, str):
+        raise ValueError("unparseable output")
+    sm, wm = _SESSION_RE.search(text), _WEEK_RE.search(text)
+    if not sm or not wm:
+        raise ValueError("unparseable output")
+
+    def num(m):
+        v = float(m.group(1))
+        return v if 0 <= v <= 100 else None
+
+    sp, wp = num(sm), num(wm)
+    if sp is None or wp is None:
+        raise ValueError("percent out of range")
+    return {
+        "session_pct": sp, "week_pct": wp,
+        "session_resets": (sm.group(2) or "").strip() or None,
+        "week_resets": (wm.group(2) or "").strip() or None,
+    }
+
+
+def _run_usage_command():
+    """Run `claude -p /usage --output-format json` bounded by the measure
+    timeout. Returns stdout; raises ValueError(reason) on any failure."""
+    proc = None
+    try:
+        proc = subprocess.Popen(
+            ["claude", "-p", "/usage", "--output-format", "json"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True,
+        )
+        try:
+            out, _ = proc.communicate(timeout=_parse_measure_timeout_secs())
+        except subprocess.TimeoutExpired:
+            _kill_group(proc)
+            raise ValueError("timeout")
+    except OSError as exc:
+        raise ValueError("cannot run claude (%s)" % type(exc).__name__)
+    if proc.returncode != 0:
+        raise ValueError("exit %d" % proc.returncode)
+    return out
+
+
+def measured_usage(cache_path, now):
+    """Return {"status":"ok", ..., "read_at": iso, "age_secs": n} or
+    {"status":"failed","reason":...}. Real invocations are at most one per
+    MEASURE_MIN_GAP (ok) / MEASURE_FAIL_GAP (failed); everything else is
+    served from cache_path (None disables the cache file)."""
+    cached = None
+    if cache_path is not None:
+        try:
+            with open(cache_path, "r", encoding="utf-8") as fh:
+                cached = json.load(fh)
+        except (OSError, ValueError):
+            cached = None
+    if isinstance(cached, dict):
+        read_at = parse_ts(cached.get("read_at") or "")
+        if read_at is not None and cached.get("status") in ("ok", "failed"):
+            age = now - read_at
+            gap = MEASURE_MIN_GAP if cached["status"] == "ok" else MEASURE_FAIL_GAP
+            if timedelta(0) <= age < gap:
+                cached["age_secs"] = int(age.total_seconds())
+                return cached
+    try:
+        result = parse_usage_text(_run_usage_command())
+        result["status"] = "ok"
+    except ValueError as exc:
+        result = {"status": "failed", "reason": str(exc) or "unknown"}
+    result["read_at"] = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    result["age_secs"] = 0
+    if cache_path is not None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache_path.with_name(cache_path.name + ".%d.tmp" % os.getpid())
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(result, fh)
+            os.replace(tmp, cache_path)
+        except OSError:
+            pass
+    return result
+
+
+def measured_cap(session_pct, week_pct, active_engineers):
+    """Seat policy: up to MEASURE_MAX_SEATS; no new seats (hold at the
+    engineers already active) while session usage is above 70%; zero at or
+    over the D39 ceilings. Returns (cap, reason)."""
+    if session_pct >= WINDOW_PCT_CEILING or week_pct >= WEEKLY_PCT_CEILING:
+        return 0, "over_ceiling"
+    if session_pct > MEASURE_HOLD_ABOVE_SESSION_PCT:
+        return min(active_engineers, MEASURE_MAX_SEATS), "hold_above_70_session"
+    return MEASURE_MAX_SEATS, "ok"
+
+
 def _last_wednesday_reset_local(ref_utc: datetime) -> datetime:
     """Most recent Wednesday 13:00 America/New_York at or before ref_utc, kept in local (aware) time."""
     tz = ZoneInfo("America/New_York")
@@ -566,7 +693,7 @@ def _valid_live_window(value):
     return value
 
 
-def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None):
+def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: Path, cache_path: Path | None = None, measured: dict | None = None):
     window_start = now - timedelta(hours=WINDOW_HOURS)
     weekly_start = last_wednesday_reset(now)
     readings = load_readings(readings_path)
@@ -740,9 +867,19 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
     # still None because active_engineers == 0 (no engineer ran last hour),
     # which is a different, more specific reason to report.
     max_engineers_reason = None
+    measured_ok = isinstance(measured, dict) and measured.get("status") == "ok"
+    if measured_ok:
+        # GOV-MEASURE: real /usage percentages replace the projection.
+        current_window_pct = measured["session_pct"]
+        current_weekly_pct = measured["week_pct"]
+        window_source = weekly_source = "measured"
+        max_engineers_next_hour, max_engineers_reason = measured_cap(
+            current_window_pct, current_weekly_pct, active_engineers)
     over_window = current_window_pct is not None and current_window_pct >= WINDOW_PCT_CEILING
     over_weekly = current_weekly_pct is not None and current_weekly_pct >= WEEKLY_PCT_CEILING
-    if over_window or over_weekly:
+    if measured_ok:
+        pass
+    elif over_window or over_weekly:
         max_engineers_next_hour = 0
         max_engineers_reason = "over_ceiling"
     elif not (window_rate_eff and weekly_rate_eff):
@@ -807,6 +944,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "current_tokens_opus_weighted": report_window_opus,
             "current_pct": current_window_pct,
             "resets_at": live_five_hour.get("resets_at") if live_five_hour else None,
+            "resets_text": measured.get("session_resets") if measured_ok else None,
         },
         "weekly": {
             "source": weekly_source,
@@ -815,6 +953,7 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "current_tokens_opus_weighted": weekly_opus,
             "current_pct": current_weekly_pct,
             "resets_at": live_seven_day.get("resets_at") if live_seven_day else None,
+            "resets_text": measured.get("week_resets") if measured_ok else None,
         },
         "governor": {
             "active_engineers_last_hour": active_engineers,
@@ -825,13 +964,26 @@ def build_report(root: Path, readings_path: Path, now: datetime, live_log_path: 
             "hours_to_weekly_reset": hours_to_weekly_reset,
             "max_engineers_next_hour": max_engineers_next_hour,
             "max_engineers_reason": max_engineers_reason,
+            "cap_basis": "measured" if measured_ok else "projected",
         },
+        "measured": measured if isinstance(measured, dict) else None,
         "limit_events": {
             "last_occurrence": last_limit_event,
             "count_last_hour": limit_event_count,
         },
     }
     return report
+
+
+def cap_basis_label(report):
+    """Visible provenance of the cap: measured, or projected with the reason
+    the /usage read failed (GOV-MEASURE)."""
+    m = report.get("measured")
+    if report["governor"].get("cap_basis") == "measured" and m:
+        return "measured, read %dm ago" % (int(m.get("age_secs", 0)) // 60)
+    if m and m.get("status") == "failed":
+        return "projected; /usage read failed: %s" % m.get("reason", "unknown")
+    return "projected; /usage not read"
 
 
 def human_summary(report):
@@ -845,7 +997,7 @@ def human_summary(report):
     lines.append(f"Readings on file: {cal['readings_count']}")
 
     if w["current_pct"] is not None:
-        tag = "LIVE" if w["source"] == "live" else "ESTIMATE"
+        tag = {"live": "LIVE", "measured": "MEASURED"}.get(w["source"], "ESTIMATE")
         lines.append(
             f"5h window [{tag}]: {w['current_pct']:.1f}% used, "
             f"{w['current_tokens_output']:,} output tokens since {w['start']}"
@@ -854,7 +1006,7 @@ def human_summary(report):
         lines.append(f"5h window: uncalibrated ({w['current_tokens_output']:,} output tokens since {w['start']})")
 
     if k["current_pct"] is not None:
-        tag = "LIVE" if k["source"] == "live" else "ESTIMATE"
+        tag = {"live": "LIVE", "measured": "MEASURED"}.get(k["source"], "ESTIMATE")
         lines.append(
             f"Weekly window [{tag}]: {k['current_pct']:.1f}% used, "
             f"{k['current_tokens_output']:,} output tokens since {k['start']}"
@@ -866,7 +1018,7 @@ def human_summary(report):
     if g["burn_per_engineer_output_last_hour"] is not None:
         lines.append(f"Burn per engineer (last hour, output tokens): {g['burn_per_engineer_output_last_hour']:,.0f}")
     if g["max_engineers_next_hour"] is not None:
-        lines.append(f"Max engineers for next hour: {g['max_engineers_next_hour']}")
+        lines.append(f"Max engineers for next hour: {g['max_engineers_next_hour']} ({cap_basis_label(report)})")
     elif g.get("max_engineers_reason") == "no_active_engineers":
         lines.append("Max engineers for next hour: no active engineers, cannot project")
     else:
@@ -900,6 +1052,15 @@ def main(argv=None):
         "--read-usage", action="store_true",
         help="calibrate from live `claude -p /usage` before reporting (E-163)",
     )
+    parser.add_argument(
+        "--measure", dest="measure", action="store_true", default=None,
+        help="derive the cap from a cached `claude -p /usage` read (default; off with --now or LOKI_USAGE_MEASURE=0)",
+    )
+    parser.add_argument("--no-measure", dest="measure", action="store_false", help="projection only")
+    parser.add_argument(
+        "--measure-cache", default=str(MEASURE_CACHE_PATH),
+        help="path to the cached /usage read (15 min between real invocations)",
+    )
     parser.add_argument("--json", action="store_true", help="print JSON instead of a human summary")
     parser.add_argument(
         "--cache-path",
@@ -917,7 +1078,14 @@ def main(argv=None):
 
     live = live_read_usage(Path(args.readings), now) if args.read_usage else None
     cache_path = None if args.no_cache else Path(args.cache_path)
-    report = build_report(Path(args.root), Path(args.readings), now, Path(args.live_log), cache_path=cache_path)
+    do_measure = args.measure
+    if do_measure is None:
+        do_measure = args.now is None and os.environ.get("LOKI_USAGE_MEASURE") != "0"
+    measured = None
+    if do_measure:
+        measured = measured_usage(None if args.no_cache else Path(args.measure_cache), now)
+    report = build_report(Path(args.root), Path(args.readings), now, Path(args.live_log),
+                          cache_path=cache_path, measured=measured)
 
     if live is not None:
         report["live_reading"] = live
