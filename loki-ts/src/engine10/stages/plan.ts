@@ -55,12 +55,14 @@ export const planStage: Stage = {
 
     const sz = sizeTask(task, loaded, testMap); // E-45: a small task skips this session and the implementer plans
     const mode = planMode();
-    const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10: flag off adds nothing. FC-34: router on, a small task still plans (Opus routes it)
+    const pr = await planRoute(ctx.runDir, ctx.provider, process.env, ctx.repoDir); // R1-10 (runner/router/plan_route.ts): flag off adds nothing
+    // FC-34: with the router on a small task still plans (Opus must route it); only an explicit LOKI_E10_PLAN=0 skips, and records why.
     const skip = mode === "never" || (mode === "auto" && sz.size === "small" && !pr.routed);
     // E-64: wall.ts makes this same check to skip itself; a forced plan (LOKI_E10_PLAN=always) also forces "wall", since it still gets its own Wall.
     const path = mode === "always" ? "wall" : smallTaskPath(sz.size, hasRelevantTests(task, loaded, testMap, ctx.tests.impacted));
     ctx.emit("variant", null, { size: sz.size, reasons: sz.reasons, plan_mode: mode, plan_skipped: skip, wall_model: wallEnabled() ? wallModel() : null, small_task_path: path, cascade: cascadeEnabled() });
-    if (skip) { pr.record({ planModel: "none", skipReason: "plan stage skipped (LOKI_E10_PLAN=0)" }); return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" }; }
+    if (skip) pr.record({ planModel: "none", skipReason: "plan stage skipped (LOKI_E10_PLAN=0)" });
+    if (skip) return { status: "skipped", data: { size: sz.size }, reason: mode === "never" ? "LOKI_E10_PLAN=0" : "small task: implementer plans" };
 
     const relevantFiles = selectRelevantFiles(task, repoMap);
     const outputPath = planOutputPath(ctx.runDir);
@@ -77,9 +79,11 @@ export const planStage: Stage = {
       ...pr.pinFor(onSonnet),
     });
     let session = await runPlan(false);
-    let planModel = pr.planModel(fastTierModel(process.env)), planModelNote: string | null = null;
+    let planModel = pr.planModel(fastTierModel(process.env));
+    let planModelNote: string | null = null;
     if (pr.pinOpus && !session.killed && session.exit !== 0) { // Opus unavailable: Sonnet plans, and the receipt says so
-      planModel = "sonnet"; planModelNote = `Opus plan session failed (exit ${session.exit}); the plan ran on sonnet`; session = await runPlan(true);
+      planModel = "sonnet"; planModelNote = `Opus plan session failed (exit ${session.exit}); the plan ran on sonnet`;
+      session = await runPlan(true);
     }
 
     // E-61: a non-killed error exit fails this stage too (never silently read as an
