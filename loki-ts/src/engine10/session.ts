@@ -5,11 +5,14 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, write
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
+import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
+/** CH-02: stages Opus marks for the advisor. Wall is never marked (Rule of Two). */
+const ADVISOR_MARKED_STAGES: ReadonlySet<string> = new Set(["plan", "fix"]);
 export type EmitFn = (type: string, stage: string | null, data: Record<string, unknown>) => void;
 // provider, model and emit are bound per run on this factory config, since SessionRunOptions carries only per-call fields.
 export interface SessionRunnerConfig {
@@ -54,6 +57,7 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
   if (opts.effort) env["LOKI_E10_EFFORT"] = opts.effort;
+  if (routerEnabled() && !ADVISOR_MARKED_STAGES.has(opts.stage)) env["LOKI_ADVISOR_SCOPE"] = "off"; else delete env["LOKI_ADVISOR_SCOPE"]; // CH-02: only with the router on, so router-off envs stay byte-identical
   const pin = routerSessionPin(env, cfg.provider, cfg.advisor, opts); // ROUTER-1 (runner/router/session_route.ts): identical to opts.model with the router off or a user override set
   if (pin && pin !== PROVIDER_DEFAULT_MODEL) { // the label is a record, never a --model value
     const t = String(opts.tier).toUpperCase(); // E-45: pin wins over any inherited tier model

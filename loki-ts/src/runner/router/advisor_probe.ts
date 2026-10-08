@@ -49,6 +49,8 @@ export function probeAdvisor(
   const no = (reason: string): AdvisorProbe => ({ available: false, reason });
 
   if (provider !== "claude") return no(`provider is ${provider}, not claude`);
+  // CH-02: session.ts sets this on every stage Opus did not mark (plan and fix are marked), so it behaves exactly like unavailable.
+  if (env["LOKI_ADVISOR_SCOPE"] === "off") return no("advisor not marked for this stage");
   for (const flag of CLOUD_FLAGS) {
     if (env[flag]) return no(`${flag} is set`);
   }
