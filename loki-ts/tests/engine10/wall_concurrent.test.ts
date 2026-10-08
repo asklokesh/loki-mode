@@ -91,6 +91,6 @@ describe("WC-01b wall concurrent", () => {
     s.wall = { name: "wall", targetS: 1, limitS: 5, run: async () => { f.log.push("wall:seq"); return { status: "completed", data: { readOnlyFiles: [] } }; } };
     const r = await run(f, s);
     expect(f.log).toEqual(["intake", "plan", "wall:seq", "implement:start", "implement:tree:clean", "verify", "commit", "seal", "pr"]);
-    expect(r.outputs.wall).toEqual({ readOnlyFiles: [] });
+    expect(r.outputs.wall?.readOnlyFiles).toEqual([]); expect(r.outputs.wall?.base_run).toBeUndefined(); // duration_s is stamped on every completed stage (RECEIPT-TRUTH), so compare the fields not the whole object
   });
 });
