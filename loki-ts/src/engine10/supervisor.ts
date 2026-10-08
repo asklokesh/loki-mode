@@ -12,7 +12,6 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
-import { createInterface } from "node:readline";
 import { withholdGithubTokens } from "../runner/github_token.ts"; import { writeRunPid } from "../util/run_pid.ts";
 import { EventLog, fold, partialCost, readEvents, tail, type Folded } from "./events.ts";
 import { capNote, parseCapUsd, resolveCap, SUBSCRIPTION_NOTE } from "../e10ext/budget_cap.ts";
@@ -20,6 +19,8 @@ import { fetchIssueToFile } from "./fetch_issue.ts";
 import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_intake.ts";
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
+import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
+import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import { modelDowngrades } from "../runner/model_downgrades.ts";
@@ -37,7 +38,6 @@ const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detecte
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
-const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 
 const nonNegNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
 function dataOk(type: string, d: Record<string, unknown>): boolean { // per-type data checks for events the supervisor itself acts on (section 7 table)
@@ -121,51 +121,6 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     return false;
   }
 }
-function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
-  if (!pid) return;
-  try { process.kill(-pid, sig); } catch { /* group already gone */ }
-}
-// Spawns the worker in its own process group, waits for exit plus stdout drain (DRAIN_MS), and backstops at
-// backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
-function spawnWorker(
-  argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void, onStopped: (stopped: boolean) => void = () => {},
-): Promise<{ code: number | null; killed: boolean }> {
-  return new Promise((resolve) => {
-    const [cmd, ...args] = argv;
-    if (!cmd) return resolve({ code: null, killed: false });
-    const child = spawn(cmd, args, { cwd, env, stdio: ["ignore", "pipe", "inherit"], detached: true });
-    const rl = createInterface({ input: child.stdout! });
-    rl.on("line", onLine);
-    let killed = false;
-    let settled = false;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); onStopped(true); process.exit(sig === "SIGINT" ? 130 : 143); }; // the worker no longer shares the terminal's group, so forward a stop to it
-    process.once("SIGINT", onStop);
-    process.once("SIGTERM", onStop);
-    const finish = (code: number | null) => {
-      if (settled) return;
-      settled = true;
-      process.off("SIGINT", onStop);
-      process.off("SIGTERM", onStop);
-      for (const t of timers) clearTimeout(t);
-      rl.close();
-      child.stdout?.destroy();
-      killGroup(child.pid, "SIGKILL"); onStopped(false); // reap anything the worker left in its group, and every announced session group (backstop and worker-exit paths too)
-      resolve({ code, killed });
-    };
-    timers.push(setTimeout(() => {
-      killed = true;
-      killGroup(child.pid, "SIGTERM");
-      timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), escalateMs));
-    }, backstopMs));
-    child.on("error", () => finish(null));
-    child.on("exit", (code) => {
-      if (child.stdout?.readableEnded) return finish(code);
-      child.stdout?.once("end", () => finish(code));
-      timers.push(setTimeout(() => finish(code), DRAIN_MS));
-    });
-  });
-}
 export async function runSupervisor(opts: SupervisorOptions): Promise<SupervisorResult> {
   const t0 = Date.now();
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
@@ -179,6 +134,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   log.append("run.started", null, { ...opts.started, origin_repo: githubRepoFromUrl(origin) });
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
   withholdGithubTokens(workerEnv);
+  // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
+  workerEnv.LOKI_INTENT_TTY = env.LOKI_CONFIRM === "1" && process.stdin.isTTY === true && process.stdout.isTTY === true ? "1" : "0";
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
   const ceilingS = Math.max(capS, opts.capCeilingS ?? capS);
@@ -188,6 +145,9 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") sealed = e.data;
+    if (e?.type === "variant" && e.data.intent_confirm === true && workerEnv.LOKI_INTENT_TTY === "1") {
+      void askIntent(String(e.data.card ?? ""), join(opts.repoDir, ".loki", "runs", opts.runId));
+    }
   }, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); if (stopped) restoreBranch(opts.repoDir, origBranch); });
   const workerExit = worker.killed ? null : worker.code;
   const sealedData = sealed as Record<string, unknown> | null;
