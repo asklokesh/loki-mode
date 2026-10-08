@@ -155,6 +155,19 @@ if [ -e "$T/edge/raw.tsv" ] && ! grep -q 'too-many-files' "$T/edge/plan.tsv"; th
     ok "150 changed files go through normal selection"
 else bad "150 changed files were short-circuited"; fi
 
+# PLAN-OVERFLOW: a plan whose estimate exceeds MAX_SHARDS * SHARD_TARGET_S fails safe to FULL.
+printf '%s\n' VERSION package.json loki-ts/dist/loki.js >"$T/ovf.files"
+FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/ovf.files" FAST_GATE_MAX_SHARDS=1 FAST_GATE_SHARD_TARGET_S=1 \
+    bash scripts/ci/fast-gate.sh plan test "$T/ovf" >"$T/ovf.log" 2>&1
+if [ "$(grep -c . "$T/ovf/raw.tsv" 2>/dev/null)" -ge 2 ] && grep -q '^FULL	plan-over-capacity	0	0$' "$T/ovf/plan.tsv" \
+    && grep -q '^full=true$' "$T/ovf/outputs.txt" && grep -q 'plan over capacity: total=.*target=1s maxs=1' "$T/ovf.log"; then
+    ok "PLAN-OVERFLOW: an estimate above the shard cap fails safe to FULL (full=true) and logs total/target/maxs"
+else bad "PLAN-OVERFLOW: over-capacity plan did not write FULL plan-over-capacity"; fi
+FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/ovf.files" bash scripts/ci/fast-gate.sh plan test "$T/ovf2" >"$T/ovf2.log" 2>&1
+if [ -s "$T/ovf2/plan.tsv" ] && ! grep -q '^FULL' "$T/ovf2/plan.tsv" && grep -q '^full=false$' "$T/ovf2/outputs.txt"; then
+    ok "PLAN-OVERFLOW: an under-capacity plan is packed normally (no FULL)"
+else bad "PLAN-OVERFLOW: under-capacity plan wrongly went FULL or was empty"; fi
+
 # PLAN-BOUND: force a hang. Run the real step script with a stub planner that
 # sleeps and a 1s timeout; the step must exit 0 under bash -e with full=true.
 mkdir -p "$T/hang/scripts/ci" "$T/hang/rt"

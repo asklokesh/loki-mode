@@ -16,6 +16,9 @@
 # plan.tsv columns: kind, target, estimated seconds, shard. Estimated seconds
 # come from tests/shard-durations.tsv (measured), default 8s for an unknown
 # suite. The shard count is chosen so each shard targets <= 60s of estimate.
+# A plan whose total estimate cannot fit MAX_SHARDS shards at that target
+# (ceil(total/target) > MAX_SHARDS) would overflow every shard's job timeout, so
+# it fails safe to FULL (plan-over-capacity) instead of packing.
 # Anything the fast gate skips is covered by the nightly full run (D90).
 set -uo pipefail
 
@@ -239,6 +242,9 @@ for line in open(os.path.join(out, "raw.tsv")):
     rows.append([kind, target_, cost])
 rows.sort(key=lambda r: -r[2])
 total = sum(r[2] for r in rows)
+over = bool(rows) and math.ceil(total / target) > maxs
+if over:
+    sys.stderr.write("fast-gate: plan over capacity: total=%gs target=%gs maxs=%d: failing safe to the FULL set\n" % (total, target, maxs))
 n = 0 if not rows else min(maxs, max(1, math.ceil(total / target)))
 loads = [0.0] * n
 for r in rows:
@@ -247,8 +253,11 @@ for r in rows:
     r.append(i)
 open(os.path.join(out, "deferred.tsv"), "w").writelines(deferred)
 with open(os.path.join(out, "plan.tsv"), "w") as f:
-    for r in rows:
-        f.write("%s\t%s\t%g\t%d\n" % tuple(r))
+    if over:
+        f.write("FULL\tplan-over-capacity\t0\t0\n")
+    else:
+        for r in rows:
+            f.write("%s\t%s\t%g\t%d\n" % tuple(r))
 PYEOF
     write_matrix "$out"
     echo "fast-gate: base=$base head=$head files=$(wc -l <"$out/changed.txt" | tr -d ' ') planned=$(wc -l <"$out/plan.tsv" | tr -d ' ')"

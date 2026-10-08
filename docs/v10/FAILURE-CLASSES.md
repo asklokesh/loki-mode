@@ -743,3 +743,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every cap_command and run_cli call site in the suite (3 telemetry cases, disclosure_start, once, route_bash all go through the stub; route_bash already refuses at the preflight).
 - Mechanism: the stub `claude` answers `auth status` with loggedIn false so the preflight refuses at once on every platform; run_cli sets LOKI_CONTROL=0 and LOKI_UI_NO_CLASSIC=1 so bare loki starts nothing; cap_command takes CAP_SECS and the Bun route case uses 8s.
 - Fixture: tests/test-funnel-privacy.sh itself. Measured locally: bare loki rc=124 at 20s before, 0s after; suite 51s before, 19-20s after (3 runs, rc=0).
+
+## FC-86 A plan far above the shard cap overflowed every shard with no fail-safe (PLAN-OVERFLOW)
+- User saw: main red. Tests runs 37852209020 (4f8b6386b) and 37851435720 (4511d9f32) lost "Impacted suites" shards 6, 8 and 10 to the job's timeout-minutes: 6 ("The operation was canceled"); shard 8 was about 60% through its pytest run. The plan log read "fast-gate: base=v11.3.2 head=HEAD files=85 planned=1086".
+- Law: a bounded resource needs a fail-safe path when the input exceeds the bound; an over-capacity plan must go FULL, never be packed into shards that cannot finish.
+- Cause (measured): the packer sets n = min(MAX_SHARDS=12, ceil(total/SHARD_TARGET_S=60)). When total is far above 12*60s the min silently clamps n, so every shard carries more than the target and overflows the 6 minute job cap. Nothing in the plan path checked the clamp.
+- Siblings swept: the other plan bounds each already have a FULL row (unparseable-diff, empty-diff, too-many-files at 150, selector-failed, selector-answered-R0, global-guards-unreadable) and the plan step timeout forces full=true on a nonzero rc; the shard count was the one bounded quantity without one.
+- Mechanism: in the python packer, ceil(total/target) > maxs writes the single row "FULL\tplan-over-capacity\t0\t0" (write_matrix then emits full=true and full-suite.yml runs) and prints total, target and maxs on stderr. Timeouts, MAX_SHARDS and SHARD_TARGET_S defaults are unchanged.
+- Fixture: tests/test-fast-gate.sh PLAN-OVERFLOW (FAST_GATE_MAX_SHARDS=1, FAST_GATE_SHARD_TARGET_S=1 gives FULL and full=true; default env on the same diff gives no FULL).
