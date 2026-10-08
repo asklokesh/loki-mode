@@ -2,19 +2,26 @@
 // and checks npm / PyPI that each exists and was first published at least 7 days ago.
 // Off with LOKI_SUPPLY_GUARD=0 (receipt byte-identical to before). Registry access is injectable.
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { run } from "../util/shell.ts";
 
-export type SupplyStatus = "ok" | "nonexistent" | "too_new" | "allowlisted" | "unreachable" | "unsupported";
+export type SupplyStatus = "ok" | "nonexistent" | "too_new" | "allowlisted" | "unreachable" | "unsupported" | "capped";
 export interface SupplyEntry { ecosystem: string; name: string; manifest: string; status: SupplyStatus; age_days?: number }
-export interface SupplyBlock { guard: "v1"; min_age_days: number; entries: SupplyEntry[] }
+export interface SupplyBlock { guard: "v1"; warn_age_days: number; fail_age_days: number | null; entries: SupplyEntry[] }
 export interface SupplyResult { block: SupplyBlock | null; notProven: string[]; blocked: boolean }
 export interface RegistryReply { status: number; json?: unknown }
 export type RegistryFetcher = (url: string, timeoutMs: number) => Promise<RegistryReply>;
 
-export const MIN_AGE_DAYS = 7;
+export const MIN_AGE_DAYS = 7; // warning threshold; a hard fail on age needs LOKI_SUPPLY_MIN_AGE_DAYS
 const MAX_CHECKED = 50;
 const DAY_MS = 86400000;
+
+/** CTO ruling: age is a warning by default; a positive LOKI_SUPPLY_MIN_AGE_DAYS makes younger packages a hard fail. */
+export function failAgeDays(env: NodeJS.ProcessEnv): number | null { const n = Number(env["LOKI_SUPPLY_MIN_AGE_DAYS"]); return Number.isFinite(n) && n > 0 ? n : null; }
+
+/** Only a nonexistent package (or an opted-in age fail) changes the verdict; VERIFIED becomes FAILED, nothing else moves. */
+export function supplyVerdict<V extends string>(verdict: V, r: SupplyResult): V { return r.blocked && verdict === "VERIFIED" ? ("FAILED" as V) : verdict; }
 
 export function supplyEnabled(env: NodeJS.ProcessEnv): boolean { return env["LOKI_SUPPLY_GUARD"] !== "0"; }
 
@@ -27,7 +34,7 @@ export const defaultFetcher: RegistryFetcher = async (url, timeoutMs) => {
 type Eco = "npm" | "pypi" | "go" | "cargo";
 export function manifestEcosystem(path: string): Eco | null {
   const b = basename(path);
-  if (b === "package.json") return "npm";
+  if (b === "package.json" || b === "package-lock.json") return "npm";
   if (/^requirements.*\.txt$/.test(b) || b === "pyproject.toml") return "pypi";
   if (b === "go.mod") return "go";
   if (b === "Cargo.toml") return "cargo";
@@ -43,12 +50,17 @@ function npmDeps(text: string): string[] {
   for (const k of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
     const d = j[k]; if (!d || typeof d !== "object") continue;
     for (const [name, spec] of Object.entries(d as Record<string, unknown>)) {
-      const s = String(spec);
-      if (/^(file|link|workspace|git|git\+\w+|https?|github):/.test(s)) continue; // not a registry spec
-      out.push(name);
+      const s = String(spec).trim();
+      if (/^(file|link|workspace|portal|catalog|git|git\+\w+|https?|github|gitlab|bitbucket):/.test(s) || /^[./~]/.test(s) || /^[\w.-]+\/[\w.-]+(#.*)?$/.test(s)) continue; // not a registry spec
+      const alias = /^npm:(@?[^@]+)(@.*)?$/.exec(s); // an alias installs the target package
+      out.push(alias ? alias[1]! : name);
     }
   }
   return out;
+}
+
+function lockDeps(text: string): string[] {
+  try { return Object.keys(((JSON.parse(text) as Record<string, unknown>)["packages"] ?? {}) as object).map((k) => k.replace(/^.*node_modules\//, "")).filter((k) => k && !k.startsWith("/")); } catch { return []; }
 }
 
 function reqLine(line: string): string | null {
@@ -60,16 +72,24 @@ function reqLine(line: string): string | null {
 
 function pyprojectDeps(text: string): string[] {
   const out: string[] = [];
-  for (const m of text.matchAll(/^\s*(?:dependencies|[A-Za-z0-9_-]+)\s*=\s*\[([\s\S]*?)\n?\s*\]/gm)) {
-    for (const s of m[1]!.matchAll(/"([^"]+)"|'([^']+)'/g)) { const n = reqLine(s[1] ?? s[2] ?? ""); if (n) out.push(n); }
-  }
-  let inPoetry = false;
+  let table = "", key = "", buf: string[] | null = null;
+  const take = (arr: string): void => { for (const m of arr.matchAll(/"([^"]+)"|'([^']+)'/g)) { const n = reqLine(m[1] ?? m[2] ?? ""); if (n) out.push(n); } };
+  const wanted = (t: string, k: string): boolean =>
+    (t === "project" && k === "dependencies") || t === "project.optional-dependencies" || t === "dependency-groups" || (t === "build-system" && k === "requires");
   for (const line of text.split("\n")) {
-    const h = /^\s*\[([^\]]+)\]/.exec(line);
-    if (h) { inPoetry = /^tool\.poetry\.(group\.[^.]+\.)?dependencies$|^tool\.poetry\.dev-dependencies$/.test(h[1]!.trim()); continue; }
-    if (!inPoetry) continue;
-    const m = /^\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*=/.exec(line);
-    if (m && m[1]!.toLowerCase() !== "python") out.push(pyNorm(m[1]!));
+    if (buf) { buf.push(line); if (/\]\s*(#.*)?$/.test(line.trim())) { if (wanted(table, key)) take(buf.join("\n")); buf = null; } continue; }
+    const h = /^\s*\[([^\[\]]+)\]\s*(#.*)?$/.exec(line);
+    if (h) { table = h[1]!.trim(); continue; }
+    if (/^\s*\[\[/.test(line)) { table = ""; continue; }
+    const m = /^\s*([A-Za-z0-9_.-]+|"[^"]+")\s*=\s*(.*)$/.exec(line);
+    if (!m) { continue; }
+    key = m[1]!.replace(/"/g, ""); const rest = m[2]!;
+    if (table === "project" && key === "dependencies" || table === "project.optional-dependencies" || table === "dependency-groups" || (table === "build-system" && key === "requires")) {
+      if (rest.trim().startsWith("[")) { if (/\]\s*(#.*)?$/.test(rest.trim())) { take(rest); } else buf = [rest]; }
+    } else if (/^tool\.poetry\.(group\.[^.]+\.)?dependencies$|^tool\.poetry\.dev-dependencies$/.test(table)) {
+      if (key.toLowerCase() !== "python") out.push(pyNorm(key));
+      if (!/^["'{\[]/.test(rest.trim()) && !/^\d/.test(rest.trim())) continue;
+    } else if (rest.trim().startsWith("[") && !/\]\s*(#.*)?$/.test(rest.trim())) buf = [rest]; // skip other multi-line arrays
   }
   return out;
 }
@@ -104,7 +124,7 @@ function cargoDeps(text: string): string[] {
 
 export function parseDeps(path: string, text: string): string[] {
   const eco = manifestEcosystem(path);
-  if (eco === "npm") return npmDeps(text);
+  if (eco === "npm") return basename(path) === "package-lock.json" ? lockDeps(text) : npmDeps(text);
   if (eco === "go") return goDeps(text);
   if (eco === "cargo") return cargoDeps(text);
   if (eco === "pypi") return basename(path) === "pyproject.toml" ? pyprojectDeps(text) : text.split("\n").map(reqLine).filter((x): x is string => !!x);
@@ -116,15 +136,31 @@ async function show(cwd: string, sha: string, path: string): Promise<string> {
   return r.exitCode === 0 ? r.stdout : "";
 }
 
+/** A requirements file that names its own index cannot be judged against the public PyPI. */
+export function usesCustomIndex(path: string, text: string): boolean { return /^requirements.*\.txt$/.test(basename(path)) && /^\s*(--index-url|--extra-index-url|-i)\b/m.test(text); }
+
+export interface NewDep { ecosystem: Eco; name: string; manifest: string; customIndex?: boolean }
 /** Dependencies present at head and absent at base, per touched manifest. */
-export async function newDependencies(repoDir: string, baseSha: string, head: string, changedFiles: string[]): Promise<{ ecosystem: Eco; name: string; manifest: string }[]> {
-  const out: { ecosystem: Eco; name: string; manifest: string }[] = [];
+export async function newDependencies(repoDir: string, baseSha: string, head: string, changedFiles: string[]): Promise<NewDep[]> {
+  const out: NewDep[] = [];
   for (const f of [...new Set(changedFiles)]) {
     const eco = manifestEcosystem(f); if (!eco) continue;
     const before = new Set(parseDeps(f, await show(repoDir, baseSha, f)));
-    for (const n of new Set(parseDeps(f, await show(repoDir, head, f)))) if (!before.has(n)) out.push({ ecosystem: eco, name: n, manifest: f });
+    const headText = await show(repoDir, head, f), custom = usesCustomIndex(f, headText);
+    for (const n of new Set(parseDeps(f, headText))) if (!before.has(n)) out.push({ ecosystem: eco, name: n, manifest: f, ...(custom ? { customIndex: true } : {}) });
   }
   return out;
+}
+
+/** Names of every package.json in the head tree: workspace siblings are local, never registry lookups. */
+export async function localPackageNames(repoDir: string, head: string): Promise<Set<string>> {
+  const names = new Set<string>();
+  const ls = await run(["git", "ls-tree", "-r", "--name-only", "-z", head], { cwd: repoDir, timeoutMs: 20000 });
+  if (ls.exitCode !== 0) return names;
+  for (const f of ls.stdout.split("\0").filter((x) => basename(x) === "package.json" && !x.includes("node_modules/")).slice(0, 300)) {
+    try { const n = (JSON.parse(await show(repoDir, head, f)) as Record<string, unknown>)["name"]; if (typeof n === "string") names.add(n); } catch { /* unparsable manifest */ }
+  }
+  return names;
 }
 
 export function readAllowlist(repoDir: string): Set<string> {
@@ -133,18 +169,46 @@ export function readAllowlist(repoDir: string): Set<string> {
   try { return new Set(readFileSync(p, "utf8").split("\n").map((l) => l.replace(/#.*$/, "").trim()).filter(Boolean)); } catch { return new Set(); }
 }
 
+export interface RegistryConfig { npmDefault: string; npmScopes: Record<string, string>; pypiBase: string | null }
+function readConf(p: string): string { try { return existsSync(p) ? readFileSync(p, "utf8") : ""; } catch { return ""; } }
+const trimSlash = (u: string): string => u.replace(/\/+$/, "");
+/** The user's configured registries: env, then repo .npmrc, ~/.npmrc, pip.conf. Defaults are the public registries. */
+export function registryConfig(repoDir: string, env: NodeJS.ProcessEnv): RegistryConfig {
+  const c: RegistryConfig = { npmDefault: "https://registry.npmjs.org", npmScopes: {}, pypiBase: null };
+  const home = env["HOME"] || homedir();
+  for (const text of [readConf(join(home, ".npmrc")), readConf(join(repoDir, ".npmrc"))]) { // later (repo) wins
+    for (const line of text.split("\n")) {
+      const m = /^\s*(@[^:\s]+:)?registry\s*=\s*(\S+)/.exec(line.replace(/[;#].*$/, ""));
+      if (!m) continue;
+      if (m[1]) c.npmScopes[m[1].slice(0, -1)] = trimSlash(m[2]!); else c.npmDefault = trimSlash(m[2]!);
+    }
+  }
+  const e = env["npm_config_registry"] || env["NPM_CONFIG_REGISTRY"]; if (e) c.npmDefault = trimSlash(e);
+  let idx = env["PIP_INDEX_URL"] ?? "";
+  if (!idx) for (const p of [join(home, ".config", "pip", "pip.conf"), join(home, ".pip", "pip.conf"), join(repoDir, "pip.conf")]) { const m = /^\s*index-url\s*[=:]\s*(\S+)/m.exec(readConf(p)); if (m) idx = m[1]!; }
+  if (idx) c.pypiBase = trimSlash(idx).replace(/\/simple$/, "");
+  return c;
+}
+
 type Probe = { kind: "nonexistent" } | { kind: "unreachable" } | { kind: "found"; firstPublish: number | null };
 
-async function probe(eco: "npm" | "pypi", name: string, fetcher: RegistryFetcher): Promise<Probe> {
-  const url = eco === "npm" ? `https://registry.npmjs.org/${name.startsWith("@") ? name.replace("/", "%2F") : name}` : `https://pypi.org/pypi/${encodeURIComponent(name)}/json`;
+async function probe(eco: "npm" | "pypi", name: string, fetcher: RegistryFetcher, cfg: RegistryConfig): Promise<Probe> {
+  let url: string, custom = false;
+  if (eco === "npm") {
+    const scope = name.startsWith("@") ? name.split("/")[0]! : "";
+    const root = (scope && cfg.npmScopes[scope]) || cfg.npmDefault; custom = root !== "https://registry.npmjs.org";
+    url = `${root}/${name.startsWith("@") ? name.replace("/", "%2F") : name}`;
+  } else { custom = cfg.pypiBase !== null; url = `${cfg.pypiBase ?? "https://pypi.org"}/pypi/${encodeURIComponent(name)}/json`; }
   let r: RegistryReply;
   try { r = await fetcher(url, 10000); } catch { return { kind: "unreachable" }; }
-  if (r.status === 404) return { kind: "nonexistent" };
+  // A configured private registry (.npmrc / pip.conf) may not mirror or expose the package: a 404 proves nothing about existence.
+  if (r.status === 404) return custom ? { kind: "unreachable" } : { kind: "nonexistent" };
   if (r.status !== 200 || !r.json || typeof r.json !== "object") return { kind: "unreachable" };
   const j = r.json as Record<string, unknown>;
   const times: number[] = [];
   if (eco === "npm") {
     const t = (j["time"] ?? {}) as Record<string, unknown>;
+    if (t["unpublished"] || !j["versions"] || Object.keys(j["versions"] as object).length === 0) return custom ? { kind: "unreachable" } : { kind: "nonexistent" };
     for (const [k, v] of Object.entries(t)) if (k !== "modified") { const n = Date.parse(String(v)); if (Number.isFinite(n)) times.push(n); }
   } else {
     for (const files of Object.values((j["releases"] ?? {}) as Record<string, unknown>)) {
@@ -162,11 +226,16 @@ export function setSupplyFetcher(f: RegistryFetcher | null): void { injected = f
 export async function supplyGuard(repoDir: string, baseSha: string, head: string, changedFiles: string[], env: NodeJS.ProcessEnv, opts: { fetcher?: RegistryFetcher; now?: number } = {}): Promise<SupplyResult> {
   const none: SupplyResult = { block: null, notProven: [], blocked: false };
   if (!supplyEnabled(env)) return none;
-  const fetcher = opts.fetcher ?? injected ?? defaultFetcher, now = opts.now ?? Date.now();
-  let added: Awaited<ReturnType<typeof newDependencies>>;
+  const raw = opts.fetcher ?? injected ?? defaultFetcher, now = opts.now ?? Date.now();
+  const cache = new Map<string, Promise<RegistryReply>>(); // per-run lookup cache
+  const fetcher: RegistryFetcher = (u, t) => { let h = cache.get(u); if (!h) { h = raw(u, t); cache.set(u, h); } return h; };
+  const cfg = registryConfig(repoDir, env), failAge = failAgeDays(env);
+  let added: NewDep[];
   try { added = await newDependencies(repoDir, baseSha, head, changedFiles); } catch { return none; }
   if (added.length === 0) return none;
-  const allow = readAllowlist(repoDir);
+  const allow = readAllowlist(repoDir), local = await localPackageNames(repoDir, head).catch(() => new Set<string>());
+  added = added.filter((d) => !(d.ecosystem === "npm" && local.has(d.name))); // workspace siblings
+  if (added.length === 0) return none;
   const notProven: string[] = []; let blocked = false;
   const checkable = added.filter((d) => (d.ecosystem === "npm" || d.ecosystem === "pypi") && !allow.has(d.name));
   const overflow = new Set(checkable.slice(MAX_CHECKED));
@@ -174,20 +243,25 @@ export async function supplyGuard(repoDir: string, baseSha: string, head: string
     const base = { ecosystem: d.ecosystem, name: d.name, manifest: d.manifest };
     if (d.ecosystem !== "npm" && d.ecosystem !== "pypi") return { ...base, status: "unsupported" };
     if (allow.has(d.name)) return { ...base, status: "allowlisted" };
-    if (overflow.has(d)) return { ...base, status: "unreachable" };
-    const p = await probe(d.ecosystem, d.name, fetcher);
+    if (d.customIndex) return { ...base, status: "unreachable" };
+    if (overflow.has(d)) return { ...base, status: "capped" };
+    const p = await probe(d.ecosystem, d.name, fetcher, cfg);
     if (p.kind === "nonexistent") return { ...base, status: "nonexistent" };
     if (p.kind === "unreachable" || p.firstPublish === null) return { ...base, status: "unreachable" };
     const age = Math.floor((now - p.firstPublish) / DAY_MS);
-    return { ...base, status: age < MIN_AGE_DAYS ? "too_new" : "ok", age_days: age };
+    return { ...base, status: age < Math.max(MIN_AGE_DAYS, failAge ?? 0) ? "too_new" : "ok", age_days: age };
   }));
   for (const e of entries) {
     const id = `${e.ecosystem}:${e.name} (${e.manifest})`;
     if (e.status === "nonexistent") { blocked = true; notProven.push(`supply guard FAILED: ${id} does not exist on the registry (possible hallucinated package)`); }
-    else if (e.status === "too_new") { blocked = true; notProven.push(`supply guard FAILED: ${id} first published ${e.age_days} days ago (minimum ${MIN_AGE_DAYS}); allowlist in .loki/supply-allowlist to accept`); }
+    else if (e.status === "too_new") {
+      if (failAge !== null && (e.age_days ?? 0) < failAge) { blocked = true; notProven.push(`supply guard FAILED: ${id} first published ${e.age_days} days ago (LOKI_SUPPLY_MIN_AGE_DAYS=${failAge}); allowlist in .loki/supply-allowlist to accept`); }
+      else notProven.push(`supply guard WARNING: ${id} first published ${e.age_days} days ago (under ${MIN_AGE_DAYS}); verdict unchanged`);
+    }
     else if (e.status === "unreachable") notProven.push(`supply guard NOT PROVEN: registry unreachable or unreadable for ${id}`);
+    else if (e.status === "capped") notProven.push(`supply guard: not checked: cap ${MAX_CHECKED} exceeded: ${id}`);
     else if (e.status === "unsupported") notProven.push(`supply guard: not checked (ecosystem unsupported in v1): ${id}`);
     else if (e.status === "allowlisted") notProven.push(`supply guard: allowlisted, not checked: ${id}`);
   }
-  return { block: { guard: "v1", min_age_days: MIN_AGE_DAYS, entries }, notProven, blocked };
+  return { block: { guard: "v1", warn_age_days: MIN_AGE_DAYS, fail_age_days: failAge, entries }, notProven, blocked };
 }
