@@ -462,6 +462,7 @@ declare -a _FAST_KEEP=(
   "tests/test-web-app-no-orphan-components.sh"
   "tests/test-release-sbom-attached.sh"       # 0.2s
   "tests/test-promote-head-stamp.sh"          # FC-51, static workflow check
+  "tests/test-promote-smoke-sha.sh"           # FC-71, smoke gate head_sha fixtures
   "tests/test-nightly-flake-tracker.sh"       # FC-53, offline fixtures
   "tests/test-workflow-no-masked-failures.sh" # FC-57, static workflow check
   "tests/test-sigpipe-guard.sh"               # FC-64, pipe-to-grep-q ratchet

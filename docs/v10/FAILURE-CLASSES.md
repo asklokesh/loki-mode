@@ -649,3 +649,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: release.sh bump_all_version_files slots and generate-stale-zero.sh targets (README.md facts block carries no version and is unchanged by a bump; SKILL.md, Chart.yaml appVersion, CLI-REFERENCE.md generated line are the only generated version carriers). Both copies of the allowlist (release.yml STEP 1, scripts/ci/version-bump-only.sh) updated; they are byte-compared by tests/test-version-bump-only.sh.
 - Mechanism: one derivation, not two lists. tests/test-version-bump-only.sh now derives the version-bearing paths from scripts/release.sh (update_version_slot targets) and scripts/generate-stale-zero.sh (Chart.yaml and CLI-REFERENCE targets) and asserts each is in the allowlist of both copies.
 - Fixture: tests/test-version-bump-only.sh "FC-70" cases (static subset check, per-file chart/cli-ref pure-bump fixtures, and a replay of 54a519a22 -> eee891534 when both objects exist). Red before the fix (ALLOWLIST lacks the four paths), green after.
+
+## FC-71 Promote blocked on a green legacy-titled Post-Release Smoke (PROMOTE-SMOKE-SHA)
+- User-visible vs raw: user-visible. Promote run 37838898754 printed "Post-Release Smoke for 75bbbb9... is none" and refused 11.3.2 although smoke run 37833604487 at that head_sha concluded success.
+- Law broken: evidence or it did not happen; a gate must read the evidence that exists, not only the newest title format.
+- Sibling sweep: the nightly and Tests gates in promote.yml already match by head_sha; only the smoke gate matched by display_title alone.
+- Shared mechanism: the smoke gate also accepts a completed workflow_run-event smoke run whose head_sha equals the released commit; newest matching run decides, API error stays fail closed.
+- Fixture: tests/test-promote-smoke-sha.sh (legacy-titled green passes, newer red blocks, no match blocks, API error blocks).
