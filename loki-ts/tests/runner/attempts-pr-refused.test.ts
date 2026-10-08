@@ -1,9 +1,12 @@
 // 11.3.1: `start --attempts N` (N>1) without --no-pr is refused before any worktree, pin or spawn (FC-40 open gap).
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+
+// Each test spawns bin/loki with a 60-120s budget; bun's 5s default fails them under full-suite load (FC-38).
+setDefaultTimeout(130_000);
 
 const REPO = resolve(import.meta.dir, "../../..");
 const MSG = "--attempts opens no PR yet in 11.3.1; rerun with --no-pr, PR support ships in 11.3.2";

@@ -1,9 +1,12 @@
 // FC-25: no attempt's engine10 spawn may carry the GitHub token family, even when the parent env has them.
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+
+// Each test spawns bin/loki with a 60-120s budget; bun's 5s default fails them under full-suite load (FC-38).
+setDefaultTimeout(130_000);
 
 const REPO = resolve(import.meta.dir, "../../..");
 const START_TS = join(REPO, "loki-ts/src/commands/start.ts");
