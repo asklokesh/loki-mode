@@ -633,3 +633,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: `gitleaks dir .gitleaksignore` over every other comment and fingerprint line: line 123 was the only finding. The three fixture copy sites all go through one helper now.
 - Mechanism: (1) the comment is reworded so it no longer trips a rule; (2) copy_real_gitleaksignore copies fingerprint lines only (comments carry no suppression), so a future prose comment cannot break fixtures; (3) a guard case scans the real .gitleaksignore with the pinned gitleaks and fails on any finding. No fingerprint added, hook untouched.
 - Fixture: tests/test-pre-push-gitleaks.sh "FC-66: the real .gitleaksignore scans clean as content". Red before the fix (suite rc=1 at c8, gitleaks reports 1 leak at line 123), green after.
+
+## FC-67 Promote blocked on a green legacy-titled Post-Release Smoke (PROMOTE-SMOKE-SHA)
+- User-visible vs raw: user-visible. Promote run 37838898754 printed "Post-Release Smoke for 75bbbb9... is none" and refused 11.3.2 although smoke run 37833604487 at that head_sha concluded success.
+- Law broken: evidence or it did not happen; a gate must read the evidence that exists, not only the newest title format.
+- Sibling sweep: the nightly and Tests gates in promote.yml already match by head_sha; only the smoke gate matched by display_title alone.
+- Shared mechanism: the smoke gate also accepts a completed workflow_run-event smoke run whose head_sha equals the released commit; newest matching run decides, API error stays fail closed.
+- Fixture: tests/test-promote-smoke-sha.sh (legacy-titled green passes, newer red blocks, no match blocks, API error blocks).

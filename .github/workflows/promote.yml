@@ -219,8 +219,10 @@ jobs:
       # commit, so runs are matched by display_title (run-name in
       # post-release-smoke.yml): "Post-Release Smoke <gitHead>" for a
       # Release-triggered run, "Post-Release Smoke v<version>" for a dispatched
-      # one. The newest completed matching run decides. Runs from before the
-      # run-name existed have no such title and fail closed.
+      # one. A Release-triggered run from before the run-name existed is titled
+      # just "Post-Release Smoke"; it is also accepted when its event is
+      # workflow_run and its head_sha equals the released commit (FC-67). The
+      # newest completed matching run decides, so a newer red still blocks.
       - name: Require a green Post-Release Smoke for this version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -230,7 +232,7 @@ jobs:
           set -euo pipefail
           [ -n "${GITHEAD:-}" ] || { echo "PROMOTE-BLOCK: no head SHA for ${VERSION}; not promoting (fail closed)"; exit 1; }
           SMOKE="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/post-release-smoke.yml/runs?status=completed&per_page=50" \
-            --jq '[.workflow_runs[] | select(.display_title == "Post-Release Smoke '"${GITHEAD}"'" or .display_title == "Post-Release Smoke v'"${VERSION}"'")] | .[0] | if . == null then "none|none" else [(.conclusion // "none"), (.html_url // "none")] | join("|") end')" || {
+            --jq '[.workflow_runs[] | select(.display_title == "Post-Release Smoke '"${GITHEAD}"'" or .display_title == "Post-Release Smoke v'"${VERSION}"'" or (.event == "workflow_run" and .head_sha == "'"${GITHEAD}"'"))] | .[0] | if . == null then "none|none" else [(.conclusion // "none"), (.html_url // "none")] | join("|") end')" || {
             echo "PROMOTE-BLOCK: could not read the Post-Release Smoke runs from the API; not promoting ${VERSION} (fail closed)"
             exit 1
           }
