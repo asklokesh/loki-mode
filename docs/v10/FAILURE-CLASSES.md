@@ -710,3 +710,19 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: the dry-run case skips the gate (verified passing without a provider); the other provider-gated suites (test-provider-preflight.sh) already build stub PATHs.
 - Mechanism: the case now puts a stub claude on PATH so the refusal path under test is reached on every host.
 - Fixture: tests/test-plan-command.sh test 25; red with the stub removed on a provider-less PATH, green with it.
+
+## FC-80 Shard-coverage watch fails when a guessed duration row displaces LPT packing (MAIN-REDS-1134)
+- User saw: Tests red on main 082cd57a4 (run 37848611813, Structural guards and shard 8): tests/test-shard-coverage.sh "expected 5 watched suites in 5 distinct shards", trust-core and E2e Features both in shard 1.
+- Law: a data table that drives a deterministic packer must hold measured values; a guessed row silently reshuffles the packing.
+- Cause (measured): the HELP-DRIFT merge added the row "help drift (CHANGELOG loki invocations in help and completion)" at 25s; the suite runs in 3.0s locally. The inflated row shifted the LPT rotation so two watched heavy suites landed together. Deterministic.
+- Siblings swept: every registered run_test name has a row in tests/shard-durations.tsv (0 missing); the other rows added this train (1, 3, 8s) are small and did not move the watched five.
+- Mechanism: row set to the measured 3s; test-shard-coverage passes 19/0.
+- Fixture: tests/test-shard-coverage.sh T5 (red at 25, green at 3).
+
+## FC-81 Scanner invoked in a test inherits stdin and reads the CI plan instead of _NM_FILES (MAIN-REDS-1134)
+- User saw: Tests red on main 082cd57a4 (shard 11): tests/test-nomock-data-render.sh "extension resolution must be deterministic across Python hash seeds", 67 passed 1 failed.
+- Law: a probe must use the transport the product uses; an inherited stdin is an input.
+- Cause (measured): no_mock_scan.py reads stdin first and falls back to _NM_FILES. The seed loop passed only _NM_FILES, so under the fast-gate runner loop (`done <"$plan"`) the scanner consumed plan lines as the changed-file list, found no hit and printed PASS. Hash seeds were never the cause. Reproduced locally: running the suite with a non-empty file on stdin gave exactly 67/1; with stdin from the terminal it passed.
+- Siblings swept: verify.sh and completion-council.sh already pipe the list on stdin; the three stdin-shape probes in the same suite already set stdin explicitly.
+- Mechanism: the seed loop feeds the list via here-string on stdin (the production transport). The scanner's extension order is already an explicit tuple.
+- Fixture: tests/test-nomock-data-render.sh run with `< nonempty-file`: 67/1 before, 68/0 after.
