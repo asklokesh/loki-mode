@@ -4,7 +4,7 @@
 // LOKI_SDK_LOOP=1). The runAutonomous delegation itself is covered by the
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { parseStartArgs } from "../../src/commands/start.ts";
+import { parseStartArgs, startEngine } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -22,7 +22,7 @@ const collect = (s: string) => {
 describe("parseStartArgs (Bun start flag subset)", () => {
   it("no spec -> exit 2", () => {
     errs.length = 0;
-    expect(parseStartArgs(["--yes"], collect)).toBe(2);
+    expect(parseStartArgs(["--max-iterations", "3"], collect)).toBe(2);
     expect(errs.join("")).toContain("spec source");
   });
 
@@ -30,7 +30,7 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     // Capture env writes: --session-model exports LOKI_SESSION_MODEL, which must
     // not leak into other test files sharing this process.
     const r = parseStartArgs(
-      ["./prd.md", "--budget-limit", "2.50", "--provider", "claude", "--session-model", "development", "--no-pr"],
+      ["./prd.md", "--max-iterations", "5", "--budget-limit", "2.50", "--provider", "claude", "--session-model", "development"],
       collect,
       () => {},
       () => {},
@@ -38,7 +38,7 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(typeof r).not.toBe("number");
     const opts = r as Exclude<typeof r, number>;
     expect(opts.prdPath).toBe("./prd.md");
-    expect(opts.noPr).toBe(true);
+    expect(opts.maxIterations).toBe(5);
     expect(opts.budgetLimit).toBe(2.5);
     expect(opts.provider).toBe("claude");
     expect(opts.sessionModel).toBe("development");
@@ -49,35 +49,40 @@ describe("parseStartArgs (Bun start flag subset)", () => {
     expect(parseStartArgs(["./prd.md", "--resume", "abc"], collect)).toBe(2);
     const msg = errs.join("");
     expect(msg).toContain("--resume is not supported");
-    expect(msg).toContain("only the Loki 10 engine");
+    expect(msg).toContain("bash route");
   });
 
-  // FC-38 / FC-37 class: a flag is either honored by engine10 or refused. Never accepted and dropped.
-  it("every legacy-only runner flag is refused with exit 2, never accepted and dropped", () => {
-    const legacy: string[][] = [
-      ["--max-iterations", "5"], ["--max-retries", "2"], ["--completion-promise", "x"], ["--base-wait", "1"],
-      ["--max-wait", "1"], ["--aider-model", "m"], ["--aider-flags", "f"], ["--cline-model", "m"],
-      ["--allow-haiku"], ["--simple"], ["--complex"], ["--regen-prd"], ["--regenerate-prd"], ["--regen"],
-      ["--fresh-prd"], ["--skip-memory"],
-    ];
-    for (const f of legacy) {
-      errs.length = 0;
-      expect(parseStartArgs(["./prd.md", ...f], collect, () => {}, () => {})).toBe(2);
-      expect(errs.join("")).toContain(`flag ${f[0]} is not supported`);
-    }
-  });
-
-  it("every accepted flag reaches engine10 (child argv, child env, or the attempts runner)", () => {
+  // --- RUN-25 iter 2: T3(c) reconciled flag surface -----------------------
+  it("boolean env-mapping flags set env, not consume a value token", () => {
     const env: Record<string, string> = {};
-    const r = parseStartArgs(
-      ["./prd.md", "--provider", "codex", "--budget", "4", "--session-model", "opus", "--attempts", "3", "--no-pr", "--yes", "--no-plan"],
-      collect, () => {}, (k, v) => (env[k] = v),
-    ) as Exclude<ReturnType<typeof parseStartArgs>, number>;
-    expect(r.provider).toBe("codex"); // child argv --provider
-    expect(r.budgetLimit).toBe(4); // child argv --max-cost
-    expect(r.noPr).toBe(true); // child argv --no-pr and the winner PR decision
-    expect(r.attempts).toBe(3); // attempts runner
-    expect(env["LOKI_SESSION_MODEL"]).toBe("opus"); // child env
+    const applyEnv = (k: string, v: string) => {
+      env[k] = v;
+    };
+    // --allow-haiku is boolean; the spec must still be found right after it.
+    const r = parseStartArgs(["--allow-haiku", "./prd.md"], collect, () => {}, applyEnv);
+    const opts = r as Exclude<typeof r, number>;
+    expect(opts.prdPath).toBe("./prd.md"); // NOT swallowed as --allow-haiku's value
+    expect(env["LOKI_ALLOW_HAIKU"]).toBe("true");
+  });
+
+  it("--simple / --complex map to LOKI_COMPLEXITY", () => {
+    const env: Record<string, string> = {};
+    parseStartArgs(["./prd.md", "--simple"], collect, () => {}, (k, v) => (env[k] = v));
+    expect(env["LOKI_COMPLEXITY"]).toBe("simple");
+    const env2: Record<string, string> = {};
+    parseStartArgs(["./prd.md", "--complex"], collect, () => {}, (k, v) => (env2[k] = v));
+    expect(env2["LOKI_COMPLEXITY"]).toBe("complex");
+  });
+
+  it("--regen spellings all set LOKI_PRD_REGEN; --skip-memory sets LOKI_SKIP_MEMORY", () => {
+    for (const flag of ["--regen-prd", "--regenerate-prd", "--regen", "--fresh-prd"]) {
+      const env: Record<string, string> = {};
+      parseStartArgs(["./prd.md", flag], collect, () => {}, (k, v) => (env[k] = v));
+      expect(env["LOKI_PRD_REGEN"]).toBe("1");
+    }
+    const env: Record<string, string> = {};
+    parseStartArgs(["./prd.md", "--skip-memory"], collect, () => {}, (k, v) => (env[k] = v));
+    expect(env["LOKI_SKIP_MEMORY"]).toBe("true");
   });
 
   it("--budget is an alias of --budget-limit", () => {
@@ -107,6 +112,18 @@ describe("parseStartArgs (Bun start flag subset)", () => {
   it("-- ends options: the next token is the spec even if it looks like a flag", () => {
     const r = parseStartArgs(["--", "--weird-spec-name"], collect);
     expect((r as Exclude<typeof r, number>).prdPath).toBe("--weird-spec-name");
+  });
+
+  it("provider-specific value flags map to env", () => {
+    const env: Record<string, string> = {};
+    parseStartArgs(
+      ["./prd.md", "--provider", "aider", "--aider-model", "gpt-x", "--cline-model", "c-y"],
+      collect,
+      () => {},
+      (k, v) => (env[k] = v),
+    );
+    expect(env["LOKI_AIDER_MODEL"]).toBe("gpt-x");
+    expect(env["LOKI_CLINE_MODEL"]).toBe("c-y");
   });
 
   it("unknown --provider -> exit 2", () => {
@@ -146,15 +163,88 @@ describe("parseStartArgs (Bun start flag subset)", () => {
   });
 
   it("zero / negative numeric values fall back to undefined (not passed through)", () => {
-    const r = parseStartArgs(["./prd.md", "--budget-limit", "-1"], collect);
+    const r = parseStartArgs(["./prd.md", "--max-iterations", "0", "--budget-limit", "-1"], collect);
     const opts = r as Exclude<typeof r, number>;
+    expect(opts.maxIterations).toBeUndefined();
     expect(opts.budgetLimit).toBeUndefined();
   });
 
   it("spec after flags is still found (order-independent)", () => {
-    const r = parseStartArgs(["--budget", "2", "owner/repo#123"], collect);
+    const r = parseStartArgs(["--max-iterations", "2", "owner/repo#123"], collect);
     const opts = r as Exclude<typeof r, number>;
     expect(opts.prdPath).toBe("owner/repo#123");
-    expect(opts.budgetLimit).toBe(2);
+    expect(opts.maxIterations).toBe(2);
+  });
+});
+
+// FC-38 scoped (CTO ruling A): only `start --attempts` is engine10-only. Every other start keeps the
+// exact 11.3.0 flag surface and runner route; the moat P9 harness runs `start prd.md --max-iterations 2`.
+describe("FC-38 scope: plain start is 11.3.0, --attempts is engine10-only", () => {
+  const legacy: string[][] = [
+    ["--max-iterations", "5"], ["--max-retries", "2"], ["--completion-promise", "x"], ["--base-wait", "1"],
+    ["--max-wait", "1"], ["--aider-model", "m"], ["--aider-flags", "f"], ["--cline-model", "m"],
+    ["--allow-haiku"], ["--simple"], ["--complex"], ["--regen-prd"], ["--regenerate-prd"], ["--regen"],
+    ["--fresh-prd"], ["--skip-memory"],
+  ];
+
+  it("plain start prd.md --max-iterations 2 parses as in 11.3.0 and routes to the runner", () => {
+    errs.length = 0;
+    const r = parseStartArgs(["prd.md", "--max-iterations", "2"], collect, () => {}, () => {});
+    expect(typeof r).not.toBe("number");
+    const opts = r as Exclude<typeof r, number>;
+    expect(opts.prdPath).toBe("prd.md");
+    expect(opts.maxIterations).toBe(2);
+    expect(opts.attempts).toBeUndefined();
+    expect(startEngine(opts)).toBe("runner");
+    expect(errs.join("")).toBe("");
+  });
+
+  it("every legacy runner flag is accepted on plain start (11.3.0) and routes to the runner", () => {
+    for (const f of legacy) {
+      errs.length = 0;
+      const r = parseStartArgs(["./prd.md", ...f], collect, () => {}, () => {});
+      expect(typeof r).not.toBe("number");
+      expect(startEngine(r as Exclude<typeof r, number>)).toBe("runner");
+      expect(errs.join("")).toBe("");
+    }
+  });
+
+  it("plain start keeps the 11.3.0 refusal text for unsupported flags", () => {
+    errs.length = 0;
+    expect(parseStartArgs(["./prd.md", "--no-pr"], collect)).toBe(2);
+    expect(errs.join("")).toContain("not supported by the Bun (LOKI_SDK_LOOP) runner");
+  });
+
+  it("with --attempts every legacy-only runner flag is refused with exit 2, never accepted and dropped", () => {
+    for (const f of legacy) {
+      errs.length = 0;
+      expect(parseStartArgs(["./prd.md", "--attempts", "2", "--no-pr", ...f], collect, () => {}, () => {})).toBe(2);
+      expect(errs.join("")).toContain(`flag ${f[0]} is not supported by loki start --attempts`);
+    }
+  });
+
+  it("with --attempts every accepted flag reaches engine10 (child argv, child env, or the attempts runner)", () => {
+    const env: Record<string, string> = {};
+    const r = parseStartArgs(
+      ["./prd.md", "--provider", "codex", "--budget", "4", "--session-model", "opus", "--attempts", "3", "--no-pr", "--yes", "--no-plan"],
+      collect, () => {}, (k, v) => (env[k] = v),
+    ) as Exclude<ReturnType<typeof parseStartArgs>, number>;
+    expect(r.provider).toBe("codex");
+    expect(r.budgetLimit).toBe(4);
+    expect(r.noPr).toBe(true);
+    expect(r.attempts).toBe(3);
+    expect(env["LOKI_SESSION_MODEL"]).toBe("opus");
+    expect(startEngine(r)).toBe("attempts");
+  });
+
+  it("--attempts=1 still takes the attempts (engine10) path", () => {
+    const r = parseStartArgs(["./prd.md", "--attempts=1"], collect, () => {}, () => {});
+    expect(startEngine(r as Exclude<typeof r, number>)).toBe("attempts");
+  });
+
+  it("--attempts out of range -> exit 2", () => {
+    errs.length = 0;
+    expect(parseStartArgs(["./prd.md", "--attempts", "9"], collect)).toBe(2);
+    expect(errs.join("")).toContain("--attempts must be an integer from 1 to 5");
   });
 });
