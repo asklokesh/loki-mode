@@ -32,9 +32,17 @@ SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)
 BASH_CLI="$REPO_ROOT/autonomy/loki"
 
-# FC-38: `loki start` never falls back to the legacy bash loop; every other command may.
+# FC-38 (scoped): `loki start --attempts` never reaches the legacy bash loop. Every other
+# start, and every other command, keeps the plain bash fallback.
+_LOKI_START_ATTEMPTS=0
+if [ "${1:-}" = "start" ]; then
+    for _loki_a0 in "${@:2}"; do
+        case "$_loki_a0" in --attempts|--attempts=*) _LOKI_START_ATTEMPTS=1 ;; esac
+    done
+    unset _loki_a0
+fi
 _loki_bash_or_refuse() {
-    if [ "${1:-}" = "start" ]; then
+    if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
         echo "loki: 'loki start' runs only the Loki 10 engine, which needs the Bun entry (loki-ts). It cannot fall back to the removed legacy loop; reinstall loki-mode or fix LOKI_TS_ENTRY / BUN_FROM_SOURCE." >&2
         exit 1
     fi
@@ -344,6 +352,70 @@ case "${1:-}" in
         ;;
 esac
 
+_loki_start_needs_bash() {
+    # $@ = the start args (already know $1 = start). Return 0 (divert to bash) if
+    # any bash-only orchestration flag or an issue-ref spec is present.
+    local a
+    local explicit_provider=""
+    local provider_value_next=0
+    for a in "$@"; do
+        if [ "$provider_value_next" = "1" ]; then
+            explicit_provider="$a"
+            provider_value_next=0
+            continue
+        fi
+        case "$a" in
+            --provider)
+                provider_value_next=1 ;;
+            --provider=*)
+                explicit_provider="${a#--provider=}" ;;
+            --parallel|--bg|--background|--github|--api|--sandbox \
+            |--fast|--repo-fast|--full|--repo-full \
+            |--bmad-project|--openspec \
+            |--mirofish|--mirofish-docker|--mirofish-rounds|--mirofish-timeout|--mirofish-bg \
+            |--issue|--dry-run|--no-start|--output|--worktree|-w|--pr|--ship|--detach|-d)
+                return 0 ;;
+            --isolation)
+                # value follows; only worktree/docker/sandbox divert (none stays Bun).
+                _loki_iso_next=1 ;;
+            worktree|wt|docker|sandbox)
+                [ "${_loki_iso_next:-0}" = "1" ] && { unset _loki_iso_next; return 0; }
+                _loki_iso_next=0 ;;
+            *)
+                # issue-ref positional: owner/repo#N, a tracker URL, or *#<digits>.
+                case "$a" in
+                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) return 0 ;;
+                esac
+                _loki_iso_next=0 ;;
+        esac
+    done
+    unset _loki_iso_next
+
+    # The Bun RARV loop has not ported the opencode invoker yet. Keep the
+    # released, autonomous shell adapter reachable when SDK mode is enabled
+    # instead of accepting the selection and then failing after intake. CLI
+    # selection wins over env, which wins over the project-level saved choice.
+    local effective_provider="$explicit_provider"
+    if [ -z "$effective_provider" ] && [ -n "${LOKI_PROVIDER:-}" ]; then
+        effective_provider="$LOKI_PROVIDER"
+    fi
+    if [ -z "$effective_provider" ] && [ -f "${PWD}/.loki/state/provider" ]; then
+        effective_provider="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"
+    fi
+    [ "$effective_provider" = "opencode" ] && return 0
+    return 1
+}
+_loki_attempts_refuse() {
+    if _loki_start_needs_bash "$@"; then
+        echo "loki: 'loki start --attempts' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, --detach, or opencode) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
+        exit 2
+    fi
+    case "${LOKI_PROVIDER:-claude}" in
+        claude|codex|cline|aider) ;;
+        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider." >&2; exit 2 ;;
+    esac
+}
+
 # FC-37: --attempts is handled HERE, once, before any route split (engine10 positional task, Bun
 # loop, bash cmd_start). A flag accepted on one route must be honored or refused loudly on every
 # other. N=1 is stripped so every route sees today's argv byte-for-byte; N=2..5 runs on the Bun
@@ -370,6 +442,7 @@ if [ "${1:-}" = "start" ]; then
             [2-5])
                 _lb=$(_loki_bun)
                 [ -n "$_lb" ] || { echo "loki: --attempts $_loki_att_n needs bun (install from https://bun.sh); refusing to run a single attempt silently." >&2; exit 1; }
+                _loki_attempts_refuse "${@:2}"
                 exec "$_lb" "$BUN_CLI" "$@"
                 ;;
             *) echo "loki: --attempts must be an integer from 1 to 5, got '$_loki_att_n'." >&2; exit 2 ;;
@@ -420,7 +493,8 @@ case "v10" in
             start)
                 case "${2:-}" in
                     */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
-                        _e10=1; _e10_hard=1; _e10_args=()  # FC-38: start never falls back to the legacy engine
+                        _e10=1; _e10_args=()
+                        [ "$_LOKI_START_ATTEMPTS" = "1" ] && _e10_hard=1  # FC-38: --attempts never falls back to the legacy engine
                         # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
                         _e10_bnext=0
                         for _e10_a in "${@:2}"; do
@@ -481,7 +555,7 @@ esac
 # Bun must be installed for the new path; if it isn't, fall through to bash
 # silently rather than fail. This keeps users on systems without Bun working.
 if ! command -v bun &>/dev/null; then
-    if [ "${1:-}" = "start" ]; then
+    if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
         echo "loki: 'loki start' runs the Loki 10 engine, which needs bun. Install bun from https://bun.sh. The legacy loop is not reachable from start." >&2
         exit 1
     fi
@@ -508,72 +582,18 @@ fi
 # guarantee that makes the eventual loop default-flip a no-regression. Runner
 # flags (--simple, --allow-haiku, --regen-prd, --skip-memory, provider knobs) are
 # handled by start.ts and do NOT divert. See artifacts/ITER1-FLAG-RECONCILE.md.
-_loki_start_needs_bash() {
-    # $@ = the start args (already know $1 = start). Return 0 (divert to bash) if
-    # any bash-only orchestration flag or an issue-ref spec is present.
-    local a
-    local explicit_provider=""
-    local provider_value_next=0
-    for a in "$@"; do
-        if [ "$provider_value_next" = "1" ]; then
-            explicit_provider="$a"
-            provider_value_next=0
-            continue
-        fi
-        case "$a" in
-            --provider)
-                provider_value_next=1 ;;
-            --provider=*)
-                explicit_provider="${a#--provider=}" ;;
-            --parallel|--bg|--background|--github|--api|--sandbox \
-            |--fast|--repo-fast|--full|--repo-full \
-            |--bmad-project|--openspec \
-            |--mirofish|--mirofish-docker|--mirofish-rounds|--mirofish-timeout|--mirofish-bg \
-            |--issue|--dry-run|--no-start|--output|--worktree|-w|--pr|--ship|--detach|-d)
-                return 0 ;;
-            --isolation)
-                # value follows; only worktree/docker/sandbox divert (none stays Bun).
-                _loki_iso_next=1 ;;
-            worktree|wt|docker|sandbox)
-                [ "${_loki_iso_next:-0}" = "1" ] && { unset _loki_iso_next; return 0; }
-                _loki_iso_next=0 ;;
-            *)
-                # issue-ref positional: owner/repo#N, a tracker URL, or *#<digits>.
-                case "$a" in
-                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*) return 0 ;;
-                esac
-                _loki_iso_next=0 ;;
-        esac
-    done
-    unset _loki_iso_next
-
-    # The Bun RARV loop has not ported the opencode invoker yet. Keep the
-    # released, autonomous shell adapter reachable when SDK mode is enabled
-    # instead of accepting the selection and then failing after intake. CLI
-    # selection wins over env, which wins over the project-level saved choice.
-    local effective_provider="$explicit_provider"
-    if [ -z "$effective_provider" ] && [ -n "${LOKI_PROVIDER:-}" ]; then
-        effective_provider="$LOKI_PROVIDER"
-    fi
-    if [ -z "$effective_provider" ] && [ -f "${PWD}/.loki/state/provider" ]; then
-        effective_provider="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"
-    fi
-    [ "$effective_provider" = "opencode" ] && return 0
-    return 1
-}
-# FC-38: no user-facing `start` reaches the legacy loop (bash cmd_start, run.sh, runAutonomous).
+# FC-38 (scoped to --attempts; plain start keeps the 11.3.0 routing below): no `start --attempts` reaches the legacy loop (bash cmd_start, run.sh, runAutonomous).
 # Issue refs and multi-word tasks were sent to engine10 above; every other start (PRD path, brief,
 # flags) goes to the Bun start command, which runs engine10 and seals a receipt. A flag only the
 # legacy route honored, or a provider engine10 cannot invoke, is refused loudly instead.
-if [ "${1:-}" = "start" ]; then
+if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
+    _loki_attempts_refuse "${@:2}"
+    exec bun "$BUN_CLI" "$@"
+fi
+if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
     if _loki_start_needs_bash "${@:2}"; then
-        echo "loki: 'loki start' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, --detach, or opencode) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
-        exit 2
+        exec "$BASH_CLI" "$@"
     fi
-    case "${LOKI_PROVIDER:-claude}" in
-        claude|codex|cline|aider) ;;
-        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider." >&2; exit 2 ;;
-    esac
     exec bun "$BUN_CLI" "$@"
 fi
 
