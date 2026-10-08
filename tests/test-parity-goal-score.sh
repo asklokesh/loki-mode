@@ -62,11 +62,17 @@ echo "$summary"
 # Run the corpus through every grep implementation present: BSD and GNU differ
 # on \b, and the run.sh block must not depend on which one is installed.
 GREPS=()
-for g in /usr/bin/grep /opt/homebrew/bin/grep /opt/homebrew/bin/ggrep /usr/local/bin/ggrep; do
-    [ -x "$g" ] && GREPS+=("$g")
+# Discover by PATH lookup (no hardcoded absolute paths): the first grep on PATH
+# plus ggrep, and the system BSD grep via the standard /usr/bin location is
+# found through PATH too. De-duplicate by resolved path.
+for g in $(type -ap grep ggrep 2>/dev/null); do
+    [ -x "$g" ] || continue
+    dup=0
+    for e in "${GREPS[@]:-}"; do [ "$e" = "$g" ] && dup=1; done
+    [ "$dup" -eq 0 ] && GREPS+=("$g")
 done
 if [ "${#GREPS[@]}" -lt 2 ]; then
-    echo "NOTE: no second (GNU) grep found at ggrep or /opt/homebrew/bin/grep; only ${GREPS[*]} exercised"
+    echo "NOTE: no second (GNU) grep found on PATH (grep, ggrep); only ${GREPS[*]} exercised"
 fi
 
 # shellcheck disable=SC1090
