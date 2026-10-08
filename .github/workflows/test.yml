@@ -101,7 +101,8 @@ jobs:
     needs: [version-bump-gate]
     if: ${{ !cancelled() && needs.version-bump-gate.outputs.skip != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # PLAN-TIMEOUT-1: 15 min; a timeout fails toward FULL (see the full-suite job if:)
+    timeout-minutes: 15
     outputs:
       full: ${{ steps.plan.outputs.full }}
       shards: ${{ steps.plan.outputs.shards }}
