@@ -24,7 +24,7 @@ cat > "$T/fake-loki" <<'FAKE'
 [ -z "${FAKE_SLEEP:-}" ] || sleep "$FAKE_SLEEP"
 [ -z "${FAKE_LOKI_FAIL:-}" ] || { echo "loki: internal error"; exit 1; }
 if ! { [ "${FAKE_LOSE_ROUTER:-}" = 1 ] && [ "${LOKI_ROUTER:-}" = 1 ] && [ -z "${LOKI_ROUTER_ADVISOR:-}" ]; }; then
-    sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+    sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
 fi
 mkdir -p .loki/runs/r1
 printf '{"route":{"shape_key":"single-root:javascript"}}\n' > .loki/runs/r1/receipt.json
@@ -69,7 +69,7 @@ case "${FAKE_CLAUDE_MODE:-}" in
     auth) echo "Not logged in. Please run /login"; exit 1 ;;
     workerr) [ "$PF" = 1 ] || { echo "API Error: boom"; exit 1; } ;;
 esac
-[ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+[ -f sum.js ] && sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
 echo '{"total_cost_usd": 0.01}'
 FC
 chmod +x "$T/bin/claude"
@@ -218,7 +218,7 @@ bash "$B9" --bogus > /dev/null 2>&1; RCU=$?; check bad-flag-rc2 "$(( RCU == 2 ? 
 # 6. R1-19 measurement: usage fields, --repeat, NOT RECORDED, router_cost_ratio and gate_1_05
 cat > "$T/fake-loki-usage" <<'FAKE'
 #!/usr/bin/env bash
-sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
 mkdir -p .loki/metrics
 if [ "${LOKI_ROUTER:-}" = 1 ] && [ -z "${LOKI_ROUTER_ADVISOR:-}" ]; then
     printf '{"total_cost_usd":%s,"input_tokens":100,"output_tokens":50,"cache_read_tokens":1000,"cache_creation_tokens":200,"advisor_calls":0}\n' "${FAKE_ROUTER_USD:-0.06}" > .loki/metrics/result-cost-1.json

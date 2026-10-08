@@ -42,11 +42,13 @@
 #   --timeout SEC           per-run limit via timeout -k (default 600)
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
+# Dry-run fixture: scripts/b9-fixtures/trivial-sum.sh (also used for the T10 supply-guard cost measurement,
+# where the task is run as `loki start "$TASK"`; start has no --no-pr flag, PRs are opt-in via --pr).
 # Test hook: B9_LOKI overrides the loki binary.
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-TASK="fix the bug that makes the failing test in sum.test.js fail"
+TASK="sum() skips the first element; fix it"
 DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -283,20 +285,15 @@ else
     NAME="${NAME:-$(basename "$REPO")}"
 fi
 
-mk_fixture() {
-    local d="$1"
-    printf '{"name":"bugrepo","version":"1.0.0","scripts":{"test":"node --test"}}\n' > "$d/package.json"
-    printf 'function sum(arr) {\n  let total = 0;\n  for (let i = 1; i < arr.length; i++) total += arr[i];\n  return total;\n}\nmodule.exports = { sum };\n' > "$d/sum.js"
-    printf "const test = require('node:test');\nconst assert = require('node:assert');\nconst { sum } = require('./sum');\ntest('sums all numbers', () => { assert.strictEqual(sum([1, 2, 3]), 6); });\n" > "$d/sum.test.js"
-    ( cd "$d" && git init -q && git config user.email b9@example.invalid && git config user.name b9 \
-        && git add package.json sum.js sum.test.js && git commit -q -m init )
+mk_fixture() { # mk_fixture DIR (empty path): the shared B9 trivial fixture
+    bash "$REPO_ROOT/scripts/b9-fixtures/trivial-sum.sh" "$1"
 }
 
 if [ "$DRY" -eq 1 ]; then
     cat > "$T/bin/claude" <<'STUB'
 #!/usr/bin/env bash
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
-[ -f sum.js ] && sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+[ -f sum.js ] && sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
 case " $* " in *" json "*) echo '{"type":"result","total_cost_usd": 0.0123}';; *) echo "stub claude done";; esac
 STUB
