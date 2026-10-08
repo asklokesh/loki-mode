@@ -15,6 +15,7 @@ import { STAGE_BUDGETS } from "../types.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts"; import { routerEnabled } from "../../runner/router/flag.ts"; import { sumResultCosts } from "../cost.ts";
 import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts"; import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
+import { supplyGuard } from "../../supply/supply_guard.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
@@ -219,8 +220,11 @@ export const sealStage: Stage = {
     const uncoveredAfterLimit = o.implement?.exit === "killed" ? strs(o.verify?.uncovered_changed) : []; // FC-21b: changed code no passing impacted check covered; limit path only
     const verdict0 = capGroupVerdict(verdictOf(o, checks.filter((c) => !(c.result === "fail" && preRedChecks.includes(c.name))), !diffOk || diff.stdout === "", verifyNotProven.length > 0 || weakTests.length > 0, wallGreenOnBase, proof, targetProofOf(o.verify), uncoveredAfterLimit), grp);
 
-    const xr = await crossReview(ctx, verdict0, head), verdict = minVerdict(verdict0, xr); // B4: opt-in second-provider review, downgrade only
-    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...grp.notProven, ...(xr?.notes ?? [])]);
+    // T10: supply-chain guard. A nonexistent or too-new new dependency blocks VERIFIED; an unreachable registry only records NOT PROVEN.
+    const supply = await supplyGuard(ctx.repoDir, ctx.baseSha, head, rawDiff.filter((_, i) => i % 2 === 1), process.env);
+    const verdict1: Verdict = supply.blocked && verdict0 === "VERIFIED" ? "FAILED" : verdict0;
+    const xr = await crossReview(ctx, verdict1, head), verdict = minVerdict(verdict1, xr); // B4: opt-in second-provider review, downgrade only
+    const notProven = new Set<string>([...DEEP_NOT_PROVEN, ...supply.notProven, ...grp.notProven, ...(xr?.notes ?? [])]);
     if (!proof && (verdict === "PARTIAL" || verdict === "VERIFIED" || verdict === "ALREADY_SATISFIED")) { const vc = Array.isArray(o.verify?.checks) ? (o.verify.checks as Obj[]) : []; notProven.add(vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNMEASURED_REASON)) ? UNMEASURED_REASON : vc.length > 0 && vc.every((c) => c.n !== 0 && String(c.reason ?? "").startsWith(UNCONFIRMED_REASON)) ? UNCONFIRMED_REASON : NO_TESTS_REASON); } // an unparsed count is never reported as "no tests executed"
     if (wallNotRun > 0) notProven.add(`wall base run not_run: ${wallNotRun}`);
     for (const d of Array.isArray(o.wall?.discarded) ? (o.wall!.discarded as Obj[]) : []) notProven.add(`wall test discarded: ${String(d.file)} (${String(d.reason)})`); // FC-23
@@ -304,6 +308,7 @@ export const sealStage: Stage = {
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true,
       ...(routeBlock ? { route: routeBlock } : {}),
+      ...(supply.block ? { supply: supply.block } : {}),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only
