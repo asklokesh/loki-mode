@@ -161,7 +161,7 @@ export function validateAnswer(repoDir: string, raw: unknown): { ok: true; model
       root,
       runner: isStr(p.runner) ? p.runner.trim() : null,
       commands,
-      ui: { present: ui.present === true, boot: checkCommand(repoDir, ui.boot, `${w}.ui.boot`, errs), cite: checkCites(repoDir, ui.cite, `${w}.ui.cite`, errs) },
+      ui: { present: ui.present === true, boot: checkCommand(repoDir, ui.boot, `${w}.ui.boot`, errs), cite: ui.present === true || (Array.isArray(ui.cite) && ui.cite.length > 0) ? checkCites(repoDir, ui.cite, `${w}.ui.cite`, errs) : [] }, // FC-55: a package with no UI has nothing to cite
       cite: checkCites(repoDir, p.cite, `${w}.cite`, errs),
       ...(p.install === undefined ? {} : { install: checkCommand(repoDir, p.install, `${w}.install`, errs) }),
       ...(p.dependsOn === undefined ? {} : { dependsOn: rawDeps(p.dependsOn, `${w}.dependsOn`, errs) }),

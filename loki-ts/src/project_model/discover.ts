@@ -15,7 +15,8 @@ export function projectModelEnabled(env: NodeJS.ProcessEnv = process.env): boole
 }
 export const PROJECT_FILE = ".loki/project.json";
 export const UNKNOWN_TTL_MS = 60 * 60 * 1000;
-const SESSION_LIMIT_S = 120; // ceiling for one discovery session; the remaining stage budget lowers it
+const SESSION_LIMIT_S = 60; // ceiling for one discovery session; the remaining stage budget lowers it
+const HARD_GRACE_MS = 5000; // FC-55: past the session limit plus this, a hung session is abandoned and recorded
 const MIN_SESSION_S = 8; // below this a session cannot finish: skip it (fail open)
 const KILL_GRACE_S = 2; // the session kill grace (session.ts, machine.ts)
 const MARGIN_S = 3;
@@ -97,7 +98,7 @@ function readAnswer(answerPath: string, summary: string | undefined): unknown {
 }
 
 /** `budgetS` is the time this call may use in total (the caller derives it from the stage budget). */
-export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal, opts: { force?: boolean; budgetS?: number } = {}): Promise<Discovery> {
+export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal, opts: { force?: boolean; budgetS?: number; hardTimeoutMs?: number } = {}): Promise<Discovery> {
   const dirs = shallowDirs(ctx.repoDir);
   const committed = loadCommitted(ctx.repoDir);
   if (committed) {
@@ -106,6 +107,10 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
   }
   const cached = opts.force ? null : loadCached(ctx.repoDir);
   if (cached && computeKey(ctx.repoDir, cached.fingerprintFiles, dirs) === cached.key) return { model: cached, cached: true, attempts: 0, ...(cached.status === "unknown" ? { owner: "model" as const } : {}) };
+
+  // FC-55: every tracked file at the root means there is no package below it to learn; the repo-root
+  // behavior consumers already have for an unknown model is exactly right, so no session is spent.
+  if (dirs.length === 1 && dirs[0] === ".") return { model: unknownModel("", "single-directory repo"), cached: false, attempts: 0, owner: "harness" };
 
   const deadline = Date.now() + (opts.budgetS ?? Infinity) * 1000;
   const g = gather(ctx.repoDir);
@@ -118,15 +123,32 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
     const limitS = Math.min(SESSION_LIMIT_S, Math.floor((deadline - Date.now()) / 1000));
     if (limitS < MIN_SESSION_S) return { model: unknownModel("", "no stage budget left for discovery"), cached: false, attempts: attempt - 1, owner: "harness" };
     rmSync(answerPath, { force: true });
-    const session = await ctx.sessions.run({
+    const hardMs = opts.hardTimeoutMs ?? limitS * 1000 + HARD_GRACE_MS;
+    const abort = new AbortController();
+    const onAbort = (): void => abort.abort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const hung = new Promise<"hung">((res) => { timer = setTimeout(() => res("hung"), hardMs); });
+    const run = ctx.sessions.run({
       stage: "intake",
       brief: buildBrief(g, answerPath, errors),
       tier: "development",
       iterationId: `${ctx.runId}-project-model${attempt > 1 ? "-retry" : ""}`,
       limitS,
-      signal,
+      signal: abort.signal,
       cwd: ctx.repoDir,
     });
+    run.catch(() => undefined);
+    const raced = await Promise.race([run, hung]);
+    clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
+    if (raced === "hung") {
+      abort.abort();
+      const reason = `owner=provider: the discovery session hung past ${Math.round(hardMs / 1000)}s and was abandoned`;
+      try { ctx.emit?.("project_model.fallback", "intake", { reason, hard_timeout_s: Math.round(hardMs / 1000) }); } catch { /* recording must not fail intake */ }
+      return { model: unknownModel("", reason), cached: false, attempts: attempt, owner: "provider" };
+    }
+    const session = raced;
     const raw = readAnswer(answerPath, session.summary);
     if (raw === undefined && (session.killed || session.exit !== 0)) {
       // The provider or the session failed: not the model's answer, so no retry and nothing cached.
