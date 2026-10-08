@@ -17,6 +17,8 @@ setDefaultTimeout(60_000);
 const SRC = resolve(import.meta.dir, "../../src");
 const CANARY_TOKEN = "ghp_FC25SUPERVISORcanary000000000000";
 const CANARY_SOCK = "/tmp/loki-fc25-canary-agent.sock";
+const SECRETS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
+const canaryFor = (k: string): string => (k === "SSH_AUTH_SOCK" ? CANARY_SOCK : `${CANARY_TOKEN}_${k}`);
 
 let root: string;
 beforeEach(() => {
@@ -123,4 +125,63 @@ it("diff.<drv>.command is blanked with textconv, and --config-env/--attr-source 
     const a = safeGitArgs([...pre, "diff", "HEAD"]);
     expect(a.slice(a.indexOf("diff") + 1, a.indexOf("diff") + 3)).toEqual(["--no-ext-diff", "--no-textconv"]);
   }
+});
+
+// B2 (HIGH review): a core.fsmonitor plant is disabled by `-c core.fsmonitor=` whatever the env holds, so it cannot tell a token-free
+// env from `{ ...process.env, ...safeGitEnv() }`. This recorder is a repo clean filter, which repoDrivers deliberately keeps live,
+// so it sees exactly the env each entry point hands git. process.env carries the canaries, as in the supervisor.
+it("each safe_git entry point hands git a token-free env, recorded by a filter safe_git keeps live", async () => {
+  const { safeGit, safeGitSpawn, safeGitRun } = await import("../../src/util/safe_git.ts");
+  const repo = resolve(root, "repo4");
+  const rec = resolve(root, "filter.rec");
+  const g = (...a: string[]) => execFileSync("git", a, { cwd: repo, env: { ...process.env }, stdio: "ignore" });
+  execFileSync("git", ["init", "-q", repo], { env: { ...process.env }, stdio: "ignore" });
+  const filt = resolve(root, "rec.sh");
+  // One field per secret var safeGitEnv must strip; "absent" when unset in the child.
+  const fields = SECRETS.map((k) => `"\${${k}:-absent}"`).join(" ");
+  writeFileSync(filt, `#!/bin/sh\nprintf '%s${"|%s".repeat(SECRETS.length)}\\n' "$1" ${fields} >> '${rec}'\ncat\n`);
+  chmodSync(filt, 0o755);
+  writeFileSync(resolve(repo, ".gitattributes"), "*.txt filter=rec\n");
+  writeFileSync(resolve(repo, "a.txt"), "one\n");
+  const saved = Object.fromEntries(SECRETS.map((k) => [k, process.env[k]]));
+  for (const k of SECRETS) process.env[k] = canaryFor(k);
+  try {
+    // hash-object --path applies the filter on every call (no index stat cache), so each call records exactly one line.
+    const hash = (tag: string) => ["-c", `filter.rec.clean=${filt} ${tag}`, "hash-object", "--path", "a.txt", "a.txt"];
+    g("config", "filter.rec.clean", `${filt} cfg`);
+    safeGit(repo, hash("safeGit"), { repoDrivers: true });
+    safeGit(repo, hash("safeGit-env"), { repoDrivers: true, env: { ...process.env } });
+    safeGitSpawn(repo, hash("safeGitSpawn"), { repoDrivers: true, encoding: "utf8" });
+    safeGitSpawn(repo, hash("safeGitSpawn-env"), { repoDrivers: true, encoding: "utf8", env: { ...process.env } });
+    await safeGitRun(repo, hash("safeGitRun"), { repoDrivers: true });
+    await safeGitRun(repo, hash("safeGitRun-env"), { repoDrivers: true, env: { ...process.env } });
+    // Positive control: allowToken is the one opt-in that keeps the token, so the recorder must see the canaries.
+    await safeGitRun(repo, hash("control"), { repoDrivers: true, allowToken: true });
+  } finally {
+    for (const k of SECRETS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+  const lines = readFileSync(rec, "utf8").trim().split("\n");
+  const absent = "|absent".repeat(SECRETS.length);
+  expect(lines).toEqual([
+    `safeGit${absent}`, `safeGit-env${absent}`,
+    `safeGitSpawn${absent}`, `safeGitSpawn-env${absent}`,
+    `safeGitRun${absent}`, `safeGitRun-env${absent}`,
+    `control|${SECRETS.map(canaryFor).join("|")}`,
+  ]);
+});
+
+it("repoDrivers keeps the user's core.attributesFile; userHooks with allowToken is refused", async () => {
+  const { safeGitArgs, safeGitRun, safeGit } = await import("../../src/util/safe_git.ts");
+  const repo = resolve(root, "repo5");
+  const g = (...a: string[]) => execFileSync("git", a, { cwd: repo, env: { ...process.env }, stdio: "ignore" });
+  execFileSync("git", ["init", "-q", repo], { env: { ...process.env }, stdio: "ignore" });
+  const attrs = resolve(root, "user.attributes");
+  writeFileSync(attrs, "c.txt filter=up\n");
+  g("config", "core.attributesFile", attrs);
+  g("config", "filter.up.clean", "tr a-z A-Z");
+  writeFileSync(resolve(repo, "c.txt"), "low\n");
+  expect((await safeGitRun(repo, ["add", "c.txt"], { repoDrivers: true })).exitCode).toBe(0);
+  expect(safeGit(repo, ["show", ":c.txt"])).toBe("LOW\n");
+  expect(safeGitArgs(["status"]).join(" ")).toContain("core.attributesFile=/dev/null");
+  expect(() => safeGitArgs(["commit"], true, undefined, { userHooks: true })).toThrow(/userHooks with allowToken/);
 });
