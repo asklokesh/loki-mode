@@ -773,6 +773,7 @@ Amends FC-35 (the router-on plan no longer skips small tasks) and D89 Amendment 
 
 1. Under LOKI_ROUTER=1, Opus ALWAYS makes the routing decision, as one short structured-output call: cache-stable prefix (COST-HALF CP-01), effort low, output {size: trivial|small|medium|large, units[], needs_full_plan: bool}. Measured target cost: under $0.01 per run.
 2. The full Opus plan session runs only when needs_full_plan is true. Trivial and small tasks go straight to the routed executor on the lean path.
-3. FC-35 R-B holds unchanged: always emit a route or a recorded reason. A failed, timed-out or malformed routing call writes routed:false with the reason to route.json and runs the full plan as before (fail-safe toward more planning, never less).
-4. Measurement gate: the B9 row on trivial-sum shows the routing call below 10% of total run cost (n>=3), and router-on cost at most 1.05x router-off (D89 Amendment 2). Router-off output stays byte-identical.
-5. Slice: COST-HALF CH-10 (docs/v11/COST-HALF.md), HIGH tier; LD-01 (lean default) follows it on stages/plan.ts.
+3. One plan gate. The implement session's LOKI_NEED_PLAN marker is a second input to the same gate: it can raise it (plan runs once, implement resumes), never lower it. With the router off, the gate's inputs are the marker and the Project Model. The receipt records the reason: route_call, marker, project_model or skipped.
+4. FC-35 R-B holds unchanged: always emit a route or a recorded reason. A failed, timed-out or malformed routing call writes routed:false with the reason to route.json and runs the full plan as before (fail-safe toward more planning, never less). Wall, verify, commit, seal and pr never skip.
+5. Measurement gate: the B9 row on trivial-sum shows the routing call below 10% of total run cost (n>=3), and router-on cost at most 1.05x router-off (D89 Amendment 2). Router-off output stays byte-identical with the flags off.
+6. Slices: COST-HALF LD-01 (gate plus routing call) and LD-02 (marker as a late input), HIGH tier.
