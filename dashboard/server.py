@@ -8578,18 +8578,11 @@ _PROVIDER_LABELS = {
 # the UI WITHOUT changing any computed cost number. The Sonnet 5 intro price
 # ($2/$10 per MTok) became the standard price, so the 2026-09-01 increase to
 # $3/$15 will not occur (platform.claude.com pricing page, read 2026-10-03).
-_UNVERIFIED_RATE_NOTE = (
-    "Unverified placeholder rate, scaled from gpt-5.3; not from OpenAI's pricing page."
-)
 _MODEL_PRICING_NOTES = {
     "sonnet": (
         "Standard pricing: $2 / $10 per MTok. "
         "The intro price became the standard price; no increase to $3 / $15."
     ),
-    # See the UNVERIFIED RATES comment on the pricing table: shown, not hidden.
-    "gpt-5.6-sol": _UNVERIFIED_RATE_NOTE,
-    "gpt-5.6-terra": _UNVERIFIED_RATE_NOTE,
-    "gpt-5.6-luna": _UNVERIFIED_RATE_NOTE,
 }
 
 _MODEL_PROVIDERS = {

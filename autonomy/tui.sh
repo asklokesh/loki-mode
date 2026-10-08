@@ -396,6 +396,7 @@ display_token_cost() {
     case "$model" in
         *opus*)   input_rate=4.0;   output_rate=20.0 ;;
         *sonnet*) input_rate=2.0;   output_rate=10.0 ;;
+        # Haiku 5.5 up to 100K prompt tokens (no over-100K tier here)
         *haiku*)  input_rate=0.10;  output_rate=0.50 ;;
         *gpt-4o-mini*) input_rate=0.15; output_rate=0.6 ;;
         *gpt-4o*) input_rate=2.5;   output_rate=10.0 ;;
