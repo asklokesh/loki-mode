@@ -2574,6 +2574,8 @@ cmd_start() {
                 echo "  --sandbox             Run in Docker sandbox (default: off; requires Docker)"
                 echo "  --isolation LEVEL     Per-run isolation: none (default) | worktree | docker."
                 echo "                        Unified dial; --parallel = worktree, --sandbox = docker."
+                echo "  --attempts N          Run N (1-5, default 1) independent attempts in separate git worktrees;"
+                echo "                        the most executed passing checks wins, losers are recorded on the receipt"
                 echo "  --skip-memory         Skip loading memory context at startup"
                 echo "  --fresh-prd           Regenerate the PRD from the codebase on a no-PRD run"
                 echo "                        (ignores the reusable generated PRD; aliases: --regen-prd,"
@@ -2726,6 +2728,17 @@ cmd_start() {
                 ;;
             --parallel)
                 args+=("--parallel")
+                shift
+                ;;
+            --attempts)
+                # 11.3.0 T5: N>=2 is routed to the Bun route by bin/loki; N=1 is today's behavior.
+                if [[ "${2:-}" != "1" ]]; then
+                    echo -e "${RED}--attempts N (2-5) needs the Bun route: run via bin/loki${NC}"
+                    exit 1
+                fi
+                shift 2
+                ;;
+            --attempts=1)
                 shift
                 ;;
             --allow-haiku)
