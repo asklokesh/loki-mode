@@ -116,4 +116,15 @@ describe("static shape", () => {
     expect(lines[hits[0]! + 3]!.trim()).toBe('(await import("./contrib/index.ts")).registerContrib();');
     expect(lines[hits[0]! + 4]!.trim()).toBe("return runEngine10(rest, registryLoader);");
   });
+
+  test("the issues arm registers contrib before its planning sessions run", () => {
+    const lines = readFileSync(join(SRC, "cli.ts"), "utf8").split("\n");
+    const at = lines.findIndex((l) => l.trim() === 'case "issues": {');
+    expect(at).toBeGreaterThan(-1);
+    const end = lines.findIndex((l, i) => i > at && l.trim() === "}");
+    const arm = lines.slice(at, end + 1).map((l) => l.trim());
+    const reg = arm.indexOf('(await import("./contrib/index.ts")).registerContrib();');
+    expect(reg).toBeGreaterThan(-1);
+    expect(reg).toBeLessThan(arm.indexOf("return runIssues(rest);"));
+  });
 });
