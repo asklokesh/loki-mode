@@ -1,7 +1,10 @@
 // Tests for src/runner/rarv.ts -- tier mapping, phase names, provider tier
 // param resolution, and complexity detection heuristics.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { resolveClaudeModel } from "../../src/util/claude_model.ts";
+import { readFileSync as _rf } from "node:fs";
+import { join as _join } from "node:path";
+// Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
+const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -110,7 +113,7 @@ describe("rarv.getProviderTierParam -- legacy fallback table", () => {
   });
 
   it("aider default", () => {
-    expect(getProviderTierParam("planning", "aider")).toBe(resolveClaudeModel("opus"));
+    expect(getProviderTierParam("planning", "aider")).toBe(CATALOG_OPUS);
   });
 
   it("respects PROVIDER_MODEL_PLANNING env override", () => {
