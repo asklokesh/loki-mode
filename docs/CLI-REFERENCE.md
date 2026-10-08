@@ -55,6 +55,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki crash` | Inspect or submit scrubbed crash reports |
 | `loki contract` | Print the spec delivery contract |
 | `loki start` | Run the autonomous build |
+| `loki plan <task> --spec` | Write the intent card's acceptance criteria to `.loki/specs/<slug>.md` for you to edit (see [spec-first-intent.md](spec-first-intent.md)); `loki start --spec-first <task>` is the same step |
+| `loki start --spec FILE` | Run against the edited spec as the authoritative intent; a spec that does not parse exits 2 with the line number |
 | `loki slack` | Slack inbound handler |
 | `loki slack serve` | Serve the Slack handler |
 | `loki queue` | Overnight issue queue with a morning digest |

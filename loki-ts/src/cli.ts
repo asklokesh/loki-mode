@@ -47,6 +47,8 @@ Bun-native commands:
   crash <subcmd>         Inspect or submit scrubbed local crash reports
   contract <spec.md>     Print the spec delivery contract and write .loki/contract.json
   start [flags]          Run the RARV autonomous loop (Bun route, LOKI_SDK_LOOP)
+                         (--spec-first writes .loki/specs/<slug>.md and stops; --spec FILE runs against the edited spec)
+  plan <task> --spec     Write the acceptance criteria to .loki/specs/<slug>.md for you to edit
   slack serve [--port N] [--host H]   Serve the Slack inbound handler (needs SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET)
   engine10 <subcmd>      v10 engine router (run, status, verify, keys, dashboard, modernize)
 

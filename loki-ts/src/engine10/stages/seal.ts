@@ -4,6 +4,7 @@
 // and receipt.md, computes receipt_sha256, and signs natively with node:crypto Ed25519
 // (A-121; no python, no `cryptography`). The key is the A-120 local key, created on first
 // use. An empty token means UNSIGNED, never presented as attested.
+import { specReceiptBlock } from "../../util/spec_file.ts";
 import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -339,6 +340,7 @@ export const sealStage: Stage = {
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
+      ...specReceiptBlock(process.env),
     };
 
     for (const l of sealContract(ctx.repoDir, body, rawDiff, checks, process.env, o.intake?.contract_snapshot as ContractSnapshot | undefined)) notProven.add(l); // D65-SPEC: additive receipt.contract, LOKI_CONTRACT=1 only

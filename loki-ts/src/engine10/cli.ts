@@ -19,6 +19,7 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   keys: { module: "keys_cmd.ts", fn: "main" },
   dashboard: { module: "../runner/engine10_dashboard.ts", fn: "main" },
   modernize: { module: "modernize/cli.ts", fn: "main" },
+  plan: { module: "plan_cmd.ts", fn: "main" },
   // Hidden subcommands spawned by the supervisor.
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },
@@ -33,7 +34,9 @@ const USAGE = `Usage:
   loki keys export                print the receipt-signing public key (JWK + kid)
   loki dashboard                  serve the local dashboard
   loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
-Flags: --deep, --provider <name>, --no-pr, --max-cost <usd> (per-run cap; default $100 with an API key, none on a subscription; or loki.yaml budgets.per_run)
+  loki plan <task> --spec         write the acceptance criteria to .loki/specs/<slug>.md for you to edit
+  loki start --spec <file>        run against an edited spec as the authoritative intent (receipt records its sha256)
+Flags: --spec <file>, --deep, --provider <name>, --no-pr, --max-cost <usd> (per-run cap; default $100 with an API key, none on a subscription; or loki.yaml budgets.per_run)
 `;
 // Returns null for an empty or help invocation.
 export function route(args: string[]): Route | null {

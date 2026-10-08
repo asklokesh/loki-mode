@@ -467,6 +467,21 @@ if [ "${1:-}" = "start" ]; then
     unset _loki_att_args _loki_att_n _loki_att_skip _loki_att_a
 fi
 
+# SPEC-FIRST-INTENT: `start --spec FILE` and `start --spec-first` are parsed by the Bun start command,
+# which forwards them to engine10; they never reach the positional-task route or the legacy loop.
+if [ "${1:-}" = "start" ]; then
+    for _loki_sp_a in "${@:2}"; do
+        case "$_loki_sp_a" in
+            --spec|--spec=*|--spec-first)
+                _lb=$(_loki_bun)
+                [ -n "$_lb" ] || { echo "loki: --spec needs bun (install from https://bun.sh)." >&2; exit 1; }
+                exec "$_lb" "$BUN_CLI" "$@"
+                ;;
+        esac
+    done
+    unset _loki_sp_a
+fi
+
 # Loki 10 engine (D29, the only engine from 11.0.0). Routes `loki "<task>"`,
 # `loki owner/repo#N`, `loki quick "<task>"`, `keys` and `verify --pubkey` to engine10.
 # shellcheck disable=SC2194
@@ -494,6 +509,13 @@ case "v10" in
                     if [ -n "$_r10" ] && { [ -z "$_p10" ] || [ "$_r10" -nt "$_p10" ]; }; then _e10=1; fi
                     unset _r10 _p10 _d
                 fi
+                ;;
+            # SPEC-FIRST-INTENT: only `plan ... --spec` is a v10 command; every other plan call stays on the legacy CLI.
+            plan)
+                for _pa in "$@"; do
+                    [ "$_pa" = "--spec" ] && { _e10=1; _e10_hard=1; }
+                done
+                unset _pa
                 ;;
             ""|-*) _e10=0 ;;
             # quick: the lean small path, no PR (legacy quick never opened one). A flag-first

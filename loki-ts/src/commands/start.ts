@@ -77,6 +77,15 @@ function hasAttemptsFlag(args: readonly string[]): boolean {
   return args.some((a) => a === "--attempts" || a.startsWith("--attempts="));
 }
 
+// SPEC-FIRST-INTENT: `start --spec FILE` / `--spec-first` run engine10 only, so a flag is accepted there
+// only if engine10 honors it (the attempts set minus --attempts, plus the spec flags). Others are refused with exit 2.
+const SPEC_VALUE_FLAGS = new Set([...ATTEMPTS_VALUE_FLAGS].filter((f) => f !== "--attempts").concat(["--spec"]));
+const SPEC_NOOP_BOOL_FLAGS = new Set([...ATTEMPTS_NOOP_BOOL_FLAGS, "--spec-first"]);
+
+function hasSpecFlag(args: readonly string[]): boolean {
+  return args.some((a) => a === "--spec" || a.startsWith("--spec=") || a === "--spec-first");
+}
+
 const VALID_PROVIDERS = new Set(["claude", "codex", "cline", "aider"]);
 // The session-pin values run.sh's LOKI_SESSION_MODEL case accepts: the three
 // tier names plus the Claude aliases (opus is the top-only setting; bash
@@ -95,10 +104,11 @@ const GENERIC_TIERS: Record<string, string> = {
 
 // The full set of flag names this route ACCEPTS (value + bool-env + no-op).
 // Anything else is rejected loudly (fail-closed: no silent capability loss).
-function acceptedFlags(attemptsMode: boolean): Set<string> {
-  const s = new Set<string>(attemptsMode ? ATTEMPTS_VALUE_FLAGS : VALUE_FLAGS);
-  if (!attemptsMode) for (const k of BOOL_ENV_FLAGS.keys()) s.add(k);
-  for (const k of attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS) s.add(k);
+function acceptedFlags(attemptsMode: boolean, specMode = false): Set<string> {
+  const engineOnly = attemptsMode || specMode;
+  const s = new Set<string>(specMode ? SPEC_VALUE_FLAGS : attemptsMode ? ATTEMPTS_VALUE_FLAGS : VALUE_FLAGS);
+  if (!engineOnly) for (const k of BOOL_ENV_FLAGS.keys()) s.add(k);
+  for (const k of specMode ? SPEC_NOOP_BOOL_FLAGS : attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS) s.add(k);
   s.add("--help");
   s.add("-h");
   return s;
@@ -121,7 +131,9 @@ export interface ParsedStartOpts {
   baseWaitSeconds?: number;
   maxWaitSeconds?: number;
   attempts?: number; // set only by --attempts; selects the engine10 attempts path
-  noPr?: boolean; // --attempts only: forwarded to engine10; absent = normal PR behavior
+  specPath?: string; // SPEC-FIRST-INTENT: --spec FILE, forwarded to engine10
+  specFirst?: boolean; // --spec-first: write the spec for editing and stop
+  noPr?: boolean; // --attempts / --spec only: forwarded to engine10; absent = normal PR behavior
 }
 
 const START_USAGE =
@@ -130,8 +142,11 @@ const START_USAGE =
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory]\n" +
+  "                        [--spec FILE | --spec-first]\n" +
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
   "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n" +
+  "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
+  "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +
   "       loki start <spec> --attempts N [--no-pr] [--provider P] [--budget USD] [--session-model T]\n" +
   "  --attempts N  run N (1-5) independent Loki 10 engine attempts in separate git worktrees; the one with\n" +
   "                the most executed passing checks is applied and every loser is recorded on the attempts\n" +
@@ -156,7 +171,12 @@ export function parseStartArgs(
   }
 
   const attemptsMode = hasAttemptsFlag(args);
-  const accepted = acceptedFlags(attemptsMode);
+  const specMode = hasSpecFlag(args);
+  if (attemptsMode && specMode) {
+    err("start: --spec / --spec-first cannot be combined with --attempts\n");
+    return 2;
+  }
+  const accepted = acceptedFlags(attemptsMode, specMode);
 
   // Single pass: validate flag names, collect the spec, apply bool/env flags.
   // `--` ends options: the next token is the spec regardless of leading dashes.
@@ -176,8 +196,8 @@ export function parseStartArgs(
     if (a.startsWith("-") && a !== "-") {
       const name = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
       if (!accepted.has(name)) {
-        if (attemptsMode) {
-          err(`start: flag ${name} is not supported by loki start --attempts (attempts run only the Loki 10 engine).\n`);
+        if (attemptsMode || specMode) {
+          err(`start: flag ${name} is not supported by loki start ${attemptsMode ? "--attempts" : "--spec"} (attempts run only the Loki 10 engine).\n`);
           err("Runner and orchestration flags were only honored by the legacy loop; remove them or drop --attempts.\n");
           return 2;
         }
@@ -192,9 +212,9 @@ export function parseStartArgs(
         applyEnv(boolEnv[0], boolEnv[1]);
         continue;
       }
-      if ((attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS).has(name)) continue;
+      if ((specMode ? SPEC_NOOP_BOOL_FLAGS : attemptsMode ? ATTEMPTS_NOOP_BOOL_FLAGS : NOOP_BOOL_FLAGS).has(name)) continue;
       // value-flag: skip its value token (unless inline --flag=value)
-      if ((attemptsMode ? ATTEMPTS_VALUE_FLAGS : VALUE_FLAGS).has(name) && !a.includes("=")) i++;
+      if ((specMode ? SPEC_VALUE_FLAGS : attemptsMode ? ATTEMPTS_VALUE_FLAGS : VALUE_FLAGS).has(name) && !a.includes("=")) i++;
       continue;
     }
     // bare token: the spec (first one wins)
@@ -204,8 +224,14 @@ export function parseStartArgs(
   // --prd / --brief override the positional spec.
   const prdFlag = argVal(args, "--prd");
   const briefFlag = argVal(args, "--brief");
-  const resolvedSpec = prdFlag ?? briefFlag ?? spec;
-  if (!resolvedSpec) {
+  const specFlag = argVal(args, "--spec");
+  const specFirst = args.includes("--spec-first");
+  if (specFlag !== undefined && specFirst) {
+    err("start: --spec and --spec-first cannot be combined\n");
+    return 2;
+  }
+  const resolvedSpec = prdFlag ?? briefFlag ?? spec ?? (specFlag !== undefined ? "" : undefined);
+  if (resolvedSpec === undefined || (resolvedSpec === "" && specFlag === "")) {
     err("start: a spec source (PRD path, --prd FILE, --brief TEXT, or issue ref) is required\n");
     err(START_USAGE);
     return 2;
@@ -255,7 +281,9 @@ export function parseStartArgs(
 
   return {
     ...(attempts !== undefined ? { attempts } : {}),
-    ...(attemptsMode && args.includes("--no-pr") ? { noPr: true } : {}),
+    ...((attemptsMode || specMode) && args.includes("--no-pr") ? { noPr: true } : {}),
+    ...(specFlag ? { specPath: specFlag } : {}),
+    ...(specFirst ? { specFirst: true } : {}),
     prdPath: resolvedSpec,
     provider: providerRaw as ProviderName | undefined,
     maxIterations: posNum(argVal(args, "--max-iterations")),
@@ -269,20 +297,27 @@ export function parseStartArgs(
 }
 
 /** Which engine a parsed start runs: the 11.3.0 runner, unless --attempts was given (FC-38 scoped). */
-export function startEngine(o: ParsedStartOpts): "runner" | "attempts" {
+export function startEngine(o: ParsedStartOpts): "runner" | "attempts" | "spec" {
+  if (o.specPath !== undefined || o.specFirst) return "spec";
   return o.attempts === undefined ? "runner" : "attempts";
 }
 
 /** One engine10 run (FC-38: the only engine `start --attempts` may reach; it seals a receipt). */
 async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessEnv, forceNoPr: boolean): Promise<number> {
-  const { spawn } = await import("node:child_process");
   const { existsSync, readFileSync, statSync } = await import("node:fs");
   const spec = o.prdPath;
-  const task = existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
-  const argv = [process.argv[1] ?? "", "engine10", task];
+  const task = spec !== "" && existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
+  const argv = o.specFirst ? [process.argv[1] ?? "", "engine10", "plan", task, "--spec"] : [process.argv[1] ?? "", "engine10", ...(task ? [task] : [])];
+  if (o.specPath) argv.push("--spec", o.specPath);
+  if (o.specFirst) { if (o.provider) argv.push("--provider", o.provider); return await spawnEngine(cwd, argv, env); }
   if (forceNoPr || o.noPr) argv.push("--no-pr");
   if (o.provider) argv.push("--provider", o.provider);
   if (o.budgetLimit !== undefined) argv.push("--max-cost", String(o.budgetLimit)); // FC-37: per-run cap, never dropped
+  return await spawnEngine(cwd, argv, env);
+}
+
+async function spawnEngine(cwd: string, argv: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  const { spawn } = await import("node:child_process");
   return await new Promise<number>((resolveExit) => {
     const child = spawn(process.execPath, argv, { cwd, env, stdio: ["ignore", "inherit", "inherit"] });
     child.on("error", () => resolveExit(1));
@@ -297,6 +332,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
     const { runAutonomous } = await import("../runner/autonomous.ts");
     return runAutonomous(parsed);
   }
+  if (startEngine(parsed) === "spec") return runEngine10(process.cwd(), parsed, process.env, false);
   const { attempts, ...runnerOpts } = parsed;
   if ((attempts ?? 1) > 1 && runnerOpts.noPr !== true) {
     // The credentialed winner push is not safe against a hostile attempt rewriting the shared .git/config yet (FC-40).
