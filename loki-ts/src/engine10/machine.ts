@@ -72,7 +72,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const k = r.exit === 0 ? null : sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason; if (k === "auth" || k === "quota_exhausted") fatal ??= `fatal:${k}`; if (ctx.overCap?.()) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
     return r;
   } };
-  const sctx: MachineRunContext = { ...ctx, sessions, outputs: () => ({ ...outputs }), capHit: () => capHit };
+  const sctx: MachineRunContext = { ...ctx, sessions, implementLeftS: () => implementStartMs === null ? Infinity : implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000, outputs: () => ({ ...outputs }), capHit: () => capHit };
   const elapsedS = (): number => (ctx.clock.now() - startMs) / 1000;
   /** FC-21b: the one post-plan resize. Never below the current cap or the elapsed time; recomputes capAtMs and re-arms the soft-cap timer. */
   const applyResize = (proposedS: number): void => {
