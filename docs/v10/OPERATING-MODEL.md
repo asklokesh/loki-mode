@@ -18,6 +18,7 @@ The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The compa
 - Non-leader sessions act as extra engineers or reviewers on BOARD.md slices, or answer Loki. They never push, bump VERSION, release or rewrite BOARD.md.
 
 ## Nobody sits idle
+- Ready queue >= 30 specced slices (features, enhancements, fixes evenly; D91). Seat cap 14 while weekly usage < 50%.
 - The Chief of Staff keeps 8-16 engineers busy whenever ready slices exist. When anyone finishes, the next slice is assigned in the same turn.
 - The ready queue never drops below 2x the number of engineers; PMs and POs refill it.
 - Idle seats while work exists, or an empty ready queue, is a P0 violation.
@@ -31,7 +32,7 @@ The CEO is Lokesh Mure (Loki), the founder. Everyone else is an agent. The compa
 - Tier A fast gate on every change (target 60-120s): syntax checks, changed-file shellcheck, diff-selected tests, moat suite split per property. It is feedback, not release authority.
 - Tier B: every main commit has a full Tier B verdict on its exact tree, run on main or on the train that produced it (D55); never cancelled on main.
 - Release = a lookup: publish a commit whose tree already has a Tier B pass. A VERSION-only bump reuses its parent's verdict. Target: 2 min from verified to npm.
-- Trains: the Release Manager batches merged slices; one push per train; releases when verified; the next train opens immediately. Never hold a train for one HIGH slice.
+- Clock cuts (D91): one release every 45 min from whatever is approved and green on main; no cut waits for a slice. Target per cut: >=3 features and >=5 enhancements or fixes, user-facing CHANGELOG. Approved slices merge to main continuously (tsc, impacted tests, global guards, P9); risky work merges flag-gated. A moat regression still blocks a cut.
 - If Tier B fails on main: stop releases, open a P0 fix-forward slice. Never unpublish; npm deprecate is allowed.
 
 ## Large tasks (for example "rebuild the dashboard")
