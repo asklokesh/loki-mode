@@ -14,6 +14,7 @@
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
 import type { ProviderName, SessionTier } from "../runner/types.ts";
+import { tokenFreeEnv } from "../util/safe_git.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -245,6 +246,11 @@ export async function runStart(args: readonly string[]): Promise<number> {
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;
   const { attempts, ...runnerOpts } = parsed;
+  if ((attempts ?? 1) > 1 && runnerOpts.noPr !== true) {
+    // The credentialed winner push is not safe against a hostile attempt rewriting the shared .git/config yet (FC-40).
+    process.stderr.write("--attempts opens no PR yet in 11.3.1; rerun with --no-pr, PR support ships in 11.3.2\n");
+    return 2;
+  }
   const { runAttempts, productionDeps } = await import("../runner/attempts.ts");
   const deps = productionDeps(
     process.cwd(),
@@ -252,7 +258,8 @@ export async function runStart(args: readonly string[]): Promise<number> {
     async (_id, wt) => {
       // Each attempt is one engine10 run in its own worktree: only engine10 seals the receipt the scorer reads.
       // Attempts never open PRs themselves; the winner alone follows normal PR behavior (see productionDeps.openPr).
-      const env: NodeJS.ProcessEnv = { ...process.env, LOKI_DIR: `${wt}/.loki` };
+      // Token-free: attempts never push (forced --no-pr), so no attempt process needs GH_TOKEN or SSH_AUTH_SOCK.
+      const env = tokenFreeEnv({ ...process.env, LOKI_DIR: `${wt}/.loki` });
       delete env["LOKI_RUN_TMP"];
       return runEngine10(wt, runnerOpts, env, true);
     },

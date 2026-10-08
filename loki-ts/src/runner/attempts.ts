@@ -8,6 +8,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
+import { safeGit } from "../util/safe_git.ts";
 import { outcomeOf } from "../features/receipt_dsse.ts";
 
 export const MAX_ATTEMPTS = 5;
@@ -220,8 +221,9 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
 
 // ---- production deps -------------------------------------------------------------------------
 
-function git(cwd: string, args: string[], input?: string): string {
-  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", input, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
+/** allowToken is for the one remote-talking call (push): it keeps GH_TOKEN and the credential helper, nothing else. */
+export function git(cwd: string, args: string[], input?: string, allowToken = false): string {
+  return safeGit(cwd, args, { input, allowToken, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 /** Checks from the attempt's own engine10 receipt. seal.ts writes join(runDir, "receipt.json") with runDir = <repo>/.loki/runs/<runId>
@@ -273,9 +275,21 @@ function attemptBranch(p: string): string {
   return `loki-attempt/${basename(dirname(p))}-${basename(p)}`;
 }
 
+const GITHUB_URL_RE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
+
+/** owner/name for a GitHub remote URL, else null (never guessed). */
+export function githubSlug(url: string): string | null {
+  const m = GITHUB_URL_RE.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
 export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>, opts: { noPr?: boolean } = {}): AttemptDeps {
   const lokiDir = process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
   const receiptDir = join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-"));
+  // Pinned once, in memory, before any attempt runs: attempt worktrees share .git/config, so an agent can rewrite origin later.
+  // The raw configured URL (not `remote get-url`, which applies insteadOf) is what the push and gh --repo are derived from.
+  let pinnedOrigin = "";
+  if (!opts.noPr) { try { pinnedOrigin = git(repoDir, ["config", "--get", "remote.origin.url"]).trim(); } catch { /* no origin: openPr refuses */ } }
   return {
     repoDir,
     receiptDir,
@@ -321,16 +335,18 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       } catch {
         // nothing stageable
       }
-      const patch = git(wt, ["diff", "--cached", "--binary", base]);
+      const patch = git(wt, ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", base]);
       if (patch.trim() !== "") git(repoDir, ["apply", "--whitespace=nowarn"], patch);
     },
     ...(opts.noPr ? {} : {
       // Normal PR behavior: only the winner's engine10 branch is pushed and opened; losers never reach a remote.
       openPr: (wt: string, base: string) => {
         const branch = git(wt, ["symbolic-ref", "--short", "HEAD"]).trim();
-        git(wt, ["push", "-u", "origin", branch]);
+        const slug = githubSlug(pinnedOrigin);
+        if (!slug) throw new Error("no PR opened: the origin pinned before the attempts is missing or not a GitHub URL");
+        git(wt, ["push", "--", pinnedOrigin, branch], undefined, true); // the literal pinned URL, never the remote name
         const baseBranch = (() => { try { return git(repoDir, ["symbolic-ref", "--short", "HEAD"]).trim(); } catch { return base; } })();
-        return execFileSync("gh", ["pr", "create", "--fill", "--head", branch, "--base", baseBranch], { cwd: wt, encoding: "utf8" }).trim().split("\n").pop() ?? "";
+        return execFileSync("gh", ["pr", "create", "--fill", "--repo", slug, "--head", branch, "--base", baseBranch], { cwd: wt, env: process.env, encoding: "utf8" }).trim().split("\n").pop() ?? "";
       },
     }),
     makeContainer: () => mkdtempSync(join(tmpdir(), "loki-attempts-")),
