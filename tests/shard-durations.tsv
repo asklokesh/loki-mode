@@ -734,6 +734,9 @@ Loki Receipt check action posts success for a valid receipt and failure for a ta
 tests that spawn the verifier pin TARGET_DIR (FC-29)	2
 b9 scoreboard dry-run rows and shape defaults (R1-17)	8
 b9 trivial-sum fixture generator	3
+b9 claimed-done extraction (FCR-1)	2
+b9 raw vs loki arms, ratios and bootstrap (B9-RAW-ARM)	8
+40x scoreboard factors and efficiency (D92)	3
 the verifier never defaults to the caller cwd (FC-29 sweep)	5
 goal_score bash vs Bun behavioral parity (RC-DOCTOR-ONE S5)	6
 doctor has one implementation (FC-DUP delegator and minimal fallback)	3
@@ -744,3 +747,8 @@ Usage governor seat formula and burn calibration (GOV-FORMULA)	5
 loki status prints the newest sealed receipt verdict on bash and Bun (133-F4)	20
 MCP server negotiates the requested protocol version (MCP-B)	5
 MCP 2026-07-28 spec doc cites sources and names each requirement (MCP-0)	2
+in-toto agent-change predicate draft example parses and maps to receipt fields (SIGS-DOC)	2
+verify-pr sandbox fails closed (VPR-1)	5
+start help does not advertise refused flags	5
+MCP Tasks verify read-only (MCP-D)	2
+OTel collector config and deterministic fixture (OTEL-2b)	3

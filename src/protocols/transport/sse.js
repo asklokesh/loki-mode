@@ -14,6 +14,12 @@ const http = require('http');
 // Maximum allowed POST body size (10 MB)
 const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
+const LOOPBACK_ORIGIN_RE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i;
+
+function _isTaskMethod(r) {
+  return !!r && typeof r === 'object' && typeof r.method === 'string' && r.method.startsWith('tasks/');
+}
+
 class SSETransport {
   constructor(handler, options) {
     this._handler = handler;
@@ -151,9 +157,24 @@ class SSETransport {
         return;
       }
 
+      // Task methods spawn processes. A text/plain cross-origin POST is a CORS simple request (no preflight), so
+      // require a JSON Content-Type and a loopback (or absent) Origin before the handler ever sees them.
+      const ctx = { transport: 'http', authorization: req.headers.authorization };
+      const touchesTasks = Array.isArray(request) ? request.some(_isTaskMethod) : _isTaskMethod(request);
+      if (touchesTasks) {
+        const ctype = String(req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+        const origin = req.headers.origin;
+        const reject = (status, message) => {
+          res.writeHead(status, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32600, message: message }, id: null }));
+        };
+        if (ctype !== 'application/json') { reject(415, 'Task requests require Content-Type: application/json'); return; }
+        if (origin !== undefined && !LOOPBACK_ORIGIN_RE.test(String(origin))) { reject(403, 'Task requests require a loopback Origin'); return; }
+      }
+
       // Handle batch
       if (Array.isArray(request)) {
-        const promises = request.map((r) => Promise.resolve().then(() => this._handler(r)));
+        const promises = request.map((r) => Promise.resolve().then(() => this._handler(r, ctx)));
         Promise.all(promises).then((results) => {
           const responses = results.filter((r) => r !== null);
           res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -171,7 +192,7 @@ class SSETransport {
         return;
       }
 
-      Promise.resolve().then(() => this._handler(request)).then((response) => {
+      Promise.resolve().then(() => this._handler(request, ctx)).then((response) => {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(response));
       }).catch(() => {

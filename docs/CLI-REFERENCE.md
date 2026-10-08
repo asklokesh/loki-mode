@@ -64,6 +64,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki queue add` | Queue issue refs |
 | `loki queue list` | Show the queue |
 | `loki queue run` | Process the queue |
+| `loki verify-pr` | Verify a PR against its linked issue in a sandbox |
 | `loki answer` | Resume a BLOCKED run with an answer |
 | `loki engine10` | v10 engine router |
 | `loki engine10 run` | Run the v10 engine |

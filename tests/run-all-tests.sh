@@ -918,6 +918,7 @@ run_test "AGENTS.md build_prompt Instruction (all blocks)" "$SCRIPT_DIR/test-age
 run_test "AGENTS.md Instruction Parity (bash vs Bun)" "$SCRIPT_DIR/test-parity-agents-md.sh"
 run_test "goal_score bash vs Bun behavioral parity (RC-DOCTOR-ONE S5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-parity-goal-score.sh"
 run_test "Run-owned temp cleanup scope" "$SCRIPT_DIR/test-safe-cleanup-scope-188.sh"
+run_test "verify-pr sandbox fails closed (VPR-1)" "timeout -k 10 120 bash $SCRIPT_DIR/test-verify-pr-sandbox.sh"
 
 # F52: DOC_SCOPE instruction scales documentation to detected project complexity
 # (simple -> minimal docs; standard/complex -> full architecture suite).
@@ -1288,6 +1289,8 @@ run_test "Magic" "$SCRIPT_DIR/test-magic.sh"
 run_test "Mcp Config" "$SCRIPT_DIR/test-mcp-config.sh"
 run_test "Acp Agent" "$SCRIPT_DIR/test-acp-agent.sh"
 run_test "Mcp Http Auth" "$SCRIPT_DIR/test-mcp-http-auth.sh"
+run_test "MCP Tasks verify read-only (MCP-D)" "timeout -k 10 200 $SCRIPT_DIR/test-mcp-tasks-verify-readonly.sh"
+run_test "OTel collector config and deterministic fixture (OTEL-2b)" "timeout -k 10 120 $SCRIPT_DIR/test-otel-collector-config.sh"
 run_test "Memory Audit Fixes" "$SCRIPT_DIR/test-memory-audit-fixes.sh"
 run_test "Memory Capture Wedge" "$SCRIPT_DIR/test-memory-capture-wedge.sh"
 run_test "Memory Economics Endpoint" "$SCRIPT_DIR/test-memory-economics-endpoint.sh"
@@ -1484,6 +1487,7 @@ run_test "a green doctor never recommends a command that exits 2" "$SCRIPT_DIR/t
 run_test "analytics opt-in has a writer (the funnel can fire)" "$SCRIPT_DIR/test-telemetry-analytics-toggle.sh"
 run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help-discoverability.sh"
 run_test "no help topic names a removed surface or a version stamp" "timeout -k 10 240 bash $SCRIPT_DIR/test-help-no-removed-surfaces.sh"
+run_test "start help does not advertise refused flags" "timeout -k 10 120 bash $SCRIPT_DIR/test-help-start-flags.sh"
 run_test "assess runtime detection (declared, never guessed)" "$SCRIPT_DIR/test-assess-runtime-detection.sh"
 run_test "provider model scoping (global tier var must not leak)" "$SCRIPT_DIR/test-provider-model-scoping.sh"
 run_test "model catalog is a single source of truth" "$SCRIPT_DIR/test-model-catalog-single-source.sh"
@@ -1653,7 +1657,10 @@ run_test "v10 guard rules (D44)" "$SCRIPT_DIR/test-v10-guard.sh"
 run_test "first-run gate assertion logic (A-02)" "$SCRIPT_DIR/test-first-run-gate.sh"
 run_test "b9 scoreboard dry-run rows and shape defaults (R1-17)" "timeout -k 10 120 $SCRIPT_DIR/test-b9-scoreboard.sh"
 run_test "b9 trivial-sum fixture generator" "timeout -k 10 120 $SCRIPT_DIR/test-b9-fixture.sh"
+run_test "b9 claimed-done extraction (FCR-1)" "timeout -k 10 120 $SCRIPT_DIR/test-b9-claim.sh"
 run_test "real-run harness scenarios, dry install, doctored receipt" "timeout -k 10 600 $SCRIPT_DIR/test-real-run.sh"
+run_test "b9 raw vs loki arms, ratios and bootstrap (B9-RAW-ARM)" "timeout -k 10 120 $SCRIPT_DIR/test-b9-ab.sh"
+run_test "40x scoreboard factors and efficiency (D92)" "timeout -k 10 120 $SCRIPT_DIR/test-scoreboard-40x.sh"
 run_test "real-repo acceptance gate logic (D58-GATE)" "timeout -k 10 120 $SCRIPT_DIR/test-real-repo-gate.sh"
 run_test "json schemas validate real why and status output (D48 r5)" "$SCRIPT_DIR/test-json-schemas.sh"
 run_test "Every test suite is registered in a runner (D44)" "$SCRIPT_DIR/test-registration-coverage.sh"
@@ -1695,6 +1702,7 @@ run_test "cp-redesign image allowlist guard (D26)" "timeout -k 10 120 bash $SCRI
 run_test "mobile emulator tests: NOT VERIFIED without a device" "timeout -k 10 120 bash $SCRIPT_DIR/test-mobile-verify.sh"
 run_test "ShellCheck Linting" "$SCRIPT_DIR/run-shellcheck.sh"
 run_test "MCP 2026-07-28 spec doc cites sources and names each requirement (MCP-0)" "timeout -k 10 60 bash $SCRIPT_DIR/test-mcp-spec-doc.sh"
+run_test "in-toto agent-change predicate draft example parses and maps to receipt fields (SIGS-DOC)" "timeout -k 10 60 bash $SCRIPT_DIR/test-predicate-doc.sh"
 
 # Summary
 echo -e "${BLUE}╔════════════════════════════════════════════════════════════════╗${NC}"

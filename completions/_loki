@@ -209,6 +209,7 @@ function _loki_commands {
         'otel:OpenTelemetry management'
         'wiki:Wiki commands'
         'answer:Resume a BLOCKED run with an answer'
+        'verify-pr:Verify a PR against its linked issue in a sandbox'
         'queue:Overnight issue queue with a morning digest'
         'undo:Show what undoing a run would do (read-only plan)'
         'control:Control plane (preview, LOKI_CONTROL=1)'

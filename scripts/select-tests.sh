@@ -251,7 +251,7 @@ grep_word_and_emit() {
         already_seen "$emit_kind:$match" && continue
         mark_seen "$emit_kind:$match"
         emit "$rule" "$emit_kind" "$match"
-    done < <(printf '%s\n' "$candidates" | xargs -I{} grep -lE -- "(^|[^A-Za-z0-9])${needle}($|[^A-Za-z0-9])" {} 2>/dev/null)
+    done < <(printf '%s\n' "$candidates" | tr '\n' '\0' | xargs -0 grep -lE -- "(^|[^A-Za-z0-9])${needle}($|[^A-Za-z0-9])" 2>/dev/null)
 }
 
 # Function names touched by a diff's changed hunks, for autonomy/run.sh and
@@ -348,7 +348,7 @@ grep_and_emit() {
         already_seen "$emit_kind:$match" && continue
         mark_seen "$emit_kind:$match"
         emit "$rule" "$emit_kind" "$match"
-    done < <(printf '%s\n' "$candidates" | xargs -I{} grep -lF -- "$needle" {} 2>/dev/null)
+    done < <(printf '%s\n' "$candidates" | tr '\n' '\0' | xargs -0 grep -lF -- "$needle" 2>/dev/null)
 }
 
 # FC-32 / RC-SLICE-SHELL-GATE: the loki-ts/src files the control plane bundles (import closure of

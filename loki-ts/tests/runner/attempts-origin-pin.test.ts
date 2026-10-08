@@ -28,34 +28,34 @@ afterAll(() => {
 });
 
 describe("attempts origin pin", () => {
-  it("a rewritten origin cannot redirect the push: the pinned repo gets the branch, the attacker repo nothing", () => {
+  it("a rewritten origin cannot redirect the push: the pinned bare repo gets the branch, the attacker repo nothing", () => {
     const pinned = join(root, "pinned.git"), attacker = join(root, "attacker.git"), repo = join(root, "repo");
-    sh(root, ["init", "-q", "--bare", pinned]);
+    sh(root, ["init", "-q", "--bare", "-b", "trunk", pinned]);
     sh(root, ["init", "-q", "--bare", attacker]);
     mkdirSync(repo);
     sh(repo, ["init", "-q", "-b", "main"]);
     writeFileSync(join(repo, "a.txt"), "x\n");
     sh(repo, ["add", "a.txt"]);
     sh(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
-    sh(repo, ["remote", "add", "origin", "https://github.com/acme/widgets.git"]);
-    sh(repo, ["config", `url.${pinned}.insteadOf`, "https://github.com/acme/widgets.git"]);
+    sh(repo, ["remote", "add", "origin", pinned]);
 
     const deps = productionDeps(repo, async () => 0, async () => 0, { noPr: false }); // pins here
     const base = deps.baseSha();
     const wt = join(root, "attempt-1");
     deps.createWorktree(wt, base);
+    sh(wt, ["checkout", "-q", "-b", "loki/run1"]);
     sh(repo, ["remote", "set-url", "origin", attacker]); // what a hostile attempt agent does to the shared config
 
-    expect(deps.openPr!(wt, base)).toBe("https://example.invalid/pr/1");
-    const branch = sh(wt, ["symbolic-ref", "--short", "HEAD"]).stdout.trim();
-    expect(sh(pinned, ["for-each-ref", "--format=%(refname)"]).stdout.trim()).toBe(`refs/heads/${branch}`);
+    const out = deps.openPr!(wt, base);
+    expect(out.startsWith(`local://${pinned}#loki-attempts/`)).toBe(true);
+    expect(sh(pinned, ["for-each-ref", "--format=%(refname)"]).stdout.trim()).toBe(`refs/heads/${out.split("#")[1]}`);
     expect(sh(attacker, ["for-each-ref"]).stdout.trim()).toBe("");
-    expect(readFileSync(join(root, "gh.log"), "utf8")).toContain("--repo acme/widgets");
   });
 
-  it("a non-GitHub pinned origin opens no PR and pushes nothing", () => {
-    const bare = join(root, "plain.git"), repo = join(root, "repo2");
-    sh(root, ["init", "-q", "--bare", bare]);
+  it("a pinned origin that is neither GitHub nor a bare repo opens no PR and pushes nothing", () => {
+    const bare = join(root, "plain"), repo = join(root, "repo2");
+    mkdirSync(bare);
+    sh(bare, ["init", "-q"]); // non-bare
     mkdirSync(repo);
     sh(repo, ["init", "-q", "-b", "main"]);
     writeFileSync(join(repo, "a.txt"), "x\n");
@@ -67,5 +67,6 @@ describe("attempts origin pin", () => {
     deps.createWorktree(wt, deps.baseSha());
     expect(() => deps.openPr!(wt, "main")).toThrow(/no PR opened/);
     expect(sh(bare, ["for-each-ref"]).stdout.trim()).toBe("");
+    expect(sh(bare, ["branch", "--list"]).stdout.trim()).toBe("");
   });
 });

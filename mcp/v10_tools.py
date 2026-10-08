@@ -193,3 +193,32 @@ def v10_verify(receipt_path: str, repo_path: str, validate: Callable[[str], str]
         return {"error": f"could not run loki verify: {e}"}
     out = ((p.stdout or "") + (p.stderr or "")).strip()
     return {"exit_code": p.returncode, "verified": p.returncode == 0, "output": out[-2000:]}
+
+
+def _cwd_validator(p: str) -> str:
+    """Resolve p and require it to sit inside the current working directory (the MCP server's, as for the SDK path)."""
+    root = os.path.realpath(os.getcwd())
+    real = os.path.realpath(p)
+    if real != root and not real.startswith(root + os.sep):
+        raise ValueError(f"path outside the working directory: {p}")
+    return real
+
+
+def cli(argv: List[str]) -> int:
+    """MCP-D adapter for the JS server's Tasks. Calls only v10_verify or v10_run and prints their dict as one
+    sorted-key JSON line. Nothing else is reachable from here, and no verdict is computed or changed."""
+    import sys
+    if len(argv) != 3 or argv[0] not in ("verify", "run"):
+        sys.stderr.write("usage: v10_tools.py verify <receipt_path|''> <repo_path|''> | run <ref> <repo_path>\n")
+        return 2
+    if argv[0] == "verify":
+        result = v10_verify(argv[1], argv[2], _cwd_validator)
+    else:
+        result = v10_run(argv[1], argv[2], _cwd_validator)
+    sys.stdout.write(json.dumps(result, sort_keys=True) + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(cli(sys.argv[1:]))

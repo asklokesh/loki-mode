@@ -132,6 +132,7 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
       if (!argv[1]) { process.stderr.write("Usage: loki memory learn <owner/repo#PR>\n"); return 2; }
       try {
         const r = await learnFromPr(process.cwd(), argv[1]);
+        if (r.reason) process.stdout.write(`${r.reason}\n`);
         process.stdout.write(`Learned from ${argv[1]}: ${r.added} added, ${r.duplicates} already known, ${r.skipped} skipped (empty)\n`);
         return 0;
       } catch (e) {

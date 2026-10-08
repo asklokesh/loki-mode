@@ -40,6 +40,7 @@ Bun-native commands:
                          (subcmds: generate | show [section] | ask "<question>")
   queue <subcmd>         Overnight issue queue with a morning digest
                          (subcmds: add <issue...> | list | run [--no-pr])
+  verify-pr <url|o/r#N>  Verify a PR against its linked issue in a sandbox (LOKI_VERIFY_PR=1)
   answer [run] [--text]  Resume a BLOCKED run with an answer (--text, or the Control Plane answer file)
   control <subcmd>       Control plane (on by default; LOKI_CONTROL=0 turns it off)
                          (subcmds: serve [--port N] [--db PATH] | backfill [DIR] | status)
@@ -325,6 +326,12 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     case "queue": {
       const { runQueue } = await import("./commands/queue.ts");
       return runQueue(rest);
+    }
+
+    case "verify-pr": {
+      // VPR-2: PR code runs only through the VPR-1 container sandbox; gated by LOKI_VERIFY_PR=1 inside runVerifyPr.
+      const { runVerifyPr } = await import("./commands/verify_pr.ts");
+      return runVerifyPr(rest);
     }
 
     case "answer": {

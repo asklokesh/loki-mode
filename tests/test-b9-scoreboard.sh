@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2319,SC2059
 # tests/test-b9-scoreboard.sh -- R1-17: scripts/b9-scoreboard.sh dry-run rows and
 # --emit-shape-defaults. A fake `loki` (B9_LOKI) and the script's own stub `claude`; no provider, no network.
 set -uo pipefail
@@ -229,7 +230,7 @@ else
 fi
 FAKE
 chmod +x "$T/fake-loki-usage"
-env -u LOKI_RUN_TMP B9_LOKI="$T/fake-loki-usage" bash "$B9" --dry-run --repeat 3 --results-out "$T/u.tsv" > "$T/u.txt" 2> "$T/u.err"
+env -u LOKI_RUN_TMP B9_STUB_CLAUDE_JSON='{"type":"result","total_cost_usd": 0.0123}' B9_LOKI="$T/fake-loki-usage" bash "$B9" --dry-run --repeat 3 --results-out "$T/u.tsv" > "$T/u.txt" 2> "$T/u.err"
 check usage-repeat-rc $? "$(cat "$T/u.err")"
 UR=$(grep -c 'b9-scoreboard arm ' "$T/u.txt")
 check repeat-3-gives-12-rows "$(( UR == 12 ? 0 : 1 ))" "rows=$UR"
@@ -251,6 +252,51 @@ grep -q '^router_cost_ratio=NOT RECORDED$' "$T/n1.txt" && grep -q '^gate_1_05=FA
 for r in 1 2 3; do printf '2\tx\t%s\t1\t10\tunknown\ts\n3\tx\t%s\t1\t10\t0.05\ts\n' "$r" "$r"; done > "$T/unk.tsv"
 bash "$B9" --summarize "$T/unk.tsv" > "$T/unk.txt"
 grep -q 'summary arm 2 router usd: NOT RECORDED' "$T/unk.txt" && grep -q '^gate_1_05=FAIL$' "$T/unk.txt"; check unknown-usd-not-zero-not-green $? "$(cat "$T/unk.txt")"
+
+# FCR-2: --arms selector with a raw-codex arm beside raw (claude). Stub codex only; no live run, no key.
+ab() { env -u LOKI_RUN_TMP "$@"; }
+ab bash "$B9" --ab --dry --n 1 --fixtures trivial-sum --arms raw,raw-codex,loki --version t --results-out "$T/fa.tsv" --json-out "$T/fa.json" > "$T/fa.out" 2>&1
+check arms-dry-rc $? "$(cat "$T/fa.out")"
+[ "$(wc -l < "$T/fa.tsv" | tr -d ' ')" = "3" ] && [ "$(cut -f1 "$T/fa.tsv" | sort | tr '\n' ' ')" = "loki raw raw-codex " ]; check arms-one-row-per-arm-per-task $? "$(cat "$T/fa.tsv")"
+# positive control: the stub codex arm really solves the task, so a later 0/N is not a broken harness
+[ "$(grep '^raw-codex' "$T/fa.tsv" | cut -f4)" = "1" ]; check codex-positive-control-solved $? "$(cat "$T/fa.tsv")"
+# codex reports no cost or wall in this harness: NOT RECORDED, never 0 and never our own clock
+[ "$(grep '^raw-codex' "$T/fa.tsv" | cut -f6,7)" = "$(printf 'NOT RECORDED\tNOT RECORDED')" ]; check codex-cost-wall-not-recorded $? "$(cat "$T/fa.tsv")"
+# default arms are unchanged (raw, loki)
+ab bash "$B9" --ab --dry --n 1 --fixtures trivial-sum --version t --results-out "$T/fd.tsv" --json-out "$T/fd.json" > /dev/null 2>&1
+[ "$(cut -f1 "$T/fd.tsv" | sort | tr '\n' ' ')" = "loki raw " ]; check default-arms-unchanged $? "$(cat "$T/fd.tsv")"
+ab bash "$B9" --ab --dry --arms bogus --version t > /dev/null 2>&1; [ $? -eq 2 ]; check unknown-arm-rc2 $? ""
+# a codex preflight failure is BLOCKED (rc 3, reason named, no scored row), not a failed solve
+ab B9_STUB_CODEX_AUTH=fail bash "$B9" --ab --dry --n 1 --fixtures trivial-sum --arms raw,raw-codex --version t --results-out "$T/fb.tsv" --json-out "$T/fb.json" > "$T/fb.out" 2>&1
+RC=$?
+[ "$RC" -eq 3 ] && grep -q 'raw-codex arm BLOCKED' "$T/fb.out" && ! grep -q '^raw-codex' "$T/fb.tsv"; check codex-preflight-failure-is-blocked $? "rc=$RC $(cat "$T/fb.out")"
+# a timed-out cell is recorded (solved 0), not dropped
+ab B9_STUB_CODEX_MODE=sleep bash "$B9" --ab --dry --n 1 --fixtures trivial-sum --arms raw-codex --timeout 1 --version t --results-out "$T/ft.tsv" --json-out "$T/ft.json" > "$T/ft.out" 2>&1
+[ "$(grep -c '^raw-codex' "$T/ft.tsv")" = "1" ] && [ "$(grep '^raw-codex' "$T/ft.tsv" | cut -f4)" = "0" ]; check codex-timeout-recorded-not-dropped $? "$(cat "$T/ft.tsv") $(cat "$T/ft.out")"
+# a no-op codex scores solved 0 (the control is not vacuous)
+ab B9_STUB_CODEX_MODE=noop bash "$B9" --ab --dry --n 1 --fixtures trivial-sum --arms raw-codex --version t --results-out "$T/fn.tsv" --json-out "$T/fn.json" > /dev/null 2>&1
+[ "$(grep '^raw-codex' "$T/fn.tsv" | cut -f4)" = "0" ]; check codex-noop-scores-zero $? "$(cat "$T/fn.tsv")"
+
+# FCR task set: pinned repo + 40-hex SHA + hidden test command + license
+TS="$SCRIPT_DIR/../docs/v11/FCR-TASKS.tsv"
+bash "$B9" --check-tasks "$TS" > "$T/ct.out" 2>&1; RC=$?
+{ [ "$RC" -eq 0 ] || [ "$RC" -eq 4 ]; } && grep -q 'tasks=' "$T/ct.out"; check committed-task-set-valid-rows $? "rc=$RC $(cat "$T/ct.out")"
+H='id\trepo\tsha\ttest_cmd\tlicense\ttask'
+printf "$H\nt1\thttps://github.com/a/b\t%s\tnpm test\tMIT\tfix it\n" "$(printf 'a%.0s' $(seq 1 40))" > "$T/ok.tsv"
+bash "$B9" --check-tasks "$T/ok.tsv" > "$T/ok.out" 2>&1; RC=$?
+[ "$RC" -eq 4 ] && grep -q 'INCOMPLETE' "$T/ok.out"; check taskset-under-20-incomplete $? "rc=$RC $(cat "$T/ok.out")"
+printf "$H\nt1\thttps://github.com/a/b\tmain\tnpm test\tMIT\tfix it\n" > "$T/bad1.tsv"
+bash "$B9" --check-tasks "$T/bad1.tsv" > "$T/bad1.out" 2>&1; RC=$?
+[ "$RC" -eq 1 ] && grep -q 'not a 40-hex SHA' "$T/bad1.out"; check taskset-unpinned-sha-rejected $? "rc=$RC $(cat "$T/bad1.out")"
+printf "$H\nt1\thttps://github.com/a/b\t%s\tnpm test\tGPL-3.0\tfix it\n" "$(printf 'a%.0s' $(seq 1 40))" > "$T/bad2.tsv"
+bash "$B9" --check-tasks "$T/bad2.tsv" > "$T/bad2.out" 2>&1; RC=$?
+[ "$RC" -eq 1 ] && grep -q 'license' "$T/bad2.out"; check taskset-incompatible-license-rejected $? "rc=$RC $(cat "$T/bad2.out")"
+{ printf "$H\n"; for i in 1 2; do printf "dup\thttps://github.com/a/b\t%s\tnpm test\tMIT\tfix it\n" "$(printf 'a%.0s' $(seq 1 40))"; done; } > "$T/bad3.tsv"
+bash "$B9" --check-tasks "$T/bad3.tsv" > "$T/bad3.out" 2>&1; RC=$?
+[ "$RC" -eq 1 ] && grep -q 'duplicate id' "$T/bad3.out"; check taskset-duplicate-id-rejected $? "rc=$RC $(cat "$T/bad3.out")"
+{ printf "$H\n"; for i in $(seq 1 20); do printf "t%s\thttps://github.com/a/b\t%s\tnpm test\tMIT\tfix it\n" "$i" "$(printf 'a%.0s' $(seq 1 40))"; done; } > "$T/full.tsv"
+bash "$B9" --check-tasks "$T/full.tsv" > "$T/full.out" 2>&1; RC=$?
+[ "$RC" -eq 0 ] && grep -q 'tasks=20' "$T/full.out"; check taskset-20-rows-complete $? "rc=$RC $(cat "$T/full.out")"
 
 echo "b9-scoreboard tests: $FAILS failure(s)"
 [ "$FAILS" -eq 0 ]
