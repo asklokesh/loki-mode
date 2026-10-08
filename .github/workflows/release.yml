@@ -1135,7 +1135,21 @@ jobs:
           # `npm pack` skips prepublishOnly and `npm publish <tgz>` runs no
           # scripts, so build the web-app and control-plane dist here, fail closed.
           npm run prepublishOnly
+          # FC-51: `npm publish <tgz>` records NO gitHead of its own (only a
+          # directory publish reads .git), and promote.yml refuses a version
+          # with no gitHead. Stamp the exact release commit into the manifest
+          # that gets packed, then restore the tracked file.
+          GITHEAD_STAMP="$(git rev-parse HEAD)" || { echo "FATAL: git rev-parse HEAD failed"; exit 1; }
+          printf '%s' "$GITHEAD_STAMP" | grep -Eq '^[0-9a-f]{40}$' || { echo "FATAL: HEAD is not a 40-hex SHA: $GITHEAD_STAMP"; exit 1; }
+          cp package.json "$RUNNER_TEMP/package.json.orig"
+          npm pkg set gitHead="$GITHEAD_STAMP"
           tgz="$(npm pack --silent | tail -n 1)"
+          cp "$RUNNER_TEMP/package.json.orig" package.json
+          tar -xzOf "$tgz" package/package.json > "$RUNNER_TEMP/packed-package.json"
+          PACKED_HEAD="$(node -p "require(process.argv[1]).gitHead || ''" "$RUNNER_TEMP/packed-package.json")"
+          [ "$PACKED_HEAD" = "$GITHEAD_STAMP" ] || {
+            echo "FATAL: packed package.json gitHead '${PACKED_HEAD}' != HEAD ${GITHEAD_STAMP}"; exit 1; }
+          echo "OK: packed manifest gitHead ${PACKED_HEAD}"
           tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
           for need in package/packages/control-plane/dist/server.js \
                       package/packages/control-plane/dist/ask-tools-server.js \

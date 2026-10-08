@@ -450,6 +450,7 @@ npm artifacts have portable permissions	11
 packaged MCP server exposes the exact tool surface	5
 MCP contract guard rejects rename/deletion/missing prereqs	23
 npm SBOM is attached to the GitHub Release	1
+promote gitHead stamp and tag fallback (FC-51)	1
 release.sh version-bump preserves file mode (BACKLOG 22)	1
 loki why maps each error class to an action	2
 loki start surfaces a stale install	1
