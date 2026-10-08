@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { defaultCheckout, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
+import { defaultCheckout, defaultIssue, defaultPackageSuites, defaultSandbox, parsePrRef, runVerifyPr, type PrMeta, type VerifyPrDeps } from "../../src/commands/verify_pr.ts";
 import { extractChecks } from "../../src/engine10/verify_pr_f2p.ts";
 
 let dir: string;
@@ -63,6 +63,8 @@ describe("loki verify-pr", () => {
     expect(parsePrRef("../..#1")).toBeNull();
     expect(parsePrRef("-x/y#1")).toBeNull();
     expect(parsePrRef("o/-r#1")).toBeNull();
+    expect(parsePrRef("o/a..b#1")).toBeNull();
+    expect(parsePrRef("a..b/r#1")).toBeNull();
     expect(parsePrRef("https://github.com/../r/pull/1")).toBeNull();
   });
 
@@ -136,6 +138,37 @@ describe("loki verify-pr", () => {
     const ok = await run(f.meta, { checkout: defaultCheckout });
     expect(ok.json.verdict).toBe("VERIFIED");
     expect(ok.json.issues).toEqual([{ ref: "o/r#1", author: "maint", association: "MEMBER", updatedAt: "2026-10-01T00:00:00Z", trusted: true }]);
+  });
+
+  test("a failed trust lookup says so, distinct from an untrusted association", async () => {
+    const f = fixture("fix");
+    const r = await run(f.meta, { checkout: defaultCheckout, issue: () => ({ body: ISSUE, repo: "o/r", lookupFailed: true }) });
+    expect(r.json.verdict).toBe("NOT PROVEN");
+    expect(r.json.reasons.join(" ")).toContain("trust lookup failed");
+    expect(r.json.reasons.join(" ")).not.toContain("untrusted issue");
+  });
+
+  test("defaultIssue reads the association through a gh that rejects unknown --json fields", () => {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "gh"), `#!/bin/sh
+if [ "$1" = issue ] && [ "$2" = view ]; then
+  for a in "$@"; do case "$a" in *authorAssociation*) echo 'Unknown JSON field: "authorAssociation"' >&2; exit 1;; esac; done
+  echo '{}'; exit 0
+fi
+if [ "$1" = api ] && [ "$2" = repos/o/r/issues/1 ] && [ "$3" = --jq ]; then
+  [ -n "$FAKE_GH_FAIL" ] && { echo 'HTTP 404' >&2; exit 1; }
+  echo '{"a":"MEMBER","u":"maint","t":"2026-10-01T00:00:00Z"}'; exit 0
+fi
+echo "unexpected: $*" >&2; exit 2
+`);
+    chmodSync(join(bin, "gh"), 0o755);
+    const env = { ...process.env, PATH: `${bin}:${process.env["PATH"]}` };
+    const fetch = () => ({ body: ISSUE });
+    expect(defaultIssue("o/r#1", env, fetch)).toEqual({ body: ISSUE, repo: "o/r", author: "maint", authorAssociation: "MEMBER", updatedAt: "2026-10-01T00:00:00Z" });
+    const bad = defaultIssue("o/r#1", { ...env, FAKE_GH_FAIL: "1" }, fetch);
+    expect(bad.lookupFailed).toBe(true);
+    expect(bad.authorAssociation).toBeUndefined();
   });
 
   test("OWNER, MEMBER and COLLABORATOR are trusted; repo match ignores case", async () => {

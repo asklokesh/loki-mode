@@ -15,7 +15,7 @@ import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 export interface PrRef { repo: string; number: number }
 export interface PrMeta { baseSha: string; headSha: string; cloneUrl: string; issueRefs: string[] }
 export interface Checkout { baseDir: string; headDir: string; changed: string[] }
-export interface IssueInfo { body: string; repo?: string; author?: string; authorAssociation?: string; updatedAt?: string }
+export interface IssueInfo { body: string; repo?: string; author?: string; authorAssociation?: string; updatedAt?: string; lookupFailed?: boolean }
 export interface PackageSuites { suites: string[]; removed: string[] }
 export interface VerifyPrDeps {
   prMeta: (ref: PrRef) => PrMeta;
@@ -53,15 +53,17 @@ export function parsePrRef(s: string): PrRef | null {
 
 const sh = (args: string[], env: NodeJS.ProcessEnv): string => execFileSync("gh", args, { encoding: "utf8", env, stdio: ["ignore", "pipe", "pipe"] });
 
-/** Issue body plus who wrote it and their association with the repo (the trust signal). */
-export function defaultIssue(ref: string, env: NodeJS.ProcessEnv = process.env): IssueInfo {
-  const body = fetchIssue(ref).body ?? "";
+/** Issue body plus who wrote it and their association with the repo (the trust signal). `gh issue view --json` has no
+ *  authorAssociation field, so the association comes from the REST issue object. A failed lookup is flagged, never guessed. */
+export function defaultIssue(ref: string, env: NodeJS.ProcessEnv = process.env, fetch: (r: string) => { body?: string } = fetchIssue): IssueInfo {
+  const body = fetch(ref).body ?? "";
   const m = /^([^#]+)#(\d+)$/.exec(ref);
-  if (!m) return { body };
+  if (!m) return { body, lookupFailed: true };
   try {
-    const j = JSON.parse(sh(["issue", "view", m[2]!, "--repo", m[1]!, "--json", "author,authorAssociation,updatedAt"], env)) as { author?: { login?: string }; authorAssociation?: string; updatedAt?: string };
-    return { body, repo: m[1]!, author: j.author?.login, authorAssociation: j.authorAssociation, updatedAt: j.updatedAt };
-  } catch { return { body, repo: m[1]! }; }
+    const j = JSON.parse(sh(["api", `repos/${m[1]!}/issues/${m[2]!}`, "--jq", "{a:.author_association,u:.user.login,t:.updated_at}"], env)) as { a?: string; u?: string; t?: string };
+    if (!j.a) return { body, repo: m[1]!, lookupFailed: true };
+    return { body, repo: m[1]!, author: j.u, authorAssociation: j.a, updatedAt: j.t };
+  } catch { return { body, repo: m[1]!, lookupFailed: true }; }
 }
 
 export function defaultPrMeta(ref: PrRef, env: NodeJS.ProcessEnv = process.env): PrMeta {
@@ -147,12 +149,16 @@ export function judgePr(ref: PrRef, deps: VerifyPrDeps, workDir: string): Verify
   const baseRepo = ref.repo.toLowerCase();
   const TRUSTED = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
   const bodies: string[] = [];
+  const lookups: boolean[] = [];
   for (const r of meta.issueRefs) {
     const i = deps.issue(r);
     const trusted = (i.repo ?? "").toLowerCase() === baseRepo && TRUSTED.has(i.authorAssociation ?? "");
     res.issues.push({ ref: r, author: i.author ?? null, association: i.authorAssociation ?? null, updatedAt: i.updatedAt ?? null, trusted });
+    lookups.push(i.lookupFailed === true);
     if (trusted) bodies.push(i.body ?? "");
   }
+  const failed = meta.issueRefs.filter((_, k) => lookups[k]);
+  if (bodies.length === 0 && failed.length > 0) return np(`trust lookup failed for ${failed.join(", ")}: could not read the issue author association, so no check was accepted`);
   if (bodies.length === 0) return np("check from an untrusted issue: the linked issue is not in the PR's repo or its author is not OWNER, MEMBER or COLLABORATOR");
   res.criteria = bodies.reduce((n, b) => n + parseContract(b).criteria.length, 0);
   res.checks = [...new Set(bodies.flatMap(extractChecks))];
