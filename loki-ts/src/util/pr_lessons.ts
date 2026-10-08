@@ -150,6 +150,16 @@ export function recordRunVerdict(repoDir: string, runId: string, verdict: string
   if (dirty) save(repoDir, lessons);
 }
 
+/** Delete exactly one lesson by id and return it; null (file untouched) when the id is unknown. */
+export function removeLesson(repoDir: string, id: string): Lesson | null {
+  const lessons = loadLessons(repoDir);
+  const idx = lessons.findIndex((l) => l.id === id);
+  if (idx < 0) return null;
+  const [gone] = lessons.splice(idx, 1);
+  save(repoDir, lessons);
+  return gone ?? null;
+}
+
 export function formatLessonsForBrief(ls: Lesson[]): string {
   if (ls.length === 0) return "";
   // Drop every angle bracket: a single-pass tag strip can be defeated by nesting a tag inside itself.

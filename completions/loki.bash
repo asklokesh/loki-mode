@@ -57,7 +57,7 @@ _loki_completion() {
             ;;
 
         memory)
-            local memory_cmds="list show search stats export clear dedupe index timeline consolidate economics retrieve episode pattern skill vectors help"
+            local memory_cmds="list show search stats export clear dedupe index timeline consolidate economics retrieve lessons learn forget episode pattern skill vectors help"
             COMPREPLY=( $(compgen -W "${memory_cmds}" -- "$cur") )
             ;;
 

@@ -337,6 +337,9 @@ function _loki_memory {
         'pattern:Manage patterns'
         'skill:Manage skills'
         'vectors:Vector search'
+        'lessons:List PR lessons (--json)'
+        'learn:Learn from a merged PR'
+        'forget:Delete a PR lesson'
         'help:Memory help'
     )
     _describe -t cmds 'memory subcommand' cmds
