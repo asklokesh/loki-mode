@@ -24,7 +24,8 @@
 # tests/moat/pending.txt and tests/moat/cases.txt at the tags, so moving this
 # directory cannot reset them.
 #
-# Exit: 0 no rule failed, 1 a rule failed, 2 could not check (no release tag
+# Exit: 0 no rule failed, 1 a rule failed, 3 a prerequisite install failed
+# (nothing ran), 2 could not check (no release tag
 # reachable, or a baseline unreadable). A definite failure (1) wins over
 # could-not-check (2). Exit 0 is not "the moat is proven": only 9 of 9
 # properties proven is.
@@ -90,6 +91,43 @@ kill_tree() {
   kill "-$2" "$1" 2> /dev/null
   kill -CONT "$1" 2> /dev/null
 }
+
+# --- 0. prerequisites: JS dependencies -------------------------------------
+# node_modules is gitignored, so a fresh worktree has none, and the P2/P7 cases
+# that need web-app typescript or the control-plane deps then fail as
+# "prerequisite missing" and read as regressions. Mirror scripts/local-ci.sh
+# step 0a: the lockfile-faithful install, announced. A failed install is a
+# PREREQUISITE failure (exit 3) that names the install error; it never runs the
+# properties and never passes. LOKI_MOAT_NO_INSTALL=1 opts out (the
+# missing-deps cases then fail as before).
+moat_root="$(cd "$MOAT_DIR/../.." && pwd -P)"
+moat_env_failed=""
+if [ "${LOKI_MOAT_NO_INSTALL:-0}" != "1" ]; then
+  for spec in \
+    "web-app|npm|package-lock.json|npm ci" \
+    "packages/control-plane|bun|bun.lock|bun install --frozen-lockfile"; do
+    IFS='|' read -r dir tool lock cmd <<< "$spec"
+    [ -f "$moat_root/$dir/package.json" ] && [ -f "$moat_root/$dir/$lock" ] || continue
+    [ -d "$moat_root/$dir/node_modules" ] && continue
+    command -v "$tool" > /dev/null 2>&1 || continue
+    echo "PREREQUISITE: $dir/node_modules missing (fresh worktree); running: (cd $dir && $cmd)"
+    if out=$( (cd "$moat_root/$dir" && eval "$cmd") 2>&1 ); then
+      echo "PREREQUISITE: $dir installed"
+    else
+      rc=$?
+      echo "$out" | tail -15
+      moat_env_failed="${moat_env_failed}  - $dir: '$cmd' exited $rc
+"
+    fi
+  done
+  if [ -n "$moat_env_failed" ]; then
+    echo
+    echo "PREREQUISITE FAILURE: dependencies could not be installed. This is the environment, not a moat regression."
+    printf '%s' "$moat_env_failed"
+    echo "No property script was run. Fix the install (network, registry, lockfile) and re-run."
+    exit 3
+  fi
+fi
 
 # --- 1. discover: exactly one script per property -----------------------------
 for f in "$MOAT_DIR"/p[0-9]*-*.sh; do
