@@ -86,7 +86,7 @@ export function defaultCheckout(ref: PrRef, meta: PrMeta, workDir: string): Chec
     mkdirSync(dir, { recursive: true });
     const tar = join(workDir, `${sha}.tar`);
     safeGit(repo, ["archive", "--format=tar", "-o", tar, sha]);
-    execFileSync("tar", ["-xf", tar, "-C", dir], { stdio: "ignore" });
+    execFileSync("tar", ["-xf", tar, "-C", dir], { stdio: "ignore", env: tokenFreeEnv(process.env) });
     rmSync(tar, { force: true });
   }
   const changed = safeGit(repo, ["diff", "--name-only", "-z", meta.baseSha, meta.headSha]).split("\0").filter(Boolean);
