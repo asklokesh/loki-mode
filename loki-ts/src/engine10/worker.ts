@@ -1,7 +1,6 @@
 // Loki 10 worker (P2, ENGINE.md 6): the token-withheld process that runs intake..seal. It never writes
 // events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates,
 // stamps seq and appends. Its own diagnostics go to stderr.
-import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { GITHUB_TOKEN_VARS } from "../runner/github_token.ts";
 import { sumResultCosts } from "./cost.ts";
@@ -13,6 +12,7 @@ import { createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "./types.ts";
 import type { EventType, RunContext, StageName } from "./types.ts";
+import { safeGit } from "../util/safe_git.ts";
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
 /** The stage driver; `main` below passes machine.ts. */
 export type WorkerDrive = (emit: WorkerEmit) => Promise<void>;
@@ -54,7 +54,7 @@ export async function main(args: string[]): Promise<number> {
     });
     const ctx: RunContext = {
       runId, repoDir, runDir: join(lokiRoot, "runs", runId), branch: `loki/${runId}`, provider, model, deep,
-      baseSha: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoDir, encoding: "utf8", env: process.env }).trim(),
+      baseSha: safeGit(repoDir, ["rev-parse", "HEAD"]).trim(),
       capS: deep ? DEEP_CAP_S : Number(process.env.LOKI_E10_CAP_S) || DEFAULT_CAP_S,
       emit, overCap: over,
       sessions: { run: (o) => { started.add(o.iterationId); return sessions.run(o); } }, failovers: () => failovers,

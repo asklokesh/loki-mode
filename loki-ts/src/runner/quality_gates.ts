@@ -50,6 +50,7 @@ import { REPO_ROOT, lokiDir } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
+import { safeGitRun } from "../util/safe_git.ts";
 
 // v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
 // (which is sync because it sits inside the runQualityGates for-loop). Bun
@@ -311,7 +312,7 @@ export async function runStaticAnalysis(ctx?: RunnerContext): Promise<GateResult
   // single-commit case (HEAD~1 absent AND --cached empty AND repo
   // actually has tracked files).
   const tryGit = async (args: readonly string[]): Promise<string | null> => {
-    const r = await run(["git", "-C", root, ...args], { timeoutMs: 30_000 });
+    const r = await safeGitRun(root, args, { timeoutMs: 30_000 });
     if (r.exitCode !== 0) return null;
     return r.stdout;
   };
@@ -1869,7 +1870,7 @@ export function filesFromDiff(diff: string): string {
 
 async function readDiffAndFiles(cwd: string): Promise<{ diff: string; files: string }> {
   const tryGit = async (args: readonly string[]): Promise<string | null> => {
-    const r = await run(["git", "-C", cwd, ...args], { timeoutMs: 30_000 });
+    const r = await safeGitRun(cwd, args, { timeoutMs: 30_000 });
     if (r.exitCode !== 0) return null;
     return r.stdout;
   };

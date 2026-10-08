@@ -1,6 +1,7 @@
 // D50-F1: an ALREADY_SATISFIED run must end with no source diff against base. Lives outside engine10 core to keep it under its line cap.
-import { execFileSync } from "node:child_process"; import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs"; import { dirname, join, relative, sep } from "node:path";
+import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs"; import { dirname, join, relative, sep } from "node:path";
 import type { Obj, StageResult } from "../engine10/types.ts";
+import { safeGitSpawn } from "../util/safe_git.ts";
 
 type Git = (args: string[]) => Promise<{ out: string; code: number }>;
 
@@ -30,6 +31,12 @@ export function alreadySatisfied(o: Partial<Record<string, Obj>>): boolean {
 
 /** Null when the run is not already-satisfied (nothing touched). Otherwise restores every staged path to base
  *  (except .loki/ and pre-existing dirt in `keep`) and resets HEAD and index to base; any git failure is a failed stage. */
+/** Blob bytes (Buffer: files may be binary), via the hardened, token-free git (FC-25). Throws on any failure. */
+function catBlob(repoDir: string, sha: string): Buffer {
+  const r = safeGitSpawn(repoDir, ["cat-file", "blob", sha], { maxBuffer: 1 << 28 });
+  if (r.error || r.status !== 0) throw r.error ?? new Error(`git cat-file blob ${sha} failed`);
+  return r.stdout;
+}
 export async function discardIfSatisfied(git: Git, base: string, o: Partial<Record<string, Obj>>, staged: { st: string; f: string }[], keep: Set<string>, repoDir: string): Promise<StageResult | null> {
   if (!alreadySatisfied(o)) return null;
   const pre = Object.assign(Object.create(null), o.intake?.preexisting_dirty ?? {}) as Record<string, string>, own = new Set([...(Array.isArray(o.intake?.preexisting_untracked) ? o.intake.preexisting_untracked : []) as string[], ...Object.keys((o.intake?.preexisting_untracked_blobs ?? {}) as object)]); // r2: user files from intake are never touched
@@ -41,13 +48,13 @@ export async function discardIfSatisfied(git: Git, base: string, o: Partial<Reco
     const fp = join(repoDir, f);
     try {
       if (v.startsWith("!")) { const st = lstatSync(fp); if (`!${st.size}:${st.mtimeMs}:${st.ctimeMs}` !== v) throw new Error("changed, not snapshotted"); continue; }
-      const [sha, mode] = v.split(" "), want = execFileSync("git", ["cat-file", "blob", sha!], { cwd: repoDir, env: process.env, maxBuffer: 1 << 28 });
+      const [sha, mode] = v.split(" "), want = catBlob(repoDir, sha!);
       safeRestore(repoDir, f, want, parseInt(mode ?? "644", 8));
     } catch { notProven.push(f); }
   }
   // pre-existing dirty files go back to their intake blob; no blob = left as is
   for (const f of Object.keys(pre)) if (staged.some((s) => s.f === f) && !keep.has(f)) {
-    try { let m = 0o644; try { const l = lstatSync(join(repoDir, f)); if (l.isFile()) m = l.mode & 0o777; } catch { /* absent */ } safeRestore(repoDir, f, execFileSync("git", ["cat-file", "blob", pre[f]!], { cwd: repoDir, env: process.env, maxBuffer: 1 << 28 }), m); } catch { notProven.push(f); }
+    try { let m = 0o644; try { const l = lstatSync(join(repoDir, f)); if (l.isFile()) m = l.mode & 0o777; } catch { /* absent */ } safeRestore(repoDir, f, catBlob(repoDir, pre[f]!), m); } catch { notProven.push(f); }
   }
   return { status: "completed", data: { committed: false, discarded: gone.length, ...(notProven.length > 0 ? { not_proven: notProven.map((f) => `pre-existing file not restored: ${f}`) } : {}) } };
 }

@@ -16,6 +16,7 @@ import { runPackageSuites } from "../../project_model/package_suite.ts";
 import { classifyCheck, goRunner, NO_TESTS_REASON } from "../../util/check_result.ts";
 import type { PushArgs, ReceiptCheck, RunContext, RunnerName, Stage, StageResult } from "../types.ts";
 import { pushArgv, STAGE_BUDGETS } from "../types.ts";
+import { safeGitRun } from "../../util/safe_git.ts";
 /** RunContext plus the value this stage needs that E-03 will eventually
  *  inject (same local-extension pattern pr.ts's PrContext already uses). */
 export type DeepContext = RunContext & {
@@ -139,7 +140,7 @@ async function runCouncilCheck(
     notProven.add("council (not wired: see the contract-gap note in stages/deep.ts)");
     return;
   }
-  const diffResult = await run(["git", "diff", "--no-color", baseSha, "HEAD", "--", ...codeFiles], { cwd: ctx.repoDir, timeoutMs: 20_000 });
+  const diffResult = await safeGitRun(ctx.repoDir, ["diff", "--no-color", baseSha, "HEAD", "--", ...codeFiles], { timeoutMs: 20_000 });
   const diff = diffResult.exitCode === 0 ? diffResult.stdout : "";
   const maxBytes = opts.maxCouncilDiffBytes ?? MAX_COUNCIL_DIFF_BYTES;
   if (Buffer.byteLength(diff, "utf8") > maxBytes) {
@@ -222,7 +223,7 @@ async function postResults(
   } else {
     out.push("deep comment not posted (no PR number)");
   }
-  const headSha = (await run(["git", "rev-parse", "HEAD"], { cwd: ctx.repoDir, timeoutMs: 10_000 })).stdout.trim();
+  const headSha = (await safeGitRun(ctx.repoDir, ["rev-parse", "HEAD"], { timeoutMs: 10_000 })).stdout.trim();
   if (SHA_RE.test(headSha)) {
     const statusArgs: PushArgs = { cmd: "status", sha: headSha, state: statusState, description: `Loki 10 deep verify: ${statusState}` };
     const statusResult = await run(["bash", scriptPath, ...pushArgv(statusArgs)], { cwd: ctx.repoDir, env, timeoutMs: 30_000 });
