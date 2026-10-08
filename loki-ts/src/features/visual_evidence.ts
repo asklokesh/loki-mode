@@ -51,6 +51,10 @@ export function pickScript(pkg: Record<string, unknown>): string | null {
   const s = (pkg["scripts"] ?? {}) as Record<string, string>;
   return ["dev", "preview", "start"].find((k) => typeof s[k] === "string") ?? null;
 }
+/** True when the repo manifest has a dev, preview or start script; never throws. */
+export const hasPickableScript = (repoDir: string): boolean => {
+  try { const p = join(repoDir, "package.json"); return existsSync(p) && pickScript(JSON.parse(readFileSync(p, "utf8"))) !== null; } catch { return false; }
+};
 function freePort(): Promise<number> {
   return new Promise((res, rej) => {
     const srv = createServer();
