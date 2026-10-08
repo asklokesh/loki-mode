@@ -131,3 +131,12 @@ describe("R1-10 N3 plan-scope.json must be a regular file", () => {
     rmSync(s.dir, { recursive: true, force: true });
   });
 });
+
+describe("T3 behavior_change intent (strict only)", () => {
+  test("brief asks for behavior_change only when requested; default brief unchanged", () => {
+    const base = buildPlanBrief("t", ["a.ts"], "/r/plan-output.txt", "/r/plan-scope.json");
+    expect(buildPlanBrief("t", ["a.ts"], "/r/plan-output.txt", "/r/plan-scope.json", false, false)).toBe(base);
+    expect(base).not.toContain("behavior_change");
+    expect(buildPlanBrief("t", ["a.ts"], "/r/plan-output.txt", "/r/plan-scope.json", false, true)).toContain("behavior_change");
+  });
+});

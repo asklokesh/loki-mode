@@ -13,6 +13,7 @@ import { loadTaskText } from "./wall.ts";
 import { routerEnabled } from "../../runner/router/flag.ts";
 import { envOverride, parseUnits } from "../../runner/router/decision.ts";
 import { probeAdvisor } from "../../runner/router/advisor_probe.ts";
+import { mutationStrict } from "../../util/mutation_proof.ts";
 import { claudeCodeVersionForRoute } from "../../runner/providers.ts";
 
 const MAX_PLAN_LINES = 10;
@@ -31,7 +32,7 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
 // R1-10: Opus is the router. The model picks each unit's executor; the harness only validates the schema (L0).
 const ROUTER_UNITS_INSTRUCTION = 'In the same JSON file (<scope>) also add "units": [{"id":"<unit id>","kind":"<short kind>","executor":"sonnet"|"haiku","reason":"<=200 chars"}], one entry per work unit of your plan. The default executor is sonnet. Assign haiku to a unit only when you judge it safe for that unit and say why in reason. Give the Wall acceptance-test unit the id "wall".';
 
-export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false): string {
+export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intent: boolean = false): string {
   return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
@@ -41,6 +42,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
     `Write a plan of at most ${MAX_PLAN_LINES} short lines, no other prose, to this exact file path: ${outputPath}`,
     `Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: ${scopePath}`,
     ...(router ? [ROUTER_UNITS_INSTRUCTION.replace("<scope>", scopePath)] : []),
+    ...(intent ? [`In the same JSON object (${scopePath}) also add "behavior_change": true if this task changes observable behavior (a fix or a feature a new test can distinguish from the old code), false for a refactor, rename, docs or config-only change.`] : []), // T3 intent, read only under LOKI_MUTATION_STRICT=1
     "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n"));
 }
@@ -77,7 +79,7 @@ export const planStage: Stage = {
     const pinOpus = routed && !advisorAvailable && ctx.provider === "claude" && envOverride(process.env) === null;
     const session = await ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), routed),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), routed, mutationStrict()),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,
@@ -106,6 +108,9 @@ export const planStage: Stage = {
       const parsed = notFile ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} is not a regular file; default sonnet`] } : tooBig ? { units: [], notProven: [`NOT PROVEN (owner model): ${PLAN_SCOPE_FILE} exceeds ${MAX_SCOPE_BYTES} bytes; default sonnet`] } : parseUnits(scope, advisorAvailable);
       route = { units: parsed.units, route_not_proven: parsed.notProven };
     }
+
+    // T3 intent: the model-declared flag only; absent or non-boolean means undeclared (the strict downgrade then never applies).
+    if (mutationStrict()) { const rd = readScopeText(ctx.runDir); if (rd.status === "ok") { try { const bc = (JSON.parse(rd.text) as { behavior_change?: unknown }).behavior_change; if (typeof bc === "boolean") route = { ...route, behavior_change: bc }; } catch { /* undeclared */ } } }
 
     return {
       status: "completed",
