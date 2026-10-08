@@ -8,8 +8,12 @@ export const CONFLICT_CORRECTION =
   "Loki imposes no file or test limits on you. If your conflict is only about Loki's own rules, finish the task. If the task itself conflicts, restate the conflict. " +
   FINISH_LINE;
 
+// FC-19b: under this much of the implement window the resume would only die at the limit; the first conflict stands and the run ends BLOCKED with its question.
+export const RESUME_MIN_LEFT_S = 60;
+
 /** Re-runs the implement session once after a spec conflict, with the first call's options: resumes the provider session when one was recorded, else starts fresh with the original brief plus the correction. */
 export async function resumeAfterConflict(ctx: RunContext, first: SessionRunOptions, firstSession: SessionResult): Promise<{ session: SessionResult; iterationId: string }> {
+  if ((ctx.implementLeftS?.() ?? Infinity) < RESUME_MIN_LEFT_S) return { session: firstSession, iterationId: first.iterationId };
   const iterationId = `${first.iterationId}-r`, sid = ctx.provider === "claude" ? readSessionId(ctx.repoDir, first.iterationId) : null;
   const session = await ctx.sessions.run({ ...first, iterationId, brief: sid ? CONFLICT_CORRECTION : `${first.brief}\n\n${CONFLICT_CORRECTION}`, ...(sid ? { resumeSessionId: sid } : {}) });
   const terminal = !session.killed && (session.markers.done || session.markers.alreadyDone !== null || session.markers.specConflict !== null);

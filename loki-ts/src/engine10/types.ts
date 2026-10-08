@@ -138,6 +138,7 @@ export interface RunContext {
   capS: number; overCap?: () => boolean; // D60-5: priced cost reached the per-run dollar cap
   emit(type: EventType, stage: StageName | null, data: Record<string, unknown>): void;
   sessions: SessionRunner;
+  implementLeftS?: () => number; // FC-19b: seconds left in the implement window; absent outside the machine
   failovers?: () => import("../runner/provider_failover.ts").FailoverRecord[]; // T9: read by seal
   tests: TestMapProvider;
   cost: CostReader;
