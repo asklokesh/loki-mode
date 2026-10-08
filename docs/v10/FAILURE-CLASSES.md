@@ -680,3 +680,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: the FC-64 ratchet covers the repo-wide count; this suite now joins the enforced family.
 - Mechanism: here-strings (`grep -q ... <<<"$var"`) at all five sites; tests/test-sigpipe-guard.sh section 2 now enforces the suite.
 - Fixture: tests/test-sigpipe-guard.sh against the pre-fix copy of the suite fails (5 legacy lines, 3 passed 1 failed); against the fixed suite 4 passed 0 failed.
+
+## FC-84 A demo non-TTY test depended on a provider CLI being installed on the host (RED-PLAN)
+- User saw: Tests red on main 082cd57a4 (shard 9): tests/test-plan-command.sh `[FAIL] demo non-TTY refuse -- exit=2 (124=timeout/hang)`, 26 passed 1 failed. The exit was 2, not a hang; the label is misleading.
+- Law: a test must not depend on host state it did not set up (same class as the "assumed host state" and "autonomy opt-out needs the claude binary" fixes).
+- Cause (measured): `loki demo` without --dry-run runs provider_offer_gate before the estimate. With no provider CLI on PATH (CI runner) it prints "No AI provider CLI found" and exits 2, so the case's grep for the estimate and the confirmation message failed while the exit code matched. A dev host with claude installed passes. Reproduced with PATH=/usr/bin:/bin:/usr/sbin:/sbin: rc=2, no estimate.
+- Siblings swept: the dry-run case skips the gate (verified passing without a provider); the other provider-gated suites (test-provider-preflight.sh) already build stub PATHs.
+- Mechanism: the case now puts a stub claude on PATH so the refusal path under test is reached on every host.
+- Fixture: tests/test-plan-command.sh test 25; red with the stub removed on a provider-less PATH, green with it.
