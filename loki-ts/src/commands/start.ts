@@ -1,5 +1,5 @@
 // v8 Phase 4 Story 5 + RUN-25 iter 2: `loki start` on the Bun route. Parses the
-// reconciled flag surface into RunnerOpts / env and calls runAutonomous. Reached
+// reconciled flag surface and runs engine10 (FC-38: never the legacy loop). Reached
 // from bin/loki ONLY when LOKI_SDK_LOOP is truthy (Story 6); until then the
 // default route still runs the bash cmd_start.
 //
@@ -20,42 +20,26 @@ function argVal(args: readonly string[], flag: string): string | undefined {
   return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
 }
 
-// RUNNER value-flags: consume the next token, map to a ParsedStartOpts field.
+// FC-38: `loki start` runs only engine10. A flag is accepted only if engine10 honors it:
+// --provider / --budget(-limit) / --no-pr are forwarded as child argv, --session-model reaches the
+// child through LOKI_SESSION_MODEL, --attempts drives the attempts runner, --prd / --brief pick the
+// spec. Every other former runner flag (--max-iterations, --simple, --allow-haiku, ...) was honored
+// only by the removed legacy loop and is refused with exit 2 instead of being dropped silently.
 const VALUE_FLAGS = new Set([
-  "--max-iterations",
-  "--max-retries",
   "--budget-limit",
   "--budget", // alias of --budget-limit (bash uses --budget); closes the divergence
   "--provider",
   "--session-model",
-  "--completion-promise",
-  "--base-wait",
-  "--max-wait",
   "--prd", // explicit spec path (overrides positional)
   "--brief", // one-liner spec text
-  // provider-specific env-mapping value flags (only affect that provider)
-  "--aider-model",
-  "--aider-flags",
-  "--cline-model",
   "--attempts", // 11.3.0 T5: N independent attempts in separate worktrees (1-5, default 1)
 ]);
 
-// RUNNER boolean env-mapping flags: no value token; set an env var the runner
-// already reads (or, for --skip-memory, now reads -- see build_prompt/runner).
-const BOOL_ENV_FLAGS = new Map<string, [string, string]>([
-  ["--allow-haiku", ["LOKI_ALLOW_HAIKU", "true"]],
-  ["--simple", ["LOKI_COMPLEXITY", "simple"]],
-  ["--complex", ["LOKI_COMPLEXITY", "complex"]],
-  ["--regen-prd", ["LOKI_PRD_REGEN", "1"]],
-  ["--regenerate-prd", ["LOKI_PRD_REGEN", "1"]],
-  ["--regen", ["LOKI_PRD_REGEN", "1"]],
-  ["--fresh-prd", ["LOKI_PRD_REGEN", "1"]],
-  ["--skip-memory", ["LOKI_SKIP_MEMORY", "true"]],
-]);
+const BOOL_ENV_FLAGS = new Map<string, [string, string]>();
 
-// Accept-and-ignore no-op booleans (documented no-op on the non-interactive Bun
-// route). Accepted so scripts passing them do not hard-fail; they take no action.
-const NOOP_BOOL_FLAGS = new Set(["--yes", "-y", "--no-plan", "--no-mirofish", "--no-dashboard", "--no-pr"]); // --no-pr: the Bun loop opens no PR; attempts runs always pass it to engine10
+// True no-ops on the non-interactive engine10 route (no plan step, no mirofish, no dashboard,
+// no prompts). --no-pr is read separately (noPr) and forwarded to engine10.
+const NOOP_BOOL_FLAGS = new Set(["--yes", "-y", "--no-plan", "--no-mirofish", "--no-dashboard", "--no-pr"]);
 
 const VALID_PROVIDERS = new Set(["claude", "codex", "cline", "aider"]);
 // The session-pin values run.sh's LOKI_SESSION_MODEL case accepts: the three
@@ -101,6 +85,7 @@ export interface ParsedStartOpts {
   baseWaitSeconds?: number;
   maxWaitSeconds?: number;
   attempts?: number;
+  noPr?: boolean; // FC-38: forwarded to engine10; absent = normal PR behavior
 }
 
 const START_USAGE =
@@ -111,8 +96,8 @@ const START_USAGE =
   "                        [--regen-prd] [--skip-memory] [--attempts N]\n" +
   "  --attempts N  run N (1-5, default 1) independent attempts in separate git worktrees; the one with the most\n" +
   "                executed passing checks is applied and every loser is recorded on the attempts receipt\n" +
-  "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
-  "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n";
+  "  <spec> = a PRD path, or a one-line brief. Every start runs the Loki 10 engine and seals a receipt;\n" +
+  "  --github / --parallel / --sandbox / --issue / --detach and the opencode provider are refused.\n";
 
 // Parse the reconciled flag surface into RunnerOpts (+ apply env-mapping flags to
 // process.env), or return an error/terminal exit code. Value 0 = handled+exit
@@ -152,9 +137,9 @@ export function parseStartArgs(
     if (a.startsWith("-") && a !== "-") {
       const name = a.includes("=") ? a.slice(0, a.indexOf("=")) : a;
       if (!accepted.has(name)) {
-        err(`start: flag ${name} is not supported by the Bun (LOKI_SDK_LOOP) runner.\n`);
+        err(`start: flag ${name} is not supported by loki start (it runs only the Loki 10 engine).\n`);
         err(
-          "Orchestration flags (--parallel, --github, --issue, --sandbox, --api, --bg, mirofish) run on the bash route automatically; if you reached this, run without LOKI_SDK_LOOP.\n",
+          "Orchestration flags (--parallel, --github, --issue, --sandbox, --api, --bg, mirofish) were only honored by the removed legacy loop; remove them.\n",
         );
         return 2;
       }
@@ -226,6 +211,7 @@ export function parseStartArgs(
 
   return {
     ...(attempts !== undefined ? { attempts } : {}),
+    ...(args.includes("--no-pr") ? { noPr: true } : {}),
     prdPath: resolvedSpec,
     provider: providerRaw as ProviderName | undefined,
     maxIterations: posNum(argVal(args, "--max-iterations")),
@@ -238,33 +224,39 @@ export function parseStartArgs(
   };
 }
 
+/** One engine10 run (FC-38: the only engine a user-facing `start` may reach; it seals a receipt). */
+async function runEngine10(cwd: string, o: ParsedStartOpts, env: NodeJS.ProcessEnv, forceNoPr: boolean): Promise<number> {
+  const { spawn } = await import("node:child_process");
+  const { existsSync, readFileSync, statSync } = await import("node:fs");
+  const spec = o.prdPath;
+  const task = existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
+  const argv = [process.argv[1] ?? "", "engine10", task];
+  if (forceNoPr || o.noPr) argv.push("--no-pr");
+  if (o.provider) argv.push("--provider", o.provider);
+  if (o.budgetLimit !== undefined) argv.push("--max-cost", String(o.budgetLimit)); // FC-37: per-run cap, never dropped
+  return await new Promise<number>((resolveExit) => {
+    const child = spawn(process.execPath, argv, { cwd, env, stdio: ["ignore", "inherit", "inherit"] });
+    child.on("error", () => resolveExit(1));
+    child.on("close", (code) => resolveExit(code ?? 1));
+  });
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;
-  const { runAutonomous } = await import("../runner/autonomous.ts");
   const { attempts, ...runnerOpts } = parsed;
-  if (attempts === undefined || attempts <= 1) return runAutonomous(attempts === undefined ? parsed : runnerOpts);
   const { runAttempts, productionDeps } = await import("../runner/attempts.ts");
   const deps = productionDeps(
     process.cwd(),
-    () => runAutonomous(runnerOpts),
+    () => runEngine10(process.cwd(), runnerOpts, process.env, false),
     async (_id, wt) => {
       // Each attempt is one engine10 run in its own worktree: only engine10 seals the receipt the scorer reads.
-      const { spawn } = await import("node:child_process");
-      const { existsSync, readFileSync, statSync } = await import("node:fs");
-      const spec = runnerOpts.prdPath;
-      const task = existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
-      const argv = [process.argv[1] ?? "", "engine10", task, "--no-pr"];
-      if (runnerOpts.provider) argv.push("--provider", runnerOpts.provider);
-      if (runnerOpts.budgetLimit !== undefined) argv.push("--max-cost", String(runnerOpts.budgetLimit)); // FC-37: per-attempt cap, never dropped
+      // Attempts never open PRs themselves; the winner alone follows normal PR behavior (see productionDeps.openPr).
       const env: NodeJS.ProcessEnv = { ...process.env, LOKI_DIR: `${wt}/.loki` };
       delete env["LOKI_RUN_TMP"];
-      return await new Promise<number>((resolveExit) => {
-        const child = spawn(process.execPath, argv, { cwd: wt, env, stdio: ["ignore", "inherit", "inherit"] });
-        child.on("error", () => resolveExit(1));
-        child.on("close", (code) => resolveExit(code ?? 1));
-      });
+      return runEngine10(wt, runnerOpts, env, true);
     },
+    { noPr: runnerOpts.noPr === true },
   );
-  return runAttempts(attempts, deps);
+  return runAttempts(attempts ?? 1, deps);
 }

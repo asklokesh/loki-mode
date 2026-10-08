@@ -391,6 +391,22 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Known gap: a new start flag still needs an entry in each route; the sweep is a table here, not a generated check.
 - Fixture: loki-ts/tests/runner/attempts-dispatch.test.ts (stub engine; red on ffe808687 with 0 pass 3 fail, green here with 3 pass 0 fail).
 
+## FC-38 Legacy loop reachable from a user command
+- User saw: `loki start "<task>" --attempts 2` exited rc 0 but the attempts receipt showed requested 2, ran 1, winner null, governor "hold: governor unknown or unreadable". The one run was the legacy RARV loop (runAutonomous), which seals no receipt, so a start returned success with nothing to verify. The swarm usage governor, absent in a clean environment, forced the fallback.
+- Law: L0 (a user command that says it verified must have run the verifying engine), L2 (one engine behind `start`).
+- Siblings (sweep of every `start` route):
+  - `bin/loki` engine10 arm (issue refs, multi-word tasks): engine10, kept; now also hard (never falls through to bash).
+  - `bin/loki` Bun start (PRD path, one-word brief, flags): ran runAutonomous (fixed: runs engine10 per attempt, N=1 included).
+  - `bin/loki` no-bun and early fallbacks to `$BASH_CLI`: ran the bash loop (fixed: `_loki_bash_or_refuse` and the no-bun check refuse `start` with exit 1).
+  - `bin/loki` legacy-only flags (--parallel, --github, --sandbox, --issue, --dry-run, --detach) and the opencode provider: diverted to the bash loop (fixed: refused, exit 2).
+  - `LOKI_SDK_LOOP` branch in `bin/loki`: removed.
+  - attempts child (loki-ts/src/commands/start.ts): engine10 only; the governor (`LOKI_ATTEMPTS_GOVERNOR_MAX`, usage files) is deleted from product code, N attempts run as N (1-5).
+  - `loki start` flags only the legacy loop honored (--max-iterations, --max-retries, --completion-promise, --base-wait, --max-wait, --simple, --complex, --allow-haiku, --regen*, --skip-memory, --aider-model, --aider-flags, --cline-model): were accepted by the Bun start and dropped (FC-37 class). Now refused with exit 2; the accepted set (--provider, --budget, --session-model, --prd, --brief, --attempts, --no-pr, no-op --yes/--no-plan/--no-mirofish/--no-dashboard) all reach engine10.
+  - `autonomy/loki` `cmd_start` callers (quick and run at 11335/11337/11826, demo at 15382, the `start` dispatch at 20928, 29705/29716), `autonomy/run.sh` run directly, and the dashboard spawns of run.sh (dashboard/control.py:572, dashboard/server.py:4356, 4640, 5226): NOT a `loki start` route, still reach the legacy loop. OPEN: requires a CTO waiver or a follow-up slice; ~dozens of shell suites drive cmd_start/run.sh directly with stubs, so refusing there is its own slice.
+- Mechanism: `bin/loki` start block (`# FC-38`) plus `_loki_bash_or_refuse`; `runStart` always goes through `runAttempts` with an engine10 runner; `formatAttemptsSummary` prints requested, ran, winner and losers from the attempts receipt.
+- Known gap (OPEN, needs CTO waiver or a follow-up slice): the `cmd_start`, run.sh and dashboard entries listed above.
+- Fixture: loki-ts/tests/runner/attempts-dispatch.test.ts and loki-ts/tests/runner/attempts.test.ts (red on e7be7289b: dispatch 1 pass 6 fail, unit 16 pass 10 fail; green here).
+
 ## FC-DOCTOR-COUNT Doctor's failure count changed between identical runs (provisional id; Release Manager renumbers)
 - User saw: `loki doctor` printed "2 failed" on one run and "1 failed" on the next, same environment. Raw cause: the Claude login row depended on a live `claude auth status` subprocess (5s timeout, no retry). When it returned nothing, doctor fell back to a clock-dependent check of the cached OAuth access token's expiry and printed FAIL "login has EXPIRED" (an expired access token is normal; a refresh renews it). Reproduced on 11.2.2 with a claude shim whose probe prints nothing plus an expired credentials file: "19 passed, 2 failed"; probe answering: "1 failed".
 - Law: L5 (an inconclusive probe was reported as a user fault) and L3 (a heuristic on the clock beat executed evidence).

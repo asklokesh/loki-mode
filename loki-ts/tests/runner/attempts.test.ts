@@ -18,16 +18,30 @@ interface Harness {
   applied: string[];
   receipts: AttemptsReceipt[];
   direct: { calls: number };
+  prs: string[];
+  lines: string[];
 }
 
-function harness(opts: { gov?: number | null; checks: Record<number, AttemptCheck[]>; throwOn?: number; removeFails?: string; applyThrows?: boolean }): Harness {
-  const h: Harness = { deps: undefined as unknown as AttemptDeps, created: [], removed: [], applied: [], receipts: [], direct: { calls: 0 } };
+function harness(opts: { noPr?: boolean; prFails?: boolean; checks: Record<number, AttemptCheck[]>; throwOn?: number; wtFailsOn?: string; removeFails?: string; applyThrows?: boolean }): Harness {
+  const h: Harness = { deps: undefined as unknown as AttemptDeps, created: [], removed: [], applied: [], receipts: [], direct: { calls: 0 }, prs: [], lines: [] };
   h.deps = {
     repoDir: "/repo",
     receiptDir: "/rcpt",
     baseSha: () => "abc123",
-    governorMax: () => (opts.gov === undefined ? 8 : opts.gov),
-    createWorktree: (p) => void h.created.push(p),
+    ...(opts.noPr
+      ? {}
+      : {
+          openPr: (wt: string) => {
+            if (opts.prFails) throw new Error("gh not authenticated");
+            h.prs.push(wt);
+            return "https://example.test/pr/1";
+          },
+        }),
+    print: (l) => void h.lines.push(l),
+    createWorktree: (p) => {
+      if (opts.wtFailsOn && p.endsWith(opts.wtFailsOn)) throw new Error("disk full");
+      h.created.push(p);
+    },
     removeWorktree: (p) => {
       if (opts.removeFails && p.endsWith(opts.removeFails)) throw new Error("busy");
       h.removed.push(p);
@@ -110,7 +124,7 @@ describe("runAttempts", () => {
     const r = h.receipts[0]!;
     expect(r.winner).toMatchObject({ attempt_id: 2, executed_passing: 2, tie: false });
     expect(r.losers.map((l) => [l.attempt_id, l.executed_passing, l.executed_failing])).toEqual([[1, 1, 0], [3, 0, 1]]);
-    expect(r.governor.state).toBe("ok");
+    expect(r.ran).toBe(3);
     expect(r.applied).toBe(true);
   });
 
@@ -138,39 +152,65 @@ describe("runAttempts", () => {
     expect(h.receipts[0]!.cleanup.find((c) => !c.removed)).toMatchObject({ path: "/c/attempt-2", error: "busy" });
   });
 
-  it("governor hold runs fewer attempts and records it", async () => {
-    const h = harness({ gov: 2, checks: { 1: [pass("a")], 2: [pass("a"), pass("b")], 3: [pass("a"), pass("b"), pass("c")] } });
-    await runAttempts(4, h.deps);
-    expect(h.created.length).toBe(2);
-    const r = h.receipts[0]!;
-    expect(r.requested).toBe(4);
-    expect(r.ran).toBe(2);
-    expect(r.governor.state).toBe("hold");
-    expect(r.governor.note).toContain("ran 2");
+  it("N attempts run as N (bounded only by 1-5): no usage governor is consulted", async () => {
+    const h = harness({ checks: { 1: [pass("a")], 2: [pass("a"), pass("b")], 3: [pass("a")], 4: [pass("a")], 5: [pass("a")] } });
+    await runAttempts(5, h.deps);
+    expect(h.created.length).toBe(5);
+    expect(h.receipts[0]!.ran).toBe(5);
+    expect(Object.keys(h.deps)).not.toContain("governorMax");
   });
 
-  it("unknown governor falls back to one direct attempt, recorded", async () => {
-    const h = harness({ gov: null, checks: {} });
-    const code = await runAttempts(3, h.deps);
-    expect(code).toBe(0);
-    expect(h.direct.calls).toBe(1);
-    expect(h.created).toEqual([]);
-    expect(h.receipts[0]!.governor.state).toBe("hold");
-  });
-
-  it("N=1 is the unchanged direct path: no worktree, no governor read, no receipt", async () => {
+  it("N=1 is the plain direct engine10 path: no worktree, no receipt", async () => {
     const h = harness({ checks: {} });
-    let govCalls = 0;
-    h.deps.governorMax = () => {
-      govCalls++;
-      return 8;
-    };
     const code = await runAttempts(1, h.deps);
     expect(code).toBe(0);
     expect(h.direct.calls).toBe(1);
-    expect(govCalls).toBe(0);
     expect(h.created).toEqual([]);
     expect(h.receipts).toEqual([]);
+  });
+
+  it("the winner follows normal PR behavior: a PR by default, only for the winner", async () => {
+    const h = harness({ checks: { 1: [pass("a")], 2: [pass("a"), pass("b")] } });
+    expect(await runAttempts(2, h.deps)).toBe(0);
+    expect(h.prs).toEqual(["/c/attempt-2"]);
+    expect(h.receipts[0]!.pr).toEqual({ mode: "opened", url: "https://example.test/pr/1" });
+    expect(h.lines.join("\n")).toContain("PR:         https://example.test/pr/1");
+  });
+
+  it("a worktree that cannot be created is not counted as run, and the degradation line prints", async () => {
+    const h = harness({ noPr: true, wtFailsOn: "attempt-2", checks: { 1: [pass("a")], 3: [pass("a"), pass("b")] } });
+    expect(await runAttempts(3, h.deps)).toBe(0);
+    const r = h.receipts[0]!;
+    expect(r.requested).toBe(3);
+    expect(r.ran).toBe(2);
+    expect(r.setup_failed).toEqual([{ attempt_id: 2, error: "disk full" }]);
+    const out = h.lines.join("\n");
+    expect(out).toContain("Attempts:   requested 3, ran 2");
+    expect(out).toContain("Degraded:   only 2 of 3 attempts ran (attempt 2 worktree failed: disk full)");
+  });
+
+  it("--no-pr opens no PR and says so on the receipt and console", async () => {
+    const h = harness({ noPr: true, checks: { 1: [pass("a")], 2: [pass("a"), pass("b")] } });
+    expect(await runAttempts(2, h.deps)).toBe(0);
+    expect(h.prs).toEqual([]);
+    expect(h.receipts[0]!.pr.mode).toBe("skipped_no_pr");
+    expect(h.lines.join("\n")).toContain("PR:         none (--no-pr)");
+  });
+
+  it("a PR that fails to open is loud: FAILED line and a non-zero exit, never a silent no-op", async () => {
+    const h = harness({ prFails: true, checks: { 1: [pass("a")], 2: [pass("a"), pass("b")] } });
+    expect(await runAttempts(2, h.deps)).toBe(1);
+    expect(h.receipts[0]!.pr).toEqual({ mode: "failed", error: "gh not authenticated" });
+    expect(h.lines.join("\n")).toContain("PR:         FAILED: gh not authenticated");
+  });
+
+  it("console summary prints requested, ran, the winner and why, and the losers", async () => {
+    const h = harness({ noPr: true, checks: { 1: [pass("a")], 2: [pass("a"), pass("b")] } });
+    await runAttempts(2, h.deps);
+    const out = h.lines.join("\n");
+    expect(out).toContain("Attempts:   requested 2, ran 2");
+    expect(out).toContain("Winner:     attempt 2 with 2 executed passing check(s)");
+    expect(out).toContain("Loser:      attempt 1: fewer executed passing checks (1 < 2)");
   });
 });
 

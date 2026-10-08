@@ -22,6 +22,8 @@ export interface AttemptOutcome {
   exit: number;
   /** null = the attempt sealed no engine10 receipt: NOT PROVEN, never scored as 0. */
   checks: AttemptCheck[] | null;
+  /** The attempt's own engine10 receipt, when one was sealed (shown on the attempts receipt). */
+  engine10?: { run_id: string; receipt_sha256: string; outcome: string };
 }
 export interface LoserRecord {
   attempt_id: number;
@@ -33,11 +35,15 @@ export interface AttemptsReceipt {
   schema: "loki.attempts.receipt/1";
   requested: number;
   ran: number;
-  governor: { state: "ok" | "hold"; max_engineers_next_hour: number | null; note: string };
+  /** Attempts run one after another in their own worktrees; only the 1-5 bound limits N. */
+  attempts: { attempt_id: number; exit: number; engine10: AttemptOutcome["engine10"] | null }[];
+  pr: { mode: "opened" | "skipped_no_pr" | "failed" | "not_applicable"; url?: string; error?: string };
   base_sha: string;
   winner: { attempt_id: number; executed_passing: number; executed_failing: number; tie: boolean } | null;
   applied: boolean;
   no_winner_reason?: string;
+  /** Attempts whose worktree could not be created; they did not run and are not counted in `ran`. */
+  setup_failed?: { attempt_id: number; error: string }[];
   losers: LoserRecord[];
   cleanup: { path: string; removed: boolean; error?: string }[];
 }
@@ -46,8 +52,10 @@ export interface AttemptDeps {
   repoDir: string;
   receiptDir: string;
   baseSha(): string;
-  /** Max concurrent engineers the usage governor allows; null/undefined = unknown (treated as hold). */
-  governorMax(): number | null | undefined;
+  /** Opens the PR for the winner (normal PR behavior). Undefined when the user passed --no-pr. Returns the PR url. */
+  openPr?(winnerWorktree: string, baseSha: string): string;
+  /** Console output; defaults to stdout. */
+  print?(line: string): void;
   createWorktree(path: string, baseSha: string): void;
   removeWorktree(path: string): void;
   /** Runs one attempt inside its worktree and returns its recorded verify checks. May throw. */
@@ -113,41 +121,44 @@ export function selectWinner(outcomes: AttemptOutcome[], errored: Map<number, st
   return { winner: { attempt_id: w.id, executed_passing: w.passing, executed_failing: w.failing, tie: top.length > 1 }, losers: losersOf(w.id) };
 }
 
-export async function runAttempts(n: number, deps: AttemptDeps): Promise<number> {
-  if (n <= 1) return deps.runDirect(); // N=1 is today's behavior, untouched
-  const g = deps.governorMax();
-  let ran = n;
-  let gov: AttemptsReceipt["governor"] = { state: "ok", max_engineers_next_hour: g ?? null, note: "governor allows the requested attempts" };
-  if (g === null || g === undefined || g < n) {
-    ran = g === null || g === undefined ? 1 : Math.max(1, Math.min(n, g));
-    gov = {
-      state: "hold",
-      max_engineers_next_hour: g ?? null,
-      note: g === null || g === undefined ? "governor unknown or unreadable: ran 1 attempt (fail safe)" : `governor max ${g} < requested ${n}: ran ${ran}`,
-    };
+/** Console summary of an attempts receipt: requested, ran, winner and why, losers. One line for any degradation. */
+export function formatAttemptsSummary(r: AttemptsReceipt): string[] {
+  const out = [`Attempts:   requested ${r.requested}, ran ${r.ran}`];
+  if (r.ran < r.requested) {
+    const why = (r.setup_failed ?? []).map((s) => `attempt ${s.attempt_id} worktree failed: ${s.error}`).join("; ");
+    out.push(`Degraded:   only ${r.ran} of ${r.requested} attempts ran${why ? ` (${why})` : ""}`);
   }
-  if (ran === 1) {
-    const code = await deps.runDirect();
-    deps.writeReceipt(deps.receiptDir, {
-      schema: "loki.attempts.receipt/1", requested: n, ran: 1, governor: gov, base_sha: deps.baseSha(),
-      winner: null, applied: false, no_winner_reason: "governor hold: ran the single direct path, no selection", losers: [], cleanup: [],
-    });
-    return code;
-  }
+  for (const a of r.attempts) out.push(`  attempt ${a.attempt_id}: ${a.engine10 ? `engine10 ${a.engine10.outcome}, receipt sha256:${a.engine10.receipt_sha256.slice(0, 12)}` : "NOT PROVEN (no sealed engine10 receipt)"}`);
+  if (r.winner) {
+    out.push(`Winner:     attempt ${r.winner.attempt_id} with ${r.winner.executed_passing} executed passing check(s)${r.winner.tie ? ", chosen on a tie (lowest attempt id)" : ""}${r.applied ? ", applied to the working tree" : ""}`);
+  } else out.push(`Winner:     none (${r.no_winner_reason ?? "no attempt qualified"})`);
+  for (const l of r.losers) out.push(`Loser:      attempt ${l.attempt_id}: ${l.why_lost}`);
+  out.push(r.pr.mode === "opened" ? `PR:         ${r.pr.url ?? "opened"}` : r.pr.mode === "failed" ? `PR:         FAILED: ${r.pr.error ?? "unknown"}` : r.pr.mode === "skipped_no_pr" ? "PR:         none (--no-pr)" : "PR:         none (no winner)");
+  return out;
+}
 
+export async function runAttempts(n: number, deps: AttemptDeps): Promise<number> {
+  if (n <= 1) return deps.runDirect(); // N=1 is the plain single engine10 run
+  let pr: AttemptsReceipt["pr"] = { mode: "not_applicable" };
   const baseSha = deps.baseSha();
   const container = deps.makeContainer();
   const created: string[] = [];
   const outcomes: AttemptOutcome[] = [];
   const errored = new Map<number, string>();
+  const setupFailed: { attempt_id: number; error: string }[] = [];
   const cleanup: AttemptsReceipt["cleanup"] = [];
   let selection: Selection = { winner: null, losers: [] };
   let applied = false;
   let failure: unknown;
   try {
-    for (let id = 1; id <= ran; id++) {
+    for (let id = 1; id <= n; id++) {
       const wt = join(container, `attempt-${id}`);
-      deps.createWorktree(wt, baseSha);
+      try {
+        deps.createWorktree(wt, baseSha);
+      } catch (e) {
+        setupFailed.push({ attempt_id: id, error: e instanceof Error ? e.message : String(e) });
+        continue;
+      }
       created.push(wt);
       try {
         outcomes.push(await deps.runAttempt(id, wt));
@@ -158,8 +169,17 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
     }
     selection = selectWinner(outcomes, errored);
     if (selection.winner) {
-      deps.applyWinner(join(container, `attempt-${selection.winner.attempt_id}`), baseSha);
+      const winWt = join(container, `attempt-${selection.winner.attempt_id}`);
+      deps.applyWinner(winWt, baseSha);
       applied = true;
+      if (!deps.openPr) pr = { mode: "skipped_no_pr" };
+      else {
+        try {
+          pr = { mode: "opened", url: deps.openPr(winWt, baseSha) };
+        } catch (e) {
+          pr = { mode: "failed", error: e instanceof Error ? e.message : String(e) };
+        }
+      }
     }
   } catch (e) {
     failure = e;
@@ -179,13 +199,16 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
     }
   }
   const receipt: AttemptsReceipt = {
-    schema: "loki.attempts.receipt/1", requested: n, ran, governor: gov, base_sha: baseSha,
+    schema: "loki.attempts.receipt/1", requested: n, ran: outcomes.length, attempts: outcomes.map((o) => ({ attempt_id: o.id, exit: o.exit, engine10: o.engine10 ?? null })), pr, base_sha: baseSha,
     winner: selection.winner, applied,
+    ...(setupFailed.length ? { setup_failed: setupFailed } : {}),
     ...(selection.no_winner_reason ? { no_winner_reason: selection.no_winner_reason } : failure ? { no_winner_reason: `apply failed: ${String(failure)}` } : {}),
     losers: selection.losers, cleanup,
   };
   deps.writeReceipt(deps.receiptDir, receipt);
-  if (!applied && receipt.no_winner_reason) process.stderr.write(`attempts: ${receipt.no_winner_reason}\n`);
+  const print = deps.print ?? ((l: string) => void process.stdout.write(`${l}\n`));
+  for (const l of formatAttemptsSummary(receipt)) print(l);
+  if (pr.mode === "failed") return 1;
   if (failure) throw failure;
   if (cleanup.some((c) => !c.removed)) return 1;
   if (!applied || !selection.winner) return 1;
@@ -221,19 +244,17 @@ export async function readRecordedChecks(worktree: string, verify: (receiptPath:
   }
 }
 
-function defaultGovernorMax(): number | null {
-  // Test hook: a fixed integer replaces the live governor so dispatch tests are deterministic.
-  const fixed = process.env["LOKI_ATTEMPTS_GOVERNOR_MAX"];
-  if (fixed !== undefined && /^[0-9]+$/.test(fixed)) return Number(fixed);
-  const script = resolve(import.meta.dir, "../../../scripts/usage-governor.py");
-  if (!existsSync(script)) return null;
-  const r = spawnSync("python3", [script, "--json"], { encoding: "utf8", timeout: 60_000 });
-  if (r.status !== 0) return null;
+/** Run id, receipt hash and outcome of the newest engine10 receipt, shown on the attempts receipt. */
+export function readEngine10Ref(worktree: string): AttemptOutcome["engine10"] | undefined {
   try {
-    const v = (JSON.parse(r.stdout) as { governor?: { max_engineers_next_hour?: unknown } }).governor?.max_engineers_next_hour;
-    return typeof v === "number" ? v : null;
+    const runs = join(worktree, ".loki", "runs");
+    const dirs = readdirSync(runs).filter((d) => statSync(join(runs, d)).isDirectory()).sort();
+    const id = dirs[dirs.length - 1];
+    if (!id) return undefined;
+    const j = JSON.parse(readFileSync(join(runs, id, "receipt.json"), "utf8")) as Record<string, unknown>;
+    return typeof j["receipt_sha256"] === "string" ? { run_id: id, receipt_sha256: j["receipt_sha256"], outcome: outcomeOf(j) } : undefined;
   } catch {
-    return null;
+    return undefined;
   }
 }
 
@@ -241,13 +262,12 @@ function attemptBranch(p: string): string {
   return `loki-attempt/${basename(dirname(p))}-${basename(p)}`;
 }
 
-export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>): AttemptDeps {
+export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>, opts: { noPr?: boolean } = {}): AttemptDeps {
   const lokiDir = process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
   return {
     repoDir,
     receiptDir: join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-")),
     baseSha: () => git(repoDir, ["rev-parse", "HEAD"]).trim(),
-    governorMax: () => defaultGovernorMax(),
     // engine10 refuses a detached HEAD, so each attempt gets its own throwaway branch, deleted with the worktree.
     createWorktree: (p, base) => {
       git(repoDir, ["worktree", "add", "-b", attemptBranch(p), p, base]);
@@ -266,7 +286,8 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
     },
     runAttempt: async (id, wt) => {
       const exit = await runInWorktree(id, wt);
-      return { id, exit, checks: await readRecordedChecks(wt) };
+      const ref = readEngine10Ref(wt);
+      return { id, exit, checks: await readRecordedChecks(wt), ...(ref ? { engine10: ref } : {}) };
     },
     applyWinner: (wt, base) => {
       // engine10 commits its edits on the attempt branch, so the result is base..working tree; stage stragglers too.
@@ -279,6 +300,15 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       const patch = git(wt, ["diff", "--cached", "--binary", base]);
       if (patch.trim() !== "") git(repoDir, ["apply", "--whitespace=nowarn"], patch);
     },
+    ...(opts.noPr ? {} : {
+      // Normal PR behavior: only the winner's engine10 branch is pushed and opened; losers never reach a remote.
+      openPr: (wt: string, base: string) => {
+        const branch = git(wt, ["symbolic-ref", "--short", "HEAD"]).trim();
+        git(wt, ["push", "-u", "origin", branch]);
+        const baseBranch = (() => { try { return git(repoDir, ["symbolic-ref", "--short", "HEAD"]).trim(); } catch { return base; } })();
+        return execFileSync("gh", ["pr", "create", "--fill", "--head", branch, "--base", baseBranch], { cwd: wt, encoding: "utf8" }).trim().split("\n").pop() ?? "";
+      },
+    }),
     makeContainer: () => mkdtempSync(join(tmpdir(), "loki-attempts-")),
     removeContainer: (p) => rmdirSync(p),
     writeReceipt: (dir, r) => {

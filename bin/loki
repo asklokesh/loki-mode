@@ -32,6 +32,15 @@ SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)
 BASH_CLI="$REPO_ROOT/autonomy/loki"
 
+# FC-38: `loki start` never falls back to the legacy bash loop; every other command may.
+_loki_bash_or_refuse() {
+    if [ "${1:-}" = "start" ]; then
+        echo "loki: 'loki start' runs only the Loki 10 engine, which needs the Bun entry (loki-ts). It cannot fall back to the removed legacy loop; reinstall loki-mode or fix LOKI_TS_ENTRY / BUN_FROM_SOURCE." >&2
+        exit 1
+    fi
+    exec "$BASH_CLI" "$@"
+}
+
 # v8.1: resolve the one-switch SDK mode (LOKI_SDK_MODE=off|judges|full) into the
 # per-site LOKI_SDK_* flags HERE, in the outermost shim, BEFORE the `start`
 # routing fork below reads LOKI_SDK_LOOP. Without this, `LOKI_SDK_MODE=full loki
@@ -78,7 +87,7 @@ if [ -n "${LOKI_TS_ENTRY:-}" ]; then
     # invoke commands while they fix the path.
     if [ ! -f "$LOKI_TS_ENTRY" ]; then
         echo "ERROR: LOKI_TS_ENTRY=$LOKI_TS_ENTRY does not exist; falling through to bash CLI. Unset the variable or fix the path." >&2
-        exec "$BASH_CLI" "$@"
+        _loki_bash_or_refuse "$@"
     fi
     BUN_CLI="$LOKI_TS_ENTRY"
 elif [ "${BUN_FROM_SOURCE:-0}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; then
@@ -89,7 +98,7 @@ elif [ "${BUN_FROM_SOURCE:-0}" = "1" ] || [ "${BUN_FROM_SOURCE:-}" = "true" ]; t
         BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
     else
         echo "ERROR: BUN_FROM_SOURCE set but neither src/cli.ts nor dist/loki.js found; falling through to bash" >&2
-        exec "$BASH_CLI" "$@"
+        _loki_bash_or_refuse "$@"
     fi
 elif [ -f "$REPO_ROOT/loki-ts/dist/loki.js" ]; then
     BUN_CLI="$REPO_ROOT/loki-ts/dist/loki.js"
@@ -112,7 +121,7 @@ elif [ -f "$REPO_ROOT/loki-ts/src/cli.ts" ]; then
     BUN_CLI="$REPO_ROOT/loki-ts/src/cli.ts"
 else
     # Neither dist nor src available; fall through to bash silently.
-    exec "$BASH_CLI" "$@"
+    _loki_bash_or_refuse "$@"
 fi
 
 # FC-30: an install artifact must not outlive the install that made it. If a provider
@@ -259,7 +268,7 @@ esac
 
 # Force-fall-through to bash when the rollback flag is set.
 if [ "${LOKI_LEGACY_BASH:-0}" = "1" ] || [ "${LOKI_LEGACY_BASH:-}" = "true" ]; then
-    exec "$BASH_CLI" "$@"
+    _loki_bash_or_refuse "$@"
 fi
 
 # Loki 10 bun resolver: bun on PATH, then an npm-installed @oven/bun-* optional
@@ -411,7 +420,7 @@ case "v10" in
             start)
                 case "${2:-}" in
                     */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
-                        _e10=1; _e10_args=()
+                        _e10=1; _e10_hard=1; _e10_args=()  # FC-38: start never falls back to the legacy engine
                         # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
                         _e10_bnext=0
                         for _e10_a in "${@:2}"; do
@@ -472,6 +481,10 @@ esac
 # Bun must be installed for the new path; if it isn't, fall through to bash
 # silently rather than fail. This keeps users on systems without Bun working.
 if ! command -v bun &>/dev/null; then
+    if [ "${1:-}" = "start" ]; then
+        echo "loki: 'loki start' runs the Loki 10 engine, which needs bun. Install bun from https://bun.sh. The legacy loop is not reachable from start." >&2
+        exit 1
+    fi
     exec "$BASH_CLI" "$@"
 fi
 
@@ -548,10 +561,19 @@ _loki_start_needs_bash() {
     [ "$effective_provider" = "opencode" ] && return 0
     return 1
 }
-if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
+# FC-38: no user-facing `start` reaches the legacy loop (bash cmd_start, run.sh, runAutonomous).
+# Issue refs and multi-word tasks were sent to engine10 above; every other start (PRD path, brief,
+# flags) goes to the Bun start command, which runs engine10 and seals a receipt. A flag only the
+# legacy route honored, or a provider engine10 cannot invoke, is refused loudly instead.
+if [ "${1:-}" = "start" ]; then
     if _loki_start_needs_bash "${@:2}"; then
-        exec "$BASH_CLI" "$@"
+        echo "loki: 'loki start' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, --detach, or opencode) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
+        exit 2
     fi
+    case "${LOKI_PROVIDER:-claude}" in
+        claude|codex|cline|aider) ;;
+        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider." >&2; exit 2 ;;
+    esac
     exec bun "$BUN_CLI" "$@"
 fi
 
