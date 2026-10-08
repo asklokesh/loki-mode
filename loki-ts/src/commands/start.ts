@@ -249,14 +249,20 @@ export async function runStart(args: readonly string[]): Promise<number> {
     process.cwd(),
     () => runAutonomous(runnerOpts),
     async (_id, wt) => {
-      const prevDir = process.env["LOKI_DIR"];
-      process.env["LOKI_DIR"] = `${wt}/.loki`;
-      try {
-        return await runAutonomous({ ...runnerOpts, cwd: wt });
-      } finally {
-        if (prevDir === undefined) delete process.env["LOKI_DIR"];
-        else process.env["LOKI_DIR"] = prevDir;
-      }
+      // Each attempt is one engine10 run in its own worktree: only engine10 seals the receipt the scorer reads.
+      const { spawn } = await import("node:child_process");
+      const { existsSync, readFileSync, statSync } = await import("node:fs");
+      const spec = runnerOpts.prdPath;
+      const task = existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
+      const argv = [process.argv[1] ?? "", "engine10", task, "--no-pr"];
+      if (runnerOpts.provider) argv.push("--provider", runnerOpts.provider);
+      const env: NodeJS.ProcessEnv = { ...process.env, LOKI_DIR: `${wt}/.loki` };
+      delete env["LOKI_RUN_TMP"];
+      return await new Promise<number>((resolveExit) => {
+        const child = spawn(process.execPath, argv, { cwd: wt, env, stdio: ["ignore", "inherit", "inherit"] });
+        child.on("error", () => resolveExit(1));
+        child.on("close", (code) => resolveExit(code ?? 1));
+      });
     },
   );
   return runAttempts(attempts, deps);

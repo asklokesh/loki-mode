@@ -1,6 +1,9 @@
 // 11.3.0 T5: --attempts N selection, executed-only counting, tie, receipt losers, cleanup, N=1 identity.
 import { describe, expect, it } from "bun:test";
-import { runAttempts, selectWinner, countChecks, type AttemptCheck, type AttemptDeps, type AttemptOutcome, type AttemptsReceipt } from "../../src/runner/attempts.ts";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readRecordedChecks, runAttempts, selectWinner, countChecks, type AttemptCheck, type AttemptDeps, type AttemptOutcome, type AttemptsReceipt } from "../../src/runner/attempts.ts";
 import { parseStartArgs } from "../../src/commands/start.ts";
 
 const pass = (name: string, n = 3): AttemptCheck => ({ name, result: "pass", n });
@@ -185,5 +188,48 @@ describe("--attempts flag parsing", () => {
   it("absent flag leaves the parsed opts byte-identical (no attempts key)", () => {
     const { r } = run(["./p.md"]);
     expect(Object.keys(r as object)).not.toContain("attempts");
+  });
+});
+
+describe("receipt-path read and NOT PROVEN", () => {
+  it("reads checks from <worktree>/.loki/runs/<runId>/receipt.json (the path seal.ts writes), latest run wins", () => {
+    const wt = mkdtempSync(join(tmpdir(), "loki-attempts-test-"));
+    try {
+      for (const [id, checks] of [["r-01", [{ name: "old", result: "fail" }]], ["r-02", [{ name: "t", result: "pass" }]]] as const) {
+        mkdirSync(join(wt, ".loki", "runs", id), { recursive: true });
+        writeFileSync(join(wt, ".loki", "runs", id, "receipt.json"), JSON.stringify({ checks }));
+      }
+      expect(readRecordedChecks(wt)).toEqual([{ name: "t", result: "pass" }]);
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it("no receipt is null (NOT PROVEN), a side file is not read", () => {
+    const wt = mkdtempSync(join(tmpdir(), "loki-attempts-test-"));
+    try {
+      expect(readRecordedChecks(wt)).toBeNull();
+      mkdirSync(join(wt, ".loki"), { recursive: true });
+      writeFileSync(join(wt, ".loki", "verify.json"), JSON.stringify({ checks: [{ name: "t", result: "pass" }] }));
+      expect(readRecordedChecks(wt)).toBeNull();
+    } finally {
+      rmSync(wt, { recursive: true, force: true });
+    }
+  });
+
+  it("an attempt without a receipt loses as NOT PROVEN to one with a receipt, even at 0 passes", () => {
+    const s = selectWinner([{ id: 1, exit: 0, checks: null }, { id: 2, exit: 0, checks: [pass("a")] }]);
+    expect(s.winner!.attempt_id).toBe(2);
+    expect(s.losers[0]!.why_lost).toContain("NOT PROVEN");
+  });
+
+  it("no attempt with a receipt is BLOCKED, nothing applied, exit 1", async () => {
+    const h = harness({ checks: {} });
+    h.deps.runAttempt = async (id) => ({ id, exit: 0, checks: null });
+    const code = await runAttempts(2, h.deps);
+    expect(code).toBe(1);
+    expect(h.applied).toEqual([]);
+    expect(h.receipts[0]!.no_winner_reason).toContain("BLOCKED");
+    expect(h.removed.sort()).toEqual(h.created);
   });
 });

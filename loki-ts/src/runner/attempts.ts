@@ -6,7 +6,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 export const MAX_ATTEMPTS = 5;
 
@@ -18,7 +18,8 @@ export interface AttemptCheck {
 export interface AttemptOutcome {
   id: number; // 1-based attempt id
   exit: number;
-  checks: AttemptCheck[];
+  /** null = the attempt sealed no engine10 receipt: NOT PROVEN, never scored as 0. */
+  checks: AttemptCheck[] | null;
 }
 export interface LoserRecord {
   attempt_id: number;
@@ -60,10 +61,10 @@ export interface AttemptDeps {
 const executedPass = (c: AttemptCheck): boolean => c.result === "pass" && (c.n === undefined || c.n > 0);
 const executedFail = (c: AttemptCheck): boolean => c.result === "fail";
 
-export function countChecks(checks: AttemptCheck[]): { passing: number; failing: number } {
+export function countChecks(checks: AttemptCheck[] | null): { passing: number; failing: number } {
   let passing = 0;
   let failing = 0;
-  for (const c of checks) {
+  for (const c of checks ?? []) {
     if (executedPass(c)) passing++;
     else if (executedFail(c)) failing++;
   }
@@ -79,7 +80,8 @@ export interface Selection {
 /** Most executed passing checks wins; a tie goes to the lowest attempt id and is stated as a tie. */
 export function selectWinner(outcomes: AttemptOutcome[], errored: Map<number, string> = new Map()): Selection {
   const rows = outcomes.map((o) => ({ id: o.id, ...countChecks(o.checks) })).sort((a, b) => a.id - b.id);
-  const eligible = rows.filter((r) => !errored.has(r.id));
+  const unproven = new Set(outcomes.filter((o) => o.checks === null).map((o) => o.id));
+  const eligible = rows.filter((r) => !errored.has(r.id) && !unproven.has(r.id));
   const best = eligible.reduce((m, r) => Math.max(m, r.passing), 0);
   const losersOf = (winId: number | null): LoserRecord[] =>
     rows
@@ -90,12 +92,17 @@ export function selectWinner(outcomes: AttemptOutcome[], errored: Map<number, st
         executed_failing: r.failing,
         why_lost: errored.has(r.id)
           ? `attempt errored: ${errored.get(r.id)}`
-          : winId === null
+          : unproven.has(r.id)
+            ? "NOT PROVEN: no engine10 receipt was sealed"
+            : winId === null
             ? "no attempt had an executed passing check"
             : r.passing === best
               ? `tied on ${best} executed passing checks; lowest attempt id (${winId}) wins the tie`
               : `fewer executed passing checks (${r.passing} < ${best})`,
       }));
+  if (unproven.size === outcomes.length) {
+    return { winner: null, losers: losersOf(null), no_winner_reason: "BLOCKED: no attempt sealed an engine10 receipt, so nothing can be scored; nothing was applied" };
+  }
   if (best === 0) {
     return { winner: null, losers: losersOf(null), no_winner_reason: "no attempt recorded an executed passing check; nothing was applied" };
   }
@@ -144,7 +151,7 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
         outcomes.push(await deps.runAttempt(id, wt));
       } catch (e) {
         errored.set(id, e instanceof Error ? e.message : String(e));
-        outcomes.push({ id, exit: 1, checks: [] });
+        outcomes.push({ id, exit: 1, checks: null });
       }
     }
     selection = selectWinner(outcomes, errored);
@@ -176,6 +183,7 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
     losers: selection.losers, cleanup,
   };
   deps.writeReceipt(deps.receiptDir, receipt);
+  if (!applied && receipt.no_winner_reason) process.stderr.write(`attempts: ${receipt.no_winner_reason}\n`);
   if (failure) throw failure;
   if (cleanup.some((c) => !c.removed)) return 1;
   if (!applied || !selection.winner) return 1;
@@ -188,22 +196,24 @@ function git(cwd: string, args: string[], input?: string): string {
   return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", input, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
 }
 
-/** Reads the checks recorded by the attempt's own sealed receipt: the latest <wt>/.loki/runs/<id>/receipt.json. */
-export function readRecordedChecks(worktree: string): AttemptCheck[] {
+/** Checks from the attempt's own engine10 receipt. seal.ts writes join(runDir, "receipt.json") with runDir = <repo>/.loki/runs/<runId>
+ *  (supervisor.ts), so the latest <worktree>/.loki/runs/<runId>/receipt.json. A pass there already means n>0 executed (FC-16).
+ *  null = no receipt (NOT PROVEN). */
+export function readRecordedChecks(worktree: string): AttemptCheck[] | null {
   const runs = join(worktree, ".loki", "runs");
-  if (!existsSync(runs)) return [];
+  if (!existsSync(runs)) return null;
   const dirs = readdirSync(runs).sort();
   for (let i = dirs.length - 1; i >= 0; i--) {
     const f = join(runs, dirs[i]!, "receipt.json");
     if (!existsSync(f)) continue;
     try {
       const j = JSON.parse(readFileSync(f, "utf8")) as { checks?: AttemptCheck[] };
-      return Array.isArray(j.checks) ? j.checks : [];
+      return Array.isArray(j.checks) ? j.checks : null;
     } catch {
-      return [];
+      return null;
     }
   }
-  return [];
+  return null;
 }
 
 function defaultGovernorMax(): number | null {
@@ -219,6 +229,10 @@ function defaultGovernorMax(): number | null {
   }
 }
 
+function attemptBranch(p: string): string {
+  return `loki-attempt/${basename(dirname(p))}-${basename(p)}`;
+}
+
 export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>): AttemptDeps {
   const lokiDir = process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
   return {
@@ -226,18 +240,34 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
     receiptDir: join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-")),
     baseSha: () => git(repoDir, ["rev-parse", "HEAD"]).trim(),
     governorMax: () => defaultGovernorMax(),
+    // engine10 refuses a detached HEAD, so each attempt gets its own throwaway branch, deleted with the worktree.
     createWorktree: (p, base) => {
-      git(repoDir, ["worktree", "add", "--detach", p, base]);
+      git(repoDir, ["worktree", "add", "-b", attemptBranch(p), p, base]);
     },
     removeWorktree: (p) => {
+      // engine10 switches the worktree onto its own loki/<runId> branch; capture it so both throwaway branches go with the worktree.
+      let current = "";
+      try {
+        current = git(p, ["symbolic-ref", "-q", "--short", "HEAD"]).trim();
+      } catch {
+        // detached or already gone
+      }
       git(repoDir, ["worktree", "remove", "--force", p]);
+      git(repoDir, ["branch", "-D", attemptBranch(p)]);
+      if (current.startsWith("loki/")) git(repoDir, ["branch", "-D", current]);
     },
     runAttempt: async (id, wt) => {
       const exit = await runInWorktree(id, wt);
       return { id, exit, checks: readRecordedChecks(wt) };
     },
     applyWinner: (wt, base) => {
-      git(wt, ["add", "-A", "--", ".", ":(exclude).loki"]);
+      // engine10 commits its edits on the attempt branch, so the result is base..working tree; stage stragglers too.
+      // `git add` exits nonzero when only gitignored .loki matches the pathspec; that is not a failure here.
+      try {
+        git(wt, ["add", "-A", "--", ".", ":(exclude).loki"]);
+      } catch {
+        // nothing stageable
+      }
       const patch = git(wt, ["diff", "--cached", "--binary", base]);
       if (patch.trim() !== "") git(repoDir, ["apply", "--whitespace=nowarn"], patch);
     },
