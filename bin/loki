@@ -335,7 +335,7 @@ case "${1:-}" in
         ;;
 esac
 
-# FC-35: --attempts is handled HERE, once, before any route split (engine10 positional task, Bun
+# FC-37: --attempts is handled HERE, once, before any route split (engine10 positional task, Bun
 # loop, bash cmd_start). A flag accepted on one route must be honored or refused loudly on every
 # other. N=1 is stripped so every route sees today's argv byte-for-byte; N=2..5 runs on the Bun
 # start command (loki-ts/src/commands/start.ts), which spawns one engine10 run per worktree.
@@ -412,7 +412,7 @@ case "v10" in
                 case "${2:-}" in
                     */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
                         _e10=1; _e10_args=()
-                        # FC-35: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
+                        # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
                         _e10_bnext=0
                         for _e10_a in "${@:2}"; do
                             if [ "$_e10_bnext" = "1" ]; then _e10_args+=("$_e10_a"); _e10_bnext=0; continue; fi

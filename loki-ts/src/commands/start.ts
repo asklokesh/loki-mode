@@ -256,7 +256,7 @@ export async function runStart(args: readonly string[]): Promise<number> {
       const task = existsSync(spec) && statSync(spec).isFile() ? readFileSync(spec, "utf8") : spec;
       const argv = [process.argv[1] ?? "", "engine10", task, "--no-pr"];
       if (runnerOpts.provider) argv.push("--provider", runnerOpts.provider);
-      if (runnerOpts.budgetLimit !== undefined) argv.push("--max-cost", String(runnerOpts.budgetLimit)); // FC-35: per-attempt cap, never dropped
+      if (runnerOpts.budgetLimit !== undefined) argv.push("--max-cost", String(runnerOpts.budgetLimit)); // FC-37: per-attempt cap, never dropped
       const env: NodeJS.ProcessEnv = { ...process.env, LOKI_DIR: `${wt}/.loki` };
       delete env["LOKI_RUN_TMP"];
       return await new Promise<number>((resolveExit) => {

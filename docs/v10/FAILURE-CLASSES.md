@@ -371,7 +371,7 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Known gap: the delegate preflight only runs `<cli> version`. A throw inside doctor.ts AFTER the CLI loads (during the doctor run itself) is not covered by the preflight and surfaces as that crash, not the minimal fallback.
 - Fixture: tests/test-doctor-single-impl.sh.
 
-## FC-35 A flag accepted on one route is silently dropped on another
+## FC-37 A flag accepted on one route is silently dropped on another
 - User saw: `loki start "<task>" --no-pr --attempts 2` returned rc 0 and VERIFIED but ran ONE attempt, with no attempts receipt and no second worktree. `bin/loki` sent the positional task to engine10 before the --attempts diversion, and engine10 glued `--attempts 2` onto the task text. The same shape hid `--budget`: engine10 has no such flag, so `--budget 3` became task words and no cap applied.
 - Law: L0 (a flag the user typed is honored or refused, never ignored), L2 (one dispatch point owns each flag).
 - Siblings (sweep of start flags by route; routes: engine10 positional, Bun start.ts, bash cmd_start, attempts engine10 child):
@@ -379,6 +379,6 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - `--budget` / `--budget-limit`: engine10 positional was DROPPED into the task (fixed: translated to `--max-cost`); Bun and bash routes honored; attempts child DROPPED it (fixed: passes `--max-cost`).
   - `--no-pr`: engine10 honored; Bun route rejected it as unknown (fixed: accepted as a no-op, the Bun loop opens no PR); bash route refuses it with `Unknown option` and exit 1 (loud, kept); attempts child always passes it.
   - `--provider`: engine10, Bun and bash routes honored; attempts child forwards it.
-- Mechanism: one flag block ahead of the route split in `bin/loki` (`# FC-35`), plus the engine10 arm's budget translation and the attempts child argv in loki-ts/src/commands/start.ts.
+- Mechanism: one flag block ahead of the route split in `bin/loki` (`# FC-37`), plus the engine10 arm's budget translation and the attempts child argv in loki-ts/src/commands/start.ts.
 - Known gap: a new start flag still needs an entry in each route; the sweep is a table here, not a generated check.
 - Fixture: loki-ts/tests/runner/attempts-dispatch.test.ts (stub engine; red on ffe808687 with 0 pass 3 fail, green here with 3 pass 0 fail).

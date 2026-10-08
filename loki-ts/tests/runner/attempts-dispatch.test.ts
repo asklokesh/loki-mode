@@ -1,4 +1,4 @@
-// FC-35: `bin/loki start "<task>" --attempts N` must reach the attempts runner on the positional
+// FC-37: `bin/loki start "<task>" --attempts N` must reach the attempts runner on the positional
 // (engine10) route too. A stub entry answers `engine10`; start delegates to the real runStart.
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
@@ -62,7 +62,7 @@ function run(f: ReturnType<typeof fixture>, args: string[]) {
   });
 }
 
-describe("FC-35 --attempts on the positional start route", () => {
+describe("FC-37 --attempts on the positional start route", () => {
   it("runs 2 attempt worktrees for `start \"<multi word task>\" --no-pr --attempts 2`", () => {
     const f = fixture();
     try {
