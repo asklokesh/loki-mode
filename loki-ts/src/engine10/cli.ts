@@ -71,6 +71,11 @@ export async function runEngine10(args: string[], load: Loader = defaultLoader):
     return help ? 0 : 2;
   }
   if (r.module === "supervisor.ts") await (await import("../features/warm_client.ts")).tryWarmSafe(process.cwd());
+  if (r.module === "supervisor.ts" && !r.args.includes("--help") && !r.args.includes("-h")) {
+    const { printForecast } = await import("./forecast.ts");
+    const { defaultUsageReading } = await import("../commands/queue.ts");
+    await printForecast(process.env["LOKI_DIR"] ?? `${process.cwd()}/.loki`, defaultUsageReading, (s) => void process.stderr.write(s));
+  }
   const spec = `./${r.module}`;
   let mod: Record<string, unknown>;
   try {
