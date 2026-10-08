@@ -10,8 +10,14 @@ name: Nightly
 # The `full` job below runs every suite the fast gate skips. A red `full`
 # makes this run red, and per D96 promote.yml refuses to move latest
 # while the newest nightly covering the promoted commit is red (next is
-# unaffected). The upstream-drift bun matrix is informational (continue-on-error)
-# so a macOS or bun=latest flake cannot hold a release.
+# unaffected). In the bun matrix only the bun=latest legs (`experimental: true`)
+# are informational: upstream Bun drift must not hold a release. The pinned
+# bun 1.3.13 legs (macOS) are BLOCKING, because a failure there is a real
+# product failure, not drift (FC-57: the old job-level continue-on-error hid a
+# deterministic macOS failure and the run concluded success, so D90 saw green).
+# The first-run gate (stub provider, pinned bun, no network) is deterministic
+# and also blocking. tests/test-workflow-no-masked-failures.sh fails on any
+# new unconditional continue-on-error or masked test command.
 
 on:
   schedule:
@@ -32,12 +38,13 @@ jobs:
     name: Full suite (backstop)
     uses: ./.github/workflows/full-suite.yml
 
-  # Moved from first-run-gate.yml (D90): stub provider, no keys, informational.
+  # Moved from first-run-gate.yml (D90): stub provider, no keys. Deterministic
+  # (pinned bun, no network, no billable call), so a red here is a real
+  # first-run regression and must fail the run (FC-57).
   first-run-gate:
     name: first-run gate (stub)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    continue-on-error: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,7 +59,9 @@ jobs:
         run: bash scripts/first-run-gate.sh --stub
 
   bun-tests-nightly:
-    continue-on-error: true
+    # Per-leg: only matrix legs marked experimental (bun=latest) may fail
+    # without failing the run. The pinned 1.3.13 legs block.
+    continue-on-error: ${{ matrix.experimental == true }}
     name: Bun tests on ${{ matrix.os }} bun=${{ matrix.bun-version }} (nightly)
     strategy:
       fail-fast: false
@@ -63,6 +72,14 @@ jobs:
           # ubuntu/1.3.13 already runs on every push/PR in test.yml.
           - os: ubuntu-latest
             bun-version: "1.3.13"
+        include:
+          # Upstream-drift legs: informational. Pinned legs stay blocking.
+          - os: ubuntu-latest
+            bun-version: "latest"
+            experimental: true
+          - os: macos-latest
+            bun-version: "latest"
+            experimental: true
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
