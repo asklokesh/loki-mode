@@ -193,21 +193,43 @@ if [ -z "$r" ] && _is_full "$REPO"; then ok "(d) a train tip equal to main stays
 
 # --- workflow wiring ---------------------------------------------------------
 if grep -q 'fetch-tags: true' "$SA_YML"; then ok "secret-scan checkout fetches tags"; else bad "secret-scan checkout does not fetch tags"; fi
-if python3 -c '
+_nightly_ok() { # _nightly_ok <nightly.yml>
+  python3 -c '
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
 j = d["jobs"]["gitleaks-full-history"]
-assert j["name"].startswith("Full suite (backstop)")
+# promote.yml counts a nightly as measured when a non-skipped job name starts
+# with "Full suite (backstop)"; this job must never carry that prefix.
+assert not j["name"].startswith("Full suite (backstop)")
+assert j["name"] == "gitleaks full history (backstop)"
 assert "continue-on-error" not in j
+co = [s for s in j["steps"] if str(s.get("uses", "")).startswith("actions/checkout@")]
+assert len(co) == 1 and co[0]["with"]["fetch-depth"] == 0
 txt = open(sys.argv[1]).read()
 assert "79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e" in txt
 assert "bash scripts/security-audit-gitleaks.sh" in txt
 assert "GITLEAKS_RANGE" not in txt.split("gitleaks-full-history:")[1].split("first-run-gate:")[0].replace("GITLEAKS_RANGE is unset", "")
-' "$NIGHTLY_YML" 2>/dev/null; then
-  ok "nightly backstop runs the full-history scan: blocking, pinned checksum, shared script, no range"
+' "$1" 2>/dev/null
+}
+if _nightly_ok "$NIGHTLY_YML"; then
+  ok "nightly backstop runs the full-history scan: blocking, not named Full suite (backstop), fetch-depth 0, pinned checksum, shared script, no range"
 else
   bad "nightly.yml gitleaks-full-history job is missing or weakened"
 fi
+python3 -c '
+import sys
+s = open(sys.argv[1]).read()
+i = s.index("gitleaks-full-history:")
+j = s.index("fetch-depth: 0", i)
+open(sys.argv[2], "w").write(s[:j] + "fetch-depth: 1" + s[j + len("fetch-depth: 0"):])
+' "$NIGHTLY_YML" "$TMP_ROOT/nightly_shallow.yml"
+if _nightly_ok "$TMP_ROOT/nightly_shallow.yml"; then bad "mutation nightly_shallow (fetch-depth 1) stayed green"; else ok "mutation nightly_shallow (shallow nightly checkout) goes red"; fi
+python3 -c '
+import sys
+s = open(sys.argv[1]).read()
+open(sys.argv[2], "w").write(s.replace("name: gitleaks full history (backstop)", "name: Full suite (backstop) / gitleaks full history", 1))
+' "$NIGHTLY_YML" "$TMP_ROOT/nightly_name.yml"
+if _nightly_ok "$TMP_ROOT/nightly_name.yml"; then bad "mutation nightly_name (Full suite prefix) stayed green"; else ok "mutation nightly_name (measured-prefix job name) goes red"; fi
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

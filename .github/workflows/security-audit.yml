@@ -45,8 +45,8 @@ on:
     # D75: daily at 07:00 UTC (was Mondays). train/** pushes scan only their
     # range (D74 follow-up) and, since GITLEAKS-INCR, a main push scans only
     # <previous release tag>..SHA. The full-history scan runs daily here and in
-    # the Nightly backstop (nightly.yml "Full suite (backstop) / gitleaks full
-    # history"); a red daily scan halts releases (release.yml required-ci,
+    # the Nightly backstop (nightly.yml job "gitleaks full history
+    # (backstop)"); a red daily scan halts releases (release.yml required-ci,
     # sched_audit_ok: any non-success conclusion of the newest scheduled run
     # blocks) and a red backstop blocks promotion to latest (promote.yml).
     - cron: '0 7 * * *'
