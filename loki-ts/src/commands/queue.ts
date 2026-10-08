@@ -8,6 +8,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REPO_ROOT } from "../util/paths.ts";
+import { printForecast, readingFromGovernorJson, recordWindowDelta, type UsageReading } from "../engine10/forecast.ts";
 
 export interface QueueItem {
   ref: string;
@@ -25,6 +26,7 @@ export interface GovernorReading {
   ok: boolean; // false when the governor could not be read
   hold: boolean;
   reason: string;
+  usage?: UsageReading | null; // measured window reading, when the governor had one (advisory forecast only)
 }
 
 export interface QueueDeps {
@@ -157,11 +159,16 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
     d.out("queue is empty\n");
     return 0;
   }
+  let forecastShown = false;
   for (const item of [...remaining]) {
     const g = await d.governor();
     if (g.hold) {
       stopReason = `governor hold: ${g.reason}`;
       break;
+    }
+    if (!forecastShown) {
+      forecastShown = true;
+      await printForecast(d.lokiDir, async () => g.usage ?? null, d.err);
     }
     let res: RunResult;
     try {
@@ -178,6 +185,14 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
       cost: typeof res.costUsd === "number" ? `$${res.costUsd.toFixed(2)}` : "NOT RECORDED",
       note: g.ok ? "" : `governor unreadable (${g.reason}); proceeded`,
     });
+    // Advisory history: window consumed by this item, from two cached governor readings (best effort).
+    if (g.usage) {
+      try {
+        recordWindowDelta(d.lokiDir, g.usage, (await d.governor()).usage ?? null);
+      } catch {
+        /* forecast history is best effort */
+      }
+    }
     // Processed items leave the queue whether they passed or failed; the digest keeps the record.
     remaining = remaining.filter((r) => r.ref !== item.ref);
     writeQueue(d.lokiDir, remaining);
@@ -198,29 +213,43 @@ export async function queueRun(args: readonly string[], d: QueueDeps): Promise<n
 }
 
 // Governor: reuse scripts/usage-governor.py (cached 15 min `claude -p /usage` read).
+async function governorReport(timeoutMs: number): Promise<unknown> {
+  const proc = Bun.spawn(["python3", resolve(REPO_ROOT, "scripts", "usage-governor.py"), "--json"], {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    env: { ...process.env },
+  });
+  const timer = setTimeout(() => proc.kill(), timeoutMs);
+  const text = await new Response(proc.stdout).text();
+  await proc.exited;
+  clearTimeout(timer);
+  return JSON.parse(text);
+}
+
+// Same cached script read, bounded shorter, for the advisory forecast (QF-2). Null when unreadable.
+export async function defaultUsageReading(): Promise<UsageReading | null> {
+  try {
+    return readingFromGovernorJson(await governorReport(20_000));
+  } catch {
+    return null;
+  }
+}
+
 export async function defaultGovernor(): Promise<GovernorReading> {
   try {
-    const proc = Bun.spawn(["python3", resolve(REPO_ROOT, "scripts", "usage-governor.py"), "--json"], {
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-      env: { ...process.env },
-    });
-    const timer = setTimeout(() => proc.kill(), 90_000);
-    const text = await new Response(proc.stdout).text();
-    await proc.exited;
-    clearTimeout(timer);
-    const rep = JSON.parse(text) as {
+    const rep = (await governorReport(90_000)) as {
       governor?: { max_engineers_reason?: string; cap_basis?: string };
       measured?: { status?: string; session_pct?: number; week_pct?: number } | null;
     };
+    const usage = readingFromGovernorJson(rep);
     const reason = rep.governor?.max_engineers_reason ?? "";
     const m = rep.measured;
     const sess = m?.status === "ok" && typeof m.session_pct === "number" ? `${m.session_pct}% session` : "session unmeasured";
     if (reason === "hold_above_70_session" || reason === "over_ceiling") {
-      return { ok: true, hold: true, reason: `${reason} (${sess})` };
+      return { ok: true, hold: true, reason: `${reason} (${sess})`, usage };
     }
-    return { ok: rep.governor?.cap_basis === "measured", hold: false, reason: `${reason || "ok"} (${sess})` };
+    return { ok: rep.governor?.cap_basis === "measured", hold: false, reason: `${reason || "ok"} (${sess})`, usage };
   } catch (e) {
     return { ok: false, hold: false, reason: e instanceof Error ? e.message : "unreadable" };
   }
