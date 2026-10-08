@@ -31,6 +31,7 @@ concurrency:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   promote:
@@ -89,6 +90,7 @@ jobs:
         id: npm
         env:
           VERSION: ${{ steps.ver.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # npm can lag a fresh publish: retry with backoff (10 x 30s, ~5 min).
@@ -106,8 +108,29 @@ jobs:
             echo "FATAL: ${VERSION} is lower than current latest ${CUR}; not promoting"
             exit 1
           fi
-          GITHEAD="$(npm view "loki-mode@${VERSION}" gitHead)"
-          test -n "$GITHEAD" || { echo "FATAL: loki-mode@${VERSION} has no gitHead on npm"; exit 1; }
+          GITHEAD="$(npm view "loki-mode@${VERSION}" gitHead 2>/dev/null || true)"
+          if [ -n "$GITHEAD" ]; then
+            echo "GITHEAD_SOURCE=npm (registry gitHead ${GITHEAD})"
+          else
+            # FC-51: a tarball publish (release.yml, D90) can leave no gitHead.
+            # Fall back to the release tag, but never on the name alone.
+            echo "WARNING: loki-mode@${VERSION} has no gitHead on npm; falling back to tag v${VERSION}"
+            git fetch --force --tags origin
+            test "$(git cat-file -t "refs/tags/v${VERSION}" 2>/dev/null || true)" = "tag" || {
+              echo "FATAL: tag v${VERSION} is missing or not an annotated tag (release.yml creates it with git tag -a); refusing the fallback"; exit 1; }
+            GITHEAD="$(git rev-parse "v${VERSION}^{commit}")" || { echo "FATAL: cannot resolve tag v${VERSION}"; exit 1; }
+            echo "GITHEAD_SOURCE=tag v${VERSION} (commit ${GITHEAD}); npm had none"
+            # The tag must point at a commit whose Tests run on main succeeded.
+            TESTS_OK="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?head_sha=${GITHEAD}&branch=main&status=success&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)"
+            [ "${TESTS_OK:-0}" -ge 1 ] || { echo "FATAL: no successful Tests run on main for ${GITHEAD}; refusing the tag fallback"; exit 1; }
+            # Not trust-on-name: the published tarball must embed this version.
+            FBDIR="$(mktemp -d)"
+            (cd "$FBDIR" && npm pack "loki-mode@${VERSION}" --silent >/dev/null && tar -xzf ./*.tgz package/loki-ts/dist/loki.js) || { echo "FATAL: cannot fetch the published tarball"; exit 1; }
+            grep -q "\"${VERSION}\"" "$FBDIR/package/loki-ts/dist/loki.js" || {
+              echo "FATAL: published loki-ts/dist/loki.js does not embed ${VERSION}; refusing the tag fallback"; exit 1; }
+            rm -rf "$FBDIR"
+            echo "OK: tag fallback verified (annotated tag, Tests green on main, tarball embeds ${VERSION})"
+          fi
           printf '%s' "$GITHEAD" | grep -Eq '^[0-9a-f]{40}$' || { echo "gitHead is not a 40-hex SHA: $GITHEAD"; exit 1; }
           git fetch origin main
           if ! git merge-base --is-ancestor "$GITHEAD" origin/main; then
