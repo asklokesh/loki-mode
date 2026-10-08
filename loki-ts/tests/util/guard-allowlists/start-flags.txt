@@ -2,19 +2,21 @@
 # Guard: start_flag_parity_guard.test.ts (D91 finding class 2). Bun-only-refused flags exit 2 loudly (FC-38), never silent.
 -* | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 -- | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
---aider-flags | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
---aider-model | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
+--aider-flags | both
+--aider-model | both
 --allow-haiku | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --api | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
---attempts | both
+--attempts | bash-only refused with exit 2 on the Bun route (FC-38): engine10 does not honor it; legacy-loop or bash-route flag
 --attempts=1 | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --background | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
+--base-wait | bun-only declared on the Bun route only; bash cmd_start has no label for it
 --bg | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --bmad-project | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --brief | both
 --budget | both
 --budget-limit | bun-only real divergence: bash cmd_start has no --budget-limit label (only --budget); follow-up to add the alias on bash
---cline-model | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
+--cline-model | both
+--completion-promise | bun-only declared on the Bun route only; bash cmd_start has no label for it
 --complex | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --compliance | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --config | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
@@ -30,6 +32,9 @@
 --issue | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --log-level | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --max-duration | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
+--max-iterations | bun-only declared on the Bun route only; bash cmd_start has no label for it
+--max-retries | bun-only declared on the Bun route only; bash cmd_start has no label for it
+--max-wait | bun-only declared on the Bun route only; bash cmd_start has no label for it
 --mirofish | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --mirofish-bg | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --mirofish-docker | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
@@ -38,7 +43,6 @@
 --no-dashboard | both
 --no-mirofish | both
 --no-plan | both
---no-pr | bun-only real divergence: bash cmd_start does not parse --no-pr; follow-up to forward it on bash
 --no-start | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --openspec | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --output | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
