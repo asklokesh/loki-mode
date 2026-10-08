@@ -177,5 +177,27 @@ if [ "$hang_rc" -eq 0 ] && grep -q '^full=true$' "$T/hang/gh_out" && ! grep -q '
     ok "a hung planner is cut by the timeout: step exits 0 under bash -e with full=true and a plan.tsv"
 else bad "a hung planner did not yield full=true with exit 0 (rc=$hang_rc)"; fi
 
+# FC-67: a release-commit plan (VERSION, package.json, dist, workflows) must not select suites that
+# have no green baseline, and VERSION must not pull in every test that merely mentions the word.
+printf '%s\n' VERSION package.json loki-ts/dist/loki.js >"$T/rel.files"
+FAST_GATE_TEST_MODE=1 FAST_GATE_FILES_FILE="$T/rel.files" bash scripts/ci/fast-gate.sh plan test "$T/rel" >"$T/rel.log" 2>&1
+fc67_bad=""
+while IFS=$'\t' read -r _k kind target _rest; do
+    [ "$_k" = "G" ] || continue
+    case "$target" in *.py | *.js) continue ;; esac
+    b="${target##*/}"
+    grep -qF -- "$b" tests/run-all-tests.sh scripts/local-ci.sh tests/shard-durations.tsv .github/workflows/full-suite.yml .github/workflows/nightly.yml \
+        || fc67_bad="$fc67_bad $target"
+done <"$T/rel/raw.tsv"
+if [ -s "$T/rel/raw.tsv" ] && [ -z "$fc67_bad" ]; then
+    ok "FC-67: every path-guard suite a release-commit plan selects has a full-suite baseline"
+else bad "FC-67: release plan selected suites with no baseline:$fc67_bad"; fi
+if grep -q 'tests/test-quick-receipt-order.sh' "$T/rel/plan.tsv" 2>/dev/null; then
+    bad "FC-67: VERSION/package.json selected a suite that only mentions the word"
+else ok "FC-67: VERSION/package.json guards are the explicit list, not every test that mentions them"; fi
+if grep -q 'tests/test-release-dist-guard.sh' "$T/rel/raw.tsv"; then
+    ok "FC-67: the explicit VERSION/dist guards are still selected"
+else bad "FC-67: explicit release guards were dropped"; fi
+
 echo "fast-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

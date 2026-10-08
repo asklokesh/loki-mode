@@ -157,10 +157,10 @@ test_cmd "loki watch --help exits 0 and shows usage" \
     0 "Usage" watch --help
 
 # -------------------------------------------
-# Test 2: Help shows v6.33.0
+# Test 2: Help shows the command summary (help text no longer embeds a version)
 # -------------------------------------------
-test_cmd "loki watch --help shows version" \
-    0 "v6.33.0" watch --help
+test_cmd "loki watch --help shows command summary" \
+    0 "Auto-rerun on PRD file changes" watch --help
 
 # -------------------------------------------
 # Test 3: PRD auto-detection (prd.md)

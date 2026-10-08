@@ -165,7 +165,8 @@ function FileTree({
                 if (isDir) {
                   setExpanded(prev => {
                     const next = new Set(prev);
-                    next.has(node.path) ? next.delete(node.path) : next.add(node.path);
+                    if (next.has(node.path)) next.delete(node.path);
+                    else next.add(node.path);
                     return next;
                   });
                 } else {

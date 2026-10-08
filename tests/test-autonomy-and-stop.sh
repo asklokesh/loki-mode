@@ -103,7 +103,9 @@ echo "$BASH_OV" | grep -q 'AskUserQuestion' \
 
 # --- Fix #2: opt-out behavioral test (Bun route buildAutoFlags) ------------
 # Assert the flag is PRESENT by default and ABSENT when LOKI_AUTONOMY_OVERRIDE=off.
-if command -v bun >/dev/null 2>&1; then
+# buildAutoFlags only emits --append-system-prompt when the claude CLI help advertises it
+# (claudeFlagSupported), so the case needs the claude binary as well as bun.
+if command -v bun >/dev/null 2>&1 && command -v claude >/dev/null 2>&1; then
     T_OPTOUT=$(cd "$REPO_ROOT/loki-ts" && bun -e '
 import { buildAutoFlags, ensureClaudeHelpCache } from "./src/providers/claude_flags.ts";
 await ensureClaudeHelpCache();
@@ -118,7 +120,7 @@ console.log(onDefault && offDisabled && onExplicit ? "OPTOUT_OK" : `OPTOUT_FAIL 
 ' 2>&1 | tail -1)
     [ "$T_OPTOUT" = "OPTOUT_OK" ] && ok "override present by default, absent when LOKI_AUTONOMY_OVERRIDE=off (Bun)" || bad "opt-out behavior: $T_OPTOUT"
 else
-    ok "opt-out behavioral test skipped (bun not on PATH)"
+    ok "opt-out behavioral test skipped (bun or claude not on PATH)"
 fi
 
 # the override must keep commit hygiene + categorical safety language (council fix)
