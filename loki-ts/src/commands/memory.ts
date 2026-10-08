@@ -8,6 +8,7 @@ import { BOLD, GREEN, YELLOW, CYAN, NC } from "../util/colors.ts";
 import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
 import { run } from "../util/shell.ts";
+import { GhError, formatLessonList, learnFromPr, loadLessons } from "../util/pr_lessons.ts";
 
 const LEARNINGS_DIR = resolve(homeLokiDir(), "learnings");
 
@@ -82,11 +83,31 @@ except Exception as e:
 }
 
 export async function runMemory(argv: readonly string[]): Promise<number> {
+  if (argv.length === 0) {
+    // Bare `loki memory`: the learnings summary followed by this repo's PR lessons.
+    const rc = await runMemoryList();
+    process.stdout.write(`\n${formatLessonList(loadLessons(process.cwd()))}`);
+    return rc;
+  }
   const sub = argv[0] ?? "list";
   switch (sub) {
+    case "lessons":
+      process.stdout.write(formatLessonList(loadLessons(process.cwd())));
+      return 0;
     case "list":
     case "ls":
       return runMemoryList();
+    case "learn": {
+      if (!argv[1]) { process.stderr.write("Usage: loki memory learn <owner/repo#PR>\n"); return 2; }
+      try {
+        const r = await learnFromPr(process.cwd(), argv[1]);
+        process.stdout.write(`Learned from ${argv[1]}: ${r.added} added, ${r.duplicates} already known, ${r.skipped} skipped (empty)\n`);
+        return 0;
+      } catch (e) {
+        if (e instanceof GhError) { process.stderr.write(`Error: ${e.message}\n`); return 1; }
+        throw e;
+      }
+    }
     case "index":
       return runMemoryIndex(argv[1] === "rebuild");
     default: {

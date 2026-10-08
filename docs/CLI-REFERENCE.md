@@ -15,6 +15,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki memory` | Cross-project learnings |
 | `loki memory list` | All learnings |
 | `loki memory index` | Show or rebuild the memory index |
+| `loki memory learn` | Learn lessons from a merged PR's review comments |
+| `loki memory lessons` | List PR review lessons with uses and outcomes |
 | `loki memory show` | Show one learning |
 | `loki memory search` | Search learnings |
 | `loki memory stats` | Memory statistics |
@@ -55,10 +57,11 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki start` | Run the autonomous build |
 | `loki slack` | Slack inbound handler |
 | `loki slack serve` | Serve the Slack handler |
-| `loki answer` | Resume a BLOCKED run with an answer |
-| `loki queue add <issue...>` | Queue issue refs in `.loki/issue-queue.json` |
+| `loki queue` | Overnight issue queue with a morning digest |
+| `loki queue add` | Queue issue refs |
 | `loki queue list` | Show the queue |
-| `loki queue run [--no-pr]` | Process the queue one issue at a time, governor-checked, then print a morning digest |
+| `loki queue run` | Process the queue |
+| `loki answer` | Resume a BLOCKED run with an answer |
 | `loki engine10` | v10 engine router |
 | `loki engine10 run` | Run the v10 engine |
 | `loki engine10 status` | v10 status |
