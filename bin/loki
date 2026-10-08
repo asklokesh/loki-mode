@@ -493,19 +493,21 @@ case "v10" in
             start)
                 case "${2:-}" in
                     */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
-                        _e10=1; _e10_args=()
-                        [ "$_LOKI_START_ATTEMPTS" = "1" ] && _e10_hard=1  # FC-38: --attempts never falls back to the legacy engine
-                        # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
-                        _e10_bnext=0
-                        for _e10_a in "${@:2}"; do
-                            if [ "$_e10_bnext" = "1" ]; then _e10_args+=("$_e10_a"); _e10_bnext=0; continue; fi
-                            case "$_e10_a" in
-                                --budget|--budget-limit) _e10_args+=(--max-cost); _e10_bnext=1 ;;
-                                --budget=*|--budget-limit=*) _e10_args+=("--max-cost=${_e10_a#*=}") ;;
-                                *) _e10_args+=("$_e10_a") ;;
-                            esac
-                        done
-                        unset _e10_a _e10_bnext
+                        _e10=1; _e10_args=("${@:2}")
+                        if [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
+                            _e10_hard=1  # FC-38: --attempts never falls back to the legacy engine
+                            # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
+                            _e10_args=(); _e10_bnext=0
+                            for _e10_a in "${@:2}"; do
+                                if [ "$_e10_bnext" = "1" ]; then _e10_args+=("$_e10_a"); _e10_bnext=0; continue; fi
+                                case "$_e10_a" in
+                                    --budget|--budget-limit) _e10_args+=(--max-cost); _e10_bnext=1 ;;
+                                    --budget=*|--budget-limit=*) _e10_args+=("--max-cost=${_e10_a#*=}") ;;
+                                    *) _e10_args+=("$_e10_a") ;;
+                                esac
+                            done
+                            unset _e10_a _e10_bnext
+                        fi
                         ;;
                     *) _e10=0 ;;
                 esac
