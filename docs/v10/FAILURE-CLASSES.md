@@ -625,3 +625,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: Y01, Y02, Y04 to Y09 (writes hidden in `$(( ))`, `printf -v` or `read` through an indirect name, a function that writes rc), exit 256, eval: all fail closed inside a capture-to-exit window and are red self-tests.
 - Mechanism: none planned. Revisit only if a real workflow edit triggers one; the structural fix would be running the step under a shell with `set -e -o pipefail` and asserting on exit status in a fixture instead of reading source.
 - Fixture: Y01, Y02, Y04, Y05, Y08, Y09, Y10, Y11, X09, X20, X05 self-tests in tests/test-workflow-no-masked-failures.sh.
+
+## FC-66 A fixture pushed the real .gitleaksignore as new content and gitleaks flagged one of its own comments (PP-GITLEAKS-FIXTURE)
+- User saw: Tests red on main 103278fe8 (run 37833691425, shard 1), deterministic and local: tests/test-pre-push-gitleaks.sh case c8 `FATAL: setup_push_clone's base push failed ... RuleID: generic-api-key File: .gitleaksignore Line: 123`.
+- Law: a guard's own config must pass the guard; evidence or it did not happen (the red was latent, not a train regression).
+- Cause (measured): setup_clone, setup_push_clone and the case-26 clone copied the real .gitleaksignore, comments included, into a fixture repo and pushed it as new content. Line 123 (a comment that quoted the default receipt key file path) matches generic-api-key. `.gitleaksignore`, `.githooks/pre-push` and the suite are byte-identical between 75bbbb946 and 103278fe8, so the red is latent; the suite only ran once diff selection picked it.
+- Siblings swept: `gitleaks dir .gitleaksignore` over every other comment and fingerprint line: line 123 was the only finding. The three fixture copy sites all go through one helper now.
+- Mechanism: (1) the comment is reworded so it no longer trips a rule; (2) copy_real_gitleaksignore copies fingerprint lines only (comments carry no suppression), so a future prose comment cannot break fixtures; (3) a guard case scans the real .gitleaksignore with the pinned gitleaks and fails on any finding. No fingerprint added, hook untouched.
+- Fixture: tests/test-pre-push-gitleaks.sh "FC-66: the real .gitleaksignore scans clean as content". Red before the fix (suite rc=1 at c8, gitleaks reports 1 leak at line 123), green after.
