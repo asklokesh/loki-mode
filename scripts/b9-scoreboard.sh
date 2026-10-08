@@ -87,7 +87,7 @@ summarize_results() { # summarize_results FILE
             a = $1; runs[a]++
             for (i = 1; i <= nf; i++) {
                 f = F[i]; v = $(col[f])
-                if (isnum(v)) {
+                if (isnum(v) && !(f == "usd" && v + 0 <= 0)) {
                     c[a, f]++; sum[a, f] += v
                     if (!((a, f) in mn) || v + 0 < mn[a, f]) mn[a, f] = v + 0
                     if (!((a, f) in mx) || v + 0 > mx[a, f]) mx[a, f] = v + 0
@@ -105,7 +105,7 @@ summarize_results() { # summarize_results FILE
             }
             reason = ""
             if (c[2, "usd"] < 3 || c[3, "usd"] < 3) reason = sprintf("need n>=3 recorded usd per arm (router=%d, no-router=%d)", c[2, "usd"] + 0, c[3, "usd"] + 0)
-            else if (sum[3, "usd"] <= 0) reason = "no-router mean usd is 0"
+            else if (sum[2, "usd"] <= 0 || sum[3, "usd"] <= 0) reason = "a mean usd is 0"
             if (reason != "") { print "router_cost_ratio=NOT RECORDED"; print "gate_1_05=FAIL"; print "gate_reason=" reason; exit }
             ratio = (sum[2, "usd"] / c[2, "usd"]) / (sum[3, "usd"] / c[3, "usd"])
             printf "router_cost_ratio=%.4f\n", ratio

@@ -205,6 +205,12 @@ bash "$B9" --emit-shape-defaults "$T/empty.json" --results "$T/noloss.tsv" --con
 python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["shapes"]=={} else 1)' "$T/empty.json"
 check emit-empty-when-no-loss $? "$(cat "$T/empty.json")"
 
+# 6b. a recorded usd of 0 is NOT RECORDED, never a free router
+for r in 1 2 3; do printf '2\tx\t%s\t1\t10\t0\ts\t1\t1\t1\t1\t0\n3\tx\t%s\t1\t10\t1\ts\t1\t1\t1\t1\t0\n' "$r" "$r"; done > "$T/zero.tsv"
+bash "$B9" --summarize "$T/zero.tsv" > "$T/zero.txt"
+grep -q '^gate_1_05=FAIL$' "$T/zero.txt" && ! grep -q '^gate_1_05=PASS$' "$T/zero.txt"; check arm2-zero-usd-fails-gate $? "$(cat "$T/zero.txt")"
+grep -q 'summary arm 2 router usd: NOT RECORDED (0 of 3 runs)' "$T/zero.txt" && grep -q '^router_cost_ratio=NOT RECORDED$' "$T/zero.txt"; check zero-usd-is-not-recorded-not-numeric-zero $? "$(cat "$T/zero.txt")"
+
 # 5. usage errors
 bash "$B9" --emit-shape-defaults "$T/x.json" > /dev/null 2>&1; RCU=$?; check emit-needs-results "$(( RCU == 2 ? 0 : 1 ))" "expected rc 2"
 bash "$B9" --bogus > /dev/null 2>&1; RCU=$?; check bad-flag-rc2 "$(( RCU == 2 ? 0 : 1 ))" "expected rc 2"
