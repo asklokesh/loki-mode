@@ -11,6 +11,7 @@ import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10e
 import { generateKeyPairSync } from "node:crypto";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -1136,6 +1137,57 @@ describe("D50-F1 already-satisfied discards run changes", () => {
     expect(Math.abs(naive - 36)).toBeLessThanOrEqual(0.36); // what a consumer that just adds the buckets (b9-scoreboard) computes
     expect(t.wall_s).toBeLessThanOrEqual(t.total_s!);
     expect(reconciledTotalS(t)).toBe(36);
+  });
+
+  // The consumer formula below is copied verbatim from scripts/b9-scoreboard.sh (slice-B9-RAW-ARM 96626a2e0, lines 418-441).
+  // It reads time.total_s and adds every time.stages value; more than 1% apart makes the row NOT RECORDED.
+  const B9_READER = `import glob, json, os, sys
+NR = "NOT RECORDED"
+fs = sorted(glob.glob(os.path.join(sys.argv[1], ".loki", "runs", "*", "receipt.json")), key=os.path.getmtime)
+v, out = 0, [NR] * 4
+def num(x, pos):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and (x > 0 if pos else x >= 0)
+if fs:
+    try:
+        d = json.load(open(fs[-1]))
+        v = 1 if d.get("verdict") == "VERIFIED" else 0
+        c, t = d.get("cost") or {}, d.get("time") or {}
+        ok = num(c.get("usd"), True) and num(t.get("total_s"), True) \\
+            and num(c.get("cache_read_tokens"), False) and num(c.get("cache_creation_tokens"), False)
+        st = t.get("stages")
+        if ok and isinstance(st, dict) and st:
+            vals = [x for x in st.values() if num(x, False)]
+            ssum = sum(vals)
+            if len(vals) != len(st) or ssum <= 0 or abs(t["total_s"] - ssum) > 0.01 * ssum:
+                ok = False
+        if ok:
+            out = [round(c["usd"], 6), round(t["total_s"], 3), c["cache_read_tokens"], c["cache_creation_tokens"]]
+    except Exception:
+        pass
+print("\\t".join([str(v)] + [str(x) for x in out]))
+`;
+  const b9Row = (time: unknown): string => {
+    const d = mkdtempSync(join(tmpdir(), "loki-run.rt-b9-"));
+    try {
+      mkdirSync(join(d, ".loki", "runs", "r1"), { recursive: true });
+      writeFileSync(join(d, ".loki", "runs", "r1", "receipt.json"), JSON.stringify({ verdict: "VERIFIED", cost: { usd: 0.05, cache_read_tokens: 100, cache_creation_tokens: 10 }, time }));
+      const r = spawnSync("python3", ["-I", "-c", B9_READER, d], { encoding: "utf8" });
+      return r.stdout.trim();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  };
+
+  test("RECEIPT-TRUTH: the b9-scoreboard reader formula gets a number, not NOT RECORDED, on a parallel plan||wall receipt", () => {
+    const base = Date.parse("2026-01-01T00:00:00.000Z"), at = (s: number) => base + s * 1000;
+    const iv = (stage: string, a: number, b: number) => ({ stage, startMs: at(a), endMs: at(b) });
+    const ctx = { startedAtMs: at(1.5), clock: { now: () => at(36) }, timeline: [
+      iv("intake", 1.5, 3.5), iv("plan", 3.5, 13.5), iv("wall", 3.5, 9.5), iv("implement", 14, 31.5), iv("verify", 31.5, 34.5), iv("commit", 34.7, 35.5),
+    ] } as unknown as RunContext;
+    const t = buildTime(ctx, {}, base);
+    expect(b9Row(t).split("\t")).toEqual(["1", "0.05", "36", "100", "10"]);
+    // the pre-partition shape (plan and wall both listed, overlapping) must read NOT RECORDED, proving the reader would catch a regression
+    const overlapped = { ...t, stages: { ...t.stages, plan: 10, wall: 6 } };
+    delete (overlapped.stages as Record<string, number>)["plan+wall"];
+    expect(b9Row(overlapped).split("\t").slice(1)).toEqual(["NOT RECORDED", "NOT RECORDED", "NOT RECORDED", "NOT RECORDED"]);
   });
 
   test("RECEIPT-TRUTH: a first event later than machine start makes a negative setup, which reads NOT RECORDED", () => {
