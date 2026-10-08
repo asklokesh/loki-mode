@@ -31529,7 +31529,7 @@ _docs_invoke_provider() {
             # not the workload that needs the top tier. Pinned to the same
             # default the review subcall uses (run.sh:13762), and overridable
             # for anyone who wants a different trade.
-            result=$($t_prefix env CAVEMAN_DEFAULT_MODE=off claude -p --model "${LOKI_DOCS_MODEL:-claude-sonnet-5}" "$prompt" 2>/dev/null) || exit_code=$?
+            result=$($t_prefix env CAVEMAN_DEFAULT_MODE=off claude -p --model "${LOKI_DOCS_MODEL:-sonnet}" "$prompt" 2>/dev/null) || exit_code=$?
             ;;
         codex)
             result=$($t_prefix codex exec --sandbox workspace-write "$prompt" 2>/dev/null) || exit_code=$?

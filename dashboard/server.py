@@ -1520,9 +1520,9 @@ async def get_provider_models() -> dict:
         "schema_version": 1,
         "providers": {
             "claude": {
-                "latest_planning": "claude-opus-4-7",
-                "latest_development": "claude-opus-4-7",
-                "latest_fast": "claude-sonnet-4-6",
+                "latest_planning": "opus",
+                "latest_development": "opus",
+                "latest_fast": "sonnet",
                 "models": [],
             }
         },
@@ -3360,7 +3360,7 @@ def _provider_model_offers(provider: str) -> list[dict]:
     Every other provider is offered the generic tiers (small/medium/high), which
     are provider-independent, each annotated with the concrete model id the
     catalog says that provider dispatches. That is what makes the picker read
-    "medium -> gpt-5.6-terra" on codex and "medium -> claude-sonnet-5" on claude
+    "medium -> gpt-5.6-terra" on codex and "medium -> <catalog sonnet id>" on claude
     without the frontend knowing a single model id.
     """
     if provider == "claude":
@@ -8565,8 +8565,8 @@ async def get_gate_policy():
 # =============================================================================
 
 _PROVIDER_LABELS = {
-    # v7.104.0: current model IDs (model_catalog.json): opus=claude-opus-4-8,
-    # sonnet=claude-sonnet-5 (the default execution model), haiku=claude-haiku-4-5.
+    # v7.104.0: current model IDs (model_catalog.json): opus, sonnet (the default execution model), haiku: ids live in
+    # the catalog cli_aliases, not here.
     "opus": "Opus 4.8",
     "sonnet": "Sonnet 5",
     "haiku": "Haiku 4.5",

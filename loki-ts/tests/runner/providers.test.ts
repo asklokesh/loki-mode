@@ -16,6 +16,10 @@ import {
   PROVIDER_COMMIT_HYGIENE,
 } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
+import { readFileSync as _rf } from "node:fs";
+import { join as _join } from "node:path";
+// Read independently from the JSON so these assertions do not depend on resolveClaudeModel itself.
+const CATALOG_OPUS: string = JSON.parse(_rf(_join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers.claude.cli_aliases.opus;
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import {
   chmodSync,
@@ -825,7 +829,7 @@ describe("aiderProvider invocation", () => {
       "--yes-always",
       "--no-auto-commits",
       "--model",
-      "claude-opus-4-7",
+      CATALOG_OPUS,
     ]);
   });
 

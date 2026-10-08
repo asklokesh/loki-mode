@@ -327,7 +327,7 @@ loki_council_dispatch_agents() {
                 else _va_wrap=""; fi
                 _va_out="$($_va_wrap "$_va_loki" internal sdk-judge \
                     --prompt-file "$_va_pf" --schema-file "$_va_schema_f" \
-                    --model "${LOKI_SDK_COUNCIL_MODEL:-claude-sonnet-5}" --effort high \
+                    --model "${LOKI_SDK_COUNCIL_MODEL:-sonnet}" --effort high \
                     --timeout-ms "$(( _va_to_s * 1000 ))" 2>"$COUNCIL_STATE_DIR/votes/dispatch-stderr-${iteration}.log")" || _va_rc=$?
                 rm -f "$_va_pf" 2>/dev/null || true
                 if [ "$_va_rc" -eq 0 ] && [ -n "$_va_out" ]; then

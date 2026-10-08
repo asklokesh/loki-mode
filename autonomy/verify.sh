@@ -207,7 +207,7 @@ _verify_llm_review() {
 }
 SCHEMA
 
-    model="${LOKI_VERIFY_LLM_MODEL:-claude-sonnet-5}"
+    model="${LOKI_VERIFY_LLM_MODEL:-sonnet}"
     local to_s="${LOKI_VERIFY_LLM_TIMEOUT_S:-120}"
     local wrap=""
     if command -v timeout >/dev/null 2>&1; then wrap="timeout $(( to_s + 15 ))"

@@ -386,7 +386,7 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                         else _c2_wrap=""; fi
                         _c2_sdk_out="$($_c2_wrap "$_c2_sdk_loki" internal sdk-judge \
                             --prompt-file "$_c2_sdk_pf" --schema-file "$_c2_sdk_schema" \
-                            --model "${LOKI_SDK_JUDGE_MODEL:-claude-haiku-4-5}" --effort low \
+                            --model "${LOKI_SDK_JUDGE_MODEL:-haiku}" --effort low \
                             --timeout-ms "$(( _c2_to_s * 1000 ))" 2>/dev/null)" || _c2_sdk_rc=$?
                         rm -f "$_c2_sdk_pf" 2>/dev/null || true
                         if [ "$_c2_sdk_rc" -eq 0 ] && [ -n "$_c2_sdk_out" ]; then

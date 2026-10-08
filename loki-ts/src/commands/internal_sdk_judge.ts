@@ -16,6 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import { type Effort, judgeJson, judgeText } from "../runner/sdk_invoker.ts";
+import { isUnresolvedClaudeAlias, resolveClaudeModel } from "../util/claude_model.ts";
 
 function argVal(args: string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -56,7 +57,11 @@ export async function runInternalSdkJudge(args: string[]): Promise<number> {
   // explicitly (from a LOKI_SDK_*_MODEL env with its own default), so this literal
   // is not reached on the real dispatch path -- it just keeps a bare hand-run of
   // `loki internal sdk-judge` from erroring with no model.
-  const model = argVal(args, "--model") ?? "claude-haiku-4-5";
+  const model = resolveClaudeModel(argVal(args, "--model") ?? "haiku");
+  if (isUnresolvedClaudeAlias(model)) {
+    process.stderr.write(`sdk: model alias "${model}" did not resolve via the catalog; refusing to call the API\n`);
+    return 2;
+  }
   const effortRaw = argVal(args, "--effort");
   const effort = effortRaw && VALID_EFFORT.has(effortRaw) ? (effortRaw as Effort) : undefined;
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));
@@ -97,7 +102,11 @@ export async function runInternalSdkText(args: string[]): Promise<number> {
   // explicitly (from a LOKI_SDK_*_MODEL env with its own default), so this literal
   // is not reached on the real dispatch path -- it just keeps a bare hand-run of
   // `loki internal sdk-judge` from erroring with no model.
-  const model = argVal(args, "--model") ?? "claude-haiku-4-5";
+  const model = resolveClaudeModel(argVal(args, "--model") ?? "haiku");
+  if (isUnresolvedClaudeAlias(model)) {
+    process.stderr.write(`sdk: model alias "${model}" did not resolve via the catalog; refusing to call the API\n`);
+    return 2;
+  }
   const effortRaw = argVal(args, "--effort");
   const effort = effortRaw && VALID_EFFORT.has(effortRaw) ? (effortRaw as Effort) : undefined;
   const maxTokens = parsePosInt(argVal(args, "--max-tokens"));

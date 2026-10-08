@@ -1,0 +1,3 @@
+# Files allowed to name dated Claude model ids. Format: path | reason. Guard: no_hardcoded_model_ids.test.ts.
+providers/model_catalog.json | the single source of truth for model ids
+loki-ts/src/runner/budget.ts | pricing table owned by PRICE-TRUTH, keyed by exact id

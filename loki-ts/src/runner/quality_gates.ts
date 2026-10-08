@@ -49,6 +49,7 @@ import { atomicWriteText, withFileLockSync } from "../util/atomic.ts";
 import { REPO_ROOT, lokiDir } from "../util/paths.ts";
 import { commandExists, run } from "../util/shell.ts";
 import type { RunnerContext } from "./types.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
 
 // v7.5.0: synchronous loader for escalation_handoff used by applyEscalation
 // (which is sync because it sits inside the runQualityGates for-loop). Bun
@@ -1634,7 +1635,7 @@ export const claudeReviewer: ReviewerFn = async ({ prompt }) => {
       const obj = await judgeJson({
         prompt,
         schema,
-        model: process.env["LOKI_SDK_REVIEW_MODEL"] || "claude-sonnet-5",
+        model: process.env["LOKI_SDK_REVIEW_MODEL"] || resolveClaudeModel("sonnet"),
         effort: "high",
         timeoutMs,
       });

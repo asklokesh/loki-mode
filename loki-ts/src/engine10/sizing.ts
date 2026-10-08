@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { readRepoMapCache, repoCacheDir, repoKey } from "./cache.ts";
 import { speedLikelyFiles } from "../features/speed/lean_select.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
 import type { RepoMap } from "./repomap.ts";
 import type { TestMap, TestRef } from "./types.ts";
 
@@ -56,9 +57,7 @@ export const wallLimitS = (size: "small" | "normal", env = process.env): number 
 /** Engine Law L1 (supersedes D31's sonnet-first default): the cascade is OFF unless LOKI_E10_CASCADE=1/on/true opts in. Off means implement and fix run on the run's own model, as a raw session would. */
 export const cascadeEnabled = (env = process.env): boolean => knob(env.LOKI_E10_CASCADE, ["1", "on", "true"]);
 /** Resolves a cli_alias (e.g. "sonnet") to its catalog model id; an id already, or an unknown alias, passes through unchanged. */
-export function resolveModelAlias(want: string): string {
-  try { return JSON.parse(readFileSync(join(import.meta.dir, "../../../providers/model_catalog.json"), "utf8")).providers?.claude?.cli_aliases?.[want] ?? want; } catch { return want; }
-}
+export const resolveModelAlias = resolveClaudeModel;
 /** LOKI_E10_WALL_TIER (alias or id, default sonnet) resolved via providers/model_catalog.json cli_aliases. */
 export const wallModel = (env = process.env): string => resolveModelAlias(env.LOKI_E10_WALL_TIER || "sonnet");
 /** E-64: the cascade's first implement call pins to the same sonnet alias Wall already uses (E-45). */

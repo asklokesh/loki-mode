@@ -65,7 +65,7 @@ _loki_prd_enrich_invoke() {
                 else _pe_wrap=""; fi
                 _pe_out="$($_pe_wrap "$_pe_loki" internal sdk-text \
                     --prompt-file "$_pe_pf" \
-                    --model "${LOKI_SDK_PRD_ENRICH_MODEL:-claude-sonnet-5}" --effort medium \
+                    --model "${LOKI_SDK_PRD_ENRICH_MODEL:-sonnet}" --effort medium \
                     --timeout-ms "$(( _pe_to_s * 1000 ))" 2>/dev/null)" || _pe_rc=$?
                 rm -f "$_pe_pf" 2>/dev/null || true
                 if [ "$_pe_rc" -eq 0 ] && [ -n "$_pe_out" ]; then
