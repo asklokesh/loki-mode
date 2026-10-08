@@ -1,4 +1,4 @@
 ﻿2026-10-08T09:00:00.0Z (pass) suite a > stable test [1.0ms]
 2026-10-08T09:00:01.0Z (pass) suite b > flips [30.1ms]
 2026-10-08T09:00:02.0Z (fail) suite c > always red [2.0ms]
-2026-10-08T09:00:03.0Z [0;31m✗ Shell Thing FAILED[0m
+2026-10-08T09:00:03.0Z [0;31m@CROSS@ Shell Thing FAILED[0m

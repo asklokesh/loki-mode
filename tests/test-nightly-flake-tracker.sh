@@ -5,7 +5,16 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 TRACKER="$REPO_DIR/scripts/nightly-flake-tracker.sh"
-FX="$SCRIPT_DIR/fixtures/nightly-flake"
+FX_SRC="$SCRIPT_DIR/fixtures/nightly-flake"
+# Fixtures hold @CHECK@/@CROSS@ placeholders so no committed file carries the
+# dingbat glyphs the emoji structural check bans; materialise them per run.
+FX="$(mktemp -d "${TMPDIR:-/tmp}/nightly-flake-fx.XXXXXX")" || exit 1
+trap 'rm -rf -- "$FX"' EXIT
+CHECK_GLYPH="$(printf '\342\234\223')"
+CROSS_GLYPH="$(printf '\342\234\227')"
+for f in "$FX_SRC"/*.txt; do
+    sed -e "s/@CHECK@/$CHECK_GLYPH/g" -e "s/@CROSS@/$CROSS_GLYPH/g" "$f" >"$FX/$(basename "$f")"
+done
 PASS=0
 FAIL=0
 
