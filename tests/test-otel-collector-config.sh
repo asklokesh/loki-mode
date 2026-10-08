@@ -2,11 +2,13 @@
 # OTEL-2b: the documented OpenTelemetry Collector config and its fixture.
 #
 # Offline only (a YAML parse, shape checks and a node run of the pure mapper;
-# no network, no collector binary). Asserts:
+# no network; a collector binary is optional, see step 4). Asserts:
 #   1. config/otel-collector/loki-collector.yaml parses and has the receiver,
 #      processor, exporters and traces pipeline the doc promises;
 #   2. every credential-bearing field is an ${env:NAME} placeholder, never a
 #      literal, and no key-looking literal appears anywhere in the file;
+#   2b. with a single vendor listed and the other vendors' variables unset,
+#      every required field still resolves to a non-empty, non-key-shaped default;
 #   3. the deterministic fixture (fixed ids and timestamps) maps to the golden
 #      span descriptors byte for byte.
 # Fail-closed: no python3/PyYAML or no node is an unmeasured config.
@@ -60,16 +62,38 @@ for e in tr.get("exporters") or []:
     if e not in exps:
         errs.append("SHAPE: pipeline exporter not defined: " + e)
 
-PLACEHOLDER = re.compile(r"^\$\{env:[A-Z][A-Z0-9_]*\}$")
+PLACEHOLDER = re.compile(r"^\$\{env:([A-Z][A-Z0-9_]*)(?::-([^}]*))?\}$")
 def cred(path, v):
-    if not PLACEHOLDER.match(str(v)):
+    m = PLACEHOLDER.match(str(v))
+    if not m:
         errs.append("SECRET: " + path + " is not an ${env:NAME} placeholder")
+        return
+    dflt = m.group(2)
+    if dflt is not None and (re.search(r"[A-Za-z0-9+/=_-]{16,}", dflt) or len(dflt) > 40):
+        errs.append("SECRET: " + path + " default is key-shaped: " + dflt)
 g = (exps.get("otlphttp/grafana") or {})
 cred("grafana.headers.Authorization", (g.get("headers") or {}).get("Authorization"))
 h = (exps.get("otlphttp/honeycomb") or {})
 cred("honeycomb.headers.x-honeycomb-team", (h.get("headers") or {}).get("x-honeycomb-team"))
 d = (exps.get("datadog") or {}).get("api") or {}
 cred("datadog.api.key", d.get("key"))
+
+# Subset case: with only one vendor listed and every other vendor's variables
+# unset, the collector still validates every defined exporter, so each required
+# field must resolve to a non-empty inert default. Only the listed vendor's
+# own variables are ever set.
+def resolve(v):
+    m = PLACEHOLDER.match(str(v))
+    return (m.group(2) or "") if m else str(v)
+req = {
+    "otlphttp/grafana": [("endpoint", (exps.get("otlphttp/grafana") or {}).get("endpoint"))],
+    "otlphttp/honeycomb": [("endpoint", (exps.get("otlphttp/honeycomb") or {}).get("endpoint"))],
+    "datadog": [("api.key", d.get("key")), ("api.site", d.get("site"))],
+}
+for vendor, fields in req.items():
+    for name, v in fields:
+        if v is None or resolve(v) == "":
+            errs.append("SUBSET: " + vendor + " " + name + " is empty when its variables are unset")
 
 # Belt and braces over the raw text: no long opaque token anywhere.
 for n, line in enumerate(raw.splitlines(), 1):
@@ -108,6 +132,18 @@ if [ "$GOT" = "$GOT2" ]; then
     ok "second mapper run is identical (deterministic)"
 else
     bad "mapper output differs between two runs"
+fi
+
+# Optional: a real collector validates the file with only one vendor's variable
+# set. SKIPPED (not passed) when the binary is absent.
+if command -v otelcol-contrib >/dev/null 2>&1; then
+    if env -i PATH="$PATH" HONEYCOMB_API_KEY=dummy otelcol-contrib validate --config "$CFG" >/dev/null 2>&1; then
+        ok "otelcol-contrib validate passes with only HONEYCOMB_API_KEY set"
+    else
+        bad "otelcol-contrib validate fails with only HONEYCOMB_API_KEY set"
+    fi
+else
+    echo "SKIP: otelcol-contrib not on PATH; collector validate not run"
 fi
 
 echo "  Passed: $PASS  Failed: $FAIL"

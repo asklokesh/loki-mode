@@ -1,11 +1,14 @@
 # OpenTelemetry Collector config for Loki Mode traces.
 # Loki exports OTLP/HTTP JSON to LOKI_OTEL_ENDPOINT (path /v1/traces). Point it
 # at this collector (for example LOKI_OTEL_ENDPOINT=http://localhost:4318), then
-# run the collector with this file unmodified. Every credential is read from an
+# run the collector with this file. Every credential is read from an
 # environment variable at start; no key is stored in this file.
 #
 # Enable any subset of exporters by listing it in service.pipelines.traces.
-# A vendor whose variables are unset must be removed from that list.
+# The collector validates every defined exporter, listed or not, so each
+# required field carries an inert default (https://unset.invalid, "unset").
+# A vendor left out of the list never uses its default; editing that list is
+# the only change needed.
 
 receivers:
   otlp:
@@ -22,7 +25,7 @@ exporters:
   # GRAFANA_OTLP_ENDPOINT example: https://otlp-gateway-prod-us-east-0.grafana.net/otlp
   # GRAFANA_OTLP_AUTH is the full header value: "Basic <base64 instanceId:token>".
   otlphttp/grafana:
-    endpoint: ${env:GRAFANA_OTLP_ENDPOINT}
+    endpoint: ${env:GRAFANA_OTLP_ENDPOINT:-https://unset.invalid}
     headers:
       Authorization: ${env:GRAFANA_OTLP_AUTH}
 
@@ -35,8 +38,8 @@ exporters:
   # Datadog (collector-contrib datadog exporter). DD_SITE example: datadoghq.com
   datadog:
     api:
-      key: ${env:DD_API_KEY}
-      site: ${env:DD_SITE}
+      key: ${env:DD_API_KEY:-unset}
+      site: ${env:DD_SITE:-datadoghq.com}
 
 service:
   pipelines:

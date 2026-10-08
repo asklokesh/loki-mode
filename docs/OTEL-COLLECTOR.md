@@ -10,10 +10,10 @@ The collector config `config/otel-collector/loki-collector.yaml` fans those span
    - Grafana Cloud: `GRAFANA_OTLP_ENDPOINT`, `GRAFANA_OTLP_AUTH` (the full header value, `Basic <base64 instanceId:token>`).
    - Honeycomb: `HONEYCOMB_API_KEY` (ingest key).
    - Datadog: `DD_API_KEY`, `DD_SITE` (for example `datadoghq.com`). Needs a collector build that includes the Datadog exporter (collector-contrib).
-2. Start the collector with the file unmodified: `otelcol-contrib --config config/otel-collector/loki-collector.yaml`.
+2. Start the collector: `otelcol-contrib --config config/otel-collector/loki-collector.yaml`.
 3. Point Loki at it: `LOKI_OTEL_ENDPOINT=http://localhost:4318 LOKI_OTEL_GENAI=1 loki start ...`.
 
-A vendor whose variables are unset must be removed from `service.pipelines.traces.exporters`; that list is the only edit ever needed.
+To use a subset of vendors, edit only `service.pipelines.traces.exporters` and list the vendors you use. The collector validates every defined exporter even when it is not listed, so the required fields of the other vendors carry inert defaults (`https://unset.invalid` for the Grafana endpoint, `unset` for the Datadog key, `datadoghq.com` for the Datadog site). Those defaults are never used by a vendor that is not in the list, and are not credentials. A listed vendor with its variables unset sends to the inert default and fails at export time, so set the variables for every vendor you list.
 
 ## Receipt link
 
@@ -21,4 +21,4 @@ When tracing was on, the receipt carries a signed `trace_id` (see `docs/AGENT-CH
 
 ## Offline check
 
-`bash tests/test-otel-collector-config.sh` parses the config, asserts the receiver, processor, exporters and traces pipeline, asserts every credential is an `${env:NAME}` placeholder, and maps the deterministic fixture in `tests/fixtures/otel/` (fixed run id and timestamps) to the golden span list. It makes no network call. It does not run a collector or contact a vendor; import into each vendor UI is not tested.
+`bash tests/test-otel-collector-config.sh` parses the config, asserts the receiver, processor, exporters and traces pipeline, asserts every credential is an `${env:NAME}` placeholder (an optional `:-default` is allowed and must not be key-shaped), asserts that every required field still resolves to a non-empty default when a vendor's variables are unset, and maps the deterministic fixture in `tests/fixtures/otel/` (fixed run id and timestamps) to the golden span list. It makes no network call. When `otelcol-contrib` is on PATH it also runs `otelcol-contrib validate` with only `HONEYCOMB_API_KEY` set; that step is skipped, not passed, when the binary is absent. It does not contact a vendor; import into each vendor UI is not tested.
