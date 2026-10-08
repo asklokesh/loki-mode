@@ -1,11 +1,14 @@
 // FC-37: `bin/loki start "<task>" --attempts N` must reach the attempts runner on the positional
 // (engine10) route too. A stub entry answers `engine10`; start delegates to the real runStart.
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { generateKeyPairSync } from "node:crypto";
+
+// Each test spawns bin/loki with a 60-120s budget; bun's 5s default fails them under full-suite load (FC-38).
+setDefaultTimeout(130_000);
 
 const REPO = resolve(import.meta.dir, "../../..");
 const SEAL_TS = join(REPO, "loki-ts/src/engine10/stages/seal.ts");
