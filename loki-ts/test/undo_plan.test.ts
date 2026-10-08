@@ -2,7 +2,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { READ_ONLY_GIT, runUndo, type GitRunner, type UndoPlan } from "../src/commands/undo.ts";
@@ -150,6 +150,19 @@ describe("loki undo --plan", () => {
     const p = JSON.parse(r.out) as UndoPlan;
     expect(p.run_id).toBe("run-a");
     expect(p.commits.every((c) => c.state === "on-default")).toBe(true);
+  });
+
+  test("hostile base_sha/head_sha in the receipt is refused (exit 2) and writes nothing", async () => {
+    const victim = join(root, "PWNED");
+    for (const [b, h] of [[`--output=${victim}`, sh(repo, "rev-parse", "main")], [base, `--output=${victim}`], ["not-a-sha", base], [base, "main"], ["abc", base]] as const) {
+      writeReceipt("run-h", b, h);
+      const before = snapshot();
+      const r = await plan("run-h");
+      expect(r.rc).toBe(2);
+      expect(r.out).toBe("");
+      expect(existsSync(victim)).toBe(false);
+      expect(snapshot()).toBe(before);
+    }
   });
 
   test("the allowlist holds no mutating git subcommand", () => {

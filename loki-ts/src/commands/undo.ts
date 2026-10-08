@@ -33,6 +33,8 @@ export interface UndoPlan {
   warnings: string[];
 }
 
+/** A receipt's refs are attacker-influenced (an unsigned receipt is accepted with --allow-unsigned): only a hex object id may reach git. */
+const SHA_RE = /^[0-9a-f]{7,64}$/;
 const RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 const defaultRunner: GitRunner = (repoDir, args) => {
@@ -53,7 +55,7 @@ function receiptRefs(path: string): { base: string; head: string } | null {
     let j = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
     if (isEnvelope(j)) j = (JSON.parse(Buffer.from(j.payload, "base64").toString()) as { predicate?: Record<string, unknown> }).predicate ?? {};
     const base = j["base_sha"], head = j["head_sha"];
-    return typeof base === "string" && typeof head === "string" && base !== "" && head !== "" ? { base, head } : null;
+    return typeof base === "string" && typeof head === "string" && SHA_RE.test(base) && SHA_RE.test(head) ? { base, head } : null;
   } catch { return null; }
 }
 
@@ -76,10 +78,10 @@ export function buildPlan(runId: string, verdict: Verdict, refs: { base: string;
   let defaultBranch: string | null = null;
   const sym = g(repoDir, ["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"]);
   if (sym.status === 0 && sym.stdout.trim()) defaultBranch = sym.stdout.trim();
-  else for (const c of ["main", "master"]) if (g(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/${c}`]).status === 0) { defaultBranch = c; break; }
+  else for (const c of ["main", "master"]) if (g(repoDir, ["rev-parse", "--verify", "-q", "--end-of-options", `refs/heads/${c}`]).status === 0) { defaultBranch = c; break; }
   if (!defaultBranch) warnings.push("default branch could not be determined; commits are reported as not on the default branch");
 
-  const range = g(repoDir, ["log", "--format=%H%x1f%s%x1f%(trailers:key=Loki-Run,valueonly,separator=%x2c)%x1e", `${refs.base}..${refs.head}`]);
+  const range = g(repoDir, ["log", "--format=%H%x1f%s%x1f%(trailers:key=Loki-Run,valueonly,separator=%x2c)%x1e", "--end-of-options", `${refs.base}..${refs.head}`]);
   if (range.status !== 0) warnings.push(`cannot list ${refs.base}..${refs.head} in this repository (commits missing locally)`);
   const commits: PlanCommit[] = [];
   let excluded = 0;
@@ -87,7 +89,7 @@ export function buildPlan(runId: string, verdict: Verdict, refs: { base: string;
     const [sha, subject, trailers] = rec.trim().split("\x1f");
     if (!sha) continue;
     if (!(trailers ?? "").split(",").map((t) => t.trim()).includes(runId)) { excluded++; continue; }
-    const onDefault = defaultBranch !== null && g(repoDir, ["merge-base", "--is-ancestor", sha, defaultBranch]).status === 0;
+    const onDefault = defaultBranch !== null && g(repoDir, ["merge-base", "--is-ancestor", "--end-of-options", sha, defaultBranch]).status === 0;
     let state: CommitState = "local-only";
     if (onDefault) state = "on-default";
     else {
@@ -97,11 +99,11 @@ export function buildPlan(runId: string, verdict: Verdict, refs: { base: string;
     commits.push({ sha, subject: subject ?? "", state });
   }
 
-  const branchLocal = g(repoDir, ["rev-parse", "--verify", "-q", `refs/heads/${branch}`]).status === 0;
+  const branchLocal = g(repoDir, ["rev-parse", "--verify", "-q", "--end-of-options", `refs/heads/${branch}`]).status === 0;
   const remoteBranches = lines(g(repoDir, ["for-each-ref", "--format=%(refname:short)", "refs/remotes"]).stdout).filter((r) => r.endsWith(`/${branch}`));
   let extra = 0;
   if (branchLocal) {
-    const n = g(repoDir, ["rev-list", "--count", `${refs.head}..refs/heads/${branch}`]);
+    const n = g(repoDir, ["rev-list", "--count", "--end-of-options", `${refs.head}..refs/heads/${branch}`]);
     extra = n.status === 0 ? Number.parseInt(n.stdout.trim(), 10) || 0 : 0;
     if (extra > 0) warnings.push(`${branch} has ${extra} commit(s) after the run's head; undo would refuse to delete it`);
   }
@@ -158,7 +160,7 @@ export async function runUndo(args: readonly string[], deps: UndoDeps = {}): Pro
     return EXIT_BY_VERDICT[result.verdict];
   }
   const refs = receiptRefs(receiptPath);
-  if (!refs) { err("loki undo: receipt has no base_sha/head_sha\n"); return 2; }
+  if (!refs) { err("loki undo: receipt base_sha/head_sha missing or not hex object ids\n"); return 2; }
   const repoDir = deps.repoDir ?? dirname(lokiDir());
   const plan = buildPlan(runId, result.verdict, refs, repoDir, prUrlOf(join(runsRoot, runId, "events.jsonl")), deps.git ?? defaultRunner);
   out(args.includes("--json") ? JSON.stringify(plan, null, 2) + "\n" : renderPlan(plan));
