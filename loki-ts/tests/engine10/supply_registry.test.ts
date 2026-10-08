@@ -49,8 +49,12 @@ describe("B4: only the user's own config can make a missing package NOT PROVEN",
   test("a user .npmrc pointing at a private registry gives NOT PROVEN; one pointing at the public registry does not", async () => {
     const d: DeclaredDep = { ecosystem: "npm", name: "ghost-pkg", version_spec: "1", registry: "default" };
     const priv = await withHome((h) => writeFileSync(join(h, ".npmrc"), "@corp:registry=https://npm.corp.example/\n"), d);
-    expect(priv.blocked).toBe(false);
-    expect(priv.block!.entries[0]!.status).toBe("unreachable");
+    expect(priv.blocked).toBe(true);
+    const scoped = await withHome((h) => writeFileSync(join(h, ".npmrc"), "@corp:registry=https://npm.corp.example/\n"), { ...d, name: "@corp/ghost" });
+    expect(scoped.blocked).toBe(false);
+    expect(scoped.block!.entries[0]!.status).toBe("unreachable");
+    const global = await withHome((h) => writeFileSync(join(h, ".npmrc"), "registry=https://npm.corp.example/\n"), d);
+    expect(global.blocked).toBe(false);
     const pub = await withHome((h) => writeFileSync(join(h, ".npmrc"), "registry=https://registry.npmjs.org/\n"), d);
     expect(pub.blocked).toBe(true);
   });

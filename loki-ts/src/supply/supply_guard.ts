@@ -103,12 +103,12 @@ const privateUrl = (u: string): boolean => /[a-z0-9]/i.test(u) && !PUBLIC_HOSTS.
 const readSmall = (p: string): string => { try { return statSync(p).size <= MAX_FILE_BYTES ? readFileSync(p, "utf8") : ""; } catch { return ""; } };
 
 /** The ecosystem decides the default registry; only the USER's own config may move it. The model's declared `registry` text is never consulted. */
-export function userConfigPrivate(eco: string, repoDir: string, env: NodeJS.ProcessEnv, goEnv: Record<string, string> = {}): boolean {
+export function userConfigPrivate(eco: string, repoDir: string, env: NodeJS.ProcessEnv, goEnv: Record<string, string> = {}, name = ""): boolean {
   const home = env["HOME"] ?? "";
   const files = (...p: string[]): string[] => p.filter((x) => x !== "").map((x) => readSmall(x));
   if (eco === "npm") {
     if (privateUrlList([env["npm_config_registry"] ?? "", env["NPM_CONFIG_REGISTRY"] ?? ""])) return true;
-    return files(join(repoDir, ".npmrc"), home ? join(home, ".npmrc") : "").some((t) => t.split("\n").some((l) => { const m = /^\s*(?:@[^:\s]+:)?registry\s*=\s*(\S+)/.exec(l); return !!m && privateUrl(m[1]!); }));
+    return files(join(repoDir, ".npmrc"), home ? join(home, ".npmrc") : "").some((t) => t.split("\n").some((l) => { const m = /^\s*(?:(@[^:\s]+):)?registry\s*=\s*(\S+)/.exec(l); return !!m && privateUrl(m[2]!) && (m[1] === undefined || name.startsWith(`${m[1]}/`)); })); // a scoped line applies only to its own scope
   }
   if (eco === "pypi") {
     if (privateUrlList([env["PIP_INDEX_URL"] ?? "", env["PIP_EXTRA_INDEX_URL"] ?? ""])) return true;
@@ -172,7 +172,7 @@ export async function supplyGuard(repoDir: string, changedFiles: string[], decla
     const key = `${d.ecosystem}:${d.name}`;
     let h = cache.get(key); if (!h) { h = resolver(d, repoDir, env).catch((): Resolution => ({ status: "unproven" })); cache.set(key, h); }
     let res = await h;
-    if (res.status === "missing" && (userConfigPrivate(d.ecosystem, repoDir, env, goEnv) || goPrivate(d, { ...env, ...goEnv }))) res = { status: "unproven" }; // user config points elsewhere than the public default
+    if (res.status === "missing" && (userConfigPrivate(d.ecosystem, repoDir, env, goEnv, d.name) || goPrivate(d, { ...env, ...goEnv }))) res = { status: "unproven" }; // user config points elsewhere than the public default
     if (res.status === "missing") entries.push({ ...base, status: "nonexistent" });
     else if (res.status === "unproven") entries.push({ ...base, status: "unreachable" });
     else if (res.firstPublish === undefined || !Number.isFinite(res.firstPublish)) entries.push({ ...base, status: "ok" });
