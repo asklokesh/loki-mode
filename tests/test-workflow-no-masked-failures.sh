@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # workflow expressions are literal text, never expanded
 # FC-57: a CI job or step must not hide a real failure from the workflow
 # conclusion. Nightly run 37780519439 concluded SUCCESS while the pinned
 # "Bun tests on macos-latest bun=1.3.13" leg failed, because the job carried a
@@ -81,41 +82,71 @@ def legs(matrix):
             out.append(dict(inc))
     return out
 
+COE_EXPR = re.compile(r"\$\{\{\s*matrix\.(\w+)\s*==\s*true\s*\}\}")
+
+def check_coe(where, value, matrix, allow_key):
+    """ONE rule for job and step level. absent/false is fine; literal true needs
+    the allowlist; any other string must be exactly `matrix.<key> == true` and
+    then no pinned leg may have that key true (R2). `${{ true }}`, event-name
+    conditions and every other expression are rejected (R1)."""
+    if value is None or value is False:
+        return
+    if truthy_literal(value):
+        if allow_key not in COE_ALLOW:
+            fail(f"{where}: unconditional continue-on-error: true hides a failure from the run conclusion (R1)")
+        return
+    if isinstance(value, str) and value.strip().lower() == "false":
+        return
+    m = COE_EXPR.fullmatch(value.strip()) if isinstance(value, str) else None
+    if not m:
+        fail(f"{where}: unsupported continue-on-error {value!r}; only matrix.<key> == true is allowed (R1)")
+        return
+    for leg in legs(matrix):
+        if leg.get(m.group(1)) is True and str(leg.get("bun-version")) != "latest":
+            fail(f"{where}: pinned leg {leg} is experimental, so its failure would not fail the run (R2)")
+
+# A test command followed by `||` is masked unless the handler fails: it must
+# contain `exit <nonzero or $var>` or `false`. Covers || true, || :, || exit 0,
+# || echo ..., `|| true; next`, and trailing comments, with one rule.
+HANDLER_FAILS = re.compile(r"\bexit\s+([1-9]|\$|\"\$)|\bfalse\b")
+
+def masked(line, run):
+    line = re.sub(r"\s+#.*$", "", line)
+    parts = line.split("||")
+    if len(parts) < 2 or not TEST_CMD.search(parts[0]):
+        return False
+    for h in parts[1:]:
+        if HANDLER_FAILS.search(h):
+            return False
+        cap = re.match(r"\s*(\w+)=\$\?\s*$", h)  # `|| rc=$?` is fine iff the step exits on it
+        if cap and re.search(r"\bexit\s+\"?\$\{?" + cap.group(1) + r"\b", run):
+            return False
+    return True
+
+ALWAYS_COND = re.compile(r"\b(always|failure)\(\)")
+
 for path in sorted(glob.glob(os.path.join(wfdir, "*.yml"))):
     fn = os.path.basename(path)
     doc = yaml.safe_load(open(path))
     jobs = (doc or {}).get("jobs") or {}
     for jname, job in jobs.items():
-        coe = job.get("continue-on-error")
-        if truthy_literal(coe):
-            if (fn, jname, None) not in COE_ALLOW:
-                fail(f"{fn}:{jname}: unconditional job-level continue-on-error: true hides a failed job from the run conclusion (R1)")
-        elif isinstance(coe, str) and "matrix." in coe:
-            for leg in legs((job.get("strategy") or {}).get("matrix")):
-                expr = coe.strip()
-                m = re.fullmatch(r"\$\{\{\s*matrix\.(\w+)\s*==\s*true\s*\}\}", expr)
-                if not m:
-                    fail(f"{fn}:{jname}: unsupported continue-on-error expression {coe!r} (use matrix.<key> == true)")
-                    break
-                if leg.get(m.group(1)) is True and str(leg.get("bun-version")) != "latest":
-                    fail(f"{fn}:{jname}: pinned leg {leg} is experimental, so its failure would not fail the run (R2)")
-        cond = str(job.get("if", ""))
-        if re.search(r"\balways\(\)", cond) and (fn, jname) not in ALWAYS_ALLOW:
-            fail(f"{fn}:{jname}: if: always() aggregator not on the reviewed allowlist (R5)")
+        matrix = (job.get("strategy") or {}).get("matrix")
+        check_coe(f"{fn}:{jname}", job.get("continue-on-error"), matrix, (fn, jname, None))
+        if ALWAYS_COND.search(str(job.get("if", ""))) and (fn, jname) not in ALWAYS_ALLOW:
+            fail(f"{fn}:{jname}: if: always()/failure() aggregator not on the reviewed allowlist (R5)")
         for st in job.get("steps") or []:
             sname = st.get("name") or st.get("id") or "?"
-            if truthy_literal(st.get("continue-on-error")) and (fn, jname, sname) not in COE_ALLOW:
-                fail(f"{fn}:{jname}: step {sname!r} has unconditional continue-on-error: true (R1)")
+            check_coe(f"{fn}:{jname}: step {sname!r}", st.get("continue-on-error"), matrix, (fn, jname, sname))
             run = st.get("run")
             if not isinstance(run, str) or not TEST_CMD.search(run):
                 continue
             pipefail = "pipefail" in run or st.get("shell") == "bash"
-            for line in run.splitlines():
+            for line in run.replace("\\\n", " ").splitlines():
                 s = line.strip()
                 if s.startswith("#") or not TEST_CMD.search(s):
                     continue
-                if re.search(r"\|\|\s*true\s*$", s) or re.search(r"\|\|\s*:\s*$", s):
-                    fail(f"{fn}:{jname}: step {sname!r}: test command masked by '|| true': {s[:90]} (R3)")
+                if masked(s, run):
+                    fail(f"{fn}:{jname}: step {sname!r}: test command masked by '||': {s[:90]} (R3)")
                 if re.search(r"\|\s*(tee|head|grep|sed|awk|cat)\b", s) and not pipefail:
                     fail(f"{fn}:{jname}: step {sname!r}: test command piped without pipefail: {s[:90]} (R4)")
 
@@ -132,4 +163,50 @@ if not fails:
     print("  PASS: no masked failures across", len(glob.glob(os.path.join(wfdir, '*.yml'))), "workflows")
 sys.exit(1 if fails else 0)
 PY
-exit $?
+rc=$?
+[ "$rc" -eq 0 ] || exit "$rc"
+
+# Self-test: every masking shape must turn the guard red on a mutated copy of
+# the real workflows (skipped when a directory argument is given).
+[ -z "${1:-}" ] || exit 0
+SELF="$(mktemp -d "${TMPDIR:-/tmp}/loki-nomask.XXXXXX")" || exit 1
+trap 'rm -rf -- "$SELF"' EXIT
+SELF_FAIL=0
+mut() { # name file old new
+    local d="$SELF/$1"
+    mkdir -p "$d" && cp .github/workflows/*.yml "$d/"
+    python3 -I - "$d/$2" "$3" "$4" <<'MP'
+import sys
+p, a, b = sys.argv[1:4]
+s = open(p).read()
+assert a in s, "mutation anchor missing: " + a
+open(p, "w").write(s.replace(a, b, 1))
+MP
+    bash "$0" "$d" >/dev/null 2>&1
+    if [ $? -eq 1 ]; then echo "  PASS: $1 turns the guard red"; else echo "  FAIL: $1 not caught"; SELF_FAIL=1; fi
+}
+JOB='    continue-on-error: ${{ matrix.experimental == true }}'
+STEP='        run: bun test
+'
+mut M04-job-expr-true nightly.yml "$JOB" '    continue-on-error: ${{ true }}'
+mut M05-job-event-name nightly.yml "$JOB" "    continue-on-error: \${{ github.event_name == 'schedule' }}"
+mut M06-step-expr-true nightly.yml "$STEP" '        continue-on-error: ${{ true }}
+        run: bun test
+'
+mut M07-exit-0 nightly.yml "$STEP" '        run: bun test || exit 0
+'
+mut M08-echo nightly.yml "$STEP" '        run: bun test || echo ignored
+'
+mut M09-true-then nightly.yml "$STEP" '        run: bun test || true; echo next
+'
+mut M10-true-comment nightly.yml "$STEP" '        run: bun test || true  # tolerated
+'
+mut M11-success-or-failure release.yml '    needs: [gate, required-ci]
+' '    needs: [gate, required-ci]
+    if: success() || failure()
+'
+mut M12-always release.yml '    needs: [gate, required-ci]
+' '    needs: [gate, required-ci]
+    if: always()
+'
+exit "$SELF_FAIL"
