@@ -38,50 +38,21 @@ bad() { printf 'FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 echo "TEST: runtime python libs ship in the npm package"
 
-# Each of these is loaded at runtime by the shipped CLI. Listed individually and
-# asserted individually: a count would pass while naming nothing.
-LIBS=(
-    "autonomy/lib/proof-verify.py"        # the Evidence Receipt verifier
-    "autonomy/lib/efficiency_cost.py"     # the single definition of "measured"
-    "autonomy/lib/cost-summary.py"        # per-run cost, unmeasured reads UNKNOWN
-    "autonomy/lib/iteration_attribution.py"
-    "autonomy/lib/codex-usage.py"         # codex token recovery
-    "autonomy/lib/doctor-fix.py"          # remediation planner
-    # User-facing tools. preflight.sh originally shipped to scripts/, which is
-    # NOT in files[] (it holds 23 dev-only scripts: local-ci, license-audit,
-    # test cleanup). It was released as a user feature while being unreachable
-    # for every npm user -- caught only by unpacking the real tarball, never by
-    # any in-repo test, which is the packaging blind spot this suite exists for.
-    "tools/preflight.sh"                  # readiness + cost preflight
-    "tools/receipt-diff.py"               # cross-run receipt comparison
-    "tools/cost-guard.py"                 # cost regression gate
-    "tools/estimate-run.py"               # forward cost projection
-    "tools/receipt-attest.py"             # portable third-party attestation
-    "tools/proof-passport.py"             # provider-neutral independent proof
-    "tools/tool-index.py"                 # what ships, and what is reachable
-    "tools/ci-gate.py"                    # one exit code over every policy
-    "tools/receipt-bundle.py"             # audit trail across a run sequence
-    "tools/model-advisor.py"              # cheaper-model recommendation
-    "tools/run-replay.py"                 # per-iteration run reconstruction
-    "tools/cost-history.py"               # cost trend across many runs
-    "tools/policy-load.py"                # version-controlled gate policy
-    "tools/gate-report.py"                # CI-native verdict rendering
-    "tools/verify-demo.sh"                # zero-cost proof of the chain
-    "tools/gate-init.py"                  # scaffold a policy from measured history
-    "tools/baseline-pin.py"               # pin a verified reference run
-    "tools/token-guard.py"                # provider-independent work ceiling
-    "tools/receipt-find.py"               # query receipts by measurable criteria
-    "tools/audit-docs.py"                 # find documentation claims that are false
-    "tools/policy-diff.py"                # classify a policy edit by safety direction
-    "tools/gate-log.py"                   # verdict history, blind never reads healthy
-    "tools/receipt-export.py"             # portable evidence file
-    "tools/cost-attribute.py"             # where a run's cost went, per stage
-    "tools/gate-explain.py"               # a verdict a human can act on
-    "tools/gate-status.py"                # is the merge gate actually set up
-    "tools/gate-badge.py"                 # live gate state as a README badge
-    "tools/receipt-stats.py"              # archive summary, unmeasured excluded
-    "tools/receipt-verify-batch.py"       # verify an explicit list of receipts
-)
+# Every runtime lib is DERIVED from the filesystem, never hand-listed: a new
+# file under autonomy/lib or tools that is not packaged must fail here instead
+# of waiting for someone to remember to add it to a list. Asserted individually
+# (a count cannot say WHICH artifact vanished). The glob expands sorted, and
+# every assertion is independent, so the result does not depend on order.
+LIBS=()
+for _f in autonomy/lib/*.py tools/*.py tools/*.sh; do
+    [ -f "$_f" ] && LIBS+=("$_f")
+done
+unset _f
+# Vacuity guard: an empty glob would pass every assertion below.
+if [ "${#LIBS[@]}" -lt 1 ]; then
+    bad "glob found no runtime libs; every assertion below would be vacuous"
+fi
+printf 'INFO: asserting %s runtime libs\n' "${#LIBS[@]}"
 
 # --- they must exist in the repo first ---------------------------------------
 # Asserting packaging for a file that does not exist would be vacuous.
