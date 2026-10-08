@@ -1441,6 +1441,7 @@ run_test "release.sh version-bump preserves file mode (BACKLOG 22)" "$SCRIPT_DIR
 run_test "loki why maps each error class to an action" "$SCRIPT_DIR/test-why-actions.sh"
 run_test "loki start surfaces a stale install" "$SCRIPT_DIR/test-start-update-hint.sh"
 run_test "loki help does not recurse into itself" "$SCRIPT_DIR/test-help-no-recursion.sh"
+run_test "loki status prints the newest sealed receipt verdict on bash and Bun (133-F4)" "timeout -k 10 300 bash $SCRIPT_DIR/test-status-last-verdict.sh"
 run_test "no test uses a platform-divergent construct" "$SCRIPT_DIR/test-ci-only-divergence.sh"
 run_test "doctor detects an incomplete install" "$SCRIPT_DIR/test-doctor-install-integrity.sh"
 run_test "findings injection degrades loudly, never silently" "$SCRIPT_DIR/test-findings-injection-degrade.sh"

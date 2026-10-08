@@ -706,10 +706,37 @@ async function runStatusText(): Promise<number> {
   // "embedded by default" mandate. Falls silent if no artifacts exist.
   await renderPhase1Section(dir);
 
+  process.stdout.write(`${DIM}${lastRunLine(dir)}${NC}\n`);
+
   process.stdout.write(`\n`);
   process.stdout.write(`${DIM}  Tip: loki analyze context show   - detailed token breakdown${NC}\n`);
   process.stdout.write(`${DIM}  Tip: loki analyze code overview  - codebase intelligence${NC}\n`);
   return 0;
+}
+
+// 133-F4: newest sealed receipt's verdict, read from the receipt field only
+// (never recomputed). Mirrors the receipt block in autonomy/loki cmd_status.
+function lastRunLine(dir: string): string {
+  const runs = resolve(dir, "runs");
+  let ids: string[] = [];
+  try {
+    ids = readdirSync(runs).filter((d) => statSync(resolve(runs, d)).isDirectory()).sort();
+  } catch {
+    ids = [];
+  }
+  const newest = ids[ids.length - 1];
+  if (newest === undefined) return "Last run: no receipt (verdict NOT AVAILABLE)";
+  try {
+    const d = JSON.parse(readFileSync(resolve(runs, newest, "receipt.json"), "utf-8")) as Record<string, unknown>;
+    const v = d["verdict"];
+    let h = d["receipt_sha256"];
+    if (typeof v !== "string" || !/^[A-Z_]+$/.test(v) || typeof h !== "string") throw new Error("bad");
+    if (h.startsWith("sha256:")) h = h.slice(7);
+    if (!/^[0-9a-f]{12,}$/.test(h)) throw new Error("bad");
+    return `Last run: ${v} (receipt sha256:${h.slice(0, 12)})`;
+  } catch {
+    return "Last run: receipt unreadable";
+  }
 }
 
 // v7.5.3: surface Phase 1 artifacts inline. Quiet on greenfield runs.
