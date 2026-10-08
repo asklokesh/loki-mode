@@ -131,8 +131,18 @@ jobs:
           elif [[ "$REF_NAME" == slice-* ]]; then
             BASE="origin/main"
           fi
-          bash scripts/ci/fast-gate.sh plan "$BASE" HEAD "$RUNNER_TEMP/plan" || true
+          # PLAN-BOUND: the planner is bounded so a stall can never fail the job;
+          # any nonzero rc (124 timeout, 137 kill, other) forces the full suite.
+          mkdir -p "$RUNNER_TEMP/plan"
+          rm -f "$RUNNER_TEMP/plan/outputs.txt"
+          PLAN_RC=0
+          timeout -k 10 240 bash scripts/ci/fast-gate.sh plan "$BASE" HEAD "$RUNNER_TEMP/plan" || PLAN_RC=$?
+          if [ "$PLAN_RC" -ne 0 ]; then
+            printf 'full=true\nshards=[]\nhas_shards=false\n' > "$RUNNER_TEMP/plan/outputs.txt"
+            printf 'FULL\tplan timed out or failed (rc=%s); full suite forced\n' "$PLAN_RC" > "$RUNNER_TEMP/plan/plan.tsv"
+          fi
           [ -f "$RUNNER_TEMP/plan/outputs.txt" ] || printf 'full=true\nshards=[]\nhas_shards=false\n' > "$RUNNER_TEMP/plan/outputs.txt"
+          [ -f "$RUNNER_TEMP/plan/plan.tsv" ] || printf 'FULL\tplan produced no plan.tsv; full suite forced\n' > "$RUNNER_TEMP/plan/plan.tsv"
           cat "$RUNNER_TEMP/plan/outputs.txt" >> "$GITHUB_OUTPUT"
           {
             echo '### Fast gate plan'
