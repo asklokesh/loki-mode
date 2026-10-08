@@ -221,8 +221,9 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
 
 // ---- production deps -------------------------------------------------------------------------
 
-function git(cwd: string, args: string[], input?: string): string {
-  return safeGit(cwd, args, { input, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
+/** allowToken is for the one remote-talking call (push): it keeps GH_TOKEN and the credential helper, nothing else. */
+export function git(cwd: string, args: string[], input?: string, allowToken = false): string {
+  return safeGit(cwd, args, { input, allowToken, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 /** Checks from the attempt's own engine10 receipt. seal.ts writes join(runDir, "receipt.json") with runDir = <repo>/.loki/runs/<runId>
@@ -329,7 +330,7 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       // Normal PR behavior: only the winner's engine10 branch is pushed and opened; losers never reach a remote.
       openPr: (wt: string, base: string) => {
         const branch = git(wt, ["symbolic-ref", "--short", "HEAD"]).trim();
-        git(wt, ["push", "-u", "origin", branch]);
+        git(wt, ["push", "-u", "origin", branch], undefined, true);
         const baseBranch = (() => { try { return git(repoDir, ["symbolic-ref", "--short", "HEAD"]).trim(); } catch { return base; } })();
         return execFileSync("gh", ["pr", "create", "--fill", "--head", branch, "--base", baseBranch], { cwd: wt, encoding: "utf8" }).trim().split("\n").pop() ?? "";
       },
