@@ -28,7 +28,7 @@ expect_fail "malformed assertion rejected" "$rc" "exit 0"
 
 # 2. doctored receipt: a good receipt passes, a doctored one fails
 cat > "$T/good.json" <<'J'
-{"verdict":"VERIFIED","cost":{"usd":0.08,"input_tokens":1200,"output_tokens":300},"time":{"wall_s":42}}
+{"verdict":"VERIFIED","cost":{"usd":0.08,"input_tokens":1200,"output_tokens":300},"time":{"wall_s":42},"checks":[{"name":"a","result":"pass"},{"name":"b","result":"pass"}],"wall":{"files":[{"path":"w.test.js","sha256":"aa"}],"passed":true},"not_proven":[]}
 J
 sed 's/"VERIFIED"/"FAILED"/' "$T/good.json" > "$T/bad.json"
 rc=0; bash "$RR" --check-receipt "$T/good.json" trivial-sum > "$T/c-good.log" 2>&1 || rc=$?

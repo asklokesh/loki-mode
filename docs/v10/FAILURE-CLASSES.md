@@ -625,3 +625,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: Y01, Y02, Y04 to Y09 (writes hidden in `$(( ))`, `printf -v` or `read` through an indirect name, a function that writes rc), exit 256, eval: all fail closed inside a capture-to-exit window and are red self-tests.
 - Mechanism: none planned. Revisit only if a real workflow edit triggers one; the structural fix would be running the step under a shell with `set -e -o pipefail` and asserting on exit status in a fixture instead of reading source.
 - Fixture: Y01, Y02, Y04, Y05, Y08, Y09, Y10, Y11, X09, X20, X05 self-tests in tests/test-workflow-no-masked-failures.sh.
+
+## FC-68 A release can drop a verification check silently and still smoke green (WALL-SMOKE-GUARD)
+- User saw: 11.3.2 receipts carried 1 executed check instead of 2. The Wall test was authored, then discarded before verify ("wall base run not_run: 1", "wall test discarded: loki_wall_sum.test.js (not_run)"). Nothing asserted the count, so the release and its smoke stayed green.
+- Law: evidence or it did not happen; a green that cannot go red is not a gate. Guard class: the root cause is FC-67 (WALL-NOTRUN holds that row); this row is the detection layer.
+- Siblings: any other check a receipt could lose without a failing exit (lint, mutation proof, cross review) is not yet counted; the guard asserts only checks[] executed >= 2 and the Wall test.
+- Mechanism: scripts/assert-wall-executed.sh reads the keys seal.ts writes (checks[].result, wall.files, wall.passed, not_proven[]). scripts/real-run.sh applies it to scenarios with SC_WALL_EXECUTED=1 (trivial-sum, two-bug). Post-Release Smoke npm-smoke runs it as a blocking step.
+- Limit: the real trivial-sum and two-bug runs are billed and CI has no provider key, so Post-Release Smoke cannot run them unattended; the blocking step proves the guard logic on the released commit and runs the real scenario when a key is supplied.
+- Fixture: tests/test-wall-executed-guard.sh (11.3.1 shape passes, 11.3.2 shape fails, each leg alone fails).

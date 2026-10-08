@@ -179,6 +179,18 @@ jobs:
           echo "loki doctor --json exited with $RC (a provider-less runner is expected to exit 1)"
           python3 .github/scripts/assert-doctor-json.py /tmp/doctor.json npm-smoke
 
+      # FC-68: blocking. A release must not silently drop a verification check or
+      # the Wall test. The real trivial-sum / two-bug runs are billed and this
+      # runner has no provider key, so this step runs the unbilled guard test on
+      # the released commit: the 11.3.1 receipt shape must pass and the 11.3.2
+      # shape (1 executed check, Wall discarded not_run) must fail.
+      - name: Assert the Wall-executed guard is intact (FC-68)
+        env:
+          LOKI_NO_BROWSER: '1'
+        run: |
+          set -uo pipefail
+          timeout -k 10 120 bash tests/test-wall-executed-guard.sh
+
   docker-smoke:
     needs: resolve
     runs-on: ubuntu-latest
