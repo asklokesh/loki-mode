@@ -152,20 +152,41 @@ def lex(text):
 
 KEYWORDS = {"if", "then", "else", "elif", "fi", "do", "done", "while", "until", "for", "case", "esac", "!", "function", "time"}
 ASSIGN = re.compile(r"(\w+)=(.*)", re.S)
+LEAD = ("{", "}", "then", "do", "else")
+
+def nonzero(v):
+    """A literal exit code that really is nonzero: the shell takes it mod 256."""
+    return re.fullmatch(r"[1-9]\d{0,2}", v) is not None and int(v) <= 255
 
 def var_of(word):
     m = re.fullmatch(r"\$(\w+|\{\w+\})", word)
     return m.group(1).strip("{}") if m else None
 
-def commands(toks):
+def split_cmds(toks, ops=(";",)):
     out, cur = [], []
     for t in toks:
-        if t[0] == "op" and t[1] == ";":
+        if t[0] == "op" and t[1] in ops:
             out.append(cur); cur = []
         else:
             cur.append(t)
     out.append(cur)
     return [c for c in out if c]
+
+def assign_only(cmd):
+    return all(t[0] == "word" and t[2] != "single" and ASSIGN.fullmatch(t[1]) for t in cmd)
+
+def mentions(cmd, var):
+    pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(var) + r"(?![A-Za-z0-9_])")
+    return any(t[0] == "word" and pat.search(t[1]) for t in cmd)
+
+def harmless(cmd):
+    """echo, true, :, false and printf without -v cannot write a variable."""
+    if cmd[0][2] != "plain":
+        return False
+    w = [t[1] for t in cmd]
+    if w[0] in ("echo", "true", ":", "false"):
+        return True
+    return w[0] == "printf" and not any(re.fullmatch(r"-\w*v\w*", x) for x in w[1:])
 
 def handler_fails(handler):
     """True only when every path through the handler ends nonzero."""
@@ -178,33 +199,35 @@ def handler_fails(handler):
     if any(t[0] == "word" and t[1] in ("{", "}") and t[2] == "plain" for t in handler):
         return False
     last, state = "fail", {}
-    for cmd in commands(handler):
+    for cmd in split_cmds(handler):
         w = [t[1] for t in cmd]
-        if w[0] in KEYWORDS or cmd[0][2] != "plain" and w[0] in ("exit", "false"):
+        if w[0] in KEYWORDS:
             return False
-        m = ASSIGN.fullmatch(w[0]) if cmd[0][2] == "plain" else None
-        if m and len(w) == 1:
-            val = m.group(2)
-            if val == "$?" or cmd[0][2] == "quoted" and val == "$?":
-                state[m.group(1)] = last
-            else:
-                state[m.group(1)] = "fail" if re.fullmatch(r"[1-9]\d*", val) else "zero"
-            last = "zero"
-        elif w[0] == "false" and len(w) == 1:
-            last = "fail"
+        if assign_only(cmd):
+            new = {}  # an assignment-only command resets all other tracked state
+            for t in cmd:
+                m = ASSIGN.fullmatch(t[1])
+                new[m.group(1)] = last if m.group(2) == "$?" else ("fail" if nonzero(m.group(2)) else "zero")
+            state, last = new, "zero"
+        elif cmd[0][2] != "plain" and w[0] in ("exit", "false"):
+            return False
         elif w[0] == "exit":
             if len(w) == 1:
                 return last == "fail"
-            if len(w) != 2:
+            if len(w) != 2 or cmd[1][2] == "single":
                 return False
-            a = w[1]
-            if re.fullmatch(r"[1-9]\d*", a) and cmd[1][2] == "plain":
+            if nonzero(w[1]):
                 return True
-            if a == "$?" and cmd[1][2] != "single":
+            if w[1] == "$?":
                 return last == "fail"
-            v = var_of(a) if cmd[1][2] != "single" else None
+            v = var_of(w[1])
             return v is not None and state.get(v) == "fail"
+        elif w == ["false"]:
+            last = "fail"
         else:
+            for v in list(state):
+                if mentions(cmd, v) and not harmless(cmd):
+                    state[v] = "zero"
             last = "zero"
     return last == "fail"
 
@@ -217,42 +240,61 @@ def capture_var(handler):
     return None
 
 def exits_with(var, after):
-    """Next exit in `after` must be `exit $var`, with no earlier write to var."""
-    for cmd in commands(lex(after)):
-        w = [t for t in cmd if not (t[0] == "word" and t[2] == "plain" and t[1] in ("{", "}", "then", "do", "else"))]
-        if any(t[0] == "word" and t[2] == "plain" and re.match(re.escape(var) + r"=", t[1]) for t in w):
+    """The next exit must be `exit $var`; anything else that could touch var voids the capture."""
+    ops = (";", "||", "&&", "|", "&", "(", ")")
+    for cmd in split_cmds(after, ops):
+        w = [t for t in cmd if not (t[0] == "word" and t[2] == "plain" and t[1] in LEAD)]
+        if not w:
+            continue
+        if assign_only(w):
             return False
-        if w and w[0][0] == "word" and w[0][1] == "exit":
+        if w[0][1] == "exit" and w[0][2] == "plain":
             return len(w) == 2 and w[1][2] != "single" and var_of(w[1][1]) == var
+        if mentions(w, var) and not harmless(w):
+            return False
     return False
 
 def masked(lines, i):
-    """lines[i] holds a test command; masked when its `||` handler can exit 0."""
+    """True when any `||` after a test command in this statement can exit 0."""
     text = lines[i]
     j = i
     while lex(text).count(("word", "{", "plain")) > lex(text).count(("word", "}", "plain")) and j + 1 < len(lines):
         j += 1
         text += "\n" + lines[j]
     toks = lex(text)
-    idx = [k for k, t in enumerate(toks) if t == ("op", "||")]
-    if not idx:
-        return False
-    rest = toks[idx[0] + 1:]
-    end = len(rest)
-    depth = 0
-    for k, t in enumerate(rest):
-        if t[0] == "word" and t[2] == "plain" and t[1] == "{":
-            depth += 1
-        elif t[0] == "word" and t[2] == "plain" and t[1] == "}":
-            depth -= 1
-        elif t == ("op", ";") and depth == 0:
-            end = k
-            break
-    handler = rest[:end]
-    if handler_fails(handler):
-        return False
-    var = capture_var(handler)
-    return not (var and exits_with(var, "\n".join(lines[j + 1:])))
+    later = None
+    seg = 0
+    for k, t in enumerate(toks):
+        if t[0] == "op" and t[1] in (";", "(", ")") or t[0] == "word" and t[2] == "plain" and t[1] in ("{", "}"):
+            seg = k + 1
+        elif t == ("op", "||"):
+            left = " ".join(x[1] for x in toks[seg:k] if x[0] == "word")
+            if not TEST_CMD.search(left):
+                continue
+            rest = toks[k + 1:]
+            end, depth = len(rest), 0
+            for n, r in enumerate(rest):
+                if r[0] == "word" and r[2] == "plain" and r[1] == "{":
+                    depth += 1
+                elif r[0] == "word" and r[2] == "plain" and r[1] == "}":
+                    depth -= 1
+                    if depth < 0:
+                        end = n
+                        break
+                elif r == ("op", ";") and depth == 0:
+                    end = n
+                    break
+            handler = rest[:end]
+            if handler_fails(handler):
+                continue
+            var = capture_var(handler)
+            if var:
+                if later is None:
+                    later = lex("\n".join(lines[j + 1:]))
+                if exits_with(var, rest[end:] + [("op", ";")] + later):
+                    continue
+            return True
+    return False
 
 ALWAYS_COND = re.compile(r"\b(always|failure)\(\)")
 
@@ -378,6 +420,32 @@ ok C02-exit-status nightly.yml "$STEP" '        run: bun test || exit $?
 ok C03-echo-false nightly.yml "$STEP" '        run: bun test || { echo "::error::gate failed"; false; }
 '
 ok C04-echo-exit-1 nightly.yml "$STEP" '        run: bun test || { echo "x"; exit 1; }
+'
+mut X01-second-or-true nightly.yml "$STEP" '        run: |
+          cd "$GITHUB_WORKSPACE" || exit 1; bash scripts/first-run-gate.sh --stub || true
+'
+mut X09-exit-256 nightly.yml "$STEP" '        run: bun test || exit 256
+'
+mut X20-capture-256 nightly.yml "$STEP" '        run: bun test || { rc=256; exit $rc; }
+'
+cap() { # name command run between the capture and the exit
+    mut "$1" nightly.yml "$STEP" "        run: |
+          bun test || rc=\$?
+          $2
+          exit \$rc
+"
+}
+cap X02-export 'export rc=0'
+cap X03-declare 'declare rc=0'
+cap X04-unset 'unset rc'
+cap X05-eval 'eval rc=0'
+cap X06-read 'read -r rc <<< 0'
+cap X07-printf-v 'printf -v rc 0'
+cap X08-assign-only 'x=1 rc=0'
+ok C05-capture-echo nightly.yml "$STEP" '        run: |
+          bun test || rc=$?
+          echo "rc is $rc"
+          exit $rc
 '
 mut M12-always release.yml '    needs: [gate, required-ci]
 ' '    needs: [gate, required-ci]
