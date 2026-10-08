@@ -144,7 +144,9 @@ fi
 # bin/loki gated the first_start_attempted emit on start|run|quick, which misses
 # quickstart and demo -- the two commands doctor's own "Next:" line names. The
 # funnel was blind to exactly the users who followed the product's advice.
-_shim_case="$(grep -A 2 '^case "\${1:-}" in' "$REPO_ROOT/bin/loki" | head -4)"
+# Anchor on the case that guards the funnel emit (nearest preceding case before
+# funnel-start-attempted), not the first top-level case: other guards precede it.
+_shim_case="$(awk '/^case "\$\{1:-\}" in/ {c=NR; l1=""; getline l1; blk=$0 "\n" l1} /funnel-start-attempted/ && c {print blk; exit}' "$REPO_ROOT/bin/loki")"
 _missing=0
 for _c in quickstart demo start; do
   printf '%s' "$_shim_case" | grep -q "$_c" || _missing=$((_missing+1))
