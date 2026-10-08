@@ -28,7 +28,7 @@ export const EVENT_TYPES = [
   "heartbeat", "session.started", "session.ended", "cost", "wall.sealed",
   "tests.restored", "test.result", "test.scoped_out", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */
@@ -60,7 +60,11 @@ export interface SessionMarkers {
   done: boolean;
   alreadyDone: string | null; // evidence after LOKI_ALREADY_DONE:
   specConflict: string | null; // reason after LOKI_SPEC_CONFLICT:
+  /** ROUTER-1 R1-09: reason after LOKI_ESCALATE: (the advisor recommended a stronger executor). Present only under LOKI_ROUTER=1 and a match. */
+  escalate?: string | null;
 }
+/** ROUTER-1 R1-08/R1-09: optional per-session cost telemetry copied onto the cost event when the cost record carries it. */
+export const ROUTER_COST_FIELDS = ["requests_total", "requests_over_100k", "advisor_calls", "advisor_input_tokens", "advisor_output_tokens"] as const;
 export interface SessionRunOptions {
   stage: StageName;
   brief: string;

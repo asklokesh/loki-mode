@@ -8,6 +8,9 @@ import { selectRelevantFiles } from "./plan.ts"; import { commandFor } from "./v
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { resumeAfterConflict } from "../../util/conflict_resume.ts";
 import { readSessionId } from "../../runner/session_resume.ts";
+import { routerEnabled } from "../../runner/router/flag.ts";
+import { climb, type UnitEscalation } from "../../runner/model_rank.ts";
+import { routeRecord, routerPinsAllowed } from "../../runner/router/unit_model.ts";
 import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
 
@@ -63,7 +66,8 @@ export const implementStage: Stage = {
     const plan = (prior.plan?.plan as string | undefined) ?? null;
     const impacted = impactedTests(ctx);
     const readOnly = (prior.wall?.readOnlyFiles as ReadOnlyFile[] | undefined) ?? [];
-    const downgrade = cascadeDowngrade(ctx.model);
+    const routed = routerEnabled(), unit = "run";
+    const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
     const cascade = downgrade !== null;
     if (downgrade) process.stderr.write(`${downgrade.note}\n`);
     const repoMap = briefCtx(ctx); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
@@ -78,8 +82,24 @@ export const implementStage: Stage = {
       cwd: ctx.repoDir,
       ...(downgrade ? { model: downgrade.to } : {}),
     };
+    // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
+    const rr = routed ? routeRecord(ctx.model, prior.plan) : null;
+    let current = rr ? rr.model : ctx.model;
+    const escalations: UnitEscalation[] = [];
+    if (rr) { if (routerPinsAllowed()) first.model = current; ctx.emit("route", "implement", { unit, model: current, source: rr.source, reason: rr.reason }); }
     let session = await ctx.sessions.run(first);
     const ids = [first.iterationId];
+    // Triggers b (LOKI_ESCALATE marker) and c (SPEC_CONFLICT, implement limit kill): redo the unit once on the next rung. Harness-owned errors never reach here.
+    if (routed && routerPinsAllowed() && !signal.aborted) {
+      const trig = session.killed ? ("limit_kill" as const) : session.markers.escalate ? ("escalate_marker" as const) : session.markers.specConflict ? ("spec_conflict" as const) : null;
+      const esc = trig ? climb(unit, current, trig, session.markers.escalate ?? session.markers.specConflict ?? "implement session limit kill") : null;
+      if (esc) {
+        escalations.push(esc); current = esc.to;
+        ctx.emit("route.escalated", "implement", { ...esc });
+        first.model = current; first.iterationId = `${first.iterationId}-esc`; ids.push(first.iterationId);
+        session = await ctx.sessions.run(first);
+      }
+    }
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, first, session); session = r.session; ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
 
     const testsReverted = restoreReadOnly(readOnly);
@@ -106,7 +126,7 @@ export const implementStage: Stage = {
       impacted_tests: impacted,
       cascade,
       ...(downgrade ? { model_downgrade: downgrade.note } : {}),
-      iteration_ids: ids, model: downgrade?.to ?? ctx.model, session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
+      iteration_ids: ids, model: routed ? current : downgrade?.to ?? ctx.model, ...(routed ? { route_model: current, route_escalations: escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS,
     };
 

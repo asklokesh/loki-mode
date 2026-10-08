@@ -3,6 +3,8 @@
 // calling this stage again after each failure; MAX_FIX_ROUNDS caps rounds itself (a 3rd call is a no-op
 // stage.skipped, moving to Seal/PARTIAL). Depends on session.ts/verify.ts only through types.ts shapes.
 import { briefCtx, buildImplementBrief, impactedTests } from "./implement.ts";
+import { routerEnabled } from "../../runner/router/flag.ts";
+import { routedFix, routerPinsAllowed } from "../../runner/router/unit_model.ts";
 import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
@@ -45,7 +47,8 @@ export const fixStage: Stage = {
   async run(ctx: RunContext, signal: AbortSignal): Promise<StageResult> {
     const prior = ctx.outputs();
     const priorRound = (prior.fix?.round as number | undefined) ?? 0;
-    if (priorRound >= MAX_FIX_ROUNDS) {
+    const routed = routerEnabled(), stallEsc = routed && prior.fix?.stall_escalated === true; // R1-13: a stall escalation grants one extra round on the next rung
+    if (priorRound >= MAX_FIX_ROUNDS + (stallEsc ? 1 : 0)) {
       return { status: "skipped", data: { round: priorRound }, reason: "fix rounds exhausted" };
     }
     const round = priorRound + 1;
@@ -59,21 +62,24 @@ export const fixStage: Stage = {
     const testFailures = groups.filter(isTestFailure);
     const signatures = groups.map((g) => g.signature).sort().join("|");
     const repeated = testFailures.length > 0 && prior.fix?.signatures === signatures;
-    const downgrade = cascadeDowngrade(ctx.model);
+    const downgrade = routed ? null : cascadeDowngrade(ctx.model); // the router replaces the opt-in downgrade list
     const reason = testFailures.map((g) => g.signature).join(", ");
-    const pinnedModel = repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;
-    const actualModel = pinnedModel ?? ctx.model;
+    const pinnedModel = routed && !routerPinsAllowed() ? undefined : repeated ? escalationModel(ctx.model) : downgrade && testFailures.length === 0 ? downgrade.to : undefined;
+    const { pin: routedPin, climbed } = routed ? routedFix(ctx.model, prior, { repeated, stall: prior.fix?.stall_pending === true, groups, reason }) : { pin: undefined, climbed: null };
+    const actualModel = routedPin ?? pinnedModel ?? ctx.model;
     if (downgrade && pinnedModel === downgrade.to) process.stderr.write(`${downgrade.note}\n`);
+    if (climbed) ctx.emit("route.escalated", "fix", { ...climbed });
     const prevDiag = (prior.fix?.diagnosis as string | undefined) ?? null; const chain = { sessionId: (prior.fix?.session_id ?? prior.implement?.session_id ?? null) as string | null, model: (prior.fix?.model ?? prior.implement?.model ?? ctx.model) as string };
     const r = await runFixSession(ctx, { stage: "fix", tier: "development", limitS: fixStage.limitS, signal, cwd: ctx.repoDir,
-      ...(pinnedModel ? { model: pinnedModel } : {}) },
+      ...(pinnedModel ? { model: pinnedModel } : {}),
+      ...(routedPin ? { model: routedPin } : {}) },
       `${ctx.runId}-fix${round}`, (prior.fix?.iteration_ids as string[] | undefined) ?? [], chain, actualModel,
       buildFixBrief(task, plan, impactedTests(ctx), groups, diffStat, repoMap, repeated ? { priorDiagnosis: prevDiag } : undefined), buildFixResumeBrief(groups, diffStat, prevDiag));
     ctx.emit("fix.round", "fix", {
       round,
       groups: groups.map((g) => ({ signature: g.signature, count: g.count, sample: g.sample })),
       model: actualModel,
-      escalated: repeated, fix_resume: r.mode, cache_read_tokens: r.cacheRead,
+      escalated: repeated || climbed !== null, fix_resume: r.mode, cache_read_tokens: r.cacheRead,
       ...(downgrade && pinnedModel === downgrade.to ? { model_downgrade: downgrade.note } : {}),
       ...(repeated ? { escalation_reason: reason, escalation_model: actualModel } : {}),
     });
@@ -82,7 +88,7 @@ export const fixStage: Stage = {
       status: "completed",
       // Every round's session id, since each round replaces this stage's output.
       data: { round, signatures, diagnosis: r.session.summary ?? null, groups_fed: groups.length, diff_stat: diffStat, killed: r.session.killed, cascade: repeated, model: actualModel,
-        iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
+        ...(stallEsc ? { stall_escalated: true } : {}), ...(climbed ? { route_escalation: climbed } : {}), iteration_ids: r.ids, session_id: r.sessionId, fix_resume: r.mode, ...(r.why ? { fix_resume_why: r.why } : {}),
         fix_rounds: [...((prior.fix?.fix_rounds as unknown[] | undefined) ?? []), { round, fix_resume: r.mode, cache_read_tokens: r.cacheRead }] },
     };
   },

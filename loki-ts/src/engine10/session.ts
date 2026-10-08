@@ -5,7 +5,10 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, write
 import { dirname, join } from "node:path";
 import { recordSessionCost, resultCostPath, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
-import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
+import { routerEnabled } from "../runner/router/flag.ts";
+import { floorNoAdvisor, routerPinsAllowed } from "../runner/router/unit_model.ts";
+import { resolveModelAlias } from "./sizing.ts";
+import { ROUTER_COST_FIELDS, type ImplementExit, type SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
@@ -18,6 +21,8 @@ export interface SessionRunnerConfig {
   heartbeatMs?: number; // default 30_000 (E-68: at least every 30s); tests use a smaller value
   childCommand?: [string, string[]]; // test-only: replaces the self-respawn
   lokiRoot?: string; // where efficiency records and result-cost files live (the repo's .loki)
+  /** ROUTER-1 R1-09: advisor availability for this run (R1-06 probe). Only read under LOKI_ROUTER=1. */
+  advisor?: { available: boolean; reason?: string };
 }
 /** Recorded when a claude run has no configured model: the provider CLI runs its own default, exactly like raw `claude -p` (L1). */
 export const PROVIDER_DEFAULT_MODEL = "claude (provider default)";
@@ -50,11 +55,16 @@ function childEnv(opts: SessionRunOptions, cfg: SessionRunnerConfig): NodeJS.Pro
     }
   }
   if (cfg.provider === "claude" && (!opts.model || opts.model === PROVIDER_DEFAULT_MODEL) && resolveModel("claude") === PROVIDER_DEFAULT_MODEL) env["LOKI_E10_MODEL_DEFAULT"] = "1"; // providers.ts then omits --model
+  // ROUTER-1 R1-09 (section 4.4): with the advisor unavailable the executor tier is Sonnet, never Haiku. An explicit override, pin or per-call model still wins.
+  if (routerEnabled() && cfg.provider === "claude" && cfg.advisor?.available === false && !process.env["LOKI_MODEL_OVERRIDE"] && !process.env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] && !process.env["LOKI_MODEL_DEVELOPMENT"] && !opts.model && opts.tier === "development") {
+    env["LOKI_CLAUDE_MODEL_DEVELOPMENT"] = resolveModelAlias("sonnet");
+    delete env["LOKI_E10_MODEL_DEFAULT"];
+  }
   if (opts.effort) env["LOKI_E10_EFFORT"] = opts.effort;
-  if (opts.model && opts.model !== PROVIDER_DEFAULT_MODEL) { // the label is a record, never a --model value
+  const pin = routerEnabled() ? (routerPinsAllowed() ? floorNoAdvisor(opts.model, cfg.advisor) : undefined) : opts.model; // a user override is never pinned over // R1-09: a per-call haiku pin is raised too when the advisor is unavailable
+  if (pin && pin !== PROVIDER_DEFAULT_MODEL) { // the label is a record, never a --model value
     const t = String(opts.tier).toUpperCase(); // E-45: pin wins over any inherited tier model
-    env[`LOKI_CLAUDE_MODEL_${t}`] = opts.model;
-    env[`LOKI_MODEL_${t}`] = opts.model;
+    env[`LOKI_CLAUDE_MODEL_${t}`] = pin; env[`LOKI_MODEL_${t}`] = pin;
   }
   return env;
 }
@@ -71,7 +81,10 @@ function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.
   const doneMatch = /^\W*LOKI_ALREADY_DONE:\s*(.+)$/m.exec(stdout);
   const conflictMatch = /^\W*LOKI_SPEC_CONFLICT:\s*(.+)$/m.exec(stdout);
-  return { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null };
+  const base: SessionMarkers = { done: !doneMatch && !conflictMatch, alreadyDone: doneMatch ? doneMatch[1]!.trim() : null, specConflict: conflictMatch ? conflictMatch[1]!.trim() : null };
+  if (!routerEnabled()) return base; // flag off: the marker shape is byte-identical
+  const escalateMatch = /^\W*LOKI_ESCALATE:\s*(.+)$/m.exec(stdout);
+  return escalateMatch ? { ...base, escalate: escalateMatch[1]!.trim() } : base;
 }
 function exitKind(exit: number | null, killed: boolean, markers: SessionMarkers): ImplementExit | "error" {
   if (killed) return "killed";
@@ -125,9 +138,11 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const info = { status, durationMs: Math.round(durationS * 1000), model };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
   const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
+  const routed: Record<string, number> = {}; // R1-09: only under the flag, only fields the cost record (R1-08) actually carries
+  if (routerEnabled()) { try { const rec = JSON.parse(readFileSync(dest, "utf8")) as Record<string, unknown>; for (const k of ROUTER_COST_FIELDS) if (typeof rec[k] === "number") routed[k] = rec[k] as number; } catch { /* no record or unreadable: no extra fields */ } }
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, input_tokens: c.input_tokens, output_tokens: c.output_tokens,
-    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.unmetered ? UNMETERED : c.source || "not measured",
+    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens, source: c.unmetered ? UNMETERED : c.source || "not measured", ...routed,
   });
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
