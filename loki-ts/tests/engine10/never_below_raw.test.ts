@@ -129,6 +129,10 @@ export function guardViolations(files: Record<string, string>): string[] {
   if (!impl.includes("cascadeDowngrade(ctx.model)")) v.push("implement.ts: pin does not come from cascadeDowngrade");
   const fix = files["stages/fix.ts"] ?? "";
   if (!fix.includes("escalationModel(ctx.model)") || !fix.includes("cascadeDowngrade(ctx.model)")) v.push("fix.ts: pin does not come from escalationModel/cascadeDowngrade");
+  // FC-33: the Sonnet plan pin is only reachable from the Opus-failure branch, never by variable name alone.
+  const planSrc = files["stages/plan.ts"] ?? "";
+  const sonnetCalls = planSrc.match(/runPlan\(true\)/g) ?? [];
+  if (sonnetCalls.length !== 1 || !/if \(pinOpus && !session\.killed && session\.exit !== 0\) \{[\s\S]{0,400}?runPlan\(true\)/.test(planSrc)) v.push("plan.ts: runPlan(true) is not confined to the Opus-failure branch");
   return v;
 }
 

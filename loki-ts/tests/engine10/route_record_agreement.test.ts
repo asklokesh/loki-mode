@@ -1,11 +1,11 @@
 // FC-33: the start line, the receipt route block and plan-scope.json/route.json must agree (L7). Drives the real plan
 // stage with fake sessions, then derives the start line and the receipt block from the run dir the way the supervisor and seal do.
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { planStage } from "../../src/engine10/stages/plan.ts";
-import { buildRouteBlock, routeStartLine } from "../../src/runner/router/route_block.ts";
+import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines, routeStartLine } from "../../src/runner/router/route_block.ts";
 import { loadRouteRecord } from "../../src/runner/router/route_record.ts";
 import { shapeKeyForRun } from "../../src/runner/router/history.ts";
 import { modelDowngrades } from "../../src/runner/model_downgrades.ts";
@@ -42,11 +42,18 @@ const scopeWith = (units: unknown[]): Fake => (_o, dir) => { writeFileSync(join(
 const sig = () => new AbortController().signal;
 const ON = { LOKI_ROUTER: "1" };
 
+/** The supervisor prints the start line before any stage: a fresh run dir, no route.json, exactly what main() passes. */
+const startAtSupervisorTime = (): string | null => {
+  const fresh = mkdtempSync(join(tmpdir(), "loki-fc33-fresh-")); dirs.push(fresh);
+  expect(loadRouteRecord(fresh)).toBeUndefined();
+  return routeStartLine(process.env, "claude");
+};
+
 /** The three consumers, each reading only the run dir / stage output exactly as supervisor.ts and seal.ts do. */
-function consumers(s: ReturnType<typeof setup>, planData: Record<string, unknown>) {
+function consumers(s: ReturnType<typeof setup>, planData: Record<string, unknown>, start0: string | null = startAtSupervisorTime()) {
   const record = loadRouteRecord(s.dir);
-  const start = routeStartLine(process.env, "claude", record);
-  const block = buildRouteBlock(process.env, "claude", planData.route_record as Record<string, unknown> | undefined, undefined)!;
+  const start = start0;
+  const block = buildRouteBlock(process.env, "claude", planData.route_record as Record<string, unknown> | undefined, undefined, "claude-sonnet-5-5")!;
   return { record, start, block };
 }
 
@@ -59,18 +66,33 @@ describe("FC-33 R-A/R-B: start line, receipt and route.json agree", () => {
     const c = consumers(s, r.data);
     expect(c.record?.routed).toBe(true);
     expect(c.block.routed).toBe(true);
-    expect(c.block.executor).toBe("sonnet-5.5");
+    expect(c.block.executor).toBe("claude-sonnet-5-5 (per-unit assignment not applied)");
     expect(c.block.units.map((u) => u.id)).toEqual(["u1", "wall"]);
-    expect(c.start).toContain("executor sonnet-5.5");
+    expect(c.start).toContain("per-unit executors not applied");
     expect(c.start).not.toContain("haiku");
     expect(c.block.plan_model).toBe("opus");
   });
-  test("routed to haiku by Opus: the start line and receipt both say mixed or haiku, never a bare default", async () => {
+  test("B1: routed to haiku by Opus but not applied: receipt and PR never claim haiku ran", async () => {
     const s = setup(ON, scopeWith([{ id: "u1", kind: "impl", executor: "haiku", reason: "rename" }]));
     const r = await planStage.run(s.ctx, sig());
     const c = consumers(s, r.data);
-    expect(c.block.executor).toBe("haiku-5.5");
-    expect(c.start).toContain("executor haiku-5.5");
+    expect(c.record?.applied).toBe(false);
+    const text = [...routeReceiptLines(c.block), routePrLine(c.block), ...routeNotProven(c.block)].join("\n");
+    expect(text).not.toMatch(/executor haiku/);
+    expect(text).toContain("not applied");
+    expect(text).toContain("assigned haiku-5.5");
+    expect(routeNotProven(c.block).join("\n")).toContain("route.executor: NOT PROVEN");
+    expect(c.start).not.toContain("haiku");
+    expect(c.start).toContain("not applied"); // start line and receipt say the same thing
+  });
+  test("B2: the supervisor prints the start line before any stage, with no route record argument", () => {
+    const src = readFileSync(join(import.meta.dir, "../../src/engine10/supervisor.ts"), "utf8");
+    expect(src).toMatch(/routeStartLine\(process\.env, provider\);/);
+    expect(src).not.toContain("loadRouteRecord(runDir)");
+    process.env.LOKI_ROUTER = "1";
+    const pre = startAtSupervisorTime();
+    expect(pre).toContain("decided at plan time");
+    expect(pre).not.toMatch(/executor (sonnet|haiku|opus)/);
   });
   test("small task, nothing routed: the plan still runs, route.json says routed:false, start line says default sonnet, never haiku", async () => {
     const s = setup(ON, (_o, _d) => ok);
@@ -80,10 +102,8 @@ describe("FC-33 R-A/R-B: start line, receipt and route.json agree", () => {
     const c = consumers(s, r.data);
     expect(c.record?.routed).toBe(false);
     expect(c.block.routed).toBe(false);
-    expect(c.block.executor).toBe("sonnet-5.5");
     expect(c.block.units).toEqual([]);
     expect(c.block.reason).toContain("no plan route");
-    expect(c.start).toContain("executor sonnet-5.5 (default, no plan route)");
     expect(c.start).not.toContain("haiku");
     expect(routeStartLine(process.env, "claude")).not.toContain("haiku");
   });
@@ -103,6 +123,21 @@ describe("FC-33 R-A/R-B: start line, receipt and route.json agree", () => {
     const rec = loadRouteRecord(s.dir);
     expect(rec?.routed).toBe(false);
     expect(String(rec?.reason)).toContain("LOKI_E10_PLAN=0");
+  });
+  test("B3: LOKI_CLAUDE_MODEL_DEVELOPMENT=opus does not pin the plan: the record says the fast tier model and the downgrade stays", async () => {
+    for (const dev of ["opus", "claude-opus-5-5"]) {
+      const s = setup({ ...ON, LOKI_CLAUDE_MODEL_DEVELOPMENT: dev }, scopeWith([{ id: "u1", kind: "impl", executor: "sonnet", reason: "r" }]));
+      await planStage.run(s.ctx, sig());
+      expect("model" in (s.calls[0] as object)).toBe(false);
+      expect(loadRouteRecord(s.dir)?.plan_model).toBe("sonnet");
+      expect(modelDowngrades("claude", { LOKI_ROUTER: "1", LOKI_CLAUDE_MODEL_DEVELOPMENT: dev }).some((d) => d.stage === "plan" && d.model === "sonnet")).toBe(true);
+    }
+  });
+  test("B3: LOKI_MODEL_OVERRIDE=opus rewrites the fast tier: plan_model is the override, no plan downgrade", async () => {
+    const s = setup({ ...ON, LOKI_MODEL_OVERRIDE: "opus" }, scopeWith([{ id: "u1", kind: "impl", executor: "sonnet", reason: "r" }]));
+    await planStage.run(s.ctx, sig());
+    expect(loadRouteRecord(s.dir)?.plan_model).toBe("opus");
+    expect(modelDowngrades("claude", { LOKI_ROUTER: "1", LOKI_MODEL_OVERRIDE: "opus" }).some((d) => d.stage === "plan")).toBe(false);
   });
   test("the router-on plan is not reported as a fast-tier downgrade", () => {
     expect(modelDowngrades("claude", { LOKI_ROUTER: "1" }).some((d) => d.stage === "plan")).toBe(false);

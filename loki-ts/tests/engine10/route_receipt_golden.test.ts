@@ -14,15 +14,12 @@ describe("start line", () => {
     expect(routeStartLine({ LOKI_ROUTER: "0" }, "claude")).toBeNull();
     expect(routeStartLine({ LOKI_ROUTER: "off" }, "claude")).toBeNull();
   });
-  test("golden (FC-33): no plan route yet -> executor sonnet default, never haiku", () => {
-    expect(routeStartLine(ON, "claude")).toBe("route: executor sonnet-5.5 (default, no plan route), advisor opus: Opus routes at plan time");
+  test("golden (FC-33 B2): pre-plan state only, never names a planned executor", () => {
+    expect(routeStartLine(ON, "claude")).toBe("route: decided at plan time, per-unit executors not applied (stages run the run model), advisor opus: Opus routes at plan time");
+    expect(routeStartLine({ ...ON, LOKI_ROUTER_EXECUTOR: "haiku" }, "claude")).toContain("haiku-5.5 requested by LOKI_ROUTER_EXECUTOR");
   });
-  test("golden (FC-33): derived from the route record when one exists", () => {
-    expect(routeStartLine(ON, "claude", { routed: true, executor: "haiku" })).toBe("route: executor haiku-5.5, advisor opus");
-    expect(routeStartLine(ON, "claude", { routed: false, executor: "sonnet" })).toBe("route: executor sonnet-5.5 (default, no plan route), advisor opus: Opus routes at plan time");
-  });
-  test("advisor unavailable: sonnet executor and the reason, never silent", () => {
-    expect(routeStartLine({ ...ON, CLAUDE_CODE_USE_BEDROCK: "1" }, "claude")).toBe("route: executor sonnet-5.5 (default, no plan route), advisor unavailable: advisor tool is unsupported on Bedrock, Vertex and Foundry");
+  test("advisor unavailable: the reason, never silent", () => {
+    expect(routeStartLine({ ...ON, CLAUDE_CODE_USE_BEDROCK: "1" }, "claude")).toBe("route: decided at plan time, per-unit executors not applied (stages run the run model), advisor unavailable: advisor tool is unsupported on Bedrock, Vertex and Foundry");
     expect(routeStartLine(ON, "codex")).toContain("advisor unavailable: provider codex has no advisor tool");
   });
 });
@@ -33,7 +30,7 @@ describe("route block", () => {
   });
   test("per-run route renders as the single unit run", () => {
     const b = buildRouteBlock(ON, "claude", { executor: "haiku", source: "opus", reason: "small change", shape_key: "single:vitest", escalations: [{ trigger: "code-owned FAIL x2", from: "haiku", to: "sonnet", evidence: "verify.json#3" }] }, tel)!;
-    expect(b.units).toEqual([{ id: "run", executor: "haiku-5.5", assigned_by: "opus", reason: "small change", escalations: b.escalations }]);
+    expect(b.units).toEqual([{ id: "run", executor: "haiku-5.5", applied: true, assigned_by: "opus", reason: "small change", escalations: b.escalations }]);
     expect(b.over_100k_share).toBe(0.25);
     expect(routeReceiptLines(b)).toEqual([
       "- Route: executor haiku-5.5, advisor opus-5.5: small change",

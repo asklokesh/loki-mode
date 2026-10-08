@@ -7,7 +7,7 @@
 import { routerEnabled } from "./flag.ts";
 export interface RouteEscalation { trigger: string; from: string; to: string; evidence: string }
 /** One row per work unit. A per-run route renders as the single unit "run". */
-export interface RouteUnit { id: string; executor: string; assigned_by: string; reason: string; escalations: RouteEscalation[] }
+export interface RouteUnit { id: string; executor: string; applied: boolean; assigned_by: string; reason: string; escalations: RouteEscalation[] }
 export interface RouteBlock {
   routed: boolean;
   units: RouteUnit[];
@@ -27,6 +27,9 @@ export interface RouteBlock {
   advisor_output_tokens: number | null;
   plan_model: string | null; // model the plan session ran on, from the route record
   not_proven: string[]; // NOT PROVEN lines carried by the route record (invalid unit, plan model fallback)
+  /** False when the record's executors were only assigned, not applied: every session ran the run model (FC-33 B1). */
+  applied: boolean;
+  run_model: string | null;
 }
 const ALIAS: Record<string, string> = { haiku: "haiku-5.5", sonnet: "sonnet-5.5", opus: "opus-5.5" };
 const modelLabel = (m: string): string => ALIAS[m] ?? m;
@@ -43,15 +46,18 @@ const nN = (v: unknown): number | null => (typeof v === "number" && Number.isFin
 const rec = (v: number | null): string => (v === null ? "not recorded" : String(v));
 const s0 = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v.trim() : null);
 
-/** Start-line fragment derived from the route record (FC-33): no record, or a record that routed nothing, says so. Null when the router is off. */
-export function routeStartLine(env: Record<string, string | undefined>, provider: string, record?: Record<string, unknown>): string | null {
+/**
+ * Start-line fragment. The supervisor prints it before any stage runs, so the plan's route does not exist yet: it says the
+ * route is decided at plan time and that per-unit executors are not applied (FC-33 B2), and never names a planned executor.
+ * The receipt route block (derived from route.json) is the record of what was assigned. Null when the router is off.
+ */
+export function routeStartLine(env: Record<string, string | undefined>, provider: string): string | null {
   if (!routerEnabled(env)) return null;
   const fixed = (env["LOKI_ROUTER_EXECUTOR"] ?? "").trim();
   const why = advisorUnavailableReason(env, provider);
-  const routedExec = record && record["routed"] !== false ? s0(record["executor"]) : null;
-  const exec = routedExec ? `executor ${modelLabel(routedExec)}` : fixed ? `executor ${modelLabel(fixed)} (LOKI_ROUTER_EXECUTOR)` : "executor sonnet-5.5 (default, no plan route)";
-  if (why) return `route: ${exec}, advisor unavailable: ${why}`;
-  return `route: ${exec}, advisor opus${routedExec ? "" : ": Opus routes at plan time"}`;
+  const exec = `route: decided at plan time, per-unit executors not applied (stages run the run model)${fixed ? `, ${modelLabel(fixed)} requested by LOKI_ROUTER_EXECUTOR` : ""}`;
+  if (why) return `${exec}, advisor unavailable: ${why}`;
+  return `${exec}, advisor opus: Opus routes at plan time`;
 }
 function toEsc(raw: unknown): RouteEscalation[] {
   const esc = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
@@ -66,8 +72,10 @@ export function buildRouteBlock(
   provider: string,
   route: Record<string, unknown> | undefined,
   telemetry: Partial<Record<"requests_total" | "requests_over_100k" | "advisor_calls" | "advisor_input_tokens" | "advisor_output_tokens", number>> | undefined,
+  runModel?: string,
 ): RouteBlock | null {
   if (!routerEnabled(env)) return null;
+  const applied = route?.["applied"] !== false;
   const executor = s0(route?.["executor"]);
   const unavailable = s0(route?.["advisor_unavailable_reason"]) ?? advisorUnavailableReason(env, provider);
   const total = nN(telemetry?.requests_total);
@@ -78,12 +86,12 @@ export function buildRouteBlock(
   const reason = s0(route?.["reason"]) ?? (executor ? "no reason recorded" : "no route recorded by implement");
   const rawUnits = Array.isArray(route?.["units"]) ? (route["units"] as Array<Record<string, unknown>>) : [];
   const units: RouteUnit[] = rawUnits.length > 0
-    ? rawUnits.map((u, i) => ({ id: s0(u["id"]) ?? String(i + 1), executor: modelLabel(s0(u["executor"]) ?? "unknown"), assigned_by: assignedBy(s0(u["source"]) ?? source, u["assigned_by"]), reason: s0(u["reason"]) ?? "no reason recorded", escalations: toEsc(u["escalations"]) }))
-    : executor && route?.["routed"] !== false ? [{ id: "run", executor: modelLabel(executor), assigned_by: assignedBy(source, route?.["assigned_by"]), reason, escalations }] : [];
+    ? rawUnits.map((u, i) => ({ id: s0(u["id"]) ?? String(i + 1), executor: modelLabel(s0(u["executor"]) ?? "unknown"), applied, assigned_by: assignedBy(s0(u["source"]) ?? source, u["assigned_by"]), reason: s0(u["reason"]) ?? "no reason recorded", escalations: toEsc(u["escalations"]) }))
+    : executor && route?.["routed"] !== false ? [{ id: "run", executor: modelLabel(executor), applied, assigned_by: assignedBy(source, route?.["assigned_by"]), reason, escalations }] : [];
   return {
     routed: route?.["routed"] === false ? false : executor !== null || units.length > 0,
     units,
-    executor: executor ? modelLabel(executor) : units[0]?.executor ?? null,
+    executor: !applied ? `${runModel ? modelLabel(runModel) : "run model"} (per-unit assignment not applied)` : executor ? modelLabel(executor) : units[0]?.executor ?? null,
     advisor: unavailable ? null : modelLabel(s0(route?.["advisor"]) ?? "opus"),
     advisor_unavailable_reason: unavailable,
     reason,
@@ -98,6 +106,8 @@ export function buildRouteBlock(
     advisor_input_tokens: nN(telemetry?.advisor_input_tokens),
     advisor_output_tokens: nN(telemetry?.advisor_output_tokens),
     plan_model: s0(route?.["plan_model"]),
+    applied,
+    run_model: runModel ?? null,
     not_proven: Array.isArray(route?.["route_not_proven"]) ? (route["route_not_proven"] as unknown[]).filter((x): x is string => typeof x === "string") : [],
   };
 }
@@ -120,7 +130,7 @@ export function routeReceiptLines(r: RouteBlock): string[] {
     `- Route shape_key: ${r.shape_key ?? "unknown"}  shape_parity: ${r.shape_parity}`,
     `- Route escalations: ${r.escalations.length === 0 ? "none" : r.escalations.map((e) => `${e.from} -> ${e.to} (${e.trigger}; evidence ${e.evidence})`).join("; ")}`,
     `- Route advisor: ${rec(r.advisor_calls)} calls, ${rec(r.advisor_input_tokens)} in / ${rec(r.advisor_output_tokens)} out tokens`,
-    ...r.units.map((u) => `- Route unit ${u.id}: executor ${u.executor}, assigned by ${u.assigned_by}: ${u.reason}; escalation: ${u.escalations.length === 0 ? "none" : u.escalations.map((e) => `${e.from} -> ${e.to} (${e.trigger})`).join(", ")}`),
+    ...r.units.map((u) => `- Route unit ${u.id}: executor ${u.applied ? u.executor : `not applied (assigned ${u.executor})`}, assigned by ${u.assigned_by}: ${u.reason}; escalation: ${u.escalations.length === 0 ? "none" : u.escalations.map((e) => `${e.from} -> ${e.to} (${e.trigger})`).join(", ")}`),
     `- Route requests over 100K: ${over(r, "")}`,
   ];
 }
@@ -130,6 +140,7 @@ export function routeNotProven(r: RouteBlock): string[] {
   return [
     ...(r.advisor_unavailable_reason ? [`advisor: NOT PROVEN (owner provider): ${r.advisor_unavailable_reason}`] : []),
     `route.shape_parity: ${r.shape_parity}`,
+    ...(r.applied ? [] : [`route.executor: NOT PROVEN (owner engine): per-unit executor assignment is not applied (R1-11); every stage ran ${r.run_model ?? "the run model"}`]),
     ...r.not_proven,
   ];
 }

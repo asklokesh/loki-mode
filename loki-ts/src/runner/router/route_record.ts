@@ -6,6 +6,8 @@ import { join } from "node:path";
 import type { UnitRoute } from "./decision.ts";
 
 export const ROUTE_RECORD_FILE = "route.json";
+/** Per-unit executors are recorded at plan time but implement/fix do not read them yet (R1-11), so every stage runs the run model. Flip with R1-11. */
+export const PER_UNIT_EXECUTORS_APPLIED = false;
 
 export interface RouteRecordInput {
   units: readonly UnitRoute[];
@@ -22,10 +24,10 @@ export interface RouteRecordInput {
 /** Record in the shape buildRouteBlock reads. Always emitted while the router is on: a route, or the reason there is none. */
 export function buildRouteRecord(i: RouteRecordInput): Record<string, unknown> {
   const notProven = [...i.notProven, ...(i.planModelNote ? [`plan model: NOT PROVEN (owner provider): ${i.planModelNote}`] : [])];
-  const base = { plan_model: i.planModel, shape_key: i.shapeKey, route_not_proven: notProven };
+  const base = { plan_model: i.planModel, shape_key: i.shapeKey, route_not_proven: notProven, applied: PER_UNIT_EXECUTORS_APPLIED };
   if (i.units.length === 0) {
     const why = i.skipReason ?? i.notProven[0] ?? "no per-unit routes returned";
-    return { ...base, routed: false, executor: "sonnet", source: "default", reason: `no plan route, default executor sonnet (NOT PROVEN): ${why}`, units: [] };
+    return { ...base, routed: false, executor: "sonnet", source: "default", reason: `no plan route (NOT PROVEN): ${why}`, units: [] };
   }
   const execs = [...new Set(i.units.map((u) => u.executor))];
   return {

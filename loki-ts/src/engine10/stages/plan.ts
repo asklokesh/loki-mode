@@ -14,6 +14,7 @@ import { routerEnabled } from "../../runner/router/flag.ts";
 import { envOverride, parseUnits } from "../../runner/router/decision.ts";
 import { probeAdvisor } from "../../runner/router/advisor_probe.ts";
 import { claudeCodeVersionForRoute } from "../../runner/providers.ts";
+import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { buildRouteRecord, writeRouteRecord } from "../../runner/router/route_record.ts";
 import { shapeKeyForRun } from "../../runner/router/history.ts";
 
@@ -93,7 +94,7 @@ export const planStage: Stage = {
       ...(planOnSonnet ? { model: "sonnet" } : {}),
     });
     let session = await runPlan(false);
-    let planModel = pinOpus ? "opus" : ctx.provider === "claude" ? (envOverride(process.env) ?? "default") : "provider default";
+    let planModel = pinOpus ? "opus" : ctx.provider === "claude" ? fastTierModel(process.env) : "provider default";
     let planModelNote: string | null = null;
     if (pinOpus && !session.killed && session.exit !== 0) { // Opus unavailable: Sonnet plans, and the receipt says so
       planModel = "sonnet"; planModelNote = `Opus plan session failed (exit ${session.exit}); the plan ran on sonnet`;
