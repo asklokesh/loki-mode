@@ -188,7 +188,14 @@ def _git(cwd, *args, env=None):
 
 _FAKE_GH = """#!/bin/bash
 [ -n "$FAKE_FAIL" ] && { echo "HTTP 502" >&2; exit 1; }
-jqf=""; while [ $# -gt 0 ]; do [ "$1" = "--jq" ] && { jqf="$2"; shift; }; shift; done
+all="$*"; jqf=""; while [ $# -gt 0 ]; do [ "$1" = "--jq" ] && { jqf="$2"; shift; }; shift; done
+case "$all" in
+  */jobs*)
+    [ -n "$FAKE_JOBS_FAIL" ] && { echo "HTTP 502" >&2; exit 1; }
+    rid="$(printf '%s' "$all" | sed -E 's#.*runs/([0-9]+)/jobs.*#\\1#')"
+    printf '%s' "$FAKE_JOBS" | jq -c --arg id "$rid" '{jobs: (.[$id] // [{"name":"Full suite (backstop) / x","conclusion":"success"}])}' | jq -r "$jqf"
+    exit ;;
+esac
 printf '%s' "$FAKE_JSON" | jq -r "$jqf"
 """
 
@@ -245,11 +252,12 @@ class PromoteGateBehavior(unittest.TestCase):
     def _run_obj(rid, conc, sha, event="schedule"):
         return {"id": rid, "conclusion": conc, "head_sha": sha, "html_url": "u%s" % rid, "event": event}
 
-    def _gate(self, script, githead, runs=None, fail=False, raw=None):
+    def _gate(self, script, githead, runs=None, fail=False, raw=None, jobs=None, jobs_fail=False):
         env = dict(os.environ, PATH="%s:%s" % (self.bin, os.environ["PATH"]), GITHUB_REPOSITORY="o/r",
                    GITHEAD=githead, VERSION="1.2.3", GH_TOKEN="x",
                    FAKE_JSON=raw if raw is not None else json.dumps({"workflow_runs": runs or []}),
-                   FAKE_FAIL="1" if fail else "")
+                   FAKE_FAIL="1" if fail else "", FAKE_JOBS=json.dumps(jobs or {}),
+                   FAKE_JOBS_FAIL="1" if jobs_fail else "")
         r = subprocess.run(["bash", "-c", script], cwd=self.repo, env=env, capture_output=True, text=True, timeout=60)
         return r.returncode, r.stdout + r.stderr
 
@@ -295,6 +303,25 @@ class PromoteGateBehavior(unittest.TestCase):
 
     def test_cancelled_at_promoted_sha_does_not_mask_older_red_check(self):
         self.assertBlock(self._n(self.A, [self._run_obj(3, "success", self.B), self._run_obj(2, "cancelled", self.A), self._run_obj(1, "timed_out", self.A)]))
+
+    _SKIPPED = [{"name": "Full suite (backstop)", "conclusion": "skipped"}]
+
+    def test_skipped_dedupe_success_newer_than_red_at_sha_blocks(self):
+        runs = [self._run_obj(2, "success", self.A), self._run_obj(1, "failure", self.A)]
+        self.assertBlock(self._n(self.A, runs, jobs={"2": self._SKIPPED}))
+
+    def test_skipped_dedupe_newer_than_green_at_sha_passes(self):
+        runs = [self._run_obj(2, "success", self.A), self._run_obj(1, "success", self.A)]
+        self.assertPass(self._n(self.A, runs, jobs={"2": self._SKIPPED}))
+
+    def test_only_skipped_dedupe_runs_block(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(2, "success", self.A)], jobs={"2": self._SKIPPED}))
+
+    def test_run_with_no_full_suite_job_is_not_a_measurement(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(2, "success", self.A)], jobs={"2": []}))
+
+    def test_jobs_api_failure_blocks(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.A)], jobs_fail=True))
 
     def test_non_scheduled_event_is_ignored(self):
         self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.B, event="push")]))

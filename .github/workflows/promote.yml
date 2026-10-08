@@ -173,6 +173,21 @@ jobs:
             echo "PROMOTE-BLOCK: could not read the nightly runs from the API; not promoting ${VERSION} (fail closed)"
             exit 1
           }
+          # D96-BACKSTOP: an hourly run whose dedupe job skipped the full suite
+          # still concludes success. A run with no non-skipped "Full suite
+          # (backstop)" job is not a measurement: ignore it like a cancelled
+          # run. A failed jobs lookup fails closed.
+          MEAS=""
+          while IFS='|' read -r RID CONC RSHA URL; do
+            [ -n "${RID:-}" ] || continue
+            NJOBS="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${RID}/jobs?per_page=100" \
+              --jq '.jobs[] | select((.name | startswith("Full suite (backstop)")) and .conclusion != "skipped") | .name' | wc -l)" || {
+              echo "PROMOTE-BLOCK: could not read the jobs of nightly run ${RID}; not promoting ${VERSION} (fail closed)"
+              exit 1
+            }
+            [ "${NJOBS//[[:space:]]/}" -gt 0 ] || continue
+            MEAS="${MEAS}${RID}|${CONC}|${RSHA}|${URL}"$'\n'
+          done <<< "$RUNS"
           # CTO ruling on P1: a descendant's green never covers a red at the
           # promoted SHA itself. The newest nightly AT that SHA must not be red.
           while IFS='|' read -r RID CONC RSHA URL; do
@@ -184,7 +199,7 @@ jobs:
                 ;;
             esac
             break
-          done <<< "$RUNS"
+          done <<< "$MEAS"
           while IFS='|' read -r RID CONC RSHA URL; do
             [ -n "${RID:-}" ] || continue
             if [ "$RSHA" = "$GITHEAD" ] || git merge-base --is-ancestor "$GITHEAD" "$RSHA" 2>/dev/null; then
@@ -197,7 +212,7 @@ jobs:
               echo "Per D96 a red nightly blocks promotion to latest. Fix forward and wait for a green nightly."
               exit 1
             fi
-          done <<< "$RUNS"
+          done <<< "$MEAS"
           echo "PROMOTE-BLOCK: no completed nightly on main covers ${GITHEAD} yet; not promoting ${VERSION}"
           exit 1
 
