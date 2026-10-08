@@ -918,6 +918,7 @@ run_test "AGENTS.md build_prompt Instruction (all blocks)" "$SCRIPT_DIR/test-age
 run_test "AGENTS.md Instruction Parity (bash vs Bun)" "$SCRIPT_DIR/test-parity-agents-md.sh"
 run_test "goal_score bash vs Bun behavioral parity (RC-DOCTOR-ONE S5)" "timeout -k 10 120 bash $SCRIPT_DIR/test-parity-goal-score.sh"
 run_test "Run-owned temp cleanup scope" "$SCRIPT_DIR/test-safe-cleanup-scope-188.sh"
+run_test "verify-pr sandbox fails closed (VPR-1)" "timeout -k 10 120 bash $SCRIPT_DIR/test-verify-pr-sandbox.sh"
 
 # F52: DOC_SCOPE instruction scales documentation to detected project complexity
 # (simple -> minimal docs; standard/complex -> full architecture suite).
