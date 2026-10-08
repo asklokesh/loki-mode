@@ -95,10 +95,10 @@ class Span {
     return this;
   }
 
-  end() {
+  end(endNanos) {
     if (this._ended) return;
     this._ended = true;
-    this.endTimeUnixNano = nowNanos();
+    this.endTimeUnixNano = endNanos !== undefined ? String(endNanos) : nowNanos(); // endNanos: replayed spans (gen_ai bridge) keep event time
     // Register with the exporter
     if (_activeExporter) {
       _activeExporter.addSpan(this);
