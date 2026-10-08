@@ -702,3 +702,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: tests/docker/test_polling.py imports checked, no unguarded optional import of this kind.
 - Mechanism: pytest.importorskip for pytest_asyncio, requests, websockets plus a module-level skip when BASE_URL is unreachable.
 - Fixture: `python3 -m pytest -q tests/docker/test_purple_lab.py` with no server exits 0 reporting a skip; before the fix it exited 2 on a runner without requests.
+
+## FC-84 A demo non-TTY test depended on a provider CLI being installed on the host (RED-PLAN)
+- User saw: Tests red on main 082cd57a4 (shard 9): tests/test-plan-command.sh `[FAIL] demo non-TTY refuse -- exit=2 (124=timeout/hang)`, 26 passed 1 failed. The exit was 2, not a hang; the label is misleading.
+- Law: a test must not depend on host state it did not set up (same class as the "assumed host state" and "autonomy opt-out needs the claude binary" fixes).
+- Cause (measured): `loki demo` without --dry-run runs provider_offer_gate before the estimate. With no provider CLI on PATH (CI runner) it prints "No AI provider CLI found" and exits 2, so the case's grep for the estimate and the confirmation message failed while the exit code matched. A dev host with claude installed passes. Reproduced with PATH=/usr/bin:/bin:/usr/sbin:/sbin: rc=2, no estimate.
+- Siblings swept: the dry-run case skips the gate (verified passing without a provider); the other provider-gated suites (test-provider-preflight.sh) already build stub PATHs.
+- Mechanism: the case now puts a stub claude on PATH so the refusal path under test is reached on every host.
+- Fixture: tests/test-plan-command.sh test 25; red with the stub removed on a provider-less PATH, green with it.

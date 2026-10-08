@@ -418,7 +418,14 @@ rm -rf "$DEMO_TMP_24"
 ((TOTAL++))
 DEMO_TMP_25=$(mktemp -d 2>/dev/null || echo "/tmp/loki-plan-demo25-$$")
 nt_exit=0
-nt_out=$(TMPDIR="$DEMO_TMP_25" run_guarded 15 "$LOKI" demo </dev/null 2>&1 | sed 's/\x1b\[[0-9;]*m//g') || nt_exit=$?
+# Hermetic provider: the demo's provider pre-flight gate exits 2 (before the
+# estimate) on a host with no provider CLI, as on CI runners. A stub claude on
+# PATH makes the case exercise the confirmation refusal, not the host's installs.
+NT_STUB_BIN="$DEMO_TMP_25/stub-bin"
+mkdir -p "$NT_STUB_BIN"
+printf '#!/bin/sh\nexit 0\n' > "$NT_STUB_BIN/claude"
+chmod +x "$NT_STUB_BIN/claude"
+nt_out=$(PATH="$NT_STUB_BIN:$PATH" TMPDIR="$DEMO_TMP_25" run_guarded 15 "$LOKI" demo </dev/null 2>&1 | sed 's/\x1b\[[0-9;]*m//g') || nt_exit=$?
 if [ "$nt_exit" -eq 2 ] \
     && echo "$nt_out" | grep -q "Estimate (SIMPLE tier, the path this demo actually runs):" \
     && echo "$nt_out" | grep -q "demo needs confirmation; re-run with --yes to proceed non-interactively"; then
