@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
+import { costTotalsOf, sumResultCosts } from "../../src/engine10/cost.ts";
 import { buildTime, reconciledTotalS } from "../../src/engine10/receipt_time.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
@@ -1195,6 +1196,25 @@ print("\\t".join([str(v)] + [str(x) for x in out]))
     const ctx = { startedAtMs: base, clock: { now: () => base + 10000 }, timeline: [{ stage: "intake", startMs: base, endMs: base + 9000 }] } as unknown as RunContext;
     expect(reconciledTotalS(buildTime(ctx, {}, base + 500))).toBeNull();
   });
+
+  test("R3-2: with an ambiguous resume the sealed cost block carries no cache, per_model, turns or sdk_duration_ms keys", async () => {
+    noKey();
+    const { repo, base } = makeRepo("receipt-truth-ambig");
+    const { ctx } = ctxFor(repo, base);
+    const dir = mkdtempSync(join(tmpdir(), "loki-run.rt-ambig-"));
+    try {
+      mkdirSync(join(dir, "metrics"), { recursive: true });
+      const mu = (c: number) => ({ m: { input_tokens: 100, output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, cost_usd: c } });
+      const rec = { output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, num_turns: 2, duration_ms: 500 };
+      writeFileSync(join(dir, "metrics", "result-cost-impl.json"), JSON.stringify({ ...rec, total_cost_usd: 1, input_tokens: 100, session_id: "S1", model_usage: mu(1) }));
+      writeFileSync(join(dir, "metrics", "result-cost-fix.json"), JSON.stringify({ ...rec, total_cost_usd: 1.4, input_tokens: 140, session_id: "S1", resumed_from: "S1", model_usage: mu(1.4) }));
+      ctx.cost = { read: () => costTotalsOf(sumResultCosts(dir, ["impl", "fix"])) };
+      const cost = receiptOf(await sealStage.run(ctx, new AbortController().signal)).cost as unknown as Record<string, unknown>;
+      for (const k of ["cache_read_tokens", "cache_creation_tokens", "per_model", "turns", "sdk_duration_ms", "tokens_scope", "cache_creation_main_loop"]) expect(k in cost).toBe(false);
+      expect(cost["resume"]).toBe("ambiguous");
+      expect(cost["usd"]).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 30000);
 
   test("RECEIPT-TRUTH: a reader without cache fields leaves the keys absent (NOT RECORDED), never 0", async () => {
     noKey();

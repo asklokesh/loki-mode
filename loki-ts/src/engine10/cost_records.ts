@@ -33,9 +33,12 @@ export function resumeVerdicts(recs: { iter: string; rec: Rec }[]): { ambiguous:
 }
 const rec_cost = (r: Rec): number | null => (typeof r["total_cost_usd"] === "number" && Number.isFinite(r["total_cost_usd"]) ? r["total_cost_usd"] : null);
 
-export function buildRecords(recs: { iter: string; rec: Rec }[], ambiguous: string[], separate: string[]): CostRecords {
+/** `recs` are the non-ambiguous parsed files; `expected` is the number of sessions in the run. Every aggregate below needs all of
+ *  them, so a missing or ambiguous session leaves per_model, turns and the cache split out (NOT RECORDED), never a partial sum. */
+export function buildRecords(recs: { iter: string; rec: Rec }[], expected: number, ambiguous: string[], separate: string[]): CostRecords {
   const out: CostRecords = {};
-  if (recs.length === 0) return out;
+  if (ambiguous.length > 0) out.resume = "ambiguous"; else if (separate.length > 0) out.resume = "separate";
+  if (recs.length === 0 || recs.length !== expected) return out;
   const turns = recs.map((r) => r.rec["num_turns"]);
   if (turns.every((t) => typeof t === "number")) out.turns = (turns as number[]).reduce((a, b) => a + b, 0);
   if (recs.every((r) => typeof r.rec["cache_creation_5m_tokens"] === "number" && typeof r.rec["cache_creation_1h_tokens"] === "number")) {
@@ -54,6 +57,5 @@ export function buildRecords(recs: { iter: string; rec: Rec }[], ambiguous: stri
     if (total > 0 && Math.abs(modelCost - total) <= RECONCILE * total) { out.per_model = per; out.tokens_scope = "all-models"; }
   }
   if (out.tokens_scope === undefined) out.tokens_scope = "main-loop";
-  if (ambiguous.length > 0) out.resume = "ambiguous"; else if (separate.length > 0) out.resume = "separate";
   return out;
 }

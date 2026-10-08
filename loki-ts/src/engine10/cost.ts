@@ -79,14 +79,24 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
   };
   const sources: string[] = [];
   const recs: { iter: string; rec: Record<string, unknown> }[] = [];
-  let usd = 0, readSeen = 0, creationSeen = 0;
+  let usd = 0, readSeen = 0, creationSeen = 0, durSeen = 0;
+  // FIX-RESUME: decide ambiguity over every parsed file first; an ambiguous file (a resumed total that may already
+  // include its predecessor) is excluded from EVERY summed figure, not just dollars (R3-2).
+  const parsed = new Map<string, Record<string, unknown>>();
+  for (const iter of iterations) {
+    try { parsed.set(iter, JSON.parse(readFileSync(resultCostPath(lokiRoot, iter), "utf8")) as Record<string, unknown>); } catch { /* counted missing below */ }
+  }
+  const rv = resumeVerdicts(iterations.filter((i) => parsed.has(i)).map((iter) => ({ iter, rec: parsed.get(iter)! })));
   for (const iter of iterations) {
     const path = resultCostPath(lokiRoot, iter);
-    let rec: Record<string, unknown>;
-    try {
-      rec = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-    } catch {
+    const rec = parsed.get(iter);
+    if (!rec) {
       out.missing.push(iter); // no file at all: neither cost nor tokens are usable
+      continue;
+    }
+    if (rv.ambiguous.includes(iter)) {
+      out.missing.push(iter);
+      sources.push(path);
       continue;
     }
     // The file parsed, so its tokens are real even when total_cost_usd is absent (a codex/tokens-only
@@ -101,7 +111,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
     out.cache_creation_tokens += cacheC;
     if (typeof rec["cache_read_tokens"] === "number") readSeen++;
     if (typeof rec["cache_creation_tokens"] === "number") creationSeen++;
-    if (typeof rec["duration_ms"] === "number" && Number.isFinite(rec["duration_ms"])) out.duration_ms = (out.duration_ms ?? 0) + rec["duration_ms"];
+    if (typeof rec["duration_ms"] === "number" && Number.isFinite(rec["duration_ms"])) { out.duration_ms = (out.duration_ms ?? 0) + rec["duration_ms"]; durSeen++; }
     if (out.router) out.router["requests_total"] += num(rec["requests_total"]);
     if (out.router) out.router["requests_over_100k"] += num(rec["requests_over_100k"]);
     if (out.router) out.router["over_100k_input_tokens"] += num(rec["over_100k_input_tokens"]);
@@ -130,11 +140,11 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
   // RECEIPT-TRUTH: a cache total is published only when EVERY session carried the key; a partial sum is not the run total
   out.cache_read_seen = iterations.length > 0 && readSeen === iterations.length;
   out.cache_creation_seen = iterations.length > 0 && creationSeen === iterations.length;
-  const rv = resumeVerdicts(recs); // FIX-RESUME: a resumed total that may already include its predecessor is not summed on trust
-  for (const iter of rv.ambiguous) if (!out.missing.includes(iter)) out.missing.push(iter);
-  if (recs.length > 0) {
-    const r = buildRecords(recs, rv.ambiguous, rv.separate);
-    if (r.tokens_scope === "all-models" && r.per_model) { // whole-pipeline tokens replace the main-loop-only usage figures
+  if (durSeen !== iterations.length) delete out.duration_ms; // a partial duration is not the run's
+  if (rv.ambiguous.length > 0 || recs.length > 0) {
+    const r = buildRecords(recs, iterations.length, rv.ambiguous, rv.separate);
+    // whole-pipeline tokens replace the main-loop-only usage figures only when EVERY session carried modelUsage (R3-1)
+    if (r.tokens_scope === "all-models" && r.per_model) {
       const v = Object.values(r.per_model);
       const sum = (k: keyof (typeof v)[number]): number => v.reduce((a, m) => a + m[k], 0);
       out.input_tokens = sum("input_tokens"); out.output_tokens = sum("output_tokens"); out.cache_read_tokens = sum("cache_read_tokens"); out.cache_creation_tokens = sum("cache_creation_tokens");

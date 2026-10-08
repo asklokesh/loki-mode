@@ -84,6 +84,38 @@ describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
       expect(c.records?.resume).toBe("ambiguous");
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("R3-1: a missing session blocks the all-models override, so a partial modelUsage sum is never published as the run total", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "a", { total_cost_usd: 1, input_tokens: 9, output_tokens: 1, cache_read_tokens: 7, cache_creation_tokens: 2, num_turns: 2, model_usage: { sonnet: { input_tokens: 9, output_tokens: 1, cache_read_tokens: 100, cache_creation_tokens: 5, cost_usd: 1 } } });
+      const c = sumResultCosts(d, ["a", "missing"]);
+      expect(c.usd).toBeNull();
+      expect(c.cache_read_seen).toBe(false);
+      expect(c.cache_creation_seen).toBe(false);
+      expect(c.records?.per_model).toBeUndefined();
+      expect(c.records?.tokens_scope).toBeUndefined();
+      expect(c.records?.turns).toBeUndefined();
+      expect(c.cache_read_tokens).toBe(7); // main-loop figure of the one measured session, never the 100 from modelUsage
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("R3-2: an ambiguous resume is excluded from every summed figure, not only dollars", () => {
+    const d = tmpCheckout();
+    try {
+      const base = { output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, num_turns: 2, duration_ms: 500 };
+      write(d, "impl", { ...base, total_cost_usd: 1, input_tokens: 100, session_id: "S1", model_usage: mu(1) });
+      write(d, "fix", { ...base, total_cost_usd: 1.4, input_tokens: 140, cache_read_tokens: 1400, session_id: "S1", resumed_from: "S1", model_usage: mu(1.4) });
+      const c = sumResultCosts(d, ["impl", "fix"]);
+      expect(c.usd).toBeNull();
+      expect(c.missing).toEqual(["fix"]);
+      expect(c.measuredCount).toBe(1);
+      expect(c.partialUsd).toBe(1);
+      expect(c.input_tokens).toBe(100);
+      expect(c.cache_read_seen).toBe(false);
+      expect(c.cache_creation_seen).toBe(false);
+      expect(c.duration_ms).toBeUndefined();
+      expect(c.records).toEqual({ resume: "ambiguous" });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
   test("resume: a predecessor outside the summed set is ambiguous; a plain run has no resume key", () => {
     const d = tmpCheckout();
     try {
