@@ -99,6 +99,40 @@ normalize() {
 }
 
 # ---------------------------------------------------------------------------
+# Parallel unit harness (issue 183). Each independent check runs as a unit in
+# its own background subshell with a private copy of the .loki fixture and its
+# own output file; units are replayed in launch order at the end so the report
+# is deterministic and PASS/FAIL are counted from the replayed lines. Every
+# assertion text and every case is unchanged; only the spawn floor is overlapped.
+# ---------------------------------------------------------------------------
+UNITS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/loki-alias-units.XXXXXX")"
+trap 'rm -rf "$WORKDIR" "$UNITS_DIR" 2>/dev/null || true' EXIT
+FIXDIR="$WORKDIR"
+MAX_UNITS="${LOKI_ALIAS_TEST_JOBS:-8}"
+U=0
+UO=""
+
+launch_slot() {
+    while [ "$(jobs -r | wc -l | tr -d ' ')" -ge "$MAX_UNITS" ]; do
+        sleep 0.05
+    done
+    U=$((U+1))
+    UO="$UNITS_DIR/out.$(printf '%04d' "$U")"
+}
+
+unit_init() {
+    local ud="$UNITS_DIR/fix.$U"
+    mkdir -p "$ud"
+    cp -R "$FIXDIR/." "$ud/"
+    WORKDIR="$ud"
+}
+
+run_unit() {
+    launch_slot
+    ( unit_init; "$@" ) > "$UO" 2>&1 &
+}
+
+# ---------------------------------------------------------------------------
 # Data table: alias|canonical|args
 # args may be empty. Multi-word canonical (e.g. "report session") is allowed.
 # ---------------------------------------------------------------------------
@@ -212,7 +246,7 @@ assert_row() {
 
 for row in "${ALIAS_ROWS[@]}"; do
     IFS='|' read -r alias_cmd canonical args <<< "$row"
-    assert_row "$alias_cmd" "$canonical" "$args"
+    run_unit assert_row "$alias_cmd" "$canonical" "$args"
 done
 
 # ---------------------------------------------------------------------------
@@ -231,8 +265,9 @@ assert_no_loki_exit_parity() {
     local alias_argv=($alias_cmd $args)
     # shellcheck disable=SC2206
     local canon_argv=($canonical $args)
-    local a_code c_code
+    local a_code c_code a_has_loki=no
     ( cd "$fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "${alias_argv[@]}" >/dev/null 2>&1 ); a_code=$?
+    [ -e "$fresh/.loki" ] && a_has_loki=yes
     rm -rf "$fresh"; fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-alias-noloki.XXXXXX")"
     ( cd "$fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "${canon_argv[@]}" >/dev/null 2>&1 ); c_code=$?
     rm -rf "$fresh"
@@ -241,41 +276,40 @@ assert_no_loki_exit_parity() {
     else
         log_fail "$label: exit codes match" "alias=$a_code canonical=$c_code"
     fi
+    # Optional 4th arg: also assert the alias left no .loki in the clean dir
+    # (the B2 no-side-effect contract), reusing the same alias spawn.
+    if [ "${4:-}" = "noloki" ]; then
+        if [ "$a_has_loki" = "no" ]; then
+            log_pass "$alias_cmd alias: no .loki created in a clean dir (no-side-effect contract)"
+        else
+            log_fail "$alias_cmd alias: no .loki created in a clean dir" ".loki was created"
+        fi
+    fi
 }
 
 # share is the canonical case (exits 1 at its no-.loki guard BEFORE any network
 # call); the reporting rows exit-parity by construction once the side effect is
 # gone.
-assert_no_loki_exit_parity share "report share" "--format text"
-assert_no_loki_exit_parity stats "report session" ""
-assert_no_loki_exit_parity cost "report cost" ""
+run_unit assert_no_loki_exit_parity share "report share" "--format text"
+run_unit assert_no_loki_exit_parity stats "report session" ""
+run_unit assert_no_loki_exit_parity cost "report cost" ""
 
 # Phase B (slice B2): no-side-effect contract for each new alias. In a fresh dir
 # with no .loki, the alias and its canonical must exit identically and (proven by
 # the dedicated row at the end of this section) leave no .loki behind. --help is
 # used so heal/migrate/explain/onboard/code never spawn an agent or touch any
 # foreign process; the forwarding is still exercised through the noun dispatcher.
-assert_no_loki_exit_parity compound "memory compound" "--help"
-assert_no_loki_exit_parity explain "analyze explain" "--help"
-assert_no_loki_exit_parity onboard "analyze onboard" "--help"
-assert_no_loki_exit_parity code "analyze code" "--help"
-assert_no_loki_exit_parity context "analyze context" "--help"
-assert_no_loki_exit_parity heal "modernize heal" "--help"
-assert_no_loki_exit_parity migrate "modernize migrate" "--help"
+run_unit assert_no_loki_exit_parity compound "memory compound" "--help" noloki
+run_unit assert_no_loki_exit_parity explain "analyze explain" "--help" noloki
+run_unit assert_no_loki_exit_parity onboard "analyze onboard" "--help" noloki
+run_unit assert_no_loki_exit_parity code "analyze code" "--help" noloki
+run_unit assert_no_loki_exit_parity context "analyze context" "--help" noloki
+run_unit assert_no_loki_exit_parity heal "modernize heal" "--help" noloki
+run_unit assert_no_loki_exit_parity migrate "modernize migrate" "--help" noloki
 
 # Phase B (slice B2): prove each new alias creates NO .loki in a clean dir (the
 # named no-side-effect contract). _deprecated_alias gates its telemetry emit on
 # .loki already existing, so a forwarding alias must leave a fresh dir pristine.
-for _b2_alias in compound explain onboard code context heal migrate; do
-    _b2_fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-b2-noloki.XXXXXX")"
-    ( cd "$_b2_fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" "$_b2_alias" --help >/dev/null 2>&1 ) || true
-    if [ ! -e "$_b2_fresh/.loki" ]; then
-        log_pass "$_b2_alias alias: no .loki created in a clean dir (no-side-effect contract)"
-    else
-        log_fail "$_b2_alias alias: no .loki created in a clean dir" ".loki was created"
-    fi
-    rm -rf "$_b2_fresh"
-done
 
 # ---------------------------------------------------------------------------
 # Short-alias rows that share a handler with their canonical (cp/wt/rc/otel/
@@ -307,15 +341,15 @@ assert_short_alias() {
     fi
 }
 
-assert_short_alias cp checkpoint
-assert_short_alias wt worktree
-assert_short_alias rc remote
-assert_short_alias otel telemetry
-assert_short_alias serve "api start"
-assert_short_alias open preview
+run_unit assert_short_alias cp checkpoint
+run_unit assert_short_alias wt worktree
+run_unit assert_short_alias rc remote
+run_unit assert_short_alias otel telemetry
+run_unit assert_short_alias serve "api start"
+run_unit assert_short_alias open preview
 # Phase B (slice B2): 'ctx' is the short alias of 'context', now forwarding to
 # 'analyze context' (the pointer uses the typed token 'ctx').
-assert_short_alias ctx "analyze context"
+run_unit assert_short_alias ctx "analyze context"
 
 # 'run' has its own inline deprecation (cmd_run, v6.84.0) aligned to the
 # standardized pointer. A real 'loki run <N>' touches the network/issue path,
@@ -340,7 +374,7 @@ assert_run_alias() {
         log_pass "$label: --json suppresses deprecation line"
     fi
 }
-assert_run_alias
+run_unit assert_run_alias
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 3: the 'run' alias must add NO side effect in a clean dir. The
@@ -348,7 +382,9 @@ assert_run_alias
 # every other alias). In a fresh dir with no .loki, `loki run <bogus>` must
 # leave NO .loki behind.
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-run-noloki.XXXXXX")"
     ( cd "$fresh" && env "${ROUTE_ENV[@]}" bash "$LOKI_SHIM" run 999999 >/dev/null 2>&1 ) || true
     if [ ! -e "$fresh/.loki" ]; then
@@ -357,7 +393,7 @@ assert_run_alias
         log_fail "run alias: no .loki created in a clean dir" ".loki was created: $(find "$fresh/.loki" -type f 2>/dev/null | head -1)"
     fi
     rm -rf "$fresh"
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 4: positional machine-output formats (export json|csv|timeline)
@@ -365,7 +401,9 @@ assert_run_alias
 # We assert on the bash route specifically (export routes through bash); stdout
 # stays pure machine output and stderr carries no 'is now' note.
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     for fmt in json csv timeline; do
         e_err="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" export "$fmt" ) 2>&1 1>/dev/null)"
         if echo "$e_err" | grep -qF "is now 'loki report export'"; then
@@ -381,14 +419,16 @@ assert_run_alias
     else
         log_fail "export markdown: pointer still fires" "note missing for human-readable format"
     fi
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 5: `trust detail` accepts the flag in any position and both
 # orderings produce byte-identical stdout on the current route. (bin/loki routes
 # any 'detail' token to bash; cmd_trust strips 'detail' flag-anywhere.)
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     o1="$(run_loki trust --json detail 2>/dev/null | normalize)"
     o2="$(run_loki trust detail --json 2>/dev/null | normalize)"
     c1=$?
@@ -399,11 +439,14 @@ assert_run_alias
     else
         log_fail "trust detail: flag-anywhere parity" "stdout_match=$([ "$o1" = "$o2" ] && echo yes || echo no) rc1=$rc1 rc2=$rc2"
     fi
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # Help-structure assertions
 # ---------------------------------------------------------------------------
+launch_slot
+{
+unit_init
 echo -e "${YELLOW}=== help-structure assertions (route: $ROUTE) ===${NC}"
 
 HELP_OUT="$(run_loki help 2>&1 | sed 's/\x1b\[[0-9;]*m//g')"
@@ -484,6 +527,7 @@ for tok in stats metrics cost export share dogfood kpis trust-metrics serve open
         log_fail "help aliases: lists '$tok'" "row missing from 'loki help aliases'"
     fi
 done
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 12: the bun-parity text normalizer in scripts/local-ci.sh must
@@ -492,7 +536,9 @@ done
 # dashboard is up. We assert the exact sed deletion: a Dashboard line (with an
 # ANSI color prefix, as cmd_status / status.ts emit it) is removed while other
 # lines survive. This guards against the local-ci sed being dropped/altered.
+launch_slot
 {
+unit_init
     fixture="$(printf '%bDashboard:%b http://127.0.0.1:57374/\nPhase: build\nIteration: 2\n' '\033[0;36m' '\033[0m')"
     stripped="$(printf '%s\n' "$fixture" | sed -E "/Dashboard:.*http/d")"
     if ! printf '%s' "$stripped" | grep -q "Dashboard:" \
@@ -508,7 +554,7 @@ done
     else
         log_fail "parity normalizer rule present in local-ci.sh" "rule missing"
     fi
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 6: `report dogfood` must degrade HONESTLY when
@@ -516,7 +562,9 @@ done
 # npm tarball). We force the absent path by pointing SKILL_DIR at a fixture dir
 # that lacks scripts/. Contract: exit 0, an honest message on stderr (human
 # mode), and a structured {"available": false} payload on stdout (--json).
+launch_slot
 {
+unit_init
     DF_SKILL="$(mktemp -d "${TMPDIR:-/tmp}/loki-dogfood-noscript.XXXXXX")"
     # human mode
     d_out="$(SKILL_DIR="$DF_SKILL" env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" report dogfood 2>"$DF_SKILL/d.err")"; d_code=$?
@@ -536,14 +584,16 @@ done
         log_fail "report dogfood degrade (--json)" "code=$dj_code json=$dj_out"
     fi
     rm -rf "$DF_SKILL"
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.31 finding 7: kpis is Bun-only. On the bash route it must NOT say the
 # generic "Unknown command" (which contradicts help listing it); it must state
 # the Bun requirement honestly (and emit {"available": false} for --json).
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     k_err="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" kpis ) 2>&1 1>/dev/null)"
     if echo "$k_err" | grep -qi "requires the Bun runtime" \
         && ! echo "$k_err" | grep -qi "Unknown command"; then
@@ -557,7 +607,7 @@ done
     else
         log_fail "kpis --json (bash route)" "got: $k_json"
     fi
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.32 finding 1 (HIGH, token-hijack): `kpis` is the report subcommand ONLY
@@ -569,7 +619,9 @@ done
 # must behave exactly as on main -- exit 0 and create a file named `kpis`. Both
 # routes (the suite runs twice: ROUTE=bun and ROUTE=bash).
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     # 1a. Canonical kpis orderings still resolve to the KPI handler. On the bash
     # route both print the honest Bun-requirement message; on the Bun route both
     # render the snapshot. Either way they must NOT fall through to the legacy
@@ -607,7 +659,7 @@ done
         fi
         rm -rf "$hj"
     done
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.32 finding 1: main-parity proof for `report export json kpis`. We extract
@@ -619,7 +671,9 @@ done
 # too, so the exported file is route-invariant. Skipped gracefully if git/main
 # are unavailable (e.g. a shallow CI checkout).
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     if git -C "$REPO_ROOT" rev-parse --verify -q main >/dev/null 2>&1; then
         MAIN_LOKI="$(mktemp "${TMPDIR:-/tmp}/loki-main-XXXXXX.sh")"
         if git -C "$REPO_ROOT" show main:autonomy/loki > "$MAIN_LOKI" 2>/dev/null && [ -s "$MAIN_LOKI" ]; then
@@ -651,7 +705,7 @@ done
     else
         log_pass "report export json kpis: main-parity SKIPPED (no 'main' ref in this checkout)"
     fi
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.32 finding 2 (MEDIUM, --json first-arg-only): on the bash route the
@@ -661,7 +715,9 @@ done
 # deprecated `kpis` alias and the canonical `report kpis` forms. Bash route
 # specifically (the helper only runs there).
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     for argv in "kpis --quiet --json" "report kpis -q --json"; do
         # shellcheck disable=SC2086
         j_out="$( ( cd "$WORKDIR" && env LOKI_LEGACY_BASH=1 bash "$LOKI_SHIM" $argv ) 2>/dev/null)"
@@ -671,7 +727,7 @@ done
             log_fail "$argv (bash route): --json flag-anywhere" "stdout: $j_out"
         fi
     done
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
 # v7.32 finding 4 (LOW, error-channel parity): the consolidated noun family
@@ -679,7 +735,6 @@ done
 # modernize) already do; this asserts the migrated siblings (memory, report)
 # now match -- error text on stderr, empty stdout, exit 1 -- on both routes.
 # ---------------------------------------------------------------------------
-{
     assert_err_channel() {
         local label="$1"; shift
         local fresh; fresh="$(mktemp -d "${TMPDIR:-/tmp}/loki-errchan.XXXXXX")"
@@ -693,12 +748,11 @@ done
         fi
         rm -rf "$fresh"
     }
-    assert_err_channel "memory bogus" memory bogus
-    assert_err_channel "report bogus" report bogus
+    run_unit assert_err_channel "memory bogus" memory bogus
+    run_unit assert_err_channel "report bogus" report bogus
     # The new nouns are the reference (already stderr); assert they still are.
-    assert_err_channel "analyze bogus" analyze bogus
-    assert_err_channel "modernize bogus" modernize bogus
-}
+    run_unit assert_err_channel "analyze bogus" analyze bogus
+    run_unit assert_err_channel "modernize bogus" modernize bogus
 
 # ---------------------------------------------------------------------------
 # v7.32 finding 3 (MEDIUM, stale-dist inversion): bin/loki must prefer the src
@@ -709,7 +763,9 @@ done
 # real tree; per the task's sanctioned fallback we pin the guard with a static
 # assertion that the `-nt` freshness check is present in the dist-preference arm.
 # ---------------------------------------------------------------------------
+launch_slot
 {
+unit_init
     # Pattern starts with a non-dash char so it is never mis-parsed as a flag
     # (some environments alias grep to ugrep, which reads a leading '-nt' as the
     # -t option). Matches the `src/cli.ts" -nt "..dist/loki.js"` freshness arm.
@@ -718,9 +774,18 @@ done
     else
         log_fail "bin/loki freshness guard" "the '-nt' dist-vs-src check is missing from bin/loki"
     fi
-}
+} > "$UO" 2>&1 &
 
 # ---------------------------------------------------------------------------
+wait
+_empty_units=0
+for _uf in "$UNITS_DIR"/out.*; do
+    [ -s "$_uf" ] || _empty_units=$((_empty_units+1))
+    cat "$_uf"
+done
+PASS="$(cat "$UNITS_DIR"/out.* | grep -ac '\[PASS\]' || true)"
+FAIL="$(cat "$UNITS_DIR"/out.* | grep -ac '\[FAIL\]' || true)"
+FAIL=$((FAIL + _empty_units))
 echo ""
 echo "===================================================="
 echo -e "Results (route $ROUTE): ${GREEN}${PASS} passed${NC}, ${RED}${FAIL} failed${NC}"
