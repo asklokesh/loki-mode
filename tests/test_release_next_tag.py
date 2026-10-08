@@ -314,6 +314,15 @@ class PromoteGateBehavior(unittest.TestCase):
         runs = [self._run_obj(2, "success", self.A), self._run_obj(1, "success", self.A)]
         self.assertPass(self._n(self.A, runs, jobs={"2": self._SKIPPED}))
 
+    def test_dedupe_skipped_suite_with_green_gitleaks_job_stays_unmeasured(self):
+        # The nightly gitleaks backstop job must not read as a measurement: a
+        # dedupe run (Full suite skipped) whose gitleaks job is green, newer
+        # than a red run at the same SHA, still blocks.
+        runs = [self._run_obj(2, "success", self.A), self._run_obj(1, "failure", self.A)]
+        jobs = [{"name": "Full suite (backstop)", "conclusion": "skipped"},
+                {"name": "gitleaks full history (backstop)", "conclusion": "success"}]
+        self.assertBlock(self._n(self.A, runs, jobs={"2": jobs}))
+
     def test_only_skipped_dedupe_runs_block(self):
         self.assertBlock(self._n(self.A, [self._run_obj(2, "success", self.A)], jobs={"2": self._SKIPPED}))
 

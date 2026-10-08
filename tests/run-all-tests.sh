@@ -1375,6 +1375,7 @@ run_test "local-ci gitleaks fast-tier step (scoped scan, skip-not-pass, literal 
 # and warns (never blocks) on a .gitleaksignore addition. SKIP not pass when
 # the binary is absent.
 run_test "security-audit.yml gitleaks config isolation (refuse config change, base-config scan, gitleaksignore warning)" "$SCRIPT_DIR/test-security-audit-config.sh"
+run_test "main push scans previous-tag..SHA, nightly backstop scans full history (GITLEAKS-INCR)" "timeout -k 10 120 bash $SCRIPT_DIR/test-gitleaks-incremental.sh"
 
 # E-94: local-ci fast-tier hermetic changed-tests scan (re-runs every changed
 # tests/*.sh, tests/*.py, loki-ts/tests/** under env -i with no gh/network,
