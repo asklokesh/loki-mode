@@ -1,6 +1,6 @@
 // SARIF-1: findings to SARIF 2.1.0. Golden shape, required fields, NOT PROVEN as note, stable fingerprints, redaction.
 import { describe, expect, test } from "bun:test";
-import { findingFingerprint, toSarif, type Finding } from "../../src/features/sarif.ts";
+import { findingFingerprint, sarifUri, toSarif, type Finding } from "../../src/features/sarif.ts";
 
 const TOKEN = "ghp_" + "a1B2c3D4e5F6g7H8i9J0k1L2m3N4";
 
@@ -53,5 +53,25 @@ describe("toSarif", () => {
     const out = JSON.stringify(toSarif(leaky));
     expect(out).not.toContain(TOKEN);
     expect(out).not.toContain("a1B2c3D4e5F6");
+  });
+});
+
+describe("artifact URIs", () => {
+  const loc = (file: string, root?: string) => (toSarif([{ kind: "wall", message: "m", file }], "0", root) as any).runs[0].results[0].locations;
+
+  test("absolute path under repoRoot becomes repo-relative", () => {
+    expect(loc("/Users/me/repo/src/a.ts", "/Users/me/repo")[0].physicalLocation.artifactLocation.uri).toBe("src/a.ts");
+  });
+  test("absolute path outside repoRoot is omitted, not leaked", () => {
+    expect(loc("/Users/me/other/a.ts", "/Users/me/repo")).toBeUndefined();
+    expect(JSON.stringify(toSarif([{ kind: "wall", message: "m", file: "/Users/me/x.ts" }]))).not.toContain("/Users/me");
+  });
+  test("backslashes and spaces are normalized and encoded; leading ./ dropped", () => {
+    expect(sarifUri("src\\b c.ts")).toBe("src/b%20c.ts");
+    expect(sarifUri("./src/a.ts")).toBe("src/a.ts");
+  });
+  test("parent traversal is omitted", () => {
+    expect(loc("../../etc/passwd")).toBeUndefined();
+    expect(sarifUri("src/../../x")).toBeNull();
   });
 });

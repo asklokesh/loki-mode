@@ -23,6 +23,22 @@ const RULES: Record<FindingKind, { id: string; name: string; level: "error" | "n
 
 const SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json";
 
+// Repo-relative, forward-slash, percent-encoded URI; null when the path is outside the repo or unusable.
+export function sarifUri(file: string, repoRoot?: string): string | null {
+  let p = file.replace(/\\/g, "/");
+  if (repoRoot) {
+    const root = repoRoot.replace(/\\/g, "/").replace(/\/+$/, "");
+    if (root && p.startsWith(root + "/")) p = p.slice(root.length + 1);
+  }
+  const parts: string[] = [];
+  for (const seg of p.split("/")) {
+    if (seg === "" || seg === ".") continue;
+    parts.push(seg);
+  }
+  if (p.startsWith("/") || /^[A-Za-z]:/.test(p) || parts.length === 0 || parts.includes("..")) return null;
+  return parts.map((seg) => encodeURIComponent(seg)).join("/");
+}
+
 const sha = (s: string): string => createHash("sha256").update(s).digest("hex");
 
 // Line numbers are excluded on purpose so the fingerprint survives line shifts.
@@ -31,7 +47,7 @@ export function findingFingerprint(f: Finding): string {
   return sha([RULES[f.kind].id, f.file ?? "", basis.trim().replace(/\s+/g, " ")].join("\0"));
 }
 
-export function toSarif(findings: Finding[], toolVersion = "0.0.0"): Record<string, unknown> {
+export function toSarif(findings: Finding[], toolVersion = "0.0.0", repoRoot?: string): Record<string, unknown> {
   const used = [...new Set(findings.map((f) => f.kind))].map((k) => RULES[k]);
   const results = findings.map((f) => {
     const rule = RULES[f.kind];
@@ -43,8 +59,9 @@ export function toSarif(findings: Finding[], toolVersion = "0.0.0"): Record<stri
       message: { text },
       partialFingerprints: { "lokiFinding/v1": findingFingerprint(f) },
     };
-    if (f.file) {
-      const physicalLocation: Record<string, unknown> = { artifactLocation: { uri: f.file } };
+    const uri = f.file ? sarifUri(f.file, repoRoot) : null;
+    if (uri) {
+      const physicalLocation: Record<string, unknown> = { artifactLocation: { uri } };
       if (f.line && f.line > 0) physicalLocation.region = { startLine: f.line };
       result.locations = [{ physicalLocation }];
     }
