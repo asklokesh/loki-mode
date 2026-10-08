@@ -8,14 +8,24 @@ import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKey
 import { chmodSync, existsSync, readdirSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
-import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { discardIfSatisfied } from "../../e10ext/discard.ts"; import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts"; import { flagOutsideScope } from "../../e10ext/scope.ts"; import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
+import { assertDeltaNotes } from "../../e10ext/assert_delta.ts";
+import { discardIfSatisfied } from "../../e10ext/discard.ts";
+import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts";
+import { flagOutsideScope } from "../../e10ext/scope.ts";
+import { RECEIPT_SIGNER_BASENAME } from "../../util/receipt_signer.ts";
 import { recordRunVerdict } from "../../util/pr_lessons.ts";
-import { run } from "../../util/shell.ts"; import { sealEvidence } from "../../features/visual_evidence.ts";
-import { isTestFile } from "../testmap.ts"; import { crossReview, minVerdict } from "./xreview.ts";
+import { run } from "../../util/shell.ts";
+import { sealEvidence } from "../../features/visual_evidence.ts";
+import { isTestFile } from "../testmap.ts";
+import { crossReview, minVerdict } from "./xreview.ts";
 import { STAGE_BUDGETS } from "../types.ts";
-import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts"; import { receiptBlock, recordRun } from "../../runner/router/cost_preview.ts"; import { routerEnabled } from "../../runner/router/flag.ts"; import { sumResultCosts } from "../cost.ts";
+import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines } from "../../runner/router/route_block.ts";
+import { receiptBlock, recordRun } from "../../runner/router/cost_preview.ts";
+import { routerEnabled } from "../../runner/router/flag.ts";
+import { sumResultCosts } from "../cost.ts";
 import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASON } from "../../util/check_result.ts";
-import { type ContractSnapshot, sealContract } from "../../features/contract.ts"; import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
+import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
+import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 
 /** Deferred to deep verify, so always NOT PROVEN at seal time. */
