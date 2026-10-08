@@ -2,7 +2,7 @@
 /**
  * Minimal HTTP API for loki-mode
  * Zero npm dependencies - uses only Node.js built-ins
- * Usage: node api-examples/node-api.js
+ * Usage: node examples/api/node-api.js
  */
 
 const http = require('http');

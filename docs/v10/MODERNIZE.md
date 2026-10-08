@@ -236,7 +236,7 @@ The report never states more than the equivalence data proves. It is sealed and 
 **COBOL to Java**
 - It needs a GnuCOBOL or mainframe runtime and file or copybook I/O capture. It also has no in-process boundary, and Legacy-Bench scores run 16.9-42.5% (V10-RESEARCH section 7).
 - The research gives a method (witness search, symbolic execution plus delta debugging) but no tooling we have.
-- It starts after the first two targets meet the section 12 gates.
+- It starts after the first two targets meet the gates in section 12.
 
 **AngularJS to React** follows COBOL. It needs browser-level capture (Playwright traces) as the oracle.
 

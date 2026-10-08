@@ -262,7 +262,7 @@ Misses: pub-click-3059 (hidden tests failed: wrong metavar bracketing), pub-huma
 
 pub-more-itertools-1192 through the E-14 glue entry, real claude, --no-pr: 30s wall (intake 0s, plan 16s, implement 12s, verify 3s, commit and seal under 1s), hidden test passes, $0.4486 over 2 sessions (plan $0.2264, implement $0.2223), verdict PARTIAL only because ruff is not installed. Raw claude on the same task: 15s, $0.1290. The planner session costs as much as the implement session.
 
-## Loki 10 gate report, small tier (2026-09-28, D30; v10.0.0 decision)
+## Loki 10 report on the gates, small tier (2026-09-28, D30; v10.0.0 decision)
 
 All arms on claude-opus-5-5, 29 small tasks with hidden tests, fresh clone per run, provider-sourced cost only. D30 targets vs raw: completion 96.5% or higher, cost per completed task $0.118 or lower, time to a correct result at most raw.
 
@@ -279,7 +279,7 @@ All arms on claude-opus-5-5, 29 small tasks with hidden tests, fresh clone per r
 - Lean-session evidence, 5 tasks (EV-8 D/E, not the full arm): opus lean 4/5 at $0.1571 per completed, p50 28s; sonnet lean 4/5 at $0.1519, p50 27.5s; raw opus on the same 5: 5/5, $0.2161, p50 41s (~/loki-ci-logs/ev8r-{D,E}/results.jsonl). The lean small path is not the default yet (E-64 in rework).
 - Medium and large tiers: not built (EV-11 3 of 15 verified, EV-12 in rework). No "2-5x" claim.
 
-## Loki 10 gate report, medium tier (upstream tests, deletion-mutant audited, not shortcut audited) (2026-09-28, D38; EV-14)
+## Loki 10 report on the gates, medium tier (upstream tests, deletion-mutant audited, not shortcut audited) (2026-09-28, D38; EV-14)
 
 Evidence note (Chief of Staff, 18:00Z): the per-run result files (eval/loki10/results/ev14-medium-{raw,v10}-r{1,2}/results.jsonl, gitignored) were lost when the EV-14 worktree was force-removed in the 17:36Z pruning incident (PROGRESS.md, E-96). The table below is the run agent's report from those files before removal (commit 0afef9e4); it cannot be re-audited. EV-15 re-runs the tier with results kept outside any worktree.
 

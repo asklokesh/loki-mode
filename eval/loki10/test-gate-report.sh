@@ -2,7 +2,7 @@
 #===============================================================================
 # eval/loki10/test-gate-report.sh
 #
-# E-33: the EV-6 gate report generator (gate_report.py) against the static
+# E-33: the gate-report generator for EV-6 (gate_report.py) against the static
 # result fixtures in fixtures/gate/. Never runs an arm.
 # Legs:
 #   1. all-met fixture -> met marker with n and the results sha256 in BOTH

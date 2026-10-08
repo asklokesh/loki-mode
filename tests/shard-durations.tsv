@@ -490,6 +490,7 @@ first_run_blocked signal (opt-out silent, enum-clamped)	3
 a green doctor never recommends a command that exits 2	0
 analytics opt-in has a writer (the funnel can fire)	0
 help discoverability (every command reachable)	29
+no help topic names a removed surface or a version stamp	10
 assess runtime detection (declared, never guessed)	0
 provider model scoping (global tier var must not leak)	0
 model catalog is a single source of truth	2

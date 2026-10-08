@@ -43,7 +43,7 @@ skill-name/
 ### 1. Create Skill Directory
 
 ```bash
-mkdir -p agent-skills/my-skill/{scripts,references,examples}
+mkdir -p examples/agent-skills/my-skill/{scripts,references,examples}
 ```
 
 ### 2. Write SKILL.md
@@ -81,7 +81,7 @@ Step-by-step guidance for agents:
 ### 3. Add Scripts (Optional)
 
 ```bash
-# agent-skills/my-skill/scripts/automation.sh
+# examples/agent-skills/my-skill/scripts/automation.sh
 #!/bin/bash
 # Automation script called by agents
 ```
@@ -99,7 +99,7 @@ Step-by-step guidance for agents:
 
 **STATUS: PROPOSED PATTERN, NOT IMPLEMENTED.** There is no runtime loader.
 `discover_agent_skills()` / `scan_skills()` do not exist anywhere in this
-repository (verified by grep), and `agent-skills/` is deliberately NOT in
+repository (verified by grep), and `examples/agent-skills/` is deliberately NOT in
 `package.json` files[], so it ships in no npm, Docker, or Homebrew artifact.
 Nothing reads these SKILL.md files on any route.
 
@@ -112,7 +112,7 @@ A loader would discover skills like this:
 
 ```python
 def discover_agent_skills():
-    """Scan agent-skills/ for available skills."""
+    """Scan examples/agent-skills/ for available skills."""
     skills = []
     skills_dir = Path(__file__).parent / "agent-skills"
 
