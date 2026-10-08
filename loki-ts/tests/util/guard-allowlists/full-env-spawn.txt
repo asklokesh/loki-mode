@@ -3,9 +3,10 @@
 # UTILITY = short read-only or operator-invoked tool call (git/ls/ps/lsof/gh probe), no model session; SWEEP = provider/runner sites to convert to tokenFreeEnv (FC-40 sibling sweep follow-up).
 loki-ts/src/cli/completions.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/commands/doctor.ts@10 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/commands/issues_run.ts@1 | UTILITY: operator-invoked read-only gh issue and pr listing with the user env, as a direct loki start --pr would have; no model session
 loki-ts/src/commands/memory.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/commands/proof.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
-loki-ts/src/commands/queue.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/commands/queue.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/commands/wiki.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/council/voter_agents.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
 loki-ts/src/e10ext/assert_delta.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
