@@ -206,8 +206,45 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d["sh
 check emit-empty-when-no-loss $? "$(cat "$T/empty.json")"
 
 # 5. usage errors
-bash "$B9" --emit-shape-defaults "$T/x.json" > /dev/null 2>&1; [ $? -eq 2 ]; check emit-needs-results $? "expected rc 2"
-bash "$B9" --bogus > /dev/null 2>&1; [ $? -eq 2 ]; check bad-flag-rc2 $? "expected rc 2"
+bash "$B9" --emit-shape-defaults "$T/x.json" > /dev/null 2>&1; RCU=$?; check emit-needs-results "$(( RCU == 2 ? 0 : 1 ))" "expected rc 2"
+bash "$B9" --bogus > /dev/null 2>&1; RCU=$?; check bad-flag-rc2 "$(( RCU == 2 ? 0 : 1 ))" "expected rc 2"
+
+# 6. R1-19 measurement: usage fields, --repeat, NOT RECORDED, router_cost_ratio and gate_1_05
+cat > "$T/fake-loki-usage" <<'FAKE'
+#!/usr/bin/env bash
+sed -i.bak 's/i = 1/i = 0/' sum.js && rm -f sum.js.bak
+mkdir -p .loki/metrics
+if [ "${LOKI_ROUTER:-}" = 1 ] && [ -z "${LOKI_ROUTER_ADVISOR:-}" ]; then
+    printf '{"total_cost_usd":%s,"input_tokens":100,"output_tokens":50,"cache_read_tokens":1000,"cache_creation_tokens":200,"advisor_calls":0}\n' "${FAKE_ROUTER_USD:-0.06}" > .loki/metrics/result-cost-1.json
+elif [ "${LOKI_ROUTER:-}" = 0 ]; then
+    printf '{"total_cost_usd":0.05,"input_tokens":90,"output_tokens":40}\n' > .loki/metrics/result-cost-1.json
+else
+    printf '{"total_cost_usd":0.05,"input_tokens":90,"output_tokens":40,"cache_read_tokens":900,"cache_creation_tokens":0}\n' > .loki/metrics/result-cost-1.json
+fi
+FAKE
+chmod +x "$T/fake-loki-usage"
+env -u LOKI_RUN_TMP B9_LOKI="$T/fake-loki-usage" bash "$B9" --dry-run --repeat 3 --results-out "$T/u.tsv" > "$T/u.txt" 2> "$T/u.err"
+check usage-repeat-rc $? "$(cat "$T/u.err")"
+UR=$(grep -c 'b9-scoreboard arm ' "$T/u.txt")
+check repeat-3-gives-12-rows "$(( UR == 12 ? 0 : 1 ))" "rows=$UR"
+grep -q 'arm 2 router .*usd=0.06 .*cache_read=1000 cache_create=200 fresh_in=100 out=50 advisor_calls=0 |' "$T/u.txt"; check row-has-usage-fields $? "$(grep 'arm 2' "$T/u.txt")"
+grep -q 'arm 3 no-router .*cache_read=NOT RECORDED cache_create=NOT RECORDED fresh_in=90 out=40 advisor_calls=NOT RECORDED |' "$T/u.txt"; check missing-fields-not-recorded-row $? "$(grep 'arm 3' "$T/u.txt")"
+grep -q 'arm 1 raw .*cache_read=NOT RECORDED' "$T/u.txt"; check raw-stub-without-usage-not-recorded $? "$(grep 'arm 1' "$T/u.txt")"
+grep -q 'summary arm 2 router usd: mean=0.0600 min=0.0600 max=0.0600 (n=3 of 3 runs)' "$T/u.txt"; check summary-mean-min-max $? "$(grep summary "$T/u.txt")"
+grep -q 'summary arm 3 no-router cache_read: NOT RECORDED (0 of 3 runs)' "$T/u.txt"; check summary-not-recorded-never-zero $? "$(grep 'summary arm 3' "$T/u.txt")"
+grep -q '^router_cost_ratio=1.2000$' "$T/u.txt" && grep -q '^gate_1_05=FAIL$' "$T/u.txt"; check ratio-1.2-fails-gate $? "$(grep -E 'ratio|gate' "$T/u.txt")"
+env -u LOKI_RUN_TMP FAKE_ROUTER_USD=0.0525 B9_LOKI="$T/fake-loki-usage" bash "$B9" --dry-run --repeat 3 > "$T/u2.txt" 2>&1
+grep -q '^router_cost_ratio=1.0500$' "$T/u2.txt" && grep -q '^gate_1_05=PASS$' "$T/u2.txt"; check ratio-1.05-passes-gate $? "$(grep -E 'ratio|gate' "$T/u2.txt")"
+bash "$B9" --summarize "$T/u.tsv" > "$T/u3.txt"
+check summarize-only-rc $? "rc"
+grep -q '^gate_1_05=FAIL$' "$T/u3.txt"; check summarize-only-gate $? "$(cat "$T/u3.txt")"
+# n=1 per arm and unrecorded dollars are FAIL with NOT RECORDED, never a false green
+printf '2\tx\t1\t1\t10\t0.01\ts\t1\t1\t1\t1\t0\n3\tx\t1\t1\t10\t0.05\ts\t1\t1\t1\t1\t0\n' > "$T/n1.tsv"
+bash "$B9" --summarize "$T/n1.tsv" > "$T/n1.txt"
+grep -q '^router_cost_ratio=NOT RECORDED$' "$T/n1.txt" && grep -q '^gate_1_05=FAIL$' "$T/n1.txt"; check n1-is-not-a-pass $? "$(cat "$T/n1.txt")"
+for r in 1 2 3; do printf '2\tx\t%s\t1\t10\tunknown\ts\n3\tx\t%s\t1\t10\t0.05\ts\n' "$r" "$r"; done > "$T/unk.tsv"
+bash "$B9" --summarize "$T/unk.tsv" > "$T/unk.txt"
+grep -q 'summary arm 2 router usd: NOT RECORDED' "$T/unk.txt" && grep -q '^gate_1_05=FAIL$' "$T/unk.txt"; check unknown-usd-not-zero-not-green $? "$(cat "$T/unk.txt")"
 
 echo "b9-scoreboard tests: $FAILS failure(s)"
 [ "$FAILS" -eq 0 ]
