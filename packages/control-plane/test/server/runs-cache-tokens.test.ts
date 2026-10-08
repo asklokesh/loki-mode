@@ -51,3 +51,27 @@ test("complete run: tokenSessions equals totalSessions and the cost route carrie
   expect("token_sessions_total" in j.totals).toBe(false);
   expect(j.rows[0] !== undefined && "token_sessions" in j.rows[0]).toBe(false);
 });
+
+// R5-1: the cost events come from the REAL engine10 session runner. One session has a result-cost file, one ends with none
+// (child exits 1); the second must reach the control plane without token keys, so the run reads "partial: 1 of 2", never a zero.
+test("real createSessionRunner: a session with no result-cost file gives token_sessions 1 of 2", async () => {
+  const { createSessionRunner } = await import("../../../../loki-ts/src/engine10/session.ts");
+  const { mkdtempSync, mkdirSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const d = mkdtempSync(join(tmpdir(), "cp-r51-"));
+  try {
+    const lokiRoot = join(d, ".loki");
+    mkdirSync(join(lokiRoot, "metrics"), { recursive: true });
+    writeFileSync(join(lokiRoot, "metrics", "result-cost-e10-a.json"), JSON.stringify({ total_cost_usd: 0.5, input_tokens: 10, output_tokens: 20, session_id: "A" }));
+    const emitted: Record<string, unknown>[] = [];
+    const run = (id: string, cmd: string) => createSessionRunner({ provider: "claude", lokiRoot, childCommand: ["bash", ["-c", cmd]], emit: (t: string, _s: unknown, data: Record<string, unknown>) => { if (t === "cost") emitted.push(data); } }).run({ stage: "implement", brief: "x", tier: "dev", iterationId: id, limitS: 30, signal: new AbortController().signal, cwd: d } as never);
+    await run("e10-a", "exit 0");
+    await run("e10-b", "exit 1");
+    expect(emitted.map((e) => e["session_id"])).toEqual(["e10-a", "e10-b"]);
+    const { row } = seed(emitted);
+    expect(row?.totalSessions).toBe(2);
+    expect(row?.tokenSessions).toBe(1);
+    expect(row?.inputTokens).toBe(10);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});

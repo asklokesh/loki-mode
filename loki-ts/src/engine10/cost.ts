@@ -201,6 +201,11 @@ export function nextEfficiencyIteration(lokiRoot: string): number {
   return max + 1;
 }
 
+// The one predicate for "this session's usage is not recorded": its efficiency record and its cost event both omit every token key.
+export function tokensUnmeasured(cost: Pick<CostResult, "tokens_measured" | "records">): boolean {
+  return cost.tokens_measured !== undefined || cost.records?.resume === "ambiguous";
+}
+
 // Writes one efficiency record for a provider session and returns its N. cost_usd is omitted (never written as 0)
 // when the session had no provider-reported dollars -- cost-summary.py then reads it as unmeasured, never as free.
 export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionInfo, cost: CostResult, costSource = "provider"): number {
@@ -219,7 +224,7 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
   }
   // A session left out of the token sums (ambiguous resume) writes NO token keys: every reader treats a record without them as
   // unmeasured, where a written 0 would read as a measured zero.
-  if (cost.tokens_measured) {
+  if (tokensUnmeasured(cost)) {
     rec.tokens_measured = false; // explicit marker the efficiency readers key on (kpis, stats, efficiency_cost.py, dashboard)
   } else {
     rec.input_tokens = cost.input_tokens;

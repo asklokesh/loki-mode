@@ -3,7 +3,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { recordSessionCost, resultCostPath, UNMETERED } from "./cost.ts";
+import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
@@ -135,7 +135,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
   const c = status === "killed" && !existsSync(dest) ? recordPartialStreamCost(cfg.lokiRoot, opts.iterationId, info) : recordSessionCost(cfg.lokiRoot, opts.iterationId, info);
   const ambiguous = c.records?.resume === "ambiguous"; // FIX-RESUME: this resumed session's total may include its predecessor, so its figures are not emitted (NOT RECORDED), never summed on trust
-  const unmeasured = ambiguous || c.tokens_measured !== undefined; // same predicate as writeEfficiencyRecord: a session without usage emits no token keys, so the control plane never reads a missing session as 0
+  const unmeasured = tokensUnmeasured(c); // the predicate writeEfficiencyRecord shares: a session without usage emits no token keys, so the control plane never reads a missing session as 0
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, ...(ambiguous ? { resume: "ambiguous" } : {}), ...(unmeasured ? {} : { input_tokens: c.input_tokens, output_tokens: c.output_tokens,
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), source: c.unmetered ? UNMETERED : c.source || "not measured", ...routedCostFields(dest),

@@ -201,6 +201,23 @@ describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
       expect(rec.tokens_measured).toBe(false);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("R5-2: a killed session with no partial-usage file writes an efficiency record with NO token keys and tokens_measured:false, never a measured zero", () => {
+    const d = tmpCheckout();
+    try {
+      const lokiRoot = join(d, ".loki");
+      mkdirSync(join(lokiRoot, "metrics"), { recursive: true });
+      const c = recordPartialStreamCost(lokiRoot, "e10-k", { status: "killed", durationMs: 5, model: "m" });
+      expect(c.tokens_measured).toEqual({ k: 0, n: 1 });
+      const rec = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-1.json"), "utf8"));
+      for (const k of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "cost_usd"]) expect(k in rec).toBe(false);
+      expect(rec.tokens_measured).toBe(false);
+      // with a partial file the streamed usage is still recorded as measured
+      writeFileSync(partialUsagePath(lokiRoot, "e10-k2"), JSON.stringify({ input_tokens: 7, output_tokens: 3, model: "claude-sonnet-5-5" }));
+      const m = recordPartialStreamCost(lokiRoot, "e10-k2", { status: "killed", durationMs: 5, model: "m" });
+      expect(m.tokens_measured).toBeUndefined();
+      expect(JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-2.json"), "utf8")).input_tokens).toBe(7);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
   test("R5-3: the FC-19 conflict-resume ('-r' iteration) at or above its predecessor comes out ambiguous and labelled", () => {
     const d = tmpCheckout();
     try {

@@ -49,6 +49,8 @@ test("migrating a db at 0004 keeps seeded runs, events and sources rows byte-equ
   const { sqlite } = openDb(path);
   const after = [dump(sqlite, "sources", "id"), dump(sqlite, "runs", "run_id"), dump(sqlite, "events", "seq"), dump(sqlite, "actions", "id")];
   expect(after).toEqual(before);
+  // the dump above ignores token_sessions, so pin what it hides: a pre-0006 run stays NULL (unknown), never backfilled to 0
+  expect(sqlite.query("select token_sessions from runs").all()).toEqual([{ token_sessions: null }]);
   expect(before[2]).toContain("\"seq\":2");
   expect(cols(sqlite, "ask_threads").length).toBeGreaterThan(0);
   sqlite.close();
