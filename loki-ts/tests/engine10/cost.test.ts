@@ -119,6 +119,43 @@ describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
       expect(costTotalsOf(c).tokensMeasured).toEqual({ k: 1, n: 2 });
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("CH-03 chain: implement resumes plan's session; an equal-or-higher total is ambiguous, a lower one is separate", () => {
+    const rec = (usd: number, id: string, from?: string) => ({ total_cost_usd: usd, input_tokens: 10, output_tokens: 1, session_id: id, ...(from ? { resumed_from: from } : {}) });
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", rec(0.3, "P"));
+      write(d, "impl", rec(0.9, "P2", "P")); // higher than plan: could be cumulative
+      const c = sumResultCosts(d, ["plan", "impl"]);
+      expect(c.usd).toBeNull();
+      expect(c.missing).toEqual(["impl"]);
+      expect(c.records?.resume).toBe("ambiguous");
+      write(d, "impl", rec(0.1, "P2", "P")); // lower than plan: provably a separate total
+      const s = sumResultCosts(d, ["plan", "impl"]);
+      expect(s.usd).toBeCloseTo(0.4, 10);
+      expect(s.records?.resume).toBe("separate");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("CH-03 chain: each fix round resumes the session before it (plan, implement, fix1, fix2)", () => {
+    const rec = (usd: number, id: string, from?: string) => ({ total_cost_usd: usd, input_tokens: 10, output_tokens: 1, session_id: id, ...(from ? { resumed_from: from } : {}) });
+    const d = tmpCheckout();
+    try {
+      write(d, "plan", rec(0.5, "P"));
+      write(d, "impl", rec(0.2, "I", "P"));      // separate (below plan)
+      write(d, "fix1", rec(0.1, "F1", "I"));     // separate (below implement)
+      write(d, "fix2", rec(0.15, "F2", "F1"));   // 0.15 >= fix1's 0.1: could be cumulative, so ambiguous
+      const c = sumResultCosts(d, ["plan", "impl", "fix1", "fix2"]);
+      expect(c.usd).toBeNull();
+      expect(c.missing).toEqual(["fix2"]);
+      expect(c.records?.resume).toBe("ambiguous");
+      expect(c.tokens_measured).toEqual({ k: 3, n: 4 });
+      expect(c.measuredCount).toBe(3);
+      write(d, "fix2", rec(0.05, "F2", "F1"));   // below fix1: separate, the whole chain sums
+      const s = sumResultCosts(d, ["plan", "impl", "fix1", "fix2"]);
+      expect(s.usd).toBeCloseTo(0.85, 10);
+      expect(s.records?.resume).toBe("separate");
+      expect(s.tokens_measured).toBeUndefined();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
   test("a complete run carries no tokens_measured", () => {
     const d = tmpCheckout();
     try {
