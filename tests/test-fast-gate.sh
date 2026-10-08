@@ -224,5 +224,20 @@ if printf '%s\n' "$fx_out" | grep -q 'test-fx-basename.sh'; then
     bad "FC-73: a suite naming only the basename package.json was selected for a nested manifest"
 else ok "FC-73: nested manifest selects by exact path only"; fi
 
+# FC-75 (L4): a root requirements-test.txt must still select suites that name its exact path (only root VERSION
+# and package.json skip the grep); L3: a candidate whose name is only a substring of a registered suite's name
+# (xtest-fx-sub.sh registered, test-fx-sub.sh not) has no baseline and must be dropped.
+printf '# requirements-test.txt\n' >"$T/fx/tests/test-fx-req.sh"
+printf 'run_test "r" "$SCRIPT_DIR/test-fx-req.sh"\n' >>"$T/fx/tests/run-all-tests.sh"
+printf '# requirements-test.txt\n' >"$T/fx/tests/test-fx-sub.sh"
+printf 'run_test "s" "$SCRIPT_DIR/xtest-fx-sub.sh"\n' >>"$T/fx/tests/run-all-tests.sh"
+fx_req="$( cd "$T/fx" && . ./fns.sh && guards_for requirements-test.txt )"
+if grep -q 'test-fx-req.sh' <<<"$fx_req"; then
+    ok "FC-75: root requirements-test.txt selects the suite naming its exact path"
+else bad "FC-75: root requirements-test.txt skipped its exact-path grep: $(printf '%s' "$fx_req" | tr '\n' ' ')"; fi
+if grep -qx 'tests/test-fx-sub.sh' <<<"$fx_req"; then
+    bad "FC-75: substring-of-registered suite name was treated as registered"
+else ok "FC-75: has_baseline matches whole entries, not substrings"; fi
+
 echo "fast-gate tests: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

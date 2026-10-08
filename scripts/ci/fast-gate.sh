@@ -53,14 +53,16 @@ is_r0_path() {
 # has_baseline: stdin test paths -> those the full suite also runs (so they have a green
 # baseline). pytest files are collected by the python runners and always pass through.
 has_baseline() {
-    local t b
+    local t b re
     while IFS= read -r t; do
         case "$t" in
             *.py) printf '%s\n' "$t"; continue ;;
         esac
         b="${t##*/}"
-        if grep -qF -- "$b" tests/run-all-tests.sh scripts/local-ci.sh tests/shard-durations.tsv 2>/dev/null \
-            || grep -qF -- "$b" .github/workflows/full-suite.yml .github/workflows/nightly.yml 2>/dev/null; then
+        # whole-entry match: the name must not be embedded in a longer name (xtest-a.sh, test-a.sh.bak)
+        re="(^|[^A-Za-z0-9_.-])$(printf '%s' "$b" | sed 's/[][\.*^$+?(){}|]/\\&/g')($|[^A-Za-z0-9_.-])"
+        if grep -qE -- "$re" tests/run-all-tests.sh scripts/local-ci.sh tests/shard-durations.tsv 2>/dev/null \
+            || grep -qE -- "$re" .github/workflows/full-suite.yml .github/workflows/nightly.yml 2>/dev/null; then
             printf '%s\n' "$t"
         fi
     done
@@ -78,9 +80,9 @@ guards_for() {
     # candidate with no green baseline (not run by the full suite) fails here for reasons
     # unrelated to the change. Keep only baseline-registered .sh candidates.
     case "$f" in
-        VERSION | package.json | requirements*.txt | requirements*.in) ;;
-        */package.json | */requirements*.txt | */requirements*.in)
-            # nested manifest: the basename is shared by every manifest, so only the exact path selects
+        VERSION | package.json) ;;
+        */package.json | requirements*.txt | requirements*.in | */requirements*.txt | */requirements*.in)
+            # nested manifest or root requirements: the basename is shared by every manifest, so only the exact path selects
             grep -rlF --include='test-*.sh' --include='test_*.py' -- "$f" tests 2>/dev/null | has_baseline
             ;;
         *)
