@@ -966,5 +966,27 @@ class OneEachOfTheRemainingRound3Checks(unittest.TestCase):
             "if it were the trailing trailer")
 
 
+class EveryWorkflowThatRunsThePythonSuiteInstallsGitleaks(unittest.TestCase):
+    """FC-49: _require_gitleaks FAILS under CI when the pinned binary is absent, so any
+    workflow that runs the full pytest suite must run scripts/install-gitleaks.sh first
+    (integrity-audit.yml did not, and the 2026-10-05 weekly audit went red on 6 tests)."""
+
+    def test_pytest_workflows_install_gitleaks_before_pytest(self):
+        wf_dir = _ROOT / ".github" / "workflows"
+        checked = 0
+        for wf in sorted(wf_dir.glob("*.yml")):
+            src = wf.read_text(encoding="utf-8", errors="replace")
+            m = re.search(r"^\s+run: python3 -m pytest\s*$", src, re.M)
+            if not m:
+                continue
+            checked += 1
+            inst = src.find("scripts/install-gitleaks.sh")
+            self.assertTrue(
+                0 <= inst < m.start(),
+                f"{wf.name} runs bare `python3 -m pytest` without a prior install-gitleaks step",
+            )
+        self.assertGreater(checked, 0, "no workflow runs bare pytest: the scan is vacuous")
+
+
 if __name__ == "__main__":
     unittest.main()

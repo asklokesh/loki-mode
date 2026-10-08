@@ -498,3 +498,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every one of the six suites was run individually red then green; the fast tier covers the same files only through select-tests.sh diff selection.
 - Mechanism: a change that touches a file a deferred suite reads (workflows, README, docs/v11, bin/loki, tests/real-run) must name that suite in its slice card Wall checks and run it before merge; the nightly is the backstop, not the first detector.
 - Fixture: the six suites themselves (tests/test-dep-inventory.sh, tests/test-docs-cli-drift.sh, tests/test-agent-types-loaded.sh, tests/test-telemetry-analytics-toggle.sh, tests/test-train-verdict-reuse.sh, shellcheck -S error tests/real-run/scenarios/*.sh).
+
+## FC-49 Weekly integrity audit ran the gitleaks-dependent suites without installing gitleaks (issue 223)
+- User saw: issue 223 "Weekly Integrity Audit Failed - 2026-10-05". Raw: run 37311758053 (head dee1553234d4), pytest 6 failed / 3637 passed, and the shell suite "security-audit.yml gitleaks config isolation" FAILED (21 passed, 1 failed).
+- Law: evidence or it did not happen; a guard that silently does not run is an absent measurement (_require_gitleaks fails under CI by design).
+- Cause (measured): integrity-audit.yml had no install-gitleaks.sh step, unlike test.yml, full-suite.yml and release.yml. Failing tests: tests/test_release_required_ci.py::PollLoopPriorityIsExercisedForReal::{test_e157_clean_range_still_reuses, test_e157_eligible_bump_reuses_parent_security_audit_success, test_e157_hex_debugid_is_still_eligible, test_e157_merge_release_hiding_a_leak_in_second_parent_is_not_reused, test_e157_secret_in_allowlisted_changelog_block_is_not_reused, test_e160_parent_main_stubs_plus_one_train_success_still_reuses), all "gitleaks is not installed in CI"; shell: "no gitleaks binary under CI".
+- Siblings swept: every workflow with a bare `python3 -m pytest` step (only integrity-audit.yml lacked the install).
+- Mechanism: install step added before the test steps; a pytest guard requires the install in every workflow that runs bare pytest.
+- Fixture: tests/test_release_required_ci.py::EveryWorkflowThatRunsThePythonSuiteInstallsGitleaks (red before the step existed).
