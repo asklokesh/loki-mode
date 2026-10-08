@@ -2,7 +2,7 @@
 // 12). Binds 127.0.0.1 only, never opens a browser. Reuses events.ts fold()/tail(): runs are
 // folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
 import { fold, partialCost, readEvents, tail } from "../engine10/events.ts";
-import { eventsPath, listRunIds } from "../engine10/status.ts";
+import { eventsPath, listRunIds } from "../contrib/status.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 import { getVersion } from "../version.ts";
 import { groupRoute, renderPage } from "../util/dashboard_page.ts";

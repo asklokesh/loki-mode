@@ -3,7 +3,7 @@
 // D61 slice 15 (design section 3D): the live unit grid for one group, served by the engine10 dashboard at /g/<group>. Folds .loki/runs/*/events.jsonl and
 // keeps the runs whose run.started carries group_id. No server, no state.
 import { fold, readEvents } from "../../engine10/events.ts";
-import { eventsPath, listRunIds } from "../../engine10/status.ts";
+import { eventsPath, listRunIds } from "../../contrib/status.ts";
 
 export interface GridRow {
   runId: string;

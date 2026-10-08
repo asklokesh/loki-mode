@@ -1,6 +1,6 @@
 // MARK-2: per-change AI-BOM (CycloneDX 1.7 ML-BOM block). Pure over receipt plus config.
 import { describe, expect, test } from "bun:test";
-import { buildAiBom, mcpServerNames, AI_BOM_SPEC_VERSION } from "../../src/features/ai_bom.ts";
+import { buildAiBom, mcpServerNames, AI_BOM_SPEC_VERSION } from "../../src/contrib/ai_bom.ts";
 
 const SHA = "a".repeat(64);
 const NOW = "2026-10-08T12:00:00.000Z";

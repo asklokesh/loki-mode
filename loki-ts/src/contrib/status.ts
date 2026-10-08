@@ -1,10 +1,10 @@
-// loki-ts/src/engine10/status.ts -- E-21 `loki status [run-id]` (ENGINE.md section 11/5). Folds
+// loki-ts/src/contrib/status.ts -- E-21 `loki status [run-id]` (ENGINE.md section 11/5). Folds
 // .loki/runs/<run-id>/events.jsonl via events.ts and renders with output.ts; events.jsonl is the
 // only source of truth, so this module keeps no other state and never guesses at a duration.
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { fold, readEvents, type Folded } from "./events.ts";
-import { formatClock, formatDuration, formatStageLine } from "./output.ts";
+import { fold, readEvents, type Folded } from "../engine10/events.ts";
+import { formatClock, formatDuration, formatStageLine } from "../engine10/output.ts";
 const RUNS_DIRNAME = ".loki/runs";
 const TERMINAL_TYPES = new Set(["stage.completed", "stage.failed", "stage.skipped"]);
 export function runsDir(repoDir: string): string {

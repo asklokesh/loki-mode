@@ -15,6 +15,7 @@ export function registerContrib(): void {
   hooks.effort = { resolve: (stage, eff) => resolveEffort(stage, eff), fix: (round, codeOwned) => fixEffort(round, codeOwned) };
   hooks.wall = { snapshotTree: (d, s) => snapshotTree(d, s), changedSinceBase, manifests: MANIFESTS };
   hooks.briefFacts = briefFacts;
+  registerModule("./status.ts", () => import("./status.ts"));
   registerModule("./plan_cmd.ts", () => import("./plan_cmd.ts"));
   registerModule("./eta.ts", () => import("./eta.ts"));
   registerModule("./forecast.ts", () => import("./forecast.ts"));

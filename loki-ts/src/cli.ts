@@ -321,7 +321,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
     }
 
     case "slack": {
-      const { runSlackCli } = await import("./features/slack_inbound.ts");
+      const { runSlackCli } = await import("./contrib/slack_inbound.ts");
       return runSlackCli(rest);
     }
 

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { speedEnabled } from "../../src/features/warm.ts";
 import { formatPreModelLine } from "../../src/engine10/output.ts";
 import { visualEvidenceEnabled } from "../../src/features/visual_evidence.ts";
-import { slackInboundEnabled } from "../../src/features/slack_inbound.ts";
+import { slackInboundEnabled } from "../../src/contrib/slack_inbound.ts";
 import { contractEnabled } from "../../src/features/contract.ts";
 
 const saved = process.env["LOKI_SPEED"];
