@@ -201,7 +201,7 @@ export function nextEfficiencyIteration(lokiRoot: string): number {
   return max + 1;
 }
 
-// The one predicate for "this session's usage is not recorded": its efficiency record and its cost event both omit every token key.
+// The one predicate for "this session has no recorded usage": its efficiency record and its cost event both omit every token key.
 export function tokensUnmeasured(cost: Pick<CostResult, "tokens_measured" | "records">): boolean {
   return cost.tokens_measured !== undefined || cost.records?.resume === "ambiguous";
 }
