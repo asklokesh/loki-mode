@@ -46,7 +46,8 @@ FAIL=0
 ok()  { PASS=$((PASS + 1)); echo "${GREEN}[PASS]${NC} $1"; }
 bad() { FAIL=$((FAIL + 1)); echo "${RED}[FAIL]${NC} $1 -- ${2:-}"; }
 
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/loki-caveman-XXXXXX")
+TMP_ROOT="${TMPDIR:-/tmp}"; TMP_ROOT="${TMP_ROOT%/}"
+TMP=$(mktemp -d "${TMP_ROOT:-/}/loki-caveman-XXXXXX")
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # Stub claude / node / npx on PATH so the capability probe + bootstrap detection

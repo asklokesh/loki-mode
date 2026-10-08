@@ -583,3 +583,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: all seven line_of call sites in the file now name their check label through failed_check; T1 stays the one assertion that the whole tree is clean.
 - Mechanism: failed_check matches `^FAIL ... <label>` anywhere in the output.
 - Fixture: with the budget red (as on the train), T6, T7, T9 are red before and green after; T1 remains red until the budget ruling.
+
+## FC-62 A test built an expected path from a raw $TMPDIR and macOS leaves a trailing slash (NIGHTLY-REDS)
+- User saw: tests/test-caveman-flags.sh `bootstrap cwd custody` FAIL on macOS (exit=0, cwd=/var/folders/.../T/loki-caveman-XXXX/bootstrap-tmp/loki-caveman-bootstrap.YYYY).
+- Law: an assertion must test the property it names, not a host path spelling.
+- Cause (measured): macOS $TMPDIR ends in a slash, so `${TMPDIR:-/tmp}/loki-caveman-XXXXXX` became `T//loki-caveman-...`; the product records the canonical single-slash cwd, so the `case "$bootstrap_cwd" in "$BOOT_TMP"/...` pattern never matched although the bootstrap behaved correctly. Reproduced locally: 44 passed, 1 failed before; 45 passed, 0 failed after.
+- Siblings swept: other suites use the same mktemp spelling but only this one compares the result against a recorded cwd string.
+- Mechanism: the test strips one trailing slash from TMPDIR before mktemp.
+- Fixture: tests/test-caveman-flags.sh section 5c is the regression (red on macOS before the strip).
+- Note: the other two Nightly 37790534786 reds (doctor hint, onboard) were already fixed by FC-53 (0c0069df3, in this train); re-verified green here (bun test gate-failures-cap-parity 3 pass; test-onboard-command.sh 11/11).

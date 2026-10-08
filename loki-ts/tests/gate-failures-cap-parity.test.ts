@@ -79,8 +79,9 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
     // host-dependent: on macOS the system python3 is 3.9, so doctor prints an
     // unrelated "Python 3.12 recommended ... Install: brew install python@3.12"
     // line on stdout and the count became 2 on every macOS nightly (FC-53).
+    const claudeCmd = "npm install -g @anthropic-ai/claude-code";
     const providerCmds = [
-      "npm install -g @anthropic-ai/claude-code",
+      claudeCmd,
       "npm install -g @openai/codex",
       "npm install -g cline",
       "pip install aider-chat",
@@ -91,7 +92,7 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
       .filter((l) => l.includes("Install:") && providerCmds.some((c) => l.includes(c)));
     expect(installLines.length).toBeLessThanOrEqual(1);
     // Only the claude fallback line may appear; the other four are stderr-only.
-    expect(installLines.every((l) => l.includes(providerCmds[0]))).toBe(true);
+    expect(installLines.every((l) => l.includes(claudeCmd))).toBe(true);
   }, 20000); // doctor spawns real per-provider `--version` probes + a network
   // reachability check (~5-7s with all providers absent); this asserts STDOUT
   // routing, not speed, so give it a generous timeout (the 5s default flaked).
