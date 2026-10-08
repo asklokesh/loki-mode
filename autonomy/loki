@@ -20283,11 +20283,11 @@ tokens_per_tier = {
     'fast': {'input': 30000, 'output': 5000, 'model': 'Haiku'},
 }
 
-# Pricing per 1M tokens. Fable 5 is the top-tier advisory model at exactly 2x
+# Pricing per 1M tokens. Fable 5 is the top-tier advisory model at 2.5x
 # Opus per token (published \$10/\$50 in/out vs Opus 5.5 \$4/\$20). The Opus row was
 # corrected to the published Opus 5.5 \$4/\$20 (platform.claude.com pricing, 2026-10-08), and the Haiku
-# row from a stale \$0.25/\$1.25 (Haiku 3.5) to the published Claude Haiku 4.5
-# price of \$1/\$5 (anthropic.com/news/claude-haiku-4-5), so all four rows now
+# row from a stale \$0.25/\$1.25 (Haiku 3.5) to Haiku 5.5 \$0.10/\$0.50 (the haiku alias target
+# in the model catalog, up to 100K prompt tokens), so all four rows now
 # match the three canonical model-keyed tables (run.sh pricing.json, run.sh
 # check_budget_limit, dashboard _DEFAULT_PRICING). The Fable row (\$10/\$50) is
 # kept as the reference price, but since v7.39.1 fable is unavailable at the API

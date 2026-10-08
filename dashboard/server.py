@@ -8565,9 +8565,9 @@ async def get_gate_policy():
 _PROVIDER_LABELS = {
     # v7.104.0: current model IDs (model_catalog.json): opus, sonnet (the default execution model), haiku: ids live in
     # the catalog cli_aliases, not here.
-    "opus": "Opus 4.8",
-    "sonnet": "Sonnet 5",
-    "haiku": "Haiku 4.5",
+    "opus": "Opus 5.5",
+    "sonnet": "Sonnet 5.5",
+    "haiku": "Haiku 5.5",
     "gpt-5.3-codex": "GPT-5.3 Codex",
     "gpt-5.6-sol": "GPT-5.6 Sol",
     "gpt-5.6-terra": "GPT-5.6 Terra",
