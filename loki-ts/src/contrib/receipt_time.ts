@@ -2,14 +2,11 @@
 // Every interval of the run is a named bucket (setup before the machine starts, each stage, orchestration gaps between
 // stages, seal), so the buckets partition total_s. A parallel group is one bucket (the union of its members' intervals). A block that does not reconcile within 1% reads NOT RECORDED downstream (reconciledTotalS returns null), never a number.
 import { readFileSync } from "node:fs";
-import type { RunContext, StageName } from "../engine10/types.ts";
+import type { ReceiptTime, RunContext, StageName } from "../engine10/types.ts";
 
 /** Overhead buckets, a stage name, or a parallel group joined with "+" (for example "plan+wall"). */
 export type TimeBucket = string;
-/** `stages` is a partition: its buckets are disjoint and sum to total_s, so any consumer may add them. A parallel group is ONE bucket holding the
- *  union of its members' intervals; each member's own seconds (overlap included, so they can add to more than the bucket) live in `stage_s`.
- *  wall_s is the sum of the stage buckets without setup, orchestration and seal, so it never exceeds total_s. */
-export interface ReceiptTime { wall_s: number; total_s?: number; stages: Record<TimeBucket, number>; stage_s?: Record<string, number> }
+export type { ReceiptTime };
 export const RECONCILE_TOLERANCE = 0.01;
 const OVERHEAD = new Set(["setup", "orchestration", "seal"]);
 const r3 = (n: number): number => Math.round(n * 1000) / 1000;

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import type { PushArgs, RunContext, Stage, StageResult, Verdict } from "../types.ts";
 import { pushArgv } from "../types.ts";
 import { renderBrief, reviewerBriefEnabled } from "../../util/reviewer_brief.ts";
-import { briefFacts } from "../../contrib/brief_facts.ts";
+import { hooks } from "../hooks.ts";
 import { renderReviewerBody } from "../../e10ext/reviewer_body.ts";
 import { withSealRoute } from "../../runner/router/route_block.ts"; import { aiMarkerLine, draftReason, withAiMarker } from "../pr_body.ts"; import { evidenceSection } from "../../features/visual_evidence.ts"; import { beforeAfterBlock } from "../../integrations/before_after.ts";
 import { intentSection } from "../../util/intent_card.ts";
@@ -62,7 +62,7 @@ function briefSection(ctx: PrContext): string {
   if (!reviewerBriefEnabled()) return "";
   const o = ctx.outputs();
   const base = String((o.intake as { base_sha?: unknown } | undefined)?.base_sha ?? ctx.baseSha ?? "");
-  try { return "\n" + renderBrief({ repoDir: ctx.repoDir, baseSha: base, plan: (o.plan as { plan?: string } | undefined)?.plan ?? null, facts: briefFacts(ctx.outputs(), ctx.runId, ctx.runDir) }); } catch { return ""; }
+  try { return "\n" + renderBrief({ repoDir: ctx.repoDir, baseSha: base, plan: (o.plan as { plan?: string } | undefined)?.plan ?? null, facts: hooks.briefFacts?.(ctx.outputs(), ctx.runId, ctx.runDir) }); } catch { return ""; }
 }
 /** MASS-1: name the issue this run worked, so GitHub links the PR and `loki issues run` reruns find it. Only a strict
  *  owner/repo and an integer number from the supervisor-fetched issue.json reach the body; VERIFIED closes on merge. */

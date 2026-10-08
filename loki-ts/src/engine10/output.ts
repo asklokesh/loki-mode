@@ -135,15 +135,15 @@ export function formatSummary(input: SummaryInput): string {
 /** Section 3: an optional module loaded only if present, never a hard dependency.
  *  eta.ts (E-20, wave 2) is not part of this slice; when absent, ETAs are omitted. */
 export type EtaEstimator = (targetS: number | null, elapsedS: number) => number | null;
-/** modulePath is injectable for tests; production callers omit it and get "./../contrib/eta.ts". */
+/** modulePath is injectable for tests; production callers omit it and get "./eta.ts". */
 export async function estimateEtaS(
   targetS: number | null,
   elapsedS: number,
-  modulePath = "./../contrib/eta.ts",
+  modulePath = "./eta.ts",
 ): Promise<number | null> {
   let mod: { estimate?: EtaEstimator };
   try {
-    mod = (await (modulePath === "./../contrib/eta.ts" ? registryLoader(modulePath) : import(modulePath))) as { estimate?: EtaEstimator };
+    mod = (await (modulePath === "./eta.ts" ? registryLoader(modulePath) : import(modulePath))) as { estimate?: EtaEstimator };
   } catch (err) {
     // Only a missing module means "no ETA yet"; any other import error is a bug.
     const e = err as { code?: string; message?: string };

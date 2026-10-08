@@ -18,17 +18,18 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./keys_cmd.ts": () => import("./keys_cmd.ts"),
   "./../runner/engine10_dashboard.ts": () => import("../runner/engine10_dashboard.ts"),
   "./modernize/cli.ts": () => import("./modernize/cli.ts"),
-  "./../contrib/plan_cmd.ts": () => import("../contrib/plan_cmd.ts"),
   "./worker.ts": () => import("./worker.ts"),
   "./session.ts": () => import("./session.ts"),
   "./supervisor.ts": () => import("./supervisor.ts"),
-  "./../contrib/eta.ts": () => import("../contrib/eta.ts"),
   "./../commands/export_sarif.ts": () => import("../commands/export_sarif.ts"),
   "../e10ext/ship_hook.ts": () => import("../e10ext/ship_hook.ts"),
 };
+/** contrib/index.ts adds its lazy modules here at startup; core never imports contrib. */
+const EXTRA: Record<string, () => Promise<Mod>> = {};
+export const registerModule = (spec: string, load: () => Promise<Mod>): void => { EXTRA[spec] = load; };
 /** An unregistered specifier rejects like a missing file, so "not built yet" still works. */
 export function registryLoader(spec: string): Promise<Mod> {
-  const hit = REGISTRY[spec];
+  const hit = REGISTRY[spec] ?? EXTRA[spec];
   if (hit) return hit();
   return Promise.reject(Object.assign(new Error(`Cannot find module '${spec}'`), { code: "ERR_MODULE_NOT_FOUND" }));
 }

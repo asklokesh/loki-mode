@@ -142,7 +142,7 @@ describe("round trip: plan --spec, edit one criterion, start --spec", () => {
 describe("CLI surface", () => {
   test("engine10 routes plan to plan_cmd and lists it in usage", async () => {
     const { route } = await import("../../src/engine10/cli.ts");
-    expect(route(["plan", "t", "--spec"])).toEqual({ module: "../contrib/plan_cmd.ts", fn: "main", args: ["t", "--spec"] });
+    expect(route(["plan", "t", "--spec"])).toEqual({ module: "plan_cmd.ts", fn: "main", args: ["t", "--spec"] });
   });
   test("plan without --spec prints usage and exits 2", async () => {
     const { main } = await import("../../src/contrib/plan_cmd.ts");

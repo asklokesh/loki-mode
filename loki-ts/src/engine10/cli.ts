@@ -20,7 +20,7 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   "export-sarif": { module: "../commands/export_sarif.ts", fn: "main" },
   dashboard: { module: "../runner/engine10_dashboard.ts", fn: "main" },
   modernize: { module: "modernize/cli.ts", fn: "main" },
-  plan: { module: "../contrib/plan_cmd.ts", fn: "main" },
+  plan: { module: "plan_cmd.ts", fn: "main" },
   // Hidden subcommands spawned by the supervisor.
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },
@@ -74,9 +74,10 @@ export async function runEngine10(args: string[], load: Loader = defaultLoader):
   }
   if (r.module === "supervisor.ts") await (await import("../features/warm_client.ts")).tryWarmSafe(process.cwd());
   if (r.module === "supervisor.ts" && process.stderr.isTTY && !r.args.includes("--help") && !r.args.includes("-h")) {
-    const { printForecast } = await import("../contrib/forecast.ts");
+    const { registryLoader } = await import("./registry.ts");
+    const fc = (await registryLoader("./forecast.ts").catch(() => null)) as { printForecast: (d: string, r: unknown, w: (s: string) => void) => Promise<void> } | null;
     const { defaultUsageReading } = await import("../commands/queue.ts");
-    await printForecast(process.env["LOKI_DIR"] ?? `${process.cwd()}/.loki`, defaultUsageReading, (s) => void process.stderr.write(s));
+    await fc?.printForecast(process.env["LOKI_DIR"] ?? `${process.cwd()}/.loki`, defaultUsageReading, (s) => void process.stderr.write(s));
   }
   const spec = `./${r.module}`;
   let mod: Record<string, unknown>;

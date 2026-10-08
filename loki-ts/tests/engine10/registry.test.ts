@@ -15,7 +15,7 @@ const stageSpecs = [...FLOW.flat(), "fix", "deep"].map((n) => `./stages/${n}.ts`
 const cliText = readFileSync(join(DIR, "cli.ts"), "utf8");
 const tableSpecs = [...cliText.matchAll(/module:\s*"([^"]+)"/g)].map((m) => `./${m[1]}`);
 const runSpec = `./${route(["some task"])!.module}`;
-const named = [...new Set([...stageSpecs, ...tableSpecs, runSpec, "./../contrib/eta.ts"])];
+const named = [...new Set([...stageSpecs, ...tableSpecs, runSpec, "./eta.ts"])];
 
 describe("engine10 registry", () => {
   test("names are found (the guard is not vacuous)", () => {

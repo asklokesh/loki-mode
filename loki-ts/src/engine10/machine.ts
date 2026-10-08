@@ -3,8 +3,7 @@
 // RunContext; stages come from ./stages/<name>.ts.
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { changedSinceBase, MANIFESTS, snapshotTree } from "../contrib/wall_snapshot.ts";
-export { snapshotTree }; // re-exported: tests import it from here
+import { hooks } from "./hooks.ts";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts";
@@ -176,6 +175,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const dropSnap = (j: WallJob): void => { j.snap.then((d) => { if (d) rmSync(d, { recursive: true, force: true }); }, () => {}); };
   const abortWall = (): void => { const j = wallJob; wallJob = null; if (!j) return; closeWallJob(j); dropSnap(j); j.ctl.abort(); j.promise.catch(() => {}); }; // an abort before install installs nothing (E-54)
   const startWallAuthor = async (): Promise<boolean> => {
+    if (!hooks.wall) return false;
     const st = await load("wall") as (Stage & { split?: WallSplit }) | null;
     if (!st?.split) return false;
     const ctl = new AbortController(); let why: "limit" | "cap" | null = null;
@@ -185,7 +185,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
     ctx.emit("stage.started", "wall", { target_s: st.targetS, limit_s: st.limitS });
     const promise = st.split.author(sctx, ctl.signal); promise.catch(() => {});
-    wallJob = { snap: snapshotTree(ctx.repoDir, ctl.signal), split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap };
+    wallJob = { snap: hooks.wall!.snapshotTree(ctx.repoDir, ctl.signal), split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap };
     return true;
   };
   /** Awaits the author, then installs once against a pre-implement tree snapshot. Returns the wall result (also recorded in outputs/events). */
@@ -205,7 +205,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
           mkdirSync(join(base, relative(ctx.repoDir, w.targetDir)), { recursive: true });
           for (const [n, c] of w.contents) writeFileSync(join(base, relative(ctx.repoDir, w.targetDir), n), c, "utf8");
           r = j.split.install(sctx, a as never, base);
-          const changed = changedSinceBase(ctx.repoDir, ctx.baseSha);
+          const changed = hooks.wall!.changedSinceBase(ctx.repoDir, ctx.baseSha);
           if (r.status === "completed") {
             const touched = (changed ?? []).filter((f) => !f.startsWith(".loki/") && !f.startsWith(`${relative(ctx.repoDir, w.targetDir)}/loki_wall_`));
             // Fail closed: a base run that passes while implement changed files is not trusted as "already satisfied" (the base copy could still resolve into live code); verify decides.
@@ -213,7 +213,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
             const green = typeof b0.pass === "number" && b0.pass > 0 && b0.fail === 0 && (b0.not_run ?? 0) === 0;
             // Fail closed for EVERY consumer (wall, discard.alreadySatisfied, seal wallGreenOnBase): an untrusted green base run is recorded as unproven (not_run), which all of them already refuse.
             const distrust = unsure && green;
-            r = { ...r, data: { ...d, ...(distrust ? { already_satisfied: false, already_satisfied_distrusted: true } : {}), base_run: { ...b0, ...(distrust ? { not_run: 1, unproven: true } : {}), ...(changed === null || changed.some((f) => MANIFESTS.test(f)) ? { deps: "head" } : {}) } } };
+            r = { ...r, data: { ...d, ...(distrust ? { already_satisfied: false, already_satisfied_distrusted: true } : {}), base_run: { ...b0, ...(distrust ? { not_run: 1, unproven: true } : {}), ...(changed === null || changed.some((f) => hooks.wall!.manifests.test(f)) ? { deps: "head" } : {}) } } };
           }
         } finally { rmSync(base, { recursive: true, force: true }); }
       }
