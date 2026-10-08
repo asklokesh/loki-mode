@@ -14,6 +14,7 @@
 // artifacts/ITER1-FLAG-RECONCILE.md.
 
 import type { ProviderName, SessionTier } from "../runner/types.ts";
+import { tokenFreeEnv } from "../util/safe_git.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -252,7 +253,8 @@ export async function runStart(args: readonly string[]): Promise<number> {
     async (_id, wt) => {
       // Each attempt is one engine10 run in its own worktree: only engine10 seals the receipt the scorer reads.
       // Attempts never open PRs themselves; the winner alone follows normal PR behavior (see productionDeps.openPr).
-      const env: NodeJS.ProcessEnv = { ...process.env, LOKI_DIR: `${wt}/.loki` };
+      // Token-free: attempts never push (forced --no-pr), so no attempt process needs GH_TOKEN or SSH_AUTH_SOCK.
+      const env = tokenFreeEnv({ ...process.env, LOKI_DIR: `${wt}/.loki` });
       delete env["LOKI_RUN_TMP"];
       return runEngine10(wt, runnerOpts, env, true);
     },
