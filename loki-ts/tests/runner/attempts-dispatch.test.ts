@@ -271,6 +271,18 @@ describe("FC-38 bin/loki start fallbacks refuse instead of reaching autonomy/lok
       rmSync(f.root, { recursive: true, force: true });
     }
   });
+  it("no bun on PATH with a PRD path (the bare no-bun start refusal, past the engine10 arm)", () => {
+    const f = fixture();
+    try {
+      writeFileSync(join(f.repo, "prd.md"), "Fix sum.\n");
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("not reachable from start");
+      expect(existsSync(f.log)).toBe(false);
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
   it("no bun on PATH", () => {
     const f = fixture();
     try {
