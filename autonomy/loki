@@ -20892,6 +20892,23 @@ main() {
     # (CLI > config). The pre-pass SCANS without consuming; the per-command
     # loops carry consume-and-ignore arms for the three aliases. Gated to
     # start/run/quick so status/config/stop never trigger a config load.
+    # T5-D2 (FC-38 sweep): the bash entries have no attempts engine. --attempts (any value) is refused
+    # here, before cmd_start / cmd_run / cmd_quick / cmd_demo can reach the legacy loop. bin/loki sends
+    # `start --attempts N` to the Bun start command and never gets here with it.
+    case "$command" in
+        start|run|quick|demo|tour)
+            local _att_a
+            for _att_a in "$@"; do
+                case "$_att_a" in
+                    --attempts|--attempts=*)
+                        echo -e "${RED}--attempts is only supported by 'loki start --attempts N --no-pr' (the Loki 10 engine); 'loki $command' would run the removed legacy loop.${NC}" >&2
+                        exit 2
+                        ;;
+                esac
+            done
+            ;;
+    esac
+
     case "$command" in
         start|run|quick)
             if declare -f loki_maybe_apply_config_file >/dev/null 2>&1; then

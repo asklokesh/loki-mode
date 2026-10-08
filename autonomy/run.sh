@@ -28817,6 +28817,11 @@ main() {
     REMAINING_ARGS=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --attempts|--attempts=*)
+                # T5-D2: run.sh is the legacy loop; attempts run only on the engine10 path.
+                echo "run.sh: --attempts is only supported by 'loki start --attempts N --no-pr' (the Loki 10 engine), not the legacy loop." >&2
+                exit 2
+                ;;
             --parallel)
                 PARALLEL_MODE=true
                 shift
