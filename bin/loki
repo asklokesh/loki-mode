@@ -477,6 +477,13 @@ case "v10" in
         _e10_args=("$@")
         case "${1:-}" in
             keys) _e10=1; _e10_hard=1 ;;
+            # SARIF-2: `export --sarif` has no bash implementation; it runs on bun only.
+            export)
+                for _sa in "$@"; do
+                    case "$_sa" in --sarif) _e10=1; _e10_hard=1; _e10_args=(export-sarif "${@:2}") ;; esac
+                done
+                unset _sa
+                ;;
             status|verify|dashboard)
                 if [ "$1" = "verify" ]; then
                     for _pk in "$@"; do

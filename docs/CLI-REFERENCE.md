@@ -109,7 +109,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki share` | Share a run |
 | `loki assets` | Export team assets |
 | `loki assets export` | Export shareable assets |
-| `loki export` | Export session data |
+| `loki export` | Export session data; `loki export --sarif [run-id]` writes `.loki/runs/<id>/findings.sarif` (SARIF 2.1.0, report only, needs bun) |
 | `loki notify` | Notifications |
 | `loki tour` | See a sample result |
 | `loki welcome` | First-run opener |

@@ -12394,6 +12394,9 @@ cmd_export() {
             echo "  csv        Task queue as CSV"
             echo "  timeline   Iteration timeline as JSON"
             echo ""
+            echo "Flags:"
+            echo "  --sarif [run-id]   Write .loki/runs/<id>/findings.sarif (SARIF 2.1.0; needs bun)"
+            echo ""
             echo "Examples:"
             echo "  loki export json                         # Print to stdout"
             echo "  loki export json session-export.json     # Save to file"
@@ -12415,6 +12418,10 @@ cmd_export() {
         timeline)
             require_jq || return 1
             _export_timeline "$output_path"
+            ;;
+        --sarif)
+            echo -e "${RED}loki export --sarif needs bun (https://bun.sh).${NC}" >&2
+            return 1
             ;;
         *)
             echo -e "${RED}Unknown format: $format${NC}"
