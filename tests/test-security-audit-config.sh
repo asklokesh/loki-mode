@@ -882,19 +882,25 @@ if _w6 "$_SCRIPT_M6B" w6b; then bad "W6 mutation (merge-base config trusted) sta
 cat > "$TMP_ROOT/extract10.py" <<'PYEOF'
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
-steps = d["jobs"]["publish-npm"]["steps"]
+# D90: the wait moved out of publish-npm into its own job, so the publish job
+# ends when the publish does. The wait job must still gate on publish-npm.
+assert d["jobs"]["npm-visible"]["needs"] == "publish-npm", "npm-visible must need publish-npm"
+pub_steps = d["jobs"]["publish-npm"]["steps"]
+assert len([x for x in pub_steps if x.get("name", "").startswith("Publish")]) == 1, "exactly one publish step"
+assert not [x for x in pub_steps if x.get("name", "").startswith("Wait until npm serves")], "publish-npm must not wait on the registry"
+steps = d["jobs"]["npm-visible"]["steps"]
 names = [s.get("name", "") for s in steps]
 w = [i for i, n in enumerate(names) if n.startswith("Wait until npm serves")]
-pub = [i for i, n in enumerate(names) if n == "Publish to npm"]
-assert len(w) == 1 and len(pub) == 1 and w[0] > pub[0], "wait step must exist once, after Publish to npm"
+pub = [0]
+assert len(w) == 1, "wait step must exist once in npm-visible"
 open(sys.argv[2], "w").write(steps[w[0]]["run"])
 for k, v in steps[w[0]]["env"].items():
     print("%s=%s" % (k, v))
 PYEOF
 if python3 "$TMP_ROOT/extract10.py" "$REL_YML" "$TMP_ROOT/npmwait.sh" > "$TMP_ROOT/npmwait.env"; then
-  ok "W10: publish-npm has exactly one npm-visibility wait step after Publish to npm"
+  ok "W10: npm-visible (needs publish-npm) holds the one npm-visibility wait; publish-npm does not wait"
 else
-  bad "W10: publish-npm wait step missing or before the publish step"
+  bad "W10: npm-visible wait job missing, not gated on publish-npm, or publish-npm still waits"
 fi
 _w10_run() { # _w10_run <script> <visible-after-N-polls|never> -> prints "<rc>|<output>"
   local d="$TMP_ROOT/w10.cur" rc=0 out

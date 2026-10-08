@@ -42,6 +42,7 @@ RUNNERS=(
     "$REPO_ROOT/tests/run-all-tests.sh"
     "$REPO_ROOT/scripts/local-ci.sh"
     "$REPO_ROOT/.github/workflows/test.yml"
+    "$REPO_ROOT/.github/workflows/full-suite.yml"
 )
 
 # Files that are deliberately not registered, each with a reason. Keep this

@@ -1,0 +1,422 @@
+name: Full suite
+
+# D90 (founder directive): the FULL suites no longer gate push or release.
+# They run nightly (nightly.yml) and on demand, and a red nightly blocks the
+# NEXT release (release.yml required-ci). The blocking gate is the fast gate
+# in test.yml. This file is the single home of the full matrix: Node 20/24,
+# the Python matrix, all 8 shell shards, the full moat suite, Helm, and the
+# full bun suite. test.yml also calls it as the fail-safe when the diff
+# cannot be computed.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  node-tests:
+    name: Node.js ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 24]  # engines.node floor (>=20) plus newest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install --no-package-lock
+
+      - name: Run tests
+        run: npm test
+
+  python-tests:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.13"]  # sdk/python requires-python floor plus newest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      # E-157: tests/test_release_required_ci.py drives release.yml's PARENT..SHA
+      # secret scan with the real pinned gitleaks and FAILS (never skips) when CI
+      # lacks it.
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: bash scripts/install-gitleaks.sh
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          # Install from the canonical list, not a hand-maintained subset -- the
+          # same fix shell-tests already made after its own drift incident (see
+          # the comment on that job). Two hand-written lists for one test suite
+          # drift apart by construction; one source cannot.
+          #
+          # This list also carries the pinned `mcp`, which the hand-written one
+          # omitted. Note that installing it does NOT by itself un-skip
+          # tests/test_mcp_agent_metrics_honesty.py: the repo's own `mcp/`
+          # package shadows the installed SDK on sys.path, so `from mcp import
+          # server` reaches our module, which then cannot import the SDK and
+          # exits. That shadowing is a separate defect, tracked separately --
+          # what this change fixes is the drift, not the skip.
+          python3 -m pip install -r requirements-test.txt
+
+      - name: Run tests
+        run: python3 -m pytest -n auto
+
+  shell-tests:
+    name: Shell tests (shard ${{ matrix.shard }}/8)
+    runs-on: ubuntu-latest
+    # 15, not 10: run 37235292758 attempt 1 and 2 both killed shard 0 at the
+    # 10-minute cap while ShellCheck was still running. The other seven shards
+    # were already green. The cap is the job clock, not a failing suite.
+    timeout-minutes: 15
+    # SHARDED because this job WAS the pipeline. Measured 2026-07-30 at 4
+    # shards / 289 suites: Shell tests 13m01s, next slowest job 2m17s.
+    #
+    # RESHARDED 4 -> 8 with DURATION-BALANCED packing (S-81), not plain
+    # `idx % n`. A plain index split ignores that suites are wildly uneven
+    # (496 suites today, 0-153s each per tests/shard-durations.tsv), so
+    # whichever shard happened to catch the slow suites set the whole
+    # workflow's wall clock regardless of shard count. tests/run-all-tests.sh
+    # now assigns each suite to a shard via a deterministic greedy
+    # longest-first (LPT) bin-packing over that measured duration table,
+    # instead of by index -- see the SHARDING comment there for the
+    # algorithm. Projected from that same table (not a new CI run): all 8
+    # shards land at ~197s of suite time (~3.3min) plus job setup, comfortably
+    # under a 6-minute per-shard target; see docs/v10/METRICS.md.
+    #
+    # fail-fast is OFF deliberately: one shard failing must not cancel the
+    # others, or a single red suite hides every other failure and the next
+    # push rediscovers them one cycle at a time.
+    #
+    # Safety: tests/test-shard-coverage.sh proves the shards partition the
+    # suite list exactly (every suite in exactly one shard, none dropped, none
+    # duplicated) and that an invalid shard spec exits non-zero rather than
+    # silently running nothing -- for n in [2, 3, 4, 6, 8], driven through the
+    # real runtime path (LOKI_TEST_LIST=1), not a re-implementation of the
+    # packing algorithm.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # E-159: tests/test-security-audit-config.sh drives the secret-scan script with the
+      # real pinned gitleaks and FAILS (never skips) under CI when it is absent.
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: bash scripts/install-gitleaks.sh
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          # Install from the canonical list, not a hand-maintained subset. This
+          # job previously installed only "pydantic httpx fastapi uvicorn" and
+          # omitted sqlalchemy/aiosqlite, so every shell test that imports
+          # dashboard/server.py died with
+          #   ModuleNotFoundError: No module named 'sqlalchemy'
+          # and reported as a product failure. Five suites were red for that one
+          # missing dependency. Sourcing requirements-test.txt keeps this job and
+          # the python-tests job from drifting apart again.
+          python3 -m pip install -r requirements-test.txt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Node.js dependencies
+        run: npm install --no-package-lock
+
+      # REQUIRED, not optional. tests/test-trust-core-tests-detect.sh runs two
+      # mutation probes as `cd loki-ts && bun test ...`. Without bun the probe
+      # baseline exits 127, the probe reports rc=67, and the suite goes red --
+      # which is the honest outcome, but the cause is a missing toolchain here,
+      # not a defect in the trust core.
+      #
+      # These probes are deliberately NOT skipped when bun is absent: they guard
+      # the trust core, and a probe that silently does not run is an absent
+      # measurement reported as a pass.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('loki-ts/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install loki-ts dependencies (for the TS mutation probes)
+        working-directory: loki-ts
+        run: bun install
+
+      - name: Run shell tests (shard ${{ matrix.shard }} of 8)
+        env:
+          LOKI_TEST_SHARD: ${{ matrix.shard }}/8
+        run: bash tests/run-all-tests.sh
+
+  # The moat suite: nine product properties, each PROVEN or honestly NOT
+  # PROVEN. A release that fails it does not ship (release.yml required-ci
+  # waits for this whole workflow). Its own job, not a shard: the pending list
+  # and the case registry are ratcheted against the reachable release tags, and
+  # the shards' depth-1 checkout
+  # has no tags, so the runner would exit 2 ("could not check") there by design.
+  # The toolchain mirrors shell-tests because the property scripts drive loki
+  # on both routes (Bun and bash) and the signing checks import cryptography.
+  moat-suite:
+    name: Moat rules (no regression)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout (full history, so release tags exist for the ratchet)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements-test.txt
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Node.js dependencies
+        run: npm install --no-package-lock
+
+      # Pinned to what release.yml's gate uses, so a Bun release cannot flip
+      # this job alone.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('loki-ts/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install loki-ts dependencies
+        working-directory: loki-ts
+        run: bun install
+
+      # P7's two route cases parse client paths with the TypeScript AST from
+      # web-app/node_modules/typescript. Without it they FAIL as "prerequisite
+      # missing" and never measure the routes. Measured 2026-09-25: 2s with a
+      # cold npm cache (254 packages).
+      - name: Install web-app dependencies (TypeScript for P7)
+        working-directory: web-app
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # The job's green check means "no rule failed", not "moat proven". The
+      # step summary carries the real count so a reader of the check sees it.
+      - name: Run the moat suite
+        run: |
+          rc=0
+          bash tests/moat/run.sh > "$RUNNER_TEMP/moat.out" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/moat.out"
+          {
+            echo '### Moat rules (no regression)'
+            echo '```'
+            grep -E '^(P[1-9] |moat:|moat suite:|ratchet:|registry:)' "$RUNNER_TEMP/moat.out" || echo "no summary lines (exit $rc)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+
+  helm-lint:
+    name: Helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint Helm chart
+        run: helm lint deploy/helm/autonomi
+
+      # LINT IS NOT ENOUGH ON ITS OWN. `helm lint` renders with the DEFAULT
+      # values, where ingress and keda are off and worker.mode is "job". Every
+      # template guarded by `{{- if .Values.ingress.enabled }}` or the
+      # deployment/serverless worker branches is therefore never exercised, so a
+      # broken conditional ships green and only fails for the operator who turns
+      # that feature on.
+      #
+      # Rendering each optional path costs seconds and is the difference between
+      # "the chart parses" and "the chart works in the configurations we
+      # document".
+      - name: Render optional paths
+        run: |
+          set -euo pipefail
+          for combo in \
+            "ingress.enabled=true" \
+            "keda.enabled=true" \
+            "worker.mode=deployment" \
+            "worker.mode=serverless" \
+            "security.networkPolicy.enabled=true"
+          do
+            echo "== helm template --set ${combo}"
+            helm template ci deploy/helm/autonomi --set "${combo}" > /dev/null
+          done
+
+      # The schema must REJECT bad values, not merely exist. A schema that
+      # accepts everything looks like validation and is not.
+      - name: values.schema.json rejects bad values
+        run: |
+          set -uo pipefail
+          if helm template ci deploy/helm/autonomi --set worker.mode=Deployment >/dev/null 2>&1; then
+            echo "FAIL: worker.mode=Deployment was accepted; the schema is not enforcing"
+            exit 1
+          fi
+          echo "OK: invalid worker.mode rejected by values.schema.json"
+
+  bun-tests:
+    name: Bun tests on ${{ matrix.os }} bun=${{ matrix.bun-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # S-90: macos-latest and bun=latest moved to nightly.yml so a flaky
+        # upstream Bun release or a slow macOS runner no longer gates every
+        # push/PR. The pinned ubuntu/1.3.13 combo (the version shipped in the
+        # Dockerfile) still runs here.
+        os: [ubuntu-latest]
+        bun-version: ["1.3.13"]
+    runs-on: ${{ matrix.os }}
+    # 20, not 10: since e594e3a43 the unit tests run with coverage (about 6 min), and run 37173354311 hit the 10-min cap mid funnel-privacy.
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun ${{ matrix.bun-version }}
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ matrix.bun-version }}
+
+      - name: Setup Python (for bash route fallthroughs)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-test.txt
+
+      - name: Setup Node.js (for shim fallthroughs to bash CLI)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Python deps used by bash CLI tests
+        run: |
+          python3 -m pip install --upgrade pip
+          # pytest: engine10 wall.test.ts runs real pytest through a .venv shim (S41-16, D42 (3)).
+          python3 -m pip install pydantic httpx fastapi uvicorn pytest
+
+      - name: Install Node deps used by bash CLI tests
+        run: npm install --no-package-lock
+
+      - name: Cache bun install
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('loki-ts/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install loki-ts dependencies
+        working-directory: loki-ts
+        run: bun install
+
+      - name: Typecheck loki-ts
+        working-directory: loki-ts
+        run: bun run typecheck
+
+      # coverage.yml was removed in v10.10.1; the coverage table is printed here
+      # for visibility only (no floor is enforced).
+      - name: Run loki-ts unit tests (with coverage report)
+        working-directory: loki-ts
+        run: bun test --coverage
+
+      - name: Build loki-ts bundle (for the SDK bridge tests + bin/loki)
+        working-directory: loki-ts
+        run: bun run build
+
+      # v8: the raw-SDK judge/text bridges. With bun + the built bundle present,
+      # these run the wiring / opt-in / binary-free-ordering / mocked-success
+      # assertions FOR REAL (they self-skip only when bun is absent). No API key
+      # is set, so every path is exercised fail-closed -- no billable call.
+      - name: Run v8 SDK bridge tests (fail-closed, no ANTHROPIC_API_KEY)
+        run: |
+          bash tests/test-sdk-done-recog-bridge.sh
+          bash tests/test-sdk-text-bridge.sh
+          bash tests/test-sdk-council-vote.sh
+          bash tests/test-sdk-voter-agents.sh
+          bash tests/test-sdk-loop-routing.sh
+          bash tests/test-sdk-mode.sh
+          bash tests/test-bundled-sdk-provider.sh
+          bash tests/test-sandbox-deprecation.sh
+          bash tests/test-acceptance-resume-idempotence.sh
+
+      # First-run funnel privacy. Stubs curl and asserts on the real POST body,
+      # so it observes what would actually reach the wire (the reverted attempt's
+      # test stubbed loki_telemetry itself and could never see a leak). Hermetic:
+      # fake HOME, fake curl on PATH, no real network send. It sets
+      # LOKI_TELEMETRY=on explicitly, which by the documented gate precedence
+      # overrides the CI auto-off, so the gates are genuinely open here.
+      - name: Run first-run funnel privacy tests (stubbed curl, no real egress)
+        run: bash tests/test-funnel-privacy.sh
+
+      - name: Run CLI tests via bash route (LOKI_LEGACY_BASH=1)
+        env:
+          LOKI_LEGACY_BASH: "1"
+        run: bash tests/test-cli-commands.sh
+
+      - name: Run CLI tests via Bun shim route
+        run: PATH="$PWD/bin:$PATH" bash tests/test-cli-commands.sh
+        # S-90: hyperfine install + bench-suite moved to nightly.yml so the
+        # benchmark no longer gates every push/PR.

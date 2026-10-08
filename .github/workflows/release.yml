@@ -222,6 +222,41 @@ jobs:
         # PARENT..SHA first (see the poll loop). Same pinned binary as the audit.
         run: bash scripts/install-gitleaks.sh
 
+      # D90: the push gate is the fast gate, so the full suites run nightly as
+      # the backstop. A red nightly on main that is newer than the last release
+      # blocks THIS release until a FAILURE-CLASSES fix slice makes a newer
+      # nightly green (rerun it with workflow_dispatch after the fix lands).
+      - name: Block the release on a red nightly newer than the last release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CUR="$(tr -d '[:space:]' < VERSION)"
+          PREV_TAG="$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -vx "v${CUR}" | head -n 1 || true)"
+          if [ -z "$PREV_TAG" ]; then
+            echo "nightly block: no previous release tag; nothing to compare against"
+            exit 0
+          fi
+          REL_AT="$(git log -1 --format=%cI "$PREV_TAG")"
+          RUNS="$(gh api "repos/${REPO}/actions/workflows/nightly.yml/runs?branch=main&status=completed&per_page=20" \
+            --jq '[.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped")] | .[0] // empty | [.id, .conclusion, .created_at, .html_url] | @tsv')" || {
+            echo "NIGHTLY-BLOCK: could not read the nightly runs from the API; rerun this job"
+            exit 1
+          }
+          if [ -z "$RUNS" ]; then
+            echo "nightly block: no completed nightly run on main yet; not blocking"
+            exit 0
+          fi
+          IFS=$'\t' read -r RID CONC CREATED URL <<< "$RUNS"
+          NEWER="$(python3 -c 'import sys; from datetime import datetime as d; f=lambda x: d.fromisoformat(x.replace("Z","+00:00")); print(int(f(sys.argv[1])>f(sys.argv[2])))' "$CREATED" "$REL_AT")"
+          echo "nightly block: latest completed nightly run ${RID} is ${CONC} (${CREATED}); last release ${PREV_TAG} at ${REL_AT}"
+          if [ "$CONC" != "success" ] && [ "$NEWER" = "1" ]; then
+            echo "NIGHTLY-BLOCK: the latest nightly on main is ${CONC} and newer than ${PREV_TAG}: ${URL}"
+            echo "Per D90 a red nightly blocks the NEXT release. Open a FAILURE-CLASSES fix slice, land the fix, then rerun Nightly (workflow_dispatch) to green before releasing."
+            exit 1
+          fi
+
       - name: Require Tests / Security Audit green, at the release SHA or an eligible parent
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1083,46 +1118,72 @@ jobs:
           # never restores a cache an issue-triggered job could have written.
           no-cache: true
 
-      - name: Verify the PACKED tarball carries a fresh dist
+      - name: Pack once and verify the PACKED tarball carries a fresh dist
         run: |
           # WHY PACK AND NOT THE WORKTREE. package.json's prepack rebuilds
-          # loki-ts/dist DURING `npm publish`, so a check against the checked-out
-          # tree inspects the PRE-rebuild file. The committed dist legitimately
-          # lags VERSION (measured: 9dfb18d2 shipped VERSION 9.50.1 with a
-          # committed dist embedding 9.50.0, and npm still published 9.50.1
-          # correctly because prepack rebuilt it). Asserting on the worktree
-          # would have failed that good release. `npm pack` runs the same
-          # prepack, so the tarball is the honest artifact to inspect.
+          # loki-ts/dist DURING pack, so a check against the checked-out tree
+          # inspects the PRE-rebuild file. `npm pack` runs that prepack once;
+          # the resulting tarball is both what we inspect and what we publish
+          # (D90: before, `npm publish` ran prepack a second time, a second
+          # full dist build, on top of the pack above it).
           #
-          # WHAT THIS CATCHES. prepack SWALLOWS a failed build:
-          #   (cd loki-ts && bun install --production && bun run build) \
-          #     || echo 'WARN: loki-ts build failed, using existing dist if present'
-          # so a broken build yields exit 0 and a tarball carrying a STALE dist.
-          # publish-docker-build asserts `test -f dist/loki.js` after its own
-          # build, but publish-docker-build and publish-npm are PARALLEL
-          # siblings on `needs: release`: the channel with the assertion
-          # cannot stop the one without it, and npm has already shipped by the
-          # time Docker goes red.
+          # WHAT THIS CATCHES. prepack SWALLOWS a failed build, so a broken
+          # build yields exit 0 and a tarball carrying a STALE dist. The
+          # assertion below fails the job before anything is published.
           set -euo pipefail
           want="$(cat VERSION)"
-          # prepack's bun build writes to stdout too, so --silent is NOT
-          # enough: the capture would be three lines, not a filename. Take the
-          # LAST line, which is the tarball npm reports.
+          # prepack's bun build writes to stdout too: take the LAST line, which
+          # is the tarball npm reports.
           tgz="$(npm pack --silent | tail -n 1)"
-          tar -xzf "$tgz" package/loki-ts/dist/loki.js
-          test -f package/loki-ts/dist/loki.js || {
+          mkdir -p "$RUNNER_TEMP/npm-tarball"
+          cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
+          printf '%s\n' "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
+          mkdir -p "$RUNNER_TEMP/unpack"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/unpack" package/loki-ts/dist/loki.js
+          test -f "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
             echo "FATAL: packed tarball has no loki-ts/dist/loki.js"; exit 1; }
-          grep -q "\"${want}\"" package/loki-ts/dist/loki.js || {
+          grep -q "\"${want}\"" "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
             echo "FATAL: packed dist does not embed VERSION ${want}"
-            echo "       embedded: $(grep -oE '\"[0-9]+\.[0-9]+\.[0-9]+\"' package/loki-ts/dist/loki.js | sort -u | head -3 | tr '\n' ' ')"
+            echo "       embedded: $(grep -oE '\"[0-9]+\.[0-9]+\.[0-9]+\"' "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" | sort -u | head -3 | tr '\n' ' ')"
             exit 1; }
           echo "OK: packed dist embeds ${want}"
-          rm -rf package "$tgz"
 
-      - name: Publish to npm
-        run: npm publish --access public --tag next
+      - name: Upload the tarball that is published
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/npm-tarball/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish the verified tarball (no rebuild)
+        # Publishing a tarball path does not run prepack. publish-npm used to
+        # take 8m20s (run 37714923032): 41s was this publish, 7m59s was the
+        # registry-visibility wait below, which now lives in its own job.
+        run: npm publish "$RUNNER_TEMP/npm-tarball/$(cat "$RUNNER_TEMP/npm-tarball/NAME")" --access public --tag next
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # D90: split out of publish-npm so the publish job ends when the publish
+  # does. Post-Release Smoke and Promote trigger on this WORKFLOW finishing, so
+  # holding this job until the registry serves the exact version still gates
+  # both on visibility. Registry lag is external time, reported separately.
+  npm-visible:
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout (VERSION only)
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: VERSION
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       - name: Wait until npm serves the published version
         # NPM-LAG: npm can take 30+ minutes to serve a version it just accepted

@@ -3,8 +3,15 @@ name: Nightly
 # S-90: bun=latest, the macOS bun job, and the hyperfine benchmark used to run
 # on every push/PR in test.yml. They're slow and their signal (upstream Bun
 # breakage, perf regressions) doesn't need push-latency, so they moved here.
-# Same steps as the pinned ubuntu/1.3.13 job in test.yml, just the other 3
-# os x bun-version combos, plus hyperfine.
+# Same steps as the pinned ubuntu/1.3.13 job in full-suite.yml, just the other
+# 3 os x bun-version combos, plus hyperfine.
+#
+# D90: this is also the BACKSTOP for the fast push/release gate (test.yml).
+# The `full` job below runs every suite the fast gate skips. A red `full`
+# makes this run red, and release.yml required-ci refuses the NEXT release
+# while the latest completed nightly on main is red and newer than the last
+# release. The upstream-drift bun matrix is informational (continue-on-error)
+# so a macOS or bun=latest flake cannot hold a release.
 
 on:
   schedule:
@@ -19,7 +26,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # D90 backstop: the complete suite set (Node 20/24, Python matrix, 8 shell
+  # shards, full moat, Helm, full bun). Blocking for the NEXT release.
+  full:
+    name: Full suite (backstop)
+    uses: ./.github/workflows/full-suite.yml
+
+  # Moved from first-run-gate.yml (D90): stub provider, no keys, informational.
+  first-run-gate:
+    name: first-run gate (stub)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+          no-cache: true
+
+      - name: Run the gate
+        run: bash scripts/first-run-gate.sh --stub
+
   bun-tests-nightly:
+    continue-on-error: true
     name: Bun tests on ${{ matrix.os }} bun=${{ matrix.bun-version }} (nightly)
     strategy:
       fail-fast: false
