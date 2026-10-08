@@ -7,7 +7,8 @@ import { readFileSync } from "node:fs";
 import { SRC, walk, rel, isComment, loadAllowlist, checkCounts } from "./_guard_lib.ts";
 
 export const CALL = /\b(Bun\.spawn(Sync)?|spawn(Sync)?|execFile(Sync)?|execSync|exec)\s*\(/;
-const SAFE = /tokenFreeEnv|withholdGithubTokens|safeGit|workerEnv|cleanEnv|sanitizedEnv/;
+// FC-87: plainTestEnv filters the token family and SSH_AUTH_SOCK from its base (util/check_result.ts), so it is token-free.
+const SAFE = /plainTestEnv|tokenFreeEnv|withholdGithubTokens|safeGit|workerEnv|cleanEnv|sanitizedEnv/;
 
 // Returns the call-site windows (call line plus following lines up to 14) in a source text.
 export function violatingCalls(src: string): number[] {
@@ -15,7 +16,9 @@ export function violatingCalls(src: string): number[] {
   const bad: number[] = [];
   lines.forEach((l, i) => {
     if (isComment(l) || !CALL.test(l) || /\.exec\(|RegExp|\bre\.exec/.test(l) || /^\s*(export\s+)?(async\s+)?function\b/.test(l)) return;
-    const win = lines.slice(i, i + 15).join("\n");
+    let end = i + 15; // FC-87: a window stops at the next call line, so a later call's safe helper cannot excuse this one
+    for (let j = i + 1; j < end && j < lines.length; j++) if (!isComment(lines[j]!) && CALL.test(lines[j]!)) { end = j; break; }
+    const win = lines.slice(i, end).join("\n");
     const hasEnv = /\benv\b/.test(win);
     const bareParent = /env:\s*process\.env\b(?!\s*\))|\.\.\.process\.env/.test(win) && !SAFE.test(win);
     if (!hasEnv || bareParent) bad.push(i + 1);
@@ -36,4 +39,9 @@ test("the detector flags a planted full-env spawn and accepts a token-free one",
   expect(violatingCalls('Bun.spawn({ cmd: ["x"] });').length).toBe(1);
   expect(violatingCalls('Bun.spawn({ cmd: ["x"], env: { ...process.env } });').length).toBe(1);
   expect(violatingCalls('Bun.spawn({ cmd: ["x"], env: tokenFreeEnv(process.env) });').length).toBe(0);
+  // FC-87: plainTestEnv is token-free; a raw parent copy is still caught.
+  expect(violatingCalls('Bun.spawn({ cmd: ["x"], env: plainTestEnv() });').length).toBe(0);
+  expect(violatingCalls('spawnSync("x", [], { env: { ...plainTestEnv(), A: "1" } });').length).toBe(0);
+  expect(violatingCalls('Bun.spawn({ cmd: ["x"], env: process.env });').length).toBe(1);
+  expect(violatingCalls('spawnSync("x", [], { env: { ...process.env, A: "1" } });').length).toBe(1);
 });
