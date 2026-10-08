@@ -3,7 +3,7 @@
 # UTILITY = short read-only or operator-invoked tool call (git/ls/ps/lsof/gh probe), no model session; SWEEP = provider/runner sites to convert to tokenFreeEnv (FC-40 sibling sweep follow-up).
 loki-ts/src/cli/completions.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/commands/doctor.ts@10 | UTILITY: short read-only or operator-invoked tool call, no model session
-loki-ts/src/commands/issues_run.ts@1 | UTILITY: operator-invoked read-only gh issue and pr listing with the user env, as a direct loki start --pr would have; no model session
+loki-ts/src/commands/issues_run.ts@1 | UTILITY: lists issues and PRs and, only with --comment, posts issue comments (the triage reason and the epic plan) using the user's pre-withhold gh auth; operator-invoked, no push, no pr create, no model session
 loki-ts/src/commands/memory.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/commands/proof.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/commands/queue.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session

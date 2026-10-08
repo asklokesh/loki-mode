@@ -95,6 +95,30 @@ describe("loki issues run", () => {
     expect(h.out.join("")).toContain("plan #7: t7");
   });
 
+  test("default triage path withholds the token from this process while gh keeps the user's", async () => {
+    const bin = join(dir, "bin-tok");
+    mkdirSync(bin);
+    const log = join(dir, "gh-token.log");
+    writeFileSync(join(bin, "gh"), `#!/bin/sh\nprintf '%s\\n' "$GH_TOKEN" >> "${log}"\ncase "$1 $2" in\n  "issue list") echo '[]';;\n  *) echo '[]';;\nesac\n`);
+    chmodSync(join(bin, "gh"), 0o755);
+    const h = harness({});
+    delete h.inject.gh;
+    delete h.inject.triage;
+    const saved = { ...process.env };
+    process.env.PATH = `${bin}:${saved.PATH}`;
+    process.env.GH_TOKEN = "ghp_USERREALTOKEN";
+    let after: string | undefined;
+    try {
+      await runIssues(["run", SLUG, "--dry-run"], h.inject);
+      after = process.env.GH_TOKEN;
+    } finally {
+      for (const k of Object.keys(process.env)) if (!(k in saved)) delete process.env[k];
+      Object.assign(process.env, saved);
+    }
+    expect(readFileSync(log, "utf8")).toContain("ghp_USERREALTOKEN");
+    expect(after).toContain("LOKIWITHHELDsentinel");
+  });
+
   test("dedupe skips an issue with an open loki/issue-N PR or a linking Loki PR body", async () => {
     const h = harness({
       issues: [issue(1), issue(2), issue(3), issue(4)],
