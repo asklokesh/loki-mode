@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { detectProtocol } from "../src/cockpit/capability.ts";
 import { encodeIterm2, encodeKitty } from "../src/cockpit/encode.ts";
 import { buildSvg, type CockpitState } from "../src/cockpit/svg.ts";
@@ -245,7 +245,17 @@ describe("cockpit SVG builder", () => {
   });
 });
 
+// Cold wasm init plus font read plus first rasterize took 5.4s on a cold macOS
+// runner (nightly 37686475225), over bun's 5000ms default. Warm once outside
+// any test budget and give the real-render tests an explicit generous timeout.
+const RENDER_TIMEOUT_MS = 30_000;
+
 describe("cockpit render orchestration", () => {
+  beforeAll(async () => {
+    const { rasterize } = await import("../src/cockpit/raster.ts");
+    await rasterize(buildSvg(SAMPLE));
+  }, 60_000);
+
   it("falls back honestly (no image) when protocol is none", async () => {
     const out = await render(SAMPLE, { protocol: "none" });
     expect(out.kind).toBe("fallback");
@@ -269,7 +279,7 @@ describe("cockpit render orchestration", () => {
     expect(out.data).toBeTruthy();
     // iTerm2 inline-image escape shape.
     expect(out.data!.startsWith("]1337;File=inline=1")).toBe(true);
-  });
+  }, RENDER_TIMEOUT_MS);
 
   it("renders a malformed/partial state without crashing (graceful degrade)", () => {
     // A truncated/hand-written state (missing verdict, budget, arrays) must
@@ -291,5 +301,5 @@ describe("cockpit render orchestration", () => {
     expect(r.available).toBe(true);
     expect(r.png).toBeTruthy();
     expect(r.png!.length).toBeGreaterThan(30_000);
-  });
+  }, RENDER_TIMEOUT_MS);
 });

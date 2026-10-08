@@ -528,3 +528,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: scripts/select-tests.sh (fixed, rule R8), scripts/ci/fast-gate.sh plan (fixed, appends --guards-only even when every path is R0-class), scripts/impacted-gate.sh (fixed, runs R8 bun guards), scripts/local-ci.sh --impacted (goes through impacted-gate.sh).
 - Mechanism: scripts/global-guards.tsv is the one declared list; select-tests.sh emits it as R8 on every non-empty diff (docs-only included) and via --guards-only.
 - Fixture: tests/test-select-tests.sh (attempts.ts-only diff and docs-only diff both select every declared guard; --guards-only lists them).
+
+## FC-50 Cold wasm render inside bun's default 5s test budget reddens the nightly (NIGHTLY-COCKPIT)
+- User saw: the 11.3.1 cut blocked by D90 because Nightly was red since 10-04. Raw: run 37686475225, job "Bun tests on macos-latest bun=1.3.13 (nightly)", `(fail) cockpit render orchestration > renders a real inline image on a graphics terminal via the bundled wasm [5479.10ms]` followed by `this test timed out after 5000ms`; the next wasm test in the same file passed in 2142ms once warm.
+- Law: evidence or it did not happen (a red gate is read from the log, then reproduced); never weaken the assertion or skip on macOS to turn a timeout green.
+- Cause (measured): the first test in the file to rasterize pays the one-time cost of importing @resvg/resvg-wasm, reading the vendored .wasm, initWasm and loading the font (raster.ts caches all three per process), and a cold macOS runner spends over 5000ms on it, which is bun's default per-test timeout. No logic failed.
+- Siblings swept: grep for rasterize, resvg and render( across loki-ts/tests finds only tests/cockpit.test.ts; its two real-render tests (inline image, font-bearing PNG) both got the explicit timeout. All other cockpit tests are pure string work.
+- Mechanism: the cold one-time init is warmed in a beforeAll with its own 60s budget, and every test that performs a real rasterize passes an explicit RENDER_TIMEOUT_MS (30s); a test that does real wasm work must not rely on the 5s default.
+- Fixture: loki-ts/tests/cockpit.test.ts. Red evidence: with RENDER_TIMEOUT_MS=1 and the warm disabled both render tests fail "timed out after 1ms"; with the fix 26 pass, 0 fail.
