@@ -9,7 +9,25 @@ import { describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+const CLAUDE_INSTALL_CMD = "npm install -g @anthropic-ai/claude-code";
+const PROVIDER_INSTALL_CMDS = [
+  CLAUDE_INSTALL_CMD,
+  "npm install -g @openai/codex",
+  "npm install -g cline",
+  "pip install aider-chat",
+  "npm install -g opencode-ai",
+];
+
+// Count only lines carrying a provider install command. A bare "Install:" count
+// is host-dependent: doctor also prints an unrelated Python 3.12 hint
+// ("Install: brew install python@3.12") whenever python3.12 is absent (FC-53).
+function providerInstallLines(stdout: string): string[] {
+  return stdout
+    .split("\n")
+    .filter((l) => l.includes("Install:") && PROVIDER_INSTALL_CMDS.some((c) => l.includes(c)));
+}
 
 // Reproduce the Bun readBytesSafe(_, 8000) head semantics on a byte buffer.
 // (readBytesSafe is module-private in build_prompt.ts; this mirrors its slice
@@ -66,7 +84,7 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
     let out: string;
     try {
       out = execFileSync("bash", [join(repoRoot, "bin", "loki"), "doctor"], {
-        env: { ...process.env, PATH: "/usr/bin:/bin" },
+        env: { ...process.env, PATH: `/usr/bin:/bin:${dirname(process.execPath)}` },
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
       }).toString();
@@ -79,23 +97,26 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
     // host-dependent: on macOS the system python3 is 3.9, so doctor prints an
     // unrelated "Python 3.12 recommended ... Install: brew install python@3.12"
     // line on stdout and the count became 2 on every macOS nightly (FC-53).
-    const claudeCmd = "npm install -g @anthropic-ai/claude-code";
-    const providerCmds = [
-      claudeCmd,
-      "npm install -g @openai/codex",
-      "npm install -g cline",
-      "pip install aider-chat",
-      "npm install -g opencode-ai",
-    ];
-    const installLines = out
-      .split("\n")
-      .filter((l) => l.includes("Install:") && providerCmds.some((c) => l.includes(c)));
+    const installLines = providerInstallLines(out);
     expect(installLines.length).toBeLessThanOrEqual(1);
     // Only the claude fallback line may appear; the other four are stderr-only.
-    expect(installLines.every((l) => l.includes(claudeCmd))).toBe(true);
+    expect(installLines.every((l) => l.includes(CLAUDE_INSTALL_CMD))).toBe(true);
   }, 20000); // doctor spawns real per-provider `--version` probes + a network
   // reachability check (~5-7s with all providers absent); this asserts STDOUT
   // routing, not speed, so give it a generous timeout (the 5s default flaked).
+
+  it("provider install-hint counter ignores the unrelated Python 3.12 hint (host-independent, FC-53)", () => {
+    // Stdout as doctor prints it on a host without python3.12 (Nightly 37790534786).
+    const stdout = [
+      "  WARN  Python 3.12 recommended for memory vector search; found 3.9.6. Install: brew install python@3.12 (macOS)",
+      "  WARN  No AI provider found. Install: " + CLAUDE_INSTALL_CMD,
+    ].join("\n");
+    // The old bare counter saw 2 here and failed the nightly.
+    expect(stdout.split("\n").filter((l) => l.includes("Install:")).length).toBe(2);
+    expect(providerInstallLines(stdout).length).toBe(1);
+    // A per-provider hint leaking to stdout is still caught.
+    expect(providerInstallLines(stdout + "\n  Install: npm install -g @openai/codex").length).toBe(2);
+  });
 
   it("sub-cap files are returned whole on both routes", () => {
     const dir = mkdtempSync(join(tmpdir(), "loki-gfcap-"));
