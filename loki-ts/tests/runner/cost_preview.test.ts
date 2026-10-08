@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendRunOutcome } from "../../src/runner/router/history.ts";
-import { encodeEstimate, estimateFromHistory, NOT_RECORDED, receiptBlock, startText } from "../../src/runner/router/cost_preview.ts";
+import { encodeEstimate, estimateFromHistory, NOT_RECORDED, priorFor, receiptBlock, sizeClassFromScope, startText } from "../../src/runner/router/cost_preview.ts";
 
 const SHAPE = "single:bun";
 const KEY = "a".repeat(64);
@@ -64,5 +64,47 @@ describe("opt-out LOKI_COST_PREVIEW=0", () => {
   });
   test("default is on", () => {
     expect(encodeEstimate({}, root, root)).not.toBeNull();
+  });
+});
+
+describe("rough prior (F2)", () => {
+  test("no history: prior shown and labelled", () => {
+    const r = estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" });
+    expect(startText(r)).toBe("estimate: ~$0.11-$0.98 (rough prior, no history for this shape)");
+  });
+  test("haiku tier has its own row", () => {
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-haiku-5-5" }))).toBe("estimate: ~$0.19-$0.63 (rough prior, no history for this shape)");
+  });
+  test("unknown tier or unmeasured size class has no prior", () => {
+    expect(priorFor("claude-opus-5-5", "unplanned")).toBeNull();
+    expect(priorFor("claude-sonnet-5-5", "large")).toBeNull();
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-opus-5-5" }))).toContain("NOT AVAILABLE");
+  });
+  test("size class comes from structured plan scope file count", () => {
+    expect(sizeClassFromScope(["a", "b", "c"])).toBe("small");
+    expect(sizeClassFromScope(["a", "b", "c", "d"])).toBe("medium");
+    expect(sizeClassFromScope(Array.from({ length: 11 }, (_, i) => String(i)))).toBe("large");
+  });
+  test("with history: unchanged golden even when a model is given", () => {
+    add(0.4, 120); add(1.1, 540); add(0.7, 300);
+    expect(startText(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" }))).toBe("estimate: $0.40-$1.10, 2m-9m (3 prior runs, shape single:bun)");
+  });
+  test("LOKI_COST_PRIOR=0 restores NOT AVAILABLE", () => {
+    const r = estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5", env: { LOKI_COST_PRIOR: "0" } });
+    expect(startText(r)).toBe("estimate: NOT AVAILABLE (0 prior verified runs for shape single:bun, need 3)");
+  });
+  test("receipt records estimate_source", () => {
+    const prior = { LOKI_E10_COST_ESTIMATE: JSON.stringify(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" })) };
+    const b = receiptBlock(prior, 0.3, false, 100).cost_preview!;
+    expect(b["estimate_source"]).toBe("rough_prior");
+    expect(b["estimate"]).toEqual({ usd_low: 0.11, usd_high: 0.98, tier: "sonnet", size_class: "unplanned" });
+    add(0.4, 120); add(1.1, 540); add(0.7, 300);
+    const h = receiptBlock({ LOKI_E10_COST_ESTIMATE: JSON.stringify(estimateFromHistory(SHAPE, KEY, root, { model: "claude-sonnet-5-5" })) }, 0.3, false, 100).cost_preview!;
+    expect(h["estimate_source"]).toBe("history");
+    expect(receiptBlock({}, 0.3, false, 100).cost_preview!["estimate_source"]).toBeUndefined();
+  });
+  test("encodeEstimate threads the model and the off switch", () => {
+    expect(JSON.parse(encodeEstimate({}, root, root, "claude-sonnet-5-5")!).prior.tier).toBe("sonnet");
+    expect(JSON.parse(encodeEstimate({ LOKI_COST_PRIOR: "0" }, root, root, "claude-sonnet-5-5")!).prior).toBeUndefined();
   });
 });
