@@ -35,9 +35,9 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     expect(cost).toBe(1.2346);
   });
 
-  it("computes opus pricing (5/25 per 1M)", () => {
+  it("computes opus pricing (4/20 per 1M, Opus 5.5)", () => {
     const cost = calculateCostFromRecords([{ model: "opus", input_tokens: 1_000_000, output_tokens: 1_000_000 }]);
-    expect(cost).toBe(30);
+    expect(cost).toBe(24);
   });
 
   it("computes sonnet pricing (2/10 per 1M)", () => {
@@ -52,9 +52,9 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     }
   });
 
-  it("computes haiku pricing (1/5 per 1M)", () => {
+  it("computes haiku pricing (0.10/0.50 per 1M, alias = Haiku 5.5)", () => {
     const cost = calculateCostFromRecords([{ model: "haiku", input_tokens: 1_000_000, output_tokens: 1_000_000 }]);
-    expect(cost).toBe(6);
+    expect(cost).toBe(0.6);
   });
 
   it("computes gpt-5.3-codex pricing (1.75/14 per 1M)", () => {
@@ -74,8 +74,8 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     const cost = calculateCostFromRecords([
       { model: "haiku", input_tokens: 1234, output_tokens: 5678 },
     ]);
-    // (1234/1e6)*1 + (5678/1e6)*5 = 0.001234 + 0.02839 = 0.029624
-    expect(cost).toBe(0.0296);
+    // (1234/1e6)*0.1 + (5678/1e6)*0.5 = 0.0001234 + 0.002839 = 0.0029624
+    expect(cost).toBe(0.003);
   });
 
   it("handles empty list", () => {
@@ -88,10 +88,12 @@ describe("budget.calculateCostFromRecords -- pricing per provider", () => {
     // dropping them made the cost loop charge cache reads at the full input
     // rate, a 10x overcharge on the term that dominates real traffic.
     expect(PRICING["opus"]).toEqual({
-      input: 5.0,
-      output: 25.0,
-      cache_read: 0.5,
-      cache_write: 6.25,
+      input: 4.0,
+      output: 20.0,
+      cache_read: 0.2,
+      cache_write: 5,
+      cache_write_5m: 5,
+      cache_write_1h: 8,
     });
   });
 

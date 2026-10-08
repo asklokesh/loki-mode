@@ -1,6 +1,6 @@
 // R1-02: Claude Haiku 5.5 pricing. Exact-id key, above-100K tier, and the
 // guarantee that Haiku 4.5 keeps pricing at the family rate.
-// Source: platform.claude.com/docs/en/about-claude/pricing, read 2026-10-07.
+// Source: platform.claude.com/docs/en/about-claude/pricing, read 2026-10-08.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -54,14 +54,18 @@ describe("haiku 5.5 pricing", () => {
     const p = PRICING["claude-haiku-5-5"] as unknown as Record<string, unknown> | undefined;
     expect(p).toBeDefined();
     expect(p).toMatchObject({ input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125 });
-    expect(p!["over_100k"]).toEqual({ input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 });
-    expect(PRICING["haiku"]).toMatchObject({ input: 1, output: 5 });
+    expect(p!["over_100k"]).toEqual({
+      input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625, cache_write_5m: 0.625, cache_write_1h: 1.0,
+    });
+    // The haiku alias prices as its catalog target (Haiku 5.5); Haiku 4.5 is the exact id.
+    expect(PRICING["haiku"]).toMatchObject({ input: 0.1, output: 0.5 });
+    expect(PRICING["claude-haiku-4-5"]).toMatchObject({ input: 1, output: 5, cache_read: 0.1, cache_write_5m: 1.25, cache_write_1h: 2 });
   });
 
   it("records the source URL and read date", () => {
     const raw = JSON.parse(readFileSync(join(repoRoot, "loki-ts", "data", "model-pricing.json"), "utf8"));
     expect(raw._source).toContain("platform.claude.com/docs/en/about-claude/pricing");
-    expect(raw._source).toContain("2026-10-07");
+    expect(raw._source).toContain("2026-10-08");
   });
 
   it("bash _write_pricing_json mirrors the JSON row", () => {
