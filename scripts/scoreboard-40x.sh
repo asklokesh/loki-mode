@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/scoreboard-40x.sh -- D92 40x scoreboard: per-release cost, wall-time and human-minutes factors plus
-# EFFICIENCY against the 11.3.1 baseline. Reads loki run TSVs (task run verified wall_s usd human_min), such as
+# EFFICIENCY against the 11.3.1 baseline. Reads loki run TSVs (task run verified solved wall_s usd human_min; a legacy 6-column file exits 2), such as
 # the loki rows of scripts/b9-scoreboard.sh --ab plus the recorded human_min. Math: scripts/scoreboard-40x.py.
 #   --current TSV --baseline TSV --version V [--baseline-version 11.3.1] --json-out F [--metrics-out F]
 #   --human-floor-min M   labelled review floor: human_min = max(recorded, M); never applied to NOT RECORDED;

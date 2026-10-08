@@ -61,4 +61,10 @@ bash "$SB" --current "$T/fc.tsv" --baseline "$T/fb.tsv" --version v --json-out "
 # unset floor keeps today's behavior
 [ "$(jget "$T/d.json" human_floor_min)" = "None" ]; check floor-unset-default $? ""
 
+# a legacy 6-column TSV (no solved column) exits 2 with a message, never a silent NOT RUN
+printf 'trivial-sum\t1\t1\t30\t0.20\t2\n' > "$T/legacy.tsv"
+bash "$SB" --current "$T/legacy.tsv" --baseline "$T/legacy.tsv" --version v --json-out "$T/legacy.json" > "$T/legacy.out" 2>&1
+RC=$?
+[ "$RC" -eq 2 ] && grep -q 'solved' "$T/legacy.out"; check legacy-6-column-exits-2 $? "rc=$RC $(cat "$T/legacy.out")"
+
 [ "$FAILS" -eq 0 ]
