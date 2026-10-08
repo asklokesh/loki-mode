@@ -87,7 +87,7 @@ docker compose run loki start prd.md
 
 To change anything (budget, provider, max iterations), edit `.env` and run the command again. No flags to retype.
 
-For a mounted config file instead of a long `.env`, pass `loki start --config /path/to/config.yaml` (also accepts `.json`/`.env`; secrets via `${VAR}`). See "Configuration file" in [docs/INSTALLATION.md](docs/INSTALLATION.md).
+For a mounted config file instead of a long `.env`, pass `loki start --config /path/to/config.yaml` (also accepts `.json`/`.env`; secrets via `${VAR}`). See "Configuration file" in [docs/INSTALLATION.md](INSTALLATION.md).
 
 With the dashboard UI:
 

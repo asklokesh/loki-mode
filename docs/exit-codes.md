@@ -142,7 +142,7 @@ An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:
 it is not used anywhere, it has no consumers, and it inverts the
 severity-rises-with-the-code rule that every other command follows.
 
-### Known gaps until v10.0.0
+### Known gaps
 
 The table above is the target. On the current release, three inputs do not
 return what it implies. Measured on this checkout:
@@ -153,8 +153,8 @@ return what it implies. Measured on this checkout:
 | Not a git directory | `loki verify` | 1 (CONCERNS) | 2 |
 | Unknown flag | `loki verify --no-such-flag` | 3 | 64 |
 
-The gap is tracked as the pending moat case P2.verify-exit-contract,
-milestone v10.0.0, in `tests/moat/pending.txt`.
+The gap is tracked as the pending moat case P2.verify-exit-contract in
+`tests/moat/pending.txt`.
 
 ### `loki verify --fast`
 

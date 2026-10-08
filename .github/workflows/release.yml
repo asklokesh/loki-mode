@@ -1454,7 +1454,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: asklokesh/loki-mode
-          readme-filepath: ./DOCKER_README.md
+          readme-filepath: ./docs/DOCKER.md
           short-description: "Autonomous spec-to-product system for Claude Code, Codex CLI, Cline, and Aider"
 
   # The VS Code marketplace publishing job was removed in v7.2.0. The

@@ -94,7 +94,7 @@ RUN npm install -g npm@latest \
 # first `claude -p` with "No AI provider CLI found" -- the image cannot run a
 # single RARV iteration (regression fixed v7.45.0). Auth is supplied at run
 # time via ANTHROPIC_API_KEY (default) or a mounted Claude Code OAuth
-# credentials file (see DOCKER_README.md). Codex/Cline/Aider remain
+# credentials file (see docs/DOCKER.md). Codex/Cline/Aider remain
 # bring-your-own-CLI in Docker.
 # Use the RECOMMENDED native installer (curl install.sh) rather than the npm
 # package: the npm path pulls the native binary via a per-platform OPTIONAL

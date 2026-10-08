@@ -1,6 +1,6 @@
 # Metrics Guide
 
-Prometheus and OpenMetrics monitoring for Loki Mode (v5.38.0).
+Prometheus and OpenMetrics monitoring for Loki Mode.
 
 ## Overview
 
@@ -15,28 +15,28 @@ Loki Mode exposes a `/metrics` endpoint that returns production-ready metrics in
 
 ## Quick Start
 
-The `/metrics` endpoint is served by the dashboard and needs no enabling flag.
-Start the dashboard and scrape it.
+The metrics endpoint is served by the Control Plane and needs no enabling flag.
+Start the Control Plane and scrape it.
 
 ```bash
-# Start the dashboard (serves /metrics)
-loki dashboard start
+# Start the Control Plane (serves /v1/metrics, and /metrics for older scrapers)
+loki control serve
 
 # View metrics
-curl http://localhost:57374/metrics
+curl http://127.0.0.1:47821/v1/metrics
 
-# Or use CLI
-loki metrics
+# Or use the CLI session report
+loki report metrics
 ```
 
 ## Metrics Endpoint
 
 ```
-GET http://localhost:57374/metrics
+GET http://127.0.0.1:47821/v1/metrics
 Content-Type: text/plain; version=0.0.4
 ```
 
-Returns metrics in OpenMetrics text format. No authentication required by default (configure reverse proxy auth for production).
+Returns metrics in OpenMetrics text format. Without `LOKI_CONTROL_TOKEN` the endpoint answers loopback requests only (403 otherwise); with a token set, send it as a bearer token.
 
 ## Available Metrics
 
@@ -121,18 +121,14 @@ Metrics are derived from `.loki/` flat files:
 ## CLI Usage
 
 ```bash
-# Fetch all metrics
-loki metrics
+# Fetch all metrics from a running Control Plane
+curl -s http://127.0.0.1:47821/v1/metrics
 
-# Filter specific metric
-loki metrics | grep loki_cost_usd
-
-# Watch metrics in real-time
-watch -n 5 loki metrics
-
-# Custom dashboard host/port
-loki metrics --host 192.168.1.100 --port 8080
+# Filter one metric
+curl -s http://127.0.0.1:47821/v1/metrics | grep loki_cost_usd
 ```
+
+`loki report metrics` is a separate session productivity report, not the Prometheus text.
 
 ## Prometheus Configuration
 
@@ -145,7 +141,7 @@ scrape_configs:
   - job_name: 'loki-mode'
     scrape_interval: 15s
     static_configs:
-      - targets: ['localhost:57374']
+      - targets: ['127.0.0.1:47821']
         labels:
           environment: 'production'
           project: 'my-app'
@@ -160,7 +156,7 @@ scrape_configs:
     tls_config:
       insecure_skip_verify: true  # For self-signed certs
     static_configs:
-      - targets: ['localhost:57374']
+      - targets: ['127.0.0.1:47821']
 ```
 
 ### With Authentication (via reverse proxy)
@@ -190,7 +186,7 @@ scrape_configs:
         regex: loki-mode
       - source_labels: [__meta_kubernetes_pod_ip]
         target_label: __address__
-        replacement: $1:57374
+        replacement: $1:47821
 ```
 
 ## Grafana Integration
@@ -287,7 +283,7 @@ Create `/etc/datadog-agent/conf.d/openmetrics.d/loki_mode.yaml`:
 
 ```yaml
 instances:
-  - prometheus_url: http://localhost:57374/metrics
+  - prometheus_url: http://127.0.0.1:47821/v1/metrics
     namespace: loki
     metrics:
       - loki_session_status
@@ -394,15 +390,10 @@ Configure alerts in Grafana panels:
 
 ## Environment Variables
 
-There are none. `/metrics` is an unconditional route on the dashboard app
-(`dashboard/server.py:9637`), served at the dashboard's own port and path. An
-earlier version of this page listed `LOKI_METRICS_ENABLED`,
-`LOKI_METRICS_PORT`, and `LOKI_METRICS_PATH`; none of the three is read by any
-code, so the endpoint cannot be turned off, moved, or re-pathed by environment.
-
-To change the port, change the dashboard port. To restrict access, put the
-dashboard behind a reverse proxy: unlike the `/api/*` routes, `/metrics` has no
-auth scope dependency, so anything that can reach the port can read it.
+There are none specific to metrics. The endpoint follows the Control Plane
+port (`LOKI_CONTROL_PORT`, default 47821) and its token (`LOKI_CONTROL_TOKEN`).
+`LOKI_METRICS_ENABLED`, `LOKI_METRICS_PORT` and `LOKI_METRICS_PATH` are not read
+by any code.
 
 ## Best Practices
 
@@ -434,19 +425,13 @@ auth scope dependency, so anything that can reach the port can read it.
 ### Metrics Endpoint Returns Empty
 
 ```bash
-# Check LOKI_METRICS_ENABLED is set
-echo $LOKI_METRICS_ENABLED
-
-# Verify LOKI_DIR is set (required for dashboard)
-echo $LOKI_DIR
-
 # Check dashboard-state.json exists and is updating
 ls -la .loki/dashboard-state.json
 watch -n 2 cat .loki/dashboard-state.json
 
-# Check dashboard is running
-loki dashboard status
-curl http://localhost:57374/health
+# Check the Control Plane is running
+loki control status
+curl http://127.0.0.1:47821/health
 ```
 
 ### Metrics Show Zero Values
@@ -468,27 +453,24 @@ ls -la .loki/events.jsonl
 ### Connection Refused
 
 ```bash
-# Verify dashboard is running on expected port
-curl http://localhost:57374/health
+# Verify the Control Plane is running on the expected port
+curl http://127.0.0.1:47821/health
+loki control status
 
-# Check if another process is using port 57374
-lsof -ti:57374
-
-# Restart dashboard
-loki dashboard stop
-loki dashboard start
+# Start it (an explicit --port never falls back to another port)
+loki control serve --port 47821
 ```
 
 ### Prometheus Cannot Scrape
 
 ```bash
 # Test endpoint manually
-curl http://localhost:57374/metrics
+curl http://127.0.0.1:47821/v1/metrics
 
 # Check Prometheus targets page
 open http://prometheus-server:9090/targets
 
-# Verify network connectivity from Prometheus to Loki dashboard
+# Verify network connectivity from Prometheus to the Control Plane
 # (firewall, security groups, etc.)
 
 # Check Prometheus logs
@@ -503,7 +485,7 @@ kubectl logs -f prometheus-server-xyz
 # Set up budget alert
 cat > /tmp/budget_check.sh <<'EOF'
 #!/bin/bash
-COST=$(curl -s http://localhost:57374/metrics | grep loki_cost_usd | awk '{print $2}')
+COST=$(curl -s http://127.0.0.1:47821/v1/metrics | grep loki_cost_usd | awk '{print $2}')
 if (( $(echo "$COST > 4.5" | bc -l) )); then
   echo "CRITICAL: Cost $COST exceeds budget!"
   loki stop
@@ -522,7 +504,7 @@ import requests
 import json
 
 def get_loki_metrics():
-    response = requests.get("http://localhost:57374/metrics")
+    response = requests.get("http://127.0.0.1:47821/v1/metrics")
     metrics = {}
     for line in response.text.splitlines():
         if line.startswith("loki_"):
@@ -553,6 +535,6 @@ EOF
 ## See Also
 
 - [Audit Logging](audit-logging.md) - Track agent actions
-- [Dashboard Guide](dashboard-guide.md) - Web dashboard
+- [Control Plane](control-plane-migration.md) - The local UI and `/v1/*` API
 - [Enterprise Features](../wiki/Enterprise-Features.md) - Complete enterprise guide
 - [Prometheus Metrics](../wiki/Prometheus-Metrics.md) - Detailed wiki documentation

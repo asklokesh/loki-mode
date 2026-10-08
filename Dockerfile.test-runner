@@ -1,5 +1,0 @@
-FROM python:3.12-slim
-RUN pip install pytest requests websockets aiohttp pytest-asyncio
-WORKDIR /tests
-COPY tests/docker/ .
-CMD ["pytest", "-v", "--tb=short", "-o", "junit_family=xunit2", "--junitxml=/results/test-results.xml"]
