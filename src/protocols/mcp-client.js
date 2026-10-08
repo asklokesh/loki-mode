@@ -70,6 +70,7 @@ class MCPClient extends EventEmitter {
     this._connected = false;
     this._connectingPromise = null;
     this._serverInfo = null;
+    this._protocolVersion = null;
     this._serverCapabilities = null;
     this._tools = null;
 
@@ -84,6 +85,7 @@ class MCPClient extends EventEmitter {
   get name() { return this._name; }
   get connected() { return this._connected; }
   get serverInfo() { return this._serverInfo; }
+  get protocolVersion() { return this._protocolVersion; }
   get tools() { return this._tools; }
 
   async connect() {
@@ -102,13 +104,14 @@ class MCPClient extends EventEmitter {
 
     const initResult = await this._sendRequest('initialize', {
       clientInfo: { name: 'loki-mode-client', version: '1.0.0' },
-      protocolVersion: '2024-11-05'
+      protocolVersion: '2025-11-25'
     });
 
     this._serverInfo = initResult.serverInfo || null;
+    this._protocolVersion = initResult.protocolVersion || null;
     this._serverCapabilities = initResult.capabilities || null;
 
-    this._sendNotification('initialized', {});
+    this._sendNotification('notifications/initialized', {});
 
     const toolsResult = await this._sendRequest('tools/list', {});
     this._tools = toolsResult.tools || [];
@@ -142,6 +145,7 @@ class MCPClient extends EventEmitter {
     this._connected = false;
     this._tools = null;
     this._serverInfo = null;
+    this._protocolVersion = null;
 
     for (const [, pending] of this._pendingRequests) {
       clearTimeout(pending.timer);

@@ -193,6 +193,45 @@ describe('MCPClient', function() {
     });
   });
 
+  describe('negotiation against the real server', function() {
+    var client;
+    var bridgeDir;
+    afterEach(async function() {
+      if (client) { await client.shutdown(); client = null; }
+      if (bridgeDir) { fs.rmSync(bridgeDir, { recursive: true, force: true }); bridgeDir = null; }
+    });
+
+    function bridge() {
+      bridgeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-bridge-'));
+      var script = path.join(bridgeDir, 'bridge.js');
+      var serverPath = path.resolve(__dirname, '../../src/protocols/mcp-server');
+      fs.writeFileSync(script, "'use strict';\n" +
+        "const { handleRequest } = require(" + JSON.stringify(serverPath) + ");\n" +
+        "const log = [];\n" +
+        "let buf = '';\n" +
+        "process.stdin.setEncoding('utf8');\n" +
+        "process.stdin.on('data', (c) => { buf += c; let i; while ((i = buf.indexOf('\\n')) !== -1) {\n" +
+        "  const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1); if (!line) continue;\n" +
+        "  const req = JSON.parse(line); log.push(req.method);\n" +
+        "  const res = handleRequest(req);\n" +
+        "  if (res) process.stdout.write(JSON.stringify(res) + '\\n');\n" +
+        "  if (req.method === 'tools/list') process.stderr.write('METHODS ' + log.join(',') + '\\n');\n" +
+        "} });\nprocess.stdin.resume();\n");
+      return script;
+    }
+
+    it('adopts the negotiated version and sends notifications/initialized', async function() {
+      client = new MCPClient({ name: 'real', command: 'node', args: [bridge()], timeout: 5000 });
+      var stderr = '';
+      client.on('stderr', function(e) { stderr += e.data; });
+      await client.connect();
+      assert.equal(client.protocolVersion, '2025-11-25');
+      assert.ok(client.serverInfo && client.serverInfo.name === 'loki-mode');
+      await new Promise(function(r) { setTimeout(r, 100); });
+      assert.match(stderr, /METHODS initialize,notifications\/initialized,tools\/list/);
+    });
+  });
+
   describe('concurrent connect() calls', function() {
     var client;
     afterEach(async function() { if (client) { await client.shutdown(); client = null; } });

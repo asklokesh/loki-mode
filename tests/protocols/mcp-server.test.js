@@ -19,7 +19,7 @@ after(() => {
   fs.rmSync(testDir, { recursive: true, force: true });
 });
 
-const { handleRequest, getTools, getResources, getServerInfo } = require('../../src/protocols/mcp-server');
+const { handleRequest, getTools, getResources, getServerInfo, SUPPORTED_PROTOCOL_VERSIONS } = require('../../src/protocols/mcp-server');
 
 describe('MCP Server initialization', () => {
   it('should return server info on initialize', () => {
@@ -44,6 +44,45 @@ describe('MCP Server initialization', () => {
     });
     // Notifications with no id should return null
     assert.equal(response, null);
+  });
+
+  it('should accept notifications/initialized notification', () => {
+    const response = handleRequest({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized'
+    });
+    assert.equal(response, null);
+  });
+
+  it('should echo a supported requested protocolVersion', () => {
+    for (const v of ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25']) {
+      const response = handleRequest({
+        jsonrpc: '2.0', method: 'initialize', id: 2,
+        params: { protocolVersion: v, capabilities: {}, clientInfo: { name: 't', version: '1' } }
+      });
+      assert.equal(response.result.protocolVersion, v);
+    }
+  });
+
+  it('should fall back to the latest supported version for an unknown request', () => {
+    const response = handleRequest({
+      jsonrpc: '2.0', method: 'initialize', id: 3,
+      params: { protocolVersion: '2099-01-01' }
+    });
+    const latest = SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1];
+    assert.equal(latest, '2025-11-25');
+    assert.equal(response.result.protocolVersion, latest);
+  });
+
+  it('should fall back to the latest version when none is requested', () => {
+    const response = handleRequest({ jsonrpc: '2.0', method: 'initialize', id: 4 });
+    assert.equal(response.result.protocolVersion, '2025-11-25');
+  });
+
+  it('should put protocolVersion at the result top level, not in serverInfo', () => {
+    const response = handleRequest({ jsonrpc: '2.0', method: 'initialize', id: 5, params: { protocolVersion: '2024-11-05' } });
+    assert.equal(response.result.protocolVersion, '2024-11-05');
+    assert.equal(response.result.serverInfo.protocolVersion, undefined);
   });
 
   it('should respond to ping', () => {
@@ -185,10 +224,10 @@ describe('JSON-RPC 2.0 error handling', () => {
 });
 
 describe('Server info', () => {
-  it('should return server name and protocol version', () => {
+  it('should return server name and version without a nested protocol version', () => {
     const info = getServerInfo();
     assert.equal(info.name, 'loki-mode');
-    assert.equal(info.protocolVersion, '2024-11-05');
+    assert.equal(info.protocolVersion, undefined);
     assert.ok(info.version);
   });
 });
