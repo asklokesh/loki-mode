@@ -3,7 +3,7 @@ name: loki-mode
 description: An autonomous software factory that knows what it is supposed to deliver, and proves it did. Use when the user says Loki Mode or asks to build, fix or verify software autonomously.
 ---
 
-# Loki Mode v11.2.2
+# Loki Mode v11.3.0
 
 **Current entry points (Loki 10 engine):** `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run the Loki 10 engine and end with a signed receipt (`loki verify`). `loki backlog owner/repo --all` runs many issues in parallel. Guide: `docs/v10/GUIDE.md`. The skill instructions below, and `loki start`, describe the legacy engine, which still ships and is being removed (`loki start owner/repo#N` still routes to it; prefer `loki owner/repo#N`).
 
@@ -483,4 +483,4 @@ See `CHANGELOG.md` entries [7.5.7], [7.5.8], [7.5.13] for the per-fix list and r
 
 ---
 
-**v11.2.2 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**
+**v11.3.0 | [Autonomi](https://www.autonomi.dev/) flagship product | core skill**
