@@ -429,6 +429,8 @@ match_kind() {
     [ "$kind" = "shell_test" ] || { printf '%s\n' "$kind"; return; }
     case "$basename" in
         test_*.py | *_test.py) kind="py_test" ;;
+        # FC-54: the aggregate runner is not a suite; run bare it executes everything (rc=124 in the fast gate).
+        run-all-tests.sh) kind="" ;;
         test-*.sh | run-*.sh | run_*.sh) ;;
         *.js | *.mjs) kind="node_test" ;;
         *) kind="" ;;

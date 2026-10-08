@@ -50,6 +50,17 @@ if has wf tests/test-ci-cache-scope.sh && has wf tests/test-registration-coverag
     ok "a workflow edit selects the workflow guards, not the full set"
 else bad "a workflow edit did not select the workflow guards"; fi
 
+# FC-54: a path guard may only select runnable tests (tests/test-*.sh, tests/test_*.py). The old
+# `grep ... -- PATTERN tests --include=...` put --include after `--`, so it was a file operand and
+# every file under tests/ (helpers, tsv, the suite runner) was selected and run as a test.
+plan_for wfrun .github/workflows/release.yml tests/run-all-tests.sh tests/test-promote-head-stamp.sh
+bad_rows="$(awk -F'\t' '$1=="shell_test" || $1=="py_test" {print $2}' "$T/wfrun/plan.tsv" \
+    | grep -vE '^tests/(.*/)?(test-[^/]*\.sh|test_[^/]*\.py|run[-_][^/]*\.sh)$' || true)"
+bad_rows="$bad_rows$(awk -F'\t' '$2=="tests/run-all-tests.sh"' "$T/wfrun/plan.tsv")"
+if [ -z "$bad_rows" ]; then
+    ok "FC-54: a workflow/runner edit plans only runnable test files, no helpers, tsv or run-all-tests.sh"
+else bad "FC-54: non-test rows planned: $(printf '%s' "$bad_rows" | tr '\n' ' ')"; fi
+
 plan_for docs docs/v10/DECISIONS.md
 if ! has docs tests/test-doctor-single-impl.sh && ! grep -q '^FULL' "$T/docs/plan.tsv"; then
     ok "mutation: an unrelated docs edit selects no doctor suite"
