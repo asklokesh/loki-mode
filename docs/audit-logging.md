@@ -6,7 +6,7 @@ Audit trails for Loki Mode operations.
 
 ## Overview
 
-Audit logging captures significant events for security monitoring, debugging, and usage analytics. Audit logging is **enabled by default** as of v5.37.0.
+Audit logging captures significant events for security monitoring, debugging, and usage analytics. Audit logging is **enabled by default**.
 
 ## Configuration
 
@@ -31,7 +31,7 @@ enterprise:
     retention_days: 90         # Days to keep logs
     max_file_size: 100         # MB per file before rotation
     compress: true             # Compress rotated files
-    integrity_check: true      # Enable SHA-256 chain hashing (v5.38.0)
+    integrity_check: true      # Enable SHA-256 chain hashing
     syslog_enabled: false      # Forward to external syslog
     exclude_events:            # Events to exclude
       - api.request
@@ -123,7 +123,7 @@ Audit logs use JSON Lines format (one JSON object per line):
   "metadata": {
     "hostname": "dev-machine",
     "pid": 12345,
-    "version": "5.42.2"
+    "version": "X.Y.Z"
   }
 }
 ```
@@ -139,7 +139,7 @@ Audit logs use JSON Lines format (one JSON object per line):
 | `resource` | string | Resource affected (optional) |
 | `details` | object | Event-specific details |
 | `metadata` | object | System metadata (hostname, PID, version) |
-| `chain_hash` | string | SHA-256 chain hash for integrity (v5.38.0) |
+| `chain_hash` | string | SHA-256 chain hash for integrity |
 
 ## Log Location
 
@@ -278,7 +278,7 @@ Response:
 }
 ```
 
-## Log Integrity (v5.38.0)
+## Log Integrity
 
 Audit entries are chain-hashed with SHA-256 for tamper detection.
 
@@ -325,7 +325,7 @@ empty chain.
 export LOKI_AUDIT_NO_INTEGRITY=true
 ```
 
-## SIEM Integration (v5.38.0)
+## SIEM Integration
 
 ### Syslog Forwarding
 
@@ -392,7 +392,7 @@ EOF
 systemctl restart filebeat
 ```
 
-## Agent Action Audit (v5.38.0)
+## Agent Action Audit
 
 In addition to dashboard audit logs, agent actions are tracked separately.
 

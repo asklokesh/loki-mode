@@ -1,318 +1,36 @@
 # Upgrading
 
-This document covers upgrade and rollback guidance for the bash-to-Bun runtime migration. For features unrelated to the runtime migration, see `CHANGELOG.md`.
-
-The Bash runtime under `autonomy/` remains the source of truth through Phase 5. The Bun runtime under `loki-ts/` ports a subset of read-only commands. The shim at `bin/loki` decides which runtime handles a given invocation.
-
----
-
-## Running parallel BMAD stories
-
-By default Loki uses `.loki/` in the current working directory as a singleton state directory. Two `loki start` invocations in the same repo will collide on `.loki/loki.pid`, `.loki/STATUS.txt`, and the queue files.
-
-To run multiple stories in parallel, give each session its own state directory via `LOKI_DIR`:
+Upgrade in place with the package manager you installed with:
 
 ```bash
-# Terminal 1
-LOKI_DIR=.loki-story-A loki start prd-story-A.md
-
-# Terminal 2
-LOKI_DIR=.loki-story-B loki start prd-story-B.md
+loki self-update            # detects npm, Bun or Homebrew and upgrades
+loki self-update --check    # print the detected manager and exit
 ```
 
-Each `LOKI_DIR` gets its own pid lock, queue, checkpoints, memory, and event stream. The dashboard reads whichever `LOKI_DIR` you point it at via the same env var.
+Or run the manager directly:
 
-For stronger isolation (separate working trees as well as state), pair `LOKI_DIR` with `git worktree add` so each session also has its own checkout. See `skills/parallel-workflows.md` for the worktree pattern.
+| Method | Upgrade |
+|--------|---------|
+| npm | `npm update -g loki-mode` |
+| Bun | `bun update -g loki-mode` |
+| Homebrew | `brew upgrade loki-mode` |
 
----
-
-## BMAD per-epic / per-story scope (v7.4.19+)
-
-When a BMAD plan contains many epics or stories, Loki injects the full tree into every iteration prompt by default. To narrow the working scope to a single epic or story, set `LOKI_BMAD_STORY_ID`:
+Then confirm the install:
 
 ```bash
-# Match by story id, key, name, story_id, or epic_id (case-insensitive substring)
-LOKI_BMAD_STORY_ID=epic-2 loki start prd.md
-LOKI_BMAD_STORY_ID="story-3.1" loki start prd.md
+loki --version
+loki doctor
 ```
 
-Behavior:
+## What changed
 
-- The match is a case-insensitive substring against `id`, `key`, `name`, `story_id`, and `epic_id` on every node in the BMAD tree (epics, stories, tasks, items, children).
-- If a node matches, that subtree is kept in the prompt and its siblings are pruned.
-- If nothing matches, Loki falls back to the full tree rather than silently emptying the plan, so a typo in the env var never hides all work.
+Every release is listed in [CHANGELOG.md](CHANGELOG.md), newest first. Read the entries between your old version and the new one before upgrading a CI pipeline or a pinned GitHub Action.
 
-This pairs with `LOKI_DIR` for running independent BMAD stories in parallel from the same repo.
+## Rolling back
 
----
+Install the previous version explicitly, for example `npm install -g loki-mode@<version>`. Run state in `.loki/` (per project) and `~/.loki/` is kept across upgrades and rollbacks.
 
-## From v7.2.0 to v7.3.0
+## More
 
-### What changed
-
-- A new `bin/loki` shim was added at the front of the install. It routes a small set of read-only commands to the Bun runtime when `bun` is available on `PATH`.
-- Routed commands: `version`, `--version`, `-v`, `status`, `stats`, `doctor`, `provider` (covers `provider show` and `provider list`), `memory` (covers `memory list` and `memory index`).
-- All other commands continue to execute the existing Bash CLI at `autonomy/loki`.
-- If `bun` is not on `PATH`, the shim falls through to Bash. Users without Bun installed see no behavior change.
-
-### What to install
-
-Bun is optional. Install it only if you want the faster route on the ported commands.
-
-```bash
-# macOS / Linux (official installer)
-curl -fsSL https://bun.sh/install | bash
-
-# macOS via Homebrew
-brew install oven-sh/bun/bun
-```
-
-Recommended Bun version: 1.3.0 or newer.
-
-### How to roll back
-
-Set `LOKI_LEGACY_BASH=1` to force the Bash route for any single invocation:
-
-```bash
-LOKI_LEGACY_BASH=1 loki version
-LOKI_LEGACY_BASH=1 loki status
-```
-
-Export the variable to make rollback persistent for a shell session:
-
-```bash
-export LOKI_LEGACY_BASH=1
-```
-
-Uninstalling Bun also forces the Bash route, since the shim falls through silently when `bun` is missing.
-
----
-
-## From v7.3.0 to v7.4.x
-
-### What changed
-
-- Additional runner-side code paths were ported to TypeScript under `loki-ts/src/`. These remain behind the Bun route, gated by the same shim and the same rollback flag.
-- The published shape of the routed commands does not change; the goal of the v7.4.x line is to extend internal coverage of the Bun runtime, not to add new user-facing commands.
-- The `LOKI_LEGACY_BASH=1` rollback flag continues to work and forces all routing back to Bash.
-
-### Status
-
-The v7.4.x line is currently in DRAFT (PR #157 on `feat/bun-migration`) and is not yet released to npm, Docker, Homebrew, or VSCode. The line will be released after v7.3.0 completes its soak window. There is nothing for end users to do until the release ships.
-
-### How to roll back
-
-Same as v7.3.0:
-
-```bash
-export LOKI_LEGACY_BASH=1
-```
-
----
-
-## From v7.4.x to v7.5.0
-
-### What changed
-
-Phase 1 of the RARV-C closure plan added five new opt-in feature flags
-to the Bun runtime. Defaults are unchanged: the system behaves exactly
-like v7.4.x unless you set the flags explicitly.
-
-| Flag | Effect |
-|------|--------|
-| `LOKI_INJECT_FINDINGS=1` | Inject structured per-finding records (severity, file, line, reviewer) into the next iteration's prompt instead of the bare comma-separated `gate-failures.txt` token. |
-| `LOKI_OVERRIDE_COUNCIL=1` | Enable the 3-judge override council on BLOCK. Requires `LOKI_INJECT_FINDINGS=1`. Reads `.loki/state/counter-evidence-<iter>.json`; 2-of-3 approval lifts the BLOCK. |
-| `LOKI_AUTO_LEARNINGS=1` | Auto-write structured learnings to `.loki/state/relevant-learnings.json` on every code_review failure. |
-| `LOKI_HANDOFF_MD=1` | Write a structured handoff doc to `.loki/escalations/handoff-*.md` before the bare `.loki/PAUSE` signal. |
-| `LOKI_AUTO_LEARNINGS_EPISODE=1` | Also write the learning into the Python episodic memory layer via `memory.engine.save_episode`. Optional companion to `LOKI_AUTO_LEARNINGS=1`. |
-
-### Reachability
-
-These flags activate inside the Bun runtime. Today `loki start <prd>`
-routes through the bash runner via the `bin/loki` shim's fall-through,
-so the flags do not yet trigger on a real `loki start` invocation. They
-DO activate in any code path that calls `runQualityGates` directly
-(tests, programmatic integration, future Bun `start` route). End-to-end
-activation lands when Part A Phase 4 wires the Bun `start` route. See
-the v7.5.0 CHANGELOG entry's "NOT tested" section for the honest gap.
-
-### Counter-evidence file format (`.loki/state/counter-evidence-<iter>.json`)
-
-```json
-{
-  "iteration": 7,
-  "evidence": [
-    {
-      "findingId": "eng-qa::- [Critical] dead code path bug at sdk/python/...",
-      "claim": "this code path is dead duplicate; live code is at sdk/src/gauge/",
-      "proofType": "duplicate-code-path",
-      "artifacts": ["sdk/python/ is excluded by pyproject.toml"]
-    }
-  ]
-}
-```
-
-`findingId` is `<reviewer>::<first 80 chars of the finding's raw text>`.
-`proofType` MUST be one of: `file-exists`, `test-passes`, `grep-miss`,
-`reviewer-misread`, `duplicate-code-path`, `out-of-scope`. Entries with
-any other value are silently dropped at load time (v7.5.1+ enum check).
-The override council uses a stub judge in v7.5.x that approves these
-six trusted proofTypes; real provider-backed judges land in Part B
-Phase 2 (target v7.6.0).
-
-### End-to-end walkthrough: when reviewer is wrong, how to override
-
-You are running a session at iteration 7. The code-review gate fires
-and BLOCKs with a finding the dev agent (or you) believes is a false
-positive (e.g. the reviewer is reading dead-duplicate code).
-
-1. **Find the finding text.** Look under
-   `.loki/quality/reviews/review-<ts>-7/<reviewer>.txt`. Each line that
-   matches `\[(Critical|High|Medium|Low)\] <description>` is one
-   finding. Pick the one you want to override.
-
-2. **Compute the findingId.** It is exactly:
-
-   ```
-   <reviewer>::<first 80 chars of the finding's raw line, with leading "- " bullet stripped>
-   ```
-
-   The implementation lives at
-   `loki-ts/src/runner/counter_evidence.ts:canonicalFindingId`. You
-   only need to compute it manually if you are hand-writing the file;
-   programmatic callers can import the function.
-
-3. **Write the counter-evidence file** at
-   `.loki/state/counter-evidence-7.json` using the schema above. Pick a
-   `proofType` from the enum that best matches your evidence. Provide
-   plain-text `artifacts[]` -- file paths, command outputs, links.
-
-4. **Re-run the iteration with override enabled:**
-
-   ```bash
-   LOKI_INJECT_FINDINGS=1 LOKI_OVERRIDE_COUNCIL=1 loki start ...
-   ```
-
-   `LOKI_INJECT_FINDINGS=1` is required so the runner re-parses the
-   per-reviewer text into structured findings. `LOKI_OVERRIDE_COUNCIL=1`
-   enables the judge panel.
-
-5. **Inspect the override transcript** at
-   `.loki/quality/reviews/review-<ts>-7/override-7.json`. It records
-   each judge's verdict and reasoning. If 2-of-3 approved, the BLOCK
-   was lifted. The override is also persisted to
-   `.loki/state/relevant-learnings.json` so future iterations remember
-   the dispute.
-
-6. **If the override is rejected** (judges disagreed with your
-   evidence), the BLOCK stays. Either fix the actual finding or
-   strengthen the counter-evidence and try again.
-
-Important caveat for v7.5.x: `loki start` today routes through the
-bash CLI via `bin/loki` shim fall-through, and the bash side does NOT
-honor these flags. The override path activates in any code path that
-calls `runQualityGates` directly (tests, programmatic integration,
-future Bun `start` route once Part A Phase 4 wires it). Track the
-actual route via `loki doctor` -- the v7.5.1+ "Runtime route" section
-shows whether you are on Bun or Bash.
-
-### How to roll back
-
-Unset the flags or:
-
-```bash
-export LOKI_LEGACY_BASH=1
-```
-
-The bash runner is unchanged from v7.4.x and ignores all five new flags.
-
----
-
-## From v7.x to v8.0.0 (planned)
-
-### What is planned
-
-- The Bash runtime under `autonomy/` is sunset. The Bun runtime becomes the only supported runtime.
-- The `LOKI_LEGACY_BASH=1` flag is removed because there is no longer a Bash route to fall back to.
-- Calendar date: TBD. The cut is gated on Phase 5 of the migration completing and on a soak window across the user base. There is no committed release date.
-
-### How to stay on the Bash runtime
-
-Pin the last v7.x release on your install channel:
-
-```bash
-# npm
-npm install -g loki-mode@7
-
-# Homebrew (pin the formula version after install)
-brew install asklokesh/tap/loki-mode
-brew pin loki-mode
-
-# Docker
-docker pull asklokesh/loki-mode:7
-```
-
-Pinning to v7 keeps both runtimes available indefinitely on your machine. Note that future v7.x patch releases may continue to ship security fixes; check the changelog for that line.
-
----
-
-## Troubleshooting
-
-### "Bun not found" / shim is silently using Bash
-
-If you intended to use the Bun route and it appears not to be active, verify:
-
-```bash
-command -v bun                # should print a path
-bun --version                 # should print >= 1.3.0
-```
-
-If `bun` is missing, install it (see "What to install" above). The shim never errors on a missing `bun`; it falls through to Bash. This is intentional so existing users are not blocked.
-
-### "Command runs slower than expected"
-
-Confirm which route was actually taken. Today the Bun route is detectable indirectly:
-
-- The `bin/loki` shim picks the Bun route only when `bun` is on `PATH` and `LOKI_LEGACY_BASH` is not set and one of the routed commands was invoked.
-- Run `command -v bun` and `printenv LOKI_LEGACY_BASH` to rule out the obvious causes.
-- Run the same command twice with and without `LOKI_LEGACY_BASH=1` and compare wall-clock time. The Bun route on the ported commands is typically several times faster than the Bash route on the same machine.
-
-**Known gap:** `loki version` does not currently print which runtime served the invocation. If you need a definitive answer, the most reliable check today is the `LOKI_LEGACY_BASH=1` comparison above. A future release may add a runtime indicator to the version output.
-
-### Errors that mention `loki-ts/dist/loki.js` or `loki-ts/src/cli.ts`
-
-The shim resolves the Bun entry in this order: `LOKI_TS_ENTRY` env var, `BUN_FROM_SOURCE=1` (prefers `src/cli.ts`), `loki-ts/dist/loki.js`, `loki-ts/src/cli.ts`. On npm and Docker installs, `src/` is excluded; only `dist/loki.js` is shipped. If you set `BUN_FROM_SOURCE=1` on a published install, the shim warns once and falls back to `dist/loki.js`. To clear the warning, unset `BUN_FROM_SOURCE`.
-
-### Forcing the Bash route per-command
-
-```bash
-LOKI_LEGACY_BASH=1 loki <command>
-```
-
-This is the supported escape hatch for any regression discovered on the Bun route through Phase 5. Please file an issue with reproduction steps so the regression can be fixed before v8.0.0.
-
-### Suppressing the `loki-mode` deprecation banner in scripts
-
-The legacy `loki-mode` binary alias was dropped from `package.json` `bin`
-in v7.4.12. The on-disk wrapper (`bin/loki-mode.js`) still works for
-already-symlinked installs and prints a one-time deprecation banner to
-stderr per invocation. Set `LOKI_NO_BANNER=1` (or `NO_COLOR=1`) to
-suppress the banner in non-interactive scripts. Pipe-detection also
-suppresses it automatically.
-
-```bash
-LOKI_NO_BANNER=1 loki-mode version    # silent
-loki-mode version | cat                # silent (piped)
-```
-
-### `LOKI_TS_ENTRY` typo handling (v7.5.1+)
-
-Pre-v7.5.1, setting `LOKI_TS_ENTRY=/typo/path` produced a raw Bun
-`Module not found` error. As of v7.5.1 the shim validates the file and
-warns + falls through to the bash CLI when the path does not exist:
-
-```bash
-$ LOKI_TS_ENTRY=/nonexistent loki version
-ERROR: LOKI_TS_ENTRY=/nonexistent does not exist; falling through to bash CLI. Unset the variable or fix the path.
-Loki Mode v7.5.1
-```
+- [Installation](docs/INSTALLATION.md)
+- [Known issues](docs/KNOWN-ISSUES.md)

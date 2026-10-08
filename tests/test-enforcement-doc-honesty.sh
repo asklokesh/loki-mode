@@ -34,7 +34,7 @@ GUARDED=(
     "wiki/Enterprise-Features.md"
     "wiki/Environment-Variables.md"
     "wiki/Use-Cases.md"
-    "DOCKER_README.md"
+    "docs/DOCKER.md"
     "docs/certification/answer-key.md"
     "docs/certification/02-enterprise-features/lesson.md"
     "docs/certification/04-production-deployment/lesson.md"
@@ -56,7 +56,7 @@ fi
 # GUARDED (and carry the marker) or this fails. Set membership on filenames,
 # never a prose pattern, so it cannot false-positive on caveat wording.
 FOUND="$(grep -rl -E 'LOKI_ALLOWED_PATHS|LOKI_BLOCKED_COMMANDS' \
-    --include='*.md' wiki docs README.md DOCKER_README.md SKILL.md 2>/dev/null \
+    --include='*.md' wiki docs README.md SKILL.md 2>/dev/null \
     | grep -vE '^docs/(competitive|research-2026-07|test-scenarios)/' \
     | grep -vE '^(CHANGELOG\.md|docs/COMPETITIVE-NEXT-10\.md)$' \
     | LC_ALL=C sort || true)"

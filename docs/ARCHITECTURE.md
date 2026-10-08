@@ -8,7 +8,6 @@ intervention. This document describes the system at a level above the code: how
 the major pieces fit together, how data flows through a build, and the design
 decisions that shaped the current structure.
 
-Version: 8.0.0
 
 ## System Overview
 

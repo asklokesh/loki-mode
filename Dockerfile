@@ -21,12 +21,12 @@ RUN bun run build:all
 FROM ubuntu:24.04
 
 LABEL maintainer="Lokesh Mure"
-LABEL version="11.2.2"
+LABEL version="11.3.0"
 # v7.4.5 fix (BUG-3): override the OCI-standard image.version label that
 # BuildKit auto-injects from the FROM ubuntu:24.04 base. Registries and
 # scanners read this; without the override they reported the Ubuntu version
 # (24.04) instead of the Loki Mode version.
-LABEL org.opencontainers.image.version="11.2.2"
+LABEL org.opencontainers.image.version="11.3.0"
 LABEL description="Loki Mode by Autonomi - Autonomous spec-to-product system (RARV-C closure loop). Provider-agnostic: Claude Code, Codex CLI, Cline, Aider"
 LABEL url="https://www.autonomi.dev/"
 
@@ -94,7 +94,7 @@ RUN npm install -g npm@latest \
 # first `claude -p` with "No AI provider CLI found" -- the image cannot run a
 # single RARV iteration (regression fixed v7.45.0). Auth is supplied at run
 # time via ANTHROPIC_API_KEY (default) or a mounted Claude Code OAuth
-# credentials file (see DOCKER_README.md). Codex/Cline/Aider remain
+# credentials file (see docs/DOCKER.md). Codex/Cline/Aider remain
 # bring-your-own-CLI in Docker.
 # Use the RECOMMENDED native installer (curl install.sh) rather than the npm
 # package: the npm path pulls the native binary via a per-platform OPTIONAL

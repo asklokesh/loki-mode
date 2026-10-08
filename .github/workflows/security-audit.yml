@@ -483,7 +483,7 @@ jobs:
           # fingerprint, so moving to a different sink or changing the sink line
           # creates an unreviewed critical finding and fails closed.
           reviewed_critical = {
-              ("py/command-line-injection", "api-examples/python-api.py", "d3e00d2bc3c0077d:1"),
+              ("py/command-line-injection", "examples/api/python-api.py", "d3e00d2bc3c0077d:1"),
               ("py/command-line-injection", "dashboard/api_releases.py", "9f905b10583ce31a:1"),
               ("py/command-line-injection", "dashboard/control.py", "1cd558210b41452d:1"),
               ("py/command-line-injection", "dashboard/server.py", "74cce5fbedefb794:1"),

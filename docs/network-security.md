@@ -174,7 +174,7 @@ spec:
         sizeLimit: 256Mi
 ```
 
-## TLS/HTTPS for Dashboard (v5.36.0)
+## TLS/HTTPS for Dashboard
 
 Enable encrypted dashboard connections:
 

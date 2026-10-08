@@ -22,7 +22,7 @@ Describe what this PR does and why.
 
 ## CLA Acknowledgment
 
-- [ ] I have read and agree to the [Contributor License Agreement](CLA.md)
+- [ ] I have read and agree to the [Contributor License Agreement](../CLA.md)
 
 ## Related Issues
 

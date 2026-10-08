@@ -379,6 +379,14 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Known gap: the delegate preflight only runs `<cli> version`. A throw inside doctor.ts AFTER the CLI loads (during the doctor run itself) is not covered by the preflight and surfaces as that crash, not the minimal fallback.
 - Fixture: tests/test-doctor-single-impl.sh.
 
+## FC-34 Test imports a temp copy of src in-process under bun --coverage
+- User saw: Tier B on main 83109bc1a failed in "Bun tests on ubuntu-latest bun=1.3.13" (`cd loki-ts && bun test --coverage`): every test printed (pass), no (fail) line and no summary, the output stopped mid coverage table and the job ended "exit code 1". The table was full of /tmp/loki-rmx-*/src/... rows. Raw view: a green test list with a dead process.
+- Law: L2 (a verdict must be produced by the runner, not lost with it), L0 (the harness must not depend on a reporter surviving deleted files).
+- Cause (measured): loki-ts/tests/engine10/route_matrix_mutation.test.ts (e49c7d29f) copies src into a mkdtemp dir 31 times and route_matrix_lib.ts matrixViolations(root) dynamically imports those copies in the test process; afterAll removes the dirs before the coverage reporter reads them. macOS exits 0 but prints 2170 loki-rmx rows; Linux died after 4 dirs.
+- Siblings swept: grep of loki-ts/tests and loki-ts/test for in-process dynamic imports from tmp/mkdtemp roots and for cpSync tests that import. Only route_matrix_lib.ts (lines 57-60, 178-179) imports from a variable root. graph.test.ts and providers.test.ts copy fixtures, not src; providers.test.ts imports real src inside a spawned script. route_matrix.test.ts passes the real src dir, which coverage tracks normally. No other hits.
+- Mechanism: the mutation test evaluates each copy through `Bun.spawn([process.execPath, route_matrix_child.ts, root])` (no --coverage), reading violations as JSON. A non-zero exit or unparsable output throws, so a crashed child can never pass a red case or the control case vacuously.
+- Fixture: the "FC-34 guard" describe block in loki-ts/tests/engine10/route_matrix_mutation.test.ts (red when the file imports route_matrix_lib in-process or does `await import(join(root` against a temp root; verified red by reverting the fix locally).
+
 ## FC-35 The router start line, receipt and plan disagree about the route
 - User saw: CTO smoke with LOKI_ROUTER=1 on a node off-by-one fixture. The start line said "route: executor haiku-5.5, advisor opus: Opus routes at plan time", the receipt said routed:false, units:[], executor:null, "no route recorded by implement", every session ran claude-sonnet-5-5, no plan-scope.json was written (plan logged "plan sonnet (fast tier)"), and shape_key was null.
 - Law: L7 (what is advertised is what is recorded); also L2 (a null shape key feeds no history, R1-16) and founder design (Opus routes; Sonnet is the default executor; Haiku only when Opus assigns it).
