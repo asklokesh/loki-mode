@@ -1,0 +1,42 @@
+# Baseline of spawn sites with the full parent env (2026-10-08). Format: path | reason. Guard: full_env_spawn_guard.test.ts (FC-40).
+# Reason groups: WORKER = runs inside the engine10 worker whose process.env was already token-withheld by withholdGithubTokens;
+# UTILITY = short read-only or operator-invoked tool call (git/ls/ps/lsof/gh probe), no model session; SWEEP = provider/runner sites to convert to tokenFreeEnv (FC-40 sibling sweep follow-up).
+loki-ts/src/cli/completions.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/commands/doctor.ts@10 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/commands/memory.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/commands/proof.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/commands/queue.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/commands/wiki.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/council/voter_agents.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/e10ext/assert_delta.ts@2 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/e10ext/discard.ts@2 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/e10ext/preexisting_dirty.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/e10ext/treeswap.ts@3 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/fetch_issue.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/modernize/codemod.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/modernize/oracle/java.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/modernize/oracle/search.ts@2 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/session.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/stages/intake.ts@3 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/stages/verify.ts@5 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/stages/wall.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/engine10/worker.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/features/blocked_answer.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/features/speed/already_done_async.ts@2 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/features/visual_evidence.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/features/wall_manifest_wire.ts@1 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/project_model/gather.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/providers/claude_flags.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/runner/attempts.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/runner/council.ts@3 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/runner/crash.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/runner/engine10_dashboard.ts@2 | WORKER: engine10 worker side, env already token-withheld before any of these run
+loki-ts/src/runner/github_token.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/runner/load_owner.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/runner/oauth_dev.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/runner/prd_reuse.ts@3 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/runner/providers.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/runner/quality_gates.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
+loki-ts/src/util/pr_lessons.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/util/run_pid.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
+loki-ts/src/util/shell.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
