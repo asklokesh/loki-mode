@@ -498,3 +498,10 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every one of the six suites was run individually red then green; the fast tier covers the same files only through select-tests.sh diff selection.
 - Mechanism: a change that touches a file a deferred suite reads (workflows, README, docs/v11, bin/loki, tests/real-run) must name that suite in its slice card Wall checks and run it before merge; the nightly is the backstop, not the first detector.
 - Fixture: the six suites themselves (tests/test-dep-inventory.sh, tests/test-docs-cli-drift.sh, tests/test-agent-types-loaded.sh, tests/test-telemetry-analytics-toggle.sh, tests/test-train-verdict-reuse.sh, shellcheck -S error tests/real-run/scenarios/*.sh).
+
+## FC-48 The diff-selected gate skipped the repo-wide guards
+- User saw: nothing yet. Raw: a slice touching only loki-ts/src/runner/attempts.ts was gated by the impacted-test planner, which selects by diff, so fc25_raw_spawn_guard and the other repo-wide guards never ran; a raw git spawn passed 3 reviews.
+- Law: Engine Laws (a guard that only runs when its own file changes is a checklist, not a guard); D26 guard 5.
+- Siblings swept: scripts/select-tests.sh (fixed, rule R8), scripts/ci/fast-gate.sh plan (fixed, appends --guards-only even when every path is R0-class), scripts/impacted-gate.sh (fixed, runs R8 bun guards), scripts/local-ci.sh --impacted (goes through impacted-gate.sh).
+- Mechanism: scripts/global-guards.tsv is the one declared list; select-tests.sh emits it as R8 on every non-empty diff (docs-only included) and via --guards-only.
+- Fixture: tests/test-select-tests.sh (attempts.ts-only diff and docs-only diff both select every declared guard; --guards-only lists them).

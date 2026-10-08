@@ -281,9 +281,12 @@ expect_contains "R3 python match uses py_test kind" "$out" "$(printf 'R3\tpy_tes
 expect_not_contains "R3 python match is never shell_test" "$out" "$(printf 'shell_test\ttests/dashboard/test_api_runs.py')"
 
 # R7: docs-only diff (outside skills/ and not SKILL.md) runs R1 only. A .md
-# change carries no shell/py syntax to check, so the selector emits nothing.
+# change carries no shell/py syntax to check, so the selector emits nothing
+# beyond the always-on R8 global guard rows (GATE-GUARDS).
 out="$(sel 'docs/some-notes.md')"
-expect_empty "R7 docs-only is silent (nothing to R1-check)" "$out"
+expect_not_contains "R7 docs-only selects no R1 check" "$out" "$(printf 'R1\t')"
+expect_not_contains "R7 docs-only selects no R3 suite" "$out" "$(printf 'R3\t')"
+expect_contains "R8 docs-only diff still selects the spawn guard" "$out" "$(printf 'R8\tbun_test\tloki-ts/tests/util\n')"
 
 # R7 does not apply to skills/ or SKILL.md -- those still get full selection.
 out="$(files_result "$(printf 'skills/testing.md\nautonomy/hooks/migration-hooks.sh\n')")"
@@ -425,6 +428,23 @@ chmod +x "$stub_dir/python3"
 out="$(cd "$REPO_ROOT" && PATH="$stub_dir:$PATH" bash "$SELECT" --files - <<<'loki-ts/src/commands/doctor.ts')"
 rm -rf "$stub_dir"
 expect_contains "FC-32 failing python3 still selects test-control-plane" "$out" "tests/test-control-plane.sh"
+
+# GATE-GUARDS R8: the global guard set (scripts/global-guards.tsv, the one declared list) is selected on
+# every non-empty diff regardless of what changed. A diff touching only runner/attempts.ts must select the
+# FC-25 raw-spawn guard and its siblings; a docs-only diff must too.
+out="$(cd "$REPO_ROOT" && bash "$SELECT" --files - <<<'loki-ts/src/runner/attempts.ts')"
+while IFS=$'\t' read -r gk gt; do
+    case "$gk" in '' | '#'*) continue ;; esac
+    expect_contains "R8 attempts.ts diff selects declared guard $gt" "$out" "$(printf 'R8\t%s\t%s' "$gk" "$gt")"
+done <"$REPO_ROOT/scripts/global-guards.tsv"
+expect_contains "R8 attempts.ts diff selects the fc25 raw spawn guard dir (tests/util)" "$out" "$(printf 'R8\tbun_test\tloki-ts/tests/util\n')"
+expect_contains "R8 attempts.ts diff selects spawn_env_guard" "$out" "loki-ts/tests/runner/spawn_env_guard.test.ts"
+expect_contains "R8 attempts.ts diff selects never_below_raw" "$out" "loki-ts/tests/engine10/never_below_raw.test.ts"
+expect_contains "R8 attempts.ts diff selects l0_guard" "$out" "loki-ts/tests/engine10/l0_guard.test.ts"
+expect_contains "R8 attempts.ts diff selects structural checks" "$out" "tests/test-structural-checks.sh"
+[ -f "$REPO_ROOT/loki-ts/tests/util/fc25_raw_spawn_guard.test.ts" ] && PASS=$((PASS + 1)) || { FAIL=$((FAIL + 1)); echo "FAIL: fc25_raw_spawn_guard.test.ts is not under the selected loki-ts/tests/util"; }
+out="$(cd "$REPO_ROOT" && bash "$SELECT" --guards-only)"
+expect_contains "R8 --guards-only lists the guards with no diff" "$out" "$(printf 'R8\tmoat\ttests/moat/p9-rule-of-two.sh')"
 
 echo ""
 echo "select-tests fixtures: $PASS passed, $FAIL failed"

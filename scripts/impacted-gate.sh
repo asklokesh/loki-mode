@@ -5,7 +5,8 @@
 #        bash scripts/local-ci.sh --impacted <base-ref>
 #
 # Selection is scripts/select-tests.sh (the one shared file-to-suite mapping).
-# Only shell_test and moat suites run here; static checks, bun and pytest stay
+# Only shell_test and moat suites run here, plus the R8 global bun guards
+# (scripts/global-guards.tsv); static checks and other bun/pytest stay
 # with the slice's own gate. Each suite runs under `timeout -k`, up to
 # IMPACTED_JOBS at a time, and its rc is printed. Exit 0 only if all are 0 and
 # every selected suite recorded a result (fail closed).
@@ -57,7 +58,7 @@ else
     # The selector's own fixture suite names many source paths as test data, so R3
     # selects it for almost any diff and it takes minutes. It runs when it (R2) or
     # the selector changes; a plain R3 mention is not a reason to run it here.
-    awk -F'\t' '($2=="shell_test" || $2=="moat") && !($1=="R3" && $3=="tests/test-select-tests.sh") && !seen[$3]++ {print $3}' "$SEL" >"$SUITES" || { echo "impacted-gate: FAIL (suite filter failed)"; exit 1; }
+    awk -F'\t' '($2=="shell_test" || $2=="moat" || ($1=="R8" && $2=="bun_test")) && !($1=="R3" && $3=="tests/test-select-tests.sh") && !seen[$3]++ {print $3}' "$SEL" >"$SUITES" || { echo "impacted-gate: FAIL (suite filter failed)"; exit 1; }
 fi
 N="$(wc -l <"$SUITES" | tr -d ' ')"
 echo "impacted-gate: $N shell suite(s) selected for $BASE..$HEAD_REF (jobs=$JOBS, ${LIMIT}s each)"
@@ -67,9 +68,17 @@ log_of() { printf '%s/%s.log' "$LOKI_RUN_TMP" "$(printf '%s' "$1" | tr '/' '_')"
 
 run_suite() {
     local s="$1" rc
-    if [ -f "$s" ]; then
-        "$TB" -k 10 "$LIMIT" bash "$s" >"$(log_of "$s")" 2>&1
-        rc=$?
+    if [ -f "$s" ] || [ -d "$s" ]; then
+        case "$s" in
+            loki-ts/tests/*) # R8 bun guard (a file or the tests/util dir)
+                (cd loki-ts && "$TB" -k 10 "$LIMIT" bun test "${s#loki-ts/}") >"$(log_of "$s")" 2>&1
+                rc=$?
+                ;;
+            *)
+                "$TB" -k 10 "$LIMIT" bash "$s" >"$(log_of "$s")" 2>&1
+                rc=$?
+                ;;
+        esac
     else
         echo "suite file missing" >"$(log_of "$s")"
         rc=127
