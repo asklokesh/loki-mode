@@ -218,7 +218,7 @@ grill_invoke_provider() {
                         else _gs_wrap=""; fi
                         _gs_out="$($_gs_wrap "$_gs_loki" internal sdk-text \
                             --prompt-file "$_gs_pf" \
-                            --model "${LOKI_SDK_GRILL_MODEL:-claude-sonnet-5}" --effort high \
+                            --model "${LOKI_SDK_GRILL_MODEL:-sonnet}" --effort high \
                             --timeout-ms "$(( _gs_to_s * 1000 ))" 2>/dev/null)" || _gs_rc=$?
                         rm -f "$_gs_pf" 2>/dev/null || true
                         if [ "$_gs_rc" -eq 0 ] && [ -n "$_gs_out" ]; then

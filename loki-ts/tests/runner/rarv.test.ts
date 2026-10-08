@@ -1,6 +1,7 @@
 // Tests for src/runner/rarv.ts -- tier mapping, phase names, provider tier
 // param resolution, and complexity detection heuristics.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { resolveClaudeModel } from "../../src/util/claude_model.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,7 +110,7 @@ describe("rarv.getProviderTierParam -- legacy fallback table", () => {
   });
 
   it("aider default", () => {
-    expect(getProviderTierParam("planning", "aider")).toBe("claude-opus-4-7");
+    expect(getProviderTierParam("planning", "aider")).toBe(resolveClaudeModel("opus"));
   });
 
   it("respects PROVIDER_MODEL_PLANNING env override", () => {

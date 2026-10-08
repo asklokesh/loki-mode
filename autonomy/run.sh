@@ -16425,7 +16425,7 @@ _dispatch_reviewer() {
                         _crs_out="$(_loki_with_deadline "$_crs_cap" \
                             "${_cr_provider_env[@]}" "$_crs_loki" internal sdk-judge \
                             --prompt-file "$_crs_pf" --schema-file "$_crs_schema_file" \
-                            --model "${LOKI_SDK_REVIEW_MODEL:-claude-sonnet-5}" --effort high \
+                            --model "${LOKI_SDK_REVIEW_MODEL:-sonnet}" --effort high \
                             --timeout-ms "$(( _crs_to_s * 1000 ))")" || _crs_rc=$?
                         _crs_invoked=true
                         rm -f "$_crs_pf" 2>/dev/null || true

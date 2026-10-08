@@ -52,6 +52,7 @@ import type {
   ProviderResult,
   SessionTier,
 } from "./types.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -1126,7 +1127,7 @@ export function clineProvider(): ProviderInvoker {
 //     (aider.sh:88-94). Multi-agent callers must serialize.
 //   - --no-auto-commits is mandatory: loki manages git itself, including
 //     branch state for healing mode (aider.sh:108-109,118).
-//   - Default model falls back to "claude-opus-4-7" hard-coded here. The
+//   - Default model falls back to the catalog opus alias (util/claude_model.ts). The
 //     bash side reads from providers/model_catalog.json via models.sh; we
 //     keep the TS provider hermetic and let LOKI_AIDER_MODEL override.
 //   - LOKI_AIDER_FLAGS is whitespace-split pass-through, mirroring bash
@@ -1136,7 +1137,7 @@ export function aiderProvider(): ProviderInvoker {
   const cli = resolveCli("LOKI_AIDER_CLI", "aider");
   return {
     async invoke(call: ProviderInvocation): Promise<ProviderResult> {
-      const model = process.env["LOKI_AIDER_MODEL"] ?? "claude-opus-4-7";
+      const model = process.env["LOKI_AIDER_MODEL"] ?? resolveClaudeModel("opus");
 
       const argv: string[] = [
         cli,

@@ -44,6 +44,7 @@ import {
   reviewAllowlistArgv,
   cavemanSuppressEnv,
 } from "../providers/claude_flags.ts";
+import { resolveClaudeModel } from "../util/claude_model.ts";
 
 export type AgentSpec = {
   description: string;
@@ -342,7 +343,7 @@ export async function dispatchClaudeAgents(
       const obj = await judgeJson({
         prompt: sdkPrompt,
         schema,
-        model: process.env["LOKI_SDK_COUNCIL_MODEL"] || "claude-sonnet-5",
+        model: process.env["LOKI_SDK_COUNCIL_MODEL"] || resolveClaudeModel("sonnet"),
         effort: "high",
         timeoutMs,
       });

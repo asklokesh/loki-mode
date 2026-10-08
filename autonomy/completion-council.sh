@@ -3233,7 +3233,7 @@ ISSUES: CRITICAL:description (optional, one per line per issue)"
                         else _cv_wrap=""; fi
                         _cv_out="$($_cv_wrap "$_cv_loki" internal sdk-text \
                             --prompt-file "$_cv_pf" \
-                            --model "${LOKI_SDK_COUNCIL_MODEL:-claude-haiku-4-5}" --effort medium \
+                            --model "${LOKI_SDK_COUNCIL_MODEL:-haiku}" --effort medium \
                             --timeout-ms "$(( _cv_to_s * 1000 ))" 2>/dev/null)" || _cv_rc=$?
                         rm -f "$_cv_pf" 2>/dev/null || true
                         if [ "$_cv_rc" -eq 0 ] && [ -n "$_cv_out" ]; then
@@ -3458,7 +3458,7 @@ REASON: your reasoning"
                         else _dv_wrap=""; fi
                         _dv_out="$($_dv_wrap "$_dv_loki" internal sdk-text \
                             --prompt-file "$_dv_pf" \
-                            --model "${LOKI_SDK_COUNCIL_MODEL:-claude-haiku-4-5}" --effort medium \
+                            --model "${LOKI_SDK_COUNCIL_MODEL:-haiku}" --effort medium \
                             --timeout-ms "$(( _dv_to_s * 1000 ))" 2>/dev/null)" || _dv_rc=$?
                         rm -f "$_dv_pf" 2>/dev/null || true
                         if [ "$_dv_rc" -eq 0 ] && [ -n "$_dv_out" ]; then

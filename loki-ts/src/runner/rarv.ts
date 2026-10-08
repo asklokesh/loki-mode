@@ -14,6 +14,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { extname, join, relative } from "node:path";
+import { resolveClaudeModel } from "../util/claude_model.ts";
 
 // ---------------------------------------------------------------------------
 // RARV tier mapping
@@ -147,7 +148,7 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
     case "cline":
       return process.env["CLINE_DEFAULT_MODEL"] ?? process.env["LOKI_CLINE_MODEL"] ?? "default";
     case "aider":
-      return process.env["AIDER_DEFAULT_MODEL"] ?? process.env["LOKI_AIDER_MODEL"] ?? "claude-opus-4-7";
+      return process.env["AIDER_DEFAULT_MODEL"] ?? process.env["LOKI_AIDER_MODEL"] ?? resolveClaudeModel("opus");
     default:
       return "development";
   }

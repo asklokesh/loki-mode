@@ -16,6 +16,7 @@ import {
   PROVIDER_COMMIT_HYGIENE,
 } from "../../src/runner/providers.ts";
 import type { ProviderInvocation } from "../../src/runner/types.ts";
+import { resolveClaudeModel } from "../../src/util/claude_model.ts";
 import { _resetClaudeHelpCacheForTest } from "../../src/providers/claude_flags.ts";
 import {
   chmodSync,
@@ -825,7 +826,7 @@ describe("aiderProvider invocation", () => {
       "--yes-always",
       "--no-auto-commits",
       "--model",
-      "claude-opus-4-7",
+      resolveClaudeModel("opus"),
     ]);
   });
 

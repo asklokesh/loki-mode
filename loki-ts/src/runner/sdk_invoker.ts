@@ -59,7 +59,7 @@ export function buildUserContent(prompt: string): string | Anthropic.TextBlockPa
 export interface JudgeParams {
   prompt: string;
   schema: Record<string, unknown>; // JSON Schema (draft-07); Loki's loki-ts/data/*.json
-  model: string; // full model id, e.g. claude-haiku-4-5
+  model: string; // full model id, resolved from the catalog
   effort?: Effort;
   maxTokens?: number;
   timeoutMs?: number;

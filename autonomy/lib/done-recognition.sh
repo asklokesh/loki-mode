@@ -121,7 +121,7 @@ _loki_done_recog_invoke() {
                 else _sdk_wrap=""; fi
                 _sdk_out="$($_sdk_wrap "$_sdk_loki" internal sdk-judge \
                     --prompt-file "$_sdk_prompt_f" --schema-file "$_sdk_schema" \
-                    --model "${LOKI_SDK_JUDGE_MODEL:-claude-haiku-4-5}" --effort low \
+                    --model "${LOKI_SDK_JUDGE_MODEL:-haiku}" --effort low \
                     --timeout-ms "$(( ${LOKI_DONE_RECOG_TIMEOUT:-180} * 1000 ))" 2>/dev/null)" || _sdk_rc=$?
                 rm -f "$_sdk_prompt_f" 2>/dev/null || true
                 if [ "$_sdk_rc" -eq 0 ] && [ -n "$_sdk_out" ]; then
