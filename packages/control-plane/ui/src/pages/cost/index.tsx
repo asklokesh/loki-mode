@@ -61,13 +61,13 @@ export function CostPage() {
         <KpiTile label="Measured" value={<span data-testid="cost-measured">{usd(t.measured_usd)}</span>} trend={`${t.measured_runs} runs`} trendTone="success" />
         <KpiTile label="Partial (priced sessions only)" value={<span data-testid="cost-partial">{usd(t.partial_usd)}</span>} trend={`${t.partial_runs} runs`} trendTone="warning" />
         <KpiTile label="Unmeasured" value={<span data-testid="cost-unmeasured">{t.unmeasured_runs} runs</span>} trend="not measured" />
-        <KpiTile label="Tokens in / out" value={<span data-testid="cost-tokens">{tok(t.input_tokens)} / {tok(t.output_tokens)}</span>} />
+        <KpiTile label="Tokens in (incl. cache) / out" value={<span data-testid="cost-tokens">{tok(t.input_tokens)} / {tok(t.output_tokens)}</span>} />
       </div>
       <div><Chip label="Group by" value={label} options={DIMS} onSelect={(v) => setDim(v as Dim)} /></div>
       {data.rows.length === 0 ? <EmptyState title="No runs yet" hint="Cost appears here once a run has been ingested." /> : (
         <Table
           caption={`Cost by ${label}`}
-          columns={[label, "Runs", "Measured", "Partial", "Unmeasured", "Tokens in", "Tokens out", "Spend"]}
+          columns={[label, "Runs", "Measured", "Partial", "Unmeasured", "Tokens in (incl. cache)", "Tokens out", "Spend"]}
           rows={data.rows.map((r) => [
             r[dim] ?? "unknown", r.runs,
             r.measured_runs ? usd(r.measured_usd) : "not measured",

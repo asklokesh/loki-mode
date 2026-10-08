@@ -11,7 +11,7 @@ import { type ProjectModel } from "../../project_model/schema.ts";
 import { loadCached, loadCommitted } from "../../project_model/discover.ts";
 import { computeKey, shallowDirs } from "../../project_model/gather.ts";
 
-export { HISTORY_FILE, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "./history_store.ts";
+export { HISTORY_FILE, WALL_KIND, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "./history_store.ts";
 
 /** A shipped shape default. "prior-default" means the LOKI_ROUTER=0 model for the stage; R1-11 resolves it to an id. */
 export type ShapeDefault = "haiku" | "sonnet" | "prior-default";

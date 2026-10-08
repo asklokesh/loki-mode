@@ -96,7 +96,7 @@ describe("engine10 machine", () => {
         implement: stage("implement", async (c) => { seen = c.outputs().intake; return { status: "completed", data: {} }; }),
       })),
     });
-    expect(seen).toEqual({ base_sha: "b1" });
+    expect(seen).toMatchObject({ base_sha: "b1" }); // the machine adds duration_s to every stored output
   });
 
   it("the same failure signature 3 verifies running ends STALLED", async () => {

@@ -13,8 +13,8 @@ An Agent Change Receipt is the JSON file a Loki 10 run seals at `.loki/runs/<run
 - `not_proven`: list of strings naming what the run did not prove.
 - `verdict`: one of `VERIFIED`, `PARTIAL`, `ALREADY_SATISFIED`, `SPEC_CONFLICT`, `FAILED` (`types.ts:44`).
 - `evidence`: list of strings (search hits and citation for an ALREADY_SATISFIED verdict).
-- `cost`: `{ usd (number or null), input_tokens, output_tokens, measured_sessions, total_sessions, partial_usd, source? }`.
-- `time`: `{ wall_s, stages }`.
+- `cost`: `{ usd (number or null), input_tokens, output_tokens, cache_read_tokens?, cache_creation_tokens?, sdk_duration_ms?, measured_sessions, total_sessions, partial_usd, source? }`.
+- `time`: `{ wall_s, total_s?, stages, stage_s? }`. `stages` is a disjoint partition of `total_s`: `setup` (first event to machine start), each stage, a parallel group as one bucket (for example `plan+wall`), `orchestration` gaps and `seal`, so a consumer may simply add them. `stage_s` holds each stage's own seconds (parallel members overlap, so they can add to more than their bucket). `wall_s` is the stage buckets without setup, orchestration and seal. `total_s` is elapsed seconds from the run's first event to seal (PR stage excluded); treat it as NOT RECORDED unless every bucket is a non-negative number and they sum to it within 1%. `total_s`, `stage_s` and the cache token keys are additive: older receipts omit them, which reads NOT RECORDED, never 0.
 - `events_sha256`: digest of the run event log.
 - `receipt_sha256`: sha256 of the canonical JSON with `verification` and `receipt_sha256` removed (`loki-ts/src/engine10/verify_cmd.ts:19`).
 - `verification`: `{ jwt, kid }`. `jwt` is a compact EdDSA (Ed25519) token binding the receipt hash; both are null when the receipt is unsigned (`stages/seal.ts:92-95`).

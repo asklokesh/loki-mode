@@ -61,6 +61,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   const outputs: Partial<Record<StageName, Obj>> = {};
   let capHit = false, fatal: string | null = null;
   const startMs = opts.startedAtMs ?? ctx.clock.now();
+  if (ctx.startedAtMs === undefined) ctx.startedAtMs = startMs;
+  const timeline: NonNullable<typeof ctx.timeline> = ctx.timeline ??= [];
   let capAtMs = startMs + softCapS(ctx.capS) * 1000; // 14/15 of capS for the default/deep caps; see softCapS above
   const capCtl = new AbortController();
   let capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
@@ -140,13 +142,15 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     }
     const res = r as StageResult;
     if (res.status === "completed") {
-      outputs[name] = res.data;
-      ctx.emit("stage.completed", name, { ...res.data, duration_s: dur() });
+      const durationS = dur();
+      res.data.duration_s = durationS; outputs[name] = res.data; // RECEIPT-TRUTH: seal sums time.stages from outputs, so every stage records its own duration_s here; same object (not a copy) because intake mutates its own data after the stage ends (D61-04)
+      ctx.emit("stage.completed", name, { ...res.data, duration_s: durationS });
     } else if (res.status === "skipped") {
       ctx.emit("stage.skipped", name, { ...res.data, reason: res.reason ?? "skipped by stage" });
     } else {
       ctx.emit("stage.failed", name, { ...res.data, duration_s: dur(), reason: res.reason ?? "failed" });
     }
+    timeline.push({ stage: name, startMs: t0, endMs: ctx.clock.now() });
     return res;
   };
   /** True when the flow must jump to the tail (commit, seal, pr). */

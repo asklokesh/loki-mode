@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendRunOutcome } from "../../src/runner/router/history.ts";
+import { appendRunOutcome, WALL_KIND } from "../../src/runner/router/history.ts";
 import { encodeEstimate, estimateFromHistory, NOT_RECORDED, priorFor, receiptBlock, sizeClassFromScope, startText } from "../../src/runner/router/cost_preview.ts";
 
 const SHAPE = "single:bun";
@@ -13,9 +13,23 @@ let root = "";
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), "cost-preview-")); });
 afterEach(() => { rmSync(root, { recursive: true, force: true }); });
 
-const add = (usd: number, wallS: number, shape = SHAPE, verdict: "pass" | "fail" = "pass"): void => {
-  appendRunOutcome(KEY, { shape, executor: "sonnet", verdict, owner: null, escalated: false, usd, wallS }, root);
+const add = (usd: number, wallS: number, shape = SHAPE, verdict: "pass" | "fail" = "pass", wallKind: typeof WALL_KIND | null = WALL_KIND): void => {
+  appendRunOutcome(KEY, { shape, executor: "sonnet", verdict, owner: null, escalated: false, usd, wallS, ...(wallKind ? { wallKind } : {}) }, root);
 };
+
+describe("RECEIPT-TRUTH wall history version marker (FC-44)", () => {
+  test("unmarked (old stage-sum) wall entries are ignored for time, still counted for dollars", () => {
+    add(0.4, 8, SHAPE, "pass", null); add(1.1, 9, SHAPE, "pass", null); add(0.7, 7, SHAPE, "pass", null);
+    const t = startText(estimateFromHistory(SHAPE, KEY, root));
+    expect(t).toContain("$0.40-$1.10");
+    expect(t).toContain("time NOT RECORDED");
+    expect(t).not.toMatch(/\b[0-9]+s-/);
+  });
+  test("one old entry plus new entries: only the marked entries drive the time range", () => {
+    add(0.5, 8, SHAPE, "pass", null); add(0.4, 120); add(1.1, 540); add(0.7, 300);
+    expect(startText(estimateFromHistory(SHAPE, KEY, root))).toBe("estimate: $0.40-$1.10, 2m-9m (4 prior runs, shape single:bun)");
+  });
+});
 
 describe("start line text", () => {
   test("with history: dollar and time range from the per-shape runs", () => {

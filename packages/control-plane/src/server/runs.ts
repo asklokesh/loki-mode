@@ -34,7 +34,7 @@ export function rebuildRun(db: Db, sourceId: string, runId: string): void {
     verdict: f.run.verdict,
     prUrl: str(done.pr_url) ?? str(pr?.url), prDraft: typeof pr?.draft === "boolean" ? Number(pr.draft) : null,
     costUsd: f.cost.usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total,
-    inputTokens: f.cost.inputTokens, outputTokens: f.cost.outputTokens,
+    inputTokens: f.cost.inputTokens + f.cost.cacheReadTokens + f.cost.cacheCreationTokens, outputTokens: f.cost.outputTokens,
     wallS: typeof done.wall_s === "number" ? done.wall_s : null,
     lastSeq: f.lastSeq, lastEventAt: evs[evs.length - 1]?.ts ?? null, tampered: Number(tampered),
     attested: Number(integ.attested), sigChecked: Number(integ.sig_checked), integrityKeyFp: keys.fingerprint ?? "", integrityReasons: JSON.stringify(integ.reasons),

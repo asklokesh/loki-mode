@@ -8,6 +8,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  costTotalsOf,
   nextEfficiencyIteration,
   readResultCost,
   recordSessionCost,
@@ -33,6 +34,107 @@ function runCostSummary(checkout: string): Record<string, unknown> {
 function tmpCheckout(): string {
   return mkdtempSync(join(tmpdir(), "e10-cost-"));
 }
+
+describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
+  const write = (dir: string, iter: string, rec: Record<string, unknown>): void => {
+    mkdirSync(join(dir, "metrics"), { recursive: true });
+    writeFileSync(join(dir, "metrics", `result-cost-${iter}.json`), JSON.stringify(rec));
+  };
+  const mu = (cost: number, i = 100) => ({ "m-main": { input_tokens: i, output_tokens: 10, cache_read_tokens: 1000, cache_creation_tokens: 50, cost_usd: cost * 0.8 }, "m-sub": { input_tokens: 5, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: cost * 0.2 } });
+  test("modelUsage that reconciles to total_cost_usd within 1% supplies whole-pipeline tokens and per-model cost", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "a", { total_cost_usd: 1, input_tokens: 100, output_tokens: 10, cache_read_tokens: 1000, cache_creation_tokens: 50, num_turns: 3, model_usage: mu(1), cache_creation_5m_tokens: 20, cache_creation_1h_tokens: 30 });
+      const c = sumResultCosts(d, ["a"]);
+      expect(c.records?.tokens_scope).toBe("all-models");
+      expect(c.input_tokens).toBe(105); // main loop 100 plus the subagent model's 5
+      expect(Object.keys(c.records!.per_model!)).toEqual(["m-main", "m-sub"]);
+      expect(c.records?.turns).toBe(3);
+      expect(c.records?.cache_creation_main_loop).toEqual({ ephemeral_5m_tokens: 20, ephemeral_1h_tokens: 30 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("modelUsage that does not reconcile is dropped: tokens stay main-loop labelled, no per_model", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "a", { total_cost_usd: 1, input_tokens: 100, output_tokens: 10, model_usage: mu(0.5) });
+      const c = sumResultCosts(d, ["a"]);
+      expect(c.records?.tokens_scope).toBe("main-loop");
+      expect(c.records?.per_model).toBeUndefined();
+      expect(c.input_tokens).toBe(100);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("resume: a lower total proves the resumed session is separate, so both are summed", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "impl", { total_cost_usd: 2, input_tokens: 10, output_tokens: 1, session_id: "S1" });
+      write(d, "fix", { total_cost_usd: 0.5, input_tokens: 4, output_tokens: 1, session_id: "S1b", resumed_from: "S1" });
+      const c = sumResultCosts(d, ["impl", "fix"]);
+      expect(c.usd).toBe(2.5);
+      expect(c.records?.resume).toBe("separate");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("resume: an equal-or-higher total could be cumulative, so dollars read NOT RECORDED (null), never a guess", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "impl", { total_cost_usd: 2, input_tokens: 10, output_tokens: 1, session_id: "S1" });
+      write(d, "fix", { total_cost_usd: 2.6, input_tokens: 14, output_tokens: 2, session_id: "S1", resumed_from: "S1" });
+      const c = sumResultCosts(d, ["impl", "fix"]);
+      expect(c.usd).toBeNull();
+      expect(c.missing).toEqual(["fix"]);
+      expect(c.records?.resume).toBe("ambiguous");
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("resume: a predecessor outside the summed set is ambiguous; a plain run has no resume key", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "fix", { total_cost_usd: 1, input_tokens: 14, output_tokens: 2, session_id: "S2", resumed_from: "S1" });
+      expect(sumResultCosts(d, ["fix"]).usd).toBeNull();
+      write(d, "p", { total_cost_usd: 1, input_tokens: 1, output_tokens: 1 });
+      expect(sumResultCosts(d, ["p"]).records?.resume).toBeUndefined();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
+
+describe("RECEIPT-TRUTH cache keys through the real reader and the worker mapping (FC-44)", () => {
+  const write = (dir: string, iter: string, rec: Record<string, unknown>): void => {
+    mkdirSync(join(dir, "metrics"), { recursive: true });
+    writeFileSync(join(dir, "metrics", `result-cost-${iter}.json`), JSON.stringify(rec));
+  };
+  test("no file carrying cache keys: seen flags are false (NOT RECORDED), not a measured 0", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "e10-r1-a", { total_cost_usd: 0.1, input_tokens: 24, output_tokens: 9 });
+      const c = sumResultCosts(d, ["e10-r1-a"]);
+      expect(c.cache_read_seen).toBeFalsy();
+      expect(costTotalsOf(c).cacheReadSeen).toBe(false);
+      expect(c.cache_creation_seen).toBeFalsy();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("a partial set is not a total: one of three sessions carrying the key leaves it unseen", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "a", { total_cost_usd: 0.1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 100, cache_creation_tokens: 1 });
+      write(d, "b", { total_cost_usd: 0.1, input_tokens: 1, output_tokens: 1 });
+      const c = costTotalsOf(sumResultCosts(d, ["a", "b", "c"]));
+      expect(c.cacheReadSeen).toBe(false);
+      expect(c.cacheCreationSeen).toBe(false);
+      expect(c.usd).toBeNull();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("every file carrying cache keys (even zero) sets the seen flags and sums duration_ms", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "e10-r1-a", { total_cost_usd: 0.1, input_tokens: 24, output_tokens: 9, cache_read_tokens: 0, cache_creation_tokens: 7, duration_ms: 1500 });
+      write(d, "e10-r1-b", { total_cost_usd: 0.1, input_tokens: 1, output_tokens: 1, cache_read_tokens: 1, cache_creation_tokens: 0, duration_ms: 500 });
+      const c = sumResultCosts(d, ["e10-r1-a", "e10-r1-b"]);
+      expect(c.cache_read_seen).toBe(true);
+      expect(c.cache_creation_seen).toBe(true);
+      expect(c.cache_creation_tokens).toBe(7);
+      expect(c.duration_ms).toBe(2000);
+      expect(costTotalsOf(c)).toMatchObject({ cacheReadSeen: true, cacheCreationSeen: true, cacheCreationTokens: 7, durationMs: 2000 });
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+});
 
 describe("engine10 cost", () => {
   test("reads one result-cost file", () => {

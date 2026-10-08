@@ -51,6 +51,9 @@ export interface StreamMsg {
   subtype?: string;
   is_error?: boolean;
   total_cost_usd?: number | null;
+  duration_ms?: number;
+  num_turns?: number;
+  modelUsage?: Record<string, Record<string, unknown>>; // SDKResultMessage.modelUsage: per-model, whole pipeline (usage is the main loop only)
   usage?: Record<string, unknown>;
   session_id?: string;
   result?: string; // SDKResultMessage.result (final assistant text summary)
@@ -533,6 +536,18 @@ function routerTelemetry(reqs: Map<string, RequestUsage>, advisors: Map<string, 
 // model is the provider-reported model (E-59: from system/init or the result message itself, never
 // the caller's guess); shared with the legacy SDK loop, so this only ADDS the key, never touches an
 // existing one, and omits it entirely (rather than writing null) when no session reported one.
+function modelUsageFields(data: StreamMsg): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const mu = data.modelUsage;
+  if (mu && typeof mu === "object") {
+    const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    out["model_usage"] = Object.fromEntries(Object.entries(mu).map(([k, v]) => [k, { input_tokens: n(v["inputTokens"]), output_tokens: n(v["outputTokens"]), cache_read_tokens: n(v["cacheReadInputTokens"]), cache_creation_tokens: n(v["cacheCreationInputTokens"]), cost_usd: n(v["costUSD"]) }]));
+  }
+  const cc = (data.usage as Record<string, unknown> | undefined)?.["cache_creation"] as Record<string, unknown> | undefined;
+  if (cc && typeof cc["ephemeral_5m_input_tokens"] === "number" && typeof cc["ephemeral_1h_input_tokens"] === "number") { out["cache_creation_5m_tokens"] = cc["ephemeral_5m_input_tokens"]; out["cache_creation_1h_tokens"] = cc["ephemeral_1h_input_tokens"]; }
+  return out;
+}
+
 function writeResultCost(
   lokiRoot: string,
   iteration: string,
@@ -549,8 +564,14 @@ function writeResultCost(
       total_cost_usd: cost,
       input_tokens: u["input_tokens"] ?? 0,
       output_tokens: u["output_tokens"] ?? 0,
-      cache_read_tokens: u["cache_read_input_tokens"] ?? 0,
-      cache_creation_tokens: u["cache_creation_input_tokens"] ?? 0,
+      // RECEIPT-TRUTH: a usage block without the cache keys leaves them out of the file (NOT RECORDED), not a measured 0
+      ...(typeof u["cache_read_input_tokens"] === "number" ? { cache_read_tokens: u["cache_read_input_tokens"] } : {}),
+      ...(typeof u["cache_creation_input_tokens"] === "number" ? { cache_creation_tokens: u["cache_creation_input_tokens"] } : {}),
+      ...(typeof data.duration_ms === "number" ? { duration_ms: data.duration_ms } : {}),
+      ...(typeof data.num_turns === "number" ? { num_turns: data.num_turns } : {}),
+      ...(typeof data.session_id === "string" && data.session_id ? { session_id: data.session_id } : {}),
+      ...(process.env["LOKI_E10_RESUME_SESSION"] ? { resumed_from: process.env["LOKI_E10_RESUME_SESSION"] } : {}),
+      ...modelUsageFields(data),
       ...(model ? { model } : {}),
       ...(firstTurnPromptTokens !== undefined ? { first_turn_prompt_tokens: firstTurnPromptTokens } : {}),
       ...(router ?? {}),

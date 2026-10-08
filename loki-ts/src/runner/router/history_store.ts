@@ -24,7 +24,10 @@ export interface RunOutcome {
   escalated: boolean;
   usd: number;
   wallS: number;
+  /** RECEIPT-TRUTH: what wallS measures. "total-v1" = receipt time.total_s that reconciled with its stage buckets. Entries without it hold the old stage sum (implement only) and are ignored for wall estimates. */
+  wallKind?: typeof WALL_KIND;
 }
+export const WALL_KIND = "total-v1" as const;
 
 const EXECUTORS: readonly string[] = ["haiku", "sonnet"];
 const VERDICTS: readonly string[] = ["pass", "fail", "error", "not_proven"];

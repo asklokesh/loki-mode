@@ -252,6 +252,7 @@ describe("consumeSdkStream (.loki parity with the bash Python parser)", () => {
       output_tokens: 350,
       cache_read_tokens: 800,
       cache_creation_tokens: 100,
+      session_id: "sess-xyz", // RECEIPT-TRUTH: resume detection
     });
   });
 
