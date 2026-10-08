@@ -202,6 +202,14 @@ g() {
 # the hook's other checks stay green), and the .gitleaksignore this repo
 # already ships (case 2 needs the real baseline entries, not a hand-written
 # subset).
+# FC-66: fixtures copy only the real .gitleaksignore's fingerprint lines. Its
+# comment lines are prose, and gitleaks scans them as new content when a fixture
+# pushes the file (a comment once tripped generic-api-key and failed every
+# setup_push_clone). Comments carry no suppression, so dropping them is lossless.
+copy_real_gitleaksignore() { # dest path
+    grep -v '^[[:space:]]*#' "$REPO_ROOT/.gitleaksignore" > "$1" || true
+}
+
 setup_clone() {
     local dir="$1"
     rm -rf "$dir"; mkdir -p "$dir/autonomy"
@@ -215,7 +223,7 @@ setup_clone() {
     mkdir -p .githooks && cp "$HOOK" .githooks/pre-push
     echo 'true' > autonomy/run.sh
     echo 'true' > autonomy/loki
-    cp "$REPO_ROOT/.gitleaksignore" .gitleaksignore
+    copy_real_gitleaksignore .gitleaksignore
 
     git -C "$dir" add -A >/dev/null 2>&1
     git -C "$dir" commit -q -m base --no-verify >/dev/null 2>&1
@@ -308,7 +316,7 @@ setup_push_clone() {
     chmod +x .githooks/pre-push
     echo 'true' > autonomy/run.sh
     echo 'true' > autonomy/loki
-    cp "$REPO_ROOT/.gitleaksignore" .gitleaksignore
+    copy_real_gitleaksignore .gitleaksignore
 
     git -C "$dir" add -A >/dev/null 2>&1
     git -C "$dir" commit -q -m base --no-verify >/dev/null 2>&1
@@ -1082,7 +1090,7 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     git config core.hooksPath .githooks
     mkdir -p .githooks && cp "$HOOK" .githooks/pre-push && chmod +x .githooks/pre-push
     echo 'true' > autonomy/run.sh; echo 'true' > autonomy/loki
-    cp "$REPO_ROOT/.gitleaksignore" .gitleaksignore
+    copy_real_gitleaksignore .gitleaksignore
     mkdir -p eval/loki10/tasks/fake-task
     printf '%s\n' "$_task_json_secret" > eval/loki10/tasks/fake-task/task.json
     git add -A >/dev/null 2>&1
@@ -1651,6 +1659,20 @@ if [[ "$_have_real_gitleaks" == "1" ]]; then
     done
     _t0=$(date +%s); real_push "$D" >/dev/null; _t1=$(date +%s)
     echo "  TIMING: 10-commit push (1 touches eval): $((_t1 - _t0))s"
+fi
+
+# --- FC-66 guard: the real .gitleaksignore, scanned as content, has no finding -
+# Any comment or entry that trips a rule would fail every fixture push and any
+# real push of the file. Scans the file itself with the real scanner.
+if [[ -x "$REAL_GITLEAKS" ]]; then
+    _gi_out=$("$REAL_GITLEAKS" dir "$REPO_ROOT/.gitleaksignore" --no-banner --no-color 2>&1); _gi_rc=$?
+    if [[ $_gi_rc -eq 0 ]]; then
+        ok "FC-66: the real .gitleaksignore scans clean as content"
+    else
+        ko "FC-66: the real .gitleaksignore scans clean as content" "rc=$_gi_rc; out: $_gi_out"
+    fi
+else
+    sk "FC-66: the real .gitleaksignore scans clean as content (no pinned gitleaks v${GITLEAKS_VERSION})"
 fi
 
 cd "$REPO_ROOT" || true

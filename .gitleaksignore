@@ -120,7 +120,7 @@ c09dfd1eb6f2f2cc1f81b2be0d7ddee717141d66:tests/workspace/80-comment.sh:github-pa
 449db8f56fce87ef05510b5ae8634ce6438a696d:packages/control-plane/src/server/integrity.ts:generic-api-key:46
 b4775bede0a04a021c89e366500ecae8ce1ae609:packages/control-plane/src/server/integrity.ts:generic-api-key:55
 # 10.11.2 full-history scan (Security Audit run 37168919918), reviewed 2026-10-04:
-# integrity.ts:55 is the default public PEM path join(..., ".loki", "keys", "receipt-ed25519.pem"), a file path, not key material.
+# integrity.ts:55 is the default public PEM location (a file path under the loki keys directory), not key material.
 0eea5800ee41e01360207eb12c7fb9b7808eb62b:packages/control-plane/src/server/integrity.ts:generic-api-key:55
 39ea73011a04ddd3178b800198e6f25e90186dc7:packages/control-plane/src/server/integrity.ts:generic-api-key:55
 b5b1c30009d7a19ad37ae2856bacd93179a5f194:packages/control-plane/src/server/integrity.ts:generic-api-key:55
