@@ -406,6 +406,26 @@ if git -C "$REPO_ROOT" cat-file -e "e38e3029b^{commit}" 2>/dev/null && git -C "$
     fi
 fi
 
+# FC-32 B1: the selector must parse under the macOS system bash (3.2), which rejects a heredoc inside $( ).
+if [ -x /bin/bash ]; then
+    if /bin/bash -n "$SELECT" 2>/dev/null; then
+        PASS=$((PASS + 1)); echo "PASS: /bin/bash -n scripts/select-tests.sh parses"
+    else
+        FAIL=$((FAIL + 1)); echo "FAIL: /bin/bash -n scripts/select-tests.sh fails to parse"
+    fi
+else
+    echo "SKIP: /bin/bash absent, system-bash parse check not run"
+fi
+
+# FC-32 B2: python3 present but failing must fail safe (closure = ALL), so a loki-ts/src change still
+# selects the control-plane suite.
+stub_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-stub.XXXXXX")"
+printf '#!/bin/sh\nexit 1\n' > "$stub_dir/python3"
+chmod +x "$stub_dir/python3"
+out="$(cd "$REPO_ROOT" && PATH="$stub_dir:$PATH" bash "$SELECT" --files - <<<'loki-ts/src/commands/doctor.ts')"
+rm -rf "$stub_dir"
+expect_contains "FC-32 failing python3 still selects test-control-plane" "$out" "tests/test-control-plane.sh"
+
 echo ""
 echo "select-tests fixtures: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

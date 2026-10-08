@@ -337,34 +337,9 @@ cp_closure_load() {
     if [ "$CP_CLOSURE_DONE" -eq 0 ]; then
         CP_CLOSURE_DONE=1
         if command -v python3 >/dev/null 2>&1 && [ -d packages/control-plane/src ]; then
-            CP_CLOSURE_CACHE="$(python3 - <<'PY'
-import os, re
-pat = re.compile(r'(?:\bfrom|\bimport)\s*\(?\s*["\']([^"\']+)["\']')
-def res(d, spec):
-    b = os.path.normpath(os.path.join(d, spec))
-    for c in (b, re.sub(r"\.js$", ".ts", b), b + ".ts", os.path.join(b, "index.ts")):
-        if os.path.isfile(c):
-            return os.path.normpath(c)
-    return None
-q = [os.path.join(d, f) for d, _, fs in os.walk("packages/control-plane/src") for f in fs if f.endswith((".ts", ".tsx"))]
-need, seen = set(), set(q)
-while q:
-    p = q.pop()
-    try:
-        txt = open(p).read()
-    except OSError:
-        continue
-    for spec in pat.findall(txt):
-        if not spec.startswith("."):
-            continue
-        r = res(os.path.dirname(p), spec)
-        if r and r.startswith("loki-ts/src/") and r not in need:
-            need.add(r)
-        if r and r.startswith("loki-ts/src/") and r not in seen:
-            seen.add(r); q.append(r)
-print("\n".join(sorted(need)))
-PY
-)"
+            CP_CLOSURE_CACHE="$(python3 "$SCRIPT_DIR/cp-closure.py" 2>/dev/null)" || CP_CLOSURE_CACHE=""
+            # An empty closure is never legitimate: python3 failing or printing nothing fails safe to ALL.
+            [ -n "$CP_CLOSURE_CACHE" ] || CP_CLOSURE_CACHE="ALL"
         else
             CP_CLOSURE_CACHE="ALL"
         fi
