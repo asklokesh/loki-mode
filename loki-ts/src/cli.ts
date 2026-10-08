@@ -332,6 +332,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
 
     case "issues": {
       const { runIssues } = await import("./commands/issues_run.ts");
+      (await import("./contrib/index.ts")).registerContrib();
       return runIssues(rest);
     }
 
