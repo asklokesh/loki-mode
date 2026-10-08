@@ -15,6 +15,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki memory` | Cross-project learnings |
 | `loki memory list` | All learnings |
 | `loki memory index` | Show or rebuild the memory index |
+| `loki memory learn <owner/repo#PR>` | Learn lessons from a merged PR's review comments (needs gh) |
+| `loki memory lessons` | List PR lessons with uses and VERIFIED/PARTIAL/FAILED outcomes (also shown by bare `loki memory`) |
 | `loki memory show` | Show one learning |
 | `loki memory search` | Search learnings |
 | `loki memory stats` | Memory statistics |

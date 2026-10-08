@@ -98,6 +98,8 @@ export const REGISTRY: readonly CmdSpec[] = [
     subcommands: [
       sub("list", "All learnings"),
       sub("index", "Show or rebuild the memory index", { positionals: [{ name: "action", type: "enum", values: ["rebuild"] }] }),
+      sub("learn", "Learn lessons from a merged PR's review comments", { positionals: [{ name: "pr", type: "string" }] }),
+      sub("lessons", "List PR review lessons with uses and outcomes"),
       sub("show", "Show one learning"),
       sub("search", "Search learnings"),
       sub("stats", "Memory statistics"),
