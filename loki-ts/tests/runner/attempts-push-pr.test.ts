@@ -44,10 +44,56 @@ describe("attempts winner push goes through push-pr", () => {
     sh(wt, ["config", "core.sshCommand", hook]);
 
     const out = deps.openPr!(wt, base);
-    expect(out).toBe(`local://${bare}#loki/run1`);
-    expect(sh(bare, ["for-each-ref", "--format=%(refname)"]).stdout.trim()).toBe("refs/heads/loki/run1");
-    expect(sh(bare, ["show", "loki/run1:b.txt"]).stdout).toBe("winner\n");
+    const pushed = out.replace(`local://${bare}#`, "");
+    expect(out.startsWith(`local://${bare}#loki-attempts/`)).toBe(true);
+    expect(sh(bare, ["for-each-ref", "--format=%(refname)"]).stdout.trim()).toBe(`refs/heads/${pushed}`);
+    expect(sh(bare, ["show", `${pushed}:b.txt`]).stdout).toBe("winner\n");
     expect(existsSync(cap)).toBe(false);
+  });
+});
+
+describe("hostile winner HEAD and missing identity", () => {
+  const mk = (name: string) => {
+    const bare = join(root, `${name}.git`), repo = join(root, name);
+    sh(root, ["init", "-q", "--bare", "-b", "trunk", bare]);
+    mkdirSync(repo);
+    sh(repo, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "x\n");
+    sh(repo, ["add", "a.txt"]);
+    sh(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+    sh(repo, ["remote", "add", "origin", bare]);
+    sh(repo, ["push", "-q", "origin", "main:release"]);
+    return { bare, repo };
+  };
+  it("a winner whose HEAD is named after an existing origin branch cannot move it", () => {
+    const { bare, repo } = mk("hostile");
+    const before = sh(bare, ["rev-parse", "release"]).stdout.trim();
+    const deps = productionDeps(repo, async () => 0, async () => 0, { noPr: false });
+    const wt = join(root, "attempt-h");
+    deps.createWorktree(wt, deps.baseSha());
+    sh(wt, ["checkout", "-q", "-B", "release"]);
+    writeFileSync(join(wt, "evil.txt"), "pwn\n");
+    sh(wt, ["add", "evil.txt"]);
+    sh(wt, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "evil"]);
+    deps.openPr!(wt, "main");
+    expect(sh(bare, ["rev-parse", "release"]).stdout.trim()).toBe(before);
+  });
+  it("commits stragglers with the fallback identity when git has none", () => {
+    const { bare, repo } = mk("noident");
+    const deps = productionDeps(repo, async () => 0, async () => 0, { noPr: false });
+    const wt = join(root, "attempt-n");
+    deps.createWorktree(wt, deps.baseSha());
+    writeFileSync(join(wt, "c.txt"), "c\n");
+    const keep = { ...process.env };
+    for (const k of Object.keys(process.env)) if (/^GIT_(AUTHOR|COMMITTER)_|^EMAIL$/.test(k)) delete process.env[k];
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null"; process.env.GIT_CONFIG_NOSYSTEM = "1";
+    try {
+      const out = deps.openPr!(wt, "main");
+      expect(sh(bare, ["show", `${out.replace(`local://${bare}#`, "")}:c.txt`]).stdout).toBe("c\n");
+    } finally {
+      for (const k of ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]) delete process.env[k];
+      Object.assign(process.env, keep);
+    }
   });
 });
 

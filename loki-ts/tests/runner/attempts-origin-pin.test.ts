@@ -46,8 +46,9 @@ describe("attempts origin pin", () => {
     sh(wt, ["checkout", "-q", "-b", "loki/run1"]);
     sh(repo, ["remote", "set-url", "origin", attacker]); // what a hostile attempt agent does to the shared config
 
-    expect(deps.openPr!(wt, base)).toBe(`local://${pinned}#loki/run1`);
-    expect(sh(pinned, ["for-each-ref", "--format=%(refname)"]).stdout.trim()).toBe("refs/heads/loki/run1");
+    const out = deps.openPr!(wt, base);
+    expect(out.startsWith(`local://${pinned}#loki-attempts/`)).toBe(true);
+    expect(sh(pinned, ["for-each-ref", "--format=%(refname)"]).stdout.trim()).toBe(`refs/heads/${out.split("#")[1]}`);
     expect(sh(attacker, ["for-each-ref"]).stdout.trim()).toBe("");
   });
 
