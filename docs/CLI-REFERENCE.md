@@ -65,7 +65,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki queue list` | Show the queue |
 | `loki queue run` | Process the queue |
 | `loki issues` | Run every open issue in a repo and open PRs |
-| `loki issues run` | Triage and run open issues, one PR each |
+| `loki issues run` | Triage and run open issues; split too-large ones into stacked PRs |
 | `loki answer` | Resume a BLOCKED run with an answer |
 | `loki engine10` | v10 engine router |
 | `loki engine10 run` | Run the v10 engine |

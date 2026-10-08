@@ -323,13 +323,18 @@ export function newestRecord(lokiDir: string, since: number): { verdict: string 
   return { verdict: null, costUsd: null };
 }
 
+/** The child `loki start` env: the run's own .loki for a worktree, and the PR asks (draft, stacked base, epic ref). */
+export function runnerEnv(opts: RunOpts, runLoki: string): NodeJS.ProcessEnv {
+  return { ...(opts.env ?? process.env), LOKI_NO_BROWSER: "1", ...(opts.cwd ? { LOKI_DIR: runLoki } : {}), ...(opts.draft ? { LOKI_PR_DRAFT: "1" } : {}), ...(opts.prBase ? { LOKI_PR_BASE: opts.prBase } : {}), ...(opts.prRefs ? { LOKI_PR_REFS: opts.prRefs } : {}) };
+}
+
 export function makeDefaultRunner(lokiDir: string): QueueDeps["runner"] {
   return async (ref, opts) => {
     const since = Date.now();
     const argv = [resolve(REPO_ROOT, "bin", "loki"), "start", ref, ...(opts.pr ? ["--pr"] : [])];
     // A per-issue worktree gets its own .loki so parallel runs never share run state (autonomy/loki refuses that).
     const runLoki = opts.cwd ? join(opts.cwd, ".loki") : lokiDir;
-    const env: NodeJS.ProcessEnv = { ...(opts.env ?? process.env), LOKI_NO_BROWSER: "1", ...(opts.cwd ? { LOKI_DIR: runLoki } : {}), ...(opts.draft ? { LOKI_PR_DRAFT: "1" } : {}), ...(opts.prBase ? { LOKI_PR_BASE: opts.prBase } : {}), ...(opts.prRefs ? { LOKI_PR_REFS: opts.prRefs } : {}) };
+    const env = runnerEnv(opts, runLoki);
     const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe", stdin: "ignore", env, ...(opts.cwd ? { cwd: opts.cwd } : {}) });
     const mins = Number(process.env["LOKI_QUEUE_ITEM_TIMEOUT_MIN"]) || 120;
     const timer = setTimeout(() => proc.kill(), mins * 60_000);
