@@ -91,6 +91,20 @@ export function issueLink(runDir: string, verdict: Verdict): string {
     return ok ? `\n${verdict === "VERIFIED" ? "Closes" : "Refs"} ${i.repo as string}#${i.number as number}\n` : "";
   } catch { return ""; }
 }
+/** MASS-2: a stacked slice's PR targets its parent slice's run branch (LOKI_PR_BASE, set by `loki issues run`).
+ *  undefined = no stacking (the default branch); null = set but not a safe branch name, so the stage fails closed. */
+export function stackBase(env: NodeJS.ProcessEnv): string | null | undefined {
+  const b = env.LOKI_PR_BASE;
+  if (b === undefined || b === "") return undefined;
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/.test(b) && !b.includes("..") && !b.includes("//") && !b.endsWith("/") && !b.endsWith(".lock") ? b : null;
+}
+/** MASS-2: a slice run has no issue.json, so `loki issues run` names the epic it belongs to (LOKI_PR_REFS=owner/repo#N).
+ *  A slice never closes its epic, so this is always "Refs"; a strict ref or nothing reaches the body. */
+export function stackSection(env: NodeJS.ProcessEnv, base: string | undefined, hasIssueLink: boolean): string {
+  const r = env.LOKI_PR_REFS ?? "";
+  const refs = !hasIssueLink && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+$/.test(r) ? `\nRefs ${r}\n` : "";
+  return refs + (base ? `\nStacked on \`${base}\`: review and merge that pull request first.\n` : "");
+}
 export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before pr started" };
   const pinnedOrigin = ctx.pinnedOrigin;
@@ -102,12 +116,15 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const notProven = [...(seal.not_proven ?? [])];
   const capHit = ctx.capHit?.() ?? false;
   const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1"; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
+  const base = stackBase(process.env);
+  if (base === null) return { status: "failed", data: {}, reason: "LOKI_PR_BASE is not a valid branch name: refusing to push" };
   mkdirSync(ctx.runDir, { recursive: true });
+  const link = issueLink(ctx.runDir, verdict);
   const bodyFile = join(ctx.runDir, "pr-body.md");
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
-  writeFileSync(bodyFile, withSealRoute(renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() }), process.env, seal) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + issueLink(ctx.runDir, verdict), "utf8");
+  writeFileSync(bodyFile, withSealRoute(renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() }), process.env, seal) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + link + stackSection(process.env, base, link !== ""), "utf8");
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
-  const pushShellArgs = toPushShellArgs({ cmd: "push-pr", repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft });
+  const pushShellArgs = [...toPushShellArgs({ cmd: "push-pr", repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft }), ...(base ? ["--base", base] : [])];
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
   if (resolvePrAuthor(ctx.repoDir) === "bot") {

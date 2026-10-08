@@ -284,6 +284,53 @@ describe("engine10 pr stage", () => {
     await runPr(off.ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
     expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).not.toContain(line);
   });
+
+  describe("MASS-2 stacked slice PRs", () => {
+    const keep = { base: process.env.LOKI_PR_BASE, refs: process.env.LOKI_PR_REFS };
+    afterEach(() => {
+      for (const [k, v] of [["LOKI_PR_BASE", keep.base], ["LOKI_PR_REFS", keep.refs]] as const) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    });
+
+    test("LOKI_PR_BASE reaches push-pr as --base and the body names the epic and the parent", async () => {
+      process.env.LOKI_PR_BASE = "loki/e10-parent";
+      process.env.LOKI_PR_REFS = "octocat/hello#12";
+      const { ctx } = makeCtx(repoDir, runDir, { verdict: "PARTIAL" });
+      const r = await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+      expect(r.status).toBe("completed");
+      expect(readLog()).toContain(`--draft --base loki/e10-parent`);
+      const body = readFileSync(join(runDir, "pr-body.md"), "utf8");
+      expect(body).toContain("\nRefs octocat/hello#12\n");
+      expect(body).not.toContain("Closes");
+      expect(body).toContain("Stacked on `loki/e10-parent`");
+    });
+
+    test("no LOKI_PR_BASE: no --base, no stack line", async () => {
+      delete process.env.LOKI_PR_BASE;
+      delete process.env.LOKI_PR_REFS;
+      const { ctx } = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+      await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+      expect(readLog()).not.toContain("--base");
+      expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).not.toContain("Stacked on");
+    });
+
+    test("an unsafe LOKI_PR_BASE or LOKI_PR_REFS fails closed or is dropped; nothing is pushed for a bad base", async () => {
+      for (const bad of ["-x", "a..b", "a b", "a/", "x.lock", "main;rm"]) {
+        process.env.LOKI_PR_BASE = bad;
+        const { ctx } = makeCtx(repoDir, runDir, { verdict: "PARTIAL" });
+        const r = await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+        expect(r.status).toBe("failed");
+        expect(readLog()).toBe("");
+      }
+      delete process.env.LOKI_PR_BASE;
+      process.env.LOKI_PR_REFS = "octocat/hello#12\nCloses other/repo#1";
+      const { ctx } = makeCtx(repoDir, runDir, { verdict: "VERIFIED" });
+      await runPr(ctx, new AbortController().signal, { pushScriptPath: writeStub(stubDir, logPath) });
+      expect(readFileSync(join(runDir, "pr-body.md"), "utf8")).not.toContain("octocat/hello#12");
+    });
+  });
 });
 
 describe("engine10 pr stage reviewer brief (T4)", () => {
