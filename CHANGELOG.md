@@ -5,6 +5,35 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.4 (2026-10-08)
+
+Patch release that hardens the release path and clears every red on main. A release-only commit now reuses its parent's CI verdict, the fast gate selects only guards with a green baseline while keeping exact-path guards for nested manifests, Post-Release Smoke fails when a release drops a check or the Wall test, the promote gate recognizes a legacy-titled smoke run by its head SHA, and a dedupe-gated hourly full-suite backstop now measures main between releases. The Wall base run no longer misreads colored test output, and spec intake decides single-directory layout from the full tracked file list. Seven CI reds are fixed at their cause, and a test plan too large for its shard cap now falls back to the full suite. v11.3.3 was never published (its release run failed), so this is the first npm release since v11.3.2 and it also ships the v11.3.3 changes listed below that section.
+
+### Changed (behavior): project tests run without your GitHub token or SSH agent
+- The test, lint and typecheck commands that Loki runs for the Wall, verify and package-suite checks no longer receive GH_TOKEN, GITHUB_TOKEN, the enterprise token variables or SSH_AUTH_SOCK, even with `LOKI_ALLOW_AGENT_GITHUB_TOKEN=1`. Untrusted repo test code never receives your credentials. A project whose tests fetch private dependencies over the SSH agent or a token will now fail those fetches. An explicit opt-in that passes named variables to project tests only is coming in the next release (FC-87).
+
+### Added
+- Hourly full-suite backstop (D96-BACKSTOP): the nightly workflow also runs hourly, and a dedupe job skips the full suite, first-run gate, pinned Bun legs and full-history gitleaks scan when main has not moved since the last measured run. Promotion still counts only a non-skipped `Full suite (backstop)` job as a measurement.
+- Wall smoke guard (FC-68, WALL-SMOKE-GUARD): real-run scenarios and Post-Release Smoke fail when a release silently drops a check or the Wall test does not execute.
+- Help drift guard (FC-72, HELP-DRIFT): a test fails when a command named in the newest CHANGELOG sections is missing from help output or shell completion.
+
+### Fixed
+- Wall base run parsed ANSI-colored test output as failures: the base run now forces no-color and strips ANSI, and an unexecuted Wall test is disclosed without capping the verdict (FC-69, WALL-COLOR).
+- Spec intake decided single-directory layout from a truncated tracked-file list, and a rejected intake could leave a stale session behind: the decision now uses the full list and the session race is cleaned up on rejection (FC-55, INTAKE-FAST).
+- Release-only commits re-ran the full suite: the bump-only allowlist now includes the Helm charts and the CLI reference, so a VERSION bump reuses its parent's green verdict (FC-70, BUMP-REUSE).
+- Promote gate rejected a valid smoke run whose title predated the head-SHA title format: a Release-triggered smoke run is now matched by head_sha too (FC-71, PROMOTE-SMOKE-SHA), and the release-tag tests now assert that contract (FC-85).
+- Help and completion were missing `loki plan --spec`, `loki start --spec` and `loki memory forget` (HELP-DRIFT).
+- Fast gate on a release commit selected guard suites that were already red on the base. Guard selection now runs only suites with a green baseline, nested package manifests and the root requirements file keep their exact-path guards, and the baseline match is whole-entry (FC-73, FC-75, RELGATE-REDS, RELGATE-L4).
+- `tests/test-verify-runner-selection.sh` could report a false failure from SIGPIPE under pipefail: its pipe-to-grep checks are now here-strings, enforced by the SIGPIPE guard (FC-74).
+- The Bun opt-out case in the autonomy-and-stop suite was skipped on CI because no `claude` was installed: it now runs against a stub (FC-76).
+- Shard coverage failed because a guessed duration row moved two watched suites into one shard: the row now holds the measured time (FC-80).
+- The no-mock data-render test inherited the CI runner's stdin and scanned the wrong file list: it now passes its files explicitly (FC-81).
+- The Purple Lab live-server suite failed collection on runners without its client libraries or server: it now skips each test with a stated reason, so pytest still collects them and exits 0 (FC-82).
+- The funnel-privacy suite timed out on Linux CI because `loki start` cases entered the real runner: the stub provider now refuses login and the suite runs in about 20 seconds with every privacy assertion intact (FC-83).
+- The demo non-TTY test depended on a provider CLI being installed: it now uses a stub provider (FC-84).
+- The fast gate packed a plan larger than its shard cap into shards that hit the 6-minute job timeout, so Tests ended cancelled: a plan over capacity now selects the full-suite fallback (FC-86, PLAN-OVERFLOW).
+- The env-spawn guard stopped counting test-command spawns after the Wall color fix routed them through a helper, so main went red: test-command environments now drop GitHub tokens and the SSH agent socket whatever the parent env holds, the guard recognizes the helper as token-free, and its allowlist shrinks to the one remaining full-env spawn (FC-87, ENVGUARD-PLAINENV).
+
 ## v11.3.3 (2026-10-08)
 
 Patch release that tightens the release path itself. Promotion of `latest` now requires a green nightly and a green Post-Release Smoke tied to the exact release, a new guard fails any workflow that masks a test failure, and a SIGPIPE guard keeps `| grep -q` from turning large output into a false red. No product behavior changes; `loki doctor` gets a test fix only.
