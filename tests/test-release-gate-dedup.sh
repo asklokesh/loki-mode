@@ -54,6 +54,7 @@ check_yml() {
     printf '%s\n' "$g" | grep -qE 'bun[[:space:]]+run[[:space:]]+typecheck' && echo "gate reruns typecheck"
     printf '%s\n' "$g" | grep -qE 'verify-release-dist\.sh[[:space:]]+build' || echo "gate lost the dist byte-identity build check"
     printf '%s\n' "$g" | grep -qE 'verify-release-dist\.sh[[:space:]]+tarball' || echo "gate lost the packed tarball dist check"
+    printf '%s\n' "$g" | grep -qE 'fast-gate\.sh[[:space:]]+p9' || echo "gate lost the P9 step"
     printf '%s\n' "$g" | grep -qE 'npm pack' || echo "gate does not pack the tarball"
     rel="$(job_block "$yml" release | code_only)"
     printf '%s\n' "$rel" | grep -qE '^[[:space:]]+needs:.*required-ci' || echo "release no longer needs required-ci (Tests verdict)"
@@ -104,6 +105,9 @@ mutate "M5 release stops needing required-ci" "release no longer needs required-
 # shellcheck disable=SC2016
 mutate "M6 required-ci stops requiring Tests" "required-ci REQUIRED list no longer names Tests" \
   's = s.replace("REQUIRED=$(printf \x27%s\\n\x27 \"Tests\" \"Security Audit\")", "REQUIRED=$(printf \x27%s\\n\x27 \"Security Audit\")", 1)'
+
+mutate "M7 remove the P9 step" "gate lost the P9 step" \
+  's = s.replace("bash scripts/ci/fast-gate.sh p9", "true", 1)'
 
 # Behavior of the verifier: copy it into a fixture repo with a committed dist.
 FX="$RUN_TMP/fx"
