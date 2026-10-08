@@ -59,6 +59,8 @@ export interface AttemptDeps {
   baseSha(): string;
   /** Opens the PR for the winner (normal PR behavior). Undefined when the user passed --no-pr. Returns the PR url. */
   openPr?(winnerWorktree: string, baseSha: string): string;
+  /** Runs before attempt 1; throws when the PR could not be opened anyway (unusable pinned origin), so no attempts are wasted. */
+  preflight?(): void;
   /** Console output; defaults to stdout. */
   print?(line: string): void;
   createWorktree(path: string, baseSha: string): void;
@@ -145,6 +147,12 @@ export function formatAttemptsSummary(r: AttemptsReceipt): string[] {
 
 export async function runAttempts(n: number, deps: AttemptDeps): Promise<number> {
   if (n <= 1) return deps.runDirect(); // N=1 is the plain single engine10 run
+  try {
+    deps.preflight?.();
+  } catch (e) {
+    (deps.print ?? ((l: string) => void process.stdout.write(`${l}\n`)))(`No attempts run: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
   let pr: AttemptsReceipt["pr"] = { mode: "not_applicable" };
   const baseSha = deps.baseSha();
   const container = deps.makeContainer();
@@ -277,6 +285,15 @@ function attemptBranch(p: string): string {
   return `loki-attempt/${basename(dirname(p))}-${basename(p)}`;
 }
 
+const GITHUB_ORIGIN_RE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)[^/\s]+\/[^/\s]+?(?:\.git)?\/?$/;
+
+/** The same acceptance rule push-pr applies: a GitHub URL, or an absolute colon-free path that is itself a bare repo. */
+export function pinnedOriginUsable(origin: string): boolean {
+  if (GITHUB_ORIGIN_RE.test(origin)) return true;
+  if (!origin.startsWith("/") || origin.includes(":")) return false;
+  try { return git(origin, ["rev-parse", "--is-bare-repository"]).trim() === "true" && resolve(git(origin, ["rev-parse", "--absolute-git-dir"]).trim()) === resolve(origin); } catch { return false; }
+}
+
 export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>, opts: { noPr?: boolean } = {}): AttemptDeps {
   const lokiDir = process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
   const receiptDir = join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-"));
@@ -335,6 +352,9 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       if (patch.trim() !== "") git(repoDir, ["apply", "--whitespace=nowarn"], patch);
     },
     ...(opts.noPr ? {} : {
+      preflight: () => {
+        if (!pinnedOriginUsable(pinnedOrigin)) throw new Error("the pinned origin is missing or is neither a GitHub URL nor a local bare repo, so no PR could be opened; use --no-pr");
+      },
       // Only the winner's engine10 branch is pushed, and only by engine10-push.sh push-pr (_loki_trusted_push): origin is the value
       // pinned above, the fetch runs into a fresh template-less repo and gh runs neutral. This code never runs git push or gh itself.
       openPr: (wt: string, _base: string) => {
@@ -343,9 +363,8 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
         try { git(wt, ["add", "-A", "--", ".", ":(exclude).loki"]); } catch { /* nothing stageable */ }
         const dirty = (() => { try { git(wt, ["diff", "--cached", "--quiet"]); return false; } catch { return true; } })();
         if (dirty) {
-          let email = "";
-          try { email = git(wt, ["config", "user.email"]).trim(); } catch { /* unset: git config exits 1 */ }
-          const ident = email ? [] : ["-c", "user.name=Loki", "-c", "user.email=loki@autonomi.dev"];
+          const unset = (key: string): boolean => { try { return git(wt, ["config", key]).trim() === ""; } catch { return true; } }; // git config exits 1 when unset
+          const ident = [...(unset("user.name") ? ["-c", "user.name=Loki"] : []), ...(unset("user.email") ? ["-c", "user.email=loki@autonomi.dev"] : [])];
           git(wt, [...ident, "commit", "-q", "-m", "loki: attempts winner uncommitted changes"]);
         }
         // The pushed ref name is chosen here, never read from the agent-writable HEAD: a hostile winner could name its branch

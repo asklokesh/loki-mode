@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { productionDeps } from "../../src/runner/attempts.ts";
+import { productionDeps, runAttempts } from "../../src/runner/attempts.ts";
 
 let root = "";
 const saved = { GH_TOKEN: process.env.GH_TOKEN, PATH: process.env.PATH };
@@ -94,6 +94,55 @@ describe("hostile winner HEAD and missing identity", () => {
       for (const k of ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]) delete process.env[k];
       Object.assign(process.env, keep);
     }
+  });
+});
+
+describe("partial identity and pin preflight", () => {
+  it("commits stragglers when user.email is set but user.name is not", () => {
+    const bare = join(root, "halfid.git"), repo = join(root, "halfid");
+    sh(root, ["init", "-q", "--bare", "-b", "trunk", bare]);
+    mkdirSync(repo);
+    sh(repo, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "x\n");
+    sh(repo, ["add", "a.txt"]);
+    sh(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+    sh(repo, ["remote", "add", "origin", bare]);
+    const deps = productionDeps(repo, async () => 0, async () => 0, { noPr: false });
+    const wt = join(root, "attempt-hn");
+    deps.createWorktree(wt, deps.baseSha());
+    sh(wt, ["config", "user.email", "only@email"]);
+    sh(wt, ["config", "user.useConfigOnly", "true"]); // no gecos-derived name, as on a bare CI box
+    writeFileSync(join(wt, "d.txt"), "d\n");
+    const keep = { ...process.env };
+    for (const k of Object.keys(process.env)) if (/^GIT_(AUTHOR|COMMITTER)_|^EMAIL$/.test(k)) delete process.env[k];
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null"; process.env.GIT_CONFIG_NOSYSTEM = "1";
+    try {
+      const out = deps.openPr!(wt, "main");
+      expect(sh(bare, ["show", `${out.replace(`local://${bare}#`, "")}:d.txt`]).stdout).toBe("d\n");
+    } finally {
+      for (const k of ["GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"]) delete process.env[k];
+      Object.assign(process.env, keep);
+    }
+  });
+
+  it("an unusable pinned origin fails before attempt 1 runs", async () => {
+    const repo = join(root, "badpin"), plain = join(root, "badpin-nonbare");
+    mkdirSync(plain);
+    sh(plain, ["init", "-q"]);
+    mkdirSync(repo);
+    sh(repo, ["init", "-q", "-b", "main"]);
+    writeFileSync(join(repo, "a.txt"), "x\n");
+    sh(repo, ["add", "a.txt"]);
+    sh(repo, ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base"]);
+    sh(repo, ["remote", "add", "origin", plain]);
+    let ran = 0;
+    const lines: string[] = [];
+    const deps = productionDeps(repo, async () => 0, async () => { ran++; return 0; }, { noPr: false });
+    const rc = await runAttempts(2, { ...deps, print: (l: string) => void lines.push(l) });
+    expect(rc).toBe(1);
+    expect(ran).toBe(0);
+    expect(lines.join("\n")).toMatch(/pinned origin/);
+    expect(sh(repo, ["worktree", "list"]).stdout.trim().split("\n").length).toBe(1);
   });
 });
 
