@@ -16,6 +16,7 @@ import {
   writeEfficiencyRecord,
 } from "../../src/engine10/cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
+import { createSessionRunner } from "../../src/engine10/session.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "cost");
 const REPO_ROOT = join(import.meta.dir, "..", "..", "..");
@@ -183,6 +184,33 @@ describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
       const rec = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-1.json"), "utf8"));
       expect(rec.input_tokens).toBe(20);
       expect("tokens_measured" in rec).toBe(false);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("R5-1: a session with no result-cost file emits a cost event with NO token keys (same predicate as the efficiency record)", async () => {
+    const d = tmpCheckout();
+    try {
+      const lokiRoot = join(d, ".loki");
+      write(lokiRoot, "e10-a", { total_cost_usd: 0.5, input_tokens: 10, output_tokens: 20, session_id: "A" });
+      const emitted: Record<string, unknown>[] = [];
+      const run = (id: string, cmd: string) => createSessionRunner({ provider: "claude", lokiRoot, childCommand: ["bash", ["-c", cmd]], emit: (t: string, _s: unknown, data: Record<string, unknown>) => { if (t === "cost") emitted.push(data); } }).run({ stage: "implement", brief: "x", tier: "dev", iterationId: id, limitS: 30, signal: new AbortController().signal, cwd: d } as never);
+      await run("e10-b", "exit 1");
+      const ev = emitted.find((e) => e["session_id"] === "e10-b") as Record<string, unknown>;
+      expect(ev).toBeDefined();
+      for (const k of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"]) expect(k in ev).toBe(false);
+      const rec = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-1.json"), "utf8"));
+      expect(rec.tokens_measured).toBe(false);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("R5-3: the FC-19 conflict-resume ('-r' iteration) at or above its predecessor comes out ambiguous and labelled", () => {
+    const d = tmpCheckout();
+    try {
+      write(d, "e10-x-impl", { total_cost_usd: 1, input_tokens: 10, output_tokens: 1, session_id: "S1" });
+      write(d, "e10-x-impl-r", { total_cost_usd: 1.5, input_tokens: 16, output_tokens: 2, session_id: "S1", resumed_from: "S1" });
+      const c = sumResultCosts(d, ["e10-x-impl", "e10-x-impl-r"]);
+      expect(c.records?.resume).toBe("ambiguous");
+      expect(c.usd).toBeNull();
+      expect(c.tokens_measured).toEqual({ k: 1, n: 2 });
+      expect(c.input_tokens).toBe(10);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
   test("a complete run carries no tokens_measured", () => {
