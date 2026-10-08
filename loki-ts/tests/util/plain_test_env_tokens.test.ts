@@ -16,26 +16,28 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
   for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
 });
+// FC-90: the token family is a non-working sentinel, not absent (absent lets gh fall back to its keyring). A planted value never survives.
+const real = (v: string | undefined): boolean => v !== undefined && !v.startsWith("ghp_LOKIWITHHELDsentinel");
 const plant = (): void => { for (const k of SECRETS) process.env[k] = `planted-${k}`; };
 
 describe("FC-87 plainTestEnv is token-free", () => {
   test("the returned env drops the token family and SSH_AUTH_SOCK, from the default base and from an explicit one", () => {
     plant();
     for (const e of [plainTestEnv(), plainTestEnv(process.env), plainTestEnv({ ...process.env, PATH: "/bin" })]) {
-      for (const k of SECRETS) expect(e[k]).toBeUndefined();
+      for (const k of SECRETS) expect(real(e[k])).toBe(false);
       expect(e["NO_COLOR"]).toBe("1");
     }
   });
   test("a child spawned with plainTestEnv sees none of them", () => {
     plant();
-    const r = spawnSync(process.execPath, ["-e", `console.log(JSON.stringify(${JSON.stringify(SECRETS)}.filter((k) => process.env[k] !== undefined)))`], { encoding: "utf8", env: plainTestEnv() });
+    const r = spawnSync(process.execPath, ["-e", `console.log(JSON.stringify(${JSON.stringify(SECRETS)}.filter((k) => process.env[k] !== undefined && !String(process.env[k]).startsWith("ghp_LOKIWITHHELDsentinel"))))`], { encoding: "utf8", env: plainTestEnv() });
     expect(r.stdout.trim()).toBe("[]");
   });
   test("a Wall base run (real node --test) sees none of them", () => {
     plant();
     const repo = mkdtempSync(join(tmpdir(), "loki-fc87-")); dirs.push(repo);
     mkdirSync(join(repo, "tests"));
-    const body = `const test = require('node:test');\nconst assert = require('node:assert');\ntest('no credentials in the env', () => { assert.deepStrictEqual(${JSON.stringify(SECRETS)}.filter((k) => process.env[k] !== undefined), []); });\n`;
+    const body = `const test = require('node:test');\nconst assert = require('node:assert');\ntest('no credentials in the env', () => { assert.deepStrictEqual(${JSON.stringify(SECRETS)}.filter((k) => process.env[k] !== undefined && !String(process.env[k]).startsWith('ghp_LOKIWITHHELDsentinel')), []); });\n`;
     writeFileSync(join(repo, "tests", "wall_env.test.js"), body);
     const r = new RealBaseTestRunner(null, 60_000).run(repo, [{ path: "tests/wall_env.test.js", runner: "node" } as never]);
     expect(r).toEqual({ pass: 1, fail: 0, not_run: 0 });

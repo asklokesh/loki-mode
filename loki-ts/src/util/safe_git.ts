@@ -5,6 +5,7 @@
 // and gets an env with the GitHub token family and SSH_AUTH_SOCK removed. A call that truly needs credentials
 // (fetch, push) opts in with allowToken: the token env and the user's credential/ssh config are then kept, but
 // the command-running classes stay off. Always returns stdout as a utf8 string.
+import { hardenCredentialEnv } from "./credential_env.ts";
 import { execFileSync, spawnSync, type ExecFileSyncOptions, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 
 export const SAFE_GIT_CONFIG: readonly string[] = ["-c", "core.fsmonitor=", "-c", "core.hooksPath=/dev/null", "-c", "core.sshCommand=", "-c", "protocol.ext.allow=never", "-c", "credential.helper="];
@@ -22,10 +23,13 @@ const PATCH_CMDS: ReadonlySet<string> = new Set(["diff", "show", "log", "whatcha
 const OPT_WITH_VALUE: ReadonlySet<string> = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env", "--attr-source"]);
 const SECRET_VARS = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "SSH_AUTH_SOCK"] as const;
 
-/** A copy of env without the token family and SSH_AUTH_SOCK. Never mutates its argument. */
+/** A copy of env without SSH_AUTH_SOCK and with every ambient GitHub credential withheld (FC-90, credential_env.ts): the token
+ *  family is a non-working sentinel (never the real value, never merely deleted: gh would fall back to its keyring), gh's config
+ *  dir is an empty directory and git's credential helpers are reset. Never mutates its argument. */
 export function tokenFreeEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env };
   for (const k of SECRET_VARS) delete out[k];
+  hardenCredentialEnv(out);
   return out;
 }
 

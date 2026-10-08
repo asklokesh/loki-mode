@@ -160,7 +160,8 @@ it("each safe_git entry point hands git a token-free env, recorded by a filter s
   } finally {
     for (const k of SECRETS) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
   }
-  const lines = readFileSync(rec, "utf8").trim().split("\n");
+  // FC-90: a withheld token var is a non-working sentinel (not unset); the canary itself must never appear.
+  const lines = readFileSync(rec, "utf8").trim().split("\n").map((l) => l.replace(/ghp_LOKIWITHHELDsentinel\w+/g, "absent"));
   const absent = "|absent".repeat(SECRETS.length);
   expect(lines).toEqual([
     `safeGit${absent}`, `safeGit-env${absent}`,

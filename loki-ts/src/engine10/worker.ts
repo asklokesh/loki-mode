@@ -2,7 +2,7 @@
 // events.jsonl; each event is one JSON line {type, stage, data} on stdout, and the supervisor validates,
 // stamps seq and appends. Its own diagnostics go to stderr.
 import { join } from "node:path";
-import { GITHUB_TOKEN_VARS } from "../runner/github_token.ts";
+import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
 import { costTotalsOf, sumResultCosts } from "./cost.ts";
 import { capMeter } from "../e10ext/budget_cap.ts";
 import { resizeCap } from "../util/run_cap.ts"; import { loadProjectApi } from "../project_model/resolve.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
@@ -16,7 +16,6 @@ import { safeGit } from "../util/safe_git.ts";
 export type WorkerEmit = (type: EventType, stage: StageName | null, data: Record<string, unknown>) => void;
 /** The stage driver; `main` below passes machine.ts. */
 export type WorkerDrive = (emit: WorkerEmit) => Promise<void>;
-const SENTINEL_PREFIX = "ghp_LOKIWITHHELDsentinel";
 /** Fail closed: the worker refuses to start while it can see a real GitHub token. */
 export function assertWorkerEnv(env: NodeJS.ProcessEnv = process.env): void {
   if (env.LOKI_ALLOW_AGENT_GITHUB_TOKEN === "1") return; // operator opt-out, warned by withholdGithubTokens

@@ -41,7 +41,12 @@ process.exit(await runStart(a.slice(1)));
       expect(existsSync(log)).toBe(true);
       const rows = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
       expect(rows.length).toBe(2);
-      for (const r of rows) expect(r).toEqual({ gh: null, github: null, ssh: null });
+      // FC-90: a withheld token is a non-working sentinel, never the leaked value and never unset (unset lets gh fall back to its keyring).
+      for (const r of rows) {
+        expect(String(r.gh).startsWith("ghp_LOKIWITHHELDsentinel")).toBe(true);
+        expect(String(r.github).startsWith("ghp_LOKIWITHHELDsentinel")).toBe(true);
+        expect(r.ssh).toBeNull();
+      }
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
