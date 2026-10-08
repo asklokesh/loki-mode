@@ -154,6 +154,8 @@ export interface Receipt {
   not_proven: string[];
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on
   verdict: Verdict;
+  /** T2: "test fails without the fix: yes | no | NOT PROVEN (reason)"; omitted when LOKI_MUTATION_PROOF=0 or the verdict was not VERIFIED. */
+  mutation_proof?: string;
   /** FC-21b: set only when implement was stopped at its time limit; omitted otherwise so other receipts stay byte-stable. */
   implement_limit?: { limit_s: number; elapsed_s: number };
   /** E-120: implement's reason for a SPEC_CONFLICT exit, sanitized (newlines/control chars
