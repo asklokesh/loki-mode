@@ -1084,3 +1084,40 @@ describe("D50-F1 already-satisfied discards run changes", () => {
   }, 30000);
 
 });
+
+// SEC-FSMON ruling: the seal commit runs in the token-withheld worker, where the agent already has exec, so it keeps the user's
+// hooks (pre-commit secret scanners) and commit signing ("require signed commits"). Hooks-off and signing-off stay on every
+// other call. The hook records the env it was given: the token never reaches it even when process.env holds one.
+describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
+  test("seal commit runs pre-commit and gpg.program token-free; a plain safeGit commit runs neither", async () => {
+    const { safeGitRun } = await import("../../src/util/safe_git.ts");
+    const { repo, base } = makeRepo("hooks");
+    const hooks = join(root, "hooks-dir"), hookRec = join(root, "hook.rec"), gpgRec = join(root, "gpg.rec");
+    sh(["mkdir", "-p", hooks], root);
+    writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\nprintf '%s\\n' "\${GH_TOKEN:-absent}" >> '${hookRec}'\n`, { mode: 0o755 });
+    const gpg = join(root, "gpg-stub.sh");
+    writeFileSync(gpg, `#!/bin/sh\nprintf '%s\\n' "\${GH_TOKEN:-absent}" >> '${gpgRec}'\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 0\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nstub\\n-----END PGP SIGNATURE-----\\n'\n`, { mode: 0o755 });
+    sh(["git", "config", "core.hooksPath", hooks], repo);
+    sh(["git", "config", "commit.gpgSign", "true"], repo);
+    sh(["git", "config", "gpg.program", gpg], repo);
+    const saved = process.env["GH_TOKEN"];
+    process.env["GH_TOKEN"] = "ghp_SEALHOOKcanary0000000000000000000";
+    try {
+      // Supervisor-side shape first: hooks and signing are off, so neither recorder fires and the commit is unsigned.
+      const plain = await safeGitRun(repo, ["commit", "-q", "--allow-empty", "-m", "plain"]);
+      expect(plain.exitCode).toBe(0);
+      expect(existsSync(hookRec)).toBe(false);
+      expect(existsSync(gpgRec)).toBe(false);
+      expect(sh(["git", "cat-file", "commit", "HEAD"], repo)).not.toContain("gpgsig");
+      const { ctx } = ctxFor(repo, sh(["git", "rev-parse", "HEAD"], repo).trim() || base);
+      const c = await commitStage.run(ctx, new AbortController().signal);
+      expect(c.status).toBe("completed");
+      expect(c.data.committed).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env["GH_TOKEN"]; else process.env["GH_TOKEN"] = saved;
+    }
+    expect(readFileSync(hookRec, "utf8")).toBe("absent\n");
+    expect(readFileSync(gpgRec, "utf8")).toBe("absent\n");
+    expect(sh(["git", "cat-file", "commit", "HEAD"], repo)).toContain("gpgsig -----BEGIN PGP SIGNATURE-----");
+  }, 30000);
+});

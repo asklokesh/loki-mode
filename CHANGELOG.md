@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - implement brief asks the model to declare new registry dependencies
+- Loki's own git calls run with hooks and commit signing off and with repo filter/textconv drivers blanked on reads (SEC-FSMON, FC-25d); the worker-side seal add and commit keep the repo's drivers and the user's core.attributesFile, and the seal commit keeps the user's hooks and commit signing.
 
 ## v11.3.0 (2026-10-08)
 
