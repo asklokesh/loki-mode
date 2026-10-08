@@ -4,4 +4,5 @@ loki-ts/src/engine10/preflight.ts | gh --version and auth probe only, no repo cw
 loki-ts/src/engine10/fetch_issue.ts | read-only gh issue view through an injected execer
 loki-ts/src/e10ext/issues.ts | read-only gh issue list through an injected execer
 loki-ts/src/commands/proof.ts | proof gist publish by the operator CLI; user-invoked, not an agent-reachable path
+loki-ts/src/commands/issues_run.ts | lists issues and PRs and, only with --comment, posts issue comments (the triage reason and the epic plan) using the user's pre-withhold gh auth; operator-invoked, no push, no pr create, no model session
 loki-ts/src/commands/verify_pr.ts | read-only gh pr view for PR metadata and closing issues; operator CLI, no mutation

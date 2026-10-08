@@ -2,7 +2,7 @@ import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { runQueue, newestRecord } from "../../src/commands/queue.ts";
+import { runQueue, newestRecord, runnerEnv } from "../../src/commands/queue.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -41,7 +41,7 @@ async function runOne(res: { rc: number; verdict?: string | null; costUsd?: numb
 describe("run record reader", () => {
   test("reads verdict and cost from an engine10 runs/<id>/receipt.json", () => {
     put("runs", "receipt.json", receipt("VERIFIED", { usd: 2.5, measured_sessions: 1 }));
-    expect(newestRecord(dir, 0)).toEqual({ verdict: "VERIFIED", costUsd: 2.5 });
+    expect(newestRecord(dir, 0)).toEqual({ verdict: "VERIFIED", costUsd: 2.5, runId: "r1" });
   });
 
   test("cli-invoker-unmetered cost is NOT RECORDED, never $0.00", async () => {
@@ -68,5 +68,13 @@ describe("run record reader", () => {
     const text = await runOne({ rc: 1, ...newestRecord(dir, 0) });
     expect(text).toContain("verdict: PARTIAL");
     expect(text).not.toContain("FAILED (exit 1)");
+  });
+});
+
+describe("runnerEnv (MASS-2)", () => {
+  test("a stacked slice run gets LOKI_PR_BASE and LOKI_PR_REFS; a plain run gets neither", () => {
+    const e = runnerEnv({ pr: true, draft: true, cwd: "/w", prBase: "loki/e10-run1", prRefs: "o/r#12", env: {} }, "/w/.loki");
+    expect(e).toEqual({ LOKI_NO_BROWSER: "1", LOKI_DIR: "/w/.loki", LOKI_PR_DRAFT: "1", LOKI_PR_BASE: "loki/e10-run1", LOKI_PR_REFS: "o/r#12" });
+    expect(runnerEnv({ pr: true, env: {} }, "/l")).toEqual({ LOKI_NO_BROWSER: "1" });
   });
 });

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Loki 10 engine P4 push child (ENGINE.md sections 6 and 7).
 #
-#   engine10-push.sh push-pr <repo-dir> <branch> <title> <body-file> [--draft]
+#   engine10-push.sh push-pr <repo-dir> <branch> <title> <body-file> [--draft] [--base <branch>]
 #   engine10-push.sh check-origin   (exit 0 when the pinned origin is acceptable to push-pr, else the refusal; no network)
 #   engine10-push.sh comment <pr-number> <body-file>
 #   engine10-push.sh issue-comment <issue-ref> <body-file>
@@ -117,12 +117,21 @@ case "$mode" in
         exit 0
         ;;
     push-pr)
-        [ "$#" -ge 4 ] && [ "$#" -le 5 ] || die "usage: push-pr <repo-dir> <branch> <title> <body-file> [--draft]"
-        dir="$1" branch="$2" title="$3" body="$4" draft=()
-        if [ "$#" -eq 5 ]; then
-            [ "$5" = "--draft" ] || die "unknown flag: $5"
-            draft=(--draft)
-        fi
+        [ "$#" -ge 4 ] && [ "$#" -le 7 ] || die "usage: push-pr <repo-dir> <branch> <title> <body-file> [--draft] [--base <branch>]"
+        dir="$1" branch="$2" title="$3" body="$4" draft=() base=()
+        shift 4
+        # MASS-2: --base stacks the PR on a parent slice's branch; a name git would not accept is refused.
+        while [ "$#" -gt 0 ]; do
+            case "$1" in
+                --draft) draft=(--draft); shift ;;
+                --base)
+                    [ "$#" -ge 2 ] || die "--base needs a branch"
+                    case "$2" in -* | '') die "invalid base branch: $2" ;; esac
+                    git check-ref-format --branch "$2" >/dev/null 2>&1 || die "invalid base branch: $2"
+                    base=(--base "$2"); shift 2 ;;
+                *) die "unknown flag: $1" ;;
+            esac
+        done
         [ -f "$body" ] || die "body file not found: $body"
         if [ -n "$_e10_local" ]; then
             _e10_local_push "$dir" "$branch" || die "push refused or failed (rc=$?)"
@@ -133,7 +142,7 @@ case "$mode" in
         url="$(_e10_gh pr list --repo "$_e10_repo" --head "$branch" --state open --json url --jq '.[0].url')" \
             || die "gh pr list failed"
         if [ -z "$url" ] || [ "$url" = "null" ]; then
-            url="$(_e10_gh pr create --repo "$_e10_repo" --head "$branch" --title "$title" --body-file "$body" "${draft[@]}")" \
+            url="$(_e10_gh pr create --repo "$_e10_repo" --head "$branch" --title "$title" --body-file "$body" "${draft[@]}" "${base[@]}")" \
                 || die "gh pr create failed"
             url="$(printf '%s\n' "$url" | tail -n 1)"
         fi

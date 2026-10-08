@@ -91,6 +91,13 @@ out="$(p4 "$LIB" push-pr "$A" loki/e10-fix "E10 title" "$W/body.md" 2>/dev/null)
 [ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(creates)" = "1" ] && ok "second call reuses the existing PR URL" \
     || bad "second call rc=$rc out=$out creates=$(creates)"
 
+# MASS-2: a stacked slice PR targets its parent slice's branch (--base, either order with --draft).
+git -C "$A" branch loki/e10-stack
+rm -f "$W/pr.url"; : > "$GHLOG"
+out="$(p4 "$LIB" push-pr "$A" loki/e10-stack "E10 title" "$W/body.md" --base loki/e10-fix --draft 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && grep -q '^cwd=/ .* pr create --repo octocat/hello --head loki/e10-stack --title E10 title --body-file .* --draft --base loki/e10-fix$' "$GHLOG" \
+    && ok "push-pr --base stacks the PR on the parent branch" || bad "stacked push-pr rc=$rc ($(tr '\n' '|' < "$GHLOG")) err=$(tr '\n' ' ' < "$W/err")"
+
 # refused <label> <stderr-substring> <cmd...>: rc 2, the reason on stderr,
 # nothing reached the remote and no PR was created.
 refused() {
@@ -110,6 +117,12 @@ echo trunk > "$W/default"
 refused "push to the gh-resolved default branch (trunk) is refused, nothing sent" "it is the default branch of octocat/hello" \
     p4 "$LIB" push-pr "$A" trunk t "$W/body.md"
 echo main > "$W/default"
+refused "push-pr refuses a base that is not a branch name" "invalid base branch" \
+    p4 "$LIB" push-pr "$A" loki/e10-stack t "$W/body.md" --base "a..b"
+refused "push-pr refuses a base that reads as a flag" "invalid base branch" \
+    p4 "$LIB" push-pr "$A" loki/e10-stack t "$W/body.md" --base --draft
+refused "push-pr refuses an unknown flag" "unknown flag" \
+    p4 "$LIB" push-pr "$A" loki/e10-stack t "$W/body.md" --head x
 refused "refuses without _LOKI_ORIGIN_PINNED=1" "origin not pinned" \
     env GH_TOKEN="$CANARY" bash "$LIB" push-pr "$A" loki/e10-fix t "$W/body.md"
 refused "origin differing from the pin is refused" "origin changed during the run" \
