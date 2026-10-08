@@ -767,3 +767,12 @@ Founder directive, verbatim: "research and update all things in loki mode per la
 1. Definition: EFFICIENCY = verified tasks / (dollars x wall-minutes x human-minutes), measured with B9 raw-vs-loki on a fixed set (trivial-sum, two-bug, one medium real issue, a 10-issue mass run). Baseline is 11.3.1, measured the moment it ships. Target by about 17:00Z: 40x, as a product of factors (about 2x cost, 2x wall time, 10x human-minutes), each reported separately in METRICS.md every release.
 2. Organization: a research division (paper-scout, docs-scout, market-scout; Opus with web access) feeds slice specs through steering. Engineering programs with named owners: COST-HALF, SPEED, HUMAN-TIME, REGISTRIES, ACCURACY, PLATFORM-UPDATE, STANDARDS. One measurement owner runs the B9 raw arm and the 40x scoreboard script. Seat cap 20 while weekly usage is under 50%.
 3. Cadence and bar: a release every 30 minutes once CI-FAST is live, each with 3+ features, 8+ fixes or enhancements and a scoreboard row. A moat regression blocks a cut, P9 is never waived, and nothing unmeasured is claimed.
+
+## D93 (2026-10-08, CTO amendment relayed by the CoS, Architect records): the router plan becomes a routing call; the full plan is conditional
+Amends FC-35 (the router-on plan no longer skips small tasks) and D89 Amendment 2 for COST-HALF (D91 item 11).
+
+1. Under LOKI_ROUTER=1, Opus ALWAYS makes the routing decision, as one short structured-output call: cache-stable prefix (COST-HALF CP-01), effort low, output {size: trivial|small|medium|large, units[], needs_full_plan: bool}. Measured target cost: under $0.01 per run.
+2. The full Opus plan session runs only when needs_full_plan is true. Trivial and small tasks go straight to the routed executor on the lean path.
+3. FC-35 R-B holds unchanged: always emit a route or a recorded reason. A failed, timed-out or malformed routing call writes routed:false with the reason to route.json and runs the full plan as before (fail-safe toward more planning, never less).
+4. Measurement gate: the B9 row on trivial-sum shows the routing call below 10% of total run cost (n>=3), and router-on cost at most 1.05x router-off (D89 Amendment 2). Router-off output stays byte-identical.
+5. Slice: COST-HALF CH-10 (docs/v11/COST-HALF.md), HIGH tier; LD-01 (lean default) follows it on stages/plan.ts.

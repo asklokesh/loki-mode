@@ -1,6 +1,6 @@
 # COST-HALF: Loki dollars per verified task against raw claude -p (D91 item 11)
 
-Status: design, Architect draft 2026-10-08 rev 2. Not committed. This revision folds in the paper survey
+Status: design, Architect draft 2026-10-08 rev 3 (rev 3 adds the CTO-amended CH-10, D93). This revision folds in the paper survey
 (autonomi-dev research/2026-10-08-cost-half/PAPERS.md) and the CTO slice order.
 Moat order holds: Seal accuracy and Wall integrity come before every saving. No slice lets the implementer
 see, read earlier, or edit the Wall checks. No slice skips wall, verify, commit, seal or pr.
@@ -191,7 +191,7 @@ sequenced, never concurrent. Full 60-line cards for ER-01, WC-01a and WC-01b wer
 - Tier HIGH, 30 min, unanimous opus review plus CTO sign-off.
 - Expected latency down 20 to 45s per run; cost flat. B9 pass: p50 down at least 20s, solve within CI.
 
-**LD-01 LEAN-DEFAULT (rank 2). DEPENDS ER-01 (session.ts) and WC-01b (machine.ts).**
+**LD-01 LEAN-DEFAULT (rank 2). DEPENDS ER-01 (session.ts), WC-01b (machine.ts) and CH-10 (plan.ts).**
 - FILES:
   - loki-ts/src/engine10/sizing.ts (the lean path is no longer small-only)
   - loki-ts/src/engine10/stages/plan.ts (plan on request)
@@ -210,6 +210,40 @@ sequenced, never concurrent. Full 60-line cards for ER-01, WC-01a and WC-01b wer
 - B9 pass: medium solve rate within CI, usd per solved down at least 25%.
 - Tier HIGH (flow next to seal), 30 min per part.
 - Expected 25 to 45%. Basis: lean arm $0.16 vs default $0.39 on small (measured). Medium is unmeasured.
+
+**CH-10 ROUTE-CALL (router on; CTO amendment, D93). DEPENDS CP-01 (cache-stable prefix). LD-01 follows it on plan.ts.**
+- FILES:
+  - loki-ts/src/engine10/stages/plan.ts (split the routing decision from the full plan session)
+  - loki-ts/src/runner/router/plan_route.ts (pinOpus applies to the routing call; the full plan is conditional)
+  - loki-ts/src/runner/router/route_record.ts (record size, units, needs_full_plan, and the call's cost)
+  - loki-ts/tests/engine10/route_call.test.ts (new)
+  - dist
+- Change: under LOKI_ROUTER=1, Opus ALWAYS makes the routing decision as one short structured-output call:
+  - cache-stable prefix (CP-01) and effort low;
+  - SDK `outputFormat: {type:"json_schema"}` with the schema
+    `{size: "trivial"|"small"|"medium"|"large", units: [...], needs_full_plan: boolean}`;
+  - measured target cost under $0.01 per run.
+  The full Opus PLAN session runs only when needs_full_plan is true. Trivial and small tasks go straight to the
+  routed executor on the lean path.
+- FC-35 R-B still holds (always emit a route or a recorded reason). The plan stage writes route.json from the
+  routing call every time the router is on. If the call fails, times out or returns invalid JSON, it writes
+  routed:false with the reason and runs the full plan, as today. Only the expensive plan becomes conditional.
+- Accept (red first):
+  - with the router on, a fake routing call returning needs_full_plan:false runs no plan session and still writes
+    route.json with size and units;
+  - true runs the full plan once;
+  - a malformed or failed call records routed:false plus the reason and falls back to the full plan;
+  - route_record_agreement.test.ts (FC-35 fixture) stays green;
+  - with the router off, outputs are byte-identical (router_optout_golden);
+  - mutation: skipping the route.json write when needs_full_plan is false turns the test red.
+- Wall checks: the common set in section 2, plus:
+  - the B9 row on trivial-sum shows the routing call's cost below 10% of the run's total cost (n>=3, read from
+    the call's cost event via CH-M1);
+  - router-on cost at most 1.05x router-off on trivial-sum (D89 Amendment 2).
+- Tier HIGH (it changes FC-35 behavior and the router's plan path). Budget 30 min.
+- Expected saving: on small tasks the Opus plan session (about $0.094 at S41-04 mean tokens, table 1.2) becomes a
+  call under $0.01. This removes most of the measured +27% to +44% router overhead on trivial and small tasks.
+  Medium and large tasks are unchanged unless the call says no full plan is needed.
 
 **PRICE-01 pricing table matches the published page**
 - FILES: loki-ts/data/model-pricing.json, loki-ts/tests/runner/model_pricing.test.ts (new or existing).
@@ -294,7 +328,7 @@ Support slices that stay in the queue: WARM-FIX (old CH-03, LOKI_E10_FIX_RESUME 
 releases fix.ts), CACHE-TTL (old CH-04, promptCacheTtl 5m, after CP-01), and B9-RATIO (old CH-14, usd per
 verified ratio row in scripts/b9-scoreboard.sh, prints MISS above 0.5).
 
-Superseded: old CH-10 (FC-35 Opus plan) and CH-12 (L0 stage declaration) are folded into LD-01. Old CH-11
+Superseded: old CH-12 (L0 stage declaration) is folded into LD-01. CH-10 is restored as the CTO-amended routing call (D93). Old CH-11
 (stagger wall behind plan) is replaced by WC-01b. Old CH-08 (100K ceiling) is folded into HB-*. Old CH-09
 (one intake session) is folded into HB-01 and HB-02.
 
