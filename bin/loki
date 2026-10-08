@@ -32,9 +32,17 @@ SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
 REPO_ROOT=$(cd "$SCRIPT_DIR/.." 2>/dev/null && pwd)
 BASH_CLI="$REPO_ROOT/autonomy/loki"
 
-# FC-38: `loki start` never falls back to the legacy bash loop; every other command may.
+# FC-38 (scoped): `loki start --attempts` never reaches the legacy bash loop. Every other
+# start, and every other command, keeps the plain bash fallback.
+_LOKI_START_ATTEMPTS=0
+if [ "${1:-}" = "start" ]; then
+    for _loki_a0 in "${@:2}"; do
+        case "$_loki_a0" in --attempts|--attempts=*) _LOKI_START_ATTEMPTS=1 ;; esac
+    done
+    unset _loki_a0
+fi
 _loki_bash_or_refuse() {
-    if [ "${1:-}" = "start" ]; then
+    if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
         echo "loki: 'loki start' runs only the Loki 10 engine, which needs the Bun entry (loki-ts). It cannot fall back to the removed legacy loop; reinstall loki-mode or fix LOKI_TS_ENTRY / BUN_FROM_SOURCE." >&2
         exit 1
     fi
@@ -344,170 +352,6 @@ case "${1:-}" in
         ;;
 esac
 
-# FC-37: --attempts is handled HERE, once, before any route split (engine10 positional task, Bun
-# loop, bash cmd_start). A flag accepted on one route must be honored or refused loudly on every
-# other. N=1 is stripped so every route sees today's argv byte-for-byte; N=2..5 runs on the Bun
-# start command (loki-ts/src/commands/start.ts), which spawns one engine10 run per worktree.
-if [ "${1:-}" = "start" ]; then
-    _loki_att_args=()
-    _loki_att_n=""
-    _loki_att_skip=0
-    for _loki_att_a in "${@:2}"; do
-        if [ "$_loki_att_skip" = "1" ]; then _loki_att_n="$_loki_att_a"; _loki_att_skip=0; continue; fi
-        case "$_loki_att_a" in
-            --attempts) _loki_att_skip=1 ;;
-            --attempts=*) _loki_att_n="${_loki_att_a#--attempts=}" ;;
-            *) _loki_att_args+=("$_loki_att_a") ;;
-        esac
-    done
-    if [ "$_loki_att_skip" = "1" ]; then
-        echo "loki: --attempts requires a value from 1 to 5." >&2
-        exit 2
-    fi
-    if [ -n "$_loki_att_n" ]; then
-        case "$_loki_att_n" in
-            1) set -- start ${_loki_att_args[@]+"${_loki_att_args[@]}"} ;;
-            [2-5])
-                _lb=$(_loki_bun)
-                [ -n "$_lb" ] || { echo "loki: --attempts $_loki_att_n needs bun (install from https://bun.sh); refusing to run a single attempt silently." >&2; exit 1; }
-                exec "$_lb" "$BUN_CLI" "$@"
-                ;;
-            *) echo "loki: --attempts must be an integer from 1 to 5, got '$_loki_att_n'." >&2; exit 2 ;;
-        esac
-    fi
-    unset _loki_att_args _loki_att_n _loki_att_skip _loki_att_a
-fi
-
-# Loki 10 engine (D29, the only engine from 11.0.0). Routes `loki "<task>"`,
-# `loki owner/repo#N`, `loki quick "<task>"`, `keys` and `verify --pubkey` to engine10.
-# shellcheck disable=SC2194
-case "v10" in
-    v10)
-        _e10=0
-        _e10_hard=0
-        _e10_args=("$@")
-        case "${1:-}" in
-            keys) _e10=1; _e10_hard=1 ;;
-            status|verify|dashboard)
-                if [ "$1" = "verify" ]; then
-                    for _pk in "$@"; do
-                        case "$_pk" in --pubkey|--pubkey=*) _e10=1; _e10_hard=1 ;; esac
-                    done
-                    unset _pk
-                fi
-                # Bare `loki verify` follows the newest run: a v10 run newer than the newest
-                # legacy proof is verified by v10, so a FAILED default run is never VERIFIED.
-                # Only a bare call or a v10 run id (e10-*) goes there; any flag (--fast, --pr, --json, unknown) stays on legacy verify.
-                if [ "$1" = "verify" ] && [ "$_e10" = "0" ] && case "${2:-}" in ""|e10-*) true ;; *) false ;; esac; then
-                    _r10=""; _p10=""
-                    for _d in "${LOKI_DIR:-.loki}"/runs/e10-*/; do [ -d "$_d" ] && _r10="$_d"; done
-                    for _d in "${LOKI_DIR:-.loki}"/proofs/*/proof.json; do [ -f "$_d" ] && { [ -z "$_p10" ] || [ "$_d" -nt "$_p10" ]; } && _p10="$_d"; done
-                    if [ -n "$_r10" ] && { [ -z "$_p10" ] || [ "$_r10" -nt "$_p10" ]; }; then _e10=1; fi
-                    unset _r10 _p10 _d
-                fi
-                ;;
-            ""|-*) _e10=0 ;;
-            # quick: the lean small path, no PR (legacy quick never opened one). A flag-first
-            # call (--help, -v) stays on the legacy quick.
-            quick)
-                case "${2:-}" in
-                    ""|-*) _e10=0 ;;
-                    *) _e10=1; _e10_args=(--no-pr "${@:2}") ;;
-                esac
-                ;;
-            # D58: `loki start <issue ref|issue URL|"multi-word task">` takes the same v10 path as
-            # `loki <ref>`; any other start call (PRD file, flags first, one word) stays legacy.
-            start)
-                case "${2:-}" in
-                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
-                        _e10=1; _e10_hard=1; _e10_args=()  # FC-38: start never falls back to the legacy engine
-                        # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
-                        _e10_bnext=0
-                        for _e10_a in "${@:2}"; do
-                            if [ "$_e10_bnext" = "1" ]; then _e10_args+=("$_e10_a"); _e10_bnext=0; continue; fi
-                            case "$_e10_a" in
-                                --budget|--budget-limit) _e10_args+=(--max-cost); _e10_bnext=1 ;;
-                                --budget=*|--budget-limit=*) _e10_args+=("--max-cost=${_e10_a#*=}") ;;
-                                *) _e10_args+=("$_e10_a") ;;
-                            esac
-                        done
-                        unset _e10_a _e10_bnext
-                        ;;
-                    *) _e10=0 ;;
-                esac
-                ;;
-            # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
-            */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*) _e10=1 ;;
-            *" "*) _e10=1 ;;
-            # ponytail: a one-word argument stays on the legacy CLI. The telemetry
-            # allowlist is not a command registry (estimate, intent, outcomes are
-            # missing from it), so it cannot decide routing. Multi-word tasks and
-            # issue refs reach v10.
-            *) _e10=0 ;;
-        esac
-        # Default (unset) mode never breaks a host: no bun, or a provider engine10 has no
-        # invoker for, falls through to the legacy engine. Explicit v10 keeps its hard error.
-        if [ "$_e10" = "1" ] && [ "$_e10_hard" = "0" ]; then
-            case "${LOKI_PROVIDER:-claude}" in
-                claude|codex|cline|aider) ;;
-                *)
-                    _e10=0
-                    echo "loki: using the legacy engine (the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider)." >&2
-                    ;;
-            esac
-            if [ "$_e10" = "1" ]; then
-                _lb=$(_loki_bun)
-                if [ -z "$_lb" ]; then
-                    _e10=0
-                    case "$(uname -s 2>/dev/null)" in
-                        Darwin) _os=darwin ;; Linux) _os=linux ;; MINGW*|MSYS*|CYGWIN*) _os=win32 ;; *) _os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]') ;;
-                    esac
-                    case "$(uname -m 2>/dev/null)" in
-                        arm64|aarch64) _arch=aarch64 ;; x86_64|amd64) _arch=x64 ;; *) _arch=$(uname -m 2>/dev/null) ;;
-                    esac
-                    echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for ${_os}-${_arch} is $(_loki_bun_why)). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
-                fi
-            fi
-        fi
-        if [ "$_e10" = "1" ]; then
-            _lb=$(_loki_bun)
-            [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
-            exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
-        fi
-        unset _e10 _e10_args _e10_hard
-        ;;
-esac
-
-# Bun must be installed for the new path; if it isn't, fall through to bash
-# silently rather than fail. This keeps users on systems without Bun working.
-if ! command -v bun &>/dev/null; then
-    if [ "${1:-}" = "start" ]; then
-        echo "loki: 'loki start' runs the Loki 10 engine, which needs bun. Install bun from https://bun.sh. The legacy loop is not reachable from start." >&2
-        exit 1
-    fi
-    exec "$BASH_CLI" "$@"
-fi
-
-# v8 Phase 4: route `start` to the Bun RARV loop ONLY when LOKI_SDK_LOOP is on.
-# Default (unset) keeps `loki start` on the bash cmd_start, byte-identical. This
-# guard is AFTER the legacy check (LOKI_LEGACY_BASH=1 still force-overrides to
-# bash above) and AFTER the bun-presence check (a bun-less host already fell to
-# bash). Accepts 1|true to match the flag's documented =1 usage; bash cannot
-# cheaply reproduce truthy()'s yes/on spellings, so those are not honored here
-# (documented divergence, same as other bin/loki bool guards). v8.1: LOKI_SDK_LOOP
-# may also be set by the mode resolver above (LOKI_SDK_MODE=full -> LOOP=1), so
-# `LOKI_SDK_MODE=full loki start` now correctly routes the loop to Bun here.
-#
-# RUN-25 iter 2 (T3(c) pre-flight): the Bun runAutonomous loop handles the RARV
-# loop only. Orchestration flags that do pre-loop work the Bun loop does NOT do
-# (git-worktree parallel streams, GitHub/issue import, Docker sandbox, the API
-# server, backgrounding, alternate spec sources) must run on the bash route so the
-# user gets FULL behavior even with the loop flag on. Scan the start args for any
-# such flag (or an issue-ref positional) and, if present, DIVERT back to bash
-# instead of taking the Bun fork. This is the "pre-loop handled, not rejected"
-# guarantee that makes the eventual loop default-flip a no-regression. Runner
-# flags (--simple, --allow-haiku, --regen-prd, --skip-memory, provider knobs) are
-# handled by start.ts and do NOT divert. See artifacts/ITER1-FLAG-RECONCILE.md.
 _loki_start_needs_bash() {
     # $@ = the start args (already know $1 = start). Return 0 (divert to bash) if
     # any bash-only orchestration flag or an issue-ref spec is present.
@@ -561,19 +405,197 @@ _loki_start_needs_bash() {
     [ "$effective_provider" = "opencode" ] && return 0
     return 1
 }
-# FC-38: no user-facing `start` reaches the legacy loop (bash cmd_start, run.sh, runAutonomous).
-# Issue refs and multi-word tasks were sent to engine10 above; every other start (PRD path, brief,
-# flags) goes to the Bun start command, which runs engine10 and seals a receipt. A flag only the
-# legacy route honored, or a provider engine10 cannot invoke, is refused loudly instead.
-if [ "${1:-}" = "start" ]; then
-    if _loki_start_needs_bash "${@:2}"; then
-        echo "loki: 'loki start' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, --detach, or opencode) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
+_loki_attempts_refuse() {
+    if _loki_start_needs_bash "$@"; then
+        echo "loki: 'loki start --attempts' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, --detach, or opencode) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
         exit 2
     fi
     case "${LOKI_PROVIDER:-claude}" in
         claude|codex|cline|aider) ;;
         *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider." >&2; exit 2 ;;
     esac
+}
+
+# FC-37: --attempts is handled HERE, once, before any route split (engine10 positional task, Bun
+# loop, bash cmd_start). A flag accepted on one route must be honored or refused loudly on every
+# other. N=1 is stripped so every route sees today's argv byte-for-byte; N=2..5 runs on the Bun
+# start command (loki-ts/src/commands/start.ts), which spawns one engine10 run per worktree.
+if [ "${1:-}" = "start" ]; then
+    _loki_att_args=()
+    _loki_att_n=""
+    _loki_att_skip=0
+    for _loki_att_a in "${@:2}"; do
+        if [ "$_loki_att_skip" = "1" ]; then _loki_att_n="$_loki_att_a"; _loki_att_skip=0; continue; fi
+        case "$_loki_att_a" in
+            --attempts) _loki_att_skip=1 ;;
+            --attempts=*) _loki_att_n="${_loki_att_a#--attempts=}" ;;
+            *) _loki_att_args+=("$_loki_att_a") ;;
+        esac
+    done
+    if [ "$_loki_att_skip" = "1" ]; then
+        echo "loki: --attempts requires a value from 1 to 5." >&2
+        exit 2
+    fi
+    if [ -n "$_loki_att_n" ]; then
+        case "$_loki_att_n" in
+            1) set -- start ${_loki_att_args[@]+"${_loki_att_args[@]}"} ;;
+            [2-5])
+                _lb=$(_loki_bun)
+                [ -n "$_lb" ] || { echo "loki: --attempts $_loki_att_n needs bun (install from https://bun.sh); refusing to run a single attempt silently." >&2; exit 1; }
+                _loki_attempts_refuse "${@:2}"
+                exec "$_lb" "$BUN_CLI" "$@"
+                ;;
+            *) echo "loki: --attempts must be an integer from 1 to 5, got '$_loki_att_n'." >&2; exit 2 ;;
+        esac
+    fi
+    unset _loki_att_args _loki_att_n _loki_att_skip _loki_att_a
+fi
+
+# Loki 10 engine (D29, the only engine from 11.0.0). Routes `loki "<task>"`,
+# `loki owner/repo#N`, `loki quick "<task>"`, `keys` and `verify --pubkey` to engine10.
+# shellcheck disable=SC2194
+case "v10" in
+    v10)
+        _e10=0
+        _e10_hard=0
+        _e10_args=("$@")
+        case "${1:-}" in
+            keys) _e10=1; _e10_hard=1 ;;
+            status|verify|dashboard)
+                if [ "$1" = "verify" ]; then
+                    for _pk in "$@"; do
+                        case "$_pk" in --pubkey|--pubkey=*) _e10=1; _e10_hard=1 ;; esac
+                    done
+                    unset _pk
+                fi
+                # Bare `loki verify` follows the newest run: a v10 run newer than the newest
+                # legacy proof is verified by v10, so a FAILED default run is never VERIFIED.
+                # Only a bare call or a v10 run id (e10-*) goes there; any flag (--fast, --pr, --json, unknown) stays on legacy verify.
+                if [ "$1" = "verify" ] && [ "$_e10" = "0" ] && case "${2:-}" in ""|e10-*) true ;; *) false ;; esac; then
+                    _r10=""; _p10=""
+                    for _d in "${LOKI_DIR:-.loki}"/runs/e10-*/; do [ -d "$_d" ] && _r10="$_d"; done
+                    for _d in "${LOKI_DIR:-.loki}"/proofs/*/proof.json; do [ -f "$_d" ] && { [ -z "$_p10" ] || [ "$_d" -nt "$_p10" ]; } && _p10="$_d"; done
+                    if [ -n "$_r10" ] && { [ -z "$_p10" ] || [ "$_r10" -nt "$_p10" ]; }; then _e10=1; fi
+                    unset _r10 _p10 _d
+                fi
+                ;;
+            ""|-*) _e10=0 ;;
+            # quick: the lean small path, no PR (legacy quick never opened one). A flag-first
+            # call (--help, -v) stays on the legacy quick.
+            quick)
+                case "${2:-}" in
+                    ""|-*) _e10=0 ;;
+                    *) _e10=1; _e10_args=(--no-pr "${@:2}") ;;
+                esac
+                ;;
+            # D58: `loki start <issue ref|issue URL|"multi-word task">` takes the same v10 path as
+            # `loki <ref>`; any other start call (PRD file, flags first, one word) stays legacy.
+            start)
+                case "${2:-}" in
+                    */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*|*" "*)
+                        _e10=1; _e10_args=("${@:2}")
+                        if [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
+                            _e10_hard=1  # FC-38: --attempts never falls back to the legacy engine
+                            # FC-37: engine10 has no --budget; unmapped it would be glued onto the task text. Its per-run cap is --max-cost.
+                            _e10_args=(); _e10_bnext=0
+                            for _e10_a in "${@:2}"; do
+                                if [ "$_e10_bnext" = "1" ]; then _e10_args+=("$_e10_a"); _e10_bnext=0; continue; fi
+                                case "$_e10_a" in
+                                    --budget|--budget-limit) _e10_args+=(--max-cost); _e10_bnext=1 ;;
+                                    --budget=*|--budget-limit=*) _e10_args+=("--max-cost=${_e10_a#*=}") ;;
+                                    *) _e10_args+=("$_e10_a") ;;
+                                esac
+                            done
+                            unset _e10_a _e10_bnext
+                        fi
+                        ;;
+                    *) _e10=0 ;;
+                esac
+                ;;
+            # http*://*/issues/* also covers GitLab's /-/issues/ URLs.
+            */*\#[0-9]*|http*://*/issues/*|http*://*/browse/*|jira:*|linear:*|https://linear.app/*/issue/*) _e10=1 ;;
+            *" "*) _e10=1 ;;
+            # ponytail: a one-word argument stays on the legacy CLI. The telemetry
+            # allowlist is not a command registry (estimate, intent, outcomes are
+            # missing from it), so it cannot decide routing. Multi-word tasks and
+            # issue refs reach v10.
+            *) _e10=0 ;;
+        esac
+        # Default (unset) mode never breaks a host: no bun, or a provider engine10 has no
+        # invoker for, falls through to the legacy engine. Explicit v10 keeps its hard error.
+        if [ "$_e10" = "1" ] && [ "$_e10_hard" = "0" ]; then
+            case "${LOKI_PROVIDER:-claude}" in
+                claude|codex|cline|aider) ;;
+                *)
+                    _e10=0
+                    echo "loki: using the legacy engine (the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider)." >&2
+                    ;;
+            esac
+            if [ "$_e10" = "1" ]; then
+                _lb=$(_loki_bun)
+                if [ -z "$_lb" ]; then
+                    _e10=0
+                    case "$(uname -s 2>/dev/null)" in
+                        Darwin) _os=darwin ;; Linux) _os=linux ;; MINGW*|MSYS*|CYGWIN*) _os=win32 ;; *) _os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]') ;;
+                    esac
+                    case "$(uname -m 2>/dev/null)" in
+                        arm64|aarch64) _arch=aarch64 ;; x86_64|amd64) _arch=x64 ;; *) _arch=$(uname -m 2>/dev/null) ;;
+                    esac
+                    echo "loki: the Loki 10 engine cannot run on this machine: no working bun (none on PATH, and the bundled bun for ${_os}-${_arch} is $(_loki_bun_why)). Running the legacy engine instead. To fix: install bun from https://bun.sh, or reinstall loki-mode without --omit=optional." >&2
+                fi
+            fi
+        fi
+        if [ "$_e10" = "1" ]; then
+            _lb=$(_loki_bun)
+            [ -n "$_lb" ] || { echo "Error: the Loki 10 engine needs bun. Install bun from https://bun.sh." >&2; exit 1; }
+            exec "$_lb" "$BUN_CLI" engine10 "${_e10_args[@]}"
+        fi
+        unset _e10 _e10_args _e10_hard
+        ;;
+esac
+
+# Bun must be installed for the new path; if it isn't, fall through to bash
+# silently rather than fail. This keeps users on systems without Bun working.
+if ! command -v bun &>/dev/null; then
+    if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
+        echo "loki: 'loki start' runs the Loki 10 engine, which needs bun. Install bun from https://bun.sh. The legacy loop is not reachable from start." >&2
+        exit 1
+    fi
+    exec "$BASH_CLI" "$@"
+fi
+
+# v8 Phase 4: route `start` to the Bun RARV loop ONLY when LOKI_SDK_LOOP is on.
+# Default (unset) keeps `loki start` on the bash cmd_start, byte-identical. This
+# guard is AFTER the legacy check (LOKI_LEGACY_BASH=1 still force-overrides to
+# bash above) and AFTER the bun-presence check (a bun-less host already fell to
+# bash). Accepts 1|true to match the flag's documented =1 usage; bash cannot
+# cheaply reproduce truthy()'s yes/on spellings, so those are not honored here
+# (documented divergence, same as other bin/loki bool guards). v8.1: LOKI_SDK_LOOP
+# may also be set by the mode resolver above (LOKI_SDK_MODE=full -> LOOP=1), so
+# `LOKI_SDK_MODE=full loki start` now correctly routes the loop to Bun here.
+#
+# RUN-25 iter 2 (T3(c) pre-flight): the Bun runAutonomous loop handles the RARV
+# loop only. Orchestration flags that do pre-loop work the Bun loop does NOT do
+# (git-worktree parallel streams, GitHub/issue import, Docker sandbox, the API
+# server, backgrounding, alternate spec sources) must run on the bash route so the
+# user gets FULL behavior even with the loop flag on. Scan the start args for any
+# such flag (or an issue-ref positional) and, if present, DIVERT back to bash
+# instead of taking the Bun fork. This is the "pre-loop handled, not rejected"
+# guarantee that makes the eventual loop default-flip a no-regression. Runner
+# flags (--simple, --allow-haiku, --regen-prd, --skip-memory, provider knobs) are
+# handled by start.ts and do NOT divert. See artifacts/ITER1-FLAG-RECONCILE.md.
+# FC-38 (scoped to --attempts; plain start keeps the 11.3.0 routing below): no `start --attempts` reaches the legacy loop (bash cmd_start, run.sh, runAutonomous).
+# Issue refs and multi-word tasks were sent to engine10 above; every other start (PRD path, brief,
+# flags) goes to the Bun start command, which runs engine10 and seals a receipt. A flag only the
+# legacy route honored, or a provider engine10 cannot invoke, is refused loudly instead.
+if [ "${1:-}" = "start" ] && [ "$_LOKI_START_ATTEMPTS" = "1" ]; then
+    _loki_attempts_refuse "${@:2}"
+    exec bun "$BUN_CLI" "$@"
+fi
+if [ "${1:-}" = "start" ] && { [ "${LOKI_SDK_LOOP:-}" = "1" ] || [ "${LOKI_SDK_LOOP:-}" = "true" ]; }; then
+    if _loki_start_needs_bash "${@:2}"; then
+        exec "$BASH_CLI" "$@"
+    fi
     exec bun "$BUN_CLI" "$@"
 fi
 

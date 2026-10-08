@@ -76,15 +76,16 @@ function withOriginAndGh(f: ReturnType<typeof fixture>) {
   return { bin, ghLog };
 }
 
-describe("FC-38 start never reaches the legacy loop", () => {
-  it("a PRD-path start runs engine10 (one sealed run), not runAutonomous", () => {
+// FC-38 is scoped to `start --attempts`: plain start keeps the 11.3.0 routing (tests/test-engine10-dispatch.sh).
+describe("FC-38 start --attempts never reaches the legacy loop", () => {
+  it("a PRD-path --attempts 2 start runs engine10 twice, not runAutonomous", () => {
     const f = fixture();
     try {
       writeFileSync(join(f.repo, "prd.md"), "Fix sum so it includes the first element.\n");
-      const r = run(f, ["start", "prd.md", "--no-pr"]);
+      const r = run(f, ["start", "prd.md", "--no-pr", "--attempts", "2"]);
       expect(r.status).toBe(0);
       const lines = readFileSync(f.log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { argv: string[] });
-      expect(lines.length).toBe(1);
+      expect(lines.length).toBe(2);
       expect(lines[0]!.argv[0]).toContain("Fix sum so it includes the first element.");
       expect(lines[0]!.argv).toContain("--no-pr");
     } finally {
@@ -92,12 +93,12 @@ describe("FC-38 start never reaches the legacy loop", () => {
     }
   });
 
-  it("a one-word task and a bare start run engine10 or refuse, never the legacy loop", () => {
+  it("a one-word --attempts 2 task runs engine10 or refuses, never the legacy loop", () => {
     const f = fixture();
     try {
-      const r = run(f, ["start", "refactor", "--no-pr"]);
+      const r = run(f, ["start", "refactor", "--no-pr", "--attempts", "2"]);
       expect(r.status).toBe(0);
-      expect(readFileSync(f.log, "utf8").trim().split("\n").length).toBe(1);
+      expect(readFileSync(f.log, "utf8").trim().split("\n").length).toBe(2);
     } finally {
       rmSync(f.root, { recursive: true, force: true });
     }
@@ -107,7 +108,7 @@ describe("FC-38 start never reaches the legacy loop", () => {
     const f = fixture();
     try {
       for (const flag of ["--parallel", "--github", "--sandbox", "--detach"]) {
-        const r = run(f, ["start", "prd.md", flag]);
+        const r = run(f, ["start", "prd.md", "--attempts", "2", "--no-pr", flag]);
         expect(r.status).toBe(2);
         expect(r.stderr).toContain("only the Loki 10 engine");
       }
@@ -120,8 +121,24 @@ describe("FC-38 start never reaches the legacy loop", () => {
   it("a provider engine10 cannot invoke is refused, not sent to the legacy engine", () => {
     const f = fixture();
     try {
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_PROVIDER: "opencode", LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_PROVIDER: "opencode", LOKI_NO_BROWSER: "1" } });
       expect(r.status).toBe(2);
+      expect(existsSync(f.log)).toBe(false);
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("FC-38 scoped: start --attempts with opencode", () => {
+  it("start --attempts 2 --no-pr with opencode is refused (rc 2) and never execs autonomy/loki or the engine", () => {
+    const f = fixture();
+    try {
+      for (const task of ["prd.md", "fix the thing please"]) {
+        const r = spawnSync(join(REPO, "bin/loki"), ["start", task, "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_PROVIDER: "opencode", LOKI_NO_BROWSER: "1" } });
+        expect(r.status).toBe(2);
+        expect(String(r.stdout)).not.toContain("Loki Mode");
+      }
       expect(existsSync(f.log)).toBe(false);
     } finally {
       rmSync(f.root, { recursive: true, force: true });
@@ -195,18 +212,6 @@ describe("--no-pr both ways through the real wiring", () => {
     }
   });
 
-  it("a plain single start without --no-pr leaves --no-pr out of the engine10 argv; with it, passes it", () => {
-    const f = fixture();
-    try {
-      writeFileSync(join(f.repo, "prd.md"), "Fix sum so it includes the first element.\n");
-      expect(run(f, ["start", "prd.md"]).status).toBe(0);
-      const first = JSON.parse(readFileSync(f.log, "utf8").trim().split("\n")[0]!) as { argv: string[] };
-      expect(first.argv).not.toContain("--no-pr");
-    } finally {
-      rmSync(f.root, { recursive: true, force: true });
-    }
-  });
-
   it("preserves each attempt's sealed run dir past worktree removal and cites its sha256", () => {
     const f = fixture();
     try {
@@ -227,7 +232,7 @@ describe("--no-pr both ways through the real wiring", () => {
   });
 });
 
-describe("FC-38 bin/loki start fallbacks refuse instead of reaching autonomy/loki", () => {
+describe("FC-38 bin/loki start --attempts fallbacks refuse instead of reaching autonomy/loki", () => {
   const refused = (r: ReturnType<typeof spawnSync>) => {
     expect(r.status).toBe(1);
     expect(String(r.stderr)).toContain("Loki 10 engine");
@@ -236,7 +241,7 @@ describe("FC-38 bin/loki start fallbacks refuse instead of reaching autonomy/lok
   it("a missing LOKI_TS_ENTRY", () => {
     const f = fixture();
     try {
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: join(f.root, "missing.ts"), LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: join(f.root, "missing.ts"), LOKI_NO_BROWSER: "1" } });
       refused(r);
     } finally {
       rmSync(f.root, { recursive: true, force: true });
@@ -245,7 +250,7 @@ describe("FC-38 bin/loki start fallbacks refuse instead of reaching autonomy/lok
   it("LOKI_LEGACY_BASH=1", () => {
     const f = fixture();
     try {
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_LEGACY_BASH: "1", LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_LEGACY_BASH: "1", LOKI_NO_BROWSER: "1" } });
       refused(r);
       expect(existsSync(f.log)).toBe(false);
     } finally {
@@ -256,7 +261,7 @@ describe("FC-38 bin/loki start fallbacks refuse instead of reaching autonomy/lok
     const f = fixture();
     try {
       writeFileSync(join(f.repo, "prd.md"), "Fix sum.\n");
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md", "--attempts", "1"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("not reachable from start");
       expect(existsSync(f.log)).toBe(false);
@@ -267,7 +272,7 @@ describe("FC-38 bin/loki start fallbacks refuse instead of reaching autonomy/lok
   it("no bun on PATH", () => {
     const f = fixture();
     try {
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
       expect(r.status).toBe(1);
       expect(r.stderr).toContain("needs bun");
       expect(existsSync(f.log)).toBe(false);

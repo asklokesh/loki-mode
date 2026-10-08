@@ -33,17 +33,13 @@ chmod +x "$TMP/pkg/bin/loki" "$TMP/pkg/autonomy/loki" "$TMP/fake-bin/bun"
 route_assert() {
     local label="$1" work="$2"
     shift 2
-    local rc=0
-    (
+    if (
         cd "$work" || exit 1
         "$@"
-    ) >/dev/null 2>&1 || rc=$?
-    # FC-38: start never reaches the legacy bash loop; the Loki 10 engine cannot invoke
-    # opencode, so the selection is refused loudly (exit 2) and no route runs.
-    if [ "$rc" = "2" ] && [ ! -e "$work/capture" ]; then
-        ok "$label opencode selection is refused by start (exit 2, no route taken)"
+    ) >/dev/null 2>&1 && grep -qx BASH "$work/capture" 2>/dev/null; then
+        ok "$label opencode selection routes start to Bash"
     else
-        bad "$label opencode selection was not refused (rc=$rc, capture present: $([ -e "$work/capture" ] && echo yes || echo no))"
+        bad "$label opencode selection did not route start to Bash"
     fi
 }
 
