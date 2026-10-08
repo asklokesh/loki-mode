@@ -123,6 +123,13 @@ jobs:
             # The tag must point at a commit whose Tests run on main succeeded.
             TESTS_OK="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/test.yml/runs?head_sha=${GITHEAD}&branch=main&status=success&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)"
             [ "${TESTS_OK:-0}" -ge 1 ] || { echo "FATAL: no successful Tests run on main for ${GITHEAD}; refusing the tag fallback"; exit 1; }
+            # A hand-made annotated tag is still annotated: the commit must
+            # also be one the Release workflow itself ran on, and must carry
+            # this very version (a tag moved to an older release commit fails).
+            REL_OK="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release.yml/runs?head_sha=${GITHEAD}&branch=main&status=success&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)"
+            [ "${REL_OK:-0}" -ge 1 ] || { echo "FATAL: no successful Release run on main for ${GITHEAD}; refusing the tag fallback"; exit 1; }
+            COMMIT_VERSION="$(git show "${GITHEAD}:VERSION" 2>/dev/null | tr -d '\n' || true)"
+            [ "$COMMIT_VERSION" = "$VERSION" ] || { echo "FATAL: VERSION at ${GITHEAD} is '${COMMIT_VERSION}', not ${VERSION}; refusing the tag fallback"; exit 1; }
             # Not trust-on-name: the published tarball must embed this version.
             FBDIR="$(mktemp -d)"
             (cd "$FBDIR" && npm pack "loki-mode@${VERSION}" --silent >/dev/null && tar -xzf ./*.tgz package/loki-ts/dist/loki.js) || { echo "FATAL: cannot fetch the published tarball"; exit 1; }
