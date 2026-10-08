@@ -751,3 +751,4 @@ in-toto agent-change predicate draft example parses and maps to receipt fields (
 verify-pr sandbox fails closed (VPR-1)	5
 start help does not advertise refused flags	5
 MCP Tasks verify read-only (MCP-D)	2
+OTel collector config and deterministic fixture (OTEL-2b)	3
