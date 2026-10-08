@@ -14,8 +14,8 @@ export const DEFAULT_API_KEY_CAP_USD = 100;
 
 const NONE = "unknown";
 type Run = typeof runs.$inferSelect;
-type Acc = { key: Record<string, string>; runs: number; measured_runs: number; partial_runs: number; unmeasured_runs: number; measured_usd: number; partial_usd: number; input_tokens: number; output_tokens: number };
-const mk = (key: Record<string, string>): Acc => ({ key, runs: 0, measured_runs: 0, partial_runs: 0, unmeasured_runs: 0, measured_usd: 0, partial_usd: 0, input_tokens: 0, output_tokens: 0 });
+type Acc = { key: Record<string, string>; runs: number; measured_runs: number; partial_runs: number; unmeasured_runs: number; measured_usd: number; partial_usd: number; input_tokens: number; output_tokens: number; tk: number; tn: number };
+const mk = (key: Record<string, string>): Acc => ({ key, runs: 0, measured_runs: 0, partial_runs: 0, unmeasured_runs: 0, measured_usd: 0, partial_usd: 0, input_tokens: 0, output_tokens: 0, tk: 0, tn: 0 });
 const add = (a: Acc, r: Run) => {
   a.runs++;
   if (r.costUsd !== null) { a.measured_runs++; a.measured_usd += r.costUsd; }
@@ -23,11 +23,12 @@ const add = (a: Acc, r: Run) => {
   else a.unmeasured_runs++;
   a.input_tokens += r.inputTokens;
   a.output_tokens += r.outputTokens;
+  if (r.tokenSessions !== null) { a.tk += r.tokenSessions; a.tn += r.totalSessions; } // FC-44: sessions that carried usage, of all cost events
 };
 const dimVal = (d: CostDim, r: Run): string =>
   d === "day" ? (r.startedAt ? r.startedAt.slice(0, 10) : NONE) : d === "model" ? (r.model ?? NONE) : d === "provider" ? (r.provider ?? NONE) : (r.originRepo ?? NONE);
 const round = (n: number) => Math.round(n * 1e6) / 1e6;
-const out = (a: Acc) => ({ ...a.key, runs: a.runs, measured_runs: a.measured_runs, partial_runs: a.partial_runs, unmeasured_runs: a.unmeasured_runs, measured_usd: round(a.measured_usd), partial_usd: round(a.partial_usd), input_tokens: a.input_tokens, output_tokens: a.output_tokens });
+const out = (a: Acc) => ({ ...a.key, runs: a.runs, measured_runs: a.measured_runs, partial_runs: a.partial_runs, unmeasured_runs: a.unmeasured_runs, measured_usd: round(a.measured_usd), partial_usd: round(a.partial_usd), input_tokens: a.input_tokens, output_tokens: a.output_tokens, ...(a.tk < a.tn ? { token_sessions: a.tk, token_sessions_total: a.tn } : {}) });
 
 export function mount(ctx: RouteCtx): void {
   // B8: per-repo breakdown. total_usd sums measured runs only (never invents a zero); avg_usd is over measured runs; verified = plain attested success display verdict.

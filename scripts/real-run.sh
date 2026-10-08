@@ -140,7 +140,10 @@ done
 if [ -n "$RCPT" ]; then
     # Receipt fields give the record; they are not recomputed. Missing fields print as NA, never 0.
     f() { v="$(receipt_get "$RCPT" "$1" 2>/dev/null)"; case "$v" in ''|__ABSENT__|null) echo NA ;; *) echo "$v" ;; esac; }
-    ROW="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NAME" "$(f verdict)" "$(f time.wall_s)" "$(f cost.usd)" "$(f cost.input_tokens)" "$(f cost.output_tokens)" "$([ "$FAILS" -eq 0 ] && echo PASS || echo FAIL)")"
+    # A receipt that left a session out of the token sums carries cost.tokens_measured; those tokens are partial, so NA, never a total.
+    TOK_IN="$(f cost.input_tokens)"; TOK_OUT="$(f cost.output_tokens)"
+    [ "$(f cost.tokens_measured.k)" = NA ] || { TOK_IN=NA; TOK_OUT=NA; }
+    ROW="$(printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NAME" "$(f verdict)" "$(f time.wall_s)" "$(f cost.usd)" "$TOK_IN" "$TOK_OUT" "$([ "$FAILS" -eq 0 ] && echo PASS || echo FAIL)")"
 else
     ROW="$(printf '%s\t%s\tNA\t%s\tNA\tNA\tNA\t%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$NAME" "$WALL" "$([ "$FAILS" -eq 0 ] && echo PASS || echo FAIL)")"
 fi

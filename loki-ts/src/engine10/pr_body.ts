@@ -1,9 +1,8 @@
 // loki-ts/src/engine10/pr_body.ts -- E-19 honest DRAFT PR body (ENGINE.md section 4 "Hard cap").
 // Pure rendering, no I/O: stages/pr.ts already computes verdict/notProven/capHit/receiptPath from
 // ctx.outputs().seal; formatDuration (output.ts) keeps "1m00s" style consistent with the summary.
-// Known contract gap: machine.ts stores outputs[name] = res.data with no duration_s (only the
-// emitted event gets it), so "Stage times:" degrades honestly to nothing shown, never a fake 0s,
-// until machine.ts stores duration_s too.
+// machine.ts stores duration_s on every completed stage's output (RECEIPT-TRUTH); a stage that
+// never completed has none, and "Stage times:" shows nothing for it, never a fake 0s.
 import { formatDuration } from "./output.ts"; import { withRouteLine } from "../runner/router/route_block.ts"; // R1-15 route block lives outside engine10 (size budget D29)
 import type { StageName, Verdict } from "./types.ts"; import { unitTableLines, type ReceiptGroup } from "../features/speed/seal_group.ts";
 import { deriveCriteria, intakeTask, layoutPrBody, type CriterionRow } from "../features/pr_criteria.ts";

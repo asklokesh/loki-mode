@@ -22,6 +22,7 @@ type IterationMetric = {
   output_tokens?: number;
   cost_usd?: number;
   duration_seconds?: number;
+  tokens_measured?: boolean;
 };
 
 type GateValue = boolean | { passed?: boolean; status?: string } | unknown;
@@ -34,7 +35,7 @@ type ReviewFile = {
 
 type StatsJson = {
   session: { iterations: number; duration_seconds: number; phase: string };
-  tokens: { input: number; output: number; total: number; cost_usd: number };
+  tokens: { input: number | null; output: number | null; total: number | null; cost_usd: number | null; unmeasured_iterations?: number };
   quality: {
     gates_passed: number;
     gates_total: number;
@@ -44,16 +45,16 @@ type StatsJson = {
     gate_failures: Record<string, number>;
   };
   efficiency: {
-    avg_tokens_per_iteration: number;
-    avg_cost_per_iteration: number;
+    avg_tokens_per_iteration: number | null;
+    avg_cost_per_iteration: number | null;
     avg_duration_per_iteration: number;
   };
   budget: { used: number; limit: number; percent: number };
   iterations?: Array<{
     number: number;
-    input_tokens: number;
-    output_tokens: number;
-    cost_usd: number;
+    input_tokens: number | null;
+    output_tokens: number | null;
+    cost_usd: number | null;
     duration_seconds: number;
   }>;
 };
@@ -140,6 +141,7 @@ type Aggregated = {
   totalTokens: number;
   totalCost: number;
   costMeasured: boolean;
+  unmeasuredIterations: number;
   totalDuration: number;
   budgetLimit: number;
   budgetUsed: number;
@@ -176,11 +178,12 @@ function aggregate(loki: string): Aggregated {
     iterationCount = Math.max(iterationCount, iterations.length);
   }
 
+  const unmeasuredIterations = iterations.filter((it) => it.tokens_measured === false).length;
   const totalInput = iterations.reduce((s, it) => s + (it.input_tokens ?? 0), 0);
   const totalOutput = iterations.reduce((s, it) => s + (it.output_tokens ?? 0), 0);
   const totalTokens = totalInput + totalOutput;
   const totalCost = iterations.reduce((s, it) => s + (it.cost_usd ?? 0), 0);
-  const costMeasured = iterations.some((it) => it.cost_usd !== undefined && it.cost_usd !== null);
+  const costMeasured = unmeasuredIterations === 0 && iterations.some((it) => it.cost_usd !== undefined && it.cost_usd !== null);
   const totalDuration = iterations.reduce((s, it) => s + (it.duration_seconds ?? 0), 0);
 
   // Budget
@@ -272,6 +275,7 @@ function aggregate(loki: string): Aggregated {
     totalTokens,
     totalCost,
     costMeasured,
+    unmeasuredIterations,
     totalDuration,
     budgetLimit,
     budgetUsed,
@@ -291,10 +295,12 @@ function renderJson(a: Aggregated, showEfficiency: boolean): string {
   const json: StatsJson = {
     session: { iterations: ic, duration_seconds: a.totalDuration, phase: a.phase },
     tokens: {
-      input: a.totalInput,
-      output: a.totalOutput,
-      total: a.totalTokens,
-      cost_usd: pyRound(a.totalCost, 2),
+      // FC-44: one unrecorded session makes the sums NOT RECORDED (null), never a partial total. Absent key on a complete run.
+      input: a.unmeasuredIterations > 0 ? null : a.totalInput,
+      output: a.unmeasuredIterations > 0 ? null : a.totalOutput,
+      total: a.unmeasuredIterations > 0 ? null : a.totalTokens,
+      cost_usd: a.unmeasuredIterations > 0 ? null : pyRound(a.totalCost, 2),
+      ...(a.unmeasuredIterations > 0 ? { unmeasured_iterations: a.unmeasuredIterations } : {}),
     },
     quality: {
       gates_passed: a.gatesPassed,
@@ -305,8 +311,8 @@ function renderJson(a: Aggregated, showEfficiency: boolean): string {
       gate_failures: a.gateFailures,
     },
     efficiency: {
-      avg_tokens_per_iteration: ic > 0 ? pyRound(a.totalTokens / ic, 0) : 0,
-      avg_cost_per_iteration: ic > 0 ? pyRound(a.totalCost / ic, 2) : 0,
+      avg_tokens_per_iteration: a.unmeasuredIterations > 0 ? null : ic > 0 ? pyRound(a.totalTokens / ic, 0) : 0,
+      avg_cost_per_iteration: a.unmeasuredIterations > 0 ? null : ic > 0 ? pyRound(a.totalCost / ic, 2) : 0,
       avg_duration_per_iteration: ic > 0 ? pyRound(a.totalDuration / ic, 1) : 0,
     },
     budget: {
@@ -318,9 +324,9 @@ function renderJson(a: Aggregated, showEfficiency: boolean): string {
   if (showEfficiency) {
     json.iterations = a.iterations.map((it, i) => ({
       number: i + 1,
-      input_tokens: it.input_tokens ?? 0,
-      output_tokens: it.output_tokens ?? 0,
-      cost_usd: pyRound(it.cost_usd ?? 0, 2),
+      input_tokens: it.tokens_measured === false ? null : (it.input_tokens ?? 0),
+      output_tokens: it.tokens_measured === false ? null : (it.output_tokens ?? 0),
+      cost_usd: it.tokens_measured === false ? null : pyRound(it.cost_usd ?? 0, 2),
       duration_seconds: it.duration_seconds ?? 0,
     }));
   }
@@ -365,9 +371,10 @@ function renderText(a: Aggregated, showEfficiency: boolean): string {
   // Token Usage
   lines.push("Token Usage");
   if (a.iterations.length > 0) {
-    lines.push(`  Input tokens:  ${fmtNumber(a.totalInput)}`);
-    lines.push(`  Output tokens: ${fmtNumber(a.totalOutput)}`);
-    lines.push(`  Total tokens:  ${fmtNumber(a.totalTokens)}`);
+    const unrec = a.unmeasuredIterations > 0 ? `NOT RECORDED (${a.unmeasuredIterations} of ${a.iterations.length} sessions have no usage)` : null;
+    lines.push(`  Input tokens:  ${unrec ?? fmtNumber(a.totalInput)}`);
+    lines.push(`  Output tokens: ${unrec ?? fmtNumber(a.totalOutput)}`);
+    lines.push(`  Total tokens:  ${unrec ?? fmtNumber(a.totalTokens)}`);
     lines.push(a.costMeasured ? `  Estimated cost: $${fmtFixed(a.totalCost, 2)}` : "  Estimated cost: unmeasured");
   } else {
     lines.push("  N/A (no iteration metrics found)");
@@ -405,8 +412,8 @@ function renderText(a: Aggregated, showEfficiency: boolean): string {
     const avgTokens = Math.round(a.totalTokens / a.iterationCount);
     const avgCost = a.totalCost / a.iterationCount;
     const avgDur = a.totalDuration / a.iterationCount;
-    lines.push(`  Avg tokens/iteration: ${fmtNumber(avgTokens)}`);
-    lines.push(`  Avg cost/iteration: $${fmtFixed(avgCost, 2)}`);
+    lines.push(`  Avg tokens/iteration: ${a.unmeasuredIterations > 0 ? "NOT RECORDED" : fmtNumber(avgTokens)}`);
+    lines.push(a.unmeasuredIterations > 0 ? "  Avg cost/iteration: NOT RECORDED" : `  Avg cost/iteration: $${fmtFixed(avgCost, 2)}`);
     lines.push(`  Avg duration/iteration: ${fmtDuration(avgDur)}`);
   } else {
     lines.push("  N/A (no iteration metrics found)");
@@ -434,13 +441,14 @@ function renderText(a: Aggregated, showEfficiency: boolean): string {
     lines.push("Per-Iteration Breakdown");
     a.iterations.forEach((it, idx) => {
       const i = idx + 1;
-      const inp = padRight(fmtNumber(it.input_tokens ?? 0), 10);
-      const out = padRight(fmtNumber(it.output_tokens ?? 0), 10);
+      const unm = it.tokens_measured === false;
+      const inp = padRight(unm ? "NOT RECORDED" : fmtNumber(it.input_tokens ?? 0), 10);
+      const out = padRight(unm ? "NOT RECORDED" : fmtNumber(it.output_tokens ?? 0), 10);
       const cost = it.cost_usd ?? 0;
       const dur = fmtDuration(it.duration_seconds ?? 0);
       const idxStr = padRight(`${i}`, 3);
       lines.push(
-        `  #${idxStr} input: ${inp} output: ${out} cost: $${fmtFixed(cost, 2)}  time: ${dur}`,
+        `  #${idxStr} input: ${inp} output: ${out} cost: ${unm ? "NOT RECORDED" : `$${fmtFixed(cost, 2)}`}  time: ${dur}`,
       );
     });
   }

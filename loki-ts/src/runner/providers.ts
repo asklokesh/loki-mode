@@ -785,8 +785,8 @@ export function sdkQueryProvider(): ProviderInvoker {
         // to the system prompt and conversation history internally. Explicit
         // per-block cache_control is only wired on the raw-SDK judge path
         // (sdk_invoker.ts) where messages.create accepts content blocks.
-        // MW-2: LOKI_E10_RESUME_SESSION is set only by engine10 session.ts (opt-in LOKI_E10_FIX_RESUME) and
-        // read from process.env here, before the LOKI_E10_* strip above applies to the child's env.
+        // MW-2: LOKI_E10_RESUME_SESSION is set only by engine10 session.ts from a per-call resumeSessionId: the default spec-conflict
+        // (FC-19) and empty-done (FC-43) resumes on claude, and the CH-03 chain under opt-in LOKI_E10_FIX_RESUME. It is read from process.env here, before the LOKI_E10_* strip above applies to the child's env.
         const resumeId = process.env["LOKI_E10_RESUME_SESSION"] || undefined;
         const q = query({
           prompt: call.prompt,

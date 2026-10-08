@@ -115,5 +115,32 @@ class CostAvailabilityTests(unittest.TestCase):
             self.assertIsNone(cost["usd"])
 
 
+class UnrecordedSessionTests(unittest.TestCase):
+    """FC-44: a record flagged tokens_measured:false carries no usage keys; the token totals are NOT RECORDED, not a partial sum."""
+
+    def test_flagged_record_nulls_token_totals_and_flags_partial(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [
+                {"iteration": 1, "input_tokens": 100, "output_tokens": 50, "cache_read_tokens": 5,
+                 "cache_creation_tokens": 2, "cost_usd": 0.5, "model": "sonnet"},
+                {"iteration": 2, "model": "sonnet", "tokens_measured": False},
+            ])
+            cost, _ = collect_efficiency(loki)
+            for key in ("input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"):
+                self.assertIsNone(cost[key], key)
+            self.assertTrue(cost["tokens_partial"])
+            self.assertEqual(cost["tokens_unmeasured_records"], 1)
+
+    def test_complete_run_dict_has_no_partial_keys(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [{"iteration": 1, "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.5, "model": "sonnet"}])
+            cost, _ = collect_efficiency(loki)
+            self.assertEqual(cost["input_tokens"], 100)
+            self.assertNotIn("tokens_partial", cost)
+            self.assertNotIn("tokens_unmeasured_records", cost)
+
+
 if __name__ == "__main__":
     unittest.main()

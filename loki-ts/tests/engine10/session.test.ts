@@ -360,6 +360,23 @@ describe("engine10 session", () => {
     expect(state.calledWith).toEqual(["--x"]);
   });
 
+  test("FIX-RESUME: a resumed session whose total may be cumulative emits no token figures on its cost event", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "loki-e10-session-cwd-"));
+    const root = join(mkdtempSync(join(tmpdir(), "loki-e10-session-root-")), ".loki");
+    const script = [
+      "mkdir -p .loki/metrics",
+      "echo '{\"total_cost_usd\":0.5,\"input_tokens\":3,\"output_tokens\":4,\"session_id\":\"S2\",\"resumed_from\":\"S1\"}' > .loki/metrics/result-cost-$LOKI_ITERATION.json",
+    ].join("; ");
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const runner = createSessionRunner({ provider: "claude", model: "m-1", lokiRoot: root, childCommand: ["bash", ["-c", script]], emit: (type, _s, data) => events.push({ type, data }) });
+    await runner.run(baseOpts({ limitS: 30, cwd }));
+    const d = events.find((e) => e.type === "cost")!.data;
+    expect(d["usd"]).toBeNull();
+    expect(d["resume"]).toBe("ambiguous");
+    for (const k of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens"]) expect(k in d).toBe(false);
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
   test("E-42: markers from the iteration log, real session.ended exit, cost priced into lokiRoot", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "loki-e10-session-cwd-"));
     const root = join(mkdtempSync(join(tmpdir(), "loki-e10-session-root-")), ".loki");

@@ -3,14 +3,14 @@
 // names (Engine Law L0). No usable history prints "NOT AVAILABLE (<reason>)", never a number.
 // Off with LOKI_COST_PREVIEW=0: no start-line text, no receipt block, no history append.
 import { repoKey } from "../../engine10/cache.ts";
-import { appendRunOutcome, readRunHistory, shapeKeyForRepo } from "./history.ts";
+import { appendRunOutcome, readRunHistory, shapeKeyForRepo, WALL_KIND } from "./history.ts";
 import { readOriginUrl } from "../../util/engine_origin.ts";
 
 export const MIN_RUNS = 3;
 const WINDOW = 20;
 export const NOT_RECORDED = "NOT RECORDED";
 
-export interface Estimate { shape: string; runs: number; usd: [number, number]; wall_s: [number, number] }
+export interface Estimate { shape: string; runs: number; usd: [number, number]; wall_s: [number, number] | null } // wall_s null = no prior run carries a reconciled total (old history is ignored for time)
 export interface Prior { usd: [number, number]; tier: string; size_class: string }
 export type EstimateResult = { ok: true; est: Estimate } | { ok: false; reason: string; prior?: Prior };
 export type SizeClass = "unplanned" | "small" | "medium" | "large";
@@ -51,8 +51,8 @@ export function estimateFromHistory(shape: string | null, key: string, cacheRoot
   if (shape === null) return withPrior("no project shape recorded for this repo");
   const runs = readRunHistory(key, cacheRoot).filter((r) => r.shape === shape && r.verdict === "pass").slice(-WINDOW);
   if (runs.length < MIN_RUNS) return withPrior(`${runs.length} prior verified run${runs.length === 1 ? "" : "s"} for shape ${shape}, need ${MIN_RUNS}`);
-  const usd = runs.map((r) => r.usd), wall = runs.map((r) => r.wallS);
-  return { ok: true, est: { shape, runs: runs.length, usd: [Math.min(...usd), Math.max(...usd)], wall_s: [Math.min(...wall), Math.max(...wall)] } };
+  const usd = runs.map((r) => r.usd), wall = runs.filter((r) => r.wallKind === WALL_KIND).map((r) => r.wallS);
+  return { ok: true, est: { shape, runs: runs.length, usd: [Math.min(...usd), Math.max(...usd)], wall_s: wall.length > 0 ? [Math.min(...wall), Math.max(...wall)] : null } };
 }
 
 const mins = (s: number): string => (s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)}m`);
@@ -61,7 +61,7 @@ export function startText(r: EstimateResult): string {
   if (!r.ok && r.prior) return `estimate: ~$${r.prior.usd[0].toFixed(2)}-$${r.prior.usd[1].toFixed(2)} (rough prior, no history for this shape)`;
   if (!r.ok) return `estimate: NOT AVAILABLE (${r.reason})`;
   const { est: e } = r;
-  return `estimate: $${e.usd[0].toFixed(2)}-$${e.usd[1].toFixed(2)}, ${mins(e.wall_s[0])}-${mins(e.wall_s[1])} (${e.runs} prior runs, shape ${e.shape})`;
+  return `estimate: $${e.usd[0].toFixed(2)}-$${e.usd[1].toFixed(2)}, ${e.wall_s ? `${mins(e.wall_s[0])}-${mins(e.wall_s[1])}` : "time NOT RECORDED"} (${e.runs} prior runs, shape ${e.shape})`;
 }
 
 /** The estimate as carried from the supervisor to the sealing worker, or null when the preview is off. */
@@ -77,15 +77,15 @@ export function receiptBlock(env: Env, usd: number | null, unmetered: boolean, w
   const source = r.ok === true ? "history" : r.prior ? "rough_prior" : null;
   return { cost_preview: {
     ...(source ? { estimate_source: source } : {}),
-    estimate: !r.ok && r.prior ? { usd_low: r.prior.usd[0], usd_high: r.prior.usd[1], tier: r.prior.tier, size_class: r.prior.size_class } : r.ok === true ? { usd_low: r.est.usd[0], usd_high: r.est.usd[1], wall_low_s: r.est.wall_s[0], wall_high_s: r.est.wall_s[1], prior_runs: r.est.runs, shape: r.est.shape } : `NOT AVAILABLE (${r.reason ?? "unreadable estimate"})`,
+    estimate: !r.ok && r.prior ? { usd_low: r.prior.usd[0], usd_high: r.prior.usd[1], tier: r.prior.tier, size_class: r.prior.size_class } : r.ok === true ? { usd_low: r.est.usd[0], usd_high: r.est.usd[1], wall_low_s: r.est.wall_s?.[0] ?? NOT_RECORDED, wall_high_s: r.est.wall_s?.[1] ?? NOT_RECORDED, prior_runs: r.est.runs, shape: r.est.shape } : `NOT AVAILABLE (${r.reason ?? "unreadable estimate"})`,
     actual: { usd: usd === null || unmetered ? NOT_RECORDED : usd, wall_s: wallS === null || wallS <= 0 ? NOT_RECORDED : wallS },
   } };
 }
 
 /** Feed the history this estimator reads: only a VERIFIED run with measured cost is recorded. */
-export function recordRun(env: Env, repoDir: string, model: string, verdict: string, usd: number | null, unmetered: boolean, wallS: number, cacheRoot?: string): boolean {
-  if (!previewOn(env) || verdict !== "VERIFIED" || usd === null || unmetered || wallS <= 0) return false;
+export function recordRun(env: Env, repoDir: string, model: string, verdict: string, usd: number | null, unmetered: boolean, wallS: number | null, cacheRoot?: string): boolean {
+  if (!previewOn(env) || verdict !== "VERIFIED" || usd === null || unmetered || wallS === null || wallS <= 0) return false; // wallS null = the receipt time block did not reconcile: no history row
   const shape = shapeKeyForRepo(repoDir);
   if (shape === null) return false;
-  return appendRunOutcome(repoKey(readOriginUrl(repoDir), repoDir), { shape, executor: /haiku/i.test(model) ? "haiku" : "sonnet", verdict: "pass", owner: null, escalated: false, usd, wallS }, cacheRoot);
+  return appendRunOutcome(repoKey(readOriginUrl(repoDir), repoDir), { shape, executor: /haiku/i.test(model) ? "haiku" : "sonnet", verdict: "pass", owner: null, escalated: false, usd, wallS, wallKind: WALL_KIND }, cacheRoot);
 }

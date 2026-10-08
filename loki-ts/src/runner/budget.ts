@@ -539,6 +539,7 @@ export function recordPartialStreamCost(lokiRoot: string, iterationId: string, i
       out.partialUsd = out.usd; out.measuredCount = 1;
     }
   } catch { /* no partial file, or unreadable: usd stays null (E-69 semantics) */ }
+  if (out.missing.length > 0) out.tokens_measured = { k: 0, n: 1 }; // no usage was read: the record and cost event carry no token keys, never a measured zero (FC-44)
   writeEfficiencyRecord(lokiRoot, info, out, "partial-stream");
   return out;
 }

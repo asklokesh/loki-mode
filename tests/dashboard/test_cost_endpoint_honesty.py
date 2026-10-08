@@ -227,6 +227,24 @@ class MeasuredZeroStillRendersZero(_Base):
         self.assertEqual(d["estimated_cost_usd"], 0.0)
 
 
+class UnrecordedSessionMakesTotalsNotRecorded(_Base):
+    """FC-44: an efficiency record flagged tokens_measured:false (an ambiguous resumed session) carries no usage keys."""
+
+    def test_flagged_record_nulls_every_total_and_complete_run_has_no_key(self):
+        self._write_eff("iteration-001.json", dict(_MEASURED_NONZERO, iteration=1, cost_usd=0.10))
+        complete = self._cost()
+        self.assertNotIn("unmeasured_sessions", complete)
+        self.assertEqual(complete["total_input_tokens"], 1000)
+        self._write_eff("iteration-002.json", {"iteration": 2, "status": "completed", "model": "sonnet", "tokens_measured": False})
+        c = self._cost()
+        self.assertEqual(c["unmeasured_sessions"], 1)
+        for key in ("total_input_tokens", "total_output_tokens", "total_cache_read_tokens",
+                    "total_cache_creation_tokens", "total_tokens", "estimated_cost_usd"):
+            self.assertIsNone(c[key], key)
+        self.assertIsNone(c["by_model"]["sonnet"]["input_tokens"])
+        self.assertIsNone(c["by_model"]["sonnet"]["cost_usd"])
+
+
 class MeasuredNonZeroUnchanged(_Base):
     """Direction 3: the normal path must be byte-identical to before."""
 

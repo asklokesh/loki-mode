@@ -30,6 +30,7 @@ import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASO
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
+import { buildTime, firstEventMs, reconciledTotalS } from "../receipt_time.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts";
 
@@ -196,7 +197,8 @@ export function renderReceiptMd(r: Receipt): string {
     `- Base: ${r.base_sha}  Head: ${r.head_sha}`,
     `- receipt_sha256: ${r.receipt_sha256}`,
     `- Signature: ${sig}`,
-    `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s`,
+    `- Provider: ${r.provider} (${r.model})  Cost: ${usd}  Wall: ${r.time.wall_s}s (stages)  Total to seal: ${reconciledTotalS(r.time) ?? "NOT RECORDED"}${reconciledTotalS(r.time) === null ? "" : "s"}`,
+    ...(r.cost.tokens_measured ? [`- Tokens: partial: ${r.cost.input_tokens} input / ${r.cost.output_tokens} output for ${r.cost.tokens_measured.k} of ${r.cost.tokens_measured.n} sessions`] : []),
     ...(r.mutation_proof ? [`- ${r.mutation_proof}`] : []),
     ...(r.route ? routeReceiptLines(r.route) : []), // R1-15: only when the router is on
     "",
@@ -284,6 +286,7 @@ export const sealStage: Stage = {
 
     const stages: Partial<Record<StageName, number>> = {};
     for (const [s, d] of Object.entries(o)) if (typeof d?.duration_s === "number") stages[s as StageName] = d.duration_s;
+    const time = buildTime(ctx, stages, firstEventMs(join(ctx.runDir, "events.jsonl"))), totalS = reconciledTotalS(time);
     const iterIds = Object.values(o).flatMap((d) => [...strs(d?.iteration_ids), ...strs([d?.iteration_id])]);
     if (iterIds.length === 0) notProven.add("cost not measured (no iteration ids recorded)");
     const cost = ctx.cost.read(ctx.repoDir, iterIds);
@@ -319,18 +322,20 @@ export const sealStage: Stage = {
       evidence: strs(o.intake?.evidence), ...(o.intake?.preexisting_dirty ? { pre_existing_dirty: Object.keys(o.intake.preexisting_dirty as object) } : {}),
       cost: {
         usd: cost.usd, input_tokens: cost.inputTokens, output_tokens: cost.outputTokens,
+        ...(cost.tokensMeasured && cost.tokensMeasured.k < cost.tokensMeasured.n ? { tokens_measured: cost.tokensMeasured } : {}),
+        ...(typeof cost.cacheReadTokens === "number" && cost.cacheReadSeen !== false ? { cache_read_tokens: cost.cacheReadTokens } : {}), ...(typeof cost.cacheCreationTokens === "number" && cost.cacheCreationSeen !== false ? { cache_creation_tokens: cost.cacheCreationTokens } : {}), ...(typeof cost.durationMs === "number" ? { sdk_duration_ms: cost.durationMs } : {}), ...(cost.records ?? {}),
         measured_sessions: cost.measuredCount ?? 0, total_sessions: cost.totalCount ?? 0, partial_usd: cost.partialUsd ?? 0,
         ...(cost.unmetered ? { source: "cli-invoker-unmetered" } : {}),
         ...(Array.isArray(o.fix?.fix_rounds) ? { fix_rounds: o.fix.fix_rounds } : {}), // MW-2: engine-recorded per-round fix_resume + cache_read_tokens, never read from a transcript
       },
-      time: { wall_s: Object.values(stages).reduce((a, b) => a + (b ?? 0), 0), stages },
+      time,
       provider: ctx.provider,
       model: ctx.model,
       resumed: o.intake?.resumed === true,
       events_sha256: sha256(existsSync(eventsPath) ? readFileSync(eventsPath) : ""),
       ...(await sealEvidence(ctx.repoDir, ctx.runDir, o, notProven, signal, ctx.emit)),
       log_seal: true,
-      ...receiptBlock(process.env, cost.usd, cost.unmetered === true, Object.values(stages).reduce((a, b) => a + (b ?? 0), 0)),
+      ...receiptBlock(process.env, cost.usd, cost.unmetered === true, totalS),
       ...(mp ? { mutation_proof: mp.line, mutation_outcome: mp.outcome } : {}),
       ...(routeBlock ? { route: routeBlock } : {}),
       ...(supply.block ? { supply: supply.block } : {}),
@@ -352,7 +357,7 @@ export const sealStage: Stage = {
     writeFileSync(path, JSON.stringify(receipt, null, 2) + "\n");
     writeFileSync(join(ctx.runDir, "receipt.md"), renderReceiptMd(receipt));
 
-    recordRun(process.env, ctx.repoDir, ctx.model, verdict, cost.usd, cost.unmetered === true, receipt.time.wall_s);
+    recordRun(process.env, ctx.repoDir, ctx.model, verdict, cost.usd, cost.unmetered === true, totalS);
     const signed = sig.jwt !== null;
     const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(mp ? { mutation_line: mp.line } : {}), ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) };
     try { recordRunVerdict(ctx.repoDir, ctx.runId, verdict); } catch { /* memory is best-effort */ }

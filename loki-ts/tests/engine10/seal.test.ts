@@ -11,10 +11,13 @@ import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10e
 import { generateKeyPairSync } from "node:crypto";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
+import { costTotalsOf, sumResultCosts } from "../../src/engine10/cost.ts";
+import { buildTime, reconciledTotalS } from "../../src/engine10/receipt_time.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
@@ -1081,6 +1084,172 @@ describe("D50-F1 already-satisfied discards run changes", () => {
       expect(ct.criteria).toHaveLength(2);
       expect(ct.sha256).toMatch(/^[0-9a-f]{64}$/);
     } finally { if (prev === undefined) delete process.env["LOKI_CONTRACT"]; else process.env["LOKI_CONTRACT"] = prev; }
+  }, 30000);
+
+  test("RECEIPT-TRUTH: every stage records duration_s, total_s covers the stage sum, cache tokens are on the receipt", async () => {
+    noKey();
+    const { repo, base } = makeRepo("receipt-truth");
+    let t = Date.parse("2026-01-01T00:00:05.000Z"); // 5s of boot before the first stage
+    const { ctx } = ctxFor(repo, base);
+    ctx.clock = { now: () => t };
+    ctx.cost = { read: () => ({ usd: 0.5, inputTokens: 24, outputTokens: 900, cacheReadTokens: 90000, cacheCreationTokens: 7000 }) };
+    const step = (name: StageName, data: Record<string, unknown>) => ({ ...commitStage, name, run: async () => { t += 10000; return { status: "completed" as const, data }; } });
+    const stages: Record<string, typeof commitStage> = {
+      intake: step("intake", { source: "text", task_sha256: "ab".repeat(32), repo: "o/r", resumed: false }),
+      plan: step("plan", {}), verify: step("verify", { checks: [], flaky: [], wall_passed: true }), seal: sealStage,
+    };
+    mkdirSync(join(repo, ".loki/runs/r1"), { recursive: true });
+    writeFileSync(join(repo, ".loki/runs/r1/events.jsonl"), JSON.stringify({ ts: "2026-01-01T00:00:00.000Z", type: "run.started" }) + "\n"); // supervisor's first event, 5s before the machine starts
+    const r = await runMachine(ctx as never, { flow: ["intake", "plan", "verify", "seal"], load: async (n: StageName) => stages[n] ?? null });
+    const rec = JSON.parse(readFileSync(join(repo, ".loki/runs/r1/receipt.json"), "utf8")) as Receipt;
+    expect(r.outputs.seal?.verdict).toBe(rec.verdict);
+    expect(rec.time.stages).toEqual({ intake: 10, plan: 10, verify: 10, setup: 5, orchestration: 0, seal: 0 });
+    expect(rec.time.wall_s).toBe(30);
+    expect(rec.time.total_s).toBe(35);
+    expect(reconciledTotalS(rec.time)).toBe(35); // real-shaped stream (boot, stages, seal) passes the 1% check
+    expect(rec.time.total_s!).toBeGreaterThanOrEqual(rec.time.wall_s);
+    expect(rec.cost.input_tokens).toBe(24);
+    expect(rec.cost.cache_read_tokens).toBe(90000);
+    expect(rec.cost.cache_creation_tokens).toBe(7000);
+    expect((await verifyReceipt(join(repo, ".loki/runs/r1/receipt.json"))).reasons.join(";")).not.toMatch(/hash/i);
+  }, 30000);
+
+  test("RECEIPT-TRUTH: a gap in the buckets reads NOT RECORDED (reconciledTotalS null), within 1% passes", () => {
+    const t = { wall_s: 30, total_s: 100, stages: { intake: 30, setup: 5 } as Record<string, number> };
+    expect(reconciledTotalS(t as never)).toBeNull();
+    expect(reconciledTotalS({ ...t, stages: { intake: 30, setup: 5, orchestration: 64.5, seal: 0 } } as never)).toBe(100);
+    expect(reconciledTotalS({ ...t, stages: { intake: 30, setup: 5, orchestration: 63.9, seal: 0 } } as never)).toBeNull();
+    expect(reconciledTotalS({ wall_s: 30, stages: { intake: 30 } })).toBeNull();
+    expect(reconciledTotalS({ wall_s: 30, total_s: 40, stages: { "a+b": 30, setup: 10 } })).toBe(40); // a parallel group is one disjoint bucket
+    expect(reconciledTotalS({ wall_s: 30, total_s: 35, stages: { a: 30, setup: -0.5, seal: 5.5 } })).toBeNull(); // a negative bucket is a clock fault
+  });
+
+  test("RECEIPT-TRUTH: real-shaped timeline with the plan||wall parallel group: stages is a partition whose naive sum equals total_s", () => {
+    const base = Date.parse("2026-01-01T00:00:00.000Z"), at = (s: number) => base + s * 1000;
+    const iv = (stage: string, a: number, b: number) => ({ stage, startMs: at(a), endMs: at(b) });
+    const ctx = { startedAtMs: at(1.5), clock: { now: () => at(36) }, timeline: [
+      iv("intake", 1.5, 3.5), iv("plan", 3.5, 13.5), iv("wall", 3.5, 9.5), iv("implement", 14, 31.5), iv("verify", 31.5, 34.5), iv("commit", 34.7, 35.5),
+    ] } as unknown as RunContext;
+    const t = buildTime(ctx, {}, base);
+    expect(t.total_s).toBe(36);
+    expect(t.stages["plan+wall"]).toBe(10);
+    expect(t.stage_s).toMatchObject({ plan: 10, wall: 6 });
+    const naive = Object.values(t.stages).reduce((a, b) => a + b, 0);
+    expect(Math.abs(naive - 36)).toBeLessThanOrEqual(0.36); // what a consumer that just adds the buckets (b9-scoreboard) computes
+    expect(t.wall_s).toBeLessThanOrEqual(t.total_s!);
+    expect(reconciledTotalS(t)).toBe(36);
+  });
+
+  // Main does not ship this reader yet: 96626a2e0 (slice-B9-RAW-ARM) is not an ancestor of main and main's b9-scoreboard.sh has no receipt_fields.
+  // This test pins the FUTURE reader: the snippet below is byte-identical to 96626a2e0 scripts/b9-scoreboard.sh lines 418-441.
+  // It reads time.total_s and adds every time.stages value; more than 1% apart makes the row NOT RECORDED.
+  const B9_READER = `import glob, json, os, sys
+NR = "NOT RECORDED"
+fs = sorted(glob.glob(os.path.join(sys.argv[1], ".loki", "runs", "*", "receipt.json")), key=os.path.getmtime)
+v, out = 0, [NR] * 4
+def num(x, pos):
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and (x > 0 if pos else x >= 0)
+if fs:
+    try:
+        d = json.load(open(fs[-1]))
+        v = 1 if d.get("verdict") == "VERIFIED" else 0
+        c, t = d.get("cost") or {}, d.get("time") or {}
+        ok = num(c.get("usd"), True) and num(t.get("total_s"), True) \\
+            and num(c.get("cache_read_tokens"), False) and num(c.get("cache_creation_tokens"), False)
+        st = t.get("stages")
+        if ok and isinstance(st, dict) and st:
+            vals = [x for x in st.values() if num(x, False)]
+            ssum = sum(vals)
+            if len(vals) != len(st) or ssum <= 0 or abs(t["total_s"] - ssum) > 0.01 * ssum:
+                ok = False
+        if ok:
+            out = [round(c["usd"], 6), round(t["total_s"], 3), c["cache_read_tokens"], c["cache_creation_tokens"]]
+    except Exception:
+        pass
+print("\\t".join([str(v)] + [str(x) for x in out]))
+`;
+  const b9Row = (time: unknown): string => {
+    const d = mkdtempSync(join(tmpdir(), "rt-b9-reader-"));
+    try {
+      mkdirSync(join(d, ".loki", "runs", "r1"), { recursive: true });
+      writeFileSync(join(d, ".loki", "runs", "r1", "receipt.json"), JSON.stringify({ verdict: "VERIFIED", cost: { usd: 0.05, cache_read_tokens: 100, cache_creation_tokens: 10 }, time }));
+      const r = spawnSync("python3", ["-I", "-c", B9_READER, d], { encoding: "utf8" });
+      return r.stdout.trim();
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  };
+
+  test("RECEIPT-TRUTH: the b9-scoreboard reader formula gets a number, not NOT RECORDED, on a parallel plan||wall receipt", () => {
+    const base = Date.parse("2026-01-01T00:00:00.000Z"), at = (s: number) => base + s * 1000;
+    const iv = (stage: string, a: number, b: number) => ({ stage, startMs: at(a), endMs: at(b) });
+    const ctx = { startedAtMs: at(1.5), clock: { now: () => at(36) }, timeline: [
+      iv("intake", 1.5, 3.5), iv("plan", 3.5, 13.5), iv("wall", 3.5, 9.5), iv("implement", 14, 31.5), iv("verify", 31.5, 34.5), iv("commit", 34.7, 35.5),
+    ] } as unknown as RunContext;
+    const t = buildTime(ctx, {}, base);
+    expect(b9Row(t).split("\t")).toEqual(["1", "0.05", "36", "100", "10"]);
+    // the pre-partition shape (plan and wall both listed, overlapping) must read NOT RECORDED, proving the reader would catch a regression
+    const overlapped = { ...t, stages: { ...t.stages, plan: 10, wall: 6 } };
+    delete (overlapped.stages as Record<string, number>)["plan+wall"];
+    expect(b9Row(overlapped).split("\t").slice(1)).toEqual(["NOT RECORDED", "NOT RECORDED", "NOT RECORDED", "NOT RECORDED"]);
+  });
+
+  test("RECEIPT-TRUTH: a first event later than machine start makes a negative setup, which reads NOT RECORDED", () => {
+    const base = Date.parse("2026-01-01T00:00:00.000Z");
+    const ctx = { startedAtMs: base, clock: { now: () => base + 10000 }, timeline: [{ stage: "intake", startMs: base, endMs: base + 9000 }] } as unknown as RunContext;
+    expect(reconciledTotalS(buildTime(ctx, {}, base + 500))).toBeNull();
+  });
+
+  test("R3-2: with an ambiguous resume the sealed cost block carries no cache, per_model, turns or sdk_duration_ms keys", async () => {
+    noKey();
+    const { repo, base } = makeRepo("receipt-truth-ambig");
+    const { ctx } = ctxFor(repo, base);
+    const dir = mkdtempSync(join(tmpdir(), "rt-ambig-"));
+    try {
+      mkdirSync(join(dir, "metrics"), { recursive: true });
+      const mu = (c: number) => ({ m: { input_tokens: 100, output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, cost_usd: c } });
+      const rec = { output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, num_turns: 2, duration_ms: 500 };
+      writeFileSync(join(dir, "metrics", "result-cost-impl.json"), JSON.stringify({ ...rec, total_cost_usd: 1, input_tokens: 100, session_id: "S1", model_usage: mu(1) }));
+      writeFileSync(join(dir, "metrics", "result-cost-fix.json"), JSON.stringify({ ...rec, total_cost_usd: 1.4, input_tokens: 140, session_id: "S1", resumed_from: "S1", model_usage: mu(1.4) }));
+      ctx.cost = { read: () => costTotalsOf(sumResultCosts(dir, ["impl", "fix"])) };
+      const cost = receiptOf(await sealStage.run(ctx, new AbortController().signal)).cost as unknown as Record<string, unknown>;
+      for (const k of ["cache_read_tokens", "cache_creation_tokens", "per_model", "turns", "sdk_duration_ms", "tokens_scope", "cache_creation_main_loop"]) expect(k in cost).toBe(false);
+      expect(cost["resume"]).toBe("ambiguous");
+      expect(cost["tokens_measured"]).toEqual({ k: 1, n: 2 });
+      expect(cost["input_tokens"]).toBe(100);
+      expect(renderReceiptMd({ ...receiptOf(await sealStage.run(ctx, new AbortController().signal)) })).toContain("Tokens: partial: 100 input / 1 output for 1 of 2 sessions");
+      expect(cost["usd"]).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 30000);
+
+  test("FC-43 empty-done resume ('-e' iteration, resumed_from the first session) seals ambiguous with labelled partial lines, no flag needed", async () => {
+    noKey();
+    const { repo, base } = makeRepo("receipt-truth-emptydone");
+    const { ctx } = ctxFor(repo, base);
+    const dir = mkdtempSync(join(tmpdir(), "rt-emptydone-"));
+    try {
+      mkdirSync(join(dir, "metrics"), { recursive: true });
+      const rec = { output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, num_turns: 2, duration_ms: 500 };
+      writeFileSync(join(dir, "metrics", "result-cost-impl.json"), JSON.stringify({ ...rec, total_cost_usd: 1, input_tokens: 100, session_id: "S1" }));
+      writeFileSync(join(dir, "metrics", "result-cost-impl-e.json"), JSON.stringify({ ...rec, total_cost_usd: 1.4, input_tokens: 140, session_id: "S2", resumed_from: "S1" }));
+      ctx.cost = { read: () => costTotalsOf(sumResultCosts(dir, ["impl", "impl-e"])) };
+      const receipt = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+      const cost = receipt.cost as unknown as Record<string, unknown>;
+      expect(cost["resume"]).toBe("ambiguous");
+      expect(cost["usd"]).toBeNull();
+      expect(cost["tokens_measured"]).toEqual({ k: 1, n: 2 });
+      expect(cost["input_tokens"]).toBe(100);
+      const md = renderReceiptMd({ ...receipt });
+      expect(md).toContain("Tokens: partial: 100 input / 1 output for 1 of 2 sessions");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 30000);
+
+  test("RECEIPT-TRUTH: a reader without cache fields leaves the keys absent (NOT RECORDED), never 0", async () => {
+    noKey();
+    const { repo, base } = makeRepo("receipt-truth-absent");
+    const { ctx } = ctxFor(repo, base);
+    const rec = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+    expect("cache_read_tokens" in rec.cost).toBe(true); // ctxFor's fake reports cacheReadTokens: 0 (a measured zero)
+    expect("cache_creation_tokens" in rec.cost).toBe(false);
+    expect("tokens_measured" in rec.cost).toBe(false); // complete runs and old receipts stay byte-identical
   }, 30000);
 
 });
