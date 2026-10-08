@@ -946,6 +946,53 @@ expect RUNNER.unreached-symlinked-pending-refuses 2 \
   "registry: checked against 1 release tag(s), newest v1.0.0" \
   "!ratchet: bootstrap" "!moat suite: OK"
 
+# ENV-SETUP: a checkout with web-app/package-lock.json but no node_modules gets
+# `npm ci` before any property script runs, so a fresh worktree never reads a
+# missing prerequisite as a regression. A failed install is a distinct
+# PREREQUISITE failure (exit 3) naming the install error, never a pass.
+webapp_fixture() {
+  fresh
+  mkdir -p "$D/web-app" "$T/stubbin"
+  echo '{}' > "$D/web-app/package.json"
+  echo '{}' > "$D/web-app/package-lock.json"
+}
+webapp_fixture
+printf '#!/bin/sh\necho "npm ERR! registry unreachable" >&2\nexit 1\n' > "$T/stubbin/npm"
+chmod +x "$T/stubbin/npm"
+PATH="$T/stubbin:$PATH" run_in "$D"
+expect RUNNER.webapp-install-failure-is-prerequisite 3 \
+  "PREREQUISITE FAILURE" "web-app: 'npm ci' exited 1" "registry unreachable" \
+  "!moat suite: OK"
+
+webapp_fixture
+# shellcheck disable=SC2016
+printf '#!/bin/sh\n[ "$1" = ci ] || exit 9\nmkdir node_modules\n' > "$T/stubbin/npm"
+chmod +x "$T/stubbin/npm"
+PATH="$T/stubbin:$PATH" run_in "$D"
+expect RUNNER.webapp-missing-deps-installed 0 \
+  "PREREQUISITE: web-app/node_modules missing" "PREREQUISITE: web-app installed" \
+  "moat suite: no rule failed"
+[ -d "$D/web-app/node_modules" ] || bad "RUNNER.webapp-missing-deps-installed node_modules was not created"
+
+webapp_fixture
+mkdir -p "$D/packages/control-plane"
+echo '{}' > "$D/packages/control-plane/package.json"
+: > "$D/packages/control-plane/bun.lock"
+# shellcheck disable=SC2016
+printf '#!/bin/sh\n[ "$1" = install ] || exit 9\nmkdir node_modules\n' > "$T/stubbin/bun"
+chmod +x "$T/stubbin/bun"
+printf '#!/bin/sh\nmkdir node_modules\n' > "$T/stubbin/npm"
+chmod +x "$T/stubbin/npm"
+PATH="$T/stubbin:$PATH" run_in "$D"
+expect RUNNER.control-plane-missing-deps-installed 0 \
+  "PREREQUISITE: packages/control-plane installed" "moat suite: no rule failed"
+
+webapp_fixture
+mkdir "$D/web-app/node_modules"
+printf '#!/bin/sh\nexit 1\n' > "$T/stubbin/npm"
+PATH="$T/stubbin:$PATH" run_in "$D"
+expect RUNNER.webapp-deps-present-no-install 0 "!PREREQUISITE" "moat suite: no rule failed"
+
 echo
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
