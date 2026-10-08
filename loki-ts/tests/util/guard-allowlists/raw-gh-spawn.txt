@@ -1,6 +1,5 @@
 # Raw gh spawns in loki-ts/src. Format: path | reason. Guard: raw_gh_spawn_guard.test.ts (FC-25, FC-40).
 loki-ts/src/util/pr_lessons.ts | read-only gh pr listing, explicit env passed, no push
-loki-ts/src/runner/attempts.ts | winner gh pr create after FC-40 fix: explicit env, --repo derived from the pinned origin
 loki-ts/src/engine10/preflight.ts | gh --version and auth probe only, no repo cwd, no mutation
 loki-ts/src/engine10/fetch_issue.ts | read-only gh issue view through an injected execer
 loki-ts/src/e10ext/issues.ts | read-only gh issue list through an injected execer

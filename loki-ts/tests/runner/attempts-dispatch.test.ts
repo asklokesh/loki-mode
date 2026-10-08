@@ -209,7 +209,7 @@ describe("FC-37 --attempts on the positional start route", () => {
 });
 
 describe("--no-pr both ways through the real wiring", () => {
-  // The PR-opening path is refused through the CLI in 11.3.1 (attempts-pr-refused.test.ts); openPr is covered directly by attempts-origin-pin.test.ts.
+  // The PR-opening path goes through push-pr (attempts-push-pr.test.ts, attempts-origin-pin.test.ts); this block covers --no-pr.
 
   it("with --attempts and --no-pr: gh is never called and the receipt says skipped_no_pr", () => {
     const f = fixture();

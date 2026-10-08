@@ -3,15 +3,17 @@
 // (a check counts only when it passed and actually ran; not_run, skipped and n=0 never count),
 // applies the winner to the primary tree, and writes an attempts receipt that names every loser.
 // All side effects go through AttemptDeps so the selection, cleanup and receipt are unit-testable.
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
+import { REPO_ROOT } from "../util/paths.ts";
 import { outcomeOf } from "../features/receipt_dsse.ts";
 
 export const MAX_ATTEMPTS = 5;
+const PUSH_SH = join(REPO_ROOT, "autonomy/lib/engine10-push.sh");
 
 export interface AttemptCheck {
   name: string;
@@ -57,6 +59,8 @@ export interface AttemptDeps {
   baseSha(): string;
   /** Opens the PR for the winner (normal PR behavior). Undefined when the user passed --no-pr. Returns the PR url. */
   openPr?(winnerWorktree: string, baseSha: string): string;
+  /** Runs before attempt 1; throws when the PR could not be opened anyway (unusable pinned origin), so no attempts are wasted. */
+  preflight?(): void;
   /** Console output; defaults to stdout. */
   print?(line: string): void;
   createWorktree(path: string, baseSha: string): void;
@@ -143,6 +147,12 @@ export function formatAttemptsSummary(r: AttemptsReceipt): string[] {
 
 export async function runAttempts(n: number, deps: AttemptDeps): Promise<number> {
   if (n <= 1) return deps.runDirect(); // N=1 is the plain single engine10 run
+  try {
+    deps.preflight?.();
+  } catch (e) {
+    (deps.print ?? ((l: string) => void process.stdout.write(`${l}\n`)))(`No attempts run: ${e instanceof Error ? e.message : String(e)}`);
+    return 1;
+  }
   let pr: AttemptsReceipt["pr"] = { mode: "not_applicable" };
   const baseSha = deps.baseSha();
   const container = deps.makeContainer();
@@ -221,9 +231,9 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
 
 // ---- production deps -------------------------------------------------------------------------
 
-/** allowToken is for the one remote-talking call (push): it keeps GH_TOKEN and the credential helper, nothing else. */
-export function git(cwd: string, args: string[], input?: string, allowToken = false): string {
-  return safeGit(cwd, args, { input, allowToken, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
+/** Always token-free: credentials only ever reach the push-pr child (see openPr). */
+export function git(cwd: string, args: string[], input?: string): string {
+  return safeGit(cwd, args, { input, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 /** Checks from the attempt's own engine10 receipt. seal.ts writes join(runDir, "receipt.json") with runDir = <repo>/.loki/runs/<runId>
@@ -275,12 +285,11 @@ function attemptBranch(p: string): string {
   return `loki-attempt/${basename(dirname(p))}-${basename(p)}`;
 }
 
-const GITHUB_URL_RE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/;
-
-/** owner/name for a GitHub remote URL, else null (never guessed). */
-export function githubSlug(url: string): string | null {
-  const m = GITHUB_URL_RE.exec(url);
-  return m ? `${m[1]}/${m[2]}` : null;
+/** One source of truth: engine10-push.sh check-origin applies exactly the validation push-pr does (no network, no token). */
+export function pinnedOriginUsable(origin: string): boolean {
+  if (!origin) return false;
+  const env = { ...tokenFreeEnv(process.env), _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
+  return spawnSync("bash", [PUSH_SH, "check-origin"], { env, encoding: "utf8", timeout: 30_000 }).status === 0;
 }
 
 export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>, opts: { noPr?: boolean } = {}): AttemptDeps {
@@ -288,6 +297,7 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
   const receiptDir = join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-"));
   // Pinned once, in memory, before any attempt runs: attempt worktrees share .git/config, so an agent can rewrite origin later.
   // The raw configured URL (not `remote get-url`, which applies insteadOf) is what the push and gh --repo are derived from.
+  const winnerBranch = `loki-attempts/${basename(receiptDir)}-winner`;
   let pinnedOrigin = "";
   if (!opts.noPr) { try { pinnedOrigin = git(repoDir, ["config", "--get", "remote.origin.url"]).trim(); } catch { /* no origin: openPr refuses */ } }
   return {
@@ -309,6 +319,7 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       git(repoDir, ["worktree", "remove", "--force", p]);
       git(repoDir, ["branch", "-D", attemptBranch(p)]);
       if (current.startsWith("loki/")) git(repoDir, ["branch", "-D", current]);
+      try { git(repoDir, ["branch", "-D", "--", winnerBranch]); } catch { /* only exists after openPr */ }
     },
     runAttempt: async (id, wt) => {
       const exit = await runInWorktree(id, wt);
@@ -339,14 +350,32 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       if (patch.trim() !== "") git(repoDir, ["apply", "--whitespace=nowarn"], patch);
     },
     ...(opts.noPr ? {} : {
-      // Normal PR behavior: only the winner's engine10 branch is pushed and opened; losers never reach a remote.
-      openPr: (wt: string, base: string) => {
-        const branch = git(wt, ["symbolic-ref", "--short", "HEAD"]).trim();
-        const slug = githubSlug(pinnedOrigin);
-        if (!slug) throw new Error("no PR opened: the origin pinned before the attempts is missing or not a GitHub URL");
-        git(wt, ["push", "--", pinnedOrigin, branch], undefined, true); // the literal pinned URL, never the remote name
-        const baseBranch = (() => { try { return git(repoDir, ["symbolic-ref", "--short", "HEAD"]).trim(); } catch { return base; } })();
-        return execFileSync("gh", ["pr", "create", "--fill", "--repo", slug, "--head", branch, "--base", baseBranch], { cwd: wt, env: process.env, encoding: "utf8" }).trim().split("\n").pop() ?? "";
+      preflight: () => {
+        if (!pinnedOriginUsable(pinnedOrigin)) throw new Error("the pinned origin is missing or is neither a GitHub URL nor a local bare repo, so no PR could be opened; use --no-pr");
+      },
+      // Only the winner's engine10 branch is pushed, and only by engine10-push.sh push-pr (_loki_trusted_push): origin is the value
+      // pinned above, the fetch runs into a fresh template-less repo and gh runs neutral. This code never runs git push or gh itself.
+      openPr: (wt: string, _base: string) => {
+        if (!pinnedOrigin) throw new Error("no PR opened: the origin pinned before the attempts is missing");
+        // Stragglers the engine left uncommitted ride on the branch (nothing stageable exits nonzero; not a failure).
+        try { git(wt, ["add", "-A", "--", ".", ":(exclude).loki"]); } catch { /* nothing stageable */ }
+        const dirty = (() => { try { git(wt, ["diff", "--cached", "--quiet"]); return false; } catch { return true; } })();
+        if (dirty) {
+          const unset = (key: string): boolean => { try { return git(wt, ["config", key]).trim() === ""; } catch { return true; } }; // git config exits 1 when unset
+          const ident = [...(unset("user.name") ? ["-c", "user.name=Loki"] : []), ...(unset("user.email") ? ["-c", "user.email=loki@autonomi.dev"] : [])];
+          git(wt, [...ident, "commit", "-q", "-m", "loki: attempts winner uncommitted changes"]);
+        }
+        // The pushed ref name is chosen here, never read from the agent-writable HEAD: a hostile winner could name its branch
+        // after an existing operator branch (release/*, gh-pages) and fast-forward it.
+        git(wt, ["branch", "-f", "--", winnerBranch, "HEAD"]);
+        const branch = winnerBranch;
+        mkdirSync(receiptDir, { recursive: true });
+        const bodyFile = join(receiptDir, "pr-body.md");
+        writeFileSync(bodyFile, `Winner of a \`loki start --attempts\` run. Receipts for every attempt are kept under ${receiptDir}.\n`);
+        const env: NodeJS.ProcessEnv = { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: pinnedOrigin };
+        const r = spawnSync("bash", [PUSH_SH, "push-pr", wt, branch, `Loki attempts winner (${branch})`, bodyFile, "--draft"], { env, encoding: "utf8" });
+        if (r.status !== 0) throw new Error(`no PR opened: engine10-push.sh push-pr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}`);
+        return (r.stdout ?? "").trim().split("\n").pop() ?? "";
       },
     }),
     makeContainer: () => mkdtempSync(join(tmpdir(), "loki-attempts-")),
