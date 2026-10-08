@@ -8,6 +8,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
+import { safeGit } from "../util/safe_git.ts";
 import { outcomeOf } from "../features/receipt_dsse.ts";
 
 export const MAX_ATTEMPTS = 5;
@@ -221,7 +222,7 @@ export async function runAttempts(n: number, deps: AttemptDeps): Promise<number>
 // ---- production deps -------------------------------------------------------------------------
 
 function git(cwd: string, args: string[], input?: string): string {
-  return execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", input, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
+  return safeGit(cwd, args, { input, maxBuffer: 256 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });
 }
 
 /** Checks from the attempt's own engine10 receipt. seal.ts writes join(runDir, "receipt.json") with runDir = <repo>/.loki/runs/<runId>
@@ -321,7 +322,7 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
       } catch {
         // nothing stageable
       }
-      const patch = git(wt, ["diff", "--cached", "--binary", base]);
+      const patch = git(wt, ["diff", "--cached", "--binary", "--no-ext-diff", "--no-textconv", base]);
       if (patch.trim() !== "") git(repoDir, ["apply", "--whitespace=nowarn"], patch);
     },
     ...(opts.noPr ? {} : {
