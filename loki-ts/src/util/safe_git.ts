@@ -82,7 +82,7 @@ function noExtDiff(args: readonly string[]): string[] {
   if (cmd === undefined || !PATCH_CMDS.has(cmd)) return [...args];
   const rest = args.slice(i + 1);
   const end = rest.indexOf("--");
-  const opts = (end < 0 ? rest : rest.slice(0, end)).filter((a) => a !== "--ext-diff" && a !== "--textconv");
+  const opts = (end < 0 ? rest : rest.slice(0, end)).filter((a) => a !== "--ext-diff" && a !== "--textconv" && a !== "--no-ext-diff" && a !== "--no-textconv");
   return [...args.slice(0, i + 1), "--no-ext-diff", "--no-textconv", ...opts, ...(end < 0 ? [] : rest.slice(end))];
 }
 
