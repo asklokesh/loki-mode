@@ -777,3 +777,8 @@ Amends FC-35 (the router-on plan no longer skips small tasks) and D89 Amendment 
 4. FC-35 R-B holds unchanged: always emit a route or a recorded reason. A failed, timed-out or malformed routing call writes routed:false with the reason to route.json and runs the full plan as before (fail-safe toward more planning, never less). Wall, verify, commit, seal and pr never skip.
 5. Measurement gate: the B9 row on trivial-sum shows the routing call below 10% of total run cost (n>=3), and router-on cost at most 1.05x router-off (D89 Amendment 2). Router-off output stays byte-identical with the flags off.
 6. Slices: COST-HALF LD-01 (gate plus routing call) and LD-02 (marker as a late input), HIGH tier.
+
+## D94 (2026-10-08, CTO ruling relayed by the CoS): main holds the last pushed release until npm has it; RG-06 contrib cap
+1. Main stays at the last pushed release commit until that version is on npm. Later approved slices merge onto a train branch (train-<version>), which fast-forwards or merges into main only after the cut is published. Origin: 11.3.2 train merges sat on main while 11.3.1 was blocked on a red nightly (NIGHTLY-BLOCK), which forced a cherry-pick-only push.
+2. Line budgets are never raised to admit a feature. Overflow is extracted along docs/v11/REGISTRIES.md.
+3. RG-06 approved: loki-ts/src/contrib/ with a 1200-line cap and the D66 import rules. Binding guards: core (engine10) never imports contrib; each contrib module is optional (deleting one leaves core compiling and flag-off goldens unchanged); no verdict logic in contrib (D42); the cap failure lists per-file line counts.
