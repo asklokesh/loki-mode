@@ -18,6 +18,86 @@ export interface BriefInput {
   repoDir: string;
   baseSha: string;
   plan?: string | null;
+  /** V2: recorded seal/plan facts; when given, the decision block leads the brief. */
+  facts?: BriefFacts;
+}
+
+/** A plan-model-declared risk (plan-scope.json "risky_hunks"). Ranking uses `risk` only, never wording. */
+export interface RiskDecl { path: string; risk: number; why: string; line?: number }
+export interface BriefFacts {
+  runId: string;
+  verdict?: string;
+  receiptSha256?: string | null;
+  /** Parsed receipt.json subset; undefined when the receipt could not be read. */
+  receipt?: { checks?: { name?: string; result?: string }[]; mutation_proof?: string; not_proven?: string[] };
+  /** The plan's intent card lines; null/undefined when none was recorded. */
+  intentCard?: string[] | null;
+  /** Files the plan declared (plan-scope.json "files"); null/undefined when none was recorded. */
+  declaredFiles?: string[] | null;
+  risks?: RiskDecl[] | null;
+}
+
+const NR = "NOT RECORDED";
+const oneLine = (t: string, n = 100): string => t.replace(/[\x00-\x1f\x7f]+/g, " ").trim().slice(0, n);
+
+/** Parses the model-declared risks from plan-scope.json content; null when none are well-formed. */
+export function parseRiskDecls(j: unknown): RiskDecl[] | null {
+  const raw = (j as { risky_hunks?: unknown } | null)?.risky_hunks;
+  if (!Array.isArray(raw)) return null;
+  const out: RiskDecl[] = [];
+  for (const r of raw) {
+    const e = r as { path?: unknown; risk?: unknown; why?: unknown; line?: unknown } | null;
+    if (!e || typeof e.path !== "string" || e.path.trim() === "" || typeof e.risk !== "number" || !Number.isFinite(e.risk)) continue;
+    out.push({ path: e.path.trim().replace(/^\.\//, ""), risk: e.risk, why: typeof e.why === "string" ? oneLine(e.why) : "", ...(typeof e.line === "number" && Number.isInteger(e.line) ? { line: e.line } : {}) });
+  }
+  return out.length ? out : null;
+}
+
+/** The decision block: verdict, where to look, proven vs not, out-of-scope files, verify command. Every line is a recorded fact or NOT RECORDED. */
+export function leadBlock(repoDir: string, baseSha: string, f: BriefFacts): string {
+  const out: string[] = ["## Reviewer brief"];
+  const lines = baseSha ? changedLines(repoDir, baseSha) : null;
+  const rc = f.receipt;
+  out.push(`Verdict: ${f.verdict ? `${f.verdict} (seal receipt ${f.receiptSha256 ? f.receiptSha256.slice(0, 12) : NR})` : NR}`);
+
+  const shown: string[] = [];
+  if (lines && f.risks) {
+    const ranked = f.risks.filter((r) => lines.has(r.path)).map((r, i) => ({ r, i })).sort((a, b) => b.r.risk - a.r.risk || a.i - b.i);
+    for (const { r } of ranked.slice(0, 3)) {
+      const nums = lines.get(r.path) ?? [];
+      const ln = r.line !== undefined && nums.includes(r.line) ? r.line : nums[0];
+      shown.push(`- ${r.path}${ln === undefined ? "" : `:${ln}`} (risk ${r.risk})${r.why ? `: ${r.why}` : ""}`);
+    }
+  }
+  if (shown.length) out.push("Look here first (risk as declared by the plan model):", ...shown);
+  else out.push(`Look here first: ${NR} (no model-declared risk)`);
+
+  out.push("Proven:");
+  const checks = rc?.checks;
+  if (!Array.isArray(checks)) out.push(`- checks run: ${NR}`);
+  else {
+    const n = (k: string): number => checks.filter((c) => c.result === k).length;
+    out.push(checks.length === 0 ? "- checks run: 0" : `- checks run: ${checks.length} (${n("pass")} pass, ${n("fail")} fail, ${n("not_run")} not_run)`);
+  }
+  out.push(`- mutation proof: ${rc?.mutation_proof ? oneLine(rc.mutation_proof) : NR}`);
+  const card = f.intentCard;
+  if (!Array.isArray(card)) out.push(`- intent card: ${NR}`);
+  else { const a = card.filter((l) => /^\s*acceptance/i.test(l)).length; out.push(`- intent card: recorded (${a} acceptance line${a === 1 ? "" : "s"})`); }
+
+  const np = rc?.not_proven;
+  if (!Array.isArray(np)) out.push(`NOT PROVEN: ${NR}`);
+  else if (np.length === 0) out.push("NOT PROVEN: none recorded");
+  else { out.push("NOT PROVEN:", ...np.slice(0, 3).map((l) => `- ${oneLine(l)}`)); if (np.length > 3) out.push(`- +${np.length - 3} more in the receipt`); }
+
+  if (!Array.isArray(f.declaredFiles)) out.push(`Outside the declared scope: ${NR} (no declared scope)`);
+  else if (!lines) out.push(`Outside the declared scope: ${NR} (diff unavailable)`);
+  else {
+    const decl = new Set(f.declaredFiles.map((p) => p.trim().replace(/^\.\//, "")));
+    const outside = [...lines.keys()].filter((p) => !decl.has(p));
+    out.push(outside.length === 0 ? "Outside the declared scope: none" : `Outside the declared scope (${outside.length}): ${outside.slice(0, 4).join(", ")}${outside.length > 4 ? `, +${outside.length - 4} more` : ""}`);
+  }
+  out.push(`Verify locally: loki verify ${f.runId}`);
+  return out.join("\n") + "\n";
 }
 
 /** Added line numbers per changed path, from `git diff -U0 base HEAD`. Null when the diff is unavailable. */
@@ -95,7 +175,7 @@ function findCov(cov: Map<string, Map<number, number>>, repoDir: string, rel: st
 }
 
 export function renderBrief(inp: BriefInput): string {
-  const out: string[] = ["## Reviewer brief", ""];
+  const out: string[] = inp.facts ? [leadBlock(inp.repoDir, inp.baseSha, inp.facts).trimEnd(), "", "### Details", ""] : ["## Reviewer brief", ""];
   const lines = inp.baseSha ? changedLines(inp.repoDir, inp.baseSha) : null;
 
   out.push("### Behavior changes");
