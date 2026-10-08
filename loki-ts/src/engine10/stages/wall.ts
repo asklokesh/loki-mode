@@ -136,9 +136,15 @@ function guessRunner(fileName: string, runners: RunnerName[]): RunnerName | null
   return (["vitest", "jest", "bun", "node"] as const).find((r) => runners.includes(r)) ?? null;
 }
 
-export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
-  if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before wall started" };
-  if (!wallEnabled()) return { status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" };
+/** WC-01a: what wallAuthor hands installWall. Sealed copies live under <runDir>/wall; nothing here touches repoDir. */
+export interface WallAuthored { kind: "authored"; task: string; sizeName: string; runners: RunnerName[]; targetDir: string; generated: string[]; contents: Map<string, string>; discarded: { file: string; reason: string }[]; manifestSha256?: string; }
+export type WallAuthorOutcome = { kind: "done"; result: StageResult } | WallAuthored;
+
+/** Session plus compile check. Writes only <runDir>/wall (sealed copies); repoDir is read, never written. */
+export async function wallAuthor(ctx: RunContext, signal: AbortSignal): Promise<WallAuthorOutcome> {
+  const done = (result: StageResult): WallAuthorOutcome => ({ kind: "done", result });
+  if (signal.aborted) return done({ status: "failed", data: {}, reason: "aborted before wall started" });
+  if (!wallEnabled()) return done({ status: "skipped", data: {}, reason: "LOKI_E10_WALL=0" });
 
   const prior = ctx.outputs();
   const task = loadTaskText(ctx, prior.intake?.task as string | undefined);
@@ -153,10 +159,10 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
   const repoMap = loadRepoMap(repomapRef);
   const sz = sizeTask(task, repoMap, testMap);
   if (planMode() !== "always" && smallTaskPath(sz.size, hasRelevantTests(task, repoMap, testMap, ctx.tests.impacted)) === "lean") {
-    return { status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" };
+    return done({ status: "skipped", data: { size: sz.size }, reason: "small task with a relevant test: cascade skips Wall" });
   }
 
-  if (testMap && runners.length === 0 && !(repoMap?.files ?? []).some((p) => /\.(py|go)$/.test(p))) return { status: "skipped", data: { size: sz.size, files: [], no_runner: true }, reason: "no runnable test command detected: the Wall cannot write a runnable check" }; // FC-17: decided before any model session
+  if (testMap && runners.length === 0 && !(repoMap?.files ?? []).some((p) => /\.(py|go)$/.test(p))) return done({ status: "skipped", data: { size: sz.size, files: [], no_runner: true }, reason: "no runnable test command detected: the Wall cannot write a runnable check" }); // FC-17: decided before any model session
 
   const tree = prior.intake?.tree as string | undefined;
   const repomapText = repoMapText(ctx.repoDir, tree, repomapRef, WALL_MAP_MAX_LINES);
@@ -178,29 +184,41 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
     signal,
     cwd,
   });
-  if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return { status: "failed", data: {}, reason: "wall session aborted, killed, or timed out", killed: true }; } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
+  if (session.killed || session.exit === null) { rmSync(cwd, { recursive: true, force: true }); return done({ status: "failed", data: {}, reason: "wall session aborted, killed, or timed out", killed: true }); } // E-54: also covers killed-from-outside (exit:null, "killed before exiting" per types.ts)
 
   const generated = readdirSync(cwd).filter((f) => f.startsWith(WALL_PREFIX));
   const sealedDir = join(ctx.runDir, "wall");
-  if (generated.length > 0) { mkdirSync(targetDir, { recursive: true }); mkdirSync(sealedDir, { recursive: true }); }
+  if (generated.length > 0) mkdirSync(sealedDir, { recursive: true });
 
+  const contents = new Map<string, string>();
+  const discarded: { file: string; reason: string }[] = []; // FC-23: a file the package's own compiler would reject is harness-owned: sealed copy only, never in the tree
+  for (const name of generated) {
+    const content = readFileSync(join(cwd, name), "utf8"), bad = conventionViolation(conv, name, content);
+    writeFileSync(join(sealedDir, name), content, "utf8");
+    if (bad) discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); else contents.set(name, content);
+  }
+  rmSync(cwd, { recursive: true, force: true });
+  return { kind: "authored", task, sizeName: sz.size, runners, targetDir, generated, contents, discarded, ...(wm ? { manifestSha256: wm.sha256 } : {}) };
+}
+
+/** Copy the sealed files into repoDir, emit wall.sealed, run the base run in baseDir, drop not_run files. */
+export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, opts: WallOptions = {}): StageResult {
+  const { generated, contents, discarded, targetDir, runners } = a;
+  if (generated.length > 0) mkdirSync(targetDir, { recursive: true });
   const sealedFiles: WallSealedFile[] = [];
   const readOnlyFiles: ReadOnlyFile[] = [];
   const wallTests: TestRef[] = [];
-  const discarded: { file: string; reason: string }[] = []; // FC-23: a file the package's own compiler would reject is harness-owned: sealed copy only, never in the tree
-
   for (const name of generated) {
-    const content = readFileSync(join(cwd, name), "utf8"), dest = join(targetDir, name), runner = guessRunner(name, runners), bad = conventionViolation(conv, name, content);
-    if (bad) { writeFileSync(join(sealedDir, name), content, "utf8"); discarded.push({ file: name, reason: `${bad}; wall test did not compile under the package config` }); continue; }
-    writeFileSync(dest, content, "utf8"); writeFileSync(join(sealedDir, name), content, "utf8");
+    const content = contents.get(name); if (content === undefined) continue; // discarded: sealed copy only
+    const dest = join(targetDir, name), runner = guessRunner(name, runners);
+    writeFileSync(dest, content, "utf8");
     sealedFiles.push({ path: dest, sha256: sha256(content) }); readOnlyFiles.push({ path: dest, content });
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
   }
-  rmSync(cwd, { recursive: true, force: true });
-  ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(wm ? { manifest_sha256: wm.sha256 } : {}) });
+  ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}) });
   const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: discarded.length }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
   for (const t of wallTests) {
-    const r = baseRunner.run(ctx.repoDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
+    const r = baseRunner.run(baseDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
   }
   // Gate on generated.length, not wallTests.length: an unselectable (guessRunner() null) file is sealed but never run, and must never be silently missing from the already_satisfied count.
   const unselectable = generated.length - wallTests.length;
@@ -218,6 +236,11 @@ export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOp
       ...(discarded.length ? { discarded } : {}),
     },
   };
+}
+
+export async function runWall(ctx: RunContext, signal: AbortSignal, opts: WallOptions = {}): Promise<StageResult> {
+  const a = await wallAuthor(ctx, signal);
+  return a.kind === "done" ? a.result : installWall(ctx, a, ctx.repoDir, opts);
 }
 
 export const wallStage: Stage = {
