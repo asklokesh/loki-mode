@@ -7583,6 +7583,7 @@ _write_pricing_json() {
     "opus":            {"input": 4.00,  "output": 20.00, "cache_read": 0.2, "cache_write": 5, "cache_write_1h": 8, "label": "Opus (latest)",   "provider": "claude"},
     "sonnet":          {"input": 2.00,  "output": 10.00, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4, "label": "Sonnet (latest)", "provider": "claude"},
     "haiku":           {"input": 0.10,  "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5 (latest)",  "provider": "claude"},
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2, "label": "Haiku 4.5", "provider": "claude"},
     "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2, "over_100k": {"input": 0.50, "output": 2.50}, "label": "Haiku 5.5", "provider": "claude"},
     "gpt-5.3-codex":   {"input": 1.75,  "output": 14.00, "label": "GPT-5.3 Codex", "provider": "codex"}
   }
@@ -20254,6 +20255,10 @@ pricing = {
     'sonnet': {'input': 2.00, 'output': 10.00, 'cache_read': 0.1, 'cache_write': 2.5, 'cache_write_1h': 4},
     # haiku = Haiku 5.5 up to 100K prompt tokens (no over-100K tier in this gate)
     'haiku': {'input': 0.10, 'output': 0.50, 'cache_read': 0.01, 'cache_write': 0.125, 'cache_write_1h': 0.2},
+    # Exact ids: this dict is keyed by the recorded model string with a sonnet
+    # fallback, so an id missing here is priced at sonnet (20x for Haiku 5.5).
+    'claude-haiku-4-5': {'input': 1.00, 'output': 5.00, 'cache_read': 0.1, 'cache_write': 1.25, 'cache_write_1h': 2},
+    'claude-haiku-5-5': {'input': 0.10, 'output': 0.50, 'cache_read': 0.01, 'cache_write': 0.125, 'cache_write_1h': 0.2},
     'gpt-5.3-codex': {'input': 1.75, 'output': 14.00},
     'gpt-5.6-sol': {'input': 4.00, 'output': 20.00},
     'gpt-5.6-terra': {'input': 2.00, 'output': 12.00},

@@ -7745,6 +7745,9 @@ _DEFAULT_PRICING = {
     "sonnet": {"input": 2.00, "output": 10.00, "cache_read": 0.1, "cache_write": 2.5, "cache_write_1h": 4},
     # haiku = Haiku 5.5 up to 100K prompt tokens (no over-100K tier here)
     "haiku":  {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2},
+    # Exact ids (a lookup by recorded model string must not fall back to sonnet)
+    "claude-haiku-4-5": {"input": 1.00, "output": 5.00, "cache_read": 0.1, "cache_write": 1.25, "cache_write_1h": 2},
+    "claude-haiku-5-5": {"input": 0.10, "output": 0.50, "cache_read": 0.01, "cache_write": 0.125, "cache_write_1h": 0.2},
     # OpenAI Codex
     "gpt-5.3-codex": {"input": 1.75, "output": 14.00},
     # gpt-5.6 line: sol (high) / terra (medium, default) / luna (small).
