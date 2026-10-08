@@ -3,7 +3,7 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { minVerdict, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
+import { minVerdict, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -42,10 +42,33 @@ describe("reviewReceipt XV-1", () => {
     const r = reviewReceipt("claude", null, env);
     expect(r.review).toEqual({ provider: null, vendor_differs: false }); expect(r.notProven.length).toBe(1);
   });
+  it("a not_run review is not cross-vendor: vendor_differs false plus NOT PROVEN", () => {
+    const r = reviewReceipt("claude", { provider: "codex", level: "not_run", notes: [] }, env);
+    expect(r.review).toEqual({ provider: "codex", vendor_differs: false }); expect(r.notProven).toEqual(["judge shares builder vendor or none configured"]);
+  });
+  it("unknown builder is never vendor_differs true", () => {
+    const r = reviewReceipt("cline", { provider: "codex", level: "pass", notes: [] }, env);
+    expect(r.review?.vendor_differs).toBe(false); expect(r.notProven.length).toBe(1);
+  });
   it("flag off adds nothing", () => expect(reviewReceipt("claude", null, {})).toEqual({ notProven: [] }));
   it("verdict can still only be downgraded", () => {
     expect(minVerdict("VERIFIED", { provider: "codex", level: "pass", notes: [] })).toBe("VERIFIED");
     expect(minVerdict("VERIFIED", { provider: "codex", level: "block", notes: [] })).toBe("PARTIAL");
     expect(minVerdict("PARTIAL", { provider: "codex", level: "pass", notes: [] })).toBe("PARTIAL");
+  });
+});
+
+describe("flag-off and CLI resolution", () => {
+  it("flag off: LOKI_REVIEW_PROVIDER=off does not mask loki.yaml review", () => {
+    const r = mkdtempSync(join(root, "yaml-")); writeFileSync(join(r, "loki.yaml"), "review: codex\n");
+    expect(reviewProvider(r, { PATH: "", LOKI_REVIEW_PROVIDER: "off" }, "claude")).toBe("codex");
+  });
+  it("flag on: explicit off beats loki.yaml", () => {
+    const r = mkdtempSync(join(root, "yaml-")); writeFileSync(join(r, "loki.yaml"), "review: codex\n");
+    expect(reviewProvider(r, on("", { LOKI_REVIEW_PROVIDER: "off" }), "claude")).toBeNull();
+  });
+  it("reviewArgv spawns the same CLI vendorAvailable resolved", () => {
+    expect(reviewArgv("codex", "p", { LOKI_CODEX_CLI: "mycodex" })[0]).toBe("mycodex");
+    expect(reviewArgv("claude", "p", {})[0]).toBe("claude");
   });
 });

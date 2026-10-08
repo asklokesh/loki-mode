@@ -25,10 +25,11 @@ const isOff = (v: string | undefined): boolean => /^(off|none|false|0)$/i.test(v
 
 /** Explicit setting: env wins over loki.yaml top-level `review:`. A provider, "off", or undefined (nothing set). */
 function explicitReview(repoDir: string, env: NodeJS.ProcessEnv): ReviewProvider | "off" | undefined {
-  const ev = env["LOKI_REVIEW_PROVIDER"], e = asProvider(ev); if (e) return e; if (isOff(ev)) return "off";
+  const flag = xvendorDefault(env); // explicit off is only meaningful (and only honoured) with the flag on; off keeps the pre-XV-1 behaviour
+  const ev = env["LOKI_REVIEW_PROVIDER"], e = asProvider(ev); if (e) return e; if (flag && isOff(ev)) return "off";
   for (const f of ["loki.yaml", "loki.yml"]) {
     const p = join(repoDir, f); if (!existsSync(p)) continue;
-    try { const m = /^review:[ \t]*["']?([A-Za-z]+)["']?[ \t]*(?:#.*)?$/m.exec(readFileSync(p, "utf8")); const v = asProvider(m?.[1]); if (v) return v; if (isOff(m?.[1])) return "off"; } catch { /* unreadable: nothing set */ }
+    try { const m = /^review:[ \t]*["']?([A-Za-z]+)["']?[ \t]*(?:#.*)?$/m.exec(readFileSync(p, "utf8")); const v = asProvider(m?.[1]); if (v) return v; if (flag && isOff(m?.[1])) return "off"; } catch { /* unreadable: nothing set */ }
   }
   return undefined;
 }
@@ -37,8 +38,9 @@ function explicitReview(repoDir: string, env: NodeJS.ProcessEnv): ReviewProvider
 export const xvendorDefault = (env: NodeJS.ProcessEnv = process.env): boolean => /^(1|true|yes|on)$/i.test(env["LOKI_XVENDOR_DEFAULT"]?.trim() ?? "");
 
 /** The CLI for a provider is on PATH (same resolution as engine10/preflight.ts: LOKI_<NAME>_CLI override, else the provider name). */
+export const reviewCli = (p: ReviewProvider, env: NodeJS.ProcessEnv = process.env): string => env[`LOKI_${p.toUpperCase()}_CLI`]?.trim() || p;
 export function vendorAvailable(p: ReviewProvider, env: NodeJS.ProcessEnv = process.env): boolean {
-  const cli = env[`LOKI_${p.toUpperCase()}_CLI`]?.trim() || p;
+  const cli = reviewCli(p, env);
   return !!Bun.which(cli, { PATH: env["PATH"] ?? process.env["PATH"] ?? "" });
 }
 
@@ -53,15 +55,16 @@ export function reviewProvider(repoDir: string, env: NodeJS.ProcessEnv = process
 /** Receipt review block plus the NOT PROVEN line, only when the flag is on. vendor_differs compares the judge to the builder. */
 export function reviewReceipt(builder: string, xr: CrossReview | null, env: NodeJS.ProcessEnv = process.env): { review?: { provider: string | null; vendor_differs: boolean }; notProven: string[] } {
   if (!xvendorDefault(env)) return { notProven: [] };
-  const differs = !!xr && xr.provider !== builder;
+  const differs = !!xr && xr.level !== "not_run" && xr.provider !== builder && (builder === "claude" || builder === "codex"); // a review that did not run is not cross-vendor evidence
   return { review: { provider: xr?.provider ?? null, vendor_differs: differs }, notProven: differs ? [] : ["judge shares builder vendor or none configured"] };
 }
 
 /** Read-only argv: codex runs in its read-only sandbox; claude gets read tools only with writers and shell denied. */
-export function reviewArgv(p: ReviewProvider, prompt: string): string[] {
+export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const cli = reviewCli(p, env);
   return p === "codex"
-    ? ["codex", "exec", "--sandbox", "read-only", prompt]
-    : ["claude", "-p", prompt, "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"];
+    ? [cli, "exec", "--sandbox", "read-only", prompt]
+    : [cli, "-p", prompt, "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"];
 }
 
 const clean = (s: string): string => s.replace(/[\x00-\x1f\x7f`]+/g, " ").trim().slice(0, 300);
