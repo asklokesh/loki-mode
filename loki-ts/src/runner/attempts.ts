@@ -332,7 +332,7 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
         const branch = git(wt, ["symbolic-ref", "--short", "HEAD"]).trim();
         git(wt, ["push", "-u", "origin", branch], undefined, true);
         const baseBranch = (() => { try { return git(repoDir, ["symbolic-ref", "--short", "HEAD"]).trim(); } catch { return base; } })();
-        return execFileSync("gh", ["pr", "create", "--fill", "--head", branch, "--base", baseBranch], { cwd: wt, encoding: "utf8" }).trim().split("\n").pop() ?? "";
+        return execFileSync("gh", ["pr", "create", "--fill", "--head", branch, "--base", baseBranch], { cwd: wt, env: process.env, encoding: "utf8" }).trim().split("\n").pop() ?? "";
       },
     }),
     makeContainer: () => mkdtempSync(join(tmpdir(), "loki-attempts-")),
