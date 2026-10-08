@@ -462,6 +462,7 @@ declare -a _FAST_KEEP=(
   "tests/test-web-app-no-orphan-components.sh"
   "tests/test-release-sbom-attached.sh"       # 0.2s
   "tests/test-promote-head-stamp.sh"          # FC-51, static workflow check
+  "tests/test-nightly-flake-tracker.sh"       # FC-53, offline fixtures
   "tests/test-release-dist-guard.sh"          # E-133, release.sh dist-map path guard
   "tests/test-webapp-modules-packaged.sh"     # 132-E2, web-app/*.py shipped by glob
   # Guards two shipped behaviors no other suite covers: a pause must not wait

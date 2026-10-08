@@ -38,22 +38,22 @@ run_test "basic onboard on loki-mode repo"
 (
     output=$("$LOKI" onboard "$REPO_DIR" --stdout 2>/dev/null)
     # Should contain project name
-    if ! echo "$output" | grep -q "loki-mode"; then
+    if ! grep -q "loki-mode" <<<"$output"; then
         echo "Missing project name" >&2
         exit 1
     fi
     # Should detect JavaScript/TypeScript
-    if ! echo "$output" | grep -q "JavaScript"; then
+    if ! grep -q "JavaScript" <<<"$output"; then
         echo "Missing language detection" >&2
         exit 1
     fi
     # Should detect npm
-    if ! echo "$output" | grep -q "npm"; then
+    if ! grep -q "npm" <<<"$output"; then
         echo "Missing package manager detection" >&2
         exit 1
     fi
     # Should have structure section
-    if ! echo "$output" | grep -q "Project Structure"; then
+    if ! grep -q "Project Structure" <<<"$output"; then
         echo "Missing structure section" >&2
         exit 1
     fi
@@ -71,7 +71,7 @@ run_test "--stdout flag prints to terminal without writing file"
     fi
     # Should NOT create .claude/CLAUDE.md in repo (we used --stdout)
     # (We check that stdout has content, file creation is tested separately)
-    if echo "$output" | grep -q "^#"; then
+    if grep -q "^#" <<<"$output"; then
         exit 0
     else
         echo "Output does not start with markdown header" >&2
@@ -135,7 +135,7 @@ run_test "onboard on directory with no recognized project files"
         exit 1
     fi
     # Should contain project name (directory name)
-    if ! echo "$output" | grep -q "empty-project"; then
+    if ! grep -q "empty-project" <<<"$output"; then
         echo "Missing project name for empty project" >&2
         exit 1
     fi
@@ -187,11 +187,11 @@ run_test "--format yaml produces valid YAML"
 (
     output=$("$LOKI" onboard "$REPO_DIR" --stdout --format yaml --depth 1 2>/dev/null)
     # Basic YAML validation - should have key: value pairs
-    if ! echo "$output" | grep -q "^project:"; then
+    if ! grep -q "^project:" <<<"$output"; then
         echo "Missing YAML project key" >&2
         exit 1
     fi
-    if ! echo "$output" | grep -q "^languages:"; then
+    if ! grep -q "^languages:" <<<"$output"; then
         echo "Missing YAML languages key" >&2
         exit 1
     fi
@@ -202,11 +202,11 @@ run_test "--format yaml produces valid YAML"
 run_test "--help shows usage information"
 (
     output=$("$LOKI" onboard --help 2>&1)
-    if ! echo "$output" | grep -q "Usage:"; then
+    if ! grep -q "Usage:" <<<"$output"; then
         echo "Missing usage text" >&2
         exit 1
     fi
-    if ! echo "$output" | grep -q "depth"; then
+    if ! grep -q "depth" <<<"$output"; then
         echo "Missing depth option" >&2
         exit 1
     fi
@@ -256,12 +256,52 @@ run_test "large non-git tree does not die on SIGPIPE"
         echo "produced ${#output} bytes; the abort emitted 0" >&2
         exit 1
     fi
-    if ! echo "$output" | grep -q "big-nongit"; then
+    if ! grep -q "big-nongit" <<<"$output"; then
         echo "output does not name the project" >&2
         exit 1
     fi
     exit 0
 ) && pass || fail "non-git >200-file tree failed"
+
+# --- Test 11: a find error during the scan must not abort onboard (FC-53) ---
+# `find | wc -l` under set -eo pipefail died silently (rc 1, 0 bytes) whenever
+# find hit an entry it could not read or that vanished mid-scan, which a
+# concurrently running suite does in the repo root. An unreadable directory
+# makes find exit 1 deterministically.
+run_test "unreadable directory during scan does not abort onboard"
+(
+    unr="$TEST_DIR/unreadable-proj"
+    mkdir -p "$unr/locked" "$unr/src"
+    echo '{"name":"unreadable-proj","version":"1.0.0"}' > "$unr/package.json"
+    echo "echo hi" > "$unr/src/run.sh"
+    chmod 000 "$unr/locked"
+    trap 'chmod 755 "$unr/locked"' EXIT
+
+    set +e
+    find "$unr" -maxdepth 2 -name "*.sh" -type f >/dev/null 2>&1
+    find_rc=$?
+    set -e
+    if [ "$find_rc" -eq 0 ]; then
+        # Running as a user that can read mode 000 (root): precondition cannot
+        # be built, so this host cannot exercise the path.
+        echo "find did not fail on this host; precondition unavailable" >&2
+        exit 0
+    fi
+
+    set +e
+    output=$("$LOKI" onboard "$unr" --stdout 2>/dev/null)
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+        echo "onboard exited $rc after a find error" >&2
+        exit 1
+    fi
+    if ! grep -q "unreadable-proj" <<<"$output"; then
+        echo "output does not name the project" >&2
+        exit 1
+    fi
+    exit 0
+) && pass || fail "find error during scan aborted onboard"
 
 echo ""
 echo "=== Results: $PASS/$TOTAL passed, $FAIL failed ==="

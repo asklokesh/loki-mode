@@ -74,11 +74,24 @@ describe("gate-failures cap head/tail parity (W4 L1)", () => {
       out = String((err as { stdout?: Buffer | string }).stdout ?? "");
     }
     // The "No AI provider" fallback hint (a single always-shown line) is allowed
-    // on stdout; the PER-PROVIDER hints under each WARN must NOT be. Distinguish by
-    // counting: bash stdout has at most ONE "Install:" line (the fallback), never
-    // four (one per absent provider).
-    const installLines = out.split("\n").filter((l) => l.includes("Install:"));
+    // on stdout; the PER-PROVIDER hints under each WARN must NOT be. Count only
+    // lines that carry a provider install command. A bare "Install:" count is
+    // host-dependent: on macOS the system python3 is 3.9, so doctor prints an
+    // unrelated "Python 3.12 recommended ... Install: brew install python@3.12"
+    // line on stdout and the count became 2 on every macOS nightly (FC-53).
+    const providerCmds = [
+      "npm install -g @anthropic-ai/claude-code",
+      "npm install -g @openai/codex",
+      "npm install -g cline",
+      "pip install aider-chat",
+      "npm install -g opencode-ai",
+    ];
+    const installLines = out
+      .split("\n")
+      .filter((l) => l.includes("Install:") && providerCmds.some((c) => l.includes(c)));
     expect(installLines.length).toBeLessThanOrEqual(1);
+    // Only the claude fallback line may appear; the other four are stderr-only.
+    expect(installLines.every((l) => l.includes(providerCmds[0]))).toBe(true);
   }, 20000); // doctor spawns real per-provider `--version` probes + a network
   // reachability check (~5-7s with all providers absent); this asserts STDOUT
   // routing, not speed, so give it a generous timeout (the 5s default flaked).

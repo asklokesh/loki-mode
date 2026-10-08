@@ -30196,7 +30196,7 @@ except: pass
 
     # Detect shell scripts
     local shell_count=0
-    shell_count=$(find "$target_path" -maxdepth 2 -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
+    shell_count=$(find "$target_path" -maxdepth 2 -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ' || true)
     if [ "$shell_count" -gt 0 ]; then
         languages="$languages Bash"
     fi
@@ -30634,7 +30634,7 @@ Files: $src_count source, $test_count test, $doc_count docs"
                 if [ -d "$target_path/$dir" ]; then
                     # Count files in directory
                     local dir_count
-                    dir_count=$(echo "$tree_output" | grep "^${dir}/" | wc -l | tr -d ' ')
+                    dir_count=$(echo "$tree_output" | grep "^${dir}/" | wc -l | tr -d ' ' || true)
                     output="$output
 $dir/    ($dir_count files)"
                 else

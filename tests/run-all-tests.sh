@@ -1443,6 +1443,7 @@ run_test "MCP contract guard rejects rename/deletion/missing prereqs" "$SCRIPT_D
 run_test "MCP server negotiates the requested protocol version (MCP-B)" "timeout -k 10 120 $SCRIPT_DIR/test-mcp-protocol-version.sh"
 run_test "npm SBOM is attached to the GitHub Release" "$SCRIPT_DIR/test-release-sbom-attached.sh"
 run_test "promote gitHead stamp and tag fallback (FC-51)" "timeout -k 10 120 bash $SCRIPT_DIR/test-promote-head-stamp.sh"
+run_test "nightly flake tracker flags same-SHA pass/fail flips (FC-53)" "timeout -k 10 120 bash $SCRIPT_DIR/test-nightly-flake-tracker.sh"
 run_test "release.sh version-bump preserves file mode (BACKLOG 22)" "$SCRIPT_DIR/test-release-sh.sh"
 run_test "loki why maps each error class to an action" "$SCRIPT_DIR/test-why-actions.sh"
 run_test "loki start surfaces a stale install" "$SCRIPT_DIR/test-start-update-hint.sh"
