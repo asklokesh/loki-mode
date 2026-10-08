@@ -174,6 +174,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
       if (results[todo.indexOf("commit")]?.status === "failed") return { outputs: { ...outputs, commit: { failed: true } }, capHit, stopped: "commit failed" }; // A-104b r2: a failed commit never advances to seal
       if (opts.resize && !resized && (todo.includes("plan") || todo.includes("wall"))) { resized = true; try { applyResize(opts.resize()); } catch { /* an unreadable plan scope keeps the current cap */ } }
       if (fatal) { stopped = fatal; jumped = true; continue; }
+      if (outputs.plan?.intent_declined === true) return { outputs, capHit, stopped: "intent declined" }; // T3: user answered n at the intent card
       if (todo.some((n, i) => mustJump(n, results[i] ?? null))) { jumped = true; continue; }
       if (todo[0] === "verify") {
         sigs.push(sigOf(outputs.verify, results[0]));

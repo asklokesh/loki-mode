@@ -20,6 +20,7 @@ import { fetchTrackerIssueToFile, parseTrackerRef } from "../features/tracker_in
 import { formatHeartbeatLine, formatStageLine, formatSummary, formatPreModelLine, preModelTiming, type PreModelTiming, EXIT, outcomeOf, reasonOf, type Outcome, type SummaryInput } from "./output.ts";
 import { LiveLine } from "../e10ext/liveline.ts";
 import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
+import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
 import { modelDowngrades } from "../runner/model_downgrades.ts";
@@ -133,6 +134,8 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   log.append("run.started", null, { ...opts.started, origin_repo: githubRepoFromUrl(origin) });
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
   withholdGithubTokens(workerEnv);
+  // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
+  workerEnv.LOKI_INTENT_TTY = env.LOKI_CONFIRM === "1" && process.stdin.isTTY === true && process.stdout.isTTY === true ? "1" : "0";
   const envCap = Number(env.LOKI_E10_CAP_S);
   const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
   const ceilingS = Math.max(capS, opts.capCeilingS ?? capS);
@@ -142,6 +145,9 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") sealed = e.data;
+    if (e?.type === "variant" && e.data.intent_confirm === true && workerEnv.LOKI_INTENT_TTY === "1") {
+      void askIntent(String(e.data.card ?? ""), join(opts.repoDir, ".loki", "runs", opts.runId));
+    }
   }, (stopped) => { for (const g of sessionGroups) killGroup(g, "SIGKILL"); if (stopped) restoreBranch(opts.repoDir, origBranch); });
   const workerExit = worker.killed ? null : worker.code;
   const sealedData = sealed as Record<string, unknown> | null;

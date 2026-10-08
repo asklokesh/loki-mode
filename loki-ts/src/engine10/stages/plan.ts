@@ -11,6 +11,7 @@ import { taskBlock } from "../types.ts";
 import { PLAN_SCOPE_FILE } from "../../util/run_cap.ts";
 import { loadTaskText } from "./wall.ts";
 import { planRoute, ROUTER_UNITS_INSTRUCTION } from "../../runner/router/plan_route.ts";
+import { applyIntent, intentCardEnabled, INTENT_CARD_INSTRUCTION } from "../../util/intent_card.ts";
 
 const MAX_PLAN_LINES = 10;
 const PLAN_OUTPUT_FILENAME = "plan-output.txt";
@@ -25,7 +26,7 @@ export function truncatePlan(raw: string, max: number = MAX_PLAN_LINES): string 
   return lines.slice(0, max).join("\n");
 }
 
-export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false): string {
+export function buildPlanBrief(task: string, relevantFiles: string[], outputPath: string, scopePath: string = outputPath.replace(PLAN_OUTPUT_FILENAME, PLAN_SCOPE_FILE), router: boolean = false, intentCard: boolean = false): string {
   return withStagePrefix([
     "You are the Loki 10 plan stage.",
     ...taskBlock(task),
@@ -35,6 +36,7 @@ export function buildPlanBrief(task: string, relevantFiles: string[], outputPath
     `Write a plan of at most ${MAX_PLAN_LINES} short lines, no other prose, to this exact file path: ${outputPath}`,
     `Also write a JSON object {"files":["<repo-relative path>", ...]} naming every file your plan changes or creates, to this exact file path: ${scopePath}`,
     ...(router ? [ROUTER_UNITS_INSTRUCTION.replace("<scope>", scopePath)] : []),
+    ...(intentCard ? [INTENT_CARD_INSTRUCTION] : []),
     "Do not edit any other file. Do not run tests. Do not commit.",
   ].join("\n\n"));
 }
@@ -65,9 +67,10 @@ export const planStage: Stage = {
 
     const iterationId = `${ctx.runId}-plan`;
     const pr = await planRoute(ctx.runDir, ctx.provider); // R1-10 (runner/router/plan_route.ts): flag off adds nothing; advisor unavailable pins Opus
+    const cardOn = intentCardEnabled(process.env);
     const session = await ctx.sessions.run({
       stage: "plan",
-      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed),
+      brief: buildPlanBrief(task, relevantFiles, outputPath, join(ctx.runDir, PLAN_SCOPE_FILE), pr.routed, cardOn),
       tier: "fast",
       iterationId,
       limitS: planStage.limitS,
@@ -88,7 +91,9 @@ export const planStage: Stage = {
     }
 
     const rawPlan = existsSync(outputPath) ? readFileSync(outputPath, "utf8") : "";
-    const plan = truncatePlan(rawPlan);
+    // T3: empty plan or LOKI_INTENT_CARD=0 is silent and changes nothing.
+    const ic = await applyIntent(rawPlan, cardOn, ctx.runDir, (d) => ctx.emit("variant", "plan", d));
+    const plan = truncatePlan(ic.rest);
     return {
       status: "completed",
       data: {
@@ -96,6 +101,7 @@ export const planStage: Stage = {
         relevant_files: relevantFiles,
         iteration_ids: [iterationId],
         duration_s: session.durationS,
+        ...ic.data,
         ...pr.units(),
       },
     };
