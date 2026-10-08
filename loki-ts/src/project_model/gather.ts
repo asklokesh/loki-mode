@@ -69,6 +69,17 @@ export function gather(repoDir: string): Gathered {
   return { tree: [...shallow].sort((a, b) => depthOf(a) - depthOf(b) || a.localeCompare(b)).slice(0, GATHER_CAPS.maxTreeLines), files };
 }
 
+/** FC-55: true only when the UNTRUNCATED tracked list is non-empty and no path has a directory part.
+ *  shallowDirs() caps the list and the depth, so it must never decide this. Failure reads as not single. */
+export function isSingleDirectory(repoDir: string): boolean {
+  try {
+    const paths = safeGit(repoDir, ["ls-files", "-z"], { maxBuffer: 256 * 1024 * 1024 }).split("\0").filter((p) => p !== "");
+    return paths.length > 0 && !paths.some((p) => p.includes("/"));
+  } catch {
+    return false;
+  }
+}
+
 /** Directories (within maxDepth) holding a tracked file; a new package arrives as a new directory. */
 export function shallowDirs(repoDir: string): string[] {
   return [...new Set(listShallow(repoDir).map((p) => dirname(p)))].sort();

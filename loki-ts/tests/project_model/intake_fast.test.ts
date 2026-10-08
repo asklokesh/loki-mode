@@ -2,7 +2,7 @@
 // hung discovery session becomes a recorded fallback. The model call is always a stub.
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { projectApi } from "../../src/project_model/api.ts";
@@ -81,6 +81,42 @@ describe("FC-55 single-directory repo", () => {
     const t = { runner: "pytest", path: "test_sumlib.py" } as never;
     expect(commandFor(t, d, null).argv).toEqual(commandFor(t, d, rootModel).argv);
     expect(commandFor(t, d, null).cwd).toBe(d);
+  });
+  // Fixtures A and B: shallowDirs() truncates by depth and by 20,000 entries, so it must not decide "single".
+  const sessionsFor = async (d: string): Promise<number> => {
+    let calls = 0;
+    await discoverProjectModel(ctxFor(d, async () => { calls++; return ok; }), sig);
+    return calls;
+  };
+  test("A: a workspace package deeper than the shallow depth still runs discovery", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pm-fast-a-"));
+    dirs.push(d);
+    writeFileSync(join(d, "package.json"), '{"name":"root","workspaces":["libs/*/*"]}\n');
+    writeFileSync(join(d, "README.md"), "x\n");
+    mkdirSync(join(d, "libs", "shared", "ui"), { recursive: true });
+    writeFileSync(join(d, "libs", "shared", "ui", "package.json"), '{"name":"ui"}\n');
+    git(d, "init", "-q");
+    git(d, "add", "-A", "-f");
+    expect(await sessionsFor(d)).toBeGreaterThan(0);
+  });
+  test("B: a package hidden by the 20,000-entry truncation still runs discovery", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pm-fast-b-"));
+    dirs.push(d);
+    writeFileSync(join(d, "README.md"), "x\n");
+    writeFileSync(join(d, "package.json"), '{"name":"root"}\n');
+    mkdirSync(join(d, "web", "app"), { recursive: true });
+    writeFileSync(join(d, "web", "app", "package.json"), '{"name":"web"}\n');
+    mkdirSync(join(d, "assets", "img", "icons"), { recursive: true });
+    for (let i = 0; i < 20_050; i++) writeFileSync(join(d, "assets", "img", "icons", `i${i}.txt`), "");
+    git(d, "init", "-q");
+    git(d, "add", "-A", "-f");
+    expect(await sessionsFor(d)).toBeGreaterThan(0);
+  });
+  test("an empty repo (no tracked files) is not single-directory", async () => {
+    const d = mkdtempSync(join(tmpdir(), "pm-fast-e-"));
+    dirs.push(d);
+    git(d, "init", "-q");
+    expect(await sessionsFor(d)).toBeGreaterThan(0);
   });
   test("a multi-directory repo still runs discovery", async () => {
     const d = multiRepo();

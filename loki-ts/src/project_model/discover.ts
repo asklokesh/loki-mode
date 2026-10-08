@@ -5,8 +5,8 @@
 // The session goes through ctx.sessions (the engine10 provider path) on the run's own model (L1).
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { STAGE_BUDGETS, type RunContext } from "../engine10/types.ts";
-import { committedModelHash, computeKey, gather, isGitTracked, shallowDirs, type Gathered } from "./gather.ts";
+import { STAGE_BUDGETS, type RunContext, type SessionResult } from "../engine10/types.ts";
+import { committedModelHash, computeKey, gather, isGitTracked, isSingleDirectory, shallowDirs, type Gathered } from "./gather.ts";
 import { PROJECT_MODEL_SCHEMA, parseCached, unknownModel, validateAnswer, type ProjectModel } from "./schema.ts";
 
 /** Default ON; LOKI_E10_PROJECT_MODEL=0 is the opt-out (discovery is skipped and consumers see no model). */
@@ -110,7 +110,7 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
 
   // FC-55: every tracked file at the root means there is no package below it to learn; the repo-root
   // behavior consumers already have for an unknown model is exactly right, so no session is spent.
-  if (dirs.length === 1 && dirs[0] === ".") return { model: unknownModel("", "single-directory repo"), cached: false, attempts: 0, owner: "harness" };
+  if (isSingleDirectory(ctx.repoDir)) return { model: unknownModel("", "single-directory repo"), cached: false, attempts: 0, owner: "harness" };
 
   const deadline = Date.now() + (opts.budgetS ?? Infinity) * 1000;
   const g = gather(ctx.repoDir);
@@ -129,19 +129,23 @@ export async function discoverProjectModel(ctx: RunContext, signal: AbortSignal,
     signal.addEventListener("abort", onAbort, { once: true });
     let timer: ReturnType<typeof setTimeout> | undefined;
     const hung = new Promise<"hung">((res) => { timer = setTimeout(() => res("hung"), hardMs); });
-    const run = ctx.sessions.run({
-      stage: "intake",
-      brief: buildBrief(g, answerPath, errors),
-      tier: "development",
-      iterationId: `${ctx.runId}-project-model${attempt > 1 ? "-retry" : ""}`,
-      limitS,
-      signal: abort.signal,
-      cwd: ctx.repoDir,
-    });
-    run.catch(() => undefined);
-    const raced = await Promise.race([run, hung]);
-    clearTimeout(timer);
-    signal.removeEventListener("abort", onAbort);
+    let raced: SessionResult | "hung";
+    try {
+      const run = ctx.sessions.run({
+        stage: "intake",
+        brief: buildBrief(g, answerPath, errors),
+        tier: "development",
+        iterationId: `${ctx.runId}-project-model${attempt > 1 ? "-retry" : ""}`,
+        limitS,
+        signal: abort.signal,
+        cwd: ctx.repoDir,
+      });
+      run.catch(() => undefined);
+      raced = await Promise.race([run, hung]);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    }
     if (raced === "hung") {
       abort.abort();
       const reason = `owner=provider: the discovery session hung past ${Math.round(hardMs / 1000)}s and was abandoned`;
