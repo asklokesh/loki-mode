@@ -1482,6 +1482,7 @@ run_test "a green doctor never recommends a command that exits 2" "$SCRIPT_DIR/t
 run_test "analytics opt-in has a writer (the funnel can fire)" "$SCRIPT_DIR/test-telemetry-analytics-toggle.sh"
 run_test "help discoverability (every command reachable)" "$SCRIPT_DIR/test-help-discoverability.sh"
 run_test "no help topic names a removed surface or a version stamp" "timeout -k 10 240 bash $SCRIPT_DIR/test-help-no-removed-surfaces.sh"
+run_test "start help does not advertise refused flags" "timeout -k 10 120 bash $SCRIPT_DIR/test-help-start-flags.sh"
 run_test "assess runtime detection (declared, never guessed)" "$SCRIPT_DIR/test-assess-runtime-detection.sh"
 run_test "provider model scoping (global tier var must not leak)" "$SCRIPT_DIR/test-provider-model-scoping.sh"
 run_test "model catalog is a single source of truth" "$SCRIPT_DIR/test-model-catalog-single-source.sh"
