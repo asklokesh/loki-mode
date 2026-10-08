@@ -235,11 +235,11 @@ Architect: opus. Source: the founder directive (2026-09-30, from building to pro
   - The last line is exactly one of:
     - `Ready: <provider> (<model>), receipts signed (kid <8>)`
     - the one blocking reason.
-- Files: loki-ts/src/commands/doctor.ts, autonomy/loki (cmd_doctor only, for bash parity), loki-ts/tests/commands/doctor.test.ts, tests/test-doctor-providers.sh, tests/test-doctor-optional-skill-not-blocking.sh, tests/test-doctor-blocker-parity.sh.
+- Files: loki-ts/src/commands/doctor.ts, autonomy/loki (cmd_doctor only, for bash parity), loki-ts/tests/commands/doctor.test.ts, tests/test-doctor-providers.sh, tests/test-doctor-optional-skill-not-blocking.sh, tests/test-doctor-single-impl.sh (replaces the deleted tests/test-doctor-blocker-parity.sh).
 - Wall check:
   - A HOME with a broken ~/.cline skill symlink and LOKI_PROVIDER=claude: doctor exits 0 and prints one Ready line.
   - With claude missing, it exits non-zero and names the blocker.
-- Commands: `cd loki-ts && bun test tests/commands/doctor.test.ts && cd .. && bash tests/test-doctor-providers.sh && bash tests/test-doctor-optional-skill-not-blocking.sh && bash tests/test-doctor-blocker-parity.sh`
+- Commands: `cd loki-ts && bun test tests/commands/doctor.test.ts && cd .. && bash tests/test-doctor-providers.sh && bash tests/test-doctor-optional-skill-not-blocking.sh && bash tests/test-doctor-single-impl.sh`
 - Tier: MEDIUM. Budget: net 0 or less.
 - Depends: A-122 (doctor.ts, autonomy/loki). Wave 3.
 

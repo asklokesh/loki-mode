@@ -40,16 +40,30 @@ done
 
 run() { env -i HOME="$HOME_DIR" PATH="$SHIM" TERM=dumb LOKI_NO_BROWSER=1 "$@"; }
 
-# (i) route-independent output
+# (i) LOKI_LEGACY_BASH=1 and the default route print identical output except the
+# Runtime route lines, which must report the route the user selected.
 run "$REPO_ROOT/bin/loki" doctor >"$T/default.out" 2>"$T/default.err"; rc_default=$?
 run LOKI_LEGACY_BASH=1 "$REPO_ROOT/bin/loki" doctor >"$T/legacy.out" 2>"$T/legacy.err"; rc_legacy=$?
-# Free disk space moves between the two runs on a busy host; mask the number.
-sed -E -i.bak 's/Disk space: [0-9]+GB/Disk space: NGB/' "$T/default.out" "$T/legacy.out"
-if [ -s "$T/default.out" ] && cmp -s "$T/default.out" "$T/legacy.out" && [ "$rc_default" = "$rc_legacy" ]; then
-    ok "(i) LOKI_LEGACY_BASH=1 doctor is byte-identical to the default route (rc $rc_default)"
+# Free disk space moves between runs on a busy host; mask the number. Then drop
+# the two route-reporting lines before comparing.
+for f in default legacy; do
+    sed -E 's/Disk space: [0-9]+GB/Disk space: NGB/' "$T/$f.out" \
+        | grep -v -e 'Active runtime:' -e 'LOKI_LEGACY_BASH set:' >"$T/$f.cmp"
+done
+if [ -s "$T/default.cmp" ] && cmp -s "$T/default.cmp" "$T/legacy.cmp" && [ "$rc_default" = "$rc_legacy" ]; then
+    ok "(i) LOKI_LEGACY_BASH=1 doctor is identical to the default route except the Runtime route lines (rc $rc_default)"
 else
-    bad "(i) routes differ (rc $rc_default vs $rc_legacy)"
-    diff "$T/default.out" "$T/legacy.out" | head -10
+    bad "(i) routes differ beyond the Runtime route lines (rc $rc_default vs $rc_legacy)"
+    diff "$T/default.cmp" "$T/legacy.cmp" | head -10
+fi
+if grep -q 'Active runtime: Bash (autonomy/loki)' "$T/legacy.out" \
+   && grep -q 'WARN.*LOKI_LEGACY_BASH set: shim routes every command to autonomy/loki (bash)' "$T/legacy.out" \
+   && ! grep -q 'LOKI_LEGACY_BASH set:' "$T/default.out" \
+   && ! grep -q 'Active runtime: Bash' "$T/default.out"; then
+    ok "(i) LOKI_LEGACY_BASH=1 reports the Bash runtime and prints the WARN; the default route does neither"
+else
+    bad "(i) runtime route lines wrong under LOKI_LEGACY_BASH"
+    grep -A2 'Runtime route' "$T/legacy.out" | sed 's/\x1b\[[0-9;]*m//g' | head -5
 fi
 
 # (ii) no second doctor body
@@ -95,6 +109,32 @@ case "$last" in
         ;;
     *) bad "(v) last line is not a bun-failed diagnostic: $last"; head -20 "$T/v.out" ;;
 esac
+
+# (vi) bun absent from PATH and from the install: minimal fallback, never a crash.
+# Run a COPY of the CLI with no node_modules so the @oven fallback cannot find bun.
+NB="$T/nobun"
+mkdir -p "$NB/bin"
+cp -R "$REPO_ROOT/autonomy" "$NB/autonomy" 2>/dev/null
+cp "$REPO_ROOT/bin/loki" "$NB/bin/loki"
+cp "$REPO_ROOT/VERSION" "$REPO_ROOT/package.json" "$NB/" 2>/dev/null || true
+NBSHIM="$T/nbshim"
+mkdir -p "$NBSHIM"
+for b in "$SHIM"/*; do
+    [ "$(basename "$b")" = "bun" ] || ln -sf "$(readlink "$b")" "$NBSHIM/$(basename "$b")"
+done
+env -i HOME="$HOME_DIR" PATH="$NBSHIM" TERM=dumb LOKI_NO_BROWSER=1 "$NB/bin/loki" doctor >"$T/vi.out" 2>&1; rc=$?
+last="$(tail -n 1 "$T/vi.out")"
+case "$last" in
+    *"bun missing"*)
+        if [ "$rc" = "1" ]; then ok "(vi) no bun: rc 1, last line: $last"; else bad "(vi) no bun: rc=$rc"; fi ;;
+    *) bad "(vi) no bun: last line is not 'bun missing': $last"; head -10 "$T/vi.out" ;;
+esac
+env -i HOME="$HOME_DIR" PATH="$NBSHIM" TERM=dumb LOKI_NO_BROWSER=1 "$NB/bin/loki" doctor --json >"$T/vi.json" 2>/dev/null; rc=$?
+if [ "$rc" = "1" ] && jq -e '.route == "unavailable" and .summary.ok == false' "$T/vi.json" >/dev/null 2>&1; then
+    ok "(vi) no bun: --json parses with route unavailable"
+else
+    bad "(vi) no bun: --json rc=$rc or not parseable"; head -c 300 "$T/vi.json"
+fi
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

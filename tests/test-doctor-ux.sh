@@ -32,8 +32,19 @@ echo ""
 # (so the AI Providers section reports every provider as missing) and run
 # doctor against it. This deterministically exercises the C1 missing-provider
 # path regardless of what is installed on the host.
+_BUN_SRC="$(command -v bun 2>/dev/null || true)"
+if [ -z "$_BUN_SRC" ]; then
+    for _c in "$REPO_ROOT"/node_modules/@oven/bun-*/bin/bun "$REPO_ROOT"/node_modules/bun/bin/bun.exe; do
+        [ -x "$_c" ] && { _BUN_SRC="$_c"; break; }
+    done
+fi
+if [ -z "$_BUN_SRC" ]; then
+    echo "SKIP: bun is not available on this host (PATH or node_modules); doctor is bun-only, so this suite cannot run"
+    exit 0
+fi
 SANDBOX_BIN="$(mktemp -d)/bin"
 mkdir -p "$SANDBOX_BIN"
+ln -sf "$_BUN_SRC" "$SANDBOX_BIN/bun"
 for t in bash sh env node python3 jq git curl df awk sed tr head tail cut grep \
          readlink dirname uname cat printf docker npm pip; do
     src="$(command -v "$t" 2>/dev/null || true)"

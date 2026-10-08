@@ -14039,8 +14039,8 @@ cmd_doctor() {
         return $?
     fi
 
-    # Doctor is route-independent: the legacy-bash switch must not change its output.
-    unset LOKI_LEGACY_BASH
+    # LOKI_LEGACY_BASH stays set: doctor.ts reads it to report the bash runtime
+    # and print the warning; it never re-routes on it.
     _loki_bun_delegate doctor "$@" || true
 
     # Reached only when the delegate could not exec.

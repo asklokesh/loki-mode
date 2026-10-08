@@ -1239,8 +1239,13 @@ async function runText(): Promise<number> {
   process.stdout.write(`${CYAN}Runtime route:${NC}\n`);
   const isBun = (process.versions as Record<string, string | undefined>)["bun"] !== undefined;
   const argv0 = process.argv[0] ?? "(unknown)";
-  process.stdout.write(`  ${badge("pass")}  Active runtime: ${isBun ? "Bun" : "Node"} (${argv0})\n`);
-  if (process.env["LOKI_LEGACY_BASH"] === "1" || process.env["LOKI_LEGACY_BASH"] === "true") {
+  // With LOKI_LEGACY_BASH set the user's `loki` is the bash shim target, which
+  // delegates here, so the route they are on is bash even though this process is
+  // Bun. Report what they selected, not the delegate's engine.
+  const legacyBash = process.env["LOKI_LEGACY_BASH"] === "1" || process.env["LOKI_LEGACY_BASH"] === "true";
+  const runtimeLabel = legacyBash ? "Bash (autonomy/loki)" : `${isBun ? "Bun" : "Node"} (${argv0})`;
+  process.stdout.write(`  ${badge("pass")}  Active runtime: ${runtimeLabel}\n`);
+  if (legacyBash) {
     process.stdout.write(`  ${badge("warn")}  LOKI_LEGACY_BASH set: shim routes every command to autonomy/loki (bash)\n`);
   }
   if (process.env["LOKI_TS_ENTRY"]) {
