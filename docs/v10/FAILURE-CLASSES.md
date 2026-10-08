@@ -694,3 +694,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: every other optional field in validateAnswer (commands.* null, ui.boot null, install, dependsOn) already accepts its empty form; ui.cite was the only citation demanded for an absent claim. Consumers of an unknown model (loadProjectApi in verify, wall packageOf, implement, run_cap, visual evidence, testmap, before_after) all resolve to null and keep repo-root behavior; commandFor takes its runner command from the harness, and a root-only model never changes it.
 - Mechanism: (1) ui.cite is checked only when ui.present is true (a supplied cite is still verified). (2) discoverProjectModel returns unknownModel("", "single-directory repo") with no session when shallowDirs is exactly ["."], after the committed and cached checks. (3) Each discovery session is raced against its limit plus 5s; a hang aborts the session, emits `project_model.fallback`, and returns an unknown model with owner=provider and no retry. Session ceiling 120s to 60s.
 - Fixture: loki-ts/tests/project_model/intake_fast.test.ts. Red on origin/main (3 of 7 fail incl. the hang case), green after.
+
+## FC-82 A live-server E2E suite failed collection on a CI runner without its client libraries (RED-PURPLE)
+- User saw: Tests red on main 082cd57a4 (run 37848611813, shard 4): `FAIL rc=2: py_test tests/docker/test_purple_lab.py`, `ModuleNotFoundError: No module named 'requests'`.
+- Law: a test needing an optional dependency or a live service must skip honestly, never error at collection (same family as FC-73 baseline rule).
+- Cause (measured): the Purple Lab server still exists (web-app/server.py, autonomy/loki 'loki web', deprecated v7.44.0), so the suite is not stale. It hit `import requests` at module top on a runner without requests, and would also need a server on localhost:57375 that CI never starts.
+- Siblings swept: tests/docker/test_polling.py imports checked, no unguarded optional import of this kind.
+- Mechanism: pytest.importorskip for pytest_asyncio, requests, websockets plus a module-level skip when BASE_URL is unreachable.
+- Fixture: `python3 -m pytest -q tests/docker/test_purple_lab.py` with no server exits 0 reporting a skip; before the fix it exited 2 on a runner without requests.
