@@ -680,3 +680,11 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: the FC-64 ratchet covers the repo-wide count; this suite now joins the enforced family.
 - Mechanism: here-strings (`grep -q ... <<<"$var"`) at all five sites; tests/test-sigpipe-guard.sh section 2 now enforces the suite.
 - Fixture: tests/test-sigpipe-guard.sh against the pre-fix copy of the suite fails (5 legacy lines, 3 passed 1 failed); against the fixed suite 4 passed 0 failed.
+
+## FC-85 FC-71 changed the promote smoke contract but left the older sibling test stale (RED-NEXTTAG)
+- User saw: CI Tests red on main 082cd57a4, suite "release publishes to npm next; promote.yml gates latest on the first-run gate (A-01)": 3 failed, 60 passed in tests/test_release_next_tag.py.
+- Law: a contract change updates every test that pins the old contract; a guard is rewritten to the new contract, never deleted or weakened.
+- Cause (measured): FC-71 (04905f46c) intentionally taught promote.yml's smoke gate to also accept a workflow_run-event run whose head_sha equals the released commit. Three tests still asserted the old rule (head_sha is never a key; untitled workflow_run runs fail closed; no ".head_sha" in the select). The PROMOTE-SMOKE-SHA merge ran only its own direct suite (test-promote-smoke-sha.sh); the sibling pytest was already registered in tests/run-all-tests.sh and tests/shard-durations.tsv, so the full-suite CI Tests was the first to report it.
+- Siblings swept: nightly and Tests gates in promote.yml (structure tests PromoteNightlyGate unchanged and green); no other test greps promote.yml for ".head_sha".
+- Mechanism: the tests now assert the new contract: head_sha counts only with event == "workflow_run" and equality to the released commit; dispatch, push and schedule events, a different head_sha, and an empty list still fail closed; the reader test requires exactly one .head_sha, inside the workflow_run clause.
+- Fixture: tests/test_release_next_tag.py. Mutation: removing the event restriction in promote.yml turns 3 tests red; restored it is 64 passed.

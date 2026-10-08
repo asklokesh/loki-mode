@@ -378,16 +378,28 @@ class PromoteGateBehavior(unittest.TestCase):
     def test_smoke_green_passes(self):
         self.assertPass(self._s([self._smk(1, "success")]))
 
-    def test_smoke_head_sha_is_not_the_key(self):
-        # Real smoke runs carry main HEAD in head_sha; only the title names the release.
-        self.assertBlock(self._s([self._smk(1, "success", title_sha=self.B, head_sha=self.A)]))
+    def test_smoke_head_sha_is_only_a_key_for_release_triggered_runs(self):
+        # FC-71: a workflow_run-event smoke at the released head_sha counts even with a
+        # legacy title; any other event (dispatch, push, schedule) never does.
+        self.assertPass(self._s([self._smk(1, "success", title_sha=self.B, head_sha=self.A)]))
+        for ev in ("workflow_dispatch", "push", "schedule"):
+            o = self._smk(1, "success", title_sha=self.B, head_sha=self.A)
+            o["event"] = ev
+            self.assertBlock(self._s([o]))
+
+    def test_smoke_head_sha_must_equal_the_released_commit(self):
+        self.assertBlock(self._s([self._smk(1, "success", title_sha=self.B, head_sha=self.C)]))
 
     def test_smoke_title_match_ignores_head_sha(self):
         self.assertPass(self._s([self._smk(1, "success", title_sha=self.A, head_sha=self.U)]))
 
     def test_smoke_untitled_runs_fail_closed(self):
-        o = self._run_obj(1, "success", self.A, event="workflow_run")
-        self.assertBlock(self._s([o]))
+        # Untitled runs pass only as a Release-triggered run at the released head_sha.
+        self.assertPass(self._s([self._run_obj(1, "success", self.A, event="workflow_run")]))
+        self.assertBlock(self._s([self._run_obj(1, "success", self.C, event="workflow_run")]))
+        self.assertBlock(self._s([self._run_obj(1, "success", self.A, event="workflow_dispatch")]))
+        self.assertBlock(self._s([self._run_obj(1, "success", self.A, event="schedule")]))
+        self.assertBlock(self._s([]))
 
     def test_smoke_dispatched_run_matches_by_version(self):
         self.assertPass(self._s([self._smk(1, "success", title="Post-Release Smoke v1.2.3")]))
@@ -438,7 +450,10 @@ class SmokeRunNameContract(unittest.TestCase):
         self.assertIn("format('v{0}', inputs.version)", expr)
         self.assertIn('.display_title == "%s\'"${GITHEAD}"\'"' % prefix, self.select)
         self.assertIn('.display_title == "%sv\'"${VERSION}"\'"' % prefix, self.select)
-        self.assertNotIn(".head_sha", self.select.split("--jq", 1)[1].split("select(", 1)[1])
+        # FC-71: head_sha may match only inside the Release-triggered (workflow_run) clause.
+        sel = self.select.split("--jq", 1)[1].split("select(", 1)[1]
+        self.assertEqual(sel.count(".head_sha"), 1)
+        self.assertIn('(.event == "workflow_run" and .head_sha == "\'"${GITHEAD}"\'")', sel)
 
 
 class PromoteNightlyGate(unittest.TestCase):
