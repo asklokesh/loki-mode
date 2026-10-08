@@ -1,4 +1,4 @@
-// MW-2: LOKI_E10_FIX_RESUME (default off). A fix round resumes the implement session; every failure path
+// MW-2 / CH-03: LOKI_E10_FIX_RESUME (default off; =1 opts in; CH-03 flips the default after RECEIPT-TRUTH). A fix round resumes the implement session; every failure path
 // starts fresh and records why. Mocked sessions only: no real model, no query().
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -49,7 +49,7 @@ const impl = { diff_stat: "1 file", model: "sonnet", session_id: "sess-impl" };
 const run = (c: RunContext) => fixStage.run(c, new AbortController().signal);
 
 describe("fix resume (MW-2)", () => {
-  test("flag off reproduces the old behaviour: one fresh session, full brief, no resume option", async () => {
+  test("flag unset reproduces the old behaviour: one fresh session, full brief, no resume option", async () => {
     const s = new Fake(() => ok);
     const r = await run(ctxFor(s, { intake: { task: "do it" }, verify: { failures_grouped: groups }, implement: impl }));
     expect(s.calls).toHaveLength(1);
