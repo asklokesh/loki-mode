@@ -73,6 +73,10 @@ mkdir -p "$BASE/loki-ts/dist" "$BASE/autonomy" "$BASE/wiki" "$BASE/web-app/src/c
   printf 'guide 1.2.3, pins lib ^21.2.3\n' > CLAUDE.md
   printf 'var V="1.2.3";\nconsole.log(V);\n//# debugId=aaaa-1111\n' > loki-ts/dist/loki.js
   printf 'Loki 1.2.3\n' > README.md
+  mkdir -p helm/loki-mode deploy/helm/autonomi docs
+  printf 'name: x\nversion: 0.1.0\nappVersion: "1.2.3"\n' > helm/loki-mode/Chart.yaml
+  printf 'name: a\nversion: 0.1.0\nappVersion: "1.2.3"\n' > deploy/helm/autonomi/Chart.yaml
+  printf 'Generated for v1.2.3. Do not edit by hand.\n' > docs/CLI-REFERENCE.md
   printf 'echo hi\n' > autonomy/run.sh
   printf '<span>\n  v1.2.3\n</span>\n' > web-app/src/components/Footer.tsx
   git add -A && gitc commit -q -m base
@@ -119,6 +123,8 @@ not-a-push|0|pull_request|bump_core 1.2.4
 footer-version-only|1|push|bump_core 1.2.4; printf '<span>\n  v1.2.4\n</span>\n' > web-app/src/components/Footer.tsx
 footer-beyond-version|0|push|bump_core 1.2.4; printf '<span>\n  v1.2.4 beta\n</span>\n' > web-app/src/components/Footer.tsx
 dep-spec-collateral|1|push|printf '1.2.4\n' > VERSION; printf 'guide 1.2.4, pins lib ^21.2.4\n' > CLAUDE.md
+charts-and-cli-ref-bump|1|push|printf '1.2.4\n' > VERSION; printf 'name: x\nversion: 0.1.0\nappVersion: "1.2.4"\n' > helm/loki-mode/Chart.yaml; printf 'name: a\nversion: 0.1.0\nappVersion: "1.2.4"\n' > deploy/helm/autonomi/Chart.yaml; printf 'Generated for v1.2.4. Do not edit by hand.\n' > docs/CLI-REFERENCE.md
+chart-beyond-version|0|push|printf '1.2.4\n' > VERSION; printf 'name: x\nversion: 0.2.0\nappVersion: "1.2.4"\n' > helm/loki-mode/Chart.yaml
 EOF
 
 echo "== parity: release.yml STEP 1 vs scripts/ci/version-bump-only.sh =="
@@ -149,6 +155,50 @@ fi
 # in the real incident). That is the v9.8.0 jest
 # incident, and why the WIRING section requires the consistency checks to run
 # on every push, skipped or not.
+
+echo "== FC-70: every file release.sh --bump-only writes is allowlisted =="
+# Derived, not hand-listed: slot targets in bump_all_version_files plus the
+# generate-stale-zero.sh targets (charts, CLI reference). README.md is excluded
+# on purpose: its generated block carries no version.
+DERIVED="$WORK/derived-paths.txt"
+{
+  # shellcheck disable=SC2016  # literal $ROOT_DIR is the pattern being matched
+  awk '/^bump_all_version_files\(\)/{f=1} f&&/^}/{f=0} f' "$REPO_ROOT/scripts/release.sh" \
+    | sed -n 's|.*"\$ROOT_DIR/\([^"]*\)".*|\1|p' | grep -v '^scripts/'
+  ( cd "$REPO_ROOT" && ls helm/loki-mode/Chart.yaml deploy/helm/*/Chart.yaml 2>/dev/null )
+  grep -o 'docs/CLI-REFERENCE.md' "$REPO_ROOT/scripts/generate-stale-zero.sh" | head -n 1
+  echo loki-ts/dist/loki.js
+} | sort -u > "$DERIVED"
+if [ "$(wc -l < "$DERIVED" | tr -d ' ')" -ge 20 ]; then
+  ok "derived $(wc -l < "$DERIVED" | tr -d ' ') bump paths from release.sh and generate-stale-zero.sh (floor 20)"
+else
+  bad "derivation found only $(wc -l < "$DERIVED" | tr -d ' ') paths; extraction is vacuous"
+fi
+allow_of() {  # $1 = file; prints the ALLOWLIST entries one per line
+  awk '/ALLOWLIST = \{/{f=1;next} f&&/^ *\}/{f=0} f' "$1" | grep -o '"[^"]*"' | tr -d '"' | sort -u
+}
+for src in "$RELEASE_YML" "$GATE_SH"; do
+  allow_of "$src" > "$WORK/allow.txt"
+  missing="$(comm -23 "$DERIVED" "$WORK/allow.txt" | tr '\n' ' ')"
+  if [ -z "$missing" ] && [ -s "$WORK/allow.txt" ]; then
+    ok "$(basename "$src"): ALLOWLIST covers every derived bump path"
+  else
+    bad "$(basename "$src"): ALLOWLIST lacks: $missing"
+  fi
+done
+
+echo "== FC-70: replay v11.3.3 (54a519a22 -> eee891534) =="
+RP=54a519a22; RS=eee891534
+if git -C "$REPO_ROOT" cat-file -e "${RP}^{commit}" 2>/dev/null && git -C "$REPO_ROOT" cat-file -e "${RS}^{commit}" 2>/dev/null; then
+  awk '/<<.PYEOF.$/{f=1;next} /^          PYEOF$/{f=0} f' "$RELEASE_YML" | sed 's/^          //' > "$WORK/replay.py"
+  if ( cd "$REPO_ROOT" && python3 "$WORK/replay.py" "$RP" "$RS" >/dev/null 2>"$WORK/replay.err" ); then
+    ok "normalizer returns eligible (rc 0) for 54a519a22 -> eee891534"
+  else
+    bad "normalizer rejects the v11.3.3 bump: $(cat "$WORK/replay.err")"
+  fi
+else
+  echo "  [SKIP] replay objects not present in this clone (shallow); static derivation above still guards"
+fi
 
 echo "== gate: parent Tests verdict =="
 FAKEBIN="$WORK/fakebin"

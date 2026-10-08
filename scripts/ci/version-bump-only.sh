@@ -47,6 +47,8 @@ ALLOWLIST = {
     "docs/INSTALLATION.md", "wiki/Home.md", "wiki/_Sidebar.md",
     "wiki/API-Reference.md", "web-app/src/components/Footer.tsx",
     "web-app/src/components/WhatsNew.tsx",
+    "helm/loki-mode/Chart.yaml", "deploy/helm/autonomi/Chart.yaml",
+    "deploy/helm/control-plane/Chart.yaml", "docs/CLI-REFERENCE.md",
 }
 REGULAR_MODES = {"100644", "100755"}
 VERSION_RE = re.compile(rb"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
