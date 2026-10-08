@@ -6424,22 +6424,35 @@ except Exception:
         fi
     fi
 
-    # v7.82: completion-aware one-liner. When a finished run left a completion
-    # record, show its outcome and point at \`loki why\` for the full story. Reads
-    # the persisted completion.json (no recompute); silent when absent.
-    if [ -f "$LOKI_DIR/state/completion.json" ]; then
-        local last_outcome
-        last_outcome=$(_LOKI_CJ="$LOKI_DIR/state/completion.json" python3 -c "
-import json, os
+    # 133-F4: newest sealed receipt's verdict, read from the receipt field only
+    # (never recomputed). Missing, empty or unparseable receipts never read as
+    # VERIFIED. This replaces the old completion.json one-liner (Bun never had it).
+    local receipt_line
+    receipt_line=$(_LOKI_RUNS="$LOKI_DIR/runs" python3 -c "
+import json, os, re
+runs = os.environ['_LOKI_RUNS']
 try:
-    d = json.load(open(os.environ['_LOKI_CJ']))
-    print(d.get('outcome', '') or '')
+    ids = sorted(d for d in os.listdir(runs) if os.path.isdir(os.path.join(runs, d)))
 except Exception:
-    print('')" 2>/dev/null)
-        if [ -n "$last_outcome" ]; then
-            echo -e "${DIM}Last run: ${last_outcome} - run 'loki why' for details${NC}"
-        fi
-    fi
+    ids = []
+if not ids:
+    print('Last run: no receipt (verdict NOT AVAILABLE)')
+else:
+    try:
+        d = json.load(open(os.path.join(runs, ids[-1], 'receipt.json')))
+        v = d['verdict']
+        h = d['receipt_sha256']
+        if not (isinstance(v, str) and re.fullmatch(r'[A-Z_]+', v) and isinstance(h, str)):
+            raise ValueError
+        h = h[7:] if h.startswith('sha256:') else h
+        if not re.fullmatch(r'[0-9a-f]{12,}', h):
+            raise ValueError
+        print('Last run: %s (receipt sha256:%s)' % (v, h[:12]))
+    except Exception:
+        print('Last run: receipt unreadable')
+" 2>/dev/null)
+    [ -n "$receipt_line" ] || receipt_line="Last run: receipt unreadable"
+    echo -e "${DIM}${receipt_line}${NC}"
 
     echo ""
     echo -e "${DIM}  Tip: loki analyze context show   - detailed token breakdown${NC}"
