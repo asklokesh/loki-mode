@@ -830,7 +830,9 @@ _w5() { # _w5 <step> <name> -> 0 iff all three doubt cases log full and export a
   # (d) not a train ref, and a train ref on a non-push event
   _mk_train "${2}d"
   _commit_file "$T_REPO" t.txt t
-  r="$(_run_step "$1" "$T_REPO" refs/heads/main push)"
+  # GITLEAKS-INCR: a main push now selects <previous tag>..SHA (covered by
+  # tests/test-gitleaks-incremental.sh), so the non-selected ref here is a slice branch.
+  r="$(_run_step "$1" "$T_REPO" refs/heads/slice-x push)"
   [ -z "$r" ] && grep -q '^gitleaks mode: full$' "$T_REPO.stepout" || return 1
   r="$(_run_step "$1" "$T_REPO" refs/heads/train/x workflow_dispatch)"
   [ -z "$r" ] && grep -q '^gitleaks mode: full$' "$T_REPO.stepout"
