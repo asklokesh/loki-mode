@@ -201,7 +201,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("modernize", "KEEP-MODERN", "both", "Code modernization", "Routed to engine10 modernize"),
   cmd("share", "KEEP-MODERN", "bash", "Share a run", "Engine-neutral"),
   cmd("assets", "KEEP-MODERN", "bash", "Export team assets", "Engine-neutral", { subcommands: [sub("export", "Export shareable assets", { positionals: [{ name: "file", type: "path" }] })] }),
-  cmd("export", "UPDATE", "bash", "Export session data", "Duplicates report export"),
+  cmd("export", "UPDATE", "bash", "Export session data", "Duplicates report export", { flags: [bool("--sarif", "Write findings.sarif for a run (SARIF 2.1.0)")] }),
   cmd("notify", "KEEP-MODERN", "bash", "Notifications", "Engine-neutral"),
   cmd("tour", "KEEP-MODERN", "bash", "See a sample result", "Onboarding"),
   cmd("welcome", "KEEP-MODERN", "bash", "First-run opener", "Onboarding"),

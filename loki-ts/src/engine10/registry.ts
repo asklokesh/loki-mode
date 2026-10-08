@@ -23,6 +23,7 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./session.ts": () => import("./session.ts"),
   "./supervisor.ts": () => import("./supervisor.ts"),
   "./eta.ts": () => import("./eta.ts"),
+  "./../commands/export_sarif.ts": () => import("../commands/export_sarif.ts"),
   "../e10ext/ship_hook.ts": () => import("../e10ext/ship_hook.ts"),
 };
 /** An unregistered specifier rejects like a missing file, so "not built yet" still works. */

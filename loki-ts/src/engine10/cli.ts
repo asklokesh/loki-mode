@@ -17,6 +17,7 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   status: { module: "status.ts", fn: "main" },
   verify: { module: "verify_cmd.ts", fn: "main" },
   keys: { module: "keys_cmd.ts", fn: "main" },
+  "export-sarif": { module: "../commands/export_sarif.ts", fn: "main" },
   dashboard: { module: "../runner/engine10_dashboard.ts", fn: "main" },
   modernize: { module: "modernize/cli.ts", fn: "main" },
   plan: { module: "plan_cmd.ts", fn: "main" },
@@ -32,6 +33,7 @@ const USAGE = `Usage:
   loki status [run-id]            latest run by default
   loki verify [--pubkey <file>] [run-id|receipt.json]  check receipt hashes and signature
   loki keys export                print the receipt-signing public key (JWK + kid)
+  loki export --sarif [run-id]    write .loki/runs/<id>/findings.sarif (SARIF 2.1.0)
   loki dashboard                  serve the local dashboard
   loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
   loki plan <task> --spec         write the acceptance criteria to .loki/specs/<slug>.md for you to edit
