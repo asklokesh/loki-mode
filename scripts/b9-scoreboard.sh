@@ -40,6 +40,19 @@
 #   Per-run usage fields (TSV columns 8-12; from .loki/metrics/result-cost-*.json for arms 2-4, from the
 #   claude JSON `usage` for arm 1): cache_read, cache_create, fresh_in, out, advisor_calls.
 #   --timeout SEC           per-run limit via timeout -k (default 600)
+#
+# B9-RAW-ARM (D91 COST-HALF and 10x metric owner): two-arm raw-vs-loki mode, same task text and model family.
+#   --ab                    arms `raw` (claude -p --output-format json, no Loki) and `loki` (loki start), n per arm
+#                           (default 3) on each fixture: trivial-sum, two-bug (generated, hidden checks copied in
+#                           after the arm finishes) and, when --repo/--base/--test-cmd are given, that real repo
+#                           as a third fixture. Raw usd is claude's total_cost_usd; loki usd and verdict come from
+#                           the run's receipt.json (cost.usd, verdict VERIFIED). A missing cost is NOT RECORDED.
+#   --dry                   alias of --dry-run; with --ab it uses recorded stubs (no keys, no network) for CI
+#   --model M               passed to the raw arm as --model and to loki as LOKI_SESSION_MODEL
+#   --version V             release label for the METRICS row and JSON
+#   --json-out FILE         the report JSON (cost, correctness and wall ratios, 95% bootstrap intervals, n)
+#   --ab-report TSV         no runs: report over an AB results TSV (arm fixture run solved verified wall usd);
+#                           with --json-out, --metrics-out, --version. Math lives in scripts/b9-ab-report.py.
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
 # Dry-run fixture: scripts/b9-fixtures/trivial-sum.sh (also used for the T10 supply-guard cost measurement,
@@ -49,10 +62,16 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="sum() skips the first element; fix it"
-DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE=""
+DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE="" AB=0 ABREPORT="" JSONOUT="" VERSION_LABEL="unknown" MODEL="" ABFIX=""
 while [ $# -gt 0 ]; do
     case "$1" in
-        --dry-run) DRY=1 ;;
+        --dry-run|--dry) DRY=1 ;;
+        --ab) AB=1 ;;
+        --ab-report) ABREPORT="${2:-}"; shift ;;
+        --json-out) JSONOUT="${2:-}"; shift ;;
+        --version) VERSION_LABEL="${2:-}"; shift ;;
+        --model) MODEL="${2:-}"; shift ;;
+        --fixtures) ABFIX="${2:-}"; shift ;;
         --repo) REPO="${2:-}"; shift ;;
         --base) BASE="${2:-}"; shift ;;
         --test-cmd) TESTCMD="${2:-}"; shift ;;
@@ -259,6 +278,17 @@ if [ -n "$EMIT" ]; then
     exit 0
 fi
 
+ab_report() { # ab_report TSV
+    [ -n "$JSONOUT" ] || { echo "--ab-report needs --json-out FILE" >&2; return 2; }
+    python3 -I "$REPO_ROOT/scripts/b9-ab-report.py" "$1" --json-out "$JSONOUT" --version "$VERSION_LABEL" \
+        ${METRICS_OUT:+--metrics-out "$METRICS_OUT"}
+}
+if [ -n "$ABREPORT" ]; then
+    [ -f "$ABREPORT" ] || { echo "--ab-report needs an existing results TSV: $ABREPORT" >&2; exit 2; }
+    ab_report "$ABREPORT"
+    exit $?
+fi
+
 if [ -n "$SUMMARIZE" ]; then
     [ -f "$SUMMARIZE" ] || { echo "--summarize needs an existing results TSV: $SUMMARIZE" >&2; exit 2; }
     summarize_results "$SUMMARIZE"
@@ -275,9 +305,11 @@ mkdir -p "$T/home" "$T/bin"
 RUN_TSV="$T/run-results.tsv"; : > "$RUN_TSV"
 
 if [ "$DRY" -eq 1 ]; then
-    [ -n "$N" ] || N=1
+    [ -n "$N" ] || { [ "$AB" -eq 1 ] && N=3 || N=1; }
     NAME="${NAME:-fixture}"
     TESTCMD="node --test"
+elif [ "$AB" -eq 1 ] && [ -z "$REPO" ]; then
+    [ -n "$N" ] || N=3
 elif [ -z "$REPO" ] || [ -z "$BASE" ] || [ -z "$TESTCMD" ]; then
     echo "real mode needs --repo, --base and --test-cmd (or use --dry-run)" >&2; exit 2
 else
@@ -294,6 +326,7 @@ if [ "$DRY" -eq 1 ]; then
 #!/usr/bin/env bash
 case " $* " in *" --help "*|*" --version "*) echo "claude stub 2.1.285 --settings --session-id --resume --model --dangerously-skip-permissions"; exit 0;; esac
 [ -f sum.js ] && sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
+[ -f stats.js ] && sed -i.bak -e 's/(xs.length-1)/xs.length/' -e 's/let m=0/let m=-Infinity/' stats.js && rm -f stats.js.bak
 mkdir -p .loki/signals; echo "fixed sum loop" > .loki/signals/COMPLETION_REQUESTED
 case " $* " in *" json "*) echo '{"type":"result","total_cost_usd": 0.0123}';; *) echo "stub claude done";; esac
 STUB
@@ -367,6 +400,87 @@ preflight() { # preflight arm
     fi
     return 0
 }
+
+
+# --- --ab: raw vs loki on the same task text (B9-RAW-ARM) -----------------------
+# receipt_fields DIR: TAB line `verified usd` from the newest .loki/runs/*/receipt.json (verified 1 only for verdict
+# VERIFIED; usd is NOT RECORDED when cost.usd is null, absent, not a number or <= 0, e.g. the unmetered CLI invoker).
+receipt_fields() {
+    python3 -I - "$1" <<'PY'
+import glob, json, os, sys
+fs = sorted(glob.glob(os.path.join(sys.argv[1], ".loki", "runs", "*", "receipt.json")), key=os.path.getmtime)
+v, u = 0, "NOT RECORDED"
+if fs:
+    try:
+        d = json.load(open(fs[-1]))
+        v = 1 if d.get("verdict") == "VERIFIED" else 0
+        x = (d.get("cost") or {}).get("usd")
+        if isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0:
+            u = round(x, 6)
+    except Exception:
+        pass
+print("%s\t%s" % (v, u))
+PY
+}
+
+run_ab() {
+    local LBL AB_TSV="${RESULTS_OUT:-$T/ab-results.tsv}" fixtures fx arm run W D H TASKF TESTF S OUT ARC WALL SOLVED UF USD VERIFIED RF
+    : > "$AB_TSV"
+    if [ -n "$ABFIX" ]; then fixtures="${ABFIX//,/ }"; else fixtures="trivial-sum two-bug"; fi
+    [ "$DRY" -eq 1 ] || [ -z "$REPO" ] || fixtures="$fixtures repo"
+    if [ "$DRY" -eq 1 ] && [ -z "${B9_LOKI:-}" ]; then
+        cat > "$T/bin/loki-stub" <<'STUB'
+#!/usr/bin/env bash
+[ -f sum.js ] && sed -i.bak 's/i *= *1/i = 0/' sum.js && rm -f sum.js.bak
+[ -f stats.js ] && sed -i.bak -e 's/(xs.length-1)/xs.length/' -e 's/let m=0/let m=-Infinity/' stats.js && rm -f stats.js.bak
+mkdir -p .loki/runs/r1
+printf '{"schema":"loki.v10.receipt/1","verdict":"VERIFIED","cost":{"usd":0.0456},"time":{"wall_s":1}}\n' > .loki/runs/r1/receipt.json
+echo "Cost: \$0.0456"
+STUB
+        chmod +x "$T/bin/loki-stub"; LOKI="$T/bin/loki-stub"
+    fi
+    if [ "$DRY" -eq 0 ] && ! preflight 1; then
+        echo "b9-scoreboard: raw arm BLOCKED: $PF_REASON" >&2; return 3
+    fi
+    local blocked=0
+    for fx in $fixtures; do
+        for run in $(seq 1 "$N"); do
+            for arm in raw loki; do
+                W="$T/ab-$fx-$arm-$run"; H="$W.hidden"; D="$W"; LBL="$fx"
+                case "$fx" in
+                    trivial-sum) bash "$REPO_ROOT/scripts/b9-fixtures/trivial-sum.sh" "$W" >/dev/null; TASKF="$TASK"; TESTF="node --test" ;;
+                    two-bug) bash "$REPO_ROOT/scripts/b9-fixtures/b9-ab-two-bug.sh" "$W" "$H" >/dev/null; TASKF="mean() and max() in stats.js return wrong results; fix both"; TESTF="cp $H/hidden.test.js . && node --test" ;;
+                    repo) mkdir -p "$W"; git clone -q --local "$REPO" "$W/repo" && git -C "$W/repo" checkout -q "$BASE"; D="$W/repo"; TASKF="$TASK"; TESTF="$TESTCMD"; LBL="${NAME:-repo}" ;;
+                    *) echo "b9-scoreboard: unknown fixture $fx" >&2; return 2 ;;
+                esac
+                S=$(date +%s); OUT="$T/ab-out-$LBL-$arm-$run.log"
+                if [ "$arm" = raw ]; then
+                    ( cd "$D" && timeout -k 10 "$TIMEOUT" claude -p "$TASKF" --dangerously-skip-permissions --output-format json ${MODEL:+--model "$MODEL"} ) < /dev/null > "$OUT" 2>&1
+                else
+                    ( cd "$D" && timeout -k 10 "$TIMEOUT" env ${MODEL:+LOKI_SESSION_MODEL="$MODEL"} "$LOKI" start "$TASKF" ) < /dev/null > "$OUT" 2>&1
+                fi
+                ARC=$?; WALL=$(( $(date +%s) - S ))
+                if [ "$ARC" -ne 0 ] && [ "$ARC" -ne 124 ] && [ "$ARC" -ne 137 ] \
+                    && [ -z "$(git -C "$D" status --porcelain -- . ':!.loki' 2>/dev/null)" ]; then
+                    echo "b9-scoreboard: $arm run $run on $fx BLOCKED: exit $ARC before any work: $(tail -c 200 "$OUT")" >&2
+                    blocked=$((blocked + 1)); continue
+                fi
+                SOLVED=0; ( cd "$D" && bash -c "$TESTF" ) > "$T/ab-test-$LBL-$arm-$run.log" 2>&1 && SOLVED=1
+                if [ "$arm" = raw ]; then
+                    UF=$(usage_fields claude "$OUT"); USD="${UF%%$'\t'*}"; VERIFIED="$SOLVED"
+                else
+                    RF=$(receipt_fields "$D"); VERIFIED="${RF%%$'\t'*}"; USD="${RF#*$'\t'}"
+                fi
+                case "$USD" in ''|*[!0-9.]*) USD="NOT RECORDED" ;; esac
+                printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$arm" "$LBL" "$run" "$SOLVED" "$VERIFIED" "$WALL" "$USD" >> "$AB_TSV"
+            done
+        done
+    done
+    [ "$blocked" -eq 0 ] || { echo "b9-scoreboard: $blocked BLOCKED run(s): this report does not count" >&2; return 3; }
+    [ -n "$JSONOUT" ] || JSONOUT="$T/ab-report.json"
+    ab_report "$AB_TSV"
+}
+if [ "$AB" -eq 1 ]; then run_ab; exit $?; fi
 
 FAILS=0 BLOCKED=0
 arm=1

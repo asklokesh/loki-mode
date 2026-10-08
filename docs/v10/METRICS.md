@@ -595,3 +595,15 @@ Cost per completed task for sonnet arms measured before this date used the old 3
 | 10.9.1 | BLOCKED | $0.75 | brief handicap, FC-19 class |
 | 10.10.3 | PARTIAL | $2.27 | 12m; full migration (83 files); backend 5855/5858 green; implement stopped at a 900s run cap and verify was skipped (FC-21); run e10-20261003T220847Z-78fa, main be0799f, reported by steering 22:08Z |
 | 10.10.5 | PARTIAL (CLI and receipt match) | $1.73 | run e10-20261003T233414Z-30ca, defaults, cap_s 2700, 12m05s, 2.42M tokens; implement 6m36s finished with no limit; verify, fix, verify ran; 77 files +4325/-2006; independent check: backend 5914 pass 0 fail 29 skip, tsc 0 errors; PARTIAL only from FC-22 (4 frontend tests over-selected, deps absent, honestly NOT PROVEN) and FC-23 (a Wall file failed the package tsc, TS1470); integration request-approval-race NOT PROVEN (needs DB). Zero false claims. |
+
+## B9 raw vs loki (D91 COST-HALF and 10x metric owner)
+
+`bash scripts/b9-scoreboard.sh --ab [--n 3] [--model M] --version V --json-out F --metrics-out docs/v10/METRICS.md`
+runs `claude -p` (raw) and `loki start` (loki) on the same task text. cost_ratio = (loki usd per VERIFIED task) /
+(raw usd per task solved), failed-run cost included; correctness_ratio = loki solve rate / raw solve rate, both judged by
+the same hidden checks; wall_ratio = mean loki wall / mean raw wall; 95% percentile bootstrap over runs within each
+(arm, fixture) cell. Raw usd is claude `total_cost_usd`; loki usd is receipt.json `cost.usd`. A missing cost reads NOT RECORDED.
+
+| Date | Run | Fixtures | Result |
+|---|---|---|---|
+| 2026-10-08T04:58Z | b9-ab n1-plumbing | trivial-sum | cost_ratio=0.92 correctness_ratio=1.00 wall_ratio=3.07 n=1/1, interval NOT COMPUTABLE. n=1 not significant: plumbing proof only (raw $0.1264 14s, loki $0.1157 43s, both solved, loki VERIFIED). |
