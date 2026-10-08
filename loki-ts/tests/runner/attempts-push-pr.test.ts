@@ -1,11 +1,11 @@
 // T5-ATTEMPTS-PR: the --attempts winner reaches a remote ONLY through engine10-push.sh push-pr (_loki_trusted_push).
 // Real git, a local bare pinned origin, planted hostile repo config in the winner worktree; no network.
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { productionDeps, runAttempts } from "../../src/runner/attempts.ts";
+import { pinnedOriginUsable, productionDeps, runAttempts } from "../../src/runner/attempts.ts";
 
 let root = "";
 const saved = { GH_TOKEN: process.env.GH_TOKEN, PATH: process.env.PATH };
@@ -143,6 +143,23 @@ describe("partial identity and pin preflight", () => {
     expect(ran).toBe(0);
     expect(lines.join("\n")).toMatch(/pinned origin/);
     expect(sh(repo, ["worktree", "list"]).stdout.trim().split("\n").length).toBe(1);
+  });
+});
+
+describe("preflight parity with push-pr", () => {
+  it("accepts and refuses the same origins push-pr does", () => {
+    const real = join(root, "par-real.git");
+    sh(root, ["init", "-q", "--bare", real]);
+    symlinkSync(root, join(root, "par-link"));
+    mkdirSync(join(root, "par-dir"), { recursive: true });
+    const nonbare = join(root, "par-nonbare");
+    mkdirSync(nonbare);
+    sh(nonbare, ["init", "-q"]);
+    const accept = [real, `${real}/`, join(root, "par-link", "par-real.git"), join(root, "par-dir", "..", "par-real.git"), realpathSync(real),
+      "https://github.com/o/r.git", "https://github.com/o/r", "git@github.com:o/r", "ssh://git@github.com/o/r/", "https://github.com/o/r/", "HTTPS://GitHub.com/o/r.git"];
+    const refuse = ["", nonbare, "relative/path.git", "https://github.com/o/r#x", "https://github.com/o/.r", "https://github.com/o/r..x", "https://github.com/o/r%41", "https://example.com/o/r.git", "/nonexistent/x.git"];
+    for (const o of accept) expect([o, pinnedOriginUsable(o)]).toEqual([o, true]);
+    for (const o of refuse) expect([o, pinnedOriginUsable(o)]).toEqual([o, false]);
   });
 });
 

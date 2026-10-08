@@ -8,7 +8,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
-import { safeGit } from "../util/safe_git.ts";
+import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { outcomeOf } from "../features/receipt_dsse.ts";
 
@@ -285,13 +285,11 @@ function attemptBranch(p: string): string {
   return `loki-attempt/${basename(dirname(p))}-${basename(p)}`;
 }
 
-const GITHUB_ORIGIN_RE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)[^/\s]+\/[^/\s]+?(?:\.git)?\/?$/;
-
-/** The same acceptance rule push-pr applies: a GitHub URL, or an absolute colon-free path that is itself a bare repo. */
+/** One source of truth: engine10-push.sh check-origin applies exactly the validation push-pr does (no network, no token). */
 export function pinnedOriginUsable(origin: string): boolean {
-  if (GITHUB_ORIGIN_RE.test(origin)) return true;
-  if (!origin.startsWith("/") || origin.includes(":")) return false;
-  try { return git(origin, ["rev-parse", "--is-bare-repository"]).trim() === "true" && resolve(git(origin, ["rev-parse", "--absolute-git-dir"]).trim()) === resolve(origin); } catch { return false; }
+  if (!origin) return false;
+  const env = { ...tokenFreeEnv(process.env), _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin };
+  return spawnSync("bash", [PUSH_SH, "check-origin"], { env, encoding: "utf8", timeout: 30_000 }).status === 0;
 }
 
 export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>, opts: { noPr?: boolean } = {}): AttemptDeps {
