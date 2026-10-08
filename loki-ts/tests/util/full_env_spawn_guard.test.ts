@@ -4,7 +4,7 @@
 // guard-allowlists/full-env-spawn.txt. Agent children must use tokenFreeEnv / withholdGithubTokens (util/safe_git.ts).
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { SRC, walk, rel, isComment, loadAllowlist, checkAllowlist } from "./_guard_lib.ts";
+import { SRC, walk, rel, isComment, loadAllowlist, checkCounts } from "./_guard_lib.ts";
 
 export const CALL = /\b(Bun\.spawn(Sync)?|spawn(Sync)?|execFile(Sync)?|execSync|exec)\s*\(/;
 const SAFE = /tokenFreeEnv|withholdGithubTokens|safeGit|workerEnv|cleanEnv|sanitizedEnv/;
@@ -24,9 +24,12 @@ export function violatingCalls(src: string): number[] {
 }
 
 test("no child spawn inherits or copies the full parent env unless allowlisted", () => {
-  const hits = walk(SRC).filter((f) => violatingCalls(readFileSync(f, "utf8")).length > 0).map(rel);
-  const r = checkAllowlist(hits, loadAllowlist("full-env-spawn.txt"));
-  expect(r).toEqual({ unlisted: [], stale: [], noReason: [] });
+  const counts: Record<string, number> = {};
+  for (const f of walk(SRC)) {
+    const n = violatingCalls(readFileSync(f, "utf8")).length;
+    if (n > 0) counts[rel(f)] = n;
+  }
+  expect(checkCounts(counts, loadAllowlist("full-env-spawn.txt"))).toEqual({ unlisted: [], mismatched: [], noReason: [] });
 });
 
 test("the detector flags a planted full-env spawn and accepts a token-free one", () => {

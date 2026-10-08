@@ -15,8 +15,9 @@ function importedBasenames(): Set<string> {
   const seen = new Set<string>();
   for (const f of srcFiles) {
     for (const m of readFileSync(f, "utf8").matchAll(importRe)) {
-      if (!m[1].startsWith(".")) continue;
-      seen.add(join(f, "..", m[1]).replace(/\.(ts|js)$/, ""));
+      const spec = m[1] ?? "";
+      if (!spec.startsWith(".")) continue;
+      seen.add(join(f, "..", spec).replace(/\.(ts|js)$/, ""));
     }
   }
   return seen;
