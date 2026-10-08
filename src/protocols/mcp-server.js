@@ -93,9 +93,17 @@ function getServerInfo() {
 
   return {
     name: 'loki-mode',
-    version: version,
-    protocolVersion: '2024-11-05'
+    version: version
   };
+}
+
+// Oldest to newest; the last entry is the fallback offered to unknown clients.
+const SUPPORTED_PROTOCOL_VERSIONS = ['2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'];
+
+function negotiateProtocolVersion(params) {
+  const requested = params && typeof params.protocolVersion === 'string' ? params.protocolVersion : null;
+  if (requested && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)) return requested;
+  return SUPPORTED_PROTOCOL_VERSIONS[SUPPORTED_PROTOCOL_VERSIONS.length - 1];
 }
 
 function getCapabilities() {
@@ -145,12 +153,14 @@ function handleRequest(request) {
   switch (method) {
     case 'initialize':
       result = {
+        protocolVersion: negotiateProtocolVersion(params),
         serverInfo: getServerInfo(),
         capabilities: getCapabilities()
       };
       break;
 
     case 'initialized':
+    case 'notifications/initialized':
       // Client acknowledgment -- no response needed
       return isNotification ? null : makeResult({}, id);
 
@@ -359,7 +369,7 @@ function main() {
 }
 
 // Export for testing
-module.exports = { handleRequest, getTools, getResources, getAuth, getServerInfo, main };
+module.exports = { SUPPORTED_PROTOCOL_VERSIONS, handleRequest, getTools, getResources, getAuth, getServerInfo, main };
 
 // Run if executed directly
 if (require.main === module) {
