@@ -837,3 +837,16 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   `tests/test-cp-redesign-images.sh` builds a fixture with an unlisted image,
   a ui-refs image and a banned name and asserts each fails.
   Run: `bash tests/test-cp-redesign-images.sh`.
+
+## D91 finding guards (review BLOCK classes become tests)
+
+- **Incident:** the same six review BLOCK classes recurred across trains and were caught only by human or agent reviewers.
+- **Guards** (all in `loki-ts/tests/util/`, each under 2s, picked up by `bun test tests/util`; allowlists in `loki-ts/tests/util/guard-allowlists/`, one `path | reason` per line, stale entries and missing reasons fail):
+  1. `raw_gh_spawn_guard.test.ts` (FC-25, FC-40): raw `gh` spawn in loki-ts/src, and raw `git push` / `gh pr create` in autonomy bash, outside the allowlist. Raw `git` in TS stays with `fc25_raw_spawn_guard.test.ts`. Known follow-up: autonomy/loki auto-PR paths push raw.
+  2. `start_flag_parity_guard.test.ts` (FC-37, FC-38): the `loki start` flag sets of bash `cmd_start` and Bun `start.ts` against the declared table `start-flags.txt`. Three real divergences are recorded (`--budget-limit`, `--no-pr`, `--session-model` are Bun-only).
+  3. `registration_list_guard.test.ts` (FC-32, FC-39): every module under src/commands and src/engine10/stages is imported somewhere, and every literal package.json files[] entry exists. Test-runner and shard lists stay with `scripts/structural-checks.sh` and `tests/test-shard-coverage.sh`. Known orphan: commands/status.ts.
+  4. `swarm_internal_read_guard.test.ts`: product code (loki-ts/src, autonomy/) naming docs/v10/BOARD.md, scripts/v10-* or .loki/v10-leader. Zero exceptions today.
+  5. `full_env_spawn_guard.test.ts` (FC-40): a spawn call site with no env or a bare process.env copy, unless the file is baselined. The baseline groups WORKER, UTILITY and SWEEP; SWEEP entries are the conversion backlog. Limit: an env variable built earlier than 14 lines above the call is not seen.
+  6. `model_output_regex_guard.test.ts` (L0, FC-36 family): regex exec/match on model-output variables under engine10. Baselined: xreview VERDICT and session sentinel parsing (follow-up to schema-checked JSON).
+- **The test that proves it fires:** each file plants a violation in the working tree during review (mutation run recorded in the slice report); `full_env_spawn_guard` and `model_output_regex_guard` also carry in-file detector self-tests.
+  Run: `cd loki-ts && bun test tests/util`.
