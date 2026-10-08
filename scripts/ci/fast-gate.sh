@@ -54,13 +54,14 @@ is_r0_path() {
 guards_for() {
     local f="$1" base
     base="${f##*/}"
+    # FC-54: options BEFORE `--`; after it --include is a file operand and the filter is silently dropped.
     # tests that name the exact path or the basename (docker/Dockerfile.control-plane
     # selects tests/test-control-plane.sh this way)
-    grep -rlF -- "$f" tests --include='test-*.sh' --include='test_*.py' 2>/dev/null
-    grep -rlF -- "$base" tests --include='test-*.sh' --include='test_*.py' 2>/dev/null
+    grep -rlF --include='test-*.sh' --include='test_*.py' -- "$f" tests 2>/dev/null
+    grep -rlF --include='test-*.sh' --include='test_*.py' -- "$base" tests 2>/dev/null
     case "$f" in
         .github/workflows/*)
-            grep -rlF -- ".github/workflows" tests --include='test-*.sh' --include='test_*.py' 2>/dev/null
+            grep -rlF --include='test-*.sh' --include='test_*.py' -- ".github/workflows" tests 2>/dev/null
             printf '%s\n' tests/test-shard-coverage.sh tests/test-registration-coverage.sh
             ;;
         docker/Dockerfile*)
