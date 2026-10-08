@@ -5,9 +5,9 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
-import { selectRelevantFiles } from "./plan.ts"; import { commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
+import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
-import { resumeAfterConflict } from "../../util/conflict_resume.ts";
+import { resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
 import { readSessionId } from "../../runner/session_resume.ts";
 import { routeEscalate, routeStart } from "../../runner/router/implement_route.ts";
 import { routerActive } from "../../runner/router/unit_model.ts";
@@ -55,6 +55,11 @@ export function restoreReadOnly(files: ReadOnlyFile[]): string[] {
   return reverted;
 }
 
+/** FC-43: the exact set verify.ts judges "empty diff" on; an unreadable tree is "not empty" so the resume never fires on a guess. */
+function treeIsEmpty(ctx: RunContext): boolean {
+  try { return changedFiles(ctx.repoDir, ctx.baseSha).length === 0; } catch { return false; }
+}
+
 export const implementStage: Stage = {
   name: "implement",
   targetS: 180,
@@ -91,6 +96,7 @@ export const implementStage: Stage = {
     const ids = [first.iterationId];
     if (rt && !signal.aborted) session = await routeEscalate(ctx, first, session, rt, ids); // triggers b/c: one redo on the next rung
     if (session.markers.specConflict && !session.killed) { const r = await resumeAfterConflict(ctx, first, session); session = r.session; ids.push(r.iterationId); } // FC-19: one correction, then the conflict is believed
+    if (!signal.aborted && !session.killed && session.exit === 0 && !session.markers.specConflict && !session.markers.alreadyDone && treeIsEmpty(ctx)) { const r = await resumeAfterEmptyDone(ctx, first, session); session = r.session; ids.push(r.iterationId); } // FC-43: one correction for a done exit with no change
 
     const testsReverted = restoreReadOnly(readOnly);
     const iterationId = ids[ids.length - 1]!;
