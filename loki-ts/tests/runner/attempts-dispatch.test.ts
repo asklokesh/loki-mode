@@ -53,13 +53,25 @@ process.exit(await runStart(a.slice(1)));
   return { root, repo, log, entry, keyFile };
 }
 
-function run(f: ReturnType<typeof fixture>, args: string[]) {
+function run(f: ReturnType<typeof fixture>, args: string[], extra: { pathPrefix?: string } = {}) {
   return spawnSync(join(REPO, "bin/loki"), args, {
     cwd: f.repo,
     encoding: "utf8",
     timeout: 120_000,
-    env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1", LOKI_RECEIPT_SIGNING_KEY_FILE: f.keyFile, LOKI_DIR: join(f.repo, ".loki") },
+    env: { ...process.env, PATH: `${extra.pathPrefix ? `${extra.pathPrefix}:` : ""}${dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1", LOKI_RECEIPT_SIGNING_KEY_FILE: f.keyFile, LOKI_DIR: join(f.repo, ".loki") },
   });
+}
+
+/** A bare origin plus a stub gh that records its argv, so the default (PR) path can be exercised for real. */
+function withOriginAndGh(f: ReturnType<typeof fixture>) {
+  const origin = join(f.root, "origin.git");
+  sh(f.root, "git", ["init", "-q", "--bare", origin]);
+  sh(f.repo, "git", ["remote", "add", "origin", origin]);
+  const bin = join(f.root, "ghbin");
+  mkdirSync(bin);
+  const ghLog = join(f.root, "gh.log");
+  writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$@" >> ${JSON.stringify(ghLog)}\necho https://example.invalid/pr/1\n`, { mode: 0o755 });
+  return { bin, ghLog };
 }
 
 describe("FC-38 start never reaches the legacy loop", () => {
@@ -157,6 +169,115 @@ describe("FC-37 --attempts on the positional start route", () => {
         expect(l.argv).toContain("--max-cost");
         expect(l.argv[0]).toBe("fix the thing please");
       }
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("--no-pr both ways through the real wiring", () => {
+  it("with --attempts and no --no-pr: children never open PRs, the winner's PR is opened once", () => {
+    const f = fixture();
+    try {
+      const g = withOriginAndGh(f);
+      const r = run(f, ["start", "sum skips the first element; fix it", "--attempts", "2"], { pathPrefix: g.bin });
+      expect(r.status).toBe(0);
+      const lines = readFileSync(f.log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { argv: string[] });
+      expect(lines.length).toBe(2);
+      for (const l of lines) expect(l.argv).toContain("--no-pr");
+      const calls = readFileSync(g.ghLog, "utf8").trim().split("\n");
+      expect(calls.length).toBe(1);
+      expect(calls[0]).toContain("pr create");
+      const att = join(f.repo, ".loki", "attempts");
+      const rc = JSON.parse(readFileSync(join(att, readdirSync(att)[0]!, "attempts-receipt.json"), "utf8")) as { winner: { attempt_id: number }; pr: { mode: string; url?: string } };
+      expect(rc.pr.mode).toBe("opened");
+      expect(calls[0]).toContain("--head loki-attempt/");
+      expect(calls[0]).toContain(`attempt-${rc.winner.attempt_id}`);
+      expect(r.stdout).toContain("PR:         https://example.invalid/pr/1");
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("with --attempts and --no-pr: gh is never called and the receipt says skipped_no_pr", () => {
+    const f = fixture();
+    try {
+      const g = withOriginAndGh(f);
+      const r = run(f, ["start", "sum skips the first element; fix it", "--attempts", "2", "--no-pr"], { pathPrefix: g.bin });
+      expect(r.status).toBe(0);
+      expect(existsSync(g.ghLog)).toBe(false);
+      const att = join(f.repo, ".loki", "attempts");
+      const rc = JSON.parse(readFileSync(join(att, readdirSync(att)[0]!, "attempts-receipt.json"), "utf8")) as { pr: { mode: string } };
+      expect(rc.pr.mode).toBe("skipped_no_pr");
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("a plain single start without --no-pr leaves --no-pr out of the engine10 argv; with it, passes it", () => {
+    const f = fixture();
+    try {
+      writeFileSync(join(f.repo, "prd.md"), "Fix sum so it includes the first element.\n");
+      expect(run(f, ["start", "prd.md"]).status).toBe(0);
+      const first = JSON.parse(readFileSync(f.log, "utf8").trim().split("\n")[0]!) as { argv: string[] };
+      expect(first.argv).not.toContain("--no-pr");
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves each attempt's sealed run dir past worktree removal and cites its sha256", () => {
+    const f = fixture();
+    try {
+      const r = run(f, ["start", "sum skips the first element; fix it", "--attempts", "2", "--no-pr"]);
+      expect(r.status).toBe(0);
+      const att = join(f.repo, ".loki", "attempts");
+      const dir = join(att, readdirSync(att)[0]!);
+      const rc = JSON.parse(readFileSync(join(dir, "attempts-receipt.json"), "utf8")) as { attempts: { attempt_id: number; engine10: { receipt_sha256: string; preserved_path: string } }[] };
+      expect(rc.attempts.length).toBe(2);
+      for (const a of rc.attempts) {
+        const kept = JSON.parse(readFileSync(join(a.engine10.preserved_path, "receipt.json"), "utf8")) as { receipt_sha256: string };
+        expect(kept.receipt_sha256).toBe(a.engine10.receipt_sha256);
+      }
+      expect(r.stdout).toContain("kept at ");
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("FC-38 bin/loki start fallbacks refuse instead of reaching autonomy/loki", () => {
+  const refused = (r: ReturnType<typeof spawnSync>) => {
+    expect(r.status).toBe(1);
+    expect(String(r.stderr)).toContain("Loki 10 engine");
+    expect(String(r.stdout)).not.toContain("Loki Mode");
+  };
+  it("a missing LOKI_TS_ENTRY", () => {
+    const f = fixture();
+    try {
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: join(f.root, "missing.ts"), LOKI_NO_BROWSER: "1" } });
+      refused(r);
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+  it("LOKI_LEGACY_BASH=1", () => {
+    const f = fixture();
+    try {
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_LEGACY_BASH: "1", LOKI_NO_BROWSER: "1" } });
+      refused(r);
+      expect(existsSync(f.log)).toBe(false);
+    } finally {
+      rmSync(f.root, { recursive: true, force: true });
+    }
+  });
+  it("no bun on PATH", () => {
+    const f = fixture();
+    try {
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "fix the thing please"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { PATH: "/usr/bin:/bin", HOME: f.root, LOKI_TS_ENTRY: f.entry, LOKI_NO_BROWSER: "1" } });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("needs bun");
+      expect(existsSync(f.log)).toBe(false);
     } finally {
       rmSync(f.root, { recursive: true, force: true });
     }

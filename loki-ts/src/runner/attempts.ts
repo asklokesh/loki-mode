@@ -4,7 +4,7 @@
 // applies the winner to the primary tree, and writes an attempts receipt that names every loser.
 // All side effects go through AttemptDeps so the selection, cleanup and receipt are unit-testable.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { verifyReceipt } from "../engine10/verify_cmd.ts";
@@ -23,7 +23,9 @@ export interface AttemptOutcome {
   /** null = the attempt sealed no engine10 receipt: NOT PROVEN, never scored as 0. */
   checks: AttemptCheck[] | null;
   /** The attempt's own engine10 receipt, when one was sealed (shown on the attempts receipt). */
-  engine10?: { run_id: string; receipt_sha256: string; outcome: string };
+  engine10?: { run_id: string; receipt_sha256: string; outcome: string; /** Preserved copy of the run dir (survives worktree removal); verify with loki verify. */ preserved_path?: string };
+  /** Why checks is null, stated truthfully (no receipt, failed verification, or a sealed non-passing outcome). */
+  unproven_reason?: string;
 }
 export interface LoserRecord {
   attempt_id: number;
@@ -91,6 +93,7 @@ export interface Selection {
 export function selectWinner(outcomes: AttemptOutcome[], errored: Map<number, string> = new Map()): Selection {
   const rows = outcomes.map((o) => ({ id: o.id, ...countChecks(o.checks) })).sort((a, b) => a.id - b.id);
   const unproven = new Set(outcomes.filter((o) => o.checks === null).map((o) => o.id));
+  const unprovenWhy = new Map(outcomes.filter((o) => o.unproven_reason).map((o) => [o.id, o.unproven_reason as string]));
   const eligible = rows.filter((r) => !errored.has(r.id) && !unproven.has(r.id));
   const best = eligible.reduce((m, r) => Math.max(m, r.passing), 0);
   const losersOf = (winId: number | null): LoserRecord[] =>
@@ -103,7 +106,7 @@ export function selectWinner(outcomes: AttemptOutcome[], errored: Map<number, st
         why_lost: errored.has(r.id)
           ? `attempt errored: ${errored.get(r.id)}`
           : unproven.has(r.id)
-            ? "NOT PROVEN: no engine10 receipt was sealed"
+            ? `NOT PROVEN: ${unprovenWhy.get(r.id) ?? "no engine10 receipt was sealed"}`
             : winId === null
             ? "no attempt had an executed passing check"
             : r.passing === best
@@ -111,7 +114,7 @@ export function selectWinner(outcomes: AttemptOutcome[], errored: Map<number, st
               : `fewer executed passing checks (${r.passing} < ${best})`,
       }));
   if (unproven.size === outcomes.length) {
-    return { winner: null, losers: losersOf(null), no_winner_reason: "BLOCKED: no attempt sealed an engine10 receipt, so nothing can be scored; nothing was applied" };
+    return { winner: null, losers: losersOf(null), no_winner_reason: "BLOCKED: no attempt produced a VERIFIED engine10 receipt with a passing outcome, so nothing can be scored; nothing was applied" };
   }
   if (best === 0) {
     return { winner: null, losers: losersOf(null), no_winner_reason: "no attempt recorded an executed passing check; nothing was applied" };
@@ -128,7 +131,7 @@ export function formatAttemptsSummary(r: AttemptsReceipt): string[] {
     const why = (r.setup_failed ?? []).map((s) => `attempt ${s.attempt_id} worktree failed: ${s.error}`).join("; ");
     out.push(`Degraded:   only ${r.ran} of ${r.requested} attempts ran${why ? ` (${why})` : ""}`);
   }
-  for (const a of r.attempts) out.push(`  attempt ${a.attempt_id}: ${a.engine10 ? `engine10 ${a.engine10.outcome}, receipt sha256:${a.engine10.receipt_sha256.slice(0, 12)}` : "NOT PROVEN (no sealed engine10 receipt)"}`);
+  for (const a of r.attempts) out.push(`  attempt ${a.attempt_id}: ${a.engine10 ? `engine10 ${a.engine10.outcome}, receipt sha256:${a.engine10.receipt_sha256.slice(0, 12)}${a.engine10.preserved_path ? `, kept at ${a.engine10.preserved_path}` : ""}` : "NOT PROVEN (no sealed engine10 receipt)"}`);
   if (r.winner) {
     out.push(`Winner:     attempt ${r.winner.attempt_id} with ${r.winner.executed_passing} executed passing check(s)${r.winner.tie ? ", chosen on a tie (lowest attempt id)" : ""}${r.applied ? ", applied to the working tree" : ""}`);
   } else out.push(`Winner:     none (${r.no_winner_reason ?? "no attempt qualified"})`);
@@ -225,23 +228,31 @@ function git(cwd: string, args: string[], input?: string): string {
  *  (supervisor.ts). Only the NEWEST run dir is read (no fallback to an older run), and only when verifyReceipt says VERIFIED and the run
  *  outcome is VERIFIED or ALREADY_SATISFIED: an unsigned, forged, tampered or BLOCKED receipt is NOT PROVEN.
  *  A pass there already means n>0 executed (FC-16). null = NOT PROVEN. */
-export async function readRecordedChecks(worktree: string, verify: (receiptPath: string) => Promise<{ verdict: string }> = verifyReceipt): Promise<AttemptCheck[] | null> {
+export async function assessAttempt(worktree: string, verify: (receiptPath: string) => Promise<{ verdict: string }> = verifyReceipt): Promise<{ checks: AttemptCheck[] | null; reason?: string }> {
   const runs = join(worktree, ".loki", "runs");
-  if (!existsSync(runs)) return null;
+  if (!existsSync(runs)) return { checks: null, reason: "no engine10 receipt was sealed" };
   const dirs = readdirSync(runs).filter((d) => statSync(join(runs, d)).isDirectory()).sort();
   const newest = dirs[dirs.length - 1];
-  if (newest === undefined) return null;
+  if (newest === undefined) return { checks: null, reason: "no engine10 receipt was sealed" };
   const f = join(runs, newest, "receipt.json");
-  if (!existsSync(f)) return null;
+  if (!existsSync(f)) return { checks: null, reason: "no engine10 receipt was sealed" };
   try {
-    if ((await verify(f)).verdict !== "VERIFIED") return null;
-    const j = JSON.parse(readFileSync(f, "utf8")) as Record<string, unknown> & { checks?: AttemptCheck[] };
+    const verdict = (await verify(f)).verdict;
+    if (verdict !== "VERIFIED") return { checks: null, reason: `the sealed engine10 receipt failed verification (${verdict})` };
+    const j = JSON.parse(readFileSync(f, "utf8")) as Record<string, unknown> & { checks?: AttemptCheck[]; reason?: string };
     const outcome = outcomeOf(j);
-    if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") return null;
-    return Array.isArray(j.checks) ? j.checks : null;
+    if (outcome !== "VERIFIED" && outcome !== "ALREADY_SATISFIED") {
+      const why = typeof j.reason === "string" && j.reason !== "" ? ` (engine10 reason: ${j.reason})` : "";
+      return { checks: null, reason: `engine10 sealed a receipt with outcome ${outcome}${why}` };
+    }
+    return Array.isArray(j.checks) ? { checks: j.checks } : { checks: null, reason: "the sealed receipt records no checks" };
   } catch {
-    return null;
+    return { checks: null, reason: "the sealed engine10 receipt could not be read" };
   }
+}
+
+export async function readRecordedChecks(worktree: string, verify: (receiptPath: string) => Promise<{ verdict: string }> = verifyReceipt): Promise<AttemptCheck[] | null> {
+  return (await assessAttempt(worktree, verify)).checks;
 }
 
 /** Run id, receipt hash and outcome of the newest engine10 receipt, shown on the attempts receipt. */
@@ -264,9 +275,10 @@ function attemptBranch(p: string): string {
 
 export function productionDeps(repoDir: string, runDirect: () => Promise<number>, runInWorktree: (id: number, wt: string) => Promise<number>, opts: { noPr?: boolean } = {}): AttemptDeps {
   const lokiDir = process.env["LOKI_DIR"] ?? resolve(repoDir, ".loki");
+  const receiptDir = join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-"));
   return {
     repoDir,
-    receiptDir: join(lokiDir, "attempts", new Date().toISOString().replace(/[:.]/g, "-")),
+    receiptDir,
     baseSha: () => git(repoDir, ["rev-parse", "HEAD"]).trim(),
     // engine10 refuses a detached HEAD, so each attempt gets its own throwaway branch, deleted with the worktree.
     createWorktree: (p, base) => {
@@ -287,7 +299,19 @@ export function productionDeps(repoDir: string, runDirect: () => Promise<number>
     runAttempt: async (id, wt) => {
       const exit = await runInWorktree(id, wt);
       const ref = readEngine10Ref(wt);
-      return { id, exit, checks: await readRecordedChecks(wt), ...(ref ? { engine10: ref } : {}) };
+      const a = await assessAttempt(wt);
+      if (ref) {
+        // The worktree is removed afterwards; keep the sealed run dir so the cited receipt can still be checked.
+        try {
+          const dest = join(receiptDir, `attempt-${id}`);
+          mkdirSync(dest, { recursive: true });
+          cpSync(join(wt, ".loki", "runs", ref.run_id), join(dest, ref.run_id), { recursive: true });
+          ref.preserved_path = join(dest, ref.run_id);
+        } catch {
+          // preservation is best effort; the summary then omits the kept path
+        }
+      }
+      return { id, exit, checks: a.checks, ...(a.reason ? { unproven_reason: a.reason } : {}), ...(ref ? { engine10: ref } : {}) };
     },
     applyWinner: (wt, base) => {
       // engine10 commits its edits on the attempt branch, so the result is base..working tree; stage stragglers too.

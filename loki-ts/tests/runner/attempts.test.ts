@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { receiptSha256, signReceipt } from "../../src/engine10/stages/seal.ts";
-import { readRecordedChecks, runAttempts, selectWinner, countChecks, type AttemptCheck, type AttemptDeps, type AttemptOutcome, type AttemptsReceipt } from "../../src/runner/attempts.ts";
+import { assessAttempt, readRecordedChecks, runAttempts, selectWinner, countChecks, type AttemptCheck, type AttemptDeps, type AttemptOutcome, type AttemptsReceipt } from "../../src/runner/attempts.ts";
 import { parseStartArgs } from "../../src/commands/start.ts";
 
 const pass = (name: string, n = 3): AttemptCheck => ({ name, result: "pass", n });
@@ -286,6 +286,20 @@ describe("receipt-path read and NOT PROVEN", () => {
     sealed(wt, "r-01");
     mkdirSync(join(wt, ".loki", "runs", "r-02"), { recursive: true });
     expect(await readRecordedChecks(wt)).toBeNull();
+  }));
+
+  it("R1: the NOT PROVEN reason is true for each case and a sealed FAILED receipt is never called unsealed", withKey(async (wt) => {
+    expect((await assessAttempt(wt)).reason).toBe("no engine10 receipt was sealed");
+    sealed(wt, "r-01", { verdict: "FAILED" });
+    const failed = await assessAttempt(wt);
+    expect(failed.checks).toBeNull();
+    expect(failed.reason).toContain("sealed a receipt with outcome FAILED");
+    expect(failed.reason).not.toContain("no engine10 receipt was sealed");
+    sealed(wt, "r-02", { forge: true });
+    expect((await assessAttempt(wt)).reason).toContain("failed verification");
+    const s = selectWinner([{ id: 1, exit: 1, checks: null, unproven_reason: failed.reason! }]);
+    expect(s.losers[0]!.why_lost).toContain("sealed a receipt with outcome FAILED");
+    expect(s.no_winner_reason).not.toContain("no attempt sealed");
   }));
 
   it("no receipt is null (NOT PROVEN), a side file is not read", withKey(async (wt) => {
