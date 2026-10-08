@@ -1,12 +1,12 @@
 // T8: Before / After proof. Boot the app on the base tree (a temp git worktree) and on the changed tree, screenshot the changed
 // route(s) with the existing visual-evidence capture, and render a "Before / After" PR section. The dev command comes from the
-// Project Model (or the package.json dev/preview/start script the capture already resolves); the harness executes it, no repo-shape regex.
+// Project Model (or the dev/preview/start script the capture already resolves); the harness executes it, no repo-shape regex.
 // Never throws and never fails a run: every failure is recorded as "before/after: NOT CAPTURED (<reason>)". LOKI_BEFORE_AFTER=0 renders nothing.
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { isMultiRoot, loadProjectApi } from "../project_model/resolve.ts";
-import { captureVisualEvidence, isPageFile, pickScript, routeFor, visualEvidenceEnabled, type CaptureOpts, type EvidenceResult, type EvidenceScreen } from "../features/visual_evidence.ts";
+import { safeGit } from "../util/safe_git.ts";
+import { captureVisualEvidence, hasPickableScript, isPageFile, routeFor, visualEvidenceEnabled, type CaptureOpts, type EvidenceResult, type EvidenceScreen } from "../features/visual_evidence.ts";
 
 export const beforeAfterEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_BEFORE_AFTER"] !== "0";
 export interface BeforeAfterResult { before: EvidenceScreen[]; after: EvidenceScreen[]; reason: string | null; routes: string[] }
@@ -15,7 +15,7 @@ export interface BeforeAfterDeps {
   worktreeAdd: (repoDir: string, path: string, ref: string) => void;
   worktreeRemove: (repoDir: string, path: string) => void;
 }
-const git = (cwd: string, args: string[]): void => { execFileSync("git", ["-c", "core.hooksPath=/dev/null", ...args], { cwd, stdio: "ignore", timeout: 60_000 }); };
+const git = (cwd: string, args: string[]): void => { safeGit(cwd, args, { stdio: "ignore", timeout: 60_000 }); };
 export const realDeps: BeforeAfterDeps = {
   capture: captureVisualEvidence,
   worktreeAdd: (repo, path, ref) => git(repo, ["worktree", "add", "--detach", path, ref]),
@@ -24,13 +24,12 @@ export const realDeps: BeforeAfterDeps = {
 const alive = (pgid: number): boolean => { try { process.kill(-pgid, 0); return true; } catch { return false; } };
 const DEFAULT_BOOT_MS = 30_000;
 
-/** The Project Model's UI boot command or the package.json script, whichever the existing capture would run. */
+/** The Project Model's UI boot command or the manifest script, whichever the existing capture would run. */
 function hasDevCommand(repoDir: string): boolean {
   try {
     const api = loadProjectApi(repoDir);
     if (isMultiRoot(api) && api.uiBoot()) return true;
-    const pkg = join(repoDir, "package.json");
-    return existsSync(pkg) && pickScript(JSON.parse(readFileSync(pkg, "utf8"))) !== null;
+    return hasPickableScript(repoDir);
   } catch { return false; }
 }
 
