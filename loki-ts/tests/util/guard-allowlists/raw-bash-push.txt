@@ -1,4 +1,0 @@
-# Raw git push / gh pr create in bash sources. Format: path | reason. Guard: raw_gh_spawn_guard.test.ts (FC-25).
-autonomy/run.sh | defines _loki_trusted_push and the delegate PR path (_loki_net gh pr create with a pinned --repo)
-autonomy/lib/engine10-push-gitlab.sh | harness-side GitLab push from a private tmp clone to a pre-fixed URL
-autonomy/loki | follow-up FC-25: loki ship and auto-PR paths still push raw; route through _loki_trusted_push

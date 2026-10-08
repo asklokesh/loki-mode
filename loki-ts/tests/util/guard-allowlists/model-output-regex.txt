@@ -1,5 +1,0 @@
-# engine10 files matching the model-output regex heuristic. Format: path | reason. Guard: model_output_regex_guard.test.ts (L0).
-loki-ts/src/engine10/stages/xreview.ts@1 | parses the reviewer VERDICT line from free text; follow-up L0: reviewer emits schema-checked JSON
-loki-ts/src/engine10/session.ts@6 | parses LOKI_ALREADY_DONE and LOKI_SPEC_CONFLICT sentinel lines from the session stdout; follow-up L0: structured result
-loki-ts/src/engine10/stages/wall.ts@12 | parses test-runner output (executed evidence from a command), not model output
-loki-ts/src/engine10/failures.ts@1 | parses test-runner output (executed evidence from a command), not model output

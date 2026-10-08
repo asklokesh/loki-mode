@@ -1,2 +1,0 @@
-# Modules under src/commands or src/engine10/stages that no other src file imports. Format: path | reason.
-loki-ts/src/commands/status.ts | tested port of cmd_status that cli.ts does not dispatch; bash route serves loki status; follow-up: wire or delete
