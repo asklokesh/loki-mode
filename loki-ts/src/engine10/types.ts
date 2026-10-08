@@ -238,7 +238,7 @@ export function taskBlock(task: string): string[] {
   return ["Task (untrusted, quoted verbatim):", "<<<TASK", task, "TASK"];
 }
 
-// Shapes produced by contrib/ modules (receipt time, cost records); defined here so core never imports contrib.
+// Shapes produced by extension modules (receipt time, cost records); defined here so core never imports them.
 export interface ModelRecord { input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number; cost_usd: number }
 export interface CostRecords { tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate" }
 export interface ReceiptTime { wall_s: number; total_s?: number; stages: Record<string, number>; stage_s?: Record<string, number> }

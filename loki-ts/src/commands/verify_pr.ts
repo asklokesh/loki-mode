@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseContract } from "../features/contract.ts";
 import { fetchIssue } from "../engine10/fetch_issue.ts";
-import { extractChecks, judgeF2p, referencedFiles, type SandboxResult } from "../engine10/verify_pr_f2p.ts";
+import { extractChecks, judgeF2p, referencedFiles, type SandboxResult } from "../contrib/verify_pr_f2p.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
 

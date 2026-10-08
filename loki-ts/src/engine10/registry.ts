@@ -24,7 +24,7 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./../commands/export_sarif.ts": () => import("../commands/export_sarif.ts"),
   "../e10ext/ship_hook.ts": () => import("../e10ext/ship_hook.ts"),
 };
-/** contrib/index.ts adds its lazy modules here at startup; core never imports contrib. */
+/** the extension layer adds its lazy modules here at startup; core never imports it. */
 const EXTRA: Record<string, () => Promise<Mod>> = {};
 export const registerModule = (spec: string, load: () => Promise<Mod>): void => { EXTRA[spec] = load; };
 /** An unregistered specifier rejects like a missing file, so "not built yet" still works. */
