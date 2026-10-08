@@ -206,12 +206,12 @@ function genaiEnabled() {
 }
 
 /** Emit the span tree for one run's envelopes. Returns the number of spans ended. */
-function exportEngine10Run(events, tracer, traceId, otelRef) {
+function exportEngine10Run(events, tracer, traceId, otelRef, rootParentSpanId) {
   const spans = require('./genai-spans').mapRunEvents(events);
   const live = new Map();
   for (const d of spans) {
     const parent = d.parentKey ? live.get(d.parentKey) : null;
-    const span = tracer.startSpan(d.name, { traceId: traceId, parentSpanId: parent ? parent.spanId : undefined, attributes: Object.assign({}, d.attributes) });
+    const span = tracer.startSpan(d.name, { traceId: traceId, parentSpanId: parent ? parent.spanId : (d.parentKey ? undefined : rootParentSpanId), attributes: Object.assign({}, d.attributes) });
     span.startTimeUnixNano = String(d.startNs);
     live.set(d.key, span);
     if (d.status === 'ok') span.setStatus(otelRef.SpanStatusCode.OK);
@@ -235,7 +235,8 @@ function scanEngine10Runs(tracer, traceId, otelRef) {
       }
       if (!events.some((e) => e && e.type === 'run.completed')) continue; // export complete trees only
       exportedRuns.add(id);
-      exportEngine10Run(events, tracer, traceId, otelRef);
+      const envParent = /^[0-9a-f]{16}$/.test(process.env.LOKI_PARENT_SPAN_ID || '') ? process.env.LOKI_PARENT_SPAN_ID : undefined; // MCP-D: parent from an MCP task's traceparent
+      exportEngine10Run(events, tracer, traceId, otelRef, envParent);
     }
   } catch (e) { /* no runs dir */ }
 }

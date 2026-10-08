@@ -739,3 +739,4 @@ doctor has one implementation (FC-DUP delegator and minimal fallback)	3
 fast gate planner selects the suites that guard a diff (D90)	20
 real-run harness scenarios, dry install, doctored receipt	17
 MCP 2026-07-28 spec doc cites sources and names each requirement (MCP-0)	2
+MCP Tasks verify read-only (MCP-D)	2
