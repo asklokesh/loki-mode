@@ -87,3 +87,6 @@ src/util/check_result.ts	vitest
 src/util/update_check.ts	package.json
 # Goes away with Project Model sourcing of manifest/resolver knowledge (11.3.3 L4).
 src/supply/supply_guard.ts	Gemfile
+# verify_pr derives the PR repo test suite from the PR own package manifest test script (read as data, never run on the host); goes away with Project Model sourcing of runner knowledge (11.3.3 L4).
+src/commands/verify_pr.ts	npm test
+src/commands/verify_pr.ts	package.json

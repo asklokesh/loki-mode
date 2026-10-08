@@ -566,3 +566,20 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Siblings swept: no other `grep ... -- ... --include` in scripts/, autonomy/ or tests/*.sh. tests/cli/test-alias-forwarding.sh is a legitimate selection with its own red, fixed by ALIAS-FWD 164eb7da2 on the train.
 - Mechanism: options before `--` in the three guards_for greps; match_kind returns no kind for run-all-tests.sh.
 - Fixture: tests/test-fast-gate.sh FC-54 case (release.yml + run-all-tests.sh + a registering test plans only test-*.sh, test_*.py, run[-_]*.sh). Red before, green after.
+
+
+## FC-60 Parallel slices each pass a repo-wide cap or allowlist alone, and the merged train is over it (TRAIN-GREEN)
+- User saw: the 11.3.2 train (832fa4b57) was red before push on four repo-wide guards that each merged slice passed on its own base: loki-ts/tests/engine10/l0_guard.test.ts ("src/commands/verify_pr.ts npm test" and "package.json" unlisted), budget.test.ts (core engine10 5462 lines against the 5,000 cap; features 3158 against 3,000), and tests/cli/test-alias-forwarding.sh ("help: front-page entry count in [12,27] -- got 28").
+- Law: evidence or it did not happen; D33 (core cap never raised), D66 (features cap), L0 (guard allowlist may only shrink without a stated reason).
+- Cause (measured): at 6ecedaefe core is 4734 and features 2977 lines. Each slice (COST, RECEIPT-TRUTH, SARIF, AI-BOM, UNDO-2, VPR-2 and others) was reviewed against a base with room, and no merge step re-ran the repo-wide guards on the union. UNDO-2 added the 28th front-page command after ALIAS-FWD pinned the bound at 27. The VPR-2 package-manifest read in verify_pr.ts predates the guard being selected for it (FC-48).
+- Siblings swept: budget.test.ts, l0_guard.test.ts, the alias-forwarding bound and tests/test-structural-checks.sh are the only cumulative caps in the fast tier. Core and features caps are NOT fixed here: D33 forbids raising the core cap, so the overage is handled by moving code out (EXT-CORE-2-r2 for core, EXT-FEAT-r2 for features), never by raising a cap.
+- Mechanism: (1) l0_guard.allowlist gains two exact file-and-token rows for verify_pr.ts with a stated sunset (the PR own manifest test script is read as data); any other file or token is still red. (2) The alias bound moves 27 to 28 with the added command named in the comment. (3) Train rule: the merge of the last slice must run the guards named in this row on the union before push.
+- Fixture: l0_guard.test.ts red then green; test-alias-forwarding.sh help bound red (got 28) then green.
+
+## FC-61 A test asserted on the first FAIL line, so one earlier real failure masked every later planted-defect check (TRAIN-GREEN)
+- User saw: tests/test-structural-checks.sh "6 passed, 5 failed" with T6, T7 and T9 reporting "committed en dash not caught", "added line starting with + not scanned", "task NOTES.md dash not caught", although the emoji/dash check was working.
+- Law: an assertion must test the property it names, not whichever line prints first.
+- Cause (measured): line_of "$out" "FAIL" | head -1 returns the first failing check. The real line-budget failure (core 5421 >= 5000) prints before "emoji/dash on changes", so the grep for emoji/dash never saw its own FAIL line. T9 asserted rc 0 for the exempt case, which also failed for the unrelated budget reason. T2, T3 and T5 passed only because their checks print before line budgets.
+- Siblings swept: all seven line_of call sites in the file now name their check label through failed_check; T1 stays the one assertion that the whole tree is clean.
+- Mechanism: failed_check matches `^FAIL ... <label>` anywhere in the output.
+- Fixture: with the budget red (as on the train), T6, T7, T9 are red before and green after; T1 remains red until the budget ruling.

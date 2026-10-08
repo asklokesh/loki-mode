@@ -45,6 +45,8 @@ cp -R "$REPO/loki-ts/src/engine10" "$REPO/loki-ts/src/e10ext" "$S/loki-ts/src/"
 
 run() { STRUCTURAL_ROOT="$S" bash "$S/scripts/structural-checks.sh" 2>&1; }
 line_of() { printf '%s\n' "$1" | grep -F -- "$2" | head -1; }
+# FC-58: match the FAIL line of the NAMED check, not whichever check fails first.
+failed_check() { printf '%s\n' "$1" | grep -E "^FAIL +[0-9]+ms +$2"; }
 
 echo "T1 -- clean tree: every check passes"
 out="$(run)"; rc=$?
@@ -58,7 +60,7 @@ echo "T2 -- missing shard-durations row is caught"
 cp "$S/tests/shard-durations.tsv" "$S/tests/shard-durations.tsv.bak"
 grep -v "^ShellCheck Linting" "$S/tests/shard-durations.tsv.bak" > "$S/tests/shard-durations.tsv"
 out="$(run)"; rc=$?
-if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "shard-durations drift"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "shard-durations drift" >/dev/null; then
     ok "drift check FAILs and script exits nonzero"
 else
     bad "missing shard row not caught (rc=$rc)"
@@ -69,7 +71,7 @@ echo "T3 -- a home path in a test fixture is caught"
 hp="/Users/"; hp="${hp}someone/project"
 printf '#!/usr/bin/env bash\ncat %s/file.txt\n' "$hp" > "$S/tests/test-planted-home-path.sh"
 out="$(run)"; rc=$?
-if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "no hardcoded paths"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "no hardcoded paths" >/dev/null; then
     ok "hardcoded-path check FAILs and script exits nonzero"
 else
     bad "planted home path not caught (rc=$rc)"
@@ -79,7 +81,7 @@ rm -f "$S/tests/test-planted-home-path.sh"
 echo "T4 -- an over-budget file is caught"
 yes 'export const x = 1;' | head -n 1600 > "$S/loki-ts/src/e10ext/planted_over_budget.ts"
 out="$(run)"; rc=$?
-if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "line budgets" && printf '%s' "$out" | grep -q "e10ext"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "line budgets" >/dev/null && printf '%s' "$out" | grep -q "e10ext"; then
     ok "line-budget check FAILs on e10ext over 1,500 lines"
 else
     bad "over-budget e10ext not caught (rc=$rc)"
@@ -89,7 +91,7 @@ rm -f "$S/loki-ts/src/e10ext/planted_over_budget.ts"
 echo "T5 -- an unregistered test is caught"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$S/tests/test-planted-unregistered.sh"
 out="$(run)"; rc=$?
-if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "test registration"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "test registration" >/dev/null; then
     ok "registration check FAILs and script exits nonzero"
 else
     bad "unregistered test not caught (rc=$rc)"
@@ -107,7 +109,7 @@ printf 'a \342\200\223 b\n' > "$G/planted-dash.txt"
 git -C "$G" add planted-dash.txt
 git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m plant
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
-if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "emoji/dash"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "emoji/dash" >/dev/null; then
     ok "committed en dash FAILs the emoji/dash check"
 else
     bad "committed en dash not caught (rc=$rc)"
@@ -119,7 +121,7 @@ printf '++\342\200\224 x\n' > "$G/planted-plus.txt"
 git -C "$G" add planted-plus.txt
 git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m plus
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
-if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "emoji/dash"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "emoji/dash" >/dev/null; then
     ok "added line '++<em dash>' FAILs the emoji/dash check"
 else
     bad "added line starting with + not scanned (rc=$rc)"
@@ -146,12 +148,12 @@ printf 'a \342\200\224 b\n' > "$G/loki-ts/dist/loki.js.map"
 git -C "$G" add eval/loki10/refdiff/pub-x.diff loki-ts/dist/loki.js.map
 git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m vendored
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
-if [ "$rc" -eq 0 ]; then ok "committed refdiff/dist dash passes"; else bad "refdiff/dist dash flagged (rc=$rc)"; fi
+if ! failed_check "$out" "emoji/dash" >/dev/null; then ok "committed refdiff/dist dash passes"; else bad "refdiff/dist dash flagged (rc=$rc)"; fi
 printf 'a \342\200\224 b\n' > "$G/eval/loki10/tasks/x/NOTES.md"
 git -C "$G" add eval/loki10/tasks/x/NOTES.md
 git -C "$G" -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.name=t -c user.email=t@t commit -q -m notes
 out="$(STRUCTURAL_ROOT="$G" bash "$G/scripts/structural-checks.sh" 2>&1)"; rc=$?
-if [ "$rc" -ne 0 ] && line_of "$out" "FAIL" | grep -q "emoji/dash"; then
+if [ "$rc" -ne 0 ] && failed_check "$out" "emoji/dash" >/dev/null; then
     ok "committed task NOTES.md dash still FAILs"
 else
     bad "task NOTES.md dash not caught (rc=$rc)"
