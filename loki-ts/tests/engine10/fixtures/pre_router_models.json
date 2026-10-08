@@ -189,8 +189,6 @@
         },
         "cli_model_flags": [
           "implement <none>",
-          "other <none>",
-          "other <none>",
           "other claude-sonnet-5-5",
           "plan sonnet"
         ]
@@ -394,8 +392,6 @@
         },
         "cli_model_flags": [
           "implement claude-sonnet-5-5",
-          "other <none>",
-          "other <none>",
           "other claude-sonnet-5-5",
           "plan sonnet"
         ]
@@ -588,8 +584,6 @@
         },
         "cli_model_flags": [
           "implement <none>",
-          "other <none>",
-          "other <none>",
           "other claude-haiku-5-5",
           "plan sonnet"
         ]
@@ -782,8 +776,6 @@
         },
         "cli_model_flags": [
           "implement <none>",
-          "other <none>",
-          "other <none>",
           "other claude-sonnet-5-5",
           "plan haiku"
         ]
@@ -975,8 +967,6 @@
         "cli_model_flags": [
           "implement sonnet",
           "other claude-sonnet-5-5",
-          "other sonnet",
-          "other sonnet",
           "plan sonnet"
         ]
       }
@@ -1170,8 +1160,6 @@
         "cli_model_flags": [
           "implement opus",
           "other claude-sonnet-5-5",
-          "other opus",
-          "other opus",
           "plan sonnet"
         ]
       }
@@ -1363,8 +1351,6 @@
         },
         "cli_model_flags": [
           "implement <none>",
-          "other <none>",
-          "other <none>",
           "other claude-sonnet-5-5",
           "plan sonnet"
         ]
