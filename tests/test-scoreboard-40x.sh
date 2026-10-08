@@ -40,4 +40,19 @@ bash "$SB" --current "$T/c.tsv" --baseline "$T/b.tsv" --version v --json-out "$T
 [ "$(jget "$T/z.json" tasks.trivial-sum.efficiency_factor)" = "NOT COMPUTABLE" ]; check zero-human-not-computable $? "$(cat "$T/z.json")"
 bash "$SB" --current "$T/c.tsv" > /dev/null 2>&1; [ $? -eq 2 ]; check usage-rc2 $? ""
 
+# --human-floor-min: lifts a recorded 0 (baseline 4 min, floor 1 min -> current 1 min: human 4x, efficiency 0.625 -> 10 = 16x)
+bash "$SB" --current "$T/c.tsv" --baseline "$T/b.tsv" --version v --human-floor-min 1 --json-out "$T/f.json" --metrics-out "$T/f.metrics" > "$T/f.out" 2>&1
+[ "$(jget "$T/f.json" tasks.trivial-sum.efficiency_factor)" = "16.0" ]; check floor-makes-efficiency-computable $? "$(cat "$T/f.out")"
+[ "$(jget "$T/f.json" tasks.trivial-sum.human_factor)" = "4.0" ]; check floor-human-factor $? "$(cat "$T/f.out")"
+[ "$(jget "$T/f.json" tasks.trivial-sum.floor_note)" = "(floor 1 min applied)" ]; check floor-json-label $? "$(cat "$T/f.json")"
+grep -q '^trivial-sum .*(floor 1 min applied)' "$T/f.out" && grep -q 'trivial-sum:.*(floor 1 min applied)' "$T/f.metrics"; check floor-row-labels $? "$(cat "$T/f.out" "$T/f.metrics")"
+# a floor that no recorded value falls under leaves the row unlabelled
+bash "$SB" --dry --version v --human-floor-min 0.5 --json-out "$T/g.json" > "$T/g.out" 2>&1
+! grep -q floor "$T/g.out"; check floor-unused-no-label $? "$(cat "$T/g.out")"
+# never applied to NOT RECORDED: medium stays NOT RECORDED even with a huge floor, labelled rows are only those lifted
+bash "$SB" --dry --version v --human-floor-min 100 --json-out "$T/h.json" > "$T/h.out" 2>&1
+[ "$(jget "$T/h.json" tasks.medium.human_factor)" = "NOT RECORDED" ] && [ "$(jget "$T/h.json" tasks.medium.efficiency_factor)" = "NOT RECORDED" ]; check floor-never-fills-not-recorded $? "$(cat "$T/h.out")"
+# unset floor keeps today's behavior
+[ "$(jget "$T/d.json" human_floor_min)" = "None" ]; check floor-unset-default $? ""
+
 [ "$FAILS" -eq 0 ]

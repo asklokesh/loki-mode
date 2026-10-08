@@ -40,11 +40,17 @@ def load(path):
     return out
 
 
-def agg(runs):
+def agg(runs, floor=None):
     n = len(runs)
     if n == 0:
         return None
-    a = {"n": n, "verified": sum(1 for r in runs if r["verified"])}
+    a = {"n": n, "verified": sum(1 for r in runs if r["verified"]), "floor_used": False}
+    if floor is not None:
+        # The floor lifts a RECORDED value only; a NOT RECORDED human_min stays None.
+        for r in runs:
+            if r["human"] is not None and r["human"] < floor:
+                r["human"] = floor
+                a["floor_used"] = True
 
     def mean(k):
         v = [r[k] for r in runs]
@@ -93,13 +99,14 @@ def main():
     ap.add_argument("--baseline", required=True)
     ap.add_argument("--version", default="unknown")
     ap.add_argument("--baseline-version", default="11.3.1")
+    ap.add_argument("--human-floor-min", type=float, default=None)
     ap.add_argument("--json-out", required=True)
     ap.add_argument("--metrics-out", default="")
     a = ap.parse_args()
     cur, base = load(a.current), load(a.baseline)
     rows = {}
     for t in TASKS:
-        c, b = agg(cur.get(t, [])), agg(base.get(t, []))
+        c, b = agg(cur.get(t, []), a.human_floor_min), agg(base.get(t, []), a.human_floor_min)
         if c is None:
             rows[t] = {"status": NRUN + (" (declared slot, awaiting MASS-1)" if t == "mass-10" else "")}
             continue
@@ -111,10 +118,14 @@ def main():
                    "wall_factor": factor(b["wall_min"], c["wall_min"]),
                    "human_factor": factor(b["human_min"], c["human_min"]),
                    "efficiency": c["efficiency"], "baseline_efficiency": b["efficiency"],
-                   "efficiency_factor": efficiency_factor(b["efficiency"], c["efficiency"])}
+                   "efficiency_factor": efficiency_factor(b["efficiency"], c["efficiency"]),
+                   "floor_used": c["floor_used"] or b["floor_used"]}
+    for r in rows.values():
+        if r.get("floor_used"):
+            r["floor_note"] = "(floor %g min applied)" % a.human_floor_min
     rep = {"version": a.version, "baseline": a.baseline_version,
            "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"), "tasks": rows,
-           "definitions": "factor = baseline / current, above 1 is better; EFFICIENCY = verified rate / (mean usd x mean wall min x mean human min); NOT RECORDED when a field is missing"}
+           "human_floor_min": a.human_floor_min, "definitions": "factor = baseline / current, above 1 is better; EFFICIENCY = verified rate / (mean usd x mean wall min x mean human min); NOT RECORDED when a field is missing"}
     with open(a.json_out, "w") as fh:
         json.dump(rep, fh, indent=2)
         fh.write("\n")
@@ -127,11 +138,11 @@ def main():
             continue
         eff = r["efficiency"] if isinstance(r["efficiency"], str) else "%.4g" % r["efficiency"]
         print("%-12s %3d %8s %8s %8s %12s %10s" % (t, r["n"], show(r["cost_factor"]), show(r["wall_factor"]),
-                                                  show(r["human_factor"]), eff, show(r["efficiency_factor"])))
+                                                  show(r["human_factor"]), eff, show(r["efficiency_factor"])) + (" " + r["floor_note"] if "floor_note" in r else ""))
     if a.metrics_out:
         cells = " ".join("%s:%s" % (t, ("cost_x=%s wall_x=%s human_x=%s eff_x=%s" % tuple(
             show(rows[t][k]) for k in ("cost_factor", "wall_factor", "human_factor", "efficiency_factor")))
-            if rows[t]["status"] == "ok" else rows[t]["status"]) for t in TASKS)
+            if rows[t]["status"] == "ok" else rows[t]["status"]) + (" " + rows[t]["floor_note"] if "floor_note" in rows[t] else "") for t in TASKS)
         with open(a.metrics_out, "a") as fh:
             fh.write("| %s | scoreboard-40x %s vs %s | %s |\n" % (rep["date"], a.version, a.baseline_version, cells))
     return 0
