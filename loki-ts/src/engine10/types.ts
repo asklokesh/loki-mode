@@ -157,6 +157,7 @@ export interface Receipt {
   wall: { files: { path: string; sha256: string }[]; passed: boolean | null };
   checks: ReceiptCheck[];
   not_proven: string[];
+  spec?: { path: string; sha256: string }; // SPEC-FIRST-INTENT: present only when a user spec file drove the run
   supply?: import("../supply/supply_guard.ts").SupplyBlock; // T10: present only when the guard found newly added dependencies
   route?: import("../runner/router/route_block.ts").RouteBlock; // R1-15: present only while the router is on
   cost_preview?: Record<string, unknown>; // 11.3.0 T1: absent under LOKI_COST_PREVIEW=0

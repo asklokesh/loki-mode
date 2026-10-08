@@ -14,6 +14,7 @@ import { routeEscalate, routeStart } from "../../runner/router/implement_route.t
 import { routerActive } from "../../runner/router/unit_model.ts";
 import type { ImplementExit, RunContext, SessionRunOptions, Stage, StageResult, TestMap } from "../types.ts";
 import { taskBlock } from "../types.ts";
+import { loadSpecFile, specBriefBlock, type LoadedSpec } from "../../util/spec_file.ts";
 
 /** A test file (a sealed Wall test) the implement session must not change: path is absolute, in the repo working tree; content is what to restore if it no longer matches. */
 export interface ReadOnlyFile { path: string; content: string; }
@@ -32,10 +33,11 @@ export function impactedTests(ctx: RunContext): string[] {
 }
 
 export const briefCtx = (ctx: RunContext): string => briefContext(ctx, { select: selectRelevantFiles, cmd: (t, repoDir) => { const c = commandFor(t, repoDir, loadProjectApi(repoDir)); return [c.cmd, c.args, c.interpreter, c.pkgRoot]; } });
-export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = ""): string {
+export function buildImplementBrief(task: string, plan: string | null, impactedTests: string[], repoMap = "", spec: string | null = null): string {
   return withStagePrefix([ // FIXED_RULES leads and FINISH_LINE closes, both byte-identical per task
     FIXED_RULES,
     ...taskBlock(task),
+    ...(spec ? [spec] : []), // SPEC-FIRST-INTENT: the user-edited spec is the authoritative intent; absent adds nothing
     plan ? `Follow this plan:\n${plan}` : "No separate plan was made: plan the change yourself in this session, then implement it.",
     ...(repoMap ? [repoMap] : []),
     impactedTests.length ? `Impacted tests (a starting hint, not a limit): ${impactedTests.join(", ")}.` : "Impacted tests: none known; run the project's full test command (a starting hint, not a limit).",
@@ -61,6 +63,12 @@ function treeIsEmpty(ctx: RunContext): boolean {
   try { return changedFiles(ctx.repoDir, ctx.baseSha).length === 0; } catch { return false; }
 }
 
+/** The supervisor snapshots the spec it hashed into the run dir; read that copy, never the live file the user may still be editing. */
+function specFor(ctx: RunContext): LoadedSpec | null {
+  if (!process.env.LOKI_E10_SPEC_SHA256) return null;
+  try { return loadSpecFile(join(ctx.runDir, "spec.snapshot.md")); } catch { return null; }
+}
+
 export const implementStage: Stage = {
   name: "implement",
   targetS: 180,
@@ -81,13 +89,14 @@ export const implementStage: Stage = {
     try { recordUse(ctx.repoDir, ctx.runId, lessons.map((l) => l.id)); } catch { /* memory is best-effort */ }
     const repoMap = briefCtx(ctx) + formatLessonsForBrief(lessons); // S41-10: up to 20 relevant files + impacted test commands, not the first 200 paths
 
+    const spec = specFor(ctx);
     // CH-03: resume plan's session on the same model (never when routed: per-unit models differ). Wall, verify and seal never join the chain. planChain owns eligibility; `!plan` here only keeps plan_chain out of the data when plan was skipped.
     const chain = routed || !plan ? null : planChain(ctx, downgrade?.to ?? ctx.model, fastTierModel(process.env));
     const resumeId = chain && "id" in chain ? chain.id : undefined;
     let planChainMode: string | undefined = chain ? (resumeId ? "resumed" : `fresh (${(chain as { why: string }).why})`) : undefined;
     const first: SessionRunOptions = {
       stage: "implement",
-      brief: buildImplementBrief(task, plan, impacted, repoMap),
+      brief: buildImplementBrief(task, plan, impacted, repoMap, specBriefBlock(spec)),
       tier: "development",
       iterationId: `${ctx.runId}-impl`,
       limitS: implementStage.limitS,

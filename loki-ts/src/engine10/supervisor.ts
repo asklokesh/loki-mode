@@ -9,7 +9,8 @@ import { terminalWidth } from "../util/term_width.ts";
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
+import { loadSpecFile, type LoadedSpec } from "../util/spec_file.ts";
 import { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker } from "../util/engine_origin.ts";
 export { eventsRelPath, githubRepoFromUrl, readOriginUrl, writeEngineMarker }; // re-exported: callers and tests import these from here
 import { withholdGithubTokens } from "../runner/github_token.ts"; import { writeRunPid } from "../util/run_pid.ts";
@@ -227,7 +228,7 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
@@ -236,10 +237,17 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--verbose") verbose = true;
     else if (a.startsWith("--max-cost")) maxCost = a.includes("=") ? a.slice(11) : args[++i] ?? "";
     else if (a === "--provider") provider = args[++i] ?? provider;
+    else if (a === "--spec") specFile = args[++i] ?? "";
+    else if (a.startsWith("--spec=")) specFile = a.slice(7);
     else if (a === "--resume") { process.stderr.write("engine10: --resume was removed; start a new run\n"); return 2; }
     else words.push(a);
   }
   let task = words.join(" ").trim();
+  let spec: LoadedSpec | null = null;
+  if (specFile !== null) { // SPEC-FIRST-INTENT: refuse a spec that does not parse (exit 2, with the line) before any run state exists
+    try { spec = loadSpecFile(resolve(specFile)); } catch (e) { process.stderr.write(`engine10: ${(e as Error).message}\n`); return 2; }
+    if (!task) task = spec.task;
+  }
   if (!task) { process.stderr.write("engine10: no task given\n"); return 2; }
   let repoDir: string;
   try {
@@ -255,6 +263,10 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (u) { Object.assign(env, u.env); cap.usd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? cap.usd; }
   }
   if (process.env.LOKI_SPEED !== "0" && !isIssue) { const g = await (await import("../features/speed/route.ts")).maybeRunGroup(task, repoDir, process.env); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
+  if (spec) { // the worker reads the snapshot of exactly the bytes hashed here, never the live file
+    mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, "spec.snapshot.md"), spec.raw);
+    for (const e of [env, process.env]) { e.LOKI_E10_SPEC_PATH = relative(repoDir, spec.path); e.LOKI_E10_SPEC_SHA256 = spec.sha256; e.LOKI_E10_REPO_DIR = repoDir; }
+  }
   env.LOKI_E10_MAX_COST_USD = String(cap.usd); if (!isIssue) env.LOKI_E10_TASK_TEXT = task;
   else if (isIssue) {
     mkdirSync(runDir, { recursive: true }); // runDir must exist before the fetch child writes issue.json
