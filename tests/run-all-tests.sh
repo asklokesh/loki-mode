@@ -1535,6 +1535,7 @@ run_test "board-mark-released flips a slice's merged row once its tag ships (E-9
 run_test "release.sh --bump-only restores debugId-only dist churn (E-72)" "$SCRIPT_DIR/test-release-bump-only.sh"
 run_test "release.sh --bump-only never leaves dist deleted on build failure (E-102)" "$SCRIPT_DIR/test-release-bump-dist.sh"
 run_test "release.sh --bump-only refuses dist maps with absolute or repo-escaping sources (E-133)" "$SCRIPT_DIR/test-release-dist-guard.sh"
+run_test "web-app python modules ship in the npm package and Docker image by glob (132-E2)" "$SCRIPT_DIR/test-webapp-modules-packaged.sh"
 run_test "release publishes to npm next; promote.yml gates latest on the first-run gate (A-01)" "python3 -m pytest -q $SCRIPT_DIR/test_release_next_tag.py"
 run_test "release-notes.sh extraction/validation + pre-push VERSION-bump gate (E-88)" "$SCRIPT_DIR/test-release-notes.sh"
 run_test "no hardcoded far-future latest a release can overtake (E-73)" "$SCRIPT_DIR/test-no-stale-future-version.sh"

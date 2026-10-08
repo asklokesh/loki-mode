@@ -143,7 +143,7 @@ COPY --chown=loki:loki mcp/ ./mcp/
 # Purple Lab (web-app/): React UI + FastAPI backend. Pre-built dist/ ships in
 # the image so `loki web` works out of the box; Phase Merge-4 mounts the same
 # app under /lab/ in the dashboard. Backend Python deps installed below.
-COPY --chown=loki:loki web-app/server.py web-app/auth.py web-app/models.py web-app/crypto.py web-app/requirements.txt ./web-app/
+COPY --chown=loki:loki web-app/*.py web-app/requirements.txt ./web-app/
 COPY --chown=loki:loki web-app/migrations/ ./web-app/migrations/
 COPY --chown=loki:loki web-app/dist/ ./web-app/dist/
 COPY --chown=loki:loki learning/ ./learning/

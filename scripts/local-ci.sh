@@ -462,6 +462,7 @@ declare -a _FAST_KEEP=(
   "tests/test-web-app-no-orphan-components.sh"
   "tests/test-release-sbom-attached.sh"       # 0.2s
   "tests/test-release-dist-guard.sh"          # E-133, release.sh dist-map path guard
+  "tests/test-webapp-modules-packaged.sh"     # 132-E2, web-app/*.py shipped by glob
   # Guards two shipped behaviors no other suite covers: a pause must not wait
   # on a keypress that cannot arrive off a TTY (it either spun forever or was
   # falsely resumed by stray stdin bytes), and a finished run must state the
