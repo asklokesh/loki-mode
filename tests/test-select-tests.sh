@@ -426,6 +426,21 @@ out="$(cd "$REPO_ROOT" && PATH="$stub_dir:$PATH" bash "$SELECT" --files - <<<'lo
 rm -rf "$stub_dir"
 expect_contains "FC-32 failing python3 still selects test-control-plane" "$out" "tests/test-control-plane.sh"
 
+# SEL-XARGS: the per-needle candidate scan must batch files into few grep calls, not spawn one grep per
+# candidate file (that made a 100-150 file diff take minutes).
+cnt_dir="$(mktemp -d "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/select-cnt.XXXXXX")"
+real_grep="$(command -v grep)"
+printf '#!/bin/sh\necho x >> "%s/n"\nexec "%s" "$@"\n' "$cnt_dir" "$real_grep" > "$cnt_dir/grep"
+chmod +x "$cnt_dir/grep"
+(cd "$REPO_ROOT" && PATH="$cnt_dir:$PATH" bash "$SELECT" --files - <<<'providers/claude.sh' >/dev/null)
+ncalls="$(wc -l < "$cnt_dir/n" 2>/dev/null | tr -d ' ')"
+rm -rf "$cnt_dir"
+if [ "${ncalls:-9999}" -lt 60 ]; then
+    PASS=$((PASS + 1)); echo "PASS: SEL-XARGS candidate scan batched ($ncalls grep calls)"
+else
+    FAIL=$((FAIL + 1)); echo "FAIL: SEL-XARGS candidate scan spawned $ncalls grep calls (expected < 60)"
+fi
+
 echo ""
 echo "select-tests fixtures: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
