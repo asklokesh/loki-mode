@@ -105,21 +105,37 @@ def check_coe(where, value, matrix, allow_key):
         if leg.get(m.group(1)) is True and str(leg.get("bun-version")) != "latest":
             fail(f"{where}: pinned leg {leg} is experimental, so its failure would not fail the run (R2)")
 
-# A test command followed by `||` is masked unless the handler fails: it must
-# contain `exit <nonzero or $var>` or `false`. Covers || true, || :, || exit 0,
-# || echo ..., `|| true; next`, and trailing comments, with one rule.
-HANDLER_FAILS = re.compile(r"\bexit\s+([1-9]|\$|\"\$)|\bfalse\b")
+# A test command followed by `||` is masked unless the handler FAILS. One
+# token-level rule: quoted strings are stripped first (so "exit 1" inside an
+# echo is text, not a command), then the handler must have, in command position
+# (start, or after ; { ( & | then do else), either `false`, `exit <nonzero
+# literal>`, `exit $?`, or `exit $VAR` where VAR was captured as `VAR=$?` in the
+# handler and the exit follows. Anything else (|| true, :, exit 0, exit $SOFT,
+# exit $((0)), echo ..., `true; next`) is a mask.
+def tokens(text):
+    text = re.sub(r'"\$\{?(\w+)\}?"', r"$\1", text)  # keep "$rc" as $rc
+    return re.sub(r'"[^"]*"|\'[^\']*\'', '""', text)
+
+CMDPOS = r"(?:^|[;{&|(]|\bthen\b|\bdo\b|\belse\b)\s*"
+END = r"\s*(?:$|[;&|})])"
+FAIL_CMD = re.compile(CMDPOS + r"(?:false\b|exit\s+(?:[1-9]\d*|\$\?)" + END + ")")
+
+def exits_var(text, var):
+    return re.search(CMDPOS + r"exit\s+\$\{?" + re.escape(var) + r"\}?" + END, text, re.M) is not None
 
 def masked(line, run):
-    line = re.sub(r"\s+#.*$", "", line)
-    parts = line.split("||")
-    if len(parts) < 2 or not TEST_CMD.search(parts[0]):
+    if not TEST_CMD.search(line):
         return False
+    t = tokens(re.sub(r"\s+#.*$", "", line))
+    parts = t.split("||")
+    if len(parts) < 2:
+        return False
+    after = tokens(run[run.find(line) + len(line):])
     for h in parts[1:]:
-        if HANDLER_FAILS.search(h):
+        if FAIL_CMD.search(h):
             return False
-        cap = re.match(r"\s*(\w+)=\$\?\s*$", h)  # `|| rc=$?` is fine iff the step exits on it
-        if cap and re.search(r"\bexit\s+\"?\$\{?" + cap.group(1) + r"\b", run):
+        cap = re.search(r"(?:^|[;{])\s*(\w+)=\$\?", h)
+        if cap and (exits_var(h, cap.group(1)) or exits_var(after, cap.group(1))):
             return False
     return True
 
@@ -204,6 +220,16 @@ mut M10-true-comment nightly.yml "$STEP" '        run: bun test || true  # toler
 mut M11-success-or-failure release.yml '    needs: [gate, required-ci]
 ' '    needs: [gate, required-ci]
     if: success() || failure()
+'
+mut N01-exit-in-string nightly.yml "$STEP" '        run: bun test || echo "gate failed (exit 1), tolerated"
+'
+mut N02-false-in-string nightly.yml "$STEP" '        run: bun test || echo "false alarm, ignoring"
+'
+mut N03-exit-var-zero nightly.yml "$STEP" '        run: |
+          SOFT=0
+          bun test || exit $SOFT
+'
+mut N08-exit-arith-zero nightly.yml "$STEP" '        run: bun test || exit $((0))
 '
 mut M12-always release.yml '    needs: [gate, required-ci]
 ' '    needs: [gate, required-ci]
