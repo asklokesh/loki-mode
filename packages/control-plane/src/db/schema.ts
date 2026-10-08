@@ -40,6 +40,7 @@ export const runs = sqliteTable("runs", {
   partialUsd: real("partial_usd").notNull(),
   measuredSessions: integer("measured_sessions").notNull(),
   totalSessions: integer("total_sessions").notNull(),
+  tokenSessions: integer("token_sessions"), // FC-44: cost events that carried usage; null on rows ingested before it existed
   inputTokens: integer("input_tokens").notNull(),
   outputTokens: integer("output_tokens").notNull(),
   wallS: real("wall_s"),

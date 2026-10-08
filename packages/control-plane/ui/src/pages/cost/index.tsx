@@ -61,7 +61,7 @@ export function CostPage() {
         <KpiTile label="Measured" value={<span data-testid="cost-measured">{usd(t.measured_usd)}</span>} trend={`${t.measured_runs} runs`} trendTone="success" />
         <KpiTile label="Partial (priced sessions only)" value={<span data-testid="cost-partial">{usd(t.partial_usd)}</span>} trend={`${t.partial_runs} runs`} trendTone="warning" />
         <KpiTile label="Unmeasured" value={<span data-testid="cost-unmeasured">{t.unmeasured_runs} runs</span>} trend="not measured" />
-        <KpiTile label="Tokens in (incl. cache) / out" value={<span data-testid="cost-tokens">{tok(t.input_tokens)} / {tok(t.output_tokens)}</span>} />
+        <KpiTile label="Tokens in (incl. cache) / out" value={<span data-testid="cost-tokens">{tok(t.input_tokens)} / {tok(t.output_tokens)}</span>} trend={t.token_sessions_total ? `partial: ${t.token_sessions} of ${t.token_sessions_total} sessions` : undefined} trendTone="warning" />
       </div>
       <div><Chip label="Group by" value={label} options={DIMS} onSelect={(v) => setDim(v as Dim)} /></div>
       {data.rows.length === 0 ? <EmptyState title="No runs yet" hint="Cost appears here once a run has been ingested." /> : (
@@ -73,7 +73,7 @@ export function CostPage() {
             r.measured_runs ? usd(r.measured_usd) : "not measured",
             r.partial_runs ? `${usd(r.partial_usd)} (partial)` : "none",
             r.unmeasured_runs ? `${r.unmeasured_runs} not measured` : "none",
-            tok(r.input_tokens), tok(r.output_tokens),
+            r.token_sessions_total ? `${tok(r.input_tokens)} (partial: ${r.token_sessions} of ${r.token_sessions_total} sessions)` : tok(r.input_tokens), tok(r.output_tokens),
             <Bar key="bar" row={r} max={max} />,
           ])}
         />

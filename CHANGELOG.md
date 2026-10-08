@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Changed
+- A default run that resumes a session after a spec conflict or an empty done now reports cost as NOT RECORDED and tokens as partial ("partial: k of n sessions"), instead of a possibly double-counted total (RECEIPT-TRUTH, FC-44). Complete runs are unchanged, and old receipts still verify.
 - implement brief asks the model to declare new registry dependencies
 - Loki's own git calls run with hooks and commit signing off and with repo filter/textconv drivers blanked on reads (SEC-FSMON, FC-25d); the worker-side seal add and commit keep the repo's drivers and the user's core.attributesFile, and the seal commit keeps the user's hooks and commit signing.
 

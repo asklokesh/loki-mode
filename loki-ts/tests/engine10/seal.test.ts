@@ -1202,7 +1202,7 @@ print("\\t".join([str(v)] + [str(x) for x in out]))
     noKey();
     const { repo, base } = makeRepo("receipt-truth-ambig");
     const { ctx } = ctxFor(repo, base);
-    const dir = mkdtempSync(join(tmpdir(), "loki-run.rt-ambig-"));
+    const dir = mkdtempSync(join(tmpdir(), "rt-ambig-"));
     try {
       mkdirSync(join(dir, "metrics"), { recursive: true });
       const mu = (c: number) => ({ m: { input_tokens: 100, output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, cost_usd: c } });
@@ -1217,6 +1217,28 @@ print("\\t".join([str(v)] + [str(x) for x in out]))
       expect(cost["input_tokens"]).toBe(100);
       expect(renderReceiptMd({ ...receiptOf(await sealStage.run(ctx, new AbortController().signal)) })).toContain("Tokens: partial: 100 input / 1 output for 1 of 2 sessions");
       expect(cost["usd"]).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  }, 30000);
+
+  test("FC-43 empty-done resume ('-e' iteration, resumed_from the first session) seals ambiguous with labelled partial lines, no flag needed", async () => {
+    noKey();
+    const { repo, base } = makeRepo("receipt-truth-emptydone");
+    const { ctx } = ctxFor(repo, base);
+    const dir = mkdtempSync(join(tmpdir(), "rt-emptydone-"));
+    try {
+      mkdirSync(join(dir, "metrics"), { recursive: true });
+      const rec = { output_tokens: 1, cache_read_tokens: 1000, cache_creation_tokens: 10, num_turns: 2, duration_ms: 500 };
+      writeFileSync(join(dir, "metrics", "result-cost-impl.json"), JSON.stringify({ ...rec, total_cost_usd: 1, input_tokens: 100, session_id: "S1" }));
+      writeFileSync(join(dir, "metrics", "result-cost-impl-e.json"), JSON.stringify({ ...rec, total_cost_usd: 1.4, input_tokens: 140, session_id: "S2", resumed_from: "S1" }));
+      ctx.cost = { read: () => costTotalsOf(sumResultCosts(dir, ["impl", "impl-e"])) };
+      const receipt = receiptOf(await sealStage.run(ctx, new AbortController().signal));
+      const cost = receipt.cost as unknown as Record<string, unknown>;
+      expect(cost["resume"]).toBe("ambiguous");
+      expect(cost["usd"]).toBeNull();
+      expect(cost["tokens_measured"]).toEqual({ k: 1, n: 2 });
+      expect(cost["input_tokens"]).toBe(100);
+      const md = renderReceiptMd({ ...receipt });
+      expect(md).toContain("Tokens: partial: 100 input / 1 output for 1 of 2 sessions");
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }, 30000);
 

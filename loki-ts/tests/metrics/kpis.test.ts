@@ -395,3 +395,20 @@ describe("formatKpisHuman", () => {
     expect(accIdx).toBeGreaterThan(effIdx);
   });
 });
+
+describe("FC-44 unrecorded session (tokens_measured:false)", () => {
+  const eff = () => { const d = join(td, "metrics", "efficiency"); mkdirSync(d, { recursive: true }); return d; };
+  it("one flagged record makes totals NOT MEASURED (null), never a partial sum; a complete run has no unmeasured key", () => {
+    const d = eff();
+    writeFileSync(join(d, "iteration-1.json"), JSON.stringify({ iteration: 1, model: "sonnet", cost_usd: 0.5, input_tokens: 100, output_tokens: 50 }));
+    const complete = computeKpis(td).efficiency;
+    expect(complete.total_input_tokens).toBe(100);
+    expect("unmeasured_iterations" in complete).toBe(false);
+    writeFileSync(join(d, "iteration-2.json"), JSON.stringify({ iteration: 2, model: "sonnet", tokens_measured: false }));
+    const e = computeKpis(td).efficiency;
+    expect(e.total_input_tokens).toBeNull();
+    expect(e.total_output_tokens).toBeNull();
+    expect(e.total_cost_usd).toBeNull();
+    expect(e.unmeasured_iterations).toBe(1);
+  });
+});

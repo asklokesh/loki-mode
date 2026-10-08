@@ -156,6 +156,35 @@ describe("RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44)", () => {
       expect(s.tokens_measured).toBeUndefined();
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("R4-1: an ambiguous resumed session writes an efficiency record with NO token keys and tokens_measured:false, never zeros", () => {
+    const d = tmpCheckout();
+    try {
+      const lokiRoot = join(d, ".loki");
+      write(lokiRoot, "fix", { total_cost_usd: 1.4, input_tokens: 140, output_tokens: 1, cache_read_tokens: 1400, session_id: "S2", resumed_from: "S1" });
+      recordSessionCost(lokiRoot, "fix", { status: "completed", durationMs: 5, model: "m" });
+      const rec = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-1.json"), "utf8"));
+      for (const k of ["input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "cost_usd"]) expect(k in rec).toBe(false);
+      expect(rec.tokens_measured).toBe(false);
+      // a plain session still writes its numbers and no marker
+      write(lokiRoot, "plan", { total_cost_usd: 0.5, input_tokens: 10, output_tokens: 1, session_id: "P" });
+      recordSessionCost(lokiRoot, "plan", { status: "completed", durationMs: 5, model: "m" });
+      const ok = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-2.json"), "utf8"));
+      expect(ok.input_tokens).toBe(10);
+      expect("tokens_measured" in ok).toBe(false);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("R4-1: a resume provably below its predecessor (found among sibling files) keeps its efficiency numbers", () => {
+    const d = tmpCheckout();
+    try {
+      const lokiRoot = join(d, ".loki");
+      write(lokiRoot, "impl", { total_cost_usd: 1.0, input_tokens: 100, output_tokens: 1, session_id: "S1" });
+      write(lokiRoot, "fix", { total_cost_usd: 0.2, input_tokens: 20, output_tokens: 1, session_id: "S2", resumed_from: "S1" });
+      recordSessionCost(lokiRoot, "fix", { status: "completed", durationMs: 5, model: "m" });
+      const rec = JSON.parse(readFileSync(join(lokiRoot, "metrics", "efficiency", "iteration-1.json"), "utf8"));
+      expect(rec.input_tokens).toBe(20);
+      expect("tokens_measured" in rec).toBe(false);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
   test("a complete run carries no tokens_measured", () => {
     const d = tmpCheckout();
     try {

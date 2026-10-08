@@ -52,6 +52,8 @@ export type KpiSnapshot = {
     // able to tell "emitted no output tokens" from "nothing was recorded".
     total_input_tokens: number | null;
     total_output_tokens: number | null;
+    // Present only when > 0: sessions whose usage could not be recorded (FC-44). Absent on every complete run.
+    unmeasured_iterations?: number;
     // NOT part of the measured predicate, and Python does not null it either.
     // Duration comes from the wall clock, not from provider-reported usage.
     total_duration_ms: number;
@@ -178,7 +180,11 @@ function deriveEfficiency(records: readonly EfficiencyRecord[]): KpiSnapshot["ef
   // ONE predicate for the whole snapshot -- cost and tokens are measured or
   // unmeasured together, exactly as Python nulls usd and the token counts on
   // the same condition. A second predicate is how the honesty rule drifts.
-  const measured = recordsMeasured(records);
+  // FC-44: a record flagged tokens_measured:false (an ambiguous resumed session) is an unmeasured session. One of them makes the
+  // aggregate unmeasured, never a partial sum presented as the total.
+  const unmeasuredIterations = records.filter((r) => (r as { tokens_measured?: unknown }).tokens_measured === false).length;
+  const measured = unmeasuredIterations === 0 && recordsMeasured(records);
+  if (unmeasuredIterations > 0) out.unmeasured_iterations = unmeasuredIterations;
   // Unmeasured stays null. A genuine measured 0.0 (records carried non-zero
   // tokens but priced to nothing) is preserved as 0, not blanked.
   out.total_cost_usd = measured

@@ -43,6 +43,13 @@
       "when": 1791051000000,
       "tag": "0005_ask",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1791052000000,
+      "tag": "0006_token_sessions",
+      "breakpoints": true
     }
   ]
 }

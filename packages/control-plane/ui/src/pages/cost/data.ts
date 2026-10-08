@@ -6,6 +6,7 @@ export interface CostRow {
   day?: string; model?: string; repo?: string; provider?: string;
   runs: number; measured_runs: number; partial_runs: number; unmeasured_runs: number;
   measured_usd: number; partial_usd: number; input_tokens: number; output_tokens: number;
+  token_sessions?: number; token_sessions_total?: number; // present only when some session carried no usage
 }
 export interface CostResponse {
   group: Dim[]; since: string | null; rows: CostRow[];

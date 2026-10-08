@@ -32,6 +32,7 @@ export interface RunRow {
   partial_usd: number | null;
   measured_sessions: number;
   total_sessions: number;
+  token_sessions?: number | null; // cost events that carried usage; fewer than total_sessions means partial
   input_tokens: number | null;
   output_tokens: number | null;
   wall_s: number | null;

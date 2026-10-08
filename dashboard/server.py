@@ -7886,6 +7886,9 @@ def _compute_cost_snapshot() -> dict:
     cost_recorded = False
     # Tokens were measured (tracker fallback) but no USD figure was recorded.
     cost_unknown = False
+    # FC-44: sessions whose usage could not be recorded (efficiency record flagged tokens_measured:false). Any of them makes
+    # every token and dollar total NOT RECORDED; the response key appears only then.
+    unmeasured_sessions = 0
 
     # Read efficiency files (one JSON file per iteration/task).
     # Use the iteration-*.json pattern so this reader sees the same
@@ -7903,6 +7906,9 @@ def _compute_cost_snapshot() -> dict:
                 if not isinstance(data, dict):
                     continue
                 measured = _record_is_measured(data)
+                rec_unmeasured = data.get("tokens_measured") is False
+                if rec_unmeasured:
+                    unmeasured_sessions += 1
                 if measured:
                     cost_recorded = True
                 # Tokens are measured apart from cost: a record that priced an
@@ -7938,17 +7944,18 @@ def _compute_cost_snapshot() -> dict:
                 for bucket, name in ((by_phase, phase), (by_model, model)):
                     if name not in bucket:
                         bucket[name] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0,
-                                        "measured": False, "tokens_measured": False}
+                                        "measured": False, "tokens_measured": False, "unmeasured": False}
                     bucket[name]["input_tokens"] += inp
                     bucket[name]["output_tokens"] += out
                     bucket[name]["cost_usd"] += cost
                     bucket[name]["measured"] = bucket[name]["measured"] or measured
                     bucket[name]["tokens_measured"] = bucket[name]["tokens_measured"] or tokens_measured
+                    bucket[name]["unmeasured"] = bucket[name]["unmeasured"] or rec_unmeasured
             except (json.JSONDecodeError, KeyError, TypeError, AttributeError):
                 pass
 
     # Fallback: read from context tracking if efficiency files have no token data
-    if total_input == 0 and total_output == 0:
+    if total_input == 0 and total_output == 0 and not unmeasured_sessions:
         ctx_file = loki_dir / "context" / "tracking.json"
         if ctx_file.exists():
             try:
@@ -8021,25 +8028,26 @@ def _compute_cost_snapshot() -> dict:
     # set of measured records that genuinely sums to zero still renders 0.0 --
     # the direction that would otherwise blank real data (the v8.72.0 trap).
     return {
-        "total_input_tokens": total_input if cost_recorded else None,
-        "total_output_tokens": total_output if cost_recorded else None,
-        "total_cache_read_tokens": total_cache_read if cost_recorded else None,
-        "total_cache_creation_tokens": total_cache_creation if cost_recorded else None,
+        **({"unmeasured_sessions": unmeasured_sessions} if unmeasured_sessions else {}),
+        "total_input_tokens": total_input if cost_recorded and not unmeasured_sessions else None,
+        "total_output_tokens": total_output if cost_recorded and not unmeasured_sessions else None,
+        "total_cache_read_tokens": total_cache_read if cost_recorded and not unmeasured_sessions else None,
+        "total_cache_creation_tokens": total_cache_creation if cost_recorded and not unmeasured_sessions else None,
         "total_tokens": (
             total_input + total_output + total_cache_read + total_cache_creation
-        ) if cost_recorded else None,
+        ) if cost_recorded and not unmeasured_sessions else None,
         "cache_hit_ratio": round(total_cache_read / _read_in, 4) if _read_in > 0 else None,
-        "estimated_cost_usd": round(estimated_cost, 6) if cost_recorded and not cost_unknown else None,
+        "estimated_cost_usd": round(estimated_cost, 6) if cost_recorded and not cost_unknown and not unmeasured_sessions else None,
         "cost_recorded": cost_recorded,
         "by_phase": {k: {
-            "input_tokens": v["input_tokens"] if v.get("tokens_measured") else None,
-            "output_tokens": v["output_tokens"] if v.get("tokens_measured") else None,
-            "cost_usd": round(v["cost_usd"], 6) if v.get("measured") else None,
+            "input_tokens": v["input_tokens"] if v.get("tokens_measured") and not v.get("unmeasured") else None,
+            "output_tokens": v["output_tokens"] if v.get("tokens_measured") and not v.get("unmeasured") else None,
+            "cost_usd": round(v["cost_usd"], 6) if v.get("measured") and not v.get("unmeasured") else None,
         } for k, v in by_phase.items()},
         "by_model": {k: {
-            "input_tokens": v["input_tokens"] if v.get("tokens_measured") else None,
-            "output_tokens": v["output_tokens"] if v.get("tokens_measured") else None,
-            "cost_usd": round(v["cost_usd"], 6) if v.get("measured") else None,
+            "input_tokens": v["input_tokens"] if v.get("tokens_measured") and not v.get("unmeasured") else None,
+            "output_tokens": v["output_tokens"] if v.get("tokens_measured") and not v.get("unmeasured") else None,
+            "cost_usd": round(v["cost_usd"], 6) if v.get("measured") and not v.get("unmeasured") else None,
         } for k, v in by_model.items()},
         "budget_limit": budget_limit,
         "budget_used": round(budget_used, 6) if budget_limit is not None and budget_used is not None else None,

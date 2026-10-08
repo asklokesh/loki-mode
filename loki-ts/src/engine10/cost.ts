@@ -70,7 +70,8 @@ export function resultCostPath(lokiRoot: string, iteration: string): string {
 
 // Sum across sessions. Any missing session makes usd null: a partial sum
 // would understate the run's cost. Tokens still sum what was measured.
-export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResult {
+// `context` are other iterations of the same run, read only to find a resumed session's predecessor (never summed).
+export function sumResultCosts(lokiRoot: string, iterations: string[], context: string[] = []): CostResult {
   const out: CostResult = {
     usd: null, partialUsd: 0, measuredCount: 0, totalCount: iterations.length,
     input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0,
@@ -87,7 +88,14 @@ export function sumResultCosts(lokiRoot: string, iterations: string[]): CostResu
   for (const iter of iterations) {
     try { parsed.set(iter, JSON.parse(readFileSync(resultCostPath(lokiRoot, iter), "utf8")) as Record<string, unknown>); } catch { /* counted missing below */ }
   }
-  const rv = resumeVerdicts(iterations.filter((i) => parsed.has(i)).map((iter) => ({ iter, rec: parsed.get(iter)! })));
+  const own = new Set(iterations);
+  const lookup = [...iterations.filter((i) => parsed.has(i)).map((iter) => ({ iter, rec: parsed.get(iter)! }))];
+  for (const iter of context) {
+    if (own.has(iter)) continue;
+    try { lookup.push({ iter, rec: JSON.parse(readFileSync(resultCostPath(lokiRoot, iter), "utf8")) as Record<string, unknown> }); } catch { /* absent predecessor stays ambiguous */ }
+  }
+  const verdicts = resumeVerdicts(lookup);
+  const rv = { ambiguous: verdicts.ambiguous.filter((i) => own.has(i)), separate: verdicts.separate.filter((i) => own.has(i)) };
   for (const iter of iterations) {
     const path = resultCostPath(lokiRoot, iter);
     const rec = parsed.get(iter);
@@ -209,10 +217,16 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
     rec.cost_usd = cost.usd;
     rec.cost_source = costSource; // EV-1 gate reads only provider-sourced dollars ("partial-stream": E-98e, priced from streamed usage, never itself provider-reported)
   }
-  rec.input_tokens = cost.input_tokens;
-  rec.output_tokens = cost.output_tokens;
-  rec.cache_read_tokens = cost.cache_read_tokens;
-  rec.cache_creation_tokens = cost.cache_creation_tokens;
+  // A session left out of the token sums (ambiguous resume) writes NO token keys: every reader treats a record without them as
+  // unmeasured, where a written 0 would read as a measured zero.
+  if (cost.tokens_measured) {
+    rec.tokens_measured = false; // explicit marker the efficiency readers key on (kpis, stats, efficiency_cost.py, dashboard)
+  } else {
+    rec.input_tokens = cost.input_tokens;
+    rec.output_tokens = cost.output_tokens;
+    rec.cache_read_tokens = cost.cache_read_tokens;
+    rec.cache_creation_tokens = cost.cache_creation_tokens;
+  }
   writeFileSync(join(dir, `iteration-${n}.json`), JSON.stringify(rec));
   return n;
 }
@@ -220,7 +234,10 @@ export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionI
 // What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record
 // in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.
 export function recordSessionCost(lokiRoot: string, iterationId: string, info: EfficiencySessionInfo): CostResult {
-  const cost = readResultCost(lokiRoot, iterationId);
+  // The predecessor of a resumed session is another file of the same run: look it up so a provably separate resume is not blanked.
+  let siblings: string[] = [];
+  try { siblings = readdirSync(join(lokiRoot, "metrics")).filter((f) => f.startsWith("result-cost-") && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)); } catch { /* no metrics dir yet */ }
+  const cost = sumResultCosts(lokiRoot, [iterationId], siblings);
   writeEfficiencyRecord(lokiRoot, info, cost, cost.unmetered ? UNMETERED : "provider");
   return cost;
 }

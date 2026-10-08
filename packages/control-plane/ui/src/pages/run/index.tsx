@@ -24,6 +24,11 @@ function OutcomeBadge({ verdict, label, tone, testid }: { verdict?: string | nul
   return <Badge tone={TONE[o.tone]} pulse={o.label === "Running"} data-testid={testid} style={{ textTransform: "none", letterSpacing: 0 }}>{o.label}</Badge>;
 }
 
+/** "partial: k of n sessions" when some session recorded no usage (FC-44); null on a complete run or an old row. */
+export function tokensPartialLabel(r: Pick<RunDetailResponse, "total_sessions"> & { token_sessions?: number | null }): string | null {
+  return r.token_sessions != null && r.total_sessions > 0 && r.token_sessions < r.total_sessions ? `partial: ${r.token_sessions} of ${r.total_sessions} sessions` : null;
+}
+
 export function costLabel(r: Pick<RunDetailResponse, "cost_usd" | "partial_usd" | "measured_sessions" | "total_sessions">): string {
   if (r.cost_usd !== null && r.cost_usd !== undefined) return fmtUsd(r.cost_usd);
   if (r.partial_usd) return `at least ${fmtUsd(r.partial_usd)} (${r.measured_sessions} of ${r.total_sessions} sessions measured)`;
@@ -313,6 +318,7 @@ export function RunThread({ source, run, slot, renderSlot }: { source: string; r
         {blocked ? <OutcomeBadge verdict="BLOCKED" testid="run-outcome" /> : d.verdict ? <OutcomeBadge label={runOutcome(d).label} tone={runOutcome(d).tone} testid="run-outcome" /> : <OutcomeBadge verdict={null} testid="run-outcome" />}
         <span data-testid="run-elapsed" style={{ fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>{elapsedLabel(d.elapsed_s ?? d.wall_s)}</span>
         <span data-testid="run-cost" style={{ fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-base)" }}>{costLabel(d)}</span>
+        {tokensPartialLabel(d) && <span data-testid="run-tokens-partial" style={{ fontFamily: "var(--cp-font-mono)", fontSize: "var(--cp-text-sm, 12px)" }}>tokens {tokensPartialLabel(d)}</span>}
         <span data-testid="run-header-slot" style={{ display: "inline-flex", gap: 8 }}>{slot}{renderSlot ? renderSlot(ownRules ? { ...d, blocked_question: null } : d, load) : null}</span>
         {renderSlot ? null : <Button variant={ownRules ? "primary" : "secondary"} size="sm" data-testid="run-retry" disabled={!canRetry || retry.busy} title={running ? "The run is still in progress" : d.issue_ref ? "Start this issue again" : `No issue reference recorded ${UNMEASURED}`} onClick={() => void doRetry()}><RotateCcw size={13} aria-hidden="true" /> Retry</Button>}
         {retry.msg ? <span role={retry.error ? "alert" : "status"} data-testid="run-retry-msg" style={{ color: retry.error ? "var(--cp-error-ink)" : "var(--cp-text-2)", fontSize: "var(--cp-text-base)" }}>{retry.msg}</span> : null}

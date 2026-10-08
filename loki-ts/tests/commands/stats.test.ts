@@ -282,3 +282,28 @@ describe("stats: unknown flags are ignored (matches bash case *)", () => {
     expect(() => JSON.parse(r.stdout)).not.toThrow();
   });
 });
+
+describe("stats: FC-44 unrecorded session (tokens_measured:false)", () => {
+  it("one flagged record prints NOT RECORDED and null JSON totals; the complete run carries no unmeasured key", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-stats-"));
+    try {
+      const eff = join(dir, "metrics", "efficiency");
+      mkdirSync(eff, { recursive: true });
+      writeFileSync(join(eff, "iteration-1.json"), JSON.stringify({ input_tokens: 100, output_tokens: 50, cost_usd: 0.5 }));
+      process.env["LOKI_DIR"] = dir;
+      const complete = JSON.parse(computeStats(["--json"]).stdout);
+      expect(complete.tokens.input).toBe(100);
+      expect("unmeasured_iterations" in complete.tokens).toBe(false);
+      writeFileSync(join(eff, "iteration-2.json"), JSON.stringify({ tokens_measured: false }));
+      const j = JSON.parse(computeStats(["--json"]).stdout);
+      expect(j.tokens.input).toBeNull();
+      expect(j.tokens.output).toBeNull();
+      expect(j.tokens.total).toBeNull();
+      expect(j.tokens.cost_usd).toBeNull();
+      expect(j.tokens.unmeasured_iterations).toBe(1);
+      expect(computeStats([]).stdout).toContain("NOT RECORDED");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
