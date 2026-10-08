@@ -110,7 +110,7 @@ export interface CostTotals {
   cacheReadTokens: number;
   tokensMeasured?: { k: number; n: number }; // set only when some session was left out of the token sums (R3-2 follow-up)
   cacheReadSeen?: boolean; cacheCreationSeen?: boolean; // false = no measured file carried the key (NOT RECORDED); undefined = a fake reader, its numbers are taken as measured
-  records?: import("./cost_records.ts").CostRecords; // COST-RECORDS / FIX-RESUME
+  records?: import("../contrib/cost_records.ts").CostRecords; // COST-RECORDS / FIX-RESUME
   durationMs?: number; // SDK result-line duration_ms, summed
   cacheCreationTokens?: number; // optional so existing CostReader fakes still typecheck; absent reads NOT RECORDED in the receipt
   // E-69: optional so every existing CostReader test fake (only usd/tokens) still typechecks;
@@ -197,7 +197,7 @@ export interface Receipt {
     // RECEIPT-TRUTH: additive; absent (older receipts, fake readers) means NOT RECORDED, never 0.
     cache_read_tokens?: number;
     cache_creation_tokens?: number;
-    tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, import("./cost_records.ts").ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate"; // COST-RECORDS / FIX-RESUME, additive
+    tokens_scope?: "all-models" | "main-loop"; per_model?: Record<string, import("../contrib/cost_records.ts").ModelRecord>; turns?: number; cache_creation_main_loop?: { ephemeral_5m_tokens: number; ephemeral_1h_tokens: number }; resume?: "ambiguous" | "separate"; // COST-RECORDS / FIX-RESUME, additive
     sdk_duration_ms?: number; // SDK result line duration_ms, summed; absent = NOT RECORDED
     tokens_measured?: { k: number; n: number }; // present only when k < n: input_tokens/output_tokens sum k of n sessions (a missing or ambiguous-resume session is left out), so they are partial
     // E-69: sessions with a provider-sourced dollar figure, out of the sessions this run recorded;
@@ -208,7 +208,7 @@ export interface Receipt {
     source?: string; // D48: "cli-invoker-unmetered" when usd is a recorded 0, absent otherwise
   };
   /** RECEIPT-TRUTH (receipt_time.ts): stages is a disjoint partition of total_s (first event to seal; a parallel group is one "a+b" bucket); wall_s = the stage buckets without setup, orchestration and seal. Additive; consumers read it through reconciledTotalS. */
-  time: import("./receipt_time.ts").ReceiptTime;
+  time: import("../contrib/receipt_time.ts").ReceiptTime;
   provider: string;
   model: string;
   resumed: boolean;

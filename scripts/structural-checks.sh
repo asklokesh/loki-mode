@@ -43,14 +43,16 @@ check() {
 # Line budgets: same split and limits as budget.test.ts (D29, D33, D42).
 lines() { find "$@" -name '*.ts' -print0 2>/dev/null | xargs -0 cat 2>/dev/null | awk 'END{print NR}'; }
 line_budgets() {
-    local e=loki-ts/src/engine10 core mod ext skill rc=0
+    local e=loki-ts/src/engine10 core mod ext contrib skill rc=0
     mod=$(lines "$e/modernize")
     core=$(( $(lines "$e") - mod ))
     ext=$(lines loki-ts/src/e10ext)
+    contrib=$(lines loki-ts/src/contrib)
     skill=$(wc -l < SKILL.md)
     [ "$core" -lt 5000 ] || { echo "core engine10 $core >= 5000"; rc=1; }
     [ "$mod" -lt 4000 ] || { echo "modernize $mod >= 4000"; rc=1; }
     [ "$ext" -lt 1500 ] || { echo "e10ext $ext >= 1500"; rc=1; }
+    [ "$contrib" -lt 1200 ] || { echo "contrib $contrib >= 1200"; rc=1; }
     [ "$skill" -lt 500 ] || { echo "SKILL.md $skill >= 500"; rc=1; }
     return $rc
 }

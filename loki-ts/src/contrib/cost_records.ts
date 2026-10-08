@@ -1,4 +1,4 @@
-// loki-ts/src/engine10/cost_records.ts -- RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44).
+// loki-ts/src/contrib/cost_records.ts -- RECEIPT-TRUTH COST-RECORDS and FIX-RESUME (FC-44).
 // Per-model cost from the SDK result line's modelUsage (whole pipeline, subagents included), the main-loop-only 5m/1h cache
 // split labelled as such, and a per-session decision on whether a resumed session's total is cumulative. Anything that
 // cannot be established reads NOT RECORDED (the key is omitted, usd is unknown), never a guess.

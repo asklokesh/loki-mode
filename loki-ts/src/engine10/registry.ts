@@ -18,11 +18,11 @@ export const REGISTRY: Readonly<Record<string, () => Promise<Mod>>> = {
   "./keys_cmd.ts": () => import("./keys_cmd.ts"),
   "./../runner/engine10_dashboard.ts": () => import("../runner/engine10_dashboard.ts"),
   "./modernize/cli.ts": () => import("./modernize/cli.ts"),
-  "./plan_cmd.ts": () => import("./plan_cmd.ts"),
+  "./../contrib/plan_cmd.ts": () => import("../contrib/plan_cmd.ts"),
   "./worker.ts": () => import("./worker.ts"),
   "./session.ts": () => import("./session.ts"),
   "./supervisor.ts": () => import("./supervisor.ts"),
-  "./eta.ts": () => import("./eta.ts"),
+  "./../contrib/eta.ts": () => import("../contrib/eta.ts"),
   "./../commands/export_sarif.ts": () => import("../commands/export_sarif.ts"),
   "../e10ext/ship_hook.ts": () => import("../e10ext/ship_hook.ts"),
 };

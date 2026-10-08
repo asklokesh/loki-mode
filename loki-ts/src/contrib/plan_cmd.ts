@@ -3,8 +3,8 @@
 import { relative } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
 import { generateSpec } from "../util/spec_file.ts";
-import { createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
-import type { SessionRunner } from "./types.ts";
+import { createSessionRunner, resolveModel, type EmitFn } from "../engine10/session.ts";
+import type { SessionRunner } from "../engine10/types.ts";
 
 export const PLAN_USAGE = "usage: loki plan <task> --spec [--force] [--provider <name>]\n  writes the acceptance criteria to .loki/specs/<slug>.md; edit it, then run: loki start --spec .loki/specs/<slug>.md\n";
 

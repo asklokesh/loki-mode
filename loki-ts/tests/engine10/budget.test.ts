@@ -273,3 +273,30 @@ describe("features size and import budget (D66)", () => {
     expect(featuresViolations("x.ts", 'import type { A } from "../engine10/verify_cmd.ts";\n')).toEqual([]);
   });
 });
+
+// D91 item 3 (docs/v11/REGISTRIES.md rule 5): contrib/ is the home for extracted non-verdict code, with its
+// own 1,200-line cap and the same fence as features/.
+const CONTRIB_ROOT = join(import.meta.dir, "..", "..", "src", "contrib");
+
+function contribFiles(): string[] {
+  const files = (readdirSync(CONTRIB_ROOT, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
+  expect(files.length).toBeGreaterThan(0);
+  return files;
+}
+
+describe("contrib size and import budget (D91)", () => {
+  it("contrib stays under 1,200 lines", () => {
+    expect(count(contribFiles(), CONTRIB_ROOT)).toBeLessThan(1200);
+  });
+
+  it("never imports stages/ or seal/verify/wall/verify_cmd except whole-statement `import type`", () => {
+    for (const f of contribFiles()) {
+      expect(featuresViolations(f, readFileSync(join(CONTRIB_ROOT, f), "utf8"))).toEqual([]);
+    }
+  });
+
+  it("the fence flags a planted value import of a stages/ module", () => {
+    expect(featuresViolations("x.ts", 'import { x } from "../engine10/stages/seal";\n').length).toBe(1);
+    expect(featuresViolations("x.ts", 'import type { X } from "../engine10/stages/seal";\n')).toEqual([]);
+  });
+});

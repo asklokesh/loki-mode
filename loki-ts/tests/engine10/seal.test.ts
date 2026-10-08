@@ -17,7 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { runMachine } from "../../src/engine10/machine.ts";
 import { costTotalsOf, sumResultCosts } from "../../src/engine10/cost.ts";
-import { buildTime, reconciledTotalS } from "../../src/engine10/receipt_time.ts";
+import { buildTime, reconciledTotalS } from "../../src/contrib/receipt_time.ts";
 import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";

@@ -1,8 +1,8 @@
-// loki-ts/src/engine10/receipt_time.ts -- RECEIPT-TRUTH (FC-44): the receipt's time block and its self-consistency check.
+// loki-ts/src/contrib/receipt_time.ts -- RECEIPT-TRUTH (FC-44): the receipt's time block and its self-consistency check.
 // Every interval of the run is a named bucket (setup before the machine starts, each stage, orchestration gaps between
 // stages, seal), so the buckets partition total_s. A parallel group is one bucket (the union of its members' intervals). A block that does not reconcile within 1% reads NOT RECORDED downstream (reconciledTotalS returns null), never a number.
 import { readFileSync } from "node:fs";
-import type { RunContext, StageName } from "./types.ts";
+import type { RunContext, StageName } from "../engine10/types.ts";
 
 /** Overhead buckets, a stage name, or a parallel group joined with "+" (for example "plan+wall"). */
 export type TimeBucket = string;

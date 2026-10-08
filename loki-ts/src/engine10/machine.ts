@@ -1,11 +1,10 @@
 // Loki 10 state machine (ENGINE.md section 4): stage table, Plan || Wall, optional() loader,
 // stage limits, global cap, stop reasons (stalled, fatal). Siblings arrive only through
 // RunContext; stages come from ./stages/<name>.ts.
-import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { safeGit, tokenFreeEnv } from "../util/safe_git.ts";
+import { changedSinceBase, MANIFESTS, snapshotTree } from "../contrib/wall_snapshot.ts";
+export { snapshotTree }; // re-exported: tests import it from here
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
 import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts";
@@ -17,38 +16,7 @@ interface WallSplit {
   author(ctx: RunContext, signal: AbortSignal): Promise<{ kind: string } & Record<string, unknown>>;
   install(ctx: RunContext, a: never, baseDir: string): StageResult;
 }
-const MANIFESTS = /(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|pyproject\.toml|poetry\.lock|Pipfile(\.lock)?|requirements[^/]*\.txt|setup\.py|setup\.cfg|go\.(mod|sum)|Cargo\.(toml|lock))$/;
 const wallConcurrent = (): boolean => process.env.LOKI_E10_WALL_CONCURRENT === "1";
-/** WC-01b: a faithful copy of the pre-implement tree (ignored dep dirs, nested node_modules, untracked work, .git; not .loki or .claude/worktrees), taken before implement starts. A clone copy where the filesystem has one. Relative links inside it resolve inside the copy, never into the live repo.
- *  Bounded: the signal (wall limit or run cap) and a timeout kill the copy, and a size ceiling refuses it up front. Every failure is null, which means the Wall fails and nothing is installed. */
-const run = (cmd: string, args: string[], signal: AbortSignal, timeout: number): Promise<{ ok: boolean; out: string }> =>
-  new Promise((res) => { try { execFile(cmd, args, { maxBuffer: 1 << 24, timeout, signal, env: tokenFreeEnv(process.env) }, (err, out) => res({ ok: !err, out: String(out ?? "") })); } catch { res({ ok: false, out: "" }); } });
-export async function snapshotTree(repoDir: string, signal: AbortSignal, o: { timeoutMs?: number; maxMb?: number } = {}): Promise<string | null> {
-  const timeoutMs = o.timeoutMs ?? (Number(process.env.LOKI_E10_WALL_SNAPSHOT_TIMEOUT_S) || 120) * 1000, maxMb = o.maxMb ?? (Number(process.env.LOKI_E10_WALL_SNAPSHOT_MAX_MB) || 2048);
-  if (signal.aborted) return null;
-  const dir = mkdtempSync(join(tmpdir(), "e10-wallbase-")), fail = (): null => { rmSync(dir, { recursive: true, force: true }); return null; };
-  try {
-    const top = readdirSync(repoDir).filter((n) => n !== ".loki" && n !== ".claude").map((n) => join(repoDir, n));
-    const claude = existsSync(join(repoDir, ".claude")) ? readdirSync(join(repoDir, ".claude")).filter((n) => n !== "worktrees").map((n) => join(repoDir, ".claude", n)) : [];
-    const all = [...top, ...claude];
-    if (!all.length) return dir;
-    const du = await run("du", ["-sk", ...all], signal, Math.min(timeoutMs, 60_000));
-    if (!du.ok || signal.aborted) return fail();
-    const kb = du.out.split("\n").reduce((t, l) => t + (Number(l.split("\t")[0]) || 0), 0);
-    if (kb > maxMb * 1024) return fail();
-    const cp = process.platform === "darwin" ? ["-cR"] : ["-a", "--reflink=auto"];
-    if (top.length && !(await run("cp", [...cp, ...top, dir], signal, timeoutMs)).ok) return fail();
-    if (claude.length) { mkdirSync(join(dir, ".claude")); if (!(await run("cp", [...cp, ...claude, join(dir, ".claude")], signal, timeoutMs)).ok) return fail(); }
-    return signal.aborted ? fail() : dir;
-  } catch { return fail(); }
-}
-/** Files changed against baseSha (tracked diff plus untracked); null when git cannot say. */
-function changedSinceBase(repoDir: string, baseSha: string): string[] | null {
-  try {
-    const tracked = safeGit(repoDir, ["diff", "--name-only", baseSha], { repoDrivers: true }), untracked = safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"], { repoDrivers: true });
-    return `${tracked}\n${untracked}`.split("\n").filter(Boolean);
-  } catch { return null; }
-}
 /** Run order. An array is a parallel group. fix is driven by the verify loop, deep is detached (supervisor). */
 export const FLOW: readonly (StageName | readonly StageName[])[] = [
   "intake", ["plan", "wall"], "implement", "verify", "commit", "seal", "pr",

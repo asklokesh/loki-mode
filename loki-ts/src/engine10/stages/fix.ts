@@ -8,7 +8,7 @@ import { cascadeDowngrade, escalationModel } from "../sizing.ts";
 import { MAX_FIX_ROUNDS } from "../types.ts";
 import type { RunContext, Stage, StageResult } from "../types.ts";
 import type { FailureGroup } from "../failures.ts";
-import { fixEffort } from "../effort_policy.ts";
+import { fixEffort } from "../../contrib/effort_policy.ts";
 import { buildFixResumeBrief, runFixSession } from "../../runner/session_resume.ts";
 
 /** A wall/impacted-test signature, never lint/select-tests (verify.ts's names): E-64 escalates only "on a test failure". */

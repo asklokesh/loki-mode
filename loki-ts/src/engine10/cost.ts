@@ -10,7 +10,7 @@
 // always writes cost_usd (defaulting to 0 when unknown), this omits cost_usd when there is no dollar figure.
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import type { CostTotals } from "./types.ts";
-import { buildRecords, resumeVerdicts, type CostRecords } from "./cost_records.ts";
+import { buildRecords, resumeVerdicts, type CostRecords } from "../contrib/cost_records.ts";
 import { join } from "node:path"; import { routerEnabled } from "../runner/router/flag.ts";
 
 /** D48: marker on a result-cost file and the cost event/receipt for a CLI-invoker session (LOKI_E10_INVOKER=cli, e.g. the

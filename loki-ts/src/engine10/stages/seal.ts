@@ -31,7 +31,7 @@ import { hasExecutedProof, NO_TESTS_REASON, UNCONFIRMED_REASON, UNMEASURED_REASO
 import { type ContractSnapshot, sealContract } from "../../features/contract.ts";
 import { capGroupVerdict, sealGroup } from "../../features/speed/seal_group.ts";
 import { readDeclared, supplyGuard, supplyVerdict } from "../../supply/supply_guard.ts";
-import { buildTime, firstEventMs, reconciledTotalS } from "../receipt_time.ts";
+import { buildTime, firstEventMs, reconciledTotalS } from "../../contrib/receipt_time.ts";
 import type { Obj, Receipt, ReceiptCheck, RunContext, Stage, StageName, StageResult, Verdict } from "../types.ts";
 import { type SafeGitKeep, safeGitRun } from "../../util/safe_git.ts";
 
