@@ -103,6 +103,21 @@ export async function learnFromPr(repoDir: string, ref: string, gh: GhClient = d
   return res;
 }
 
+/** Verdict-bearing uses (null verdicts are in-flight and do not count) and how many were VERIFIED. */
+export function lessonStats(l: Lesson): { decided: number; verified: number } {
+  let decided = 0, verified = 0;
+  for (const u of l.uses) if (u.verdict !== null) { decided++; if (u.verdict === "VERIFIED") verified++; }
+  return { decided, verified };
+}
+export const DEMOTE_AFTER = 3;
+const demoteOn = (): boolean => process.env["LOKI_PR_LESSON_DEMOTE"] !== "0";
+/** v2: 3+ verdict-bearing uses and none VERIFIED. Retrieval filter only; the lesson is never deleted. */
+export function isDemoted(l: Lesson): boolean {
+  if (!demoteOn()) return false;
+  const { decided, verified } = lessonStats(l);
+  return decided >= DEMOTE_AFTER && verified === 0;
+}
+
 const words = (s: string): Set<string> => new Set(s.toLowerCase().match(/[a-z0-9_]{4,}/g) ?? []);
 
 /** Lessons whose text or file path shares vocabulary with the task, best first. Empty when nothing relates. */
@@ -111,6 +126,7 @@ export function retrieveLessons(repoDir: string, task: string, limit = 3): Lesso
   const tw = words(task);
   if (tw.size === 0) return [];
   return loadLessons(repoDir)
+    .filter((l) => !isDemoted(l))
     .map((l) => { let n = 0; for (const w of words(`${l.text} ${l.source.path ?? ""}`)) if (tw.has(w)) n++; return { l, n }; })
     .filter((x) => x.n > 0).sort((a, b) => b.n - a.n).slice(0, limit).map((x) => x.l);
 }
@@ -152,6 +168,8 @@ export function formatLessonList(ls: Lesson[]): string {
     out.push(`  ${l.id}  ${l.source.pr}  ${l.source.comment_url}`);
     out.push(`    ${l.text.replace(/\s+/g, " ").slice(0, 120)}`);
     out.push(`    uses ${l.uses.length}: VERIFIED ${c.VERIFIED}, PARTIAL ${c.PARTIAL}, FAILED ${c.FAILED}${pending ? `, in-flight ${pending}` : ""}`);
+    const st = lessonStats(l);
+    if (st.decided > 0) out.push(`    VERIFIED ${st.verified}/${st.decided}${isDemoted(l) ? " (demoted: no longer injected into briefs)" : ""}`);
   }
   return out.join("\n") + "\n";
 }
