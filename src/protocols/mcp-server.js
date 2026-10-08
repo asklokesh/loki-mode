@@ -131,7 +131,9 @@ const TASK_TOOLS = {
 const TASK_MAX = 64;
 const TASK_TIMEOUT_MS = 300000;
 const TRACEPARENT_RE = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/;
-const SECRET_ENV_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|KEY|AUTH|WEBHOOK|COOKIE)/i;
+// Same list the adapter's _env() drops for the direct tool (mcp/v10_tools.py _DROPPED_ENV): one mechanism, so a task
+// sees the same environment as the direct call. MCP_AUTH_TOKEN is the server's own bearer and is never forwarded.
+const TASK_DROPPED_ENV = ['LOKI_CONTROL_TOKEN', 'SLACK_BOT_TOKEN', 'SLACK_SIGNING_SECRET', 'SLACK_WEBHOOK_URL', 'MCP_AUTH_TOKEN'];
 
 const tasks = new Map();
 let _taskSpawner = null;
@@ -160,7 +162,7 @@ function parseTraceparent(value) {
 function taskChildEnv(trace) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === 'string' && !SECRET_ENV_RE.test(k)) env[k] = v;
+    if (typeof v === 'string' && !TASK_DROPPED_ENV.includes(k)) env[k] = v;
   }
   delete env.LOKI_PARENT_SPAN_ID;
   env.LOKI_NO_BROWSER = '1';
@@ -198,6 +200,11 @@ function taskCreate(params, id) {
   const a = taskArgs(p.tool, p.arguments);
   if (a.error) return makeError(-32602, a.error, id);
   const trace = parseTraceparent(p._meta && p._meta.traceparent);
+  while (tasks.size >= TASK_MAX) {
+    const old = Array.from(tasks.values()).find((t) => t.status !== 'working');
+    if (!old) return makeError(-32603, 'too many running tasks', id);
+    tasks.delete(old.id);
+  }
   const adapter = path.resolve(__dirname, '..', '..', 'mcp', 'v10_tools.py');
   const cmd = process.env.LOKI_PYTHON || 'python3';
   const args = ['-I', adapter, a.spec.cmd].concat(a.argv);
@@ -207,11 +214,6 @@ function taskCreate(params, id) {
     child = spawner(cmd, args, { env: taskChildEnv(trace) });
   } catch (err) {
     return makeError(-32603, 'could not start task', id);
-  }
-  while (tasks.size >= TASK_MAX) {
-    const old = Array.from(tasks.values()).find((t) => t.status !== 'working');
-    if (!old) { try { child.kill('SIGTERM'); } catch (e) { /* gone */ } return makeError(-32603, 'too many running tasks', id); }
-    tasks.delete(old.id);
   }
   const t = { id: crypto.randomUUID(), tool: p.tool, status: 'working', pid: child.pid, stdout: '', text: null, child: child };
   tasks.set(t.id, t);
@@ -256,7 +258,7 @@ function getCapabilities() {
 // JSON-RPC 2.0 request handler
 // ---------------------------------------------------------------------------
 
-function handleRequest(request) {
+function handleRequest(request, ctx) {
   // Validate basic JSON-RPC structure
   if (!request || typeof request !== 'object') {
     return makeError(-32600, 'Invalid request', null);
@@ -278,8 +280,15 @@ function handleRequest(request) {
   // Auth check for tool/resource calls
   if (method === 'tools/call' || method === 'resources/read' || (tasksEnabled() && method.startsWith('tasks/'))) {
     const auth = getAuth();
+    const overHttp = !!(ctx && ctx.transport === 'http') && method.startsWith('tasks/');
+    // Tasks spawn processes: over HTTP a token is mandatory even when general auth is off (fail closed).
+    if (overHttp && !auth.enabled) {
+      if (isNotification) return null;
+      return makeError(-32001, 'Tasks over HTTP require an auth token (set MCP_AUTH_TOKEN)', id);
+    }
     if (auth.enabled) {
-      const validation = auth.validate(request);
+      let validation = auth.validate(request);
+      if (overHttp && !validation.valid && ctx.authorization) validation = auth.validateHeader(ctx.authorization);
       if (!validation.valid) {
         if (isNotification) return null;
         return makeError(-32001, validation.error || 'Unauthorized', id);

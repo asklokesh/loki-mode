@@ -26,6 +26,73 @@ log_skip() { echo "[SKIP] $1"; }
 
 PY="${PYTHON:-python3}"
 
+# ---------------------------------------------------------------------------
+# Node server (MCP-D): task creation over HTTP. Needs only node and curl, so it runs
+# before the Python SDK preflight below. Task methods spawn a process, so over HTTP they
+# need a token even when general auth is off, a JSON Content-Type, and a loopback Origin.
+# ---------------------------------------------------------------------------
+NODE_TMP=""
+NODE_PID=""
+node_cleanup() {
+    [ -n "$NODE_PID" ] && kill "$NODE_PID" >/dev/null 2>&1 && wait "$NODE_PID" 2>/dev/null
+    NODE_PID=""
+    [ -n "$NODE_TMP" ] && [ -d "$NODE_TMP" ] && rm -rf -- "$NODE_TMP"
+    NODE_TMP=""
+}
+trap node_cleanup EXIT
+
+node_phase() {
+    command -v node >/dev/null 2>&1 && command -v curl >/dev/null 2>&1 || { log_skip "node or curl missing; skipping Node task-auth phase"; return 0; }
+    NODE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/loki-mcp-node-auth.XXXXXX")" || return 0
+    local port argv_log stub body c
+    port="$("$PY" -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+    argv_log="$NODE_TMP/argv.log"
+    stub="$NODE_TMP/stub.sh"
+    printf '#!/bin/sh\necho "$@" >> "%s"\necho "{}"\n' "$argv_log" >"$stub"
+    chmod +x "$stub"
+    body='{"jsonrpc":"2.0","id":1,"method":"tasks/create","params":{"tool":"loki_v10_run","arguments":{"ref":"uninstall","repo_path":"."}}}'
+
+    # A: no token configured -> tasks refused, nothing spawned, whatever the headers say.
+    ( cd "$NODE_TMP" && exec env -u MCP_AUTH_TOKEN -u LOKI_MCP_AUTH_TOKEN LOKI_MCP_TASKS=1 LOKI_PYTHON="$stub" LOKI_NO_BROWSER=1 \
+        node "$ROOT/src/protocols/mcp-server.js" --sse --port "$port" >"$NODE_TMP/srv.log" 2>&1 ) &
+    NODE_PID=$!
+    local i; for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$port/mcp/health" && break; sleep 0.3; done
+
+    c="$(curl -s -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:$port/mcp")"
+    case "$c" in *'"code":-32001'*) log_pass "node: no token configured, tasks/create over HTTP refused" ;; *) log_fail "node: tasks/create without auth was not refused: $c" ;; esac
+    c="$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: text/plain' -H 'Origin: https://evil.example' -d "$body" "http://127.0.0.1:$port/mcp")"
+    case "$c" in 415|403) log_pass "node: text/plain cross-origin task POST rejected ($c)" ;; *) log_fail "node: cross-origin text/plain task POST got $c" ;; esac
+    sleep 0.5
+    [ ! -s "$argv_log" ] && log_pass "node: nothing was spawned without a token" || log_fail "node: a process was spawned without a token: $(cat "$argv_log")"
+    node_stop
+
+    # B: token configured.
+    ( cd "$NODE_TMP" && exec env -u LOKI_MCP_AUTH_TOKEN MCP_AUTH_TOKEN=node-tok LOKI_MCP_TASKS=1 LOKI_PYTHON="$stub" LOKI_NO_BROWSER=1 \
+        node "$ROOT/src/protocols/mcp-server.js" --sse --port "$port" >"$NODE_TMP/srv.log" 2>&1 ) &
+    NODE_PID=$!
+    for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:$port/mcp/health" && break; sleep 0.3; done
+
+    c="$(curl -s -H 'Content-Type: application/json' -d "$body" "http://127.0.0.1:$port/mcp")"
+    case "$c" in *'"code":-32001'*) log_pass "node: token set, no bearer -> refused" ;; *) log_fail "node: no bearer not refused: $c" ;; esac
+    c="$(curl -s -H 'Content-Type: application/json' -H 'Authorization: Bearer wrong' -d "$body" "http://127.0.0.1:$port/mcp")"
+    case "$c" in *'"code":-32001'*) log_pass "node: token set, wrong bearer -> refused" ;; *) log_fail "node: wrong bearer not refused: $c" ;; esac
+    c="$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: text/plain' -H 'Authorization: Bearer node-tok' -d "$body" "http://127.0.0.1:$port/mcp")"
+    [ "$c" = "415" ] && log_pass "node: valid bearer but text/plain -> 415" || log_fail "node: text/plain got $c (want 415)"
+    c="$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' -H 'Origin: https://evil.example' -H 'Authorization: Bearer node-tok' -d "$body" "http://127.0.0.1:$port/mcp")"
+    [ "$c" = "403" ] && log_pass "node: valid bearer but non-loopback Origin -> 403" || log_fail "node: evil Origin got $c (want 403)"
+    sleep 0.5
+    [ ! -s "$argv_log" ] && log_pass "node: still nothing spawned by any refused request" || log_fail "node: a refused request spawned: $(cat "$argv_log")"
+    c="$(curl -s -H 'Content-Type: application/json' -H 'Authorization: Bearer node-tok' -d "$body" "http://127.0.0.1:$port/mcp")"
+    case "$c" in *'"status":"working"'*) log_pass "node: valid bearer + JSON + no Origin -> task starts" ;; *) log_fail "node: authorized task did not start: $c" ;; esac
+    node_stop
+}
+node_stop() {
+    [ -n "$NODE_PID" ] && kill "$NODE_PID" >/dev/null 2>&1 && wait "$NODE_PID" 2>/dev/null
+    NODE_PID=""
+}
+node_phase
+
+
 # Preflight: need the MCP SDK, uvicorn, starlette, and curl.
 #
 # `import mcp` is NOT a valid probe for the SDK here. This repo contains a local
@@ -68,6 +135,7 @@ PYEOF
 SRV_PID=""
 LOG=""
 cleanup() {
+    node_cleanup
     [ -n "$SRV_PID" ] && kill -9 "$SRV_PID" >/dev/null 2>&1
     [ -n "$LOG" ] && rm -f "$LOG" >/dev/null 2>&1
 }

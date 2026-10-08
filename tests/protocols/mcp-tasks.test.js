@@ -81,17 +81,17 @@ describe('MCP tasks (LOKI_MCP_TASKS)', () => {
     assert.equal(server.parseTraceparent(TP).parentSpanId, 'b7ad6b7169203331');
   });
 
-  it('the child env carries no tokens or secrets', () => {
-    process.env.LOKI_MCP_AUTH_TOKEN = 'tok-123';
-    process.env.LOKI_CONTROL_TOKEN = 'ctl-456';
-    process.env.GH_TOKEN = 'gh-789';
-    process.env.AWS_SECRET_ACCESS_KEY = 'aws-000';
+  it('the child env drops exactly the adapter list plus the server bearer; receipt key vars reach it', () => {
+    const keep = { LOKI_RECEIPT_SIGNING_KEY_FILE: '/k/k.pem', LOKI_RECEIPT_SIGNING_KEY: 'pem', LOKI_RECEIPT_RETIRED_PUBKEYS: '/a.pem:/b.pem', ANTHROPIC_API_KEY: 'sk-ant-1' };
+    const drop = { MCP_AUTH_TOKEN: 'tok-123', LOKI_CONTROL_TOKEN: 'ctl-456', SLACK_BOT_TOKEN: 'sl-1', SLACK_SIGNING_SECRET: 'sl-2', SLACK_WEBHOOK_URL: 'https://hooks/x' };
+    Object.assign(process.env, keep, drop);
     try {
       call('tasks/create', { tool: 'loki_v10_verify', arguments: { repo_path: '/r' }, _meta: { traceparent: TP } });
+      for (const [k, v] of Object.entries(keep)) assert.equal(seen.env[k], v, k);
       const blob = JSON.stringify(seen.env);
-      for (const s of ['tok-123', 'ctl-456', 'gh-789', 'aws-000']) assert.ok(!blob.includes(s), s);
+      for (const [k, v] of Object.entries(drop)) { assert.equal(seen.env[k], undefined, k); assert.ok(!blob.includes(v), v); }
       assert.equal(seen.env.LOKI_NO_BROWSER, '1');
-    } finally { for (const k of ['LOKI_CONTROL_TOKEN', 'GH_TOKEN', 'AWS_SECRET_ACCESS_KEY']) delete process.env[k]; }
+    } finally { for (const k of Object.keys(keep).concat(Object.keys(drop))) delete process.env[k]; }
   });
 
   it('task creation needs auth when auth is enabled; no spawn happens without it', () => {
@@ -129,4 +129,87 @@ describe('traceparent as the parent of the first span (OTEL-1 exporter)', () => 
     bridge.exportEngine10Run(events, tracer, 'a'.repeat(32), ref);
     assert.equal(made[0].opts.parentSpanId, undefined);
   });
+});
+
+describe('tasks over the HTTP (SSE) transport', () => {
+  const http = require('http');
+  const net = require('net');
+  const { SSETransport } = require('../../src/protocols/transport/sse');
+  const BODY = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tasks/create', params: { tool: 'loki_v10_run', arguments: { ref: 'uninstall', repo_path: '.' } } });
+  let transport, port;
+  const savedFlag = process.env.LOKI_MCP_TASKS;
+  const freePort = () => new Promise((resolve) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)); }); });
+  const post = (headers, body) => new Promise((resolve, reject) => {
+    const req = http.request({ host: '127.0.0.1', port, path: '/mcp', method: 'POST', headers }, (res) => {
+      let d = ''; res.on('data', (c) => { d += c; }); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+    });
+    req.on('error', reject); req.end(body === undefined ? BODY : body);
+  });
+  const withAuth = (enabled, validToken, fn) => async () => {
+    const auth = server.getAuth();
+    const origValidateHeader = auth.validateHeader;
+    const origValidate = auth.validate;
+    auth.validate = () => ({ valid: false, error: 'Missing or invalid authorization token' });
+    Object.defineProperty(auth, 'enabled', { get: () => enabled, configurable: true });
+    auth.validateHeader = (h) => (h === 'Bearer ' + validToken ? { valid: true } : { valid: false, error: 'bad token' });
+    try { await fn(); } finally { auth.validateHeader = origValidateHeader; auth.validate = origValidate; delete auth.enabled; }
+  };
+  beforeEach(async () => {
+    seen = undefined; process.env.LOKI_MCP_TASKS = '1'; server._setTaskSpawnerForTests(fakeSpawner(OK));
+    port = await freePort(); transport = new SSETransport(server.handleRequest, { port }); transport.start();
+    await until(() => transport._server && transport._server.listening);
+  });
+  afterEach(() => {
+    transport.stop(); server._setTaskSpawnerForTests(null);
+    if (savedFlag === undefined) delete process.env.LOKI_MCP_TASKS; else process.env.LOKI_MCP_TASKS = savedFlag;
+  });
+  const J = { 'Content-Type': 'application/json' };
+
+  it('auth disabled: tasks/create over HTTP is refused and nothing is spawned', withAuth(false, 'x', async () => {
+    const r = await post(J);
+    assert.equal(JSON.parse(r.body).error.code, -32001);
+    assert.equal(seen, undefined);
+  }));
+
+  it('the reviewer repro (text/plain, evil Origin, no token) is refused and nothing is spawned', withAuth(false, 'x', async () => {
+    const r = await post({ 'Content-Type': 'text/plain', Origin: 'https://evil.example' });
+    assert.ok(r.status === 415 || r.status === 403, String(r.status));
+    assert.equal(seen, undefined);
+  }));
+
+  it('non-JSON Content-Type on task creation is 415 even with a valid token', withAuth(true, 'good', async () => {
+    const r = await post({ 'Content-Type': 'text/plain', Authorization: 'Bearer good' });
+    assert.equal(r.status, 415);
+    assert.equal(seen, undefined);
+  }));
+
+  it('non-loopback Origin on task creation is 403 even with a valid token', withAuth(true, 'good', async () => {
+    const r = await post(Object.assign({ Authorization: 'Bearer good', Origin: 'https://evil.example' }, J));
+    assert.equal(r.status, 403);
+    assert.equal(seen, undefined);
+  }));
+
+  it('a batch containing a task call is held to the same rules', withAuth(true, 'good', async () => {
+    const r = await post({ 'Content-Type': 'text/plain', Authorization: 'Bearer good' }, '[' + BODY + ']');
+    assert.equal(r.status, 415);
+    assert.equal(seen, undefined);
+  }));
+
+  it('auth enabled, wrong or missing bearer: refused, nothing spawned', withAuth(true, 'good', async () => {
+    for (const h of [J, Object.assign({ Authorization: 'Bearer nope' }, J)]) {
+      assert.equal(JSON.parse((await post(h)).body).error.code, -32001);
+    }
+    assert.equal(seen, undefined);
+  }));
+
+  it('auth enabled, valid bearer, JSON, loopback Origin: the task starts', withAuth(true, 'good', async () => {
+    const r = await post(Object.assign({ Authorization: 'Bearer good', Origin: 'http://localhost:3000' }, J));
+    assert.equal(JSON.parse(r.body).result.task.status, 'working');
+    assert.deepEqual(seen.args.slice(-3), ['run', 'uninstall', '.']);
+  }));
+
+  it('other methods are untouched by the task rules (text/plain tools/list still works)', withAuth(false, 'x', async () => {
+    const r = await post({ 'Content-Type': 'text/plain' }, JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list' }));
+    assert.equal(r.status, 200);
+  }));
 });

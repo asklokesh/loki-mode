@@ -55,5 +55,46 @@ python3 -I "$ADAPTER" status r1 x >/dev/null 2>&1
 out="$(python3 -I "$ADAPTER" verify "" /etc 2>&1)"
 case "$out" in *"outside the working directory"*) pass "adapter refuses a path outside the working directory" ;; *) fail "outside path not refused: $out" ;; esac
 
+# Signed receipt: the verifying key is found through LOKI_RECEIPT_SIGNING_KEY_FILE, so the task must see the same
+# environment as the direct call. A secret-name filter on the child env turned VERIFIED into UNCHECKED here.
+mkdir -p "$WORK/repo/signed/.loki/runs/e10-1" "$WORK/home" || exit 1
+cat >"$WORK/mk.js" <<'JS'
+const c = require("crypto"), fs = require("fs");
+const w = process.argv[2];
+const { privateKey, publicKey } = c.generateKeyPairSync("ed25519");
+fs.writeFileSync(w + "/k.pem", privateKey.export({ type: "pkcs8", format: "pem" }));
+const canon = (v) => Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v === undefined ? null : v);
+const b = (x) => Buffer.from(x).toString("base64url");
+const body = { schema: "loki.v10.receipt/1", run_id: "e10-1", verdict: "VERIFIED" };
+const hash = c.createHash("sha256").update(canon(body)).digest("hex");
+const kid = b(c.createHash("sha256").update('{"crv":"Ed25519","kty":"OKP","x":"' + publicKey.export({ format: "jwk" }).x + '"}').digest());
+const input = b(canon({ alg: "EdDSA", typ: "JWT", kid: kid })) + "." + b(canon({ job_id: "e10-1", run_id: "e10-1", receipt_sha256: hash, iat: 1 }));
+const jwt = input + "." + b(c.sign(null, Buffer.from(input), privateKey));
+fs.writeFileSync(w + "/repo/signed/.loki/runs/e10-1/receipt.json", JSON.stringify(Object.assign({}, body, { receipt_sha256: hash, verification: { jwt: jwt } })));
+JS
+node "$WORK/mk.js" "$WORK" || { fail "could not build a signed receipt"; }
+export HOME="$WORK/home" LOKI_RECEIPT_SIGNING_KEY_FILE="$WORK/k.pem"
+sdirect="$(python3 -I "$ADAPTER" verify "" "$WORK/repo/signed")"
+case "$sdirect" in
+  *'"verified": true'*) pass "positive control: direct verify of the signed receipt is VERIFIED" ;;
+  *) echo "SKIP: signed verify not runnable here (no bun / loki-ts deps): $sdirect"; sdirect="" ;;
+esac
+if [ -n "$sdirect" ]; then
+  stask="$(ADAPTER_ROOT="$ROOT" REPO="$WORK/repo/signed" LOKI_MCP_TASKS=1 node -e '
+const s = require(process.env.ADAPTER_ROOT + "/src/protocols/mcp-server.js");
+const call = (m, p) => s.handleRequest({ jsonrpc: "2.0", method: m, params: p, id: 1 });
+const c = call("tasks/create", { tool: "loki_v10_verify", arguments: { repo_path: process.env.REPO } });
+if (c.error) { console.error(JSON.stringify(c.error)); process.exit(3); }
+const id = c.result.task.taskId;
+const t0 = Date.now();
+(function poll() {
+  const st = call("tasks/get", { taskId: id }).result.task.status;
+  if (st === "working") { if (Date.now() - t0 > 150000) process.exit(4); return setTimeout(poll, 100); }
+  process.stdout.write(call("tasks/result", { taskId: id }).result.content[0].text);
+})();
+')"
+  [ "$stask" = "$sdirect" ] && pass "signed-receipt task result is byte-identical to the direct result" || fail "signed task differs: [$stask] vs [$sdirect]"
+fi
+
 echo "Passed: $PASSED  Failed: $FAILED"
 [ "$FAILED" -eq 0 ]
