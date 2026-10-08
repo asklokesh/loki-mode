@@ -1691,6 +1691,22 @@ _help_answer() {
     echo "and sets LOKI_NO_BROWSER=1."
 }
 
+# `loki help verify-pr`: a Bun-only command (loki-ts), so its help lives here.
+_help_verify_pr() {
+    echo -e "${BOLD}loki verify-pr${NC} - Verify a PR against its linked issue (experimental, LOKI_VERIFY_PR=1)"
+    echo ""
+    echo "Usage: loki verify-pr <https://github.com/o/r/pull/N | o/r#N> [--out DIR]"
+    echo ""
+    echo "Derives a check from the PR's linked issue (Check: \`cmd\` or a loki-check fence)."
+    echo "VERIFIED only if the check fails on the PR base, passes on its head, and the"
+    echo "touched packages' suites pass. A PR with no linked issue, no check, a removed"
+    echo "test or a non-discriminating check is NOT PROVEN. Writes verify-pr-result.json."
+    echo "PR code runs only in the container sandbox (scripts/verify-pr-sandbox.sh); set"
+    echo "LOKI_VPR_IMAGE to a locally present image."
+    echo ""
+    echo "Exit codes: 0 verified, 2 usage or sandbox blocked, 4 not proven."
+}
+
 # Appended to `loki help verify`: the v10 DSSE export flag (docs/exit-codes.md).
 _help_verify_dsse() {
     echo ""
@@ -21413,6 +21429,8 @@ main() {
                             show_help
                         elif [ "$_help_target" = "answer" ]; then
                             _help_answer
+                        elif [ "$_help_target" = "verify-pr" ]; then
+                            _help_verify_pr
                         else
                             LOKI_HELP_ONLY=1 "$0" "$_help_target" --help "$@"
                             local _help_rc=$?
