@@ -1,11 +1,11 @@
-// loki-ts/src/engine10/dashboard/server.ts -- E-24 local dashboard over SSE (ENGINE.md section
+// loki-ts/src/runner/engine10_dashboard.ts (moved from engine10/dashboard/server.ts to keep the core under its line cap, D29/D33) -- E-24 local dashboard over SSE (ENGINE.md section
 // 12). Binds 127.0.0.1 only, never opens a browser. Reuses events.ts fold()/tail(): runs are
 // folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
-import { fold, partialCost, readEvents, tail } from "../events.ts";
-import { eventsPath, listRunIds } from "../status.ts";
-import type { EventEnvelope, Verdict } from "../types.ts";
-import { getVersion } from "../../version.ts";
-import { groupRoute, renderPage } from "../../util/dashboard_page.ts";
+import { fold, partialCost, readEvents, tail } from "../engine10/events.ts";
+import { eventsPath, listRunIds } from "../engine10/status.ts";
+import type { EventEnvelope, Verdict } from "../engine10/types.ts";
+import { getVersion } from "../version.ts";
+import { groupRoute, renderPage } from "../util/dashboard_page.ts";
 export const DEFAULT_PORT = 57375;
 const HOSTNAME = "127.0.0.1"; // section 12: localhost only; never configurable
 const DASHBOARD_IDENT = "loki-v10"; // /version's "dashboard" field, identifies a v10 occupant
@@ -119,7 +119,7 @@ export function startServer(repoDir: string, port: number = DEFAULT_PORT): Dashb
       const g = /^\/g\/([^/]+)$/.exec(url.pathname);
       if (g) return groupRoute(repoDir, g[1]!);
       if (url.pathname === "/modernize") {
-        return (await import("../modernize/dashboard.ts")).modernizeRoute(repoDir);
+        return (await import("../engine10/modernize/dashboard.ts")).modernizeRoute(repoDir);
       }
       if (url.pathname === "/version") {
         return Response.json({ dashboard: DASHBOARD_IDENT, version: getVersion(), cliVersion: getCliVersion(), pid: process.pid });
@@ -301,7 +301,7 @@ export async function main(_args: string[]): Promise<number> {
     return 1;
   }
   process.stdout.write(`Dashboard: ${server.url}\n`);
-  (await import("../../features/warm.ts")).startWarmIfEnabled();
+  (await import("../features/warm.ts")).startWarmIfEnabled();
   await new Promise<void>(() => {}); // ponytail: blocks forever; the process-level SIGINT/SIGTERM handler in cli.ts terminates it
   return 0;
 }
