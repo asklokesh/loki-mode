@@ -76,6 +76,8 @@ expect "start --attempts 2 --parallel is refused, no route" "" "$(route_of "$(ru
 expect "start --attempts 2 --parallel exits 2" "2" "$(cat "$T/rc")"
 expect "start --attempts 2 bad provider is refused" "" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=gemini -- start --attempts 2 --no-pr)"
 expect "start --attempts with missing TS entry is refused, no bash" "" "$(run_loki "$WITH_BUN" LOKI_TS_ENTRY="$T/nope.ts" -- start --attempts 2 --no-pr)"
+expect "start 'fix x' --budget 5 stays as typed (11.3.0)" "BUN $ENTRY engine10 fix x --budget 5" "$(run_loki "$WITH_BUN" -- start "fix x" --budget 5)"
+expect "start 'fix x' --attempts 1 --budget 5 -> --max-cost" "BUN $ENTRY engine10 fix x --max-cost 5" "$(run_loki "$WITH_BUN" -- start "fix x" --attempts 1 --budget 5)"
 expect "plain start with opencode stays bash (11.3.0)" "BASH start prd.md" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- start prd.md)"
 expect "no bun falls back to legacy, no error" "BASH fix x" "$(run_loki "$NO_BUN" -- "fix x")"
 expect "provider without an invoker -> legacy" "BASH fix x" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- "fix x")"
