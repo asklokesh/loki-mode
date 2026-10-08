@@ -157,6 +157,13 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("start", "UPDATE", "both", "Run the autonomous build", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
   cmd("slack", "KEEP-MODERN", "bun", "Slack inbound handler", "Bun-native integration", { subcommands: [sub("serve", "Serve the Slack handler", { flags: [port, str("--host", "<host>", "Bind host")] })] }),
   cmd("queue", "KEEP-MODERN", "bun", "Overnight issue queue with a morning digest", "Governor-aware batch of issue-mode runs", { subcommands: [sub("add", "Queue issue refs", { positionals: [{ name: "issue", type: "string" }] }), sub("list", "Show the queue"), sub("run", "Process the queue", { flags: [bool("--no-pr", "Do not open pull requests")] })] }),
+  cmd("issues", "KEEP-MODERN", "bun", "Run every open issue in a repo and open PRs", "Mass issue pickup on the T7 queue", {
+    subcommands: [sub("run", "Triage and run open issues, one PR each", {
+      example: "loki issues run owner/repo --label bug --limit 10",
+      positionals: [{ name: "repo", type: "string" }],
+      flags: [str("--label", "<label>", "Only issues with this label"), { name: "--limit", type: "int", placeholder: "<n>", desc: "At most this many issues" }, { name: "--parallel", type: "int", placeholder: "<k>", desc: "Runs at once, at most 4 (separate worktrees)" }, bool("--draft", "Open every PR as a draft"), bool("--dry-run", "List, dedupe and show the plan; no model calls"), bool("--yes", "Skip the cost confirmation (CI)"), bool("--comment", "Comment the triage reason on skipped issues")],
+    })],
+  }),
   cmd("answer", "KEEP-MODERN", "bun", "Resume a BLOCKED run with an answer", "v10 blocked-run flow", { flags: [bool("--text", "Answer text inline")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("engine10", "KEEP-MODERN", "bun", "v10 engine router", "The v10 engine", {
     subcommands: [sub("run", "Run the v10 engine"), sub("status", "v10 status"), sub("verify", "v10 verify"), sub("keys", "v10 keys"), sub("dashboard", "v10 dashboard"), sub("modernize", "v10 modernize")],

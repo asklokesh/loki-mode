@@ -210,6 +210,7 @@ function _loki_commands {
         'wiki:Wiki commands'
         'answer:Resume a BLOCKED run with an answer'
         'queue:Overnight issue queue with a morning digest'
+        'issues:Run every open issue in a repo and open PRs'
         'control:Control plane (preview, LOKI_CONTROL=1)'
         'workspace:Multi-project workspaces (preview, LOKI_WORKSPACES=1)'
         'backlog:Run every matching open issue, N in parallel'

@@ -82,6 +82,15 @@ function briefFacts(ctx: PrContext): BriefFacts {
   }
   return facts;
 }
+/** MASS-1: name the issue this run worked, so GitHub links the PR and `loki issues run` reruns find it. Only a strict
+ *  owner/repo and an integer number from the supervisor-fetched issue.json reach the body; VERIFIED closes on merge. */
+export function issueLink(runDir: string, verdict: Verdict): string {
+  try {
+    const i = JSON.parse(readFileSync(join(runDir, "issue.json"), "utf8")) as { repo?: unknown; number?: unknown };
+    const ok = typeof i.repo === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(i.repo) && Number.isInteger(i.number) && (i.number as number) > 0;
+    return ok ? `\n${verdict === "VERIFIED" ? "Closes" : "Refs"} ${i.repo as string}#${i.number as number}\n` : "";
+  } catch { return ""; }
+}
 export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions = {}): Promise<StageResult> {
   if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before pr started" };
   const pinnedOrigin = ctx.pinnedOrigin;
@@ -92,11 +101,11 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const verdict = seal.verdict ?? "PARTIAL"; // fail-safe: an unknown verdict is never treated as VERIFIED
   const notProven = [...(seal.not_proven ?? [])];
   const capHit = ctx.capHit?.() ?? false;
-  const draft = verdict !== "VERIFIED" || capHit;
+  const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1"; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
   mkdirSync(ctx.runDir, { recursive: true });
   const bodyFile = join(ctx.runDir, "pr-body.md");
   const beforeAfter = await beforeAfterBlock(ctx.repoDir, ctx.runDir, ((ctx.outputs().verify?.["changed_files"] ?? []) as unknown[]).map(String), ctx.baseSha, { signal });
-  writeFileSync(bodyFile, withSealRoute(renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() }), process.env, seal) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : ""), "utf8");
+  writeFileSync(bodyFile, withSealRoute(renderReviewerBody({ verdict, draftReason: draftReason(verdict, capHit), notProven, receiptPath: seal.receipt_path ?? null, receiptSha256: seal.receipt_sha256 ?? null, signed: typeof seal.signed === "boolean" ? seal.signed : null, runId: ctx.runId, outputs: ctx.outputs() }), process.env, seal) + intentSection(ctx.outputs().plan) + specPrLine(process.env) + evidenceSection(seal.receipt_path) + briefSection(ctx) + beforeAfter + (seal.mutation_line ? `\n${seal.mutation_line}\n` : "") + issueLink(ctx.runDir, verdict), "utf8");
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
   const pushShellArgs = toPushShellArgs({ cmd: "push-pr", repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft });
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
