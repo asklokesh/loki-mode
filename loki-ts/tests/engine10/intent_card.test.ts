@@ -114,7 +114,7 @@ describe("plan stage intent card", () => {
     process.env.LOKI_INTENT_CARD = "0";
     const s = planWith(["step 1", ...CARD3].join("\n"));
     const r = await planStage.run(ctxFor(dir, s), new AbortController().signal);
-    expect(s.briefs[0]).toBe(buildPlanBrief("add search ranking", [], join(dir, "plan-output.txt"), join(dir, "plan-scope.json")));
+    expect(s.briefs[0]).toBe(buildPlanBrief("add search ranking", [], join(dir, "plan-output.txt"), join(dir, "plan-scope.json"), false, false, false, true)); // card off: only the reviewer-brief risk line is added
     expect(errs.join("")).not.toContain("What I think you want");
     expect("intent_card" in r.data).toBe(false);
     expect("intent_enabled" in r.data).toBe(false);
