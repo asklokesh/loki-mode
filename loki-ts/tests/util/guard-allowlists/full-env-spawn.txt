@@ -18,7 +18,6 @@ loki-ts/src/engine10/stages/wall.ts@1 | WORKER: engine10 worker side, env alread
 loki-ts/src/features/blocked_answer.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
 loki-ts/src/features/visual_evidence.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
 loki-ts/src/providers/claude_flags.ts@1 | SWEEP: provider or runner site that runs on the bash-route runner which withholds tokens at startup (runner/autonomous.ts); convert to tokenFreeEnv in the FC-40 sweep
-loki-ts/src/runner/attempts.ts@1 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/runner/crash.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
 loki-ts/src/runner/engine10_dashboard.ts@2 | WORKER: engine10 worker side, env already token-withheld before any of these run
 loki-ts/src/runner/load_owner.ts@2 | UTILITY: short read-only or operator-invoked tool call, no model session
