@@ -12,6 +12,7 @@ export interface TimelineLine {
   cost_usd: number | null | "no-session"; // "no-session": the stage ran no model session (verify, commit, seal)
   outcome: string;
   detail?: string;
+  files?: number; // Wall: how many acceptance-check files it sealed
 }
 
 const obj = (d: unknown): Record<string, unknown> => (d && typeof d === "object" ? (d as Record<string, unknown>) : {});
@@ -60,8 +61,9 @@ export function buildTimeline(events: RunEvent[]): TimelineLine[] {
       const dur = num(d.duration_s) ?? (line?.startedMs != null && ms(e.ts) != null ? (ms(e.ts)! - line.startedMs) / 1000 : null);
       const reason = str(d.skipped_reason) ?? str(d.reason);
       const outcome = d.skipped === true ? "skipped" : "completed";
-      if (line) Object.assign(line, { duration_s: dur, outcome, model: models.get(e.stage) ?? line.model, cost_usd: costOf(e.stage), detail: reason ?? undefined });
-      else lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "stage", label: e.stage, duration_s: dur, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome, detail: reason ?? undefined });
+      const files = Array.isArray(d.files) ? d.files.length : undefined;
+      if (line) Object.assign(line, { duration_s: dur, outcome, model: models.get(e.stage) ?? line.model, cost_usd: costOf(e.stage), detail: reason ?? undefined, files });
+      else lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "stage", label: e.stage, duration_s: dur, model: models.get(e.stage) ?? null, cost_usd: costOf(e.stage), outcome, detail: reason ?? undefined, files });
       open.delete(e.stage);
     } else if (e.type === "pr.opened") {
       lines.push({ key: `s${e.seq}`, ts: e.ts ?? null, kind: "pr", label: "Pull request opened", duration_s: null, model: null, cost_usd: null, outcome: d.draft === true ? "draft" : "opened", detail: str(d.url) ?? undefined });
