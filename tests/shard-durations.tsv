@@ -748,3 +748,4 @@ loki status prints the newest sealed receipt verdict on bash and Bun (133-F4)	20
 MCP server negotiates the requested protocol version (MCP-B)	5
 MCP 2026-07-28 spec doc cites sources and names each requirement (MCP-0)	2
 in-toto agent-change predicate draft example parses and maps to receipt fields (SIGS-DOC)	2
+verify-pr sandbox fails closed (VPR-1)	5
