@@ -1,0 +1,46 @@
+# OpenTelemetry Collector config for Loki Mode traces.
+# Loki exports OTLP/HTTP JSON to LOKI_OTEL_ENDPOINT (path /v1/traces). Point it
+# at this collector (for example LOKI_OTEL_ENDPOINT=http://localhost:4318), then
+# run the collector with this file unmodified. Every credential is read from an
+# environment variable at start; no key is stored in this file.
+#
+# Enable any subset of exporters by listing it in service.pipelines.traces.
+# A vendor whose variables are unset must be removed from that list.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  # Grafana Cloud (Tempo) OTLP gateway.
+  # GRAFANA_OTLP_ENDPOINT example: https://otlp-gateway-prod-us-east-0.grafana.net/otlp
+  # GRAFANA_OTLP_AUTH is the full header value: "Basic <base64 instanceId:token>".
+  otlphttp/grafana:
+    endpoint: ${env:GRAFANA_OTLP_ENDPOINT}
+    headers:
+      Authorization: ${env:GRAFANA_OTLP_AUTH}
+
+  # Honeycomb. HONEYCOMB_API_KEY is an ingest key.
+  otlphttp/honeycomb:
+    endpoint: https://api.honeycomb.io
+    headers:
+      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+
+  # Datadog (collector-contrib datadog exporter). DD_SITE example: datadoghq.com
+  datadog:
+    api:
+      key: ${env:DD_API_KEY}
+      site: ${env:DD_SITE}
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp/grafana, otlphttp/honeycomb, datadog]
