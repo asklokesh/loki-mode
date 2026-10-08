@@ -19,10 +19,14 @@ case "$prompt" in
   *"Loki 10 implement stage"*) stage=implement ;;
   *) stage=other ;;
 esac
+is_wall=0; case "$prompt" in *"Loki 10 Wall author"*) is_wall=1 ;; esac
 if [ -n "${E2E_STUB_ARGV_LOG:-}" ]; then echo "$stage$flags" >> "$E2E_STUB_ARGV_LOG"; fi
 if [ -n "${E2E_STUB_LOG:-}" ]; then echo "$stage" >> "$E2E_STUB_LOG"; fi
 # What the session can see: the canary test asserts no GitHub token and no LOKI_LEGACY_BASH.
 if [ -n "${E2E_STUB_ENV_LOG:-}" ]; then echo "$stage GH_TOKEN=${GH_TOKEN:-} LOKI_LEGACY_BASH=${LOKI_LEGACY_BASH:-}" >> "$E2E_STUB_ENV_LOG"; fi
+if [ "$is_wall" = 1 ] && [ "${E2E_STUB_MODE:-}" = "wallcolor" ]; then # FC-69: the Wall author writes one red-on-base test for multiply()
+  printf 'import { expect, test } from "bun:test";\nimport { multiply } from "./calc";\n\ntest("multiply", () => {\n  expect(multiply(3, 4)).toBe(12);\n});\n' > loki_wall_multiply.test.ts
+fi
 if [ "$stage" = "implement" ]; then
   if [ "${E2E_STUB_MODE:-done}" = "nochange" ]; then
     echo "LOKI_DONE"

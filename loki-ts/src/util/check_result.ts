@@ -5,6 +5,15 @@
 
 import { basename } from "node:path";
 
+/** FC-69: the ONE child env for every harness-run test or verify command. A user's FORCE_COLOR=3 makes node:test, pytest, jest and
+ *  friends emit ANSI that defeats line-anchored result parsers; FORCE_COLOR=0 + NO_COLOR=1 keeps the output plain. CI is left as is. */
+export function plainTestEnv(base: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const e: Record<string, string> = {};
+  for (const [k, v] of Object.entries(base)) if (typeof v === "string") e[k] = v;
+  e["FORCE_COLOR"] = "0"; e["NO_COLOR"] = "1";
+  delete e["CLICOLOR_FORCE"];
+  return e;
+}
 export const NO_TESTS_REASON = "no tests executed";
 export const GO_EXIT0_REASON = "test count could not be confirmed: go test output is produced by the code under test and cannot confirm execution (a Go exit 0 is never a pass)";
 export const UNCONFIRMED_REASON = "test count could not be confirmed";
@@ -31,7 +40,8 @@ export function ran(raw: string, path?: string, ok?: boolean): number | null {
   if (!l) return null;
   return /^(?:=+ )?no tests (?:ran|found)|^No tests found|skipped/i.test(l) || /\d+ (?:passed|failed|errors?)/.test(l) ? n(l, /(\d+) passed/) + n(l, /(\d+) failed/) + n(l, /(\d+) errors?/) : null;
 }
-const stripAnsi = (s: string): string => s.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").replace(/(?:\u001b\[|\u009b)[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\r\n?/g, "\n");
+/** FC-69: the ONE ANSI stripper every tool-output parser reads through (CSI, 8-bit CSI, OSC; CRLF folded to LF). */
+export const stripAnsi = (s: string): string => s.replace(/\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g, "").replace(/(?:\u001b\[|\u009b)[0-9;?]*[ -\/]*[@-~]/g, "").replace(/\r\n?/g, "\n");
 /** The runner's own trailer: the last 12 non-empty lines. Earlier lines are test output and never a summary (forged-summary guard, M1). */
 const tailLines = (out: string): string[] => out.split("\n").filter((x) => x.trim()).slice(-12);
 /** cargo test: one segment per "running N tests" header; a segment counts only through its LAST line being "test result:" (the real

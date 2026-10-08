@@ -9,3 +9,5 @@ bun_test	loki-ts/tests/engine10/l0_guard.test.ts
 shell_test	tests/test-structural-checks.sh
 shell_test	tests/test-no-hardcoded-paths.sh
 moat	tests/moat/p9-rule-of-two.sh
+bun_test	loki-ts/tests/engine10/fc69_ansi.test.ts
+bun_test	loki-ts/tests/engine10/fc69_wall_e2e.test.ts

@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { classifyRunnerOutput } from "./runner_errors.ts";
 import { safeGit } from "../util/safe_git.ts";
+import { plainTestEnv, stripAnsi } from "../util/check_result.ts";
 
 export interface LoadOwnerInput {
   repoDir: string;
@@ -79,7 +80,7 @@ export async function runOnBase(i: LoadOwnerInput, dir: string): Promise<string 
   const stop = AbortSignal.any([i.signal, AbortSignal.timeout(i.timeoutMs ?? 60_000)]);
   try {
     const proc = Bun.spawn([sub(i.cmd), ...i.args.map(sub)], {
-      cwd: sub(i.cwd ?? i.repoDir), stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env: { ...process.env, ...(i.env ?? {}) }, // detached: its own process group, killed as a group on a cut
+      cwd: sub(i.cwd ?? i.repoDir), stdin: "ignore", stdout: "pipe", stderr: "pipe", detached: true, env: { ...plainTestEnv(), ...(i.env ?? {}) }, // FC-69; // detached: its own process group, killed as a group on a cut
     });
     let tail = ""; const rs = [proc.stdout, proc.stderr].map((x) => x.getReader());
     const pumps = rs.map(async (r) => { const d = new TextDecoder(); for (;;) { const c = await r.read().catch(() => ({ done: true, value: undefined })); if (c.done) return; tail = (tail + d.decode(c.value, { stream: true })).slice(-65536); } });
@@ -87,7 +88,7 @@ export async function runOnBase(i: LoadOwnerInput, dir: string): Promise<string 
     const code = await Promise.race([proc.exited, cut]);
     if (code === null) { killTree(proc.pid); return null; }
     await Promise.race([Promise.all(pumps), new Promise((r) => setTimeout(r, 300))]); rs.forEach((r) => r.cancel().catch(() => {}));
-    return stop.aborted || code === 0 ? null : tail;
+    return stop.aborted || code === 0 ? null : stripAnsi(tail);
   } catch { return null; }
 }
 

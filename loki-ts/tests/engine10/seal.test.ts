@@ -18,7 +18,7 @@ import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd
 import { runMachine } from "../../src/engine10/machine.ts";
 import { costTotalsOf, sumResultCosts } from "../../src/engine10/cost.ts";
 import { buildTime, reconciledTotalS } from "../../src/contrib/receipt_time.ts";
-import { EXIT, outcomeOf } from "../../src/engine10/output.ts";
+import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
 import { _setIsolatedPythonFixedForTests } from "../../src/util/python.ts";
@@ -1294,5 +1294,34 @@ describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
     for (const k of SECRETS) expect(dumped).not.toMatch(new RegExp(`^${k}=`, "m"));
     expect(readFileSync(gpgRec, "utf8")).toBe("absent\n");
     expect(sh(["git", "cat-file", "commit", "HEAD"], repo)).toContain("gpgsig -----BEGIN PGP SIGNATURE-----");
+  }, 30000);
+});
+
+// FC-69: a Wall test that was not executed is never silent, but the verdict still comes from the checks that executed (CTO ruling, D95 THIN).
+describe("FC-69 not_run Wall is disclosed and does not change the verdict", () => {
+  test("unexecuted Wall test: verdict stays VERIFIED, named on the receipt and the console NOT PROVEN line", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-not-executed");
+    const reason = "exit 1 but the runner output showed no readable failing test";
+    const { ctx } = ctxFor(repo, base, "claude", {
+      wall: { files: [], base_run: { pass: 0, fail: 0, not_run: 1 }, not_run_files: [{ file: "tests/loki_wall_x.py", reason }] },
+    });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).toBe("VERIFIED");
+    const np = receiptOf(s).not_proven as string[];
+    expect(np).toContain(`Wall test not executed: tests/loki_wall_x.py: ${reason}`);
+    const out = formatSummary({ pr: null, verdict: "VERIFIED", notProven: np, flaky: [], cost: { usd: null, provider: "claude", tokens: null }, wallS: 1, stages: [] } as never);
+    expect(out).toContain(`NOT PROVEN: `);
+    expect(out).toContain(`Wall test not executed: tests/loki_wall_x.py: ${reason}`);
+  }, 30000);
+  test("a not_run count with no recorded reason is still named and does not change the verdict", async () => {
+    noKey();
+    const { repo, base } = makeRepo("wall-not-executed-bare");
+    const { ctx } = ctxFor(repo, base, "claude", { wall: { files: [], base_run: { pass: 0, fail: 0, not_run: 1 } } });
+    await commitStage.run(ctx, new AbortController().signal);
+    const s = await sealStage.run(ctx, new AbortController().signal);
+    expect(s.data.verdict).toBe("VERIFIED");
+    expect(receiptOf(s).not_proven.some((n: string) => n.startsWith("Wall test not executed:"))).toBe(true);
   }, 30000);
 });

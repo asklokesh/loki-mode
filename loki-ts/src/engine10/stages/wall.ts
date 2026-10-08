@@ -15,7 +15,7 @@ import { hasRelevantTests, loadRepoMap, planMode, repoMapText, sizeTask, smallTa
 import { sha256 } from "./seal.ts";
 import { commandFor } from "./verify.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
-import { classifyCheck } from "../../util/check_result.ts";
+import { classifyCheck, plainTestEnv, stripAnsi } from "../../util/check_result.ts";
 import { conventionViolation, conventionsBrief, readPackageConventions } from "../../project_model/conventions.ts"; // FC-23
 
 const WALL_PREFIX = "loki_wall_";
@@ -24,7 +24,7 @@ export interface WallSealedFile { path: string; sha256: string; } // path: absol
 
 // Runs the sealed Wall tests on the base tree; local since types.ts has no "execute tests" contract yet.
 // not_run (D42 (3)): no real result; counts toward neither pass nor fail. Optional for pre-D42(3) fakes.
-export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; }
+export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; }
 const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
 // B1/B2/B3/B4 (r3, opus review of E-125): only the short-summary line names the FINAL exception -- immune to a captured stdout/stderr block forging an earlier frame (B3), or an earlier link in a chain (B4).
 function pytestCollectionIsRed(output: string, repoDir: string): boolean {
@@ -69,8 +69,16 @@ function nodeIsRed(f: TestRef, raw: string): boolean {
 }
 // D42 (3) exit classification. B4 (r2): any "system"-interpreter result is not_run, same as verify (E-98a).
 // Red: pytest exit 1/resolved 2; jest/vitest/bun a parsed failed count>0. npm/go/cargo (B2, coarse): never fail.
+/** FC-69: why a base run was not_run, for the receipt and console ("Wall test not executed: <file>: <reason>"). */
+export function notRunReason(status: number | null, interpreter?: "project" | "system"): string {
+  if (interpreter === "system") return "ran under the system interpreter, not the project's, so the result proves nothing";
+  if (status === null) return "the test runner did not start or timed out";
+  if (status === 126 || status === 127) return `the test runner command was not found or not executable (exit ${status})`;
+  return status === 0 ? "exit 0 but no executed test count could be confirmed" : `exit ${status} but the runner output showed no readable failing test`;
+}
 export function classify(f: TestRef, status: number | null, output: string, repoDir: string, interpreter?: "project" | "system"): "pass" | "fail" | "not_run" {
   if (interpreter === "system") return "not_run";
+  output = stripAnsi(output); // FC-69: every parser below reads plain text, whoever captured it
   if (status === null || status === 126 || status === 127) return "not_run"; if (status === 0) return classifyCheck({ kind: "test", ok: true, out: output, path: f.path, ...(f.runner === "go" ? { runner: "go" as const } : {}) }).result === "pass" ? "pass" : "not_run"; // FC-16: exit 0 with zero or unknown executed tests is not a pass
   if (f.runner === "pytest") return status === 1 ? (pytestExit1IsRed(output) ? "fail" : "not_run") : status === 2 ? (pytestCollectionIsRed(output, repoDir) ? "fail" : "not_run") : "not_run";
   if (f.runner === "jest" || f.runner === "vitest" || f.runner === "bun") return parsedFailCount(f.runner, output) > 0 ? "fail" : "not_run";
@@ -80,15 +88,18 @@ export function classify(f: TestRef, status: number | null, output: string, repo
 // misread as a failing test. env is explicit, matching verify.ts's runOnce (its default PATH lookup can
 // otherwise resolve a snapshot from process start, not the live env).
 export class RealBaseTestRunner implements BaseTestRunner {
+  lastNotRunFiles: { file: string; reason: string }[] = [];
   constructor(private readonly api?: ProjectApi | null, private readonly timeoutMs: number = BASE_RUN_TIMEOUT_MS) {} // FC-01: undefined = load the repo's cached Project Model per run
   run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run: number } {
-    let pass = 0, fail = 0, not_run = 0; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
+    this.lastNotRunFiles = [];
+    let pass = 0, fail = 0, not_run = 0; const not_run_files: { file: string; reason: string }[] = []; const api = this.api === undefined ? loadProjectApi(repoDir) : this.api; for (const f of files) {
       const { cmd, args, interpreter, cwd } = commandFor(f, repoDir, api);
-      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: Math.max(1000, this.timeoutMs), env: process.env });
+      const r = spawnSync(cmd, f.runner === "pytest" ? [...args, "-rfE"] : args, { cwd, encoding: "utf8", timeout: Math.max(1000, this.timeoutMs), env: plainTestEnv() }); // FC-69: plain env in, ANSI stripped out
       const status = r.error ? null : r.status;
-      const result = classify(f, status, `${r.stdout ?? ""}\n${r.stderr ?? ""}`, repoDir, interpreter);
-      if (result === "pass") pass++; else if (result === "fail") fail++; else not_run++;
+      const result = classify(f, status, stripAnsi(`${r.stdout ?? ""}\n${r.stderr ?? ""}`), repoDir, interpreter);
+      if (result === "pass") pass++; else if (result === "fail") fail++; else { not_run++; not_run_files.push({ file: f.path, reason: notRunReason(status, interpreter) }); }
     }
+    this.lastNotRunFiles = not_run_files;
     return { pass, fail, not_run };
   }
 }
@@ -216,9 +227,9 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
     if (runner) wallTests.push({ runner, path: relative(ctx.repoDir, dest) });
   }
   ctx.emit("wall.sealed", "wall", { files: sealedFiles, ...(a.manifestSha256 ? { manifest_sha256: a.manifestSha256 } : {}) });
-  const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: discarded.length }; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
+  const baseRunner = opts.baseRunner ?? new RealBaseTestRunner(), baseRun = { pass: 0, fail: 0, not_run: discarded.length }, notRunFiles: { file: string; reason: string }[] = []; // A-103: one file at a time; a file with no real result (not_run) proves nothing, so it leaves the tree and Implement's read-only set. Its sealed copy stays under runDir/wall; base_run.not_run lets Seal list it.
   for (const t of wallTests) {
-    const r = baseRunner.run(baseDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
+    const r = baseRunner.run(baseDir, [t]), abs = join(ctx.repoDir, t.path); baseRun.pass += r.pass; baseRun.fail += r.fail; baseRun.not_run += r.not_run ?? 0; notRunFiles.push(...(baseRunner.lastNotRunFiles ?? [])); if (r.pass + r.fail === 0) { rmSync(abs, { force: true }); for (const l of [sealedFiles, readOnlyFiles] as { path: string }[][]) l.splice(0, l.length, ...l.filter((f) => f.path !== abs)); }
   }
   // Gate on generated.length, not wallTests.length: an unselectable (guessRunner() null) file is sealed but never run, and must never be silently missing from the already_satisfied count.
   const unselectable = generated.length - wallTests.length;
@@ -231,6 +242,7 @@ export function installWall(ctx: RunContext, a: WallAuthored, baseDir: string, o
       files: sealedFiles,
       readOnlyFiles,
       base_run: baseRun,
+      ...(notRunFiles.length ? { not_run_files: notRunFiles } : {}),
       iteration_ids: [`${ctx.runId}-wall`],
       already_satisfied: alreadySatisfied,
       ...(discarded.length ? { discarded } : {}),
