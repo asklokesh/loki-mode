@@ -481,15 +481,15 @@ done
 # is added); the line-count guardrail just tracks the new noun. Later Phase B
 # slices (ui/new/admin) pull the front page back toward the ~17 target.
 # Later shipped features each added a real canonical entry (backlog, workspace,
-# next, steer, verify, keys, ultracode, acp, plan, trust); no decision caps the
-# page below its current 27 entries, so the bound tracks the shipped surface.
-# Growth past 27 still requires a deliberate edit here.
+# next, steer, verify, keys, ultracode, acp, plan, trust, undo); no decision caps the
+# page below its current 28 entries, so the bound tracks the shipped surface.
+# Growth past 28 still requires a deliberate edit here.
 CMD_BLOCK="$(echo "$HELP_OUT" | awk '/^Commands:/{f=1;next} /^Options for/{f=0} f')"
 ENTRY_COUNT="$(echo "$CMD_BLOCK" | grep -E '^  [a-z]' | grep -vE '^  [a-z].*:$' | wc -l | tr -d ' ')"
-if [ "$ENTRY_COUNT" -le 27 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
-    log_pass "help: front-page entry count in [12,27] ($ENTRY_COUNT)"
+if [ "$ENTRY_COUNT" -le 28 ] && [ "$ENTRY_COUNT" -ge 12 ]; then
+    log_pass "help: front-page entry count in [12,28] ($ENTRY_COUNT)"
 else
-    log_fail "help: front-page entry count in [12,27]" "got $ENTRY_COUNT"
+    log_fail "help: front-page entry count in [12,28]" "got $ENTRY_COUNT"
 fi
 
 # Deprecated alias tokens must NOT appear as command entries in the Commands
