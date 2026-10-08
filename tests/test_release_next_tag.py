@@ -6,9 +6,14 @@ validates its version input, fails closed without the first-run gate script,
 and runs the gate before any `dist-tag add`.
 """
 
+import json
+import os
 import pathlib
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 
 import yaml
@@ -124,19 +129,19 @@ class PromoteWorkflow(unittest.TestCase):
 
 
 class PromoteAutoTrigger(unittest.TestCase):
-    """D49: auto-promote after a green Post-Release Smoke."""
+    """D96: auto-promote after a green Nightly (smoke is a gate step)."""
 
     def setUp(self):
         self.doc = yaml.safe_load(_PROMOTE.read_text(encoding="utf-8"))
         self.on = self.doc.get("on", self.doc.get(True))
         self.job = self.doc["jobs"]["promote"]
 
-    def test_workflow_run_trigger_on_post_release_smoke(self):
+    def test_workflow_run_trigger_on_nightly(self):
         wr = self.on["workflow_run"]
-        self.assertEqual(wr["workflows"], ["Post-Release Smoke"])
+        self.assertEqual(wr["workflows"], ["Nightly"])
         self.assertEqual(wr["types"], ["completed"])
-        smoke = yaml.safe_load((_WF / "post-release-smoke.yml").read_text(encoding="utf-8"))
-        self.assertEqual(smoke["name"], "Post-Release Smoke")
+        nightly = yaml.safe_load((_WF / "nightly.yml").read_text(encoding="utf-8"))
+        self.assertEqual(nightly["name"], "Nightly")
 
     def test_workflow_dispatch_still_present(self):
         self.assertIn("version", self.on["workflow_dispatch"]["inputs"])
@@ -144,16 +149,19 @@ class PromoteAutoTrigger(unittest.TestCase):
     def test_success_conclusion_gate_and_release_origin(self):
         cond = " ".join(str(self.job["if"]).split())
         self.assertIn("github.event.workflow_run.conclusion == 'success'", cond)
-        self.assertIn("github.event.workflow_run.event == 'workflow_run'", cond)
+        self.assertIn("github.event.workflow_run.head_branch == 'main'", cond)
+        self.assertIn("github.event.workflow_run.event == 'schedule'", cond)
+        self.assertIn("github.event.workflow_run.event == 'workflow_dispatch'", cond)
+        self.assertNotIn("github.event.workflow_run.event == 'workflow_run'", cond)
         self.assertIn("github.event_name == 'workflow_dispatch'", cond)
 
-    def test_version_derivation_step_reads_version_file_at_head_sha(self):
+    def test_version_derivation_step_reads_newest_next_tag(self):
         steps = self.job["steps"]
         co = next(s for s in steps if str(s.get("uses", "")).startswith("actions/checkout"))
         self.assertIn("github.event.workflow_run.head_sha", co["with"]["ref"])
         der = next(s for s in steps if s.get("id") == "ver")
-        self.assertIn("VERSION", der["run"])
-        self.assertIn("tr -d", der["run"])
+        self.assertIn('VERSION="$(npm view loki-mode dist-tags.next)"', der["run"])
+        self.assertNotIn("< VERSION", der["run"])
         self.assertNotIn("inputs.version", "\n".join(str(s.get("env", "")) for s in steps if s.get("id") != "ver"))
 
     def test_semver_guard_never_lowers_latest(self):
@@ -174,34 +182,192 @@ class PromoteAutoTrigger(unittest.TestCase):
         self.assertEqual(self.doc["concurrency"]["group"], "promote")
 
 
+def _git(cwd, *args, env=None):
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True, env=env).stdout.strip()
+
+
+_FAKE_GH = """#!/bin/bash
+[ -n "$FAKE_FAIL" ] && { echo "HTTP 502" >&2; exit 1; }
+jqf=""; while [ $# -gt 0 ]; do [ "$1" = "--jq" ] && { jqf="$2"; shift; }; shift; done
+printf '%s' "$FAKE_JSON" | jq -r "$jqf"
+"""
+
+
+@unittest.skipUnless(shutil.which("jq") and shutil.which("git"), "needs jq and git")
+class PromoteGateBehavior(unittest.TestCase):
+    """D96: run the real gate steps' `run` blocks against a commit-tree fixture
+    (P<-A<-B<-C on main, side SD off A, orphan U) with a fake gh that pipes the
+    JSON through the real --jq filter."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp(prefix="d96-gate-")
+        root = pathlib.Path(cls.tmp)
+        origin, cls.repo, cls.bin = root / "origin.git", root / "work", root / "bin"
+        _git(root, "init", "-q", "--bare", "-b", "main", str(origin))
+        _git(root, "init", "-q", "-b", "main", str(cls.repo))
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t",
+                   GIT_COMMITTER_EMAIL="t@t", GIT_AUTHOR_DATE="2026-01-01T00:00:00Z",
+                   GIT_COMMITTER_DATE="2026-01-01T00:00:00Z")
+        tree = subprocess.run(["git", "mktree"], cwd=cls.repo, input="", capture_output=True, text=True, check=True).stdout.strip()
+
+        def commit(msg, *parents):
+            args = ["commit-tree", tree, "-m", msg]
+            for par in parents:
+                args += ["-p", par]
+            return _git(cls.repo, *args, env=env)
+
+        cls.P = commit("P")
+        cls.A = commit("A", cls.P)
+        cls.B = commit("B", cls.A)
+        cls.C = commit("C", cls.B)
+        cls.SD = commit("SD", cls.A)
+        cls.U = commit("U")
+        _git(cls.repo, "update-ref", "refs/heads/main", cls.C)
+        _git(cls.repo, "update-ref", "refs/heads/side", cls.SD)
+        _git(cls.repo, "update-ref", "refs/heads/orphan", cls.U)
+        _git(cls.repo, "remote", "add", "origin", str(origin))
+        _git(cls.repo, "push", "-q", "origin", "main")
+        cls.bin.mkdir()
+        gh = cls.bin / "gh"
+        gh.write_text(_FAKE_GH)
+        gh.chmod(0o755)
+        doc = yaml.safe_load(_PROMOTE.read_text(encoding="utf-8"))
+        steps = doc["jobs"]["promote"]["steps"]
+        cls.nightly = next(s["run"] for s in steps if "(D96)" in s.get("name", ""))
+        cls.smoke = next(s["run"] for s in steps if s.get("name", "").startswith("Require a green Post-Release Smoke"))
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    @staticmethod
+    def _run_obj(rid, conc, sha, event="schedule"):
+        return {"id": rid, "conclusion": conc, "head_sha": sha, "html_url": "u%s" % rid, "event": event}
+
+    def _gate(self, script, githead, runs=None, fail=False, raw=None):
+        env = dict(os.environ, PATH="%s:%s" % (self.bin, os.environ["PATH"]), GITHUB_REPOSITORY="o/r",
+                   GITHEAD=githead, VERSION="1.2.3", GH_TOKEN="x",
+                   FAKE_JSON=raw if raw is not None else json.dumps({"workflow_runs": runs or []}),
+                   FAKE_FAIL="1" if fail else "")
+        r = subprocess.run(["bash", "-c", script], cwd=self.repo, env=env, capture_output=True, text=True, timeout=60)
+        return r.returncode, r.stdout + r.stderr
+
+    def _n(self, githead, runs, **kw):
+        return self._gate(self.nightly, githead, runs, **kw)
+
+    def assertPass(self, res):
+        self.assertEqual(res[0], 0, res[1])
+
+    def assertBlock(self, res):
+        self.assertNotEqual(res[0], 0, res[1])
+        self.assertIn("PROMOTE-BLOCK", res[1])
+
+    def test_exact_green_passes(self):
+        self.assertPass(self._n(self.A, [self._run_obj(1, "success", self.A)]))
+
+    def test_descendant_green_passes(self):
+        self.assertPass(self._n(self.A, [self._run_obj(2, "success", self.C)]))
+
+    def test_newest_covering_red_blocks_despite_older_green(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(3, "failure", self.C), self._run_obj(2, "success", self.B)]))
+
+    def test_newest_cancelled_is_ignored(self):
+        self.assertPass(self._n(self.A, [self._run_obj(3, "cancelled", self.C), self._run_obj(2, "success", self.B)]))
+
+    def test_newest_skipped_with_older_red_blocks(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(3, "skipped", self.C), self._run_obj(2, "failure", self.B)]))
+
+    def test_only_pre_promoted_commit_blocks(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.P)]))
+
+    def test_orphan_blocks(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.U)]))
+
+    def test_side_branch_descendant_not_on_main_blocks(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.SD)]))
+
+    def test_non_scheduled_event_is_ignored(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.B, event="push")]))
+
+    def test_non_success_conclusions_block(self):
+        for conc in ("timed_out", "neutral", "startup_failure", "action_required"):
+            with self.subTest(conc=conc):
+                self.assertBlock(self._n(self.A, [self._run_obj(1, conc, self.B)]))
+
+    def test_null_fields_block(self):
+        raw = json.dumps({"workflow_runs": [{"id": 1, "conclusion": None, "head_sha": self.B, "html_url": "x", "event": "schedule"},
+                                            {"id": 2, "conclusion": "success", "head_sha": None, "html_url": "x", "event": "schedule"}]})
+        self.assertBlock(self._n(self.A, None, raw=raw))
+
+    def test_no_runs_blocks(self):
+        self.assertBlock(self._n(self.A, []))
+
+    def test_api_failure_blocks(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.B)], fail=True))
+
+    def test_garbage_json_blocks(self):
+        self.assertBlock(self._n(self.A, None, raw="not json"))
+
+    def test_empty_githead_blocks(self):
+        self.assertBlock(self._n("", [self._run_obj(1, "success", self.B)]))
+
+    def _s(self, runs, githead=None, **kw):
+        return self._gate(self.smoke, githead or self.A, runs, **kw)
+
+    def test_smoke_green_passes(self):
+        self.assertPass(self._s([self._run_obj(1, "success", self.A)]))
+
+    def test_smoke_newest_red_blocks_despite_older_green(self):
+        self.assertBlock(self._s([self._run_obj(2, "failure", self.A), self._run_obj(1, "success", self.A)]))
+
+    def test_smoke_skipped_newest_blocks(self):
+        self.assertBlock(self._s([self._run_obj(2, "skipped", self.A), self._run_obj(1, "success", self.A)]))
+
+    def test_smoke_for_other_sha_does_not_count(self):
+        self.assertBlock(self._s([self._run_obj(1, "success", self.B)]))
+
+    def test_smoke_none_blocks(self):
+        self.assertBlock(self._s([]))
+
+    def test_smoke_api_failure_blocks(self):
+        self.assertBlock(self._s([self._run_obj(1, "success", self.A)], fail=True))
+
+    def test_smoke_empty_githead_blocks(self):
+        self.assertBlock(self._gate(self.smoke, "", [self._run_obj(1, "success", self.A)]))
+
+
 class PromoteNightlyGate(unittest.TestCase):
-    """D96: a red nightly blocks promotion to latest, not publishing to next."""
+    """D96: structure of the gates; behavior is in PromoteGateBehavior."""
 
     def setUp(self):
-        self.job = yaml.safe_load(_PROMOTE.read_text(encoding="utf-8"))["jobs"]["promote"]
+        self.doc = yaml.safe_load(_PROMOTE.read_text(encoding="utf-8"))
+        self.job = self.doc["jobs"]["promote"]
         self.steps = self.job["steps"]
+        self.names = [s.get("name", "") for s in self.steps]
         self.gate = next(s for s in self.steps if "(D96)" in s.get("name", ""))
+        self.smoke = next(s for s in self.steps if s.get("name", "").startswith("Require a green Post-Release Smoke"))
 
-    def test_gate_runs_before_any_dist_tag_moves(self):
-        names = [s.get("name", "") for s in self.steps]
-        gi = names.index(self.gate["name"])
+    def test_gates_run_after_npm_verify_and_before_any_dist_tag_moves(self):
+        npm_i = next(i for i, s in enumerate(self.steps) if s.get("id") == "npm")
+        gi, si = self.names.index(self.gate["name"]), self.names.index(self.smoke["name"])
+        self.assertLess(npm_i, gi)
+        self.assertLess(gi, si)
         for later in ("First-run gate", "Move npm latest", "Move Docker latest", "Update Homebrew"):
-            self.assertLess(gi, next(i for i, n in enumerate(names) if n.startswith(later)), later)
-        self.assertLess(next(i for i, s in enumerate(self.steps) if s.get("id") == "npm"), gi)
+            self.assertLess(si, next(i for i, n in enumerate(self.names) if n.startswith(later)), later)
 
-    def test_gate_reads_nightly_runs_and_ignores_cancelled_skipped(self):
-        r = self.gate["run"]
-        self.assertIn("workflows/nightly.yml/runs?branch=main&status=completed", r)
-        self.assertIn('.conclusion != "cancelled" and .conclusion != "skipped"', r)
-        self.assertIn("merge-base --is-ancestor", r)
-        self.assertIn('[ "$CONC" = "success" ]', r)
+    def test_gates_cannot_be_skipped_or_ignored(self):
+        for step in (self.gate, self.smoke):
+            self.assertNotIn("if", step)
+            self.assertNotIn("continue-on-error", step)
+        self.assertNotIn("continue-on-error", self.job)
+        move_i = next(i for i, n in enumerate(self.names) if n.startswith("Move npm latest"))
+        for step in self.steps[: move_i + 1]:
+            self.assertNotIn("continue-on-error", step, step.get("name"))
 
-    def test_gate_fails_closed_on_api_failure_none_and_red(self):
-        r = self.gate["run"]
-        self.assertIn("could not read the nightly runs from the API", r)
-        self.assertEqual(r.count("PROMOTE-BLOCK"), 3)
-        self.assertTrue(r.rstrip().endswith("exit 1"))
-        self.assertIn("set -euo pipefail", r)
+    def test_gates_use_strict_shell(self):
+        for step in (self.gate, self.smoke):
+            self.assertIn("set -euo pipefail", step["run"])
 
     def test_release_no_longer_blocks_on_nightly(self):
         rel = (_WF / "release.yml").read_text(encoding="utf-8")

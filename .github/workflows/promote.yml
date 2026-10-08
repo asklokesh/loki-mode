@@ -7,14 +7,16 @@ name: Promote
 #
 # PyPI has no dist-tag equivalent, so loki-mode-sdk on PyPI is not gated.
 
-# D49: every `next` release is promoted automatically once Post-Release Smoke
-# passed on it. workflow_run fires after Post-Release Smoke completes; the job
-# runs only for a successful smoke run that was itself triggered by a Release
-# (event workflow_run), never for a manual smoke re-run. A failed smoke or
-# gate leaves the version on `next`. workflow_dispatch stays for manual runs.
+# D96: promotion is driven by a green backstop. workflow_run fires when a
+# Nightly run completes; the job runs only for a successful scheduled or
+# dispatched Nightly on main, and promotes the NEWEST version on `next`. Two
+# gates sit before any dist-tag moves: a green nightly covering the promoted
+# commit, and a green Post-Release Smoke for it. A red nightly never triggers
+# this workflow. workflow_dispatch (version input) stays for manual runs and
+# passes through the same two gates.
 on:
   workflow_run:
-    workflows: ["Post-Release Smoke"]
+    workflows: ["Nightly"]
     types:
       - completed
   workflow_dispatch:
@@ -38,7 +40,9 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'workflow_run')
+       github.event.workflow_run.head_branch == 'main' &&
+       (github.event.workflow_run.event == 'schedule' ||
+        github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -46,8 +50,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # workflow_run: the commit the smoke run was produced for, so VERSION
-          # matches what was released. workflow_dispatch: default checkout.
+          # workflow_run: the nightly's commit (on main, full history).
+          # workflow_dispatch: default checkout.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Derive and validate version
@@ -60,7 +64,8 @@ jobs:
           if [ "$EVENT" = "workflow_dispatch" ]; then
             VERSION="$INPUT_VERSION"
           else
-            VERSION="$(tr -d '\n' < VERSION)"
+            # D96: promote the newest version on next, never the VERSION file.
+            VERSION="$(npm view loki-mode dist-tags.next)" || { echo "FATAL: cannot read the npm next tag"; exit 1; }
           fi
           if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
             echo "FATAL: version must be exact semver X.Y.Z, got '$VERSION'"
@@ -149,12 +154,11 @@ jobs:
           echo "githead=${GITHEAD}" >> "$GITHUB_OUTPUT"
 
       # D96: a red nightly no longer blocks publishing to `next` (release.yml);
-      # it blocks PROMOTION instead. The newest completed nightly on main
-      # (cancelled and skipped runs ignored) whose head_sha is the promoted
-      # commit or a descendant of it must be green. None yet, red, or an API
-      # read failure all fail closed here, before any dist-tag moves. Re-run
-      # this workflow with workflow_dispatch (version input) once a green
-      # nightly covers the commit.
+      # it blocks PROMOTION instead. The newest completed (not cancelled or
+      # skipped) scheduled or dispatched nightly on main whose head_sha is the
+      # promoted commit or a descendant of it, and is itself on main, must be
+      # green. None yet, red, or an API read failure all fail closed here,
+      # before any dist-tag moves.
       - name: Require a green nightly at or after the promoted commit (D96)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -162,25 +166,51 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
+          [ -n "${GITHEAD:-}" ] || { echo "PROMOTE-BLOCK: no head SHA for ${VERSION}; not promoting (fail closed)"; exit 1; }
+          git fetch origin main
           RUNS="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?branch=main&status=completed&per_page=50" \
-            --jq '.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped") | [.id, .conclusion, .head_sha, .html_url] | @tsv')" || {
+            --jq '.workflow_runs[] | select((.conclusion != "cancelled" and .conclusion != "skipped") and (.event == "schedule" or .event == "workflow_dispatch")) | [.id, (.conclusion // "none"), (.head_sha // "none"), (.html_url // "none")] | join("|")')" || {
             echo "PROMOTE-BLOCK: could not read the nightly runs from the API; not promoting ${VERSION} (fail closed)"
             exit 1
           }
-          while IFS=$'\t' read -r RID CONC RSHA URL; do
+          while IFS='|' read -r RID CONC RSHA URL; do
             [ -n "${RID:-}" ] || continue
             if [ "$RSHA" = "$GITHEAD" ] || git merge-base --is-ancestor "$GITHEAD" "$RSHA" 2>/dev/null; then
+              git merge-base --is-ancestor "$RSHA" origin/main 2>/dev/null || continue
               if [ "$CONC" = "success" ]; then
                 echo "OK: newest covering nightly is green: ${URL}"
                 exit 0
               fi
               echo "PROMOTE-BLOCK: the newest nightly covering ${GITHEAD} is ${CONC}: ${URL}"
-              echo "Per D96 a red nightly blocks promotion to latest. Fix forward, wait for a green nightly, then run Promote with workflow_dispatch (version ${VERSION})."
+              echo "Per D96 a red nightly blocks promotion to latest. Fix forward and wait for a green nightly."
               exit 1
             fi
           done <<< "$RUNS"
           echo "PROMOTE-BLOCK: no completed nightly on main covers ${GITHEAD} yet; not promoting ${VERSION}"
-          echo "Run Promote with workflow_dispatch (version ${VERSION}) after a nightly at or after that commit is green."
+          exit 1
+
+      # D96: the promoted version must have a green Post-Release Smoke. A smoke
+      # run's head_sha equals the Release run's head_sha, which is the gitHead
+      # stamped at publish. The newest completed smoke run for that SHA decides.
+      - name: Require a green Post-Release Smoke for this version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHEAD: ${{ steps.npm.outputs.githead }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          [ -n "${GITHEAD:-}" ] || { echo "PROMOTE-BLOCK: no head SHA for ${VERSION}; not promoting (fail closed)"; exit 1; }
+          SMOKE="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/post-release-smoke.yml/runs?status=completed&per_page=50" \
+            --jq '[.workflow_runs[] | select(.head_sha == "'"${GITHEAD}"'")] | .[0] | if . == null then "none|none" else [(.conclusion // "none"), (.html_url // "none")] | join("|") end')" || {
+            echo "PROMOTE-BLOCK: could not read the Post-Release Smoke runs from the API; not promoting ${VERSION} (fail closed)"
+            exit 1
+          }
+          IFS='|' read -r CONC URL <<< "$SMOKE"
+          if [ "${CONC:-none}" = "success" ]; then
+            echo "OK: Post-Release Smoke is green for ${GITHEAD}: ${URL}"
+            exit 0
+          fi
+          echo "PROMOTE-BLOCK: Post-Release Smoke for ${GITHEAD} is ${CONC:-none}: ${URL:-none}; not promoting ${VERSION}"
           exit 1
 
       # FAIL CLOSED, both machines a user can have. Leg 1 (bun installed) runs the
