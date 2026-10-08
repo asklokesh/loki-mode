@@ -25,7 +25,7 @@ python3 - "$REPO_ROOT" <<'PY'
 import json, re, sys
 
 root = sys.argv[1]
-KEYS = ("fable", "claude-fable-5", "opus", "sonnet", "haiku")
+KEYS = ("fable", "claude-fable-5", "opus", "sonnet", "haiku", "claude-haiku-4-5", "claude-haiku-5-5")
 NUM = r"([0-9]+(?:\.[0-9]+)?)"
 
 
@@ -71,9 +71,9 @@ for m in re.finditer(
 tables["budget.ts fallback"] = ts_rows
 
 run = read("autonomy/run.sh")
-tables["run.sh _write_pricing_json"] = rows_dict(window(run, '"fable":           {"input"', 900), '"')
-tables["run.sh check_budget_limit"] = rows_dict(window(run, "pricing = {\n    'fable'", 700), "'")
-tables["dashboard _DEFAULT_PRICING"] = rows_dict(window(read("dashboard/server.py"), '"fable":  {"input"', 700), '"')
+tables["run.sh _write_pricing_json"] = rows_dict(window(run, '"fable":           {"input"', 2500), '"')
+tables["run.sh check_budget_limit"] = rows_dict(window(run, "pricing = {\n    'fable'", 1800), "'")
+tables["dashboard _DEFAULT_PRICING"] = rows_dict(window(read("dashboard/server.py"), '"fable":  {"input"', 1800), '"')
 tables["autonomy/loki"] = rows_dict(window(read("autonomy/loki"), "pricing = {\n    'Fable'", 400), "'")
 
 fails = 0
@@ -112,6 +112,8 @@ PUBLISHED = {
     "sonnet": (2.0, 10.0, 0.1, 2.5, 4.0),
     "haiku": (0.1, 0.5, 0.01, 0.125, 0.2),
     "claude-haiku-5-5": (0.1, 0.5, 0.01, 0.125, 0.2),
+    # Previous Haiku, still in the catalog: exact id stays $1/$5 (R1-02).
+    "claude-haiku-4-5": (1.0, 5.0, 0.1, 1.25, 2.0),
 }
 for k, want in PUBLISHED.items():
     e = pj[k]
@@ -158,6 +160,18 @@ for name, t in cache_tables.items():
     for k in ("opus", "sonnet", "haiku", "fable"):
         if k in tables[name] and not t.get(k, {}).get("cache_read"):
             print(f"FAIL: {name} {k} carries no cache_read rate")
+            fails += 1
+
+# Exact-id rows (PRICE-TRUTH-2): a model-id-keyed lookup (the bash route uses an
+# exact-string dict with a sonnet fallback) must find these ids, or a Haiku run
+# is priced at the sonnet row (a 20x overcharge). Every id-keyed table carries both.
+for name in ("model-pricing.json", "budget.ts fallback", "run.sh _write_pricing_json", "run.sh check_budget_limit", "dashboard _DEFAULT_PRICING"):
+    for k in ("claude-haiku-4-5", "claude-haiku-5-5"):
+        if k not in tables[name]:
+            print(f"FAIL: {name} has no exact-id row for {k}")
+            fails += 1
+        elif tables[name][k] != PUBLISHED[k][:2]:
+            print(f"FAIL: {name} {k} {tables[name][k]} != published {PUBLISHED[k][:2]}")
             fails += 1
 
 # Alias rows must price exactly as the catalog-resolved model (PRICE-TRUTH):
@@ -246,3 +260,43 @@ for rel in ("autonomy/tui.sh", "autonomy/context-tracker.py"):
 print("PRICING-PARITY-TEST:", "FAIL" if fails else "PASS")
 sys.exit(1 if fails else 0)
 PY
+rc=$?
+[ "$rc" -eq 0 ] || exit "$rc"
+
+# PRICE-TRUTH-2: run the real check_budget_limit from run.sh on the bash route.
+# 1M input + 1M output tokens: claude-haiku-4-5 must cost $6 ($1/$5), not the
+# sonnet fallback $12, and claude-haiku-5-5 must cost $0.6 ($0.10/$0.50).
+# shellcheck disable=SC1090,SC2034,SC2329
+bash_route_cost() {
+    local model="$1" work
+    work="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")" || return 1
+    mkdir -p "$work/.loki/metrics/efficiency"
+    printf '{"model":"%s","input_tokens":1000000,"output_tokens":1000000}\n' "$model" \
+        >"$work/.loki/metrics/efficiency/1.json"
+    (
+        cd "$work" || exit 1
+        log_error() { :; }; log_warn() { :; }; log_info() { :; }; emit_event_json() { :; }
+        BUDGET_LIMIT=0.000001; ITERATION_COUNT=1
+        # shellcheck disable=SC1090
+        # The function body holds a python dict whose closing brace sits at column 0,
+        # so cut at the next top-level function instead of the first "^}".
+        source <(awk 'f && /^[A-Za-z_][A-Za-z0-9_]*\(\) \{/ {exit} /^check_budget_limit\(\) \{/ {f=1} f' "$REPO_ROOT/autonomy/run.sh")
+        check_budget_limit >/dev/null 2>&1
+        python3 -c "import json; print(json.load(open('.loki/metrics/budget.json'))['budget_used'])"
+    )
+    local out=$?
+    case "$work" in "${TMPDIR:-/tmp}"/loki-run.*) rm -rf -- "$work" ;; esac
+    return "$out"
+}
+bash_fail=0
+for pair in "claude-haiku-4-5=6.0" "claude-haiku-5-5=0.6" "sonnet=12.0"; do
+    model="${pair%%=*}"; want="${pair##*=}"
+    got="$(bash_route_cost "$model")"
+    if [ "$got" != "$want" ]; then
+        echo "FAIL: bash route (check_budget_limit) prices $model at $got per 1M in+out, want $want"
+        bash_fail=1
+    else
+        echo "ok:   bash route prices $model at $want per 1M in+out"
+    fi
+done
+exit "$bash_fail"

@@ -58,6 +58,9 @@ const _FALLBACK_PRICING: PricingMap = {
   },
   // Exact-id key: kept so a dated id never resolves through the family
   // substring match to a different row (Haiku 4.5 is priced differently).
+  // Exact id for the previous Haiku, still in the catalog: the haiku alias now
+  // prices as 5.5, so 4.5 must not resolve through it (page: $1/$5).
+  "claude-haiku-4-5": { input: 1.0, output: 5.0, cache_read: 0.1, cache_write: 1.25, cache_write_5m: 1.25, cache_write_1h: 2.0 },
   "claude-haiku-5-5": {
     input: 0.1, output: 0.5, cache_read: 0.01, cache_write: 0.125,
     over_100k: { input: 0.5, output: 2.5, cache_read: 0.05, cache_write: 0.625 },
