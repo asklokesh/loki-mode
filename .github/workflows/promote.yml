@@ -148,6 +148,41 @@ jobs:
           echo "npm next tag: ${NEXT}; promoting ${VERSION} (gitHead ${GITHEAD} is on main)"
           echo "githead=${GITHEAD}" >> "$GITHUB_OUTPUT"
 
+      # D96: a red nightly no longer blocks publishing to `next` (release.yml);
+      # it blocks PROMOTION instead. The newest completed nightly on main
+      # (cancelled and skipped runs ignored) whose head_sha is the promoted
+      # commit or a descendant of it must be green. None yet, red, or an API
+      # read failure all fail closed here, before any dist-tag moves. Re-run
+      # this workflow with workflow_dispatch (version input) once a green
+      # nightly covers the commit.
+      - name: Require a green nightly at or after the promoted commit (D96)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHEAD: ${{ steps.npm.outputs.githead }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          RUNS="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?branch=main&status=completed&per_page=50" \
+            --jq '.workflow_runs[] | select(.conclusion != "cancelled" and .conclusion != "skipped") | [.id, .conclusion, .head_sha, .html_url] | @tsv')" || {
+            echo "PROMOTE-BLOCK: could not read the nightly runs from the API; not promoting ${VERSION} (fail closed)"
+            exit 1
+          }
+          while IFS=$'\t' read -r RID CONC RSHA URL; do
+            [ -n "${RID:-}" ] || continue
+            if [ "$RSHA" = "$GITHEAD" ] || git merge-base --is-ancestor "$GITHEAD" "$RSHA" 2>/dev/null; then
+              if [ "$CONC" = "success" ]; then
+                echo "OK: newest covering nightly is green: ${URL}"
+                exit 0
+              fi
+              echo "PROMOTE-BLOCK: the newest nightly covering ${GITHEAD} is ${CONC}: ${URL}"
+              echo "Per D96 a red nightly blocks promotion to latest. Fix forward, wait for a green nightly, then run Promote with workflow_dispatch (version ${VERSION})."
+              exit 1
+            fi
+          done <<< "$RUNS"
+          echo "PROMOTE-BLOCK: no completed nightly on main covers ${GITHEAD} yet; not promoting ${VERSION}"
+          echo "Run Promote with workflow_dispatch (version ${VERSION}) after a nightly at or after that commit is green."
+          exit 1
+
       # FAIL CLOSED, both machines a user can have. Leg 1 (bun installed) runs the
       # v10 engine; leg 2 (a plain `npm i -g` user, no bun) runs the legacy engine
       # with bun removed from PATH. Either failure fails this step, so the dist-tag

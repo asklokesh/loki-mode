@@ -174,5 +174,40 @@ class PromoteAutoTrigger(unittest.TestCase):
         self.assertEqual(self.doc["concurrency"]["group"], "promote")
 
 
+class PromoteNightlyGate(unittest.TestCase):
+    """D96: a red nightly blocks promotion to latest, not publishing to next."""
+
+    def setUp(self):
+        self.job = yaml.safe_load(_PROMOTE.read_text(encoding="utf-8"))["jobs"]["promote"]
+        self.steps = self.job["steps"]
+        self.gate = next(s for s in self.steps if "(D96)" in s.get("name", ""))
+
+    def test_gate_runs_before_any_dist_tag_moves(self):
+        names = [s.get("name", "") for s in self.steps]
+        gi = names.index(self.gate["name"])
+        for later in ("First-run gate", "Move npm latest", "Move Docker latest", "Update Homebrew"):
+            self.assertLess(gi, next(i for i, n in enumerate(names) if n.startswith(later)), later)
+        self.assertLess(next(i for i, s in enumerate(self.steps) if s.get("id") == "npm"), gi)
+
+    def test_gate_reads_nightly_runs_and_ignores_cancelled_skipped(self):
+        r = self.gate["run"]
+        self.assertIn("workflows/nightly.yml/runs?branch=main&status=completed", r)
+        self.assertIn('.conclusion != "cancelled" and .conclusion != "skipped"', r)
+        self.assertIn("merge-base --is-ancestor", r)
+        self.assertIn('[ "$CONC" = "success" ]', r)
+
+    def test_gate_fails_closed_on_api_failure_none_and_red(self):
+        r = self.gate["run"]
+        self.assertIn("could not read the nightly runs from the API", r)
+        self.assertEqual(r.count("PROMOTE-BLOCK"), 3)
+        self.assertTrue(r.rstrip().endswith("exit 1"))
+        self.assertIn("set -euo pipefail", r)
+
+    def test_release_no_longer_blocks_on_nightly(self):
+        rel = (_WF / "release.yml").read_text(encoding="utf-8")
+        self.assertNotIn("NIGHTLY-BLOCK", rel)
+        self.assertNotIn("workflows/nightly.yml", rel)
+
+
 if __name__ == "__main__":
     unittest.main()
