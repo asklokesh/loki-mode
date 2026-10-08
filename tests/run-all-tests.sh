@@ -1394,6 +1394,7 @@ run_test "version-bump-only push skips heavy Tests jobs (S-132)" "$SCRIPT_DIR/te
 run_test "train verdict reuse on main push (E-160, D55)" "$SCRIPT_DIR/test-train-verdict-reuse.sh"
 run_test "council gate readers use the resolved -I -S interpreter (S-141)" "$SCRIPT_DIR/test-council-gate-readers-pth.sh"
 run_test "Tier A test selector (S-91 rules R0-R7)" "$SCRIPT_DIR/test-select-tests.sh"
+run_test "select-tests --run never a silent no-op (FC-47)" "timeout -k 10 120 $SCRIPT_DIR/test-select-tests-run.sh"
 run_test "fast gate planner selects the suites that guard a diff (D90)" "$SCRIPT_DIR/test-fast-gate.sh"
 run_test "impacted gate fails closed and survives suites that clean LOKI_RUN_TMP (FC-31)" "timeout -k 10 120 $SCRIPT_DIR/test-impacted-gate.sh"
 run_test "quarantine (non-blocking listed failure, rejects expired/moat/review/>7d)" "$SCRIPT_DIR/test-quarantine.sh"

@@ -69,6 +69,7 @@ done
 
 CHANGED_FILE_LIST=""
 UNPARSEABLE=0
+CHANGED=()
 
 if [ "$MODE" = "git" ]; then
     BASE_REF="${BASE_REF:-HEAD^}"
@@ -88,6 +89,106 @@ else
     fi
 fi
 
+# ---- --run: execute everything selected (FC-47) ---------------------------
+# Every selection path, including the early R0 / docs-only / empty exits,
+# ends in finish() so --run can never return having silently run nothing.
+run_selection() {
+    FAILED=0
+    INNER_ARGS=()
+    [ "$GUARDS_ONLY" -eq 1 ] && INNER_ARGS=(--guards-only)
+    EXECUTED=0
+    TB=""
+    if command -v timeout >/dev/null 2>&1; then TB="timeout"; elif command -v gtimeout >/dev/null 2>&1; then TB="gtimeout"; fi
+    run_one() {
+        local desc="$1"; shift
+        echo "--- $desc ---"
+        EXECUTED=$((EXECUTED + 1))
+        if [ -n "$TB" ]; then
+            "$TB" 100 "$@"
+        else
+            "$@"
+        fi
+        local rc=$?
+        if [ "$rc" -ne 0 ]; then
+            echo "FAIL ($rc): $desc"
+            FAILED=1
+        fi
+        return 0
+    }
+
+    if [ "$UNPARSEABLE" -eq 1 ] && [ "$GUARDS_ONLY" -eq 0 ]; then
+        SELECTION="$(printf 'R0\tALL\tunparseable diff -- running everything\n')"
+    elif [ "$MODE" = "git" ]; then
+        SELECTION="$("$0" --base "$BASE_REF" --head "$HEAD_REF" "${INNER_ARGS[@]}")"
+    else
+        SELECTION="$(printf '%s\n' "$CHANGED_FILE_LIST" | "$0" --files - "${INNER_ARGS[@]}")"
+    fi
+
+    while IFS=$'\t' read -r rule kind target; do
+        [ -n "$rule" ] || continue
+        case "$rule:$kind" in
+            R0:ALL)
+                # R0 means "run everything" -- that IS the full suite, so run it,
+                # untimed by us (run-all-tests.sh manages its own per-suite
+                # timeouts). This is the one path exempt from the 2-minute
+                # Tier A target; the workflow gives it its own budget.
+                echo "R0: $target -- running the full suite (tests/run-all-tests.sh)"
+                EXECUTED=$((EXECUTED + 1))
+                bash tests/run-all-tests.sh || FAILED=1
+                ;;
+            *:bash_n) run_one "bash -n $target" bash -n "$target" ;;
+            *:shellcheck)
+                if command -v shellcheck >/dev/null 2>&1; then
+                    # Mirror tests/run-shellcheck.sh's severity floor and excludes
+                    # exactly (-S warning, SC1090/SC1091 global, +SC2034 for
+                    # providers/ and tests/) -- a bare `shellcheck file` uses the
+                    # default style severity and flags pre-existing nits this
+                    # repo has already accepted, which is not what a per-diff
+                    # fast gate should fail a PR over.
+                    sc_excludes="SC1090,SC1091"
+                    case "$target" in
+                        providers/*.sh | tests/*.sh) sc_excludes="${sc_excludes},SC2034" ;;
+                    esac
+                    run_one "shellcheck $target" shellcheck -S warning -e "$sc_excludes" "$target"
+                fi
+                ;;
+            *:py_syntax)
+                run_one "py syntax $target" python3 -c "import ast; ast.parse(open('$target').read())"
+                ;;
+            *:shell_test | *:moat) run_one "$target" bash "$target" ;;
+            *:py_test) run_one "$target" python3 -m pytest -q "$target" ;;
+            *:bun_test)
+                # bun test resolves its path filter relative to --cwd, which we
+                # set to loki-ts/ below; strip that prefix off the target first.
+                run_one "bun test $target" bash -c "cd loki-ts && bun test '${target#loki-ts/}'"
+                ;;
+            *:bun_typecheck) run_one "bun typecheck" bash -c "cd loki-ts && bun run typecheck" ;;
+            *:pytest) run_one "pytest $target" python3 -m pytest -q "$target" ;;
+            *:node_lint) run_one "npm run lint ($target)" bash -c "cd '$target' && npm run lint" ;;
+            *:node_test) run_one "node --test $target" node --test "$target" ;;
+        esac
+    done <<<"$SELECTION"
+
+    echo "suites executed: $EXECUTED"
+    if [ "$EXECUTED" -eq 0 ]; then
+        if [ "$GUARDS_ONLY" -eq 0 ] && [ "${#CHANGED[@]}" -eq 0 ] && [ "$UNPARSEABLE" -eq 0 ]; then
+            echo "select-tests: empty diff, nothing selected (documented empty selection)"
+            return 0
+        fi
+        echo "select-tests: NOTHING RUN -- --run executed zero suites" >&2
+        return 1
+    fi
+    return "$FAILED"
+}
+
+finish() {
+    if [ "$DO_RUN" -eq 0 ]; then
+        exit 0
+    fi
+    run_selection
+    exit $?
+}
+
 emit() { printf '%s\t%s\t%s\n' "$1" "$2" "$3"; }
 
 # R8: the repo-wide guards, always selected. The list lives only in global-guards.tsv.
@@ -103,12 +204,12 @@ emit_global_guards() {
 
 if [ "$GUARDS_ONLY" -eq 1 ]; then
     emit_global_guards
-    exit 0
+    finish
 fi
 
 if [ "$UNPARSEABLE" -eq 1 ]; then
     emit R0 ALL "unparseable diff -- running everything"
-    exit 0
+    finish
 fi
 
 # Strip blank lines; nothing changed at all is not "unknown", just nothing to do.
@@ -118,7 +219,7 @@ while IFS= read -r _f; do
 done <<<"$CHANGED_FILE_LIST"
 
 if [ "${#CHANGED[@]}" -eq 0 ]; then
-    exit 0
+    finish
 fi
 
 # ---- R0: broad-blast-radius files -> run everything ------------------------
@@ -128,7 +229,7 @@ for f in "${CHANGED[@]}"; do
             | requirements*.txt | requirements*.in | */requirements*.txt | */requirements*.in \
             | loki-ts/dist/* | VERSION | .github/workflows/*)
             emit R0 ALL "matched broad-blast-radius path: $f"
-            exit 0
+            finish
             ;;
     esac
 done
@@ -159,7 +260,7 @@ is_recognized_shape() {
 for f in "${CHANGED[@]}"; do
     if ! is_recognized_shape "$f"; then
         emit R0 ALL "unknown path shape: $f"
-        exit 0
+        finish
     fi
 done
 
@@ -191,7 +292,7 @@ done
 emit_global_guards
 
 if [ "$DOCS_ONLY" -eq 1 ]; then
-    exit 0
+    finish
 fi
 
 TEST_FILES_CACHE=""
@@ -526,78 +627,4 @@ for f in "${CHANGED[@]}"; do
     esac
 done
 
-if [ "$DO_RUN" -eq 0 ]; then
-    exit 0
-fi
-
-# ---- --run: execute everything selected above ------------------------------
-FAILED=0
-TB=""
-if command -v timeout >/dev/null 2>&1; then TB="timeout"; elif command -v gtimeout >/dev/null 2>&1; then TB="gtimeout"; fi
-run_one() {
-    local desc="$1"; shift
-    echo "--- $desc ---"
-    if [ -n "$TB" ]; then
-        "$TB" 100 "$@"
-    else
-        "$@"
-    fi
-    local rc=$?
-    if [ "$rc" -ne 0 ]; then
-        echo "FAIL ($rc): $desc"
-        FAILED=1
-    fi
-    return 0
-}
-
-if [ "$MODE" = "git" ]; then
-    SELECTION="$("$0" --base "$BASE_REF" --head "$HEAD_REF")"
-else
-    SELECTION="$(printf '%s\n' "$CHANGED_FILE_LIST" | "$0" --files -)"
-fi
-
-while IFS=$'\t' read -r rule kind target; do
-    [ -n "$rule" ] || continue
-    case "$rule:$kind" in
-        R0:ALL)
-            # R0 means "run everything" -- that IS the full suite, so run it,
-            # untimed by us (run-all-tests.sh manages its own per-suite
-            # timeouts). This is the one path exempt from the 2-minute
-            # Tier A target; the workflow gives it its own budget.
-            echo "R0: $target -- running the full suite (tests/run-all-tests.sh)"
-            bash tests/run-all-tests.sh || FAILED=1
-            ;;
-        *:bash_n) run_one "bash -n $target" bash -n "$target" ;;
-        *:shellcheck)
-            if command -v shellcheck >/dev/null 2>&1; then
-                # Mirror tests/run-shellcheck.sh's severity floor and excludes
-                # exactly (-S warning, SC1090/SC1091 global, +SC2034 for
-                # providers/ and tests/) -- a bare `shellcheck file` uses the
-                # default style severity and flags pre-existing nits this
-                # repo has already accepted, which is not what a per-diff
-                # fast gate should fail a PR over.
-                sc_excludes="SC1090,SC1091"
-                case "$target" in
-                    providers/*.sh | tests/*.sh) sc_excludes="${sc_excludes},SC2034" ;;
-                esac
-                run_one "shellcheck $target" shellcheck -S warning -e "$sc_excludes" "$target"
-            fi
-            ;;
-        *:py_syntax)
-            run_one "py syntax $target" python3 -c "import ast; ast.parse(open('$target').read())"
-            ;;
-        *:shell_test | *:moat) run_one "$target" bash "$target" ;;
-        *:py_test) run_one "$target" python3 -m pytest -q "$target" ;;
-        *:bun_test)
-            # bun test resolves its path filter relative to --cwd, which we
-            # set to loki-ts/ below; strip that prefix off the target first.
-            run_one "bun test $target" bash -c "cd loki-ts && bun test '${target#loki-ts/}'"
-            ;;
-        *:bun_typecheck) run_one "bun typecheck" bash -c "cd loki-ts && bun run typecheck" ;;
-        *:pytest) run_one "pytest $target" python3 -m pytest -q "$target" ;;
-        *:node_lint) run_one "npm run lint ($target)" bash -c "cd '$target' && npm run lint" ;;
-        *:node_test) run_one "node --test $target" node --test "$target" ;;
-    esac
-done <<<"$SELECTION"
-
-exit "$FAILED"
+finish
