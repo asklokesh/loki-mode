@@ -9,7 +9,7 @@ import {
   readWindowDeltas,
   recordWindowDelta,
 } from "../src/engine10/forecast.ts";
-import { runQueue } from "../src/commands/queue.ts";
+import { governorReadingFromReport, runQueue } from "../src/commands/queue.ts";
 
 const mk = (): string => mkdtempSync(join(tmpdir(), "loki-forecast-"));
 const writeQueue = (dir: string, items: { ref: string; added_at: string }[]): void => {
@@ -31,6 +31,19 @@ describe("forecastLine", () => {
     const line = forecastLine(readingFromGovernorJson({ measured: { status: "error" } }), [], { env: {}, width: 200 });
     expect(line).toContain("unmeasured");
     expect(line).not.toMatch(/~\d/);
+  });
+
+  test("exactly 2 measured deltas is still unmeasured, no percent", () => {
+    const line = forecastLine(R, [{ session: 2, week: 1 }, { session: 4, week: 1 }], { env: {}, width: 200 });
+    expect(line).toContain("unmeasured");
+    expect(line).toContain("2 past runs, need 3");
+    expect(line).not.toMatch(/~\d/);
+  });
+
+  test("exactly 3 deltas prints the number", () => {
+    const line = forecastLine(R, [{ session: 2, week: 1 }, { session: 4, week: 1 }, { session: 3, week: 1 }], { env: {}, width: 200 });
+    expect(line).toMatch(/~2-4% of session window/);
+    expect(line).not.toContain("unmeasured");
   });
 
   test("reading but too little history stays unmeasured", () => {
@@ -122,5 +135,23 @@ describe("queue run call site", () => {
       if (prev === undefined) delete process.env["LOKI_FORECAST"]; else process.env["LOKI_FORECAST"] = prev;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("governorReadingFromReport (the refactored defaultGovernor mapping)", () => {
+  const ok = { status: "ok", session_pct: 40, week_pct: 12, session_resets: "4am", week_resets: "Oct 12 at 1pm" };
+  test("measured, no hold: ok with usage", () => {
+    const g = governorReadingFromReport({ governor: { max_engineers_reason: "fine", cap_basis: "measured" }, measured: ok });
+    expect(g).toMatchObject({ ok: true, hold: false, reason: "fine (40% session)" });
+    expect(g.usage).toEqual({ session_pct: 40, week_pct: 12 });
+  });
+  test("hold reasons hold the queue", () => {
+    for (const r of ["hold_above_70_session", "over_ceiling"]) {
+      expect(governorReadingFromReport({ governor: { max_engineers_reason: r, cap_basis: "measured" }, measured: ok })).toMatchObject({ ok: true, hold: true });
+    }
+  });
+  test("projected basis is not ok, unmeasured has no usage", () => {
+    const g = governorReadingFromReport({ governor: { cap_basis: "projected" }, measured: null });
+    expect(g).toMatchObject({ ok: false, hold: false, reason: "ok (session unmeasured)", usage: null });
   });
 });

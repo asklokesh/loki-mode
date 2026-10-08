@@ -236,20 +236,26 @@ export async function defaultUsageReading(): Promise<UsageReading | null> {
   }
 }
 
+type GovernorReport = {
+  governor?: { max_engineers_reason?: string; cap_basis?: string };
+  measured?: { status?: string; session_pct?: number; week_pct?: number } | null;
+};
+
+// Pure mapping from the usage-governor `--json` report to a queue reading (kept separate so it is testable without a spawn).
+export function governorReadingFromReport(rep: GovernorReport): GovernorReading {
+  const usage = readingFromGovernorJson(rep);
+  const reason = rep.governor?.max_engineers_reason ?? "";
+  const m = rep.measured;
+  const sess = m?.status === "ok" && typeof m.session_pct === "number" ? `${m.session_pct}% session` : "session unmeasured";
+  if (reason === "hold_above_70_session" || reason === "over_ceiling") {
+    return { ok: true, hold: true, reason: `${reason} (${sess})`, usage };
+  }
+  return { ok: rep.governor?.cap_basis === "measured", hold: false, reason: `${reason || "ok"} (${sess})`, usage };
+}
+
 export async function defaultGovernor(): Promise<GovernorReading> {
   try {
-    const rep = (await governorReport(90_000)) as {
-      governor?: { max_engineers_reason?: string; cap_basis?: string };
-      measured?: { status?: string; session_pct?: number; week_pct?: number } | null;
-    };
-    const usage = readingFromGovernorJson(rep);
-    const reason = rep.governor?.max_engineers_reason ?? "";
-    const m = rep.measured;
-    const sess = m?.status === "ok" && typeof m.session_pct === "number" ? `${m.session_pct}% session` : "session unmeasured";
-    if (reason === "hold_above_70_session" || reason === "over_ceiling") {
-      return { ok: true, hold: true, reason: `${reason} (${sess})`, usage };
-    }
-    return { ok: rep.governor?.cap_basis === "measured", hold: false, reason: `${reason || "ok"} (${sess})`, usage };
+    return governorReadingFromReport((await governorReport(90_000)) as GovernorReport);
   } catch (e) {
     return { ok: false, hold: false, reason: e instanceof Error ? e.message : "unreadable" };
   }
