@@ -107,19 +107,35 @@ legacy_copy_list() { # legacy_copy_list <repo>: COPY lines (one per file) for ev
 import os, re, sys
 repo = os.path.normpath(sys.argv[1])
 rx = re.compile(r"""(?:from|import)\s*\(?\s*["'](\.[^"']+)["']""")
+JS_MAP = os.environ.get("CP04_WALK_NO_JS_MAP") != "1"  # test hook: the mutant used to prove the .js case is guarded
+def candidates(t):
+    yield t
+    for ext in (".js", ".mjs") if JS_MAP else ():
+        if t.endswith(ext):
+            yield t[: -len(ext)] + ".ts"
+    yield t + ".ts"
+    yield os.path.join(t, "index.ts")
+    if JS_MAP:
+        yield os.path.join(t, "index.js")
 def resolve(base, spec):
     t = os.path.normpath(os.path.join(os.path.dirname(base), spec))
-    for c in (t, t + ".ts", os.path.join(t, "index.ts")):
+    for c in candidates(t):
         if os.path.isfile(c):
             return c
     return None
+def specs(path):  # specifiers in code; comment-only lines are skipped (they quote specifiers as prose)
+    code = [l for l in open(path, encoding="utf-8").read().split("\n") if not re.match(r"\s*(//|\*|/\*)", l)]
+    return rx.findall("\n".join(code))
 entries = [os.path.join(repo, "packages/control-plane/src/server/serve.ts"), os.path.join(repo, "packages/control-plane/src/ask/tools_server.ts")]
 seen, queue = set(entries), list(entries)
 while queue:
     f = queue.pop()
-    for spec in rx.findall(open(f, encoding="utf-8").read()):
+    for spec in specs(f):
         t = resolve(f, spec)
-        if t and t not in seen:
+        if t is None:
+            sys.stderr.write("legacy_copy_list: cannot resolve relative import " + repr(spec) + " from " + os.path.relpath(f, repo) + "\n")
+            sys.exit(3)
+        if t not in seen:
             seen.add(t)
             queue.append(t)
 root = os.path.join(repo, "loki-ts/src") + os.sep
@@ -141,6 +157,22 @@ plant_import() { # plant_import <repo> <spec>: a brand new loki-ts file reached 
     printf 'export const fc32Fresh = 1;\n' >"$1/loki-ts/src/util/fc32_fresh.ts"
     printf 'import { fc32Fresh } from "%s";\nexport const fc32Use = fc32Fresh;\n' "$2" >>"$1/loki-ts/src/util/redact.ts"
 }
+# FC-39: the closure walk must follow .js/.mjs specifiers (TS ESM style) and must fail loudly on an unresolvable one.
+walkrepo() { # walkrepo <name> <import-spec>: tiny repo whose serve.ts imports <import-spec> from loki-ts/src
+    local d="$T/walk/$1"
+    mkdir -p "$d/packages/control-plane/src/server" "$d/packages/control-plane/src/ask" "$d/loki-ts/src/runner"
+    printf 'import { a } from "%s";\nexport const s = a;\n' "$2" >"$d/packages/control-plane/src/server/serve.ts"
+    : >"$d/packages/control-plane/src/ask/tools_server.ts"
+    printf 'export const a = 1;\n' >"$d/loki-ts/src/runner/dev.ts"
+    echo "$d"
+}
+WD="$(walkrepo js "../../../../loki-ts/src/runner/dev.js")"
+if legacy_copy_list "$WD" 2>/dev/null | grep -q 'loki-ts/src/runner/dev.ts '; then ok "closure walk maps a .js specifier to its .ts file"; else bad ".js specifier dropped from the derived list"; fi
+if CP04_WALK_NO_JS_MAP=1 legacy_copy_list "$WD" >/dev/null 2>&1; then bad "RED-FIRST: removing the .js mapping did not fail the walk"; else ok "RED-FIRST: with the .js mapping removed the walk fails (guard is live)"; fi
+WD="$(walkrepo mjs "../../../../loki-ts/src/runner/dev.mjs")"
+if legacy_copy_list "$WD" 2>/dev/null | grep -q 'loki-ts/src/runner/dev.ts '; then ok "closure walk maps .mjs to <name>.ts"; else bad ".mjs specifier dropped from the derived list"; fi
+WD="$(walkrepo missing "../../../../loki-ts/src/runner/nope.js")"
+if MSG="$(legacy_copy_list "$WD" 2>&1 >/dev/null)"; then bad "unresolvable relative import did not fail the walk"; elif printf '%s' "$MSG" | grep -q 'nope.js'; then ok "unresolvable relative import fails the walk and names the specifier"; else bad "walk failed without naming the specifier: $MSG"; fi
 FX="$(mkrepo legacy-sanity)"; legacy_dockerfile "$FX/Dockerfile.control-plane"
 if stage_build "$FX" "$T/stage-legacy-sanity" >"$T/s1.log" 2>&1; then ok "legacy list model bundles the unmodified tree (fixture sanity)"; else bad "legacy fixture sanity failed"; tail -10 "$T/s1.log"; fi
 FX="$(mkrepo legacy-plant)"; legacy_dockerfile "$FX/Dockerfile.control-plane"; plant_import "$FX" "./fc32_fresh.ts"
