@@ -182,6 +182,19 @@ describe("loki undo apply", () => {
     expect(snap()).toBe(before);
   });
 
+  test("hostile receipt refs are refused before any git call and write nothing", async () => {
+    const f = fixture("r17");
+    const victim = join(root, "PWNED-apply");
+    writeReceipt("r17", `--output=${victim}`, f.head);
+    const calls: string[][] = [];
+    const before = snap();
+    const r = await undo(["r17", "--yes"], { applyGit: (_d, a) => (calls.push([...a]), { status: 1, stdout: "", stderr: "" }) });
+    expect(r.rc).toBe(2);
+    expect(calls).toEqual([]);
+    expect(existsSync(victim)).toBe(false);
+    expect(snap()).toBe(before);
+  });
+
   test("apply is off without LOKI_UNDO=1", async () => {
     const f = fixture("r11");
     writeReceipt("r11", f.base, f.head);
