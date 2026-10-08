@@ -154,6 +154,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("contract", "KEEP-MODERN", "bun", "Print the spec delivery contract", "v10 delivery contract", { positionals: [{ name: "spec", type: "path" }] }),
   cmd("start", "UPDATE", "both", "Run the autonomous build", "Forks between v10 and the SDK loop; flags still legacy-shaped", { flags: startFlags, positionals: [{ name: "spec", type: "path" }], example: "loki start ./prd.md --provider claude" }),
   cmd("slack", "KEEP-MODERN", "bun", "Slack inbound handler", "Bun-native integration", { subcommands: [sub("serve", "Serve the Slack handler", { flags: [port, str("--host", "<host>", "Bind host")] })] }),
+  cmd("queue", "KEEP-MODERN", "bun", "Overnight issue queue with a morning digest", "Governor-aware batch of issue-mode runs", { subcommands: [sub("add", "Queue issue refs", { positionals: [{ name: "issue", type: "string" }] }), sub("list", "Show the queue"), sub("run", "Process the queue", { flags: [bool("--no-pr", "Do not open pull requests")] })] }),
   cmd("answer", "KEEP-MODERN", "bun", "Resume a BLOCKED run with an answer", "v10 blocked-run flow", { flags: [bool("--text", "Answer text inline")], positionals: [{ name: "run", type: "dynamic", dynamic: "runs" }] }),
   cmd("engine10", "KEEP-MODERN", "bun", "v10 engine router", "The v10 engine", {
     subcommands: [sub("run", "Run the v10 engine"), sub("status", "v10 status"), sub("verify", "v10 verify"), sub("keys", "v10 keys"), sub("dashboard", "v10 dashboard"), sub("modernize", "v10 modernize")],
