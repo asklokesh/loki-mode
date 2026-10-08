@@ -108,7 +108,7 @@ spec, so events cannot break the record framing. Failed events
 (`success: false`) are elevated to severity 8.
 
 ```
-CEF:0|Autonomi|Loki Mode|11.2.2|revoke_token|revoke_token|8|rt=2026-02-15T14:30:00.000Z suser=alice src=10.0.0.4 cs1=token cs1Label=resourceType outcome=failure msg=expired credential loki.provider=claude loki.cost=4.25
+CEF:0|Autonomi|Loki Mode|X.Y.Z|revoke_token|revoke_token|8|rt=2026-02-15T14:30:00.000Z suser=alice src=10.0.0.4 cs1=token cs1Label=resourceType outcome=failure msg=expired credential loki.provider=claude loki.cost=4.25
 ```
 
 Nested `details` are flattened under the `loki.` namespace. Standard CEF keys
@@ -326,7 +326,7 @@ export LOKI_CEF_VENDOR=Autonomi
 export LOKI_CEF_PRODUCT="Loki Mode"
 
 # CEF message example:
-# CEF:0|Autonomi|Loki Mode|11.2.2|session.start|Session Started|3|
+# CEF:0|Autonomi|Loki Mode|X.Y.Z|session.start|Session Started|3|
 # rt=2026-02-15T14:30:00Z suser=user cs1=claude cs1Label=Provider
 ```
 
@@ -428,13 +428,13 @@ Notifications: PagerDuty, Slack #incidents
 ### CEF (Common Event Format)
 
 ```
-CEF:0|Autonomi|Loki Mode|11.2.2|session.start|Session Started|3|rt=2026-02-15T14:30:00Z suser=user cs1=claude cs1Label=Provider
+CEF:0|Autonomi|Loki Mode|X.Y.Z|session.start|Session Started|3|rt=2026-02-15T14:30:00Z suser=user cs1=claude cs1Label=Provider
 ```
 
 ### LEEF (Log Event Extended Format)
 
 ```
-LEEF:1.0|Autonomi|Loki Mode|11.2.2|session.start|devTime=2026-02-15T14:30:00Z usrName=user provider=claude
+LEEF:1.0|Autonomi|Loki Mode|X.Y.Z|session.start|devTime=2026-02-15T14:30:00Z usrName=user provider=claude
 ```
 
 ## Event Correlation

@@ -123,7 +123,7 @@ Audit logs use JSON Lines format (one JSON object per line):
   "metadata": {
     "hostname": "dev-machine",
     "pid": 12345,
-    "version": "11.2.2"
+    "version": "X.Y.Z"
   }
 }
 ```

@@ -27,7 +27,7 @@ ln -sf ~/.claude/skills/loki-mode/bin/loki /usr/local/bin/loki
 
 ## Docker
 
-**Status:** Image exists on Docker Hub. Tags: `latest`, one per release version (for example `11.2.2`).
+**Status:** Image exists on Docker Hub. Tags: `latest`, one per release version (for example `X.Y.Z`, matching the npm version).
 
 ```bash
 docker pull asklokesh/loki-mode:latest
@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: asklokesh/loki-mode@v11.2.2
+      - uses: asklokesh/loki-mode@vX.Y.Z   # pin a release tag
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           mode: review
@@ -108,9 +108,10 @@ jobs:
 **Status:** Working. Release assets available for each version.
 
 ```bash
-# Download and extract to skills directory
-curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v11.2.2.tar.gz | tar xz
-mv loki-mode-11.2.2 ~/.claude/skills/loki-mode
+# Download the latest release and extract to the skills directory
+VERSION=$(npm view loki-mode version)
+curl -sL https://github.com/asklokesh/loki-mode/archive/refs/tags/v${VERSION}.tar.gz | tar xz
+mv loki-mode-${VERSION} ~/.claude/skills/loki-mode
 ```
 
 **Best for:** Offline or air-gapped environments, pinned version deployments.
