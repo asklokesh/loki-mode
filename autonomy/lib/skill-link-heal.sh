@@ -31,12 +31,40 @@ _loki_skill_is_install_path() {
 # dir, or a Homebrew prefix. Prints a reason and returns 1 when it is not.
 _loki_skill_dir_p() { (cd "$1" 2>/dev/null && pwd -P); }
 
+# `npm root -g` bounded to 3s so a hung npm can never hang bin/loki. Output goes
+# to a file (not a pipe) so an orphaned grandchild cannot hold the caller open.
+# Returns 124 on timeout (callers fail closed), otherwise npm's own status.
+_loki_skill_npm_root() {
+    local out pid i=0 rc
+    out="$(mktemp "${TMPDIR:-/tmp}/loki-npmroot.XXXXXX")" || return 1
+    npm root -g >"$out" 2>/dev/null </dev/null &
+    pid=$!
+    while kill -0 "$pid" 2>/dev/null; do
+        if [ "$i" -ge 30 ]; then
+            kill "$pid" 2>/dev/null
+            rm -f "$out"
+            return 124
+        fi
+        sleep 0.1
+        i=$((i + 1))
+    done
+    wait "$pid"; rc=$?
+    [ "$rc" -eq 0 ] && head -n 1 "$out"
+    rm -f "$out"
+    return "$rc"
+}
+
 _loki_skill_root_durable() {
-    local root_p="$1" cand cands="" npmroot prefix
+    local root_p="$1" cand cands="" npmroot prefix rc
     case "$root_p" in
         */_npx/*) printf 'running from an npx cache (%s)' "$root_p"; return 1 ;;
     esac
-    npmroot="$(npm root -g 2>/dev/null)" || npmroot=""
+    npmroot="$(_loki_skill_npm_root)"; rc=$?
+    if [ "$rc" -eq 124 ]; then
+        printf 'npm root -g timed out (running install %s not verified durable)' "$root_p"
+        return 1
+    fi
+    [ "$rc" -eq 0 ] || npmroot=""
     [ -n "$npmroot" ] && cands="$cands
 $npmroot"
     [ -n "${NPM_CONFIG_PREFIX:-}" ] && cands="$cands

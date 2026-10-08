@@ -20,7 +20,27 @@ bad() { printf 'FAIL: %s\n' "$1"; FAIL=$((FAIL + 1)); }
 
 if [ ! -f "$LIB" ]; then
     bad "autonomy/lib/skill-link-heal.sh exists"
-    printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
+    # 13. _npx under a durable root: refused ONLY by the dedicated _npx rule.
+H13="$T/h13"; mkdir -p "$H13/.claude/skills"; ln -s "$DANGLE" "$H13/.claude/skills/loki-mode"
+NPXD="$T/durpfx/lib/node_modules/_npx/x/node_modules/loki-mode"; mkinst "$NPXD"
+NPM_CONFIG_PREFIX="$T/durpfx" heal_from "$H13" "$NPXD"
+if [ "$(readlink "$H13/.claude/skills/loki-mode")" = "$DANGLE" ] && grep -q 'npx cache' "$T/err"; then
+    ok "_npx under a durable root refused by the npx rule"
+else bad "_npx under a durable root refused by the npx rule"; fi
+
+# 14. hung npm: bounded, fail closed, one stderr line.
+SLOW="$T/slowbin"; mkdir -p "$SLOW"
+printf '#!/bin/sh\nsleep 8\necho "%s"\n' "$GROOT" >"$SLOW/npm"; chmod +x "$SLOW/npm"
+H14="$T/h14"; mkdir -p "$H14/.claude/skills"; ln -s "$DANGLE" "$H14/.claude/skills/loki-mode"
+S14=$SECONDS
+PATH="$SLOW:$PATH" heal_from "$H14" "$RUN"
+E14=$((SECONDS - S14))
+if [ "$E14" -le 5 ] && [ "$(readlink "$H14/.claude/skills/loki-mode")" = "$DANGLE" ] \
+    && [ "$(wc -l <"$T/err" | tr -d ' ')" = "1" ] && grep -q 'timed out' "$T/err"; then
+    ok "hung npm bounded (${E14}s) and refused"
+else bad "hung npm bounded (${E14}s) and refused"; fi
+
+printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
     exit 1
 fi
 
@@ -162,6 +182,26 @@ heal_from "$H12" "$NPX"
 if [ "$(readlink "$H12/.claude/skills/loki-mode")" = "$T/foreign2" ] && [ ! -s "$T/err" ]; then
     ok "foreign link untouched and silent when running from npx"
 else bad "foreign link untouched and silent when running from npx"; fi
+
+# 13. _npx under a durable root: refused ONLY by the dedicated _npx rule.
+H13="$T/h13"; mkdir -p "$H13/.claude/skills"; ln -s "$DANGLE" "$H13/.claude/skills/loki-mode"
+NPXD="$T/durpfx/lib/node_modules/_npx/x/node_modules/loki-mode"; mkinst "$NPXD"
+NPM_CONFIG_PREFIX="$T/durpfx" heal_from "$H13" "$NPXD"
+if [ "$(readlink "$H13/.claude/skills/loki-mode")" = "$DANGLE" ] && grep -q 'npx cache' "$T/err"; then
+    ok "_npx under a durable root refused by the npx rule"
+else bad "_npx under a durable root refused by the npx rule"; fi
+
+# 14. hung npm: bounded, fail closed, one stderr line.
+SLOW="$T/slowbin"; mkdir -p "$SLOW"
+printf '#!/bin/sh\nsleep 8\necho "%s"\n' "$GROOT" >"$SLOW/npm"; chmod +x "$SLOW/npm"
+H14="$T/h14"; mkdir -p "$H14/.claude/skills"; ln -s "$DANGLE" "$H14/.claude/skills/loki-mode"
+S14=$SECONDS
+PATH="$SLOW:$PATH" heal_from "$H14" "$RUN"
+E14=$((SECONDS - S14))
+if [ "$E14" -le 5 ] && [ "$(readlink "$H14/.claude/skills/loki-mode")" = "$DANGLE" ] \
+    && [ "$(wc -l <"$T/err" | tr -d ' ')" = "1" ] && grep -q 'timed out' "$T/err"; then
+    ok "hung npm bounded (${E14}s) and refused"
+else bad "hung npm bounded (${E14}s) and refused"; fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
