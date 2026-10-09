@@ -133,3 +133,5 @@ dcca5ebb5ca767b4b1358c66fc7d5d724f82251b:dashboard-ui/tests/ui-components.test.j
 dd61901dc34ca13c107c7f9800171f6cec2efe45:.gitleaksignore:generic-api-key:123
 # FC-90 GH-KEYRING fixture: FAKE_GH is a planted fake gho_FAKEPLANTED canary, not a credential
 1513583f087412b1930e114e9209594ef31bbf12:loki-ts/tests/util/fc90_credential_env.test.ts:github-oauth:11
+# FC-90 GH-KEYRING fixture, same planted fake gho_FAKEPLANTED canary: gitleaks 8.30.0 (CI pin) attributes it to merge commit 5aaec69ff, not 1513583f0
+5aaec69ff1738ed1948cf986dd7ff7db46d6537a:loki-ts/tests/util/fc90_credential_env.test.ts:github-oauth:11
