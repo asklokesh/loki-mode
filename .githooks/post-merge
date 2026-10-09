@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Loki Mode post-merge hook (AUTO-REAP, FC-99): after a merge lands in the
+# primary checkout, remove finished slice worktrees under .claude/worktrees.
+# Non-force and best-effort; never fails the merge. Skipped inside a linked
+# worktree (only the primary checkout is the merge path).
+set -uo pipefail
+if [ "$(git rev-parse --git-dir 2>/dev/null)" != "$(git rev-parse --git-common-dir 2>/dev/null)" ]; then exit 0; fi
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+[ -x "$root/scripts/v10-worktree-reap.sh" ] || exit 0
+tmo=""
+if command -v timeout >/dev/null 2>&1; then tmo=timeout; elif command -v gtimeout >/dev/null 2>&1; then tmo=gtimeout; fi
+if [ -n "$tmo" ]; then
+    REAP_REPO="$root" "$tmo" -k 5 120 "$root/scripts/v10-worktree-reap.sh" >/dev/null 2>&1 || true
+else
+    REAP_REPO="$root" "$root/scripts/v10-worktree-reap.sh" >/dev/null 2>&1 || true
+fi
+exit 0
