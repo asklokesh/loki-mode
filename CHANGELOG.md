@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.9 (2026-10-09)
+
+Security follow-up to v11.3.6 plus a release-pipeline fix that lets verified releases reach the `latest` tag sooner.
+
+### Security
+- Credential isolation follow-ups (FC-90, GH-KEYRING). The git credential.helper reset is now also appended to an inherited GIT_CONFIG_PARAMETERS so it is read last, and the per-process empty gh config directory is removed on SIGTERM as well as on normal exit; the SIGTERM cleanup is registered first so a host process's own shutdown handler keeps control. The seal check now records only the token variable names and fails if the token canary value appears under any other variable name.
+- The FC-90 wording no longer overclaims: code running as your own user can still reach your credentials. This is default-path hardening, not a sandbox; process isolation remains the opt-in P9 work (LOKI_P9_ISOLATION=1).
+
+### Changed
+- Release backstop (BACKSTOP-TRIGGER): a completed Release now triggers the Nightly full-suite backstop on that exact commit (deduplicated by SHA), and promotion to `latest` accepts that run. Previously only the hourly schedule ran the backstop, so a release could wait up to an hour, or longer under steady releases, before it was eligible for `latest`.
+
 ## v11.3.8 (2026-10-09)
 
 Release pipeline speed patch. Nothing changes in what Loki builds or verifies for users; this release changes only how Loki itself is packaged and published.
