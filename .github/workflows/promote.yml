@@ -8,8 +8,8 @@ name: Promote
 # PyPI has no dist-tag equivalent, so loki-mode-sdk on PyPI is not gated.
 
 # D96: promotion is driven by a green backstop. workflow_run fires when a
-# Nightly run completes; the job runs only for a successful scheduled or
-# dispatched Nightly on main, and promotes the NEWEST version on `next`. Two
+# Nightly run completes; the job runs only for a successful scheduled,
+# Release-triggered (workflow_run) or dispatched Nightly on main, and promotes the NEWEST version on `next`. Two
 # gates sit before any dist-tag moves: a green nightly covering the promoted
 # commit, and a green Post-Release Smoke for it. A red nightly never triggers
 # this workflow. workflow_dispatch (version input) stays for manual runs and
@@ -42,6 +42,7 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main' &&
        (github.event.workflow_run.event == 'schedule' ||
+        github.event.workflow_run.event == 'workflow_run' ||
         github.event.workflow_run.event == 'workflow_dispatch'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -169,7 +170,7 @@ jobs:
           [ -n "${GITHEAD:-}" ] || { echo "PROMOTE-BLOCK: no head SHA for ${VERSION}; not promoting (fail closed)"; exit 1; }
           git fetch origin main
           RUNS="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/nightly.yml/runs?branch=main&status=completed&per_page=50" \
-            --jq '.workflow_runs[] | select((.conclusion != "cancelled" and .conclusion != "skipped") and (.event == "schedule" or .event == "workflow_dispatch")) | [.id, (.conclusion // "none"), (.head_sha // "none"), (.html_url // "none")] | join("|")')" || {
+            --jq '.workflow_runs[] | select((.conclusion != "cancelled" and .conclusion != "skipped") and (.event == "schedule" or .event == "workflow_run" or .event == "workflow_dispatch")) | [.id, (.conclusion // "none"), (.head_sha // "none"), (.html_url // "none")] | join("|")')" || {
             echo "PROMOTE-BLOCK: could not read the nightly runs from the API; not promoting ${VERSION} (fail closed)"
             exit 1
           }

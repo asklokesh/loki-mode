@@ -20,15 +20,26 @@ name: Nightly
 # new unconditional continue-on-error or masked test command.
 #
 # D96: the backstop runs hourly on main HEAD (a green backstop is what promotes
-# `next` to `latest`). `dedupe` makes an idle main free: a scheduled run whose
+# `next` to `latest`). `dedupe` makes an idle main free: a scheduled or workflow_run run whose
 # main HEAD already has a live or finished (not cancelled/skipped) nightly run
 # logs "nightly skip" and every other job is skipped. workflow_dispatch always
 # runs. NOTE: a skipped run still concludes success; read the `full` job (not
 # the run conclusion) to know whether a SHA was actually measured.
 
+# BACKSTOP-TRIGGER: GitHub stopped firing the cron after 2026-10-08, so a
+# completed Release now also triggers the backstop (workflow_run, success on
+# main only). cron stays as the fallback and workflow_dispatch stays. Triggers
+# differ ONLY in the dedupe step (schedule and workflow_run skip a SHA that
+# already has a nightly; dispatch always runs); no job, matrix leg, env or if:
+# depends on the event, so the verdict is identical however it was triggered.
+# A workflow_run run executes on the default-branch HEAD (github.sha), which is
+# the SHA promote.yml matches against.
 on:
   schedule:
     - cron: '7 * * * *'
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -43,6 +54,11 @@ jobs:
     name: Skip when this SHA already has a nightly run
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # A Release that did not succeed on main starts no backstop.
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
     permissions:
       contents: read
       actions: read
@@ -59,7 +75,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           skip=false
-          if [ "$EVENT" = "schedule" ]; then
+          if [ "$EVENT" = "schedule" ] || [ "$EVENT" = "workflow_run" ]; then
             if runs=$(gh run list --workflow nightly.yml --commit "$SHA" --limit 50 --json databaseId,status,conclusion); then
               prior=$(printf '%s' "$runs" | jq -r --argjson me "$RUN_ID" '[.[] | select(.databaseId != $me) | select(.status != "completed" or (.conclusion != "cancelled" and .conclusion != "skipped"))] | first // empty | "\(.databaseId) \(.status) \(.conclusion)"')
               if [ -n "$prior" ]; then
