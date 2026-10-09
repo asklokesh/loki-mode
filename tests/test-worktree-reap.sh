@@ -123,19 +123,19 @@ check "save commit uses asklokesh identity" '[ "$(git -C "$P" log -1 --format=%a
 check "save commit message and session line" 'git -C "$P" log -1 --format=%B wt-save/dirty-idle | grep -q "^wt-save: uncommitted state at reap" && git -C "$P" log -1 --format=%B wt-save/dirty-idle | grep -q "^Claude-Session: "'
 check "dist-only dirt removed without a save branch" 'gone dist-only && ! git -C "$P" show-ref --verify -q refs/heads/wt-save/dist-only'
 check "dist change was discarded, not committed" '[ "$(git -C "$P" show slice-dist-only:loki-ts/dist/a.js)" = built ]'
-check "dirty fresh kept and listed" '! gone dirty-fresh && printf "%s\n" "$OUT" | grep -q "^LISTED dirty .*dirty-fresh"'
+check "dirty fresh kept and listed" '! gone dirty-fresh && grep -q "^LISTED dirty .*dirty-fresh" <<<"$OUT"'
 check "locked worktree kept" '! gone locked-old'
-check "locked worktree listed" 'printf "%s\n" "$OUT" | grep -q "^LISTED locked .*locked-old"'
+check "locked worktree listed" 'grep -q "^LISTED locked .*locked-old" <<<"$OUT"'
 check "fresh unmerged kept" '! gone fresh-unmerged'
 check "tracked dist in primary untouched" '[ "$(cat "$P/loki-ts/dist/a.js")" = built ]'
 
 check "idle clean worktree holding .env kept (ignored file would be destroyed)" '! gone env-idle && [ -f "$WT/env-idle/.env" ]'
-check "precious-ignored worktree listed" 'printf "%s\n" "$OUT" | grep -q "^LISTED precious-ignored .*env-idle"'
+check "precious-ignored worktree listed" 'grep -q "^LISTED precious-ignored .*env-idle" <<<"$OUT"'
 check "idle worktree with build/ output kept" '! gone build-idle && [ -f "$WT/build-idle/build/out.txt" ]'
 check "merged worktree holding .env kept" '! gone env-merged && [ -f "$WT/env-merged/.env" ]'
 check "dirty worktree with .env kept, not salvaged" '! gone env-dirty && ! git -C "$P" show-ref --verify -q refs/heads/wt-save/env-dirty'
 check ".env is never committed to any ref" '[ -z "$(git -C "$P" log --all --format=%H -- .env)" ]'
-check "mid-merge worktree kept" '! gone mid-merge && printf "%s\n" "$OUT" | grep -q "^KEPT in-progress-MERGE_HEAD .*mid-merge"'
+check "mid-merge worktree kept" '! gone mid-merge && grep -q "^KEPT in-progress-MERGE_HEAD .*mid-merge" <<<"$OUT"'
 check "recent file change keeps an idle-reflog worktree" '! gone recent-file'
 
 # BOARD active row protects an idle unmerged worktree
@@ -175,8 +175,8 @@ run_pulse_n() {
 }
 P21="$(run_pulse_n 21)"
 P20="$(run_pulse_n 20)"
-check "pulse: 21 worktrees fires WORKTREE_SPRAWL" 'printf "%s\n" "$P21" | grep -q "^VIOLATION: WORKTREE_SPRAWL"'
-check "pulse: 20 worktrees does not fire WORKTREE_SPRAWL" 'printf "%s\n" "$P20" | grep -q "Worktrees under .claude/worktrees: 20" && ! printf "%s\n" "$P20" | grep -q "^VIOLATION: WORKTREE_SPRAWL"'
+check "pulse: 21 worktrees fires WORKTREE_SPRAWL" 'grep -q "^VIOLATION: WORKTREE_SPRAWL" <<<"$P21"'
+check "pulse: 20 worktrees does not fire WORKTREE_SPRAWL" 'grep -q "Worktrees under .claude/worktrees: 20" <<<"$P20" && ! grep -q "^VIOLATION: WORKTREE_SPRAWL" <<<"$P20"'
 
 echo "worktree-reap: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]

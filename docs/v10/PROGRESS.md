@@ -1,5 +1,9 @@
 # Progress
 
+## 2026-10-09T02:10Z: v11.3.7 train (AUTO-REAP) pushing (CoS)
+- AUTO-REAP 0024b137e merged (TL APPROVE delta); guards: 19 rows, sigpipe red 1748>1742 fixed by here-strings in test-worktree-reap.sh, rerun 4/0 and 38/0.
+- In flight: WF-2MIN-3 TL review, WF-2MIN-4 built (ed92048b8), ENV-INTAKE r1fix, CANARY-SHAPE.
+
 ## 2026-10-04T02:21Z: 11.0.0 pushed, release run 37170767617 in progress (CoS)
 - Founder 01:35Z: one MAJOR 11.0.0 in 1-2 hours; 02:08Z: no tests until next week, only tsc, build and dist guard. Source of truth: docs/v10/RELEASE-11.md.
 - train11 merged into main (44839e531): A1b, A2a, A2b, A3a-f, A4a, A4b, A4-ASK-2, A5, A6a, A6b, B2-B8, Tier C docs in docs/v11/ (c7bc9378a, unverified claims stripped).
@@ -2285,32 +2289,32 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - RECEIPT-TRUTH 66931a217 (11.3.2): HIGH round 5 with high-receipt-truth; branch frozen.
 - Next: merge PRICE-TRUTH-2 and PLAN-TIMEOUT by SHA, dist rebuild if needed, moat on the final SHA, push, Tests green on that SHA, then release.sh patch --bump-only with scratchpad changelog-1131.md.
 
-## 2026-10-08 07:43Z CoS
+## 2026-10-08T07:43Z: CoS
 - PRICE-TRUTH-2 merged by SHA 884d22be1 as 82eb1ad31 (FC-45/FC-46 rows conflict resolved, both kept); post-merge util+budget 175/0, test-pricing-parity rc 0; git diff 884d22be1 HEAD^2 empty.
 - 11.3.1 now blocked only on PLAN-TIMEOUT: high-cifast parity byte-identical (236s->2s, 455s->4s), 169-commit plan 15s; P1 timeout-minutes 8, P2 timing test, P3 always-run set, P4 rebase onto 82eb1ad31 sent to sec-fsmonitor.
 - 11.3.2 approved queue (hold until 11.3.1 cut, merge by SHA): 132-E2 057b332e9, 132-B4 36284ebb5, 132-F1 82837ec9f. In review: 132-E3, 132-F3, 133-E2, GOV-FORMULA 76afb31a8. 132-E4 31b5c304b built, target missed (4x 23.7s vs 12s at load 20-26), TL deferred until load drops.
 - Found: tests/cli/test-alias-forwarding.sh fails 3 cases on cdbec7679 (help count 27 vs [12,23], local-ci parity rule missing, report export json kpis exit parity); check in the FULL tier run before the cut.
 
-## 2026-10-08 08:17Z CoS
+## 2026-10-08T08:17Z: CoS
 - RECEIPT-TRUTH round 6 APPROVED by HIGH at 1b5bbaef5 (R5-1/2/4 mutations red, moat rc 0 with P9 PROVEN, CP 519/0); queued for 11.3.2.
 - FC-47 (CTO ruling): select-tests --run is a no-op on R0 and docs diffs (early exits before DO_RUN). Interim rule: TLs on R0 diffs name and run suites explicitly and report the number of suites executed. Fix slice SEL-RUN-FC47 goes after PLAN-TIMEOUT, then a one-shot audit of the R0 merges since v11.3.0.
 - PLAN-TIMEOUT engineer had no edits from 07:40Z to 08:14Z; re-pinged with a commit-now instruction.
 
 - 2026-10-08T10:27Z CoS: PLAN-TIMEOUT-1 merged by SHA b43536756 (TL APPROVE: fast-gate 10, train-verdict-reuse 40, select-tests 42, rc 0; git diff approved..HEAD^2 empty). Full local tier on 82eb1ad31 hit the 45-min cap (rc 124); reds classified env-only (receipt_attest needs cryptography; indexer + typecheck worktree-path only, green in main). bun 2004/0, util 175/0, moat rc 0 5/9. Lost ~1h: TL verdict sat in an idle teammate; next time read the subagent transcript after 10 min instead of waiting. Pushing the 11.3.1 train now.
 
-## 2026-10-08 12:21Z CoS
+## 2026-10-08T12:21Z: CoS
 - 11.3.1 (604145bbc, pushed) release run 37774482965 failed at required-ci NIGHTLY-BLOCK (D90): nightly 37686475225 red since 10-04 on one test, macOS bun cockpit "renders a real inline image ... via the bundled wasm" timed out after 5000ms (cold wasm+font load). npm 11.3.1 NOT published.
 - Fix-forward NIGHTLY-COCKPIT (row FC-50, beforeAll warm-up + 30s render timeout, assertions unchanged): built f7f48a120, cockpit 26/0; TL round 1 BLOCK only on FC-47 id collision, r2 is the rename, in review. Then: merge, push, dispatch nightly, FULL rerun of 37774482965.
 - 11.3.2 train on local main (unpushed), now e18e4ca11: 12 earlier slices plus 133-B4..ER-01-r2, 133-E3-r2, SIGS-DOC (run-all-tests.sh registration union by hand), VPR-1-r2. UNDO-2-r2 merge reverted locally (tripped raw-gh and full-env spawn guards), r3 in HIGH review.
 - Product-code conflicts sent to engineers: XV-1 (seal.ts), MARK-1 (pr.ts), MASS-2 (queue.ts/pr.ts). BLOCKs back to engineers: MCP-D (unauthenticated HTTP task creation), VPR-2-r2 (gh authorAssociation field does not exist), T5-ATTEMPTS-PR-r2 (stale help line, r3 in review).
 
-## 2026-10-08 20:27Z CoS
+## 2026-10-08T20:27Z: CoS
 - v11.3.3 (eee891534) is on main; release run 37837110730 failed at required-ci. Tests 37837111102 at the bump SHA is red, and bump-only parent reuse was refused: "normalizer: not on the allowlist: deploy/helm/autonomi/Chart.yaml" (release.sh also bumps 2 more Chart.yaml files and docs/CLI-REFERENCE.md). Parent 54a519a22 Tests green; nightly 37836989262 at 54a519a22 green.
 - CTO split: (A) BUMP-REUSE HIGH slice (allowlist + bump-set subset guard + replay), then ship as 11.3.4. (B) RELGATE-REDS: 6 latent reds that guards_for("VERSION") selected (watch-command v6.33.0, manifest-truncation rc=2, quick-receipt-order rc=124, autonomy-and-stop OPTOUT, node_lint web-app rc=127, moat P2.verify-exit-contract); ships separately and does not block A. SEL follow-up: guards_for literal-string selection, LOW.
 - Promote 11.3.2: auto run 37838898754 blocked on the smoke lookup (the pre-run-name smoke 37833604487 is not matched by display_title). Dispatched smoke 37839153237 (v11.3.2) then promote.
 - WALL-SMOKE-GUARD merged into train-1132 at 5be544484 (rides with 11.3.4). WALL-COLOR engineer building.
 
-## 2026-10-09 01:48Z CoS
+## 2026-10-09T01:48Z: CoS
 - 11.3.6 (GH-KEYRING) published to next: release run 37869841774 success, tag v11.3.6 at 549b3b7fe; CTO smoke PASS (trivial-sum VERIFIED, 28s). latest stays 11.3.2 pending backstop plus smoke promotion.
 - guards-always pushed to main at 1d20b928e (push rc=0): 19/19 --guards-only rows rc=0 (~/loki-ci-logs/ga-guards-2141b.log), sigpipe CEILING 1789 -> 1742.
 - ENV-INTAKE bb2d57569: opus r1 BLOCK (F1 supply_guard registry token exfil, F2 seal commit hooks get worker env, F3 LOKI_* secrets incl. PR bot token and receipt signing key reach repo tests, F4 stray ' + R + ' arg in run.sh lint calls). CTO: F3 counts against 11.3.6 and earlier; signing key must never be in any child env. Fix slice ENV-INTAKE-R1FIX building; r2 pending; B9 n=9 two-bug +5.2% (rerun on fixed head). GHSA-p656 held.
