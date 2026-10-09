@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/v10-worktree-add.sh (AUTO-REAP, FC-91)
+# scripts/v10-worktree-add.sh (AUTO-REAP, FC-99)
 #
 # The one way to create a slice worktree: enforce the disk floor first (reaping
 # finished worktrees if free space is low), then run `git worktree add` with the

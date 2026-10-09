@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Loki Mode post-merge hook (AUTO-REAP, FC-91): after a merge lands in the
+# Loki Mode post-merge hook (AUTO-REAP, FC-99): after a merge lands in the
 # primary checkout, remove finished slice worktrees under .claude/worktrees.
 # Non-force and best-effort; never fails the merge. Skipped inside a linked
 # worktree (only the primary checkout is the merge path).

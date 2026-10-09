@@ -2946,7 +2946,7 @@ else:
 
 # --- 12b. WORKTREE_COUNT: too many worktrees under .claude/worktrees (S-94)
 _WORKTREE_COUNT_MAX = 15
-# WORKTREE_SPRAWL (AUTO-REAP, FC-91): the disk-exhaustion tier. 377 worktrees
+# WORKTREE_SPRAWL (AUTO-REAP, FC-99): the disk-exhaustion tier. 377 worktrees
 # (56G) once filled the laptop volume; above this the reaper must run now.
 _WORKTREE_SPRAWL_MAX = 20
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/v10-worktree-reap.sh (AUTO-REAP, FC-91)
+# scripts/v10-worktree-reap.sh (AUTO-REAP, FC-99)
 #
 # Removes finished slice worktrees under <repo>/.claude/worktrees so they can
 # never pile up and fill the disk (377 worktrees / 56G once did). Safe to run
@@ -29,6 +29,11 @@
 #   scripts/v10-worktree-reap.sh --check-floor   # exit 0 if the repo volume has
 #       at least LOKI_WORKTREE_DISK_FLOOR_GB (default 40) free; else reap, then
 #       re-check; exit 75 (refuse) if still under.
+#
+# Known limits: (1) a locked worktree whose owning agent is dead is kept, since
+# the reaper cannot tell dead from alive; (2) worktrees created by the agent
+# harness bypass the disk floor unless the dispatcher creates them through
+# scripts/v10-worktree-add.sh.
 #
 # Env overrides: REAP_REPO (repo path), REAP_BASE, REAP_BOARD, REAP_NOW,
 # REAP_IDLE_SECS, REAP_MERGED_GRACE_SECS, REAP_FREE_GB_OVERRIDE (stub free GB).

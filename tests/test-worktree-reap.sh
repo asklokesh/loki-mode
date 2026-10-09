@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/test-worktree-reap.sh -- AUTO-REAP (FC-91): scripts/v10-worktree-reap.sh removes finished slice
+# tests/test-worktree-reap.sh -- AUTO-REAP (FC-99): scripts/v10-worktree-reap.sh removes finished slice
 # worktrees (never force), saves dirty/detached state to wt-save/<name> first, keeps fresh, locked and
 # unmerged-fresh ones, refuses new worktrees under the disk floor; the pulse fires WORKTREE_SPRAWL above 20.
 # REAP_SCRIPT overrides the script under test (red proof).
