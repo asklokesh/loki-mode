@@ -111,8 +111,8 @@ for n in ('packages/control-plane/dist/server.js', 'packages/control-plane/dist/
     assert n in seg, n
 assert 'tar -tzf' in seg
 PY
-then ok "publish-npm runs prepublishOnly before npm pack and asserts the four dist files"
-else bad "publish-npm does not run prepublishOnly before pack or lacks the dist assertions"; fi
+then ok "pack-npm runs prepublishOnly before npm pack and asserts the four dist files"
+else bad "pack-npm does not run prepublishOnly before pack or lacks the dist assertions"; fi
 
 # B2 (D96): a red nightly no longer blocks the release; it blocks promotion.
 if python3 - "$rel" <<'PY'

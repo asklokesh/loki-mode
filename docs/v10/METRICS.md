@@ -607,3 +607,7 @@ the same hidden checks; wall_ratio = mean loki wall / mean raw wall; 95% percent
 | Date | Run | Fixtures | Result |
 |---|---|---|---|
 | 2026-10-08T04:58Z | b9-ab n1-plumbing (SUPERSEDED) | trivial-sum | SUPERSEDED, do not cite. Used our own clock for wall and the old receipt fields: its loki wall (43s) was not the receipt `time.wall_s`/`total_s` and `time.wall_s` is invalid as a total (it is a stage sum that excludes boot and seal). Rerun on SDK `duration_ms` and receipt `time.total_s` once RECEIPT-TRUTH ships. Former text: cost_ratio=0.92 wall_ratio=3.07 n=1/1, not significant. |
+
+## Release latency metric (WF-2MIN-3)
+
+Definition: seconds from the Release run's dispatch/push event to the `+ loki-mode@<version>` line of the `npm publish` step in the `release` job. Baseline run 37869841774: 2m46s (gate/required-ci 30s, release 68s, publish-npm 64s). Target: under 2m. npm registry lag is NOT part of this metric; the non-blocking `npm-visible` job records it separately in its job summary (`npm registry lag: ... visible after Ns`, or `NPM-LAG-TIMEOUT`). Post-Release Smoke polls for visibility itself (up to 15 min).

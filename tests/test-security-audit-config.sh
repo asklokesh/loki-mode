@@ -884,12 +884,21 @@ if _w6 "$_SCRIPT_M6B" w6b; then bad "W6 mutation (merge-base config trusted) sta
 cat > "$TMP_ROOT/extract10.py" <<'PYEOF'
 import sys, yaml
 d = yaml.safe_load(open(sys.argv[1]))
-# D90: the wait moved out of publish-npm into its own job, so the publish job
-# ends when the publish does. The wait job must still gate on publish-npm.
-assert d["jobs"]["npm-visible"]["needs"] == "publish-npm", "npm-visible must need publish-npm"
-pub_steps = d["jobs"]["publish-npm"]["steps"]
+# WF-2MIN-3: publish-npm is merged into `release`; the pack is its own parallel
+# job (pack-npm). npm-visible is a NON-BLOCKING reporter: it needs release,
+# is continue-on-error, and no other job may need it.
+assert d["jobs"]["npm-visible"]["needs"] == "release", "npm-visible must need release"
+assert d["jobs"]["npm-visible"].get("continue-on-error") is True, "npm-visible must be continue-on-error"
+assert "publish-npm" not in d["jobs"], "publish-npm must be merged into release"
+for jn, j in d["jobs"].items():
+    n = j.get("needs") or []
+    n = [n] if isinstance(n, str) else n
+    assert "npm-visible" not in n, "%s must not need npm-visible" % jn
+pub_steps = d["jobs"]["release"]["steps"]
 assert len([x for x in pub_steps if x.get("name", "").startswith("Publish")]) == 1, "exactly one publish step"
-assert not [x for x in pub_steps if x.get("name", "").startswith("Wait until npm serves")], "publish-npm must not wait on the registry"
+names_r = [x.get("name", "") for x in pub_steps]
+assert names_r.index("Create GitHub Release") < [i for i, n in enumerate(names_r) if n.startswith("Publish the verified")][0], "tag and release must precede npm publish"
+assert not [x for x in pub_steps if x.get("name", "").startswith("Wait until npm serves")], "release must not wait on the registry"
 steps = d["jobs"]["npm-visible"]["steps"]
 names = [s.get("name", "") for s in steps]
 w = [i for i, n in enumerate(names) if n.startswith("Wait until npm serves")]
@@ -900,9 +909,9 @@ for k, v in steps[w[0]]["env"].items():
     print("%s=%s" % (k, v))
 PYEOF
 if python3 "$TMP_ROOT/extract10.py" "$REL_YML" "$TMP_ROOT/npmwait.sh" > "$TMP_ROOT/npmwait.env"; then
-  ok "W10: npm-visible (needs publish-npm) holds the one npm-visibility wait; publish-npm does not wait"
+  ok "W10: npm-visible is a non-blocking reporter holding the one npm-visibility wait; publish is merged into release after the tag"
 else
-  bad "W10: npm-visible wait job missing, not gated on publish-npm, or publish-npm still waits"
+  bad "W10: npm-visible wait job missing, blocking, needed by another job, or publish precedes the tag"
 fi
 _w10_run() { # _w10_run <script> <visible-after-N-polls|never> -> prints "<rc>|<output>"
   local d="$TMP_ROOT/w10.cur" rc=0 out
