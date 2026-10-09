@@ -85,6 +85,27 @@ describe("FC-90 git credential helpers", () => {
   });
 });
 
+describe("FC-90 a parent GIT_CONFIG_PARAMETERS helper", () => {
+  const quoted = (helper: string): string => `'credential.helper'='${helper}'`;
+  test("control: a parent GIT_CONFIG_PARAMETERS helper DOES serve the planted password on the raw env", () => {
+    const helper = join(root, "params-helper.sh");
+    writeFileSync(helper, `#!/bin/sh\necho username=paramuser\necho password=${FAKE_PW}\n`); chmodSync(helper, 0o755);
+    const raw = { ...parentEnv(), HOME: join(root, "nohome"), GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_PARAMETERS: quoted(helper) };
+    expect(sh("git credential fill", raw, FILL).stdout).toContain(`password=${FAKE_PW}`);
+    const hard = plainTestEnv(raw);
+    expect(hard["GIT_CONFIG_PARAMETERS"]!.endsWith(`${quoted("")}`)).toBe(true);
+    const r = sh("git credential fill", hard, FILL);
+    expect(r.stdout + r.stderr).not.toContain(FAKE_PW);
+    expect(r.status).not.toBe(0);
+  });
+  test("the reset is appended once and an unset GIT_CONFIG_PARAMETERS stays unset", () => {
+    const e = plainTestEnv({ ...parentEnv(), GIT_CONFIG_PARAMETERS: "'user.name'='X'" });
+    expect(e["GIT_CONFIG_PARAMETERS"]).toBe("'user.name'='X' 'credential.helper'=''");
+    expect(plainTestEnv(e)["GIT_CONFIG_PARAMETERS"]).toBe(e["GIT_CONFIG_PARAMETERS"]);
+    expect(plainTestEnv(parentEnv())["GIT_CONFIG_PARAMETERS"]).toBeUndefined();
+  });
+});
+
 describe("FC-90 the scoped GH_CONFIG_DIR lifecycle", () => {
   const countDirs = (d: string): number => readdirSync(d).filter((n) => n.startsWith("loki-gh-config-")).length;
   const src = (rel: string): string => JSON.stringify(join(import.meta.dir, "../../src", rel));
@@ -116,5 +137,14 @@ process.stdout.write(d + "\\n" + (statSync(d).mode & 0o777).toString(8));`;
     expect(r.status).toBe(0);
     expect(r.stdout.split("\n")[0]).toContain(realpathSync(run));
     expect(countDirs(tmp)).toBe(0); expect(countDirs(run)).toBe(0);
+  });
+  test("a child killed by SIGTERM removes its dir and still dies with 143", () => {
+    const tmp = mkdtempSync(join(root, "tmp-"));
+    const f = join(root, "sigterm-child.ts");
+    writeFileSync(f, `import { plainTestEnv } from ${src("util/check_result.ts")};
+plainTestEnv(); setTimeout(() => {}, 20000); process.kill(process.pid, "SIGTERM");`);
+    const r = spawnSync(process.execPath, [f], { encoding: "utf8", env: { PATH: process.env["PATH"], TMPDIR: tmp } as Record<string, string>, timeout: 30_000 });
+    expect(r.status).toBe(143);
+    expect(countDirs(tmp)).toBe(0);
   });
 });

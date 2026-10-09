@@ -21,6 +21,7 @@ export const SENTINEL_PREFIX = "ghp_LOKIWITHHELDsentinel";
 let sentinel: string | null = null;
 let configDir: string | null = null;
 let exitHooked = false;
+let sigtermHooked = false;
 
 /** One fresh garbage value per process. */
 export function withheldSentinel(fresh = false): string {
@@ -29,6 +30,10 @@ export function withheldSentinel(fresh = false): string {
 }
 
 const isDir = (p: string): boolean => { try { return !lstatSync(p).isSymbolicLink() && statSync(p).isDirectory(); } catch { return false; } };
+
+function removeConfigDir(): void {
+  if (configDir) try { rmSync(configDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+}
 
 /** The per-process empty GH_CONFIG_DIR. Lives under the run's own LOKI_RUN_TMP when that is a real directory, else under the
  *  OS temp dir; created by mkdtemp (mode 700) and removed, by exact path only, when the process exits. Best-effort: null on failure. */
@@ -43,7 +48,13 @@ export function emptyGhConfigDir(env: NodeJS.ProcessEnv = process.env): string |
   }
   if (!exitHooked) {
     exitHooked = true;
-    process.once("exit", () => { if (configDir) try { rmSync(configDir, { recursive: true, force: true }); } catch { /* best-effort */ } });
+    process.once("exit", removeConfigDir);
+  }
+  // A SIGTERM kill skips "exit" handlers. Remove the dir, then exit 143 only when ours is the sole SIGTERM listener (an
+  // installed listener replaces the default action, so without this the process would stop dying); other handlers keep control.
+  if (!sigtermHooked) {
+    sigtermHooked = true;
+    process.on("SIGTERM", () => { removeConfigDir(); if (process.listenerCount("SIGTERM") === 1) process.exit(143); });
   }
   return configDir;
 }
@@ -63,6 +74,10 @@ export function hardenCredentialEnv(env: NodeJS.ProcessEnv, fresh = false): void
     env[`GIT_CONFIG_VALUE_${n}`] = "";
     env["GIT_CONFIG_COUNT"] = String(n + 1);
   }
+  // GIT_CONFIG_PARAMETERS is read after GIT_CONFIG_COUNT, so a parent value carrying credential.helper would win over the
+  // reset above. Append the reset last, in git's own quoting ('key'='value', space separated).
+  const params = env["GIT_CONFIG_PARAMETERS"];
+  if (params && !params.trimEnd().endsWith("'credential.helper'=''")) env["GIT_CONFIG_PARAMETERS"] = `${params} 'credential.helper'=''`;
   env["GIT_TERMINAL_PROMPT"] = "0";
   env["GCM_INTERACTIVE"] = "never";
 }
