@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.8 (2026-10-09)
+
+Release pipeline speed patch. Nothing changes in what Loki builds or verifies for users; this release changes only how Loki itself is packaged and published.
+
+### Changed
+- Release workflow (WF-2MIN-3): the npm tarball is packed once in a new `pack-npm` job (read-only permissions, no secrets) and the `release` job publishes those exact bytes. The sha256 is verified after download and again immediately before `npm publish`, and publish still refuses unless the release tag exists on the remote. The separate `publish-npm` job is absorbed into `release`, which removes one job start from the path between dispatch and npm publish.
+- `npm-visible` (registry propagation poll) is now non-blocking: Docker, the SDKs and Slack no longer wait on it. Registry lag is reported separately in docs/v10/METRICS.md.
+- Post-Release Smoke now polls for up to 15 minutes of registry lag before failing.
+
+### Behaviour notes
+- A failed `npm publish` now fails the `release` job, so the Docker, SDK and Slack jobs are skipped for that run instead of running independently. A rerun after the tag and GitHub release exist skips publish; use `workflow_dispatch` with `force_republish` to recover.
+
 ## v11.3.7 (2026-10-09)
 
 Maintenance patch release for contributors running many parallel worktrees. Nothing changes in what Loki builds or verifies for users.
