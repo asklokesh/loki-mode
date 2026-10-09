@@ -45,6 +45,8 @@ COE_ALLOW = {
         "reuse lookup; a failure means no reuse and the audit runs in full",
     ("security-audit.yml", "python-audit", "pip-audit every requirements file"):
         "findings reported; the next step asserts a parseable report for every manifest",
+    ("release.yml", "npm-visible", None):
+        "non-blocking registry-lag reporter (WF-2MIN-3): writes the lag to the job summary; nothing needs it; smoke polls for visibility itself",
     ("release.yml", "publish-docker", "Update Docker Hub description"):
         "cosmetic; the image publish already succeeded and PAT scope can 403",
 }
@@ -427,8 +429,8 @@ mut M09-true-then nightly.yml "$STEP" '        run: bun test || true; echo next
 '
 mut M10-true-comment nightly.yml "$STEP" '        run: bun test || true  # tolerated
 '
-mut M11-success-or-failure release.yml '    needs: [gate, required-ci]
-' '    needs: [gate, required-ci]
+mut M11-success-or-failure release.yml '    needs: [gate, required-ci, pack-npm]
+' '    needs: [gate, required-ci, pack-npm]
     if: success() || failure()
 '
 mut N01-exit-in-string nightly.yml "$STEP" '        run: bun test || echo "gate failed (exit 1), tolerated"
@@ -509,8 +511,8 @@ ok C05-capture-echo nightly.yml "$STEP" '        run: |
           echo "rc is $rc"
           exit $rc
 '
-mut M12-always release.yml '    needs: [gate, required-ci]
-' '    needs: [gate, required-ci]
+mut M12-always release.yml '    needs: [gate, required-ci, pack-npm]
+' '    needs: [gate, required-ci, pack-npm]
     if: always()
 '
 exit "$SELF_FAIL"

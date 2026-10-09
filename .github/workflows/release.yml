@@ -688,9 +688,115 @@ jobs:
             sleep 10
           done
 
+  # WF-2MIN-3: the tarball is built ONCE, here, in parallel with gate and
+  # required-ci, instead of serially after the release job. This job holds no
+  # secret and no write token. The release job downloads the artifact, recomputes
+  # its sha256 and compares it with the digest this job reports, then publishes
+  # exactly those bytes. Every pack-time integrity check (gitHead stamp, dist
+  # presence, embedded VERSION) runs here and fails the whole run before the
+  # release job can tag or publish.
+  pack-npm:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tgz_sha256: ${{ steps.digest.outputs.sha256 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup Bun
+        # Required so the npm prepack hook can build the loki-ts dist artifact
+        # before publishing. Without bun on PATH the prepack falls back to the
+        # committed dist (if any) and emits a WARN, which is not desirable for
+        # release builds.
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.13
+          # Rule of Two: never restore a cache an issue-triggered job could have written.
+          no-cache: true
+
+      - name: Pack once and verify the PACKED tarball carries a fresh dist
+        run: |
+          # WHY PACK AND NOT THE WORKTREE. package.json's prepack rebuilds
+          # loki-ts/dist DURING pack, so a check against the checked-out tree
+          # inspects the PRE-rebuild file. `npm pack` runs that prepack once;
+          # the resulting tarball is both what we inspect and what we publish
+          # (D90: before, `npm publish` ran prepack a second time, a second
+          # full dist build, on top of the pack above it).
+          #
+          # WHAT THIS CATCHES. prepack SWALLOWS a failed build, so a broken
+          # build yields exit 0 and a tarball carrying a STALE dist. The
+          # assertion below fails the job before anything is published.
+          set -euo pipefail
+          want="$(cat VERSION)"
+          # prepack's bun build writes to stdout too: take the LAST line, which
+          # is the tarball npm reports.
+          # `npm pack` skips prepublishOnly and `npm publish <tgz>` runs no
+          # scripts, so build the web-app and control-plane dist here, fail closed.
+          npm run prepublishOnly
+          # FC-51: `npm publish <tgz>` records NO gitHead of its own (only a
+          # directory publish reads .git), and promote.yml refuses a version
+          # with no gitHead. Stamp the exact release commit into the manifest
+          # that gets packed, then restore the tracked file.
+          GITHEAD_STAMP="$(git rev-parse HEAD)" || { echo "FATAL: git rev-parse HEAD failed"; exit 1; }
+          printf '%s' "$GITHEAD_STAMP" | grep -Eq '^[0-9a-f]{40}$' || { echo "FATAL: HEAD is not a 40-hex SHA: $GITHEAD_STAMP"; exit 1; }
+          cp package.json "$RUNNER_TEMP/package.json.orig"
+          npm pkg set gitHead="$GITHEAD_STAMP"
+          tgz="$(npm pack --silent | tail -n 1)"
+          cp "$RUNNER_TEMP/package.json.orig" package.json
+          tar -xzOf "$tgz" package/package.json > "$RUNNER_TEMP/packed-package.json"
+          PACKED_HEAD="$(node -p "require(process.argv[1]).gitHead || ''" "$RUNNER_TEMP/packed-package.json")"
+          [ "$PACKED_HEAD" = "$GITHEAD_STAMP" ] || {
+            echo "FATAL: packed package.json gitHead '${PACKED_HEAD}' != HEAD ${GITHEAD_STAMP}"; exit 1; }
+          echo "OK: packed manifest gitHead ${PACKED_HEAD}"
+          tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
+          for need in package/packages/control-plane/dist/server.js \
+                      package/packages/control-plane/dist/ask-tools-server.js \
+                      package/packages/control-plane/ui/dist/index.html \
+                      package/web-app/dist/index.html; do
+            grep -qxF "$need" "$RUNNER_TEMP/tgz.list" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
+          done
+          mkdir -p "$RUNNER_TEMP/npm-tarball"
+          cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
+          printf '%s\n' "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
+          mkdir -p "$RUNNER_TEMP/unpack"
+          tar -xzf "$tgz" -C "$RUNNER_TEMP/unpack" package/loki-ts/dist/loki.js
+          test -f "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
+            echo "FATAL: packed tarball has no loki-ts/dist/loki.js"; exit 1; }
+          grep -q "\"${want}\"" "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
+            echo "FATAL: packed dist does not embed VERSION ${want}"
+            echo "       embedded: $(grep -oE '\"[0-9]+\.[0-9]+\.[0-9]+\"' "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" | sort -u | head -3 | tr '\n' ' ')"
+            exit 1; }
+          echo "OK: packed dist embeds ${want}"
+
+      - name: Record the tarball sha256
+        id: digest
+        run: |
+          set -euo pipefail
+          tgz="$RUNNER_TEMP/npm-tarball/$(cat "$RUNNER_TEMP/npm-tarball/NAME")"
+          sha="$(sha256sum "$tgz" | cut -d' ' -f1)"
+          printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$' || { echo "FATAL: bad sha256 '$sha'"; exit 1; }
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "tarball $(cat "$RUNNER_TEMP/npm-tarball/NAME") sha256 $sha"
+
+      - name: Upload the tarball that is published
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-tarball
+          overwrite: true
+          path: ${{ runner.temp }}/npm-tarball/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     runs-on: ubuntu-latest
-    needs: [gate, required-ci]
+    needs: [gate, required-ci, pack-npm]
     permissions:
       contents: write
 
@@ -805,11 +911,34 @@ jobs:
       # OS layer and Python runtime the npm tree never lists. They are NOT
       # interchangeable, which is why the filenames differ -- a collision would
       # silently overwrite one and ship half the evidence the release claims.
-      - name: Setup Node.js (for SBOM generation)
-        if: steps.check_release.outputs.release_exists == 'false'
+      - name: Setup Node.js (SBOM generation and npm publish)
+        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download the packed tarball
+        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-tarball
+          path: ${{ runner.temp }}/npm-tarball
+
+      - name: Verify the downloaded tarball digest
+        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
+        env:
+          WANT_SHA256: ${{ needs.pack-npm.outputs.tgz_sha256 }}
+        run: |
+          set -euo pipefail
+          # Recompute locally; never trust the artifact's name or presence alone.
+          [ "$(ls "$RUNNER_TEMP"/npm-tarball/*.tgz | wc -l | tr -d ' ')" = "1" ] || { echo "FATAL: expected exactly one tarball"; exit 1; }
+          tgz="$(ls "$RUNNER_TEMP"/npm-tarball/*.tgz)"
+          got="$(sha256sum "$tgz" | cut -d' ' -f1)"
+          [ -n "$WANT_SHA256" ] && [ "$got" = "$WANT_SHA256" ] || {
+            echo "FATAL: tarball sha256 ${got} != pack-npm digest '${WANT_SHA256}'"; exit 1; }
+          echo "OK: tarball sha256 ${got} matches the pack-npm job"
+          basename "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
 
       - name: Generate npm-tarball SBOM (CycloneDX)
         if: steps.check_release.outputs.release_exists == 'false'
@@ -820,9 +949,11 @@ jobs:
           # tree. --omit dev twice: the published tarball declares
           # devDependencies but does not ship them, and cyclonedx-npm's
           # `npm ls --all` errors ELSPROBLEMS on the missing ones.
-          npm pack
+          # WF-2MIN-3: the tarball is the one pack-npm built and the digest
+          # step above verified (the exact bytes published below), not a
+          # second `npm pack` here.
           mkdir -p /tmp/published
-          tar xzf loki-mode-*.tgz -C /tmp/published
+          tar xzf "$RUNNER_TEMP"/npm-tarball/*.tgz -C /tmp/published
           cd /tmp/published/package
           npm install --omit=dev --no-package-lock
           npx --yes @cyclonedx/cyclonedx-npm \
@@ -984,6 +1115,29 @@ jobs:
             echo "::warning::published release v${VERSION} body is the placeholder 'Release v${VERSION}' -- the extract step should have caught this before tagging; investigate but the release stands."
           fi
 
+      # WF-2MIN-3: publish-npm is merged into this job. It runs LAST among the
+      # irreversible steps, after the tag and the GitHub release exist, so a
+      # package is never published without its tag. Docker, SDKs and Slack
+      # depend on this job, so they start only once the package is published.
+      - name: Publish the verified tarball (no rebuild)
+        # Publishing a tarball path does not run prepack. The registry-visibility
+        # wait lives in its own non-blocking job (npm-visible).
+        if: steps.check_release.outputs.release_exists == 'false' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          WANT_SHA256: ${{ needs.pack-npm.outputs.tgz_sha256 }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Never publish without the tag on the remote.
+          git ls-remote --exit-code --tags origin "refs/tags/v${VERSION}" >/dev/null || {
+            echo "FATAL: tag v${VERSION} is not on the remote; refusing to publish"; exit 1; }
+          tgz="$RUNNER_TEMP/npm-tarball/$(cat "$RUNNER_TEMP/npm-tarball/NAME")"
+          got="$(sha256sum "$tgz" | cut -d' ' -f1)"
+          [ -n "$WANT_SHA256" ] && [ "$got" = "$WANT_SHA256" ] || {
+            echo "FATAL: tarball sha256 ${got} != pack-npm digest '${WANT_SHA256}' at publish time"; exit 1; }
+          npm publish "$tgz" --access public --tag next
+
       - name: Skip message
         if: steps.check_release.outputs.release_exists == 'true'
         run: |
@@ -1078,111 +1232,21 @@ jobs:
 
           echo "Slack notification sent for ${VERSION}"
 
-  publish-npm:
-    needs: release
-    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Setup Bun
-        # Required so the npm prepack hook can build the loki-ts dist artifact
-        # before publishing. Without bun on PATH the prepack falls back to the
-        # committed dist (if any) and emits a WARN, which is not desirable for
-        # release builds.
-        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
-        with:
-          bun-version: 1.3.13
-          # Rule of Two: this job holds a write token or publish secret, so it
-          # never restores a cache an issue-triggered job could have written.
-          no-cache: true
-
-      - name: Pack once and verify the PACKED tarball carries a fresh dist
-        run: |
-          # WHY PACK AND NOT THE WORKTREE. package.json's prepack rebuilds
-          # loki-ts/dist DURING pack, so a check against the checked-out tree
-          # inspects the PRE-rebuild file. `npm pack` runs that prepack once;
-          # the resulting tarball is both what we inspect and what we publish
-          # (D90: before, `npm publish` ran prepack a second time, a second
-          # full dist build, on top of the pack above it).
-          #
-          # WHAT THIS CATCHES. prepack SWALLOWS a failed build, so a broken
-          # build yields exit 0 and a tarball carrying a STALE dist. The
-          # assertion below fails the job before anything is published.
-          set -euo pipefail
-          want="$(cat VERSION)"
-          # prepack's bun build writes to stdout too: take the LAST line, which
-          # is the tarball npm reports.
-          # `npm pack` skips prepublishOnly and `npm publish <tgz>` runs no
-          # scripts, so build the web-app and control-plane dist here, fail closed.
-          npm run prepublishOnly
-          # FC-51: `npm publish <tgz>` records NO gitHead of its own (only a
-          # directory publish reads .git), and promote.yml refuses a version
-          # with no gitHead. Stamp the exact release commit into the manifest
-          # that gets packed, then restore the tracked file.
-          GITHEAD_STAMP="$(git rev-parse HEAD)" || { echo "FATAL: git rev-parse HEAD failed"; exit 1; }
-          printf '%s' "$GITHEAD_STAMP" | grep -Eq '^[0-9a-f]{40}$' || { echo "FATAL: HEAD is not a 40-hex SHA: $GITHEAD_STAMP"; exit 1; }
-          cp package.json "$RUNNER_TEMP/package.json.orig"
-          npm pkg set gitHead="$GITHEAD_STAMP"
-          tgz="$(npm pack --silent | tail -n 1)"
-          cp "$RUNNER_TEMP/package.json.orig" package.json
-          tar -xzOf "$tgz" package/package.json > "$RUNNER_TEMP/packed-package.json"
-          PACKED_HEAD="$(node -p "require(process.argv[1]).gitHead || ''" "$RUNNER_TEMP/packed-package.json")"
-          [ "$PACKED_HEAD" = "$GITHEAD_STAMP" ] || {
-            echo "FATAL: packed package.json gitHead '${PACKED_HEAD}' != HEAD ${GITHEAD_STAMP}"; exit 1; }
-          echo "OK: packed manifest gitHead ${PACKED_HEAD}"
-          tar -tzf "$tgz" > "$RUNNER_TEMP/tgz.list"
-          for need in package/packages/control-plane/dist/server.js \
-                      package/packages/control-plane/dist/ask-tools-server.js \
-                      package/packages/control-plane/ui/dist/index.html \
-                      package/web-app/dist/index.html; do
-            grep -qxF "$need" "$RUNNER_TEMP/tgz.list" || { echo "FATAL: packed tarball is missing $need"; exit 1; }
-          done
-          mkdir -p "$RUNNER_TEMP/npm-tarball"
-          cp "$tgz" "$RUNNER_TEMP/npm-tarball/"
-          printf '%s\n' "$tgz" > "$RUNNER_TEMP/npm-tarball/NAME"
-          mkdir -p "$RUNNER_TEMP/unpack"
-          tar -xzf "$tgz" -C "$RUNNER_TEMP/unpack" package/loki-ts/dist/loki.js
-          test -f "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
-            echo "FATAL: packed tarball has no loki-ts/dist/loki.js"; exit 1; }
-          grep -q "\"${want}\"" "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" || {
-            echo "FATAL: packed dist does not embed VERSION ${want}"
-            echo "       embedded: $(grep -oE '\"[0-9]+\.[0-9]+\.[0-9]+\"' "$RUNNER_TEMP/unpack/package/loki-ts/dist/loki.js" | sort -u | head -3 | tr '\n' ' ')"
-            exit 1; }
-          echo "OK: packed dist embeds ${want}"
-
-      - name: Upload the tarball that is published
-        uses: actions/upload-artifact@v4
-        with:
-          name: npm-tarball
-          overwrite: true
-          path: ${{ runner.temp }}/npm-tarball/*.tgz
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Publish the verified tarball (no rebuild)
-        # Publishing a tarball path does not run prepack. publish-npm used to
-        # take 8m20s (run 37714923032): 41s was this publish, 7m59s was the
-        # registry-visibility wait below, which now lives in its own job.
-        run: npm publish "$RUNNER_TEMP/npm-tarball/$(cat "$RUNNER_TEMP/npm-tarball/NAME")" --access public --tag next
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-  # D90: split out of publish-npm so the publish job ends when the publish
+  # D90: split out of the publish so the publish ends when the publish
   # does. Post-Release Smoke and Promote trigger on this WORKFLOW finishing, so
   # holding this job until the registry serves the exact version still gates
   # both on visibility. Registry lag is external time, reported separately.
   npm-visible:
-    needs: publish-npm
+    needs: release
+    if: needs.release.outputs.release_created == 'true' || (github.event_name == 'workflow_dispatch' && inputs.force_republish == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 50
+    # WF-2MIN-3: a REPORTER, not a gate. Registry lag is external time and is
+    # recorded in the job summary; no job may `needs:` this one, and a lag
+    # timeout must not turn the Release run red (allow-listed in
+    # tests/test-workflow-no-masked-failures.sh). Post-Release Smoke and
+    # Promote poll for visibility themselves.
+    continue-on-error: true
     steps:
       - name: Checkout (VERSION only)
         uses: actions/checkout@v4
@@ -1218,7 +1282,8 @@ jobs:
         run: |
           set -uo pipefail
           VERSION="$(tr -d '\n' < VERSION)"
-          deadline=$(( $(date +%s) + NPM_WAIT_TIMEOUT_S ))
+          start="$(date +%s)"
+          deadline=$(( start + NPM_WAIT_TIMEOUT_S ))
           delay="$NPM_WAIT_BASE_S"
           polls=0
           while :; do
@@ -1226,10 +1291,12 @@ jobs:
             FOUND="$(npm view "loki-mode@${VERSION}" version --prefer-online 2>/dev/null || true)"
             if [ "$FOUND" = "$VERSION" ]; then
               echo "OK: npm serves loki-mode@${VERSION} (poll ${polls})"
+              echo "npm registry lag: loki-mode@${VERSION} visible after $(( $(date +%s) - start ))s (${polls} polls)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
               exit 0
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
               echo "NPM-LAG-TIMEOUT: loki-mode@${VERSION} still not served by npm after ${NPM_WAIT_TIMEOUT_S}s (${polls} polls); the publish step succeeded but the registry never listed it"
+              echo "NPM-LAG-TIMEOUT: loki-mode@${VERSION} not visible after ${NPM_WAIT_TIMEOUT_S}s (${polls} polls)" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"
               exit 1
             fi
             echo "poll ${polls}: loki-mode@${VERSION} not visible on npm yet (registry lag, not a failure); sleeping ${delay}s"

@@ -88,12 +88,12 @@ def check(rel, pro):
     """Return a list of failures; empty means the definitions are sound."""
     bad = []
     try:
-        steps = yaml.safe_load(rel)['jobs']['publish-npm'].get('steps') or []
+        steps = yaml.safe_load(rel)['jobs']['pack-npm'].get('steps') or []
     except Exception as e:
-        return ['release.yml publish-npm unparsable: %s' % e]
+        return ['release.yml pack-npm unparsable: %s' % e]
     pack = [s.get('run') or '' for s in steps if '$(npm pack' in (s.get('run') or '')]
     if len(pack) != 1:
-        return ['expected exactly one npm pack step in publish-npm, got %d' % len(pack)]
+        return ['expected exactly one npm pack step in pack-npm, got %d' % len(pack)]
     ls = lines(pack[0])
     for msg, l in REL_LINES.items():
         if l not in ls:

@@ -105,7 +105,7 @@ mutate "M3 remove dist byte-identity check" "gate lost the dist byte-identity bu
 mutate "M4 remove tarball dist check" "gate lost the packed tarball dist check" \
   's = s.replace("verify-release-dist.sh tarball", "true", 1)'
 mutate "M5 release stops needing required-ci" "release no longer needs required-ci" \
-  's = s.replace("    needs: [gate, required-ci]\n    permissions:\n      contents: write", "    needs: [gate]\n    permissions:\n      contents: write", 1)'
+  's = s.replace("    needs: [gate, required-ci, pack-npm]\n    permissions:\n      contents: write", "    needs: [gate, pack-npm]\n    permissions:\n      contents: write", 1)'
 # shellcheck disable=SC2016
 mutate "M6 required-ci stops requiring Tests" "required-ci REQUIRED list no longer names Tests" \
   's = s.replace("REQUIRED=$(printf \x27%s\\n\x27 \"Tests\" \"Security Audit\")", "REQUIRED=$(printf \x27%s\\n\x27 \"Security Audit\")", 1)'

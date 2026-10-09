@@ -91,14 +91,14 @@ jobs:
           echo "Resolved version: $VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-  # D90: release.yml npm-visible already waited until the registry served this
-  # exact version, so the long propagation backoff is gone: one fresh install,
-  # `loki version` and the doctor assertion, budget 60s of work (to be measured
-  # on push). A stubbed run is DEFERRED (no stub provider fixture exists here).
+  # WF-2MIN-3: release.yml npm-visible is a non-blocking reporter, so the
+  # install step below polls for registry visibility itself (up to 15 min).
+  # Once installed: `loki version` and the doctor assertion, budget 60s of work.
+  # A stubbed run is DEFERRED (no stub provider fixture exists here).
   npm-smoke:
     needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       # The doctor assertion lives in .github/scripts/, so this job needs the
       # repo on disk. Pinned to the SAME commit the release came from (as the
@@ -120,16 +120,25 @@ jobs:
           VERSION: ${{ needs.resolve.outputs.version }}
         run: |
           set -uo pipefail
-          for attempt in 1 2 3 4; do
+          # WF-2MIN-3: release.yml npm-visible is now a non-blocking reporter,
+          # so this job owns the wait. Tolerate up to 15 minutes of registry
+          # lag (SMOKE_NPM_WAIT_S), polling every 15s.
+          deadline=$(( $(date +%s) + ${SMOKE_NPM_WAIT_S:-900} ))
+          attempt=0
+          while :; do
+            attempt=$(( attempt + 1 ))
             echo "npm install attempt ${attempt} for loki-mode@${VERSION}"
             if npm install -g "loki-mode@${VERSION}"; then
               echo "npm install succeeded"
               exit 0
             fi
-            echo "npm not ready yet (propagation lag); backing off..."
-            sleep $((attempt * 5))
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              break
+            fi
+            echo "npm not ready yet (propagation lag); backing off 15s..."
+            sleep 15
           done
-          echo "FATAL: loki-mode@${VERSION} not installable from npm after retries"
+          echo "FATAL: loki-mode@${VERSION} not installable from npm after ${attempt} attempts (~15 min of registry lag tolerated)"
           exit 1
 
       # A-01: releases publish under `next`; `latest` moves only via promote.yml.
