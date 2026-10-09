@@ -16,6 +16,9 @@ Security follow-up to v11.3.6 plus a release-pipeline fix that lets verified rel
 ### Changed
 - Release backstop (BACKSTOP-TRIGGER): a completed Release now triggers the Nightly full-suite backstop on that exact commit (deduplicated by SHA), and promotion to `latest` accepts that run. Previously only the hourly schedule ran the backstop, so a release could wait up to an hour, or longer under steady releases, before it was eligible for `latest`.
 
+### Upgrade
+- Confirm the installed version with `loki version`.
+
 ## v11.3.8 (2026-10-09)
 
 Release pipeline speed patch. Nothing changes in what Loki builds or verifies for users; this release changes only how Loki itself is packaged and published.
