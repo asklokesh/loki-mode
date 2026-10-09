@@ -42,7 +42,8 @@ test("repomap, restoreBranch and the cap never fire the plant with the canary in
 });
 test("safeGit strips the token family and SSH_AUTH_SOCK from the child env", () => {
   const e = tokenFreeEnv({ GH_TOKEN: "a", GITHUB_TOKEN: "b", GH_ENTERPRISE_TOKEN: "c", GITHUB_ENTERPRISE_TOKEN: "d", SSH_AUTH_SOCK: "e", KEEP: "1" });
-  expect(e).toEqual({ KEEP: "1" });
+  expect(e["KEEP"]).toBe("1"); expect(e["SSH_AUTH_SOCK"]).toBeUndefined(); // FC-90: the family is a sentinel, never the real value
+  for (const k of ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"]) expect(e[k]!.startsWith("ghp_LOKIWITHHELDsentinel")).toBe(true);
   reset(); safeGit(repo, ["ls-files"]); expect(fired()).toBe(false);
 });
 

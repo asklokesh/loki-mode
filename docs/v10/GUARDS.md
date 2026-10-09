@@ -868,3 +868,10 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
 - **The test that proves it fires:** `tests/test-select-tests.sh` (R8 cases):
   an attempts.ts-only diff and a docs-only diff each select every declared
   guard. Run: `bash tests/test-select-tests.sh`.
+
+## 23. Deleting the token env vars left gh and git credential stores reachable (GH-KEYRING, FC-90)
+
+- **Incident:** with the token vars removed, `gh auth token` still returned the user's login via the keyring and git still ran osxkeychain and gh credential helpers; tokenFreeEnv and plainTestEnv did nothing about either.
+- **Root cause:** each env builder deleted a subset of credential paths itself; only the worker env reset the rest.
+- **Guard:** `loki-ts/tests/util/fc90_credential_env.test.ts` plants a fake gh hosts.yml and a fake global git credential helper in a fake HOME, proves the raw env sees them, and proves an env from plainTestEnv does not; it also pins the one-dir-per-process GH_CONFIG_DIR lifecycle. It lives in loki-ts/tests/util, which `scripts/global-guards.tsv` already selects on every diff.
+- **The test that proves it fires:** removing the GH_CONFIG_DIR line, the credential.helper reset or the sentinel from `loki-ts/src/util/credential_env.ts` turns it red. Run: `cd loki-ts && bun test tests/util/fc90_credential_env.test.ts`.

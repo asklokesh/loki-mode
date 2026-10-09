@@ -1291,8 +1291,9 @@ describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
     expect(dumped).toContain("HOOK-RAN");
     expect(dumped).toContain("PATH="); // positive control: the dump really holds the hook's env
     expect(dumped).not.toContain("sealhook-canary-");
-    for (const k of SECRETS) expect(dumped).not.toMatch(new RegExp(`^${k}=`, "m"));
-    expect(readFileSync(gpgRec, "utf8")).toBe("absent\n");
+    // FC-90: a withheld token var is a non-working sentinel, not unset; any other value is a leak.
+    for (const k of SECRETS) expect(dumped).not.toMatch(new RegExp(`^${k}=(?!ghp_LOKIWITHHELDsentinel)`, "m"));
+    expect(readFileSync(gpgRec, "utf8")).toMatch(/^ghp_LOKIWITHHELDsentinel\w+\n$/); // FC-90: sentinel, never the canary
     expect(sh(["git", "cat-file", "commit", "HEAD"], repo)).toContain("gpgsig -----BEGIN PGP SIGNATURE-----");
   }, 30000);
 });

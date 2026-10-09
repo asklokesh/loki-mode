@@ -1,5 +1,5 @@
-// Rule of Two (moat P9) on the Bun route: a GitHub token never reaches an
-// agent session via the IMPLICIT resolution paths this module withholds (env
+// Rule of Two (moat P9) on the Bun route: Loki never passes the GitHub token into the agent's environment
+// via the IMPLICIT resolution paths this module withholds (env
 // vars, gh config store, git credential.helper, SSH agent/ssh command). Not
 // an absolute claim -- see the disclosed residuals further down (an explicit
 // named-account keyring read, a direct ssh/hosts.yml/keychain read outside
@@ -107,18 +107,12 @@
 // explicitly to route around this. The boundary is
 // a CI job that holds no write token and no SSH agent while the agent runs.
 
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { safeGit } from "../util/safe_git.ts";
+import { GITHUB_TOKEN_VARS, hardenCredentialEnv } from "../util/credential_env.ts";
 
-export const GITHUB_TOKEN_VARS = [
-  "GH_TOKEN",
-  "GITHUB_TOKEN",
-  "GH_ENTERPRISE_TOKEN",
-  "GITHUB_ENTERPRISE_TOKEN",
-] as const;
+// FC-90: the sentinel, the empty GH_CONFIG_DIR and the credential.helper reset live in util/credential_env.ts, shared with
+// tokenFreeEnv and plainTestEnv. The module comment above documents why each leg exists.
+export { GITHUB_TOKEN_VARS };
 
 export const AGENT_TOKEN_WARNING_PREFIX =
   "WARNING: LOKI_ALLOW_AGENT_GITHUB_TOKEN=1: the agent session holds the GitHub token";
@@ -145,25 +139,6 @@ function isGitVersionBelowFloor(): boolean {
   } catch {
     return false;
   }
-}
-
-// The empty GH_CONFIG_DIR scopes are removed when the process exits (round 4:
-// they were never deleted, and over a thousand piled up in TMPDIR, mostly from
-// unit tests). One exit handler for the whole module, not one per call.
-const scopedDirs = new Set<string>();
-function trackScopedDir(dir: string): void {
-  if (scopedDirs.size === 0) {
-    process.once("exit", () => {
-      for (const d of scopedDirs) {
-        try {
-          rmSync(d, { recursive: true, force: true });
-        } catch {
-          // best-effort
-        }
-      }
-    });
-  }
-  scopedDirs.add(dir);
 }
 
 /**
@@ -195,31 +170,7 @@ export function withholdGithubTokens(
     }
     return [];
   }
-  // Alphanumeric-only after the ghp_ prefix (no underscores): matches the
-  // real gh token shape and the existing token-redaction regex in
-  // autonomy/lib/proof_redact.py (gh[pousr]_[A-Za-z0-9]{20,}), so if this
-  // sentinel ever leaked into a proof/receipt artifact it would still be
-  // caught by the existing redaction filter rather than passing it by shape.
-  const sentinel = `ghp_LOKIWITHHELDsentinel${process.pid}${randomBytes(8).toString("hex")}INVALID`;
-  for (const v of GITHUB_TOKEN_VARS) env[v] = sentinel;
-  try {
-    const dir = mkdtempSync(join(tmpdir(), "loki-gh-config-"));
-    env["GH_CONFIG_DIR"] = dir;
-    trackScopedDir(dir);
-  } catch {
-    // Best-effort, matching the bash route: if the scoped dir cannot be
-    // created, fall through rather than failing the run. The sentinel
-    // withhold above still applies.
-  }
-  // Reset git's own credential.helper chain (module comment (b)). Append
-  // after any pre-existing GIT_CONFIG_COUNT rather than overwriting it, so an
-  // operator's own GIT_CONFIG_KEY_n/VALUE_n overrides for this session are
-  // preserved ahead of this reset.
-  const existingCount = Number(env["GIT_CONFIG_COUNT"]);
-  const n = Number.isInteger(existingCount) && existingCount >= 0 ? existingCount : 0;
-  env[`GIT_CONFIG_KEY_${n}`] = "credential.helper";
-  env[`GIT_CONFIG_VALUE_${n}`] = "";
-  env["GIT_CONFIG_COUNT"] = String(n + 1);
+  hardenCredentialEnv(env, true);
   if (isGitVersionBelowFloor()) {
     warn(GIT_VERSION_FLOOR_WARNING);
   }
