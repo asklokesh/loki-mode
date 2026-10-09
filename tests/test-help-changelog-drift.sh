@@ -46,7 +46,7 @@ if [ -z "${LOKI_HELP_DRIFT_CHANGELOG:-}" ]; then
         bad "fixture: two command-free newest sections must widen the window and pass"
     fi
     out="$(LOKI_HELP_DRIFT_CHANGELOG="$WORK/fx/none.md" bash "${BASH_SOURCE[0]}" 2>&1)"
-    if [ $? -ne 0 ] && printf '%s' "$out" | grep -q "extraction is broken"; then
+    if [ $? -ne 0 ] && grep -q "extraction is broken" <<< "$out"; then
         ok "fixture: no invocation inside the 5-section window still reports broken extraction"
     else
         bad "fixture: an empty 5-section window must report broken extraction"

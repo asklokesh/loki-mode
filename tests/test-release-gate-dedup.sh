@@ -49,22 +49,22 @@ check_yml() {
     local yml="$1" g rel req
     g="$(gate_block "$yml" | code_only)"
     [ -n "$g" ] || { echo "gate job not found"; return; }
-    printf '%s\n' "$g" | grep -qE 'bun[[:space:]]+(run[[:space:]]+)?test' && echo "gate runs bun test"
-    printf '%s\n' "$g" | grep -qE 'pytest' && echo "gate runs pytest"
-    printf '%s\n' "$g" | grep -qE 'bun[[:space:]]+run[[:space:]]+typecheck' && echo "gate reruns typecheck"
-    printf '%s\n' "$g" | grep -qE 'verify-release-dist\.sh[[:space:]]+build' || echo "gate lost the dist byte-identity build check"
-    printf '%s\n' "$g" | grep -qE 'verify-release-dist\.sh[[:space:]]+tarball' || echo "gate lost the packed tarball dist check"
-    printf '%s\n' "$g" | grep -qE 'fast-gate\.sh[[:space:]]+p9' || echo "gate lost the P9 step"
+    grep -qE 'bun[[:space:]]+(run[[:space:]]+)?test' <<< "$g" && echo "gate runs bun test"
+    grep -qE 'pytest' <<< "$g" && echo "gate runs pytest"
+    grep -qE 'bun[[:space:]]+run[[:space:]]+typecheck' <<< "$g" && echo "gate reruns typecheck"
+    grep -qE 'verify-release-dist\.sh[[:space:]]+build' <<< "$g" || echo "gate lost the dist byte-identity build check"
+    grep -qE 'verify-release-dist\.sh[[:space:]]+tarball' <<< "$g" || echo "gate lost the packed tarball dist check"
+    grep -qE 'fast-gate\.sh[[:space:]]+p9' <<< "$g" || echo "gate lost the P9 step"
     # Order: P9 needs bun, bun deps and PyYAML, so it must come after all three.
     printf '%s\n' "$g" | grep -nE 'setup-bun|bun install --cwd loki-ts --frozen-lockfile|pip install pyyaml|fast-gate\.sh[[:space:]]+p9' \
         | awk -F: '{ if ($0 ~ /setup-bun/) b=$1; else if ($0 ~ /bun install/) i=$1; else if ($0 ~ /pyyaml/) y=$1; else p=$1 }
                    END { if (!(b && i && y && p && b < i && i < p && y < p)) print "gate runs P9 before bun, bun install or PyYAML are ready" }'
-    printf '%s\n' "$g" | grep -qE 'npm pack' || echo "gate does not pack the tarball"
+    grep -qE 'npm pack' <<< "$g" || echo "gate does not pack the tarball"
     rel="$(job_block "$yml" release | code_only)"
-    printf '%s\n' "$rel" | grep -qE '^[[:space:]]+needs:.*required-ci' || echo "release no longer needs required-ci (Tests verdict)"
-    printf '%s\n' "$rel" | grep -qE '^[[:space:]]+needs:.*\bgate\b' || echo "release no longer needs gate"
+    grep -qE '^[[:space:]]+needs:.*required-ci' <<< "$rel" || echo "release no longer needs required-ci (Tests verdict)"
+    grep -qE '^[[:space:]]+needs:.*\bgate\b' <<< "$rel" || echo "release no longer needs gate"
     req="$(job_block "$yml" required-ci | code_only)"
-    printf '%s\n' "$req" | grep -qE "REQUIRED=.*\"Tests\"" || echo "required-ci REQUIRED list no longer names Tests"
+    grep -qE "REQUIRED=.*\"Tests\"" <<< "$req" || echo "required-ci REQUIRED list no longer names Tests"
 }
 
 # expect_clean / expect_red wrap check_yml
@@ -74,7 +74,7 @@ expect_clean() {
 }
 expect_red() { # name yml needle
     local out; out="$(check_yml "$2")"
-    if printf '%s\n' "$out" | grep -qF "$3"; then ok "$1 turns red"; else bad "$1 stayed green (got: ${out:-nothing})"; fi
+    if grep -qF "$3" <<< "$out"; then ok "$1 turns red"; else bad "$1 stayed green (got: ${out:-nothing})"; fi
 }
 
 expect_clean "release.yml gate keeps its dedup contract" "$RELEASE_YML"
