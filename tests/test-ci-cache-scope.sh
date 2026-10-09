@@ -219,6 +219,8 @@ crons = [c.get('cron') for c in on.get('schedule', [])]
 parts = (crons[0] if crons else '').split()
 if len(crons) != 1 or len(parts) != 5 or not parts[0].isdigit() or parts[1:] != ['*', '*', '*', '*']: errs.append('nightly cron is not one hourly entry: %r' % crons)
 if 'workflow_dispatch' not in on: errs.append('nightly lost workflow_dispatch')
+wr = on.get('workflow_run') or {}
+if wr.get('workflows') != ['Release'] or wr.get('types') != ['completed']: errs.append('nightly lost the Release workflow_run trigger: %r' % wr)
 c = n.get('concurrency', {})
 if 'github.workflow' not in str(c.get('group')) or c.get('cancel-in-progress') is not False: errs.append('nightly concurrency must be a single group with cancel-in-progress false')
 jobs = n['jobs']
@@ -243,6 +245,8 @@ else:
         ('schedule', [done(97, 'failure')], 'skip=true', 'failed prior run still measured the SHA'),
         ('schedule', [done(96, 'cancelled'), done(95, 'skipped')], 'skip=false', 'only cancelled or skipped prior runs'),
         ('schedule', [{'databaseId': 100, 'status': 'in_progress', 'conclusion': ''}], 'skip=false', 'only this run'),
+        ('workflow_run', [done(99, 'success')], 'skip=true', 'workflow_run: completed prior run'),
+        ('workflow_run', [done(96, 'cancelled')], 'skip=false', 'workflow_run: only cancelled prior run'),
         ('workflow_dispatch', [done(99, 'success')], 'skip=false', 'manual dispatch always runs'),
     ]
     for ev, runs, want, why in cases:

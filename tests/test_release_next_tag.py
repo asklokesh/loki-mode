@@ -143,6 +143,31 @@ class PromoteAutoTrigger(unittest.TestCase):
         nightly = yaml.safe_load((_WF / "nightly.yml").read_text(encoding="utf-8"))
         self.assertEqual(nightly["name"], "Nightly")
 
+    def test_nightly_triggers_on_release_completion(self):
+        nightly = yaml.safe_load((_WF / "nightly.yml").read_text(encoding="utf-8"))
+        on = nightly.get("on", nightly.get(True))
+        self.assertEqual(on["workflow_run"]["workflows"], ["Release"])
+        self.assertEqual(on["workflow_run"]["types"], ["completed"])
+        self.assertIn("schedule", on)
+        self.assertIn("workflow_dispatch", on)
+        cond = " ".join(str(nightly["jobs"]["dedupe"].get("if")).split())
+        self.assertIn("github.event.workflow_run.conclusion == 'success'", cond)
+        self.assertIn("github.event.workflow_run.head_branch == 'main'", cond)
+
+    def test_nightly_has_no_trigger_dependent_behaviour_outside_dedupe(self):
+        text = (_WF / "nightly.yml").read_text(encoding="utf-8")
+        nightly = yaml.safe_load(text)
+        for name, job in nightly["jobs"].items():
+            if name == "dedupe":
+                continue
+            blob = yaml.safe_dump(job)
+            self.assertNotIn("github.event", blob, name)
+            self.assertNotIn("inputs.", blob, name)
+            self.assertNotIn("schedule", blob, name)
+        top = yaml.safe_dump({k: v for k, v in nightly.items() if k != "jobs"})
+        self.assertNotIn("github.event", top)
+        self.assertNotIn("inputs.", top)
+
     def test_workflow_dispatch_still_present(self):
         self.assertIn("version", self.on["workflow_dispatch"]["inputs"])
 
@@ -152,7 +177,8 @@ class PromoteAutoTrigger(unittest.TestCase):
         self.assertIn("github.event.workflow_run.head_branch == 'main'", cond)
         self.assertIn("github.event.workflow_run.event == 'schedule'", cond)
         self.assertIn("github.event.workflow_run.event == 'workflow_dispatch'", cond)
-        self.assertNotIn("github.event.workflow_run.event == 'workflow_run'", cond)
+        # BACKSTOP-TRIGGER: a Release-triggered Nightly (event workflow_run) promotes too.
+        self.assertIn("github.event.workflow_run.event == 'workflow_run'", cond)
         self.assertIn("github.event_name == 'workflow_dispatch'", cond)
 
     def test_version_derivation_step_reads_newest_next_tag(self):
@@ -341,6 +367,12 @@ class PromoteGateBehavior(unittest.TestCase):
 
     def test_jobs_api_failure_blocks(self):
         self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.A)], jobs_fail=True))
+
+    def test_workflow_run_triggered_nightly_is_accepted(self):
+        self.assertPass(self._n(self.A, [self._run_obj(1, "success", self.A, event="workflow_run")]))
+
+    def test_workflow_run_triggered_red_nightly_still_blocks(self):
+        self.assertBlock(self._n(self.A, [self._run_obj(1, "failure", self.A, event="workflow_run")]))
 
     def test_non_scheduled_event_is_ignored(self):
         self.assertBlock(self._n(self.A, [self._run_obj(1, "success", self.B, event="push")]))
