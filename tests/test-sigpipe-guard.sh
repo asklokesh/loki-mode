@@ -10,7 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="${SIGPIPE_GUARD_TESTS_DIR:-$SCRIPT_DIR}"
 # Repo-wide ceiling of the legacy pipe form in suites that set pipefail.
 # Lower it when you convert a suite; never raise it.
-CEILING="${SIGPIPE_GUARD_CEILING:-1789}"
+CEILING="${SIGPIPE_GUARD_CEILING:-1742}"
 PASS=0
 FAIL=0
 ok() { PASS=$((PASS + 1)); echo "  PASS: $1"; }

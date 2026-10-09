@@ -73,14 +73,14 @@ export HOME="$TEST_HOME"
 
 log_test "compound help shows usage information"
 output=$("$LOKI_CLI" compound help 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "loki memory compound" && \
-   echo "$output" | grep -q "Knowledge compounding system" && \
-   echo "$output" | grep -q "Commands:" && \
-   echo "$output" | grep -q "list" && \
-   echo "$output" | grep -q "show" && \
-   echo "$output" | grep -q "search" && \
-   echo "$output" | grep -q "run" && \
-   echo "$output" | grep -q "stats"; then
+if grep -q "loki memory compound" <<< "$output" && \
+   grep -q "Knowledge compounding system" <<< "$output" && \
+   grep -q "Commands:" <<< "$output" && \
+   grep -q "list" <<< "$output" && \
+   grep -q "show" <<< "$output" && \
+   grep -q "search" <<< "$output" && \
+   grep -q "run" <<< "$output" && \
+   grep -q "stats" <<< "$output"; then
     pass "compound help shows all expected sections"
 else
     fail "compound help missing expected content" "output: $(echo "$output" | head -3)"
@@ -105,7 +105,7 @@ fi
 
 log_test "compound with no subcommand defaults to help"
 output=$("$LOKI_CLI" compound 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "Knowledge compounding system"; then
+if grep -q "Knowledge compounding system" <<< "$output"; then
     pass "compound with no subcommand defaults to help"
 else
     fail "compound with no subcommand defaults to help" "output did not match help text"
@@ -117,8 +117,8 @@ fi
 
 log_test "compound list with no solutions directory"
 output=$("$LOKI_CLI" compound list 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "No solutions yet" && \
-   echo "$output" | grep -q "Location:"; then
+if grep -q "No solutions yet" <<< "$output" && \
+   grep -q "Location:" <<< "$output"; then
     pass "compound list shows empty state when no solutions directory"
 else
     fail "compound list shows empty state" "output: $(echo "$output" | head -3)"
@@ -159,9 +159,9 @@ Compounded from 4 learnings from project: loki-mode
 SOLUTION
 
 output=$("$LOKI_CLI" compound list 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "testing" && \
-   echo "$output" | grep -q "1 solutions" && \
-   echo "$output" | grep -q "Total: 1"; then
+if grep -q "testing" <<< "$output" && \
+   grep -q "1 solutions" <<< "$output" && \
+   grep -q "Total: 1" <<< "$output"; then
     pass "compound list shows testing category with 1 solution"
 else
     fail "compound list with test solution" "output: $(echo "$output" | head -8)"
@@ -201,9 +201,9 @@ Compounded from 3 learnings from project: api-gateway
 SOLUTION
 
 output=$("$LOKI_CLI" compound list 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "security" && \
-   echo "$output" | grep -q "testing" && \
-   echo "$output" | grep -q "Total: 2"; then
+if grep -q "security" <<< "$output" && \
+   grep -q "testing" <<< "$output" && \
+   grep -q "Total: 2" <<< "$output"; then
     pass "compound list shows multiple categories"
 else
     fail "compound list with multiple categories" "output: $(echo "$output" | head -10)"
@@ -215,8 +215,8 @@ fi
 
 log_test "compound show testing category"
 output=$("$LOKI_CLI" compound show testing 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "Solutions: testing" && \
-   echo "$output" | grep -q "Playwright shadow DOM piercing"; then
+if grep -q "Solutions: testing" <<< "$output" && \
+   grep -q "Playwright shadow DOM piercing" <<< "$output"; then
     pass "compound show displays testing solutions with title"
 else
     fail "compound show testing" "output: $(echo "$output" | head -5)"
@@ -228,8 +228,8 @@ fi
 
 log_test "compound show displays confidence and source project"
 output=$("$LOKI_CLI" compound show testing 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "confidence: 0.85" && \
-   echo "$output" | grep -q "project: loki-mode"; then
+if grep -q "confidence: 0.85" <<< "$output" && \
+   grep -q "project: loki-mode" <<< "$output"; then
     pass "compound show displays confidence and project metadata"
 else
     fail "compound show metadata" "output: $(echo "$output" | head -5)"
@@ -243,7 +243,7 @@ log_test "compound show with no category argument returns error"
 output=$("$LOKI_CLI" compound show 2>&1 | strip_ansi || true)
 exit_code=0
 "$LOKI_CLI" compound show >/dev/null 2>&1 || exit_code=$?
-if [ "$exit_code" -ne 0 ] && echo "$output" | grep -qi "Error.*Specify a category"; then
+if [ "$exit_code" -ne 0 ] && grep -qi "Error.*Specify a category" <<< "$output"; then
     pass "compound show with no argument returns error"
 else
     fail "compound show with no argument" "expected error, got exit=$exit_code output: $(echo "$output" | head -3)"
@@ -255,7 +255,7 @@ fi
 
 log_test "compound show with nonexistent category"
 output=$("$LOKI_CLI" compound show nonexistent 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "No solutions in category: nonexistent"; then
+if grep -q "No solutions in category: nonexistent" <<< "$output"; then
     pass "compound show handles nonexistent category gracefully"
 else
     fail "compound show nonexistent category" "output: $(echo "$output" | head -3)"
@@ -267,8 +267,8 @@ fi
 
 log_test "compound search matching a tag"
 output=$("$LOKI_CLI" compound search "playwright" 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "Searching solutions for: playwright" && \
-   echo "$output" | grep -q "Found: 1"; then
+if grep -q "Searching solutions for: playwright" <<< "$output" && \
+   grep -q "Found: 1" <<< "$output"; then
     pass "compound search finds solution by tag/content match"
 else
     fail "compound search by tag" "output: $(echo "$output" | head -5)"
@@ -280,7 +280,7 @@ fi
 
 log_test "compound search matching solution body content"
 output=$("$LOKI_CLI" compound search "shadow" 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "Found:"; then
+if grep -q "Found:" <<< "$output"; then
     pass "compound search finds solution by body content"
 else
     fail "compound search body content" "output: $(echo "$output" | head -5)"
@@ -292,7 +292,7 @@ fi
 
 log_test "compound search with no matching results"
 output=$("$LOKI_CLI" compound search "zzz_nonexistent_query_zzz" 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "No solutions matching: zzz_nonexistent_query_zzz"; then
+if grep -q "No solutions matching: zzz_nonexistent_query_zzz" <<< "$output"; then
     pass "compound search shows no results message for unmatched query"
 else
     fail "compound search no results" "output: $(echo "$output" | head -5)"
@@ -306,7 +306,7 @@ log_test "compound search with no query argument returns error"
 exit_code=0
 "$LOKI_CLI" compound search >/dev/null 2>&1 || exit_code=$?
 output=$("$LOKI_CLI" compound search 2>&1 | strip_ansi || true)
-if [ "$exit_code" -ne 0 ] && echo "$output" | grep -qi "Error.*search query"; then
+if [ "$exit_code" -ne 0 ] && grep -qi "Error.*search query" <<< "$output"; then
     pass "compound search with no query returns error"
 else
     fail "compound search no query" "expected error, got exit=$exit_code output: $(echo "$output" | head -3)"
@@ -321,7 +321,7 @@ log_test "compound search with no solutions directory"
 mv "$TEST_HOME/.loki/solutions" "$TEST_HOME/.loki/solutions.bak"
 output=$("$LOKI_CLI" compound search "test" 2>&1 | strip_ansi || true)
 mv "$TEST_HOME/.loki/solutions.bak" "$TEST_HOME/.loki/solutions"
-if echo "$output" | grep -q "No solutions directory found"; then
+if grep -q "No solutions directory found" <<< "$output"; then
     pass "compound search handles missing solutions directory"
 else
     fail "compound search no directory" "output: $(echo "$output" | head -3)"
@@ -333,11 +333,11 @@ fi
 
 log_test "compound stats shows total and metadata"
 output=$("$LOKI_CLI" compound stats 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "Compound Solution Statistics" && \
-   echo "$output" | grep -q "Total solutions: 2" && \
-   echo "$output" | grep -q "Newest:" && \
-   echo "$output" | grep -q "Oldest:" && \
-   echo "$output" | grep -q "Location:"; then
+if grep -q "Compound Solution Statistics" <<< "$output" && \
+   grep -q "Total solutions: 2" <<< "$output" && \
+   grep -q "Newest:" <<< "$output" && \
+   grep -q "Oldest:" <<< "$output" && \
+   grep -q "Location:" <<< "$output"; then
     pass "compound stats shows all expected fields"
 else
     fail "compound stats output" "output: $(echo "$output" | head -8)"
@@ -351,7 +351,7 @@ log_test "compound stats with no solutions directory"
 mv "$TEST_HOME/.loki/solutions" "$TEST_HOME/.loki/solutions.bak"
 output=$("$LOKI_CLI" compound stats 2>&1 | strip_ansi || true)
 mv "$TEST_HOME/.loki/solutions.bak" "$TEST_HOME/.loki/solutions"
-if echo "$output" | grep -q "No solutions directory found"; then
+if grep -q "No solutions directory found" <<< "$output"; then
     pass "compound stats handles missing solutions directory"
 else
     fail "compound stats no directory" "output: $(echo "$output" | head -3)"
@@ -363,8 +363,8 @@ fi
 
 log_test "compound ls alias works same as list"
 output=$("$LOKI_CLI" compound ls 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "testing" && \
-   echo "$output" | grep -q "security"; then
+if grep -q "testing" <<< "$output" && \
+   grep -q "security" <<< "$output"; then
     pass "compound ls alias works"
 else
     fail "compound ls alias" "output: $(echo "$output" | head -5)"
@@ -378,7 +378,7 @@ log_test "compound unknown subcommand returns error"
 exit_code=0
 "$LOKI_CLI" compound foobar >/dev/null 2>&1 || exit_code=$?
 output=$("$LOKI_CLI" compound foobar 2>&1 | strip_ansi || true)
-if [ "$exit_code" -ne 0 ] && echo "$output" | grep -q "Unknown compound command: foobar"; then
+if [ "$exit_code" -ne 0 ] && grep -q "Unknown compound command: foobar" <<< "$output"; then
     pass "compound unknown subcommand returns error"
 else
     fail "compound unknown subcommand" "expected error, got exit=$exit_code"
@@ -390,13 +390,13 @@ fi
 
 log_test "compound help lists all 7 categories"
 output=$("$LOKI_CLI" compound help 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "security" && \
-   echo "$output" | grep -q "performance" && \
-   echo "$output" | grep -q "architecture" && \
-   echo "$output" | grep -q "testing" && \
-   echo "$output" | grep -q "debugging" && \
-   echo "$output" | grep -q "deployment" && \
-   echo "$output" | grep -q "general"; then
+if grep -q "security" <<< "$output" && \
+   grep -q "performance" <<< "$output" && \
+   grep -q "architecture" <<< "$output" && \
+   grep -q "testing" <<< "$output" && \
+   grep -q "debugging" <<< "$output" && \
+   grep -q "deployment" <<< "$output" && \
+   grep -q "general" <<< "$output"; then
     pass "compound help lists all 7 categories"
 else
     fail "compound help categories" "missing one or more categories"
@@ -417,7 +417,7 @@ Some content here.
 SOLUTION
 
 output=$("$LOKI_CLI" compound show general 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "no-frontmatter"; then
+if grep -q "no-frontmatter" <<< "$output"; then
     pass "compound show falls back to filename when title missing"
 else
     fail "compound show filename fallback" "output: $(echo "$output" | head -5)"
@@ -429,7 +429,7 @@ fi
 
 log_test "compound search finds results across multiple categories"
 output=$("$LOKI_CLI" compound search "Compounded from" 2>&1 | strip_ansi || true)
-if echo "$output" | grep -q "Found: 2"; then
+if grep -q "Found: 2" <<< "$output"; then
     pass "compound search finds results across categories"
 else
     fail "compound search cross-category" "output: $(echo "$output" | head -5)"
