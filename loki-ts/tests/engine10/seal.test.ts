@@ -1264,7 +1264,7 @@ describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
     const hooks = join(root, "hooks-dir"), hookRec = join(root, "hook.rec"), gpgRec = join(root, "gpg.rec");
     sh(["mkdir", "-p", hooks], root);
     // The hook records only the secret-bearing vars (never the whole env), so a failure cannot print inherited values.
-    writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\nenv | grep -E '^(GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|SSH_AUTH_SOCK)=' >> '${hookRec}'\n[ -n "$PATH" ] && printf 'PATH-SET\\n' >> '${hookRec}'\nprintf 'HOOK-RAN\\n' >> '${hookRec}'\n`, { mode: 0o755 });
+    writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\nenv | grep -E '^(GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|SSH_AUTH_SOCK)=' >> '${hookRec}'\nenv | grep sealhook-canary- | cut -d= -f1 | sed 's/^/CANARY-NAME:/' >> '${hookRec}'\n[ -n "$PATH" ] && printf 'PATH-SET\\n' >> '${hookRec}'\nprintf 'HOOK-RAN\\n' >> '${hookRec}'\n`, { mode: 0o755 });
     const gpg = join(root, "gpg-stub.sh");
     writeFileSync(gpg, `#!/bin/sh\nprintf '%s\\n' "\${GH_TOKEN:-absent}" >> '${gpgRec}'\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 0\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nstub\\n-----END PGP SIGNATURE-----\\n'\n`, { mode: 0o755 });
     sh(["git", "config", "core.hooksPath", hooks], repo);
@@ -1291,6 +1291,8 @@ describe("seal commit keeps the user's hooks and signing (FC-25d)", () => {
     expect(dumped).toContain("HOOK-RAN");
     expect(dumped).toContain("PATH-SET"); // positive control: the hook ran with a real env
     expect(dumped).not.toContain("sealhook-canary-");
+    // The canary must not survive under ANY name (a copy such as LOKI_STASHED_TOKEN): the hook lists names only, never values.
+    expect(dumped.split("\n").filter((l) => l.startsWith("CANARY-NAME:"))).toEqual([]);
     expect(dumped).toContain("GH_TOKEN=ghp_LOKIWITHHELDsentinel"); // positive control: the recorded vars are present, as sentinels
     // FC-90: a withheld token var is a non-working sentinel, not unset; any other value is a leak.
     for (const k of SECRETS) expect(dumped).not.toMatch(new RegExp(`^${k}=(?!ghp_LOKIWITHHELDsentinel)`, "m"));

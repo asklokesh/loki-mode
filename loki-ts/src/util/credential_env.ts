@@ -50,11 +50,11 @@ export function emptyGhConfigDir(env: NodeJS.ProcessEnv = process.env): string |
     exitHooked = true;
     process.once("exit", removeConfigDir);
   }
-  // A SIGTERM kill skips "exit" handlers. Remove the dir, then exit 143 only when ours is the sole SIGTERM listener (an
+  // prependListener: we run before any host handler, so a host process.once handler (removed just before it is called) still counts as a listener. A SIGTERM kill skips "exit" handlers. Remove the dir, then exit 143 only when ours is the sole SIGTERM listener (an
   // installed listener replaces the default action, so without this the process would stop dying); other handlers keep control.
   if (!sigtermHooked) {
     sigtermHooked = true;
-    process.on("SIGTERM", () => { removeConfigDir(); if (process.listenerCount("SIGTERM") === 1) process.exit(143); });
+    process.prependListener("SIGTERM", () => { removeConfigDir(); if (process.listenerCount("SIGTERM") === 1) process.exit(143); });
   }
   return configDir;
 }

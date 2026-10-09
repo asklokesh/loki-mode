@@ -3,7 +3,7 @@
 // Each leg has a positive control (the raw env DOES see the planted credential) so a green result is not an absence-of-output artifact.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { plainTestEnv } from "../../src/util/check_result.ts";
@@ -145,6 +145,18 @@ process.stdout.write(d + "\\n" + (statSync(d).mode & 0o777).toString(8));`;
 plainTestEnv(); setTimeout(() => {}, 20000); process.kill(process.pid, "SIGTERM");`);
     const r = spawnSync(process.execPath, [f], { encoding: "utf8", env: { PATH: process.env["PATH"], TMPDIR: tmp } as Record<string, string>, timeout: 30_000 });
     expect(r.status).toBe(143);
+    expect(countDirs(tmp)).toBe(0);
+  });
+  test("a host process.once SIGTERM handler registered BEFORE ours keeps control of shutdown", () => {
+    const tmp = mkdtempSync(join(root, "tmp-")), marker = join(root, "host-shutdown.marker");
+    const f = join(root, "sigterm-host-child.ts");
+    writeFileSync(f, `import { writeFileSync } from "node:fs";
+import { plainTestEnv } from ${src("util/check_result.ts")};
+process.once("SIGTERM", () => { setTimeout(() => { writeFileSync(${JSON.stringify(marker)}, "done"); process.exit(0); }, 200); });
+plainTestEnv(); setTimeout(() => {}, 20000); process.kill(process.pid, "SIGTERM");`);
+    const r = spawnSync(process.execPath, [f], { encoding: "utf8", env: { PATH: process.env["PATH"], TMPDIR: tmp } as Record<string, string>, timeout: 30_000 });
+    expect(r.status).toBe(0);
+    expect(existsSync(marker)).toBe(true);
     expect(countDirs(tmp)).toBe(0);
   });
 });
