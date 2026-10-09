@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.6 (2026-10-09)
+
+Security patch release. Removing the GitHub token variables from a child environment did not remove the user's other GitHub credentials: the gh CLI could still read its login from its config directory or the OS keyring, and git could still call the user's credential helpers. Every token-free environment Loki builds now closes those paths through one shared mechanism.
+
+### Security
+- Project test, lint and typecheck commands and the agent worker no longer reach your gh login or git credential helpers (FC-90, GH-KEYRING). The GitHub token variables become a non-working sentinel, gh gets an empty per-process config directory, and git's credential.helper is reset through GIT_CONFIG_COUNT entries appended after your own configuration, so your gitconfig file is never edited and your commit identity is kept. Git terminal prompts and Git Credential Manager prompts are disabled in those environments. The empty config directory is created once per process and removed by exact path at exit.
+- Known limits: SSH keys under ~/.ssh remain reachable from project test commands (the agent worker already withholds the SSH agent), and code running as your user can still undo these variables and call gh directly. This change closes accidental and default credential reach; it is not a sandbox. Process isolation is the opt-in P9 work (LOKI_P9_ISOLATION=1).
+
 ## v11.3.5 (2026-10-08)
 
 Patch release that makes the fast gate always run the guard tests that scan the whole source tree, and corrects a public isolation claim to what the code actually guarantees.
