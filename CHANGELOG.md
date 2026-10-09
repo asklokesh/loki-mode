@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.3.7 (2026-10-09)
+
+Maintenance patch release for contributors running many parallel worktrees. Nothing changes in what Loki builds or verifies for users.
+
+### Added
+- Worktree reaper for parallel development (FC-99, AUTO-REAP). `scripts/v10-worktree-reap.sh` removes `.claude/worktrees` entries that are merged or idle, after saving any uncommitted work to a local `wt-save/<name>` branch. It runs from the train cycle and from a post-merge hook (under a 120s timeout), and `scripts/v10-worktree-add.sh` refuses to create a worktree below 40G of free disk until a reap frees space. The pulse reports a WORKTREE_SPRAWL violation above 20 worktrees.
+- The reaper never deletes work it cannot save: a worktree holding ignored files outside a fixed regenerable list (node_modules, caches, the built loki-ts dist) is kept and listed, never committed, and so is any worktree mid-merge, mid-rebase, cherry-pick, revert or bisect, or with a file changed in the last 6 hours. Removal is by exact path, non-force, inside `.claude/worktrees` only; the main checkout and the calling worktree are never touched.
+
+### Fixed
+- Tests: the repo-wide counting and ceiling guards now run in every pre-push guard pass, and 47 more checks in the compound CLI test use here-strings in place of `echo | grep -q`, which could fail intermittently with a broken pipe under load (FC-64). The legacy pipe-to-grep ceiling drops from 1789 to 1742.
+
 ## v11.3.6 (2026-10-09)
 
 Security patch release. Removing the GitHub token variables from a child environment did not remove the user's other GitHub credentials: the gh CLI could still read its login from its config directory or the OS keyring, and git could still call the user's credential helpers. Every token-free environment Loki builds now closes those paths through one shared mechanism.
