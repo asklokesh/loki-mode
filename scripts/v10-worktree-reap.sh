@@ -30,6 +30,13 @@
 #       at least LOKI_WORKTREE_DISK_FLOOR_GB (default 40) free; else reap, then
 #       re-check; exit 75 (refuse) if still under.
 #
+# Never removed: a worktree holding ignored files outside a regenerable allowlist
+# (.env, build/ output; see precious_ignored) is kept and listed, because
+# `git status` hides ignored files and a remove would destroy them; secret-shaped
+# files are never committed. Also kept: mid-rebase/merge/cherry-pick/bisect, and
+# any worktree where a file (outside node_modules, .rv, .git) changed within the
+# idle window.
+#
 # Known limits: (1) a locked worktree whose owning agent is dead is kept, since
 # the reaper cannot tell dead from alive; (2) worktrees created by the agent
 # harness bypass the disk floor unless the dispatcher creates them through
@@ -38,6 +45,7 @@
 # Env overrides: REAP_REPO (repo path), REAP_BASE, REAP_BOARD, REAP_NOW,
 # REAP_IDLE_SECS, REAP_MERGED_GRACE_SECS, REAP_FREE_GB_OVERRIDE (stub free GB).
 set -uo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
 DRY=0
 MODE=reap
@@ -147,7 +155,7 @@ salvage() {
         esac
     done < <(git -C "$path" status --porcelain -z --untracked-files=all 2>/dev/null)
     for f in "${files[@]}"; do
-        git -C "$path" add -- "$f" >/dev/null 2>&1
+        git -C "$path" add -- ":(literal)$f" >/dev/null 2>&1
     done
     env GIT_AUTHOR_NAME=asklokesh GIT_AUTHOR_EMAIL=lokeshmure@live.com \
         GIT_COMMITTER_NAME=asklokesh GIT_COMMITTER_EMAIL=lokeshmure@live.com \
@@ -158,9 +166,42 @@ salvage() {
     printf 'SAVED dirty state -> %s\n' "$save"
 }
 
+# Prints the first ignored file that is NOT a known-regenerable cache. Git
+# status hides ignored files, but a non-force remove destroys them (.env,
+# build/ output), and wt-save never captures them. Any such file makes the
+# worktree precious: it is kept and listed, never removed, and secret-shaped
+# files are never committed anywhere. Allowlist (regenerable): node_modules,
+# .rv, __pycache__, .pytest_cache, .mypy_cache, .ruff_cache, .DS_Store, and
+# loki-ts/dist.
+precious_ignored() {
+    local f seg skip
+    while IFS= read -r -d '' f; do
+        skip=0
+        case "$f" in loki-ts/dist/*) skip=1 ;; esac
+        if [ "$skip" = 0 ]; then
+            local IFS=/
+            for seg in $f; do
+                case "$seg" in
+                    node_modules | .rv | __pycache__ | .pytest_cache | .mypy_cache | .ruff_cache | .DS_Store) skip=1 ;;
+                esac
+            done
+        fi
+        if [ "$skip" = 0 ]; then printf '%s\n' "$f"; return 0; fi
+    done < <(git -C "$1" ls-files -o -i --exclude-standard -z 2>/dev/null)
+    return 0
+}
+
+# 0 when any file outside node_modules, .rv and .git changed inside the idle window.
+recent_file_change() {
+    local mins out
+    mins=$(((IDLE_SECS + 59) / 60))
+    out="$(find "$1" \( -name node_modules -o -name .rv -o -name .git \) -prune -o -type f -mmin "-$mins" -print -quit 2>/dev/null)"
+    [ -n "$out" ]
+}
+
 reap_one() {
     local path="$1" head="$2" branch="$3" locked="$4"
-    local name st gitdir logf mt age reason save n
+    local name st gitdir logf mt age reason save n precious
     reason=""
     name="${path##*/}"
     if [ "$locked" = 1 ]; then printf 'LISTED locked %s\n' "$path"; return 0; fi
@@ -177,6 +218,16 @@ reap_one() {
     logf="$gitdir/logs/HEAD"
     mt="$(file_mtime "$logf")" || { printf 'KEPT no-reflog %s\n' "$path"; return 0; }
     age=$(($(now) - mt))
+    for n in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD BISECT_LOG; do
+        if [ -e "$gitdir/$n" ]; then printf 'KEPT in-progress-%s %s\n' "$n" "$path"; return 0; fi
+    done
+    if precious="$(precious_ignored "$path")" && [ -n "$precious" ]; then
+        printf 'LISTED precious-ignored %s (e.g. %s)\n' "$path" "$precious"
+        return 0
+    fi
+    # Idle clock: the reflog must be old AND no file (outside node_modules,
+    # .rv, .git) may have changed within the idle window.
+    if [ "$age" -ge "$IDLE_SECS" ] && recent_file_change "$path"; then age=0; fi
     if [ -n "$st" ]; then
         if [ "$age" -lt "$IDLE_SECS" ]; then printf 'LISTED dirty %s\n' "$path"; return 0; fi
         if board_active "$name" "$branch"; then printf 'LISTED dirty-board-active %s\n' "$path"; return 0; fi

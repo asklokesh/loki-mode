@@ -30,7 +30,8 @@ git clone -q "$ORIGIN" "$P" 2>/dev/null
 mkdir -p "$P/loki-ts/dist"
 echo one >"$P/a.txt"
 echo built >"$P/loki-ts/dist/a.js"
-git -C "$P" add a.txt loki-ts/dist/a.js
+printf '.env\nbuild/\n' >"$P/.gitignore"
+git -C "$P" add a.txt loki-ts/dist/a.js .gitignore
 git -C "$P" commit -q -m base
 git -C "$P" branch -M main
 git -C "$P" push -q origin main 2>/dev/null
@@ -39,7 +40,10 @@ WT="$P/.claude/worktrees"
 mkdir -p "$WT"
 OLD=202001010000
 
-age_old() { touch -t "$OLD" "$(git -C "$1" rev-parse --absolute-git-dir)/logs/HEAD"; }
+age_old() {
+    touch -t "$OLD" "$(git -C "$1" rev-parse --absolute-git-dir)/logs/HEAD"
+    find "$1" -name .git -prune -o -type f -exec touch -t "$OLD" {} +
+}
 mkwt_branch() { # name: new branch worktree with one unmerged commit
     git -C "$P" worktree add -q -b "slice-$1" "$WT/$1" origin/main 2>/dev/null
     echo "$1" >"$WT/$1/$1.txt"
@@ -74,6 +78,26 @@ mkwt_branch locked-old
 age_old "$WT/locked-old"
 git -C "$P" worktree lock "$WT/locked-old"
 mkwt_branch fresh-unmerged
+mkwt_branch env-idle
+echo SECRET >"$WT/env-idle/.env"
+age_old "$WT/env-idle"
+mkwt_branch build-idle
+mkdir "$WT/build-idle/build"
+echo out >"$WT/build-idle/build/out.txt"
+age_old "$WT/build-idle"
+mkwt_merged env-merged
+echo SECRET >"$WT/env-merged/.env"
+age_old "$WT/env-merged"
+mkwt_branch env-dirty
+echo SECRET >"$WT/env-dirty/.env"
+echo wip >"$WT/env-dirty/wip.txt"
+age_old "$WT/env-dirty"
+mkwt_branch mid-merge
+age_old "$WT/mid-merge"
+: >"$(git -C "$WT/mid-merge" rev-parse --absolute-git-dir)/MERGE_HEAD"
+mkwt_branch recent-file
+age_old "$WT/recent-file"
+touch "$WT/recent-file/recent-file.txt"
 
 cd "$T" || exit 1
 OUT="$(REAP_REPO="$P" REAP_BASE=origin/main bash "$REAP" 2>&1)"
@@ -104,6 +128,15 @@ check "locked worktree kept" '! gone locked-old'
 check "locked worktree listed" 'printf "%s\n" "$OUT" | grep -q "^LISTED locked .*locked-old"'
 check "fresh unmerged kept" '! gone fresh-unmerged'
 check "tracked dist in primary untouched" '[ "$(cat "$P/loki-ts/dist/a.js")" = built ]'
+
+check "idle clean worktree holding .env kept (ignored file would be destroyed)" '! gone env-idle && [ -f "$WT/env-idle/.env" ]'
+check "precious-ignored worktree listed" 'printf "%s\n" "$OUT" | grep -q "^LISTED precious-ignored .*env-idle"'
+check "idle worktree with build/ output kept" '! gone build-idle && [ -f "$WT/build-idle/build/out.txt" ]'
+check "merged worktree holding .env kept" '! gone env-merged && [ -f "$WT/env-merged/.env" ]'
+check "dirty worktree with .env kept, not salvaged" '! gone env-dirty && ! git -C "$P" show-ref --verify -q refs/heads/wt-save/env-dirty'
+check ".env is never committed to any ref" '[ -z "$(git -C "$P" log --all --format=%H -- .env)" ]'
+check "mid-merge worktree kept" '! gone mid-merge && printf "%s\n" "$OUT" | grep -q "^KEPT in-progress-MERGE_HEAD .*mid-merge"'
+check "recent file change keeps an idle-reflog worktree" '! gone recent-file'
 
 # BOARD active row protects an idle unmerged worktree
 mkwt_branch board-held
@@ -137,7 +170,7 @@ HEAD dead
 }
 run_pulse_n() {
     PULSE_REPO_ROOT="$P" PULSE_MAIN_REF=main PULSE_NPM_CMD=false PULSE_GH_CMD=false PULSE_GH_FALLBACK_CMD=false \
-        PULSE_GH_STREAK_CMD=false PULSE_GOVERNOR_CMD=false PULSE_MOAT_RESULT= \
+        PULSE_GH_STREAK_CMD=false PULSE_GOVERNOR_CMD=false PULSE_MOAT_RESULT='' \
         PULSE_WORKTREE_LIST="$(pulse_list "$1")" timeout -k 5 90 bash "$PULSE" 2>/dev/null
 }
 P21="$(run_pulse_n 21)"
