@@ -2309,3 +2309,9 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - CTO split: (A) BUMP-REUSE HIGH slice (allowlist + bump-set subset guard + replay), then ship as 11.3.4. (B) RELGATE-REDS: 6 latent reds that guards_for("VERSION") selected (watch-command v6.33.0, manifest-truncation rc=2, quick-receipt-order rc=124, autonomy-and-stop OPTOUT, node_lint web-app rc=127, moat P2.verify-exit-contract); ships separately and does not block A. SEL follow-up: guards_for literal-string selection, LOW.
 - Promote 11.3.2: auto run 37838898754 blocked on the smoke lookup (the pre-run-name smoke 37833604487 is not matched by display_title). Dispatched smoke 37839153237 (v11.3.2) then promote.
 - WALL-SMOKE-GUARD merged into train-1132 at 5be544484 (rides with 11.3.4). WALL-COLOR engineer building.
+
+## 2026-10-09 01:48Z CoS
+- 11.3.6 (GH-KEYRING) published to next: release run 37869841774 success, tag v11.3.6 at 549b3b7fe; CTO smoke PASS (trivial-sum VERIFIED, 28s). latest stays 11.3.2 pending backstop plus smoke promotion.
+- guards-always pushed to main at 1d20b928e (push rc=0): 19/19 --guards-only rows rc=0 (~/loki-ci-logs/ga-guards-2141b.log), sigpipe CEILING 1789 -> 1742.
+- ENV-INTAKE bb2d57569: opus r1 BLOCK (F1 supply_guard registry token exfil, F2 seal commit hooks get worker env, F3 LOKI_* secrets incl. PR bot token and receipt signing key reach repo tests, F4 stray ' + R + ' arg in run.sh lint calls). CTO: F3 counts against 11.3.6 and earlier; signing key must never be in any child env. Fix slice ENV-INTAKE-R1FIX building; r2 pending; B9 n=9 two-bug +5.2% (rerun on fixed head). GHSA-p656 held.
+- Disk P0 cleared earlier (83G free). AUTO-REAP cf94b8bd4 in TL review; WF-2MIN-3 (CTO GO: one tarball, merge release+publish-npm, npm-visible non-blocking) building; CANARY-SHAPE building.
