@@ -611,3 +611,9 @@ the same hidden checks; wall_ratio = mean loki wall / mean raw wall; 95% percent
 ## Release latency metric (WF-2MIN-3)
 
 Definition: seconds from the Release run's dispatch/push event to the `+ loki-mode@<version>` line of the `npm publish` step in the `release` job. Baseline run 37869841774: 2m46s (gate/required-ci 30s, release 68s, publish-npm 64s). Target: under 2m. npm registry lag is NOT part of this metric; the non-blocking `npm-visible` job records it separately in its job summary (`npm registry lag: ... visible after Ns`, or `NPM-LAG-TIMEOUT`). Post-Release Smoke polls for visibility itself (up to 15 min).
+
+| Version | Release run | Push SHA | Run created (UTC) | `+ loki-mode@` line (UTC) | Dispatch to publish | npm-visible done (UTC) | Registry lag (separate) | Target met |
+|---|---|---|---|---|---|---|---|---|
+| 11.3.8 | 37875150528 | 80989fdf0 | 02:33:37Z | 02:35:20Z | 1m43s | 02:39:49Z | ~4m29s | yes (under 2m) |
+
+Source: `gh run view 37875150528 --log` (release job "Publish the verified tarball (no rebuild)" printed `+ loki-mode@11.3.8` at 2026-10-09T02:35:20Z), `gh run view 37875150528 --json createdAt` = 02:33:37Z; npm next = 11.3.8 at 436s after push. CTO steering smoke on 11.3.8: PASS (trivial-sum VERIFIED, $0.07, 27s). Prior run 11.3.7 (pre WF-2MIN-3) was 2m32s.

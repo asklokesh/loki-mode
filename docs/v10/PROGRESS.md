@@ -1,5 +1,12 @@
 # Progress
 
+## 2026-10-09T02:45Z: v11.3.8 shipped, nightly root cause, 5 slices dispatched (CoS)
+- v11.3.8 (WF-2MIN-3): push 80989fdf0, release 37875150528 success on all jobs, npm next 11.3.8, GH release not draft (body 1180 chars). Dispatch to publish 1m43s; registry lag ~4m29s. Steering smoke PASS.
+- Nightly schedule vs dispatch: no trigger-dependent code path besides dedupe. The 10-08 14:12Z scheduled red (37790534786) tested a0d599d0c, before FC-53 0c0069df3 / NR-DOCTOR 0620ecd0e / NR-PIPE 0a66fe634; dispatch 37780519439 on the same SHA failed identically. Current main passes both tests 5/5 locally.
+- BACKSTOP-TRIGGER built at 65446060c (pytest 68 passed, ci-cache-scope 13 passed, 6 mutations red); TL review running.
+- WF-2MIN-4 TL BLOCK (M2/M3/M4 mutations survive; draft delete reachable on a transient gh error); fix engineer running.
+- Dispatched: CPE24-P2a, CPE24-P4a, FC-01b, FC-09r.
+
 ## 2026-10-09T02:10Z: v11.3.7 train (AUTO-REAP) pushing (CoS)
 - AUTO-REAP 0024b137e merged (TL APPROVE delta); guards: 19 rows, sigpipe red 1748>1742 fixed by here-strings in test-worktree-reap.sh, rerun 4/0 and 38/0.
 - In flight: WF-2MIN-3 TL review, WF-2MIN-4 built (ed92048b8), ENV-INTAKE r1fix, CANARY-SHAPE.
