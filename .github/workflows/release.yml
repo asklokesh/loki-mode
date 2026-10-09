@@ -56,14 +56,6 @@ jobs:
         run: |
           bash -n autonomy/run.sh
           bash -n autonomy/loki
-      - name: P9 Rule of Two on the exact release SHA (never waived)
-        # CTO N4: P9 must hold at the release SHA even if required-ci stops
-        # enforcing Tests (D88 waiver, D97). Fail closed: a missing script or
-        # any nonzero rc fails the gate. About 13s.
-        run: |
-          set -euo pipefail
-          test -f scripts/ci/fast-gate.sh
-          bash scripts/ci/fast-gate.sh p9
       - name: Setup Bun
         # publish-npm and publish-docker ship the loki-ts Bun dist. This job
         # only rebuilds it to prove the committed dist is the release SHA's.
@@ -81,10 +73,28 @@ jobs:
       # cannot know: the dist committed at the release SHA is what a fresh build
       # of that SHA produces (debugId aside), and so is the dist in the tarball.
       # Do NOT re-add `bun test`; tests/test-release-gate-dedup.sh fails on it.
-      - name: Verify the committed loki-ts dist is a fresh build of this SHA
+      - name: Install loki-ts dependencies
+        run: bun install --cwd loki-ts --frozen-lockfile
+      # P9 needs bun (its injection case) and PyYAML (its workflow scan), the
+      # same prerequisites as test.yml moat-p9. Python is set up first so the
+      # pip install is not blocked by the runner's system Python. No cache is
+      # restored here (Rule of Two above).
+      - name: Setup Python (PyYAML for the P9 workflow scan)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML (the workflow scan prerequisite)
+        run: python3 -m pip install pyyaml
+      - name: P9 Rule of Two on the exact release SHA (never waived)
+        # CTO N4: P9 must hold at the release SHA even if required-ci stops
+        # enforcing Tests (D88 waiver, D97). Fail closed: a missing script or
+        # any nonzero rc fails the gate. About 13s.
         run: |
-          bun install --cwd loki-ts --frozen-lockfile
-          bash scripts/ci/verify-release-dist.sh build
+          set -euo pipefail
+          test -f scripts/ci/fast-gate.sh
+          bash scripts/ci/fast-gate.sh p9
+      - name: Verify the committed loki-ts dist is a fresh build of this SHA
+        run: bash scripts/ci/verify-release-dist.sh build
       - name: Verify the dist inside the npm tarball matches the committed dist
         run: |
           set -euo pipefail

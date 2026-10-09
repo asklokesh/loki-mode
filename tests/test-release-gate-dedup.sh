@@ -55,6 +55,10 @@ check_yml() {
     printf '%s\n' "$g" | grep -qE 'verify-release-dist\.sh[[:space:]]+build' || echo "gate lost the dist byte-identity build check"
     printf '%s\n' "$g" | grep -qE 'verify-release-dist\.sh[[:space:]]+tarball' || echo "gate lost the packed tarball dist check"
     printf '%s\n' "$g" | grep -qE 'fast-gate\.sh[[:space:]]+p9' || echo "gate lost the P9 step"
+    # Order: P9 needs bun, bun deps and PyYAML, so it must come after all three.
+    printf '%s\n' "$g" | grep -nE 'setup-bun|bun install --cwd loki-ts --frozen-lockfile|pip install pyyaml|fast-gate\.sh[[:space:]]+p9' \
+        | awk -F: '{ if ($0 ~ /setup-bun/) b=$1; else if ($0 ~ /bun install/) i=$1; else if ($0 ~ /pyyaml/) y=$1; else p=$1 }
+                   END { if (!(b && i && y && p && b < i && i < p && y < p)) print "gate runs P9 before bun, bun install or PyYAML are ready" }'
     printf '%s\n' "$g" | grep -qE 'npm pack' || echo "gate does not pack the tarball"
     rel="$(job_block "$yml" release | code_only)"
     printf '%s\n' "$rel" | grep -qE '^[[:space:]]+needs:.*required-ci' || echo "release no longer needs required-ci (Tests verdict)"
@@ -108,6 +112,10 @@ mutate "M6 required-ci stops requiring Tests" "required-ci REQUIRED list no long
 
 mutate "M7 remove the P9 step" "gate lost the P9 step" \
   's = s.replace("bash scripts/ci/fast-gate.sh p9", "true", 1)'
+mutate "M8 move P9 above Setup Bun" "gate runs P9 before bun" \
+  'a = s.index("      - name: P9 Rule of Two"); b = s.index("      - name: Verify the committed loki-ts dist"); blk = s[a:b]; s = s[:a] + s[b:]; c = s.index("      - name: Setup Bun\n"); s = s[:c] + blk + s[c:]'
+mutate "M9 drop the PyYAML install" "gate runs P9 before bun" \
+  's = s.replace("python3 -m pip install pyyaml", "true", 1)'
 
 # Behavior of the verifier: copy it into a fixture repo with a committed dist.
 FX="$RUN_TMP/fx"
