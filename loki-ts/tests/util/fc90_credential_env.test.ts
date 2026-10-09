@@ -1,7 +1,7 @@
 // FC-90 (P9): a harness-run test command never carries the user's ambient GitHub credential. The credential here is PLANTED in a fake HOME
 // (a gh hosts.yml with a fake oauth_token, a fake global git credential helper), so the test never depends on the real user's login.
 // Each leg has a positive control (the raw env DOES see the planted credential) so a green result is not an absence-of-output artifact.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,21 +12,38 @@ const FAKE_GH = "gho_FAKEPLANTEDOAUTHTOKEN0123456789abcdef";
 const FAKE_PW = "FAKEPLANTEDGITPASSWORD9876";
 const have = (bin: string): boolean => spawnSync(bin, ["--version"], { stdio: "ignore" }).status === 0;
 const HAVE_GH = have("gh"); // skip reason when absent: the gh legs need the gh binary; the git legs always run
-let root = "", home = "";
+let root = "", home = "", namedHome = "";
+// Capability of the installed gh: a named-account read (gh >= 2.40 multi-account hosts.yml). Probed in beforeAll against the
+// planted raw env; when it cannot fire, the paired hardened-env assertion is skipped too, never passed alone.
+let NAMED_READ = false;
 
 // A parent env that carries the planted credential through HOME, XDG_CONFIG_HOME and a global gitconfig, and no real token vars.
-const parentEnv = (): NodeJS.ProcessEnv => ({ PATH: process.env["PATH"], HOME: home, XDG_CONFIG_HOME: join(home, ".config"), GIT_CONFIG_NOSYSTEM: "1", TMPDIR: root });
+const parentEnv = (h: string = home): NodeJS.ProcessEnv => ({ PATH: process.env["PATH"], HOME: h, XDG_CONFIG_HOME: join(h, ".config"), GIT_CONFIG_NOSYSTEM: "1", TMPDIR: root });
 const sh = (cmd: string, env: NodeJS.ProcessEnv, input = "") => spawnSync("sh", ["-c", cmd], { encoding: "utf8", env: env as Record<string, string>, input, timeout: 30_000, cwd: root });
 const FILL = "protocol=https\nhost=github.com\n\n";
 
-beforeAll(() => {
+// Runs at module load (not beforeAll) so the capability probe can gate test.skipIf at definition time.
+(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "loki-fc90-"))); home = join(root, "home");
   mkdirSync(join(home, ".config", "gh"), { recursive: true });
-  writeFileSync(join(home, ".config", "gh", "hosts.yml"), `github.com:\n    oauth_token: ${FAKE_GH}\n    user: fakeuser\n    git_protocol: https\n`);
+  // The default `gh auth token` reads the flat hosts.yml everywhere. A NAMED read (`--user`) needs a shape that differs by gh: the
+  // flat one on macOS, the multi-account one on gh for Linux (a flat file is not migrated there, so the named read finds nothing).
+  // Plant each shape in a scratch home in turn and keep the first the installed gh actually reads, in its own home so the default
+  // control keeps its flat file. gh may rewrite a file on a read, hence a fresh scratch home per probe and a pristine final plant.
+  const flat = `github.com:\n    oauth_token: ${FAKE_GH}\n    user: fakeuser\n    git_protocol: https\n`;
+  const multi = `github.com:\n    users:\n        fakeuser:\n            oauth_token: ${FAKE_GH}\n    git_protocol: https\n    user: fakeuser\n`;
+  writeFileSync(join(home, ".config", "gh", "hosts.yml"), flat);
+  const plant = (h: string, shape: string): void => { mkdirSync(join(h, ".config", "gh"), { recursive: true }); writeFileSync(join(h, ".config", "gh", "hosts.yml"), shape); };
+  namedHome = join(root, "named-home");
+  if (HAVE_GH) for (const [i, shape] of [flat, multi].entries()) {
+    const probe = join(root, `probe-home-${i}`);
+    plant(probe, shape);
+    if (sh("gh auth token --user fakeuser", parentEnv(probe)).stdout.trim() === FAKE_GH) { NAMED_READ = true; plant(namedHome, shape); break; }
+  }
   const helper = join(root, "fake-helper.sh");
   writeFileSync(helper, `#!/bin/sh\necho username=fakeuser\necho password=${FAKE_PW}\n`); chmodSync(helper, 0o755);
   writeFileSync(join(home, ".gitconfig"), `[user]\n\tname = Fake Identity\n\temail = fake@example.invalid\n[credential]\n\thelper = ${helper}\n`);
-});
+})();
 afterAll(() => { rmSync(root, { recursive: true, force: true }); });
 
 describe("FC-90 the token family is a sentinel, not absent", () => {
@@ -49,11 +66,11 @@ describe("FC-90 gh credential store", () => {
     expect(st.status).not.toBe(0);
     expect(st.stdout + st.stderr).not.toContain(FAKE_GH);
   });
-  test.skipIf(!HAVE_GH)("a named-account read (which ignores the env token) finds nothing: GH_CONFIG_DIR is an empty dir", () => {
-    const env = plainTestEnv(parentEnv());
+  test.skipIf(!NAMED_READ)("a named-account read (which ignores the env token) finds nothing: GH_CONFIG_DIR is an empty dir", () => {
+    const env = plainTestEnv(parentEnv(namedHome));
     expect(env["GH_CONFIG_DIR"]).toBeTruthy();
     expect(readdirSync(env["GH_CONFIG_DIR"]!)).toEqual([]);
-    expect(sh("gh auth token --user fakeuser", parentEnv()).stdout.trim()).toBe(FAKE_GH);
+    expect(sh("gh auth token --user fakeuser", parentEnv(namedHome)).stdout.trim()).toBe(FAKE_GH); // control, same gate as the skip probe
     const r = sh("gh auth token --user fakeuser", env);
     expect(r.stdout + r.stderr).not.toContain(FAKE_GH);
   });
