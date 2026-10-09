@@ -324,6 +324,11 @@ npm_has_version() {
 sync_local_main() {
     local cur
     net git -C "$REPO" fetch --quiet "$REMOTE" main 2>/dev/null || { log C "" "SYNC_FETCH_FAIL local main not updated"; return 0; }
+    # AUTO-REAP (FC-91): origin/main just moved, so merged slice worktrees are
+    # now removable. Non-force and best-effort; never fails the cycle.
+    if [ -x "$REPO/scripts/v10-worktree-reap.sh" ]; then
+        REAP_REPO="$REPO" REAP_BASE="$REMOTE/main" timeout -k 5 120 "$REPO/scripts/v10-worktree-reap.sh" >/dev/null 2>&1 || true
+    fi
     if is_ancestor "$REMOTE/main" refs/heads/main; then return 0; fi
     cur="$(g symbolic-ref --short -q HEAD 2>/dev/null)"
     if is_ancestor refs/heads/main "$REMOTE/main"; then
