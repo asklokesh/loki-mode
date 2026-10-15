@@ -4,16 +4,9 @@ Loki Mode Dashboard Backend
 FastAPI-based dashboard for managing Loki Mode projects, tasks, and agents.
 
 Modules:
-    control: Session control API (start/stop/pause/resume)
+    control: Session control helpers (status, atomic writes, origin check)
 """
 
 __version__ = "11.5.0"
 
-# Expose the control app for easy import
-try:
-    from .control import app as control_app
-except ImportError:
-    # FastAPI not installed, control module not available
-    control_app = None
-
-__all__ = ["control_app", "__version__"]
+__all__ = ["__version__"]

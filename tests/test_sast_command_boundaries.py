@@ -1,4 +1,4 @@
-"""Regression checks for the seven reviewed CodeQL command boundaries."""
+"""Regression checks for the six reviewed CodeQL command boundaries."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_REVIEWED_SINKS = {
     "dashboard/api_releases.py": 1,
-    "dashboard/control.py": 1,
     "examples/api/python-api.py": 1,
     "web-app/server.py": 2,
     "dashboard/server.py": 2,
@@ -68,4 +67,4 @@ def test_reviewed_codeql_sinks_are_explicitly_shell_free() -> None:
 
 
 def test_reviewed_codeql_sink_count_remains_complete() -> None:
-    assert sum(EXPECTED_REVIEWED_SINKS.values()) == 7
+    assert sum(EXPECTED_REVIEWED_SINKS.values()) == 6

@@ -177,6 +177,57 @@ class ARemoteRequestIsRefusedEndToEnd(unittest.TestCase):
             auth.OIDC_ENABLED = oidc
 
 
+class ControlRoutesRequireScope(unittest.TestCase):
+    """Ported from the deleted standalone control app test: the live server
+    routes carry require_scope and reject anonymous callers when auth is on.
+
+    LOKI_ENTERPRISE_AUTH is read at import time, so each check runs in a
+    subprocess; the parent interpreter's dashboard modules are untouched.
+    """
+
+    _PATHS = _MUTATING[:4]
+
+    def _child(self, body, enterprise_auth):
+        import subprocess  # noqa: PLC0415
+        env = dict(os.environ)
+        if enterprise_auth:
+            env["LOKI_ENTERPRISE_AUTH"] = "true"
+        else:
+            env.pop("LOKI_ENTERPRISE_AUTH", None)
+        pre = "import sys\nsys.path.insert(0, %r)\nPATHS = %r\n" % (
+            str(_ROOT), list(self._PATHS))
+        proc = subprocess.run([sys.executable, "-c", pre + body], env=env,
+                              cwd=str(_ROOT), capture_output=True, text=True)
+        if "SKIP:" in proc.stdout:
+            self.skipTest(proc.stdout.strip())
+        self.assertEqual(
+            proc.returncode, 0,
+            "STDOUT:\n%s\nSTDERR:\n%s" % (proc.stdout, proc.stderr))
+
+    def test_mutating_routes_carry_a_dependency(self):
+        self._child(
+            "import dashboard.server as server\n"
+            "routes = {r.path: r for r in server.app.routes if hasattr(r, 'path')}\n"
+            "for p in PATHS:\n"
+            "    assert p in routes, p + ' route missing'\n"
+            "    assert len(getattr(routes[p], 'dependencies', [])) >= 1, p\n",
+            False)
+
+    def test_auth_enabled_rejects_unauthenticated_mutation(self):
+        self._child(
+            "try:\n"
+            "    from fastapi.testclient import TestClient\n"
+            "    import httpx  # noqa: F401\n"
+            "except Exception:\n"
+            "    print('SKIP: TestClient/httpx unavailable'); sys.exit(0)\n"
+            "import dashboard.server as server\n"
+            "c = TestClient(server.app, raise_server_exceptions=False)\n"
+            "for p in PATHS:\n"
+            "    r = c.post(p, json={})\n"
+            "    assert r.status_code == 401, (p, r.status_code)\n",
+            True)
+
+
 class BrowserOriginsCannotDriveLocalMutations(unittest.TestCase):
     """CORS alone does not stop a simple cross-origin POST from being sent."""
 
