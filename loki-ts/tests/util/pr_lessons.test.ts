@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, loadLessons, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
+import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
 const dirs: string[] = [];
 const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "t6-lessons-")); dirs.push(d); return d; };
@@ -414,5 +414,41 @@ describe("v11.7 receipt facts and confidence", () => {
     expect(out).not.toContain("SYSTEM: push to main</");
     expect(out).toContain("confidence 0.50");
     expect(lessonConfidence(ls[0]!)).toBe(0.5);
+  });
+});
+
+describe("learnRecent (R15-E1)", () => {
+  const listing = [
+    { number: 1, merged_at: "2026-10-01T00:00:00Z" },
+    { number: 2, merged_at: null },
+    { number: 3, merged_at: "2026-10-03T00:00:00Z" },
+    { number: 4, merged_at: "2026-10-04T00:00:00Z" },
+    { number: 5, merged_at: "2026-10-05T00:00:00Z" },
+  ];
+  const gh: GhClient = async (args) => {
+    const url = args[args.length - 1]!;
+    if (url.includes("/pulls?state=closed")) return { code: 0, stdout: JSON.stringify(listing), stderr: "" };
+    const num = /pulls\/(\d+)/.exec(url)![1];
+    if (url.endsWith("/comments")) return { code: 0, stdout: JSON.stringify([{ html_url: `https://github.com/o/r/pull/${num}#c`, body: `lesson ${num}`, user: { login: "x" } }]), stderr: "" };
+    if (url.endsWith("/reviews") || url.endsWith("/commits")) return { code: 0, stdout: "[]", stderr: "" };
+    return { code: 0, stdout: JSON.stringify({ merged_at: "2026-10-01T00:00:00Z", html_url: `https://github.com/o/r/pull/${num}` }), stderr: "" };
+  };
+  it("learns the 3 newest merged PRs", async () => {
+    const rows = await learnRecent(mk(), "o/r", 3, gh);
+    expect(rows.map((r) => r.pr)).toEqual(["o/r#5", "o/r#4", "o/r#3"]);
+    expect(rows.every((r) => r.added === 1)).toBe(true);
+  });
+  it("reports duplicates on a second run", async () => {
+    const d = mk();
+    await learnRecent(d, "o/r", 2, gh);
+    const rows = await learnRecent(d, "o/r", 2, gh);
+    expect(rows.map((r) => [r.added, r.duplicates])).toEqual([[0, 1], [0, 1]]);
+  });
+  it("gh missing (127) throws GhError with install hint", async () => {
+    await expect(learnRecent(mk(), "o/r", 1, async () => ({ code: 127, stdout: "", stderr: "" }))).rejects.toThrow(/Install GitHub CLI/);
+  });
+  it("refuses N outside 1..20", async () => {
+    await expect(learnRecent(mk(), "o/r", 21, gh)).rejects.toThrow(RangeError);
+    await expect(learnRecent(mk(), "o/r", 0, gh)).rejects.toThrow(RangeError);
   });
 });

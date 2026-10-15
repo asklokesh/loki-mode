@@ -8,7 +8,7 @@ import { BOLD, GREEN, YELLOW, CYAN, NC } from "../util/colors.ts";
 import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
 import { run } from "../util/shell.ts";
-import { GhError, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, loadLessons, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
+import { GhError, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, MAX_RECENT, defaultGh, loadLessons, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
 import { learningsBlock } from "../engine10/stages/implement.ts";
 
 const LEARNINGS_DIR = resolve(homeLokiDir(), "learnings");
@@ -137,7 +137,30 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
     case "ls":
       return runMemoryList();
     case "learn": {
-      if (!argv[1]) { process.stderr.write("Usage: loki memory learn <owner/repo#PR>\n"); return 2; }
+      const usage = "Usage: loki memory learn <owner/repo#PR> | --recent N [--repo owner/repo]\n";
+      if (argv[1] === "--recent") {
+        const raw = argv[2] ?? "";
+        const n = /^\d+$/.test(raw) ? Number(raw) : NaN;
+        if (!Number.isInteger(n) || n < 1 || n > MAX_RECENT) { process.stderr.write(`Error: --recent needs an integer from 1 to ${MAX_RECENT}\n${usage}`); return 2; }
+        try {
+          let repo = argv[3] === "--repo" ? (argv[4] ?? "") : "";
+          if (!repo) {
+            const g = await defaultGh(["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]);
+            if (g.code === 127) { process.stderr.write("Error: gh CLI not found. Install GitHub CLI (https://cli.github.com) and run `gh auth login`.\n"); return 1; }
+            repo = g.stdout.trim();
+          }
+          if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { process.stderr.write(`Error: cannot determine the repo; pass --repo owner/repo\n${usage}`); return 2; }
+          const rows = await learnRecent(process.cwd(), repo, n);
+          for (const r of rows) process.stdout.write(`${r.pr}: ${r.error ? `error: ${r.error}` : `${r.added} added, ${r.duplicates} already known, ${r.skipped} skipped${r.reason ? ` (${r.reason})` : ""}`}\n`);
+          const t = rows.reduce((a, r) => a + r.added, 0);
+          process.stdout.write(`Learned from ${rows.length} merged PR(s): ${t} added\n`);
+          return 0;
+        } catch (e) {
+          if (e instanceof GhError) { process.stderr.write(`Error: ${e.message}\n`); return 1; }
+          throw e;
+        }
+      }
+      if (!argv[1]) { process.stderr.write(usage); return 2; }
       try {
         const r = await learnFromPr(process.cwd(), argv[1]);
         if (r.reason) process.stdout.write(`${r.reason}\n`);
