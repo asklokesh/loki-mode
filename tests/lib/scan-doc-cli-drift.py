@@ -65,6 +65,9 @@ def commands():
     cmds |= set(re.findall(r'case "([a-z0-9-]+)":', read("loki-ts/src/cli.ts")))
     # bin/loki handles `loki legacy` (D48) before either dispatcher sees it.
     cmds |= set(re.findall(r"^    ([a-z0-9-]+)\)\n        shift\n", read("bin/loki"), re.M))
+    # bin/loki sources autonomy/route.sh before dispatch; its `route)` arm answers `loki route`.
+    if re.search(r"^        route\)", read("autonomy/route.sh"), re.M):
+        cmds.add("route")
     return cmds
 
 
