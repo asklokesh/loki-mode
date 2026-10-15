@@ -181,6 +181,9 @@ _qs_score_templates() {
     # can tell a genuine match from simple-todo-app winning by default.
     local best_mode=false
     [ "${2:-}" = "--best" ] && best_mode=true
+    # --scores: print "name<TAB>score" for the top 3 (used by --explain-match).
+    local scores_mode=false
+    [ "${2:-}" = "--scores" ] && scores_mode=true
     local tdir; tdir="$(_qs_templates_dir)"
     local brief_lc; brief_lc=$(printf '%s' "$brief" | tr '[:upper:]' '[:lower:]')
 
@@ -263,6 +266,8 @@ _qs_score_templates() {
     ' | sort -t"$(printf '\t')" -k1,1nr -k2,2n -k3,3 | {
         if [ "$best_mode" = true ]; then
             head -1 | cut -f1 | awk '{ print ($1 == "" ? 0 : $1) }'
+        elif [ "$scores_mode" = true ]; then
+            head -3 | awk -F'\t' '{ printf "%s\t%s\n", $3, $1 }'
         else
             head -3 | cut -f3
         fi
@@ -274,6 +279,27 @@ _qs_score_templates() {
 # filename token or one curated keyword).
 _qs_match_strength() {
     _qs_score_templates "$1" --best
+}
+
+# _qs_explain_match <brief>: print the top 3 template scores and a confidence
+# label. Reuses the scorer; offline and read-only.
+_qs_explain_match() {
+    local brief="$1" strength rank=1 name score
+    strength="$(_qs_match_strength "$brief")"
+    case "$strength" in ''|*[!0-9]*) strength=0;; esac
+    printf '\n  Template match scores:\n'
+    while IFS=$'\t' read -r name score; do
+        [ -n "$name" ] || continue
+        printf '  %d. %s score %s\n' "$rank" "$name" "$score"
+        rank=$((rank + 1))
+    done < <(_qs_score_templates "$brief" --scores)
+    if [ "$strength" -ge 4 ]; then
+        printf '  Match confidence: high (strength %s)\n' "$strength"
+    elif [ "$strength" -ge 2 ]; then
+        printf '  Match confidence: medium (strength %s)\n' "$strength"
+    else
+        printf '  Match confidence: low (strength %s): no strong match, using a plain spec\n' "$strength"
+    fi
 }
 
 # _qs_template_summary <name>: a short one-line description for the picker.
@@ -919,6 +945,7 @@ _qs_help() {
     printf '  --yes, -y     Auto-confirm the final build prompt (still shows the plan)\n'
     printf '  --dry-run     Preview the selected template and plan; write/start nothing\n'
     printf '  --json        Emit machine-readable output for a read-only command\n'
+    printf '  --explain-match  With --dry-run, show the top 3 template scores and match confidence\n'
     printf '  --from-preview F  Continue saved JSON from file F (or - for piped stdin); requires --yes\n'
     printf '  --verify-preview F  Verify saved JSON from file F (or - for piped stdin); executes nothing\n'
     printf '  --template N  Use the exact shipped template N for an IDEA\n'
@@ -986,6 +1013,7 @@ cmd_quickstart() {
     local template_flag_seen=false
     local list_templates=false
     local list_templates_flag_seen=false
+    local explain_match=false
     local from_preview=""
     local from_preview_flag_seen=false
     local verify_preview=""
@@ -1021,6 +1049,10 @@ cmd_quickstart() {
                 ;;
             --json)
                 json_output=true
+                shift
+                ;;
+            --explain-match)
+                explain_match=true
                 shift
                 ;;
             --template)
@@ -1168,6 +1200,11 @@ cmd_quickstart() {
         exit 2
     fi
 
+    if [ "$explain_match" = true ] && { [ "$dry_run" != true ] || [ "$json_output" = true ]; }; then
+        printf '%s--explain-match requires --dry-run and cannot be combined with --json.%s\n' "$_QS_RED" "$_QS_NC" >&2
+        exit 2
+    fi
+
     if [ "$json_output" = true ] && [ "$dry_run" != true ]; then
         printf '%s--json requires --dry-run.%s\n' "$_QS_RED" "$_QS_NC" >&2
         exit 2
@@ -1257,6 +1294,9 @@ cmd_quickstart() {
     printf '\n'
     if [ "$dry_run" = true ]; then
         printf '%sLoki Mode quickstart preview -- template and plan only.%s\n' "$_QS_BOLD" "$_QS_NC"
+        if [ "$explain_match" = true ]; then
+            _qs_explain_match "$positional"
+        fi
     else
         printf '%sLoki Mode quickstart -- four quick questions, then your build starts.%s\n' "$_QS_BOLD" "$_QS_NC"
     fi
