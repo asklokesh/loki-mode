@@ -384,6 +384,18 @@ export function attribute(repoDir: string, baseSha: string, failing: { name: str
     line: `baseline: ${pre.length} pre-existing failing check(s) (not blocking), ${introduced.length} introduced${introduced.length ? " (blocking)" : ""}` };
 }
 
+/** REPOMEM for the RISKTIER full suite: the full-suite check carries no ids, so a failing one is re-run once to read them, and the same `attribute` decides.
+ *  Fail-closed: the baseline must have run this same command (else the ids are not comparable and nothing is excused, the reason is returned in `line`),
+ *  ids must be extractable, and an id the targeted checks already failed (`blocked`) or one naming a changed file is never excused. */
+export function attributeFullSuite(repoDir: string, baseSha: string, full: { name: string; cmd: string; result: string }[], blocked: string[], changed: string[], run: BaselineRunner = shellRunner): Attribution {
+  const bad = full.filter((c) => c.result === "fail"), none: Attribution = { preExistingChecks: [], preExistingIds: [], introducedChecks: bad.map((c) => c.name), line: null };
+  const norm = (s: string): string => s.replace(/\s+--silent\b/, "").trim(), p = loadProfile(repoDir);
+  if (!bad.length || !p || p.revision !== baseSha || !p.baseline.attributable || !p.baseline.failing_ids.length) return none;
+  if (bad.some((c) => norm(c.cmd) !== norm(p.baseline.command ?? ""))) return { ...none, line: `baseline: ran "${p.baseline.command}", not the full suite command, ids not comparable, full suite failures not excused` };
+  const block = new Set(blocked);
+  return attribute(repoDir, baseSha, bad.map((c) => { const r = run(c.cmd, repoDir, 300_000), ids = r.timedOut || r.missing ? [] : failIds(r.out); return { name: c.name, ids, eligible: ids.every((i) => !block.has(i) && !changed.some((f) => i.includes(f))) }; }));
+}
+
 /** Stable text for the implementer brief: fixed order, no timestamps, so the bytes change only when the profile's content does. */
 export function profileBrief(repoDir: string): string {
   const p = loadProfile(repoDir);
