@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { hooks } from "./hooks.ts";
 import { classifyFailure } from "../runner/retry_class.ts";
 import { REGISTRY } from "./registry.ts";
-import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts";
+import { timeBudgetNote } from "../util/run_cap.ts"; import { FINISH_LINE } from "../e10ext/context.ts"; import { withSteer } from "../e10ext/steer.ts"; import { restoreReadOnly, type ReadOnlyFile } from "./stages/implement.ts"; import { stallClimb } from "../runner/router/unit_model.ts";
 import { backstopS, DEEP_IMPLEMENT_LIMIT_S, MAX_FIX_ROUNDS, STAGE_BUDGETS } from "./types.ts";
 import type { Obj, RunContext, Stage, StageName, StageResult } from "./types.ts";
 
@@ -76,7 +76,8 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   let capTimer = setTimeout(() => capCtl.abort(), Math.max(0, capAtMs - ctx.clock.now()));
   let implementStartMs: number | null = null;
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
-  const sessions = { run: async (o: Parameters<typeof ctx.sessions.run>[0]) => {
+  const sessions = { run: async (o0: Parameters<typeof ctx.sessions.run>[0]) => {
+    const o = withSteer(o0, ctx.repoDir); // operator steer (.loki/HUMAN_INPUT.md), consumed once
     const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
     const t = (r as { stderrTail?: string }).stderrTail ?? "", sdk = /\[sdk-loop error: [^\n]*?(?:(Failed to authenticate|API key is invalid|Not logged in)|(credit balance))/.exec(t); // the SDK's real wording, matched only on its own error line
     const k = r.exit === 0 ? null : sdk ? (sdk[1] ? "auth" : "quota_exhausted") : classifyFailure(t).reason; if (k === "auth" || k === "quota_exhausted") fatal ??= `fatal:${k}`; if (ctx.overCap?.()) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
