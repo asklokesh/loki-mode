@@ -28,6 +28,7 @@ export interface RouterUsage {
 }
 
 export interface CostResult {
+  estimated?: boolean; // PARITY-COST: some session in this sum was priced from the price table (estimated=true), not provider dollars
   unmetered?: boolean; // some session in this sum carried the UNMETERED marker
   usd: number | null;
   // E-69: dollars actually reported by the measured sessions even when usd above is null (some OTHER
@@ -137,6 +138,7 @@ export function sumResultCosts(lokiRoot: string, iterations: string[], context: 
     // is a session that never really ran, so it's unmeasured like a missing file, never a real $0.00.
     const unmetered = rec["source"] === UNMETERED; // D48: an explicit marker, so the zero is disclosed, not a fake provider figure
     if (unmetered) out.unmetered = true;
+    if (rec["estimated"] === true) out.estimated = true;
     const noUsage = !unmetered && inTok === 0 && outTok === 0 && cacheR === 0 && cacheC === 0;
     if (typeof c !== "number" || !Number.isFinite(c) || noUsage) {
       out.missing.push(iter); // dollars unknown for this session: the usd sum stays unknown too
@@ -243,7 +245,7 @@ export function recordSessionCost(lokiRoot: string, iterationId: string, info: E
   let siblings: string[] = [];
   try { siblings = readdirSync(join(lokiRoot, "metrics")).filter((f) => f.startsWith("result-cost-") && f.endsWith(".json")).map((f) => f.slice("result-cost-".length, -".json".length)); } catch { /* no metrics dir yet */ }
   const cost = sumResultCosts(lokiRoot, [iterationId], siblings);
-  writeEfficiencyRecord(lokiRoot, info, cost, cost.unmetered ? UNMETERED : "provider");
+  writeEfficiencyRecord(lokiRoot, info, cost, cost.unmetered ? UNMETERED : cost.estimated ? "estimated" : "provider");
   return cost;
 }
 

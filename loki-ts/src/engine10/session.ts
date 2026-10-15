@@ -3,6 +3,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { writeProviderCost } from "./provider_cost.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
 import { hooks } from "./hooks.ts";
@@ -121,7 +122,7 @@ function killGroupWithGrace(pgid: number | undefined): void {
   setTimeout(() => send("SIGKILL"), KILL_GRACE_MS);
 }
 /** Efficiency record plus cost event for one session; a run in another cwd (wall's temp dir) has its result-cost file copied into lokiRoot first, so seal can price it after that dir is gone. */
-function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number): void {
+function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: string, durationS: number, outText = ""): void {
   if (!cfg.lokiRoot) return;
   const ownRoot = join(opts.cwd ?? process.cwd(), ".loki");
   const own = resultCostPath(ownRoot, opts.iterationId), dest = resultCostPath(cfg.lokiRoot, opts.iterationId);
@@ -133,6 +134,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
     mkdirSync(dirname(dest), { recursive: true });
     writeFileSync(dest, JSON.stringify({ total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, model, source: UNMETERED }));
   }
+  const pcost = existsSync(dest) ? null : writeProviderCost(dest, cfg.provider, model, opts.brief, outText); // PARITY-COST: codex/cline/aider priced from output usage or sizes, estimated=true; feeds the same cap path
   const effort = (hooks.effort?.resolve(opts.stage, opts.effort) ?? opts.effort);
   const info = { status, durationMs: Math.round(durationS * 1000), model };
   // No `result` ever arrived: price streamed usage instead of leaving cost_usd null.
@@ -141,7 +143,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
   const unmeasured = tokensUnmeasured(c); // the predicate writeEfficiencyRecord shares: a session without usage emits no token keys, so the control plane never reads a missing session as 0
   cfg.emit?.("cost", opts.stage, {
     session_id: opts.iterationId, model, usd: c.usd, ...(ambiguous ? { resume: "ambiguous" } : {}), ...(unmeasured ? {} : { input_tokens: c.input_tokens, output_tokens: c.output_tokens,
-    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(effort ? { effort } : {}), ...routedCostFields(dest),
+    cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
   });
 }
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
@@ -200,7 +202,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
           cfg.emit?.("session.ended", opts.stage, {
             session_id: sessionId, exit: exitKind(code, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
           });
-          recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS);
+          recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
           resolve({ exit: code, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
         });
       });
