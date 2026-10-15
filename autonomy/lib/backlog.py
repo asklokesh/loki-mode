@@ -195,7 +195,8 @@ def load_dag(path, group):
         if task.lstrip().startswith("-"):
             raise ValueError("unit %s task text starts with '-' and would be read as an option" % uid)
         units.append({"n": n, "id": uid, "deps": deps[uid], "write_set": list(u.get("writeSet") or []),
-                      "task": task})
+                      "task": task, "done": u.get("done") is True,
+                      "spec": u["spec"] if isinstance(u.get("spec"), str) and os.path.isabs(u["spec"]) else ""})
     return group, units
 
 
@@ -313,7 +314,10 @@ def main(argv):
                    "cmd": [launcher, u["task"], "--no-pr"],
                    "deps": [key_of[d] for d in u["deps"]],
                    "env": {"LOKI_GROUP_ID": group, "LOKI_UNIT_ID": u["id"], "LOKI_UNIT_N": str(u["n"]),
-                           "LOKI_UNIT_DEPS": ",".join(u["deps"]), "LOKI_UNIT_WRITE_SET": "\n".join(u["write_set"])}}
+                           "LOKI_UNIT_DEPS": ",".join(u["deps"]), "LOKI_UNIT_WRITE_SET": "\n".join(u["write_set"])},
+                   "done": u["done"]}
+        if u["spec"]:  # frozen group acceptance for unit_mode (wall.ts)
+            spec[k]["env"].update(LOKI_UNIT_SPEC=u["spec"], LOKI_SPEED="1")
     state = {k: {"status": "queued", "ok": None, "cost": None, "ran": False} for k in spec}
     for k in state:
         say("backlog: %s queued" % spec[k]["label"])
@@ -330,6 +334,32 @@ def main(argv):
         sys.exit(130)
     signal.signal(signal.SIGTERM, stop_children)
     signal.signal(signal.SIGINT, stop_children)
+
+    def harvest(k, wt):
+        """Copy the newest unit receipt and events into the group dir before the worktree goes."""
+        gid = spec[k]["env"].get("LOKI_GROUP_ID")
+        uid = spec[k]["env"].get("LOKI_UNIT_ID")
+        if not (spec[k]["unit"] and gid and uid):
+            return
+        try:
+            runs = os.path.join(wt, ".loki", "runs")
+            cands = [os.path.join(runs, d) for d in os.listdir(runs)
+                     if not os.path.islink(os.path.join(runs, d))
+                     and os.path.isfile(os.path.join(runs, d, "receipt.json"))]
+            if not cands:
+                return
+            src_dir = max(cands, key=lambda d: os.path.getmtime(os.path.join(d, "receipt.json")))
+            dst_dir = os.path.join(top, ".loki", "groups", gid, "group", "units", uid)
+            os.makedirs(dst_dir, mode=0o700, exist_ok=True)
+            for name in ("receipt.json", "events.jsonl"):
+                src, dst = os.path.join(src_dir, name), os.path.join(dst_dir, name)
+                if os.path.islink(src) or os.path.islink(dst) or not os.path.isfile(src):
+                    continue
+                tmp = dst + ".tmp%d" % os.getpid()
+                shutil.copyfile(src, tmp)
+                os.replace(tmp, dst)
+        except OSError:
+            pass
 
     def finish(k):
         nonlocal unmeasured
@@ -348,6 +378,7 @@ def main(argv):
             add_spend(usd)
         state[k].update(status=status, ok=ok, cost=usd)
         say("backlog: %s %s" % (spec[k]["label"], status))
+        harvest(k, wt)
         if ok:
             git("worktree", "remove", "--force", wt, cwd=top)
             if not spec[k]["unit"]:  # a passing unit branch is kept for the integrator
@@ -414,6 +445,10 @@ def main(argv):
             k = next_ready()
             if k is None:
                 break
+            if spec[k].get("done"):
+                state[k].update(status="VERIFIED (resumed)", ok=True)
+                say("backlog: %s VERIFIED (resumed)" % spec[k]["label"])
+                continue
             launch(k)
         if running:
             time.sleep(0.2)

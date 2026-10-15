@@ -36,6 +36,12 @@ id="${LOKI_UNIT_ID:-issue-${1##*#}}"
 echo "start $id $(git branch --show-current) args=$*" >> "$MOCK_DIR/events"
 mkdir "$MOCK_DIR/lock.$id"
 ls -d "$MOCK_DIR"/lock.* | wc -l | tr -d ' ' >> "$MOCK_DIR/conc"
+if [ -n "${LOKI_UNIT_ID:-}" ]; then
+    echo "spec $id ${LOKI_UNIT_SPEC:-none} speed=${LOKI_SPEED:-unset}" >> "$MOCK_DIR/events"
+    rd=".loki/runs/r1"; mkdir -p "$rd"
+    if [ "$id" = "${MOCK_SYMLINK:-}" ]; then ln -s "$MOCK_DIR/secret.json" "$rd/receipt.json"; else echo "{\"unit\":\"$id\"}" > "$rd/receipt.json"; fi
+    echo "{\"ev\":\"$id\"}" > "$rd/events.jsonl"
+fi
 sleep 1
 rmdir "$MOCK_DIR/lock.$id"
 if [ "$id" = "${MOCK_FAIL:-}" ]; then echo "Outcome:    FAILED"; echo "Reason:     boom"; echo "end $id fail" >> "$MOCK_DIR/events"; exit 1; fi
@@ -64,7 +70,7 @@ cat > "$TMP/dag.json" <<'DEOF'
  "edges":[{"from":"a","to":"b","via":"x"},{"from":"b","to":"d","via":"y"},{"from":"c","to":"d","via":"z"}]}
 DEOF
 
-reset_mock() { rm -rf "$TMP"/lock.* "$TMP"/events "$TMP"/conc "$HOME/.loki"; MOCK_FAIL=""; export MOCK_FAIL; }
+reset_mock() { rm -rf "$REPO/.loki/groups"; rm -rf "$TMP"/lock.* "$TMP"/events "$TMP"/conc "$HOME/.loki"; MOCK_FAIL=""; export MOCK_FAIL; }
 # Line number of the first event matching $1 in the events file.
 ev() { grep -n "$1" "$TMP/events" | head -1 | cut -d: -f1; }
 maxconc() { sort -n "$TMP/conc" | tail -1; }
@@ -134,6 +140,27 @@ echo "== summary header (S5)"
 reset_mock
 out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dag.json" --concurrency 3 2>&1)"
 grep -q '^ITEM ' <<<"$out" && ! grep -q '^ISSUE ' <<<"$out" && pass "summary header says ITEM, not ISSUE" || fail "summary header" "$out"
+
+echo "== receipts, resume, frozen spec (V118-02)"
+GU="$REPO/.loki/groups/g1/group/units"
+reset_mock
+echo '{"secret":1}' > "$TMP/secret.json"
+cat > "$TMP/dag2.json" <<DEOF
+{"group":"g1","units":[
+ {"id":"a","items":["do a"],"done":true},
+ {"id":"b","items":["do b"],"deps":["a"],"spec":"$TMP/accept.json"},
+ {"id":"c","items":["do c"]}]}
+DEOF
+out="$(MOCK_FAIL=c MOCK_SYMLINK=b $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dag2.json" --concurrency 2 2>&1)"
+grep -q 'backlog: unit-g1-1 VERIFIED (resumed)' <<<"$out" && pass "done unit reports VERIFIED (resumed)" || fail "resumed line" "$out"
+! grep -q '^start a ' "$TMP/events" && pass "launcher never called for the done unit" || fail "done launched" "$(cat "$TMP/events")"
+grep -q '^start b ' "$TMP/events" && pass "dependent of a done unit still runs" || fail "dependent" "$(cat "$TMP/events")"
+grep -q "^spec b $TMP/accept.json speed=1" "$TMP/events" && pass "spec unit gets LOKI_UNIT_SPEC and LOKI_SPEED=1" || fail "spec env" "$(cat "$TMP/events")"
+grep -q '^spec c none speed=unset' "$TMP/events" && pass "unit without spec gets neither" || fail "no spec env" "$(cat "$TMP/events")"
+grep -q '"unit":"c"' "$GU/c/receipt.json" 2>/dev/null && [ -f "$GU/c/events.jsonl" ] && pass "failed unit receipt and events harvested" || fail "fail harvest" "$(ls -R "$REPO/.loki" 2>&1 | head -20)"
+[ ! -e "$GU/b/receipt.json" ] && pass "symlinked receipt is not copied" || fail "symlink copied" "$(ls -l "$GU/b")"
+mode="$(stat -f %Lp "$GU/c" 2>/dev/null || stat -c %a "$GU/c")"
+[ "$mode" = "700" ] && pass "harvest dir mode 0700" || fail "mode" "$mode"
 
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
