@@ -796,11 +796,13 @@ export function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--airgap] [--repo]\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON\n`);
   process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); print commands for the rest\n`);
   // --airgap never reaches this handler: bin/loki routes it to the bash audit.
+  process.stdout.write(`  --repo    Print the repo profile (.loki/state/repo-profile.json): discovered\n`);
+  process.stdout.write(`            test/lint/typecheck/build commands and the baseline test run\n`);
   process.stdout.write(`  --airgap  Audit network egress: model inference, telemetry and the\n`);
   process.stdout.write(`            update check, REQUIRED or optional, and how to disable\n`);
   process.stdout.write(`            each. Exits non-zero while a required egress remains.\n\n`);
@@ -1566,8 +1568,11 @@ else:
 export async function runDoctor(argv: readonly string[]): Promise<number> {
   let json = false;
   let fix = false;
+  let repo = false;
   for (const arg of argv) {
-    if (arg === "--json") {
+    if (arg === "--repo") {
+      repo = true;
+    } else if (arg === "--json") {
       json = true;
     } else if (arg === "--fix") {
       fix = true;
@@ -1576,11 +1581,17 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--airgap] [--repo]\n`);
       return 1;
     }
   }
 
+  if (repo) { // REPOMEM: read-only print of .loki/state/repo-profile.json; never runs anything
+    const { loadProfile, renderProfile } = await import("../util/repo_baseline.ts");
+    const p = loadProfile(process.cwd());
+    process.stdout.write(json ? JSON.stringify(p, null, 2) + "\n" : renderProfile(p));
+    return 0;
+  }
   if (json) {
     const result = await buildDoctorJson();
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
