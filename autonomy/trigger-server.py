@@ -586,6 +586,14 @@ def handle_workflow_run_event(payload, dry_run=False):
     return summary, status
 
 
+def brief_start_args(brief):
+    """argv for a delegated PR run. `--brief` forces brief mode so the text is
+    never reclassified as a PRD path or issue URL, and `--pr --detach` are only
+    honored by `loki start` in brief mode because cmd_start routes them through
+    the worktree + PR path."""
+    return ["start", "--brief", brief, "--pr", "--detach"]
+
+
 def handle_job_event(payload, dry_run=False):
     """Handle a remotely-submitted job: loki start <spec> --detach.
 
@@ -597,11 +605,11 @@ def handle_job_event(payload, dry_run=False):
     spec = payload.get("spec")
     if not valid_spec(spec):
         return None, "rejected (invalid spec)"
-    args = ["start", spec.strip()]
     # Jira/Teams delegation sets pr=True: receipt-gated PR run, never a deploy.
     if payload.get("pr") is True:
-        args.append("--pr")
-    args.append("--detach")
+        args = brief_start_args(spec.strip())
+    else:
+        args = ["start", spec.strip(), "--detach"]
     summary = "job %s: %s" % (payload.get("job_id", "?"), spec.strip())
     # A remote submitter gates CI on this, so report the BUILD's outcome, not
     # merely that a build was launched. "fired" (launched) and "passed" must
@@ -791,9 +799,26 @@ def jira_trigger_matches(payload, assignees, labels):
         {x for x in have if isinstance(x, str)}.intersection(labels))
 
 
+def adf_text(node, out=None):
+    """Flatten an Atlassian Document Format tree to its text nodes."""
+    top = out is None
+    out = [] if top else out
+    if isinstance(node, dict):
+        if isinstance(node.get("text"), str):
+            out.append(node["text"])
+        for child in node.get("content") or []:
+            adf_text(child, out)
+    elif isinstance(node, list):
+        for child in node:
+            adf_text(child, out)
+    return " ".join(out) if top else None
+
+
 def build_jira_brief(issue):
     fields = issue.get("fields") or {}
     desc = fields.get("description")
+    if isinstance(desc, dict):
+        desc = adf_text(desc)
     parts = ["Resolve Jira issue %s: %s." % (issue.get("key"), fields.get("summary") or "")]
     if isinstance(desc, str) and desc.strip():
         parts.append(desc)
@@ -928,7 +953,7 @@ def handle_sentry_event(payload, dry_run=False):
     brief = build_sentry_brief(norm)
     if not valid_spec(brief):
         return None, "rejected (invalid brief)"
-    args = ["start", brief, "--pr", "--detach"]
+    args = brief_start_args(brief)
     summary = "sentry issue %s" % norm.get("number", "?")
     success = run_loki_command(args, dry_run=dry_run)
     status = "fired" if success else "error"
@@ -1721,9 +1746,14 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         if not valid_spec(brief):
             self._send_json(400, {"error": "invalid brief"})
             return
-        # Jira has no signed timestamp; its delivery id bounds replay.
-        if self.dispatcher.seen_delivery(
-                self.headers.get("X-Atlassian-Webhook-Identifier", "")):
+        # Jira has no signed timestamp, and the delivery id header is not covered
+        # by the HMAC, so also dedup on a hash of the signed body: a captured body
+        # cannot be replayed by changing or dropping the header.
+        dup_id = self.dispatcher.seen_delivery(
+            self.headers.get("X-Atlassian-Webhook-Identifier", ""))
+        dup_body = self.dispatcher.seen_delivery(
+            "jira-body:" + hashlib.sha256(body).hexdigest())
+        if dup_id or dup_body:
             self._send_json(200, {"status": "duplicate"})
             return
         job_id = self._enqueue_job(brief, pr=True)

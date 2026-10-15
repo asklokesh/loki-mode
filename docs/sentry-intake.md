@@ -46,15 +46,15 @@ Linear (`POST /linear`):
 Jira (`POST /jira`):
 
 1. Set `JIRA_WEBHOOK_SECRET` (the secret on a Jira Cloud webhook) and point the webhook at `/jira`. Set `JIRA_ASSIGNEES` (comma-separated accountId, email or display name) and/or `JIRA_LABELS`. With neither set, every event is skipped.
-2. `X-Hub-Signature` is `sha256=` + hex HMAC-SHA256 of the raw body. Bad or missing signature: 401. Jira signs no timestamp, so replay is bounded by `X-Atlassian-Webhook-Identifier`: a repeated delivery id answers `duplicate` and queues nothing.
-3. `jira:issue_created`, or `jira:issue_updated` whose changelog touches assignee or labels, runs only when the issue is assigned to a configured user or has a configured label. The key, summary and description are folded into a one-line brief (1500 bytes max) and run as `loki start "<brief>" --pr --detach`. Answers 202 with the job id.
+2. `X-Hub-Signature` is `sha256=` + hex HMAC-SHA256 of the raw body. Bad or missing signature: 401. Jira signs no timestamp and the `X-Atlassian-Webhook-Identifier` header is not covered by the HMAC, so replay is bounded two ways: a repeated delivery id, or a repeated signed body (sha256 of the raw body, so changing or dropping the header does not help), answers `duplicate` and queues nothing. A replay of a body Jira never sent twice still needs the secret to forge.
+3. `jira:issue_created`, or `jira:issue_updated` whose changelog touches assignee or labels, runs only when the issue is assigned to a configured user or has a configured label. The key, summary and description are folded into a one-line brief (1500 bytes max; an Atlassian Document Format description is flattened to its text) and run as `loki start --brief "<brief>" --pr --detach`. Answers 202 with the job id.
 
 Teams (`POST /teams`):
 
 1. Set `TEAMS_SECURITY_TOKEN` (the base64 token Teams shows when you create the outgoing webhook) and point the webhook at `/teams`.
 2. `Authorization: HMAC <base64>` is the base64 HMAC-SHA256 of the raw body keyed by the base64-decoded token. Bad signature: 401. The activity `timestamp` must be within 300s; a stale or missing one is refused with 401.
-3. The message text (with `<at>` mentions and tags removed) is the brief and runs as `loki start "<brief>" --pr --detach`. Teams gets a synchronous reply `Queued loki job <id>`. A repeated activity id is not queued twice.
+3. The message text (with `<at>` mentions and tags removed) is the brief and runs as `loki start --brief "<brief>" --pr --detach`. Teams gets a synchronous reply `Queued loki job <id>`. A repeated activity id is not queued twice.
 
-Jira and Teams runs are receipt-gated PR runs only: the server always passes `--pr` and never a deploy argument, so shipping stays a separate gated step. Neither secret reaches the `loki start` child environment, and both must differ from every other credential. A missing secret answers 503 naming the variable.
+Jira and Teams runs are receipt-gated PR runs only: the server always passes `--pr` and never a deploy argument, so shipping stays a separate gated step. `--brief` forces brief mode, so text that ends in `.md` or contains an issue URL is never reclassified, and `loki start --brief ... --pr/--worktree/--detach` runs in an isolated worktree, detached, and opens a PR carrying the Evidence Receipt (the same machinery as `loki start <issue>`). Sentry alerts use the same form. Neither secret reaches the `loki start` child environment, and both must differ from every other credential. A missing secret answers 503 naming the variable.
 
 Reply targets are stored server side keyed by job id, captured only after verification. Notifier errors are logged and never fail the job. Poll status with `GET /jobs/<id>`.

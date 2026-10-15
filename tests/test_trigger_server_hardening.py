@@ -21,7 +21,9 @@ import http.client
 import importlib
 import json
 import os
+import shutil
 import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -806,11 +808,12 @@ class TestSentryWebhook(unittest.TestCase):
         self.assertEqual(len(seen), 1)
         args = seen[0]
         self.assertEqual(args[0], "start")
-        self.assertIn("TypeError: x is undefined", args[1])
-        self.assertIn("Sentry issue", args[1])
-        self.assertFalse(args[1].startswith("-"))
-        self.assertNotIn("\n", args[1])
-        self.assertEqual(args[2:], ["--pr", "--detach"])
+        self.assertEqual(args[1], "--brief")
+        self.assertIn("TypeError: x is undefined", args[2])
+        self.assertIn("Sentry issue", args[2])
+        self.assertFalse(args[2].startswith("-"))
+        self.assertNotIn("\n", args[2])
+        self.assertEqual(args[3:], ["--pr", "--detach"])
 
     def test_no_deploy_argument_ever_present(self):
         _, seen = self._run(
@@ -1190,10 +1193,11 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         self.assertEqual(len(seen), 1)
         args = seen[0]
         self.assertEqual(args[0], "start")
-        self.assertIn("ENG-7", args[1])
-        self.assertIn("Crash on save", args[1])
-        self.assertIn("Line one Line two", args[1])
-        self.assertEqual(args[2:], ["--pr", "--detach"])
+        self.assertEqual(args[1], "--brief")
+        self.assertIn("ENG-7", args[2])
+        self.assertIn("Crash on save", args[2])
+        self.assertIn("Line one Line two", args[2])
+        self.assertEqual(args[3:], ["--pr", "--detach"])
         self.assertNotIn("--deploy", args)
 
     def test_jira_label_match_and_non_matching_skipped(self):
@@ -1233,8 +1237,8 @@ class TestJiraTeamsDelegation(unittest.TestCase):
     def test_jira_dash_leading_summary_cannot_become_a_flag(self):
         (status, _), seen = self._run(self._jira(self._jira_body(desc="--deploy prod")))
         self.assertEqual(status, 202)
-        self.assertTrue(seen[0][1].startswith("Resolve Jira issue"))
-        self.assertEqual(seen[0][2:], ["--pr", "--detach"])
+        self.assertTrue(seen[0][2].startswith("Resolve Jira issue"))
+        self.assertEqual(seen[0][3:], ["--pr", "--detach"])
 
     def test_teams_bad_or_missing_signature_401(self):
         body = self._teams_body()
@@ -1259,7 +1263,7 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         reply = json.loads(data)
         self.assertEqual(reply["type"], "message")
         self.assertTrue(reply["text"].startswith("Queued loki job "))
-        self.assertEqual(seen, [["start", "fix the flaky login test", "--pr", "--detach"]])
+        self.assertEqual(seen, [["start", "--brief", "fix the flaky login test", "--pr", "--detach"]])
         self.assertNotIn("--deploy", seen[0])
 
     def test_teams_invalid_brief_and_replay_not_enqueued(self):
@@ -1273,6 +1277,28 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         _, seen2 = self._run(twice)
         self.assertEqual(seen, [])
         self.assertEqual(len(seen2), 1)
+
+    def test_jira_adf_description_is_flattened(self):
+        adf = {"type": "doc", "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": "Save crashes"}]},
+            {"type": "paragraph", "content": [{"type": "text", "text": "on empty title"}]}]}
+        (status, _), seen = self._run(self._jira(self._jira_body(desc=adf)))
+        self.assertEqual(status, 202)
+        self.assertIn("Save crashes on empty title", seen[0][2])
+
+    def test_jira_replay_with_changed_or_dropped_identifier_deduped(self):
+        body = self._jira_body()
+
+        def replay(s):
+            return (self._jira(body, delivery="d1")(s),
+                    self._jira(body, delivery="other")(s),
+                    self._jira(body, delivery="")(s))
+
+        (first, second, third), seen = self._run(replay)
+        self.assertEqual(first[0], 202)
+        self.assertEqual(json.loads(second[1])["status"], "duplicate")
+        self.assertEqual(json.loads(third[1])["status"], "duplicate")
+        self.assertEqual(len(seen), 1)
 
     def test_generic_job_has_no_pr_flag(self):
         # /jobs behaviour unchanged: only Jira/Teams opt into --pr.
@@ -1290,6 +1316,76 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         self.assertEqual(ts.resolve_delegation_secrets(e, ["b"]), ("a", ""))
         e = {"JIRA_WEBHOOK_SECRET": "a", "TEAMS_SECURITY_TOKEN": "a"}
         self.assertEqual(ts.resolve_delegation_secrets(e, []), ("", ""))
+
+
+class TestBriefPrReachesWorktreePath(unittest.TestCase):
+    """The argv the server enqueues must really produce a worktree + PR run.
+
+    Drives the real `loki start` (cmd_start) in a scratch copy of the skill with
+    a stub run.sh and a stub gh, so a flag that cmd_start silently ignores in
+    brief mode turns this red even though the mocked-runner tests stay green.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = tempfile.mkdtemp(prefix="loki-brief-pr-")
+        repo = Path(__file__).resolve().parent.parent
+        cls.skill = os.path.join(cls.root, "skill")
+        subprocess.run(
+            ["rsync", "-a", "--exclude=.git", "--exclude=node_modules",
+             "--exclude=docs", "--exclude=tests", "--exclude=.claude",
+             "--exclude=loki-ts", "--exclude=dashboard", "--exclude=web-app",
+             "--exclude=website", str(repo) + "/", cls.skill + "/"], check=True)
+        cls.log = os.path.join(cls.root, "log")
+        stub = os.path.join(cls.skill, "autonomy", "run.sh")
+        with open(stub, "w") as f:
+            f.write('#!/usr/bin/env bash\n'
+                    'echo "RUN_SH_ARGV: $*" >> "$STUB_LOG"\n'
+                    'echo "ENV: PM=${LOKI_PARALLEL_MODE:-} WB=${LOKI_WORKTREE_BRANCH:-}" >> "$STUB_LOG"\n')
+        os.chmod(stub, 0o755)
+        cls.bin = os.path.join(cls.root, "bin")
+        os.makedirs(cls.bin)
+        with open(os.path.join(cls.bin, "gh"), "w") as f:
+            f.write('#!/usr/bin/env bash\necho "GH: $*" >> "$STUB_LOG"\n')
+        os.chmod(os.path.join(cls.bin, "gh"), 0o755)
+        os.symlink(os.path.join(cls.skill, "autonomy", "loki"),
+                   os.path.join(cls.bin, "loki"))
+        cls.origin = os.path.join(cls.root, "origin.git")
+        subprocess.run(["git", "init", "-q", "--bare", cls.origin], check=True)
+        cls.proj = os.path.join(cls.root, "proj")
+        os.makedirs(cls.proj)
+        for cmd in (["git", "init", "-q", "-b", "feature"],
+                    ["git", "config", "user.email", "t@example.com"],
+                    ["git", "config", "user.name", "t"],
+                    ["git", "commit", "-q", "--allow-empty", "-m", "init"],
+                    ["git", "remote", "add", "origin", cls.origin]):
+            subprocess.run(cmd, cwd=cls.proj, check=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def test_server_argv_takes_worktree_detach_and_pr_path(self):
+        argv = ts.brief_start_args("Resolve Jira issue ABC-1: login fails. notes.md")
+        env = dict(os.environ, STUB_LOG=self.log, LOKI_NO_BROWSER="1",
+                   PATH=self.bin + os.pathsep + os.environ["PATH"])
+        proc = subprocess.run(
+            ["bash", os.path.join(self.skill, "autonomy", "loki")] + argv,
+            cwd=self.proj, env=env, stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        deadline = time.time() + 60
+        text = ""
+        while time.time() < deadline:
+            if os.path.exists(self.log):
+                text = open(self.log).read()
+                if "GH: pr create" in text:
+                    break
+            time.sleep(0.5)
+        self.assertIn("RUN_SH_ARGV: --parallel", text)
+        self.assertIn("PM=true WB=issue/brief-", text)
+        self.assertIn("GH: pr create", text)
+        self.assertNotIn("--deploy", text)
 
 
 if __name__ == "__main__":

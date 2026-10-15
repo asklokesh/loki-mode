@@ -3443,6 +3443,24 @@ cmd_start() {
         return $?
     fi
 
+    # BRIEF + isolation flags (--pr/--worktree/--detach/--prepare-pr/--ship):
+    # the flags were collected above but only the issue path consumed them, so a
+    # delegated brief ran in the caller's checkout with no PR. Route it through
+    # cmd_run (worktree, detach, receipt-bearing PR) as a tracker-less issue.
+    if [ "$detected_type" = "brief" ] && [ "$issue_use_worktree" = "true" ]; then
+        local brief_run_args=("--brief-text" "$brief_text")
+        for a in "${issue_mode_args[@]+"${issue_mode_args[@]}"}"; do
+            brief_run_args+=("$a")
+        done
+        for a in "${args[@]+"${args[@]}"}"; do
+            brief_run_args+=("$a")
+        done
+        brief_run_args+=("--no-plan")
+        export LOKI_UNIFIED_START=1
+        cmd_run "${brief_run_args[@]}"
+        return $?
+    fi
+
     # R7 (zero-config first run): BRIEF mode. The user gave a one-line brief
     # (`loki start "build a todo app"` or `loki start --brief "..."`). Synthesize
     # a forward-looking PRD, switch to the lightweight TTFV profile (honest fast:
@@ -10939,6 +10957,10 @@ cmd_run() {
     local prepare_pr=false
     local auto_merge=false
     local run_detached=false
+    # Internal: set by cmd_start when a one-line brief carries --pr/--worktree/
+    # --detach. The brief is treated as a tracker-less issue so it reuses the
+    # worktree, detach and PR machinery below instead of a parallel copy.
+    local brief_in=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -11128,6 +11150,15 @@ cmd_run() {
             --config=*|--vars=*|--env-file=*)
                 shift
                 ;;
+            --brief-text)
+                if [ "$#" -ge 2 ]; then
+                    brief_in="$2"
+                    shift 2
+                else
+                    echo -e "${RED}--brief-text requires text${NC}"
+                    exit 1
+                fi
+                ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
                 echo "Run 'loki run --help' for usage."
@@ -11161,6 +11192,10 @@ cmd_run() {
     # Add --parallel once if worktree mode is enabled (not per-flag)
     if $use_worktree; then
         start_args+=("--parallel")
+    fi
+
+    if [[ -n "$brief_in" ]]; then
+        issue_ref="brief"
     fi
 
     if [[ -z "$issue_ref" ]]; then
@@ -11202,16 +11237,33 @@ cmd_run() {
 
     # Detect provider
     local issue_provider
-    issue_provider=$(detect_issue_provider "$issue_ref")
-    echo -e "${CYAN}Issue provider:${NC} ${issue_provider}"
-
-    # Fetch the issue
-    echo -e "${CYAN}Fetching issue...${NC}"
     local issue_json
-    issue_json=$(fetch_issue "$issue_ref") || {
-        echo -e "${RED}Failed to fetch issue${NC}"
-        exit 1
-    }
+    if [[ -n "$brief_in" ]]; then
+        # Brief: no tracker to fetch from. The text travels in env so quoting in
+        # the brief can never reach the shell or python source.
+        issue_provider="brief"
+        echo -e "${CYAN}Source:${NC} one-line brief"
+        issue_json=$(LOKI_BRIEF_IN="$brief_in" LOKI_BRIEF_TS="$(date +%s)" python3 -c "
+import json, os
+t = os.environ['LOKI_BRIEF_IN']
+first = t.strip().splitlines()[0] if t.strip() else 'brief'
+print(json.dumps({'provider': 'brief', 'number': 'b' + os.environ['LOKI_BRIEF_TS'],
+    'title': first[:80], 'body': t, 'labels': [], 'url': '', 'repo': ''}))
+") || {
+            echo -e "${RED}Failed to build brief${NC}"
+            exit 1
+        }
+    else
+        issue_provider=$(detect_issue_provider "$issue_ref")
+        echo -e "${CYAN}Issue provider:${NC} ${issue_provider}"
+
+        # Fetch the issue
+        echo -e "${CYAN}Fetching issue...${NC}"
+        issue_json=$(fetch_issue "$issue_ref") || {
+            echo -e "${RED}Failed to fetch issue${NC}"
+            exit 1
+        }
+    fi
 
     # Extract fields for display
     local title number url
@@ -11557,7 +11609,7 @@ ${_gh_receipt}"
             fi
 
             case "${issue_provider:-github}" in
-                github)
+                github|brief)
                     if command -v gh &>/dev/null; then
                         local branch_current
                         branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
@@ -11609,7 +11661,7 @@ ${_gh_receipt}"
                     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
                     if gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null; then
                         echo -e "${GREEN}PR merged and branch deleted${NC}"
-                        if [[ -n "${number:-}" ]]; then
+                        if [[ "${number:-}" =~ ^[0-9]+$ ]]; then
                             gh issue close "$number" --comment "Resolved by Loki Mode" 2>/dev/null || true
                         fi
                     else
