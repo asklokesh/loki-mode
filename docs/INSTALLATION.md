@@ -51,7 +51,33 @@ loki --version    # prints the installed version
 loki doctor       # checks providers, Bun, skill links and prerequisites
 ```
 
-You need at least one provider CLI. Claude Code (`claude`) is the default and the only one with every feature.
+## Prerequisites
+
+Required (`loki doctor` fails without them):
+
+| Tool | Minimum |
+|------|---------|
+| Node.js | 18 (20+ recommended, 22 LTS is the CI target) |
+| Python 3 | 3.8 |
+| git | any recent version |
+| jq | any |
+| curl | any |
+
+Plus at least one way to reach a model: a provider CLI (`claude`, `codex`, `cline`, `aider` or `opencode`) or the bundled Claude Agent SDK with credentials. A coding CLI is not mandatory when the SDK route works, but Claude Code (`claude`) is the default and the only provider with every feature: `npm install -g @anthropic-ai/claude-code`, then `claude auth login`.
+
+Optional: Bun 1.3+ (bundled by the npm package), bash 4+ (recommended), Ollama or an OpenRouter key for non-Claude model routes.
+
+One command checks and configures all of this:
+
+```bash
+loki setup            # wizard: tools, Claude login, provider, model route, spend cap
+loki setup --yes      # non-interactive, accept defaults
+loki setup --check    # report only
+loki doctor --fix     # apply safe fixes; prints exact commands for the rest
+loki config list      # show settings; also: loki config get|set|path
+```
+
+`loki doctor --fix` creates state directories and a default config. It never installs system packages or runs sudo; it prints those commands instead.
 
 ---
 
