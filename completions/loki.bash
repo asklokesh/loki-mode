@@ -142,14 +142,14 @@ _loki_completion() {
 
         deploy)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--execute --health-url --auto-rollback --dir --no-clip --allow-unanchored --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--execute --canary --health-url --auto-rollback --dir --no-clip --allow-unanchored --help" -- "$cur") )
                 return 0
             fi
             ;;
 
         verify)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--base --out --block-on --no-llm --json --explain --check-fresh --max-age --hosted --seal-composite --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--base --out --block-on --no-llm --json --explain --check-fresh --max-age --hosted --seal-composite --sign-deploy --receipt --pubkey --help" -- "$cur") )
                 return 0
             fi
             ;;

@@ -9751,7 +9751,11 @@ _deploy_latest_receipt() {
     return 0
 }
 
-# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha>
+# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary]
+# Writes the executed deploy's own record, then signs it (loki.deploy/1, Ed25519 via the
+# receipt signer in loki-ts/src/util/receipt_signer.ts) so it is bound to the receipt that
+# authorized it; `loki verify <record>` re-checks it offline. An unsigned record is reported
+# loudly and verifies as UNCHECKED, never VERIFIED.
 # Writes the executed deploy's own record. A deploy with no record of itself
 # defeats the entire premise of gating on evidence.
 #
@@ -9769,17 +9773,27 @@ _deploy_record() {
     # Post-deploy health and rollback facts. "unchecked" never implies healthy.
     local health_status="${7:-unchecked}" health_url="${8:-}"
     local rb_attempted="${9:-false}" rb_exit="${10:-}"
+    local receipt_sha="${11:-}" started_at="${12:-}" finished_at="${13:-}" target="${14:-}" canary="${15:-false}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
     local f="$ddir/$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
     DR_CMD="$command" DR_RC="$rc" DR_RUN="$run_id" DR_ANCHOR="$anchor" DR_OUT="$f" \
     DR_STATE="$anchor_state" DR_HS="$health_status" DR_HU="$health_url" \
-    DR_RBA="$rb_attempted" DR_RBX="$rb_exit" \
+    DR_RBA="$rb_attempted" DR_RBX="$rb_exit" DR_RSHA="$receipt_sha" DR_T0="$started_at" \
+    DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" \
         python3 -c '
 import json, os, datetime
 state = os.environ.get("DR_STATE") or "anchored"
+now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 json.dump({
+    "schema": "loki.deploy/1",
+    "receipt_sha256": os.environ.get("DR_RSHA", ""),
+    "head_sha": os.environ["DR_ANCHOR"],
+    "target": os.environ.get("DR_TGT", ""),
+    "started_at": os.environ.get("DR_T0") or now,
+    "finished_at": os.environ.get("DR_T1") or now,
+    "canary": os.environ.get("DR_CAN") == "true",
     "recorded_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "command": os.environ["DR_CMD"],
     "exit_code": int(os.environ["DR_RC"]),
@@ -9795,6 +9809,10 @@ json.dump({
     "rollback_exit": int(os.environ["DR_RBX"]) if os.environ.get("DR_RBX", "") != "" else None,
 }, open(os.environ["DR_OUT"], "w"), indent=2)
 ' 2>/dev/null || return 0
+    # Sign through the one Bun implementation. A subshell, because the delegate execs.
+    if ! ( _loki_bun_delegate engine10 verify --sign-deploy "$f" ) >/dev/null 2>&1; then
+        echo -e "${YELLOW}WARNING: the deploy record is UNSIGNED (no signing key or Bun route); it verifies as UNCHECKED.${NC}" >&2
+    fi
     printf '%s' "$f"
     return 0
 }
@@ -9946,6 +9964,20 @@ _deploy_try_execute() {
         return 1
     fi
 
+    # --canary uses only documented staged verbs; anything else refuses, naming why.
+    local canary="${_LOKI_DEPLOY_CANARY:-false}" exec_cmd="$command" canary_kind=""
+    if [ "$canary" = true ]; then
+        case "$command" in
+            "vercel --prod") canary_kind="vercel"; exec_cmd="vercel" ;;
+            "fly deploy") canary_kind="fly"; exec_cmd="fly deploy --strategy canary" ;;
+            *)
+                echo -e "${RED}REFUSED: --canary is not supported for: ${command}${NC}" >&2
+                echo "  This provider documents no staged rollout verb (Vercel: deploy then 'vercel promote'; Fly: 'fly deploy --strategy canary'). Nothing was run." >&2
+                return 1
+                ;;
+        esac
+    fi
+
     local reasons
     reasons="$(_deploy_gate "$dir" "$command")"
 
@@ -10002,7 +10034,7 @@ _deploy_try_execute() {
     else
         echo -e "${GREEN}Evidence gate PASSED.${NC} Receipt ${run_id:-unknown} VERIFIED this tree (${anchor:0:12})."
     fi
-    echo "Running: ${command}"
+    if [ "$canary" = true ]; then echo "Running (canary): ${exec_cmd}"; else echo "Running: ${command}"; fi
     echo ""
 
     # Run in the project dir. No credential env var is read, set, or forwarded:
@@ -10032,13 +10064,40 @@ _deploy_try_execute() {
         esac
     fi
 
-    local rc=0
-    ( cd "$dir" && eval "$command" ) || rc=$?
+    local rc=0 started_at finished_at purl="" canary_out=""
+    started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    local health_status="unchecked" rb_attempted=false rb_exit="" hcode=""
+    if [ "$canary_kind" = vercel ]; then
+        # Staged: a preview deploy (no --prod), probe the preview URL, promote only if healthy.
+        # Nothing reaches production before the probe, so there is nothing to roll back.
+        rb_cmd=""; auto_rollback=false
+        exec_cmd="vercel"
+        canary_out="$( cd "$dir" && eval "$exec_cmd" )" || rc=$?
+        printf '%s\n' "$canary_out"
+        purl="$(grep -Eo 'https?://[^[:space:]]+' <<<"$canary_out" | tail -n 1)"
+        if [ "$rc" -eq 0 ] && [ -n "$purl" ]; then
+            health_url="$purl"
+            echo "Probing canary health: ${health_url}"
+            if hcode="$(_deploy_probe_health "$health_url")"; then
+                health_status="healthy"
+                echo "Promoting: vercel promote ${purl}"
+                exec_cmd="vercel; vercel promote ${purl}"
+                ( cd "$dir" && vercel promote "$purl" ) || rc=$?
+            else
+                health_status="FAILED_HEALTH"
+                echo "  The canary was NOT promoted. Production is unchanged." >&2
+            fi
+        elif [ "$rc" -eq 0 ]; then
+            echo "  The preview deploy printed no URL, so it cannot be health-checked and is NOT promoted." >&2
+            rc=4
+        fi
+    else
+        ( cd "$dir" && eval "$exec_cmd" ) || rc=$?
+    fi
 
     # Health probe only after a deploy that exited 0. Without a URL, or after a
     # failed deploy, status is "unchecked": never a claim the service is healthy.
-    local health_status="unchecked" rb_attempted=false rb_exit="" hcode=""
-    if [ "$rc" -eq 0 ] && [ -n "$health_url" ]; then
+    if [ "$canary_kind" != vercel ] && [ "$rc" -eq 0 ] && [ -n "$health_url" ]; then
         echo "Probing health: ${health_url}"
         if hcode="$(_deploy_probe_health "$health_url")"; then
             health_status="healthy"
@@ -10066,9 +10125,12 @@ _deploy_try_execute() {
         fi
     fi
 
-    local rec
-    rec="$(_deploy_record "$dir" "$command" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
-        "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit")"
+    local rec rsha
+    finished_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    rsha="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("verification") or {}).get("hash") or "")' "$pj" 2>/dev/null || printf '')"
+    rec="$(_deploy_record "$dir" "$exec_cmd" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
+        "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit" \
+        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
@@ -10208,7 +10270,7 @@ cmd_deploy() {
     # file alone weakens this gate.
     local LOKI_DEPLOY_ALLOW_UNANCHORED=false
     # Per-invocation like --execute; local so an ambient env var cannot set them.
-    local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_AUTO_ROLLBACK=false
+    local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_AUTO_ROLLBACK=false _LOKI_DEPLOY_CANARY=false
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
@@ -10216,7 +10278,7 @@ cmd_deploy() {
             --help|-h|help)
                 echo -e "${BOLD}Loki Mode -- deploy command advisory (print-only by default)${NC}"
                 echo ""
-                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute] [--health-url URL [--auto-rollback]]"
+                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary]] [--health-url URL [--auto-rollback]]"
                 echo ""
                 echo "Detects your project type and your installed cloud CLI (and any"
                 echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
@@ -10283,6 +10345,18 @@ cmd_deploy() {
                 echo "                    print a manual note. Needs --health-url. The rolled-back"
                 echo "                    service is not re-probed."
                 echo ""
+                echo "Staged rollout (only with --execute):"
+                echo "  --canary          Vercel: deploy without --prod, health-check the preview"
+                echo "                    URL, then run 'vercel promote <url>'; a failed probe never"
+                echo "                    promotes. Fly: 'fly deploy --strategy canary'. Other"
+                echo "                    providers document no staged path and refuse --canary."
+                echo ""
+                echo "The executed deploy's record in .loki/deploys/ is a signed loki.deploy/1"
+                echo "attestation bound to the receipt (receipt_sha256). Re-check it offline with"
+                echo "'loki verify <record.json>' (add --pubkey FILE to use a given key). It fails"
+                echo "closed: a tampered, unsigned or unkeyed record, or a cited receipt that is not"
+                echo "VERIFIED, is never reported as VERIFIED."
+                echo ""
                 echo "Options:"
                 echo "  --dir <path>   Project directory to scan (default: current dir)"
                 echo "  --no-clip      Do not copy the idiomatic command to the clipboard"
@@ -10311,6 +10385,9 @@ cmd_deploy() {
             --auto-rollback)
                 _LOKI_DEPLOY_AUTO_ROLLBACK=true
                 ;;
+            --canary)
+                _LOKI_DEPLOY_CANARY=true
+                ;;
             --dir)
                 # Guard against a missing OR flag-shaped value: an unguarded
                 # shift when --dir is the last arg underflows under set -e, and a
@@ -10330,6 +10407,10 @@ cmd_deploy() {
 
     if [ "$_LOKI_DEPLOY_AUTO_ROLLBACK" = true ] && [ -z "$_LOKI_DEPLOY_HEALTH_URL" ]; then
         echo "loki deploy --auto-rollback requires --health-url (no health signal, no rollback)" >&2
+        return 1
+    fi
+    if [ "$_LOKI_DEPLOY_CANARY" = true ] && [ "$do_execute" != true ]; then
+        echo "loki deploy --canary requires --execute" >&2
         return 1
     fi
     if [ "$do_execute" != true ] && [ -n "$_LOKI_DEPLOY_HEALTH_URL" ]; then
@@ -18134,9 +18215,15 @@ cmd_verify() {
     # verified by the engine10 verifier directly; bin/loki sends a bare verify back here.
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
-            composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json)
+            --sign-deploy|--receipt|composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json)
                 _loki_bun_delegate engine10 verify "$@"
                 return $? ;;
+            # A signed deploy record (.loki/deploys/*.json, schema loki.deploy/1) is re-checked by the same verifier.
+            *.json)
+                if [ -f "$_pk_arg" ] && grep -q 'loki\.deploy/1' "$_pk_arg" 2>/dev/null; then
+                    _loki_bun_delegate engine10 verify "$@"
+                    return $?
+                fi ;;
         esac
     done
     # --fast: deterministic checks only, in milliseconds. Measured on this repo

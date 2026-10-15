@@ -765,3 +765,91 @@ describe("main() --max-age on the signed iat (V118-05)", () => {
     expect((await run(["--help"])).out).toContain("--max-age");
   });
 });
+
+describe("loki.deploy/1 signed deploy records", () => {
+  let dir: string, keyFile: string, savedKey: string | undefined, savedInline: string | undefined;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "deploy-rec-"));
+    keyFile = join(dir, "key.pem");
+    savedKey = process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; savedInline = process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    delete process.env["LOKI_RECEIPT_SIGNING_KEY"];
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = keyFile;
+  });
+  afterEach(() => {
+    if (savedKey === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"]; else process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = savedKey;
+    if (savedInline !== undefined) process.env["LOKI_RECEIPT_SIGNING_KEY"] = savedInline;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  async function run(args: string[]): Promise<{ code: number; out: string }> {
+    const out: string[] = [];
+    const w = process.stdout.write.bind(process.stdout), e = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try { return { code: await main(args, {}), out: out.join("") }; } finally { process.stdout.write = w; process.stderr.write = e; }
+  }
+  /** A legacy proof.json (digest = sha256 of the sorted compact body) with an attestation, plus a deploy record citing it. */
+  async function fixture(signedProof = true): Promise<{ rec: string; proof: string }> {
+    const { canonicalJson, signReceipt } = await import("../../src/util/receipt_signer.ts");
+    const body = { schema: "proof/1", run_id: "p1", verdict: "pass" };
+    const hash = createHash("sha256").update(canonicalJson(body)).digest("hex");
+    const att = signedProof ? signReceipt("p1", hash).jwt : null;
+    const proof = join(dir, ".loki", "proofs", "p1", "proof.json");
+    mkdirSync(join(dir, ".loki", "proofs", "p1"), { recursive: true });
+    writeFileSync(proof, JSON.stringify({ ...body, verification: { hash, attestation: att } }));
+    const rec = join(dir, ".loki", "deploys", "d.json");
+    mkdirSync(join(dir, ".loki", "deploys"), { recursive: true });
+    writeFileSync(rec, JSON.stringify({ schema: "loki.deploy/1", receipt_sha256: hash, head_sha: "abc123", target: "vercel", command: "vercel --prod", health_status: "HEALTHY", health_url: "http://x/ok", rollback_attempted: false, rollback_exit: null, started_at: "2026-01-01T00:00:00Z", finished_at: "2026-01-01T00:00:05Z" }));
+    return { rec, proof };
+  }
+  test("sign then verify is VERIFIED and leaves the receipt unchanged", async () => {
+    const { rec, proof } = await fixture();
+    const before = readFileSync(proof, "utf8");
+    expect((await run(["--sign-deploy", rec])).code).toBe(0);
+    const r = await run([rec]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("verdict: VERIFIED");
+    expect(readFileSync(proof, "utf8")).toBe(before);
+  });
+  test("a flipped field is TAMPERED, exit 1", async () => {
+    const { rec } = await fixture();
+    await run(["--sign-deploy", rec]);
+    writeFileSync(rec, readFileSync(rec, "utf8").replace('"HEALTHY"', '"FAILED_HEALTH"'));
+    const r = await run([rec]);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("verdict: TAMPERED");
+  });
+  test("an unsigned record is UNCHECKED, exit 2", async () => {
+    const { rec } = await fixture();
+    const r = await run([rec]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("verdict: UNCHECKED");
+  });
+  test("a machine without the signing key is UNCHECKED", async () => {
+    const { rec } = await fixture();
+    await run(["--sign-deploy", rec]);
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, "absent.pem");
+    expect((await run([rec])).code).toBe(2);
+  });
+  test("--pubkey re-checks with only the public half", async () => {
+    const { rec } = await fixture();
+    await run(["--sign-deploy", rec]);
+    const { createPrivateKey, createPublicKey } = await import("node:crypto");
+    const pub = join(dir, "pub.jwk");
+    writeFileSync(pub, JSON.stringify(createPublicKey(createPrivateKey(readFileSync(keyFile))).export({ format: "jwk" })));
+    process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, "absent.pem");
+    expect((await run([rec, "--pubkey", pub])).code).toBe(0);
+  });
+  test("a tampered cited receipt is never VERIFIED", async () => {
+    const { rec, proof } = await fixture();
+    await run(["--sign-deploy", rec]);
+    writeFileSync(proof, readFileSync(proof, "utf8").replace('"pass"', '"fail"'));
+    expect((await run([rec])).code).toBe(1);
+  });
+  test("an unsigned cited receipt is UNCHECKED, a missing one is UNCHECKED", async () => {
+    const a = await fixture(false);
+    await run(["--sign-deploy", a.rec]);
+    expect((await run([a.rec])).code).toBe(2);
+    rmSync(a.proof);
+    expect((await run([a.rec])).code).toBe(2);
+  });
+});

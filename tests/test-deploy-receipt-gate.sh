@@ -897,6 +897,131 @@ EOF
         else
             bad "19. fly rollback target wrong" "rc=$RC19 $(cat "$SENTINEL_DIR/fly-calls" 2>/dev/null) $(printf '%s' "$OUT19" | tail -3)"
         fi
+
+        # 20-25. SIGNED DEPLOY RECORD (loki.deploy/1) and the staged --canary rollout.
+        # The Bun route is pinned to the working tree source so the dist bundle cannot mask a regression.
+        if ! command -v bun >/dev/null 2>&1; then
+            echo "  SKIPPED: bun not installed; 20-25 need the Bun verifier (not a pass)"
+        else
+        export LOKI_TS_ENTRY="$PROJECT_DIR/loki-ts/src/cli.ts" LOKI_NO_BROWSER=1
+        vrf() { ( cd "$WORKROOT" && HOME="${VHOME:-$HOME}" bash "$LOKI_BIN" verify "$@" 2>&1 ); }
+        sha_of() { python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$1"; }
+
+        mk_hfix d20h; D20H="$WORKROOT/d20h"
+        PROOF20="$(ls "$D20H"/.loki/proofs/*/proof.json | head -1)"
+        PSUM20="$(sha_of "$PROOF20")"
+        reset_sentinels
+        _="$(run_h "$D20H" --execute --health-url "http://127.0.0.1:$HS_PORT/ok")"; RC20=$?
+        R20="$(last_record "$D20H")"
+        PDIG20="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["verification"]["hash"])' "$PROOF20")"
+        OUTV20="$(vrf "$R20")"; RCV20=$?
+        if [ "$RC20" -eq 0 ] && [ "$RCV20" -eq 0 ] && grep -q "verdict: VERIFIED" <<<"$OUTV20" \
+           && [ "$(rec_field "$R20" schema)" = "loki.deploy/1" ] && [ "$(rec_field "$R20" receipt_sha256)" = "$PDIG20" ] \
+           && [ "$(rec_field "$R20" head_sha)" = "$(git -C "$D20H" rev-parse HEAD)" ] \
+           && [ "$(sha_of "$PROOF20")" = "$PSUM20" ]; then
+            ok "20. the deploy record is a signed loki.deploy/1 attestation that verifies offline; the receipt is unchanged"
+        else
+            bad "20. signed record did not verify" "rc=$RC20 rcv=$RCV20 $(printf '%s' "$OUTV20" | tail -3)"
+        fi
+
+        # 21. a flipped byte in the record is TAMPERED (exit 1), never VERIFIED
+        python3 - "$R20" "$WORKROOT/rec21.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1]))
+d["health_status"] = "FAILED_HEALTH" if d["health_status"] == "healthy" else "healthy"
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PYEOF
+        OUTV21="$(vrf "$WORKROOT/rec21.json" --receipt "$PROOF20")"; RCV21=$?
+        if [ "$RCV21" -eq 1 ] && grep -q "verdict: TAMPERED" <<<"$OUTV21"; then
+            ok "21. an edited record fails closed as TAMPERED"
+        else
+            bad "21. edited record was not TAMPERED" "rcv=$RCV21 $(printf '%s' "$OUTV21" | tail -3)"
+        fi
+
+        # 22. unsigned record and unknown key are UNCHECKED (exit 2), never VERIFIED
+        python3 - "$R20" "$WORKROOT/rec22.json" <<'PYEOF'
+import json, sys
+d = json.load(open(sys.argv[1])); d.pop("signature", None)
+json.dump(d, open(sys.argv[2], "w"), indent=2)
+PYEOF
+        OUTV22="$(vrf "$WORKROOT/rec22.json" --receipt "$PROOF20")"; RCV22=$?
+        mkdir -p "$WORKROOT/nokeyhome"
+        OUTV22B="$(VHOME="$WORKROOT/nokeyhome" vrf "$R20")"; RCV22B=$?
+        if [ "$RCV22" -eq 2 ] && grep -q "verdict: UNCHECKED" <<<"$OUTV22" \
+           && [ "$RCV22B" -eq 2 ] && grep -q "verdict: UNCHECKED" <<<"$OUTV22B"; then
+            ok "22. an unsigned record and a machine without the key are UNCHECKED"
+        else
+            bad "22. unsigned or unkeyed record was not UNCHECKED" "rc=$RCV22/$RCV22B $(printf '%s' "$OUTV22B" | tail -2)"
+        fi
+
+        # 23. --pubkey checks against the given public key only, with no local key
+        bun -e 'import {createPrivateKey,createPublicKey} from "node:crypto";import {readFileSync,writeFileSync} from "node:fs";writeFileSync(process.argv[1],createPublicKey(createPrivateKey(readFileSync(process.argv[2]))).export({type:"spki",format:"pem"}))' \
+            "$WORKROOT/pub23.pem" "$HOME/.loki/keys/receipt-ed25519.pem" 2>/dev/null
+        OUTV23="$(VHOME="$WORKROOT/nokeyhome" vrf "$R20" --pubkey "$WORKROOT/pub23.pem")"; RCV23=$?
+        if [ "$RCV23" -eq 0 ] && grep -q "verdict: VERIFIED" <<<"$OUTV23"; then
+            ok "23. verify --pubkey re-checks the record with only the public key"
+        else
+            bad "23. --pubkey verify failed" "rcv=$RCV23 $(printf '%s' "$OUTV23" | tail -3)"
+        fi
+
+        # 24. a cited receipt that is no longer VERIFIED fails closed, though the record signature is intact
+        cp -R "$D20H/.loki" "$WORKROOT/loki24"
+        python3 - "$WORKROOT/loki24" <<'PYEOF'
+import glob, json, sys
+for f in glob.glob(sys.argv[1] + "/proofs/*/proof.json"):
+    d = json.load(open(f)); d["files_changed"] = {"count": 999999}
+    json.dump(d, open(f, "w"))
+PYEOF
+        R24="$(ls "$WORKROOT"/loki24/deploys/*.json | head -1)"
+        OUTV24="$(vrf "$R24")"; RCV24=$?
+        if [ "$RCV24" -ne 0 ] && ! grep -q "verdict: VERIFIED" <<<"$OUTV24"; then
+            ok "24. a record citing a tampered receipt is never VERIFIED"
+        else
+            bad "24. record verified over a tampered receipt" "rcv=$RCV24 $(printf '%s' "$OUTV24" | tail -3)"
+        fi
+
+        # 25. --canary on Vercel: healthy preview is promoted; a 500 preview is NEVER promoted; unsupported providers refuse
+        printf '%s' "http://127.0.0.1:$HS_PORT/ok" > "$WORKROOT/canary-url"
+        cat > "$FAKE_BIN/vercel" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >> "$SENTINEL_DIR/vercel-calls"
+if [ "\$1" = "promote" ]; then exit 0; fi
+cat "$WORKROOT/canary-url"; echo
+exit 0
+EOF
+        chmod +x "$FAKE_BIN/vercel"
+        mk_hfix d25a; D25A="$WORKROOT/d25a"
+        rm -f "$SENTINEL_DIR/vercel-calls"
+        _="$(run_h "$D25A" --execute --canary)"; RC25A=$?
+        R25A="$(last_record "$D25A")"
+        if [ "$RC25A" -eq 0 ] && grep -q "^promote http://127.0.0.1:$HS_PORT/ok" "$SENTINEL_DIR/vercel-calls" \
+           && ! grep -q -- "--prod" "$SENTINEL_DIR/vercel-calls" \
+           && [ "$(rec_field "$R25A" canary)" = "True" ] && [ "$(rec_field "$R25A" health_status)" = "healthy" ] \
+           && grep -q "verdict: VERIFIED" <<<"$(vrf "$R25A")"; then
+            ok "25a. canary: preview deploy (no --prod), healthy probe, then vercel promote; record verifies"
+        else
+            bad "25a. canary happy path wrong" "rc=$RC25A calls=$(cat "$SENTINEL_DIR/vercel-calls" 2>/dev/null)"
+        fi
+        printf '%s' "http://127.0.0.1:$HS_PORT/bad" > "$WORKROOT/canary-url"
+        mk_hfix d25b; D25B="$WORKROOT/d25b"
+        rm -f "$SENTINEL_DIR/vercel-calls"
+        _="$(run_h "$D25B" --execute --canary)"; RC25B=$?
+        R25B="$(last_record "$D25B")"
+        if [ "$RC25B" -eq 4 ] && ! grep -q "promote" "$SENTINEL_DIR/vercel-calls" \
+           && [ "$(rec_field "$R25B" health_status)" = "FAILED_HEALTH" ]; then
+            ok "25b. canary with a 500 preview never promotes and exits 4"
+        else
+            bad "25b. a failed canary was promoted or mis-recorded" "rc=$RC25B calls=$(cat "$SENTINEL_DIR/vercel-calls" 2>/dev/null)"
+        fi
+        mkdir -p "$WORKROOT/d25c/dist"; echo "<html></html>" > "$WORKROOT/d25c/dist/index.html"
+        reset_sentinels
+        OUT25C="$(run_h "$WORKROOT/d25c" --execute --canary)"; RC25C=$?
+        if [ "$RC25C" -ne 0 ] && [ "$(any_sentinel)" -eq 0 ] && grep -q "documents no staged rollout verb" <<<"$OUT25C"; then
+            ok "25c. a provider with no staged path refuses --canary and runs nothing"
+        else
+            bad "25c. unsupported provider did not refuse --canary" "rc=$RC25C sentinels=$(any_sentinel)"
+        fi
+        fi
     fi
     kill "$HS_PID" 2>/dev/null || true
 else

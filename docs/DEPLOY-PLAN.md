@@ -7,9 +7,19 @@ clean tree, a destructive-op refusal and a policy permission (`.loki/policies.js
 deployed URL after the command. A non-2xx result is recorded as FAILED_HEALTH and exits non-zero;
 with `--auto-rollback` it also runs the provider's documented rollback verb (`vercel rollback`,
 `fly releases rollback <captured version>`; Netlify and Cloudflare print a manual note). With no
-URL, health is recorded as "unchecked", never healthy. The deploy record lives in `.loki/deploys`
-and is not part of the signed receipt. `loki start --deploy [--health-url U] [--auto-rollback]`
-chains the same gated command after a start. Not built: canary or staged rollout, and receipt-bound deploy records.
+URL, health is recorded as "unchecked", never healthy. The deploy record in `.loki/deploys` is a
+signed `loki.deploy/1` attestation bound to the receipt that authorized it (fields: receipt_sha256,
+head_sha, target, command, health_status, health_url, rollback_attempted, rollback_exit,
+started_at, finished_at). It is signed with the existing receipt signer (Ed25519, no new crypto)
+and the receipt itself is unchanged. `loki verify <record.json>` re-checks it offline (also with
+`--pubkey FILE`; `--receipt FILE` names the cited receipt when it is not beside the record). It
+fails closed: a flipped byte is TAMPERED, an unsigned record or an unknown key is UNCHECKED, and a
+cited receipt that is not VERIFIED is never reported as VERIFIED.
+`loki deploy --execute --canary` is a staged rollout using only documented provider verbs: Vercel
+deploys without `--prod`, health-checks the preview URL, then runs `vercel promote <url>` (a failed
+probe never promotes); Fly runs `fly deploy --strategy canary`; Netlify and Cloudflare document no
+staged path and refuse `--canary` with a sentence saying so.
+`loki start --deploy [--health-url U] [--auto-rollback]` chains the same gated command after a start.
 
 Everything below is the original print-only design plan and is kept for history.
 

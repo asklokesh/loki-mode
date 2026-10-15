@@ -1,7 +1,7 @@
 // Single definition of the default receipt signer file name. Kept apart from any
 // key-ish word so the secret scanner never reads the name as a secret (E-156).
-import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
-import { chmodSync, linkSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes, createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify, type KeyObject } from "node:crypto";
+import { chmodSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { Obj } from "../engine10/types.ts";
@@ -100,4 +100,90 @@ export function takeMaxAge(args: readonly string[]): { args: readonly string[]; 
     }
   }
   return { args, raw, seconds };
+}
+
+// ---- loki.deploy/1: a deploy record signed with the receipt signer and bound to the receipt that authorized it ----
+export const DEPLOY_SCHEMA = "loki.deploy/1";
+export interface DeployDeps {
+  pubFor(kid: unknown): KeyObject | undefined; // the key for a kid, or undefined (never creates a key)
+  verifyReceipt(path: string): Promise<{ verdict: string; reasons: string[] }>; // engine10 receipt.json check, injected
+  attest(jwt: string, hash: string): { status: string; reason: string | null }; // JWT attestation check, injected
+}
+type DeployResult = { verdict: "VERIFIED" | "TAMPERED" | "UNCHECKED"; reasons: string[] };
+const deployBody = (r: Obj): Obj => Object.fromEntries(Object.entries(r).filter(([k]) => k !== "signature"));
+/** Adds signature {alg,kid,sig} (Ed25519 over the canonical body, every other field covered). Null when no signing key exists. */
+export function signDeployRecord(rec: Obj): Obj | null {
+  const key = loadSigningKey();
+  if (!key) return null;
+  const body = deployBody(rec);
+  return { ...body, signature: { alg: "EdDSA", kid: kidOf(createPublicKey(key)), sig: b64u(sign(null, Buffer.from(canonicalJson(body)), key)) } };
+}
+/** Finds the receipt a record cites (by receipt_sha256) next to it: proofs/<id>/proof.json or runs/<id>/receipt.json under the .loki dir. */
+function citedReceipt(recPath: string, hash: string, explicit: string | null): string | null {
+  if (explicit) return explicit;
+  const root = dirname(dirname(recPath));
+  for (const sub of ["proofs", "runs"]) {
+    const base = join(root, sub);
+    let ids: string[] = [];
+    try { ids = readdirSync(base); } catch { continue; }
+    for (const id of ids) {
+      const p = join(base, id, sub === "proofs" ? "proof.json" : "receipt.json");
+      try {
+        const d = JSON.parse(readFileSync(p, "utf8")) as Obj;
+        if ((sub === "proofs" ? (d["verification"] as Obj | undefined)?.["hash"] : d["receipt_sha256"]) === hash) return p;
+      } catch { /* not this one */ }
+    }
+  }
+  return null;
+}
+async function checkCited(path: string, hash: string, deps: DeployDeps): Promise<DeployResult> {
+  const doc = JSON.parse(readFileSync(path, "utf8")) as Obj;
+  if (doc["receipt_sha256"] !== undefined) {
+    if (doc["receipt_sha256"] !== hash) return { verdict: "TAMPERED", reasons: ["the cited receipt has a different receipt_sha256"] };
+    const r = await deps.verifyReceipt(path);
+    return r.verdict === "VERIFIED" ? { verdict: "VERIFIED", reasons: [] } : { verdict: r.verdict === "TAMPERED" ? "TAMPERED" : "UNCHECKED", reasons: [`cited receipt is ${r.verdict}`, ...r.reasons] };
+  }
+  const v = (doc["verification"] ?? {}) as { hash?: unknown; attestation?: unknown };
+  if (v.hash !== hash) return { verdict: "TAMPERED", reasons: ["the cited receipt has a different digest"] };
+  if (createHash("sha256").update(canonicalJson(Object.fromEntries(Object.entries(doc).filter(([k]) => k !== "verification")))).digest("hex") !== hash) return { verdict: "TAMPERED", reasons: ["cited receipt body does not hash to its recorded digest"] };
+  if (typeof v.attestation !== "string" || !v.attestation) return { verdict: "UNCHECKED", reasons: ["cited receipt is UNSIGNED"] };
+  const a = deps.attest(v.attestation, hash);
+  return a.status === "verified" ? { verdict: "VERIFIED", reasons: [] } : { verdict: a.status === "tampered" ? "TAMPERED" : "UNCHECKED", reasons: [`cited receipt attestation: ${a.reason ?? a.status}`] };
+}
+/** Offline re-check of a signed deploy record. Fails closed: unsigned, unknown key, missing or non-VERIFIED cited receipt is UNCHECKED, never VERIFIED. */
+export async function verifyDeployRecord(recPath: string, rec: Obj, deps: DeployDeps, receiptFile: string | null = null): Promise<DeployResult> {
+  const sig = rec["signature"] as { alg?: unknown; kid?: unknown; sig?: unknown } | undefined;
+  if (!sig || typeof sig !== "object") return { verdict: "UNCHECKED", reasons: ["deploy record is unsigned (no signature)"] };
+  if (sig.alg !== "EdDSA" || typeof sig.sig !== "string") return { verdict: "TAMPERED", reasons: ["malformed deploy signature"] };
+  const pub = deps.pubFor(sig.kid);
+  if (!pub) return { verdict: "UNCHECKED", reasons: [`no key for kid ${String(sig.kid)} on this machine (set LOKI_RECEIPT_SIGNING_KEY_FILE or use --pubkey)`] };
+  if (!verify(null, Buffer.from(canonicalJson(deployBody(rec))), pub, Buffer.from(sig.sig, "base64url"))) return { verdict: "TAMPERED", reasons: ["deploy record signature does not verify (record was edited)"] };
+  const hash = rec["receipt_sha256"];
+  if (typeof hash !== "string" || !hash) return { verdict: "UNCHECKED", reasons: ["deploy record cites no receipt_sha256"] };
+  const path = citedReceipt(recPath, hash, receiptFile);
+  if (!path) return { verdict: "UNCHECKED", reasons: [`cited receipt ${hash.slice(0, 12)} not found next to the record (pass --receipt FILE)`] };
+  try { return await checkCited(path, hash, deps); } catch { return { verdict: "UNCHECKED", reasons: ["cited receipt is unreadable"] }; }
+}
+/** loki verify dispatch: `--sign-deploy FILE` signs a record in place; a loki.deploy/1 file is verified. Null means the args are not a deploy record. */
+export async function deployAttestCmd(args: readonly string[], env: { takePubkey(a: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string }; make(pk?: KeyObject): DeployDeps }): Promise<number | null> {
+  const rc = args.indexOf("--receipt"), receiptFile = rc >= 0 ? (args[rc + 1] ?? null) : null;
+  const pre = rc < 0 ? args : args.filter((_, i) => i !== rc && i !== rc + 1), si = pre.indexOf("--sign-deploy");
+  const pk = env.takePubkey(si >= 0 ? pre.filter((_, i) => i !== si && i !== si + 1) : pre), deps = env.make(pk.pubkey);
+  const file = si >= 0 ? pre[si + 1] : pk.args[0];
+  if (!file || file.startsWith("-")) return null;
+  let rec: Obj;
+  try { if (statSync(file).size > 1_000_000) return null; rec = JSON.parse(readFileSync(file, "utf8")) as Obj; } catch { return si >= 0 ? (process.stderr.write(`loki verify: cannot read deploy record ${file}\n`), 2) : null; }
+  if (rec === null || typeof rec !== "object" || rec["schema"] !== DEPLOY_SCHEMA) return si >= 0 ? (process.stderr.write(`loki verify: ${file} is not a ${DEPLOY_SCHEMA} record\n`), 2) : null;
+  if (si >= 0) {
+    const signed = signDeployRecord(rec);
+    if (!signed) return (process.stdout.write("deploy record: UNSIGNED (no signing key)\n"), 2);
+    writeFileSync(`${file}.tmp`, JSON.stringify(signed, null, 2) + "\n");
+    renameSync(`${file}.tmp`, file);
+    process.stdout.write(`deploy record: signed (kid ${(signed["signature"] as { kid: string }).kid})\n`);
+    return 0;
+  }
+  const r = await verifyDeployRecord(file, rec, deps, receiptFile);
+  process.stdout.write(`deploy: ${file}\nverdict: ${r.verdict}\n${r.reasons.map((x) => `  ${x}\n`).join("")}`);
+  if (r.verdict === "VERIFIED") process.stdout.write(`receipt_sha256: ${String(rec["receipt_sha256"])}\n`);
+  return r.verdict === "VERIFIED" ? 0 : r.verdict === "TAMPERED" ? 1 : 2;
 }
