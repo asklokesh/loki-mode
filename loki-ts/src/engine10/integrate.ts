@@ -1,0 +1,87 @@
+// D61 slice 12: integrate passing parallel unit branches onto loki/group-<id> in DAG order, run the repo test command once, and
+// report per-unit outcomes. A conflict stops the merge and names the unit; the merge is aborted so no partial merge is left (fix
+// units are deferred). Moat: ok is true only when every unit passed its own run, merged cleanly and the suite ran and exited 0.
+import { spawnSync } from "node:child_process";
+import type { Dag } from "../features/decompose.ts";
+import { safeGitSpawn } from "../util/safe_git.ts";
+
+export type UnitOutcome = "pass" | "fail" | "conflict" | "skipped";
+export interface IntegrateOpts {
+  repoDir: string;
+  groupId: string;
+  baseRef: string;
+  dag: Dag;
+  /** unit id -> branch holding that unit's commits. */
+  branches: Record<string, string>;
+  /** unit ids whose own run did not pass: never merged, reported fail. Units absent from branches are also fail. */
+  failedUnits?: readonly string[];
+  /** repo test command argv, run once in repoDir after all merges. */
+  testCmd: readonly string[];
+  suiteTimeoutMs?: number;
+}
+export interface IntegrateResult {
+  perUnit: Record<string, UnitOutcome>;
+  branch: string;
+  /** null when the suite did not run (conflict, nothing merged, or git failure). */
+  suiteExit: number | null;
+  conflictUnit?: string;
+  ok: boolean;
+  reason?: string;
+}
+
+const IDENT = ["-c", "user.name=loki-integrate", "-c", "user.email=integrate@loki.invalid", "-c", "commit.gpgSign=false"];
+const SUITE_ENV_KEYS = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "CI", "LOKI_NO_BROWSER"];
+
+/** Unit ids in DAG order: edges (from -> to) first, ties broken by dag.units order. A cycle is appended in unit order, never dropped. */
+export function integrationOrder(dag: Dag): string[] {
+  const ids = dag.units.map((u) => u.id), indeg = new Map(ids.map((i) => [i, 0]));
+  for (const e of dag.edges) if (indeg.has(e.to) && indeg.has(e.from)) indeg.set(e.to, indeg.get(e.to)! + 1);
+  const out: string[] = [], done = new Set<string>();
+  while (out.length < ids.length) {
+    const next = ids.find((i) => !done.has(i) && indeg.get(i) === 0);
+    if (next === undefined) { for (const i of ids) if (!done.has(i)) { out.push(i); done.add(i); } break; }
+    out.push(next); done.add(next);
+    for (const e of dag.edges) if (e.from === next && indeg.has(e.to)) indeg.set(e.to, indeg.get(e.to)! - 1);
+  }
+  return out;
+}
+
+const git = (dir: string, args: string[]) => safeGitSpawn(dir, [...IDENT, ...args], { encoding: "utf8" });
+
+export function integrate(o: IntegrateOpts): IntegrateResult {
+  const branch = `loki/group-${o.groupId}`, order = integrationOrder(o.dag);
+  const perUnit: Record<string, UnitOutcome> = {};
+  const failed = new Set(o.failedUnits ?? []);
+  for (const id of order) perUnit[id] = failed.has(id) || !o.branches[id] ? "fail" : "skipped";
+  const res = (r: Partial<IntegrateResult>): IntegrateResult => ({ perUnit, branch, suiteExit: null, ok: false, ...r });
+
+  const co = git(o.repoDir, ["checkout", "-B", branch, o.baseRef]);
+  if (co.status !== 0) return res({ reason: `cannot create ${branch} from ${o.baseRef}: ${String(co.stderr).trim()}` });
+
+  const merged: string[] = [];
+  for (const id of order) {
+    if (perUnit[id] === "fail") continue;
+    const m = git(o.repoDir, ["merge", "--no-ff", "--no-edit", "-m", `integrate ${id}`, o.branches[id]!]);
+    if (m.status !== 0) {
+      git(o.repoDir, ["merge", "--abort"]);
+      git(o.repoDir, ["reset", "--hard", "HEAD"]);
+      perUnit[id] = "conflict";
+      return res({ conflictUnit: id, reason: `merge conflict in unit ${id}` });
+    }
+    perUnit[id] = "pass";
+    merged.push(id);
+  }
+  if (merged.length === 0) return res({ reason: "no unit branch to merge" });
+  if (o.testCmd.length === 0) return res({ reason: "no test command: suite did not run" });
+
+  const env: NodeJS.ProcessEnv = {};
+  for (const k of SUITE_ENV_KEYS) if (process.env[k] !== undefined) env[k] = process.env[k];
+  const s = spawnSync(o.testCmd[0]!, o.testCmd.slice(1), { cwd: o.repoDir, env, stdio: "ignore", timeout: o.suiteTimeoutMs ?? 600_000 });
+  const suiteExit = typeof s.status === "number" ? s.status : null;
+  if (suiteExit !== 0) {
+    for (const id of merged) perUnit[id] = "fail";
+    return res({ suiteExit, reason: suiteExit === null ? "suite did not complete" : `suite exit ${suiteExit}` });
+  }
+  const allPass = Object.values(perUnit).every((v) => v === "pass");
+  return res({ suiteExit, ok: allPass, ...(allPass ? {} : { reason: "a unit failed its own run" }) });
+}
