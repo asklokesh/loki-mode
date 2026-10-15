@@ -163,7 +163,10 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
     const pkgPath = join(appDir, "package.json");
     let script: string | null = null;
     if (!boot) {
-      if (!existsSync(pkgPath)) return skip("no package.json");
+      if (!existsSync(pkgPath)) { // monorepo without a root manifest: name the packages checked
+        const subs = ["backend", "frontend"].filter((d) => existsSync(join(repoDir, d, "package.json")));
+        return skip(subs.length > 0 ? `no dev, preview or start script in ${subs.map((d) => `${d}/`).join(" or ")} (no root package.json)` : "no package.json");
+      }
       script = pickScript(JSON.parse(readFileSync(pkgPath, "utf8")));
       if (!script) return skip("no dev, preview or start script");
     }

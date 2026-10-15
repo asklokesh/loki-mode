@@ -270,3 +270,12 @@ test("e2e video and trace: spec encodes routes safely, PR section labels media, 
   expect(sec).toContain("- video: evidence/ab/e2e/out/v.webm");
   expect(sec).toContain("- trace: evidence/ab/e2e/out/trace.zip");
 });
+
+test("monorepo without a root manifest names the packages it checked", async () => {
+  const repo = join(root, "mono");
+  for (const d of ["backend", "frontend"]) { mkdirSync(join(repo, d), { recursive: true }); writeFileSync(join(repo, d, "package.json"), JSON.stringify({ scripts: { build: "x" } })); }
+  const ev = await captureVisualEvidence(repo, RUN, ["frontend/app/page.tsx"], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 2000 });
+  expect(ev.skipped).toContain("no dev, preview or start script in backend/ or frontend/");
+  const bare = join(root, "bare"); mkdirSync(bare, { recursive: true });
+  expect((await captureVisualEvidence(bare, RUN, ["a/page.tsx"], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 2000 })).skipped).toBe("no package.json");
+});
