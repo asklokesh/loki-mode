@@ -1,0 +1,681 @@
+#!/usr/bin/env python3
+"""Harness attribution benchmark: does Loki beat raw Claude Code on the SAME model?
+
+Runs each task twice under matched conditions:
+  raw_claude : `claude -p` with the pinned model, same permissions, same budget
+  loki       : `loki start --provider claude` with the same pinned model
+
+Both arms get the same seed repo (byte-identical, fresh git repo), the same
+prompt text, the same wall-clock cap and the same budget. The acceptance test
+lives OUTSIDE the agent workspace (benchmarks/attribution/tasks/<id>/acceptance)
+and is copied in only AFTER the run, so the implementer cannot modify it.
+Neither arm grades itself: acceptance = held-out command exit code 0.
+
+Metrics follow the harness attribution protocol in docs/EVALUATING.md:
+failures and timeouts stay in every denominator, unmeasured cost is reported as
+unmeasured (never zero), cost per accepted task is undefined when none accepted.
+
+Reuses runner._apply_overlay, report._median and benchmarks/bench/adapters (_base.run_cli process-group reaping, the
+claude JSON parser, the loki adapter and its cost collection). No model call is
+made by --dry-run, by the default (no --execute) invocation, or by the tests.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from adapters import _base  # noqa: E402
+from adapters import claude_code as _claude_adapter  # noqa: E402
+from adapters import loki as _loki_adapter  # noqa: E402
+import bench_schema as _schema  # noqa: E402
+import equivalence_report as _equivalence  # noqa: E402
+import report as _report  # noqa: E402
+import runner as _runner  # noqa: E402
+
+REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
+DEFAULT_TASKS_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "tasks")
+DEFAULT_OUT_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "results")
+
+ARMS = ("raw_claude", "loki")
+TASK_CLASSES = ("bugfix", "feature", "refactor", "integration")
+PILOT_MIX = {"bugfix": 2, "feature": 2, "refactor": 1, "integration": 1}
+DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_BUDGET_USD = 5.0
+DEFAULT_TIMEOUT_S = 900
+SCHEMA_VERSION = "1.0"
+
+
+# ---------------------------------------------------------------------------
+# Task set
+# ---------------------------------------------------------------------------
+
+
+def _read(path: str) -> str:
+    with open(path) as fh:
+        return fh.read()
+
+
+def _nonempty_dir(path: str) -> bool:
+    return os.path.isdir(path) and bool(os.listdir(path))
+
+
+def load_tasks(tasks_dir: str, only: Optional[List[str]] = None
+               ) -> Tuple[List[Dict[str, Any]], List[str], List[str]]:
+    """Return (tasks, errors, warnings). Errors make the set unusable."""
+    errors: List[str] = []
+    warnings: List[str] = []
+    tasks: List[Dict[str, Any]] = []
+    if not os.path.isdir(tasks_dir):
+        return [], ["tasks dir not found: %s" % tasks_dir], []
+    for name in sorted(os.listdir(tasks_dir)):
+        tdir = os.path.join(tasks_dir, name)
+        spec_path = os.path.join(tdir, "task.json")
+        if not os.path.isfile(spec_path):
+            continue
+        if only and name not in only:
+            continue
+        try:
+            with open(spec_path) as fh:
+                spec = json.load(fh)
+        except Exception as exc:  # noqa: BLE001
+            errors.append("%s: task.json unreadable: %s" % (name, exc))
+            continue
+        errs = _validate_task(name, tdir, spec)
+        if errs:
+            errors.extend(errs)
+            continue
+        acc = spec["acceptance"]
+        prompt_path = os.path.join(tdir, spec["prompt"])
+        with open(prompt_path) as fh:
+            prompt = fh.read()
+        tasks.append({
+            "id": spec["id"],
+            "class": spec["class"],
+            "title": spec.get("title", spec["id"]),
+            "dir": tdir,
+            "prompt": prompt,
+            "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+            "seed_dir": os.path.join(tdir, spec["seed"]),
+            "seed_sha256": _schema._hash_fixture_dir(os.path.join(tdir, spec["seed"])),
+            "acceptance_dir": os.path.join(tdir, acc["dir"]),
+            "acceptance_sha256": _schema._hash_fixture_dir(os.path.join(tdir, acc["dir"])),
+            "acceptance_cmd": acc["cmd"],
+            "acceptance_timeout_s": int(acc.get("timeout_s", 60)),
+            "reference_dir": (os.path.join(tdir, spec["reference"])
+                              if spec.get("reference") else None),
+            "agent_timeout_s": spec.get("agent_timeout_s"),
+        })
+    if only:
+        missing = sorted(set(only) - {t["id"] for t in tasks})
+        for m in missing:
+            errors.append("requested task not found or invalid: %s" % m)
+    if not only and tasks and not errors:
+        mix: Dict[str, int] = {}
+        for t in tasks:
+            mix[t["class"]] = mix.get(t["class"], 0) + 1
+        if mix != PILOT_MIX:
+            warnings.append("task mix %s differs from the pilot mix %s"
+                            % (json.dumps(mix, sort_keys=True),
+                               json.dumps(PILOT_MIX, sort_keys=True)))
+    return tasks, errors, warnings
+
+
+def _validate_task(name: str, tdir: str, spec: Any) -> List[str]:
+    errs: List[str] = []
+    if not isinstance(spec, dict):
+        return ["%s: task.json is not an object" % name]
+    for key in ("id", "class", "prompt", "seed", "acceptance"):
+        if key not in spec:
+            errs.append("%s: missing field '%s'" % (name, key))
+    if errs:
+        return errs
+    if spec["id"] != name:
+        errs.append("%s: id '%s' does not match directory name" % (name, spec["id"]))
+    if spec["class"] not in TASK_CLASSES:
+        errs.append("%s: class '%s' not in %s" % (name, spec["class"], list(TASK_CLASSES)))
+    pp = os.path.join(tdir, str(spec["prompt"]))
+    if not os.path.isfile(pp) or not _read(pp).strip():
+        errs.append("%s: prompt file missing or empty" % name)
+    if not _nonempty_dir(os.path.join(tdir, str(spec["seed"]))):
+        errs.append("%s: seed dir missing or empty" % name)
+    acc = spec["acceptance"]
+    if not isinstance(acc, dict) or not acc.get("cmd") or not acc.get("dir"):
+        errs.append("%s: acceptance needs 'dir' and 'cmd'" % name)
+        return errs
+    if not _nonempty_dir(os.path.join(tdir, str(acc["dir"]))):
+        errs.append("%s: acceptance dir missing or empty" % name)
+    # The hidden test must not already sit in the agent-visible seed.
+    seed_dir = os.path.join(tdir, str(spec["seed"]))
+    acc_dir = os.path.join(tdir, str(acc["dir"]))
+    if os.path.isdir(seed_dir) and os.path.isdir(acc_dir):
+        for fname in os.listdir(acc_dir):
+            sp = os.path.join(seed_dir, fname)
+            ap = os.path.join(acc_dir, fname)
+            if os.path.isfile(sp) and "test" in fname.lower() \
+                    and os.path.isfile(ap):
+                errs.append("%s: acceptance test '%s' also present in seed" % (name, fname))
+    if os.path.realpath(acc_dir).startswith(os.path.realpath(seed_dir) + os.sep):
+        errs.append("%s: acceptance dir is inside the seed dir" % name)
+    return errs
+
+
+# ---------------------------------------------------------------------------
+# Environment pinning
+# ---------------------------------------------------------------------------
+
+def _git_sha(path: str) -> Optional[str]:
+    try:
+        out = subprocess.run(["git", "-C", path, "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=15,
+                             env=_scoped_env())
+        return out.stdout.strip() or None if out.returncode == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _scoped_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    keep = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "SHELL",
+            "ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR", "LOKI_NO_BROWSER")
+    env = {k: os.environ[k] for k in keep if k in os.environ}
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["LOKI_NO_BROWSER"] = "1"
+    if extra:
+        env.update(extra)
+    return env
+
+
+def pin_environment(probe: bool, runner: Optional[Callable] = None,
+                    model: Optional[str] = None) -> Dict[str, Any]:
+    """Tool versions and commit SHAs. probe=False records them as not probed."""
+    if not probe:
+        return {"probed": False, "claude_version": None, "loki_version": None,
+                "loki_repo_sha": None, "python_version": sys.version.split()[0],
+                "loki_session_model_effective": model,
+                "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL")}
+    return {
+        "probed": True,
+        "claude_version": _claude_adapter._detect_claude_version(runner=runner),
+        "loki_version": _loki_adapter._detect_loki_version(runner=runner),
+        "loki_repo_sha": _git_sha(REPO_ROOT),
+        "python_version": sys.version.split()[0],
+        "loki_session_model_effective": model,
+        "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Plan
+# ---------------------------------------------------------------------------
+
+def arm_order(task_index: int, repeat: int, arms: Tuple[str, ...] = ARMS) -> List[str]:
+    """Alternate which arm goes first so time-of-day drift is not one-sided."""
+    return list(arms) if (task_index + repeat) % 2 == 0 else list(reversed(arms))
+
+
+def build_plan(tasks: List[Dict[str, Any]], repeats: int, model: str,
+               budget_usd: float, timeout_s: int,
+               arms: Tuple[str, ...] = ARMS) -> Dict[str, Any]:
+    cells = []
+    for r in range(repeats):
+        for i, t in enumerate(tasks):
+            for arm in arm_order(i, r, arms):
+                cells.append({"task": t["id"], "class": t["class"],
+                              "arm": arm, "repeat": r + 1})
+    return {
+        "model": model, "budget_usd": budget_usd, "timeout_s": timeout_s,
+        "repeats": repeats, "arms": list(arms),
+        "tasks": [{"id": t["id"], "class": t["class"],
+                   "seed_sha256": t["seed_sha256"],
+                   "acceptance_sha256": t["acceptance_sha256"],
+                   "prompt_sha256": t["prompt_sha256"]} for t in tasks],
+        "cells": cells,
+        "model_calls_planned": len(cells),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Metrics (pure; unit-tested)
+# ---------------------------------------------------------------------------
+
+def _wilson_ci95(k: int, n: int) -> Optional[List[float]]:
+    """Rounded [low, high] from equivalence_report.wilson_interval; None when n == 0."""
+    _p, low, high = _equivalence.wilson_interval(k, n)
+    return None if low is None else [round(low, 4), round(high, 4)]
+
+
+def _median(vals: List[float]) -> Optional[float]:
+    m = _report._median(vals)
+    return None if m is None else round(m, 3)
+
+
+def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Metrics for one arm. EVERY row (failure, timeout, harness error) counts.
+
+    acceptance_rate      accepted / assigned
+    false_completion     (reported_success and not accepted) / reported_success
+                         (null when nothing reported success)
+    cost_per_accepted    total spend across ALL attempts / accepted. Null when
+                         no run was accepted (undefined) OR when any run's cost
+                         was unmeasured (a partial sum is not a total; the
+                         measured part is still reported as a lower bound).
+    elapsed              median time-to-accepted over accepted runs, reported
+                         with the completion rate; elapsed over all runs too.
+    """
+    assigned = len(rows)
+    accepted = sum(1 for r in rows if r.get("accepted"))
+    reported = [r for r in rows if r.get("reported_success")]
+    false_done = [r for r in reported if not r.get("accepted")]
+    completed = sum(1 for r in rows if r.get("status") == "completed")
+    timeouts = sum(1 for r in rows if r.get("status") == "timeout")
+    errors = sum(1 for r in rows if r.get("status") not in ("completed", "timeout"))
+
+    measured = [r["cost_usd"] for r in rows if r.get("cost_usd") is not None]
+    unmeasured_n = assigned - len(measured)
+    spend = round(sum(measured), 6)
+    if assigned == 0:
+        cost_status = "no_runs"
+    elif accepted == 0:
+        cost_status = "undefined_no_accepted"
+    elif unmeasured_n == assigned:
+        cost_status = "unmeasured"
+    elif unmeasured_n:
+        cost_status = "partial_lower_bound"
+    else:
+        cost_status = "measured"
+    per_accepted = (round(spend / accepted, 6)
+                    if cost_status == "measured" else None)
+    lower_bound = (round(spend / accepted, 6)
+                   if cost_status == "partial_lower_bound" else None)
+
+    return {
+        "assigned": assigned,
+        "accepted": accepted,
+        "acceptance_rate": round(accepted / assigned, 4) if assigned else None,
+        "acceptance_rate_ci95": _wilson_ci95(accepted, assigned),
+        "reported_success": len(reported),
+        "false_completions": len(false_done),
+        "false_completion_rate": (round(len(false_done) / len(reported), 4)
+                                  if reported else None),
+        "completion_rate": round(completed / assigned, 4) if assigned else None,
+        "timeouts": timeouts,
+        "errors": errors,
+        "spend_measured_usd": spend if measured else None,
+        "runs_with_unmeasured_cost": unmeasured_n,
+        "cost_status": cost_status,
+        "cost_per_accepted_usd": per_accepted,
+        "cost_per_accepted_lower_bound_usd": lower_bound,
+        "elapsed_median_accepted_s": _median(
+            [r["elapsed_s"] for r in rows
+             if r.get("accepted") and r.get("elapsed_s") is not None]),
+        "elapsed_median_all_s": _median(
+            [r["elapsed_s"] for r in rows if r.get("elapsed_s") is not None]),
+    }
+
+
+def summarize(rows: List[Dict[str, Any]],
+              arms: Tuple[str, ...] = ARMS) -> Dict[str, Any]:
+    by_arm = {a: compute_metrics([r for r in rows if r["arm"] == a]) for a in arms}
+    by_class: Dict[str, Any] = {}
+    for c in TASK_CLASSES:
+        sub = [r for r in rows if r.get("class") == c]
+        if sub:
+            by_class[c] = {a: compute_metrics([r for r in sub if r["arm"] == a])
+                           for a in arms}
+    return {"by_arm": by_arm, "by_class": by_class}
+
+
+# ---------------------------------------------------------------------------
+# Execution
+# ---------------------------------------------------------------------------
+
+def materialize_seed(task: Dict[str, Any], workdir: str) -> None:
+    """Copy the seed into workdir and make it a fresh, identical git repo."""
+    shutil.copytree(task["seed_dir"], workdir, dirs_exist_ok=True)
+    env = _scoped_env({"GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
+                       "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"})
+    ident = ["-c", "user.name=attribution-bench", "-c", "user.email=bench@example.invalid"]
+    for args in (["init", "-q"], ["add", "-A"], ident + ["commit", "-q", "-m", "seed"]):
+        subprocess.run(["git", "-C", workdir] + args, check=True,
+                       capture_output=True, env=env, timeout=60)
+
+
+def grade(task: Dict[str, Any], workdir: str) -> Dict[str, Any]:
+    """Copy the hidden acceptance files in AFTER the run, run them, exit 0 = pass."""
+    _runner._apply_overlay(workdir, task["acceptance_dir"])
+    try:
+        rc, out, err = _base._run_reapable(
+            shlex.split(task["acceptance_cmd"]), workdir,
+            task["acceptance_timeout_s"], _scoped_env())
+    except subprocess.TimeoutExpired:
+        return {"passed": False, "rc": 124, "tail": "acceptance timeout"}
+    except Exception as exc:  # noqa: BLE001
+        return {"passed": False, "rc": 1, "tail": "grader error: %s" % exc}
+    tail = ((out or "") + (err or "")).strip().splitlines()[-8:]
+    return {"passed": rc == 0, "rc": rc, "tail": "\n".join(tail)}
+
+
+def run_raw_claude(workdir: str, prompt: str, *, model: str, budget_usd: float,
+                   timeout_s: int, runner: Optional[Callable] = None) -> Dict[str, Any]:
+    cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model,
+           "--dangerously-skip-permissions", "--max-budget-usd", str(budget_usd)]
+    rc, out, _err, status, dur = _base.run_cli(
+        cmd, cwd=workdir, timeout=timeout_s, runner=runner,
+        env={"LOKI_NO_BROWSER": "1"})
+    cost, t_in, t_out, model_used = _claude_adapter._parse_json_result(out)
+    is_error = False
+    try:
+        obj = json.loads((out or "").strip())
+        is_error = bool(isinstance(obj, dict) and obj.get("is_error"))
+    except Exception:  # noqa: BLE001
+        pass
+    return {
+        "status": status, "rc": rc, "elapsed_s": dur,
+        "reported_success": rc == 0 and not is_error,
+        "cost_usd": cost, "cost_source": "claude_json.total_cost_usd" if cost is not None else None,
+        "tokens_in": t_in, "tokens_out": t_out, "model_used": model_used or model,
+        "command": "claude -p <prompt> --output-format json --model %s "
+                   "--dangerously-skip-permissions --max-budget-usd %s" % (model, budget_usd),
+    }
+
+
+def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
+             timeout_s: int, runner: Optional[Callable] = None) -> Dict[str, Any]:
+    prev = os.environ.get("LOKI_BUDGET_LIMIT")
+    prev_model = os.environ.get("LOKI_SESSION_MODEL")
+    os.environ["LOKI_BUDGET_LIMIT"] = str(budget_usd)
+    # Force the pinned model for the loki arm even if the operator exported a
+    # different LOKI_SESSION_MODEL; the adapter only pins when it is absent.
+    os.environ["LOKI_SESSION_MODEL"] = model
+    try:
+        res = _loki_adapter.run(workdir, prompt_file, model=model,
+                                timeout=timeout_s, runner=runner, provider="claude")
+    finally:
+        if prev is None:
+            os.environ.pop("LOKI_BUDGET_LIMIT", None)
+        else:
+            os.environ["LOKI_BUDGET_LIMIT"] = prev
+        if prev_model is None:
+            os.environ.pop("LOKI_SESSION_MODEL", None)
+        else:
+            os.environ["LOKI_SESSION_MODEL"] = prev_model
+    prov = res.get("provenance") or {}
+    status = res["exit_status"]
+    return {
+        "status": status, "rc": 0 if status == "completed" else None,
+        "elapsed_s": res["duration_s"],
+        "reported_success": status == "completed",
+        "cost_usd": res["cost_usd"],
+        "cost_source": "loki.efficiency_cost" if res["cost_usd"] is not None else None,
+        "tokens_in": res["tokens_in"], "tokens_out": res["tokens_out"],
+        "model_used": res["model_used"], "iterations": res["iterations"],
+        "verify_verdict": prov.get("verify_verdict"),
+        "failure_reason": prov.get("failure_reason"),
+        "command": prov.get("command"),
+    }
+
+
+def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
+             budget_usd: float, timeout_s: int, scratch: str,
+             runner: Optional[Callable] = None) -> Dict[str, Any]:
+    row: Dict[str, Any] = {"task": task["id"], "class": task["class"], "arm": arm,
+                           "repeat": repeat, "accepted": False,
+                           "reported_success": False}
+    workdir = os.path.join(scratch, "%s-%s-%d" % (task["id"], arm, repeat))
+    try:
+        materialize_seed(task, workdir)
+        cap = task.get("agent_timeout_s")
+        eff_timeout = min(timeout_s, cap) if cap else timeout_s
+        if arm == "raw_claude":
+            res = run_raw_claude(workdir, task["prompt"], model=model,
+                                 budget_usd=budget_usd, timeout_s=eff_timeout,
+                                 runner=runner)
+        else:
+            # PRD lives OUTSIDE the workspace so it is not part of the repo.
+            pf = os.path.join(scratch, "%s-%d.prd.md" % (task["id"], repeat))
+            with open(pf, "w") as fh:
+                fh.write(task["prompt"])
+            res = run_loki(workdir, pf, model=model, budget_usd=budget_usd,
+                           timeout_s=eff_timeout, runner=runner)
+        row.update(res)
+        g = grade(task, workdir)
+        row["accepted"] = bool(g["passed"])
+        row["acceptance"] = {"rc": g["rc"], "tail": g["tail"]}
+    except Exception as exc:  # noqa: BLE001 - a harness failure stays in the denominator
+        row["status"] = "harness_error"
+        row["error"] = str(exc)
+        row.setdefault("cost_usd", None)
+        row.setdefault("elapsed_s", None)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+    return row
+
+
+def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
+            runner: Optional[Callable] = None,
+            progress: Callable[[str], None] = lambda s: None) -> List[Dict[str, Any]]:
+    by_id = {t["id"]: t for t in tasks}
+    scratch = tempfile.mkdtemp(prefix="loki-attr-")
+    rows: List[Dict[str, Any]] = []
+    try:
+        for cell in plan["cells"]:
+            progress("run %s %s #%d" % (cell["task"], cell["arm"], cell["repeat"]))
+            rows.append(run_cell(by_id[cell["task"]], cell["arm"], cell["repeat"],
+                                 model=plan["model"], budget_usd=plan["budget_usd"],
+                                 timeout_s=plan["timeout_s"], scratch=scratch,
+                                 runner=runner))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
+
+def _fmt(v: Any, pct: bool = False, usd: bool = False, secs: bool = False) -> str:
+    if v is None:
+        return "n/a"
+    if pct:
+        return "%.1f%%" % (v * 100)
+    if usd:
+        return "$%.4f" % v
+    if secs:
+        return "%.1fs" % v
+    return str(v)
+
+
+def _cost_cell(m: Dict[str, Any]) -> str:
+    s = m["cost_status"]
+    if s == "measured":
+        return _fmt(m["cost_per_accepted_usd"], usd=True)
+    if s == "partial_lower_bound":
+        return ">= %s (%d runs unmeasured)" % (
+            _fmt(m["cost_per_accepted_lower_bound_usd"], usd=True),
+            m["runs_with_unmeasured_cost"])
+    if s == "undefined_no_accepted":
+        return "undefined (none accepted)"
+    return "unmeasured"
+
+
+def _ci(m: Dict[str, Any]) -> str:
+    ci = m.get("acceptance_rate_ci95")
+    return "n/a" if not ci else "%.0f-%.0f%%" % (ci[0] * 100, ci[1] * 100)
+
+
+def render_markdown(result: Dict[str, Any]) -> str:
+    plan, env, rows = result["plan"], result["environment"], result["rows"]
+    summ = result["summary"]
+    L: List[str] = []
+    L.append("# Harness attribution benchmark: Loki vs raw Claude Code")
+    L.append("")
+    L.append("Generated: %s. This is a pilot; small n is not statistical proof." % result["generated_utc"])
+    L.append("")
+    L.append("## Pinned conditions")
+    L.append("")
+    L.append("- Model id (both arms): `%s`" % plan["model"])
+    L.append("- Budget per run: $%s; wall-clock cap per run: %ss; repeats: %d" % (
+        plan["budget_usd"], plan["timeout_s"], plan["repeats"]))
+    L.append("- Claude Code version: %s" % (env.get("claude_version") or "not recorded"))
+    L.append("- Loki version: %s; Loki repo SHA: %s" % (
+        env.get("loki_version") or "not recorded", env.get("loki_repo_sha") or "not recorded"))
+    L.append("- Tasks: %s" % ", ".join("%s (seed %s, acceptance %s)" % (
+        t["id"], t["seed_sha256"][:8], t["acceptance_sha256"][:8]) for t in plan["tasks"]))
+    L.append("")
+    L.append("## Summary by arm")
+    L.append("")
+    L.append("| Arm | Assigned | Accepted | Acceptance rate (95% CI) | Reported success | False-completion rate | Completion rate | Timeouts | Errors | Cost per accepted | Median time to accepted |")
+    L.append("|---|---|---|---|---|---|---|---|---|---|---|")
+    for arm in plan["arms"]:
+        m = summ["by_arm"][arm]
+        L.append("| %s | %d | %d | %s (%s) | %d | %s | %s | %d | %d | %s | %s |" % (
+            arm, m["assigned"], m["accepted"], _fmt(m["acceptance_rate"], pct=True), _ci(m),
+            m["reported_success"], _fmt(m["false_completion_rate"], pct=True),
+            _fmt(m["completion_rate"], pct=True), m["timeouts"], m["errors"],
+            _cost_cell(m), _fmt(m["elapsed_median_accepted_s"], secs=True)))
+    L.append("")
+    L.append("Failures, timeouts and harness errors are included in every denominator. "
+             "Cost totals cover all attempts, not only accepted ones.")
+    L.append("")
+    L.append("## Summary by task class")
+    L.append("")
+    L.append("| Class | Arm | Assigned | Accepted | Acceptance rate | False-completion rate |")
+    L.append("|---|---|---|---|---|---|")
+    for c, per in summ["by_class"].items():
+        for arm in plan["arms"]:
+            m = per[arm]
+            L.append("| %s | %s | %d | %d | %s | %s |" % (
+                c, arm, m["assigned"], m["accepted"],
+                _fmt(m["acceptance_rate"], pct=True),
+                _fmt(m["false_completion_rate"], pct=True)))
+    L.append("")
+    L.append("## Task-level results")
+    L.append("")
+    L.append("| Task | Class | Arm | Run | Status | Reported success | Accepted | Elapsed | Cost |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
+    for r in rows:
+        cost = ("unmeasured" if r.get("cost_usd") is None else _fmt(r["cost_usd"], usd=True))
+        L.append("| %s | %s | %s | %d | %s | %s | %s | %s | %s |" % (
+            r["task"], r["class"], r["arm"], r["repeat"], r.get("status", "n/a"),
+            "yes" if r.get("reported_success") else "no",
+            "yes" if r.get("accepted") else "no",
+            _fmt(r.get("elapsed_s"), secs=True), cost))
+    L.append("")
+    L.append("## Disclosures")
+    L.append("")
+    L.append("- Reported success: raw arm is `claude -p` exit 0 with is_error false; "
+             "Loki arm is `loki start` exit 0. Acceptance is the held-out test only.")
+    L.append("- Unmeasured cost is reported as unmeasured, never as zero. Subscription "
+             "usage and API dollars are not interchangeable; costs here are API-dollar "
+             "figures reported by each tool.")
+    L.append("- Human effort, recovery success and review quality are not measured by this harness.")
+    L.append("- Known unavoidable difference: Loki receives the prompt as a PRD file; "
+             "raw Claude receives it inline.")
+    return "\n".join(L) + "\n"
+
+
+def print_plan(plan: Dict[str, Any], env: Dict[str, Any], warnings: List[str]) -> None:
+    print("attribution plan (DRY RUN: no model call is made)")
+    print("  model (both arms): %s" % plan["model"])
+    print("  budget per run: $%s   timeout per run: %ss   repeats: %d"
+          % (plan["budget_usd"], plan["timeout_s"], plan["repeats"]))
+    print("  arms: %s" % ", ".join(plan["arms"]))
+    print("  tasks (%d):" % len(plan["tasks"]))
+    for t in plan["tasks"]:
+        print("    %-28s %-12s seed=%s acceptance=%s" % (
+            t["id"], t["class"], t["seed_sha256"][:8], t["acceptance_sha256"][:8]))
+    print("  cells in run order (%d model-backed runs would execute):" % plan["model_calls_planned"])
+    for c in plan["cells"]:
+        print("    %-28s %-11s run %d" % (c["task"], c["arm"], c["repeat"]))
+    print("  tool versions: %s" % ("probed" if env.get("probed") else "not probed in dry run"))
+    for w in warnings:
+        print("  warning: %s" % w)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="loki bench attribution",
+        description="Same-model harness attribution: raw Claude Code vs Loki.")
+    p.add_argument("--dry-run", action="store_true",
+                   help="validate the task set and print the plan; no model call")
+    p.add_argument("--execute", action="store_true",
+                   help="really run the model-backed cells (spends money); "
+                        "without it the command only prints the plan")
+    p.add_argument("--report", metavar="RESULT_JSON",
+                   help="re-render the markdown report from a result json")
+    p.add_argument("--tasks", default="", help="comma-separated task ids (default: all)")
+    p.add_argument("--tasks-dir", default=DEFAULT_TASKS_DIR)
+    p.add_argument("--repeats", type=int, default=1)
+    p.add_argument("--model", default=os.environ.get("LOKI_BENCH_MODEL", DEFAULT_MODEL),
+                   help="exact model id used by BOTH arms (default %s)" % DEFAULT_MODEL)
+    p.add_argument("--budget-usd", type=float, default=DEFAULT_BUDGET_USD)
+    p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
+    p.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
+    return p
+
+
+def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) -> int:
+    args = _parser().parse_args(argv)
+    if args.report:
+        with open(args.report) as fh:
+            result = json.load(fh)
+        sys.stdout.write(render_markdown(result))
+        return 0
+    if args.repeats < 1 or args.budget_usd <= 0 or args.timeout < 1:
+        print("repeats, budget-usd and timeout must be positive", file=sys.stderr)
+        return 2
+    only = [s for s in args.tasks.split(",") if s] or None
+    tasks, errors, warnings = load_tasks(args.tasks_dir, only)
+    if errors or not tasks:
+        for e in errors or ["no tasks found in %s" % args.tasks_dir]:
+            print("task set invalid: %s" % e, file=sys.stderr)
+        return 2
+    plan = build_plan(tasks, args.repeats, args.model, args.budget_usd, args.timeout)
+    execute = args.execute and not args.dry_run
+    env = pin_environment(probe=execute, runner=runner, model=args.model)
+    if not execute:
+        print_plan(plan, env, warnings)
+        if not args.dry_run:
+            print("  pass --execute to run these cells for real (spends API budget)")
+        return 0
+    if not env.get("claude_version"):
+        print("claude CLI not found or not runnable; cannot run the benchmark", file=sys.stderr)
+        return 2
+    rows = run_all(tasks, plan, runner=runner,
+                   progress=lambda s: print(s, file=sys.stderr))
+    result = {
+        "schema_version": SCHEMA_VERSION,
+        "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "plan": plan, "environment": env, "warnings": warnings,
+        "rows": rows, "summary": summarize(rows),
+    }
+    os.makedirs(args.out_dir, exist_ok=True)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    jpath = os.path.join(args.out_dir, "attribution-%s.json" % stamp)
+    mpath = os.path.join(args.out_dir, "attribution-%s.md" % stamp)
+    with open(jpath, "w") as fh:
+        json.dump(result, fh, indent=2)
+    with open(mpath, "w") as fh:
+        fh.write(render_markdown(result))
+    print("json:   %s" % jpath)
+    print("report: %s" % mpath)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

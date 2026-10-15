@@ -1,0 +1,14 @@
+{
+  "id": "bugfix-1-pagination",
+  "class": "bugfix",
+  "title": "Pagination drops the last partial page",
+  "prompt": "prompt.md",
+  "seed": "seed",
+  "reference": "reference",
+  "acceptance": {
+    "dir": "acceptance",
+    "cmd": "python3 -m unittest -q acceptance_test",
+    "timeout_s": 60
+  },
+  "agent_timeout_s": 600
+}

@@ -184,6 +184,33 @@ per-call cost was not recorded.
 
 ---
 
+## 8. Harness attribution: what Loki adds to the same model
+
+Question: what does Loki add to the same underlying coding agent, and is the benefit worth its cost? Status: pilot. Six tasks, small n. A pilot reports variance; it is not proof of superiority. Running it is a separate, paid step.
+
+```bash
+loki bench attribution --dry-run                       # validate task set, print plan, no model call
+loki bench attribution --model <model-id> --execute    # run, spends API budget
+loki bench attribution --report <result.json>          # re-render the markdown report
+```
+
+Source checkout only. Implementation: `benchmarks/bench/attribution.py`, reusing `runner._apply_overlay`, `report._median` and `benchmarks/bench/adapters` (process-tree reaping, the Claude JSON parser, the Loki adapter and its cost collection). Options: `--tasks id,id`, `--repeats N` (default 1), `--model ID` (default `claude-sonnet-5`, or `LOKI_BENCH_MODEL`), `--budget-usd X` (default 5), `--timeout SECONDS` (default 900, capped by each task's `agent_timeout_s`), `--out-dir DIR`, `--tasks-dir DIR`. Without `--execute` it only prints the plan and never spawns `claude` or `loki`.
+
+Arms and controls: `raw_claude` runs `claude -p <prompt> --output-format json --model M --dangerously-skip-permissions --max-budget-usd B`; `loki` runs `loki start <prompt-file> --provider claude --no-dashboard --yes` with `LOKI_SESSION_MODEL=M` and `LOKI_BUDGET_LIMIT=B`. Both get a byte-identical seed in a fresh git repo with one fixed "seed" commit, the same prompt text (the PRD file for Loki is kept outside the workspace), the same wall-clock cap with the process tree reaped on timeout, separate scratch directories, a scoped child environment and `LOKI_NO_BROWSER=1`. The arm that goes first alternates per task and repeat. Every result JSON pins `claude --version`, `loki version`, the Loki commit SHA, Python version, model, budget, timeout, repeats, and per task the sha256 of the seed tree, acceptance tree and prompt. Disclosed difference: Loki runs its own planning, review and verification loop; that overhead is what is measured. Provider comparisons are out of scope so model and harness effects are not mixed.
+
+Tasks live under `benchmarks/attribution/tasks/<id>/` (2 bug fixes, 2 features, 1 refactor, 1 integration): `task.json`, `prompt.md` (the only instruction either arm sees), `seed/` (workspace), `acceptance/` (hidden test, copied in only after the run, overwriting same-named files) and `reference/` (known-good overlay, used only by tests). Exit code 0 from `acceptance.cmd` means accepted. The loader rejects a task whose acceptance test also appears in the seed. Neither arm grades itself: no council, RARV-C or LLM judge takes part in scoring.
+
+Metrics, per arm and per task class, computed by `compute_metrics`; failures, timeouts and harness errors stay in every denominator:
+
+- Acceptance rate: accepted / assigned, with a 95% Wilson interval.
+- False-completion rate: (reported success and not accepted) / reported success; null when nothing reported success. Reported success means `claude -p` exits 0 with `is_error` false, or `loki start` exits 0.
+- Cost per accepted task: total measured spend across all attempts / accepted. Null (`undefined_no_accepted`) when none accepted. A run with no cost figure is `unmeasured`, never zero: some unmeasured gives `partial_lower_bound` (per-accepted null, lower bound only), all unmeasured gives `unmeasured`. Cost is API-dollar accounting; subscription use is not converted.
+- Elapsed time: median over accepted runs, with completion rate, timeout count and error count; median over all runs is also given.
+
+Not measured: human effort, recovery success, review quality. Output: `--out-dir` (default `benchmarks/attribution/results/`) receives `attribution-<UTC stamp>.json` and the matching `.md`. Publish failures, timeouts and exclusions with the report; do not drop rows. Do not claim superiority from overlapping intervals on a handful of runs; use the pilot to size a larger run with `--repeats` above 1. Tests: `python3 benchmarks/bench/tests/test_attribution.py` (no model call).
+
+---
+
 ## What we do not have
 
 Stating this plainly, because you will find it out anyway and it is cheaper for

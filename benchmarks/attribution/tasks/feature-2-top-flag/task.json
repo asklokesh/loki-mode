@@ -1,0 +1,14 @@
+{
+  "id": "feature-2-top-flag",
+  "class": "feature",
+  "title": "Add --top N to the wordcount CLI",
+  "prompt": "prompt.md",
+  "seed": "seed",
+  "reference": "reference",
+  "acceptance": {
+    "dir": "acceptance",
+    "cmd": "python3 -m unittest -q acceptance_test",
+    "timeout_s": 60
+  },
+  "agent_timeout_s": 600
+}

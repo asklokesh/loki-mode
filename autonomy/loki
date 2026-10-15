@@ -36259,7 +36259,7 @@ PYEOF
 }
 
 # loki bench - head-to-head benchmark harness (R2).
-# Subcommands: run <task> | vs <task> | list | verify <result.json>.
+# Subcommands: run <task> | vs <task> | list | verify <result.json> | attribution.
 # Thin pass-through to benchmarks/bench/run.sh (shared python core runner.py).
 # CREDIBILITY: Loki NEVER grades its own success. Success is decided by a
 # held-out acceptance command run by the grader OUTSIDE the agent (exit code).
@@ -36293,6 +36293,7 @@ cmd_bench() {
             echo "  verify <file>   Recompute task_hash + check tool versions for a result.json"
             echo "  oracles         Are the graders trustworthy? Hash-bound, no spend, no provider"
             echo "  report <files>  Build results.json + RESULTS.md from per-tool result-rows"
+            echo "  attribution     Same-model harness attribution: raw Claude Code vs Loki (--dry-run, --execute)"
             echo ""
             echo "Options:"
             echo "  --trials N      Number of trials per tool (default 3)"
