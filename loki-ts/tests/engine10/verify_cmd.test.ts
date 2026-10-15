@@ -7,7 +7,7 @@
 // slice's files.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sealedLog } from "./log_fixture.ts";
-import { createHash, generateKeyPairSync, sign as nodeSign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign as nodeSign, type KeyObject } from "node:crypto";
 import { kidOf } from "../../src/engine10/stages/seal.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -676,5 +676,92 @@ describe("main() --seal-composite", () => {
       expect((await runMain(["--seal-composite", d], d)).code).toBe(2);
     } finally { process.stderr.write = err; }
     rmSync(d, { recursive: true, force: true });
+  });
+});
+
+// V118-05: --max-age rides the signed JWT iat, checked after integrity.
+describe("main() --max-age on the signed iat (V118-05)", () => {
+  const SAVED = process.env["LOKI_RECEIPT_SIGNING_KEY"];
+  const NOW = 1_800_000_000_000; // ms, injected clock
+  let dir: string;
+  let key: { publicKey: KeyObject; privateKey: KeyObject };
+  beforeEach(() => {
+    dir = tmpDir();
+    key = generateKeyPairSync("ed25519");
+    process.env["LOKI_RECEIPT_SIGNING_KEY"] = key.privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+  });
+  afterEach(() => {
+    if (SAVED === undefined) delete process.env["LOKI_RECEIPT_SIGNING_KEY"]; else process.env["LOKI_RECEIPT_SIGNING_KEY"] = SAVED;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  // Signed receipt whose JWT carries the given iat (seconds), written at `sub` under dir.
+  function signedAt(iat: number | undefined, sub = "runs/sg/receipt.json"): string {
+    const fields = baseReceiptFields();
+    const hash = computeReceiptHash(fields);
+    const h = Buffer.from(JSON.stringify({ alg: "EdDSA", kid: kidOf(key.publicKey) })).toString("base64url");
+    const p = Buffer.from(JSON.stringify({ receipt_sha256: hash, ...(iat === undefined ? {} : { iat }) })).toString("base64url");
+    const sig = nodeSign(null, Buffer.from(`${h}.${p}`), key.privateKey).toString("base64url");
+    const path = join(dir, sub);
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, JSON.stringify({ ...fields, receipt_sha256: hash, verification: { jwt: `${h}.${p}.${sig}`, kid: kidOf(key.publicKey) } }));
+    return path;
+  }
+  async function run(args: string[]): Promise<{ code: number; out: string; err: string }> {
+    const out: string[] = [], err: string[] = [];
+    const w = process.stdout.write.bind(process.stdout), e = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: string) => { out.push(String(c)); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((c: string) => { err.push(String(c)); return true; }) as typeof process.stderr.write;
+    try { return { code: await main(args, { runsRoot: join(dir, "runs"), now: () => NOW }), out: out.join(""), err: err.join("") }; }
+    finally { process.stdout.write = w; process.stderr.write = e; }
+  }
+  const nowS = NOW / 1000;
+  test("fresh signed receipt with --max-age 1d is VERIFIED, exit 0; the =form agrees", async () => {
+    const f = signedAt(nowS - 60);
+    expect((await run([f, "--max-age", "1d"])).code).toBe(0);
+    expect((await run([f, "--max-age=86400"])).code).toBe(0);
+  });
+  test("backdated iat exits 2 with the reason text", async () => {
+    const r = await run([signedAt(nowS - 8 * 86400), "--max-age", "7d"]);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("verdict: UNCHECKED");
+    expect(r.out).toContain("is older than --max-age 7d");
+  });
+  test("a group receipt path (.loki/groups/<gid>/receipt.json) is checked the same way", async () => {
+    const f = signedAt(nowS - 8 * 3600, ".loki/groups/g1/receipt.json");
+    expect((await run([f, "--max-age", "1h"])).code).toBe(2);
+    expect((await run([f, "--max-age", "1d"])).code).toBe(0);
+  });
+  test("unsigned receipt and a signed receipt with no iat both exit 2 with the no-iat reason", async () => {
+    const u = writeUnsignedReceipt(dir, "us");
+    for (const f of [u, signedAt(undefined)]) {
+      const r = await run([f, "--max-age", "1d", "--allow-unsigned"]);
+      expect(r.code).toBe(2);
+      expect(r.out).toContain("no signed iat; age cannot be checked");
+    }
+  });
+  test("tampered receipt stays TAMPERED, exit 1", async () => {
+    const f = signedAt(nowS - 10);
+    const r = JSON.parse(readFileSync(f, "utf8")); r.repo = "x/y"; writeFileSync(f, JSON.stringify(r));
+    expect((await run([f, "--max-age", "1d"])).code).toBe(1);
+  });
+  test("invalid --max-age (abc, 0, empty, missing, negative, repeated) exits 2 with invalid --max-age", async () => {
+    const f = signedAt(nowS);
+    for (const a of [["--max-age", "abc"], ["--max-age=0"], ["--max-age="], ["--max-age"], ["--max-age", "-5"], ["--max-age=1d", "--max-age=2d"]]) {
+      const r = await run([f, ...a]);
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("invalid --max-age");
+    }
+  });
+  test("iat more than 300s in the future exits 2; within skew passes", async () => {
+    expect((await run([signedAt(nowS + 400), "--max-age", "1d"])).code).toBe(2);
+    expect((await run([signedAt(nowS + 100), "--max-age", "1d"])).code).toBe(0);
+  });
+  test("without --max-age the output is unchanged", async () => {
+    const r = await run([signedAt(nowS - 99 * 86400)]);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("iat");
+  });
+  test("the help names --max-age", async () => {
+    expect((await run(["--help"])).out).toContain("--max-age");
   });
 });
