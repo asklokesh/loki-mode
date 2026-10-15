@@ -25,7 +25,7 @@ const LOKI_TS = join(import.meta.dir, "../..");
 const HAIKU = '"claude-haiku-5-5"';
 type Edit = [file: string, from: string, to: string];
 const PR = "runner/router/plan_route.ts", IMPL = "engine10/stages/implement.ts", FIX = "engine10/stages/fix.ts", UM = "runner/router/unit_model.ts", MR = "runner/model_rank.ts", MACH = "engine10/machine.ts", IR = "runner/router/implement_route.ts", SR = "runner/router/session_route.ts";
-const SEND = "let session = await ctx.sessions.run(first);";
+const SEND = "let session = two ? two.session : await ctx.sessions.run(first);"; // S41-13: the two-attempt path shares this line
 
 const MUTATIONS: { name: string; edits: Edit[] }[] = [
   { name: "B1 route start assigns a haiku literal", edits: [[IR, "first.model = rr.model;", `first.model = ${HAIKU};`]] },
@@ -33,7 +33,7 @@ const MUTATIONS: { name: string; edits: Edit[] }[] = [
   { name: "B3 Object.assign(first, { model: haiku })", edits: [[IMPL, SEND, `Object.assign(first, { model: ${HAIKU} }); ${SEND}`]] },
   { name: "B4 split-line first\\n.model =", edits: [[IR, "first.model = rr.model;", `first\n.model = ${HAIKU};`]] },
   { name: "B5 first[\"model\"] =", edits: [[IR, "first.model = rr.model;", `first["model"] = ${HAIKU};`]] },
-  { name: "B6 spread copy {...first, model: haiku} to sessions.run", edits: [[IMPL, SEND, `let session = await ctx.sessions.run({ ...first, model: ${HAIKU} });`]] },
+  { name: "B6 spread copy {...first, model: haiku} to sessions.run", edits: [[IMPL, SEND, `let session = two ? two.session : await ctx.sessions.run({ ...first, model: ${HAIKU} });`]] },
   { name: "B7 fix pin computed from a haiku literal", edits: [[UM, "const carried = String(out[\"fix\"]?.[\"model\"] ?? out[\"implement\"]?.[\"route_model\"] ?? rec.model);", `const carried = ${HAIKU};`]] },
   { name: "B8a model_rank climb returns haiku", edits: [[MR, "to: resolveModelAlias(next)", 'to: resolveModelAlias("haiku")']] },
   { name: "B8b unit_model routedFix pin returns haiku", edits: [[UM, "return { pin: climbed?.to ?? (cur !== runModel ? cur : undefined), climbed };", `return { pin: ${HAIKU}, climbed };`]] },

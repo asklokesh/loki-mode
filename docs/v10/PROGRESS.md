@@ -2366,3 +2366,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Not shipped: M-15 (Opus BLOCK at unit.ts:164, symlinked conftest.py reaches PROVEN); round 3 rework in workflow wf_1d55d32c-a65. M-17..M-29 and G-05 stay blocked on it.
 - Advisory to card: TEAMS-DEDUP collision test is toothless; use conv='a|b',svc='c' against conv='a',svc='b|c'.
 - Guards on eb6c8d762: structural-checks and bun budget failed (core engine10 5000 >= 5000; A-112b split the verify.ts git helper over three lines). Folded it back to one line, no behaviour change. After dist rebuild (build rc=0): help-changelog-drift, sigpipe-guard, help-and-log-cap, ci-only-divergence, platform-infra, engine10-dispatch, docs-cli-drift, structural-checks all rc=0; pytest test_trigger_server_hardening 74 passed; bun budget, l2_destructive_registry, l0_guard, fc25, spawn_env, start_flag_parity, cli static shape, attempts, implement, verify 131 pass 0 fail.
+
+## 2026-10-15T22:37Z (CoS) v11.10.0 failed CI, v11.10.1 fix-forward
+- v11.10.0 (58344ed27): Tests run 38816323342 and Release failed: bun route_matrix_mutation B3 and B6 (anchor "let session = await ctx.sessions.run(first);" no longer exists after S41-13, so the mutations were not applied). Not published; npm next stays 11.9.1.
+- Fix: anchor updated to the S41-13 line in loki-ts/tests/engine10/route_matrix_mutation.test.ts (33 pass 0 fail); bun test tests/engine10 2037 pass 0 fail 1 skip.
+- M-15 round 4 (1c9a5e56a) Opus BLOCK: case-insensitive Conftest.py and symlinks under SKIP_DIRS; round 5 (class fixes) in flight.
