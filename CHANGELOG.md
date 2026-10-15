@@ -5,7 +5,58 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## v11.4.0 (2026-10-15)
+## v11.4.1 (2026-10-15)
+
+Fix-forward for v11.4.0, which was tagged on main but never reached npm. Its release run stopped at `required-ci` because the Tests run on the release commit was red. v11.4.1 contains everything listed under v11.4.0 below, plus these fixes and the remaining parity gaps.
+
+### Added
+- `loki steer "<guidance>"` and `/steer` in `loki chat` now take effect on Loki 10 runs. Before each plan and implement session the engine reads `.loki/HUMAN_INPUT.md` and adds it to the next brief as a delimited operator-guidance block, outside the cache-stable prefix. It then archives the file to `.loki/logs/human-input-<ts>.md`, so the guidance applies once. The engine rejects symlinks, and archives files over 1 MB without injecting them. Set `LOKI_PROMPT_INJECTION=0` to turn this off.
+- Custom agents now apply on the default Loki 10 review path, not only through `LOKI_REVIEW_PROVIDER`. An agent named `reviewer.md` or `council.md`, or any agent with `role: reviewer` or `role: council` in `.loki/agents/` or `~/.config/loki/agents/`, sets the review stage's prompt, provider and model. The agents loader accepts the new optional `role` key.
+- `loki edit "<change>"` ends with the unified run summary. `--quiet` prints only the summary, `--json` prints one JSON object, and NO_COLOR is honored.
+- `loki diff` is a real command. It shows uncommitted changes, or the last commit if the tree is clean. Run summaries already suggest it as a next step.
+- Bash and zsh completion now cover chat, route, edit, setup, models, agents and diff, plus the new `start` flags (`--model`, `--isolation`, `--max-cost`, `--no-pr`, `--explain-route`).
+
+### Changed
+- Plan mode in `loki chat` is read-only for every provider. Each provider runs with its own read-only flags:
+
+  | Provider | Plan-mode flags |
+  |---|---|
+  | codex | `exec --sandbox read-only` |
+  | opencode | `--agent plan` |
+  | aider | `--dry-run --no-auto-commits` |
+  | cline | `--plan` |
+
+  A post-turn guard also reverts any tracked or untracked file a plan turn changed anyway.
+- `loki chat --attach` finds running sessions the same way `loki status` does. It reads the session and run pid files, PAUSE, STOP and session.json, and the Loki 10 run pid. It no longer guesses from the event log.
+- `loki help` keeps the short core-verbs page with `start` first. It now also lists:
+  - examples
+  - how to resume an interrupted run
+  - the `--isolation` dial
+  - `cost` and `estimate`
+  - where exit codes are documented (docs/exit-codes.md)
+
+  `loki help <command>` once again shows that command's own `--help`. `loki help all` lists agents, chat, edit and models.
+- README's `loki verify` exit codes now match docs/exit-codes.md:
+
+  | Exit code | Meaning |
+  |---|---|
+  | 0 | VERIFIED |
+  | 1 | CONCERNS |
+  | 2 | BLOCKED |
+  | 3 | verifier error |
+  | 64 | usage error |
+
+  Treat only exit 0 as verified.
+
+### Fixed
+- `loki verify --json` once again prints only the evidence JSON on stdout. A generic JSON wrapper had captured it.
+- With opencode selected through the CLI, the environment or a saved provider, `loki start` routes to the Bun engine, which has an opencode invoker.
+- TypeScript build error in the Loki 10 supervisor ("'res' is possibly 'null'").
+- Line budgets: the v11.4.0 modules moved out of the size-capped engine10, e10ext and features trees. Run summary and steer moved to util/, role agents to council/, and provider cost and guard to providers/. Behavior is unchanged.
+- `autonomy/route.sh` is shellcheck clean.
+- Docs that mention `loki route` and `loki diff` now pass the docs-drift check, which reads route.sh's dispatch.
+- The P5 egress-blocked moat case pins the legacy engine for its stub provider, because a PRD start now routes to Loki 10 by default. The seal and verify assertions are unchanged.
+
 
 Usability release: Loki now matches or beats opencode on everyday use, onboarding, interactive work, small changes, provider and local-model flexibility, multi-agent setup, docs consistency and predictability. Loki stays autonomous. The RARV-C loop, receipts, Seal and council are unchanged, `loki start` is still the primary path, and Claude Code is still the default provider. Plan and scorecard: docs/v10/OPENCODE-PARITY-PLAN.md. Comparison: docs/COMPARE-OPENCODE.md.
 
