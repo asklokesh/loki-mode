@@ -336,6 +336,8 @@ export function graduationAdvice(
 ): GraduationAdvice {
   const runs = traj.series.length;
   const withVerdict = traj.series.filter((r) => r.verdict !== null).length;
+  const passing = traj.series.filter((r) => r.verdict === "VERIFIED").length;
+  const nonPassing = withVerdict - passing;
   const falseV = traj.series.filter((r) => r.false_verified === true).length;
   const council = traj.series
     .map((r) => r.council_pass_rate)
@@ -355,12 +357,17 @@ export function graduationAdvice(
     return { ...base, eligible: false, missing: [], summary: "already at the highest level (operate); nothing to graduate to" };
   }
   const missing: string[] = [];
-  if (withVerdict < GRADUATION_MIN_RUNS) {
-    missing.push(
-      runs < GRADUATION_MIN_RUNS
-        ? `need ${GRADUATION_MIN_RUNS}+ runs, have ${runs}`
-        : `need ${GRADUATION_MIN_RUNS}+ runs with a recorded verdict, have ${withVerdict} (UNCHECKED runs do not count)`,
-    );
+  if (passing < GRADUATION_MIN_RUNS) {
+    if (runs < GRADUATION_MIN_RUNS) {
+      missing.push(`need ${GRADUATION_MIN_RUNS}+ runs, have ${runs}`);
+    } else {
+      missing.push(
+        `need ${GRADUATION_MIN_RUNS}+ VERIFIED runs, have ${passing} (UNCHECKED runs do not count)`,
+      );
+    }
+  }
+  if (nonPassing > 0) {
+    missing.push(`${nonPassing} run(s) with a non-VERIFIED verdict (FAILED, PARTIAL or UNVERIFIED do not count)`);
   }
   if (falseV > 0) missing.push(`${falseV} false VERIFIED run(s) (FAILED after VERIFIED)`);
   if (traj.regressing_axes.length > 0) missing.push(`regressing: ${traj.regressing_axes.join(", ")}`);

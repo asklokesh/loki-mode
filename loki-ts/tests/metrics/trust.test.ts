@@ -325,6 +325,20 @@ describe("graduationAdvice", () => {
     expect(a.eligible).toBe(false);
     expect(a.missing[0]).toContain("UNCHECKED");
   });
+  it("all-FAILED verdicts are not eligible", () => {
+    const s = Array.from({ length: 10 }, (_, i) => gRun(i, { verdict: "FAILED", council_pass_rate: 0, gate_pass_rate: 0 }));
+    const a = graduationAdvice({ series: s, regressing_axes: [] }, "propose");
+    expect(a.eligible).toBe(false);
+    expect(a.summary).toContain("not yet eligible for execute");
+    expect(a.missing.join()).toContain("10 run(s) with a non-VERIFIED verdict");
+  });
+  it("6 VERIFIED + 4 FAILED is not eligible", () => {
+    const s = Array.from({ length: 10 }, (_, i) => gRun(i, i < 6 ? {} : { verdict: "FAILED" }));
+    const a = graduationAdvice({ series: s, regressing_axes: [] }, "propose");
+    expect(a.eligible).toBe(false);
+    expect(a.missing.join()).toContain("have 6");
+    expect(a.missing.join()).toContain("4 run(s) with a non-VERIFIED verdict");
+  });
   it("a false VERIFIED blocks", () => {
     const s = [...ten.slice(1), gRun(99, { false_verified: true })];
     expect(graduationAdvice({ series: s, regressing_axes: [] }, "execute").eligible).toBe(false);
