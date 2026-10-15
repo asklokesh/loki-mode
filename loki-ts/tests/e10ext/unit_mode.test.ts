@@ -255,3 +255,14 @@ describe("unitIntake", () => {
     expect(unitSpec(e)?.writeSet).toEqual(["src/a.ts", "lib/"]);
   });
 });
+
+describe("unit acceptance (CONTRACT)", () => {
+  test("optional acceptance is parsed and omitted when absent", () => {
+    expect(unitSpec(on(specFile("acc0.json", good)))?.acceptance).toBeUndefined();
+    expect(unitSpec(on(specFile("acc1.json", { ...good, acceptance: ["a login works", "b export works"] })))?.acceptance).toEqual(["a login works", "b export works"]);
+  });
+  test("a non-string acceptance entry invalidates the spec (fail-safe)", () => {
+    expect(unitSpec(on(specFile("acc2.json", { ...good, acceptance: ["ok", 5] })))).toBeNull();
+    expect(unitSpec(on(specFile("acc3.json", { ...good, acceptance: "nope" })))).toBeNull();
+  });
+});

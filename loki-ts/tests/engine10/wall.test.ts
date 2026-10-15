@@ -119,6 +119,12 @@ describe("engine10 wall brief", () => {
     expect(brief.toLowerCase()).toContain("cannot see the repository");
     expect(brief).toContain("loki_wall_");
   });
+  test("frozen unit acceptance lines seed the brief; none means byte-identical", () => {
+    expect(buildWallBrief("t", "", [], false, "", [])).toBe(buildWallBrief("t"));
+    const b = buildWallBrief("t", "", [], false, "", ["login works", "export works"]);
+    expect(b).toContain("Acceptance: login works");
+    expect(b).toContain("Acceptance: export works");
+  });
 });
 
 describe("engine10 wall stage", () => {

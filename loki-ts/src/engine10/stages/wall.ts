@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import type { RunContext, RunnerName, Stage, StageResult, TestMap, TestRef } from "../types.ts";
 import { taskBlock } from "../types.ts";
+import { unitSpec } from "../../features/speed/unit_mode.ts";
 import type { ReadOnlyFile } from "./implement.ts";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { RUNNER_HINT, wallManifestFor } from "../../e10ext/wall_hints.ts";
@@ -108,12 +109,13 @@ export interface WallOptions { baseRunner?: BaseTestRunner; }
 /** E-45: the Wall repo map is paths only, capped, so the (sonnet) brief stays short. */
 export const WALL_MAP_MAX_LINES = 200;
 
-export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = ""): string {
+export function buildWallBrief(task: string, repomapText = "", runners: RunnerName[] = [], hasManifest = false, conventions = "", acceptance: string[] = []): string {
   return withStagePrefix([
     "You are the Loki 10 Wall author.",
     `You cannot see the repository. This directory holds only task.md and repomap.txt${hasManifest ? " and wall_manifest.txt (signatures, runner config, test layout and test-style examples)" : ""}.`,
     ...(repomapText ? [`Repository paths (repomap.txt):\n${repomapText}`] : []),
     ...taskBlock(task),
+    ...(acceptance.length ? [`Acceptance criteria frozen for this unit (each must be covered by a test):\n${acceptance.map((a) => `Acceptance: ${a}`).join("\n")}`] : []),
     "Write behavioral acceptance tests that prove the task is done. A test that errors on import, uses another framework's globals, or fails for a reason unrelated to the task is discarded.",
     `Test runner: ${runners.map((r) => RUNNER_HINT[r]).find(Boolean) ?? "the framework named in repomap.txt"}`,
     ...(conventions ? [conventions] : []),
@@ -186,7 +188,7 @@ export async function wallAuthor(ctx: RunContext, signal: AbortSignal): Promise<
 
   const session = await ctx.sessions.run({
     stage: "wall",
-    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv)),
+    brief: buildWallBrief(task, repomapText, runners, !!wm, conventionsBrief(conv), unitSpec()?.acceptance ?? []),
     // E-45: pinned cheaper model; development tier because the planning tier yields to the LOKI_SESSION_MODEL=opus pin.
     tier: "development",
     model: wallModel(),
