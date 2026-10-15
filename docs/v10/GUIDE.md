@@ -18,7 +18,7 @@ longer read; any value is ignored.
 `loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word
 task>"` run Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`. A PRD
 file, a flag-first call (`loki start --simple prd.md`) and a one-word start still
-run on the previous bash loop (autonomy/run.sh), and so does the opencode
+run on the previous bash loop (autonomy/run.sh), and so does `loki start` with the opencode
 provider, until FC38-SWEEP ports them. `loki legacy` and LOKI_ENGINE remain
 removed. The previous loop is being removed (see docs/v10/LEGACY-REMOVAL.md).
 
@@ -227,12 +227,17 @@ receipt with no signing key configured (or a key that failed to load) reads
 | codex    | no             | no                       |
 | cline    | no             | no                       |
 | aider    | no             | no                       |
-| opencode | not supported  | n/a                      |
+| opencode | no             | no                       |
 
-For codex, cline and aider, a run's Cost line reads `not measured` and the
+For codex, cline, aider and opencode, a run's Cost line reads `not measured` and the
 NOT PROVEN line adds the literal entry `kill blocking not enforced`
-(`loki-ts/src/engine10/stages/seal.ts`). opencode is not one of engine10's
-provider names (`claude`, `codex`, `cline`, `aider`); it is not supported.
+(`loki-ts/src/engine10/stages/seal.ts`). opencode is a supported
+engine10 provider (`loki-ts/src/runner/provider_opencode.ts`): select it with
+`--provider opencode`. It runs `opencode run --auto` non-interactively, takes a
+`provider/model` id from `LOKI_OPENCODE_MODEL` (for example
+`openrouter/deepseek/deepseek-v3.2`; unset uses opencode's own default), passes
+extra flags from `LOKI_OPENCODE_FLAGS`, and honors `LOKI_OPENCODE_CLI` for the
+binary path. Claude remains the default provider.
 
 ## Model routing
 

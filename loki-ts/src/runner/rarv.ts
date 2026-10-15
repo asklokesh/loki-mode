@@ -22,7 +22,7 @@ import { resolveClaudeModel } from "../util/claude_model.ts";
 
 export type RarvTier = "planning" | "development" | "fast" | "fable";
 export type RarvPhase = "REASON" | "ACT" | "REFLECT" | "VERIFY";
-export type Provider = "claude" | "codex" | "cline" | "aider";
+export type Provider = "claude" | "codex" | "cline" | "aider" | "opencode";
 
 export interface GetRarvTierOptions {
   // When set and `legacy` is false, the session-pinned model overrides the
@@ -149,6 +149,8 @@ export function getProviderTierParam(tier: RarvTier | string, provider: Provider
       return process.env["CLINE_DEFAULT_MODEL"] ?? process.env["LOKI_CLINE_MODEL"] ?? "default";
     case "aider":
       return process.env["AIDER_DEFAULT_MODEL"] ?? process.env["LOKI_AIDER_MODEL"] ?? resolveClaudeModel("opus");
+    case "opencode":
+      return process.env["LOKI_OPENCODE_MODEL"] ?? "default";
     default:
       return "development";
   }

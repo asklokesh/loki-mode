@@ -86,7 +86,7 @@ function hasSpecFlag(args: readonly string[]): boolean {
   return args.some((a) => a === "--spec" || a.startsWith("--spec=") || a === "--spec-first");
 }
 
-const VALID_PROVIDERS = new Set(["claude", "codex", "cline", "aider"]);
+const VALID_PROVIDERS = new Set(["claude", "codex", "cline", "aider", "opencode"]);
 // The session-pin values run.sh's LOKI_SESSION_MODEL case accepts: the three
 // tier names plus the Claude aliases (opus is the top-only setting; bash
 // dispatches it as opus, not as the sonnet-defaulted planning tier).
@@ -138,7 +138,7 @@ export interface ParsedStartOpts {
 
 const START_USAGE =
   "usage: loki start <spec> [--max-iterations N] [--max-retries N] [--budget-limit USD]\n" +
-  "                        [--provider claude|codex|cline|aider] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
+  "                        [--provider claude|codex|cline|aider|opencode] [--session-model small|medium|high|opus|sonnet|haiku]\n" +
   "                        [--completion-promise TEXT] [--base-wait S] [--max-wait S]\n" +
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory]\n" +
