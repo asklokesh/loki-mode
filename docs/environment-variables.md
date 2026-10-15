@@ -99,10 +99,45 @@ behaviour has a switch rather than a fork.
 | `LOKI_INJECT_FINDINGS` | on | Injects the previous iteration's reviewer findings, by severity and file:line. `0` makes the next iteration a blind retry. |
 | `LOKI_ITERATION_GRACE` | on | When the agent reports done and no gate is failing, grants ONE extra iteration past the cap to land the work. Granted at most once per run. `0` restores a pure counter. |
 | `LOKI_SCOPED_CHANGE` | auto | Forces the scoped-change profile on (`1`) or off (`0`). Auto-detected from an issue-sourced spec on a repository with real history. Never disables a trust gate; it skips phases irrelevant to a scoped fix. |
+| `LOKI_RISK_TIER` | computed | Raises the verification tier (`low`, `medium`, `high`) above the one computed from the diff. Lowering is ignored unless `LOKI_RISK_OVERRIDE_REASON` is also set. |
+| `LOKI_RISK_OVERRIDE_REASON` | unset | Recorded reason that lets `LOKI_RISK_TIER` lower the computed tier. Stored in the risk record and shown in the run summary. |
 
 `LOKI_INJECT_FINDINGS=0` is the one to think twice about. Without it the model
 is told to fix problems without being told which, so it re-derives them from
 scratch every iteration -- the slowest and least accurate way to converge.
+
+### Verification depth (risk tier)
+
+The v10 verify stage classifies risk on the diff (the artifact), never on the
+prompt, and records the result in `.loki/state/risk-tier.json`. The run
+summary prints its one-line `summary` (also `summary.risk` under `--json`; in
+default output only while the 8-line cap still holds). A record older than the
+run start is ignored, and a classification failure never fails verify.
+`loki review --risk` (`autonomy/lib/review_risk.py`) is a separate 0-100
+advisory score and is unchanged.
+
+- high: a sensitive path (auth, crypto, payments, migrations or `.sql`, CI config, lockfiles, infra, `.env`), a deleted test file, public API surface (openapi/swagger, `.proto`, `.d.ts`, `api/`, `routes/`, `public/`, index files), 15+ files, or 500+ changed lines.
+- medium: an existing test or test config modified, 4+ files, or 100+ changed lines.
+- low: everything else. Test files are never counted as sensitive.
+
+| Tier | Selected checks | Recorded as not run |
+|---|---|---|
+| low | targeted tests, lint of changed files | full test command, reviewer, council, security scan (skipped by design) |
+| medium | low plus full test command, one reviewer | one reviewer (and the full test command when no runner was detected) |
+| high | medium plus full suite, council, security scan | council, security scan (and the full test command and full suite when no runner was detected) |
+
+Targeted tests and lint always run. At medium and high, verify also runs the
+detected full test command (the `deep.ts` per-runner table); a full-test
+failure counts like any failing check, and a `not_run` result is added to
+`not_proven`. Reviewer, council and security scan are not run by fast verify at
+any tier, so they stay recorded as not run; nothing marks a skipped check as
+passing. Record shape: `{version, tier, computed, reasons[], stats{files, lines,
+sensitive[], tests_modified[], tests_deleted[], api[]}, checks_selected[],
+checks_deferred[], override?, override_ignored?, summary}`.
+
+Known gaps: the bash `run.sh` council triggers and the outcome record do not
+yet use this tier; public API detection is path-based, not a semantic diff of
+exports; a full-test failure that also fails on the base is not subtracted.
 
 ## Timeouts
 

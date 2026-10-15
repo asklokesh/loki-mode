@@ -1,5 +1,7 @@
 // OC-OUTPUT: one shared end-of-run summary, same format as autonomy/lib/run-summary.sh
 // (legacy engine). Pure formatting; callers supply already-measured facts. Null is never shown as 0.
+import { readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { safeGit } from "../util/safe_git.ts";
 import type { Outcome } from "../engine10/output.ts";
 
@@ -82,4 +84,21 @@ export function diffStat(repoDir: string, base: string | null): { files: number;
   } catch {
     return null;
   }
+}
+
+/** The recorded summary line for a run that started at sinceMs; null when absent, stale or unreadable. */
+export function readRiskSummary(repoDir: string, sinceMs = 0): string | null {
+  try {
+    const p = join(repoDir, ".loki", "state", "risk-tier.json");
+    if (statSync(p).mtimeMs < sinceMs) return null;
+    const s = (JSON.parse(readFileSync(p, "utf8")) as { summary?: unknown }).summary;
+    return typeof s === "string" && s ? s : null;
+  } catch { return null; }
+}
+
+/** Appends the risk line to rendered output only while the default 8-line cap (D48, start line printed separately) still holds. */
+export function withRiskLine(out: string, line: string | null, maxLines = 7): string {
+  if (!line) return out;
+  const body = out.replace(/\n+$/, "");
+  return body.split("\n").length + 1 > maxLines ? out : `${body}\n${line}\n`;
 }
