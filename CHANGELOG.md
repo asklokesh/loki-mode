@@ -5,6 +5,16 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.9.1 (2026-10-15)
+
+Fix-forward release. v11.9.0 was tagged but failed CI and was never published to npm. v11.9.1 carries every v11.9.0 change listed below, plus these fixes for the guards that failed.
+
+### Fixed
+- `loki estimate` resolves its model inside the cost preview module, so the CLI's estimate arm no longer reaches into engine10 and the single-arm dispatch shape holds again. The dispatch test now asserts that `loki estimate` routes to the Bun runtime.
+- The L0 harness guard allowlist lists the new test-runner config classifier and drops two stale entries for code that moved there.
+- The Sentry intake doc no longer names a `loki job` command; it describes the "Queued" reply the trigger server actually sends.
+- A trigger server test no longer assumes a provider CLI is installed on the host.
+
 ## v11.9.0 (2026-10-15)
 
 Factory parity, phase 3. Work can now be delegated from Jira and Microsoft Teams, deploys carry a signed record bound to the receipt that authorized them, rollouts can be staged, and the workspace graph learns dependencies from code. Every capability extends the module that already owned its concern. `loki start` with Claude remains the primary path, and `loki chat` reaches the same code.
