@@ -25,7 +25,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 import os
 import shlex
 import shutil
@@ -40,6 +39,8 @@ sys.path.insert(0, HERE)
 from adapters import _base  # noqa: E402
 from adapters import claude_code as _claude_adapter  # noqa: E402
 from adapters import loki as _loki_adapter  # noqa: E402
+import bench_schema as _schema  # noqa: E402
+import equivalence_report as _equivalence  # noqa: E402
 import report as _report  # noqa: E402
 import runner as _runner  # noqa: E402
 
@@ -59,20 +60,6 @@ SCHEMA_VERSION = "1.0"
 # ---------------------------------------------------------------------------
 # Task set
 # ---------------------------------------------------------------------------
-
-def tree_hash(path: str) -> str:
-    """sha256 over sorted (relative path, content) of every file under path."""
-    h = hashlib.sha256()
-    for root, dirs, files in os.walk(path):
-        dirs.sort()
-        for name in sorted(files):
-            full = os.path.join(root, name)
-            h.update(os.path.relpath(full, path).encode())
-            h.update(b"\0")
-            with open(full, "rb") as fh:
-                h.update(fh.read())
-            h.update(b"\0")
-    return h.hexdigest()
 
 
 def _read(path: str) -> str:
@@ -121,9 +108,9 @@ def load_tasks(tasks_dir: str, only: Optional[List[str]] = None
             "prompt": prompt,
             "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
             "seed_dir": os.path.join(tdir, spec["seed"]),
-            "seed_sha256": tree_hash(os.path.join(tdir, spec["seed"])),
+            "seed_sha256": _schema._hash_fixture_dir(os.path.join(tdir, spec["seed"])),
             "acceptance_dir": os.path.join(tdir, acc["dir"]),
-            "acceptance_sha256": tree_hash(os.path.join(tdir, acc["dir"])),
+            "acceptance_sha256": _schema._hash_fixture_dir(os.path.join(tdir, acc["dir"])),
             "acceptance_cmd": acc["cmd"],
             "acceptance_timeout_s": int(acc.get("timeout_s", 60)),
             "reference_dir": (os.path.join(tdir, spec["reference"])
@@ -262,15 +249,10 @@ def build_plan(tasks: List[Dict[str, Any]], repeats: int, model: str,
 # Metrics (pure; unit-tested)
 # ---------------------------------------------------------------------------
 
-def wilson_interval(k: int, n: int, z: float = 1.96) -> Optional[List[float]]:
-    """95% Wilson score interval for k/n; None when n == 0."""
-    if n <= 0:
-        return None
-    p = k / n
-    denom = 1 + z * z / n
-    centre = (p + z * z / (2 * n)) / denom
-    half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / denom
-    return [round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4)]
+def _wilson_ci95(k: int, n: int) -> Optional[List[float]]:
+    """Rounded [low, high] from equivalence_report.wilson_interval; None when n == 0."""
+    _p, low, high = _equivalence.wilson_interval(k, n)
+    return None if low is None else [round(low, 4), round(high, 4)]
 
 
 def _median(vals: List[float]) -> Optional[float]:
@@ -321,7 +303,7 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         "assigned": assigned,
         "accepted": accepted,
         "acceptance_rate": round(accepted / assigned, 4) if assigned else None,
-        "acceptance_rate_ci95": wilson_interval(accepted, assigned),
+        "acceptance_rate_ci95": _wilson_ci95(accepted, assigned),
         "reported_success": len(reported),
         "false_completions": len(false_done),
         "false_completion_rate": (round(len(false_done) / len(reported), 4)

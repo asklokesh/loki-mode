@@ -79,9 +79,9 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(m["cost_status"], "no_runs")
 
     def test_wilson(self):
-        lo, hi = A.wilson_interval(5, 10)
+        lo, hi = A._wilson_ci95(5, 10)
         self.assertTrue(0.23 < lo < 0.25 and 0.75 < hi < 0.77, (lo, hi))
-        self.assertIsNone(A.wilson_interval(0, 0))
+        self.assertIsNone(A._wilson_ci95(0, 0))
 
     def test_summarize_and_markdown(self):
         rows = [row(arm="raw_claude", accepted=True, reported=True, cost=1.0),
