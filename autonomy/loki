@@ -1829,6 +1829,7 @@ show_help_all() {
     echo ""
     echo "Options for 'start':"
     echo "  --provider NAME  AI provider: claude (default), codex, cline, aider, opencode"
+    echo "  --model ID       Model tier or route (e.g. ollama/qwen3-coder)"
     echo "  --simple         Force simple complexity tier (3 phases)"
     echo "  --complex        Force complex complexity tier (8 phases)"
     echo "  --no-dashboard   Disable web dashboard"
@@ -1913,6 +1914,7 @@ show_help_all() {
     # missing from this list, so a new command cannot ship invisible.
     echo ""
     echo "All commands:"
+    echo "  agents chat edit models"
     echo "  acp agent analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
@@ -21458,7 +21460,7 @@ main() {
                 show_help_aliases
             elif [ "${1:-}" = "all" ]; then
                 show_help_all
-            elif [ -n "${1:-}" ] && { source "$_LOKI_SCRIPT_DIR/lib/help-core.sh"; help_topic_text "$1"; }; then
+            elif [ -n "${1:-}" ] && case "${1:-}" in providers|exit-codes) true ;; *) false ;; esac && { source "$_LOKI_SCRIPT_DIR/lib/help-core.sh"; help_topic_text "$1"; }; then
                 :
             elif [ -n "${1:-}" ]; then
                 # `loki help <command>` reaches the command's own help. Before

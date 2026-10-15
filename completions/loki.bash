@@ -27,7 +27,7 @@ _loki_completion() {
 
             # If the word starts with a dash, show flags
             if [[ "$cur" == -* ]]; then
-                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --spec --spec-first --yes --budget --attempts --help"
+                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --spec --spec-first --yes --budget --attempts --model --isolation --help"
                 COMPREPLY=( $(compgen -W "${flags}" -- "$cur") )
                 return 0
             fi
@@ -125,7 +125,28 @@ _loki_completion() {
 
         doctor)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --fix --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        chat)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--attach --tui --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        models)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--local --json --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        agents)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--claude --help" -- "$cur") )
                 return 0
             fi
             ;;

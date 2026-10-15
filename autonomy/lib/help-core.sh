@@ -4,7 +4,7 @@
 # (autonomy/loki) and is reached with `loki help all`.
 
 # Topics reachable as `loki help <topic>`. Keep in sync with help_topic_text.
-LOKI_HELP_TOPICS="start models providers agents verify exit-codes config"
+LOKI_HELP_TOPICS="providers exit-codes"
 
 help_core_screen() {
     local version="$1"
@@ -30,6 +30,21 @@ help_core_screen() {
     echo "  models           Model tiers and routes (models --local for local models)"
     echo "  agents           Agent roles and routing (route shows where a task would go)"
     echo "  doctor [--json]  Check your setup is ready"
+    echo ""
+    echo "Options for 'start': --provider NAME, --model ID, --budget USD, --isolation LVL (isolation dial: none | worktree | docker)"
+    echo "Also: cost / estimate (spend before you build), resume (continue a paused or interrupted run)"
+    echo "Exit codes: docs/exit-codes.md"
+    echo ""
+    echo "Examples:"
+    echo "  loki start ./prd.md                 Build from a spec file"
+    echo "  loki start owner/repo#123           Build from a GitHub issue"
+    echo "  loki start ./prd.md --budget 20     Cap spend at 20 USD"
+    echo "  loki plan ./prd.md                  Dry run: complexity, cost, plan"
+    echo "  loki verify --json                  Machine-readable verification for CI"
+    echo "  loki resume                         Continue a paused or interrupted run"
+    echo "  loki status --json                  What is running, as JSON"
+    echo "  loki cost ./prd.md                  Estimate spend before you build"
+    echo "  loki doctor --fix                   Check setup and repair what it can"
     echo ""
     echo "More:"
     echo "  loki help all            Every command"
