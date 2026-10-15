@@ -215,8 +215,7 @@ memory/                    Memory system (Python package, ~19 modules)
 
 mcp/                       Model Context Protocol server
   server.py                MCP server (tools + resources + prompts)
-  tools.py / magic_tools.py / managed_tools.py  Tool registries
-  resources.py             MCP resources
+  magic_tools.py / managed_tools.py  Tool registries
   lsp_proxy.py             LSP proxy (references, definitions, symbols)
 
 dashboard/                 FastAPI control-plane backend

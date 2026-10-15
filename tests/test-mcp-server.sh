@@ -54,34 +54,6 @@ test_server_syntax() {
     fi
 }
 
-# Test 3: tools.py syntax valid
-test_tools_syntax() {
-    log_test "MCP tools.py has valid Python syntax"
-    if [ -f "$PROJECT_ROOT/mcp/tools.py" ]; then
-        if python3 -m py_compile "$PROJECT_ROOT/mcp/tools.py" 2>/dev/null; then
-            pass "tools.py syntax valid"
-        else
-            fail "tools.py has syntax errors"
-        fi
-    else
-        echo "[SKIP] tools.py not found"
-    fi
-}
-
-# Test 4: resources.py syntax valid
-test_resources_syntax() {
-    log_test "MCP resources.py has valid Python syntax"
-    if [ -f "$PROJECT_ROOT/mcp/resources.py" ]; then
-        if python3 -m py_compile "$PROJECT_ROOT/mcp/resources.py" 2>/dev/null; then
-            pass "resources.py syntax valid"
-        else
-            fail "resources.py has syntax errors"
-        fi
-    else
-        echo "[SKIP] resources.py not found"
-    fi
-}
-
 # Test 5: .mcp.json exists and is valid
 test_mcp_json() {
     log_test ".mcp.json exists and is valid"
@@ -220,8 +192,6 @@ test_v10_tools() {
 setup
 test_mcp_import
 test_server_syntax
-test_tools_syntax
-test_resources_syntax
 test_mcp_json
 test_mcp_json_server
 test_task_queue_file_ops
