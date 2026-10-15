@@ -1,6 +1,6 @@
 # CLI reference
 
-Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.4.1. Do not edit by hand.
+Generated from `loki-ts/src/cli/registry.ts` by `scripts/generate-stale-zero.sh` for v11.4.2. Do not edit by hand.
 Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for the full inventory.
 
 | Command | Description |
@@ -74,6 +74,11 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki engine10 dashboard` | v10 dashboard |
 | `loki engine10 modernize` | v10 modernize |
 | `loki help` | Show help |
+| `loki chat` | Interactive chat with the active provider |
+| `loki edit` | Make one small scoped edit |
+| `loki diff` | Show what the last run changed |
+| `loki models` | Show per-provider model routes |
+| `loki setup` | Guided first-run setup wizard |
 | `loki quick` | One small task |
 | `loki quickstart` | Guided first build |
 | `loki init` | Scaffold from a template |
@@ -90,6 +95,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki dashboard open` | Open in browser |
 | `loki config` | Manage configuration |
 | `loki config show` | Show config |
+| `loki config list` | List config (alias of show) |
 | `loki config init` | Create config |
 | `loki config edit` | Edit config |
 | `loki config path` | Print config path |
