@@ -1,0 +1,14 @@
+{
+  "id": "refactor-1-pricing",
+  "class": "refactor",
+  "title": "Extract duplicated pricing logic into pricing.py",
+  "prompt": "prompt.md",
+  "seed": "seed",
+  "reference": "reference",
+  "acceptance": {
+    "dir": "acceptance",
+    "cmd": "python3 -m unittest -q acceptance_test",
+    "timeout_s": 60
+  },
+  "agent_timeout_s": 600
+}

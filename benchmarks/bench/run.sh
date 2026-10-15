@@ -12,6 +12,8 @@
 #   list           List available task-specs.
 #   verify <file>  Recompute task_hash + re-check tool versions for a result.
 #   report <files> Build results.json + RESULTS.md from per-tool result-rows.
+#   attribution    Same-model harness attribution: raw Claude Code vs Loki
+#                  (attribution.py; --dry-run prints the plan, no model call).
 #
 # CREDIBILITY: Loki NEVER grades itself. The grader runs the held-out acceptance
 # command OUTSIDE the agent and decides success by exit code. No council /
@@ -49,6 +51,8 @@ Subcommands:
   verify <file>   Recompute task_hash + check tool versions for a result.json
   oracles         Are the graders trustworthy? Hash-bound, no spend, no provider
   report <files>  Build results.json + RESULTS.md from per-tool result-rows
+  attribution     Same-model harness attribution: raw Claude Code vs Loki
+                  (--dry-run prints the plan; --execute runs and spends budget)
 
 Options:
   --trials N      Number of trials per tool (default 3)
@@ -64,6 +68,12 @@ EOF
 # Parse leading subcommand.
 SUB="${1:-}"
 [ $# -gt 0 ] && shift || true
+
+# attribution has its own option set (parsed by attribution.py), so it is routed
+# before the shared option loop below.
+if [ "$SUB" = "attribution" ]; then
+    exec "${LOKI_BENCH_PYTHON:-python3}" "$SCRIPT_DIR/attribution.py" "$@"
+fi
 
 # Parse options + positionals. POSITIONAL holds the first positional (run/vs/
 # verify take exactly one); POSITIONALS accumulates all of them (report takes
