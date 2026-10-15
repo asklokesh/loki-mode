@@ -15,6 +15,8 @@ export interface RunSummaryInput {
   elapsedS: number;
   receiptPath?: string | null;
   next: string;
+  /** REQTRACE: requirements with no passing check, from .loki/state/requirements-map.json; absent or 0 prints nothing. */
+  uncovered?: number;
 }
 
 /** Map engine10's Outcome to the four user-facing results. */
@@ -43,8 +45,11 @@ export function useColor(env: NodeJS.ProcessEnv = process.env, isTty: boolean = 
 }
 
 export function summaryObject(i: RunSummaryInput): Record<string, unknown> {
-  return { result: i.result, files_changed: i.filesChanged, insertions: i.insertions ?? null, deletions: i.deletions ?? null, cost_usd: i.costUsd, cost_estimated: !!i.costEstimated, elapsed_s: Math.round(i.elapsedS), receipt: i.receiptPath ?? null, next: i.next };
+  return { result: i.result, files_changed: i.filesChanged, insertions: i.insertions ?? null, deletions: i.deletions ?? null, cost_usd: i.costUsd, cost_estimated: !!i.costEstimated, elapsed_s: Math.round(i.elapsedS), receipt: i.receiptPath ?? null, next: i.next, ...(i.uncovered ? { requirements_uncovered: i.uncovered } : {}) };
 }
+
+/** The next-step suffix naming uncovered requirements; empty when there are none. */
+export function uncoveredNote(n: number | undefined): string { return n ? `${n} requirement${n === 1 ? "" : "s"} uncovered, see: loki plan --requirements` : ""; }
 
 export function formatRunSummary(i: RunSummaryInput, opts: { json?: boolean; color?: boolean } = {}): string {
   if (opts.json) return `${JSON.stringify(summaryObject(i))}\n`;
@@ -58,7 +63,7 @@ export function formatRunSummary(i: RunSummaryInput, opts: { json?: boolean; col
     `Cost:     ${cost}`,
     `Elapsed:  ${dur(i.elapsedS)}`,
     ...(i.receiptPath ? [`Receipt:  ${i.receiptPath}`] : []),
-    `next:     ${i.next}  (or: loki chat --attach)`,
+    `next:     ${i.next}  (or: loki chat --attach)${i.uncovered ? `; ${uncoveredNote(i.uncovered)}` : ""}`,
   ];
   return `${lines.join("\n")}\n`;
 }
@@ -67,8 +72,9 @@ export function formatRunSummary(i: RunSummaryInput, opts: { json?: boolean; col
 export function withNextLine(out: string, i: RunSummaryInput): string {
   const files = i.filesChanged == null ? "files unknown" : `${i.filesChanged} file${i.filesChanged === 1 ? "" : "s"} changed${i.insertions != null && i.deletions != null ? ` (+${i.insertions} -${i.deletions})` : ""}`;
   const lines = out.replace(/\n+$/, "").split("\n");
-  if (lines.length < 7) return `${lines.join("\n")}\nNext:       ${i.next}  (${files})\n`;
-  lines[lines.length - 1] += `; next: ${i.next}`;
+  const un = i.uncovered ? `; ${uncoveredNote(i.uncovered)}` : "";
+  if (lines.length < 7) return `${lines.join("\n")}\nNext:       ${i.next}  (${files})${un}\n`;
+  lines[lines.length - 1] += `; next: ${i.next}${un}`;
   return `${lines.join("\n")}\n`;
 }
 

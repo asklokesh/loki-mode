@@ -66,6 +66,22 @@ except Exception:
         *) if [ -n "$files" ] && [ "$files" != "0" ]; then next="loki undo"; else next="loki doctor"; fi ;;
     esac
 
+    # REQTRACE: requirements with no passing check, from .loki/state/requirements-map.json (written by the Bun runner and engine10).
+    local unc=""
+    if [ -s "$loki_dir/state/requirements-map.json" ]; then
+        unc="$(LOKI_RM="$loki_dir/state/requirements-map.json" python3 -I -c "
+import json, os
+try:
+    m = json.load(open(os.environ['LOKI_RM']))
+    n = sum(1 for r in m.get('requirements', []) if r.get('status') == 'uncovered')
+    print(n if n else '')
+except Exception:
+    print('')
+" 2>/dev/null || true)"
+    fi
+    local next_h="$next"
+    [ -n "$unc" ] && next_h="${next}; ${unc} requirement(s) uncovered, see: loki plan --requirements"
+
     local mm=$((elapsed / 60)) ss=$((elapsed % 60)) elapsed_h
     if [ "$elapsed" -lt 60 ]; then elapsed_h="${elapsed}s"; else elapsed_h="${mm}m$(printf '%02d' "$ss")s"; fi
 
@@ -92,5 +108,5 @@ except Exception:
     printf 'Cost:     %s\n' "$cost_h"
     printf 'Elapsed:  %s\n' "$elapsed_h"
     [ -n "$receipt" ] && printf 'Receipt:  %s\n' "$receipt"
-    printf 'next:     %s  (or: loki chat --attach)\n' "$next"
+    printf 'next:     %s  (or: loki chat --attach)\n' "$next_h"
 }

@@ -389,6 +389,7 @@ function _loki_plan {
         '--json[Machine-readable JSON output]' \
         '--verbose[Detailed per-iteration breakdown]' \
         '--spec[Write editable acceptance criteria to .loki/specs/<slug>.md]' \
+        '--requirements[Print the last run requirement-to-check map (read-only)]' \
         '*:prd file:_files'
 }
 
