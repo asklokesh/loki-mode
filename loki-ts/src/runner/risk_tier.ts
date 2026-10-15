@@ -1,7 +1,7 @@
 // RISKTIER: classify risk on the ARTIFACT (the actual diff), never the prompt, and map the tier to a
 // verification plan. Pure functions plus one best-effort recorder. Reuses isTestFile from testmap.ts;
 // the bash `loki review --risk` scorer (autonomy/lib/review_risk.py) stays a separate 0-100 advisory view.
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isTestFile } from "../engine10/testmap.ts";
 import { safeGit } from "../util/safe_git.ts";
@@ -31,11 +31,27 @@ const TEST_CFG = /(^|\/)(conftest\.py|\.?pytest\.(ini|toml)|tox\.ini|jest\.confi
 const RANK: Record<RiskTier, number> = { low: 0, medium: 1, high: 2 };
 const FILES_MEDIUM = 4, FILES_HIGH = 15, LINES_MEDIUM = 100, LINES_HIGH = 500;
 
-const PLAN: Record<RiskTier, { selected: string[]; deferred: string[] }> = {
-  low: { selected: ["targeted tests", "lint of changed files"], deferred: ["full test command", "reviewer", "council", "security scan"] },
-  medium: { selected: ["targeted tests", "lint of changed files", "full test command", "one reviewer"], deferred: ["council", "security scan"] },
-  high: { selected: ["targeted tests", "lint of changed files", "full test command", "full suite", "council", "security scan"], deferred: [] },
+// Fast verify always runs targeted tests and lint of changed files; anything else in `selected` is required depth.
+const RAN_ALWAYS = ["targeted tests", "lint of changed files"];
+const PLAN: Record<RiskTier, { selected: string[] }> = {
+  low: { selected: [...RAN_ALWAYS] },
+  medium: { selected: [...RAN_ALWAYS, "full test command", "one reviewer"] },
+  high: { selected: [...RAN_ALWAYS, "full test command", "full suite", "council", "security scan"] },
 };
+const LOW_SKIPPED = ["full test command", "reviewer", "council", "security scan"]; // low skips these by design; they are listed so the record never implies they ran
+const deferredOf = (tier: RiskTier, selected: string[], executed: string[]): string[] => (tier === "low" ? LOW_SKIPPED : selected).filter((c) => !RAN_ALWAYS.includes(c) && !executed.includes(c));
+
+function summaryOf(a: Pick<RiskAssessment, "tier" | "computed" | "reasons" | "override" | "checks_deferred">): string {
+  const why = a.tier === a.computed ? a.reasons.slice(0, 2).join("; ") : `computed ${a.computed}; override ${a.override?.from} to ${a.override?.to}: ${a.override?.reason}`;
+  const def = a.checks_deferred;
+  return `risk: ${a.tier} (${why}), ${def.length ? def.join(", ") : "no deeper checks"} not run`;
+}
+
+/** Marks selected deeper checks that verify really executed (for example the full test command), then rebuilds deferred and summary. */
+export function markExecuted(a: RiskAssessment, executed: string[]): RiskAssessment {
+  const checks_deferred = deferredOf(a.tier, a.checks_selected, executed);
+  return { ...a, checks_deferred, summary: summaryOf({ ...a, checks_deferred }) };
+}
 
 export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process.env): RiskAssessment {
   const lines = files.reduce((n, f) => n + f.added + f.deleted, 0);
@@ -65,13 +81,12 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
     else if (reason) { tier = asked; override = { from: computed, to: asked, reason }; }
     else ignored = `LOKI_RISK_TIER=${asked} ignored: lowering from ${computed} needs LOKI_RISK_OVERRIDE_REASON`;
   }
-  const plan = PLAN[tier];
-  const why = tier === computed ? reasons.slice(0, 2).join("; ") : `computed ${computed}; override ${override?.from} to ${override?.to}: ${override?.reason}`;
-  const summary = `risk: ${tier} (${why}), ${plan.deferred.length ? `${plan.deferred.join(", ")} not run` : "all deeper checks required"}`;
+  const plan = PLAN[tier], checks_deferred = deferredOf(tier, plan.selected, []);
+  const summary = summaryOf({ tier, computed, reasons, ...(override ? { override } : {}), checks_deferred });
   return {
     version: 1, tier, computed, reasons,
     stats: { files: files.length, lines, sensitive, tests_modified: testsModified, tests_deleted: testsDeleted, api },
-    checks_selected: plan.selected, checks_deferred: plan.deferred,
+    checks_selected: plan.selected, checks_deferred,
     ...(override ? { override } : {}), ...(ignored ? { override_ignored: ignored } : {}), summary,
   };
 }
@@ -104,4 +119,21 @@ export function recordRisk(repoDir: string, a: RiskAssessment): string | null {
     writeFileSync(`${p}.tmp`, JSON.stringify(a, null, 2) + "\n"); renameSync(`${p}.tmp`, p);
     return p;
   } catch { return null; }
+}
+
+/** The recorded summary line for a run that started at sinceMs; null when absent, stale or unreadable. */
+export function readRiskSummary(repoDir: string, sinceMs = 0): string | null {
+  try {
+    const p = join(repoDir, ".loki", "state", "risk-tier.json");
+    if (statSync(p).mtimeMs < sinceMs) return null;
+    const s = (JSON.parse(readFileSync(p, "utf8")) as { summary?: unknown }).summary;
+    return typeof s === "string" && s ? s : null;
+  } catch { return null; }
+}
+
+/** Appends the risk line to rendered output only while the default 8-line cap (D48, start line printed separately) still holds. */
+export function withRiskLine(out: string, line: string | null, maxLines = 7): string {
+  if (!line) return out;
+  const body = out.replace(/\n+$/, "");
+  return body.split("\n").length + 1 > maxLines ? out : `${body}\n${line}\n`;
 }

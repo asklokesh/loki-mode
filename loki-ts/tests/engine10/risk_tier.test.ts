@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { classifyRisk, diffFiles, recordRisk, type DiffFile } from "../../src/runner/risk_tier.ts";
+import { classifyRisk, diffFiles, markExecuted, readRiskSummary, recordRisk, withRiskLine, type DiffFile } from "../../src/runner/risk_tier.ts";
 
 const f = (path: string, added = 5, deleted = 1, status: DiffFile["status"] = "modified"): DiffFile => ({ path, added, deleted, status });
 const dirs: string[] = [];
@@ -16,14 +16,14 @@ describe("classifyRisk tiers", () => {
     expect(r.checks_deferred).toContain("council");
     expect(r.checks_selected).not.toContain("council");
     expect(r.summary).toContain("risk: low (2 files, no sensitive paths)");
-    expect(r.summary).toContain("council");
-    expect(r.summary).toContain("not run");
+    expect(r.summary).toBe("risk: low (2 files, no sensitive paths), full test command, reviewer, council, security scan not run");
   });
   test("many files or lines is medium: full test command plus one reviewer", () => {
     const r = classifyRisk(["a", "b", "c", "d"].map((n) => f(`src/${n}.ts`)), {});
     expect(r.tier).toBe("medium");
     expect(r.checks_selected).toContain("one reviewer");
-    expect(r.checks_deferred).toEqual(["council", "security scan"]);
+    expect(r.checks_deferred).toEqual(["full test command", "one reviewer"]);
+    expect(r.summary).toMatch(/full test command, one reviewer not run$/);
     expect(classifyRisk([f("src/big.ts", 120, 0)], {}).tier).toBe("medium");
   });
   test("modifying an existing test is medium, adding a new test is not", () => {
@@ -34,7 +34,25 @@ describe("classifyRisk tiers", () => {
     const r = classifyRisk([f("src/big.ts", 600, 0)], {});
     expect(r.tier).toBe("high");
     expect(r.checks_selected).toEqual(expect.arrayContaining(["full suite", "council", "security scan"]));
-    expect(r.checks_deferred).toEqual([]);
+    expect(r.checks_deferred).toEqual(["full test command", "full suite", "council", "security scan"]);
+    expect(r.summary).toMatch(/full test command, full suite, council, security scan not run$/);
+  });
+  test("markExecuted removes only what really ran and keeps the rest not run", () => {
+    const r = markExecuted(classifyRisk([f("src/big.ts", 600, 0)], {}), ["full test command", "full suite"]);
+    expect(r.checks_deferred).toEqual(["council", "security scan"]);
+    expect(r.summary).toMatch(/council, security scan not run$/);
+    expect(markExecuted(classifyRisk(["a", "b", "c", "d"].map((n) => f(`src/${n}.ts`)), {}), ["full test command"]).checks_deferred).toEqual(["one reviewer"]);
+  });
+  test("readRiskSummary returns the recorded line, null when absent or stale; withRiskLine honors the line cap", () => {
+    const d = mkdtempSync(join(tmpdir(), "risk-sum-")); dirs.push(d);
+    expect(readRiskSummary(d)).toBeNull();
+    const r = classifyRisk([f("src/a.ts")], {});
+    recordRisk(d, r);
+    expect(readRiskSummary(d)).toBe(r.summary);
+    expect(readRiskSummary(d, Date.now() + 60_000)).toBeNull();
+    expect(withRiskLine("a\nb\n", r.summary)).toBe(`a\nb\n${r.summary}\n`);
+    expect(withRiskLine("1\n2\n3\n4\n5\n6\n7\n", r.summary)).toBe("1\n2\n3\n4\n5\n6\n7\n");
+    expect(withRiskLine("a\n", null)).toBe("a\n");
   });
   test("deleted test file and public API are high", () => {
     expect(classifyRisk([f("tests/old.test.ts", 0, 40, "deleted")], {}).tier).toBe("high");

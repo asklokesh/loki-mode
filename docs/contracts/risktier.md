@@ -11,7 +11,7 @@ Goal: small changes stay quick, risky changes get deeper checks, and the run rec
 
 ## Module
 `loki-ts/src/runner/risk_tier.ts`: `classifyRisk(files, env)`, `diffFiles(repoDir, baseSha)`, `recordRisk(repoDir, assessment)`.
-Wired in one place: the verify stage computes it from the real diff (`git diff --numstat` plus untracked files, `.loki/` excluded), writes `.loki/state/risk-tier.json`, and returns it as `risk` in the stage data. A classification failure yields `risk: null` and never fails verify.
+Wired in verify (computes from the real diff, writes `.loki/state/risk-tier.json`, returns `risk` in stage data, runs the full test command at medium and high) and in the engine10 supervisor end of run: `readRiskSummary(repoDir, runStartMs)` prints the recorded `summary` line in quiet and verbose output, as `summary.risk` in `--json`, and in default output only while the D48 line cap still holds. A record older than the run start is ignored. A classification failure yields `risk: null` and never fails verify.
 
 ## Classification (artifact only, never the prompt)
 - high: any sensitive path (auth, crypto, payments, migrations or .sql, CI config, lockfiles, infra, .env), a deleted test file, public API surface (openapi/swagger, .proto, .d.ts, api/routes/public dirs, index files), 15+ files, or 500+ changed lines.
@@ -20,13 +20,13 @@ Wired in one place: the verify stage computes it from the real diff (`git diff -
 Test files are never counted as sensitive. Every tier lists its reasons.
 
 ## Tier to depth
-| tier | selected | deferred (not run by fast verify) |
+| tier | selected | checks_deferred (recorded as NOT run) |
 |---|---|---|
-| low | targeted tests, lint of changed files | full test command, reviewer, council, security scan |
-| medium | low plus full test command, one reviewer | council, security scan |
-| high | medium plus full suite, council, security scan | none |
+| low | targeted tests, lint of changed files | full test command, reviewer, council, security scan (skipped by design) |
+| medium | low plus full test command, one reviewer | full test command, one reviewer |
+| high | medium plus full suite, council, security scan | full test command, full suite, council, security scan |
 
-`checks_selected` is the required depth for the tier; `checks_deferred` lists what the tier skips. Honesty rule: the fast verify stage still executes only the targeted tests and lint. Consumers must read `checks_selected` entries beyond those two as REQUIRED, not as passed. Nothing here marks a skipped or not-yet-run check as passing, and it does not alter the verdict.
+`checks_deferred` is selected minus what actually executed. Targeted tests and lint always run. At medium and high the verify stage also runs the detected full test command (the deep.ts per-runner full suite commands, reused through a lazy import); when at least one such check ran to pass or fail, `markExecuted` removes "full test command" and "full suite" from deferred and rewrites the record. Reviewer, council and security scan are never run by fast verify, so they stay deferred at every tier. The summary always ends `<deferred> not run`. Full test command checks are real verify checks: a failure counts like any failing check; a not_run result is added to not_proven. Nothing marks a skipped check as passing.
 
 ## Override
 - `LOKI_RISK_TIER=low|medium|high` can raise the tier freely.
@@ -35,9 +35,10 @@ Test files are never counted as sensitive. Every tier lists its reasons.
 ## Record shape (`.loki/state/risk-tier.json`)
 `{version:1, tier, computed, reasons[], stats{files,lines,sensitive[],tests_modified[],tests_deleted[],api[]}, checks_selected[], checks_deferred[], override?, override_ignored?, summary}`.
 `summary` example: `risk: low (2 files, no sensitive paths), full test command, reviewer, council, security scan not run`.
-The outcome-record and run-summary owners should read this file tolerantly (it may be absent) and print `summary`.
+The outcome-record owner should read this file tolerantly (it may be absent) and print `summary`; the run summary already does.
 
 ## Known gaps
-- Medium and high depth beyond targeted tests and lint (full suite, council, security scan) are recorded as required but not yet executed by engine10 verify; no enforcement or verdict change yet.
-- The bash run.sh council triggers are not yet driven by this tier.
+- Reviewer, council and security scan are not executed by engine10 verify at any tier; they are recorded as not run. Follow-up owner: the council/deep-verify slice owner (deep.ts already has council and secret scan, not yet driven by this tier).
+- The bash run.sh council triggers are not yet driven by this tier, and the outcome record (parallel wave) does not yet embed the line.
 - Public API detection is path-based, not a semantic diff of exports.
+- A full test command failure that also fails on the base is not subtracted (subtractBase covers per-file tests only).
