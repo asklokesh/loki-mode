@@ -101,3 +101,37 @@ describe("FC-09r no weakening of the main line-keyword guard", () => {
     expect(testConfigChanged(r.dir, r.base, ["pyproject.toml"])).toEqual([]);
   });
 });
+
+describe("FC-09r dependency swaps, tsconfig extends, section headers, subdir base", () => {
+  const dev = (d: Record<string, string>): string => JSON.stringify({ scripts: { test: "t" }, devDependencies: d });
+  test.each([
+    ["jest file stub", { jest: "^29.0.0" }, { jest: "file:./fakejest" }],
+    ["vitest npm alias", { vitest: "^1.0.0" }, { vitest: "npm:noop-vitest@1.0.0" }],
+    ["non-runner key to link spec", { left: "1.0.0" }, { left: "link:../x" }],
+  ])("%s caps", (_n, a, b) => {
+    const r = repo({ "package.json": dev(a) });
+    r.edit("package.json", dev(b));
+    expect(testConfigChanged(r.dir, r.base, ["package.json"])).toEqual(["package.json"]);
+  });
+  test("plain non-runner dependency bump does not cap", () => {
+    const r = repo({ "package.json": dev({ left: "1.0.0" }) });
+    r.edit("package.json", dev({ left: "1.0.1" }));
+    expect(testConfigChanged(r.dir, r.base, ["package.json"])).toEqual([]);
+  });
+  test("tsconfig extends change caps", () => {
+    const r = repo({ "tsconfig.json": '{"extends":"./a.json"}' });
+    r.edit("tsconfig.json", '{"extends":"./b.json"}');
+    expect(testConfigChanged(r.dir, r.base, ["tsconfig.json"])).toEqual(["tsconfig.json"]);
+  });
+  test("tsconfig rootDirs change caps", () => {
+    const r = repo({ "tsconfig.json": '{"compilerOptions":{}}' });
+    r.edit("tsconfig.json", '{"compilerOptions":{"rootDirs":["a","b"]}}');
+    expect(testConfigChanged(r.dir, r.base, ["tsconfig.json"])).toEqual(["tsconfig.json"]);
+  });
+  test("array-valued line starting with [ does not end the pytest section", () => {
+    const a = '[tool.pytest.ini_options]\nmarkers = [\n  "a",\n]\nfoo = 1\n';
+    const r = repo({ "pyproject.toml": a });
+    r.edit("pyproject.toml", a.replace("foo = 1", "foo = 2"));
+    expect(testConfigChanged(r.dir, r.base, ["pyproject.toml"])).toEqual(["pyproject.toml"]);
+  });
+});

@@ -20,6 +20,11 @@ export const RUNNER_CONFIGS: Spec[] = [
   { re: /(^|\/)[jt]sconfig(\.[\w-]+)?\.json$/, shared: "tsconfig" },
 ];
 
+const DEP_MAPS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"] as const;
+const RUNNER_DEP = /^(jest|vitest|mocha|ava|c8|nyc|pytest[\w-]*|@jest\/.*|ts-jest|babel-jest)$/;
+const LOCAL_SPEC = /^(file|link|npm|workspace):/;
+/** Dependency entries that can swap the runner or redirect code: runner-named keys, or any key resolved to a local or aliased spec. */
+const depGuard = (j: Record<string, unknown>): unknown[] => DEP_MAPS.map((m) => Object.entries((j[m] ?? {}) as Record<string, unknown>).filter(([k, v]) => RUNNER_DEP.test(k) || LOCAL_SPEC.test(String(v))));
 const KW = /pytest|jest|mocha|vitest|addopts|testpaths/i; // main's original line trigger, kept as a union so no guard is weakened
 const lines = (t: string): string[] => t.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 const jsonc = (t: string): unknown => JSON.parse(t.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "$1").replace(/,(\s*[}\]])/g, "$1"));
@@ -30,14 +35,14 @@ function relevant(shared: Sections, text: string): string {
     let blk = false;
     return lines(text).filter((l) => { if (blk) { if (l === ")") blk = false; return true; } if (/^replace\s*\($/.test(l)) { blk = true; return true; } return /^replace\s/.test(l); }).join("\n");
   }
-  if (shared === "tsconfig") { const o = (jsonc(text) as { compilerOptions?: Record<string, unknown> }).compilerOptions ?? {}; return JSON.stringify([o["baseUrl"], o["paths"]]); }
-  if (Array.isArray(shared)) { const j = JSON.parse(text) as Record<string, unknown>; return JSON.stringify(shared.map((k) => j[k])); }
+  if (shared === "tsconfig") { const j = jsonc(text) as { compilerOptions?: Record<string, unknown>; extends?: unknown }; const o = j.compilerOptions ?? {}; return JSON.stringify(["extends", "baseUrl", "paths", "rootDirs", "moduleSuffixes", "customConditions"].map((k) => (k === "extends" ? j["extends"] : o[k]))); }
+  if (Array.isArray(shared)) { const j = JSON.parse(text) as Record<string, unknown>; return JSON.stringify([shared.map((k) => j[k]), depGuard(j)]); }
   let on = false;
-  return lines(text).filter((l) => { if (l.startsWith("[")) on = (shared as RegExp).test(l); return on || KW.test(l); }).join("\n");
+  return lines(text).filter((l) => { if (/^\[[^\]]+\]$/.test(l)) on = (shared as RegExp).test(l); return on || KW.test(l); }).join("\n");
 }
 
 const baseText = (dir: string, base: string, f: string): string => {
-  try { return execFileSync("git", ["show", `${base}:${f}`], { cwd: dir, encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"], timeout: 20000 }); } catch { return ""; }
+  try { return execFileSync("git", ["show", `${base}:./${f}`], { cwd: dir, encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"], timeout: 20000 }); } catch { return ""; }
 };
 const headText = (dir: string, f: string): string => { try { return readFileSync(join(dir, f), "utf8"); } catch { return ""; } };
 
