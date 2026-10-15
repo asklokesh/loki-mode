@@ -26,6 +26,9 @@
 //     the oracle cases must then FAIL equivalence, else NOT_PROVEN "oracle does not constrain unit".
 // (6) Conformance files (tests, conftest.py, pytest config) and every .py are hashed at Wall-seal time and must be
 //     unchanged on the new tree before the post-implement conformance run is trusted.
+// (7) FC-24 (docs/v10/FAILURE-CLASSES.md): target conformance is runner_reported. Checks (6) and the per-test
+//     identity check stop accidental and low-effort false passes, not unit code that deliberately subverts
+//     pytest inside its own process. PROVEN's conformance leg carries that limit in the result and the log.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs";
@@ -133,8 +136,11 @@ export function nodeidKey(nodeid: string): string {
 }
 
 /** Footer counts and per-test outcomes, trusted only when the junit report (never written by a process that
- *  dies early, and not forgeable by printing a footer) agrees with them, the run never hit pytest.exit, and
- *  the report holds at least as many testcases as pytest said it collected. */
+ *  dies early) agrees with them, the run never hit pytest.exit, and the report holds at least as many
+ *  testcases as pytest said it collected. A printed footer alone never passes: the junit report must exist and
+ *  agree. Both the footer and the report come from the pytest process, which runs unit-under-test code, so a
+ *  deliberate in-process forgery (rewriting the report, patching pytest's reports) is not detected: FC-24,
+ *  recorded as runner_reported. */
 function trustedRun(stdout: string, junitXml: string | undefined): { counts: PytestCounts; tests: Record<string, TestOutcome> } | undefined {
   const c = parseFooterCounts(stdout);
   const j = junitXml === undefined ? undefined : parseJunit(junitXml);
@@ -197,8 +203,8 @@ export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000)
 
 /** One pytest child under the pinned configuration. Bytecode must never answer for source: no in-tree .pyc
  *  is read (fresh empty PYTHONPYCACHEPREFIX) or written (PYTHONDONTWRITEBYTECODE), pytest's cache plugin is
- *  off, and xfail is strict (-rX lists the rest). The junit file lives in its own mkdtemp dir that no env
- *  variable the child sees points at. */
+ *  off, and xfail is strict (-rX lists the rest). The junit file lives in a fresh mkdtemp dir so no stale
+ *  report is ever read. Its path is in the child's argv, so code in the child can read and rewrite it (FC-24). */
 function spawnPytest(pythonBin: string, repoDir: string, timeoutMs: number, extra: string[], withJunit: boolean) {
   const pycPrefix = mkdtempSync(join(tmpdir(), "loki-pyc-"));
   const junitDir = mkdtempSync(join(tmpdir(), "loki-junit-"));
@@ -444,6 +450,8 @@ export interface UnitRunResult {
   wall: PreSealedWallResult | null;
   equiv: EquivResult | null;
   not_proven: string[];
+  /** Set only on PROVEN: the conformance leg is runner_reported under the FC-24 limit. null on every other verdict. */
+  conformance: { trust: "runner_reported"; limit: "FC-24"; tests: number } | null;
 }
 
 function notProvenUnitResult(
@@ -452,7 +460,7 @@ function notProvenUnitResult(
   oracle: SealedOracle | null,
   wall: PreSealedWallResult | null,
 ): UnitRunResult {
-  return { unit, verdict: "NOT_PROVEN", oracle, wall, equiv: null, not_proven: [reason] };
+  return { unit, verdict: "NOT_PROVEN", oracle, wall, equiv: null, not_proven: [reason], conformance: null };
 }
 
 function readOracleSealed(repoDir: string, mid: string, unit: string): SealedOracle {
@@ -567,7 +575,7 @@ export function runUnit(
 
   const equiv = checkEquivalence(repoDir, mid, unit, newTreeDir, card.normalizers, runNew, log);
   if (equiv.verdict !== "PROVEN") {
-    return { unit, verdict: equiv.verdict, oracle, wall, equiv, not_proven: equiv.not_proven };
+    return { unit, verdict: equiv.verdict, oracle, wall, equiv, not_proven: equiv.not_proven, conformance: null };
   }
 
   // No-op ablation (MODERNIZE.md:153, :262): the oracle cases run against the unit replaced by
@@ -599,7 +607,7 @@ export function runUnit(
     );
   }
   // A bare exit 0 is not proof (os._exit(0), pytest.exit, an all-skipped or xfailed run): every sealed test
-  // identity must appear in the verified junit report with outcome passed.
+  // identity must appear in the runner-reported junit report (FC-24) with outcome passed.
   let want = expected ?? undefined;
   if (expected === null) {
     const files = Object.keys(sealedHashes).filter((p) => TEST_FILE.test(p) && !p.split("/").some(skipName) && !sealedHashes![p]!.startsWith(LINK) && !sealedHashes![p]!.startsWith("entry:"));
@@ -611,5 +619,7 @@ export function runUnit(
   const shortfall = conformanceShortfall(want, newOutcome);
   if (shortfall) return notProvenUnitResult(unit, `target conformance run is not a full pass: ${shortfall}`, oracle, wall);
 
-  return { unit, verdict: "PROVEN", oracle, wall, equiv, not_proven: [] };
+  const tests = want!.length; // non-empty: conformanceShortfall refuses an empty or missing set
+  log.append("unit.conformance_passed", { unit, trust: "runner_reported", limit: "FC-24", tests });
+  return { unit, verdict: "PROVEN", oracle, wall, equiv, not_proven: [], conformance: { trust: "runner_reported", limit: "FC-24", tests } };
 }

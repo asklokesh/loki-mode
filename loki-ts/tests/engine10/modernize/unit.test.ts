@@ -117,6 +117,7 @@ describe("runUnit ordering (1): sealOracle runs before implement", () => {
     const result = runUnitAb(baseCard(unit), log, () => redBase, () => { implementCalled = true; }, () => passingNewCase());
     expect(implementCalled).toBe(false);
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
   });
 });
 
@@ -138,6 +139,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     const second = runUnitAb(card, log, () => redBase, () => { implementCalled = true; }, () => passingNewCase());
     expect(implementCalled).toBe(false);
     expect(second.verdict).toBe("NOT_PROVEN");
+    expect(second.conformance).toBeNull();
     expect(second.not_proven[0]).toMatch(/oracle seal invalid/);
   });
 
@@ -153,6 +155,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     );
     expect(implementCalled).toBe(false);
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/design error/);
   });
 
@@ -168,6 +171,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     );
     expect(implementCalled).toBe(false);
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
   });
 
   it("re-verifies a resumed Wall seal and still refuses to trust it once tampered", () => {
@@ -181,6 +185,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     const second = runUnitAb(card, log, redThenGreen(), () => { implementCalled = true; }, () => passingNewCase());
     expect(implementCalled).toBe(false);
     expect(second.verdict).toBe("NOT_PROVEN");
+    expect(second.conformance).toBeNull();
     expect(second.not_proven[0]).toMatch(/presealed wall invalid/);
   });
 
@@ -202,6 +207,7 @@ describe("runUnit trust (2): verifySeal and verifyPreSealedWall gate every downs
     // after implement is still red too -- case-level equivalence alone must never be enough.
     const result = runUnitAb(baseCard(unit), log, () => redBase, () => {}, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/target conformance did not pass/);
   });
 });
@@ -324,6 +330,7 @@ describe("finding 1: no-op ablation", () => {
     // `def f(*a, **k): pass` returns None: the stub matches the oracle just as well as the new unit.
     const result = runUnit(baseCard(unit), log, redThenGreen(), () => {}, noneOutcome, noneOutcome);
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven).toEqual(["oracle does not constrain unit"]);
   });
 
@@ -332,6 +339,7 @@ describe("finding 1: no-op ablation", () => {
     sealOracleFixture(unit);
     const result = runUnit(baseCard(unit), log, redThenGreen(), () => {}, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven).toEqual(["ablation not run"]);
   });
 
@@ -367,6 +375,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       "import pytest\ndef pytest_collection_modifyitems(items):\n    for i in items:\n        i.add_marker(pytest.mark.skip)\n");
     const result = runUnitAb(baseCard("conf_skip"), log, real(), forge, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/conftest\.py added/);
   });
 
@@ -375,6 +384,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const edit = () => writeFileSync(join(repoDir, "test_conf.py"), "def test_ready():\n    assert True\n");
     const result = runUnitAb(baseCard("conf_edit"), log, real(), edit, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/test_conf\.py changed/);
   });
 
@@ -383,6 +393,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const cfg = () => writeFileSync(join(repoDir, "pytest.ini"), "[pytest]\naddopts = --deselect test_conf.py::test_ready\n");
     const result = runUnitAb(baseCard("conf_cfg"), log, real(), cfg, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/pytest\.ini added/);
   });
 
@@ -391,6 +402,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const shim = () => { modernize(); writeFileSync(join(repoDir, "pytest.py"), "raise SystemExit(0)\n"); };
     const result = runUnitAb(baseCard("conf_shim"), log, real(), shim, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/pytest\.py added/);
   });
 
@@ -410,6 +422,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       setup(`conf_r4_${name.replace(/\W/g, "")}`);
       const result = runUnitAb(baseCard(`conf_r4_${name.replace(/\W/g, "")}`), log, real(), attack, () => passingNewCase());
       expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.conformance).toBeNull();
       expect(result.not_proven[0]).toMatch(new RegExp(re));
     });
   }
@@ -430,6 +443,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
         const card = listed ? { ...baseCard(unit), files: ["u.py"] } : baseCard(unit);
         const result = runUnitAb(card, log, real(), attack, () => passingNewCase());
         expect(result.verdict).toBe("NOT_PROVEN");
+        expect(result.conformance).toBeNull();
         expect(result.not_proven[0]).toMatch(/added/);
       });
     }
@@ -443,6 +457,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const hack = () => writeFileSync(join(repoDir, "helpers.py"), "import u\nu.PY3_READY = True\n");
     const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), hack, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/helpers\.py changed/);
   });
 
@@ -468,6 +483,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const cheat = () => writeFileSync(join(repoDir, "tests", "expected.txt"), "py2\n");
     const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), cheat, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/tests\/expected\.txt changed/);
   });
 
@@ -478,12 +494,14 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const edit = () => { modernize(); writeFileSync(join(repoDir, "golden.txt"), "b\n"); };
     const r1 = runUnitAb(baseCard(unit), log, real(), edit, () => passingNewCase());
     expect(r1.verdict).toBe("NOT_PROVEN");
+    expect(r1.conformance).toBeNull();
     expect(r1.not_proven[0]).toMatch(/golden\.txt changed/);
     const unit2 = "conf_fixture_nofiles_add";
     setup(unit2);
     const add = () => { modernize(); writeFileSync(join(repoDir, "golden"), "x\n"); };
     const r2 = runUnitAb(baseCard(unit2), log, real(), add, () => passingNewCase());
     expect(r2.verdict).toBe("NOT_PROVEN");
+    expect(r2.conformance).toBeNull();
     expect(r2.not_proven[0]).toMatch(/golden added/);
   });
 
@@ -508,6 +526,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     };
     const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), plant, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
   });
 
   it("r5 B2: a stray .pyc outside __pycache__ (sourceless import) is refused", () => {
@@ -516,6 +535,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const plant = () => { modernize(); writeFileSync(join(repoDir, "zz.pyc"), "junk"); };
     const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), plant, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/zz\.pyc added/);
   });
 
@@ -524,6 +544,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const boom = () => { throw new Error("stub runner exploded"); };
     const result = runUnit(baseCard("conf_abl_throw"), log, real(), modernize, () => passingNewCase(), boom);
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/ablation inconclusive/);
   });
 
@@ -535,6 +556,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     expect(sealPreSealedWall(repoDir, mid, unit, "python3", real(), log).sealed).toBe(true);
     const result = runUnitAb(baseCard(unit), log, real(), modernize, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/not bound to the seal/);
   });
   // r3: a symlink is hashed (never skipped), so a link planted over a conformance file is drift.
@@ -556,6 +578,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       const result = runUnitAb(card(unit), log, real(), link, () => passingNewCase());
       rmSync(join(target, ".."), { recursive: true, force: true });
       expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.conformance).toBeNull();
       expect(result.not_proven[0]).toMatch(/conftest\.py added/);
     });
     it(`r3: a sealed test file replaced by a masking symlink is refused, ${tag}`, () => {
@@ -566,6 +589,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       const result = runUnitAb(card(unit), log, real(), link, () => passingNewCase());
       rmSync(join(target, ".."), { recursive: true, force: true });
       expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.conformance).toBeNull();
       expect(result.not_proven[0]).toMatch(/test_conf\.py changed/);
     });
     // r4 B1: pyproject.toml/setup.cfg/tox.ini are hashed in full; both TOML spellings steer real pytest.
@@ -580,6 +604,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
         const add = () => writeFileSync(join(repoDir, "pyproject.toml"), body);
         const result = runUnitAb(card(unit), log, real(), add, () => passingNewCase());
         expect(result.verdict).toBe("NOT_PROVEN");
+        expect(result.conformance).toBeNull();
         expect(result.not_proven[0]).toMatch(/pyproject\.toml added/);
       });
       it(`r4 B1: a changed pyproject.toml (${name}) is refused, ${tag}`, () => {
@@ -589,6 +614,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
         const change = () => writeFileSync(join(repoDir, "pyproject.toml"), body);
         const result = runUnitAb(card(unit), log, real(), change, () => passingNewCase());
         expect(result.verdict).toBe("NOT_PROVEN");
+        expect(result.conformance).toBeNull();
         expect(result.not_proven[0]).toMatch(/pyproject\.toml changed/);
       });
     }
@@ -602,6 +628,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const result = runUnitAb(baseCard(unit), log, real(), swap, () => passingNewCase());
     rmSync(join(target, ".."), { recursive: true, force: true });
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/test_conf\.py changed/);
   });
 
@@ -613,6 +640,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const result = runUnitAb(baseCard(unit), log, real(), link, () => passingNewCase());
     rmSync(join(target, ".."), { recursive: true, force: true });
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/helper_mod\.py added/);
   });
 
@@ -627,6 +655,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const result = runUnitAb({ ...baseCard(unit), files: ["pkg/"] }, log, real(), link, () => passingNewCase());
     rmSync(join(target, ".."), { recursive: true, force: true });
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/pkg\/sub added/);
   });
 
@@ -640,6 +669,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const result = runUnitAb(baseCard(unit), log, real(), edit, () => passingNewCase());
     rmSync(join(target, ".."), { recursive: true, force: true });
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/lnk changed/);
   });
 
@@ -653,6 +683,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       const add = () => { modernize(); writeFileSync(join(repoDir, dirName, file), SKIP_ALL); };
       const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), add, () => passingNewCase());
       expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.conformance).toBeNull();
       expect(result.not_proven[0]).toContain(`${dirName}/${file} added`);
     });
   }
@@ -685,6 +716,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const badEdit = () => { modernize(); writeFileSync(join(repoDir, "golden"), "b\n"); };
     const bad = runUnitAb({ ...baseCard(unit2), files: ["u.py", "unit_data.cfg"] }, log, real(), badEdit, () => passingNewCase());
     expect(bad.verdict).toBe("NOT_PROVEN");
+    expect(bad.conformance).toBeNull();
     expect(bad.not_proven[0]).toMatch(/golden changed/);
   });
 
@@ -733,6 +765,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       const add = () => { modernize(); writeFileSync(join(repoDir, "pkg", "Conftest.py"), SKIP_ALL); };
       const result = runUnitAb(card(unit), log, real(), add, () => passingNewCase());
       expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.conformance).toBeNull();
       expect(result.not_proven[0]).toMatch(/pkg\/Conftest\.py added/);
     });
     it(`r5 NB2: a node_modules symlink to an outside conftest.py dir under a norecursedirs override is refused, ${tag}`, () => {
@@ -745,6 +778,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       const result = runUnitAb(card(unit), log, real(), link, () => passingNewCase());
       rmSync(join(target, ".."), { recursive: true, force: true });
       expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.conformance).toBeNull();
       expect(result.not_proven[0]).toMatch(/node_modules\/x added/);
     });
   }
@@ -760,6 +794,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const add = () => { modernize(); writeFileSync(join(repoDir, "node_modules", "pkg", "new.txt"), "x\n"); };
     const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), add, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/node_modules\/pkg\/new\.txt added/);
   });
 
@@ -769,6 +804,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const exit0 = () => writeFileSync(join(repoDir, "u.py"), "import os\nos._exit(0)\n");
     const result = runUnitAb(baseCard(unit), log, real(), exit0, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/not a full pass/);
   });
   it("r5 A1: a forged footer printed before os._exit(0) is never PROVEN", () => {
@@ -778,6 +814,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       "import os, sys\nsys.stdout.write('\\n=== 1 passed in 0.01s ===\\n'); sys.stdout.flush()\nos._exit(0)\n");
     const result = runUnitAb(baseCard(unit), log, real(), forge, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/not a full pass/);
   });
   it("r5 A1: an all-skipped post-implement run (exit 0) is never PROVEN", () => {
@@ -786,6 +823,7 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const skipAll = () => writeFileSync(join(repoDir, "u.py"), "import pytest\npytest.skip('nope', allow_module_level=True)\n");
     const result = runUnitAb(baseCard(unit), log, real(), skipAll, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.conformance).toBeNull();
     expect(result.not_proven[0]).toMatch(/not a full pass|classified not_run/);
   });
   it("r6: conformanceShortfall rules are per test identity", () => {
@@ -864,6 +902,7 @@ describe("r6: the post-implement check is per sealed test identity, real pytest"
         const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"),
           "import pytest\ndef f(x):\n    if x > 1:\n        pytest.exit('done', returncode=0)\n    return x\n"));
         expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.conformance).toBeNull();
         expect(r.not_proven[0]).toMatch(/not a full pass|classified/);
       });
       it("B1: a collection-error base with no collector injected is refused", () => {
@@ -871,6 +910,7 @@ describe("r6: the post-implement check is per sealed test identity, real pytest"
         collectErrorBase(unit);
         const r = runUnit(card(unit), log, real(), () => writeFileSync(join(repoDir, "u.py"), "def f(x):\n    return x\n"), () => passingNewCase(), failingStub);
         expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.conformance).toBeNull();
         expect(r.not_proven[0]).toMatch(/no sealed tests can be collected/);
       });
       it("B1: a post-implement collection that itself errors is refused", () => {
@@ -878,6 +918,7 @@ describe("r6: the post-implement check is per sealed test identity, real pytest"
         collectErrorBase(unit);
         const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"), "x = 1\n"));
         expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.conformance).toBeNull();
       });
       const redBaseFiles = (unit: string, star: boolean) => {
         sealOracleFixture(unit);
@@ -897,6 +938,7 @@ describe("r6: the post-implement check is per sealed test identity, real pytest"
         const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"),
           "import pytest\ndef f(x):\n    if x > 1:\n        pytest.xfail('no')\n    return x\n"));
         expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.conformance).toBeNull();
         expect(r.not_proven[0]).toMatch(/xfailed/);
       });
       it("B3: new passing test ids via star import cannot stand in for the sealed ones", () => {
@@ -905,6 +947,7 @@ describe("r6: the post-implement check is per sealed test identity, real pytest"
         const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"),
           "import pytest\ndef test_p1(): pass\ndef test_p2(): pass\ndef test_p3(): pass\ndef f(x):\n    pytest.xfail('no')\n"));
         expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.conformance).toBeNull();
         expect(r.not_proven[0]).toMatch(/test_conf::test_1: xfailed/);
       });
     });
@@ -955,4 +998,54 @@ describe("r6: the post-implement check is per sealed test identity, real pytest"
     expect(out.tests?.["test_conf::test_x"]).toBe("failed");
   });
 });
+});
+
+// If one of these turns red because a mechanism now closes the forgery, invert the assertion and update the
+// FC-24 row (docs/v10/FAILURE-CLASSES.md) in the same change. Never delete the case.
+describe("FC-24 known limit: in-process forgery is runner_reported, not detected (documenting, not a fix)", () => {
+  const real = () => makePytestBaseRunner("python3", 60_000);
+  const col = () => makePytestCollector("python3", 60_000);
+  const WRONG = "def f(x):\n    return -1\n";
+  const b1 = WRONG + "import atexit, os, sys\n"
+    + "def _forge():\n    p = [a.split('=',1)[1] for a in sys.argv if a.startswith('--junitxml=')][0]\n"
+    + "    cases = ''.join('<testcase classname=\"test_conf\" name=\"test_%d\"/>' % i for i in (1,2,3))\n"
+    + "    open(p,'w').write('<?xml version=\"1.0\"?><testsuites><testsuite name=\"pytest\" errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"3\">'+cases+'</testsuite></testsuites>')\n"
+    + "    sys.stdout.write('\\n=== 3 passed in 0.01s ===\\n'); sys.stdout.flush(); os._exit(0)\n"
+    + "atexit.register(_forge)\n";
+  const b2 = WRONG + "import _pytest.reports as R\n_o = R.TestReport.from_item_and_call.__func__\ndef _p(cls, item, call):\n    r = _o(cls, item, call)\n    r.outcome = 'passed'; r.longrepr = None\n    return r\nR.TestReport.from_item_and_call = classmethod(_p)\n";
+  const tests = (colErr: boolean) => (colErr ? "from u import f\n\n" : "import u\n\n")
+    + [1, 2, 3].map((i) => `def test_${i}():\n    assert ${colErr ? "f" : "u.f"}(${i}) == ${i}\n`).join("\n");
+  const go = (unit: string, body: string, colErr: boolean) => {
+    sealOracleFixture(unit);
+    writeFileSync(join(repoDir, "u.py"), "# no f yet\n");
+    writeFileSync(join(repoDir, "test_conf.py"), tests(colErr));
+    return runUnit(baseCard(unit), log, real(), () => writeFileSync(join(repoDir, "u.py"), body), () => passingNewCase(), failingStub, col());
+  };
+  const conformanceEvents = (unit: string) => readModernizeEvents(repoDir, mid).filter((e) => e.type === "unit.conformance_passed" && e.data.unit === unit);
+
+  for (const [name, body] of [["B1", b1], ["B2", b2]] as const) {
+    for (const [cfg, colErr] of [["base-junit", false], ["collection-error-base", true]] as const) {
+      it(`FC-24 limit (documented): ${name} ${cfg} forges conformance; recorded runner_reported`, () => {
+        const unit = `fc24_${name}_${cfg}`.replace(/-/g, "_");
+        const r = go(unit, body, colErr);
+        expect(r.verdict).toBe("PROVEN");
+        expect(r.conformance).toEqual({ trust: "runner_reported", limit: "FC-24", tests: 3 });
+        const ev = conformanceEvents(unit);
+        expect(ev.length).toBe(1);
+        expect(ev[0]!.data.trust).toBe("runner_reported");
+      }, 120_000);
+    }
+  }
+  it("honest control (def f(x): return x) is PROVEN with conformance.trust runner_reported", () => {
+    const r = go("fc24_ctl", "def f(x):\n    return x\n", false);
+    expect(r.verdict).toBe("PROVEN");
+    expect(r.conformance?.trust).toBe("runner_reported");
+    expect(conformanceEvents("fc24_ctl").length).toBe(1);
+  }, 120_000);
+  it("r6 in-scope attack (sys.exit at import) is NOT_PROVEN with conformance null and no event", () => {
+    const r = go("fc24_sysexit", "import sys\nsys.exit(0)\n", false);
+    expect(r.verdict).toBe("NOT_PROVEN");
+    expect(r.conformance).toBeNull();
+    expect(conformanceEvents("fc24_sysexit").length).toBe(0);
+  }, 120_000);
 });
