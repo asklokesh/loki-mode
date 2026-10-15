@@ -11,9 +11,10 @@
 // fields and ordering here match the heredoc layout in run.sh:7913-7921 and
 // run.sh:7931-7938.
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { atomicWriteText } from "../util/atomic.ts";
 import { lokiDir } from "../util/paths.ts";
 import { type CostResult, type EfficiencySessionInfo, num, writeEfficiencyRecord } from "../engine10/cost.ts";
 
@@ -337,9 +338,7 @@ export function writeBudgetState(state: BudgetState, file?: string): void {
   const body = lines.join("\n") + "\n";
   // Atomic: write tmp then rename. Bash uses cat-heredoc directly (not atomic),
   // but rename is safer for concurrent reads from dashboard.
-  const tmp = `${fp}.tmp.${process.pid}`;
-  writeFileSync(tmp, body);
-  renameSync(tmp, fp);
+  atomicWriteText(fp, body);
 }
 
 // Format a number to match bash heredoc output. Integers stay integers.
