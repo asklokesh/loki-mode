@@ -341,6 +341,11 @@ function _loki_start {
     _arguments \
         '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
         '--parallel[Parallel mode]' \
+        '--brief[Zero-config brief mode]:brief text:' \
+        '--worktree[Git worktree isolation]' \
+        '--pr[Worktree plus auto-create PR]' \
+        '--ship[Worktree plus PR plus auto-merge]' \
+        '--detach[Run in background (implies --worktree)]' \
         '--workspace[Run a loki.yaml workspace for the brief]:workspace name:' \
         '--deploy[Deploy after a VERIFIED run via loki deploy --execute]' \
         '--health-url[With --deploy: health probe URL]:url:' \

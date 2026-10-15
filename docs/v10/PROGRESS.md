@@ -2345,5 +2345,12 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 
 ## 2026-10-15T20:45Z (CoS) v11.8.0 failed CI, v11.8.1 fix-forward
 - v11.8.0 (b5191b999): Tests run 38800796458 and Release failed on line budgets (core engine10 5020, features 3190), the D66 fence (run_group.ts value-imported seal and verify_cmd), two unclassified checkouts in the L2 registry, macOS-first stat in tests/test-backlog-units.sh:162, and a `loki help verify` mismatch. Not published.
-- Fix 1d734e6ba (Opus HIGH review APPROVED, 162 pass 0 fail on five suites), merged as 1788db60b. The pulse ID_RE item (E-121) was not in the train and stays open.
+- Fix 1d734e6ba (Opus HIGH review APPROVED, 162 pass 0 fail on five suites), merged as 1788db60b. Correction: E-121 (pulse ID_RE for S41-style ids) already shipped in v10.5.3 (BOARD row E-121, merge aecf6daa); nothing is open there.
 - Local guards on the merged tree, all rc=0: test-help-changelog-drift, test-sigpipe-guard, test-help-and-log-cap, test-backlog-units, structural-checks, test-ci-only-divergence, test-platform-infra; bun test budget, l2_destructive_registry, route_group, seal_group: 117 pass 0 fail.
+
+## 2026-10-15T21:36Z (CoS) v11.9.0 train merged, release pending
+- 11.8.1 (22a6efc1f): Release and Tests completed/success; npm next=11.8.1.
+- Merged into main with --no-ff (workflow wf_b2e3c1df-452): DELEG-JIRA-TEAMS, DEPLOY-ATTEST-CANARY, ESTIMATE-ONE, RAG-DECIDE, GRAPH-IMPORTS, CPE24-HARDEN, CP-NITS-START, FC-01b (head e089b4224). FC-19b was already on main (5470167dd).
+- Rework round wf_4d4e81e3-3c3, Opus review APPROVE: GROUP-FIX-UNITS 196e3a6a4 (cap mutant MAX_FIX_UNITS=3 now red; 124 pass 0 fail), merged 0b3a2a46b; FC-09r c91b3642d (safeGit at runner_config.ts:45; raw execFileSync positive control red; 72 pass 0 fail), merged c39697cc1.
+- Guards on c39697cc1 plus dist rebuild (build rc=0): structural-checks rc=0; bun budget, l2_destructive_registry, fc25_raw_spawn_guard, spawn_env_guard, start_flag_parity_guard 43 pass 0 fail.
+- Advisories to card: detached --ship brief path calls gh issue close on b<epoch>; non-detached auto-merge arm rejects --brief; `loki run --brief-text` not marked internal; Teams dedup keys only on activity id; backlog.py base silently falls back to origin/HEAD on a non-SHA; runner_config subdir-base test missing.

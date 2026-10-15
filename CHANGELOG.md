@@ -5,6 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.9.0 (2026-10-15)
+
+Factory parity, phase 3. Work can now be delegated from Jira and Microsoft Teams, deploys carry a signed record bound to the receipt that authorized them, rollouts can be staged, and the workspace graph learns dependencies from code. Every capability extends the module that already owned its concern. `loki start` with Claude remains the primary path, and `loki chat` reaches the same code.
+
+### Added
+- Jira and Teams delegation on the trigger server. Jira Cloud (POST /jira) verifies the X-Hub-Signature HMAC and queues a run when an issue is assigned to a configured user or gets a configured label; rich-text (ADF) descriptions are included in the brief, and a replayed signed body is rejected even if the delivery-id header is changed or dropped. Microsoft Teams (POST /teams) verifies the Authorization HMAC and a fresh timestamp, then replies with the job id. A missing secret returns 503. See docs/sentry-intake.md.
+- Delegated Jira, Teams and Sentry runs now run as isolated, detached, receipt-gated PR runs: `loki start --brief "<text>" --pr --detach` honors the isolation flags in brief mode and uses the same worktree and PR machinery as `loki start <issue>`. Delegation never passes a deploy argument.
+- Signed deploy records. `loki deploy --execute` writes a `loki.deploy/1` record bound to the receipt that authorized it, signed with the existing receipt signer. `loki verify <record>` re-checks it offline, also with `--pubkey`. Tampering gives TAMPERED; an unsigned record, a missing or non-Ed25519 key, or a cited receipt that is not VERIFIED is never VERIFIED. `--max-age` on a deploy record is refused with UNCHECKED and exit 2, because the record carries no signed issue time. The receipt itself is unchanged.
+- Staged rollout: `loki deploy --execute --canary` uses only documented provider verbs (Vercel preview deploy, health check, then `vercel promote`; Fly `--strategy canary`). A failed health check never promotes, and providers with no staged path refuse `--canary` with the reason.
+- `loki workspace infer` also suggests `after:` edges from source imports of a sibling repo's package or module name (TS/JS, Python, Go; bounded to 400 files per repo) and from OpenAPI client generator configs whose input spec lives in a sibling repo. Each edge prints its evidence as file:line. Output stays print-only and cycle-checked.
+- When a parallel group hits a merge conflict or a failing suite during integration, Loki now runs one bounded fix unit (max one per conflict, two per group) through the same unit launcher and re-integrates once; the verdict still requires the suite to pass and the group Seal; a fix unit is accepted only if its branch contains the conflicting unit's branch; LOKI_GROUP_FIX_UNITS=0 turns it off.
+### Changed
+- `loki estimate` prints the same estimate `loki start` shows (run history for this repo's shape, a per-model prior, or NOT AVAILABLE), replacing the old iteration-based projection. One estimator now serves both. `--iterations` is removed and rejected with an explanation; `--json`, `--model` and `--provider` are supported.
+- Removed the unused memory/rag_injector.py module and its tests. Lessons and learnings already reach engine10 briefs through the existing injection path, and nothing in the product called it.
+
+### Fixed
+- Control Plane checkpoint rollback restores only an allowlist of state files and refuses nested or destination symlinks, so a planted audit directory in a checkpoint can no longer overwrite the audit log. Legacy session-control and council force-review calls now require a loopback peer and a loopback Host, matching the /v1 routes.
+- Control Plane Start no longer shows a bare "HTTP 404": it explains the problem in a sentence and, when the running service is older than the installed version, says to restart it with `loki control serve`. The New run picker gained a Browse repos link and a model choice that shows a muted note for haiku without blocking, and failed diff-stat lookups are cached briefly.
+- Visual evidence on a monorepo with backend/ and frontend/ packages but no root package.json now names the sub-packages that lack a dev, preview or start script (and which one has one) instead of the misleading "no package.json".
+- Test-runner config changes cap the verdict: any package.json script (pretest, posttest, test:*), runner dependency swaps to local or aliased stubs, overrides and imports, mocha/vitest/ava/c8/nyc keys, pytest/jest lines in pyproject.toml or setup.cfg, go.mod replace, Cargo.toml [patch], and tsconfig paths/extends/rootDirs/moduleSuffixes/customConditions.
+
 ## v11.8.1 (2026-10-15)
 
 Fix-forward release. v11.8.0 was tagged but failed CI and was never published to npm. v11.8.1 carries every v11.8.0 change listed below, plus these fixes for the guards that failed.
