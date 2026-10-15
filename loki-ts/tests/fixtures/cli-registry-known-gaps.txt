@@ -133,7 +133,6 @@ proof phases
 proof releases
 proof verify
 provider current
-provider info
 provider models
 quick help
 resume help

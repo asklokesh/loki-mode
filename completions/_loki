@@ -378,7 +378,8 @@ function _loki_provider {
         'show:Display current provider'
         'set:Set default provider'
         'list:List available providers'
-        'info:Get provider information'
+        'info:Get provider information (--json: capability contract)'
+        'matrix:Show the capability matrix'
         'help:Provider help'
     )
     _describe -t cmds 'provider subcommand' cmds

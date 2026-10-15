@@ -92,6 +92,8 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("show", "Show current provider", { positionals: [{ name: "name", type: "dynamic", dynamic: "providers" }] }),
       sub("list", "List providers and install status"),
       sub("set", "Switch the active provider", { positionals: [{ name: "name", type: "dynamic", dynamic: "providers" }] }),
+      sub("info", "Provider details; --json prints the capability contract", { positionals: [{ name: "name", type: "dynamic", dynamic: "providers" }] }),
+      sub("matrix", "Capability matrix per provider and engine"),
     ],
   }),
   cmd("memory", "UPDATE", "both", "Cross-project learnings", "Memory still carries legacy store paths", {

@@ -67,7 +67,7 @@ _loki_completion() {
             ;;
 
         provider)
-            local provider_cmds="show set list info help"
+            local provider_cmds="show set list info matrix help"
             COMPREPLY=( $(compgen -W "${provider_cmds}" -- "$cur") )
             ;;
 
