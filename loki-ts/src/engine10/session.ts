@@ -11,6 +11,8 @@ import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
+import { beginGuard, finishGuard, isGuarded, watchBudget } from "./provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
+import { checkBudgetLimit } from "../runner/budget.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only
 export const HEARTBEAT_MS_DEFAULT = 30_000; // E-68 (augmentiq #52 P0): a provider call emits progress at least every 30s
@@ -161,6 +163,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const sessionId = opts.iterationId;
       // stderr is piped and kept (tail only, E-61) for stage.failed diagnostics; always drained
       // via the "data" listener below so a full pipe can never stall the child.
+      const guardSnap = isGuarded(cfg.provider) && cfg.lokiRoot ? beginGuard(opts.cwd ?? process.cwd(), cfg.lokiRoot) : null; // PARITY-ENFORCE
       const child: ChildProcess = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
       const pgid = child.pid;
       let stdout = "";
@@ -185,6 +188,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       cfg.emit?.("session.started", opts.stage, { session_id: sessionId, provider: cfg.provider, model: opts.model ?? cfg.model ?? null, pgid: pgid ?? null });
       const onAbort = () => kill("aborted");
       const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
+      const stopBudgetWatch = isGuarded(cfg.provider) && process.env["BUDGET_LIMIT"] ? watchBudget(() => checkBudgetLimit({ efficiencyDir: cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : undefined }).exceeded, () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE
       const heartbeatTimer = setInterval(() => {
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
@@ -194,16 +198,19 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
         child.on("close", (code) => {
           clearTimeout(limitTimer);
           clearInterval(heartbeatTimer);
+          stopBudgetWatch();
+          const guard = finishGuard(guardSnap); // PARITY-ENFORCE: revert destructive changes, fail the iteration
+          if (!guard.ok) cfg.emit?.("guard.violation", opts.stage, { provider: cfg.provider, violations: guard.violations, reverted: guard.reverted });
           opts.signal.removeEventListener("abort", onAbort);
           // The CLI invoker writes only to its iteration log, never stdout.
           const log = join(opts.cwd ?? process.cwd(), ".loki", `iteration-${sessionId}.log`);
           const logText = existsSync(log) ? readFileSync(log, "utf8") : ""; const markers = parseMarkers(stdout + logText);
           const durationS = (Date.now() - start) / 1000;
           cfg.emit?.("session.ended", opts.stage, {
-            session_id: sessionId, exit: exitKind(code, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
+            session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
           });
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
-          resolve({ exit: code, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
+          resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
         });
       });
     },

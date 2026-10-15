@@ -19,6 +19,7 @@ Loki Mode supports five AI providers for autonomous execution.
 | **Model Tiers** | 3 (opus/sonnet/haiku) | 1 (effort param) | 1 (external) | 1 (external) | 1 (external) |
 | **Multi-Provider** | Claude only | OpenAI only | 12+ providers | 18+ providers | 75+ providers + custom endpoints |
 | **Skill Directory** | ~/.claude/skills | None | None | None | ~/.config/opencode |
+| **Guardrails (engine10)** | Native hooks + permission flags | Timeout + budget kill, diff scan, sandbox flag | Timeout + budget kill, diff scan | Timeout + budget kill, diff scan, no-auto-commits | Timeout + budget kill, diff scan |
 
 ## Provider Selection
 
@@ -396,3 +397,15 @@ PROVIDER_DEGRADED=false
 | Local models (Ollama, free) | opencode, Aider, or Cline |
 | Architect mode (dual model) | Aider |
 | Sequential-only is acceptable | Codex or Aider |
+
+---
+
+## Guardrail Parity (engine10)
+
+Claude blocks destructive commands inline through its hooks and permission flags. For codex, cline, aider and opencode, engine10 applies `loki-ts/src/engine10/provider_guard.ts` around every session:
+
+1. Wall-clock timeout (`limitS`) and a budget-stop poll (`BUDGET_LIMIT`) kill the whole process group.
+2. After each session a diff scan fails the iteration and reverts: mass deletion of tracked files, `.git/config` edits, new git hooks, symlinks or paths that point outside the project.
+3. Native CLI flags are used where they exist: codex `--sandbox workspace-write`, aider `--no-auto-commits`. Cline and opencode have no filesystem sandbox flag.
+
+The scan is post-hoc, not inline, so the receipt still lists `kill blocking not enforced` for non-Claude providers. Violations emit a `guard.violation` event.
