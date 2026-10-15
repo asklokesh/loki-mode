@@ -43,6 +43,35 @@ export function parseItems(spec: string): string[] {
   return t ? [t] : [];
 }
 
+const MS_HEAD_RE = /^\s{0,3}#{1,6}\s+Milestone\s+(\d+)\s*(?:[:.-]\s*(.*?))?\s*#*\s*$/i;
+const MS_KEY_RE = /^milestones:\s*$/i;
+export interface Milestone { n: number; title: string; body: string }
+/** Missions: `## Milestone N[: title]` sections, else a top-level `milestones:` list. Fewer than 2 found returns [] (not a mission). Pure. */
+export function parseMilestones(spec: string): Milestone[] {
+  const lines = spec.split(/\r?\n/);
+  const out: Milestone[] = [];
+  let cur: { n: number; title: string; body: string[] } | null = null;
+  for (const l of lines) {
+    const h = MS_HEAD_RE.exec(l);
+    if (h) {
+      if (cur) out.push({ n: cur.n, title: cur.title, body: cur.body.join("\n").trim() });
+      cur = { n: Number(h[1]), title: (h[2] ?? "").trim(), body: [] };
+    } else if (cur) cur.body.push(l);
+  }
+  if (cur) out.push({ n: cur.n, title: cur.title, body: cur.body.join("\n").trim() });
+  if (out.length >= 2) return out.map((m) => ({ ...m, body: m.body || m.title || `Milestone ${m.n}` }));
+  const list: Milestone[] = [];
+  let inList = false;
+  for (const l of lines) {
+    if (!inList) { inList = MS_KEY_RE.test(l); continue; }
+    const m = LIST_RE.exec(l);
+    if (m) { const t = m[1]!.trim(); list.push({ n: list.length + 1, title: t, body: t }); continue; }
+    if (l.trim() === "" || /^\s+\S/.test(l)) continue;
+    break;
+  }
+  return list.length >= 2 ? list : [];
+}
+
 export function moduleOf(path: string, workspaces: string[]): string {
   const ws = [...workspaces].sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).find((w) => path === w || path.startsWith(`${w}/`));
   if (ws) return ws;

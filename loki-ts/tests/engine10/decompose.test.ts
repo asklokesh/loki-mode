@@ -1,6 +1,6 @@
 // D61 slice 8 wall check: six fixture specs and a determinism test for the deterministic decomposer.
 import { describe, expect, it } from "bun:test";
-import { dagJson, decompose, isSharedFile, parseItems } from "../../src/features/decompose.ts";
+import { dagJson, decompose, isSharedFile, parseItems, parseMilestones } from "../../src/features/decompose.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 
 const FILES = [
@@ -65,5 +65,21 @@ describe("decompose", () => {
     for (let i = 0; i < 5; i++) expect(dagJson(run(spec))).toBe(a);
     const shuffled = { ...map, files: [...FILES].reverse() };
     expect(dagJson(decompose(spec, shuffled, opts))).toBe(a);
+  });
+});
+
+describe("parseMilestones", () => {
+  it("parses Milestone headings with titles and bodies, deterministically", () => {
+    const spec = "intro\n## Milestone 1: base\n- a\n- b\n## Milestone 2\ndo c\n";
+    const m = parseMilestones(spec);
+    expect(m).toEqual([{ n: 1, title: "base", body: "- a\n- b" }, { n: 2, title: "", body: "do c" }]);
+    expect(parseMilestones(spec)).toEqual(m);
+  });
+  it("parses a top-level milestones: list", () => {
+    expect(parseMilestones("name: x\nmilestones:\n  - first\n  - second\nother: 1\n").map((x) => x.title)).toEqual(["first", "second"]);
+  });
+  it("fewer than 2 milestones returns []", () => {
+    expect(parseMilestones("## Milestone 1: solo\n- a\n")).toEqual([]);
+    expect(parseMilestones("- a\n- b\n")).toEqual([]);
   });
 });
