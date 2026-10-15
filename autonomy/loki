@@ -11075,6 +11075,7 @@ cmd_run() {
                 echo "  --sandbox          Run in Docker sandbox (default: off; requires Docker)"
                 echo "  --no-plan          Skip auto-shown PRD analysis at startup"
                 echo "  --budget USD       Per-run cost cap (default $(loki_budget_default_usd))"
+                echo "  --brief-text TEXT  (internal) set by 'loki start --brief'; not for direct use"
                 echo ""
                 echo "Progressive Isolation:"
                 echo "  --worktree, -w     Git worktree isolation (separate branch)"
@@ -11491,7 +11492,8 @@ fi
 if [[ "$LOKI_AUTO_MERGE" == "true" ]]; then
     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
     if gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null; then
-        if [[ -n "${LOKI_ISSUE_NUMBER:-}" ]]; then
+        # A brief run carries a synthetic ref (b<epoch>), not a real issue: close only numeric refs.
+        if [[ "${LOKI_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
             gh issue close "$LOKI_ISSUE_NUMBER" --comment "Resolved by Loki Mode" 2>/dev/null || true
         fi
     fi
@@ -11738,7 +11740,7 @@ ${_gh_receipt}"
         if $auto_merge; then
             echo -e "${GREEN}Auto-merging...${NC}"
             case "${issue_provider:-github}" in
-                github)
+                github|brief)
                     local branch_current
                     branch_current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
                     if gh pr merge "$branch_current" --squash --delete-branch 2>/dev/null; then
