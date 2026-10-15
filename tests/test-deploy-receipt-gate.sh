@@ -829,7 +829,7 @@ EOF
         R17="$(last_record "$D17H")"
         OUT17B="$(run_h "$D17H" --execute --auto-rollback)"; RC17B=$?
         if [ "$RC17" -eq 0 ] && [ "$(rec_field "$R17" health_status)" = "unchecked" ] \
-           && [ "$RC17B" -ne 0 ] && printf '%s' "$OUT17B" | grep -q "requires --health-url"; then
+           && [ "$RC17B" -ne 0 ] && grep -q "requires --health-url" <<<"$OUT17B"; then
             ok "17. no URL records unchecked; --auto-rollback without a URL is refused"
         else
             bad "17. unchecked handling wrong" "rc=$RC17 rec=$R17 rcb=$RC17B"
@@ -841,7 +841,7 @@ EOF
         printf '{"autonomy":"execute"}\n' > "$D18H/.loki/policies.json"
         rm -f "$SENTINEL_DIR/vercel"
         OUT18="$(run_h "$D18H" --execute)"; RC18=$?
-        if [ "$RC18" -ne 0 ] && printf '%s' "$OUT18" | grep -q "policy denied deploy" \
+        if [ "$RC18" -ne 0 ] && grep -q "policy denied deploy" <<<"$OUT18" \
            && [ ! -e "$SENTINEL_DIR/vercel" ]; then
             ok "18. policy autonomy=execute refuses the deploy before any CLI runs"
         else
@@ -865,7 +865,7 @@ EOF
         printf '{}\n' > "$D18H/.loki/policies.json"
         rm -f "$SENTINEL_DIR/vercel"
         OUT18D="$(run_h "$D18H" --execute)"; RC18D=$?
-        if [ "$RC18D" -ne 0 ] && printf '%s' "$OUT18D" | grep -q "sets no autonomy/actions.deploy" \
+        if [ "$RC18D" -ne 0 ] && grep -q "sets no autonomy/actions.deploy" <<<"$OUT18D" \
            && [ ! -e "$SENTINEL_DIR/vercel" ]; then
             ok "18d. a policy file with no autonomy/actions.deploy refuses the deploy"
         else

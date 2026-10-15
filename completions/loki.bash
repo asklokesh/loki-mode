@@ -57,7 +57,11 @@ _loki_completion() {
             ;;
 
         memory)
-            local memory_cmds="list show search stats export clear dedupe index timeline consolidate economics retrieve lessons learn forget episode pattern skill vectors help"
+            local memory_cmds="list show search stats export clear dedupe index timeline consolidate economics retrieve lessons learn forget episode pattern skill vectors brief help"
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--task --help" -- "$cur") )
+                return 0
+            fi
             COMPREPLY=( $(compgen -W "${memory_cmds}" -- "$cur") )
             ;;
 
@@ -132,6 +136,20 @@ _loki_completion() {
         doctor)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--json --fix --repo --requirements --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        deploy)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--execute --health-url --auto-rollback --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        verify)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--base --out --block-on --no-llm --json --explain --check-fresh --hosted --seal-composite --help" -- "$cur") )
                 return 0
             fi
             ;;

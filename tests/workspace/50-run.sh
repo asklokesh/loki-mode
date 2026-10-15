@@ -103,7 +103,7 @@ workspaces:
 YAML
 _ws50_out="$(_ws50_run "$_ws50_tmp/stamp.sh" stg)"
 _ws50_rc=$?
-if [ "$_ws50_rc" -ne 0 ] && printf '%s' "$_ws50_out" | grep -q "acme/web SKIPPED (stage 0 integration failed)" &&
+if [ "$_ws50_rc" -ne 0 ] && grep -q "acme/web SKIPPED (stage 0 integration failed)" <<<"$_ws50_out" &&
     [ ! -e "$(find "$_ws50_tmp/proj/.loki/workspaces/stg" -mindepth 1 -maxdepth 1 -type d | head -1)/worktrees/acme__web" ]; then
     ok "workspace: per_stage failure after layer 0 SKIPs dependents, exit != 0"
 else
@@ -111,8 +111,8 @@ else
 fi
 _ws50_out="$(_ws50_run "$_ws50_tmp/stamp.sh" stgok)"
 _ws50_rc=$?
-if [ "$_ws50_rc" -eq 0 ] && printf '%s' "$_ws50_out" | grep -q "stage 0 integration passed" &&
-    printf '%s' "$_ws50_out" | grep -q "stage 1 integration passed"; then
+if [ "$_ws50_rc" -eq 0 ] && grep -q "stage 0 integration passed" <<<"$_ws50_out" &&
+    grep -q "stage 1 integration passed" <<<"$_ws50_out"; then
     ok "workspace: per_stage passing stages run every layer"
 else
     bad "workspace: per_stage passing stages (rc=$_ws50_rc)"

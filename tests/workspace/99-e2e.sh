@@ -171,15 +171,15 @@ fi
 echo '{"acme/ghost": "x"}' > "$_ws99_tmp/plan-bad.json"
 _ws99_out="$(_ws99_plan_run "$_ws99_tmp/plan-bad.json" "X=1")"
 _ws99_l="$(cat "$_ws99_tasks/acme__app" 2>/dev/null)"
-if printf '%s' "$_ws99_out" | grep -q 'plan not used (plan.json names repos outside the workspace: acme/ghost)' &&
-    printf '%s' "$_ws99_l" | grep -q '^Implement the change described by'; then
+if grep -q 'plan not used (plan.json names repos outside the workspace: acme/ghost)' <<<"$_ws99_out" &&
+    grep -q '^Implement the change described by' <<<"$_ws99_l"; then
     ok "workspace planner: a malformed plan falls back to the generic task with a reason"
 else
     bad "workspace planner: fallback lib=[$_ws99_l] out=$_ws99_out"
 fi
 
 _ws99_out="$(_ws99_plan_run "$_ws99_tmp/plan-ok.json" "NO_RECEIPT_FOR=acme__app")"
-if printf '%s' "$_ws99_out" | grep -q 'composite not sealed: acme/app has no receipt' &&
+if grep -q 'composite not sealed: acme/app has no receipt' <<<"$_ws99_out" &&
     [ -z "$(find "$_ws99_tmp/proj/.loki/workspaces/planned" -name composite.json 2>/dev/null)" ]; then
     ok "workspace planner: an unsealed child blocks the composite and names the repo"
 else
@@ -225,14 +225,14 @@ for _ws99_variant in "--isolation worktree acme/lib#1" "--model sonnet --max-cos
 done
 _ws99_out="$(cd "$_ws99_tmp/proj" && LOKI_NO_BROWSER=1 timeout -k 5 60 bash "$REPO_ROOT/bin/loki" start --health-url http://127.0.0.1:1/ x 2>&1)"
 _ws99_rc=$?
-if [ "$_ws99_rc" -eq 2 ] && printf '%s' "$_ws99_out" | grep -q 'apply only with --deploy'; then
+if [ "$_ws99_rc" -eq 2 ] && grep -q 'apply only with --deploy' <<<"$_ws99_out"; then
     ok "start --health-url without --deploy exits 2"
 else
     bad "start --health-url without --deploy: rc=$_ws99_rc out=$_ws99_out"
 fi
 _ws99_out="$(cd "$_ws99_tmp/proj" && LOKI_NO_BROWSER=1 timeout -k 5 60 bash "$REPO_ROOT/bin/loki" start --deploy --budget notanumber x 2>&1)"
 _ws99_rc=$?
-if [ "$_ws99_rc" -ne 0 ] && printf '%s' "$_ws99_out" | grep -q 'not deploying'; then
+if [ "$_ws99_rc" -ne 0 ] && grep -q 'not deploying' <<<"$_ws99_out"; then
     ok "start --deploy: a failed start never reaches the deploy step"
 else
     bad "start --deploy: rc=$_ws99_rc out=$_ws99_out"
@@ -277,8 +277,8 @@ PY
 rm -rf "$_ws99_tmp/proj/.loki" "${_ws99_tasks:?}"/*
 _ws99_out="$(timeout -k 5 150 python3 "$_ws99_tmp/chat_smoke.py" "$REPO_ROOT/bin/loki" "$_ws99_tmp/proj" LOKI_NO_BROWSER=1 "PLAN_SRC=$_ws99_tmp/plan-ok.json" \
     "LOKI_RECEIPT_SIGNING_KEY_FILE=$_ws99_tmp/sign.pem" "LOKI_WORKSPACE_LAUNCHER=$_ws99_tmp/plan-launcher.sh" 2>&1)"
-if printf '%s' "$_ws99_out" | grep -q 'workspace run finished, exit 0' && printf '%s' "$_ws99_out" | grep -q 'composite: ' &&
-    printf '%s' "$_ws99_out" | grep -q 'Deploy cancelled'; then
+if grep -q 'workspace run finished, exit 0' <<<"$_ws99_out" && grep -q 'composite: ' <<<"$_ws99_out" &&
+    grep -q 'Deploy cancelled' <<<"$_ws99_out"; then
     ok "loki chat: /workspace prints the composite verdict and /deploy cancels without confirmation"
 else
     bad "loki chat smoke: $(printf '%s' "$_ws99_out" | tail -15)"

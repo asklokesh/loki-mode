@@ -2584,6 +2584,10 @@ OPTIONS:
                        is exactly as without --hosted (fail-open, never a silent
                        pass). Without --hosted, output is byte-identical to prior
                        releases.
+    --seal-composite <run-dir>
+                       Seal a workspace run into one signed composite receipt
+                       (composite.json). `loki verify <composite.json>` then
+                       re-checks it offline. Routed to the engine10 verifier.
     -h, --help         Show this help.
 
 GATES (deterministic, reproducible by construction):

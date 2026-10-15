@@ -25,7 +25,7 @@ workspaces:
 YAML
 _ws00_out="$(cd "$_ws00_tmp/proj" && env -u LOKI_WORKSPACES python3 "$REPO_ROOT/autonomy/lib/workspace.py" infer shop 2>&1)"
 _ws00_rc=$?
-if [ "$_ws00_rc" -eq 0 ] && printf '%s' "$_ws00_out" | grep -q 'after: \[owner/api\]' &&
+if [ "$_ws00_rc" -eq 0 ] && grep -q 'after: \[owner/api\]' <<<"$_ws00_out" &&
     ! grep -q 'after' "$_ws00_tmp/proj/loki.yaml"; then
     ok "workspace infer: web depends on api, prints after: [owner/api], print-only"
 else
@@ -36,7 +36,7 @@ fi
 printf '{"name":"@acme/api","dependencies":{"web":"1"}}\n' > "$_ws00_tmp/api/package.json"
 _ws00_out="$(cd "$_ws00_tmp/proj" && env -u LOKI_WORKSPACES python3 "$REPO_ROOT/autonomy/lib/workspace.py" infer shop 2>&1)"
 _ws00_rc=$?
-if [ "$_ws00_rc" -eq 1 ] && printf '%s' "$_ws00_out" | grep -q 'not usable'; then
+if [ "$_ws00_rc" -eq 1 ] && grep -q 'not usable' <<<"$_ws00_out"; then
     ok "workspace infer: cyclic inferred edges rejected"
 else
     bad "workspace infer: cycle rejected (rc=$_ws00_rc)"
