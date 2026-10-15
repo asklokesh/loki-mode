@@ -1,7 +1,7 @@
 // S41-13 two parallel attempts (SCORECARD-PLAN.md S41-13), in features/ because e10ext is at its cap. Behind LOKI_E10_ATTEMPTS=2, default off. A runs in the primary, B in a detached worktree under
 // <runDir>/attempts; each is scored by running the shared set S in the PRIMARY tree through treeswap, select.ts picks the winner, core then re-runs verify and Seal on the one tree left in the primary.
 // No verdicts, no Wall writes. E-141: treeswap's git children inherit process.env, so runTwoAttempts refuses to start unless that env is already token-scrubbed (the worker's is).
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { GITHUB_TOKEN_VARS, SENTINEL_PREFIX } from "../util/credential_env.ts";
 import { safeGit } from "../util/safe_git.ts";
@@ -64,7 +64,7 @@ export async function runTwoAttempts(ops: AttemptOps, S: TestRef[], wall: TestRe
 const untracked = (root: string): string[] => (safeGit(root, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ...DEFAULT_EXCLUDES.map((e) => `:(exclude)${e}`)]).split("\0").filter((p) => p.length > 0));
 /** Builds the real ops over treeswap. `wallPaths` are repo-relative sealed Wall files. */
 export function treeswapOps(a: {
-  primary: string; runDir: string; base: string; wallPaths: Set<string>;
+  primary: string; runDir: string; base: string; wallPaths: Set<string>; wallContent?: Map<string, string>; // wallContent: sealed bytes per Wall path; a Wall file is weakened only if it differs from these or is deleted
   runSession: (i: Idx, cwd: string, signal: AbortSignal) => Promise<SessionResult>;
   runOne: (t: TestRef, out: AttemptCheck[]) => Promise<unknown>; S: TestRef[];
 }): AttemptOps & { dispose(): void; bDir: string } {
@@ -73,6 +73,13 @@ export function treeswapOps(a: {
   safeGit(a.primary, ["worktree", "add", "--detach", bDir, a.base]);
   const pre = new Set(untracked(a.primary)); // the user's own untracked files: never dropped between attempts
   let snapA: ReturnType<typeof snapshotDiff> | null = null;
+  // installWall leaves the sealed Wall files untracked in the primary, so presence in a diff proves nothing: judge by bytes.
+  const wallWeakened = (root: string, isPrimary: boolean, p: string, touched: Set<string>): boolean => {
+    const sealed = a.wallContent?.get(p), f = join(root, p);
+    if (!existsSync(f)) return isPrimary ? sealed !== undefined || touched.has(p) : false; // B's worktree never held the untracked sealed file
+    if (sealed === undefined) return touched.has(p);
+    try { return readFileSync(f, "utf8") !== sealed; } catch { return true; }
+  };
   const dropOwnUntracked = (): void => applyDiff(a.primary, untracked(a.primary).filter((p) => !pre.has(p)).map((path) => ({ path, kind: "delete" as const })));
   return {
     bDir,
@@ -89,15 +96,15 @@ export function treeswapOps(a: {
       const root = i === 0 ? a.primary : bDir, ex = DEFAULT_EXCLUDES.map((e) => `:(exclude)${e}`);
       const tracked = safeGit(root, ["diff", "--no-ext-diff", a.base, "--", ".", ...ex]);
       const added = untracked(root).filter((p) => !pre.has(p)).map((p) => `diff --git a/${p} b/${p}\n@@ -0,0 +1 @@\n+${p}\n`).join(""); // new files count as changed lines; content size is irrelevant to the empty-diff test
-      const touched = snapshotDiff(root, a.base).map((e) => e.path);
-      return { diff: tracked + added, weakensTest: touched.some((p) => a.wallPaths.has(p)) };
+      const touched = new Set(snapshotDiff(root, a.base).map((e) => e.path).filter((p) => !pre.has(p)));
+      return { diff: tracked + added, weakensTest: [...a.wallPaths].some((p) => wallWeakened(root, i === 0, p, touched)) };
     },
     async score() { const out: AttemptCheck[] = []; for (const t of a.S) await a.runOne(t, out); return out; },
     dispose: () => { try { cleanupAttempt(a.primary, a.runDir, bDir); } catch { /* best-effort: a leaked worktree is pruned by git worktree prune */ } },
   };
 }
 /** `check` is verify.ts's runCheck, bound by the caller (this module may not import stages/ at runtime). */
-export interface AttemptsDeps { check: (ctx: RunContext, t: TestRef, signal: AbortSignal, out: AttemptCheck[]) => Promise<unknown>; wallPaths: string[]; }
+export interface AttemptsDeps { check: (ctx: RunContext, t: TestRef, signal: AbortSignal, out: AttemptCheck[]) => Promise<unknown>; wallPaths: string[]; wallContent?: Record<string, string>; }
 /** Runs the two attempts for implement. Returns the winner's session, every iteration id (winner last) and an event-ready summary. */
 export async function runAttemptsOnCtx(ctx: RunContext, first: SessionRunOptions, signal: AbortSignal, impacted: string[], deps: AttemptsDeps): Promise<{ session: SessionResult; ids: string[]; summary: Record<string, unknown> }> {
   assertScrubbedEnv(process.env); // before the worktree exists
@@ -106,7 +113,7 @@ export async function runAttemptsOnCtx(ctx: RunContext, first: SessionRunOptions
   const idB = `${first.iterationId}b`;
   const { resumeSessionId: _r, ...fresh } = first; // a provider session resumes into one cwd only
   const ops = treeswapOps({
-    primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, wallPaths: new Set(deps.wallPaths), S,
+    primary: ctx.repoDir, runDir: ctx.runDir, base: ctx.baseSha, wallPaths: new Set(deps.wallPaths), ...(deps.wallContent ? { wallContent: new Map(Object.entries(deps.wallContent)) } : {}), S,
     runSession: (i, cwd, sig) => ctx.sessions.run(i === 0 ? { ...first, cwd, signal: sig } : { ...fresh, cwd, iterationId: idB, signal: sig }),
     runOne: (t, out) => deps.check(ctx, t, signal, out),
   });
