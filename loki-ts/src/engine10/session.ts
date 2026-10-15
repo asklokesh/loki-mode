@@ -3,7 +3,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { writeProviderCost } from "./provider_cost.ts";
+import { writeProviderCost } from "../features/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
 import { recordSessionCost, resultCostPath, tokensUnmeasured, UNMETERED } from "./cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../runner/budget.ts";
@@ -12,7 +12,7 @@ import { routerEnabled } from "../runner/router/flag.ts";
 import { routedCostFields, routerMarkers, routerSessionPin } from "../runner/router/session_route.ts";
 import type { ImplementExit, SessionMarkers, SessionResult, SessionRunner, SessionRunOptions } from "./types.ts";
 import { safeGit } from "../util/safe_git.ts";
-import { beginGuard, finishGuard, isGuarded, watchBudget } from "./provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
+import { beginGuard, finishGuard, isGuarded, watchBudget } from "../features/provider_guard.ts"; // PARITY-ENFORCE: non-Claude guardrails
 import { checkBudgetLimit } from "../runner/budget.ts";
 const KILL_GRACE_MS = 2000; // ENGINE.md section 10: SIGKILL 2s after SIGTERM
 const STDERR_TAIL_BYTES = 64 * 1024; // E-61: kept for stage.failed diagnostics, tail only

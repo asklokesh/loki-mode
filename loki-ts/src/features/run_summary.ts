@@ -1,7 +1,7 @@
 // OC-OUTPUT: one shared end-of-run summary, same format as autonomy/lib/run-summary.sh
 // (legacy engine). Pure formatting; callers supply already-measured facts. Null is never shown as 0.
 import { safeGit } from "../util/safe_git.ts";
-import type { Outcome } from "./output.ts";
+import type { Outcome } from "../engine10/output.ts";
 
 export type RunResult = "verified" | "done-unverified" | "failed" | "stopped";
 
