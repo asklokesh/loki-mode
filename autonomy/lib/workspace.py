@@ -20,8 +20,15 @@ Each repo gets its own worktree and engine run (continue-and-report: a failing
 repo does not stop the others; dependents of a failed repo are SKIPPED). After
 every repo has finished, the integration command runs once with each run branch
 checked out, and evidence lands in
-.loki/workspaces/<name>/<run-id>/integration.json. Integration evidence is not
-part of the Seal.
+.loki/workspaces/<name>/<run-id>/integration.json. When every repo finished ok,
+integration did not fail and every child sealed a receipt, the run seals
+composite.json (`loki verify --seal-composite`), which binds integration.json.
+Otherwise the run prints "composite not sealed: <reason>".
+
+With `plan: true` (workspace key) or LOKI_WORKSPACE_PLAN=1 one provider call
+through the launcher seam writes <run-dir>/plan.json ({"<repo>": "<task>"});
+a valid plan gives each listed repo its own task, an invalid one falls back to
+the generic text and prints why.
 
 Repos with no pending `after` run in parallel, at most `concurrency` at once
 (workspace key or LOKI_WORKSPACE_CONCURRENCY, default 2). SIGINT and SIGTERM
@@ -156,8 +163,53 @@ def prepare(source, dest, branch, setup):
     return dest
 
 
-def task_for(entry, ref, siblings):
-    """(launcher argument, extra env) for a repo: the issue ref when it lives here, else task text."""
+def load_plan(run_dir, repos):
+    """(plan dict, reason): per-repo task text from run_dir/plan.json. Any problem gives ({}, reason)."""
+    path = os.path.join(run_dir, "plan.json")
+    try:
+        with open(path) as f:
+            plan = json.load(f)
+    except FileNotFoundError:
+        return {}, "plan.json was not written"
+    except (OSError, ValueError) as e:
+        return {}, "plan.json unreadable (%s)" % type(e).__name__
+    if not isinstance(plan, dict) or not plan:
+        return {}, "plan.json is not a non-empty object"
+    unknown = sorted(k for k in plan if k not in repos)
+    if unknown:
+        return {}, "plan.json names repos outside the workspace: %s" % ", ".join(map(str, unknown))
+    empty = sorted(k for k, v in plan.items() if not isinstance(v, str) or not v.strip())
+    if empty:
+        return {}, "plan.json has empty task text for: %s" % ", ".join(empty)
+    return plan, None
+
+
+def request_plan(ordered, ref, run_dir, launcher, env):
+    """One launcher call asking for plan.json; returns (plan, reason). The launcher may ignore it."""
+    repos = [e["repo"] for e in ordered]
+    prompt = ("Plan the change described by %s across the repos %s. Write JSON to %s mapping each "
+              "repo that needs work to its own task text. Do not edit any repo." %
+              (ref, ", ".join(repos), os.path.join(run_dir, "plan.json")))
+    try:
+        timeout = int(os.environ.get("LOKI_WORKSPACE_PLAN_TIMEOUT") or 600)
+    except ValueError:
+        timeout = 600
+    penv = dict(env, LOKI_E10_TASK_TEXT=prompt, LOKI_WORKSPACE_PLAN_OUT=os.path.join(run_dir, "plan.json"))
+    try:
+        subprocess.run([launcher, prompt], cwd=run_dir, env=penv, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=timeout,
+                       start_new_session=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {}, "plan call failed (%s)" % type(e).__name__
+    return load_plan(run_dir, set(repos))
+
+
+def task_for(entry, ref, siblings, plan=None):
+    """(launcher argument, extra env) for a repo: its planned task, else the issue ref when it lives here, else task text."""
+    if plan and plan.get(entry["repo"]):
+        text = "%s\n\nPart of: %s. Sibling worktrees (read-only context, do not edit): %s" % (
+            plan[entry["repo"]].strip(), ref, ", ".join(siblings) or "none")
+        return text, {"LOKI_E10_TASK_TEXT": text}
     m = REF_RE.match(ref)
     if m and m.group(1) == entry["repo"]:
         return ref, {}
@@ -171,7 +223,7 @@ def run_integration(ws, run_dir, worktrees, heads):
     integ = ws.get("integration") or {}
     cmd = integ.get("command")
     ev = {"heads": heads, "exit_code": None, "log_sha256": None, "status": "not_configured",
-          "seal": False, "note": "integration evidence is not part of the Seal"}
+          "seal": False, "note": "integration evidence is bound by composite.json only when the run seals one"}
     if not cmd:
         return ev
     timeout = integ.get("timeout_s", 900)
@@ -237,6 +289,14 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
         conc = max(1, int(os.environ.get("LOKI_WORKSPACE_CONCURRENCY") or ws.get("concurrency") or 2))
     except (TypeError, ValueError):
         conc = 2
+
+    plan = {}
+    if ws.get("plan") is True or os.environ.get("LOKI_WORKSPACE_PLAN") == "1":
+        plan, why = request_plan(ordered, ref, run_dir, launcher, child_env_base)
+        if why:
+            say("workspace: plan not used (%s); every repo gets the generic task" % why)
+        else:
+            say("workspace: plan accepted for %s" % ", ".join(sorted(plan)))
 
     def stop(*_):
         for p, _lf in running.values():
@@ -326,7 +386,7 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
                 continue
             worktrees[repo] = wt
             siblings = [os.path.join(run_dir, "worktrees", _slug(o["repo"])) for o in ordered if o["repo"] != repo]
-            arg, extra = task_for(entry, ref, siblings)
+            arg, extra = task_for(entry, ref, siblings, plan)
             lf = open(os.path.join(run_dir, "%s.log" % _slug(repo)), "w")
             say("workspace: %s running" % repo)
             p = subprocess.Popen([launcher, arg], cwd=wt, env=dict(child_env_base, **extra), stdout=lf,
@@ -365,6 +425,8 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
         json.dump(ev, f, indent=2, sort_keys=True)
     os.replace(tmp, ev_path)
 
+    seal_composite(ordered, outcome, ev, run_dir)
+
     try:
         import workspace_comment
         workspace_comment.post_comments(name, run_id, run_dir, worktrees, ev, say)
@@ -379,6 +441,46 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     if ev["status"] == "failed" or any(k == "fail" for k in kind.values()):
         return 1, ev_path
     return (3 if any(k == "budget" for k in kind.values()) else 0), ev_path
+
+
+_SEAL_ENV_KEYS = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SHELL", "USER", "BUN_INSTALL", "LOKI_NO_BROWSER",
+                  "LOKI_RECEIPT_SIGNING_KEY", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_TS_ENTRY", "BUN_FROM_SOURCE",
+                  "LOKI_LEGACY_BASH")
+
+
+def seal_composite(ordered, outcome, ev, run_dir):
+    """Seal composite.json once when every repo finished ok with a receipt; otherwise say why not."""
+    if ev.get("status") == "failed":
+        say("composite not sealed: integration failed")
+        return False
+    for e in ordered:
+        repo = e["repo"]
+        if outcome.get(repo) != "ok":
+            say("composite not sealed: %s did not finish ok (%s)" % (repo, outcome.get(repo, "no outcome")))
+            return False
+        runs = os.path.join(run_dir, "worktrees", _slug(repo), ".loki", "runs")
+        try:
+            has = any(os.path.isfile(os.path.join(runs, n, "receipt.json")) for n in os.listdir(runs))
+        except OSError:
+            has = False
+        if not has:
+            say("composite not sealed: %s has no receipt" % repo)
+            return False
+    env = {k: os.environ[k] for k in _SEAL_ENV_KEYS if k in os.environ}
+    env["LOKI_NO_BROWSER"] = "1"
+    exe = os.environ.get("LOKI_WORKSPACE_VERIFY") or os.path.join(REPO_ROOT, "bin", "loki")
+    try:
+        r = subprocess.run([exe, "verify", "--seal-composite", run_dir], env=env, capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        say("composite not sealed: verify could not run (%s)" % type(e).__name__)
+        return False
+    if r.returncode != 0:
+        last = (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or ["no output"])[-1]
+        say("composite not sealed: verify exit %d (%s)" % (r.returncode, last))
+        return False
+    say("workspace: composite sealed: %s" % os.path.join(run_dir, "composite.json"))
+    return True
 
 
 def _runs(base_dir):

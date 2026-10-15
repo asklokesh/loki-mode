@@ -94,6 +94,99 @@ for _ws99_entry in "$REPO_ROOT/autonomy/loki" "$REPO_ROOT/bin/loki"; do
     fi
 done
 
+# PLANNER: per-repo plan, composite seal, tamper check. Stub launcher only; no provider, no network.
+_ws99_tasks="$_ws99_tmp/tasks"
+mkdir -p "$_ws99_tasks"
+cat > "$_ws99_tmp/receipt.ts" <<TS
+import { receiptSha256, signReceipt } from "$REPO_ROOT/loki-ts/src/engine10/stages/seal.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+const [dir, head, id] = process.argv.slice(2);
+const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", head_sha: head, events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", not_proven: [] };
+const h = receiptSha256(body as never);
+mkdirSync(dir + "/.loki/runs/" + id, { recursive: true });
+writeFileSync(dir + "/.loki/runs/" + id + "/events.jsonl", "");
+writeFileSync(dir + "/.loki/runs/" + id + "/receipt.json", JSON.stringify({ ...body, receipt_sha256: h, verification: signReceipt(id, h) }, null, 2) + "\n");
+TS
+cat > "$_ws99_tmp/plan-launcher.sh" <<SH
+#!/bin/bash
+if [ -n "\${LOKI_WORKSPACE_PLAN_OUT:-}" ]; then
+    cp "\$PLAN_SRC" "\$LOKI_WORKSPACE_PLAN_OUT"
+    exit 0
+fi
+printf '%s' "\${LOKI_E10_TASK_TEXT:-\$1}" > "$_ws99_tasks/\$(basename "\$PWD")"
+[ "\${NO_RECEIPT_FOR:-}" = "\$(basename "\$PWD")" ] && exit 0
+bun "$_ws99_tmp/receipt.ts" "\$PWD" "\$(git rev-parse HEAD)" "run-\$(basename "\$PWD")"
+SH
+chmod +x "$_ws99_tmp/plan-launcher.sh"
+openssl genpkey -algorithm ed25519 -out "$_ws99_tmp/sign.pem" 2>/dev/null && chmod 600 "$_ws99_tmp/sign.pem"
+cat > "$_ws99_tmp/proj/loki.yaml" <<YAML
+workspaces:
+  planned:
+    plan: true
+    repos:
+      - {repo: acme/lib, path: $_ws99_tmp/lib}
+      - {repo: acme/app, path: $_ws99_tmp/app, after: [acme/lib]}
+    integration: {command: "true", timeout_s: 30}
+YAML
+
+_ws99_plan_run() { # plan source file, extra env assignment
+    rm -rf "$_ws99_tmp/proj/.loki" "${_ws99_tasks:?}"/*
+    (cd "$_ws99_tmp/proj" && env -u LOKI_WORKSPACES PLAN_SRC="$1" "$2" LOKI_NO_BROWSER=1 \
+        LOKI_RECEIPT_SIGNING_KEY_FILE="$_ws99_tmp/sign.pem" LOKI_WORKSPACE_LAUNCHER="$_ws99_tmp/plan-launcher.sh" \
+        LOKI_WORKSPACE_VERIFY="$_ws99_tmp/e10.sh" \
+        timeout -k 5 200 python3 "$REPO_ROOT/autonomy/lib/workspace.py" run planned acme/lib#1 2>&1)
+}
+# bin/loki does not yet route `verify --seal-composite` or a composite path to engine10 (PATH slice), and dist is
+# rebuilt only at train time, so the test runs engine10 verify from source through this wrapper.
+printf '#!/bin/sh\nexec bun "%s/loki-ts/src/cli.ts" engine10 "$@"\n' "$REPO_ROOT" > "$_ws99_tmp/e10.sh"
+chmod +x "$_ws99_tmp/e10.sh"
+_ws99_verify() { LOKI_NO_BROWSER=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$_ws99_tmp/sign.pem" timeout -k 5 120 "$_ws99_tmp/e10.sh" verify "$1" 2>&1; }
+
+echo '{"acme/lib": "Add the shared helper", "acme/app": "Use the shared helper"}' > "$_ws99_tmp/plan-ok.json"
+_ws99_out="$(_ws99_plan_run "$_ws99_tmp/plan-ok.json" "X=1")"
+_ws99_rc=$?
+_ws99_l="$(cat "$_ws99_tasks/acme__lib" 2>/dev/null)"
+_ws99_a="$(cat "$_ws99_tasks/acme__app" 2>/dev/null)"
+if [ "$_ws99_rc" -eq 0 ] && [ "${_ws99_l#Add the shared helper}" != "$_ws99_l" ] && [ "${_ws99_a#Use the shared helper}" != "$_ws99_a" ]; then
+    ok "workspace planner: a valid plan gives each repo its own task"
+else
+    bad "workspace planner: rc=$_ws99_rc lib=[$_ws99_l] app=[$_ws99_a] out=$_ws99_out"
+fi
+_ws99_comp="$(find "$_ws99_tmp/proj/.loki/workspaces/planned" -name composite.json 2>/dev/null | head -1)"
+if [ -n "$_ws99_comp" ] && _ws99_vout="$(_ws99_verify "$_ws99_comp")"; then
+    ok "workspace planner: composite sealed and engine10 verify exits 0"
+else
+    bad "workspace planner: composite=${_ws99_comp:-none} verify=${_ws99_vout:-} run=$_ws99_out"
+fi
+if [ -n "$_ws99_comp" ]; then
+    _ws99_child="$(find "$(dirname "$_ws99_comp")/worktrees" -name receipt.json | head -1)"
+    sed -i.bak 's/"VERIFIED"/"FAILED"/' "$_ws99_child"
+    rm -f "$_ws99_child.bak"
+    if _ws99_verify "$_ws99_comp" >/dev/null; then
+        bad "workspace planner: tampered child still verified"
+    else
+        ok "workspace planner: a tampered child receipt makes verify exit non-zero"
+    fi
+fi
+
+echo '{"acme/ghost": "x"}' > "$_ws99_tmp/plan-bad.json"
+_ws99_out="$(_ws99_plan_run "$_ws99_tmp/plan-bad.json" "X=1")"
+_ws99_l="$(cat "$_ws99_tasks/acme__app" 2>/dev/null)"
+if printf '%s' "$_ws99_out" | grep -q 'plan not used (plan.json names repos outside the workspace: acme/ghost)' &&
+    printf '%s' "$_ws99_l" | grep -q '^Implement the change described by'; then
+    ok "workspace planner: a malformed plan falls back to the generic task with a reason"
+else
+    bad "workspace planner: fallback lib=[$_ws99_l] out=$_ws99_out"
+fi
+
+_ws99_out="$(_ws99_plan_run "$_ws99_tmp/plan-ok.json" "NO_RECEIPT_FOR=acme__app")"
+if printf '%s' "$_ws99_out" | grep -q 'composite not sealed: acme/app has no receipt' &&
+    [ -z "$(find "$_ws99_tmp/proj/.loki/workspaces/planned" -name composite.json 2>/dev/null)" ]; then
+    ok "workspace planner: an unsealed child blocks the composite and names the repo"
+else
+    bad "workspace planner: no-receipt out=$_ws99_out"
+fi
+
 if grep -q '^## Verify a workspace run' "$REPO_ROOT/docs/WORKSPACES.md"; then
     ok "workspace e2e: docs/WORKSPACES.md has the verify section"
 else
@@ -101,4 +194,4 @@ else
 fi
 
 rm -rf -- "$_ws99_tmp"
-unset _ws99_tmp _ws99_entry _ws99_name _ws99_out _ws99_rc _ws99_json _ws99_status _ws99_src _ws99_met _ws99_n
+unset _ws99_tasks _ws99_l _ws99_a _ws99_comp _ws99_child _ws99_vout _ws99_tmp _ws99_entry _ws99_name _ws99_out _ws99_rc _ws99_json _ws99_status _ws99_src _ws99_met _ws99_n
