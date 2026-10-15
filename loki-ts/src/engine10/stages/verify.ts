@@ -165,9 +165,7 @@ async function subtractBase(
   const sus = pairs.filter(({ c }) => rel.has(c.name) && c.result === "pass");
   if (!(un.some(({ c }) => c.result === "fail" && c.ids?.length) || sus.length) || signal.aborted) return out;
   const dir = mkdtempSync(join(tmpdir(), "e10-base-"));
-  const git = (args: string[]): void => { // worktree add checks out base content
-    safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true });
-  };
+  const git = (args: string[]): void => { safeGit(ctx.repoDir, args, { stdio: "ignore", repoDrivers: true }); }; // worktree add checks out base content
   try {
     git(["-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", dir, ctx.baseSha]);
     const base = new Map<VerifyCheck, { red: string[]; n: number; sk: number }>();
