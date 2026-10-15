@@ -54,6 +54,7 @@ import type {
 } from "./types.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 import { modelRouteEnv, modelRouteModel } from "../providers/model_routes.ts";
+import { opencodeProvider } from "./provider_opencode.ts";
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -91,6 +92,8 @@ export async function resolveProvider(
       return clineProvider();
     case "aider":
       return aiderProvider();
+    case "opencode":
+      return opencodeProvider();
     default: {
       // Defensive: TS exhaustiveness should make this unreachable, but a
       // bad cast at the call site (e.g. user-supplied name) lands here.

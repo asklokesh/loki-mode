@@ -44,7 +44,7 @@ The previous loop (autonomy/run.sh) runs only when:
    Only that call goes to the previous loop, and one stderr line names the flag
    and the engine chosen, or
 3. LOKI_PROVIDER (or `--provider`) names a provider Loki 10 has no invoker
-   for (anything but claude, codex, cline, aider), or bun is missing, or the
+   for (anything but claude, codex, cline, aider, opencode), or bun is missing, or the
    PRD is larger than 100000 bytes. One stderr line says why.
 
 `loki <word>` with a single bare word stays the command namespace (`loki doctor`),
@@ -269,12 +269,17 @@ receipt with no signing key configured (or a key that failed to load) reads
 | codex    | no             | no                       |
 | cline    | no             | no                       |
 | aider    | no             | no                       |
-| opencode | not supported  | n/a                      |
+| opencode | no             | no                       |
 
-For codex, cline and aider, a run's Cost line reads `not measured` and the
+For codex, cline, aider and opencode, a run's Cost line reads `not measured` and the
 NOT PROVEN line adds the literal entry `kill blocking not enforced`
-(`loki-ts/src/engine10/stages/seal.ts`). opencode is not one of engine10's
-provider names (`claude`, `codex`, `cline`, `aider`); it is not supported.
+(`loki-ts/src/engine10/stages/seal.ts`). opencode is a supported
+engine10 provider (`loki-ts/src/runner/provider_opencode.ts`): select it with
+`--provider opencode`. It runs `opencode run --auto` non-interactively, takes a
+`provider/model` id from `LOKI_OPENCODE_MODEL` (for example
+`openrouter/deepseek/deepseek-v3.2`; unset uses opencode's own default), passes
+extra flags from `LOKI_OPENCODE_FLAGS`, and honors `LOKI_OPENCODE_CLI` for the
+binary path. Claude remains the default provider.
 
 ## Model routing
 

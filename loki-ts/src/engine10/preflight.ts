@@ -1,7 +1,7 @@
 import { truthy } from "../runner/providers.ts"; // E-36 first-run preflight (docs/v10/ENGINE.md); see preflight.test.ts for cases. Terse: engine10's own budget test caps this dir at 5,000 lines.
 import { safeGitRun } from "../util/safe_git.ts";
 import { run, type ShellOpts, type ShellResult } from "../util/shell.ts";
-const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI" }; // provider name doubles as its default CLI
+const CLI_ENV_VAR: Record<string, string> = { claude: "LOKI_CLAUDE_CLI", codex: "LOKI_CODEX_CLI", cline: "LOKI_CLINE_CLI", aider: "LOKI_AIDER_CLI", opencode: "LOKI_OPENCODE_CLI" }; // provider name doubles as its default CLI
 const GITHUB_ORIGIN_RE = /^(?:https:\/\/(?:[^@/]+@)?github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)/;
 export interface PreflightOptions { repoDir: string; provider: string; pr: boolean; env?: Record<string, string | undefined> }
 export interface PreflightResult { fatal: string | null; warnings: string[] }
