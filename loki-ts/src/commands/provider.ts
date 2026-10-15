@@ -1,6 +1,7 @@
 // Port of autonomy/loki:cmd_provider (line 2572) + cmd_provider_show (2615)
 // + cmd_provider_list (2708). Read-only operations only -- `set` stays in
 // bash for Phase 2 (it mutates .loki/state/provider).
+import { capabilitiesFor, matrixText } from "../providers/provider_guard.ts";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { commandExists } from "../util/shell.ts";
@@ -103,6 +104,18 @@ export async function runProviderList(): Promise<number> {
   return 0;
 }
 
+/** LM-004: the capability rows for one provider (all engines), straight from the table. Unknown name exits 1. */
+export function runProviderInfoJson(name?: string): number {
+  const provider = name ?? defaultProvider(undefined, readSavedProvider());
+  const rows = capabilitiesFor(provider);
+  if (rows.length === 0) {
+    process.stderr.write(`Unknown provider: ${provider}\n`);
+    return 1;
+  }
+  process.stdout.write(`${JSON.stringify({ provider, capabilities: rows }, null, 2)}\n`);
+  return 0;
+}
+
 export function printProviderHelp(): number {
   process.stdout.write(`${BOLD}Loki Mode Provider Management${NC}\n`);
   process.stdout.write(`\n`);
@@ -112,7 +125,8 @@ export function printProviderHelp(): number {
   process.stdout.write(`  show     Show current provider (default)\n`);
   process.stdout.write(`  set      Set provider for this project\n`);
   process.stdout.write(`  list     List available providers\n`);
-  process.stdout.write(`  info     Show provider details\n`);
+  process.stdout.write(`  info     Show provider details (--json: capability contract)\n`);
+  process.stdout.write(`  matrix   Show the capability matrix per provider and engine\n`);
   process.stdout.write(`  models   Show resolved model configuration for all providers\n`);
   process.stdout.write(`\n`);
   process.stdout.write(`Examples:\n`);
@@ -134,8 +148,13 @@ export async function runProvider(argv: readonly string[]): Promise<number> {
       return runProviderShow(rest[0]);
     case "list":
       return runProviderList();
-    case "set":
+    case "matrix":
+      process.stdout.write(matrixText());
+      return 0;
     case "info":
+      if (rest.includes("--json")) return runProviderInfoJson(rest.find((a) => !a.startsWith("--")));
+      return execLegacyBash(["provider", sub, ...rest]);
+    case "set":
     case "models":
       // Defer to bash for write/lookup commands not in Phase 2 scope.
       return execLegacyBash(["provider", sub, ...rest]);

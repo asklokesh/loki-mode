@@ -207,3 +207,21 @@ What we do instead:
 
 If a run cost more than you expected, `loki proof show <id>` tells you where it
 went.
+
+## Backend capability contract (LM-004)
+
+One table in `loki-ts/src/providers/provider_guard.ts` (`CAPABILITIES`) records what each provider guarantees on engine10. `loki provider matrix` prints it (all engines), `loki provider info <name> --json` prints one provider's rows with the source files each value was read from, and `loki start` prints one disclosure line before the run when the provider falls short of Claude. Claude prints nothing extra. On the legacy bash engine only the invocation and sandbox flags are confirmed from code; every other value there is `unknown`, which means not confirmed, not absent.
+
+- cost: `measured` = provider-reported; `estimated` = parsed or size-based and flagged estimated; `none` = reported as not measured.
+- budget kill: `post-iteration` = no further stage starts once priced cost reaches the cap; `none` = no cap applies.
+- cancel (pgroup): the session child is killed as a whole process group.
+- guard scan: `native` = the provider's own hooks gate each call; `post-iteration` = diff scan after each iteration, reverting destructive changes.
+- kill blocking: `native` = enforced; `none` = receipts list `kill blocking not enforced`.
+
+| provider | engine | cost | budget kill | cancel (pgroup) | sandbox flags | receipt | resume | guard scan | kill blocking |
+|---|---|---|---|---|---|---|---|---|---|
+| claude | engine10 | measured | post-iteration | yes | none | yes | yes | native | native |
+| codex | engine10 | estimated | post-iteration | yes | --sandbox workspace-write | yes | no | post-iteration | none |
+| cline | engine10 | estimated | post-iteration | yes | none | yes | no | post-iteration | none |
+| aider | engine10 | estimated | post-iteration | yes | --no-auto-commits | yes | no | post-iteration | none |
+| opencode | engine10 | none | none | yes | none | yes | no | post-iteration | none |

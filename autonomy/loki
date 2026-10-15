@@ -7128,7 +7128,13 @@ cmd_provider() {
             cmd_provider_list
             ;;
         info)
+            case " $* " in
+                *" --json "*) _loki_bun_delegate provider info "$@" || { echo "loki provider info --json needs bun: ${_LOKI_DELEGATE_WHY}" >&2; return 1; } ;;
+            esac
             cmd_provider_info "$@"
+            ;;
+        matrix)
+            _loki_bun_delegate provider matrix "$@" || { echo "loki provider matrix needs bun: ${_LOKI_DELEGATE_WHY}" >&2; return 1; }
             ;;
         models)
             cmd_provider_models
@@ -7142,7 +7148,8 @@ cmd_provider() {
             echo "  show     Show current provider (default)"
             echo "  set      Set provider for this project"
             echo "  list     List available providers"
-            echo "  info     Show provider details"
+            echo "  info     Show provider details (--json: capability contract)"
+            echo "  matrix   Show the capability matrix per provider and engine"
             echo "  models   Show resolved model configuration for all providers"
             echo ""
             echo "Precedence (highest wins):"
