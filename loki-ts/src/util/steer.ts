@@ -3,7 +3,7 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { FINISH_LINE } from "./context.ts";
+import { FINISH_LINE } from "../e10ext/context.ts";
 
 export const STEER_MAX_BYTES = 1024 * 1024;
 export const STEER_STAGES: ReadonlySet<string> = new Set(["plan", "implement"]);

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, w
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
-import { STEER_BEGIN, STEER_END, consumeSteer, withSteer } from "../../src/e10ext/steer.ts";
+import { STEER_BEGIN, STEER_END, consumeSteer, withSteer } from "../../src/util/steer.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });

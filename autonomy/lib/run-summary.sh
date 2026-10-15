@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # OC-OUTPUT: unified end-of-run summary for the legacy engine. Same format as
-# loki-ts/src/engine10/run_summary.ts (Result, Files, Cost, Elapsed, Receipt, next).
+# loki-ts/src/util/run_summary.ts (Result, Files, Cost, Elapsed, Receipt, next).
 # Sourced by autonomy/run.sh; defines functions only.
 #
 #   loki_run_summary RESULT_CODE [START_SHA]

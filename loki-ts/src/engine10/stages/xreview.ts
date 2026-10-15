@@ -3,7 +3,7 @@
 // Off unless loki.yaml `review: codex|claude` or LOKI_REVIEW_PROVIDER is set.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadReviewStageAgent } from "../../e10ext/role_agents.ts";
+import { loadReviewStageAgent } from "../../council/role_agents.ts";
 import { run } from "../../util/shell.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import type { RunContext, Verdict } from "../types.ts";
@@ -68,7 +68,7 @@ export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.Proces
     : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"];
 }
 
-/** OC-AGENTS: a configured reviewer or council agent (see e10ext/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
+/** OC-AGENTS: a configured reviewer or council agent (see council/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
 export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = process.env): { prompt: string; model: string; provider: ReviewProvider | null } | null {
   const a = loadReviewStageAgent(repoDir, env); if (!a) return null;
   return { prompt: a.prompt, model: a.provider === "claude" ? a.model : "", provider: asProvider(a.provider) };

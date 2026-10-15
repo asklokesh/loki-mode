@@ -166,7 +166,7 @@ capability degradation.
 - `cline.sh` - Cline (Tier 2: reduced parallelism).
 - `codex.sh` - OpenAI Codex CLI (Tier 3: degraded, sequential).
 - `aider.sh` - Aider (Tier 3: degraded).
-- Non-Claude engine10 sessions run under `loki-ts/src/engine10/provider_guard.ts` (timeout, budget stop, post-iteration diff scan with revert).
+- Non-Claude engine10 sessions run under `loki-ts/src/providers/provider_guard.ts` (timeout, budget stop, post-iteration diff scan with revert).
 - `loader.sh` - Provider loader utility.
 - `models.sh`, `model_catalog.json` - Model name registry and catalog.
 - `managed.py` - Managed provider client.

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadReviewStageAgent, loadRoleAgent } from "../../src/e10ext/role_agents.ts";
+import { loadReviewStageAgent, loadRoleAgent } from "../../src/council/role_agents.ts";
 import { configuredReviewer } from "../../src/engine10/stages/xreview.ts";
 
 function fixture(files: Record<string, string>): { repo: string; env: NodeJS.ProcessEnv; done: () => void } {

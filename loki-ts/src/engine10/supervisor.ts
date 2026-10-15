@@ -6,7 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process"; import { cu
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
-import { diffStat, formatRunSummary, nextOf, resultOf, summaryObject, useColor } from "../features/run_summary.ts"; // OC-OUTPUT
+import { diffStat, formatRunSummary, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";

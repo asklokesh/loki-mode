@@ -402,7 +402,7 @@ PROVIDER_DEGRADED=false
 
 ## Guardrail Parity (engine10)
 
-Claude blocks destructive commands inline through its hooks and permission flags. For codex, cline, aider and opencode, engine10 applies `loki-ts/src/engine10/provider_guard.ts` around every session:
+Claude blocks destructive commands inline through its hooks and permission flags. For codex, cline, aider and opencode, engine10 applies `loki-ts/src/providers/provider_guard.ts` around every session:
 
 1. Wall-clock timeout (`limitS`) and a budget-stop poll (`BUDGET_LIMIT`) kill the whole process group.
 2. After each session a diff scan fails the iteration and reverts: mass deletion of tracked files, `.git/config` edits, new git hooks, symlinks or paths that point outside the project.
