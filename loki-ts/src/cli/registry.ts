@@ -176,6 +176,11 @@ export const REGISTRY: readonly CmdSpec[] = [
 
   // ---- bash-dispatched, modern ----
   cmd("help", "KEEP-MODERN", "bash", "Show help", "Core", { aliases: ["--help", "-h"], positionals: [{ name: "command", type: "string" }] }),
+  cmd("chat", "KEEP-MODERN", "bash", "Interactive chat with the active provider", "Provider-neutral conversational verb", { positionals: [{ name: "message", type: "string" }] }),
+  cmd("edit", "KEEP-MODERN", "bash", "Make one small scoped edit", "Provider-neutral single-edit verb", { positionals: [{ name: "task", type: "string" }] }),
+  cmd("diff", "KEEP-MODERN", "bash", "Show what the last run changed", "Passes extra args to git diff"),
+  cmd("models", "KEEP-MODERN", "bash", "Show per-provider model routes", "Provider-neutral model tiers"),
+  cmd("setup", "KEEP-MODERN", "bash", "Guided first-run setup wizard", "Onboarding gate"),
   cmd("quick", "UPDATE", "bash", "One small task", "Routes to the v10 lean path by default", { positionals: [{ name: "task", type: "string" }] }),
   cmd("quickstart", "KEEP-MODERN", "bash", "Guided first build", "Onboarding path", { positionals: [{ name: "idea", type: "string" }] }),
   cmd("init", "UPDATE", "bash", "Scaffold from a template", "Templates predate v10", { flags: [str("-t", "<template>", "Template name")] }),
@@ -184,7 +189,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("keys", "KEEP-MODERN", "bash", "Receipt-signing keys", "Trust moat", { subcommands: [sub("export", "Print the public signing key (JWK)")] }),
   cmd("review", "UPDATE", "bash", "Standalone code review with quality gates", "Gates are legacy-shaped"),
   cmd("dashboard", "UPDATE", "bash", "Operations UI server", "Overlaps Control Plane", { subcommands: [sub("start", "Start"), sub("stop", "Stop"), sub("status", "Status"), sub("url", "Print URL"), sub("open", "Open in browser")] }),
-  cmd("config", "UPDATE", "bash", "Manage configuration", "Mixed legacy keys", { subcommands: [sub("show", "Show config"), sub("init", "Create config"), sub("edit", "Edit config"), sub("path", "Print config path"), sub("set", "Set a value"), sub("get", "Get a value")] }),
+  cmd("config", "UPDATE", "bash", "Manage configuration", "Mixed legacy keys", { subcommands: [sub("show", "Show config"), sub("list", "List config (alias of show)"), sub("init", "Create config"), sub("edit", "Edit config"), sub("path", "Print config path"), sub("set", "Set a value"), sub("get", "Get a value")] }),
   cmd("mcp", "KEEP-MODERN", "bash", "Launch the MCP server (stdio)", "Engine-neutral"),
   cmd("acp", "KEEP-MODERN", "bash", "Run Loki as an ACP agent", "Engine-neutral"),
   cmd("stop", "KEEP-MODERN", "bash", "Stop execution immediately", "Session control"),

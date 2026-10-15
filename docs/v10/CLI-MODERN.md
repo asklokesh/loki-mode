@@ -6,12 +6,12 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 
 ## Counts
 
-- KEEP-MODERN: 64
+- KEEP-MODERN: 69
 - UPDATE: 22
 - DROP-LEGACY: 32
 - DELETE: 14
-- Total rows: 132
-- Registry paths (commands and nested subcommands): 182
+- Total rows: 137
+- Registry paths (commands and nested subcommands): 188
 
 ## Commands
 
@@ -45,6 +45,11 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | completion (hidden) | loki-ts/src/cli.ts | KEEP-MODERN | Hidden plumbing; completions install themselves |
 | __complete (hidden) | loki-ts/src/cli.ts | KEEP-MODERN | Hidden plumbing for generated completions |
 | help | autonomy/loki | KEEP-MODERN | Core |
+| chat | autonomy/loki | KEEP-MODERN | Provider-neutral conversational verb |
+| edit | autonomy/loki | KEEP-MODERN | Provider-neutral single-edit verb |
+| diff | autonomy/loki | KEEP-MODERN | Passes extra args to git diff |
+| models | autonomy/loki | KEEP-MODERN | Provider-neutral model tiers |
+| setup | autonomy/loki | KEEP-MODERN | Onboarding gate |
 | quick | autonomy/loki | UPDATE | Routes to the v10 lean path by default |
 | quickstart | autonomy/loki | KEEP-MODERN | Onboarding path |
 | init | autonomy/loki | UPDATE | Templates predate v10 |
