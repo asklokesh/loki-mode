@@ -46,16 +46,36 @@ _chat_run_dir() {
     echo "$newest"
 }
 
+# True when the pid file at $1 holds a live pid (plain number or run.pid JSON).
+_chat_pidfile_live() {
+    local f="$1" pid
+    [ -f "$f" ] || return 1
+    pid="$(head -n1 "$f" 2>/dev/null | tr -d '[:space:]')"
+    case "$pid" in
+        '{'*) pid="$(printf '%s' "$pid" | sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p')" ;;
+    esac
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    kill -0 "$pid" 2>/dev/null
+}
+
+# Same sources loki status reads (list_running_sessions: loki.pid, sessions/*/loki.pid,
+# run-*.pid; PAUSE/STOP signals; session.json) plus the engine10 run.pid the supervisor
+# writes in the run dir and removes on every exit path. No events.jsonl guessing.
 _chat_run_state() {
-    local root="${LOKI_DIR:-.loki}" rd="$1" pid
-    if [ -f "$root/STOPPED" ]; then echo stopped; return; fi
-    if [ -f "$root/loki.pid" ]; then
-        pid="$(head -n1 "$root/loki.pid" 2>/dev/null | tr -d '[:space:]')"
-        case "$pid" in ''|*[!0-9]*) ;; *) kill -0 "$pid" 2>/dev/null && { echo running; return; } ;; esac
-    fi
-    if [ -n "$rd" ] && [ -f "$rd/events.jsonl" ]; then
-        if grep -q '"run.completed"' "$rd/events.jsonl" 2>/dev/null; then echo finished; else echo running; fi
+    local root="${LOKI_DIR:-.loki}" rd="$1" f st="" live=0
+    if [ -n "$rd" ] && _chat_pidfile_live "$rd/run.pid"; then live=1; fi
+    if _chat_pidfile_live "$root/loki.pid"; then live=1; fi
+    for f in "$root"/sessions/*/loki.pid "$root"/run-*.pid; do
+        if _chat_pidfile_live "$f"; then live=1; fi
+    done
+    if [ "$live" = "1" ]; then
+        if [ -f "$root/PAUSE" ]; then echo paused; else echo running; fi
         return
+    fi
+    if [ -f "$root/STOP" ] || [ -f "$root/STOPPED" ]; then echo stopped; return; fi
+    if [ -f "$root/session.json" ]; then
+        st="$(sed -n 's/.*"status"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$root/session.json" 2>/dev/null | head -n1)"
+        case "$st" in running|paused|stopped) echo "$st (no live process)"; return ;; esac
     fi
     echo finished
 }
@@ -70,6 +90,7 @@ _chat_attach_context() {
     if [ -n "$rd" ] && [ -f "$rd/events.jsonl" ]; then
         printf 'Last events:\n'; tail -n 20 "$rd/events.jsonl" 2>/dev/null | cut -c1-300
     fi
+    # shellcheck disable=SC2012
     lf="$(ls -t "$root"/logs/*.log 2>/dev/null | head -n1 || true)"
     if [ -n "$lf" ]; then printf 'Log tail (%s):\n' "$lf"; tail -n 40 "$lf" 2>/dev/null | cut -c1-300; fi
 }
@@ -99,12 +120,78 @@ _chat_send() {
     if [ "$mode" = "plan" ]; then
         prompt="PLAN MODE: analyze and propose only. Do NOT modify any files. Request: $text"
     fi
+    if [ "$mode" != "plan" ]; then
+        (
+            # shellcheck disable=SC1091
+            source "${_LOKI_SCRIPT_DIR:-.}/../providers/loader.sh" 2>/dev/null || exit 1
+            load_provider "$_CHAT_PROVIDER" >/dev/null 2>&1 || { echo "loki chat: cannot load provider $_CHAT_PROVIDER" >&2; exit 1; }
+            provider_invoke "$prompt"
+        )
+        return $?
+    fi
+    # Plan mode: read-only via the provider's native flags, then a post-turn guard
+    # that reverts any change the provider made anyway.
+    local rc=0
+    _chat_plan_snapshot
     (
         # shellcheck disable=SC1091
         source "${_LOKI_SCRIPT_DIR:-.}/../providers/loader.sh" 2>/dev/null || exit 1
         load_provider "$_CHAT_PROVIDER" >/dev/null 2>&1 || { echo "loki chat: cannot load provider $_CHAT_PROVIDER" >&2; exit 1; }
-        provider_invoke "$prompt"
-    )
+        case "$_CHAT_PROVIDER" in
+            codex) codex exec --sandbox read-only --skip-git-repo-check "$prompt" < /dev/null ;;
+            opencode) opencode run --agent plan --model "$PROVIDER_MODEL_DEVELOPMENT" "$prompt" < /dev/null ;;
+            aider) aider --message "$prompt" --yes-always --no-auto-commits --dry-run --model "$AIDER_DEFAULT_MODEL" < /dev/null 2>&1 ;;
+            cline) cline --plan "$prompt" < /dev/null ;;
+            *) provider_invoke "$prompt" ;;
+        esac
+    ) || rc=$?
+    _chat_plan_guard
+    return "$rc"
+}
+
+# Plan-mode snapshot: tracked state as a tree-ish commit (git stash create does not
+# touch the stash stack; empty output means clean, so HEAD is the base) plus the
+# list of untracked files.
+_CHAT_PLAN_BASE=""
+_CHAT_PLAN_UNTRACKED=""
+_CHAT_PLAN_ARMED=0
+_chat_plan_snapshot() {
+    _CHAT_PLAN_ARMED=0
+    git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+    _CHAT_PLAN_BASE="$(git stash create 2>/dev/null || true)"
+    [ -n "$_CHAT_PLAN_BASE" ] || _CHAT_PLAN_BASE="$(git rev-parse HEAD 2>/dev/null || true)"
+    [ -n "$_CHAT_PLAN_BASE" ] || return 0
+    _CHAT_PLAN_UNTRACKED="$(git ls-files -o --exclude-standard 2>/dev/null | sort)"
+    _CHAT_PLAN_ARMED=1
+}
+
+_chat_plan_guard() {
+    [ "$_CHAT_PLAN_ARMED" = "1" ] || return 0
+    local f changed=0 now
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        changed=1
+        if git cat-file -e "${_CHAT_PLAN_BASE}:${f}" 2>/dev/null; then
+            git checkout "$_CHAT_PLAN_BASE" -- "$f" 2>/dev/null || true
+        else
+            git rm -f -q --cached -- "$f" 2>/dev/null || true
+            rm -f -- "$f"
+        fi
+    done < <(git diff --name-only "$_CHAT_PLAN_BASE" 2>/dev/null)
+    now="$(git ls-files -o --exclude-standard 2>/dev/null | sort)"
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        printf '%s\n' "$_CHAT_PLAN_UNTRACKED" | grep -Fxq -- "$f" && continue
+        changed=1
+        rm -f -- "$f"
+    done <<EOF
+$now
+EOF
+    _CHAT_PLAN_ARMED=0
+    if [ "$changed" = "1" ]; then
+        echo "loki chat: plan mode is read-only; the provider changed files, and those changes were reverted. Use /build to allow edits."
+    fi
+    return 0
 }
 
 # /run: the exact run the shell would give: loki start with this session's provider and model.
