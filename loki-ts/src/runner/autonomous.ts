@@ -495,7 +495,7 @@ export async function runAutonomous(opts: RunnerOpts): Promise<number> {
     // R1: shareable proof-of-run. Single call site -> emits on EVERY terminal
     // return (success and failure). Fire-and-forget; never throws.
     await maybeGenerateProof(ctx).catch(() => {});
-    try { (await import("../util/requirements_map.ts")).writeFromChecklist(ctx.cwd, ctx.lokiDir); } catch { /* REQTRACE: never fails a run */ }
+    try { (await import("../features/contract.ts")).writeFromChecklist(ctx.cwd, ctx.lokiDir); } catch { /* REQTRACE: never fails a run */ }
   }
 }
 

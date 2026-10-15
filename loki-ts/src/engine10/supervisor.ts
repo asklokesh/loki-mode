@@ -361,7 +361,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
   }, verbose);
   // OC-OUTPUT: unified run summary, same format as the legacy engine (autonomy/lib/run-summary.sh)
-  const rq = await import("../util/requirements_map.ts"), uncovered = rq.uncoveredCount(rq.writeFromEngine10(repoDir, join(repoDir, ".loki"), runDir, isIssue ? null : task, events)); // REQTRACE: map written after verification, before the summary
+  const rq = await import("../features/contract.ts"), uncovered = rq.uncoveredCount(rq.writeFromEngine10(repoDir, join(repoDir, ".loki"), runDir, isIssue ? null : task, events)); // REQTRACE: map written after verification, before the summary
   const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, ds = diffStat(repoDir, typeof baseSha === "string" ? baseSha : null), rr = resultOf(res.outcome);
   const ui = { result: rr, filesChanged: ds?.files ?? null, insertions: ds?.ins, deletions: ds?.del, costUsd: usd, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), receiptPath: res.receiptSha ? join(runDir, "receipt.json") : null, next: nextOf(rr, ds?.files ?? null), uncovered }; 
   process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: summaryObject(ui) })}\n` : quiet ? formatRunSummary(ui, { color: useColor() }) : verbose ? `${out}\n${formatRunSummary(ui, { color: useColor() })}` : withNextLine(out, ui)); // D48: default output stays within 8 lines, so the summary collapses to one line

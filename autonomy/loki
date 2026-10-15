@@ -20708,7 +20708,7 @@ print()
 # Dry-run PRD analysis and cost estimation (v6.18.0; refactored v6.81.1)
 # Thin wrapper around show_prd_plan() so the same analysis is reusable from
 # `loki start`, `loki run`, and other commands without duplicated code.
-# Read-only view of .loki/state/requirements-map.json (REQTRACE; contract: docs/contracts/requirements.md).
+# Read-only view of .loki/state/requirements-map.json (REQTRACE; contract: docs/spec-first-intent.md).
 _plan_show_requirements() {
     local as_json="${1:-false}" map="${LOKI_DIR:-.loki}/state/requirements-map.json"
     if [ ! -s "$map" ]; then
