@@ -5,8 +5,9 @@ import { withStagePrefix } from "../../features/lean_prefix.ts";
 import { fence, formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
-import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
-import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
+import { cascadeDowngrade, loadRepoMap, namedFiles, sizeTask } from "../sizing.ts";
+import { attemptsGate, runAttemptsOnCtx } from "../../features/attempts.ts"; // S41-13, default off
+import { selectRelevantFiles } from "./plan.ts"; import { changedFiles, commandFor, runCheck, type VerifyCheck } from "./verify.ts"; import { loadProjectApi } from "../../project_model/resolve.ts";
 import { classifyExitCause } from "../session.ts"; // E-68 reuse: never re-classify exit codes here
 import { resumeAfterConflict, resumeAfterEmptyDone } from "../../util/conflict_resume.ts";
 import { planChain, readSessionId } from "../../runner/session_resume.ts";
@@ -129,8 +130,11 @@ export const implementStage: Stage = {
     const unchained = (): SessionRunOptions => { const { resumeSessionId: _chained, ...rest } = first; return rest; }; // read at call time: the router may rewrite first.model; retries and conflict reruns never inherit the chain link
     // ROUTER-1: per-unit ladder from the plan's route record (runner/router/unit_model.ts). Flag off: none of this runs.
     const rt = routed ? routeStart(ctx, first, prior.plan) : null;
-    let session = await ctx.sessions.run(first);
-    const ids = [first.iterationId];
+    // S41-13: LOKI_E10_ATTEMPTS=2 on a normal-size task with a non-empty predicted S runs two attempts; the worker env is already token-scrubbed (asserted inside).
+    const size = sizeTask(task, loadRepoMap(prior.intake?.repomap_ref as string | undefined), (prior.intake?.testmap as TestMap | undefined) ?? null).size;
+    const two = attemptsGate({ size, predictedS: impacted.length }) ? await runAttemptsOnCtx(ctx, first, signal, impacted, { wallPaths: readOnly.map((f) => relative(ctx.repoDir, f.path)), check: (c, t, sg, out) => { const tc = commandFor(t, c.repoDir, loadProjectApi(c.repoDir)); return runCheck(c, `${t.runner}:${t.path}`, tc.cmd, tc.args, sg, out as VerifyCheck[], { ...(tc.interpreter ? { interpreter: tc.interpreter } : {}), ...(tc.pkgRoot !== "." ? { cwd: tc.cwd } : {}) }); } }) : null;
+    let session = two ? two.session : await ctx.sessions.run(first);
+    const ids = two ? two.ids : [first.iterationId];
     if (resumeId && !session.killed && session.exit !== 0) { // a failed resume reruns fresh with the same full brief
       planChainMode = "fallback (resume failed)";
       const retry = `${first.iterationId}f`; ids.push(retry);
@@ -167,6 +171,7 @@ export const implementStage: Stage = {
       iteration_ids: ids, model: rt ? rt.current : downgrade?.to ?? ctx.model, ...(rt ? { route_model: rt.current, route_escalations: rt.escalations } : {}), session_id: readSessionId(ctx.repoDir, iterationId), // MW-2
       duration_s: session.durationS,
       ...(planChainMode ? { plan_chain: planChainMode } : {}),
+      ...(two ? { attempts: two.summary } : {}),
     };
 
     if (exit !== "error") return { status: "completed", data };
