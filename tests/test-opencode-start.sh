@@ -36,10 +36,10 @@ route_assert() {
     if (
         cd "$work" || exit 1
         "$@"
-    ) >/dev/null 2>&1 && grep -qx BASH "$work/capture" 2>/dev/null; then
-        ok "$label opencode selection routes start to Bash"
+    ) >/dev/null 2>&1 && grep -qx BUN "$work/capture" 2>/dev/null; then
+        ok "$label opencode selection routes start to Bun (opencode invoker ported)"
     else
-        bad "$label opencode selection did not route start to Bash"
+        bad "$label opencode selection did not route start to Bun"
     fi
 }
 
