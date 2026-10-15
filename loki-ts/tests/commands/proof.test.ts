@@ -147,8 +147,8 @@ describe("loki proof: bash vs Bun parity (list)", () => {
 describe("loki proof: bash vs Bun parity (show)", () => {
   it("valid id: both emit equivalent JSON, exit 0", async () => {
     seedProof("run-20260603-abc123", FULL_PROOF);
-    const a = await bunRoute(["proof", "show", "run-20260603-abc123"]);
-    const b = await bashRoute(["proof", "show", "run-20260603-abc123"]);
+    const a = await bunRoute(["proof", "show", "run-20260603-abc123", "--json"]);
+    const b = await bashRoute(["proof", "show", "run-20260603-abc123", "--json"]);
     expect(a.exitCode).toBe(0);
     expect(b.exitCode).toBe(0);
     // Compare structurally: bash uses jq (if present) else python json.dumps,
@@ -156,6 +156,18 @@ describe("loki proof: bash vs Bun parity (show)", () => {
     // but deep-equal is robust to any whitespace/key-order formatting drift.
     expect(JSON.parse(a.stdout)).toEqual(JSON.parse(b.stdout));
     expect(JSON.parse(a.stdout)).toEqual(FULL_PROOF);
+  });
+
+  it("default output is the compact summary on both routes (LM-005)", async () => {
+    seedProof("run-20260603-abc123", FULL_PROOF);
+    const a = await bunRoute(["proof", "show", "run-20260603-abc123"]);
+    const b = await bashRoute(["proof", "show", "run-20260603-abc123"]);
+    expect(a.exitCode).toBe(b.exitCode);
+    expect(a.stdout.trim().split("\n").length).toBeLessThanOrEqual(14);
+    expect(a.stdout).not.toContain('"schema_version"');
+    // Both routes call the one shared summarizer, so the label line agrees.
+    expect(a.stdout.split("\n")[0]).toBe(b.stdout.split("\n")[0]);
+    expect(a.stdout).toContain("integrity:");
   });
 
   it("missing id: both exit 1 with not-found message", async () => {

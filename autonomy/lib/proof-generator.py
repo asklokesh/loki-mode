@@ -40,6 +40,10 @@ from efficiency_cost import collect_efficiency as _collect_efficiency  # noqa: E
 import effort_estimator  # noqa: E402
 from tree_digest import MANIFEST_VERSION, compute_tree_digest  # noqa: E402
 from workspace_diff import collect_workspace_diff  # noqa: E402
+from verification_record import (  # noqa: E402
+    capture_environment as _vr_capture_environment,
+    git_dirty as _vr_git_dirty,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1625,6 +1629,9 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
         # recompute it after runner exit to reject proofs followed by code edits.
         "tree_sha256": compute_tree_digest(target_dir),
         "tree_manifest_version": MANIFEST_VERSION,
+        # Execution validity (docs/contracts/verification.md): whether the tree
+        # was dirty when the checks ran. None when git could not answer.
+        "dirty": _vr_git_dirty(target_dir),
     }
     facts = {
         "git": git_facts,
@@ -1663,6 +1670,8 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
         # Descriptive; NOT read by _compute_headline (gating is founder-gated).
         "healthcheck": healthcheck,
         "cost": cost,
+        # Environment the checks ran in (measured at generation time).
+        "environment": _vr_capture_environment(),
         "meta": {
             "run_id": run_id,
             "loki_version": loki_version,

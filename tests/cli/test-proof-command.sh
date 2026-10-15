@@ -109,7 +109,7 @@ fi
 # ---------------------------------------------------------------------------
 # T2: show prints proof.json for a valid id.
 # ---------------------------------------------------------------------------
-out=$(run_proof show "$RUN_ID" 2>&1)
+out=$(run_proof show "$RUN_ID" --json 2>&1)
 if echo "$out" | grep -q '"schema_version"' \
    && echo "$out" | grep -q "$RUN_ID"; then
   log_pass "proof show prints proof.json for valid id"

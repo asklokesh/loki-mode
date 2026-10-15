@@ -2268,6 +2268,7 @@ verify_emit_evidence() {
     _V_SCOPE_SOFT_NET="${VERIFY_SCOPE_SOFT_NET_LINES:-}" \
     _V_SCOPE_MAX_FILES="${VERIFY_SCOPE_MAX_FILES:-}" \
     _V_SCOPE_MAX_NET="${VERIFY_SCOPE_MAX_NET_LINES:-}" \
+    _V_LIBDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib" \
     _verify_py - <<'PYEOF'
 import json, os, hashlib, sys
 
@@ -2401,6 +2402,23 @@ if _scope_verdict:
         "thresholds": _thresholds,
     }
 
+# Verification record (docs/contracts/verification.md): integrity, execution
+# validity (revision + environment) and requirement coverage, kept separate, plus
+# per-check status and a scoped label. Additive; verdict/exit_code are untouched.
+# A failure to build it is recorded, never swallowed into a clean-looking doc.
+try:
+    sys.path.insert(0, os.environ["_V_LIBDIR"])
+    import verification_record
+    doc["verification"] = verification_record.build_for_evidence(
+        doc, repo_dir=".", loki_dir=os.environ.get("LOKI_DIR") or ".loki",
+        record_path="", fresh_capture=True)
+    # base_verdict duplicates doc["verdict"]; record_path would pin the output
+    # directory into a document that must be byte-identical across directories.
+    doc["verification"].pop("base_verdict", None)
+except Exception as _vr_exc:
+    doc["verification"] = {"schema_version": "1.0", "error": "verification record unavailable: %s" % _vr_exc,
+                           "label": doc["verdict"] + " (verification record unavailable)"}
+
 os.makedirs(out_dir, exist_ok=True)
 ev_path = os.path.join(out_dir, "evidence.json")
 with open(ev_path, "w") as f:
@@ -2437,6 +2455,10 @@ lines.append("# Autonomi Verify report")
 lines.append("")
 lines.append("Verdict: **%s** (exit %d)" % (doc["verdict"], doc["exit_code"]))
 lines.append("")
+_vr_label = (doc.get("verification") or {}).get("label")
+if _vr_label:
+    lines.append("Verification: %s" % _vr_label)
+    lines.append("")
 _llm = doc.get("llm_review") or {}
 _llm_status = _llm.get("status", "unavailable")
 if _llm_status == "reviewed":
@@ -3419,7 +3441,20 @@ verify_main() {
     # Under --json stdout carries the evidence document alone, so the human
     # banner is redirected to stderr rather than dropped: an operator watching a
     # terminal still sees the verdict, and `| jq` still parses.
-    printf 'VERDICT: %s\n' "$VERIFY_VERDICT" >&$_v_banner_fd
+    # Scoped label + compact reviewer summary from the verification record just
+    # written to evidence.json. The exit code is unchanged; only the wording is
+    # stricter: a skipped or not-run check never leaves a bare "VERIFIED".
+    local _v_lib _v_label _v_summary
+    _v_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
+    _v_label="$VERIFY_VERDICT"
+    if [ -f "$_v_lib/verification_record.py" ]; then
+        _v_summary="$(_verify_py "$_v_lib/verification_record.py" summary "$out_dir/evidence.json" --embedded 2>/dev/null)" || _v_summary=""
+        if [ -n "$_v_summary" ]; then
+            _v_label="${_v_summary%%$'\n'*}"
+            printf '%s\n' "${_v_summary#*$'\n'}" >&$_v_banner_fd
+        fi
+    fi
+    printf 'VERDICT: %s\n' "$_v_label" >&$_v_banner_fd
     printf 'Evidence: %s/evidence.json\n' "$out_dir" >&$_v_banner_fd
     printf 'Report:   %s/report.md\n' "$out_dir" >&$_v_banner_fd
     # --hosted only: surface the enrichment in human output so the extra signal

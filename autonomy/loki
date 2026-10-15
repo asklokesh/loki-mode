@@ -36324,7 +36324,9 @@ cmd_proof() {
             echo "                       reads UNKNOWN when it cannot be computed"
             echo "  phases [--json]      Measured phase history from real phase_change"
             echo "                       events; unrecorded boundaries read UNKNOWN"
-            echo "  show <id>            Pretty-print .loki/proofs/<id>/proof.json"
+            echo "  show <id> [--json]   Compact reviewer summary (label, revision, checks,"
+            echo "                       requirements, modified tests); --json prints the"
+            echo "                       full .loki/proofs/<id>/proof.json"
             echo "  verify <id>          Re-check a receipt against the repo (tamper + drift)."
             echo "                       Exit 0 clean, 1 tamper/drift, 2 could not check,"
             echo "                       64 usage (no id, more than one id, unknown option,"
@@ -36496,6 +36498,14 @@ PYEOF
             exit 0
             ;;
         show)
+            local _ps_json=0 _ps_a _ps_args=()
+            for _ps_a in "$@"; do
+                case "$_ps_a" in
+                    --json) _ps_json=1 ;;
+                    *) _ps_args+=("$_ps_a") ;;
+                esac
+            done
+            set -- "${_ps_args[@]+"${_ps_args[@]}"}"
             local id="${1:-}"
             if [ -z "$id" ]; then
                 echo -e "${RED}Missing proof id.${NC} Use 'loki proof list'."
@@ -36506,6 +36516,16 @@ PYEOF
                 echo -e "${RED}Proof not found: ${id}${NC}"
                 echo "Use 'loki proof list' to see available proofs."
                 exit 1
+            fi
+            if [ "$_ps_json" -eq 0 ]; then
+                # Compact reviewer summary (docs/contracts/verification.md).
+                local _ps_py _ps_vr="${_LOKI_SCRIPT_DIR}/lib/verification_record.py"
+                _ps_py="$(loki_verify_tool_path python3)" || {
+                    echo -e "${RED}python3 is unavailable${NC}" >&2
+                    exit 2
+                }
+                "$_ps_py" -E "$_ps_vr" summary "$pj" --repo "$(loki_verify_root 2>/dev/null || pwd)" --loki-dir "$loki_dir" || exit $?
+                exit 0
             fi
             if command -v jq &>/dev/null; then
                 jq . "$pj"

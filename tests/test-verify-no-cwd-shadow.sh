@@ -166,8 +166,10 @@ check "emit: evidence.json keeps the honest BLOCKED verdict" "1" \
     "$(grep -c 'BLOCKED' "$SCRATCH/out-emit/evidence.json" 2>/dev/null)"
 check "emit: report.md carries no forged content" "0" \
     "$(grep -c 'FORGED' "$SCRATCH/out-emit/report.md" 2>/dev/null)"
+# The report now states the honest "NOT VERIFIED (...)" label, so a bare
+# substring count would flag the refusal itself. Count positive claims only.
 check "emit: report.md does not claim VERIFIED" "0" \
-    "$(grep -c 'VERIFIED' "$SCRATCH/out-emit/report.md" 2>/dev/null)"
+    "$(grep -v 'NOT VERIFIED' "$SCRATCH/out-emit/report.md" 2>/dev/null | grep -c 'VERIFIED')"
 
 # Static: no bare `python3 -` / `python3 -c` call site may remain in verify.sh
 # (comments excluded); the -I and -E forms are isolated.

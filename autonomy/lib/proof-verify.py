@@ -1054,7 +1054,26 @@ def _cli(argv=None):
     except Exception as exc:  # defensive: never a traceback-as-UX
         print(json.dumps({"ok": False, "error": "verify failed: %s" % exc}))
         return 2
-    print(render_reasons(result) if human else json.dumps(result, indent=2))
+    # Additive: the three-property record (integrity / execution validity /
+    # requirement coverage). Existing fields are untouched.
+    vrec = None
+    try:
+        import verification_record
+        proof_dir = os.path.dirname(os.path.abspath(proof_path))
+        vrec = verification_record.build_for_proof(
+            _load_proof(proof_path), repo_dir=repo_dir,
+            loki_dir=os.path.dirname(os.path.dirname(proof_dir)),
+            record_path=proof_path)
+        result["verification"] = vrec
+    except Exception as exc:  # never a traceback-as-UX
+        result["verification"] = {"error": "verification record unavailable: %s" % exc}
+    if human:
+        print(render_reasons(result))
+        if vrec is not None:
+            print("")
+            print(verification_record.render_compact(vrec))
+    else:
+        print(json.dumps(result, indent=2))
     if result.get("ok"):
         return 0
     if drift_unverifiable(result):

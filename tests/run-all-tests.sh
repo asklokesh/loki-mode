@@ -1479,6 +1479,7 @@ run_test "every opencode dispatch path passes --auto" "$SCRIPT_DIR/test-provider
 run_test "a dropped event is visible" "$SCRIPT_DIR/test-event-drop-visible.sh"
 run_test "events carry the source the dashboard reads" "$SCRIPT_DIR/test-event-source-attribution.sh"
 run_test "proof verify --human explains a failure" "$SCRIPT_DIR/test-proof-verify-human.sh"
+run_test "verification record keeps integrity, execution validity and coverage apart (LM-005)" "timeout -k 10 240 bash $SCRIPT_DIR/test-verification-record.sh"
 run_test "tests that spawn the verifier pin TARGET_DIR (FC-29)" "timeout -k 10 60 $SCRIPT_DIR/test-verifier-spawn-sets-target-dir.sh"
 run_test "the verifier never defaults to the caller cwd (FC-29 sweep)" "timeout -k 10 60 $SCRIPT_DIR/test-verifier-root-not-ambient-cwd.sh"
 run_test "the verification demo runs the real tools" "$SCRIPT_DIR/test-verify-demo.sh"
