@@ -76,7 +76,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "workspaces": {
-      "description": "Named groups of repos for cross-repo runs (`loki workspace run`). Accepted unconditionally; runtime behavior is gated by LOKI_WORKSPACES=1.",
+      "description": "Named groups of repos for cross-repo runs (`loki workspace run`). On by default; LOKI_WORKSPACES=0 disables. Unknown or mistyped keys fail validation.",
       "type": "object",
       "additionalProperties": {
         "type": "object",
@@ -100,9 +100,12 @@
             "additionalProperties": false,
             "properties": {
               "command": { "type": "string", "minLength": 1 },
-              "timeout_s": { "type": "integer", "minimum": 1 }
+              "timeout_s": { "type": "integer", "minimum": 1 },
+              "per_stage": { "type": "boolean" }
             }
           },
+          "concurrency": { "type": "integer", "minimum": 1 },
+          "plan": { "type": "boolean" },
           "integration_files": { "type": "array", "items": { "type": "string", "minLength": 1 } }
         }
       }
