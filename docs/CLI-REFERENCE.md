@@ -8,7 +8,6 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki version` | Show version |
 | `loki status` | Show current run status |
 | `loki doctor` | System prerequisites health check |
-| `loki doctor --repo` | Print the repo profile (`.loki/state/repo-profile.json`): discovered commands and the baseline test run |
 | `loki provider` | Show, list or set the AI provider |
 | `loki provider show` | Show current provider |
 | `loki provider list` | List providers and install status |
