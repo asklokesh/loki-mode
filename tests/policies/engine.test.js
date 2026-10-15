@@ -588,3 +588,42 @@ describe('PolicyEngine - unknown rule validation warning', function () {
     engine.destroy();
   });
 });
+
+describe('PolicyEngine - autonomy ladder', function () {
+  function engineWith(doc) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'loki-autonomy-'));
+    fs.mkdirSync(path.join(dir, '.loki'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.loki', 'policies.json'), JSON.stringify(doc));
+    return new PolicyEngine(dir);
+  }
+  it('allowedActions maps levels', function () {
+    const { allowedActions } = require('../../src/policies/engine');
+    assert.deepStrictEqual(allowedActions('propose'), { pr: false, merge: false, deploy: false });
+    assert.deepStrictEqual(allowedActions('execute'), { pr: true, merge: false, deploy: false });
+    assert.deepStrictEqual(allowedActions('operate'), { pr: true, merge: false, deploy: true });
+    assert.strictEqual(allowedActions('bogus'), null);
+  });
+  it('propose denies pr, execute allows pr but not deploy, operate allows both', function () {
+    assert.strictEqual(engineWith({ autonomy: 'propose' }).evaluate('pre_deployment', { action: 'pr' }).decision, 'DENY');
+    const ex = engineWith({ autonomy: 'execute' });
+    assert.strictEqual(ex.evaluate('pre_deployment', { action: 'pr' }).decision, 'ALLOW');
+    assert.strictEqual(ex.evaluate('pre_deployment', { action: 'deploy' }).decision, 'DENY');
+    assert.strictEqual(engineWith({ autonomy: 'operate' }).evaluate('pre_deployment', { action: 'deploy' }).decision, 'ALLOW');
+  });
+  it('actions override can require approval', function () {
+    const r = engineWith({ autonomy: 'execute', actions: { pr: 'require_approval' } }).evaluate('pre_deployment', { action: 'pr' });
+    assert.strictEqual(r.decision, 'REQUIRE_APPROVAL');
+    assert.strictEqual(r.requiresApproval, true);
+  });
+  it('unknown autonomy level fails closed and is reported', function () {
+    const e = engineWith({ autonomy: 'yolo' });
+    assert.strictEqual(e.evaluate('pre_deployment', { action: 'pr' }).decision, 'DENY');
+    assert.ok(e.getValidationErrors().some(function (m) { return m.includes('autonomy'); }));
+  });
+  it('actions.pr allow does not rescue an unknown autonomy level', function () {
+    assert.strictEqual(engineWith({ autonomy: 'yolo', actions: { pr: 'allow' } }).evaluate('pre_deployment', { action: 'pr' }).decision, 'DENY');
+  });
+  it('no autonomy key leaves behaviour unchanged', function () {
+    assert.strictEqual(engineWith({ pre_deployment: [] }).evaluate('pre_deployment', { action: 'pr' }).decision, 'ALLOW');
+  });
+});

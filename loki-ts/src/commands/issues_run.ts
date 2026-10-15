@@ -490,7 +490,7 @@ export function makeWorktrees(repoDir: string): IssuesRunDeps["worktree"] {
   };
 }
 
-function askYesNo(question: string): Promise<boolean> {
+export function askYesNo(question: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((res) => rl.question(question, (ans) => {
     rl.close();

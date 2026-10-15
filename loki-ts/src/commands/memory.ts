@@ -8,7 +8,8 @@ import { BOLD, GREEN, YELLOW, CYAN, NC } from "../util/colors.ts";
 import { homeLokiDir, lokiDir, REPO_ROOT } from "../util/paths.ts";
 import { runInline } from "../util/python.ts";
 import { run } from "../util/shell.ts";
-import { GhError, type Lesson, formatLessonList, learnFromPr, loadLessons, removeLesson } from "../util/pr_lessons.ts";
+import { GhError, type Lesson, formatLessonList, formatLessonsForBrief, learnFromPr, loadLessons, removeLesson, retrieveLessons } from "../util/pr_lessons.ts";
+import { learningsBlock } from "../engine10/stages/implement.ts";
 
 const LEARNINGS_DIR = resolve(homeLokiDir(), "learnings");
 
@@ -115,6 +116,13 @@ export async function runMemory(argv: readonly string[]): Promise<number> {
         return 0;
       }
       process.stdout.write(formatLessonList(lessons));
+      return 0;
+    }
+    case "brief": {
+      // INJECT: the exact block an engine10 run injects, so `loki chat` can show it. No new retrieval.
+      const i = argv.indexOf("--task");
+      const task = i >= 0 ? (argv[i + 1] ?? "") : "";
+      process.stdout.write((formatLessonsForBrief(retrieveLessons(process.cwd(), task)) + learningsBlock(process.cwd())).trimStart());
       return 0;
     }
     case "forget": {
