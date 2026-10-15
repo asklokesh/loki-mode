@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { attribute, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, type BaselineRunner } from "../../src/runner/repo_profile.ts";
+import { attribute, attributeFullSuite, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, type BaselineRunner } from "../../src/runner/repo_profile.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
@@ -676,6 +676,59 @@ describe("repo baseline profile (REPOMEM)", () => {
       expect(out["baseline_line"]).toBe("baseline: 1 pre-existing failing check(s) (not blocking), 1 introduced (blocking)");
       expect((out["failures_grouped"] as unknown[]).length).toBe(1);
     }, 120_000);
+    describe("medium tier full suite (REPOMEM, v11.5.1)", () => {
+      const FEAT = { "feat.js": "exports.v=1;\n", "feat.test.js": T + "t('feat',()=>{assert.ok(true);});\n", "other.test.js": T + "const {v}=require('./feat.js');t('other',()=>{assert.strictEqual(v,1);});\n" };
+      const medium = async (d: string, impacted: TestRef[], edit: () => void): Promise<Record<string, unknown>> => {
+        ensureProfile(d);
+        const base = git(d, ["rev-parse", "HEAD"]);
+        edit();
+        const ctx = { ...ctxFor(d, base, impacted), tests: { detect: async () => ({ runners: ["npm"], tests: impacted }), impacted: (_m: unknown, f: string[]) => (f.length ? impacted : []) } } as unknown as RunContext;
+        const prev = process.env["LOKI_RISK_TIER"];
+        process.env["LOKI_RISK_TIER"] = "medium";
+        try { return (await verifyStage.run(ctx, new AbortController().signal)).data as Record<string, unknown>; } finally { if (prev === undefined) delete process.env["LOKI_RISK_TIER"]; else process.env["LOKI_RISK_TIER"] = prev; }
+      };
+      const fullFails = (out: Record<string, unknown>): string[] => (out["failures_grouped"] as { signature: string }[]).map((f) => f.signature).filter((n) => n.startsWith("full suite"));
+      test("red baseline, only pre-existing ids fail the full suite: listed pre-existing, not a failure", async () => {
+        const d = repo({ ...NODE, ...FEAT });
+        const out = await medium(d, [node("feat.test.js")], () => writeFileSync(join(d, "feat.js"), "exports.v=1;\nexports.w=2;\n"));
+        expect((out["checks"] as { name: string; result: string }[]).find((c) => c.name === "full suite: npm")?.result).toBe("fail");
+        expect(out["pre_red_checks"]).toContain("full suite: npm");
+        expect(out["pre_red"]).toContain("old bug");
+        expect(fullFails(out)).toEqual([]);
+      }, 120_000);
+      test("one new failing id in the full suite blocks", async () => {
+        const d = repo({ ...NODE, ...FEAT });
+        const out = await medium(d, [node("feat.test.js")], () => writeFileSync(join(d, "feat.js"), "exports.v=2;\n"));
+        expect(out["pre_red_checks"]).not.toContain("full suite: npm");
+        expect(fullFails(out).length).toBe(1);
+      }, 120_000);
+      test("unparseable full-suite failure output excuses nothing", async () => {
+        const d = repo({ ...NODE, ...FEAT });
+        const out = await medium(d, [node("feat.test.js")], () => writeFileSync(join(d, "package.json"), JSON.stringify({ scripts: { test: "node -e \"console.log('boom');process.exit(1)\"" } })));
+        expect(out["pre_red_checks"]).not.toContain("full suite: npm");
+        expect(fullFails(out).length).toBe(1);
+      }, 120_000);
+      test("a baseline-red id that a changed test file also fails is never excused", async () => {
+        const d = repo({ ...NODE, ...FEAT });
+        const out = await medium(d, [node("old.test.js")], () => writeFileSync(join(d, "old.test.js"), OLD_RED + "// edited\n"));
+        expect(out["pre_red_checks"]).not.toContain("full suite: npm");
+        expect(fullFails(out).length).toBe(1);
+      }, 120_000);
+      test("attributeFullSuite: a different baseline command, an id naming a changed file, or a blocked id are not excused", () => {
+        const d = repo(NODE);
+        const base = git(d, ["rev-parse", "HEAD"]);
+        mkdirSync(join(d, ".loki", "state"), { recursive: true });
+        writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "npm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["src/a.py::t"], attributable: true } }));
+        const f = (cmd: string): { name: string; cmd: string; result: string }[] => [{ name: "full suite: x", cmd, result: "fail" }];
+        const ran: BaselineRunner = () => ({ code: 1, timedOut: false, out: "FAILED src/a.py::t - boom\n1 failed, 0 passed in 0.1s", missing: false });
+        expect(attributeFullSuite(d, base, f("npm test --silent"), [], [], ran).preExistingChecks).toEqual(["full suite: x"]);
+        const narrow = attributeFullSuite(d, base, f("python -m pytest -q"), [], [], ran);
+        expect(narrow.preExistingChecks).toEqual([]);
+        expect(narrow.line).toContain("not comparable");
+        expect(attributeFullSuite(d, base, f("npm test"), [], ["src/a.py"], ran).preExistingChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, f("npm test"), ["src/a.py::t"], [], ran).preExistingChecks).toEqual([]);
+      });
+    });
     test("without a profile verify behaves as before: no baseline fields, every failure stays", async () => {
       const d = repo({ "old.test.js": OLD_RED, "x.js": "1\n" });
       const base = git(d, ["rev-parse", "HEAD"]);
