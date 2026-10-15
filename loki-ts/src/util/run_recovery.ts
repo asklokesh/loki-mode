@@ -67,7 +67,7 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
   if (!origin) { out("resume: no origin remote; nothing to publish\n"); return 2; }
   const log = new SupervisorLog(join(repoDir, eventsRelPath(it.runId)), it.runId);
   log.append("run.resumed", null, { phase: "publish", receipt_reused: true, receipt_sha256: sealedData["receipt_sha256"] ?? null });
-  const notProven = ["publish phase resumed after an interruption"];
+  const notProven = [...(Array.isArray(sealedData["not_proven"]) ? (sealedData["not_proven"] as string[]) : []), "publish phase resumed after an interruption"];
   const runPr = deps.runPr ?? (async (c, s) => (await import("../engine10/stages/pr.ts")).runPr(c as never, s));
   const events = readEvents(log.path);
   const baseSha = it.events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data["base_sha"];

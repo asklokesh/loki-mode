@@ -75,6 +75,19 @@ describe("engine10 recovery", () => {
     expect(existsSync(join(repo, ".loki", "runs", RUN, "receipt.json"))).toBe(true);
   });
 
+  test("resume keeps the sealed receipt not_proven entries in the PR seal and run.completed", async () => {
+    mkdirSync(join(repo, ".loki", "runs", RUN), { recursive: true });
+    log.append("receipt.sealed", "seal", { verdict: "PARTIAL", receipt_sha256: "abc", path: "p", not_proven: ["cost unmetered", "wall result not recorded"] });
+    let seen: unknown = null;
+    const spy: RunPrFn = async (ctx) => { seen = ((ctx["outputs"] as () => Record<string, unknown>)()["seal"] as Record<string, unknown>)["not_proven"]; return runPr(ctx, new AbortController().signal); };
+    const cwd = process.cwd(); process.chdir(repo);
+    try { expect(await main([], { runPr: spy, out: say })).toBe(0); } finally { process.chdir(cwd); }
+    const want = ["cost unmetered", "wall result not recorded", "publish phase resumed after an interruption"];
+    expect(seen).toEqual(want);
+    const done = readEvents(evPath()).findLast((e) => e.type === "run.completed");
+    expect(done?.data["not_proven"]).toEqual(want);
+  });
+
   test("failed publish leaves the run resumable and appends no pr.opened", async () => {
     seal();
     const failing: RunPrFn = async () => { prCalls++; return { status: "failed", data: {}, reason: "boom" }; };
