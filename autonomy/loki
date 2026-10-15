@@ -1785,7 +1785,8 @@ show_help_all() {
     echo "  start [SPEC]     Start a build (PRD file, GitHub/GitLab/Jira/Azure issue, or no arg)"
     echo "  plan <PRD-file>  Dry-run analysis: complexity, cost, execution plan"
     echo "  backlog <owner/repo> --all|--label X|--issues N,N   Run every matching open issue, N in parallel"
-    echo "  workspace list | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=0 disables)"
+    echo "  workspace list | infer <name> | run <name> <ref>   Multi-repo runs from loki.yaml workspaces (LOKI_WORKSPACES=0 disables)"
+    echo "  start --workspace <name> \"<brief>\"   Run a workspace; start --deploy [--health-url U] deploys after a VERIFIED run"
     echo "  quickstart [idea]  Guided first build: setup, idea, template, plan, go"
     echo ""
     echo "Session:"
@@ -2541,6 +2542,68 @@ cmd_start() {
     # fail-silent internally (opt-out, CI, non-TTY, timeout, unparseable
     # version all return 0 without output), so no guard is needed here.
     maybe_print_update_hint || true
+
+    # PATH slice: --workspace NAME runs a multi-repo workspace through the one
+    # workspace runner (no new logic here), and --deploy [--health-url U]
+    # [--auto-rollback] chains the gated `loki deploy --execute` after a start
+    # that ended 0. cmd_deploy owns every gate: no VERIFIED HEAD-anchored
+    # receipt means a refusal, never a deploy.
+    local _ps_ws="" _ps_deploy=0 _ps_health="" _ps_rb=0 _ps_rest=() _ps_brief=() _ps_a
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --workspace)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--workspace requires a workspace name${NC}" >&2; exit 2; }
+                _ps_ws="$2"; shift 2 ;;
+            --workspace=*) _ps_ws="${1#*=}"; shift ;;
+            --deploy) _ps_deploy=1; shift ;;
+            --health-url)
+                [ -n "${2:-}" ] && [ "${2#-}" = "$2" ] || { echo -e "${RED}--health-url requires a URL${NC}" >&2; exit 2; }
+                _ps_health="$2"; shift 2 ;;
+            --health-url=*) _ps_health="${1#*=}"; shift ;;
+            --auto-rollback) _ps_rb=1; shift ;;
+            *) _ps_rest+=("$1"); shift ;;
+        esac
+    done
+    if { [ -n "$_ps_health" ] || [ "$_ps_rb" = 1 ]; } && [ "$_ps_deploy" != 1 ]; then
+        echo -e "${RED}--health-url and --auto-rollback apply only with --deploy${NC}" >&2
+        exit 2
+    fi
+    if [ -n "$_ps_ws" ]; then
+        if [ "$_ps_deploy" = 1 ]; then
+            echo -e "${RED}--workspace and --deploy cannot be combined: deploy each repo with loki deploy${NC}" >&2
+            exit 2
+        fi
+        local _ps_skip=0
+        for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
+            if [ "$_ps_skip" = 1 ]; then _ps_skip=0; continue; fi
+            case "$_ps_a" in
+                --brief=*) _ps_brief+=("${_ps_a#*=}") ;;
+                --brief|--provider|--budget|--prd) _ps_skip=1 ;;
+                -*) ;;
+                *) _ps_brief+=("$_ps_a") ;;
+            esac
+        done
+        if [ "${#_ps_brief[@]}" -eq 0 ]; then
+            echo -e "${RED}loki start --workspace $_ps_ws needs a brief or an issue ref${NC}" >&2
+            exit 2
+        fi
+        cmd_workspace run "$_ps_ws" "${_ps_brief[*]}"
+        return $?
+    fi
+    if [ "$_ps_deploy" = 1 ]; then
+        local _ps_rc=0
+        ( cmd_start ${_ps_rest[@]+"${_ps_rest[@]}"} ) || _ps_rc=$?
+        if [ "$_ps_rc" -ne 0 ]; then
+            echo -e "${RED}start exited $_ps_rc: not deploying${NC}" >&2
+            return "$_ps_rc"
+        fi
+        local _ps_dargs=(--execute)
+        [ -n "$_ps_health" ] && _ps_dargs+=(--health-url "$_ps_health")
+        [ "$_ps_rb" = 1 ] && _ps_dargs+=(--auto-rollback)
+        cmd_deploy "${_ps_dargs[@]}"
+        return $?
+    fi
+    set -- ${_ps_rest[@]+"${_ps_rest[@]}"}
 
     local args=()
     local prd_file=""
@@ -18062,6 +18125,15 @@ cmd_verify() {
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
             --pubkey|--pubkey=*) exec "$_LOKI_SCRIPT_DIR/../bin/loki" verify "$@" ;;
+        esac
+    done
+    # PATH slice: a workspace composite (composite.json, or --seal-composite RUN_DIR) is
+    # verified by the engine10 verifier directly; bin/loki sends a bare verify back here.
+    for _pk_arg in "$@"; do
+        case "$_pk_arg" in
+            composite.json|*/composite.json|--seal-composite|--seal-composite=*)
+                _loki_bun_delegate engine10 verify "$@"
+                return $? ;;
         esac
     done
     # --fast: deterministic checks only, in milliseconds. Measured on this repo

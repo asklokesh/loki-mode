@@ -136,8 +136,7 @@ _ws99_plan_run() { # plan source file, extra env assignment
         LOKI_WORKSPACE_VERIFY="$_ws99_tmp/e10.sh" \
         timeout -k 5 200 python3 "$REPO_ROOT/autonomy/lib/workspace.py" run planned acme/lib#1 2>&1)
 }
-# bin/loki does not yet route `verify --seal-composite` or a composite path to engine10 (PATH slice), and dist is
-# rebuilt only at train time, so the test runs engine10 verify from source through this wrapper.
+# The planner cases pin the verifier to engine10 source through this wrapper; the PATH cases below use the real bin/loki route.
 printf '#!/bin/sh\nexec bun "%s/loki-ts/src/cli.ts" engine10 "$@"\n' "$REPO_ROOT" > "$_ws99_tmp/e10.sh"
 chmod +x "$_ws99_tmp/e10.sh"
 _ws99_verify() { LOKI_NO_BROWSER=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$_ws99_tmp/sign.pem" timeout -k 5 120 "$_ws99_tmp/e10.sh" verify "$1" 2>&1; }
@@ -185,6 +184,91 @@ if printf '%s' "$_ws99_out" | grep -q 'composite not sealed: acme/app has no rec
     ok "workspace planner: an unsealed child blocks the composite and names the repo"
 else
     bad "workspace planner: no-receipt out=$_ws99_out"
+fi
+
+# PATH: the primary path reaches the workspace runner, the composite verifier and the chat REPL.
+# `loki start --workspace` (through bin/loki) runs the planned workspace and seals the composite with the real bin/loki verify
+# route; `loki verify <composite.json>` then re-checks it offline with no wrapper.
+_ws99_path_run() {
+    rm -rf "$_ws99_tmp/proj/.loki" "${_ws99_tasks:?}"/*
+    (cd "$_ws99_tmp/proj" && env -u LOKI_WORKSPACES PLAN_SRC="$_ws99_tmp/plan-ok.json" LOKI_NO_BROWSER=1 \
+        LOKI_RECEIPT_SIGNING_KEY_FILE="$_ws99_tmp/sign.pem" LOKI_WORKSPACE_LAUNCHER="$_ws99_tmp/plan-launcher.sh" \
+        timeout -k 5 200 bash "$REPO_ROOT/bin/loki" start --workspace planned acme/lib#1 2>&1)
+}
+_ws99_out="$(_ws99_path_run)"
+_ws99_rc=$?
+_ws99_comp="$(find "$_ws99_tmp/proj/.loki/workspaces/planned" -name composite.json 2>/dev/null | head -1)"
+_ws99_l="$(cat "$_ws99_tasks/acme__lib" 2>/dev/null)"
+if [ "$_ws99_rc" -eq 0 ] && [ -n "$_ws99_comp" ] && [ "${_ws99_l#Add the shared helper}" != "$_ws99_l" ]; then
+    ok "start --workspace: runs the workspace (per-repo task) and seals a composite"
+else
+    bad "start --workspace: rc=$_ws99_rc composite=${_ws99_comp:-none} lib=[$_ws99_l] out=$_ws99_out"
+fi
+if [ -n "$_ws99_comp" ] &&
+    (cd "$_ws99_tmp/proj" && LOKI_NO_BROWSER=1 LOKI_RECEIPT_SIGNING_KEY_FILE="$_ws99_tmp/sign.pem" timeout -k 5 120 bash "$REPO_ROOT/bin/loki" verify "$_ws99_comp" >/dev/null 2>&1); then
+    ok "loki verify <composite.json>: routes to the engine10 verifier and exits 0"
+else
+    bad "loki verify <composite.json>: composite=${_ws99_comp:-none} did not verify through bin/loki"
+fi
+_ws99_out="$(cd "$_ws99_tmp/proj" && LOKI_NO_BROWSER=1 timeout -k 5 60 bash "$REPO_ROOT/bin/loki" start --health-url http://127.0.0.1:1/ x 2>&1)"
+_ws99_rc=$?
+if [ "$_ws99_rc" -eq 2 ] && printf '%s' "$_ws99_out" | grep -q 'apply only with --deploy'; then
+    ok "start --health-url without --deploy exits 2"
+else
+    bad "start --health-url without --deploy: rc=$_ws99_rc out=$_ws99_out"
+fi
+_ws99_out="$(cd "$_ws99_tmp/proj" && LOKI_NO_BROWSER=1 timeout -k 5 60 bash "$REPO_ROOT/bin/loki" start --deploy --budget notanumber x 2>&1)"
+_ws99_rc=$?
+if [ "$_ws99_rc" -ne 0 ] && printf '%s' "$_ws99_out" | grep -q 'not deploying'; then
+    ok "start --deploy: a failed start never reaches the deploy step"
+else
+    bad "start --deploy: rc=$_ws99_rc out=$_ws99_out"
+fi
+
+# chat smoke: a pty session; /workspace reaches the same start --workspace, /deploy cancels without y.
+cat > "$_ws99_tmp/chat_smoke.py" <<'PY'
+import os, pty, sys, time, select
+loki, proj, extra = sys.argv[1], sys.argv[2], sys.argv[3:]
+env = dict(os.environ)
+for kv in extra:
+    k, v = kv.split("=", 1)
+    env[k] = v
+pid, fd = pty.fork()
+if pid == 0:
+    os.chdir(proj)
+    os.execvpe("bash", ["bash", loki, "chat"], env)
+out = b""
+def pump(t):
+    global out
+    end = time.time() + t
+    while time.time() < end:
+        r, _, _ = select.select([fd], [], [], 0.2)
+        if r:
+            try:
+                d = os.read(fd, 65536)
+            except OSError:
+                return
+            if not d:
+                return
+            out += d
+pump(3)
+for line in ["/workspace planned acme/lib#1", "/deploy", "n", "/exit"]:
+    os.write(fd, (line + "\n").encode())
+    pump(25 if line.startswith("/workspace") else 3)
+try:
+    os.waitpid(pid, 0)
+except ChildProcessError:
+    pass
+sys.stdout.write(out.decode("utf8", "replace"))
+PY
+rm -rf "$_ws99_tmp/proj/.loki" "${_ws99_tasks:?}"/*
+_ws99_out="$(timeout -k 5 150 python3 "$_ws99_tmp/chat_smoke.py" "$REPO_ROOT/bin/loki" "$_ws99_tmp/proj" LOKI_NO_BROWSER=1 "PLAN_SRC=$_ws99_tmp/plan-ok.json" \
+    "LOKI_RECEIPT_SIGNING_KEY_FILE=$_ws99_tmp/sign.pem" "LOKI_WORKSPACE_LAUNCHER=$_ws99_tmp/plan-launcher.sh" 2>&1)"
+if printf '%s' "$_ws99_out" | grep -q 'workspace run finished, exit 0' && printf '%s' "$_ws99_out" | grep -q 'composite: ' &&
+    printf '%s' "$_ws99_out" | grep -q 'Deploy cancelled'; then
+    ok "loki chat: /workspace prints the composite verdict and /deploy cancels without confirmation"
+else
+    bad "loki chat smoke: $(printf '%s' "$_ws99_out" | tail -15)"
 fi
 
 if grep -q '^## Verify a workspace run' "$REPO_ROOT/docs/WORKSPACES.md"; then

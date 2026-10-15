@@ -16,6 +16,7 @@
 import { DEFAULT_MAX_COST_USD } from "../e10ext/budget_cap.ts"; // LM-002: help states the real default
 import type { ProviderName, SessionTier } from "../runner/types.ts";
 import { tokenFreeEnv } from "../util/safe_git.ts";
+import { REPO_ROOT } from "../util/paths.ts";
 
 function argVal(args: readonly string[], flag: string): string | undefined {
   const i = args.indexOf(flag);
@@ -144,8 +145,10 @@ export const START_USAGE =
   "                        [--prd FILE | --brief TEXT] [--simple|--complex] [--allow-haiku]\n" +
   "                        [--regen-prd] [--skip-memory]\n" +
   "                        [--spec FILE | --spec-first]\n" +
+  "                        [--workspace NAME | --deploy [--health-url URL] [--auto-rollback]]\n" +
   "  <spec> = a PRD path, or a one-line brief. (Issue refs / --github / --parallel /\n" +
   "  --sandbox, opencode, and other shell-adapter paths run on the bash route automatically.)\n" +
+  "  --workspace NAME  run the loki.yaml workspace NAME for the brief; --deploy deploys after the run through the gated loki deploy --execute\n" +
   "  --spec-first  write the acceptance criteria to .loki/specs/<slug>.md and stop, so you can edit them\n" +
   "  --spec FILE   run Loki 10 against an edited spec as the authoritative intent (a spec that does not parse exits 2 with the line)\n" +
   `  --budget-limit USD  per-run spend cap (default $${DEFAULT_MAX_COST_USD}; Loki 10 applies it with an API key and none on a subscription; see docs/cost-controls.md)\n` +
@@ -327,7 +330,21 @@ async function spawnEngine(cwd: string, argv: string[], env: NodeJS.ProcessEnv):
   });
 }
 
+/** PATH slice: --workspace / --deploy (and their --health-url / --auto-rollback modifiers) are bash-route orchestration. Alone they divert to autonomy/loki; with --attempts or --spec they fall through and are refused loudly. */
+export function isBashOnlyStart(args: readonly string[]): boolean {
+  if (hasAttemptsFlag(args) || hasSpecFlag(args)) return false;
+  return args.some((a) => a === "--workspace" || a.startsWith("--workspace=") || a === "--deploy");
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
+  if (isBashOnlyStart(args)) {
+    const { spawn } = await import("node:child_process");
+    return await new Promise<number>((resolveExit) => {
+      const child = spawn("bash", [`${REPO_ROOT}/autonomy/loki`, "start", ...args], { env: process.env, stdio: "inherit" });
+      child.on("error", () => resolveExit(1));
+      child.on("close", (code) => resolveExit(code ?? 1));
+    });
+  }
   const parsed = parseStartArgs(args);
   if (typeof parsed === "number") return parsed;
   if (startEngine(parsed) === "runner") {

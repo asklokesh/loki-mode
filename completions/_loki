@@ -313,6 +313,10 @@ function _loki_start {
     _arguments \
         '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
         '--parallel[Parallel mode]' \
+        '--workspace[Run a loki.yaml workspace for the brief]:workspace name:' \
+        '--deploy[Deploy after a VERIFIED run via loki deploy --execute]' \
+        '--health-url[With --deploy: health probe URL]:url:' \
+        '--auto-rollback[With --deploy: roll back on a failed health probe]' \
         '--background[Background mode]' \
         '--bg[Background mode]' \
         '--simple[Force simple complexity]' \
