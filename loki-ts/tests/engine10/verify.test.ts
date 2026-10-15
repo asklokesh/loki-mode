@@ -487,6 +487,8 @@ describe("classifyRisk tiers", () => {
     expect(withRiskLine("a\nb\n", r.summary)).toBe(`a\nb\n${r.summary}\n`);
     expect(withRiskLine("1\n2\n3\n4\n5\n6\n7\n", r.summary)).toBe("1\n2\n3\n4\n5\n6\n7\n");
     expect(withRiskLine("a\n", null)).toBe("a\n");
+    expect(withRiskLine("1\n2\n3\n4\n5\n6\n", r.summary, 7, 1)).toBe("1\n2\n3\n4\n5\n6\n"); // F3: a provider disclosure line counts against the 8-line cap
+    expect(withRiskLine("1\n2\n3\n4\n5\n", r.summary, 7, 1)).toBe(`1\n2\n3\n4\n5\n${r.summary}\n`);
   });
   test("deleted test file and public API are high", () => {
     expect(classifyRisk([rf("tests/old.test.ts", 0, 40, "deleted")], {}).tier).toBe("high");

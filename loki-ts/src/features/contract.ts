@@ -2,7 +2,7 @@
 // parseContract turns a spec/PRD markdown into acceptance criteria; traceContract maps each criterion
 // to changed files and checks by keyword overlap. The `loki contract <spec.md>` subcommand prints the
 // contract and writes .loki/contract.json. The receipt field is strictly additive (seal.ts).
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { atomicWriteJson } from "../util/atomic.ts";
 import { parseSpec } from "../util/spec_file.ts";
@@ -306,13 +306,16 @@ export function writeFromEngine10(repoDir: string, lokiDir: string, runDir: stri
   const snap = join(runDir, "spec.snapshot.md");
   if (existsSync(snap)) { try { reqs = fromSpecText(readFileSync(snap, "utf8")); } catch { reqs = null; } }
   if (!reqs && task) reqs = fromPrdText(task);
-  if (!reqs) return null;
+  const mapPath = join(lokiDir, "state", "requirements-map.json");
+  if (!reqs || reqs.length === 0) { try { rmSync(mapPath, { force: true }); } catch { /* best effort */ } return null; } // a prior run's map must never read as this run's
   const last = new Map<string, RanCheck>();
   for (const e of events) if (e.type === "test.result" && typeof e.data.name === "string") {
     const name = e.data.name, cmd = typeof e.data.cmd === "string" ? e.data.cmd : "";
     last.set(name, { id: name, label: cmd, passed: e.data.result === "pass" });
   }
-  return writeRequirementsMap(repoDir, lokiDir, reqs, [...last.values()]);
+  const m = writeRequirementsMap(repoDir, lokiDir, reqs, [...last.values()]);
+  if (!m) { try { rmSync(mapPath, { force: true }); } catch { /* best effort */ } }
+  return m;
 }
 
 export function uncoveredCount(m: RequirementsMap | null): number { return m ? m.requirements.filter((r) => r.status === "uncovered").length : 0; }

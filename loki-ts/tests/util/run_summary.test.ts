@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { composeHandoff, decisionCommands, renderHandoff, spendText, writeHandoff, type HandoffFacts, type HandoffInput } from "../../src/util/run_summary.ts";
+import { composeHandoff, decisionCommands, renderHandoff, handoffSection, spendText, writeHandoff, type HandoffFacts, type HandoffInput } from "../../src/util/run_summary.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 
 const base: HandoffInput = {
@@ -56,6 +56,25 @@ test("empty state: no checks says nothing is verified; commands fall back to lok
   expect(md).toContain("elapsed not measured");
   expect(decisionCommands({ outcome: "X" }).reject).toBe("loki undo");
   expect(decisionCommands({ outcome: "X", branch: "loki/e10-1" }).accept).toBe("git merge --no-ff loki/e10-1");
+});
+
+test("F1: stale requirements-map.json never leaks; the in-memory map wins; F2: risk tier and deferred checks come from risk-tier.json", () => {
+  const repo = mkdtempSync(join(tmpdir(), "loki-handoff-"));
+  try {
+    mkdirSync(join(repo, ".loki", "state"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "state", "requirements-map.json"), JSON.stringify({ version: 1, requirements: [{ id: "R1", text: "OLD PRD: export CSV of invoices", status: "uncovered", checks: [], method: "m" }] }));
+    writeFileSync(join(repo, ".loki", "state", "risk-tier.json"), JSON.stringify({ version: 1, tier: "high", summary: "risk high", checks_deferred: ["mutation"] }));
+    const f: HandoffFacts = { repoDir: repo, runId: "e10-2", events: [], outcome: "VERIFIED", usd: null, elapsedS: 5, notProven: [], task: "t", requirements: null };
+    const md = writeHandoff(f) ?? "";
+    expect(md).not.toContain("OLD PRD");
+    expect(md).not.toContain("UNCOVERED");
+    expect(md).toContain("risk tier: high");
+    expect(md).toContain("NOT RUN (deferred by risk tier): mutation");
+    const pr = handoffSection({ ...f, requirements: [{ id: "R9", text: "this run", status: "uncovered" }] });
+    expect(pr).toContain("UNCOVERED requirement: this run");
+    expect(pr).not.toContain("OLD PRD");
+    expect(composeHandoff({ ...f, sinceMs: Date.now() + 60_000 }).riskTier).toBeNull();
+  } finally { rmSync(repo, { recursive: true, force: true }); }
 });
 
 test("compose + write from events, missing files tolerated, requirements-map read when present", () => {

@@ -6,7 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process"; import { cu
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
-import { diffStat, formatRunSummary, readRiskSummary, withNextLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
+import { diffStat, formatRunSummary, handoffSection, readRiskSummary, writeHandoff, withNextLine, withRiskLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT, RISKTIER
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -310,6 +310,8 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     const wait = setInterval(() => { if (existsSync(eventsPath)) { clearInterval(wait); stopLiveTail = tail(eventsPath, (e) => liveLine.onEvent(e), { intervalMs: 250 }); } }, 100);
     liveStop = () => { clearInterval(wait); clearInterval(tick); stopLiveTail(); liveLine.clear(); };
   }
+  let reqMap: { requirements: { id: string; text: string; status: string }[] } | null | undefined; // REQTRACE: computed once, before the PR stage, from intake/spec plus verify results; undefined = not yet computed
+  const reqOnce = async (evs: ReturnType<typeof readEvents>): Promise<NonNullable<typeof reqMap> | null> => { if (reqMap === undefined) { const rq = await import("../features/contract.ts"); reqMap = rq.writeFromEngine10(repoDir, join(repoDir, ".loki"), runDir, isIssue ? null : task, evs); } return reqMap; }; // also removes a prior run's stale map when this run has no requirements
   const sized = deep ? null : resolveRunCapS(repoDir, cap.usd <= 0, env), capS = sized?.capS ?? DEEP_CAP_S;
   if (sized) { env.LOKI_E10_CAP_S = String(capS); if (sized.fixedS) env.LOKI_E10_CAP_FIXED_S = String(sized.fixedS); else delete env.LOKI_E10_CAP_FIXED_S; } // FC-21b: starts at DEFAULT_CAP_S; the worker resizes once after plan from plan-scope.json unless the cap is fixed
   const res = await runSupervisor({
@@ -324,8 +326,8 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       const { loadRunOutputs } = await import("../util/run_outputs.ts"), { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
       const events = readEvents(eventsPath);
       const sealed: Record<string, unknown> = { ...((events.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: notProven }; // notProven (backstop/tamper included): a killed worker never sealed a receipt; explicit Record annotation keeps sealed.path typed instead of narrowing to the {} branch of the ?? union (TS2339, E-67 round 5 REJECT finding 2)
-      const hf = await import("../util/run_summary.ts"), hbase = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hpc = partialCost(events, false); // HANDOFF: the PR body carries the same handoff
-      const handoffMd = hf.handoffSection({ repoDir, runId, events, outcome: String(verdict), usd: fold(events).cost.usd, partialUsd: hpc.usd, measuredSessions: hpc.measured, totalSessions: hpc.total, elapsedS: null, notProven, baseSha: typeof hbase === "string" ? hbase : null, stats: diffStat(repoDir, typeof hbase === "string" ? hbase : null) });
+      const hbase = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hpc = partialCost(events, false); // HANDOFF: the PR body carries the same handoff
+      const handoffMd = handoffSection({ requirements: (await reqOnce(events))?.requirements ?? null, sinceMs: t0, repoDir, runId, events, outcome: String(verdict), usd: fold(events).cost.usd, partialUsd: hpc.usd, measuredSessions: hpc.measured, totalSessions: hpc.total, elapsedS: null, notProven, baseSha: typeof hbase === "string" ? hbase : null, stats: diffStat(repoDir, typeof hbase === "string" ? hbase : null) });
       const r = await runPr({
         runId, repoDir, runDir, branch: `loki/${runId}`, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN, handoffMd,
         outputs: () => ({ ...loadRunOutputs(runDir, events), seal: { ...sealed, verdict, receipt_path: sealed.path } }), // L7: the PR body reads recorded intake, plan and verify data, not only seal
@@ -365,12 +367,13 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
   }, verbose);
-  const rq = await import("../features/contract.ts"), uncovered = rq.uncoveredCount(rq.writeFromEngine10(repoDir, join(repoDir, ".loki"), runDir, isIssue ? null : task, events)); // REQTRACE: map written after verification, before the summary
-  let handoffRef = ""; if (!json) { const hb = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hbs = typeof hb === "string" ? hb : null; handoffRef = (await import("../util/run_summary.ts")).writeHandoff({ repoDir, runId, events, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), prUrl: res.prUrl, draft: res.verdict !== "VERIFIED", usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), notProven: res.notProven, task, baseSha: hbs, stats: diffStat(repoDir, hbs) }) ? "review: .loki/review/HANDOFF.md" : ""; } // HANDOFF: written on every outcome; the pointer folds into the last line (D48 cap)
+  const rmap = await reqOnce(events), uncovered = rmap ? rmap.requirements.filter((r) => r.status === "uncovered").length : 0; // REQTRACE: same map the PR body used (or computed now when no PR stage ran)
+  const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hbs = typeof baseSha === "string" ? baseSha : null, ds = diffStat(repoDir, hbs);
+  let handoffRef = ""; if (!json) { handoffRef = writeHandoff({ requirements: rmap?.requirements ?? null, sinceMs: t0, repoDir, runId, events, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), prUrl: res.prUrl, draft: res.verdict !== "VERIFIED", usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), notProven: res.notProven, task, baseSha: hbs, stats: ds }) ? "review: .loki/review/HANDOFF.md" : ""; } // HANDOFF: written on every outcome; the pointer folds into the last line (D48 cap)
   // OC-OUTPUT: unified run summary, same format as the legacy engine (autonomy/lib/run-summary.sh)
-  const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, ds = diffStat(repoDir, typeof baseSha === "string" ? baseSha : null), rr = resultOf(res.outcome);
+  const rr = resultOf(res.outcome);
   const ui = { result: rr, filesChanged: ds?.files ?? null, insertions: ds?.ins, deletions: ds?.del, costUsd: usd, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), receiptPath: res.receiptSha ? join(runDir, "receipt.json") : null, next: nextOf(rr, ds?.files ?? null), uncovered }; 
   const riskLine = readRiskSummary(repoDir, t0); // RISKTIER: this run's recorded tier, deferred checks stated as not run
-  process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: { ...summaryObject(ui), ...(riskLine ? { risk: riskLine } : {}) } })}\n` : quiet ? withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99) + (handoffRef ? `${handoffRef}\n` : "") : verbose ? `${out}\n${withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99)}${handoffRef ? `${handoffRef}\n` : ""}` : withRiskLine(handoffRef ? withNextLine(out, ui).replace(/\n$/, `; ${handoffRef}\n`) : withNextLine(out, ui), riskLine)); // D48: default output stays within 8 lines, so the summary collapses to one line
+  process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: { ...summaryObject(ui), ...(riskLine ? { risk: riskLine } : {}) } })}\n` : quiet ? withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99) + (handoffRef ? `${handoffRef}\n` : "") : verbose ? `${out}\n${withRiskLine(formatRunSummary(ui, { color: useColor() }), riskLine, 99)}${handoffRef ? `${handoffRef}\n` : ""}` : withRiskLine(handoffRef ? withNextLine(out, ui).replace(/\n$/, `; ${handoffRef}\n`) : withNextLine(out, ui), riskLine, 7, capLine ? 1 : 0)); // D48: default output stays within 8 lines, so the summary collapses to one line
   return res.outcome === "CANCELLED" && res.notProven.some((n) => n.endsWith("SIGTERM")) ? 143 : EXIT[res.outcome]; // a SIGTERM cancel keeps the conventional 128+15
 }

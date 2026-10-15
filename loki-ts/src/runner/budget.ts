@@ -18,7 +18,7 @@ import { lokiDir } from "../util/paths.ts";
 import { type CostResult, type EfficiencySessionInfo, num, writeEfficiencyRecord } from "../engine10/cost.ts";
 
 // LM-002: the default per-run cap (default_max_cost_usd) lives in loki-ts/data/model-pricing.json, also read by autonomy/run.sh and autonomy/loki.
-// The data dir is ../../data from src/e10ext and ../data from the bundled dist; the literal is only the last-resort fallback, and a test pins it to the file.
+// The data dir is ../../data from src/runner (this file) and ../data from the bundled dist; the literal is only the last-resort fallback, and a test pins it to the file.
 const DEFAULT_FALLBACK_USD = 100;
 export function loadDefaultMaxCostUsd(): number {
   const here = dirname(fileURLToPath(import.meta.url));

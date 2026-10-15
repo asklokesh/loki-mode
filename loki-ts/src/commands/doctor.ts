@@ -1764,10 +1764,15 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
     }
   }
 
+  if (repo && fix) { // --fix repairs the host install; --repo is a read-only profile print, so the combination has no meaning
+    process.stderr.write(`${RED}--fix cannot be combined with --repo (repo profile is read-only)${NC}\nUsage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo]\n`);
+    return 64;
+  }
   if (repo) { // REPOMEM: read-only print of .loki/state/repo-profile.json; never runs anything
     const { loadProfile, renderProfile } = await import("../runner/repo_profile.ts");
     const p = loadProfile(process.cwd());
-    process.stdout.write(json ? JSON.stringify(p, null, 2) + "\n" : renderProfile(p));
+    if (json) process.stdout.write(JSON.stringify(reqs ? { repo: p, requirements: await evaluateRequirements() } : p, null, 2) + "\n");
+    else process.stdout.write(renderProfile(p) + (reqs ? renderRequirementsText(await evaluateRequirements()) + "\n" : ""));
     return 0;
   }
   if (reqs && !json) {

@@ -113,21 +113,26 @@ export function diffStat(repoDir: string, base: string | null): { files: number;
   }
 }
 
-/** The recorded summary line for a run that started at sinceMs; null when absent, stale or unreadable. */
-export function readRiskSummary(repoDir: string, sinceMs = 0): string | null {
+/** The recorded risk-tier record for a run that started at sinceMs; null when absent, stale or unreadable. */
+export function readRiskRecord(repoDir: string, sinceMs = 0): { tier?: unknown; summary?: unknown; checks_deferred?: unknown } | null {
   try {
     const p = join(repoDir, ".loki", "state", "risk-tier.json");
     if (statSync(p).mtimeMs < sinceMs) return null;
-    const s = (JSON.parse(readFileSync(p, "utf8")) as { summary?: unknown }).summary;
-    return typeof s === "string" && s ? s : null;
+    const r = JSON.parse(readFileSync(p, "utf8"));
+    return r && typeof r === "object" ? r : null;
   } catch { return null; }
+}
+/** The recorded summary line for a run that started at sinceMs; null when absent, stale or unreadable. */
+export function readRiskSummary(repoDir: string, sinceMs = 0): string | null {
+  const s = readRiskRecord(repoDir, sinceMs)?.summary;
+  return typeof s === "string" && s ? s : null;
 }
 
 /** Appends the risk line to rendered output only while the default 8-line cap (D48, start line printed separately) still holds. */
-export function withRiskLine(out: string, line: string | null, maxLines = 7): string {
+export function withRiskLine(out: string, line: string | null, maxLines = 7, extraLines = 0): string {
   if (!line) return out;
   const body = out.replace(/\n+$/, "");
-  return body.split("\n").length + 1 > maxLines ? out : `${body}\n${line}\n`;
+  return body.split("\n").length + 1 + extraLines > maxLines ? out : `${body}\n${line}\n`;
 }
 
 // HANDOFF: one compact review handoff (.loki/review/HANDOFF.md + handoff.json) composed ONLY from recorded run state.
@@ -139,7 +144,7 @@ export interface HandoffInput {
   task: string; outcome: string; reason?: string | null; runId: string; branch?: string | null; prUrl?: string | null; draft?: boolean;
   checks: HandoffCheck[]; notProven: string[]; failures: string[]; requirements?: { id?: string; text?: string; status?: string }[] | null;
   filesChanged: number | null; insertions?: number | null; deletions?: number | null; hunks: HandoffHunk[];
-  riskTier?: string | null; usd: number | null; partialUsd?: number; measuredSessions?: number; totalSessions?: number;
+  riskTier?: string | null; deferred?: string[]; usd: number | null; partialUsd?: number; measuredSessions?: number; totalSessions?: number;
   elapsedS: number | null; interventions: number | null; baseSha?: string | null;
 }
 const W = 110, clip = (s: string, n = W): string => { const t = redactSecrets(String(s)).replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 3)}...` : t; };
@@ -176,7 +181,7 @@ export function renderHandoff(i: HandoffInput): string {
   if (ran.length === 0) L.push("- nothing demonstrated: no check passed");
   if (ran.length > 6) L.push(`- +${ran.length - 6} more passed`);
   if (bad.length || i.failures.length) { L.push("", "## Failures"); for (const c of bad.slice(0, 4)) L.push(`- ${checkLine(c)}`); for (const f of i.failures.slice(0, 3)) L.push(`- ${clip(f)}`); }
-  const notChecked = [...skipped.map((c) => checkLine(c)), ...i.notProven.map((n) => `NOT PROVEN: ${clip(n, 80)}`), ...unc.map((u) => `UNCOVERED requirement: ${u}`)];
+  const notChecked = [...skipped.map((c) => checkLine(c)), ...(i.deferred ?? []).map((n) => `NOT RUN (deferred by risk tier): ${clip(n, 60)}`), ...i.notProven.map((n) => `NOT PROVEN: ${clip(n, 80)}`), ...unc.map((u) => `UNCOVERED requirement: ${u}`)];
   L.push("", "## Not checked");
   for (const n of notChecked.slice(0, 8)) L.push(`- ${n}`);
   if (notChecked.length === 0) L.push(i.checks.length === 0 ? "- no checks were recorded, so nothing is verified" : "- nothing recorded as skipped or uncovered");
@@ -195,14 +200,16 @@ const hunkSummary = (diff: string): HandoffHunk[] => {
   return out.sort((a, b) => b.added + b.removed - (a.added + a.removed)).slice(0, 5).map((h) => ({ ...h, summary: h.summary || "changed" }));
 };
 const readJson = (p: string): unknown => { try { return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null; } catch { return null; } };
-export interface HandoffFacts { repoDir: string; runId: string; events: EventEnvelope[]; outcome: string; reason?: string | null; prUrl?: string | null; draft?: boolean; usd: number | null; partialUsd?: number; measuredSessions?: number; totalSessions?: number; elapsedS: number | null; notProven: string[]; task?: string; baseSha?: string | null; stats?: { files: number; ins: number; del: number } | null }
+export interface HandoffFacts { requirements?: HandoffInput["requirements"]; sinceMs?: number; repoDir: string; runId: string; events: EventEnvelope[]; outcome: string; reason?: string | null; prUrl?: string | null; draft?: boolean; usd: number | null; partialUsd?: number; measuredSessions?: number; totalSessions?: number; elapsedS: number | null; notProven: string[]; task?: string; baseSha?: string | null; stats?: { files: number; ins: number; del: number } | null }
 /** Compose from recorded state; every missing source degrades to "not recorded", never to a fabricated value. */
 export function composeHandoff(f: HandoffFacts): HandoffInput {
   const done = (s: string): Record<string, unknown> => (f.events.findLast((e) => e.type === "stage.completed" && e.stage === s)?.data ?? {}) as Record<string, unknown>;
   const started = (f.events.find((e) => e.type === "run.started")?.data ?? {}) as Record<string, unknown>;
   const checks = (Array.isArray(done("verify").checks) ? done("verify").checks as HandoffCheck[] : []).filter((c) => c && typeof c.name === "string");
-  const rm = readJson(join(f.repoDir, ".loki", "state", "requirements-map.json")) as { requirements?: HandoffInput["requirements"] } | null;
-  const risk = [done("plan").risk_tier, done("plan").tier, started.risk_tier].find((v) => typeof v === "string") as string | undefined;
+  const rm = f.requirements === undefined ? readJson(join(f.repoDir, ".loki", "state", "requirements-map.json")) as { requirements?: HandoffInput["requirements"] } | null : { requirements: f.requirements }; // the in-memory map of THIS run wins; null means no requirements, never a disk fallback
+  const rt = readRiskRecord(f.repoDir, f.sinceMs ?? 0); // same reader and freshness rule as the run summary risk line
+  const risk = typeof rt?.tier === "string" ? rt.tier : undefined;
+  const deferred = Array.isArray(rt?.checks_deferred) ? rt.checks_deferred.filter((x): x is string => typeof x === "string") : [];
   const iv = f.events.filter((e) => e.type === "steer.consumed" || e.type === "intervention").length;
   let hunks: HandoffHunk[] = [];
   if (f.baseSha) { try { hunks = hunkSummary(safeGit(f.repoDir, ["diff", "--unified=0", `${f.baseSha}..HEAD`, "--", ".", ":(exclude).loki"], { maxBuffer: 8 << 20 })); } catch { /* diff unavailable */ } }
@@ -210,7 +217,7 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
   return {
     task: f.task ?? String(done("intake").task ?? "").split("\n").find((l) => l.trim()) ?? "", outcome: f.outcome, reason: f.reason, runId: f.runId, branch: typeof started.branch === "string" ? started.branch : null,
     prUrl: f.prUrl, draft: f.draft, checks, notProven: f.notProven, failures: failed, requirements: Array.isArray(rm?.requirements) ? rm.requirements : null,
-    filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null,
+    filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null, deferred,
     usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: iv > 0 ? iv : null, baseSha: f.baseSha,
   };
 }

@@ -387,6 +387,17 @@ describe("doctor.runDoctor (end-to-end)", () => {
     expect(cap.out).toContain("--json");
   });
 
+  it("F4: --repo --fix is rejected with exit 64; --repo --requirements prints both", async () => {
+    const bad = await captureStdio(() => runDoctor(["--repo", "--fix"]));
+    expect(bad.result).toBe(64);
+    expect(bad.cap.err).toContain("--fix cannot be combined with --repo");
+    const repoOnly = await captureStdio(() => runDoctor(["--repo"]));
+    const both = await captureStdio(() => runDoctor(["--repo", "--requirements"]));
+    expect(both.result).toBe(0);
+    expect(both.cap.out.startsWith(repoOnly.cap.out)).toBe(true);
+    expect(both.cap.out.length).toBeGreaterThan(repoOnly.cap.out.length);
+  });
+
   it("rejects unknown options with exit 1", async () => {
     const { result, cap } = await captureStdio(() => runDoctor(["--bogus"]));
     expect(result).toBe(1);

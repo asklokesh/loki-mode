@@ -335,6 +335,12 @@ describe("requirements map (REQTRACE)", () => {
     expect(fromSpecText("not a spec")).toBeNull();
     expect(fromPrdText("short")).toBeNull();
   });
+  it("F1: a prior run's map is removed when this run has no requirements", () => {
+    mkdirSync(join(loki, "state"), { recursive: true });
+    writeFileSync(mapPath(), JSON.stringify({ version: 1, requirements: [{ id: "R1", text: "OLD PRD: export CSV of invoices", status: "uncovered", checks: [], method: "m" }] }));
+    expect(writeFromEngine10(dir, loki, runDir, "fix the typo in the header", [])).toBeNull();
+    expect(existsSync(mapPath())).toBe(false);
+  });
 
   it("checklist source: items are explicit requirements, only passed verification covers", () => {
     mkdirSync(join(loki, "checklist"), { recursive: true });
