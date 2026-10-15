@@ -7,7 +7,7 @@ import { scopedOutOf } from "../../project_model/scope.ts";
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
-import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
+import { testConfigChanged } from "../../features/runner_config.ts"; import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failIds } from "../failures.ts";
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
@@ -83,16 +83,7 @@ interface RunOpts {
 }
 const CODE_EXT = /\.(?:[cm]?[jt]sx?|py|go)$/; // the extensions testmap.ts maps (JS/TS, Python, Go)
 export { ran, skipped } from "../../util/check_result.ts"; // FC-16: the one shared count parser and classifier live in check_result.ts
-const CFG_ALWAYS = /(^|\/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$/;
-const CFG_SHARED = /(^|\/)(setup\.cfg|pyproject\.toml|package\.json)$/;
-const CFG_LINE = /^[+-].*(pytest|jest|mocha|vitest|"test"\s*:|addopts|testpaths)/im;
-/** A-115: changed files that configure the test runner. Files that also hold dependencies and metadata (setup.cfg, pyproject.toml,
- *  package.json) count only when a changed line names a runner or the test script, or the file is new (no diff against base).
- *  ponytail: a hit needs a human look, never a verdict; a runner key renamed without one of those words slips through. */
-export function testConfigChanged(repoDir: string, baseSha: string, changed: string[]): string[] {
-  const diff = (f: string): string => safeGit(repoDir, ["diff", "-U0", baseSha, "--", f]);
-  return changed.filter((f) => CFG_ALWAYS.test(f) || (CFG_SHARED.test(f) && (() => { const d = diff(f); return !d || CFG_LINE.test(d); })()));
-}
+export { testConfigChanged } from "../../features/runner_config.ts"; // D86 FC-09r: the one runner-config registry lives in features/
 /** `cut` means the timeout or the stage's AbortSignal killed the child: never read as "fail" and
  *  never retried (a hung check must not burn 2x its timeout). `out` is a 64 KB tail, unread when cut. The result comes from exit + timeout, never pipe EOF (an orphaned grandchild may hold the pipes). */
 async function runOnce(cmd: string, args: string[], cwd: string, signal: AbortSignal, opts: RunOpts): Promise<{ ok: boolean; missing: boolean; cut: boolean; out: string }> {
