@@ -22,6 +22,7 @@ const REGISTRY: Record<string, Entry> = {
   "e10ext/treeswap.ts|checkout": { count: 1, cls: "trust", why: "tree swap restores paths from the base commit while merging a chosen attempt tree into the run's own worktree" },
   "e10ext/treeswap.ts|rm": { count: 1, cls: "trust", why: "tree swap drops files the losing attempt added, inside the run's own worktree" },
   "engine10/stages/intake.ts|checkout": { count: 2, cls: "trust", why: "creates or enters the run branch; plain checkout refuses to overwrite edits" },
+  "providers/provider_guard.ts|checkout": { count: 1, cls: "trust", why: "revertGuard restores only tracked files the provider run deleted, literal pathspecs after a -- separator, inside the run worktree" },
   "e10ext/stop_restore.ts|checkout": { count: 1, cls: "trust", why: "returns the user's checkout to the branch they started on; plain checkout refuses to overwrite edits" },
 };
 
