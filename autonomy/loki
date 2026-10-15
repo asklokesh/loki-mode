@@ -1725,6 +1725,12 @@ _help_verify_pr() {
 # Appended to `loki help verify`: the v10 DSSE export flag (docs/exit-codes.md).
 _help_verify_dsse() {
     echo ""
+    echo "RECEIPT AGE (v10 engine):"
+    echo "    loki verify <receipt.json> --max-age <Ns|Nm|Nh|Nd|seconds>"
+    echo "        Reject a receipt whose signed JWT iat is older than the limit, in the"
+    echo "        future, or absent (UNCHECKED, exit 2). Checked after integrity; a"
+    echo "        tampered receipt stays tampered (exit 1). Group receipts included."
+    echo ""
     echo "DSSE EXPORT (v10 engine):"
     echo "    loki verify <run-id|receipt.json> --export-dsse"
     echo "        Print a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto"
@@ -18134,7 +18140,7 @@ cmd_verify() {
     # verified by the engine10 verifier directly; bin/loki sends a bare verify back here.
     for _pk_arg in "$@"; do
         case "$_pk_arg" in
-            composite.json|*/composite.json|--seal-composite|--seal-composite=*)
+            composite.json|*/composite.json|--seal-composite|--seal-composite=*|--max-age|--max-age=*|.loki/groups/*/receipt.json|*/.loki/groups/*/receipt.json)
                 _loki_bun_delegate engine10 verify "$@"
                 return $? ;;
         esac

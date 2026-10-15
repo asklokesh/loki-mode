@@ -47,7 +47,7 @@ Loki chat commands:
   /attach            attach to the current or most recent loki start run in this repo
   /quick <task>      loki quick
   /edit <change>     apply one change (build mode for this turn)
-  /verify            loki verify
+  /verify [path] [--max-age 7d]  loki verify (a receipt path, group receipt, or age limit)
   /receipt           loki receipt
   /model <id>        set model for this session
   /provider <name>   switch provider (claude, codex, cline, aider, opencode)
@@ -351,7 +351,8 @@ Question: $line" || true
             /edit)
                 [ -n "$rest" ] || { echo "usage: /edit <change>"; continue; }
                 _chat_send build "$rest" ;;
-            /verify) _chat_do "$loki" verify ;;
+            /verify) # shellcheck disable=SC2086
+                _chat_do "$loki" verify $rest ;;
             /receipt) _chat_do "$loki" receipt ;;
             /cost) _chat_do "$loki" cost ;;
             /undo) # shellcheck disable=SC2086
