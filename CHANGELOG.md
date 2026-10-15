@@ -5,6 +5,21 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.10.0 (2026-10-15)
+
+Two concurrent implement attempts behind a flag, plus fixes for the advisories left open by the v11.9.0 train. `loki start` with Claude remains the primary path.
+
+### Added
+- Two concurrent implement attempts, behind LOKI_E10_ATTEMPTS=2 (off by default), for normal-size tasks with a predicted test set. Attempt A runs in the repo and attempt B runs in a detached worktree; both are scored in the primary tree and the better one wins. If A passes every check first, B is stopped and its cost is still recorded. An attempt that changes or deletes a Wall test is disqualified; a Wall test counts as weakened only when its contents change or it is deleted.
+
+### Changed
+- Internal readability cleanup of the verify stage base-run subtraction code, with no change in behaviour.
+
+### Fixed
+- `loki start --brief` with `--ship` no longer tries to close a nonexistent GitHub issue, auto-merge now works for brief runs in the foreground path, and `loki run --help` marks `--brief-text` as internal.
+- Microsoft Teams intake dedup now keys on conversation id, serviceUrl and tenant plus the activity id, so identical activity ids from different conversations are no longer dropped as duplicates.
+- `loki backlog` now resolves a ref-name base in a DAG unit to its commit SHA and exits with an error when the base cannot be resolved, instead of silently starting from origin/HEAD.
+
 ## v11.9.1 (2026-10-15)
 
 Fix-forward release. v11.9.0 was tagged but failed CI and was never published to npm. v11.9.1 carries every v11.9.0 change listed below, plus these fixes for the guards that failed.

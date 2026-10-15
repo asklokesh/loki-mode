@@ -196,7 +196,7 @@ def load_dag(path, group):
             raise ValueError("unit %s task text starts with '-' and would be read as an option" % uid)
         units.append({"n": n, "id": uid, "deps": deps[uid], "write_set": list(u.get("writeSet") or []),
                       "task": task, "done": u.get("done") is True,
-                      "base": str(u["base"]) if re.match(r"^[0-9a-f]{7,64}$", str(u.get("base") or "")) else "",
+                      "base": str(u.get("base") or ""),
                       "spec": u["spec"] if isinstance(u.get("spec"), str) and os.path.isabs(u["spec"]) else ""})
     return group, units
 
@@ -265,6 +265,17 @@ def main(argv):
     if origin_slug(top).lower() != a.repo.lower():
         return die("this checkout's origin is %r, not %s; cd into a checkout of %s"
                    % (origin_slug(top) or "unknown", a.repo, a.repo))
+
+    for u in dag_units:
+        b = u["base"]
+        if not b or re.match(r"^[0-9a-f]{7,64}$", b):
+            continue
+        # A ref-name base is resolved to a SHA; an unresolvable one fails loudly, never falls back to origin/HEAD.
+        r = git("rev-parse", "--verify", "-q", "--end-of-options", b + "^{commit}", cwd=top) if not b.startswith("-") else None
+        sha = r.stdout.strip() if r is not None and r.returncode == 0 else ""
+        if not re.match(r"^[0-9a-f]{40,64}$", sha):
+            return die("unit %s base %r is not a commit SHA or a resolvable ref" % (u["id"], b))
+        u["base"] = sha
 
     try:
         issues = ([{"number": n, "title": ""} for n in numbers] if numbers

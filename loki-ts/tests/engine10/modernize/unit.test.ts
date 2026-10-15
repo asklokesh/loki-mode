@@ -558,16 +558,40 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
       expect(result.verdict).toBe("NOT_PROVEN");
       expect(result.not_proven[0]).toMatch(/conftest\.py added/);
     });
-    it(`r3: a symlinked test_*.py is refused, ${tag}`, () => {
+    it(`r3: a sealed test file replaced by a masking symlink is refused, ${tag}`, () => {
       const unit = `conf_link_test_${withFiles}`;
       setup(unit);
-      const target = outside("test_x.py", "def test_x():\n    assert True\n");
-      const link = () => symlinkSync(target, join(repoDir, "test_extra.py"));
+      const target = outside("test_x.py", "def test_ready():\n    assert True\n");
+      const link = () => { rmSync(join(repoDir, "test_conf.py")); symlinkSync(target, join(repoDir, "test_conf.py")); };
       const result = runUnitAb(card(unit), log, real(), link, () => passingNewCase());
       rmSync(join(target, ".."), { recursive: true, force: true });
       expect(result.verdict).toBe("NOT_PROVEN");
-      expect(result.not_proven[0]).toMatch(/test_extra\.py added/);
+      expect(result.not_proven[0]).toMatch(/test_conf\.py changed/);
     });
+    // r4 B1: pyproject.toml/setup.cfg/tox.ini are hashed in full; both TOML spellings steer real pytest.
+    const tomls: Array<[string, string]> = [
+      ["top-level dotted key", 'tool.pytest.ini_options.addopts = "--collect-only"\n'],
+      ["dotted key under [tool]", '[tool]\npytest.ini_options.addopts = "--collect-only"\n'],
+    ];
+    for (const [name, body] of tomls) {
+      it(`r4 B1: a new pyproject.toml (${name}) is refused, ${tag}`, () => {
+        const unit = `conf_r4_toml_${name.replace(/\W/g, "")}_${withFiles}`;
+        setup(unit);
+        const add = () => writeFileSync(join(repoDir, "pyproject.toml"), body);
+        const result = runUnitAb(card(unit), log, real(), add, () => passingNewCase());
+        expect(result.verdict).toBe("NOT_PROVEN");
+        expect(result.not_proven[0]).toMatch(/pyproject\.toml added/);
+      });
+      it(`r4 B1: a changed pyproject.toml (${name}) is refused, ${tag}`, () => {
+        const unit = `conf_r4_tomlchg_${name.replace(/\W/g, "")}_${withFiles}`;
+        setup(unit);
+        writeFileSync(join(repoDir, "pyproject.toml"), '[project]\nname = "x"\n');
+        const change = () => writeFileSync(join(repoDir, "pyproject.toml"), body);
+        const result = runUnitAb(card(unit), log, real(), change, () => passingNewCase());
+        expect(result.verdict).toBe("NOT_PROVEN");
+        expect(result.not_proven[0]).toMatch(/pyproject\.toml changed/);
+      });
+    }
   }
 
   it("r3: swapping a sealed test file for a symlink is refused", () => {
@@ -592,13 +616,54 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     expect(result.not_proven[0]).toMatch(/helper_mod\.py added/);
   });
 
+  // r4 B2: a symlink new under a listed path is drift (pytest follows linked dirs and collects conftest.py).
+  it("r4 B2: a symlinked subdir under a listed dir, holding a skip-all conftest.py, is refused", () => {
+    const unit = "conf_r4_listed_linkdir";
+    setup(unit);
+    mkdirSync(join(repoDir, "pkg"));
+    writeFileSync(join(repoDir, "pkg", "real.py"), "A = 1\n");
+    const target = outside("conftest.py", SKIP_ALL);
+    const link = () => symlinkSync(join(target, ".."), join(repoDir, "pkg", "sub"));
+    const result = runUnitAb({ ...baseCard(unit), files: ["pkg/"] }, log, real(), link, () => passingNewCase());
+    rmSync(join(target, ".."), { recursive: true, force: true });
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/pkg\/sub added/);
+  });
+
+  // r4 advisory b: a pre-existing outside link is bound by its target bytes, not just the target string.
+  it("r4: editing the bytes behind a pre-existing outside symlink is refused", () => {
+    const unit = "conf_r4_outside_bytes";
+    setup(unit);
+    const target = outside("data.txt", "one\n");
+    symlinkSync(target, join(repoDir, "lnk"));
+    const edit = () => writeFileSync(target, "two\n");
+    const result = runUnitAb(baseCard(unit), log, real(), edit, () => passingNewCase());
+    rmSync(join(target, ".."), { recursive: true, force: true });
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/lnk changed/);
+  });
+
+  // r4 advisory c: sealed-name files under SKIP_DIRS are bound too.
+  for (const [dirName, file] of [["node_modules", "conftest.py"], ["venv", "x.pth"], [".tox", "sitecustomize.py"]] as const) {
+    it(`r4: ${file} added under ${dirName} is refused`, () => {
+      const unit = `conf_r4_skip_${dirName.replace(/\W/g, "")}`;
+      setup(unit);
+      mkdirSync(join(repoDir, dirName));
+      writeFileSync(join(repoDir, dirName, "keep.txt"), "k\n");
+      const add = () => { modernize(); writeFileSync(join(repoDir, dirName, file), SKIP_ALL); };
+      const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), add, () => passingNewCase());
+      expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.not_proven[0]).toContain(`${dirName}/${file} added`);
+    });
+  }
+
   it("conformanceHashes records a symlink (file or dir) without following it", () => {
     const target = outside("a.txt", "x");
     symlinkSync(target, join(repoDir, "lnk"));
     symlinkSync(join(target, ".."), join(repoDir, "lnkdir"));
     const h = conformanceHashes(repoDir);
     rmSync(join(target, ".."), { recursive: true, force: true });
-    expect(h["lnk"]).toBe(`symlink:${target}`);
+    expect(h["lnk"]).toMatch(new RegExp(`^symlink:${target.replace(/\W/g, "\\$&")}\\|[0-9a-f]{64}$`));
     expect(h["lnkdir"]).toMatch(/^symlink:/);
     expect(Object.keys(h).some((k) => k.startsWith("lnkdir/"))).toBe(false);
   });

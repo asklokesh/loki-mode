@@ -181,6 +181,21 @@ sed 's/,"base":"[0-9a-f]*"//' "$TMP/dagb.json" > "$TMP/dagn.json"
 LOKI_WORKSPACES=1 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagn.json" >/dev/null 2>&1
 grep -q "^head fixu-1 $ORIGIN" "$TMP/events" && pass "control: no base under workspaces starts at origin/HEAD" || fail "control" "$(cat "$TMP/events" 2>&1)"
 
+echo "== non-hex base: ref resolves to its SHA, unresolvable fails loudly"
+git -C "$REPO" branch -f basebr "$TIP"
+sed 's/"base":"[0-9a-f]*"/"base":"basebr"/' "$TMP/dagb.json" > "$TMP/dagr.json"
+for ws in 1 0; do
+    reset_mock
+    LOKI_WORKSPACES=$ws $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagr.json" >/dev/null 2>&1
+    grep -q "^head fixu-1 $TIP" "$TMP/events" && pass "LOKI_WORKSPACES=$ws: ref-name base resolved to its SHA" || fail "ref base ws=$ws" "$(cat "$TMP/events" 2>&1)"
+done
+for bad in nosuchref -x; do
+    reset_mock
+    sed "s/\"base\":\"[0-9a-f]*\"/\"base\":\"$bad\"/" "$TMP/dagb.json" > "$TMP/dagx.json"
+    out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagx.json" 2>&1)"; rc=$?
+    [ "$rc" -ne 0 ] && echo "$out" | grep -q "base '$bad' is not a commit SHA" && [ ! -s "$TMP/events" ] && pass "bad base '$bad' fails loudly, nothing launched" || fail "bad base $bad" "rc=$rc $out"
+done
+
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1159,10 +1159,16 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         return lambda s: s.raw("/jira", body, h)
 
     def _teams_body(self, text="<at>loki</at> fix the flaky login test", ts_iso=None,
-                    act_id="a1"):
+                    act_id="a1", conv=None, service_url=None, tenant=None):
         ts_iso = ts_iso or datetime.datetime.now(datetime.timezone.utc).isoformat()
-        return json.dumps({"type": "message", "id": act_id, "text": text,
-                           "timestamp": ts_iso}).encode()
+        act = {"type": "message", "id": act_id, "text": text, "timestamp": ts_iso}
+        if conv is not None:
+            act["conversation"] = {"id": conv}
+        if service_url is not None:
+            act["serviceUrl"] = service_url
+        if tenant is not None:
+            act["channelData"] = {"tenant": {"id": tenant}}
+        return json.dumps(act).encode()
 
     def _teams(self, body, token=TEAMS_TOKEN, sig=True):
         h = {}
@@ -1277,6 +1283,37 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         _, seen2 = self._run(twice)
         self.assertEqual(seen, [])
         self.assertEqual(len(seen2), 1)
+
+    def _teams_twice(self, body_a, body_b):
+        def both(s):
+            return self._teams(body_a)(s), self._teams(body_b)(s)
+        return self._run(both)
+
+    def test_teams_same_activity_id_different_conversation_both_enqueued(self):
+        a = self._teams_body(conv="conv-A")
+        b = self._teams_body(conv="conv-B")
+        _, seen = self._teams_twice(a, b)
+        self.assertEqual(len(seen), 2)
+
+    def test_teams_same_conversation_and_id_deduped(self):
+        a = self._teams_body(conv="conv-A", service_url="https://s/", tenant="t1")
+        _, seen = self._teams_twice(a, a)
+        self.assertEqual(len(seen), 1)
+
+    def test_teams_same_id_different_tenant_or_service_url_both_enqueued(self):
+        a = self._teams_body(conv="c", service_url="https://s1/", tenant="t1")
+        b = self._teams_body(conv="c", service_url="https://s1/", tenant="t2")
+        c = self._teams_body(conv="c", service_url="https://s2/", tenant="t1")
+        _, seen = self._teams_twice(a, b)
+        self.assertEqual(len(seen), 2)
+        _, seen = self._teams_twice(a, c)
+        self.assertEqual(len(seen), 2)
+
+    def test_teams_key_parts_cannot_collide_across_fields(self):
+        a = self._teams_body(conv="x|y", act_id="z")
+        b = self._teams_body(conv="x", act_id="y|z")
+        _, seen = self._teams_twice(a, b)
+        self.assertEqual(len(seen), 2)
 
     def test_jira_adf_description_is_flattened(self):
         adf = {"type": "doc", "content": [

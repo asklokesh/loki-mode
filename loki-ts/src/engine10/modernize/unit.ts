@@ -28,9 +28,9 @@
 //     unchanged on the new tree before the post-implement conformance run is trusted.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
 import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
@@ -121,20 +121,8 @@ export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000)
 const CONF_EVENT = "unit.conformance_sealed";
 const SKIP_DIRS = new Set([".git", ".loki", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache", ".tox"]);
 const TEST_FILE = /(^|\/)(test_[^/]*|[^/]*_test)\.py$/;
-const SECTIONED = /(^|\/)(pyproject\.toml|setup\.cfg|tox\.ini)$/; // only their pytest sections count
 // Anything that can change what `python -m pytest` runs or reports; a NEW one is refused, not just a changed one.
 const PYTEST_CFG = /(^|\/)(conftest\.py|\.?pytest\.(ini|toml)|pytest\.py|pyproject\.toml|setup\.cfg|tox\.ini|sitecustomize\.py|usercustomize\.py)$|\.pth$|(^|\/)pytest\//;
-
-function pytestSections(text: string): string {
-  let on = false;
-  const out: string[] = [];
-  for (const line of text.split("\n")) {
-    const h = /^\s*\[([^\]]*)\]/.exec(line);
-    if (h) on = /pytest/i.test(h[1] ?? "");
-    if (on) out.push(line);
-  }
-  return out.join("\n");
-}
 
 /** Deletes every __pycache__ under dir (skipping SKIP_DIRS, never following a symlink), so stale or
  *  planted bytecode cannot stand in for a hashed .py. */
@@ -153,37 +141,72 @@ export function purgePycache(dir: string): void {
 }
 
 const LINK = "symlink:";
+// Skipped dirs still contribute files whose NAME can steer pytest or the interpreter (a conftest.py in
+// node_modules/venv/.tox): they are hashed, so a sealed-name file added there is drift. VCS and run state are fully skipped.
+const FULL_SKIP = new Set([".git", ".loki"]);
+
+/** Digest of what a link points at, for links resolving outside `dir` (inside, the target is hashed under its own path).
+ *  Files hash their bytes; directories hash names plus file bytes (nested links by target string); capped, fail closed. */
+function outsideTargetDigest(dir: string, full: string): string {
+  let real: string;
+  try { real = realpathSync(full); } catch { return "dangling"; }
+  let root: string;
+  try { root = realpathSync(dir); } catch { return "noroot"; }
+  if (real === root || real.startsWith(root + sep)) return "inside";
+  const h = createHash("sha256");
+  let budget = 20_000;
+  const walk = (p: string): void => {
+    if (budget-- <= 0) { h.update("capped"); return; }
+    let st;
+    try { st = lstatSync(p); } catch { h.update("unreadable"); return; }
+    if (st.isSymbolicLink()) { try { h.update("L" + readlinkSync(p)); } catch { h.update("L?"); } return; }
+    if (st.isDirectory()) {
+      let names: string[] = [];
+      try { names = readdirSync(p).sort(); } catch { h.update("unreadable"); }
+      for (const n of names) { h.update("D" + n); walk(join(p, n)); }
+      return;
+    }
+    if (st.isFile()) { try { h.update(readFileSync(p)); } catch { h.update("unreadable"); } }
+  };
+  walk(real);
+  return h.digest("hex");
+}
 
 /** sha256 of EVERY regular file under dir (bytes, so fixtures, snapshots and golden data are bound),
- *  keyed by relative path; SKIP_DIRS (VCS, caches, venvs, __pycache__) are excluded and __pycache__ is
- *  purged separately. A symlink is never skipped: it is recorded as "symlink:<target>" (never followed),
- *  so a link swapped in for a conftest.py, test file or config changes the set. pyproject.toml, setup.cfg and tox.ini hash their pytest sections only. */
+ *  keyed by relative path; pyproject.toml, setup.cfg and tox.ini are hashed in full. SKIP_DIRS (venvs,
+ *  caches, node_modules) contribute only files whose name is sealed (test files, conftest.py, pytest
+ *  config, *.pth, sitecustomize.py). A symlink is never followed: it is recorded as
+ *  "symlink:<target>|<digest>" where the digest covers the target bytes when the link resolves outside dir. */
 export function conformanceHashes(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   const rels: string[] = [];
-  const walk = (sub: string): void => {
+  const walk = (sub: string, inSkip: boolean): void => {
     let ents;
     try { ents = readdirSync(join(dir, sub), { withFileTypes: true }); } catch { return; }
     for (const e of ents) {
-      if (SKIP_DIRS.has(e.name)) continue;
+      if (FULL_SKIP.has(e.name)) continue;
       const rel = sub ? `${sub}/${e.name}` : e.name;
-      rels.push(rel);
-      if (e.isDirectory()) walk(rel); // a symlinked dir is recorded as a link above, never descended
+      const skipped = inSkip || SKIP_DIRS.has(e.name);
+      if (e.isDirectory()) {
+        if (!skipped) rels.push(rel);
+        walk(rel, skipped); // a symlinked dir is recorded as a link, never descended
+      } else if (!skipped || TEST_FILE.test(rel) || PYTEST_CFG.test(rel)) {
+        rels.push(rel);
+      }
     }
   };
-  walk("");
+  walk("", false);
   for (const rel of rels) {
-    let data: Buffer | string;
+    let data: Buffer;
     try {
       const st = lstatSync(join(dir, rel));
-      if (st.isSymbolicLink()) { out[rel] = LINK + readlinkSync(join(dir, rel)); continue; }
+      if (st.isSymbolicLink()) {
+        out[rel] = `${LINK}${readlinkSync(join(dir, rel))}|${outsideTargetDigest(dir, join(dir, rel))}`;
+        continue;
+      }
       if (!st.isFile()) continue;
       data = readFileSync(join(dir, rel));
     } catch { continue; }
-    if (SECTIONED.test(rel)) {
-      data = pytestSections(data.toString("utf8"));
-      if (data === "") continue;
-    }
     out[rel] = createHash("sha256").update(data).digest("hex");
   }
   return out;
@@ -208,10 +231,11 @@ function conformanceDrift(base: Record<string, string>, now: Record<string, stri
   const sealed = (p: string): boolean => TEST_FILE.test(p) || PYTEST_CFG.test(p);
   const listed = (p: string): boolean => !!files?.some((f) => p === f || p.startsWith(f.replace(/\/?$/, "/")));
   const link = (h: string | undefined): boolean => !!h?.startsWith(LINK);
-  // Sealed test/config files are immutable even when listed. Otherwise a listed path may change; an
-  // unlisted one may not when a file list exists, and without one non-.py data and any symlink are immutable.
+  // Sealed test/config files and any symlink (new or changed, listed or not: pytest follows linked dirs
+  // and collects conftest.py inside) are immutable. Otherwise a listed path may change; an unlisted one
+  // may not when a file list exists, and without one non-.py data is immutable.
   const immutable = (p: string, linked: boolean): boolean =>
-    sealed(p) || (!listed(p) && (!!files || linked || !p.endsWith(".py")));
+    sealed(p) || linked || (!listed(p) && (!!files || !p.endsWith(".py")));
   for (const [p, h] of Object.entries(base)) {
     if (now[p] === h) continue;
     if (immutable(p, link(h) || link(now[p]))) return `${p} ${p in now ? "changed" : "removed"}`;
