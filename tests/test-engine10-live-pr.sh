@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E-40 (docs/v10/ENGINE.md 23:00Z cut): live PR smoke on a sandbox GitHub repo.
+# E-40 (docs/v10/ARCHITECT-CUTS.md 23:00Z cut): live PR smoke on a sandbox GitHub repo.
 # Runs one small real task through bin/loki with LOKI_ENGINE=v10 from the dist
 # entry (LOKI_TS_ENTRY, default loki-ts/dist/loki.js) against
 # LOKI_E10_LIVE_REPO=<owner>/<sandbox>, then checks the five Wall items.

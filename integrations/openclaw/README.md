@@ -2,6 +2,26 @@
 
 Run Loki Mode autonomous SDLC sessions from any OpenClaw channel (Slack, Discord, Teams, web).
 
+## Status
+
+This integration is a skill package plus a bridge skeleton. It is not a Loki CLI feature.
+
+An earlier doc described an OpenClaw coordination protocol that was never implemented and has been removed. None of these exist in the source (`autonomy/` and `loki-ts/src/` contain no OpenClaw command or flag):
+
+- an OpenClaw subcommand in the `loki` CLI dispatch
+- `/api/openclaw/*` REST endpoints in the dashboard
+- `LOKI_OPENCLAW_*` environment variables
+- a `.loki/config.yaml` `openclaw:` block
+- `loki_openclaw_*` Prometheus metrics
+
+What does exist: the skill package in this directory (the agent calls the ordinary `loki start` and `loki status --json`) and the bridge skeleton in `bridge/` (see Phase 2 below). The bridge has no WebSocket client yet and prints mapped events to stdout. Run it directly, not through `loki`.
+
+For real multi-agent coordination today, use implemented surfaces:
+
+- The MCP server (`loki mcp`) exposes Loki's tools to any MCP client.
+- `.loki/events.jsonl` is the durable event stream the bridge reads; anything that can tail a JSONL file can consume it.
+- `loki status --json` is the supported programmatic status surface.
+
 ## Installation
 
 1. Install Loki Mode CLI:
