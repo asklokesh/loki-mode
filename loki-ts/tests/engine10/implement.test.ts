@@ -339,4 +339,11 @@ describe("engine10 implement learnings injection (INJECT)", () => {
     expect(learningsBlock(d)).toBe("");
     rmSync(d, { recursive: true, force: true });
   });
+
+  test("run.sh-shaped file (no learnings array) is ignored, not claimed", () => {
+    const d = mkRepo(undefined);
+    writeFileSync(join(d, ".loki", "state", "relevant-learnings.json"), JSON.stringify({ patterns: [{ x: 1 }], mistakes: [{ y: 2 }], successes: [], project_memory: {} }));
+    expect(learningsBlock(d)).toBe("");
+    rmSync(d, { recursive: true, force: true });
+  });
 });

@@ -211,6 +211,9 @@ export function appendReceiptFact(repoDir: string, f: ReceiptFact, now: () => Da
   return true;
 }
 
+/** Shared fence helper: strips angle brackets so quoted notes cannot close or forge a fence tag. Used by every untrusted-notes block. */
+export const fence = (s: string): string => s.replace(/[<>]/g, "");
+
 /** Tag lessons as used by a run; the verdict is filled in at run end. */
 export function recordUse(repoDir: string, runId: string, ids: string[], now: () => Date = () => new Date()): void {
   if (ids.length === 0) return;
@@ -243,7 +246,6 @@ export function removeLesson(repoDir: string, id: string): Lesson | null {
 export function formatLessonsForBrief(ls: Lesson[]): string {
   if (ls.length === 0) return "";
   // Drop every angle bracket: a single-pass tag strip can be defeated by nesting a tag inside itself.
-  const fence = (s: string): string => s.replace(/[<>]/g, "");
   const prov = (l: Lesson): string => {
     const kind = KINDS.has(String(l.kind ?? "pr")) ? String(l.kind ?? "pr") : "pr";
     const j = l.justified_by;

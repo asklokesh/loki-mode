@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withStagePrefix } from "../../features/lean_prefix.ts";
-import { formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
+import { fence, formatLessonsForBrief, recordUse, retrieveLessons } from "../../util/pr_lessons.ts";
 import { FINISH_LINE, FIXED_RULES, briefContext } from "../../e10ext/context.ts";
 import { fastTierModel } from "../../runner/model_downgrades.ts";
 import { cascadeDowngrade, loadRepoMap, namedFiles } from "../sizing.ts";
@@ -70,7 +70,7 @@ export function learningsBlock(repoDir: string, limit = 5): string {
     const parsed = JSON.parse(readFileSync(join(repoDir, ".loki", "state", "relevant-learnings.json"), "utf-8")) as { learnings?: unknown };
     if (Array.isArray(parsed.learnings)) items = parsed.learnings;
   } catch { return ""; }
-  const strip = (v: unknown): string => String(v ?? "").replace(/[<>]/g, "").replace(/\s+/g, " ").trim();
+  const strip = (v: unknown): string => fence(String(v ?? "")).replace(/\s+/g, " ").trim();
   const lines: string[] = [];
   for (const it of items) {
     if (lines.length >= limit) break;

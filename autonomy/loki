@@ -24459,6 +24459,7 @@ except Exception as e:
             echo "  lessons [--json]  PR review lessons with their uses and outcomes"
             echo "  learn <o/r#PR>    Learn lessons from a merged PR's review comments"
             echo "  forget <prl-id>   Delete one PR lesson and print its text"
+            echo "  brief [--task T]  Print the lessons and learnings block injected into a run"
             echo ""
             echo "Memory System Commands:"
             echo "  index [rebuild]   Show or rebuild the memory index layer"
