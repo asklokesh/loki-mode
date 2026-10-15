@@ -38,6 +38,7 @@ Usage:
 """
 
 import argparse
+import base64
 import collections
 import hashlib
 import hmac
@@ -56,7 +57,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
 
@@ -418,6 +419,8 @@ CHILD_ENV_DENYLIST = (
     "SLACK_BOT_TOKEN",
     "LINEAR_WEBHOOK_SECRET",
     "LINEAR_API_KEY",
+    "JIRA_WEBHOOK_SECRET",
+    "TEAMS_SECURITY_TOKEN",
 )
 
 
@@ -594,7 +597,11 @@ def handle_job_event(payload, dry_run=False):
     spec = payload.get("spec")
     if not valid_spec(spec):
         return None, "rejected (invalid spec)"
-    args = ["start", spec.strip(), "--detach"]
+    args = ["start", spec.strip()]
+    # Jira/Teams delegation sets pr=True: receipt-gated PR run, never a deploy.
+    if payload.get("pr") is True:
+        args.append("--pr")
+    args.append("--detach")
     summary = "job %s: %s" % (payload.get("job_id", "?"), spec.strip())
     # A remote submitter gates CI on this, so report the BUILD's outcome, not
     # merely that a build was launched. "fired" (launched) and "passed" must
@@ -691,6 +698,129 @@ def resolve_chat_secrets(env, secret, api_token, sentry_secret):
         logging.error("The Linear secret is identical to another credential. "
                       "They MUST differ; disabling /linear.")
     return ("" if slack_bad else slack), ("" if linear_bad else linear)
+
+
+# Jira Cloud and Microsoft Teams delegation. Both enqueue a PR-only run.
+JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]*-\d+$")
+JIRA_EVENTS = ("jira:issue_created", "jira:issue_updated")
+JIRA_TRIGGER_FIELDS = ("assignee", "labels")
+DELEGATED_BRIEF_MAX = 1500
+HTML_TAG_RE = re.compile(r"<[^>]*>")
+
+
+def verify_jira_signature(secret, body, signature):
+    """X-Hub-Signature: `sha256=` + hex HMAC-SHA256 of the raw body. Jira sends
+    no timestamp, so replay is bounded by delivery-id dedup in the handler."""
+    if not secret or not signature:
+        return False
+    sig = signature.strip().lower()
+    if not sig.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return constant_time_equals(expected, sig[len("sha256="):])
+
+
+def sign_teams_body(token, body):
+    """Base64 HMAC-SHA256 of the raw body, keyed by the base64-decoded token."""
+    key = base64.b64decode(token, validate=True)
+    return base64.b64encode(hmac.new(key, body, hashlib.sha256).digest()).decode("ascii")
+
+
+def verify_teams_signature(token, body, authorization):
+    """Authorization: `HMAC <base64>`. Fails closed on a bad token or header."""
+    if not token or not authorization:
+        return False
+    scheme, _, value = authorization.strip().partition(" ")
+    if scheme.upper() != "HMAC" or not value.strip():
+        return False
+    try:
+        expected = sign_teams_body(token, body)
+    except ValueError:
+        return False
+    return constant_time_equals(expected, value.strip())
+
+
+def teams_fresh(activity, now=None):
+    """The activity's ISO-8601 `timestamp` must be within the skew window."""
+    raw = activity.get("timestamp")
+    if not isinstance(raw, str) or not raw:
+        return False
+    try:
+        dt = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    now = time.time() if now is None else now
+    return abs(now - dt.timestamp()) <= SIGNATURE_MAX_SKEW_S
+
+
+def _csv_set(value):
+    return frozenset(x.strip() for x in value.split(",") if x.strip())
+
+
+def _one_line(text, limit=DELEGATED_BRIEF_MAX):
+    text = " ".join(CONTROL_CHARS_RE.sub(" ", str(text or "")).split())
+    return text.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+
+
+def jira_trigger_matches(payload, assignees, labels):
+    """True when the issue is assigned to a configured user or carries a
+    configured label. An update only counts if it changed assignee or labels,
+    so unrelated edits never re-fire a run."""
+    issue = payload.get("issue")
+    fields = issue.get("fields") if isinstance(issue, dict) else None
+    if not isinstance(fields, dict):
+        return False
+    if payload.get("webhookEvent") == "jira:issue_updated":
+        items = (payload.get("changelog") or {}).get("items")
+        changed = ({i.get("field") for i in items if isinstance(i, dict)}
+                   if isinstance(items, list) else set())
+        if not changed.intersection(JIRA_TRIGGER_FIELDS):
+            return False
+    who = fields.get("assignee")
+    ids = set()
+    if isinstance(who, dict):
+        for k in ("accountId", "emailAddress", "displayName"):
+            if isinstance(who.get(k), str):
+                ids.add(who[k])
+    if ids.intersection(assignees):
+        return True
+    have = fields.get("labels")
+    return isinstance(have, list) and bool(
+        {x for x in have if isinstance(x, str)}.intersection(labels))
+
+
+def build_jira_brief(issue):
+    fields = issue.get("fields") or {}
+    desc = fields.get("description")
+    parts = ["Resolve Jira issue %s: %s." % (issue.get("key"), fields.get("summary") or "")]
+    if isinstance(desc, str) and desc.strip():
+        parts.append(desc)
+    parts.append("Reproduce with a regression test, then fix the root cause.")
+    return _one_line(" ".join(parts))
+
+
+def build_teams_brief(activity):
+    text = re.sub(r"<at>.*?</at>", " ", str(activity.get("text") or ""), flags=re.S)
+    return _one_line(HTML_TAG_RE.sub(" ", text))
+
+
+def resolve_delegation_secrets(env, others):
+    """Return (jira_secret, teams_token), blanking any equal to another
+    credential in `others` or to each other."""
+    jira = env.get("JIRA_WEBHOOK_SECRET", "")
+    teams = env.get("TEAMS_SECURITY_TOKEN", "")
+    others = [x for x in others if x]
+    out = []
+    for name, val, peer in (("Jira", jira, teams), ("Teams", teams, jira)):
+        bad = bool(val) and any(constant_time_equals(val, o)
+                                for o in others + ([peer] if peer else []))
+        if bad:
+            logging.error("The %s secret is identical to another credential. "
+                          "They MUST differ; disabling its route.", name)
+        out.append("" if bad else val)
+    return tuple(out)
 
 
 def _post_json(url, data, headers):
@@ -1129,6 +1259,12 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
     # distinct from every other credential.
     slack_secret = ""
     linear_secret = ""
+    # Jira webhook secret (/jira), Teams outgoing-webhook token (/teams), and
+    # the Jira trigger filters (assignee ids/emails/names, labels).
+    jira_secret = ""
+    teams_secret = ""
+    jira_assignees = frozenset()
+    jira_labels = frozenset()
     dispatcher = None
     # Ed25519 key that attests receipts, and the retired public keys that keep
     # pre-rotation receipts verifiable. Both default to unconfigured, which
@@ -1414,7 +1550,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             return
         self._send_json(202, {"id": job_id, "status": "queued"})
 
-    def _enqueue_job(self, spec, reply_target=None):
+    def _enqueue_job(self, spec, reply_target=None, pr=False):
         """Record and enqueue one validated job; shared by /jobs, /slack, /linear.
 
         Returns the job id, or None after sending 429 when the queue is full.
@@ -1422,6 +1558,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         """
         job_id = secrets.token_urlsafe(12)
         job = {"spec": spec, "job_id": job_id}
+        if pr:
+            job["pr"] = True
 
         # Record BEFORE enqueueing. A worker can pick the job up the instant
         # submit() returns and write "running"/"fired"; record_job is
@@ -1546,6 +1684,95 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             return
         self._send_json(202, {"id": job_id, "status": "queued"})
 
+    def _handle_jira(self):
+        """POST /jira -- signed Jira Cloud webhook; enqueues a PR-only run."""
+        body = self._read_body()
+        if body is None:
+            return
+        if not self.jira_secret:
+            log_event(JOB_EVENT, "", "", "rejected (no jira webhook secret configured)")
+            self._send_json(503, {"error": "JIRA_WEBHOOK_SECRET not configured"})
+            return
+        if not verify_jira_signature(
+                self.jira_secret, body, self.headers.get("X-Hub-Signature", "")):
+            logging.warning("Invalid Jira signature from %s", self.address_string())
+            log_event(JOB_EVENT, "", "", "rejected (invalid jira signature)")
+            self._send_json(401, {"error": "invalid signature"})
+            return
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            self._send_json(400, {"error": "invalid JSON"})
+            return
+        if not isinstance(payload, dict):
+            self._send_json(400, {"error": "payload must be a JSON object"})
+            return
+        if (payload.get("webhookEvent") not in JIRA_EVENTS
+                or not jira_trigger_matches(
+                    payload, self.jira_assignees, self.jira_labels)):
+            self._send_json(200, {"status": "skipped"})
+            return
+        issue = payload["issue"]
+        key = issue.get("key")
+        if not isinstance(key, str) or not JIRA_KEY_RE.match(key):
+            self._send_json(400, {"error": "invalid issue key"})
+            return
+        brief = build_jira_brief(issue)
+        if not valid_spec(brief):
+            self._send_json(400, {"error": "invalid brief"})
+            return
+        # Jira has no signed timestamp; its delivery id bounds replay.
+        if self.dispatcher.seen_delivery(
+                self.headers.get("X-Atlassian-Webhook-Identifier", "")):
+            self._send_json(200, {"status": "duplicate"})
+            return
+        job_id = self._enqueue_job(brief, pr=True)
+        if job_id is None:
+            return
+        self._send_json(202, {"id": job_id, "status": "queued"})
+
+    def _handle_teams(self):
+        """POST /teams -- Teams outgoing webhook; enqueues a PR-only run."""
+        body = self._read_body()
+        if body is None:
+            return
+        if not self.teams_secret:
+            log_event(JOB_EVENT, "", "", "rejected (no teams security token configured)")
+            self._send_json(503, {"error": "TEAMS_SECURITY_TOKEN not configured"})
+            return
+        if not verify_teams_signature(
+                self.teams_secret, body, self.headers.get("Authorization", "")):
+            logging.warning("Invalid Teams signature from %s", self.address_string())
+            log_event(JOB_EVENT, "", "", "rejected (invalid teams signature)")
+            self._send_json(401, {"error": "invalid signature"})
+            return
+        try:
+            activity = json.loads(body)
+        except ValueError:
+            self._send_json(400, {"error": "invalid JSON"})
+            return
+        if not isinstance(activity, dict):
+            self._send_json(400, {"error": "payload must be a JSON object"})
+            return
+        if not teams_fresh(activity):
+            log_event(JOB_EVENT, "", "", "rejected (stale teams timestamp)")
+            self._send_json(401, {"error": "stale or missing timestamp"})
+            return
+        brief = build_teams_brief(activity)
+        if not valid_spec(brief):
+            self._send_json(200, {"type": "message",
+                                  "text": "Usage: @loki <brief>. One-line brief, "
+                                          "not starting with '-'."})
+            return
+        act_id = activity.get("id")
+        if self.dispatcher.seen_delivery(act_id if isinstance(act_id, str) else ""):
+            self._send_json(200, {"type": "message", "text": "Duplicate, already queued."})
+            return
+        job_id = self._enqueue_job(brief, pr=True)
+        if job_id is None:
+            return
+        self._send_json(200, {"type": "message", "text": "Queued loki job %s" % job_id})
+
     def _handle_sentry(self):
         """POST /sentry -- Sentry alert, HMAC-verified, enqueues a fix run."""
         body = self._read_body()
@@ -1596,6 +1823,12 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/linear":
             self._handle_linear()
+            return
+        if path == "/jira":
+            self._handle_jira()
+            return
+        if path == "/teams":
+            self._handle_teams()
             return
         if path != "/webhook":
             self._send_json(404, {"error": "not found"})
@@ -1782,6 +2015,11 @@ def main():
     slack_secret, linear_secret = resolve_chat_secrets(
         os.environ, secret, api_token, sentry_secret)
 
+    jira_secret, teams_secret = resolve_delegation_secrets(
+        os.environ, [secret, api_token, sentry_secret, slack_secret, linear_secret])
+    WebhookHandler.jira_assignees = _csv_set(os.environ.get("JIRA_ASSIGNEES", ""))
+    WebhookHandler.jira_labels = _csv_set(os.environ.get("JIRA_LABELS", ""))
+
     # Persist resolved values, but never write the secret to disk.
     config["port"] = port
     config["dry_run"] = dry_run
@@ -1798,6 +2036,8 @@ def main():
     WebhookHandler.sentry_secret = sentry_secret
     WebhookHandler.slack_secret = slack_secret
     WebhookHandler.linear_secret = linear_secret
+    WebhookHandler.jira_secret = jira_secret
+    WebhookHandler.teams_secret = teams_secret
     WebhookHandler.dispatcher = dispatcher
 
     signing_key, signing_kid = load_signing_key(auto_generate=False)
@@ -1854,6 +2094,14 @@ def main():
             "No Linear webhook secret configured: POST /linear is rejected with "
             "503. Set LINEAR_WEBHOOK_SECRET."
         )
+    if not jira_secret:
+        logging.warning(
+            "No Jira webhook secret configured: POST /jira is rejected with "
+            "503. Set JIRA_WEBHOOK_SECRET.")
+    if not teams_secret:
+        logging.warning(
+            "No Teams security token configured: POST /teams is rejected with "
+            "503. Set TEAMS_SECURITY_TOKEN.")
     if not secret:
         logging.warning(
             "No webhook secret configured: ALL webhooks will be rejected with "

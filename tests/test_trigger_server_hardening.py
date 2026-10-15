@@ -13,6 +13,8 @@ Standard library only (unittest). Run with:
     python3 tests/test_trigger_server_hardening.py
 """
 
+import base64
+import datetime
 import hashlib
 import hmac
 import http.client
@@ -843,14 +845,22 @@ class TestSentryWebhook(unittest.TestCase):
         self.assertEqual(seen, [])
 
 
+TEAMS_TOKEN = base64.b64encode(b"teams-key-bytes").decode()
+
+
 class _ChatFixture(_ServerFixture):
-    def __init__(self, dispatcher, slack="slacksecret", linear="linearsecret"):
+    def __init__(self, dispatcher, slack="slacksecret", linear="linearsecret",
+                 jira="jirasecret", teams=None, assignees=("acc-1",), labels=("loki",)):
         class _H(ts.WebhookHandler):
             pass
 
         _H.secret = "ghsecret"
         _H.slack_secret = slack
         _H.linear_secret = linear
+        _H.jira_secret = jira
+        _H.teams_secret = TEAMS_TOKEN if teams is None else teams
+        _H.jira_assignees = frozenset(assignees)
+        _H.jira_labels = frozenset(labels)
         _H.dry_run = False
         _H.dispatcher = dispatcher
         _H.log_message = lambda *a, **k: None
@@ -1094,6 +1104,192 @@ class TestSlackLinearDelegation(unittest.TestCase):
         self.assertEqual(ts.resolve_chat_secrets(env, "gh", "", ""), ("", ""))
         env = {"SLACK_SIGNING_SECRET": "a", "LINEAR_WEBHOOK_SECRET": "b"}
         self.assertEqual(ts.resolve_chat_secrets(env, "gh", "tok", "sen"), ("a", "b"))
+
+
+class TestJiraTeamsDelegation(unittest.TestCase):
+    """POST /jira and /teams: signed, PR-only, never a deploy argument."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        patch.object(ts, "send_notification").start()
+
+    def tearDown(self):
+        patch.stopall()
+        os.chdir(self.orig_cwd)
+
+    def _run(self, fn, **fixture):
+        seen = []
+
+        def fake_outcome(args, dry_run=False):
+            seen.append(args)
+            return "passed"
+
+        with patch.object(ts, "run_loki_outcome", side_effect=fake_outcome):
+            disp = ts.Dispatcher(workers=1, queue_size=8, dry_run=False)
+            srv = _ChatFixture(disp, **fixture)
+            try:
+                result = fn(srv)
+                disp.queue.join()
+            finally:
+                srv.close()
+                disp.shutdown()
+        return result, seen
+
+    def _jira_body(self, event="jira:issue_created", assignee="acc-1", labels=(),
+                   changed=None, key="ENG-7", desc="Line one\nLine two"):
+        payload = {"webhookEvent": event,
+                   "issue": {"key": key, "fields": {
+                       "summary": "Crash on save", "description": desc,
+                       "labels": list(labels),
+                       "assignee": {"accountId": assignee} if assignee else None}}}
+        if changed is not None:
+            payload["changelog"] = {"items": [{"field": f} for f in changed]}
+        return json.dumps(payload).encode()
+
+    def _jira(self, body, secret="jirasecret", sig=True, delivery="d1"):
+        h = {"X-Atlassian-Webhook-Identifier": delivery}
+        if sig:
+            h["X-Hub-Signature"] = "sha256=" + hmac.new(
+                secret.encode(), body, hashlib.sha256).hexdigest()
+        return lambda s: s.raw("/jira", body, h)
+
+    def _teams_body(self, text="<at>loki</at> fix the flaky login test", ts_iso=None,
+                    act_id="a1"):
+        ts_iso = ts_iso or datetime.datetime.now(datetime.timezone.utc).isoformat()
+        return json.dumps({"type": "message", "id": act_id, "text": text,
+                           "timestamp": ts_iso}).encode()
+
+    def _teams(self, body, token=TEAMS_TOKEN, sig=True):
+        h = {}
+        if sig:
+            h["Authorization"] = "HMAC " + ts.sign_teams_body(token, body)
+        return lambda s: s.raw("/teams", body, h)
+
+    def test_jira_bad_or_missing_signature_401(self):
+        body = self._jira_body()
+        for fn in (self._jira(body, secret="wrong"), self._jira(body, sig=False)):
+            (status, _), seen = self._run(fn)
+            self.assertEqual(status, 401)
+            self.assertEqual(seen, [])
+
+    def test_missing_secret_refuses_both_routes(self):
+        (status, data), seen = self._run(self._jira(self._jira_body()), jira="")
+        self.assertEqual(status, 503)
+        self.assertIn("JIRA_WEBHOOK_SECRET", json.loads(data)["error"])
+        (status, data), seen2 = self._run(self._teams(self._teams_body()), teams="")
+        self.assertEqual(status, 503)
+        self.assertIn("TEAMS_SECURITY_TOKEN", json.loads(data)["error"])
+        self.assertEqual(seen + seen2, [])
+
+    def test_jira_valid_enqueues_normalized_pr_only_brief(self):
+        (status, data), seen = self._run(self._jira(self._jira_body()))
+        self.assertEqual(status, 202)
+        self.assertIn("id", json.loads(data))
+        self.assertEqual(len(seen), 1)
+        args = seen[0]
+        self.assertEqual(args[0], "start")
+        self.assertIn("ENG-7", args[1])
+        self.assertIn("Crash on save", args[1])
+        self.assertIn("Line one Line two", args[1])
+        self.assertEqual(args[2:], ["--pr", "--detach"])
+        self.assertNotIn("--deploy", args)
+
+    def test_jira_label_match_and_non_matching_skipped(self):
+        (status, _), seen = self._run(
+            self._jira(self._jira_body(assignee=None, labels=["loki"])))
+        self.assertEqual(status, 202)
+        (status, data), seen2 = self._run(
+            self._jira(self._jira_body(assignee="other", labels=["x"])))
+        self.assertEqual((status, json.loads(data)["status"]), (200, "skipped"))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen2, [])
+
+    def test_jira_update_only_fires_on_assignee_or_label_change(self):
+        (status, _), seen = self._run(self._jira(self._jira_body(
+            event="jira:issue_updated", changed=["status"])))
+        self.assertEqual(status, 200)
+        self.assertEqual(seen, [])
+        (status, _), seen = self._run(self._jira(self._jira_body(
+            event="jira:issue_updated", changed=["assignee"])))
+        self.assertEqual(status, 202)
+        self.assertEqual(len(seen), 1)
+
+    def test_jira_replayed_delivery_and_bad_key_not_enqueued(self):
+        body = self._jira_body()
+
+        def twice(s):
+            first = self._jira(body)(s)
+            return first, self._jira(body)(s)
+
+        ((s1, _), (s2, d2)), seen = self._run(twice)
+        self.assertEqual((s1, s2, json.loads(d2)["status"]), (202, 200, "duplicate"))
+        self.assertEqual(len(seen), 1)
+        (status, _), seen = self._run(self._jira(self._jira_body(key="--x")))
+        self.assertEqual(status, 400)
+        self.assertEqual(seen, [])
+
+    def test_jira_dash_leading_summary_cannot_become_a_flag(self):
+        (status, _), seen = self._run(self._jira(self._jira_body(desc="--deploy prod")))
+        self.assertEqual(status, 202)
+        self.assertTrue(seen[0][1].startswith("Resolve Jira issue"))
+        self.assertEqual(seen[0][2:], ["--pr", "--detach"])
+
+    def test_teams_bad_or_missing_signature_401(self):
+        body = self._teams_body()
+        other = base64.b64encode(b"other").decode()
+        for fn in (self._teams(body, token=other), self._teams(body, sig=False)):
+            (status, _), seen = self._run(fn)
+            self.assertEqual(status, 401)
+            self.assertEqual(seen, [])
+
+    def test_teams_stale_or_missing_timestamp_refused(self):
+        old = (datetime.datetime.now(datetime.timezone.utc)
+               - datetime.timedelta(seconds=400)).isoformat()
+        no_ts = json.dumps({"type": "message", "text": "fix it"}).encode()
+        for body in (self._teams_body(ts_iso=old), no_ts):
+            (status, _), seen = self._run(self._teams(body))
+            self.assertEqual(status, 401)
+            self.assertEqual(seen, [])
+
+    def test_teams_valid_enqueues_pr_only_and_replies_job_id(self):
+        (status, data), seen = self._run(self._teams(self._teams_body()))
+        self.assertEqual(status, 200)
+        reply = json.loads(data)
+        self.assertEqual(reply["type"], "message")
+        self.assertTrue(reply["text"].startswith("Queued loki job "))
+        self.assertEqual(seen, [["start", "fix the flaky login test", "--pr", "--detach"]])
+        self.assertNotIn("--deploy", seen[0])
+
+    def test_teams_invalid_brief_and_replay_not_enqueued(self):
+        (status, _), seen = self._run(self._teams(self._teams_body(text="--deploy prod")))
+        self.assertEqual(status, 200)
+        body = self._teams_body()
+
+        def twice(s):
+            return self._teams(body)(s), self._teams(body)(s)
+
+        _, seen2 = self._run(twice)
+        self.assertEqual(seen, [])
+        self.assertEqual(len(seen2), 1)
+
+    def test_generic_job_has_no_pr_flag(self):
+        # /jobs behaviour unchanged: only Jira/Teams opt into --pr.
+        with patch.object(ts, "run_loki_outcome", return_value="passed") as m:
+            ts.handle_job_event({"spec": "build a thing", "job_id": "j"})
+        self.assertEqual(m.call_args[0][0], ["start", "build a thing", "--detach"])
+
+    def test_secrets_denied_to_child_and_must_differ(self):
+        with patch.dict(os.environ, {"JIRA_WEBHOOK_SECRET": "x", "TEAMS_SECURITY_TOKEN": "y"}):
+            env = ts._scoped_child_env()
+        self.assertNotIn("JIRA_WEBHOOK_SECRET", env)
+        self.assertNotIn("TEAMS_SECURITY_TOKEN", env)
+        e = {"JIRA_WEBHOOK_SECRET": "a", "TEAMS_SECURITY_TOKEN": "b"}
+        self.assertEqual(ts.resolve_delegation_secrets(e, ["a"]), ("", "b"))
+        self.assertEqual(ts.resolve_delegation_secrets(e, ["b"]), ("a", ""))
+        e = {"JIRA_WEBHOOK_SECRET": "a", "TEAMS_SECURITY_TOKEN": "a"}
+        self.assertEqual(ts.resolve_delegation_secrets(e, []), ("", ""))
 
 
 if __name__ == "__main__":
