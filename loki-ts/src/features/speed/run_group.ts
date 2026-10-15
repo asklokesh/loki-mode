@@ -12,6 +12,7 @@ import { join } from "node:path";
 import type { Dag, Unit } from "../decompose.ts";
 import { freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
 import { integrate } from "../../engine10/integrate.ts";
+import { integrateWithFixes, type FixUnit } from "./fix_units.ts";
 import type { receiptSha256 as ReceiptSha256Fn } from "../../engine10/stages/seal.ts";
 import type { verifyReceipt as VerifyReceiptFn } from "../../engine10/verify_cmd.ts";
 import { composeGroupReceipt } from "./seal_group.ts";
@@ -124,6 +125,16 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   let startBranch = "";
   let units: StoredUnit[];
   let full: Dag;
+  /** Leaves loki/group-<id> (when HEAD is on it) and deletes it; returns an error text, or null. */
+  const dropGroupBranch = (): string | null => {
+    const gb = `loki/group-${groupId}`;
+    if (git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${gb}`]) === "") return null;
+    if (git(repoDir, ["symbolic-ref", "--short", "-q", "HEAD"]) === gb) {
+      const co = safeGitSpawn(repoDir, startBranch ? ["checkout", "-q", startBranch] : ["checkout", "-q", "--detach", baseRef], { encoding: "utf8" });
+      if (co.status !== 0) return `cannot leave ${gb}: ${String(co.stderr).trim()}`;
+    }
+    return safeGitSpawn(repoDir, ["branch", "-D", gb], { encoding: "utf8" }).status !== 0 ? `cannot remove stale ${gb}` : null;
+  };
   if (resumable) {
     // Same spec: reuse the gid, the stored DAG, its base and the frozen contract (never refreeze, never re-decompose).
     baseRef = String(resumable.stored["base_ref"]);
@@ -141,15 +152,9 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
       say(`loki: resuming group ${groupId}: group receipt already VERIFIED on ${`loki/group-${groupId}`}; nothing to run\n`);
       return 0;
     }
-    // integrate refuses an existing group branch; a leftover one is this group's own earlier integration, so drop it (leaving it first if HEAD is on it).
-    const gb = `loki/group-${groupId}`;
-    if (git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${gb}`]) !== "") {
-      if (git(repoDir, ["symbolic-ref", "--short", "-q", "HEAD"]) === gb) {
-        const co = safeGitSpawn(repoDir, startBranch ? ["checkout", "-q", startBranch] : ["checkout", "-q", "--detach", baseRef], { encoding: "utf8" });
-        if (co.status !== 0) { say(`loki: FAILED: cannot leave ${gb} to resume group ${groupId}: ${String(co.stderr).trim()}\n`); return 1; }
-      }
-      if (safeGitSpawn(repoDir, ["branch", "-D", gb], { encoding: "utf8" }).status !== 0) { say(`loki: FAILED: cannot remove stale ${gb} to resume group ${groupId}\n`); return 1; }
-    }
+    // integrate refuses an existing group branch; a leftover one is this group's own earlier integration, so drop it.
+    const dropErr = dropGroupBranch();
+    if (dropErr) { say(`loki: FAILED: ${dropErr} (resuming group ${groupId})\n`); return 1; }
   } else {
     const frozen = freezeGroupContract(repoDir, groupId, dag.units, parseContract(ctx.spec, ctx.specPath ?? ""));
     if (!frozen.ok) { say(`loki: ${frozen.reason}\n`); return 1; }
@@ -169,7 +174,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   mkdirSync(specDir, { recursive: true });
   for (const u of units) {
     const spec = join(specDir, `${u.id}.json`);
-    atomicWriteJson(spec, { id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: accOf.get(u.id) ?? [] });
+    atomicWriteJson(spec, { id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: (u as Partial<FixUnit>).acceptance ?? accOf.get(u.id) ?? [] });
     u.spec = spec;
   }
   // Resume bookkeeping: a unit is done only on a verified, head-matching harvest; anything else drops its stale harvest and reruns.
@@ -179,6 +184,9 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     if (u.done) doneCount++;
     else if (resumable && UNIT_ID_RE.test(u.id)) rmSync(join(groupDir, "group", "units", u.id), { recursive: true, force: true });
   }
+  // An unfinished fix unit (and every later one) is dropped: its base integration no longer exists; the fix loop re-derives it.
+  const cut = units.findIndex((u) => (u as Partial<FixUnit>).fixKind && !u.done);
+  if (cut >= 0) for (const u of units.splice(cut)) { if (u.done) doneCount--; rmSync(join(groupDir, "group", "units", u.id), { recursive: true, force: true }); }
   if (resumable) say(`loki: resuming group ${groupId}: ${doneCount} of ${units.length} units already VERIFIED\n`);
   const dagPath = join(groupDir, "dag.json");
   atomicWriteJson(dagPath, { group: groupId, spec_sha256: specSha, base_ref: baseRef, start_branch: startBranch, ...full, units });
@@ -207,7 +215,22 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   if (launchCode !== 0) say(`loki: unit launcher exit ${launchCode}; ${failedUnits.length} unit(s) did not pass\n`);
   if (Object.keys(branches).length === 0) { say("loki: FAILED: no unit passed; nothing to integrate\n"); return 1; }
 
-  const r = integrate({ repoDir, groupId, baseRef, dag: full, branches, failedUnits, testCmd: testCommand(repoDir, env) });
+  const testCmd = testCommand(repoDir, env), fixes = units.filter((u) => (u as Partial<FixUnit>).fixKind) as FixUnit[];
+  const putDag = (us: StoredUnit[]): void => atomicWriteJson(dagPath, { group: groupId, spec_sha256: specSha, base_ref: baseRef, start_branch: startBranch, ...full, units: us });
+  const launchFix = async (fix: FixUnit): Promise<string | null> => {
+    const key = `unit-${groupId}-${units.length + 1}`, spec = join(specDir, `${fix.id}.json`), slug = slugOf();
+    if (!slug) return null;
+    atomicWriteJson(spec, { id: fix.id, writeSet: fix.writeSet, pack: fix.writeSet, tokenBudget: 1e9, acceptance: fix.acceptance });
+    fix.spec = spec; fix.done = false; units.push(fix);
+    putDag(units.map((u) => (u === fix ? u : { ...u, done: true })));
+    const res = await run([join(REPO_ROOT, "autonomy", "lib", "backlog.py"), slug, "--dag", dagPath, "--group", groupId, "--slots", "1", "--provider", provider], scopedEnv({ ...env, LOKI_PROVIDER: provider }), repoDir);
+    if (res.code !== 0 || !new RegExp(`^backlog: ${key} (VERIFIED|PR \\S+)$`, "m").test(res.stdout)) { units.pop(); return null; }
+    fix.done = true;
+    return `loki/${key}`;
+  };
+  const r = await integrateWithFixes({ repoDir, env, dag: { ...full, units: units.filter((u) => !(u as Partial<FixUnit>).fixKind) }, fixes, branches, failed: failedUnits, testCmd,
+    io: { integrate: (dag, br, failed) => integrate({ repoDir, groupId, baseRef, dag, branches: br, failedUnits: failed, testCmd }), launch: launchFix, leave: dropGroupBranch, say } });
+  if (fixes.length > 0) putDag(units);
   for (const [id, o] of Object.entries(r.perUnit)) say(`loki: unit ${id} ${o}\n`);
   if (!r.ok || launchCode !== 0) {
     say(`loki: FAILED: group not verified (${r.reason ?? "launcher reported a failed unit"})\n`);

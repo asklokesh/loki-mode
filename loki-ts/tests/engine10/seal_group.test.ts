@@ -501,11 +501,11 @@ describe("group run: Group Seal and resume", () => {
     sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
     return d;
   };
-  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[] }
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean }
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
-    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; done?: boolean }[] };
+    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; done?: boolean; fixKind?: string; fixFor?: string }[] };
     let out = "";
     for (const [i, u] of dag.units.entries()) {
       const n = i + 1, br = `loki/unit-${g}-${n}`;
@@ -513,11 +513,22 @@ describe("group run: Group Seal and resume", () => {
       calls.push(u.id);
       if (o.fail?.includes(n)) { out += `backlog: unit-${g}-${n} FAILED: exit 1\n`; continue; }
       const has = Bun.spawnSync({ cmd: ["git", "rev-parse", "--verify", "--quiet", `refs/heads/${br}`], cwd: repo }).exitCode === 0;
-      sh(has ? ["git", "checkout", "-q", br] : ["git", "checkout", "-q", "-b", br, "main"], repo);
-      writeFileSync(join(repo, `${g}-u${n}.txt`), `${calls.length}\n`);
-      sh(["git", "add", `${g}-u${n}.txt`], repo); sh(["git", "commit", "-q", "-m", `u${n}`], repo);
+      const prev = sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).trim();
+      if (u.fixKind) {
+        // A fix unit starts from the checked-out group branch (backlog.py worktrees start at HEAD).
+        if (o.fixFail) { out += `backlog: unit-${g}-${n} FAILED: exit 1\n`; continue; }
+        sh(["git", "checkout", "-q", "-b", br], repo);
+        if (u.fixKind === "conflict") sh(["git", "merge", "--no-ff", "-q", "-X", "theirs", "-m", "fix", `loki/unit-${g}-${dag.units.findIndex((x) => x.id === u.fixFor) + 1}`], repo);
+        else if (!o.fixNoop) { writeFileSync(join(repo, "ok.txt"), "ok\n"); sh(["git", "add", "ok.txt"], repo); }
+        sh(["git", "commit", "-q", "--allow-empty", "-m", "fix"], repo);
+      } else {
+        sh(has ? ["git", "checkout", "-q", br] : ["git", "checkout", "-q", "-b", br, "main"], repo);
+        const f = o.shared?.includes(n) ? "shared.txt" : `${g}-u${n}.txt`;
+        writeFileSync(join(repo, f), o.shared?.includes(n) ? `${n}\n` : `${calls.length}\n`);
+        sh(["git", "add", f], repo); sh(["git", "commit", "-q", "-m", `u${n}`], repo);
+      }
       const head = sh(["git", "rev-parse", "HEAD"], repo).trim();
-      sh(["git", "checkout", "-q", "main"], repo);
+      sh(["git", "checkout", "-q", prev], repo);
       const d = join(repo, ".loki", "groups", g, "group", "units", u.id);
       mkdirSync(d, { recursive: true });
       const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: {} }) + "\n";
@@ -630,6 +641,73 @@ describe("group run: Group Seal and resume", () => {
     const g = groups(repo)[0]!, gd = join(repo, ".loki", "groups", g);
     rewrite(join(gd, "group", "units", "u2", "receipt.json"), (r) => { r["verdict"] = "FAILED"; }, false);
     expect((await verifyReceipt(join(gd, "receipt.json"))).verdict).not.toBe("VERIFIED");
+  });
+
+  // GROUP-FIX-UNITS: u1 and u2 both add shared.txt, so integration conflicts on u2.
+  const unitsOf = (repo: string): string[] => dagOf(repo, groups(repo)[0]!).units.map((u: { id: string }) => u.id);
+  const brs = (repo: string): string[] => sh(["git", "branch", "--list", "loki/group-*"], repo).split("\n").map((l) => l.replace(/^[*+ ]+/, "")).filter(Boolean);
+
+  test("fix unit: conflict then a passing fix unit merges, re-runs the suite and VERIFIES with the fix in the receipt", async () => {
+    const repo = mkRepo("gr-fix-conflict"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { shared: [1, 2] }));
+    expect(err).toContain("running fix unit fixu-1");
+    expect(calls).toEqual(["u1", "u2", "u3", "fixu-1"]);
+    expect(code).toBe(0);
+    const gd = join(repo, ".loki", "groups", groups(repo)[0]!);
+    const rec = JSON.parse(readFileSync(join(gd, "receipt.json"), "utf8"));
+    expect(rec.verdict).toBe("VERIFIED");
+    expect(rec.group.units.map((u: { unit_id: string }) => u.unit_id)).toEqual(["u1", "u2", "u3", "fixu-1"]);
+    expect((await verifyReceipt(join(gd, "receipt.json"))).verdict).toBe("VERIFIED");
+    expect(unitsOf(repo)).toEqual(["u1", "u2", "u3", "fixu-1"]);
+    expect(dagOf(repo, groups(repo)[0]!).units[3]).toMatchObject({ fixKind: "conflict", fixFor: "u2", done: true });
+  });
+
+  test("fix unit: a failing suite gets one suite fix unit and then VERIFIES", async () => {
+    const repo = mkRepo("gr-fix-suite"), calls: string[] = [];
+    const { code } = await go(repo, fake(repo, calls), { LOKI_GROUP_TEST_CMD: "test -f ok.txt" });
+    expect(calls).toEqual(["u1", "u2", "u3", "fixu-1"]);
+    expect(code).toBe(0);
+  });
+
+  test("fix unit: a fix whose suite still fails ends not-verified naming the fix unit, and the cap of 2 holds", async () => {
+    const repo = mkRepo("gr-fix-cap"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { shared: [1, 2], fixNoop: true }), { LOKI_GROUP_TEST_CMD: "test -f never.txt" });
+    expect(calls).toEqual(["u1", "u2", "u3", "fixu-1", "fixu-2"]);
+    expect(code).toBe(1);
+    expect(err).toContain("unit fixu-2 fail");
+    expect(err).toContain("suite exit 1");
+    expect(err).toContain("FAILED: group not verified");
+  });
+
+  test("fix unit: a fix unit that fails keeps stop-and-name for the conflicting unit", async () => {
+    const repo = mkRepo("gr-fix-fails"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { shared: [1, 2], fixFail: true }));
+    expect(calls).toEqual(["u1", "u2", "u3", "fixu-1"]);
+    expect(code).toBe(1);
+    expect(err).toContain("unit u2 conflict");
+    expect(err).toContain("fix unit fixu-1 did not pass");
+  });
+
+  test("fix unit: LOKI_GROUP_FIX_UNITS=0 restores stop-and-name with no fix launched", async () => {
+    const repo = mkRepo("gr-fix-off"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { shared: [1, 2] }), { LOKI_GROUP_FIX_UNITS: "0" });
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+    expect(code).toBe(1);
+    expect(err).toContain("unit u2 conflict");
+    expect(err).not.toContain("fix unit");
+    expect(brs(repo).length).toBe(1);
+  });
+
+  test("fix unit: resume treats a finished fix unit like any other unit and launches nothing", async () => {
+    const repo = mkRepo("gr-fix-resume"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls, { shared: [1, 2] }))).code).toBe(0);
+    const gd = join(repo, ".loki", "groups", groups(repo)[0]!);
+    rmSync(join(gd, "receipt.json"));
+    const before = calls.length;
+    const { code, err } = await go(repo, fake(repo, calls, { shared: [1, 2] }));
+    expect(code).toBe(0);
+    expect(err).toContain("4 of 4 units already VERIFIED");
+    expect(calls.length).toBe(before);
   });
 
   test("an unsigned unit receipt under a signed group is NOT PROVEN, never exit 0", async () => {
