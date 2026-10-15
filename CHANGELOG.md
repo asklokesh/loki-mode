@@ -5,6 +5,13 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.10.1 (2026-10-15)
+
+Fix-forward release. v11.10.0 was cut but failed CI and was never published to npm. v11.10.1 carries every v11.10.0 change listed below, plus this fix.
+
+### Fixed
+- The router mutation proof test anchors on the implement session line as it now reads with the two-attempt path, so its haiku-pin mutations are applied and caught again.
+
 ## v11.10.0 (2026-10-15)
 
 Two concurrent implement attempts behind a flag, plus fixes for the advisories left open by the v11.9.0 train. `loki start` with Claude remains the primary path.

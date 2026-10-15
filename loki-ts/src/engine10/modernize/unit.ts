@@ -35,7 +35,7 @@ import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
 import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
 import { sealOracle, verifySeal } from "./oracle/seal.ts";
-import type { BaseConformanceRunner, BaseRunOutcome, PreSealedWallResult, PytestCounts } from "./presealed_wall.ts";
+import type { BaseConformanceRunner, BaseRunOutcome, PreSealedWallResult, PytestCounts, TestOutcome } from "./presealed_wall.ts";
 import { classifyBaseRun, sealPreSealedWall, verifyPreSealedWall } from "./presealed_wall.ts";
 import type { EquivResult, NewCaseRunner } from "./equiv.ts";
 import { checkEquivalence } from "./equiv.ts";
@@ -96,15 +96,60 @@ function parseJunit(xml: string): { tests: number; failures: number; errors: num
   return tests === undefined || failures === undefined || errors === undefined ? undefined : { tests, failures, errors };
 }
 
-/** Footer counts, trusted only when the junit report (never written by a process that dies early, and
- *  not forgeable by printing a footer) agrees with them. */
-function trustedCounts(stdout: string, junitXml: string | undefined): PytestCounts | undefined {
+const unesc = (v: string): string => v.replace(/&(lt|gt|quot|apos|amp|#x?[0-9a-fA-F]+);/g, (_m, e: string) =>
+  e === "lt" ? "<" : e === "gt" ? ">" : e === "quot" ? '"' : e === "apos" ? "'" : e === "amp" ? "&"
+    : String.fromCodePoint(e[1] === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)));
+const SEVERITY: TestOutcome[] = ["passed", "xpassed", "skipped", "xfailed", "failed", "error"];
+
+/** Per-testcase outcome from the junit report, keyed "classname::name"; a duplicated key keeps its worst outcome. */
+function parseJunitCases(xml: string): Record<string, TestOutcome> {
+  const out: Record<string, TestOutcome> = {};
+  for (const m of xml.matchAll(/<testcase\b((?:[^>"]|"[^"]*")*?)(\/>|>)/g)) {
+    const attrs: Record<string, string> = {};
+    for (const [, k, v] of (m[1] ?? "").matchAll(/([\w:.-]+)="([^"]*)"/g)) attrs[k!] = unesc(v ?? "");
+    let body = "";
+    if (m[2] === ">") {
+      const end = xml.indexOf("</testcase>", (m.index ?? 0) + m[0].length);
+      body = xml.slice((m.index ?? 0) + m[0].length, end < 0 ? undefined : end);
+    }
+    const sk = /<skipped\b([^>]*)>/.exec(body);
+    const o: TestOutcome = /<error\b/.test(body) ? "error" : /<failure\b/.test(body) ? "failed"
+      : sk ? (/type="pytest\.xfail"/.test(sk[1] ?? "") ? "xfailed" : "skipped") : "passed";
+    const key = `${attrs.classname ?? ""}::${attrs.name ?? ""}`;
+    const prev = out[key];
+    if (prev === undefined || SEVERITY.indexOf(o) > SEVERITY.indexOf(prev)) out[key] = o;
+  }
+  return out;
+}
+
+/** pytest nodeid ("pkg/test_m.py::Cls::test_x[p]") to the junit key ("pkg.test_m.Cls::test_x[p]"). */
+export function nodeidKey(nodeid: string): string {
+  const br = nodeid.indexOf("[");
+  const parts = (br < 0 ? nodeid : nodeid.slice(0, br)).split("::");
+  const param = br < 0 ? "" : nodeid.slice(br);
+  const file = (parts.shift() ?? "").replace(/\.py$/, "").split("/").join(".");
+  const name = (parts.pop() ?? "") + param;
+  return `${[file, ...parts].join(".")}::${name}`;
+}
+
+/** Footer counts and per-test outcomes, trusted only when the junit report (never written by a process that
+ *  dies early, and not forgeable by printing a footer) agrees with them, the run never hit pytest.exit, and
+ *  the report holds at least as many testcases as pytest said it collected. */
+function trustedRun(stdout: string, junitXml: string | undefined): { counts: PytestCounts; tests: Record<string, TestOutcome> } | undefined {
   const c = parseFooterCounts(stdout);
   const j = junitXml === undefined ? undefined : parseJunit(junitXml);
-  if (!c || !j) return undefined;
+  if (!c || !j || junitXml === undefined) return undefined;
   if (j.tests !== c.passed + c.failed + c.errors + c.skipped + c.other) return undefined;
   if (j.failures + j.errors !== c.failed + c.errors) return undefined;
-  return c;
+  if (/_pytest\.outcomes\.Exit/.test(stdout)) return undefined;
+  const col = [...stdout.matchAll(/^collected (\d+) items?(?:.*?(\d+) selected)?/gm)].pop();
+  if (col && j.tests < Number(col[2] ?? col[1])) return undefined;
+  const tests = parseJunitCases(junitXml);
+  for (const [, id] of stdout.matchAll(/^XPASS\S*\s+(\S+)/gm)) { // a non-strict xpass is a plain pass in junit
+    const k = nodeidKey(id!);
+    if (tests[k] === "passed") tests[k] = "xpassed";
+  }
+  return { counts: c, tests };
 }
 
 /** Parses one pytest run's raw stdout into presealed_wall.ts's BaseRunOutcome. Pure and
@@ -122,8 +167,8 @@ export function parsePytestOutput(
 ): BaseRunOutcome {
   const outcome: BaseRunOutcome = { runner: "pytest", exitCode, timedOut };
   if (timedOut || exitCode === null) return outcome;
-  const counts = trustedCounts(stdout, junitXml);
-  if (counts) outcome.counts = counts;
+  const run = trustedRun(stdout, junitXml);
+  if (run) { outcome.counts = run.counts; outcome.tests = run.tests; }
   // exit 2: hand the raw output to classifyBaseRun, which reuses the Wall's own red/not_run rule.
   if (exitCode === 2) return { ...outcome, output: stdout };
   if (exitCode === 1) {
@@ -141,29 +186,55 @@ export function parsePytestOutput(
  *  way spawnSync's own `timeout` option does (SIGTERM, then a null exitCode). */
 export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000): BaseConformanceRunner {
   return (_unit: string, repoDir: string): BaseRunOutcome => {
-    // Bytecode must never answer for source: no in-tree .pyc is read (fresh empty PYTHONPYCACHEPREFIX)
-    // or written (PYTHONDONTWRITEBYTECODE), and pytest's own cache plugin is off.
-    const pycPrefix = mkdtempSync(join(tmpdir(), "loki-pyc-"));
-    const junit = join(pycPrefix, "junit.xml");
-    let res;
-    let junitXml: string | undefined;
-    try {
-      let root = repoDir;
-      try { root = realpathSync(repoDir); } catch { /* spawn will report it */ }
-      // Pin rootdir/confcutdir to the tree and the ini to the tree's own (sealed) config, so no parent-dir
-      // ini or conftest.py is ever loaded; none in the tree means an empty config.
-      res = spawnSync(pythonBin, ["-m", "pytest", "-p", "no:cacheprovider", "--rootdir", root, "--confcutdir", root,
-        "-c", pytestConfigFor(root), `--junitxml=${junit}`], {
-        cwd: repoDir, encoding: "utf8", timeout: timeoutMs,
-        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pycPrefix },
-      });
-      try { junitXml = readFileSync(junit, "utf8"); } catch { junitXml = undefined; }
-    } finally { rmSync(pycPrefix, { recursive: true, force: true }); }
+    const { res, junitXml } = spawnPytest(pythonBin, repoDir, timeoutMs, [], true);
     const timedOut = res.signal === "SIGTERM" && res.status === null;
     // pytest's own report (the footer, the collection-error traceback) goes to stdout; stderr is
     // never appended ahead of it -- an unrelated stderr line (a warning, a plugin's own output)
     // must never shadow or precede the real footer this file's parser searches for.
     return parsePytestOutput(repoDir, `${res.stdout ?? ""}\n${res.stderr ?? ""}`, res.status, timedOut, junitXml);
+  };
+}
+
+/** One pytest child under the pinned configuration. Bytecode must never answer for source: no in-tree .pyc
+ *  is read (fresh empty PYTHONPYCACHEPREFIX) or written (PYTHONDONTWRITEBYTECODE), pytest's cache plugin is
+ *  off, and xfail is strict (-rX lists the rest). The junit file lives in its own mkdtemp dir that no env
+ *  variable the child sees points at. */
+function spawnPytest(pythonBin: string, repoDir: string, timeoutMs: number, extra: string[], withJunit: boolean) {
+  const pycPrefix = mkdtempSync(join(tmpdir(), "loki-pyc-"));
+  const junitDir = mkdtempSync(join(tmpdir(), "loki-junit-"));
+  const junit = join(junitDir, "junit.xml");
+  let junitXml: string | undefined;
+  try {
+    let root = repoDir;
+    try { root = realpathSync(repoDir); } catch { /* spawn will report it */ }
+    // Pin rootdir/confcutdir to the tree and the ini to the tree's own (sealed) config, so no parent-dir
+    // ini or conftest.py is ever loaded; none in the tree means an empty config.
+    const res = spawnSync(pythonBin, ["-m", "pytest", "-p", "no:cacheprovider", "--rootdir", root, "--confcutdir", root,
+      "-c", pytestConfigFor(root), "-o", "xfail_strict=true", "-rX", ...(withJunit ? [`--junitxml=${junit}`] : []), ...extra], {
+      cwd: repoDir, encoding: "utf8", timeout: timeoutMs,
+      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pycPrefix },
+    });
+    if (withJunit) { try { junitXml = readFileSync(junit, "utf8"); } catch { junitXml = undefined; } }
+    return { res, junitXml };
+  } finally {
+    rmSync(pycPrefix, { recursive: true, force: true });
+    rmSync(junitDir, { recursive: true, force: true });
+  }
+}
+
+/** Collects the nodeids of `files` (relative to repoDir) with `pytest --collect-only -q`, or a refusal. */
+export type CollectRunner = (unit: string, repoDir: string, files: string[]) => { ok: true; nodeids: string[] } | { ok: false; reason: string };
+
+export function makePytestCollector(pythonBin = "python3", timeoutMs = 300_000): CollectRunner {
+  return (_unit, repoDir, files) => {
+    const { res } = spawnPytest(pythonBin, repoDir, timeoutMs, ["--collect-only", "-q", ...files], false);
+    if (res.status !== 0) return { ok: false, reason: `collect-only exited ${res.status ?? "without a status"}` };
+    const out = res.stdout ?? "";
+    if (/_pytest\.outcomes\.Exit/.test(out)) return { ok: false, reason: "collect-only hit pytest.exit" };
+    const nodeids = out.split("\n").filter((l) => /^\S.*\.py::\S/.test(l) && !l.startsWith("ERROR "));
+    const n = /(\d+) tests? collected/.exec(out);
+    if (!n || Number(n[1]) !== nodeids.length) return { ok: false, reason: "collect-only count disagrees with its nodeid list" };
+    return nodeids.length === 0 ? { ok: false, reason: "collect-only found no sealed tests" } : { ok: true, nodeids };
   };
 }
 
@@ -176,8 +247,8 @@ function pytestConfigFor(root: string): string {
     if (!marker) return true;
     try { return marker.test(readFileSync(p, "utf8")); } catch { return false; }
   };
-  if (has("pytest.ini")) return join(root, "pytest.ini");
-  if (has(".pytest.ini")) return join(root, ".pytest.ini");
+  // pytest 9 order: pytest.ini, .pytest.ini, pytest.toml, .pytest.toml, pyproject.toml, tox.ini, setup.cfg.
+  for (const f of ["pytest.ini", ".pytest.ini", "pytest.toml", ".pytest.toml"]) if (has(f)) return join(root, f);
   if (has("pyproject.toml", /^\s*\[tool\.pytest|^\s*(tool\.)?pytest\./m)) return join(root, "pyproject.toml");
   if (has("tox.ini", /^\s*\[pytest\]/m)) return join(root, "tox.ini");
   if (has("setup.cfg", /^\s*\[tool:pytest\]/m)) return join(root, "setup.cfg");
@@ -330,16 +401,16 @@ function conformanceDrift(base: Record<string, string>, now: Record<string, stri
   return hit ? `${hit} added (shadows a module importable outside the repo)` : null;
 }
 
-/** Why `now` (the post-implement run) is not a full pass relative to `base`, or null. Fails closed. */
-export function conformanceShortfall(base: PytestCounts | undefined, now: PytestCounts | undefined): string | null {
-  if (!base) return "no base test counts were recorded at seal time";
-  if (!now) return "no verified pytest footer (the run did not finish or its report disagrees)";
-  if (now.failed > 0 || now.errors > 0) return `${now.failed} failed, ${now.errors} errors`;
-  // Every base test that was not skipped there must pass now (skips may stay skips, never grow).
-  const mustPass = base.passed + base.failed + base.errors + base.other;
-  if (now.passed < mustPass) return `${now.passed} passed, base collected ${mustPass} runnable`;
-  if (now.skipped > base.skipped) return `${now.skipped} skipped, base had ${base.skipped}`;
-  return null;
+/** Why the post-implement run is not a full pass of the sealed tests, or null. Fails closed. `expected` are the
+ *  sealed test identities ("classname::name"); every one must have outcome passed (not skipped, xfailed,
+ *  xpassed or error). Identities outside the set never count. */
+export function conformanceShortfall(expected: string[] | undefined, now: Pick<BaseRunOutcome, "counts" | "tests"> | undefined): string | null {
+  if (!expected || expected.length === 0) return "no sealed test identities were recorded";
+  if (!now?.counts || !now.tests) return "no verified pytest footer (the run did not finish or its report disagrees)";
+  if (now.counts.failed > 0 || now.counts.errors > 0) return `${now.counts.failed} failed, ${now.counts.errors} errors`;
+  const bad = expected.filter((id) => now.tests![id] !== "passed");
+  if (bad.length === 0) return null;
+  return `${bad.length} of ${expected.length} sealed tests did not pass (${bad.slice(0, 3).map((id) => `${id}: ${now.tests![id] ?? "did not run"}`).join(", ")})`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -415,6 +486,8 @@ export function runUnit(
   runNew: NewCaseRunner,
   /** Runs an oracle case against the unit REPLACED BY STUBS (the no-op ablation). Required for PROVEN. */
   runStub?: NewCaseRunner,
+  /** Collects the sealed test files' nodeids after implement; required when the base was a collection error. */
+  collect?: CollectRunner,
 ): UnitRunResult {
   const { repoDir, mid, unit } = card;
   const newTreeDir = card.newTreeDir ?? repoDir;
@@ -439,11 +512,11 @@ export function runUnit(
   // Pre-sealed Wall: runs the conformance check on the base (unmodernized) tree, still before
   // `implement` -- a green or not_run base refuses the seal outright (section 7, D42 (3)).
   let freshSeal = false;
-  let baseCounts: PytestCounts | undefined;
+  let expected: string[] | null | undefined; // sealed test identities; null = base never collected, derive post-implement
   try {
     const attempt = sealPreSealedWall(repoDir, mid, unit, card.target, (u, d) => {
       const o = runConformance(u, d);
-      baseCounts = o.counts;
+      expected = o.exitCode === 2 ? null : o.tests && Object.entries(o.tests).filter(([, v]) => v === "passed" || v === "failed" || v === "error").map(([k]) => k);
       return o;
     }, log, card.baseSha ?? null);
     if (!attempt.sealed) {
@@ -483,9 +556,9 @@ export function runUnit(
   if (!sealedHashes) {
     if (!freshSeal) return notProvenUnitResult(unit, "conformance files not bound to the seal (no record from seal time)", oracle, wall);
     sealedHashes = conformanceHashes(repoDir);
-    log.append(CONF_EVENT, { unit, files: sealedHashes, counts: baseCounts ?? null });
+    log.append(CONF_EVENT, { unit, files: sealedHashes, expected: expected === undefined ? [] : expected });
   } else {
-    baseCounts = (bound?.data.counts as PytestCounts | null | undefined) ?? undefined;
+    expected = bound?.data.expected as string[] | null | undefined;
   }
 
   // Only now: the actual code change.
@@ -525,9 +598,17 @@ export function runUnit(
       wall,
     );
   }
-  // A bare exit 0 is not proof (os._exit(0), an all-skipped run): the run must show a real pytest footer
-  // (confirmed by the junit report) with nothing failed, at least as many passes as the base collected, no new skips.
-  const shortfall = conformanceShortfall(baseCounts, newOutcome.counts);
+  // A bare exit 0 is not proof (os._exit(0), pytest.exit, an all-skipped or xfailed run): every sealed test
+  // identity must appear in the verified junit report with outcome passed.
+  let want = expected ?? undefined;
+  if (expected === null) {
+    const files = Object.keys(sealedHashes).filter((p) => TEST_FILE.test(p) && !p.split("/").some(skipName) && !sealedHashes![p]!.startsWith(LINK) && !sealedHashes![p]!.startsWith("entry:"));
+    if (!collect || files.length === 0) return notProvenUnitResult(unit, "target conformance run is not a full pass: base never collected and no sealed tests can be collected", oracle, wall);
+    const col = collect(unit, newTreeDir, files);
+    if (!col.ok) return notProvenUnitResult(unit, `target conformance run is not a full pass: ${col.reason}`, oracle, wall);
+    want = col.nodeids.map(nodeidKey);
+  }
+  const shortfall = conformanceShortfall(want, newOutcome);
   if (shortfall) return notProvenUnitResult(unit, `target conformance run is not a full pass: ${shortfall}`, oracle, wall);
 
   return { unit, verdict: "PROVEN", oracle, wall, equiv, not_proven: [] };

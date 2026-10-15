@@ -20,7 +20,7 @@ import { DEFAULT_NORMALIZERS, sealOracle } from "../../../src/engine10/modernize
 import { classifyBaseRun, sealPreSealedWall } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { CaseRecord, NewCaseOutcome } from "../../../src/engine10/modernize/equiv.ts";
-import { conformanceHashes, conformanceShortfall, isSealedName, makePytestBaseRunner, parsePytestOutput, purgePycache, runUnit } from "../../../src/engine10/modernize/unit.ts";
+import { conformanceHashes, conformanceShortfall, isSealedName, makePytestBaseRunner, makePytestCollector, nodeidKey, parsePytestOutput, purgePycache, runUnit } from "../../../src/engine10/modernize/unit.ts";
 import type { UnitCard } from "../../../src/engine10/modernize/unit.ts";
 import type { ModernizeLog as Log } from "../../../src/engine10/modernize/log.ts";
 
@@ -65,8 +65,8 @@ function baseCard(unit: string): UnitCard {
   return { unit, repoDir, mid, target: "python3", normalizers: DEFAULT_NORMALIZERS };
 }
 
-const redBase: BaseRunOutcome = { runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1, counts: { passed: 0, failed: 1, errors: 0, skipped: 0, other: 0 } };
-const greenBase: BaseRunOutcome = { runner: "pytest", exitCode: 0, timedOut: false, counts: { passed: 1, failed: 0, errors: 0, skipped: 0, other: 0 } };
+const redBase: BaseRunOutcome = { runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1, counts: { passed: 0, failed: 1, errors: 0, skipped: 0, other: 0 }, tests: { "t::a": "failed" } };
+const greenBase: BaseRunOutcome = { runner: "pytest", exitCode: 0, timedOut: false, counts: { passed: 1, failed: 0, errors: 0, skipped: 0, other: 0 }, tests: { "t::a": "passed" } };
 const passingNewCase = (): NewCaseOutcome => ({
   return: { t: "int", v: "2" }, exc: null, stdout: { t: "text", v: "" }, files: [],
 });
@@ -788,16 +788,21 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     expect(result.verdict).toBe("NOT_PROVEN");
     expect(result.not_proven[0]).toMatch(/not a full pass|classified not_run/);
   });
-  it("r5 A1: conformanceShortfall rules", () => {
-    const c = (passed: number, failed = 0, errors = 0, skipped = 0, other = 0) => ({ passed, failed, errors, skipped, other });
-    expect(conformanceShortfall(undefined, c(3))).toMatch(/no base/);
-    expect(conformanceShortfall(c(2, 1), undefined)).toMatch(/no verified/);
-    expect(conformanceShortfall(c(2, 1), c(2, 1))).toMatch(/1 failed/);
-    expect(conformanceShortfall(c(2, 0, 1), c(2, 0, 1))).toMatch(/errors/);
-    expect(conformanceShortfall(c(2, 1), c(2))).toMatch(/base collected 3 runnable/);
-    expect(conformanceShortfall(c(2, 1), c(3, 0, 0, 1))).toMatch(/skipped/);
-    expect(conformanceShortfall(c(2, 1), c(3))).toBeNull();
-    expect(conformanceShortfall(c(1, 0, 0, 1), c(1, 0, 0, 1))).toBeNull();
+  it("r6: conformanceShortfall rules are per test identity", () => {
+    const run = (tests: Record<string, string>, failed = 0, errors = 0) =>
+      ({ counts: { passed: 0, failed, errors, skipped: 0, other: 0 }, tests: tests as Record<string, "passed"> });
+    expect(conformanceShortfall(undefined, run({ "a::t": "passed" }))).toMatch(/no sealed test identities/);
+    expect(conformanceShortfall(["a::t"], undefined)).toMatch(/no verified/);
+    expect(conformanceShortfall(["a::t"], run({ "a::t": "passed" }, 1))).toMatch(/1 failed/);
+    expect(conformanceShortfall(["a::t"], run({ "a::t": "passed" }, 0, 1))).toMatch(/errors/);
+    for (const o of ["skipped", "xfailed", "xpassed", "error", "failed"]) expect(conformanceShortfall(["a::t"], run({ "a::t": o }))).toMatch(new RegExp(`a::t: ${o}`));
+    expect(conformanceShortfall(["a::t", "a::u"], run({ "a::t": "passed" }))).toMatch(/a::u: did not run/);
+    expect(conformanceShortfall(["a::t"], run({ "a::t": "passed", "a::new": "passed" }))).toBeNull();
+    expect(conformanceShortfall(["a::t"], run({ "a::new1": "passed", "a::new2": "passed" }))).toMatch(/a::t: did not run/);
+  });
+  it("r6: nodeidKey maps pytest nodeids to junit classname::name", () => {
+    expect(nodeidKey("test_conf.py::test_a")).toBe("test_conf::test_a");
+    expect(nodeidKey("pkg/test_m.py::Cls::test_a[x::y.z]")).toBe("pkg.test_m.Cls::test_a[x::y.z]");
   });
 
   // A2: the conformance run never loads an ini or conftest.py from above the tree.
@@ -829,4 +834,125 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     expect(parsePytestOutput("/r", out, 0, false, xml(1, 1)).counts).toBeUndefined(); // failures disagree
   });
 
+describe("r6: the post-implement check is per sealed test identity, real pytest", () => {
+  const real = () => makePytestBaseRunner("python3", 60_000);
+  const col = () => makePytestCollector("python3", 60_000);
+  const run = (card: UnitCard, impl: () => void) => runUnit(card, log, real(), impl, () => passingNewCase(), failingStub, col());
+  const n5 = [1, 2, 3, 4, 5];
+  const bodies = (k: number[]) => k.map((i) => `def test_${i}():\n    assert f(${i}) == ${i}\n`).join("\n");
+
+  for (const withFiles of [false, true]) {
+    const tag = withFiles ? "with card.files" : "without card.files";
+    const card = (unit: string): UnitCard => (withFiles ? { ...baseCard(unit), files: ["u.py"] } : baseCard(unit));
+
+    describe(tag, () => {
+      const collectErrorBase = (unit: string) => {
+        sealOracleFixture(unit);
+        writeFileSync(join(repoDir, "u.py"), "# no f yet\n");
+        writeFileSync(join(repoDir, "test_conf.py"), `from u import f\n\n${bodies(n5)}`);
+      };
+      it("positive control: a genuine modernization of a collection-error base reaches PROVEN", () => {
+        const unit = `r6_ctl_col_${withFiles}`;
+        collectErrorBase(unit);
+        const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"), "def f(x):\n    return x\n"));
+        expect(r.not_proven).toEqual([]);
+        expect(r.verdict).toBe("PROVEN");
+      });
+      it("B1: pytest.exit(returncode=0) after one test on a collection-error base is never PROVEN", () => {
+        const unit = `r6_b1_${withFiles}`;
+        collectErrorBase(unit);
+        const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"),
+          "import pytest\ndef f(x):\n    if x > 1:\n        pytest.exit('done', returncode=0)\n    return x\n"));
+        expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.not_proven[0]).toMatch(/not a full pass|classified/);
+      });
+      it("B1: a collection-error base with no collector injected is refused", () => {
+        const unit = `r6_b1_nocol_${withFiles}`;
+        collectErrorBase(unit);
+        const r = runUnit(card(unit), log, real(), () => writeFileSync(join(repoDir, "u.py"), "def f(x):\n    return x\n"), () => passingNewCase(), failingStub);
+        expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.not_proven[0]).toMatch(/no sealed tests can be collected/);
+      });
+      it("B1: a post-implement collection that itself errors is refused", () => {
+        const unit = `r6_b1_colerr_${withFiles}`;
+        collectErrorBase(unit);
+        const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"), "x = 1\n"));
+        expect(r.verdict).toBe("NOT_PROVEN");
+      });
+      const redBaseFiles = (unit: string, star: boolean) => {
+        sealOracleFixture(unit);
+        writeFileSync(join(repoDir, "u.py"), "# no f yet\n");
+        writeFileSync(join(repoDir, "test_conf.py"), star ? `from u import *\n\n${bodies([1, 2, 3])}` : `import u\n\n${bodies(n5).replace(/f\(/g, "u.f(")}`);
+      };
+      it("positive control: a genuine modernization of a red base (run failures) reaches PROVEN", () => {
+        const unit = `r6_ctl_red_${withFiles}`;
+        redBaseFiles(unit, false);
+        const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"), "def f(x):\n    return x\n"));
+        expect(r.not_proven).toEqual([]);
+        expect(r.verdict).toBe("PROVEN");
+      });
+      it("B2: pytest.xfail() from the unit (1 passed, 4 xfailed) is never PROVEN", () => {
+        const unit = `r6_b2_${withFiles}`;
+        redBaseFiles(unit, false);
+        const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"),
+          "import pytest\ndef f(x):\n    if x > 1:\n        pytest.xfail('no')\n    return x\n"));
+        expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.not_proven[0]).toMatch(/xfailed/);
+      });
+      it("B3: new passing test ids via star import cannot stand in for the sealed ones", () => {
+        const unit = `r6_b3_${withFiles}`;
+        redBaseFiles(unit, true);
+        const r = run(card(unit), () => writeFileSync(join(repoDir, "u.py"),
+          "import pytest\ndef test_p1(): pass\ndef test_p2(): pass\ndef test_p3(): pass\ndef f(x):\n    pytest.xfail('no')\n"));
+        expect(r.verdict).toBe("NOT_PROVEN");
+        expect(r.not_proven[0]).toMatch(/test_conf::test_1: xfailed/);
+      });
+    });
+  }
+
+  const xml = (n: number, extra = "") => `<?xml version="1.0"?><testsuites><testsuite name="pytest" errors="0" failures="0" skipped="0" tests="${n}">${
+    Array.from({ length: n }, (_, i) => `<testcase classname="t" name="t${i}"/>`).join("")}${extra}</testsuite></testsuites>`;
+  it("a run showing _pytest.outcomes.Exit is never trusted, even with a consistent junit", () => {
+    const out = "collected 1 item\n\n!!!!!! _pytest.outcomes.Exit: done !!!!!!\n=== 1 passed in 0.01s ===\n";
+    expect(parsePytestOutput("/r", out, 0, false, xml(1)).counts).toBeUndefined();
+    expect(parsePytestOutput("/r", out.replace("_pytest.outcomes.Exit", "ok"), 0, false, xml(1)).counts).toBeDefined();
+  });
+  it("a junit with fewer testcases than pytest collected is never trusted", () => {
+    const out = "collected 5 items\n\n=== 1 passed in 0.01s ===\n";
+    expect(parsePytestOutput("/r", out, 0, false, xml(1)).counts).toBeUndefined();
+    expect(parsePytestOutput("/r", "collected 5 items / 4 deselected / 1 selected\n=== 1 passed, 4 deselected in 0.01s ===\n", 0, false, xml(1)).counts).toBeDefined();
+  });
+  it("junit outcomes: skipped, xfail, failure and error testcases are told apart", () => {
+    const body = `<testsuite errors="1" failures="1" skipped="2" tests="5"><testcase classname="a" name="p"/><testcase classname="a" name="s"><skipped type="pytest.skip" message="x"/></testcase>`
+      + `<testcase classname="a" name="x"><skipped type="pytest.xfail" message="y"/></testcase><testcase classname="a" name="f"><failure message="m">t</failure></testcase><testcase classname="a" name="e"><error message="m">t</error></testcase></testsuite>`;
+    const out = "=== 1 failed, 1 passed, 1 skipped, 1 xfailed, 1 errors in 0.01s ===\n";
+    expect(parsePytestOutput("/r", out, 1, false, body).tests).toEqual({ "a::p": "passed", "a::s": "skipped", "a::x": "xfailed", "a::f": "failed", "a::e": "error" });
+  });
+  it("a non-strict xpass listed by -rX is not a pass", () => {
+    writeFileSync(join(repoDir, "test_conf.py"), "import pytest\n@pytest.mark.xfail(strict=False)\ndef test_x():\n    pass\n");
+    const out = real()("u", repoDir);
+    expect(out.tests?.["test_conf::test_x"]).toBe("xpassed");
+  });
+  it("pytest.toml and .pytest.toml are the tree's config (pytest 9)", () => {
+    for (const f of ["pytest.toml", ".pytest.toml"]) {
+      rmSync(join(repoDir, "pytest.toml"), { force: true });
+      rmSync(join(repoDir, ".pytest.toml"), { force: true });
+      writeFileSync(join(repoDir, f), '[pytest]\npython_files = ["check_*.py"]\n');
+      writeFileSync(join(repoDir, "check_a.py"), "def test_a():\n    assert False\n");
+      const out = real()("u", repoDir);
+      expect(out.exitCode).toBe(1);
+      expect(out.counts?.failed).toBe(1);
+    }
+  });
+  it("the junit report is not under PYTHONPYCACHEPREFIX: an atexit forgery there cannot replace it", () => {
+    writeFileSync(join(repoDir, "u.py"), "import atexit, os, sys\n"
+      + "def forge():\n    open(os.path.join(sys.pycache_prefix, 'junit.xml'), 'w').write("
+      + "'<testsuites><testsuite errors=\"0\" failures=\"0\" skipped=\"0\" tests=\"1\"><testcase classname=\"test_conf\" name=\"test_x\"/></testsuite></testsuites>')\n"
+      + "atexit.register(forge)\n");
+    writeFileSync(join(repoDir, "test_conf.py"), "import u\ndef test_x():\n    assert False\n");
+    const out = real()("u", repoDir);
+    expect(out.counts?.failed).toBe(1);
+    expect(out.tests?.["test_conf::test_x"]).toBe("failed");
+  });
+});
 });

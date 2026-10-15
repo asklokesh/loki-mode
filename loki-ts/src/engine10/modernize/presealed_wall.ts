@@ -64,6 +64,7 @@ const RUNNER_FAILURE_EXIT: Record<ConformanceRunnerName, number> = {
 /** One conformance run's raw result, as an injected runner reports it -- never wall-clock or
  *  process plumbing this module parses itself. */
 export interface PytestCounts { passed: number; failed: number; errors: number; skipped: number; other: number }
+export type TestOutcome = "passed" | "failed" | "error" | "skipped" | "xfailed" | "xpassed";
 
 export interface BaseRunOutcome {
   runner: ConformanceRunnerName;
@@ -76,6 +77,8 @@ export interface BaseRunOutcome {
   /** pytest only: counts from a parsed footer cross-checked against the junit report. Absent when
    *  either is missing or they disagree (e.g. os._exit(0) before the session finished). */
   counts?: PytestCounts;
+  /** pytest only, set with `counts` under the same trust rule: per-test outcome keyed by "classname::name". */
+  tests?: Record<string, TestOutcome>;
   /** pytest exit-2 only: the raw stdout+stderr. classifyBaseRun derives red/not_run from it and
    *  repoDir itself; nothing else about a collection error is trusted from the caller. */
   output?: string;
