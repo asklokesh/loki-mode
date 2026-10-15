@@ -28,7 +28,7 @@
 //     unchanged on the new tree before the post-implement conformance run is trusted.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModernizeLog } from "./log.ts";
@@ -97,7 +97,16 @@ export function parsePytestOutput(
  *  way spawnSync's own `timeout` option does (SIGTERM, then a null exitCode). */
 export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000): BaseConformanceRunner {
   return (_unit: string, repoDir: string): BaseRunOutcome => {
-    const res = spawnSync(pythonBin, ["-m", "pytest"], { cwd: repoDir, encoding: "utf8", timeout: timeoutMs });
+    // Bytecode must never answer for source: no in-tree .pyc is read (fresh empty PYTHONPYCACHEPREFIX)
+    // or written (PYTHONDONTWRITEBYTECODE), and pytest's own cache plugin is off.
+    const pycPrefix = mkdtempSync(join(tmpdir(), "loki-pyc-"));
+    let res;
+    try {
+      res = spawnSync(pythonBin, ["-m", "pytest", "-p", "no:cacheprovider"], {
+        cwd: repoDir, encoding: "utf8", timeout: timeoutMs,
+        env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pycPrefix },
+      });
+    } finally { rmSync(pycPrefix, { recursive: true, force: true }); }
     const timedOut = res.signal === "SIGTERM" && res.status === null;
     // pytest's own report (the footer, the collection-error traceback) goes to stdout; stderr is
     // never appended ahead of it -- an unrelated stderr line (a warning, a plugin's own output)
@@ -127,21 +136,39 @@ function pytestSections(text: string): string {
   return out.join("\n");
 }
 
-/** sha256 of every test file, conftest.py, pytest config (pytest sections only for pyproject.toml,
- *  setup.cfg, tox.ini) and a root pytest.py/pytest/ shim under dir, keyed by relative path. */
+/** Deletes every __pycache__ under dir (skipping SKIP_DIRS, never following a symlink), so stale or
+ *  planted bytecode cannot stand in for a hashed .py. */
+export function purgePycache(dir: string): void {
+  const walk = (d: string): void => {
+    let ents;
+    try { ents = readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (!e.isDirectory()) continue; // a symlink is not a directory entry here
+      const full = join(d, e.name);
+      if (e.name === "__pycache__") rmSync(full, { recursive: true, force: true });
+      else if (!SKIP_DIRS.has(e.name)) walk(full);
+    }
+  };
+  walk(dir);
+}
+
+/** sha256 of EVERY regular file under dir (bytes, so fixtures, snapshots and golden data are bound),
+ *  keyed by relative path; SKIP_DIRS (VCS, caches, venvs, __pycache__) are excluded and __pycache__ is
+ *  purged separately. pyproject.toml, setup.cfg and tox.ini hash their pytest sections only. */
 export function conformanceHashes(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
     if (rel.split("/").some((p) => SKIP_DIRS.has(p))) continue;
-    if (!/\.py$/.test(rel) && !PYTEST_CFG.test(rel)) continue;
-    let text: string;
+    let data: Buffer | string;
     try {
-      if (!statSync(join(dir, rel)).isFile()) continue;
-      text = readFileSync(join(dir, rel), "utf8");
+      if (!lstatSync(join(dir, rel)).isFile()) continue;
+      data = readFileSync(join(dir, rel));
     } catch { continue; }
-    if (SECTIONED.test(rel)) text = pytestSections(text);
-    if (SECTIONED.test(rel) && text === "") continue;
-    out[rel] = createHash("sha256").update(text).digest("hex");
+    if (SECTIONED.test(rel)) {
+      data = pytestSections(data.toString("utf8"));
+      if (data === "") continue;
+    }
+    out[rel] = createHash("sha256").update(data).digest("hex");
   }
   return out;
 }
@@ -164,12 +191,13 @@ function importableOutsideRepo(target: string, names: string[]): Set<string> {
 function conformanceDrift(base: Record<string, string>, now: Record<string, string>, files: string[] | undefined, target: string): string | null {
   const sealed = (p: string): boolean => TEST_FILE.test(p) || PYTEST_CFG.test(p);
   const listed = (p: string): boolean => !!files?.some((f) => p === f || p.startsWith(f.replace(/\/?$/, "/")));
+  const bound = (p: string): boolean => sealed(p) || !p.endsWith(".py"); // non-.py data is never the unit's code
   for (const [p, h] of Object.entries(base)) {
     if (now[p] === h) continue;
-    if (sealed(p) || (files && !listed(p))) return `${p} ${p in now ? "changed" : "removed"}`;
+    if (bound(p) || (files && !listed(p))) return `${p} ${p in now ? "changed" : "removed"}`;
   }
   const added = Object.keys(now).filter((p) => !(p in base));
-  for (const p of added) if (sealed(p)) return `${p} added`;
+  for (const p of added) if (sealed(p) || (!files && !p.endsWith(".py"))) return `${p} added`;
   if (files) return added.find((p) => !listed(p)) ? `${added.find((p) => !listed(p))} added` : null;
   const tops = [...new Set(added.map((p) => p.split("/")[0]!.replace(/\.py$/, "")))];
   const bad = importableOutsideRepo(target, tops);
@@ -318,6 +346,7 @@ export function runUnit(
 
   // Only now: the actual code change.
   implement(card);
+  purgePycache(newTreeDir);
 
   const equiv = checkEquivalence(repoDir, mid, unit, newTreeDir, card.normalizers, runNew, log);
   if (equiv.verdict !== "PROVEN") {
@@ -341,6 +370,7 @@ export function runUnit(
   // Target conformance: the same check, re-run against the MODERNIZED tree, must now pass (exit
   // 0 / green) -- a unit whose cases match the oracle but whose target-runtime conformance still
   // fails (or cannot even run) has not actually been modernized.
+  purgePycache(newTreeDir);
   const newOutcome = runConformance(unit, newTreeDir);
   const newClassification = classifyBaseRun(newOutcome, newTreeDir);
   if (newClassification !== "green") {

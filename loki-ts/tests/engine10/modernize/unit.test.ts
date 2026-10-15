@@ -455,6 +455,70 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     expect(result.verdict).toBe("PROVEN");
   });
 
+  // r5 B1: a non-.py file a sealed test reads (fixture, snapshot, golden data) is bound too.
+  it("r5 B1: an implement that rewrites a fixture data file the sealed test reads is refused (card lists u.py)", () => {
+    const unit = "conf_fixture";
+    sealOracleFixture(unit);
+    mkdirSync(join(repoDir, "tests"), { recursive: true });
+    writeFileSync(join(repoDir, "u.py"), "def mode():\n    return 'py2'\n");
+    writeFileSync(join(repoDir, "tests", "expected.txt"), "py3\n");
+    writeFileSync(join(repoDir, "tests", "test_conf.py"),
+      "import os, sys\nsys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))\nimport u\n\n" +
+      "def test_mode():\n    exp = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'expected.txt')).read().strip()\n    assert u.mode() == exp\n");
+    const cheat = () => writeFileSync(join(repoDir, "tests", "expected.txt"), "py2\n");
+    const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), cheat, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/tests\/expected\.txt changed/);
+  });
+
+  it("r5 B1: without a file list a changed, added or removed non-.py file is drift too", () => {
+    const unit = "conf_fixture_nofiles";
+    setup(unit);
+    writeFileSync(join(repoDir, "golden.txt"), "a\n");
+    const edit = () => { modernize(); writeFileSync(join(repoDir, "golden.txt"), "b\n"); };
+    const r1 = runUnitAb(baseCard(unit), log, real(), edit, () => passingNewCase());
+    expect(r1.verdict).toBe("NOT_PROVEN");
+    expect(r1.not_proven[0]).toMatch(/golden\.txt changed/);
+    const unit2 = "conf_fixture_nofiles_add";
+    setup(unit2);
+    const add = () => { modernize(); writeFileSync(join(repoDir, "extra.dat"), "x\n"); };
+    const r2 = runUnitAb(baseCard(unit2), log, real(), add, () => passingNewCase());
+    expect(r2.verdict).toBe("NOT_PROVEN");
+    expect(r2.not_proven[0]).toMatch(/extra\.dat added/);
+  });
+
+  // r5 B2: bytecode must not override a hashed .py.
+  it("r5 B2: a planted __pycache__ .pyc for an unlisted helper cannot reach PROVEN", () => {
+    const unit = "conf_pyc";
+    setup(unit);
+    writeFileSync(join(repoDir, "helpers.py"), "X = 1\n");
+    writeFileSync(join(repoDir, "conftest.py"), "import helpers\n");
+    const plant = () => {
+      mkdirSync(join(repoDir, "__pycache__"), { recursive: true });
+      const py = [
+        "import sys, os, marshal, importlib.util as u, sysconfig",
+        "d = sys.argv[1]",
+        "st = os.stat(os.path.join(d, 'helpers.py'))",
+        "code = compile('import u; u.PY3_READY = True', os.path.join(d, 'helpers.py'), 'exec')",
+        "tag = sys.implementation.cache_tag",
+        "hdr = u.MAGIC_NUMBER + (0).to_bytes(4, 'little') + int(st.st_mtime).to_bytes(4, 'little') + (st.st_size & 0xFFFFFFFF).to_bytes(4, 'little')",
+        "open(os.path.join(d, '__pycache__', 'helpers.' + tag + '.pyc'), 'wb').write(hdr + marshal.dumps(code))",
+      ].join("\n");
+      expect(spawnSync("python3", ["-c", py, repoDir]).status).toBe(0);
+    };
+    const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), plant, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+  });
+
+  it("r5 B2: a stray .pyc outside __pycache__ (sourceless import) is refused", () => {
+    const unit = "conf_pyc_legacy";
+    setup(unit);
+    const plant = () => { modernize(); writeFileSync(join(repoDir, "zz.pyc"), "junk"); };
+    const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), plant, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/zz\.pyc added/);
+  });
+
   it("a throwing ablation stub is never PROVEN", () => {
     setup("conf_abl_throw");
     const boom = () => { throw new Error("stub runner exploded"); };
