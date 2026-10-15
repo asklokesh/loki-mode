@@ -5,8 +5,9 @@
 //                               consulting the usage governor before each item, then
 //                               write and print a morning digest.
 // The runner and the governor are injectable so tests never call claude.
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { atomicWriteText } from "../util/atomic.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 import { printForecast, readingFromGovernorJson, recordWindowDelta, type UsageReading } from "../contrib/forecast.ts";
 
@@ -87,9 +88,7 @@ export function readQueue(lokiDir: string): QueueItem[] {
 function writeQueue(lokiDir: string, items: QueueItem[]): void {
   mkdirSync(lokiDir, { recursive: true });
   const p = queuePath(lokiDir);
-  const tmp = `${p}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ version: 1, items }, null, 2) + "\n");
-  renameSync(tmp, p);
+  atomicWriteText(p, JSON.stringify({ version: 1, items }, null, 2) + "\n");
 }
 
 export function queueAdd(refs: readonly string[], d: QueueDeps): number {
