@@ -138,6 +138,26 @@ else
     echo "       add a 'cmd:description' line to _loki_commands in completions/_loki"
 fi
 
+# Deploy flag coverage: every `--flag)` arm inside cmd_deploy must appear in the
+# bash deploy) completion line, so new deploy flags cannot silently drift.
+deploy_body="$(awk '/^cmd_deploy\(\)/{f=1} f{print} f&&/^}/{exit}' "$LOKI_SRC")"
+deploy_flags="$(grep -oE '^[[:space:]]*--[a-z][a-z-]*(\|--?[a-z-]+)*\)' <<<"$deploy_body" \
+    | sed -E 's/[[:space:]]//g; s/\)$//' | tr '|' '\n' | grep -E '^--' | sort -u)"
+deploy_line="$(grep -A2 -E '^[[:space:]]*deploy\)' "$BASH_COMP" | grep 'compgen -W')"
+if [ -z "$deploy_flags" ] || [ -z "$deploy_line" ]; then
+    log_fail "deploy flag extraction failed (cmd_deploy arms or deploy) completion line not found)"
+else
+    missing_deploy=()
+    for fl in $deploy_flags; do
+        grep -Eq "[\" ]${fl}[\" ]" <<<"$deploy_line" || missing_deploy+=("$fl")
+    done
+    if [ "${#missing_deploy[@]}" -eq 0 ]; then
+        log_pass "bash deploy) completion covers every cmd_deploy flag"
+    else
+        log_fail "bash deploy) completion is missing: ${missing_deploy[*]}"
+    fi
+fi
+
 echo ""
 echo "Checked ${#arms[@]} dispatch command tokens. PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1
