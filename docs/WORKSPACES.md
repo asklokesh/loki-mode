@@ -10,8 +10,12 @@ workspaces:
     repos:
       - {repo: acme/api, path: ~/src/api, setup: "npm ci"}
       - {repo: acme/web, path: ~/src/web, after: [acme/api]}
-    integration: {command: "make e2e", timeout_s: 900}
+    integration: {command: "make e2e", timeout_s: 900, per_stage: false}
+    concurrency: 2
+    plan: false
 ```
+
+The `workspaces:` block is validated and fails closed: a misspelled key (for example `afer`) or a wrong type exits 2 and names the key.
 
 Repos with no pending `after` run in parallel, at most `concurrency` at a time (default 2; set `LOKI_WORKSPACE_CONCURRENCY` to change it).
 
@@ -21,6 +25,8 @@ Then:
 loki workspace list
 loki workspace show shop
 loki workspace run shop acme/api#12
+loki start --workspace shop "<brief>"   # same runner, from the primary command
+loki workspace infer shop        # print suggested after: edges
 loki workspace status            # every recorded run, one row per repo
 loki workspace status <run-id>
 ```
@@ -30,7 +36,10 @@ loki workspace status <run-id>
 - A failing repo does not stop the others (continue and report). The command exits 0 only when every repo succeeded and the integration step did not fail. It exits 3 when the only non-ok outcomes are budget stops (a child exited 3, or a dependent was skipped behind one), and 1 for any other failure. Ctrl-C (SIGINT) stops the recorded child process groups like SIGTERM.
 - The repo that owns the issue ref gets the ref; other repos get a task text naming the ref and the sibling worktree paths as read-only context.
 - After all repos finish, the `integration` command runs once from the run directory with `LOKI_WS_DIR_<OWNER>_<REPO>` pointing at each worktree. A timeout counts as failed. With no integration configured the status is `not_configured`.
-- Evidence is written to `.loki/workspaces/<name>/<run-id>/integration.json`: head SHA per repo, exit code, log sha256. It is not part of the Seal.
+- Evidence is written to `.loki/workspaces/<name>/<run-id>/integration.json`: head SHA per repo, exit code, log sha256. When every repo succeeded, integration did not fail and every child sealed a receipt, the run also seals a signed `composite.json` that binds integration.json and every child receipt (see "Verify a workspace run").
+- `loki workspace infer <name>` prints suggested `after:` edges read from package.json, go.mod and pyproject.toml dependencies on other listed repos. It is print-only and cycle-checked; it never edits loki.yaml. Manifests only: no OpenAPI or import inference.
+- `plan: true` (or `LOKI_WORKSPACE_PLAN=1`) makes one provider call that decomposes the brief per repo into `<run-dir>/plan.json`. A valid plan gives each listed repo its own task; an invalid one falls back to the generic text and prints the reason.
+- `integration: {per_stage: true}` also runs the integration command after each topological layer. A failing stage SKIPs every later layer, so a broken contract stops before downstream repos build on it.
 - Without `path`, a repo is cloned to `~/.loki/repos/owner__name`.
 - After the integration step, a PR comment is posted on each repo PR that exists for its run branch, showing the integration status (PASSED, FAILED, TIMEOUT or NOT CONFIGURED) and every head SHA. It uses your own `gh` login or GH_TOKEN, skips silently when there is no PR, never fails the run, and is disabled with `LOKI_WORKSPACE_COMMENT=0`.
 - Metrics: each run records `timing` (per repo `started_at` and `finished_at`, epoch seconds) in integration.json. `python3 autonomy/lib/workspace_metrics.py <run-dir> --attention-min 30` prints `prs` (repos with outcome ok), `wall_clock_seconds` (earliest start to latest finish), `prs_per_hour` and `prs_per_attention_minute`. Runs recorded before timing existed, and any run where `--attention-min` is not given, print `unmeasured` for the affected rate, never zero.
@@ -46,5 +55,9 @@ After `loki workspace run <name> <ref>` finishes, check the evidence rather than
 3. `.loki/workspaces/<name>/<run-id>/integration.json` holds `status`, the head SHA per repo and `timing`.
 4. `python3 autonomy/lib/workspace_metrics.py <run-dir> --attention-min <minutes>` prints `prs`, `prs_per_hour` and `prs_per_attention_minute`; any value it cannot measure prints `unmeasured`.
 5. Each repo PR for the run branch carries exactly one integration comment.
+6. `loki verify <run-dir>/composite.json` re-checks the composite offline (add `--pubkey FILE` on another machine). It recomputes the composite hash, re-verifies every child receipt from disk and checks the signature. A tampered, swapped or stale-head child makes it TAMPERED or UNCHECKED; an unsigned child under a signed composite is UNCHECKED. Exit codes are the single-receipt ones: 0 VERIFIED, 1 TAMPERED, 2 UNCHECKED, 3 UNSIGNED. The composite never reads higher than its weakest child: one PARTIAL child caps it at PARTIAL.
+7. A run that could not seal prints `composite not sealed: <reason>` (for example a repo with no receipt). Seal by hand with `loki verify --seal-composite <run-dir>`; it refuses unless every child has a receipt.
+
+Not measured: no scale test exists for large repo counts. Claim only what you have run.
 
 `tests/workspace/99-e2e.sh` runs this whole check through both `autonomy/loki` and `bin/loki` with a stub launcher and a stub `gh`.

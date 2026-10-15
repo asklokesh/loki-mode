@@ -1,17 +1,26 @@
-# DEPLOY-PLAN.md -- `loki deploy` (ADVISORY / PRINT-ONLY)
+# DEPLOY-PLAN.md -- `loki deploy` (original design: advisory print-only; `--execute` now exists)
 
-**Feature:** `loki deploy` -- detect project type + the user's installed cloud CLI,
-PRINT (and best-effort copy) the canonical deploy command(s), and **never run them**.
+**Current behavior (v11.7.0).** `loki deploy` still prints the deploy command by default and
+runs nothing. Loki deploys only behind `--execute` plus a VERIFIED, HEAD-anchored receipt, a
+clean tree, a destructive-op refusal and a policy permission (`.loki/policies.json`
+`autonomy: operate`, or an explicit `actions.deploy` allow). With `--health-url URL` it probes the
+deployed URL after the command. A non-2xx result is recorded as FAILED_HEALTH and exits non-zero;
+with `--auto-rollback` it also runs the provider's documented rollback verb (`vercel rollback`,
+`fly releases rollback <captured version>`; Netlify and Cloudflare print a manual note). With no
+URL, health is recorded as "unchecked", never healthy. The deploy record lives in `.loki/deploys`
+and is not part of the signed receipt. `loki start --deploy [--health-url U] [--auto-rollback]`
+chains the same gated command after a start. Not built: canary or staged rollout, and receipt-bound deploy records.
+
+Everything below is the original print-only design plan and is kept for history.
 
 **Status:** Architecture plan. No implementation code here. Pattern family: the just-shipped
 `loki preview --public` (`_preview_public` at `autonomy/loki:5306`, helpers from `_read_app_state`
 at `:5216`, arg parsing in `cmd_preview` at `:5546`-`:5609`, dispatch arm `preview)` at `:14966`).
 
-**Why this exists / why it is safe.** README states (line 447) *"Does not deploy -- human runs
-deploy commands"* and (line 452) *"It does NOT access your cloud accounts ... Human oversight is
-expected for deployment."* This feature keeps that literally true: it is an **advisory printer**.
-It runs `command -v <cli>` ONLY (never the CLI itself, not even `--version`), prints the exact
-command, and the **human runs it**. Fully reversible; touches no cloud account.
+**Why the original design was print-only.** The README then stated that deploy commands were run by
+a human and that Loki did not access cloud accounts. The first version was an **advisory printer**:
+it ran `command -v <cli>` ONLY (never the CLI itself, not even `--version`), printed the exact
+command, and the **human ran it**. Fully reversible; touched no cloud account.
 
 ---
 

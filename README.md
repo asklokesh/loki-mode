@@ -59,6 +59,23 @@ loki verify              # newest run; or: loki verify <run-id>
 
 `loki verify` re-hashes the receipt, checks its signature and checks it against the run's event log. It prints a verdict and exits 0 (VERIFIED), 1 (CONCERNS), 2 (BLOCKED), 3 (verifier error, never a silent pass) or 64 (usage error); `[ $rc -eq 0 ]` is the only safe test for "verified". Full table: [docs/exit-codes.md](docs/exit-codes.md). On another machine, export the public key with `loki keys export` and pass it with `loki verify --pubkey <file>`. A receipt claims only what its checks ran, and lists what they did not; signing proves who produced it, not that the code is bug-free. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
 
+For a multi-repo change set, `loki start --workspace <name> "<brief>"` seals one signed `composite.json` over every child receipt, and `loki verify <run-dir>/composite.json` re-checks it offline ([docs/WORKSPACES.md](docs/WORKSPACES.md)). A composite never reads higher than its weakest child.
+
+Two vocabularies, not one. Receipt verdicts (sealed, 5): VERIFIED, PARTIAL, ALREADY_SATISFIED, SPEC_CONFLICT, FAILED. Run outcomes (printed, 8): VERIFIED, ALREADY_SATISFIED, PARTIAL, FAILED, BUDGET_STOP, BLOCKED, STALLED, CANCELLED. BUDGET_STOP, BLOCKED, STALLED and CANCELLED are run outcomes, never receipt verdicts.
+
+| Run outcome | Receipt verdict | `loki start` exit |
+|---|---|---|
+| VERIFIED, ALREADY_SATISFIED | same | 0 |
+| FAILED, PARTIAL | same | 1 |
+| BUDGET_STOP | none (stopped at a cap) | 3 |
+| BLOCKED | SPEC_CONFLICT | 4 |
+| STALLED | none | 5 |
+| CANCELLED | none | 130 |
+
+Composite: every child VERIFIED or ALREADY_SATISFIED gives VERIFIED; one PARTIAL child caps it at PARTIAL; a FAILED child fails it. `loki verify` on a composite exits 0 VERIFIED, 1 TAMPERED, 2 UNCHECKED, 3 UNSIGNED.
+
+Autonomy and deploy: `.loki/policies.json` `autonomy: propose|execute|operate` governs what `loki start` may do (propose opens nothing, execute opens a PR, operate also allows deploy); no file keeps today's behavior. `loki trust` prints advisory graduation advice from your receipts and never writes the policy. Loki deploys only behind `loki deploy --execute` (or `loki start --deploy`) plus a VERIFIED, HEAD-anchored receipt and the policy permission; `--health-url` and `--auto-rollback` add a post-deploy probe and a documented provider rollback. A Sentry alert webhook can enqueue a receipt-gated fix PR ([docs/sentry-intake.md](docs/sentry-intake.md)).
+
 A finished run prints a short summary (every run on both engines also ends with a unified Result, Files, Cost, Elapsed, Receipt and `next:` block; `--quiet` prints only that block, `--json` adds a `summary` object):
 
 ```
@@ -140,7 +157,7 @@ macOS and Linux are supported.
 - [Installation](docs/INSTALLATION.md), [environment variables](docs/environment-variables.md), [exit codes](docs/exit-codes.md), [known issues](docs/KNOWN-ISSUES.md), [privacy and telemetry](docs/PRIVACY.md)
 - Agent Change Receipt format: [docs/AGENT-CHANGE-RECEIPT.md](docs/AGENT-CHANGE-RECEIPT.md)
 - Issue to PR from GitHub Actions, no hosted service: [docs/examples/loki-issue-to-pr.yml.example](docs/examples/loki-issue-to-pr.yml.example)
-- Jira and Linear intake: [docs/trackers.md](docs/trackers.md). Two-way Slack: [docs/slack.md](docs/slack.md). Multi-repo runs: [docs/WORKSPACES.md](docs/WORKSPACES.md)
+- Jira and Linear intake: [docs/trackers.md](docs/trackers.md). Two-way Slack: [docs/slack.md](docs/slack.md). Multi-repo runs and composite receipts: [docs/WORKSPACES.md](docs/WORKSPACES.md). Deploy: [docs/DEPLOY-PLAN.md](docs/DEPLOY-PLAN.md)
 - MCP: the bundled server exposes 47 tools over stdio (`loki mcp`), including starting a run, reading its status and verifying its receipt.
 - Claude Code plugin: `claude plugin marketplace add asklokesh/loki-mode`, then `claude plugin install loki-mode@loki-mode`. The same marketplace ships [loki-seal](packages/loki-seal/README.md), a Stop hook that refuses "done" when tests newly fail or were weakened.
 - Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Upgrading: [UPGRADING.md](UPGRADING.md)

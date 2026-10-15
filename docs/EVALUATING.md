@@ -211,6 +211,12 @@ Not measured: human effort, recovery success, review quality. Output: `--out-dir
 
 ---
 
+## 9. Factory-vs-Loki task set (reproducible, partly unmeasured)
+
+`benchmarks/attribution/tasks/coord-1-api-web/` (multi-repo coordination) and `benchmarks/attribution/tasks/longspec-1-three-units/` (long spec, three units) ship with held-out acceptance kept outside the workspace. `benchmarks/bench/attribution.py` has three arms: `raw_claude`, `loki` and an optional `droid` arm. The droid arm probes `droid exec --help`; when `droid exec` is unavailable every droid cell is recorded UNMEASURED with a reason, never zero. `python3 benchmarks/bench/attribution.py --dry-run` lists the tasks and arms and makes no model call. No Factory result is published: Factory publishes no Missions benchmark and no droid run has been measured here. Axis where Loki is ahead on documented features: offline-recheckable signed receipts, now composite receipts for multi-repo change sets; Factory documents none.
+
+---
+
 ## What we do not have
 
 Stating this plainly, because you will find it out anyway and it is cheaper for
@@ -228,6 +234,8 @@ both of us if you find it here.
   Replit Agent ship no local CLI and are not covered at all. Treat this as
   "unclaimed on every surface we can reach", which is stronger than the earlier
   "unclaimed as far as we can verify" and still short of a proven first.
+- **No scale measurement for multi-repo runs.** No test covers dozens of repos, so none is claimed.
+- **No Factory comparison run.** The droid arm is UNMEASURED until a run exists (section 9).
 - **Generation is not air-gapped.** See section 2.
 
 ---

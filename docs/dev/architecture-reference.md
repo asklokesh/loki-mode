@@ -105,3 +105,11 @@ These knobs together implement the RARV-C (closure) loop: findings -> override c
 ## Project memory across runs
 
 extract_learnings_from_session (autonomy/run.sh) mirrors learnings and decisions into .loki/memory/learnings/project-*.jsonl. get_relevant_learnings adds a bounded newest-first project_memory list (15 entries, LOKI_PROJECT_MEMORY_MAX_CHARS, default 2000) to .loki/state/relevant-learnings.json at run start. LOKI_PROJECT_MEMORY=0 disables both. Test: tests/test-project-memory.sh.
+
+## Verdicts, composite receipts and the autonomy ladder (v11.7.0)
+- Two sets: receipt verdicts (`engine10/types.ts` Verdict: VERIFIED, PARTIAL, ALREADY_SATISFIED, SPEC_CONFLICT, FAILED) and run outcomes (`engine10/output.ts` Outcome adds BUDGET_STOP, BLOCKED, STALLED, CANCELLED; exit ladder EXIT). Only receipt verdicts are sealed.
+- Composite: `features/speed/seal_group.ts` composeComposite/verifyComposite (schema `loki.v10.composite/1`), sealed by `loki verify --seal-composite <run_dir>`, signed with the existing `signReceipt`, capped by `capGroupVerdict`. Workspace runs seal it after integration.json.
+- Autonomy ladder: `src/policies/engine.js` allowedActions(level) (propose = none, execute = pr, operate = pr + deploy; merge never). engine10 `supervisor.ts` prGate consults `src/policies/check.js`; `loki deploy --execute` consults it for `deploy` and fails closed. `loki trust` graduationAdvice is advisory and never writes the policy file.
+- Parallel units: `route.ts` maybeRunGroup defaults to `features/speed/run_group.ts`, which freezes per-unit acceptance (`features/contract.ts`), runs units, merges with `engine10/integrate.ts` and seals once via sealGroup.
+- Lessons: every sealed run appends a receipt fact (`LOKI_AUTO_LEARN_PR`, default on) outside the receipt body; `implement.ts` injects lessons and relevant learnings inside the untrusted-data fence; `loki memory brief --task T` prints the same block.
+
