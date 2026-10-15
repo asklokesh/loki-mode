@@ -11,7 +11,7 @@
 // B2 adds the post-implement target-conformance + no-op-ablation gate PROVEN now requires.
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
@@ -20,7 +20,7 @@ import { DEFAULT_NORMALIZERS, sealOracle } from "../../../src/engine10/modernize
 import { classifyBaseRun, sealPreSealedWall } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { CaseRecord, NewCaseOutcome } from "../../../src/engine10/modernize/equiv.ts";
-import { makePytestBaseRunner, parsePytestOutput, runUnit } from "../../../src/engine10/modernize/unit.ts";
+import { conformanceHashes, makePytestBaseRunner, parsePytestOutput, purgePycache, runUnit } from "../../../src/engine10/modernize/unit.ts";
 import type { UnitCard } from "../../../src/engine10/modernize/unit.ts";
 import type { ModernizeLog as Log } from "../../../src/engine10/modernize/log.ts";
 
@@ -481,10 +481,10 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     expect(r1.not_proven[0]).toMatch(/golden\.txt changed/);
     const unit2 = "conf_fixture_nofiles_add";
     setup(unit2);
-    const add = () => { modernize(); writeFileSync(join(repoDir, "extra.dat"), "x\n"); };
+    const add = () => { modernize(); writeFileSync(join(repoDir, "golden"), "x\n"); };
     const r2 = runUnitAb(baseCard(unit2), log, real(), add, () => passingNewCase());
     expect(r2.verdict).toBe("NOT_PROVEN");
-    expect(r2.not_proven[0]).toMatch(/extra\.dat added/);
+    expect(r2.not_proven[0]).toMatch(/golden added/);
   });
 
   // r5 B2: bytecode must not override a hashed .py.
@@ -536,5 +536,118 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     const result = runUnitAb(baseCard(unit), log, real(), modernize, () => passingNewCase());
     expect(result.verdict).toBe("NOT_PROVEN");
     expect(result.not_proven[0]).toMatch(/not bound to the seal/);
+  });
+  // r3: a symlink is hashed (never skipped), so a link planted over a conformance file is drift.
+  const outside = (name: string, body: string): string => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-ext-"));
+    const f = join(dir, name);
+    writeFileSync(f, body);
+    return f;
+  };
+  const SKIP_ALL = "import pytest\ndef pytest_collection_modifyitems(items):\n    for i in items:\n        i.add_marker(pytest.mark.skip)\n";
+  for (const withFiles of [false, true]) {
+    const tag = withFiles ? "with card.files" : "without card.files";
+    const card = (unit: string): UnitCard => (withFiles ? { ...baseCard(unit), files: ["u.py"] } : baseCard(unit));
+    it(`r3: a symlinked conftest.py to an outside file is refused, ${tag}`, () => {
+      const unit = `conf_link_conftest_${withFiles}`;
+      setup(unit);
+      const target = outside("conftest.py", SKIP_ALL);
+      const link = () => symlinkSync(target, join(repoDir, "conftest.py"));
+      const result = runUnitAb(card(unit), log, real(), link, () => passingNewCase());
+      rmSync(join(target, ".."), { recursive: true, force: true });
+      expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.not_proven[0]).toMatch(/conftest\.py added/);
+    });
+    it(`r3: a symlinked test_*.py is refused, ${tag}`, () => {
+      const unit = `conf_link_test_${withFiles}`;
+      setup(unit);
+      const target = outside("test_x.py", "def test_x():\n    assert True\n");
+      const link = () => symlinkSync(target, join(repoDir, "test_extra.py"));
+      const result = runUnitAb(card(unit), log, real(), link, () => passingNewCase());
+      rmSync(join(target, ".."), { recursive: true, force: true });
+      expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.not_proven[0]).toMatch(/test_extra\.py added/);
+    });
+  }
+
+  it("r3: swapping a sealed test file for a symlink is refused", () => {
+    const unit = "conf_link_swap";
+    setup(unit);
+    const target = outside("t.py", "def test_ready():\n    assert True\n");
+    const swap = () => { rmSync(join(repoDir, "test_conf.py")); symlinkSync(target, join(repoDir, "test_conf.py")); };
+    const result = runUnitAb(baseCard(unit), log, real(), swap, () => passingNewCase());
+    rmSync(join(target, ".."), { recursive: true, force: true });
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/test_conf\.py changed/);
+  });
+
+  it("r3: a new unlisted symlink is refused without a file list even when named like a module", () => {
+    const unit = "conf_link_module";
+    setup(unit);
+    const target = outside("m.py", "A = 1\n");
+    const link = () => { modernize(); symlinkSync(target, join(repoDir, "helper_mod.py")); };
+    const result = runUnitAb(baseCard(unit), log, real(), link, () => passingNewCase());
+    rmSync(join(target, ".."), { recursive: true, force: true });
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/helper_mod\.py added/);
+  });
+
+  it("conformanceHashes records a symlink (file or dir) without following it", () => {
+    const target = outside("a.txt", "x");
+    symlinkSync(target, join(repoDir, "lnk"));
+    symlinkSync(join(target, ".."), join(repoDir, "lnkdir"));
+    const h = conformanceHashes(repoDir);
+    rmSync(join(target, ".."), { recursive: true, force: true });
+    expect(h["lnk"]).toBe(`symlink:${target}`);
+    expect(h["lnkdir"]).toMatch(/^symlink:/);
+    expect(Object.keys(h).some((k) => k.startsWith("lnkdir/"))).toBe(false);
+  });
+
+  // (c): files named in card.files may change even when they are not .py.
+  it("r3: a non-.py file listed in card.files may change; an unlisted one may not", () => {
+    const unit = "conf_listed_data";
+    setup(unit);
+    writeFileSync(join(repoDir, "unit_data.cfg"), "a\n");
+    writeFileSync(join(repoDir, "golden"), "a\n");
+    const okEdit = () => { modernize(); writeFileSync(join(repoDir, "unit_data.cfg"), "b\n"); };
+    const ok = runUnitAb({ ...baseCard(unit), files: ["u.py", "unit_data.cfg"] }, log, real(), okEdit, () => passingNewCase());
+    expect(ok.not_proven).toEqual([]);
+    expect(ok.verdict).toBe("PROVEN");
+    const unit2 = "conf_listed_data_bad";
+    setup(unit2);
+    writeFileSync(join(repoDir, "unit_data.cfg"), "a\n");
+    writeFileSync(join(repoDir, "golden"), "a\n");
+    const badEdit = () => { modernize(); writeFileSync(join(repoDir, "golden"), "b\n"); };
+    const bad = runUnitAb({ ...baseCard(unit2), files: ["u.py", "unit_data.cfg"] }, log, real(), badEdit, () => passingNewCase());
+    expect(bad.verdict).toBe("NOT_PROVEN");
+    expect(bad.not_proven[0]).toMatch(/golden changed/);
+  });
+
+  // (a): each bytecode mechanism has its own test, so removing any one alone goes red.
+  it("runner sets PYTHONPYCACHEPREFIX to a fresh empty dir (a planted in-tree .pyc is not read)", () => {
+    writeFileSync(join(repoDir, "helpers.py"), "X = 1\n");
+    writeFileSync(join(repoDir, "test_conf.py"),
+      "import sys, os\ndef test_prefix():\n    assert sys.pycache_prefix\n    assert os.listdir(sys.pycache_prefix) == []\n");
+    const out = makePytestBaseRunner("python3", 60_000)("u", repoDir);
+    expect(out.exitCode).toBe(0);
+  });
+  it("runner sets PYTHONDONTWRITEBYTECODE (sys.dont_write_bytecode is true under the runner)", () => {
+    writeFileSync(join(repoDir, "test_conf.py"), "import sys\ndef test_nowrite():\n    assert sys.dont_write_bytecode\n");
+    const out = makePytestBaseRunner("python3", 60_000)("u", repoDir);
+    expect(out.exitCode).toBe(0);
+  });
+  it("purgePycache removes nested __pycache__ dirs but not a symlinked dir's contents", () => {
+    mkdirSync(join(repoDir, "a", "__pycache__"), { recursive: true });
+    writeFileSync(join(repoDir, "a", "__pycache__", "m.pyc"), "x");
+    mkdirSync(join(repoDir, "__pycache__"), { recursive: true });
+    const keep = mkdtempSync(join(tmpdir(), "loki-keep-"));
+    mkdirSync(join(keep, "__pycache__"));
+    symlinkSync(keep, join(repoDir, "lnk"));
+    purgePycache(repoDir);
+    const survived = existsSync(join(keep, "__pycache__"));
+    rmSync(keep, { recursive: true, force: true });
+    expect(existsSync(join(repoDir, "a", "__pycache__"))).toBe(false);
+    expect(existsSync(join(repoDir, "__pycache__"))).toBe(false);
+    expect(survived).toBe(true);
   });
 });

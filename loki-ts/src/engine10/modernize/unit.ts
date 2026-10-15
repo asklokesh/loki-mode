@@ -28,7 +28,7 @@
 //     unchanged on the new tree before the post-implement conformance run is trusted.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ModernizeLog } from "./log.ts";
@@ -152,16 +152,32 @@ export function purgePycache(dir: string): void {
   walk(dir);
 }
 
+const LINK = "symlink:";
+
 /** sha256 of EVERY regular file under dir (bytes, so fixtures, snapshots and golden data are bound),
  *  keyed by relative path; SKIP_DIRS (VCS, caches, venvs, __pycache__) are excluded and __pycache__ is
- *  purged separately. pyproject.toml, setup.cfg and tox.ini hash their pytest sections only. */
+ *  purged separately. A symlink is never skipped: it is recorded as "symlink:<target>" (never followed),
+ *  so a link swapped in for a conftest.py, test file or config changes the set. pyproject.toml, setup.cfg and tox.ini hash their pytest sections only. */
 export function conformanceHashes(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const rel of readdirSync(dir, { recursive: true }) as string[]) {
-    if (rel.split("/").some((p) => SKIP_DIRS.has(p))) continue;
+  const rels: string[] = [];
+  const walk = (sub: string): void => {
+    let ents;
+    try { ents = readdirSync(join(dir, sub), { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      if (SKIP_DIRS.has(e.name)) continue;
+      const rel = sub ? `${sub}/${e.name}` : e.name;
+      rels.push(rel);
+      if (e.isDirectory()) walk(rel); // a symlinked dir is recorded as a link above, never descended
+    }
+  };
+  walk("");
+  for (const rel of rels) {
     let data: Buffer | string;
     try {
-      if (!lstatSync(join(dir, rel)).isFile()) continue;
+      const st = lstatSync(join(dir, rel));
+      if (st.isSymbolicLink()) { out[rel] = LINK + readlinkSync(join(dir, rel)); continue; }
+      if (!st.isFile()) continue;
       data = readFileSync(join(dir, rel));
     } catch { continue; }
     if (SECTIONED.test(rel)) {
@@ -191,14 +207,18 @@ function importableOutsideRepo(target: string, names: string[]): Set<string> {
 function conformanceDrift(base: Record<string, string>, now: Record<string, string>, files: string[] | undefined, target: string): string | null {
   const sealed = (p: string): boolean => TEST_FILE.test(p) || PYTEST_CFG.test(p);
   const listed = (p: string): boolean => !!files?.some((f) => p === f || p.startsWith(f.replace(/\/?$/, "/")));
-  const bound = (p: string): boolean => sealed(p) || !p.endsWith(".py"); // non-.py data is never the unit's code
+  const link = (h: string | undefined): boolean => !!h?.startsWith(LINK);
+  // Sealed test/config files are immutable even when listed. Otherwise a listed path may change; an
+  // unlisted one may not when a file list exists, and without one non-.py data and any symlink are immutable.
+  const immutable = (p: string, linked: boolean): boolean =>
+    sealed(p) || (!listed(p) && (!!files || linked || !p.endsWith(".py")));
   for (const [p, h] of Object.entries(base)) {
     if (now[p] === h) continue;
-    if (bound(p) || (files && !listed(p))) return `${p} ${p in now ? "changed" : "removed"}`;
+    if (immutable(p, link(h) || link(now[p]))) return `${p} ${p in now ? "changed" : "removed"}`;
   }
   const added = Object.keys(now).filter((p) => !(p in base));
-  for (const p of added) if (sealed(p) || (!files && !p.endsWith(".py"))) return `${p} added`;
-  if (files) return added.find((p) => !listed(p)) ? `${added.find((p) => !listed(p))} added` : null;
+  for (const p of added) if (immutable(p, link(now[p]))) return `${p} added`;
+  if (files) return null;
   const tops = [...new Set(added.map((p) => p.split("/")[0]!.replace(/\.py$/, "")))];
   const bad = importableOutsideRepo(target, tops);
   const hit = added.find((p) => bad.has(p.split("/")[0]!.replace(/\.py$/, "")));
