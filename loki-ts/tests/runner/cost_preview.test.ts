@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendRunOutcome, WALL_KIND } from "../../src/runner/router/history.ts";
-import { encodeEstimate, estimateFromHistory, NOT_RECORDED, priorFor, receiptBlock, sizeClassFromScope, startText } from "../../src/runner/router/cost_preview.ts";
+import { ESTIMATE_HELP, encodeEstimate, estimateFromHistory, NOT_RECORDED, priorFor, receiptBlock, runEstimate, sizeClassFromScope, startText } from "../../src/runner/router/cost_preview.ts";
 
 const SHAPE = "single:bun";
 const KEY = "a".repeat(64);
@@ -136,5 +136,37 @@ describe("startText cap warning (POLICY)", () => {
   });
   test("no estimate never warns", () => {
     expect(startText({ ok: false, reason: "none" }, 0.01)).toBe("estimate: NOT AVAILABLE (none)");
+  });
+});
+
+describe("loki estimate is the same estimator as the loki start preview (ESTIMATE-ONE)", () => {
+  const run = (args: string[], env: Record<string, string | undefined> = {}) => {
+    let out = "", err = "";
+    const rc = runEstimate(args, { repoDir: root, env, resolve: (p) => (p === "claude" ? "claude-sonnet-5-5" : `${p} (model not recorded)`), cacheRoot: root, out: (s) => { out += s; }, err: (s) => { err += s; } });
+    return { rc, out, err };
+  };
+  test("prints exactly the start-line estimate text for the same input", () => {
+    for (const [args, model] of [[[], "claude-sonnet-5-5"], [["--model", "claude-haiku-4-5"], "claude-haiku-4-5"], [["--model=zzz"], "zzz"]] as const) {
+      const start = startText(JSON.parse(encodeEstimate({}, root, root, model)!));
+      expect(run([...args]).out).toBe(`${start}\n`);
+    }
+  });
+  test("the numbers are the sonnet prior and no prior is NOT AVAILABLE, never a made-up number", () => {
+    expect(run([]).out).toBe("estimate: ~$0.11-$0.98 (rough prior, no history for this shape)\n");
+    expect(run(["--provider", "codex"]).out).toBe("estimate: NOT AVAILABLE (no project shape recorded for this repo)\n");
+  });
+  test("--json carries the same result object the start line is rendered from", () => {
+    expect(JSON.parse(run(["--json"]).out)).toEqual(JSON.parse(encodeEstimate({}, root, root, "claude-sonnet-5-5")!));
+  });
+  test("LOKI_COST_PREVIEW=0 prints OFF, no number", () => {
+    expect(run([], { LOKI_COST_PREVIEW: "0" }).out).toBe("estimate: OFF (LOKI_COST_PREVIEW=0)\n");
+  });
+  test("--iterations is removed and says so; unknown flags fail; --help documents the change", () => {
+    const a = run(["--iterations", "10"]);
+    expect(a.rc).toBe(1); expect(a.err).toContain("--iterations was removed"); expect(a.out).toBe("");
+    expect(run(["--bogus"]).rc).toBe(1);
+    expect(run(["--model"]).rc).toBe(1);
+    const h = run(["--help"]);
+    expect(h.rc).toBe(0); expect(h.out).toBe(ESTIMATE_HELP); expect(h.out).toContain("--iterations is removed");
   });
 });

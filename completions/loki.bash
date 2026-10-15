@@ -120,6 +120,13 @@ _loki_completion() {
             COMPREPLY=( $(compgen -W "${syslog_cmds}" -- "$cur") )
             ;;
 
+        estimate)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--json --model --provider --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
         status)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--json --help" -- "$cur") )

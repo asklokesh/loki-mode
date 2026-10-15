@@ -34,7 +34,7 @@ bare_len=${#bare}
 # Includes the SIDE-EFFECTING commands deliberately. A first pass sampled only
 # read-only ones (proof/verify/doctor/status), which is exactly the sample that
 # would miss `loki help stop` actually stopping something.
-for cmd in proof verify doctor status start stop update; do
+for cmd in proof verify doctor status start stop update estimate; do
     out="$(bash "$LOKI" help "$cmd" 2>&1)"
     if [[ ${#out} -eq $bare_len ]]; then
         ko "loki help $cmd differs from the generic front page" \

@@ -94,3 +94,48 @@ export function recordRun(env: Env, repoDir: string, model: string, verdict: str
   if (shape === null) return false;
   return appendRunOutcome(repoKey(readOriginUrl(repoDir), repoDir), { shape, executor: /haiku/i.test(model) ? "haiku" : "sonnet", verdict: "pass", owner: null, escalated: false, usd, wallS, wallKind: WALL_KIND }, cacheRoot);
 }
+
+export const ESTIMATE_HELP = `loki estimate - Show what a run is likely to cost
+
+Usage: loki estimate [--model M] [--provider P] [--json]
+
+Prints the same estimate line "loki start" prints before a run: the dollar and time
+range of this repo's prior verified runs of the same project shape. With fewer than
+${MIN_RUNS} such runs it prints a rough per-model prior, or NOT AVAILABLE (reason).
+It never estimates from task text and never prints a number it did not measure.
+
+Options:
+  --model M      Model whose rough prior to use when there is no history (default: the start model)
+  --provider P   Provider whose default model is used (default: LOKI_PROVIDER or claude)
+  --json         Machine-readable output (the estimate result object)
+  --help, -h     Show this help
+
+Changed: --iterations is removed. The old iteration-based projection (tools/estimate-run.py)
+is replaced by this single estimator. LOKI_COST_PREVIEW=0 turns the estimate off.
+
+Examples:
+  loki estimate
+  loki estimate --json
+
+See also: loki cost --detail (what a run ALREADY spent)
+`;
+
+/** `loki estimate`: one estimator, the one `loki start` prints. resolve maps a provider to its start model. */
+export function runEstimate(args: readonly string[], d: { repoDir: string; env: Env; resolve: (provider: string) => string; cacheRoot?: string; out?: (s: string) => void; err?: (s: string) => void }): number {
+  const out = d.out ?? ((s: string) => void process.stdout.write(s)), err = d.err ?? ((s: string) => void process.stderr.write(s));
+  let json = false, model: string | undefined, provider = d.env["LOKI_PROVIDER"] || "claude";
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--help" || a === "-h") { out(ESTIMATE_HELP); return 0; }
+    else if (a === "--json") json = true;
+    else if (a === "--model" || a === "--provider") { const v = args[++i]; if (!v) { err(`loki estimate: ${a} needs a value\n`); return 1; } if (a === "--model") model = v; else provider = v; }
+    else if (a.startsWith("--model=")) model = a.slice(8);
+    else if (a.startsWith("--provider=")) provider = a.slice(11);
+    else if (a === "--iterations" || a.startsWith("--iterations=")) { err("loki estimate: --iterations was removed; the estimate now comes from this repo's run history (same as 'loki start'). Run 'loki estimate --help'.\n"); return 1; }
+    else { err(`Unknown option: ${a}\nRun 'loki estimate --help' for usage.\n`); return 1; }
+  }
+  if (!previewOn(d.env)) { out(json ? '{"ok":false,"reason":"cost preview is off (LOKI_COST_PREVIEW=0)"}\n' : "estimate: OFF (LOKI_COST_PREVIEW=0)\n"); return 0; }
+  const r = estimateFor(d.repoDir, d.cacheRoot, { model: model ?? d.resolve(provider), env: d.env });
+  out(json ? `${JSON.stringify(r)}\n` : `${startText(r)}\n`);
+  return 0;
+}

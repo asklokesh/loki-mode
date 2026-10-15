@@ -28151,93 +28151,32 @@ cmd_trust_metrics() {
     python3 "$tm_mod" --loki-dir "$loki_dir" ${pass_args[@]+"${pass_args[@]}"}
 }
 
+# loki estimate: one estimator. The estimate is loki-ts/src/runner/router/cost_preview.ts,
+# the same one 'loki start' prints; this arm only hands off to the Bun CLI (bin/loki is the
+# normal route; this covers 'loki help estimate' and a direct bash invocation). tools/estimate-run.py
+# stays for its other callers (preflight, model-advisor) but is no longer reachable from here.
+cmd_estimate() {
+    local entry="${LOKI_TS_ENTRY:-}"
+    if [ -z "$entry" ]; then
+        if [ -f "$SKILL_DIR/loki-ts/dist/loki.js" ]; then
+            entry="$SKILL_DIR/loki-ts/dist/loki.js"
+        elif [ -f "$SKILL_DIR/loki-ts/src/cli.ts" ]; then
+            entry="$SKILL_DIR/loki-ts/src/cli.ts"
+        fi
+    fi
+    if [ -z "$entry" ] || [ ! -f "$entry" ] || ! command -v bun >/dev/null 2>&1; then
+        echo -e "${RED}loki estimate requires the Bun runtime and is not available on the bash route.${NC}" >&2
+        echo "Install Bun (https://bun.sh) or remove LOKI_LEGACY_BASH=1." >&2
+        return 1
+    fi
+    bun "$entry" estimate "$@"
+}
+
 # Transparent cost view (R3): per-run + per-project spend, model routing, and
 # budget status with the 80% warn line. Reuses efficiency_cost.collect_efficiency
 # for the current-run aggregate (single source of truth) and reads .loki/proofs/
 # for persistent per-run history. Honest: prints "not recorded" when cost was
 # never collected, never a fabricated $0.00.
-# Forward cost projection. Wraps tools/estimate-run.py.
-#
-# --iterations is REQUIRED by that tool by design: no multi-run history exists
-# to derive a horizon from, so projecting a total without one would be guessing
-# at the single number the operator asked for. We surface that requirement here
-# rather than inventing a default, for the same reason cost reports UNKNOWN
-# instead of $0.00 -- an unearned number is worse than an absent one.
-cmd_estimate() {
-    local iterations=""
-    local show_json=false
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --help|-h)
-                echo -e "${BOLD}loki estimate${NC} - Project what a run is likely to cost"
-                echo ""
-                echo "Usage: loki estimate --iterations N [--json]"
-                echo ""
-                echo "Projects a run cost from this workspace's MEASURED history in"
-                echo ".loki/metrics/efficiency/. With no measured history there is no"
-                echo "basis, and it says so rather than returning a fabricated number."
-                echo ""
-                echo "Options:"
-                echo "  --iterations N       REQUIRED. How many iterations to project."
-                echo "                       No multi-run history exists to derive a horizon"
-                echo "                       from, so there is no honest default."
-                echo "  --json               Machine-readable JSON output"
-                echo "  --help, -h           Show this help"
-                echo ""
-                echo "Examples:"
-                echo "  loki estimate --iterations 10"
-                echo "  loki estimate --iterations 25 --json"
-                echo ""
-                echo "See also: loki cost --detail (what a run ALREADY spent)"
-                return 0
-                ;;
-            --json) show_json=true; shift ;;
-            --iterations) iterations="${2:-}"; shift 2 || shift ;;
-            --iterations=*) iterations="${1#*=}"; shift ;;
-            *) echo -e "${RED}Unknown option: $1${NC}" >&2; echo "Run 'loki estimate --help' for usage." >&2; return 1 ;;
-        esac
-    done
-
-    if [ -z "$iterations" ]; then
-        echo -e "${RED}--iterations is required${NC}" >&2
-        echo "" >&2
-        echo "No multi-run history exists to derive a horizon from, so there is no" >&2
-        echo "honest default for how many iterations to project. Say how many you" >&2
-        echo "expect and the projection is scaled from measured per-iteration cost." >&2
-        echo "" >&2
-        echo "  loki estimate --iterations 10" >&2
-        echo "" >&2
-        echo "Run 'loki estimate --help' for usage." >&2
-        return 1
-    fi
-
-    case "$iterations" in
-        ''|*[!0-9]*)
-            echo -e "${RED}--iterations must be a positive whole number (got: $iterations)${NC}" >&2
-            return 1
-            ;;
-    esac
-
-    local estimate_py="$SKILL_DIR/tools/estimate-run.py"
-    if ! command -v python3 >/dev/null 2>&1; then
-        echo -e "${RED}python3 is required for 'loki estimate'${NC}" >&2
-        echo "Install python3 and re-run." >&2
-        return 1
-    fi
-    if [ ! -f "$estimate_py" ]; then
-        echo -e "${RED}Estimate tool not found: $estimate_py${NC}" >&2
-        echo "Your install looks incomplete. Reinstall: loki self-update" >&2
-        return 1
-    fi
-
-    # Same workspace derivation as 'loki cost --detail': the tool takes the
-    # workspace and appends .loki itself, while LOKI_DIR is the .loki path.
-    local est_args=("$(dirname "${LOKI_DIR:-.loki}")" "--iterations" "$iterations")
-    [ "$show_json" = "true" ] && est_args+=("--json")
-    python3 "$estimate_py" "${est_args[@]}"
-}
-
 cmd_cost() {
     local show_json=false
     local last_n=0

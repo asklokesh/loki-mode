@@ -56,6 +56,13 @@ function _loki {
                 agent)
                     _loki_agent
                     ;;
+                estimate)
+                    _arguments \
+                        '--json[Output machine-readable JSON]' \
+                        '--model[Model whose rough prior to use]:model:' \
+                        '--provider[Provider whose default model is used]:provider:' \
+                        '--help[Show help]'
+                    ;;
                 status)
                     _arguments \
                         '--json[Output machine-readable JSON]' \
@@ -252,7 +259,7 @@ function _loki_commands {
         'plan:Preview the build plan for a spec'
         'report:Reporting commands (cost, kpis, share)'
         'cost:Show cost of recent runs (--detail for cache + trend)'
-        'estimate:Project run cost (requires --iterations N)'
+        'estimate:Estimate run cost from run history (--json, --model, --provider)'
         'kpis:Key performance indicators'
         'stats:Session statistics'
         'preview:Open the running app preview'
