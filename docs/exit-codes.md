@@ -346,3 +346,13 @@ esac
 Do not read an exit code through a pipe. `$?` after a pipeline reports the last
 stage, so `loki verify | tee log` gives you `tee`'s status and always looks
 successful. Use `${PIPESTATUS[0]}` in bash, or capture first and test after.
+
+## `loki edit`
+
+One provider pass, no loop.
+
+| Code | Meaning |
+|---|---|
+| 0 | Edit done (or nothing to change, or `--dry-run` plan printed) |
+| 1 | Provider pass failed, or `--verify` failed (nothing is committed) |
+| 2 | Usage or setup error (no change text, not a git repo, claude or python3 missing, unsupported provider) |
