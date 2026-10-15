@@ -29819,6 +29819,12 @@ except (json.JSONDecodeError, OSError): pass
         _loki_surface_why_hint || true
     fi
 
+    # OC-OUTPUT: unified run summary (same format as engine10); best-effort, never changes the exit code.
+    if [ -f "$SCRIPT_DIR/lib/run-summary.sh" ]; then
+        # shellcheck source=lib/run-summary.sh
+        source "$SCRIPT_DIR/lib/run-summary.sh" 2>/dev/null && loki_run_summary "$result" 2>/dev/null || true
+    fi
+
     exit $result
 }
 
