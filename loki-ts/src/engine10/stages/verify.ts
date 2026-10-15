@@ -11,7 +11,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failId
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
-import { classifyCheck, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped } from "../../util/check_result.ts";
+import { changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -70,17 +70,7 @@ export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null)
   return { cwd: site?.cwd ?? repoDir, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: site?.root ?? "." };
 }
 const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
-/** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
- *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
- *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
-export function changedFiles(repoDir: string, baseSha: string): string[] {
-  const run = (args: string[]): string[] =>
-    safeGit(repoDir, args)
-      .split("\n").map((l) => l.trim()).filter(Boolean);
-  const tracked = run(["diff", "--name-only", baseSha]);
-  const untracked = run(["ls-files", "--others", "--exclude-standard"]);
-  return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/"));
-}
+export { changedFiles } from "../../util/check_result.ts"; // one owner: check_result.ts (diffFiles builds on it)
 interface RunOpts {
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   stdin?: string;
@@ -251,6 +241,7 @@ export const verifyStage: Stage = {
       }
       return { status: "failed", data: { changed_files: [] }, reason: "empty diff without an already_done marker" };
     }
+    let risk = (() => { try { const r = classifyRisk(diffFiles(ctx.repoDir, ctx.baseSha)); recordRisk(ctx.repoDir, r); return r; } catch { return null; } })(); // RISKTIER: artifact-based tier, recorded; deferred checks are never a pass
     const checks: VerifyCheck[] = [];
     const api = loadProjectApi(ctx.repoDir); // FC-01: null (repo-root behavior) unless the model has a package below the root
     const map = await ctx.tests.detect(ctx.repoDir);
@@ -290,6 +281,14 @@ export const verifyStage: Stage = {
         });
       }
     }
+    const fullNotProven = new Set<string>(); // no-runner entries are dropped at not_proven: nothing ran, and the risk record keeps the full test command deferred
+    if (risk && risk.tier !== "low" && !signal.aborted) { // RISKTIER: medium and high run the detected full test command (deep.ts runner table); the reviewer, council and security scan stay recorded as not run
+      const { runFullSuite } = await import("./deep.ts"); // lazy: deep.ts imports this module
+      const full: Parameters<typeof runFullSuite>[3] = [];
+      await runFullSuite(ctx, signal, {}, full, fullNotProven);
+      for (const c of full) checks.push({ name: c.name, cmd: c.cmd, result: c.result as VerifyCheck["result"], duration_s: c.duration_s, ...(c.reason ? { reason: c.reason } : {}) });
+      if (full.some((c) => c.result === "pass" || c.result === "fail")) { risk = markExecuted(risk, ["full test command", "full suite"]); recordRisk(ctx.repoDir, risk); }
+    }
     const cfgChanged = testConfigChanged(ctx.repoDir, ctx.baseSha, changed); // FC-21b: also feeds uncovered_changed
     const covered = (f: string): boolean => ctx.tests.impacted(map, [f]).some((t) => checks.some((c) => c.name === `${t.runner}:${t.path}` && hasExecutedProof([c])));
     const uncoveredChanged = changed.filter((f) => CODE_EXT.test(f) && !isTestFile(f) && !wallPaths.has(f) && !cfgChanged.includes(f) && !covered(f)); // FC-21b: changed code no passing impacted check ran; seal denies VERIFIED after a limit
@@ -304,8 +303,8 @@ export const verifyStage: Stage = {
     const inBase = (f: string): boolean => { try { safeGit(ctx.repoDir, ["cat-file", "-e", `${ctx.baseSha}:${f}`], { stdio: "ignore" }); return true; } catch { return false; } };
     const testCounts: Record<string, unknown> = {}; const modifiedRel = relevant.filter((t) => changed.includes(t.path) && inBase(t.path)).flatMap((t) => { const k = preRed.cnt[`${t.runner}:${t.path}`]; if (k) testCounts[t.path] = k; return [`weakened test: ${t.path}`, ...(assertDeltaNotes(ctx.repoDir, ctx.baseSha, null, t.path, intake?.task ?? "", k?.b, k?.h) ?? [])]; }); // a relevant test file edited: NOT VERIFIED (seal lists the same line)
     const weakened = [...modifiedRel, ...cfgChanged.map((f) => `test configuration changed: ${f}`), ...preRed.weak.map((n) => `skipped or fewer tests than base: ${n}`)];
-    const notProven = [...weakened, ...checks.filter((c) => c.owner === "harness").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
-    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => c.name) } };
+    const notProven = [...weakened, ...[...fullNotProven].filter((n) => !n.startsWith("full suite (no test runner")), ...checks.filter((c) => c.owner === "harness").map((c) => `${c.reason} (${c.name}; harness-owned, no fix rounds)`), ...new Set(checks.filter((c) => c.interpreter === "system" && c.result !== "not_run").map((c) => (c.name.startsWith("lint:") ? "lint ran on the system ruff" : "tests ran on the system interpreter")))];
+    return { status: "completed", data: { checks, flaky, failures_grouped: failuresGrouped, changed_files: changed, not_proven: notProven, pre_red: preRed.ids, pre_red_checks: preRed.names, ...(attr.line ? { baseline_line: attr.line, introduced_checks: attr.introducedChecks } : {}), test_counts: testCounts, uncovered_changed: uncoveredChanged, target_checks: checks.filter((c) => c.result === "pass" && targetNames.has(c.name)).map((c) => c.name), risk } };
   },
 };
 export const stage = verifyStage;
