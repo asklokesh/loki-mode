@@ -2576,9 +2576,12 @@ cmd_start() {
         local _ps_skip=0
         for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
             if [ "$_ps_skip" = 1 ]; then _ps_skip=0; continue; fi
+            if [ "$_ps_skip" = 2 ]; then _ps_skip=0; _ps_brief+=("$_ps_a"); continue; fi
             case "$_ps_a" in
                 --brief=*) _ps_brief+=("${_ps_a#*=}") ;;
-                --brief|--provider|--budget|--prd) _ps_skip=1 ;;
+                --brief) _ps_skip=2 ;;
+                # Every value-taking cmd_start flag: its value is never brief text.
+                --provider|--budget|--prd|--issue|--model|--max-cost|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--max-wait) _ps_skip=1 ;;
                 -*) ;;
                 *) _ps_brief+=("$_ps_a") ;;
             esac

@@ -336,11 +336,22 @@ export function isBashOnlyStart(args: readonly string[]): boolean {
   return args.some((a) => a === "--workspace" || a.startsWith("--workspace=") || a === "--deploy");
 }
 
+const START_ENV_NAMES = new Set(["PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "LANG", "TZ", "CI", "NO_COLOR", "SSH_AUTH_SOCK", "LOKI_RUN_TMP"]);
+const START_ENV_PREFIXES = ["LOKI_", "LC_", "XDG_", "NODE_", "BUN_", "ANTHROPIC_", "CLAUDE_", "OPENAI_", "CODEX_", "GEMINI_", "GOOGLE_", "OPENROUTER_", "OLLAMA_", "AWS_", "AZURE_", "GH_", "GITHUB_"];
+/** Scoped child env for the bash divert: an explicit allowlist (plan section 3), never the whole env plus unrelated secrets. */
+export function scopedStartEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(env)) {
+    if (v !== undefined && (START_ENV_NAMES.has(k) || START_ENV_PREFIXES.some((p) => k.startsWith(p)))) out[k] = v;
+  }
+  return out;
+}
+
 export async function runStart(args: readonly string[]): Promise<number> {
   if (isBashOnlyStart(args)) {
     const { spawn } = await import("node:child_process");
     return await new Promise<number>((resolveExit) => {
-      const child = spawn("bash", [`${REPO_ROOT}/autonomy/loki`, "start", ...args], { env: process.env, stdio: "inherit" });
+      const child = spawn("bash", [`${REPO_ROOT}/autonomy/loki`, "start", ...args], { env: scopedStartEnv(process.env), stdio: "inherit" });
       child.on("error", () => resolveExit(1));
       child.on("close", (code) => resolveExit(code ?? 1));
     });

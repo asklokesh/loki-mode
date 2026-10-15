@@ -193,9 +193,10 @@ _ws99_path_run() {
     rm -rf "$_ws99_tmp/proj/.loki" "${_ws99_tasks:?}"/*
     (cd "$_ws99_tmp/proj" && env -u LOKI_WORKSPACES PLAN_SRC="$_ws99_tmp/plan-ok.json" LOKI_NO_BROWSER=1 \
         LOKI_RECEIPT_SIGNING_KEY_FILE="$_ws99_tmp/sign.pem" LOKI_WORKSPACE_LAUNCHER="$_ws99_tmp/plan-launcher.sh" \
-        timeout -k 5 200 bash "$REPO_ROOT/bin/loki" start --workspace planned acme/lib#1 2>&1)
+        timeout -k 5 200 bash "$REPO_ROOT/bin/loki" start --workspace planned "$@" 2>&1)
 }
-_ws99_out="$(_ws99_path_run)"
+
+_ws99_out="$(_ws99_path_run acme/lib#1)"
 _ws99_rc=$?
 _ws99_comp="$(find "$_ws99_tmp/proj/.loki/workspaces/planned" -name composite.json 2>/dev/null | head -1)"
 _ws99_l="$(cat "$_ws99_tasks/acme__lib" 2>/dev/null)"
@@ -210,6 +211,18 @@ if [ -n "$_ws99_comp" ] &&
 else
     bad "loki verify <composite.json>: composite=${_ws99_comp:-none} did not verify through bin/loki"
 fi
+# Value flags and --brief never leak into or vanish from the brief: the issue ref must arrive intact.
+for _ws99_variant in "--isolation worktree acme/lib#1" "--model sonnet --max-cost 1 acme/lib#1" "--brief acme/lib#1"; do
+    # shellcheck disable=SC2086
+    _ws99_out="$(_ws99_path_run $_ws99_variant)"
+    _ws99_rc=$?
+    _ws99_l="$(cat "$_ws99_tasks/acme__lib" 2>/dev/null)"
+    if [ "$_ws99_rc" -eq 0 ] && [ "${_ws99_l#Add the shared helper}" != "$_ws99_l" ]; then
+        ok "start --workspace $_ws99_variant: brief collected intact"
+    else
+        bad "start --workspace $_ws99_variant: rc=$_ws99_rc lib=[$_ws99_l] out=$_ws99_out"
+    fi
+done
 _ws99_out="$(cd "$_ws99_tmp/proj" && LOKI_NO_BROWSER=1 timeout -k 5 60 bash "$REPO_ROOT/bin/loki" start --health-url http://127.0.0.1:1/ x 2>&1)"
 _ws99_rc=$?
 if [ "$_ws99_rc" -eq 2 ] && printf '%s' "$_ws99_out" | grep -q 'apply only with --deploy'; then
