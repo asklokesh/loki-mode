@@ -20,6 +20,8 @@ _loki_edit_usage() {
     echo "  --receipt    Write an unsigned edit receipt to .loki/edit-receipts/"
     echo "  --commit     Commit the result with a generated message (stages only touched files)"
     echo "  --dry-run    Plan only: read-only pass, no files are changed"
+    echo "  --quiet, -q  Print only the run summary block"
+    echo "  --json       Print only the run summary as one JSON object"
     echo "  --help, -h   Show this help"
     echo ""
     echo "Leading arguments that are existing files or directories scope the edit to them."
@@ -29,7 +31,49 @@ _loki_edit_usage() {
     echo "edit = one pass, no loop. quick = small task with the verify loop (loki quick)."
 }
 
+# Run the edit, then print the unified run summary (autonomy/lib/run-summary.sh).
+# --quiet hides the diff and per-step lines; --json prints only the JSON summary.
 cmd_edit() {
+    local _q=false _j=false _a _t0 _sha _rc _lib _out _cost
+    for _a in "$@"; do
+        case "$_a" in --quiet|-q) _q=true ;; --json) _j=true ;; --) break ;; esac
+    done
+    case " $* " in *" --help "*|*" -h "*) _cmd_edit_run "$@"; return $? ;; esac
+    _t0="$(date +%s)"
+    _sha="$(git rev-parse HEAD 2>/dev/null || true)"
+    _LOKI_EDIT_COST_FILE="$(mktemp 2>/dev/null || true)"
+    export _LOKI_EDIT_COST_FILE
+    if [ "$_q" = true ] || [ "$_j" = true ]; then
+        _out="$(_cmd_edit_run "$@" 2>&1)"; _rc=$?
+        # Failures and usage errors stay visible even when quiet.
+        if [ "$_rc" -ne 0 ]; then printf '%s\n' "$_out" >&2; fi
+    else
+        _cmd_edit_run "$@"; _rc=$?
+    fi
+    _cost=""
+    if [ -n "${_LOKI_EDIT_COST_FILE:-}" ]; then
+        [ -s "$_LOKI_EDIT_COST_FILE" ] && _cost="$(head -n1 "$_LOKI_EDIT_COST_FILE")"
+        rm -f "$_LOKI_EDIT_COST_FILE"
+    fi
+    unset _LOKI_EDIT_COST_FILE
+    # Usage and setup errors (exit 2) never ran a pass: no summary.
+    if [ "$_rc" -ne 2 ]; then
+        _lib="${_LOKI_SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}/lib/run-summary.sh"
+        if [ -f "$_lib" ]; then
+            # shellcheck source=lib/run-summary.sh
+            source "$_lib" 2>/dev/null || true
+            if command -v loki_run_summary >/dev/null 2>&1; then
+                _LOKI_SUMMARY_PRINTED=0
+                LOKI_SUMMARY_WORKTREE=1 LOKI_SUMMARY_COST="$_cost" SESSION_START_EPOCH="$_t0" \
+                LOKI_SUMMARY_JSON="$([ "$_j" = true ] && echo 1 || echo 0)" \
+                TARGET_DIR="." loki_run_summary "$_rc" "$_sha" || true
+            fi
+        fi
+    fi
+    return "$_rc"
+}
+
+_cmd_edit_run() {
     local do_verify=false do_receipt=false do_commit=false dry=false
     local paths=() change=""
     local a
@@ -41,6 +85,7 @@ cmd_edit() {
             --receipt) do_receipt=true ;;
             --commit) do_commit=true ;;
             --dry-run) dry=true ;;
+            --quiet|-q|--json) ;;
             --) shift; change="$*"; break ;;
             -*) echo "loki edit: unknown option: $a" >&2; _loki_edit_usage >&2; return 2 ;;
             *)
@@ -123,6 +168,7 @@ print("%s|%s|%s" % (c,err,(d.get("result") or "").strip().replace("\n"," ")[:400
         *) msg="$parsed" ;;
     esac
 
+    [ -n "${_LOKI_EDIT_COST_FILE:-}" ] && printf '%s\n' "$cost" > "$_LOKI_EDIT_COST_FILE" 2>/dev/null
     if [ "$rc" -ne 0 ] || [ "$iserr" = "1" ]; then
         echo "loki edit: provider pass failed (exit $rc)" >&2
         [ -n "$msg" ] && echo "$msg" >&2
