@@ -8,7 +8,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { snapshotContract } from "../../src/features/contract.ts";
 import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { appendReceiptFact } from "../../src/util/pr_lessons.ts";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -1350,10 +1351,13 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
     sealedLog(dirname(s.data.receipt_path as string), r.receipt_sha256);
     expect((await verifyReceipt(s.data.receipt_path as string)).verdict).toBe("VERIFIED");
   }, 30000);
-  test("LOKI_AUTO_LEARN_PR=0 writes no fact and the receipt hash is identical", async () => {
+  test("LOKI_AUTO_LEARN_PR=0 writes no fact; appending a fact leaves receipt bytes unchanged", async () => {
     const on = await factFor("learn-hash-on");
+    const rp = on.s.data.receipt_path as string;
+    const before = createHash("sha256").update(readFileSync(rp)).digest("hex");
+    appendReceiptFact(on.repo, { runId: "r-other", verdict: "VERIFIED", receiptSha256: "a".repeat(64), title: "x" });
+    expect(createHash("sha256").update(readFileSync(rp)).digest("hex")).toBe(before);
     const off = await factFor("learn-off", "0");
     expect(existsSync(join(off.repo, ".loki/memory/semantic/pr-lessons.json"))).toBe(false);
-    expect(off.r.receipt_sha256).toBe(on.r.receipt_sha256);
   }, 60000);
 });
