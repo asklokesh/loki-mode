@@ -2337,3 +2337,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - 10.6.6 (456058bae): scope control, Control Plane v0, train-cycle fix, docs. All green. Published.
 - 10.6.7 (bfce1db12): D60 sprint, all gates, Release, Post-Release Smoke and Promote success. latest and next at 10.6.7.
 - Open at handoff: real-repo gate not wired into promote.yml and needs operator provider auth; no end-to-end exit 3 run of the cost cap; root action.yml still uses loki start --simple; about 43 worktrees under .claude/worktrees (cap 15); never push backup/train-67..70 or backup/main-pre-rebuild.
+
+## 2026-10-15T20:05Z (CoS) 11.7.1 published, v11.8.0 train started
+- 11.7.0 (8b22e5fba): Tests red on tests/test-help-changelog-drift.sh (three flags missing from help/completion) and tests/test-sigpipe-guard.sh (count 1743 over ceiling 1742). Not published.
+- 11.7.1 (a01a22740): Release and Tests completed/success (gh run watch log, runs 38794589410 and 38794589637); npm dist-tags next=11.7.1, latest=11.6.0.
+- v11.8.0 train (workflow wf_e6306e08-008): group Seal, group resume, multi-milestone missions, Slack and Linear delegation on the trigger server, receipt --max-age, deploy completion and pulse ID_RE fixes.

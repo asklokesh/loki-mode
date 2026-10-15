@@ -5,6 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.8.0 (2026-10-15)
+
+Phase 2 of the multi-repo company operating system. Parallel group runs on `loki start` can now be proven, interrupted groups resume without redoing verified work, multi-milestone specs run as missions, and work can be delegated from Slack and Linear. Every capability extends the module that already owned its concern. `loki start` with Claude remains the primary path, and `loki chat` reaches the same code.
+
+### Added
+- Group Seal. A parallel unit group run on `loki start` now composes one signed group receipt over its unit receipts after integration, using the existing receipt sealer. The run exits 0 only when every unit is VERIFIED and the group receipt verifies offline with `loki verify`; any other outcome keeps the honest non-zero exit.
+- Group resume. Rerunning the same spec resumes the group: units already VERIFIED are skipped and reported as resumed, the rest run again, and the group is integrated and sealed. The resume short-circuit requires every recorded unit verdict to be VERIFIED and fails closed when the unit list is missing. `LOKI_GROUP_RESUME=0` forces a fresh run. The backlog runner harvests each unit's receipt and events (copy then rename, symlinks refused) before its worktree is removed, and forwards the frozen acceptance contract to each unit through `LOKI_UNIT_SPEC`.
+- Missions. A spec with two or more `## Milestone N` sections runs milestone by milestone, each as its own unit group with its own acceptance contract. The run stops at the first milestone that is not VERIFIED, returns that exit code, and names the milestone. Resume applies per milestone. Format and exit semantics are documented in docs/v10/D61-SPEED.md.
+- Slack and Linear delegation on the trigger server. `POST /slack` verifies the Slack signing secret (v0 HMAC-SHA256, 300 second replay window, constant-time compare) and `POST /linear` verifies the Linear-Signature HMAC and webhook timestamp. Both enqueue through the same job path as `/jobs`, reply with the job id, and post a completion summary back (Slack response_url on hooks.slack.com only; a Linear comment when `LINEAR_API_KEY` is set). A missing secret returns 503 naming the variable. The new secrets are denied to child runs. See docs/sentry-intake.md.
+- `loki verify --max-age DUR` (for example `30m`, `24h`, `7d`) refuses a receipt whose signed issue time is older, has no signed issue time, or is more than 300 seconds in the future, with UNCHECKED (exit 2) and a named reason. Invalid values exit 2. Group receipts under `.loki/groups/` are verified by engine10, and chat `/verify` passes its arguments through.
+
+### Fixed
+- Bash completion for `loki deploy` now offers `--dir`, `--no-clip` and `--allow-unanchored`, and `loki verify` offers `--max-age`.
+- A precedence test now pins `LOKI_GROUP_TEST_CMD` over the discovered test command for group runs.
+
+### Not in this release
+- Hosted Company OS, cloud compute, Jira and Teams delegation, and a measured comparison against Factory. Slack and Linear delegation has not yet been exercised against live Slack or Linear workspaces.
+
 ## v11.7.1 (2026-10-15)
 
 Patch for v11.7.0, which was pushed but never published: its CI Tests run failed, so npm did not receive it. This release ships everything listed under v11.7.0 together with the fixes below.
