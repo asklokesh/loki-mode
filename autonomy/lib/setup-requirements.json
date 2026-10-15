@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "comment": "Single source of truth for Loki setup requirements per execution path. Read by loki-ts/src/util/requirements.ts (doctor, runtime errors), autonomy/setup-wizard.sh (loki setup) and tests (docs/contracts/setup.md is asserted against it). Edit here, then update docs/contracts/setup.md.",
+  "comment": "Single source of truth for Loki setup requirements per execution path. Read by loki-ts/src/commands/doctor.ts (doctor, runtime errors), autonomy/provider-offer.sh (bash fallback), autonomy/setup-wizard.sh (loki setup) and tests (the generated block in docs/alternative-installations.md is asserted against it). Edit here, then run UPDATE_CONTRACT=1 bun test tests/commands/doctor.test.ts from loki-ts.",
   "paths": [
     { "id": "common", "title": "All paths", "summary": "Needed by every Loki command" },
     { "id": "claude-cli", "title": "Claude Code CLI path (default, loki start)", "summary": "Loki drives the claude binary you installed and logged in" },

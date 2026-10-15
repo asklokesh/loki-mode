@@ -9,7 +9,7 @@
 // identity" case. Every repo fixture pins HOME to an empty temp dir and
 // blanks GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM so the check is hermetic.
 import { afterAll, describe, expect, test } from "bun:test";
-import { requirementFix } from "../../src/util/requirements.ts";
+import { requirementFix } from "../../src/commands/doctor.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
