@@ -10,9 +10,9 @@
 // all of it and also runs the full verify on every sub-receipt. Nothing here produces a verdict:
 // the combined verdict still comes from the Seal computation, and this module can only lower it.
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { canonicalJson } from "../../util/receipt_signer.ts";
+import { canonicalJson, signReceipt } from "../../util/receipt_signer.ts";
 import type { Verdict } from "../../engine10/types.ts";
 import type { VerifyDeps } from "../../engine10/verify_cmd.ts";
 
@@ -116,6 +116,23 @@ export async function verifyGroup(receiptPath: string, receipt: Record<string, u
     if (r.verdict === "UNCHECKED") unchecked ??= `unit ${id} sub-receipt not checked: ${r.reasons.join("; ")}`;
   }
   return unchecked ? { verdict: "UNCHECKED", reason: `group: ${unchecked}` } : null;
+}
+
+/** Group receipt: one signed body over sealGroup's section, written to <groupDir>/receipt.json (tmp + rename). Reuses sealGroup and the cap rules; no second sealer.
+ *  Throws (message names the problem) when group/manifest.json is missing or any unit sub-receipt fails to seal, so a bad group never gets a receipt. rh is seal.ts receiptSha256, injected. */
+export const GROUP_SCHEMA = "loki.v10.group/1";
+export function composeGroupReceipt(groupDir: string, rh: RecHash, o: { baseRef: string; head: string }): { path: string; receipt: Record<string, unknown> } {
+  const seal = sealGroup(groupDir, rh);
+  if (!seal.section) throw new Error(seal.notProven.length > 0 ? seal.notProven.join("; ") : "group/manifest.json missing");
+  const verdict = capGroupVerdict(compositeVerdict(seal.section.units.map((u) => u.verdict)), seal);
+  const gid = seal.section.group_id;
+  const body = { schema: GROUP_SCHEMA, run_id: gid, verdict, base_sha: o.baseRef, head_sha: o.head, not_proven: seal.notProven, group: seal.section };
+  const hash = rh(body as unknown as Record<string, unknown>), sig = signReceipt(gid, hash);
+  const receipt = { ...body, receipt_sha256: hash, verification: { jwt: sig.jwt, kid: sig.kid } };
+  const path = join(groupDir, "receipt.json"), tmp = `${path}.${process.pid}.tmp`;
+  mkdirSync(groupDir, { recursive: true });
+  writeFileSync(tmp, JSON.stringify(receipt, null, 2) + "\n"); renameSync(tmp, path);
+  return { path, receipt };
 }
 
 // Composite receipt: one signed artifact over every child repo receipt of a workspace run.

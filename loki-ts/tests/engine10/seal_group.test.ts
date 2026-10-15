@@ -9,6 +9,8 @@ import { sealedLog } from "./log_fixture.ts";
 import { createHash, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { commitStage, loadSigningKey, receiptSha256, sealStage, sha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { computeReceiptHash, main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
+import { runGroup } from "../../src/features/speed/run_group.ts";
+import type { Dag } from "../../src/features/decompose.ts";
 import { capGroupVerdict, composeComposite, compositeHash, sealGroup } from "../../src/features/speed/seal_group.ts";
 import type { EventType, Receipt, RunContext, StageName, Verdict } from "../../src/engine10/types.ts";
 
@@ -479,5 +481,150 @@ describe("composite receipt", () => {
     i.outcomes.web = "FAILED: exit 1";
     writeFileSync(ip, JSON.stringify(i));
     expect(() => composeComposite(dir, computeReceiptHash)).toThrow(/did not finish/);
+  });
+});
+
+// V118-01: runGroup composes a signed group receipt and resumes on the same spec. Fake launcher (the BacklogLauncher seam) writes
+// signed unit receipts into the harvest layout (group/units/<id>/) exactly as backlog.py does.
+describe("group run: Group Seal and resume", () => {
+  const SPEC = "- add alpha\n- add beta\n- add gamma\n";
+  const DAG: Dag = {
+    units: ["alpha", "beta", "gamma"].map((w, i) => ({ id: `u${i + 1}`, items: [`add ${w}`], writeSet: [`src/${w}.ts`], modules: [], serialized: [] })),
+    sharedFiles: [], edges: [],
+  };
+  const mkRepo = (name: string): string => {
+    const d = join(root, name);
+    mkdirSync(d, { recursive: true });
+    for (const a of [["init", "-q", "-b", "main"], ["config", "user.name", "t"], ["config", "user.email", "t@t.invalid"], ["config", "commit.gpgsign", "false"]]) sh(["git", ...a], d);
+    writeFileSync(join(d, "README.md"), "x\n");
+    sh(["git", "add", "README.md"], d); sh(["git", "commit", "-q", "-m", "init"], d);
+    sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
+    return d;
+  };
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[] }
+  /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
+  const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
+    const g = argv[argv.indexOf("--group") + 1]!;
+    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; done?: boolean }[] };
+    let out = "";
+    for (const [i, u] of dag.units.entries()) {
+      const n = i + 1, br = `loki/unit-${g}-${n}`;
+      if (u.done) continue;
+      calls.push(u.id);
+      if (o.fail?.includes(n)) { out += `backlog: unit-${g}-${n} FAILED: exit 1\n`; continue; }
+      const has = Bun.spawnSync({ cmd: ["git", "rev-parse", "--verify", "--quiet", `refs/heads/${br}`], cwd: repo }).exitCode === 0;
+      sh(has ? ["git", "checkout", "-q", br] : ["git", "checkout", "-q", "-b", br, "main"], repo);
+      writeFileSync(join(repo, `${g}-u${n}.txt`), `${calls.length}\n`);
+      sh(["git", "add", `${g}-u${n}.txt`], repo); sh(["git", "commit", "-q", "-m", `u${n}`], repo);
+      const head = sh(["git", "rev-parse", "HEAD"], repo).trim();
+      sh(["git", "checkout", "-q", "main"], repo);
+      const d = join(repo, ".loki", "groups", g, "group", "units", u.id);
+      mkdirSync(d, { recursive: true });
+      const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: {} }) + "\n";
+      writeFileSync(join(d, "events.jsonl"), events);
+      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: "VERIFIED", head_sha: head, events_sha256: sha256(events), not_proven: [] };
+      const h = receiptSha256(body as never), sig = o.unsigned?.includes(n) ? { jwt: null, kid: null } : signReceipt(u.id, h);
+      const rec = { ...body, receipt_sha256: h, verification: sig };
+      if (o.tamper?.includes(n)) rec.verdict = "FAILED";
+      writeFileSync(join(d, "receipt.json"), JSON.stringify(rec, null, 2) + "\n");
+      out += `backlog: unit-${g}-${n} VERIFIED\n`;
+    }
+    return { code: 0, stdout: out };
+  };
+  const go = async (repo: string, l: ReturnType<typeof fake>, env: Record<string, string> = {}): Promise<{ code: number; err: string }> => {
+    let err = "";
+    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", ...env } as NodeJS.ProcessEnv, provider: "claude", spec: SPEC, specPath: null, say: (s) => { err += s; } });
+    return { code, err };
+  };
+  const groups = (repo: string): string[] => readdirSync(join(repo, ".loki", "groups")).filter((n) => n.startsWith("g"));
+  const dagOf = (repo: string, g: string): Record<string, any> => JSON.parse(readFileSync(join(repo, ".loki", "groups", g, "dag.json"), "utf8"));
+
+  test("green run: signed group receipt verifies, exit 0, dag carries spec_sha256 base_ref and unit specs", async () => {
+    const repo = mkRepo("gr-green"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls));
+    expect(code).toBe(0);
+    const [g] = groups(repo), gd = join(repo, ".loki", "groups", g!);
+    const rec = JSON.parse(readFileSync(join(gd, "receipt.json"), "utf8"));
+    expect(rec.schema).toBe("loki.v10.group/1");
+    expect(rec.verdict).toBe("VERIFIED");
+    expect(rec.run_id).toBe(g);
+    expect(rec.base_sha).toBe(dagOf(repo, g!).base_ref);
+    expect(rec.head_sha).toBe(sh(["git", "rev-parse", `refs/heads/loki/group-${g}`], repo).trim());
+    expect(rec.verification.jwt).toBeTruthy();
+    expect((await verifyReceipt(join(gd, "receipt.json"))).verdict).toBe("VERIFIED");
+    expect(err).not.toContain("NOT PROVEN");
+    const dag = dagOf(repo, g!);
+    expect(dag.spec_sha256).toBe(createHash("sha256").update(SPEC).digest("hex"));
+    for (const u of dag.units) {
+      expect(u.spec).toBe(join(gd, "unit_specs", `${u.id}.json`));
+      const us = JSON.parse(readFileSync(u.spec, "utf8"));
+      expect(us).toMatchObject({ id: u.id, writeSet: u.writeSet, pack: u.writeSet, tokenBudget: 1e9, acceptance: [] });
+    }
+    expect(JSON.parse(readFileSync(join(gd, "group", "manifest.json"), "utf8")).units.map((u: { unit_id: string }) => u.unit_id)).toEqual(["u1", "u2", "u3"]);
+  });
+
+  test("a verified group receipt on the group branch short-circuits: exit 0, nothing launched", async () => {
+    const repo = mkRepo("gr-again"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls))).code).toBe(0);
+    const before = calls.length;
+    const { code, err } = await go(repo, fake(repo, calls));
+    expect(code).toBe(0);
+    expect(calls.length).toBe(before);
+    expect(groups(repo).length).toBe(1);
+    expect(err).toContain("already VERIFIED");
+  });
+
+  test("resume skips VERIFIED units: only the failed unit reruns, same gid, done flags set", async () => {
+    const repo = mkRepo("gr-resume"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls, { fail: [3] }))).code).toBe(1);
+    expect(calls).toEqual(["u1", "u2", "u3"]);
+    const { code, err } = await go(repo, fake(repo, calls));
+    expect(code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3", "u3"]);
+    expect(groups(repo).length).toBe(1);
+    expect(err).toContain(`loki: resuming group ${groups(repo)[0]}: 2 of 3 units already VERIFIED`);
+    expect(dagOf(repo, groups(repo)[0]!).units.map((u: { done: boolean }) => u.done)).toEqual([true, true, false]);
+  });
+
+  test("a unit whose branch head moved since its receipt reruns", async () => {
+    const repo = mkRepo("gr-head"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls, { fail: [3] }))).code).toBe(1);
+    const g = groups(repo)[0]!;
+    sh(["git", "checkout", "-q", `loki/unit-${g}-1`], repo);
+    writeFileSync(join(repo, "extra.txt"), "x\n"); sh(["git", "add", "extra.txt"], repo); sh(["git", "commit", "-q", "-m", "moved"], repo);
+    sh(["git", "checkout", "-q", "main"], repo);
+    expect((await go(repo, fake(repo, calls))).code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3", "u1", "u3"]);
+  });
+
+  test("LOKI_GROUP_RESUME=0 starts a new group id and runs every unit", async () => {
+    const repo = mkRepo("gr-fresh"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls, { fail: [3] }))).code).toBe(1);
+    await new Promise((r) => setTimeout(r, 5));
+    await go(repo, fake(repo, calls), { LOKI_GROUP_RESUME: "0" });
+    expect(groups(repo).length).toBe(2);
+    expect(calls.length).toBe(6);
+  });
+
+  test("a tampered unit receipt is never exit 0 and the group does not verify", async () => {
+    const repo = mkRepo("gr-tamper"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { tamper: [2] }));
+    expect(code).toBe(4);
+    expect(err).toContain("NOT PROVEN");
+  });
+
+  test("tampering a harvested unit receipt after sealing makes the group receipt not VERIFIED", async () => {
+    const repo = mkRepo("gr-tamper2"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls))).code).toBe(0);
+    const g = groups(repo)[0]!, gd = join(repo, ".loki", "groups", g);
+    rewrite(join(gd, "group", "units", "u2", "receipt.json"), (r) => { r["verdict"] = "FAILED"; }, false);
+    expect((await verifyReceipt(join(gd, "receipt.json"))).verdict).not.toBe("VERIFIED");
+  });
+
+  test("an unsigned unit receipt under a signed group is NOT PROVEN, never exit 0", async () => {
+    const repo = mkRepo("gr-unsigned"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { unsigned: [2] }));
+    expect(code).toBe(4);
+    expect(err).toContain("NOT PROVEN");
   });
 });
