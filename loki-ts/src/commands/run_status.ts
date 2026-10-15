@@ -28,9 +28,19 @@ export function runsRoot(env: NodeJS.ProcessEnv, repoDir: string): string {
   return env.LOKI_DIR ? join(resolve(repoDir, env.LOKI_DIR), "runs") : join(repoDir, ".loki", "runs");
 }
 
-function listRuns(root: string): string[] {
+/** Run ids under a runs root, sorted. Ids embed a sortable UTC timestamp (e10-<ISO-ish>-<rand>), so the last is the newest. */
+export function listRunIds(root: string): string[] {
   if (!existsSync(root)) return [];
   return readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+}
+
+export function latestRunId(root: string): string | null {
+  const ids = listRunIds(root);
+  return ids.length ? ids[ids.length - 1]! : null;
+}
+
+export function eventsPath(root: string, runId: string): string {
+  return join(root, runId, "events.jsonl");
 }
 
 const lastTs = (ev: EventEnvelope[]): number => (ev.length ? Date.parse(ev[ev.length - 1]!.ts) : 0);
@@ -67,10 +77,10 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
 
 /** The live run if one is recent, else the newest run; null when there are none. */
 export function pickRun(root: string, nowMs: number): { id: string; events: EventEnvelope[] } | null {
-  const ids = listRuns(root).reverse();
+  const ids = listRunIds(root).reverse();
   let newest: { id: string; events: EventEnvelope[] } | null = null;
   for (const id of ids) {
-    const events = readEvents(join(root, id, "events.jsonl"));
+    const events = readEvents(eventsPath(root, id));
     if (events.length === 0) continue;
     newest ??= { id, events };
     if (!events.some((e) => e.type === "run.completed") && nowMs - lastTs(events) <= STALE_S * 1000) return { id, events };
@@ -117,7 +127,7 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   const now = Date.now();
   let hit = pickRun(root, now);
   if (wanted !== null) {
-    const events = readEvents(join(root, wanted, "events.jsonl"));
+    const events = readEvents(eventsPath(root, wanted));
     if (events.length === 0) { process.stderr.write(`loki status: no events for run ${wanted}\n`); return 1; }
     hit = { id: wanted, events };
   }

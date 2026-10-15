@@ -2,7 +2,7 @@
 // 12). Binds 127.0.0.1 only, never opens a browser. Reuses events.ts fold()/tail(): runs are
 // folded read-only from .loki/runs/*/events.jsonl; the per-run stream is tail()'s replay-then-poll.
 import { fold, partialCost, readEvents, tail } from "../engine10/events.ts";
-import { eventsPath, listRunIds } from "../contrib/status.ts";
+import { eventsPath, listRunIds, runsRoot } from "../commands/run_status.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 import { getVersion } from "../version.ts";
 import { groupRoute, renderPage } from "../util/dashboard_page.ts";
@@ -28,7 +28,7 @@ export interface RunSummary {
 /** Folds one run's events into the summary the dashboard renders. A field the
  *  run has not reached yet is left null (section 12: never a fake 0). */
 export function summarizeRun(repoDir: string, runId: string): RunSummary {
-  const events = readEvents(eventsPath(repoDir, runId));
+  const events = readEvents(eventsPath(runsRoot(process.env, repoDir), runId));
   const folded = fold(events);
   const sealData = folded.stages["seal"]?.data as { not_proven?: string[] } | undefined;
   const prData = folded.stages["pr"]?.data as { url?: string; pr_url?: string; draft?: boolean } | undefined;
@@ -55,7 +55,7 @@ export function summarizeRun(repoDir: string, runId: string): RunSummary {
   };
 }
 export function listRuns(repoDir: string): RunSummary[] {
-  return listRunIds(repoDir).map((id) => summarizeRun(repoDir, id));
+  return listRunIds(runsRoot(process.env, repoDir)).map((id) => summarizeRun(repoDir, id));
 }
 /** One screen's worth of labeled panels (section 12). A panel with no data
  *  yet is left out of the array entirely; cost/time always render, "not
@@ -88,7 +88,7 @@ function eventStream(repoDir: string, runId: string): ReadableStream<Uint8Array>
   let stop: (() => void) | null = null;
   return new ReadableStream({
     start(controller) {
-      stop = tail(eventsPath(repoDir, runId), (e) => {
+      stop = tail(eventsPath(runsRoot(process.env, repoDir), runId), (e) => {
         try {
           controller.enqueue(sseLine(e));
         } catch {
