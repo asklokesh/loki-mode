@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { policyGate } from "../../src/engine10/supervisor.ts";
+import { policyGate, prGate } from "../../src/engine10/supervisor.ts";
 
 let root = "";
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), "policy-gate-")); });
@@ -32,5 +32,25 @@ describe("policyGate", () => {
   test("policy present and check.js missing fails closed", () => {
     withPolicy();
     expect(policyGate(root, "pr", env(), join(root, "missing.js")).decision).toBe("deny");
+  });
+});
+
+describe("prGate (shared by the supervisor pr callback and resumePublish)", () => {
+  const pol = (v: unknown): void => { mkdirSync(join(root, ".loki"), { recursive: true }); writeFileSync(join(root, ".loki", "policies.json"), JSON.stringify(v)); };
+  test("no policy file: not denied, not draft (start behaviour unchanged)", () => {
+    const keep = { h: process.env.HOME, d: process.env.LOKI_DATA_DIR }; process.env.HOME = root; process.env.LOKI_DATA_DIR = join(root, "none");
+    try { expect(prGate(root)).toEqual({ draft: false }); } finally { process.env.HOME = keep.h; if (keep.d === undefined) delete process.env.LOKI_DATA_DIR; else process.env.LOKI_DATA_DIR = keep.d; }
+  });
+  test("deny and approval map through real check.js; LOKI_PR_DRAFT is never set", () => {
+    const keep = { h: process.env.HOME, d: process.env.LOKI_DATA_DIR }; process.env.HOME = root; process.env.LOKI_DATA_DIR = join(root, "none"); delete process.env.LOKI_PR_DRAFT;
+    try {
+      pol({ autonomy: "propose" });
+      const d = prGate(root); expect("deny" in d && d.deny).toContain("policy denied");
+      pol({ autonomy: "execute", actions: { pr: "require_approval" } });
+      expect(prGate(root)).toEqual({ draft: true });
+      pol({ autonomy: "yolo", actions: { pr: "allow" } });
+      expect("deny" in prGate(root)).toBe(true);
+      expect(process.env.LOKI_PR_DRAFT).toBeUndefined();
+    } finally { process.env.HOME = keep.h; if (keep.d === undefined) delete process.env.LOKI_DATA_DIR; else process.env.LOKI_DATA_DIR = keep.d; }
   });
 });

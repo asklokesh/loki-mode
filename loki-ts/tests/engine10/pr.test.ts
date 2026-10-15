@@ -470,6 +470,24 @@ describe("RECOVERY: interrupted run resume", () => {
     expect(prCalls).toBe(1);
   });
 
+  test("POLICY: resume under autonomy propose opens no PR; execute opens one; require_approval drafts", async () => {
+    seal();
+    const pol = (v: unknown): void => { mkdirSync(join(repo, ".loki"), { recursive: true }); writeFileSync(join(repo, ".loki", "policies.json"), JSON.stringify(v)); };
+    const seen: boolean[] = [];
+    const spy: RunPrFn = async (c) => { prCalls++; seen.push((c as { draft?: boolean }).draft === true); return { status: "completed", data: { pr_url: "https://github.com/o/r/pull/9", draft: false, existing: null } }; };
+    const cwd = process.cwd(); process.chdir(repo);
+    try {
+      pol({ autonomy: "propose" });
+      expect(await resumeMain([], { runPr: spy, out: say })).toBe(5);
+      expect(prCalls).toBe(0);
+      expect(out.join("")).toContain("policy denied");
+      expect(readEvents(evPath()).some((e) => e.type === "pr.opened")).toBe(false);
+      pol({ autonomy: "execute", actions: { pr: "require_approval" } });
+      expect(await resumeMain([], { runPr: spy, out: say })).toBe(0);
+      expect(seen).toEqual([true]);
+    } finally { process.chdir(cwd); }
+  });
+
   test("startRecovery resumes only the same task; a different task starts fresh with a notice", async () => {
     seal();
     expect(await startRecovery(repo, "something else", false, { runPr, out: say })).toBeNull();

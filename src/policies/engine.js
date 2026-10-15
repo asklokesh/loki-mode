@@ -537,6 +537,7 @@ class PolicyEngine {
         violations: [{ name: 'autonomy', action: decision === Decision.DENY ? 'deny' : 'require_approval', reason: reason }],
       };
     };
+    if (level !== undefined && !allowedActions(level)) return mk(Decision.DENY, 'unknown autonomy level "' + level + '" (fail-closed)'); // level is checked first: an actions.<a> allow never rescues an invalid level
     if (override === 'deny') return mk(Decision.DENY, 'actions.' + action + ' is deny');
     if (override === 'require_approval') return mk(Decision.REQUIRE_APPROVAL, 'actions.' + action + ' requires approval');
     if (override === 'allow') return null;

@@ -32,6 +32,8 @@ export type PrContext = RunContext & {
   capHit?(): boolean;
   /** Review handoff markdown (util/run_summary.ts handoffSection); appended to the PR body. */
   handoffMd?: string;
+  /** Policy require_approval: open as a draft. Carried on the context, never process.env. */
+  draft?: boolean;
 };
 export interface PrOptions {
   /** Injectable for tests; defaults to the real script next to this checkout. */
@@ -92,7 +94,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const verdict = seal.verdict ?? "PARTIAL"; // fail-safe: an unknown verdict is never treated as VERIFIED
   const notProven = [...(seal.not_proven ?? [])];
   const capHit = ctx.capHit?.() ?? false;
-  const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1"; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
+  const draft = verdict !== "VERIFIED" || capHit || process.env.LOKI_PR_DRAFT === "1" || (ctx as PrContext).draft === true; // MASS-1: `loki issues run --draft` asks for drafts only; it never un-drafts
   const base = stackBase(process.env);
   if (base === null) return { status: "failed", data: {}, reason: "LOKI_PR_BASE is not a valid branch name: refusing to push" };
   mkdirSync(ctx.runDir, { recursive: true });

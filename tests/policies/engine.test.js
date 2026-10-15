@@ -620,6 +620,9 @@ describe('PolicyEngine - autonomy ladder', function () {
     assert.strictEqual(e.evaluate('pre_deployment', { action: 'pr' }).decision, 'DENY');
     assert.ok(e.getValidationErrors().some(function (m) { return m.includes('autonomy'); }));
   });
+  it('actions.pr allow does not rescue an unknown autonomy level', function () {
+    assert.strictEqual(engineWith({ autonomy: 'yolo', actions: { pr: 'allow' } }).evaluate('pre_deployment', { action: 'pr' }).decision, 'DENY');
+  });
   it('no autonomy key leaves behaviour unchanged', function () {
     assert.strictEqual(engineWith({ pre_deployment: [] }).evaluate('pre_deployment', { action: 'pr' }).decision, 'ALLOW');
   });
