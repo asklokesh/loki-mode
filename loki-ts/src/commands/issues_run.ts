@@ -59,6 +59,7 @@ export interface IssuesRunDeps {
 export interface IssuesRunArgs {
   slug: string | null;
   label: string | null;
+  milestone: string | null;
   limit: number;
   parallel: number;
   draft: boolean;
@@ -68,13 +69,13 @@ export interface IssuesRunArgs {
   split: boolean;
 }
 
-const USAGE = "usage: loki issues run [owner/repo] [--label L] [--limit N] [--parallel K] [--draft] [--dry-run] [--yes] [--comment] [--no-split]\n";
+const USAGE = "usage: loki issues run [owner/repo] [--label L] [--milestone M] [--limit N] [--parallel K] [--draft] [--dry-run] [--yes] [--comment] [--no-split]\n";
 const SLUG_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const DEFAULT_LIMIT = 100;
 const RATE_LIMIT_RETRIES = 2;
 
 export function parseIssuesArgs(args: readonly string[]): IssuesRunArgs | string {
-  const a: IssuesRunArgs = { slug: null, label: null, limit: DEFAULT_LIMIT, parallel: 1, draft: false, dryRun: false, yes: false, comment: false, split: true };
+  const a: IssuesRunArgs = { slug: null, label: null, milestone: null, limit: DEFAULT_LIMIT, parallel: 1, draft: false, dryRun: false, yes: false, comment: false, split: true };
   for (let i = 0; i < args.length; i++) {
     const t = args[i]!;
     const val = (): string | null => (i + 1 < args.length ? args[++i]! : null);
@@ -83,10 +84,12 @@ export function parseIssuesArgs(args: readonly string[]): IssuesRunArgs | string
     else if (t === "--yes" || t === "-y") a.yes = true;
     else if (t === "--comment") a.comment = true;
     else if (t === "--no-split") a.split = false;
-    else if (t === "--label") {
+    else if (t === "--label" || t === "--milestone") {
       const v = val();
-      if (!v) return "--label needs a value";
-      a.label = v;
+      if (!v) return `${t} needs a value`;
+      if (v.startsWith("-")) return `invalid ${t.slice(2)} "${v}"`; // no option-like token may reach gh
+      if (t === "--label") a.label = v;
+      else a.milestone = v;
     } else if (t === "--limit" || t === "--parallel") {
       const v = Number(val());
       if (!Number.isInteger(v) || v < 1) return `${t} needs a positive integer`;
@@ -112,6 +115,16 @@ export function coveredIssues(slug: string, prs: readonly { headRefName?: string
     for (const l of (pr.body ?? "").matchAll(link)) out.add(Number(l[1] ?? l[2]));
   }
   return out;
+}
+
+interface RawIssue { number: number; title: string; body?: string | null; labels: { name: string }[] }
+
+/** Strict row shape: a partial or odd row aborts the run rather than being guessed at. */
+function validIssueRow(r: unknown): r is RawIssue {
+  const x = r as Record<string, unknown> | null;
+  return !!x && Number.isInteger(x["number"]) && typeof x["title"] === "string"
+    && (x["body"] === undefined || x["body"] === null || typeof x["body"] === "string")
+    && Array.isArray(x["labels"]) && x["labels"].every((l) => typeof (l as { name?: unknown } | null)?.name === "string");
 }
 
 function parseJson<T>(text: string): T | null {
@@ -176,16 +189,25 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
     d.err("loki issues run: no owner/repo given and origin is not a GitHub remote\n");
     return 2;
   }
+  if (slug.split("/").some((s) => s.includes("..") || s.startsWith("-"))) {
+    d.err(`loki issues run: invalid repo "${slug}"\n`);
+    return 2;
+  }
   const started = d.now();
 
   // 1. list and dedupe (read-only gh calls, nothing billed)
-  const list = d.gh(["issue", "list", "--repo", slug, "--state", "open", "--json", "number,title,body,labels", "--limit", String(a.limit), ...(a.label ? ["--label", a.label] : [])]);
-  const raw = list.rc === 0 ? parseJson<{ number: number; title?: string; body?: string; labels?: { name?: string }[] }[]>(list.stdout) : null;
+  const list = d.gh(["issue", "list", "--repo", slug, "--state", "open", "--json", "number,title,body,labels", "--limit", String(a.limit), ...(a.label ? ["--label", a.label] : []), ...(a.milestone ? ["--milestone", a.milestone] : [])]);
+  const raw = list.rc === 0 ? parseJson<unknown>(list.stdout) : null;
   if (!Array.isArray(raw)) {
     d.err(`loki issues run: gh issue list failed (rc ${list.rc}): ${clip(list.stderr || list.stdout, 300)}\n`);
     return 1;
   }
-  const issues: GhIssue[] = raw.map((i) => ({ number: i.number, title: i.title ?? "", body: i.body ?? "", labels: (i.labels ?? []).map((l) => l.name ?? "") }));
+  const bad = raw.findIndex((r) => !validIssueRow(r));
+  if (bad >= 0) {
+    d.err(`loki issues run: malformed issue at index ${bad} in gh output\n`);
+    return 1;
+  }
+  const issues: GhIssue[] = (raw as RawIssue[]).map((i) => ({ number: i.number, title: i.title, body: i.body ?? "", labels: i.labels.map((l) => l.name) }));
   const prs = d.gh(["pr", "list", "--repo", slug, "--state", "open", "--json", "number,headRefName,body,url", "--limit", "500"]);
   const prList = prs.rc === 0 ? parseJson<{ headRefName?: string; body?: string }[]>(prs.stdout) : null;
   if (!Array.isArray(prList)) {
@@ -197,7 +219,7 @@ export async function issuesRun(args: readonly string[], d: IssuesRunDeps): Prom
   const dupes = issues.filter((i) => covered.has(i.number));
   const todo = issues.filter((i) => !covered.has(i.number));
 
-  d.out(`${slug}: ${issues.length} open issue${issues.length === 1 ? "" : "s"}${a.label ? ` labeled ${a.label}` : ""}, ${dupes.length} already ha${dupes.length === 1 ? "s" : "ve"} an open Loki PR, ${todo.length} to triage\n`);
+  d.out(`${slug}: ${issues.length} open issue${issues.length === 1 ? "" : "s"}${a.label ? ` labeled ${a.label}` : ""}${a.milestone ? ` in milestone ${a.milestone}` : ""}, ${dupes.length} already ha${dupes.length === 1 ? "s" : "ve"} an open Loki PR, ${todo.length} to triage\n`);
   for (const i of dupes) d.out(`  skip #${i.number} (open Loki PR exists): ${clip(i.title, 70)}\n`);
   for (const i of todo) d.out(`  plan #${i.number}: ${clip(i.title, 70)}\n`);
   const est = d.estimate();
