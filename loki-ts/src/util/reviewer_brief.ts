@@ -5,6 +5,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize } from "node:path";
 import { listRepoFiles } from "../engine10/repomap.ts";
+import { buildTestMap, impactedRefs } from "../engine10/testmap.ts";
 import { safeGit } from "./safe_git.ts";
 
 export const reviewerBriefEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env["LOKI_REVIEWER_BRIEF"] !== "0";
@@ -193,6 +194,20 @@ export function renderBrief(inp: BriefInput): string {
     const counts = callerCounts(inp.repoDir, files);
     const ranked = files.map((f) => ({ f, n: counts.get(f) ?? null })).sort((a, b) => (b.n ?? -1) - (a.n ?? -1) || a.f.localeCompare(b.f));
     for (const r of ranked) out.push(`- ${r.f}: ${r.n === null ? "callers n/a (not a JS/TS module)" : `${r.n} caller${r.n === 1 ? "" : "s"}`}`);
+  }
+  out.push("");
+
+  out.push("### Tests that import the changed files");
+  if (!lines) out.push("not measured (no base commit or diff unavailable)");
+  else if (lines.size === 0) out.push("no changed files");
+  else {
+    let map: ReturnType<typeof buildTestMap> | null = null;
+    try { map = buildTestMap(inp.repoDir); } catch { /* reported below */ }
+    if (!map || map.tests.length === 0) out.push("not measured (no test runner or test files detected)");
+    else for (const f of lines.keys()) {
+      const hit = impactedRefs(map, [f]).map((t) => t.path);
+      out.push(hit.length === 0 ? `- ${f}: no test imports this file` : `- ${f}: ${hit.slice(0, 3).join(", ")}${hit.length > 3 ? `, +${hit.length - 3} more` : ""}`);
+    }
   }
   out.push("");
 

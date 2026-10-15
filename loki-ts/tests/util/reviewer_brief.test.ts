@@ -206,3 +206,35 @@ describe("reviewer brief v2", () => {
     });
   });
 });
+
+describe("reviewer brief: tests that import the changed files", () => {
+  let d: string; let b0: string;
+  const g = (a: string[]): string => git(d, a);
+  beforeAll(() => {
+    d = mkdtempSync(join(tmpdir(), "e10-brief-tm-"));
+    g(["init", "-q"]);
+    mkdirSync(join(d, "src")); mkdirSync(join(d, "tests"));
+    writeFileSync(join(d, "bunfig.toml"), "[test]\n");
+    for (const n of ["a", "b", "c"]) writeFileSync(join(d, `src/${n}.ts`), `export const ${n} = 1;\n`);
+    for (const n of ["t1", "t2", "t3", "t4", "t5"]) writeFileSync(join(d, `tests/${n}.test.ts`), 'import { a } from "../src/a.ts";\nvoid a;\n');
+    writeFileSync(join(d, "tests/b.test.ts"), 'import { b } from "../src/b.ts";\nvoid b;\n');
+    g(["add", "-A"]); g(["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "init"]);
+    b0 = g(["rev-parse", "HEAD"]).trim();
+    for (const n of ["a", "b", "c"]) writeFileSync(join(d, `src/${n}.ts`), `export const ${n} = 2;\n`);
+    g(["add", "-A"]); g(["-c", "user.name=t", "-c", "user.email=t@e.x", "commit", "-q", "-m", "chg"]);
+  });
+  afterAll(() => rmSync(d, { recursive: true, force: true }));
+
+  test("lists importing tests, capped at 3 plus +N more, and flags files with none", () => {
+    const sec = renderBrief({ repoDir: d, baseSha: b0 }).split("### Tests that import the changed files")[1]!.split("###")[0]!.trim().split("\n");
+    expect(sec.find((l) => l.startsWith("- src/b.ts"))).toBe("- src/b.ts: tests/b.test.ts");
+    expect(sec.find((l) => l.startsWith("- src/c.ts"))).toBe("- src/c.ts: no test imports this file");
+    const a = sec.find((l) => l.startsWith("- src/a.ts"))!;
+    expect(a).toMatch(/^- src\/a\.ts: tests\/t\d\.test\.ts, tests\/t\d\.test\.ts, tests\/t\d\.test\.ts, \+2 more$/);
+  });
+
+  test("no runner detected: not measured, never a false 'no test'", () => {
+    const sec = renderBrief({ repoDir: dir, baseSha: base }).split("### Tests that import the changed files")[1]!.split("###")[0]!;
+    expect(sec).toContain("not measured (no test runner or test files detected)");
+  });
+});
