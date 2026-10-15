@@ -22,7 +22,10 @@ is the part most likely to surprise a script author.
 | 0 | The run completed |
 | nonzero | Something went wrong |
 
-There is no finer signal. A gate that needs to tell "failed the quality gate"
+Usage errors are distinct from run outcomes: `loki start` with an unknown
+option exits 64, and `loki quick` with no task description exits 64 (they were
+1 and 2). A missing provider CLI still exits 2 before any spend. There is no
+finer run-outcome signal. A gate that needs to tell "failed the quality gate"
 from "crashed" must opt into the durable contract below.
 
 ### With `LOKI_DURABLE_STATE=1` (the platform contract)
@@ -56,6 +59,7 @@ identically; a parity test asserts they agree status for status.
 |---|---|
 | 0 | The run completed and its diff did not weaken the tests |
 | 3 | The diff weakened the tests (a skip marker added in a test file, a test runner config changed, or an existing test file deleted or renamed). The receipt headline is NOT VERIFIED and names what was weakened, for example `NOT VERIFIED (tests weakened: skip added in sum.test.js)` |
+| 64 | Usage error: no task description |
 | other nonzero | The run itself failed; this code is passed through unchanged |
 
 `loki quick` has no `--json` flag; its structured result is `loki why --json`, schema: `schemas/why-result.schema.json` (`state.lastExitCode` carries the ladder above).
@@ -72,8 +76,9 @@ headline caused by unproven gates alone also keeps exit 0. The signal is the
 |---|---|
 | 0 | VERIFIED |
 | 1 | CONCERNS (findings below the block threshold, or inconclusive evidence) |
-| 2 | BLOCKED (findings at or above the block threshold) |
-| 3 | Verifier error: it could not complete, and never silently passes |
+| 2 | BLOCKED (findings at or above the block threshold), or not a git directory |
+| 3 | Verifier error: it could not complete, and never silently passes (also an empty diff) |
+| 64 | Usage error: unknown option or unexpected argument |
 
 `loki verify` has no `--json` flag. `loki status --json` schema: `schemas/status-result.schema.json`.
 
@@ -142,19 +147,21 @@ An early draft spec listed `1=BLOCKED, 2=CONCERNS`. That ordering was rejected:
 it is not used anywhere, it has no consumers, and it inverts the
 severity-rises-with-the-code rule that every other command follows.
 
-### Known gaps
+### Contract enforced from v11.4.0
 
-The table above is the target. On the current release, three inputs do not
-return what it implies. Measured on this checkout:
+This is a deliberate contract change for the 11.4.0 minor release. Three inputs
+that used to return a misleading code now return the table's value:
 
-| Input | Command | Exit today | Target |
+| Input | Command | Exit | Note |
 |---|---|---|---|
-| Empty diff (a git repo with no changes vs base) | `loki verify` | 1 (CONCERNS) | 3 |
-| Not a git directory | `loki verify` | 1 (CONCERNS) | 2 |
-| Unknown flag | `loki verify --no-such-flag` | 3 | 64 |
+| Empty diff (a repo with no changes vs base) | `loki verify` | 3 | Nothing to check is a verifier error, never a pass. VERDICT line still reads CONCERNS. |
+| Not a git directory | `loki verify` | 2 | Could not check. VERDICT line still reads CONCERNS. |
+| Unknown option or unexpected argument | `loki verify --no-such-flag` | 64 | Usage error, as in `proof verify`. |
 
-The gap is tracked as the pending moat case P2.verify-exit-contract in
-`tests/moat/pending.txt`.
+A real finding keeps precedence: an empty diff that also carries a below-threshold
+finding (for example spec drift) still exits 1, and a blocking finding still exits 2.
+CI gates that tested `[ $rc -eq 1 ]` for these inputs must move to `[ $rc -ne 0 ]`.
+The moat case `P2.verify-exit-contract` is no longer pending and is enforced.
 
 ### `loki verify --fast`
 

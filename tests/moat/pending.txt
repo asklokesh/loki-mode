@@ -23,7 +23,6 @@
 #     the baseline.
 #
 # Entries:
-P2.verify-exit-contract v10.0.0 autonomy/verify.sh uses 0 VERIFIED/1 CONCERNS/2 BLOCKED/3 ERROR: empty diff exits 1 (want 3), non-git directory exits 1 (want 2), unknown flag exits 3 (want 64). Breaking change, pinned by tests/test-verify.sh, tests/test-exit-codes-documented.sh and docs/exit-codes.md.
 P3.check-author-context-excludes-implementation M2 build autonomy/lib/check_author.py context per interface A in the script header
 P3.checks-frozen-before-eval M2 add checklist-verify.py --freeze plus a definition digest check that rejects edits with 'hash mismatch' (interface B)
 P3.implementer-prompt-has-no-check-authoring M2 remove PRD_CHECKLIST_INIT from both builders (run.sh build_prompt, build_prompt.ts buildChecklistStatus) and move check authoring to a walled step
