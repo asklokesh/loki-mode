@@ -339,6 +339,27 @@ council_v2_run_reviewer() {
             ;;
     esac
 
+    # User-configured agent (loki agents) for this role overrides prompt/model.
+    # No configured agents (the default) leaves everything unchanged.
+    local _c2_agent_model=""
+    local _c2_agents_helper
+    _c2_agents_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/agents/custom_agents.py"
+    if [ -f "$_c2_agents_helper" ] && [ -n "$_c2_py" ] \
+       && { [ -d "${PWD}/.loki/agents" ] || [ -d "${XDG_CONFIG_HOME:-$HOME/.config}/loki/agents" ] || [ -n "${LOKI_AGENTS_USER_DIR:-}" ]; }; then
+        local _c2_agent_json
+        _c2_agent_json="$("$_c2_py" -I "$_c2_agents_helper" resolve "$role" 2>/dev/null)" || _c2_agent_json=""
+        if [ -n "$_c2_agent_json" ]; then
+            local _c2_agent_prompt
+            _c2_agent_prompt="$(printf '%s' "$_c2_agent_json" | "$_c2_py" -I -c 'import sys,json; print(json.load(sys.stdin)["prompt"])' 2>/dev/null)" || _c2_agent_prompt=""
+            _c2_agent_model="$(printf '%s' "$_c2_agent_json" | "$_c2_py" -I -c 'import sys,json; d=json.load(sys.stdin); print(d["model"] if d["provider"]=="claude" else "")' 2>/dev/null)" || _c2_agent_model=""
+            if [ -n "$_c2_agent_prompt" ]; then
+                prompt="$_c2_agent_prompt
+
+Output a JSON object with keys: verdict (APPROVE or REJECT), reasoning (string), issues (array of {severity, description})."
+            fi
+        fi
+    fi
+
     local evidence=""
     [ -f "$review_dir/evidence.md" ] && evidence=$(cat "$review_dir/evidence.md")
     local prd=""
@@ -404,7 +425,7 @@ Respond ONLY with a valid JSON object. No markdown fencing."
                 # both apply (a reviewer must never mutate the tree). Gated +
                 # opt-out LOKI_BARE_SUBCALLS=0 / LOKI_REVIEW_TOOL_GUARD=0;
                 # type-guarded for standalone sourcing.
-                local _c2_argv=("--model" "haiku")
+                local _c2_argv=("--model" "${_c2_agent_model:-haiku}")
                 if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                     _c2_argv+=("--bare")
                 fi

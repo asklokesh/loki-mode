@@ -21255,6 +21255,9 @@ main() {
         agent)
             cmd_agent "$@"
             ;;
+        agents)
+            cmd_agents "$@"
+            ;;
         template)
             cmd_template "$@"
             ;;
@@ -29493,6 +29496,28 @@ PYEOF
             return 1
             ;;
     esac
+}
+
+# User-configurable child agents: .loki/agents/<name>.md, ~/.config/loki/agents/<name>.md
+cmd_agents() {
+    local sub="${1:-list}"
+    case "$sub" in
+        help|-h|--help)
+            echo "Usage: loki agents <list|new|show|export> [args]"
+            echo "  list                    List configured agents (project overrides user)"
+            echo "  new <name> [--user]     Scaffold .loki/agents/<name>.md (or ~/.config/loki/agents)"
+            echo "                          Names reviewer, planner, tester copy the shipped examples"
+            echo "  show <name>             Show one agent and its system prompt"
+            echo "  export --claude [--user] Write agents as Claude Code subagents (.claude/agents/)"
+            echo "Council reviewers use a configured agent named reviewer, tester or security."
+            return 0
+            ;;
+    esac
+    local script_dir helper
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    helper="${script_dir}/../agents/custom_agents.py"
+    [ -f "$helper" ] || { echo -e "${RED}Error: agents/custom_agents.py not found${NC}"; return 1; }
+    python3 -I "$helper" "$@"
 }
 
 # Agent type dispatch (v6.7.0)
