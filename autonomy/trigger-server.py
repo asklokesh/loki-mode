@@ -55,8 +55,10 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 # Receipt attestation. Imported by path because trigger-server.py runs as a
 # script from an arbitrary cwd, so a bare `import receipt_jwt` would depend on
@@ -412,6 +414,10 @@ CHILD_ENV_DENYLIST = (
     "LOKI_API_TOKEN_FILE",
     "LOKI_SENTRY_WEBHOOK_SECRET",
     "SENTRY_CLIENT_SECRET",
+    "SLACK_SIGNING_SECRET",
+    "SLACK_BOT_TOKEN",
+    "LINEAR_WEBHOOK_SECRET",
+    "LINEAR_API_KEY",
 )
 
 
@@ -622,6 +628,110 @@ def validate_sentry_signature(secret, body, signature_header):
     return constant_time_equals(expected, signature_header.strip().lower())
 
 
+# Slack and Linear delegation. Same signed-body contract as
+# loki-ts/src/contrib/slack_inbound.ts (signSlackBody/verifySlackSignature).
+SIGNATURE_MAX_SKEW_S = 300
+SLACK_REPLY_PREFIX = "https://hooks.slack.com/"
+LINEAR_API_URL = "https://api.linear.app/graphql"
+LINEAR_IDENTIFIER_RE = re.compile(r"^[A-Za-z][A-Za-z0-9]*-\d+$")
+NOTIFY_TIMEOUT_SECONDS = 10
+NOTIFY_TEXT_MAX = 1000
+
+
+def sign_slack_body(secret, timestamp, body):
+    """`v0=` + hex HMAC-SHA256 over `v0:<timestamp>:<raw body>` (bytes)."""
+    base = b"v0:" + str(timestamp).encode("utf-8") + b":" + body
+    return "v0=" + hmac.new(secret.encode("utf-8"), base, hashlib.sha256).hexdigest()
+
+
+def verify_slack_signature(secret, timestamp, body, signature, now=None):
+    """Fail closed: no secret, header, numeric timestamp or fresh window -> False."""
+    if not secret or not timestamp or not signature:
+        return False
+    if not re.fullmatch(r"[0-9]+", timestamp):
+        return False
+    now = time.time() if now is None else now
+    if abs(now - int(timestamp)) > SIGNATURE_MAX_SKEW_S:
+        return False
+    return constant_time_equals(sign_slack_body(secret, timestamp, body), signature)
+
+
+def verify_linear_signature(secret, body, signature):
+    """Linear-Signature: hex HMAC-SHA256 of the raw body. Freshness is checked
+    separately against the signed body's webhookTimestamp (linear_fresh)."""
+    if not secret or not signature:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return constant_time_equals(expected, signature.strip().lower())
+
+
+def linear_fresh(payload, now=None):
+    ts_val = payload.get("webhookTimestamp")
+    if isinstance(ts_val, bool) or not isinstance(ts_val, (int, float)):
+        return False
+    secs = ts_val / 1000.0 if ts_val > 1e11 else float(ts_val)
+    now = time.time() if now is None else now
+    return abs(now - secs) <= SIGNATURE_MAX_SKEW_S
+
+
+def resolve_chat_secrets(env, secret, api_token, sentry_secret):
+    """Return (slack_secret, linear_secret), blanking any that equals another
+    credential: each authenticates a different party and MUST differ."""
+    slack = env.get("SLACK_SIGNING_SECRET", "")
+    linear = env.get("LINEAR_WEBHOOK_SECRET", "")
+    others = [x for x in (secret, api_token, sentry_secret) if x]
+    slack_bad = bool(slack) and any(
+        constant_time_equals(slack, o) for o in others + ([linear] if linear else []))
+    linear_bad = bool(linear) and any(
+        constant_time_equals(linear, o) for o in others + ([slack] if slack else []))
+    if slack_bad:
+        logging.error("The Slack secret is identical to another credential. "
+                      "They MUST differ; disabling /slack.")
+    if linear_bad:
+        logging.error("The Linear secret is identical to another credential. "
+                      "They MUST differ; disabling /linear.")
+    return ("" if slack_bad else slack), ("" if linear_bad else linear)
+
+
+def _post_json(url, data, headers):
+    """POST JSON with a bounded timeout. Raises on any failure; callers log."""
+    req = Request(url, data=json.dumps(data).encode("utf-8"),
+                  headers=dict(headers, **{"Content-Type": "application/json"}),
+                  method="POST")
+    with urlopen(req, timeout=NOTIFY_TIMEOUT_SECONDS) as resp:
+        resp.read()
+
+
+def notify_job_complete(target, job_id, status, summary):
+    """Send a completion summary to a reply target captured after verification.
+
+    Never raises: a notifier failure must not fail the job. The Slack URL is
+    re-checked here as defense in depth.
+    """
+    if not isinstance(target, dict):
+        return
+    text = ("loki job %s finished: %s. %s" % (job_id, status, summary or "")).strip()
+    text = CONTROL_CHARS_RE.sub(" ", text)[:NOTIFY_TEXT_MAX]
+    try:
+        if target.get("kind") == "slack":
+            url = target.get("response_url", "")
+            if not (isinstance(url, str) and url.startswith(SLACK_REPLY_PREFIX)):
+                return
+            _post_json(url, {"response_type": "in_channel", "text": text}, {})
+        elif target.get("kind") == "linear":
+            key = os.environ.get("LINEAR_API_KEY", "")
+            issue_id = target.get("issue_id", "")
+            if not key or not isinstance(issue_id, str) or not issue_id:
+                return
+            _post_json(LINEAR_API_URL, {
+                "query": "mutation($i:String!,$b:String!){commentCreate(input:"
+                         "{issueId:$i,body:$b}){success}}",
+                "variables": {"i": issue_id, "b": text},
+            }, {"Authorization": key})
+    except Exception as e:  # notifier errors never fail a job
+        logging.warning("Completion notify for job %s failed: %s", job_id, e)
+
+
 def normalize_sentry_payload(payload):
     """Run the existing normalize_sentry_json over a Sentry webhook payload.
 
@@ -750,6 +860,9 @@ class Dispatcher:
         self._job_max = max(1, job_history)
         self._jobs = collections.OrderedDict()
         self._jobs_lock = threading.Lock()
+        # Reply targets (Slack response_url / Linear issue) keyed by job_id,
+        # written only by the verified /slack and /linear handlers.
+        self._reply_targets = collections.OrderedDict()
         # Proof-attribution bookkeeping. The proof pointer is global to the
         # working directory, so a receipt only identifies a job when that job
         # was the only build that could have written it. All three are updated
@@ -887,6 +1000,17 @@ class Dispatcher:
             if summary:
                 entry["summary"] = summary
 
+    def set_reply_target(self, job_id, target):
+        """Store a verified reply target server side, bounded like _jobs."""
+        with self._jobs_lock:
+            self._reply_targets[job_id] = target
+            while len(self._reply_targets) > self._job_max:
+                self._reply_targets.popitem(last=False)
+
+    def pop_reply_target(self, job_id):
+        with self._jobs_lock:
+            return self._reply_targets.pop(job_id, None)
+
     def get_job(self, job_id):
         """Return a copy of the job record, or None if unknown/evicted.
 
@@ -980,6 +1104,9 @@ class Dispatcher:
                 )
                 if job_id:
                     self.record_job(job_id, status, summary or "")
+                    target = self.pop_reply_target(job_id)
+                    if target is not None:
+                        notify_job_complete(target, job_id, status, summary)
             finally:
                 self.queue.task_done()
 
@@ -998,6 +1125,10 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
     api_token = ""
     # Sentry integration client secret for /sentry. Distinct from both above.
     sentry_secret = ""
+    # Slack signing secret (/slack) and Linear webhook secret (/linear), each
+    # distinct from every other credential.
+    slack_secret = ""
+    linear_secret = ""
     dispatcher = None
     # Ed25519 key that attests receipts, and the retired public keys that keep
     # pre-rotation receipts verifiable. Both default to unconfigured, which
@@ -1278,8 +1409,19 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "invalid spec"})
             return
 
+        job_id = self._enqueue_job(spec.strip())
+        if job_id is None:
+            return
+        self._send_json(202, {"id": job_id, "status": "queued"})
+
+    def _enqueue_job(self, spec, reply_target=None):
+        """Record and enqueue one validated job; shared by /jobs, /slack, /linear.
+
+        Returns the job id, or None after sending 429 when the queue is full.
+        reply_target must come from an already-verified request.
+        """
         job_id = secrets.token_urlsafe(12)
-        job = {"spec": spec.strip(), "job_id": job_id}
+        job = {"spec": spec, "job_id": job_id}
 
         # Record BEFORE enqueueing. A worker can pick the job up the instant
         # submit() returns and write "running"/"fired"; record_job is
@@ -1288,6 +1430,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         # forever. On the 429 path below the record is unreachable (no id is
         # handed out) and the store is bounded, so nothing leaks.
         self.dispatcher.record_job(job_id, "queued", job["spec"])
+        if reply_target is not None:
+            self.dispatcher.set_reply_target(job_id, reply_target)
 
         # Enforce the existing queue bound so a submit storm cannot fork
         # unbounded builds. 429 (not a silent drop) tells the client to retry.
@@ -1295,11 +1439,111 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             logging.warning(
                 "Queue full; shedding job submit from %s", self.address_string()
             )
+            self.dispatcher.pop_reply_target(job_id)
             log_event(JOB_EVENT, "", "", "rejected (queue full)")
             self._send_json(429, {"error": "server busy, retry later"})
-            return
+            return None
 
         log_event(JOB_EVENT, "", job["spec"], "queued")
+        return job_id
+
+    def _handle_slack(self):
+        """POST /slack -- signed slash command; enqueues a job, ephemeral reply."""
+        body = self._read_body()
+        if body is None:
+            return
+        if not self.slack_secret:
+            log_event(JOB_EVENT, "", "", "rejected (no slack signing secret configured)")
+            self._send_json(503, {"error": "SLACK_SIGNING_SECRET not configured"})
+            return
+        if not verify_slack_signature(
+                self.slack_secret,
+                self.headers.get("X-Slack-Request-Timestamp", ""),
+                body, self.headers.get("X-Slack-Signature", "")):
+            logging.warning("Invalid Slack signature from %s", self.address_string())
+            log_event(JOB_EVENT, "", "", "rejected (invalid slack signature)")
+            self._send_json(401, {"error": "invalid signature"})
+            return
+        # Verified from here on.
+        ctype = (self.headers.get("Content-Type", "") or "").lower()
+        if "json" in ctype:
+            try:
+                data = json.loads(body)
+            except ValueError:
+                self._send_json(400, {"error": "invalid JSON"})
+                return
+            if isinstance(data, dict) and data.get("type") == "url_verification":
+                self._send_json(200, {"challenge": str(data.get("challenge", ""))})
+                return
+            self._send_json(400, {"error": "unsupported slack payload"})
+            return
+        form = urllib.parse.parse_qs(body.decode("utf-8", errors="replace"))
+        text = (form.get("text") or [""])[0]
+        if not valid_spec(text):
+            log_event(JOB_EVENT, "", "", "rejected (invalid slack spec)")
+            self._send_json(200, {"response_type": "ephemeral",
+                                  "text": "Usage: /loki <spec>. Spec must be a "
+                                          "one-line brief or ref, not starting with '-'."})
+            return
+        response_url = (form.get("response_url") or [""])[0]
+        target = {"kind": "slack"}
+        if response_url.startswith(SLACK_REPLY_PREFIX):
+            target["response_url"] = response_url
+        job_id = self._enqueue_job(text.strip(), target)
+        if job_id is None:
+            return
+        self._send_json(200, {"response_type": "ephemeral",
+                              "text": "Queued loki job %s" % job_id})
+
+    def _handle_linear(self):
+        """POST /linear -- signed Linear issue webhook; enqueues linear:<identifier>."""
+        body = self._read_body()
+        if body is None:
+            return
+        if not self.linear_secret:
+            log_event(JOB_EVENT, "", "", "rejected (no linear webhook secret configured)")
+            self._send_json(503, {"error": "LINEAR_WEBHOOK_SECRET not configured"})
+            return
+        if not verify_linear_signature(
+                self.linear_secret, body, self.headers.get("Linear-Signature", "")):
+            logging.warning("Invalid Linear signature from %s", self.address_string())
+            log_event(JOB_EVENT, "", "", "rejected (invalid linear signature)")
+            self._send_json(401, {"error": "invalid signature"})
+            return
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            self._send_json(400, {"error": "invalid JSON"})
+            return
+        if not isinstance(payload, dict):
+            self._send_json(400, {"error": "payload must be a JSON object"})
+            return
+        if not linear_fresh(payload):
+            log_event(JOB_EVENT, "", "", "rejected (stale linear timestamp)")
+            self._send_json(401, {"error": "stale or missing webhookTimestamp"})
+            return
+        data = payload.get("data")
+        if (payload.get("type") != "Issue" or payload.get("action") != "create"
+                or not isinstance(data, dict)):
+            self._send_json(200, {"status": "skipped"})
+            return
+        ident = data.get("identifier")
+        if not isinstance(ident, str) or not LINEAR_IDENTIFIER_RE.match(ident):
+            self._send_json(400, {"error": "invalid issue identifier"})
+            return
+        if self.dispatcher.seen_delivery(self.headers.get("Linear-Delivery", "")):
+            self._send_json(200, {"status": "duplicate"})
+            return
+        spec = "linear:%s" % ident
+        if not valid_spec(spec):
+            self._send_json(400, {"error": "invalid spec"})
+            return
+        issue_id = data.get("id")
+        target = {"kind": "linear",
+                  "issue_id": issue_id if isinstance(issue_id, str) else ""}
+        job_id = self._enqueue_job(spec, target)
+        if job_id is None:
+            return
         self._send_json(202, {"id": job_id, "status": "queued"})
 
     def _handle_sentry(self):
@@ -1346,6 +1590,12 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/sentry":
             self._handle_sentry()
+            return
+        if path == "/slack":
+            self._handle_slack()
+            return
+        if path == "/linear":
+            self._handle_linear()
             return
         if path != "/webhook":
             self._send_json(404, {"error": "not found"})
@@ -1527,6 +1777,11 @@ def main():
         )
         sentry_secret = ""
 
+    # Slack/Linear secrets: env only. Each must differ from every other
+    # credential, since each authenticates a different party.
+    slack_secret, linear_secret = resolve_chat_secrets(
+        os.environ, secret, api_token, sentry_secret)
+
     # Persist resolved values, but never write the secret to disk.
     config["port"] = port
     config["dry_run"] = dry_run
@@ -1541,6 +1796,8 @@ def main():
     WebhookHandler.secret = secret
     WebhookHandler.api_token = api_token
     WebhookHandler.sentry_secret = sentry_secret
+    WebhookHandler.slack_secret = slack_secret
+    WebhookHandler.linear_secret = linear_secret
     WebhookHandler.dispatcher = dispatcher
 
     signing_key, signing_kid = load_signing_key(auto_generate=False)
@@ -1586,6 +1843,16 @@ def main():
         logging.warning(
             "No Sentry secret configured: POST /sentry is rejected with 503. "
             "Set LOKI_SENTRY_WEBHOOK_SECRET or SENTRY_CLIENT_SECRET."
+        )
+    if not slack_secret:
+        logging.warning(
+            "No Slack signing secret configured: POST /slack is rejected with "
+            "503. Set SLACK_SIGNING_SECRET."
+        )
+    if not linear_secret:
+        logging.warning(
+            "No Linear webhook secret configured: POST /linear is rejected with "
+            "503. Set LINEAR_WEBHOOK_SECRET."
         )
     if not secret:
         logging.warning(

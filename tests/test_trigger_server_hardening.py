@@ -25,6 +25,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -841,6 +842,258 @@ class TestSentryWebhook(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(seen, [])
 
+
+class _ChatFixture(_ServerFixture):
+    def __init__(self, dispatcher, slack="slacksecret", linear="linearsecret"):
+        class _H(ts.WebhookHandler):
+            pass
+
+        _H.secret = "ghsecret"
+        _H.slack_secret = slack
+        _H.linear_secret = linear
+        _H.dry_run = False
+        _H.dispatcher = dispatcher
+        _H.log_message = lambda *a, **k: None
+        self.server = ts.ThreadingWebhookServer(("127.0.0.1", 0), _H)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def raw(self, path, body, headers):
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("POST", path, body=body, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp.status, data
+
+
+def _fake_resp():
+    from unittest.mock import MagicMock
+    m = MagicMock()
+    m.__enter__.return_value = m
+    m.read.return_value = b"ok"
+    return m
+
+
+# Same vector as loki-ts/tests/features/slack_inbound.test.ts (SECRET, NOW, BODY).
+SLACK_VECTOR = ("test-signing-secret", "1700000000", b'{"type":"event_callback"}',
+                "v0=a0c625131c61101f5568ce01cd6c951e36fa4b0c50f46b25feafb898b0ea4250")
+HOOK = "https://hooks.slack.com/commands/T1/B1/xyz"
+
+
+class TestSlackLinearDelegation(unittest.TestCase):
+    """POST /slack and /linear: signed, queued through the job queue, reply on completion."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        patch.object(ts, "send_notification").start()
+
+    def tearDown(self):
+        patch.stopall()
+        os.chdir(self.orig_cwd)
+
+    def _slack_form(self, text="fix owner/repo#12", hook=HOOK):
+        return urllib.parse.urlencode(
+            {"command": "/loki", "text": text, "response_url": hook}).encode()
+
+    def _slack_headers(self, body, secret="slacksecret", ts_s=None, sig=True):
+        ts_s = str(int(time.time())) if ts_s is None else ts_s
+        h = {"Content-Type": "application/x-www-form-urlencoded",
+             "X-Slack-Request-Timestamp": ts_s}
+        if sig:
+            h["X-Slack-Signature"] = ts.sign_slack_body(secret, ts_s, body)
+        return h
+
+    def _linear_body(self, ident="ENG-42", ts_ms=None, action="create"):
+        ts_ms = int(time.time() * 1000) if ts_ms is None else ts_ms
+        return json.dumps({"type": "Issue", "action": action, "webhookTimestamp": ts_ms,
+                           "data": {"id": "uuid-1", "identifier": ident}}).encode()
+
+    def _run(self, fn, outcome="passed", slack="slacksecret", linear="linearsecret"):
+        """fn(srv) posts; returns (result, seen_args, urlopen_calls)."""
+        seen, posts = [], []
+
+        def fake_outcome(args, dry_run=False):
+            seen.append(args)
+            return outcome
+
+        def fake_urlopen(req, timeout=None):
+            posts.append((req.full_url, json.loads(req.data), dict(req.header_items())))
+            return _fake_resp()
+
+        with patch.object(ts, "run_loki_outcome", side_effect=fake_outcome), \
+                patch.object(ts, "urlopen", side_effect=fake_urlopen), \
+                patch.dict(os.environ, {"LINEAR_API_KEY": "lin_key"}):
+            disp = ts.Dispatcher(workers=1, queue_size=8, dry_run=False)
+            srv = _ChatFixture(disp, slack=slack, linear=linear)
+            try:
+                result = fn(srv)
+                disp.queue.join()
+            finally:
+                srv.close()
+                disp.shutdown()
+        return result, seen, posts
+
+    def test_shared_signature_vector_matches_typescript(self):
+        secret, stamp, body, sig = SLACK_VECTOR
+        self.assertEqual(ts.sign_slack_body(secret, stamp, body), sig)
+        now = int(stamp) + 10
+        self.assertTrue(ts.verify_slack_signature(secret, stamp, body, sig, now=now))
+        self.assertFalse(ts.verify_slack_signature(secret, stamp, body, sig, now=int(stamp) + 301))
+        self.assertFalse(ts.verify_slack_signature(secret, stamp, body + b"x", sig, now=now))
+        self.assertFalse(ts.verify_slack_signature(secret, stamp, body, "", now=now))
+
+    def test_slack_bad_stale_or_missing_signature_401_no_job(self):
+        body = self._slack_form()
+        cases = [
+            self._slack_headers(body, secret="wrong"),
+            self._slack_headers(body, ts_s=str(int(time.time()) - 400)),
+            self._slack_headers(body, sig=False),
+        ]
+        h = self._slack_headers(body)
+        del h["X-Slack-Request-Timestamp"]
+        cases.append(h)
+        for headers in cases:
+            (status, _), seen, posts = self._run(
+                lambda s, hh=headers: s.raw("/slack", body, hh))
+            self.assertEqual(status, 401)
+            self.assertEqual(seen, [])
+            self.assertEqual(posts, [])
+
+    def test_slack_valid_enqueues_spec_replies_ephemeral_and_posts_completion(self):
+        body = self._slack_form()
+        (status, data), seen, posts = self._run(
+            lambda s: s.raw("/slack", body, self._slack_headers(body)))
+        self.assertEqual(status, 200)
+        reply = json.loads(data)
+        self.assertEqual(reply["response_type"], "ephemeral")
+        self.assertEqual(seen, [["start", "fix owner/repo#12", "--detach"]])
+        self.assertEqual(len(posts), 1)
+        self.assertEqual(posts[0][0], HOOK)
+        self.assertIn("passed", posts[0][1]["text"])
+        job_id = reply["text"].split()[-1]
+        self.assertIn(job_id, posts[0][1]["text"])
+
+    def test_slack_foreign_response_url_never_posted(self):
+        for hook in ("https://evil.example.com/x", "http://hooks.slack.com/x",
+                     "https://hooks.slack.com.evil.com/x"):
+            body = self._slack_form(hook=hook)
+            (status, _), seen, posts = self._run(
+                lambda s: s.raw("/slack", body, self._slack_headers(body)))
+            self.assertEqual(status, 200)
+            self.assertEqual(len(seen), 1)
+            self.assertEqual(posts, [])
+
+    def test_slack_invalid_spec_not_enqueued(self):
+        for text in ("", "--flag", "a\x07b"):
+            body = self._slack_form(text=text)
+            (status, data), seen, _ = self._run(
+                lambda s: s.raw("/slack", body, self._slack_headers(body)))
+            self.assertEqual(status, 200)
+            self.assertEqual(seen, [])
+            self.assertIn("Usage", json.loads(data)["text"])
+
+    def test_slack_url_verification_echoes_challenge_only_when_signed(self):
+        body = json.dumps({"type": "url_verification", "challenge": "abc123"}).encode()
+        h = self._slack_headers(body)
+        h["Content-Type"] = "application/json"
+        (status, data), seen, _ = self._run(lambda s: s.raw("/slack", body, h))
+        self.assertEqual((status, json.loads(data)["challenge"]), (200, "abc123"))
+        self.assertEqual(seen, [])
+        h2 = dict(h, **{"X-Slack-Signature": "v0=00"})
+        (status, _), _, _ = self._run(lambda s: s.raw("/slack", body, h2))
+        self.assertEqual(status, 401)
+
+    def test_missing_secrets_503_with_named_reason(self):
+        body = self._slack_form()
+        (status, data), seen, _ = self._run(
+            lambda s: s.raw("/slack", body, self._slack_headers(body)), slack="")
+        self.assertEqual(status, 503)
+        self.assertIn("SLACK_SIGNING_SECRET", json.loads(data)["error"])
+        self.assertEqual(seen, [])
+        lb = self._linear_body()
+        (status, data), seen, _ = self._run(
+            lambda s: s.raw("/linear", lb, {"Linear-Signature": "00"}), linear="")
+        self.assertEqual(status, 503)
+        self.assertIn("LINEAR_WEBHOOK_SECRET", json.loads(data)["error"])
+        self.assertEqual(seen, [])
+
+    def _linear_post(self, body, secret="linearsecret", sig=True):
+        h = {"Content-Type": "application/json"}
+        if sig:
+            h["Linear-Signature"] = _sentry_sig(secret, body)
+        return lambda s: s.raw("/linear", body, h)
+
+    def test_linear_bad_sig_missing_sig_and_stale_timestamp_401(self):
+        body = self._linear_body()
+        no_ts = json.dumps({"type": "Issue", "action": "create",
+                            "data": {"identifier": "ENG-1"}}).encode()
+        for fn in (self._linear_post(body, secret="wrong"),
+                   self._linear_post(body, sig=False),
+                   self._linear_post(self._linear_body(
+                       ts_ms=int((time.time() - 400) * 1000))),
+                   self._linear_post(no_ts)):
+            (status, _), seen, posts = self._run(fn)
+            self.assertEqual(status, 401)
+            self.assertEqual(seen, [])
+            self.assertEqual(posts, [])
+
+    def test_linear_valid_enqueues_ref_and_comments_on_completion(self):
+        (status, data), seen, posts = self._run(
+            self._linear_post(self._linear_body()), outcome="failed")
+        self.assertEqual(status, 202)
+        self.assertIn("id", json.loads(data))
+        self.assertEqual(seen, [["start", "linear:ENG-42", "--detach"]])
+        self.assertEqual(len(posts), 1)
+        url, payload, headers = posts[0]
+        self.assertEqual(url, ts.LINEAR_API_URL)
+        self.assertEqual(payload["variables"]["i"], "uuid-1")
+        self.assertIn("failed", payload["variables"]["b"])
+        self.assertEqual(headers.get("Authorization"), "lin_key")
+
+    def test_linear_bad_identifier_and_non_create_not_enqueued(self):
+        (status, _), seen, _ = self._run(
+            self._linear_post(self._linear_body(ident="--x")))
+        self.assertEqual(status, 400)
+        (status, _), seen2, _ = self._run(
+            self._linear_post(self._linear_body(action="update")))
+        self.assertEqual(status, 200)
+        self.assertEqual(seen + seen2, [])
+
+    def test_notifier_error_never_fails_job(self):
+        body = self._slack_form()
+        with patch.object(ts, "run_loki_outcome", return_value="passed"), \
+                patch.object(ts, "urlopen", side_effect=OSError("down")):
+            disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=False)
+            srv = _ChatFixture(disp)
+            try:
+                _, data = srv.raw("/slack", body, self._slack_headers(body))
+                disp.queue.join()
+                job_id = json.loads(data)["text"].split()[-1]
+                self.assertEqual(disp.get_job(job_id)["status"], "passed")
+            finally:
+                srv.close()
+                disp.shutdown()
+
+    def test_child_env_lacks_all_four_secrets(self):
+        names = ("SLACK_SIGNING_SECRET", "SLACK_BOT_TOKEN",
+                 "LINEAR_WEBHOOK_SECRET", "LINEAR_API_KEY")
+        with patch.dict(os.environ, {n: "s3cret" for n in names}):
+            env = ts._scoped_child_env()
+        for n in names:
+            self.assertNotIn(n, env)
+
+    def test_chat_secret_equal_to_other_credential_refused(self):
+        env = {"SLACK_SIGNING_SECRET": "same", "LINEAR_WEBHOOK_SECRET": "lin"}
+        self.assertEqual(ts.resolve_chat_secrets(env, "same", "", ""), ("", "lin"))
+        self.assertEqual(ts.resolve_chat_secrets(env, "", "same", ""), ("", "lin"))
+        env = {"SLACK_SIGNING_SECRET": "a", "LINEAR_WEBHOOK_SECRET": "a"}
+        self.assertEqual(ts.resolve_chat_secrets(env, "gh", "", ""), ("", ""))
+        env = {"SLACK_SIGNING_SECRET": "a", "LINEAR_WEBHOOK_SECRET": "b"}
+        self.assertEqual(ts.resolve_chat_secrets(env, "gh", "tok", "sen"), ("a", "b"))
 
 
 if __name__ == "__main__":
