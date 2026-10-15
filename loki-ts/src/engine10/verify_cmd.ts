@@ -2,15 +2,15 @@
 // Reads receipt.json straight off disk, no RunContext. Three checks, cheapest first: TAMPER
 // (recompute receipt_sha256 with `verification`+itself removed), SIGNATURE (native Ed25519
 // against the active + retired keys), UNSIGNED (jwt null). Node crypto only, no python (A-121).
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
 import { latestRunId } from "../commands/run_status.ts";
 import { readEvents } from "./events.ts";
-import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
+import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
-import { verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
+import { composeComposite, compositeHash, isComposite, verifyComposite, verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
 export interface VerifyResult {
   verdict: Verdict;
@@ -81,6 +81,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   let receipt: Record<string, unknown>;
   try { receipt = JSON.parse((deps.read ?? ((p) => readFileSync(p, "utf8")))(receiptPath)); } catch { return { verdict: "UNCHECKED", reasons: ["receipt.json is not valid JSON"] }; }
   if (isEnvelope(receipt)) return verifyDsseReceipt(receipt, { pubFor: (kid) => pubFor(kid, deps.pubkey), hash: computeReceiptHash, attest: (j, h) => checkAttestation(j, h, deps.pubkey) }); // INTEL-1: DSSE envelope
+  if (isComposite(receipt)) return verifyCompositeFile(receiptPath, receipt, deps);
   const recorded = receipt["receipt_sha256"];
   const computed = computeReceiptHash(receipt);
   if (typeof recorded !== "string" || recorded !== computed) {
@@ -107,6 +108,34 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   if (gp) return { verdict: gp.verdict, reasons: [gp.reason] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
 }
+/** composite.json: recompute composite_sha256, check every child against disk (TAMPERED first), then the composite signature. Unsigned or unchecked children under a signed composite make it UNCHECKED. */
+async function verifyCompositeFile(receiptPath: string, receipt: Record<string, unknown>, deps: VerifyDeps): Promise<VerifyResult> {
+  const computed = compositeHash(receipt);
+  if (receipt["composite_sha256"] !== computed) return { verdict: "TAMPERED", reasons: [`composite_sha256 mismatch: recorded ${JSON.stringify(receipt["composite_sha256"])}, computed ${computed}`] };
+  const c = await verifyComposite(receiptPath, receipt, computeReceiptHash, verifyReceipt, deps);
+  if (c.problem?.verdict === "TAMPERED") return { verdict: "TAMPERED", reasons: [c.problem.reason] };
+  const jwt = ((receipt["verification"] ?? {}) as { jwt?: unknown }).jwt ?? null;
+  if (jwt !== null && typeof jwt !== "string") return { verdict: "UNCHECKED", reasons: ["verification.jwt is not a string"] };
+  if (!jwt) return c.problem ? { verdict: c.problem.verdict, reasons: [c.problem.reason] } : { verdict: "UNSIGNED", reasons: [], receiptSha256: computed };
+  const outcome = checkAttestation(jwt, computed, deps.pubkey);
+  if (outcome.status === "unchecked") return { verdict: "UNCHECKED", reasons: [outcome.reason ?? "attestation not checked"] };
+  if (outcome.status === "tampered") return { verdict: "TAMPERED", reasons: [outcome.reason ?? "attestation invalid"] };
+  const shown = (receipt["verification"] as { kid?: unknown }).kid, signed = (JSON.parse(Buffer.from(jwt.split(".")[0]!, "base64url").toString()) as { kid?: unknown }).kid;
+  if (shown !== undefined && shown !== signed) return { verdict: "TAMPERED", reasons: ["verification.kid differs from the signing kid in the attestation header"] };
+  if (c.problem) return { verdict: c.problem.verdict, reasons: [c.problem.reason] };
+  return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
+}
+/** `loki verify --seal-composite <run_dir>`: writes a signed composite.json, refusing unless every child repo has a receipt. */
+function sealCompositeCmd(runDir: string): number {
+  let body;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(basename(runDir.replace(/\/+$/, "")))) return (process.stderr.write("loki verify: run directory name is not a valid run id; composite would never verify\n"), 2);
+  try { body = composeComposite(runDir, computeReceiptHash); } catch (e) { return (process.stderr.write(`loki verify: ${(e as Error).message}\n`), 2); }
+  const hash = compositeHash(body as unknown as Record<string, unknown>), sig = signReceipt(body.run_id, hash);
+  const out = { ...body, composite_sha256: hash, verification: { jwt: sig.jwt, kid: sig.kid } }, path = join(runDir, "composite.json");
+  writeFileSync(`${path}.tmp`, JSON.stringify(out, null, 2) + "\n"); renameSync(`${path}.tmp`, path);
+  process.stdout.write(`composite: ${path}\nverdict: ${body.verdict}\nchildren: ${body.children.length}\nsignature: ${sig.jwt ? "signed" : "UNSIGNED (no signing key)"}\n`);
+  return sig.jwt ? 0 : EXIT_BY_VERDICT.UNSIGNED;
+}
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
 const EXIT_BY_VERDICT: Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 };
 export async function main(args: readonly string[], deps: VerifyDeps = {}): Promise<number> {
@@ -114,9 +143,11 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const exportDsse = args.includes("--export-dsse");
   args = args.filter((a) => a !== "--allow-unsigned" && a !== "--export-dsse");
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\nUnknown flags and more than one run-id exit 2.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\nUnknown flags and more than one run-id exit 2.\n");
     return 0;
   }
+  const sc = args.indexOf("--seal-composite");
+  if (sc >= 0) return args.length === 2 && sc === 0 ? sealCompositeCmd(args[1]!) : (process.stderr.write("loki verify: --seal-composite takes exactly one run directory\n"), 2);
   const pk = takePubkey(args);
   if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   args = pk.args;
