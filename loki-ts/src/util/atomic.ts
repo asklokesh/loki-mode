@@ -27,6 +27,7 @@ import {
   rmSync,
   statSync,
   unlinkSync,
+  writeFileSync,
   writeSync,
 } from "node:fs";
 import { dirname } from "node:path";
@@ -44,7 +45,7 @@ let _tmpCounter = 0;
 // rename-only durability rather than failing the write.
 export function durableWriteThenRename(target: string, body: string | Uint8Array): void {
   mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.tmp.${process.pid}.${++_tmpCounter}`;
+  const tmp = tmpPathFor(target);
   const fd = openSync(tmp, "w");
   try {
     writeSync(fd, body as never);
@@ -82,7 +83,27 @@ export function atomicWriteJson(target: string, data: unknown): void {
   durableWriteThenRename(target, `${JSON.stringify(data, null, 2)}\n`);
 }
 
-export function atomicWriteText(target: string, body: string): void {
+// Unique tmp path next to `target` (pid + per-process counter) so concurrent
+// writes and copies within one process never collide.
+export function tmpPathFor(target: string): string {
+  return `${target}.tmp.${process.pid}.${++_tmpCounter}`;
+}
+
+// durable defaults to true (fsync file + parent dir). Pass { durable: false }
+// for the plain writeFileSync + rename path (no fsync) used by the council and
+// checkpoint writers, which keep their original lower write cost.
+export function atomicWriteText(
+  target: string,
+  body: string,
+  opts: { durable?: boolean } = {},
+): void {
+  if (opts.durable === false) {
+    mkdirSync(dirname(target), { recursive: true });
+    const tmp = tmpPathFor(target);
+    writeFileSync(tmp, body);
+    renameSync(tmp, target);
+    return;
+  }
   durableWriteThenRename(target, body);
 }
 
