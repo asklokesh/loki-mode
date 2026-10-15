@@ -21,7 +21,7 @@ PASS=0; FAIL=0
 pass() { PASS=$((PASS+1)); echo "PASS: $1"; }
 fail() { FAIL=$((FAIL+1)); echo "FAIL: $1 -- ${2:-}"; }
 
-MAIN_HELP="$(bash "$LOKI" --help 2>&1 || true)"
+MAIN_HELP="$(bash "$LOKI" help all 2>&1 || true)"
 START_HELP="$(bash "$LOKI" start --help 2>&1 || true)"
 
 # 1. documented in help

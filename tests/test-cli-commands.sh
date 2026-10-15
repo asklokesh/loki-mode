@@ -313,8 +313,8 @@ test_cmd "loki api start -h shows help (#574)" \
 # -------------------------------------------
 # Test: unknown command exits non-zero
 # -------------------------------------------
-test_cmd "loki unknown-command exits 1" \
-    1 "Unknown command" nonexistent-command-xyz
+test_cmd "loki unknown-command exits 2 (usage error)" \
+    2 "Unknown command" nonexistent-command-xyz
 
 # -------------------------------------------
 # Summary

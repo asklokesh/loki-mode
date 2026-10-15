@@ -17928,15 +17928,8 @@ cmd_verify() {
     fi
     # shellcheck source=/dev/null
     source "$verify_mod"
-    # HELP slice: --json wraps the human output in one JSON object (shared helper).
-    # shellcheck source=/dev/null
-    source "$_LOKI_SCRIPT_DIR/lib/json-output.sh"
-    if loki_json_requested "$@"; then
-        local _vj_args=() _vj_a
-        while IFS= read -r _vj_a; do _vj_args+=("$_vj_a"); done < <(loki_json_strip "$@")
-        loki_json_wrap verify verify_main "${_vj_args[@]+"${_vj_args[@]}"}"
-        return $?
-    fi
+    # verify_main handles --json natively (evidence document on stdout, banner
+    # on stderr); the generic json-output.sh wrapper must not intercept it.
     verify_main "$@"
     return $?
 }

@@ -209,7 +209,7 @@ done
 # Test 8: both appear in loki --help
 # ===========================================
 log_test "cost and estimate appear in loki --help"
-help_out="$(cd "$WORK" && bash "$LOKI" --help 2>&1)"
+help_out="$(cd "$WORK" && bash "$LOKI" help all 2>&1)"
 help_missing=""
 grep -qw "cost" <<<"$help_out" || help_missing="$help_missing cost"
 grep -qw "estimate" <<<"$help_out" || help_missing="$help_missing estimate"

@@ -111,7 +111,7 @@ _chat_send() {
 # The summary prints at the end of the run; chat stays open afterwards.
 _chat_run_start() {
     local loki="$1" input="$2" rc=0
-    local -a args=(start "$input" --provider "$_CHAT_PROVIDER")
+    local -a args=("start" "$input" --provider "$_CHAT_PROVIDER")
     [ -n "$_CHAT_MODEL" ] && args+=(--model "$_CHAT_MODEL")
     "$loki" "${args[@]}" || rc=$?
     echo "(run finished, exit $rc; chat is still open)"
