@@ -1914,7 +1914,7 @@ show_help_all() {
     # missing from this list, so a new command cannot ship invisible.
     echo ""
     echo "All commands:"
-    echo "  agents chat edit models"
+    echo "  agents chat diff edit models route"
     echo "  acp agent analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
