@@ -5,6 +5,14 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.7.1 (2026-10-15)
+
+Patch for v11.7.0, which was pushed but never published: its CI Tests run failed, so npm did not receive it. This release ships everything listed under v11.7.0 together with the fixes below.
+
+### Fixed
+- `loki verify --help` now documents `--seal-composite <run-dir>`. Bash completion now offers the `loki deploy` flags (`--execute`, `--health-url`, `--auto-rollback`), the `loki verify` flags including `--seal-composite`, and `loki memory brief --task`.
+- The new deploy and workspace tests use here-strings instead of piping output into `grep -q`, which kept the repo under its FC-64 ceiling for that form.
+
 ## v11.7.0 (2026-10-15)
 
 Phase 1 of the multi-repo company operating system. Workspaces become reachable from `loki start` and `loki chat`, a whole multi-repo change set can be sealed into one signed composite receipt, autonomy is set by policy, and verified deploys gain a health check with automatic rollback. Every capability is an extension of an existing module; no parallel implementation was added. `loki start` with Claude remains the primary path.
