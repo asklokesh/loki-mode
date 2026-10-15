@@ -124,7 +124,7 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki tour` | See a sample result |
 | `loki welcome` | First-run opener |
 | `loki onboard` | Onboard to a codebase |
-| `loki setup-skill` | Install the skill symlinks; `--claude-code` merges the Loki plugin into Claude Code settings (see `plugins/loki-mode/README.md`) |
+| `loki setup-skill` | Install the skill symlinks |
 | `loki self-update` (alias: `self_update`, `update`) | Update Loki |
 | `loki remote` (alias: `rc`) | Remote session |
 | `loki cockpit` | Live multi-repo cockpit |
