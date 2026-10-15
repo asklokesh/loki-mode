@@ -141,53 +141,50 @@ else
 fi
 
 # ===========================================
-# Test 4: loki estimate WITHOUT --iterations explains the requirement
+# Test 4: loki estimate prints the same estimate line 'loki start' prints
+# (one estimator: loki-ts/src/runner/router/cost_preview.ts)
 # ===========================================
-log_test "loki estimate without --iterations explains what is required"
+log_test "loki estimate prints the shared estimate line"
+export LOKI_TS_ENTRY="$REPO_ROOT/loki-ts/src/cli.ts"
+export LOKI_NO_BROWSER=1
 nout="$(cd "$WS_MEASURED" && bash "$LOKI" estimate 2>&1)"
 nrc=$?
-
-if [ $nrc -eq 0 ]; then
-    log_fail "loki estimate without --iterations exited 0 (expected non-zero). Output: $nout"
-elif ! grep -q -- "--iterations is required" <<<"$nout"; then
-    log_fail "loki estimate did not state that --iterations is required. Output: $nout"
-elif ! grep -q -- "loki estimate --iterations" <<<"$nout"; then
-    log_fail "loki estimate did not show a runnable example. Output: $nout"
+if [ $nrc -ne 0 ]; then
+    log_fail "loki estimate exited $nrc (expected 0). Output: $nout"
+elif ! grep -q "^estimate: " <<<"$nout"; then
+    log_fail "loki estimate did not print the shared 'estimate:' line. Output: $nout"
 elif grep -qi "Traceback" <<<"$nout"; then
     log_fail "loki estimate leaked a python traceback. Output: $nout"
 else
-    log_pass "loki estimate without --iterations explains the requirement (no traceback)"
+    log_pass "loki estimate prints the shared estimate line"
 fi
 
 # ===========================================
-# Test 5: loki estimate --iterations N projects from measured history
+# Test 5: the removed --iterations flag is rejected with an explanation
 # ===========================================
-log_test "loki estimate --iterations 10 projects a total"
+log_test "loki estimate --iterations is rejected, not silently ignored"
 pout="$(cd "$WS_MEASURED" && bash "$LOKI" estimate --iterations 10 2>&1)"
 prc=$?
-
-if [ $prc -ne 0 ]; then
-    log_fail "loki estimate --iterations 10 exited $prc (expected 0). Output: $pout"
-elif ! grep -qi "estimate" <<<"$pout"; then
-    log_fail "loki estimate produced no estimate output. Output: $pout"
-elif ! grep -q "Projected for 10" <<<"$pout"; then
-    log_fail "loki estimate did not project for the requested 10 iterations. Output: $pout"
+if [ $prc -eq 0 ]; then
+    log_fail "loki estimate --iterations 10 exited 0 (expected non-zero). Output: $pout"
+elif ! grep -q -- "--iterations was removed" <<<"$pout"; then
+    log_fail "loki estimate did not explain that --iterations was removed. Output: $pout"
 else
-    log_pass "loki estimate --iterations 10 projects from measured per-iteration cost"
+    log_pass "loki estimate --iterations is rejected with an explanation"
 fi
 
 # ===========================================
-# Test 6: a non-numeric --iterations is rejected, not passed through
+# Test 6: an unknown option is rejected
 # ===========================================
-log_test "loki estimate --iterations <non-numeric> is rejected cleanly"
-bout="$(cd "$WS_MEASURED" && bash "$LOKI" estimate --iterations abc 2>&1)"
+log_test "loki estimate <unknown option> is rejected cleanly"
+bout="$(cd "$WS_MEASURED" && bash "$LOKI" estimate --bogus 2>&1)"
 brc=$?
 if [ $brc -eq 0 ]; then
-    log_fail "loki estimate accepted a non-numeric --iterations. Output: $bout"
-elif grep -qi "Traceback" <<<"$bout"; then
-    log_fail "non-numeric --iterations leaked a python traceback. Output: $bout"
+    log_fail "loki estimate accepted an unknown option. Output: $bout"
+elif ! grep -q "Unknown option" <<<"$bout"; then
+    log_fail "unknown option gave no explanation. Output: $bout"
 else
-    log_pass "loki estimate rejects a non-numeric --iterations without a traceback"
+    log_pass "loki estimate rejects an unknown option"
 fi
 
 # ===========================================
