@@ -375,7 +375,8 @@ def _names(checks, *statuses):
     return [c["id"] for c in checks if c["status"] in statuses]
 
 
-def compute_label(base, integrity, execution, checks, counts, requirements, mod_tests, complete):
+def compute_label(base, integrity, execution, checks, counts, requirements, mod_tests, complete,
+                  kind="proof"):
     base = (base or "").strip().upper()
     failed = _names(checks, FAILED)
     if integrity["status"] == "invalid":
@@ -384,12 +385,18 @@ def compute_label(base, integrity, execution, checks, counts, requirements, mod_
         return "NOT VERIFIED (failed: %s)" % ", ".join(failed)
     if not complete:
         return "INCOMPLETE (record has no usable check results)"
+    if kind == "proof" and integrity["status"] != "valid":
+        if integrity["status"] == "unchecked":
+            return "NOT VERIFIED (integrity could not be checked)"
+        return "NOT VERIFIED (integrity not provable: no hash recorded)"
     if base not in ("VERIFIED", "VERIFIED WITH GAPS"):
         return base or "NOT VERIFIED"
     if execution["status"] == "stale":
         return "STALE (%s; re-run the checks)" % execution["reason"]
     not_run = _names(checks, NOT_RUN, SKIPPED, STALE)
     parts = []
+    if kind != "proof" and integrity["status"] != "valid":
+        parts.append("integrity not recorded")
     if not_run:
         parts.append("%d of %d checks ran; not run: %s" % (
             counts["ran"], counts["total"], ", ".join(not_run)))
@@ -419,7 +426,7 @@ def _assemble(kind, base, integrity, execution, checks, requirements, mod_tests,
     # Label uses pre-stale statuses for "not run" names: recompute from the
     # current list, where stale checks are named as not run on a stale record.
     label = compute_label(base, integrity, execution, checks, counts,
-                          requirements, mod_tests, complete)
+                          requirements, mod_tests, complete, kind)
     return {
         "schema_version": SCHEMA_VERSION,
         "kind": kind,

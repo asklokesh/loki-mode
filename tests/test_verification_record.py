@@ -188,6 +188,8 @@ class Outcomes(_Fixture):
         proof = _proof(self.repo, self.base, self.head)
         rec = self.build(proof)
         self.assertEqual(rec["integrity"]["status"], "not_recorded")
+        self.assertFalse(rec["label"].startswith("VERIFIED"), rec["label"])
+        self.assertTrue(rec["label"].startswith("NOT VERIFIED"), rec["label"])
 
 
 class ModifiedTests(_Fixture):

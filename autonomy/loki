@@ -36524,7 +36524,12 @@ PYEOF
                     echo -e "${RED}python3 is unavailable${NC}" >&2
                     exit 2
                 }
-                "$_ps_py" -E "$_ps_vr" summary "$pj" --repo "$(loki_verify_root 2>/dev/null || pwd)" --loki-dir "$loki_dir" || exit $?
+                local _ps_root
+                _ps_root="$(loki_verify_root 2>/dev/null)" || {
+                    echo -e "${YELLOW}Summary unavailable (project tree not resolved; not checking the ambient cwd).${NC} Use 'loki proof show ${id} --json' for the full record." >&2
+                    exit 2
+                }
+                "$_ps_py" -E "$_ps_vr" summary "$pj" --repo "$_ps_root" --loki-dir "$loki_dir" || exit $?
                 exit 0
             fi
             if command -v jq &>/dev/null; then
