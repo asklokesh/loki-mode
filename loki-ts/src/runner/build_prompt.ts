@@ -32,12 +32,11 @@ import {
   readFileSync,
   readdirSync,
   statSync,
-  writeFileSync,
-  renameSync,
   rmSync,
 } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { runInline } from "../util/python.ts";
+import { atomicWriteText } from "../util/atomic.ts";
 import { detectComplexity } from "./rarv.ts";
 import { goalSharpeningInstruction } from "./goal_score.ts";
 import { profileFragment } from "./repo_profile.ts";
@@ -865,9 +864,7 @@ function buildSelfHealContext(cwd: string): string {
     }
     lines.push(JSON.stringify(rec));
     lines = lines.slice(-50);
-    const tmp = resolve(dirname(hist), `.failure-history.${process.pid}.tmp`);
-    writeFileSync(tmp, lines.join("\n") + "\n");
-    renameSync(tmp, hist);
+    atomicWriteText(hist, lines.join("\n") + "\n");
   } catch {
     /* best-effort */
   }
@@ -1021,7 +1018,7 @@ async function buildEfficiencyTrend(
 
 // Phase 1 helper: read structured findings from the most recent review dir
 // and render them as a prompt-ready block. Lives here (not in
-// build_prompt_helpers.ts) to keep the env-flag gate in one file. Imports
+// a separate helpers module) to keep the env-flag gate in one file. Imports
 // are dynamic to avoid loading the whole findings_injector module on every
 // prompt build when the flag is off.
 async function buildStructuredFindingsBlock(cwd: string): Promise<string> {
