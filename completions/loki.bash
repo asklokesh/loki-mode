@@ -5,7 +5,7 @@ _loki_completion() {
     _init_completion || return
 
     # Main subcommands (must match autonomy/loki main case statement)
-    local main_commands="start backlog quick monitor demo tour welcome init stop pause resume steer status next ship dashboard web serve api sandbox notify import github issue intent config provider reset memory compound checkpoint council dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt outcomes explain plan report cost estimate kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control workspace open otel preview quickstart rc rollback merge self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help keys answer queue issues undo acp verify-pr"
+    local main_commands="start backlog quick monitor demo tour welcome init stop pause resume steer status next ship dashboard web serve api sandbox notify import github issue intent config provider reset memory compound checkpoint council dogfood projects enterprise secrets cockpit secure own handoff doctor watchdog audit metrics syslog onboard share proof receipt outcomes explain plan report cost estimate kpis stats test ci watch telemetry agent context ctx code run export review optimize heal modernize migrate cluster worktree wt trigger failover remote deploy docker mcp magic assets analyze compliance crash control workspace open otel preview quickstart rc rollback merge self-update sentrux setup-skill spec state template trust trust-metrics ultracode update verify voice why wiki bench cleanup logs grill docs cp version completions help keys answer queue issues undo acp verify-pr chat route edit setup models agents diff"
 
     # 1. If we are on the first argument (subcommand)
     if [[ $cword -eq 1 ]]; then
@@ -27,7 +27,7 @@ _loki_completion() {
 
             # If the word starts with a dash, show flags
             if [[ "$cur" == -* ]]; then
-                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --spec --spec-first --yes --budget --attempts --model --isolation --help"
+                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --spec --spec-first --yes --budget --attempts --model --isolation --max-cost --no-pr --explain-route --help"
                 COMPREPLY=( $(compgen -W "${flags}" -- "$cur") )
                 return 0
             fi
@@ -137,6 +137,15 @@ _loki_completion() {
             fi
             ;;
 
+        agents)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "list new show export" -- "$cur") )
+            elif [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--claude --user --help" -- "$cur") )
+            fi
+            return 0
+            ;;
+
         models)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--local --json --help" -- "$cur") )
@@ -144,9 +153,25 @@ _loki_completion() {
             fi
             ;;
 
-        agents)
+        setup)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--claude --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--yes --check --help" -- "$cur") )
+                return 0
+            fi
+            ;;
+
+        route)
+            if [[ $cword -eq 2 ]]; then
+                COMPREPLY=( $(compgen -W "start quick" -- "$cur") )
+            elif [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--json --provider --model --no-pr --max-cost --help" -- "$cur") )
+            fi
+            return 0
+            ;;
+
+        edit)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--verify --commit --dry-run --help" -- "$cur") )
                 return 0
             fi
             ;;

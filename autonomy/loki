@@ -2591,7 +2591,8 @@ cmd_start() {
                 echo "                        Token from LOKI_REMOTE_TOKEN / LOKI_REMOTE_TOKEN_FILE"
                 echo "                        (never an argument). Env: LOKI_REMOTE_URL."
                 echo "  --provider NAME       AI provider: claude (default), codex, cline, aider, opencode"
-                echo "  --allow-haiku         Enable Haiku model for the fast tier (default: disabled)"
+                echo "  --model NAME          Model or route override (for example ollama/qwen3-coder)"
+                echo "  --allow-haiku        Enable Haiku model for the fast tier (default: disabled)"
                 echo "  --simple              Force simple complexity tier (3 phases)"
                 echo "  --complex             Force complex complexity tier (8 phases)"
                 echo "  --no-dashboard        Disable web dashboard"
@@ -21013,6 +21014,24 @@ main() {
             ;;
         edit)
             cmd_edit "$@"
+            ;;
+        diff)
+            # Show what the last run changed: uncommitted changes, else the HEAD commit.
+            # Extra args pass through to git (for example --stat or a path).
+            if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+                echo "Usage: loki diff [git diff args]"
+                echo "Show uncommitted changes; if there are none, show the latest commit."
+                exit 0
+            fi
+            if ! git rev-parse --git-dir >/dev/null 2>&1; then
+                echo "loki diff: not inside a git repository" >&2
+                exit 1
+            fi
+            if git diff --quiet HEAD -- 2>/dev/null; then
+                git show --format='%h %s' "$@" HEAD
+            else
+                git diff "$@" HEAD
+            fi
             ;;
         monitor)
             cmd_monitor "$@"

@@ -64,7 +64,51 @@ function _loki {
                 doctor)
                     _arguments \
                         '--json[Output machine-readable JSON]' \
+                        '--fix[Create state dirs and a default config]' \
                         '--help[Show help]'
+                    ;;
+                chat)
+                    _arguments \
+                        '--attach[Attach to a running session]' \
+                        '--tui[Use the terminal UI]' \
+                        '--help[Show help]'
+                    ;;
+                agents)
+                    _arguments \
+                        '1:subcommand:(list new show export)' \
+                        '--claude[Export to .claude/agents]' \
+                        '--user[Use the user-level agents directory]' \
+                        '--help[Show help]'
+                    ;;
+                models)
+                    _arguments \
+                        '--local[Show local models]' \
+                        '--json[Output machine-readable JSON]' \
+                        '--help[Show help]'
+                    ;;
+                setup)
+                    _arguments \
+                        '--yes[Non-interactive defaults]' \
+                        '--check[Report only]' \
+                        '--help[Show help]'
+                    ;;
+                route)
+                    _arguments \
+                        '1:verb:(start quick)' \
+                        '--json[Output machine-readable JSON]' \
+                        '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
+                        '--model[Model or route override]:model:' \
+                        '--no-pr[Skip the pull request]' \
+                        '--max-cost[Spend cap in USD]:amount:' \
+                        '--help[Show help]'
+                    ;;
+                edit)
+                    _arguments \
+                        '--verify[Run verification after the edit]' \
+                        '--commit[Commit the edit]' \
+                        '--dry-run[Describe the change only]' \
+                        '--help[Show help]' \
+                        '*:file:_files'
                     ;;
                 reset)
                     _loki_reset
@@ -219,6 +263,13 @@ function _loki_commands {
         'queue:Overnight issue queue with a morning digest'
         'issues:Run every open issue in a repo and open PRs'
         'undo:Show what undoing a run would do (read-only plan)'
+        'chat:Interactive chat session (run, attach)'
+        'route:Print the engine, provider and model route without running'
+        'edit:Make a scoped edit to files'
+        'setup:First-run wizard for tools, provider, model route and spend cap'
+        'models:List models and routes (--local for local models)'
+        'agents:List, scaffold, show and export agent definitions'
+        'diff:Show what the last run changed'
         'control:Control plane (preview, LOKI_CONTROL=1)'
         'workspace:Multi-project workspaces (preview, LOKI_WORKSPACES=1)'
         'backlog:Run every matching open issue, N in parallel'
@@ -275,6 +326,10 @@ function _loki_start {
         '--yes[Skip confirmation prompts]' \
         '-y[Skip confirmation prompts]' \
         '--budget[Cost budget limit in USD]:amount:' \
+        '--model[Model or route override]:model:' \
+        '--max-cost[Spend cap in USD]:amount:' \
+        '--no-pr[Build and verify without opening a pull request]' \
+        '--explain-route[Print the route without running]' \
         '--max-iterations[Max iterations]:number:' \
         '--attempts[Independent attempts in worktrees, 1-5]:number:(1 2 3 4 5)' \
         '*:spec file:_loki_spec_files'

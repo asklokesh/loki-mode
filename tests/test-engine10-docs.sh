@@ -107,6 +107,15 @@ while IFS= read -r line; do
             # an issue"). No literal token to match, so accept the shape.
             ok "example '$line' is a task or issue-ref form"
             ;;
+        start | route | edit | agents | setup | doctor | config | chat | models | diff | undo)
+            # v11.4.0 verbs: each must be a real dispatch arm, not just a plausible word.
+            if grep -qE "^ +${second}\)" "$REPO_ROOT/autonomy/loki" "$REPO_ROOT/autonomy/route.sh" \
+                || grep -qE "^ +start\)|^ +\"?${second}\"?\)|\\|${second}[|)]" "$BIN_LOKI"; then
+                ok "example '$line' uses the real command '$second'"
+            else
+                bad "example '$line' uses '$second', which has no dispatch arm"
+            fi
+            ;;
         *)
             bad "example '$line' uses an unrecognized command shape '$second'"
             ;;
