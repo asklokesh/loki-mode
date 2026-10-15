@@ -136,6 +136,40 @@ class PlanTest(unittest.TestCase):
             shutil.rmtree(d, ignore_errors=True)
 
 
+class LokiModelPinTest(unittest.TestCase):
+    def test_loki_arm_sees_pinned_model_despite_parent_env(self):
+        seen = {}
+
+        def fake(cmd, **kw):
+            seen["env"] = dict(kw.get("env") or os.environ)
+            seen["parent"] = os.environ.get("LOKI_SESSION_MODEL")
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        old = os.environ.get("LOKI_SESSION_MODEL")
+        os.environ["LOKI_SESSION_MODEL"] = "haiku"
+        try:
+            pf = os.path.join(d, "p.md")
+            open(pf, "w").write("x")
+            try:
+                A.run_loki(d, pf, model="claude-sonnet-5", budget_usd=1.0,
+                           timeout_s=5, runner=fake)
+            except Exception:
+                pass
+            self.assertEqual(seen["env"].get("LOKI_SESSION_MODEL"), "claude-sonnet-5")
+            self.assertEqual(os.environ.get("LOKI_SESSION_MODEL"), "haiku")
+        finally:
+            if old is None:
+                os.environ.pop("LOKI_SESSION_MODEL", None)
+            else:
+                os.environ["LOKI_SESSION_MODEL"] = old
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_pinned_environment_records_effective_model(self):
+        env = A.pin_environment(False, model="claude-sonnet-5")
+        self.assertEqual(env["loki_session_model_effective"], "claude-sonnet-5")
+
+
 class TaskSetTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

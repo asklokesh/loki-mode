@@ -207,17 +207,22 @@ def _scoped_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     return env
 
 
-def pin_environment(probe: bool, runner: Optional[Callable] = None) -> Dict[str, Any]:
+def pin_environment(probe: bool, runner: Optional[Callable] = None,
+                    model: Optional[str] = None) -> Dict[str, Any]:
     """Tool versions and commit SHAs. probe=False records them as not probed."""
     if not probe:
         return {"probed": False, "claude_version": None, "loki_version": None,
-                "loki_repo_sha": None, "python_version": sys.version.split()[0]}
+                "loki_repo_sha": None, "python_version": sys.version.split()[0],
+                "loki_session_model_effective": model,
+                "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL")}
     return {
         "probed": True,
         "claude_version": _claude_adapter._detect_claude_version(runner=runner),
         "loki_version": _loki_adapter._detect_loki_version(runner=runner),
         "loki_repo_sha": _git_sha(REPO_ROOT),
         "python_version": sys.version.split()[0],
+        "loki_session_model_effective": model,
+        "loki_session_model_parent_env": os.environ.get("LOKI_SESSION_MODEL"),
     }
 
 
@@ -407,7 +412,11 @@ def run_raw_claude(workdir: str, prompt: str, *, model: str, budget_usd: float,
 def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
              timeout_s: int, runner: Optional[Callable] = None) -> Dict[str, Any]:
     prev = os.environ.get("LOKI_BUDGET_LIMIT")
+    prev_model = os.environ.get("LOKI_SESSION_MODEL")
     os.environ["LOKI_BUDGET_LIMIT"] = str(budget_usd)
+    # Force the pinned model for the loki arm even if the operator exported a
+    # different LOKI_SESSION_MODEL; the adapter only pins when it is absent.
+    os.environ["LOKI_SESSION_MODEL"] = model
     try:
         res = _loki_adapter.run(workdir, prompt_file, model=model,
                                 timeout=timeout_s, runner=runner, provider="claude")
@@ -416,6 +425,10 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
             os.environ.pop("LOKI_BUDGET_LIMIT", None)
         else:
             os.environ["LOKI_BUDGET_LIMIT"] = prev
+        if prev_model is None:
+            os.environ.pop("LOKI_SESSION_MODEL", None)
+        else:
+            os.environ["LOKI_SESSION_MODEL"] = prev_model
     prov = res.get("provenance") or {}
     status = res["exit_status"]
     return {
@@ -653,7 +666,7 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         return 2
     plan = build_plan(tasks, args.repeats, args.model, args.budget_usd, args.timeout)
     execute = args.execute and not args.dry_run
-    env = pin_environment(probe=execute, runner=runner)
+    env = pin_environment(probe=execute, runner=runner, model=args.model)
     if not execute:
         print_plan(plan, env, warnings)
         if not args.dry_run:
