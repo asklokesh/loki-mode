@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.5.0 (2026-10-15)
+
+Less human attention per accepted task. Loki now discovers your repo and runs a baseline on its own, maps acceptance criteria to checks, verifies according to risk, recovers interrupted runs without double-publishing, and ends every run with a review handoff you can act on in under two minutes. Each feature extends a module, test file or doc that already owned its concern; no parallel duplicates were added. `loki start` is still the primary path, and `loki chat` reuses the same pieces.
+
+### Added
+- Repo discovery and baseline: `loki start` now discovers each repo's test, lint, typecheck and build commands and records a baseline test run in `.loki/state/repo-profile.json`, reusing it until the manifests or HEAD change. This lives in the existing `runner/repo_profile.ts`. A check that already failed at baseline, with the same failing ids and outside the files the diff touched, is reported as pre-existing and does not block; every other failure blocks as before. `loki doctor --repo` prints the profile; combined with `--requirements` it prints both. Set `LOKI_REPO_BASELINE=0` to skip the baseline run.
+- Risk-based verification: the verify stage classifies risk from the diff (never from the prompt) as low, medium or high and records it in `.loki/state/risk-tier.json`. High covers sensitive paths (auth, crypto, payments, migrations, CI config, lockfiles, infra, `.env`), deleted tests, public API surface, or large diffs. A lower tier runs targeted checks, and every check it skips is recorded as not run, never as passed. The run summary shows the tier. `LOKI_RISK_TIER` can raise the tier; lowering it requires `LOKI_RISK_OVERRIDE_REASON`, which is recorded. The logic lives in `util/check_result.ts`; see `docs/environment-variables.md`.
+- Review handoff: every engine10 `loki start` run writes `.loki/review/HANDOFF.md` (about 30 lines) and `.loki/review/handoff.json`. Both list the outcome, spend, the risk tier, the change, what was demonstrated, failures, what was not checked, and the exact accept and reject commands. The PR body includes the same handoff, `loki chat` `/run` prints it, and the final summary line points to it.
+- Requirement tracing: acceptance criteria from the task are mapped to the checks that cover them in `.loki/state/requirements-map.json`. Uncovered requirements are counted in the run summary and listed in the handoff and PR body. A run with no requirements removes any map left by an earlier run, so it never reports another run's requirements. This is built into the existing `features/contract.ts`.
+- Recovery of an interrupted run: a run that was interrupted after push or PR creation resumes from its recorded phase and does not push or open a PR twice. This is built into `util/run_outputs.ts`, `util/run_pid.ts` and `engine10/events.ts`, and documented in `docs/v10/ENGINE.md`.
+- Claude Code plugin: a Stop hook (`loki-stop-verify.sh`) runs Loki's fast verification when a Claude Code session ends, and the `/loki-mode:start` and `/loki-mode:handoff` commands are new. `/loki-mode:verify` accepts `--fast`. Install with `loki setup-skill --claude-code`.
+- Setup requirements: `loki doctor --requirements` lists what each execution path needs, whether each item is required or optional, whether it is present, and a one-line fix. `loki doctor --json` includes the same data. The table is shared by bash and TypeScript through `autonomy/lib/setup-requirements.json` and documented in `docs/alternative-installations.md`.
+- Backend capability disclosure: `loki route --json` reports the adapter and its capability differences from Claude Code. The capability table lives in the existing `providers/provider_guard.ts` and is documented in `docs/cost-controls.md`.
+- Attribution benchmark: `benchmarks/bench/attribution.py` and six tasks compare Loki against a well-configured Claude Code on accepted tasks, human interventions and cost. It reuses the existing bench fixture hash and Wilson interval code.
+
+### Changed
+- One default budget: the default cost cap is $100. It is read by both the bash and TypeScript engines from `loki-ts/data/model-pricing.json`. Precedence is `--max-cost`, then `LOKI_BUDGET_LIMIT`, then `loki.yaml`, then the default. Unmeasured cost is reported as unknown with a reason, never as $0.00. See `docs/cost-controls.md`.
+- Cancel is a recorded outcome: Ctrl-C ends a run as CANCELLED with exit 130 (SIGTERM exits 143), and the receipt says so.
+- Proof verification records its outcome in the existing `autonomy/lib/proof-verify.py` and shares its git and JSON helpers. No second verifier was added.
+- `loki quick` with an unknown option now exits 64. The routing contract and exit-code cases are documented in `docs/exit-codes.md` and checked by the existing `tests/test-engine10-dispatch.sh` and `tests/test-exit-codes-documented.sh`.
+
+### Process
+- New binding rule in CLAUDE.md: extend existing code and docs, never duplicate. Before this train, every slice was consolidated under that rule. The per-slice `docs/contracts/*.md` files were folded into the docs that own each topic, and the parallel modules were merged into their owners.
+
 ## v11.4.2 (2026-10-15)
 
 Fix-forward for v11.4.1, which was tagged on main but never reached npm. The full Bun test job on the release commit had 13 failures, so `required-ci` stopped the publish. v11.4.2 contains everything listed under v11.4.1 and v11.4.0 below, plus these fixes.
