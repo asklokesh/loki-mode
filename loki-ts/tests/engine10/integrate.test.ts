@@ -77,6 +77,38 @@ describe("integrate", () => {
     expect(existsSync(join(f.repo, "b.txt"))).toBe(false);
     expect(r.ok).toBe(false);
   });
+  test("dirty tree is refused and user edits survive", () => {
+    const f = fixture("dirty", { u1: { "shared.txt": "one\n" } });
+    writeFileSync(join(f.repo, "shared.txt"), "USER UNSAVED WORK\n");
+    const r = integrate({ repoDir: f.repo, groupId: "g5", baseRef: "main", dag: dag("u1"), branches: f.branches, testCmd: ["./suite.sh"] });
+    expect(r.ok).toBe(false);
+    expect(r.conflictUnit).toBeUndefined();
+    expect(r.reason).toContain("uncommitted");
+    expect(readFileSync(join(f.repo, "shared.txt"), "utf8")).toBe("USER UNSAVED WORK\n");
+    expect(runs(f.counter)).toBe(0);
+  });
+  test("missing ref is fail with git stderr, not conflict", () => {
+    const f = fixture("noref", { u1: { "a.txt": "a\n" } });
+    const r = integrate({ repoDir: f.repo, groupId: "g6", baseRef: "main", dag: dag("u1"), branches: { u1: "no-such-branch" }, testCmd: ["./suite.sh"] });
+    expect(r.perUnit["u1"]).toBe("fail");
+    expect(r.conflictUnit).toBeUndefined();
+    expect(r.reason).toContain("not a conflict");
+    expect(r.ok).toBe(false);
+  });
+  test("dependents of a failed unit are not merged", () => {
+    const f = fixture("dep", { u1: { "a.txt": "a\n" }, u2: { "b.txt": "b\n" } });
+    const d: Dag = { ...dag("u1", "u2"), edges: [{ from: "u1", to: "u2", via: "x" }] };
+    const r = integrate({ repoDir: f.repo, groupId: "g7", baseRef: "main", dag: d, branches: f.branches, failedUnits: ["u1"], testCmd: ["./suite.sh"] });
+    expect(r.perUnit).toEqual({ u1: "fail", u2: "fail" });
+    expect(r.ok).toBe(false);
+  });
+  test("existing group branch is not overwritten", () => {
+    const f = fixture("exists", { u1: { "a.txt": "a\n" } });
+    sh(f.repo, "branch", "loki/group-g8", "main");
+    const r = integrate({ repoDir: f.repo, groupId: "g8", baseRef: "main", dag: dag("u1"), branches: f.branches, testCmd: ["./suite.sh"] });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toContain("already exists");
+  });
   test("DAG order follows edges", () => {
     const d: Dag = { ...dag("u1", "u2", "u3"), edges: [{ from: "u3", to: "u1", via: "x" }] };
     expect(integrationOrder(d)).toEqual(["u2", "u3", "u1"]);

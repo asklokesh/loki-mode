@@ -53,9 +53,21 @@ export function integrate(o: IntegrateOpts): IntegrateResult {
   const perUnit: Record<string, UnitOutcome> = {};
   const failed = new Set(o.failedUnits ?? []);
   for (const id of order) perUnit[id] = failed.has(id) || !o.branches[id] ? "fail" : "skipped";
+  // A unit whose DAG dependency failed is never merged: its output was built on a base that did not land.
+  for (const id of order) {
+    if (perUnit[id] !== "fail" && o.dag.edges.some((e) => e.to === id && perUnit[e.from] === "fail")) perUnit[id] = "fail";
+  }
   const res = (r: Partial<IntegrateResult>): IntegrateResult => ({ perUnit, branch, suiteExit: null, ok: false, ...r });
 
-  const co = git(o.repoDir, ["checkout", "-B", branch, o.baseRef]);
+  // Never carry or destroy uncommitted tracked work: refuse unless the tracked tree is clean.
+  const dirty = git(o.repoDir, ["status", "--porcelain", "--untracked-files=no"]);
+  if (dirty.status !== 0) return res({ reason: `cannot read git status: ${String(dirty.stderr).trim()}` });
+  if (String(dirty.stdout).trim() !== "") return res({ reason: "working tree has uncommitted changes: refusing to integrate" });
+  // Never silently reset an earlier integration result.
+  if (git(o.repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).status === 0) {
+    return res({ reason: `branch ${branch} already exists: refusing to overwrite` });
+  }
+  const co = git(o.repoDir, ["checkout", "-b", branch, o.baseRef]);
   if (co.status !== 0) return res({ reason: `cannot create ${branch} from ${o.baseRef}: ${String(co.stderr).trim()}` });
 
   const merged: string[] = [];
@@ -63,8 +75,13 @@ export function integrate(o: IntegrateOpts): IntegrateResult {
     if (perUnit[id] === "fail") continue;
     const m = git(o.repoDir, ["merge", "--no-ff", "--no-edit", "-m", `integrate ${id}`, o.branches[id]!]);
     if (m.status !== 0) {
+      const inProgress = git(o.repoDir, ["rev-parse", "-q", "--verify", "MERGE_HEAD"]).status === 0;
+      const unmerged = String(git(o.repoDir, ["diff", "--name-only", "--diff-filter=U"]).stdout).trim() !== "";
+      if (!inProgress && !unmerged) {
+        perUnit[id] = "fail";
+        return res({ reason: `merge of unit ${id} failed (not a conflict): ${String(m.stderr).trim()}` });
+      }
       git(o.repoDir, ["merge", "--abort"]);
-      git(o.repoDir, ["reset", "--hard", "HEAD"]);
       perUnit[id] = "conflict";
       return res({ conflictUnit: id, reason: `merge conflict in unit ${id}` });
     }
