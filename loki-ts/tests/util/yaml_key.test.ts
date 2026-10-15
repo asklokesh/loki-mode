@@ -1,6 +1,9 @@
 // loki-ts/tests/util/yaml_key.test.ts -- S1 wall checks for the two-level yaml key reader.
 import { describe, expect, test } from "bun:test";
-import { yamlKey } from "../../src/util/yaml_key.ts";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { lokiYamlTexts, yamlKey } from "../../src/util/yaml_key.ts";
 
 describe("yamlKey", () => {
   test("reads a first-child key", () => {
@@ -27,5 +30,33 @@ describe("yamlKey", () => {
   });
   test("a key that merely shares a prefix does not match", () => {
     expect(yamlKey("budgets:\n  run_cap_s_extra: 5\n", "budgets", "run_cap_s")).toBeNull();
+  });
+});
+
+describe("lokiYamlTexts", () => {
+  const mk = (files: Record<string, string>): string => {
+    const d = mkdtempSync(join(tmpdir(), "yamltexts-"));
+    for (const [n, t] of Object.entries(files)) writeFileSync(join(d, n), t);
+    return d;
+  };
+  test("missing files give an empty list", () => {
+    const d = mk({});
+    try { expect(lokiYamlTexts(d)).toEqual([]); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("loki.yml is the fallback", () => {
+    const d = mk({ "loki.yml": "a: 1\n" });
+    try { expect(lokiYamlTexts(d)).toEqual(["a: 1\n"]); } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("both present: loki.yaml first, then loki.yml; yamlOnly skips loki.yml", () => {
+    const d = mk({ "loki.yaml": "y\n", "loki.yml": "z\n" });
+    try {
+      expect(lokiYamlTexts(d)).toEqual(["y\n", "z\n"]);
+      expect(lokiYamlTexts(d, { yamlOnly: true })).toEqual(["y\n"]);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+  test("an unreadable entry (a directory named loki.yaml) is skipped, not thrown", () => {
+    const d = mk({ "loki.yml": "z\n" });
+    mkdirSync(join(d, "loki.yaml"));
+    try { expect(lokiYamlTexts(d)).toEqual(["z\n"]); } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });

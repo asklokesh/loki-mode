@@ -3,8 +3,7 @@
 // Only whether the key variable is SET is checked; its value is never read or printed.
 // Enforced in the worker (worker.ts -> machine.ts overCap): once priced cost reaches the cap no further stage starts and the
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
-import { existsSync, readFileSync } from "node:fs"; import { join } from "node:path";
-import { yamlKey } from "../util/yaml_key.ts"; import { loadDefaultMaxCostUsd } from "../runner/budget.ts";
+import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts"; import { loadDefaultMaxCostUsd } from "../runner/budget.ts";
 export const DEFAULT_MAX_COST_USD = loadDefaultMaxCostUsd(); // LM-002: default per-run cap lives in loki-ts/data/model-pricing.json, read by runner/budget.ts
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
 export type CapSource = "--max-cost" | "env" | "loki.yaml" | "default" | "subscription";
@@ -20,11 +19,8 @@ export function yamlPerRun(text: string): number | null { return parseCapUsd(yam
 export function resolveCap(cli: string | null, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number; source: CapSource } | { error: string } {
   if (cli !== null) { const n = parseCapUsd(cli); return n === null ? { error: "--max-cost must be a positive number of US dollars" } : { usd: n, source: "--max-cost" }; }
   const envCap = parseCapUsd(env.LOKI_BUDGET_LIMIT); if (envCap !== null) return { usd: envCap, source: "env" }; // same variable the bash route reads; flag > env > loki.yaml > default
-  for (const f of ["loki.yaml", "loki.yml"]) {
-    const p = join(repoDir, f);
-    if (!existsSync(p)) continue;
-    let n: number | null = null;
-    try { n = yamlPerRun(readFileSync(p, "utf8")); } catch { /* unreadable: fall through to the default */ }
+  for (const text of lokiYamlTexts(repoDir)) {
+    const n = yamlPerRun(text);
     if (n !== null) return { usd: n, source: "loki.yaml" };
   }
   return hasApiKey(env) ? { usd: DEFAULT_MAX_COST_USD, source: "default" } : { usd: 0, source: "subscription" };

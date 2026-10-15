@@ -10,9 +10,9 @@
 import { spawn } from "node:child_process";
 import { safeGit } from "../util/safe_git.ts";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
-import { yamlKey } from "../util/yaml_key.ts";
+import { lokiYamlTexts, yamlKey } from "../util/yaml_key.ts";
 import type { ProjectApi } from "./api.ts";
 
 export const INSTALL_CAP_MS = 300_000;
@@ -56,10 +56,8 @@ const mergedEnv = (e?: Record<string, string | undefined>): Record<string, strin
 
 function optedOut(repoDir: string, env: Record<string, string>): boolean {
   if (env["LOKI_E10_INSTALL"] === "0") return true;
-  try {
-    const f = join(repoDir, "loki.yaml");
-    return existsSync(f) && yamlKey(readFileSync(f, "utf8"), "verify", "install_deps")?.toLowerCase() === "false";
-  } catch { return false; }
+  const t = lokiYamlTexts(repoDir, { yamlOnly: true })[0];
+  return t !== undefined && yamlKey(t, "verify", "install_deps")?.toLowerCase() === "false";
 }
 
 const git = (repoDir: string, env: Record<string, string>, args: string[]): string =>

@@ -1,11 +1,11 @@
 // FC-21b (2): the run wall-clock cap scales with the plan's scope, not the task text. Pure; the CLI gathers the signals.
 // An explicit cap (LOKI_E10_CAP_S or loki.yaml budgets.run_cap_s) is fixed: never shrunk or grown, and it wins over the ceiling.
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_CAP_S } from "../engine10/types.ts";
 import { dependentsOf } from "../project_model/graph.ts";
 import type { ProjectApi } from "../project_model/api.ts";
-import { yamlKey } from "./yaml_key.ts";
+import { lokiYamlTexts, yamlKey } from "./yaml_key.ts";
 
 export const PLAN_SCOPE_FILE = "plan-scope.json";
 export const MAX_SCOPE_BYTES = 256 * 1024;
@@ -55,8 +55,8 @@ export function yamlRunCapS(text: string): number | null {
 }
 /** The cap the run starts with: a fixed cap if one is set, else DEFAULT_CAP_S (no plan exists yet; the worker resizes once after plan). Best effort: unreadable yaml falls back to the default. */
 export function resolveRunCapS(repoDir: string, subscription: boolean, env: NodeJS.ProcessEnv = process.env): { capS: number; fixedS?: number; ceilingS: number } {
-  let yamlS: number | null = null;
-  for (const f of ["loki.yaml", "loki.yml"]) { const p = join(repoDir, f); if (existsSync(p)) try { yamlS = yamlRunCapS(readFileSync(p, "utf8")); } catch { /* unreadable */ } }
+  const texts = lokiYamlTexts(repoDir);
+  const yamlS = texts.length > 0 ? yamlRunCapS(texts[texts.length - 1]!) : null; // the last readable file wins
   const fixedS = fixedCapS(Number(env.LOKI_E10_CAP_S) || undefined, yamlS);
   return { capS: fixedS ?? DEFAULT_CAP_S, fixedS, ceilingS: fixedS ?? capCeilingS(subscription) };
 }
