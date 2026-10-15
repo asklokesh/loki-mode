@@ -11,7 +11,7 @@ import { assertDeltaNotes } from "../../e10ext/assert_delta.ts"; import { failId
 import { harnessLoadReason } from "../../runner/load_owner.ts";
 import { loadRepoMap, namedFiles } from "../sizing.ts";
 import { isTestFile } from "../testmap.ts";
-import { classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped } from "../../util/check_result.ts";
+import { changedFiles, classifyCheck, classifyRisk, diffFiles, markExecuted, recordRisk, plainTestEnv, stripAnsi, goRunner, hasExecutedProof, ran, skipped } from "../../util/check_result.ts";
 import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts";
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
@@ -70,17 +70,7 @@ export function commandFor(t: TestRef, repoDir: string, api?: ProjectApi | null)
   return { cwd: site?.cwd ?? repoDir, cmd, args, argv: [cmd, ...args], ...(interpreter ? { interpreter } : {}), pkgRoot: site?.root ?? "." };
 }
 const dedupeTests = (tests: TestRef[]): TestRef[] => [...new Map(tests.map((t) => [`${t.runner}:${t.path}`, t] as const)).values()];
-/** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
- *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
- *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
-export function changedFiles(repoDir: string, baseSha: string): string[] {
-  const run = (args: string[]): string[] =>
-    safeGit(repoDir, args)
-      .split("\n").map((l) => l.trim()).filter(Boolean);
-  const tracked = run(["diff", "--name-only", baseSha]);
-  const untracked = run(["ls-files", "--others", "--exclude-standard"]);
-  return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/"));
-}
+export { changedFiles } from "../../util/check_result.ts"; // one owner: check_result.ts (diffFiles builds on it)
 interface RunOpts {
   path?: string; // PATH override, tests only, so "missing tool" never depends on the host
   stdin?: string;

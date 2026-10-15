@@ -276,24 +276,35 @@ export function classifyRisk(files: DiffFile[], env: NodeJS.ProcessEnv = process
   };
 }
 
-/** Diff of the working tree against baseSha (tracked numstat plus untracked line counts), .loki/ excluded. Throws on git failure. */
+/** Tracked changes against baseSha, plus untracked new files (commit runs after verify). `.loki/`
+ *  is filtered defensively even though intake also excludes it via .git/info/exclude. Throws if
+ *  either git command fails: a broken baseSha must never read as "nothing changed" (~ALREADY_SATISFIED). */
+export function changedFiles(repoDir: string, baseSha: string): string[] {
+  const run = (args: string[]): string[] =>
+    safeGit(repoDir, args)
+      .split("\n").map((l) => l.trim()).filter(Boolean);
+  const tracked = run(["diff", "--name-only", baseSha]);
+  const untracked = run(["ls-files", "--others", "--exclude-standard"]);
+  return [...new Set([...tracked, ...untracked])].filter((f) => !f.startsWith(".loki/"));
+}
+
+/** changedFiles enriched with numstat counts and name-status; untracked files get a line count as additions. Throws on git failure. */
 export function diffFiles(repoDir: string, baseSha: string): DiffFile[] {
-  const out = new Map<string, DiffFile>();
+  const paths = changedFiles(repoDir, baseSha), stat = new Map<string, DiffFile>();
   for (const l of safeGit(repoDir, ["diff", "--numstat", baseSha]).split("\n")) {
     const [a, d, ...p] = l.split("\t"), path = p.join("\t");
-    if (!path || path.startsWith(".loki/")) continue;
-    out.set(path, { path, added: Number(a) || 0, deleted: Number(d) || 0 });
+    if (path) stat.set(path, { path, added: Number(a) || 0, deleted: Number(d) || 0 });
   }
   for (const l of safeGit(repoDir, ["diff", "--name-status", baseSha]).split("\n")) {
-    const [s, ...p] = l.split("\t"), f = out.get(p[p.length - 1] ?? "");
+    const [s, ...p] = l.split("\t"), f = stat.get(p[p.length - 1] ?? "");
     if (f) f.status = s?.startsWith("A") ? "added" : s?.startsWith("D") ? "deleted" : "modified";
   }
-  for (const path of safeGit(repoDir, ["ls-files", "--others", "--exclude-standard"]).split("\n").map((x) => x.trim()).filter(Boolean)) {
-    if (path.startsWith(".loki/")) continue;
+  return paths.map((path) => {
+    const f = stat.get(path);
+    if (f) return f;
     let n = 0; try { n = readFileSync(join(repoDir, path), "utf8").split("\n").length; } catch { /* unreadable or binary */ }
-    out.set(path, { path, added: n, deleted: 0, status: "added" });
-  }
-  return [...out.values()];
+    return { path, added: n, deleted: 0, status: "added" as const };
+  });
 }
 
 /** Writes .loki/state/risk-tier.json atomically; best effort, a recording failure never fails the run. */
