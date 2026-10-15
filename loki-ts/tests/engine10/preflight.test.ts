@@ -73,8 +73,8 @@ describe("checkPreflight", () => {
 
   test("unsupported provider is fatal with the E-37 line, named for the given provider", async () => {
     const { dir, env } = identifiedRepo();
-    const r = await checkPreflight({ repoDir: dir, provider: "opencode", pr: false, env });
-    expect(r.fatal).toBe("the v10 engine has no opencode invoker yet");
+    const r = await checkPreflight({ repoDir: dir, provider: "bogus", pr: false, env });
+    expect(r.fatal).toBe("the v10 engine has no bogus invoker yet");
   });
 
   test("host guard with a non-claude provider is fatal (would otherwise throw at providers.ts:63)", async () => {

@@ -196,16 +196,16 @@ describe("E-37 non-claude provider paths (codex, cline, aider)", () => {
 // assertion itself is wrong. E-36 (also not yet merged) owns the exact
 // refusal line preflight.ts prints for `--provider opencode`; this asserts
 // that final line so a landed E-36+E-42 turns it green unmodified.
-describe("E-37 opencode refusal (depends on E-36 + E-42)", () => {
-  test.skipIf(!E42_SUPERVISOR_MAIN_LANDED)("--provider opencode exits 2 with the E-36 refusal line", () => {
+describe("E-37 unsupported-provider refusal (depends on E-36 + E-42)", () => {
+  test.skipIf(!E42_SUPERVISOR_MAIN_LANDED)("--provider bogus exits 2 with the E-36 refusal line", () => {
     const { repo } = makeRepo();
     const r = Bun.spawnSync({
-      cmd: ["bash", BIN_LOKI, "add a thing", "--provider", "opencode", "--no-pr"],
+      cmd: ["bash", BIN_LOKI, "add a thing", "--provider", "bogus", "--no-pr"],
       cwd: repo,
       env: { ...process.env, LOKI_TS_ENTRY: CLI_ENTRY, LOKI_NO_BROWSER: "1" },
     });
     const out = r.stdout.toString() + r.stderr.toString();
     expect(r.exitCode).toBe(2);
-    expect(out).toContain("the v10 engine has no opencode invoker yet");
+    expect(out).toContain("the v10 engine has no bogus invoker yet");
   }, 20_000);
 });

@@ -135,7 +135,7 @@ describe("FC-38 start --attempts never reaches the legacy loop", () => {
   it("a provider engine10 cannot invoke is refused, not sent to the legacy engine", () => {
     const f = fixture();
     try {
-      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_PROVIDER: "opencode", LOKI_NO_BROWSER: "1" } });
+      const r = spawnSync(join(REPO, "bin/loki"), ["start", "prd.md", "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_PROVIDER: "bogus", LOKI_NO_BROWSER: "1" } });
       expect(r.status).toBe(2);
       expect(existsSync(f.log)).toBe(false);
     } finally {
@@ -144,12 +144,12 @@ describe("FC-38 start --attempts never reaches the legacy loop", () => {
   });
 });
 
-describe("FC-38 scoped: start --attempts with opencode", () => {
-  it("start --attempts 2 --no-pr with opencode is refused (rc 2) and never execs autonomy/loki or the engine", () => {
+describe("FC-38 scoped: start --attempts with an unsupported provider", () => {
+  it("start --attempts 2 --no-pr with an unsupported provider is refused (rc 2) and never execs autonomy/loki or the engine", () => {
     const f = fixture();
     try {
       for (const task of ["prd.md", "fix the thing please"]) {
-        const r = spawnSync(join(REPO, "bin/loki"), ["start", task, "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_PROVIDER: "opencode", LOKI_NO_BROWSER: "1" } });
+        const r = spawnSync(join(REPO, "bin/loki"), ["start", task, "--attempts", "2", "--no-pr"], { cwd: f.repo, encoding: "utf8", timeout: 60_000, env: { ...process.env, PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, LOKI_TS_ENTRY: f.entry, LOKI_PROVIDER: "bogus", LOKI_NO_BROWSER: "1" } });
         expect(r.status).toBe(2);
         expect(String(r.stdout)).not.toContain("Loki Mode");
       }
