@@ -21,7 +21,7 @@ export interface RunSummaryInput {
 export function resultOf(outcome: Outcome): RunResult {
   if (outcome === "VERIFIED" || outcome === "ALREADY_SATISFIED") return "verified";
   if (outcome === "PARTIAL") return "done-unverified";
-  if (outcome === "BUDGET_STOP" || outcome === "BLOCKED" || outcome === "STALLED") return "stopped";
+  if (outcome === "BUDGET_STOP" || outcome === "BLOCKED" || outcome === "STALLED" || outcome === "CANCELLED") return "stopped";
   return "failed";
 }
 

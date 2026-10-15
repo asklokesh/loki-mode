@@ -1,14 +1,13 @@
-// D60-5 (INTEL-2): the per-run dollar cap. Resolution order: --max-cost, then loki.yaml budgets.per_run, then the default.
+// D60-5 (INTEL-2): the per-run dollar cap. Resolution order: --max-cost, then LOKI_BUDGET_LIMIT, then loki.yaml budgets.per_run, then the default.
 // D82-COSTCAP: the default is $100 when an API key is set in the env, and NO dollar cap on a subscription run (no key).
 // Only whether the key variable is SET is checked; its value is never read or printed.
 // Enforced in the worker (worker.ts -> machine.ts overCap): once priced cost reaches the cap no further stage starts and the
 // run ends BUDGET_STOP (exit 3). Unpriced sessions (usd null) never count, so an unmetered run is not stopped by a guess.
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs"; import { join } from "node:path";
 import { yamlKey } from "../util/yaml_key.ts";
-export const DEFAULT_MAX_COST_USD = 100;
+import { DEFAULT_MAX_COST_USD } from "../util/budget_default.ts"; export { DEFAULT_MAX_COST_USD }; // LM-002: one JSON source
 export const SUBSCRIPTION_NOTE = "subscription: no dollar cap; usage counts against your plan limits";
-export type CapSource = "--max-cost" | "loki.yaml" | "default" | "subscription";
+export type CapSource = "--max-cost" | "env" | "loki.yaml" | "default" | "subscription";
 /** True when a provider API key variable is set (presence only; the value is never read). */
 export function hasApiKey(env: NodeJS.ProcessEnv): boolean {
   return ["ANTHROPIC_API_KEY", "OPENAI_API_KEY"].some((k) => (env[k] ?? "") !== "");
@@ -22,6 +21,7 @@ export function yamlPerRun(text: string): number | null { return parseCapUsd(yam
 /** usd 0 means no dollar cap (subscription run). */
 export function resolveCap(cli: string | null, repoDir: string, env: NodeJS.ProcessEnv = process.env): { usd: number; source: CapSource } | { error: string } {
   if (cli !== null) { const n = parseCapUsd(cli); return n === null ? { error: "--max-cost must be a positive number of US dollars" } : { usd: n, source: "--max-cost" }; }
+  const envCap = parseCapUsd(env.LOKI_BUDGET_LIMIT); if (envCap !== null) return { usd: envCap, source: "env" }; // same variable the bash route reads; flag > env > loki.yaml > default
   for (const f of ["loki.yaml", "loki.yml"]) {
     const p = join(repoDir, f);
     if (!existsSync(p)) continue;

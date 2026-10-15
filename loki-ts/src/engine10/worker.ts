@@ -8,7 +8,7 @@ import { capMeter } from "../e10ext/budget_cap.ts";
 import { resizeCap } from "../util/run_cap.ts"; import { loadProjectApi } from "../project_model/resolve.ts"; import { parseCapUsd } from "../e10ext/budget_cap.ts";
 import { FLOW, runMachine } from "./machine.ts";
 import { withFailover, type FailoverRecord } from "../runner/provider_failover.ts";
-import { createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
+import { cancelSessions, createSessionRunner, resolveModel, type EmitFn } from "./session.ts";
 import { RealTestMapProvider } from "./testmap.ts";
 import { DEEP_CAP_S, DEFAULT_CAP_S } from "./types.ts";
 import type { EventType, RunContext, StageName } from "./types.ts";
@@ -42,6 +42,9 @@ export async function main(args: string[]): Promise<number> {
   const lokiRoot = join(repoDir, ".loki");
   const deep = mode === "deep";
   const started = new Set<string>();
+  // Supervisor cancel (SIGINT/SIGTERM): stop every live session so each records its partial usage, then exit.
+  (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down: the handler below owns the stop
+  for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void cancelSessions().finally(() => process.exit(sig === "SIGINT" ? 130 : 143)); });
   await runWorker(async (rawEmit) => {
     const { emit, over } = capMeter(rawEmit, process.env);
     const base = createSessionRunner({ provider, model, emit: emit as EmitFn, lokiRoot });

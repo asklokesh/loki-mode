@@ -387,8 +387,11 @@ installCrashHandlers();
 // SIGINT handler -- propagate Ctrl-C to a clean exit so child processes
 // spawned via Bun.spawn (e.g. doctor's network probes) don't outlive us.
 // Standard convention: 128 + signal number.
-process.on("SIGINT", () => process.exit(130));
-process.on("SIGTERM", () => process.exit(143));
+// A Loki 10 supervisor (runner/worker_proc.ts spawnWorker) sets this symbol while it owns the stop: it terminates the
+// worker gracefully, records usage, and exits 130 itself, so these immediate exits must stand down.
+const ownsStop = (): boolean => (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] === true;
+process.on("SIGINT", () => { if (!ownsStop()) process.exit(130); });
+process.on("SIGTERM", () => { if (!ownsStop()) process.exit(143); });
 
 // Conservative capture (plan section 9): a plain nonzero exit from a command
 // that returned a status cleanly (doctor failing a check, an unknown subcommand,

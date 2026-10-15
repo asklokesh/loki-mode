@@ -33,7 +33,8 @@ async function run(sig: NodeJS.Signals, dirty = false): Promise<void> {
   git(dir, "add", "a.txt"); git(dir, "commit", "-q", "-m", "base");
   writeFileSync(join(base, "worker.js"), WORKER(dirty));
   writeFileSync(join(base, "drive.ts"), `import { runSupervisor } from ${JSON.stringify(SUP)};
-await runSupervisor({ runId: "e10-sig", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: {} });`);
+const r = await runSupervisor({ runId: "e10-sig", repoDir: ${JSON.stringify(dir)}, env: process.env, capS: 600, workerArgv: [process.execPath, ${JSON.stringify(join(base, "worker.js"))}], started: {} });
+process.exit(r.outcome === "CANCELLED" ? (r.notProven.some((n) => n.endsWith("SIGTERM")) ? 143 : 130) : 0); // main() returns this code; the supervisor now cancels gracefully instead of exiting in the handler`);
   const sup = spawn(process.execPath, [join(base, "drive.ts")], { env: { ...process.env, LOKI_CLAUDE_CLI: "/usr/bin/true" }, stdio: ["ignore", "ignore", "pipe"] });
   let err = ""; sup.stderr?.on("data", (d: Buffer) => { err += d.toString(); });
   const exited = new Promise<number | null>((r) => sup.on("exit", (c, s) => r(c ?? (s ? 1 : null))));

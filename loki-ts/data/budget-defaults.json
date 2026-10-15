@@ -1,0 +1,1 @@
+{"_doc":"Single source of truth for the default per-run spend cap in USD. Read by loki-ts/src/e10ext/budget_cap.ts and autonomy/run.sh. Contract: docs/contracts/budget.md","default_max_cost_usd":100}

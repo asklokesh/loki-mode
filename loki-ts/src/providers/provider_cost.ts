@@ -7,7 +7,7 @@
 //   3. prompt/response sizes, priced from the table: estimated=true
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { estimateTokens, usdFor } from "../providers/price_table.ts";
+import { estimateTokens, priceFor, usdFor } from "../providers/price_table.ts";
 
 export interface ParsedUsage { input: number; output: number; cached: number; usd: number | null }
 
@@ -70,8 +70,15 @@ export function parseUsage(provider: string, text: string): ParsedUsage | null {
 export const ESTIMATED_PROVIDERS: ReadonlySet<string> = new Set(["codex", "cline", "aider"]);
 
 export interface ProviderCostRecord {
-  total_cost_usd: number; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
-  model: string; estimated: boolean; cost_basis: "provider-dollars" | "provider-tokens" | "size-estimate";
+  total_cost_usd: number | null; input_tokens: number; output_tokens: number; cache_read_tokens: number; cache_creation_tokens: number;
+  model: string; estimated: boolean; cost_basis: "provider-dollars" | "provider-tokens" | "size-estimate" | "unpriced";
+  /** Set when total_cost_usd is null: why the dollars are unmeasured. Tokens stay recorded. */
+  unmeasured_reason?: string;
+}
+
+/** A model with no table entry has no known price: dollars are unmeasured (null + reason), never a DEFAULT_PRICE guess or 0. */
+function unpriced(model: string, input: number, output: number, cached: number, estimated: boolean): ProviderCostRecord {
+  return { total_cost_usd: null, input_tokens: input, output_tokens: output, cache_read_tokens: cached, cache_creation_tokens: 0, model, estimated, cost_basis: "unpriced", unmeasured_reason: `no known price for model "${model || "unknown"}"` };
 }
 
 export function buildProviderCost(provider: string, model: string, prompt: string, output: string): ProviderCostRecord | null {
@@ -80,11 +87,14 @@ export function buildProviderCost(provider: string, model: string, prompt: strin
   if (u && u.usd !== null && u.usd >= 0 && u.input + u.output > 0) {
     return { total_cost_usd: u.usd, input_tokens: u.input, output_tokens: u.output, cache_read_tokens: u.cached, cache_creation_tokens: 0, model, estimated: false, cost_basis: "provider-dollars" };
   }
+  const known = priceFor(model).matched;
   if (u && u.input + u.output > 0) {
+    if (!known) return unpriced(model, u.input, u.output, u.cached, false);
     return { total_cost_usd: usdFor(model, u.input, u.output, u.cached), input_tokens: u.input, output_tokens: u.output, cache_read_tokens: u.cached, cache_creation_tokens: 0, model, estimated: true, cost_basis: "provider-tokens" };
   }
   const i = estimateTokens(prompt), o = estimateTokens(output);
   if (i + o === 0) return null; // nothing ran: stays unmeasured, never a fake zero
+  if (!known) return unpriced(model, i, o, 0, false);
   return { total_cost_usd: usdFor(model, i, o), input_tokens: i, output_tokens: o, cache_read_tokens: 0, cache_creation_tokens: 0, model, estimated: true, cost_basis: "size-estimate" };
 }
 
