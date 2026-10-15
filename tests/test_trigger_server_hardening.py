@@ -674,5 +674,154 @@ class TestHttpEndToEnd(unittest.TestCase):
                 disp.shutdown()
 
 
+def _sentry_sig(secret, body):
+    return hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+
+
+SENTRY_PAYLOAD = {
+    "action": "triggered",
+    "data": {
+        "event": {
+            "title": "TypeError: x is undefined",
+            "web_url": "https://sentry.io/organizations/o/issues/42/",
+            "exception": {"values": [{"type": "TypeError", "value": "x is undefined",
+                                      "stacktrace": {"frames": [
+                                          {"filename": "app.js", "lineNo": 3,
+                                           "function": "go"}]}}]},
+        },
+    },
+}
+
+
+class _SentryFixture(_ServerFixture):
+    def __init__(self, sentry_secret, dispatcher, secret="ghsecret"):
+        class _H(ts.WebhookHandler):
+            pass
+
+        _H.secret = secret
+        _H.sentry_secret = sentry_secret
+        _H.dry_run = False
+        _H.dispatcher = dispatcher
+        _H.log_message = lambda *a, **k: None
+        self.server = ts.ThreadingWebhookServer(("127.0.0.1", 0), _H)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def post_sentry(self, body, sig=None, path="/sentry"):
+        headers = {"Content-Type": "application/json"}
+        if sig is not None:
+            headers["sentry-hook-signature"] = sig
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        conn.request("POST", path, body=body, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        conn.close()
+        return resp.status, data
+
+
+class TestSentryWebhook(unittest.TestCase):
+    """POST /sentry: HMAC-verified, enqueues a PR-only `loki start`, never a deploy."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        patch.object(ts, "send_notification").start()
+
+    def tearDown(self):
+        patch.stopall()
+        os.chdir(self.orig_cwd)
+
+    def _run(self, secret, sig_fn, body=None, wait=False):
+        seen = []
+        ev = threading.Event()
+
+        def fake_run(args, dry_run=False):
+            seen.append(args)
+            ev.set()
+            return True
+
+        body = body or json.dumps(SENTRY_PAYLOAD).encode()
+        with patch.object(ts, "run_loki_command", side_effect=fake_run):
+            disp = ts.Dispatcher(workers=2, queue_size=8, dry_run=False)
+            srv = _SentryFixture(sentry_secret=secret, dispatcher=disp)
+            try:
+                status, _ = srv.post_sentry(body, sig_fn(body))
+                if wait:
+                    ev.wait(timeout=10)
+                disp.queue.join()
+            finally:
+                srv.close()
+                disp.shutdown()
+        return status, seen
+
+    def test_bad_signature_401_no_dispatch(self):
+        status, seen = self._run("sentrysecret", lambda b: "0" * 64)
+        self.assertEqual(status, 401)
+        self.assertEqual(seen, [])
+
+    def test_missing_signature_401(self):
+        status, seen = self._run("sentrysecret", lambda b: None)
+        self.assertEqual(status, 401)
+        self.assertEqual(seen, [])
+
+    def test_github_secret_signature_rejected(self):
+        status, seen = self._run("sentrysecret", lambda b: _sentry_sig("ghsecret", b))
+        self.assertEqual(status, 401)
+        self.assertEqual(seen, [])
+
+    def test_missing_secret_refuses_route(self):
+        status, seen = self._run("", lambda b: _sentry_sig("", b))
+        self.assertEqual(status, 503)
+        self.assertEqual(seen, [])
+
+    def test_valid_payload_enqueues_normalized_brief(self):
+        status, seen = self._run(
+            "sentrysecret", lambda b: _sentry_sig("sentrysecret", b), wait=True)
+        self.assertEqual(status, 202)
+        self.assertEqual(len(seen), 1)
+        args = seen[0]
+        self.assertEqual(args[0], "start")
+        self.assertIn("TypeError: x is undefined", args[1])
+        self.assertIn("Sentry issue", args[1])
+        self.assertFalse(args[1].startswith("-"))
+        self.assertNotIn("\n", args[1])
+        self.assertEqual(args[2:], ["--pr", "--detach"])
+
+    def test_no_deploy_argument_ever_present(self):
+        _, seen = self._run(
+            "sentrysecret", lambda b: _sentry_sig("sentrysecret", b), wait=True)
+        for args in seen:
+            for a in args[:1] + args[2:]:
+                self.assertNotIn("deploy", a.lower())
+
+    def test_non_triggering_action_skipped(self):
+        payload = dict(SENTRY_PAYLOAD, action="resolved")
+        _, status = ts.handle_sentry_event(payload, dry_run=True)
+        self.assertIn("skipped", status)
+
+    def test_sentry_event_refused_on_github_webhook(self):
+        seen = []
+        with patch.object(ts, "run_loki_command",
+                          side_effect=lambda a, dry_run=False: seen.append(a) or True):
+            disp = ts.Dispatcher(workers=1, queue_size=4, dry_run=False)
+            srv = _SentryFixture(sentry_secret="sentrysecret", dispatcher=disp)
+            try:
+                body = json.dumps(SENTRY_PAYLOAD).encode()
+                status, _ = srv.post(body, {
+                    "Content-Type": "application/json",
+                    "X-GitHub-Event": ts.SENTRY_EVENT,
+                    "X-Hub-Signature-256": _sign("ghsecret", body),
+                })
+                disp.queue.join()
+            finally:
+                srv.close()
+                disp.shutdown()
+        self.assertEqual(status, 403)
+        self.assertEqual(seen, [])
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
