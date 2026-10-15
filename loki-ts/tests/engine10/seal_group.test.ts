@@ -581,7 +581,7 @@ describe("group run: Group Seal and resume", () => {
     const before = calls.length;
     const second = await go(repo, fake(repo, calls, { satisfied: [2] }));
     expect(second.code).toBe(4);
-    expect(second.err).not.toContain("already VERIFIED");
+    expect(second.err).not.toContain("nothing to run");
     expect(calls.length).toBeGreaterThan(before);
   });
 
