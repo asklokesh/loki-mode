@@ -347,3 +347,26 @@ describe("engine10 implement learnings injection (INJECT)", () => {
     rmSync(d, { recursive: true, force: true });
   });
 });
+
+describe("engine10 implement stage: S41-13 two attempts (LOKI_E10_ATTEMPTS)", () => {
+  const countingRunner = () => { const r = new FakeSessionRunner(doneResult); let n = 0; const run = r.run.bind(r); r.run = async (o) => { n++; return run(o); }; return { r, count: () => n }; };
+  const withFlag = async (v: string | undefined, fn: () => Promise<void>) => { const old = process.env.LOKI_E10_ATTEMPTS; if (v === undefined) delete process.env.LOKI_E10_ATTEMPTS; else process.env.LOKI_E10_ATTEMPTS = v; try { await fn(); } finally { if (old === undefined) delete process.env.LOKI_E10_ATTEMPTS; else process.env.LOKI_E10_ATTEMPTS = old; } };
+
+  test("flag off: exactly one session and no attempts data", async () => {
+    await withFlag(undefined, async () => {
+      const { r, count } = countingRunner();
+      const res = await implementStage.run(fakeCtx(r, { intake: { task: "fix the bug" } }), new AbortController().signal);
+      expect(count()).toBe(1);
+      expect(res.data.attempts).toBeUndefined();
+    });
+  });
+
+  test("flag on but no selector (empty predicted S): still exactly one session", async () => {
+    await withFlag("2", async () => {
+      const { r, count } = countingRunner();
+      const res = await implementStage.run(fakeCtx(r, { intake: { task: "fix the bug" } }), new AbortController().signal);
+      expect(count()).toBe(1);
+      expect(res.data.attempts).toBeUndefined();
+    });
+  });
+});
