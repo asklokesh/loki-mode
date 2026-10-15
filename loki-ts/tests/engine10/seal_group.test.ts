@@ -6,7 +6,6 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sealedLog } from "./log_fixture.ts";
-import { renderPrBody } from "../../src/engine10/pr_body.ts";
 import { createPublicKey } from "node:crypto";
 import { commitStage, loadSigningKey, receiptSha256, sealStage, sha256, signReceipt } from "../../src/engine10/stages/seal.ts";
 import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -319,16 +318,4 @@ describe("D61-13 single run is unchanged", () => {
     expect((await verifyReceipt(s.data["receipt_path"] as string)).verdict).toBe("VERIFIED");
     expect(readdirSync(ctx.runDir)).not.toContain("group");
   }, 30000);
-
-  test("PR body without a group is byte-identical to the legacy rendering", () => {
-    const body = renderPrBody({ verdict: "VERIFIED", notProven: ["full suite"], receiptPath: "/r/receipt.json", capHit: false, outputs: { implement: { duration_s: 3 } } });
-    expect(body).toBe("Verdict: VERIFIED\n\nStage times:\n- implement: 3s\n\nNOT PROVEN:\n- full suite\n\nReceipt: /r/receipt.json\n");
-  });
-
-  test("PR body with a group appends a unit table", () => {
-    const group = { group_id: "g1", units: [{ index: 0, unit_id: "u1", goal: "add csv", files: ["a.ts", "b.ts"], tests: 2, tokens: 100, model: "sonnet", verdict: "VERIFIED" }] };
-    const body = renderPrBody({ verdict: "VERIFIED", notProven: [], receiptPath: null, capHit: false, outputs: {}, group: group as never });
-    expect(body).toContain("| Unit | Goal | Files | Tests | Tokens | Model | Verdict |");
-    expect(body).toContain("| u1 | add csv | a.ts, b.ts | 2 | 100 | sonnet | VERIFIED |");
-  });
 });

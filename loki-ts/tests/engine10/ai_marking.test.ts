@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { aiMarkerLine, aiTrailers, PR_BODY_LINE_BUDGET, renderPrBody, type PrBodyInput } from "../../src/engine10/pr_body.ts";
+import { aiMarkerLine, aiTrailers, withAiMarker } from "../../src/engine10/pr_body.ts";
 import { commitStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, RunContext, StageName } from "../../src/engine10/types.ts";
 
@@ -67,20 +67,15 @@ describe("MARK-1 commit trailers", () => {
   });
 });
 
-const body = (over: Partial<PrBodyInput> = {}): PrBodyInput => ({
-  verdict: "VERIFIED", notProven: ["x"], receiptPath: "/r/receipt.json", capHit: false,
-  outputs: { intake: { task: "Fix it\n- a\n- b" }, verify: { changed_files: ["a.ts"], checks: [{ name: "t", cmd: "bun test", result: "pass" }] } }, ...over,
-});
-
 describe("MARK-1 PR marker", () => {
+  const plain = "Verdict: VERIFIED\n\nReceipt: /r/receipt.json\n";
   test("no marker input: body unchanged", () => {
-    expect(renderPrBody(body())).toBe(renderPrBody(body({ aiMarker: undefined })));
-    expect(renderPrBody(body())).not.toContain("AI-Generated");
+    expect(withAiMarker(plain, null)).toBe(plain);
   });
   test("marker is one line right after the verdict line, with the receipt link kept", () => {
     const m = aiMarkerLine({ runId: "r1", provider: "claude", model: "opus" }, { LOKI_AI_MARKING: "1" })!;
     expect(m).toBe("AI-Generated: true (Loki Mode, claude, opus, run r1)");
-    const lines = renderPrBody(body({ aiMarker: m })).split("\n");
+    const lines = withAiMarker(plain, m).split("\n");
     const v = lines.findIndex((l) => l.startsWith("Verdict:"));
     expect(lines[v + 1]).toBe(m);
     expect(lines.filter((l) => l.includes("AI-Generated")).length).toBe(1);
@@ -89,15 +84,5 @@ describe("MARK-1 PR marker", () => {
   test("aiMarkerLine is null when the flag is off and sanitizes values", () => {
     expect(aiMarkerLine({ runId: "r", provider: "p", model: "m" }, {})).toBeNull();
     expect(aiMarkerLine({ runId: "r", provider: "p\nq", model: "m" }, { LOKI_AI_MARKING: "1" })).not.toContain("\n");
-  });
-  test("with the marker the body still fits PR_BODY_LINE_BUDGET", () => {
-    const criteria = Array.from({ length: 80 }, (_, i) => ({ text: `crit ${i}`, files: ["a.ts"], check: "t" }));
-    const m = "AI-Generated: true (Loki Mode, claude, opus, run r1)";
-    for (const aiMarker of [undefined, m]) {
-      const lines = renderPrBody(body({ criteria, aiMarker, notProven: Array.from({ length: 30 }, (_, i) => `np ${i}`) })).trimEnd().split("\n");
-      expect(lines.length).toBeLessThanOrEqual(PR_BODY_LINE_BUDGET);
-      const exact = renderPrBody(body({ criteria, aiMarker })).trimEnd().split("\n"); // a body that fills the budget exactly without the marker
-      expect(exact.length).toBeLessThanOrEqual(PR_BODY_LINE_BUDGET);
-    }
   });
 });

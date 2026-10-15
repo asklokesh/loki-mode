@@ -1,6 +1,5 @@
 // R1-15 (L7): goldens for the router start line, receipt route block and PR line. Flag off must be inert.
 import { describe, expect, test } from "bun:test";
-import { renderPrBody } from "../../src/engine10/pr_body.ts";
 import { buildRouteBlock, routeNotProven, routePrLine, routeReceiptLines, routeStartLine, withRouteLine } from "../../src/runner/router/route_block.ts";
 import { renderReceiptMd } from "../../src/engine10/stages/seal.ts";
 import type { Receipt } from "../../src/engine10/types.ts";
@@ -60,14 +59,11 @@ describe("route block", () => {
 });
 
 describe("byte stability when the router is off", () => {
-  const base = { verdict: "VERIFIED" as const, notProven: ["full suite"], receiptPath: "/r/receipt.json", capHit: false, outputs: {} };
-  test("PR body without a route line equals the body before R1-15", () => {
+  test("withRouteLine with no route line returns the body unchanged", () => {
     expect(withRouteLine("Verdict: VERIFIED\n\nx\n", null)).toBe("Verdict: VERIFIED\n\nx\n");
-    const plain = renderPrBody(base);
-    expect(renderPrBody({ ...base, routeLine: undefined })).toBe(plain);
   });
   test("route line lands directly under the verdict line", () => {
-    const lines = renderPrBody({ ...base, routeLine: "Route: not routed (x)" }).split("\n");
+    const lines = withRouteLine("Verdict: VERIFIED\n\nx\n", "Route: not routed (x)").split("\n");
     const i = lines.findIndex((l) => l.startsWith("Verdict:"));
     expect(lines[i + 1]).toBe("Route: not routed (x)");
   });

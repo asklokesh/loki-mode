@@ -116,12 +116,3 @@ export async function verifyGroup(receiptPath: string, receipt: Record<string, u
   }
   return unchecked ? { verdict: "UNCHECKED", reason: `group: ${unchecked}` } : null;
 }
-const cell = (s: string): string => s.replace(/[\x00-\x1f\x7f|]+/g, " ").trim();
-/** Markdown unit table for the PR body. */
-export function unitTableLines(g: ReceiptGroup): string[] {
-  return [
-    `Units (group ${cell(g.group_id)}):`, "",
-    "| Unit | Goal | Files | Tests | Tokens | Model | Verdict |", "|---|---|---|---|---|---|---|",
-    ...g.units.map((u) => `| ${cell(u.unit_id)} | ${cell(u.goal)} | ${u.files.map(cell).join(", ")} | ${u.tests} | ${u.tokens} | ${cell(u.model)} | ${cell(u.verdict)} |`),
-  ];
-}
