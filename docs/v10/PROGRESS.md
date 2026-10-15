@@ -1885,7 +1885,7 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - Rerun (b) started 2026-10-01T09:32Z: the 4 Loki-specific tasks x 3 reps, arms v10 and raw-claude, model claude-sonnet-5, at main 575ddebcf; out ~/loki-ci-logs/d50-rerun-*. No lift number is cited until it finishes. Then fix the top cause first and record a per-model stage profile with a lift row.
 
 ## 2026-10-01T10:14Z LOKI MORNING TEST
-- See docs/v10/MORNING-BRIEF.md, section "LOKI MORNING TEST" (latest 10.5.27, both gate legs passed).
+- LOKI MORNING TEST: latest 10.5.27, both gate legs passed (the separate morning brief doc was removed).
 
 ## 2026-10-01T10:25Z D50 rerun complete (3 reps x 4 tasks x 2 arms, claude-sonnet-5, main 575ddebcf)
 - click-2877: v10 3/3, raw 3/3 (baseline false ALREADY_SATISFIED did not recur: noise). humanize-333: v10 1/3, raw 1/3 (parity, hard task).
@@ -2326,3 +2326,14 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - guards-always pushed to main at 1d20b928e (push rc=0): 19/19 --guards-only rows rc=0 (~/loki-ci-logs/ga-guards-2141b.log), sigpipe CEILING 1789 -> 1742.
 - ENV-INTAKE bb2d57569: opus r1 BLOCK (F1 supply_guard registry token exfil, F2 seal commit hooks get worker env, F3 LOKI_* secrets incl. PR bot token and receipt signing key reach repo tests, F4 stray ' + R + ' arg in run.sh lint calls). CTO: F3 counts against 11.3.6 and earlier; signing key must never be in any child env. Fix slice ENV-INTAKE-R1FIX building; r2 pending; B9 n=9 two-bug +5.2% (rerun on fixed head). GHSA-p656 held.
 - Disk P0 cleared earlier (83G free). AUTO-REAP cf94b8bd4 in TL review; WF-2MIN-3 (CTO GO: one tarball, merge release+publish-npm, npm-visible non-blocking) building; CANARY-SHAPE building.
+
+## Release CI results, 10.6.x (folded from the removed 2026-10-03 handoff doc)
+- 10.6.0 (9f9569c35): Tests, Bun Parity, Coverage, Security Audit green. Published.
+- 10.6.1 (9bc3cfcc7): Tests red, shard 7 test-engine10-docs.sh (D57 docs pass removed the README loki10-default marker). Not published.
+- 10.6.2 (5c1e3324d): Tests red from W1-ROUTE (moat P5 and P9 probes, loki run --help flags, UI bare loki). Not published.
+- 10.6.3 (f289f8bf2): Tests red, shard 7 test-ui-bare-loki (LEAK3 URL output); LEAK3 reverted (05410c554). Not published.
+- 10.6.4 (3a4df211c): all Tests jobs failed on an npm 404 for a not-yet-propagated package. Not published; carried into 10.6.5.
+- 10.6.5 (0472f306a): moat P9 injection-cannot-reach-token regressed by the minimal loki start route. Not published.
+- 10.6.6 (456058bae): scope control, Control Plane v0, train-cycle fix, docs. All green. Published.
+- 10.6.7 (bfce1db12): D60 sprint, all gates, Release, Post-Release Smoke and Promote success. latest and next at 10.6.7.
+- Open at handoff: real-repo gate not wired into promote.yml and needs operator provider auth; no end-to-end exit 3 run of the cost cap; root action.yml still uses loki start --simple; about 43 worktrees under .claude/worktrees (cap 15); never push backup/train-67..70 or backup/main-pre-rebuild.

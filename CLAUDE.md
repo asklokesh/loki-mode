@@ -19,7 +19,7 @@ loki start owner/repo#123        # issue-mode
 ## Git and release invariants (binding, no exceptions)
 - Repo-local commit identity: `asklokesh` / `lokeshmure@live.com`, never set globally. Stage files by name; never bulk-stage the whole tree; never add a co-author line.
 - Commit/push authority: the standing authorization in `docs/LOKI-10-BUILD-PROMPT.md` section 1 governs sessions operating under that program (no waiting for approval there). Ask before committing otherwise.
-- Release model: trains, not push-per-merge (`docs/v10/DECISIONS.md` D25). Batch approved merges locally, push once per train, wait for CI green on that exact SHA, then release.
+- Release model: every approved slice is a release (`docs/v10/DECISIONS.md` D96, which supersedes the D25 trains; see `docs/v10/OPERATING-MODEL.md`). Merge-gate merges to main and main publishes to npm `next`; `latest` is promotion only, driven by a green hourly backstop. Never unpublish. Before any push, wait for CI green on that exact SHA if you push outside the merge-gate.
 - Pre-push/release gate: `bash scripts/local-ci.sh` (fast tier). The FULL tier is diagnostic only, never a release blocker. Never force-push, kill processes by name/pattern, or bypass branch protection.
 - Extend, never duplicate (founder rule, 2026-10-15): a feature goes into the existing module, command, test file or doc that already owns its concern. A new file needs a one-line justification that no existing file owns the concern. A replacement deletes the code it supersedes in the same change. Reviewers block parallel duplicates.
 - No emojis, no em dashes, no en dashes, anywhere (code, docs, commits, UI); remove any found on sight. SKILL.md stays under 500 lines with header AND footer version bumped together.

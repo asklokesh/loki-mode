@@ -4,9 +4,10 @@ Moved out of CLAUDE.md (S-78) to keep the root file short. Updated in this
 pass to remove two items that `docs/v10/DECISIONS.md` D25 and
 `docs/LOKI-10-BUILD-PROMPT.md` section 1 have superseded:
 - `git add -A` in step 4 is replaced with staging by name (repo rule, always).
-- Per-merge pushing is replaced by the release-train model (D25): batch
-  approved merges locally, push once per train, freeze main until Tests, Bun
-  Parity and Security Audit are all green on that exact SHA, then release.
+- Per-merge pushing and the D25 release trains are superseded by D96 (every
+  approved slice is a release; see `docs/v10/OPERATING-MODEL.md`). Waiting for
+  Tests and Security Audit green on that exact SHA still applies to any push
+  made outside the merge-gate.
   "Wait for user approval before commit" from the old workflow is superseded
   by the standing authorization in `docs/LOKI-10-BUILD-PROMPT.md` section 1
   for sessions operating under that program; outside it, ask as normal.
@@ -116,13 +117,13 @@ rm -f loki-mode-*.tgz
 ```
 If any check fails, do not release; fix the root cause first.
 
-### 4. Commit and land (release-train model, D25)
+### 4. Commit and land (every approved slice is a release, D96)
 
 Stage files by name (never `git add -A` or `git add .`), commit with the
-repo-local `asklokesh` identity, no co-author. Batch approved merges locally;
-push once per train (`git push origin main`); wait for Tests and
-Security Audit to go green on that exact SHA before bumping VERSION and
-releasing. GitHub Actions then creates the tag, the GitHub Release, publishes
+repo-local `asklokesh` identity, no co-author. The merge-gate merges approved
+slices to main and main publishes to npm `next` (D96); for a manual push
+(`git push origin main`), wait for Tests and Security Audit to go green on that
+exact SHA before bumping VERSION and releasing. GitHub Actions then creates the tag, the GitHub Release, publishes
 npm, builds/pushes Docker, and updates the Homebrew tap. Do not manually
 create tags.
 
