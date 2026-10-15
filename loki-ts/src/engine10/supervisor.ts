@@ -30,7 +30,8 @@ import { modelDowngrades } from "../runner/model_downgrades.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
-import { baseLine, noteOf } from "../util/base_guard.ts";
+import { baseLine } from "../util/base_guard.ts";
+import { alreadyDoneTextComment, unmergedLokiWorkNote } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
@@ -206,16 +207,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s` }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
   return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
-/** E-66: a text run confirmed already-done has no issue to comment on (no comment_argv, intake.ts);
- *  main() prints intake's comment body instead so the no-change decision is not swallowed. */
-export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
-  const d = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data;
-  return d?.source === "text" && d?.already_satisfied === true && typeof d.comment === "string" ? d.comment : null;
-}
-/** FC-15 (L5/L6): intake's harness-owned "work exists on <branch>, not on <target>" note, null when absent. */
-export function unmergedLokiWorkNote(events: EventEnvelope[]): string | null {
-  return noteOf(events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data);
-}
+export { alreadyDoneTextComment, unmergedLokiWorkNote }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers
 /** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
 export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
   const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);

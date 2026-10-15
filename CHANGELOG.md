@@ -5,6 +5,27 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.5.1 (2026-10-15)
+
+Patch for v11.5.0, which was pushed but never published: its CI Tests run failed, so npm did not receive it. This release ships everything listed under v11.5.0 together with the fixes below.
+
+### Fixed
+- Pre-existing failures no longer block the full-suite run on medium and high risk tiers. In v11.5.0, a check that already failed at baseline was excused only on the targeted checks. Now the full-suite run applies the same baseline attribution, so the v11.5.0 claim holds on every tier. The attribution fails closed. A full-suite failure is excused only when all of these hold:
+  - the baseline was recorded at the same base commit, with the same command;
+  - every failing test id can be extracted from the run that failed (there is no retry, so a flaky new failure cannot hide);
+  - no failing id is new;
+  - no failing id names a file the diff changed;
+  - no failing id already failed a targeted check.
+  Anything else still blocks. The logic lives in the existing `runner/repo_profile.ts`.
+- `loki quick` with an unknown option now exits 64 even on a host with no provider installed. Usage is validated before the provider check.
+- The core engine is back under its 5,000-line budget. Receipt signing helpers moved into the existing `util/receipt_signer.ts`, and run-output notes moved into `util/run_outputs.ts`. Both keep their old import paths. `scripts/structural-checks.sh` now counts lines the same way as the budget test.
+- Test fixes for the v11.5.0 CI failures:
+  - the verify demo fixture now links the shared proof verifier;
+  - the docs extractor now reads `export const USAGE`;
+  - the impacted-gate fixture now uses a file that is truly outside the control-plane closure;
+  - two pipe-to-grep forms are now here-strings;
+  - the efficiency pipeline test now asserts the documented contract: an unmeasured iteration omits `cost_usd` and records `cost_unmeasured_reason`.
+
 ## v11.5.0 (2026-10-15)
 
 Less human attention per accepted task. Loki now discovers your repo and runs a baseline on its own, maps acceptance criteria to checks, verifies according to risk, recovers interrupted runs without double-publishing, and ends every run with a review handoff you can act on in under two minutes. Each feature extends a module, test file or doc that already owned its concern; no parallel duplicates were added. `loki start` is still the primary path, and `loki chat` reuses the same pieces.

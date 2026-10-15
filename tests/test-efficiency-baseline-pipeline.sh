@@ -63,7 +63,7 @@ fi
 
 # Every field the speed/cost workstream depends on must be present, or a
 # downstream comparison silently drops a dimension.
-for field in iteration model phase duration_ms cost_usd input_tokens output_tokens; do
+for field in iteration model phase duration_ms input_tokens output_tokens; do
     if python3 -c "
 import json,sys
 d=json.load(open('$REC'))
@@ -73,6 +73,17 @@ sys.exit(0 if '$field' in d else 1)" 2>/dev/null; then
         bad "record is missing '$field'"
     fi
 done
+
+# No dollar figure was recorded for this iteration, so the record omits cost_usd
+# and carries the reason instead (never a fabricated 0; BUDGET unknown-cost contract).
+if python3 -c "
+import json,sys
+d=json.load(open('$REC'))
+sys.exit(0 if 'cost_usd' not in d and d.get('cost_unmeasured_reason') else 1)" 2>/dev/null; then
+    ok "unmeasured cost omits 'cost_usd' and carries 'cost_unmeasured_reason'"
+else
+    bad "unmeasured cost must omit 'cost_usd' and carry 'cost_unmeasured_reason'"
+fi
 
 # The model must be the one actually DISPATCHED, not a per-provider default.
 # Recording the wrong model made a prior model-equivalence benchmark

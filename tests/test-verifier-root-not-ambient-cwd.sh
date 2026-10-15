@@ -96,7 +96,7 @@ done
 for route in default legacy; do
     if [ "$route" = legacy ]; then _legacy=1; else _legacy=0; fi
     out="$(cd "$BARE" && env -u TARGET_DIR LOKI_DIR="p/.loki" HOME="$SCRATCH/nohome" LOKI_LEGACY_BASH="$_legacy" timeout -k 5 120 bash "$ROOT/bin/loki" proof show r1 2>&1)"; rc=$?
-    if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'Summary unavailable'; then
+    if [ "$rc" -eq 2 ] && grep -q 'Summary unavailable' <<<"$out"; then
         ok "proof show ($route route) from a non-project cwd exits 2 Summary unavailable"
     else
         bad "proof show ($route route) from a non-project cwd gave rc=$rc: $out"
