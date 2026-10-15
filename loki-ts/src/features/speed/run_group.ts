@@ -94,6 +94,16 @@ async function unitDone(repoDir: string, gid: string, n: number, id: string): Pr
   return tip !== "" && rec["head_sha"] === tip;
 }
 
+/** The card's exit-0 rule for unit receipts: every unit VERIFIED (ALREADY_SATISFIED does not pass). Shared by the fresh path and the resume short-circuit. */
+function allUnitsVerified(unitVerdicts: string[]): boolean {
+  return unitVerdicts.every((x) => x === "VERIFIED");
+}
+
+function unitVerdictsOf(rec: Record<string, unknown>): string[] {
+  const us = (rec["group"] as { units?: { verdict?: unknown }[] } | undefined)?.units;
+  return Array.isArray(us) && us.length > 0 ? us.map((u) => String(u.verdict)) : ["MISSING"];
+}
+
 export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, ctx: GroupCtx): Promise<number> {
   const say = ctx.say ?? ((s: string): void => { process.stderr.write(s); });
   const { repoDir, env } = ctx;
@@ -122,7 +132,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     // A VERIFIED group receipt whose head is still the group branch re-verifies and finishes without launching anything.
     const rec = readJson(receiptPath);
     const tip = git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/group-${groupId}`]);
-    if (rec && rec["verdict"] === "VERIFIED" && tip !== "" && rec["head_sha"] === tip && (await verifyReceipt(receiptPath)).verdict === "VERIFIED") {
+    if (rec && rec["verdict"] === "VERIFIED" && tip !== "" && rec["head_sha"] === tip && allUnitsVerified(unitVerdictsOf(rec)) && (await verifyReceipt(receiptPath)).verdict === "VERIFIED") {
       say(`loki: resuming group ${groupId}: group receipt already VERIFIED on ${`loki/group-${groupId}`}; nothing to run\n`);
       return 0;
     }
@@ -212,7 +222,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     if (v.verdict !== "VERIFIED") why = `group receipt verify ${v.verdict}${v.reasons.length ? `: ${v.reasons.join("; ")}` : ""}`;
   } catch (e) { why = `group receipt not written: ${(e as Error).message}`; }
   if (!why && verdict !== "VERIFIED") why = `group verdict ${verdict}`;
-  if (!why && !unitVerdicts.every((x) => x === "VERIFIED")) why = "a unit receipt is not VERIFIED";
+  if (!why && !allUnitsVerified(unitVerdicts)) why = "a unit receipt is not VERIFIED";
   if (!why && r.suiteExit !== 0) why = `suite exit ${String(r.suiteExit)}`;
   if (why) {
     say(`loki: group ${groupId} integrated on ${r.branch}, suite exit ${String(r.suiteExit)}. NOT PROVEN: ${why}; exit ${NOT_PROVEN}\n`);

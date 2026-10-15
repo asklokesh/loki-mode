@@ -501,7 +501,7 @@ describe("group run: Group Seal and resume", () => {
     sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
     return d;
   };
-  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[] }
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[] }
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
@@ -522,7 +522,7 @@ describe("group run: Group Seal and resume", () => {
       mkdirSync(d, { recursive: true });
       const events = JSON.stringify({ v: 1, seq: 0, ts: "2026-01-01T00:00:00.000Z", run: u.id, type: "run.started", stage: null, data: {} }) + "\n";
       writeFileSync(join(d, "events.jsonl"), events);
-      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: "VERIFIED", head_sha: head, events_sha256: sha256(events), not_proven: [] };
+      const body = { schema: "loki.v10.receipt/1", run_id: u.id, verdict: o.satisfied?.includes(n) ? "ALREADY_SATISFIED" : "VERIFIED", head_sha: head, events_sha256: sha256(events), not_proven: [] };
       const h = receiptSha256(body as never), sig = o.unsigned?.includes(n) ? { jwt: null, kid: null } : signReceipt(u.id, h);
       const rec = { ...body, receipt_sha256: h, verification: sig };
       if (o.tamper?.includes(n)) rec.verdict = "FAILED";
@@ -572,6 +572,17 @@ describe("group run: Group Seal and resume", () => {
     expect(calls.length).toBe(before);
     expect(groups(repo).length).toBe(1);
     expect(err).toContain("already VERIFIED");
+  });
+
+  test("an ALREADY_SATISFIED unit exits 4 and a rerun does not short-circuit to 0", async () => {
+    const repo = mkRepo("gr-satisfied"), calls: string[] = [];
+    const first = await go(repo, fake(repo, calls, { satisfied: [2] }));
+    expect(first.code).toBe(4);
+    const before = calls.length;
+    const second = await go(repo, fake(repo, calls, { satisfied: [2] }));
+    expect(second.code).toBe(4);
+    expect(second.err).not.toContain("already VERIFIED");
+    expect(calls.length).toBeGreaterThan(before);
   });
 
   test("resume skips VERIFIED units: only the failed unit reruns, same gid, done flags set", async () => {
