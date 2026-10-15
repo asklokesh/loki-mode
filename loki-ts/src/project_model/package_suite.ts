@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { harnessLoadReason } from "../runner/load_owner.ts";
 import { classifyCheck, goRunner, NO_TESTS_REASON } from "../util/check_result.ts";
 import { run } from "../util/shell.ts";
+import { failIds } from "../engine10/failures.ts";
 import { isMultiRoot, loadProjectApi } from "./resolve.ts";
 
-interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number }
+interface SuiteCheck { name: string; cmd: string; result: "pass" | "fail" | "not_run"; duration_s: number; ids?: string[] }
 
 export async function runPackageSuites(
   repoDir: string,
@@ -31,7 +32,7 @@ export async function runPackageSuites(
     const lr = r.exitCode === 0 || !opts.baseSha ? undefined : await harnessLoadReason({ repoDir, baseSha: opts.baseSha, out, cmd: "bash", args: ["-c", tc.cmd], signal, cwd: join(repoDir, tc.cwd), ...(opts.path ? { env: { PATH: opts.path } } : {}) });
     if (lr) { checks.push({ name, cmd, result: "not_run", duration_s }); notProven.add(`${lr} (${name}; harness-owned)`); continue; }
     const cls = classifyCheck({ kind: "test", ok: r.exitCode === 0, out, ...goRunner(tc.cmd) });
-    checks.push({ name, cmd, result: cls.result, duration_s });
+    checks.push({ name, cmd, result: cls.result, duration_s, ...(cls.result === "fail" ? { ids: failIds(out) } : {}) });
     if (cls.result === "not_run") notProven.add(`not run: ${name} (${cls.reason ?? NO_TESTS_REASON})`);
   }
   for (const pkg of api.packages().filter((p) => !p.commands.test)) notProven.add(`full suite: package ${pkg.name} defines no test command`);
