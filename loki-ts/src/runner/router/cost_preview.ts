@@ -3,6 +3,7 @@
 // names (Engine Law L0). No usable history prints "NOT AVAILABLE (<reason>)", never a number.
 // Off with LOKI_COST_PREVIEW=0: no start-line text, no receipt block, no history append.
 import { repoKey } from "../../engine10/cache.ts";
+import { resolveModel } from "../../engine10/session.ts";
 import { appendRunOutcome, readRunHistory, shapeKeyForRepo, WALL_KIND } from "./history.ts";
 import { readOriginUrl } from "../../util/engine_origin.ts";
 
@@ -121,7 +122,7 @@ See also: loki cost --detail (what a run ALREADY spent)
 `;
 
 /** `loki estimate`: one estimator, the one `loki start` prints. resolve maps a provider to its start model. */
-export function runEstimate(args: readonly string[], d: { repoDir: string; env: Env; resolve: (provider: string) => string; cacheRoot?: string; out?: (s: string) => void; err?: (s: string) => void }): number {
+export function runEstimate(args: readonly string[], d: { repoDir: string; env: Env; resolve?: (provider: string) => string; cacheRoot?: string; out?: (s: string) => void; err?: (s: string) => void }): number {
   const out = d.out ?? ((s: string) => void process.stdout.write(s)), err = d.err ?? ((s: string) => void process.stderr.write(s));
   let json = false, model: string | undefined, provider = d.env["LOKI_PROVIDER"] || "claude";
   for (let i = 0; i < args.length; i++) {
@@ -135,7 +136,7 @@ export function runEstimate(args: readonly string[], d: { repoDir: string; env: 
     else { err(`Unknown option: ${a}\nRun 'loki estimate --help' for usage.\n`); return 1; }
   }
   if (!previewOn(d.env)) { out(json ? '{"ok":false,"reason":"cost preview is off (LOKI_COST_PREVIEW=0)"}\n' : "estimate: OFF (LOKI_COST_PREVIEW=0)\n"); return 0; }
-  const r = estimateFor(d.repoDir, d.cacheRoot, { model: model ?? d.resolve(provider), env: d.env });
+  const r = estimateFor(d.repoDir, d.cacheRoot, { model: model ?? (d.resolve ?? resolveModel)(provider), env: d.env });
   out(json ? `${JSON.stringify(r)}\n` : `${startText(r)}\n`);
   return 0;
 }

@@ -107,8 +107,7 @@ async function dispatch(argv: readonly string[]): Promise<number> {
 
     case "estimate": {
       const { runEstimate } = await import("./runner/router/cost_preview.ts");
-      const { resolveModel } = await import("./engine10/session.ts");
-      return runEstimate(rest, { repoDir: process.cwd(), env: process.env, resolve: resolveModel });
+      return runEstimate(rest, { repoDir: process.cwd(), env: process.env });
     }
 
     case "kpis": {

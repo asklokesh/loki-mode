@@ -1348,6 +1348,10 @@ class TestBriefPrReachesWorktreePath(unittest.TestCase):
         with open(os.path.join(cls.bin, "gh"), "w") as f:
             f.write('#!/usr/bin/env bash\necho "GH: $*" >> "$STUB_LOG"\n')
         os.chmod(os.path.join(cls.bin, "gh"), 0o755)
+        # Hermetic provider: the CLI refuses to start with no provider CLI on PATH.
+        with open(os.path.join(cls.bin, "claude"), "w") as f:
+            f.write('#!/usr/bin/env bash\nexit 0\n')
+        os.chmod(os.path.join(cls.bin, "claude"), 0o755)
         os.symlink(os.path.join(cls.skill, "autonomy", "loki"),
                    os.path.join(cls.bin, "loki"))
         cls.origin = os.path.join(cls.root, "origin.git")

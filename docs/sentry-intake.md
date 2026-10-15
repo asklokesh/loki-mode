@@ -53,7 +53,7 @@ Teams (`POST /teams`):
 
 1. Set `TEAMS_SECURITY_TOKEN` (the base64 token Teams shows when you create the outgoing webhook) and point the webhook at `/teams`.
 2. `Authorization: HMAC <base64>` is the base64 HMAC-SHA256 of the raw body keyed by the base64-decoded token. Bad signature: 401. The activity `timestamp` must be within 300s; a stale or missing one is refused with 401.
-3. The message text (with `<at>` mentions and tags removed) is the brief and runs as `loki start --brief "<brief>" --pr --detach`. Teams gets a synchronous reply `Queued loki job <id>`. A repeated activity id is not queued twice.
+3. The message text (with `<at>` mentions and tags removed) is the brief and runs as `loki start --brief "<brief>" --pr --detach`. Teams gets a synchronous reply whose text starts with "Queued" and ends with the job id. A repeated activity id is not queued twice.
 
 Jira and Teams runs are receipt-gated PR runs only: the server always passes `--pr` and never a deploy argument, so shipping stays a separate gated step. `--brief` forces brief mode, so text that ends in `.md` or contains an issue URL is never reclassified, and `loki start --brief ... --pr/--worktree/--detach` runs in an isolated worktree, detached, and opens a PR carrying the Evidence Receipt (the same machinery as `loki start <issue>`). Sentry alerts use the same form. Neither secret reaches the `loki start` child environment, and both must differ from every other credential. A missing secret answers 503 naming the variable.
 
