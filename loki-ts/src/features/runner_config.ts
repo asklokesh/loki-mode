@@ -1,9 +1,9 @@
 // D86 FC-09r: the one registry of files that steer how tests run or resolve code. A run that changes the runner-relevant part of one
 // cannot seal VERIFIED (the agent could be mocking the code under test). Shared files (package.json, go.mod, Cargo.toml, ...) are
 // compared base vs head by section, so a dependency bump is not config but a pretest edit, a go.mod replace or a tsconfig path is.
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { safeGit } from "../util/safe_git";
 
 type Sections = RegExp | readonly string[] | "go" | "tsconfig";
 interface Spec { re: RegExp; shared?: Sections }
@@ -42,7 +42,7 @@ function relevant(shared: Sections, text: string): string {
 }
 
 const baseText = (dir: string, base: string, f: string): string => {
-  try { return execFileSync("git", ["show", `${base}:./${f}`], { cwd: dir, encoding: "utf8", maxBuffer: 64 << 20, stdio: ["ignore", "pipe", "ignore"], timeout: 20000 }); } catch { return ""; }
+  try { return safeGit(dir, ["show", `${base}:./${f}`], { timeout: 20000, maxBuffer: 64 << 20 }); } catch { return ""; }
 };
 const headText = (dir: string, f: string): string => { try { return readFileSync(join(dir, f), "utf8"); } catch { return ""; } };
 
