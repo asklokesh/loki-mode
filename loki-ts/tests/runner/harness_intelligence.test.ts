@@ -714,19 +714,30 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(out["pre_red_checks"]).not.toContain("full suite: npm");
         expect(fullFails(out).length).toBe(1);
       }, 120_000);
-      test("attributeFullSuite: a different baseline command, an id naming a changed file, or a blocked id are not excused", () => {
+      test("B1: the real run fails baseline id B plus a flaky new id X; a re-run would show only B: still blocked, nothing is re-run", async () => {
+        const d = repo({ ...NODE, ...FEAT }), arm = join(d, "..", `armed-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+        writeFileSync(join(d, "flaky.test.js"), T + `const fs=require('node:fs');t('flaky x',()=>{if(fs.existsSync(${JSON.stringify(arm)})){fs.unlinkSync(${JSON.stringify(arm)});assert.fail('x');}});\n`);
+        git(d, ["add", "flaky.test.js"]); git(d, ["commit", "-q", "-m", "flaky"]);
+        const out = await medium(d, [node("feat.test.js")], () => { writeFileSync(join(d, "feat.js"), "exports.v=1;\nexports.w=2;\n"); writeFileSync(arm, "1"); });
+        expect(out["pre_red_checks"]).not.toContain("full suite: npm");
+        expect(fullFails(out).length).toBe(1);
+      }, 120_000);
+      test("attributeFullSuite attributes on the check's own ids: different baseline command, id in a changed file, blocked id, missing or empty ids are not excused", () => {
         const d = repo(NODE);
         const base = git(d, ["rev-parse", "HEAD"]);
         mkdirSync(join(d, ".loki", "state"), { recursive: true });
         writeFileSync(commandProfilePath(d), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "t", commands: [], baseline: { ran: true, command: "npm test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["src/a.py::t"], attributable: true } }));
-        const f = (cmd: string): { name: string; cmd: string; result: string }[] => [{ name: "full suite: x", cmd, result: "fail" }];
-        const ran: BaselineRunner = () => ({ code: 1, timedOut: false, out: "FAILED src/a.py::t - boom\n1 failed, 0 passed in 0.1s", missing: false });
-        expect(attributeFullSuite(d, base, f("npm test --silent"), [], [], ran).preExistingChecks).toEqual(["full suite: x"]);
-        const narrow = attributeFullSuite(d, base, f("python -m pytest -q"), [], [], ran);
+        const f = (cmd: string, ids?: string[]): { name: string; cmd: string; result: string; ids?: string[] }[] => [{ name: "full suite: x", cmd, result: "fail", ...(ids ? { ids } : {}) }];
+        const ok = ["src/a.py::t"];
+        expect(attributeFullSuite(d, base, f("npm test --silent", ok), [], []).preExistingChecks).toEqual(["full suite: x"]);
+        const narrow = attributeFullSuite(d, base, f("python -m pytest -q", ok), [], []);
         expect(narrow.preExistingChecks).toEqual([]);
         expect(narrow.line).toContain("not comparable");
-        expect(attributeFullSuite(d, base, f("npm test"), [], ["src/a.py"], ran).preExistingChecks).toEqual([]);
-        expect(attributeFullSuite(d, base, f("npm test"), ["src/a.py::t"], [], ran).preExistingChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, f("npm test", ok), [], ["src/a.py"]).preExistingChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, f("npm test", ok), ["src/a.py::t"], []).preExistingChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, f("npm test", [...ok, "new"]), [], []).preExistingChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, f("npm test"), [], []).preExistingChecks).toEqual([]);
+        expect(attributeFullSuite(d, base, f("npm test", []), [], []).preExistingChecks).toEqual([]);
       });
     });
     test("without a profile verify behaves as before: no baseline fields, every failure stays", async () => {
