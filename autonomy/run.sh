@@ -31,7 +31,7 @@
 #   LOKI_RESOURCE_MEM_THRESHOLD  - Memory % threshold to warn (default: 80)
 #
 # Budget / Cost Limits (opt-in):
-#   LOKI_BUDGET_LIMIT            - Max USD spend before auto-pause (default: loki-ts/data/budget-defaults.json, 100 USD; empty = unlimited)
+#   LOKI_BUDGET_LIMIT            - Max USD spend before auto-pause (default: loki-ts/data/model-pricing.json default_max_cost_usd, 100 USD; empty = unlimited)
 #                                  Example: "50.00" pauses session when estimated cost >= $50
 #
 # Security & Autonomy Controls (Enterprise):
@@ -565,11 +565,11 @@ RESOURCE_MEM_THRESHOLD=${LOKI_RESOURCE_MEM_THRESHOLD:-80}     # Memory % thresho
 # it never kills work or discards a deliverable. The user removes .loki/PAUSE
 # to resume, or raises LOKI_BUDGET_LIMIT. Set LOKI_BUDGET_LIMIT="" to restore
 # the old unlimited behavior explicitly.
-# LM-002: the default value is read from loki-ts/data/budget-defaults.json, the same
-# file the Loki 10 engine reads (docs/contracts/budget.md). "100.00" is only the
-# fallback when that file is absent, and tests/test-budget-contract.sh pins it to the file.
+# LM-002: the default value is read from default_max_cost_usd in loki-ts/data/model-pricing.json, the same
+# file the Loki 10 engine reads (docs/cost-controls.md). "100.00" is only the
+# fallback when that file is absent, and budget_cap.test.ts pins it to the file.
 _loki_budget_default="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' \
-    "${SCRIPT_DIR}/../loki-ts/data/budget-defaults.json" 2>/dev/null | head -n 1)"
+    "${SCRIPT_DIR}/../loki-ts/data/model-pricing.json" 2>/dev/null | head -n 1)"
 case "$_loki_budget_default" in
     '' | *[!0-9.]*) _loki_budget_default="100.00" ;;
     *) _loki_budget_default="$(awk -v v="$_loki_budget_default" 'BEGIN{printf "%.2f", v}')" ;;

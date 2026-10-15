@@ -8,7 +8,7 @@
 // Module contract: each target exports `main(args: string[])` returning an
 // exit code (or void for 0); stages/deep.ts exports `deepSupervise` and
 // `deepWorker` instead.
-const DEFAULT_MAX_COST_USD = (require("../util/budget_default.ts") as typeof import("../util/budget_default.ts")).DEFAULT_MAX_COST_USD; // LM-002: help text states the real default (require, not a static import: this router imports nothing statically)
+const DEFAULT_MAX_COST_USD = (require("../e10ext/budget_cap.ts") as typeof import("../e10ext/budget_cap.ts")).DEFAULT_MAX_COST_USD; // LM-002: help text states the real default (require, not a static import: this router imports nothing statically)
 export interface Route {
   module: string; // path relative to this directory
   fn: string; // exported function name

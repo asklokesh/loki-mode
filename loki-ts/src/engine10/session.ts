@@ -151,7 +151,7 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
   });
 }
-// Cancellation (docs/contracts/budget.md): every provider child is spawned by createSessionRunner below, so one registry
+// Cancellation (docs/cost-controls.md): every provider child is spawned by createSessionRunner below, so one registry
 // covers all providers. cancelSessions() stops new spawns, kills each live child group (SIGTERM, then SIGKILL after
 // KILL_GRACE_MS via killGroupWithGrace) and resolves once each close handler has recorded its partial usage.
 const liveSessions = new Set<() => void>();

@@ -71,11 +71,14 @@ if [ -f "$_LOKI_SCRIPT_DIR/lib/lock.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/lib/lock.sh"
 fi
 
-# Default per-run spend cap (single source: loki-ts/data/budget-defaults.json).
-if [ -f "$_LOKI_SCRIPT_DIR/lib/budget-default.sh" ]; then
-    # shellcheck source=lib/budget-default.sh
-    source "$_LOKI_SCRIPT_DIR/lib/budget-default.sh"
-fi
+# Default per-run spend cap (single source: default_max_cost_usd in loki-ts/data/model-pricing.json,
+# also read by loki-ts/src/e10ext/budget_cap.ts and autonomy/run.sh). Prints a plain number; 100 only if the file is unreadable.
+loki_budget_default_usd() {
+    local v=""
+    [ -f "$_LOKI_SCRIPT_DIR/../loki-ts/data/model-pricing.json" ] && \
+        v="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$_LOKI_SCRIPT_DIR/../loki-ts/data/model-pricing.json" | head -1)"
+    printf '%s\n' "${v:-100}"
+}
 
 # Guarded browser opener (loki_open_url). Every browser open goes through it
 # so tests, CI and non-TTY runs never pop a tab. If missing, nothing opens.
@@ -1844,7 +1847,7 @@ show_help_all() {
     echo "  --spec FILE      Run against an edited spec (written by 'loki plan <task> --spec'; see also --spec-first)"
     echo "  --fresh-prd      Regenerate the PRD from the codebase (no-PRD runs; ignores the reusable generated PRD)"
     echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
-    echo "  --budget USD     Per-run cost cap in USD (default $(loki_budget_default_usd); auto-pause when exceeded; see docs/contracts/budget.md)"
+    echo "  --budget USD     Per-run cost cap in USD (default $(loki_budget_default_usd); auto-pause when exceeded; see docs/cost-controls.md)"
     echo "  --bmad-project PATH  Use BMAD Method project artifacts as input"
     echo "  --openspec PATH      Use OpenSpec change directory as input"
     echo "  --config PATH    Load settings from a config file (.yaml/.json/.env). Alias: --env-file, --vars"
