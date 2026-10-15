@@ -68,7 +68,7 @@ while read -r c; do
 done < "$WORK/candidates.txt"
 
 # The bare front page is its own topic.
-front="$(cd "$WORK/cwd" && timeout -k 5 60 "$LOKI" help </dev/null 2>&1)"
+front="$(cd "$WORK/cwd" && timeout -k 5 60 "$LOKI" help all </dev/null 2>&1)"
 if printf '%s' "$front" | grep -qE "$PATTERN"; then
     bad "the 'loki help' front page names a removed surface or a version stamp"
 else
