@@ -98,9 +98,11 @@ class MetricsTest(unittest.TestCase):
 
 class PlanTest(unittest.TestCase):
     def test_arm_order_alternates(self):
-        self.assertEqual(A.arm_order(0, 0), ["raw_claude", "loki"])
-        self.assertEqual(A.arm_order(1, 0), ["loki", "raw_claude"])
-        self.assertEqual(A.arm_order(0, 1), ["loki", "raw_claude"])
+        two = ("raw_claude", "loki")
+        self.assertEqual(A.arm_order(0, 0, two), ["raw_claude", "loki"])
+        self.assertEqual(A.arm_order(1, 0, two), ["loki", "raw_claude"])
+        self.assertEqual(A.arm_order(0, 1, two), ["loki", "raw_claude"])
+        self.assertEqual(A.arm_order(1, 0), ["loki", "droid", "raw_claude"])
 
     def test_dry_run_no_model_call(self):
         def boom(*a, **k):
@@ -111,8 +113,13 @@ class PlanTest(unittest.TestCase):
         text = out.getvalue()
         self.assertEqual(rc, 0)
         self.assertIn("DRY RUN", text)
-        self.assertIn("24 model-backed runs", text)
+        self.assertIn("32 model-backed runs", text)
         self.assertIn("not probed", text)
+        self.assertIn("droid arm: 16 cells", text)
+        for tid in ("coord-1-api-web", "longspec-1-three-units"):
+            self.assertIn(tid, text)
+        for arm in A.ARMS:
+            self.assertIn(arm, text)
 
     def test_default_without_execute_is_plan_only(self):
         out = io.StringIO()
@@ -134,6 +141,81 @@ class PlanTest(unittest.TestCase):
             self.assertIn("missing field", err.getvalue())
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+
+def _fresh_task(tid):
+    tasks, _e, _w = A.load_tasks(A.DEFAULT_TASKS_DIR, [tid])
+    return tasks[0]
+
+
+class DroidArmTest(unittest.TestCase):
+    def test_unavailable_droid_is_unmeasured_and_never_run(self):
+        def boom(*a, **k):
+            raise AssertionError("droid ran although unavailable")
+        scratch = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            r = A.run_cell(_fresh_task("coord-1-api-web"), "droid", 1, model="m",
+                           budget_usd=1.0, timeout_s=5, scratch=scratch, runner=boom,
+                           droid_probe={"available": False, "reason": "droid CLI not found on PATH"})
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        self.assertEqual(r["status"], "unmeasured")
+        self.assertIsNone(r["cost_usd"])
+        self.assertFalse(r["accepted"])
+        self.assertIn("not found", r["unmeasured_reason"])
+
+    def test_unprobed_droid_is_unmeasured(self):
+        r = A.run_cell(_fresh_task("coord-1-api-web"), "droid", 1, model="m",
+                       budget_usd=1.0, timeout_s=5, scratch="/nonexistent",
+                       runner=lambda *a, **k: 1 / 0)
+        self.assertEqual(r["status"], "unmeasured")
+
+    def test_probe_reports_absent_and_failing(self):
+        def missing(cmd, **kw):
+            raise FileNotFoundError("droid")
+
+        def failing(cmd, **kw):
+            return subprocess.CompletedProcess(cmd, 3, "", "")
+
+        def ok(cmd, **kw):
+            self.assertEqual(cmd, ["droid", "exec", "--help"])
+            return subprocess.CompletedProcess(cmd, 0, "usage", "")
+        self.assertFalse(A.probe_droid(runner=missing)["available"])
+        self.assertIn("not found", A.probe_droid(runner=missing)["reason"])
+        self.assertIn("exited 3", A.probe_droid(runner=failing)["reason"])
+        self.assertTrue(A.probe_droid(runner=ok)["available"])
+
+    def test_unmeasured_arm_has_no_rate_but_stays_in_assigned(self):
+        rows = [row(arm="droid", status="unmeasured", cost=None, elapsed=None)
+                for _ in range(3)]
+        m = A.compute_metrics(rows)
+        self.assertEqual(m["assigned"], 3)
+        self.assertEqual(m["unmeasured_runs"], 3)
+        self.assertIsNone(m["acceptance_rate"])
+        self.assertIsNone(m["acceptance_rate_ci95"])
+        self.assertEqual(m["errors"], 0)
+        self.assertEqual(m["cost_status"], "unmeasured")
+
+    def test_mixed_unmeasured_never_yields_a_rate(self):
+        rows = [row(arm="droid", accepted=True, reported=True, cost=None),
+                row(arm="droid", status="unmeasured", cost=None, elapsed=None)]
+        self.assertIsNone(A.compute_metrics(rows)["acceptance_rate"])
+
+    def test_report_marks_droid_unmeasured(self):
+        rows = [row(arm="raw_claude", accepted=True, reported=True, cost=1.0),
+                dict(row(arm="droid", status="unmeasured", cost=None, elapsed=None),
+                     unmeasured_reason="droid CLI not found on PATH")]
+        plan = A.build_plan([], 1, "m", 1.0, 5)
+        md = A.render_markdown({"generated_utc": "x", "plan": plan, "environment": {},
+                                "rows": rows, "summary": A.summarize(rows)})
+        self.assertIn("UNMEASURED (1 of 1 runs not measured)", md)
+        self.assertIn("droid CLI not found on PATH", md)
+
+    def test_arms_flag_validation(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = A.main(["--dry-run", "--arms", "raw_claude,nope"])
+        self.assertEqual(rc, 2)
 
 
 class LokiModelPinTest(unittest.TestCase):

@@ -4,6 +4,9 @@
 Runs each task twice under matched conditions:
   raw_claude : `claude -p` with the pinned model, same permissions, same budget
   loki       : `loki start --provider claude` with the same pinned model
+  droid      : optional `droid exec` arm (its own model). When `droid exec` is
+               absent or fails its probe, every droid cell is UNMEASURED: never
+               run, never zero, no rate published for that arm.
 
 Both arms get the same seed repo (byte-identical, fresh git repo), the same
 prompt text, the same wall-clock cap and the same budget. The acceptance test
@@ -48,9 +51,10 @@ REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 DEFAULT_TASKS_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "tasks")
 DEFAULT_OUT_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "results")
 
-ARMS = ("raw_claude", "loki")
+ARMS = ("raw_claude", "loki", "droid")
+MODEL_PINNED_ARMS = ("raw_claude", "loki")
 TASK_CLASSES = ("bugfix", "feature", "refactor", "integration")
-PILOT_MIX = {"bugfix": 2, "feature": 2, "refactor": 1, "integration": 1}
+PILOT_MIX = {"bugfix": 2, "feature": 3, "refactor": 1, "integration": 2}
 DEFAULT_MODEL = "claude-sonnet-5"
 DEFAULT_BUDGET_USD = 5.0
 DEFAULT_TIMEOUT_S = 900
@@ -220,8 +224,9 @@ def pin_environment(probe: bool, runner: Optional[Callable] = None,
 # ---------------------------------------------------------------------------
 
 def arm_order(task_index: int, repeat: int, arms: Tuple[str, ...] = ARMS) -> List[str]:
-    """Alternate which arm goes first so time-of-day drift is not one-sided."""
-    return list(arms) if (task_index + repeat) % 2 == 0 else list(reversed(arms))
+    """Rotate which arm goes first so time-of-day drift is not one-sided."""
+    k = (task_index + repeat) % len(arms)
+    return list(arms[k:]) + list(arms[:k])
 
 
 def build_plan(tasks: List[Dict[str, Any]], repeats: int, model: str,
@@ -241,7 +246,8 @@ def build_plan(tasks: List[Dict[str, Any]], repeats: int, model: str,
                    "acceptance_sha256": t["acceptance_sha256"],
                    "prompt_sha256": t["prompt_sha256"]} for t in tasks],
         "cells": cells,
-        "model_calls_planned": len(cells),
+        "model_calls_planned": sum(1 for c in cells if c["arm"] in MODEL_PINNED_ARMS),
+        "droid_cells_planned": sum(1 for c in cells if c["arm"] == "droid"),
     }
 
 
@@ -279,13 +285,18 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     false_done = [r for r in reported if not r.get("accepted")]
     completed = sum(1 for r in rows if r.get("status") == "completed")
     timeouts = sum(1 for r in rows if r.get("status") == "timeout")
-    errors = sum(1 for r in rows if r.get("status") not in ("completed", "timeout"))
+    unmeasured_runs = sum(1 for r in rows if r.get("status") == "unmeasured")
+    errors = sum(1 for r in rows if r.get("status") not in
+                 ("completed", "timeout", "unmeasured"))
+    any_unmeasured = unmeasured_runs > 0
 
     measured = [r["cost_usd"] for r in rows if r.get("cost_usd") is not None]
     unmeasured_n = assigned - len(measured)
     spend = round(sum(measured), 6)
     if assigned == 0:
         cost_status = "no_runs"
+    elif unmeasured_runs == assigned:
+        cost_status = "unmeasured"
     elif accepted == 0:
         cost_status = "undefined_no_accepted"
     elif unmeasured_n == assigned:
@@ -302,13 +313,18 @@ def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {
         "assigned": assigned,
         "accepted": accepted,
-        "acceptance_rate": round(accepted / assigned, 4) if assigned else None,
-        "acceptance_rate_ci95": _wilson_ci95(accepted, assigned),
+        "unmeasured_runs": unmeasured_runs,
+        # An arm with any unmeasured run has no honest rate: never zero.
+        "acceptance_rate": (round(accepted / assigned, 4)
+                            if assigned and not any_unmeasured else None),
+        "acceptance_rate_ci95": (None if any_unmeasured
+                                 else _wilson_ci95(accepted, assigned)),
         "reported_success": len(reported),
         "false_completions": len(false_done),
         "false_completion_rate": (round(len(false_done) / len(reported), 4)
-                                  if reported else None),
-        "completion_rate": round(completed / assigned, 4) if assigned else None,
+                                  if reported and not any_unmeasured else None),
+        "completion_rate": (round(completed / assigned, 4)
+                            if assigned and not any_unmeasured else None),
         "timeouts": timeouts,
         "errors": errors,
         "spend_measured_usd": spend if measured else None,
@@ -426,18 +442,55 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
     }
 
 
+def probe_droid(runner: Optional[Callable] = None) -> Dict[str, Any]:
+    """Is `droid exec` usable here? Absent or failing means the arm is UNMEASURED."""
+    rc, _out, _err, status, _dur = _base.run_cli(
+        ["droid", "exec", "--help"], cwd=REPO_ROOT, timeout=30, runner=runner,
+        env={"LOKI_NO_BROWSER": "1"})
+    if status == "cli_not_found":
+        return {"available": False, "reason": "droid CLI not found on PATH"}
+    if rc != 0:
+        return {"available": False, "reason": "`droid exec --help` exited %s" % rc}
+    return {"available": True, "reason": None}
+
+
+def run_droid(workdir: str, prompt: str, *, timeout_s: int,
+              runner: Optional[Callable] = None) -> Dict[str, Any]:
+    cmd = ["droid", "exec", "--auto", "high", prompt]
+    rc, _out, _err, status, dur = _base.run_cli(
+        cmd, cwd=workdir, timeout=timeout_s, runner=runner,
+        env={"LOKI_NO_BROWSER": "1"})
+    return {
+        "status": status, "rc": rc, "elapsed_s": dur,
+        "reported_success": rc == 0,
+        "cost_usd": None, "cost_source": None,
+        "tokens_in": None, "tokens_out": None, "model_used": None,
+        "command": "droid exec --auto high <prompt>",
+    }
+
+
 def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
              budget_usd: float, timeout_s: int, scratch: str,
-             runner: Optional[Callable] = None) -> Dict[str, Any]:
+             runner: Optional[Callable] = None,
+             droid_probe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     row: Dict[str, Any] = {"task": task["id"], "class": task["class"], "arm": arm,
                            "repeat": repeat, "accepted": False,
                            "reported_success": False}
+    if arm == "droid" and not (droid_probe and droid_probe.get("available")):
+        # Never run, never graded: an unavailable arm is UNMEASURED, not a failure.
+        row.update({"status": "unmeasured", "cost_usd": None, "elapsed_s": None,
+                    "unmeasured_reason": (droid_probe or {}).get(
+                        "reason", "droid availability not probed")})
+        return row
     workdir = os.path.join(scratch, "%s-%s-%d" % (task["id"], arm, repeat))
     try:
         materialize_seed(task, workdir)
         cap = task.get("agent_timeout_s")
         eff_timeout = min(timeout_s, cap) if cap else timeout_s
-        if arm == "raw_claude":
+        if arm == "droid":
+            res = run_droid(workdir, task["prompt"], timeout_s=eff_timeout,
+                            runner=runner)
+        elif arm == "raw_claude":
             res = run_raw_claude(workdir, task["prompt"], model=model,
                                  budget_usd=budget_usd, timeout_s=eff_timeout,
                                  runner=runner)
@@ -464,7 +517,8 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
 
 def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
             runner: Optional[Callable] = None,
-            progress: Callable[[str], None] = lambda s: None) -> List[Dict[str, Any]]:
+            progress: Callable[[str], None] = lambda s: None,
+            droid_probe: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     by_id = {t["id"]: t for t in tasks}
     scratch = tempfile.mkdtemp(prefix="loki-attr-")
     rows: List[Dict[str, Any]] = []
@@ -474,7 +528,7 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
             rows.append(run_cell(by_id[cell["task"]], cell["arm"], cell["repeat"],
                                  model=plan["model"], budget_usd=plan["budget_usd"],
                                  timeout_s=plan["timeout_s"], scratch=scratch,
-                                 runner=runner))
+                                 runner=runner, droid_probe=droid_probe))
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return rows
@@ -539,6 +593,10 @@ def render_markdown(result: Dict[str, Any]) -> str:
     L.append("|---|---|---|---|---|---|---|---|---|---|---|")
     for arm in plan["arms"]:
         m = summ["by_arm"][arm]
+        if m.get("unmeasured_runs"):
+            L.append("| %s | %d | UNMEASURED | UNMEASURED (%d of %d runs not measured) | - | - | - | - | - | unmeasured | - |" % (
+                arm, m["assigned"], m["unmeasured_runs"], m["assigned"]))
+            continue
         L.append("| %s | %d | %d | %s (%s) | %d | %s | %s | %d | %d | %s | %s |" % (
             arm, m["assigned"], m["accepted"], _fmt(m["acceptance_rate"], pct=True), _ci(m),
             m["reported_success"], _fmt(m["false_completion_rate"], pct=True),
@@ -579,6 +637,13 @@ def render_markdown(result: Dict[str, Any]) -> str:
     L.append("- Unmeasured cost is reported as unmeasured, never as zero. Subscription "
              "usage and API dollars are not interchangeable; costs here are API-dollar "
              "figures reported by each tool.")
+    reasons = sorted({r["unmeasured_reason"] for r in rows if r.get("unmeasured_reason")})
+    for why in reasons:
+        L.append("- UNMEASURED arm cells: %s. They are not counted as failures and no "
+                 "rate is published for that arm." % why)
+    if "droid" in plan["arms"]:
+        L.append("- The droid arm uses its own model and settings, not the pinned model; "
+                 "its flags were not verified against a live run here.")
     L.append("- Human effort, recovery success and review quality are not measured by this harness.")
     L.append("- Known unavoidable difference: Loki receives the prompt as a PRD file; "
              "raw Claude receives it inline.")
@@ -598,6 +663,9 @@ def print_plan(plan: Dict[str, Any], env: Dict[str, Any], warnings: List[str]) -
     print("  cells in run order (%d model-backed runs would execute):" % plan["model_calls_planned"])
     for c in plan["cells"]:
         print("    %-28s %-11s run %d" % (c["task"], c["arm"], c["repeat"]))
+    if plan.get("droid_cells_planned"):
+        print("  droid arm: %d cells, availability not probed in dry run; an absent "
+              "`droid exec` records UNMEASURED, never zero" % plan["droid_cells_planned"])
     print("  tool versions: %s" % ("probed" if env.get("probed") else "not probed in dry run"))
     for w in warnings:
         print("  warning: %s" % w)
@@ -620,6 +688,8 @@ def _parser() -> argparse.ArgumentParser:
                    help="re-render the markdown report from a result json")
     p.add_argument("--tasks", default="", help="comma-separated task ids (default: all)")
     p.add_argument("--tasks-dir", default=DEFAULT_TASKS_DIR)
+    p.add_argument("--arms", default=",".join(ARMS),
+                   help="comma-separated arms (default: %s)" % ",".join(ARMS))
     p.add_argument("--repeats", type=int, default=1)
     p.add_argument("--model", default=os.environ.get("LOKI_BENCH_MODEL", DEFAULT_MODEL),
                    help="exact model id used by BOTH arms (default %s)" % DEFAULT_MODEL)
@@ -639,13 +709,18 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
     if args.repeats < 1 or args.budget_usd <= 0 or args.timeout < 1:
         print("repeats, budget-usd and timeout must be positive", file=sys.stderr)
         return 2
+    arms = tuple(a for a in args.arms.split(",") if a)
+    if not arms or any(a not in ARMS for a in arms) or len(set(arms)) != len(arms):
+        print("--arms must be unique names from %s" % ",".join(ARMS), file=sys.stderr)
+        return 2
     only = [s for s in args.tasks.split(",") if s] or None
     tasks, errors, warnings = load_tasks(args.tasks_dir, only)
     if errors or not tasks:
         for e in errors or ["no tasks found in %s" % args.tasks_dir]:
             print("task set invalid: %s" % e, file=sys.stderr)
         return 2
-    plan = build_plan(tasks, args.repeats, args.model, args.budget_usd, args.timeout)
+    plan = build_plan(tasks, args.repeats, args.model, args.budget_usd, args.timeout,
+                      arms)
     execute = args.execute and not args.dry_run
     env = pin_environment(probe=execute, runner=runner, model=args.model)
     if not execute:
@@ -653,16 +728,19 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         if not args.dry_run:
             print("  pass --execute to run these cells for real (spends API budget)")
         return 0
-    if not env.get("claude_version"):
+    if set(arms) & set(MODEL_PINNED_ARMS) and not env.get("claude_version"):
         print("claude CLI not found or not runnable; cannot run the benchmark", file=sys.stderr)
         return 2
+    droid_probe = probe_droid(runner=runner) if "droid" in arms else None
+    env["droid"] = droid_probe
     rows = run_all(tasks, plan, runner=runner,
-                   progress=lambda s: print(s, file=sys.stderr))
+                   progress=lambda s: print(s, file=sys.stderr),
+                   droid_probe=droid_probe)
     result = {
         "schema_version": SCHEMA_VERSION,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "plan": plan, "environment": env, "warnings": warnings,
-        "rows": rows, "summary": summarize(rows),
+        "rows": rows, "summary": summarize(rows, arms),
     }
     os.makedirs(args.out_dir, exist_ok=True)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
