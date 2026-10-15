@@ -748,6 +748,27 @@ def verify_teams_signature(token, body, authorization):
     return constant_time_equals(expected, value.strip())
 
 
+def teams_dedup_key(activity):
+    """Dedup key for a Teams activity: activity ids are unique only within a
+    conversation, so scope by conversation id plus serviceUrl and tenant when
+    present. Empty string (never deduplicated) when the activity id is absent."""
+    act_id = activity.get("id")
+    if not isinstance(act_id, str) or not act_id:
+        return ""
+
+    def _s(v):
+        return v if isinstance(v, str) else ""
+
+    conv = activity.get("conversation")
+    conv = conv if isinstance(conv, dict) else {}
+    cdata = activity.get("channelData")
+    tenant = cdata.get("tenant") if isinstance(cdata, dict) else None
+    tenant_id = _s(tenant.get("id")) if isinstance(tenant, dict) else ""
+    tenant_id = tenant_id or _s(conv.get("tenantId"))
+    return "teams:" + json.dumps(
+        [_s(conv.get("id")), _s(activity.get("serviceUrl")), tenant_id, act_id])
+
+
 def teams_fresh(activity, now=None):
     """The activity's ISO-8601 `timestamp` must be within the skew window."""
     raw = activity.get("timestamp")
@@ -1794,8 +1815,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
                                   "text": "Usage: @loki <brief>. One-line brief, "
                                           "not starting with '-'."})
             return
-        act_id = activity.get("id")
-        if self.dispatcher.seen_delivery(act_id if isinstance(act_id, str) else ""):
+        if self.dispatcher.seen_delivery(teams_dedup_key(activity)):
             self._send_json(200, {"type": "message", "text": "Duplicate, already queued."})
             return
         job_id = self._enqueue_job(brief, pr=True)
