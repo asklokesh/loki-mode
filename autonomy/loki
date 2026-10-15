@@ -3184,7 +3184,7 @@ cmd_start() {
                 ;;
             -*)
                 echo -e "${RED}Unknown option: $1${NC}"
-                exit 1
+                exit 64
                 ;;
             *)
                 # Capture first positional arg for unified mode detection.
@@ -15654,7 +15654,7 @@ cmd_quick() {
         echo "  loki quick \"fix the login bug in auth.js\""
         echo "  loki quick \"add input validation to the signup form\""
         echo "  loki quick \"write unit tests for the API endpoints\""
-        exit 2
+        exit 64
     fi
 
     # v7.29.0: provider pre-flight gate. Offer install on a TTY; print honest
@@ -15690,7 +15690,7 @@ cmd_quick() {
     if [ $# -eq 0 ]; then
         echo -e "${RED}Error: No task description provided${NC}"
         echo "Usage: loki quick [--verbose] \"description of what to do\""
-        exit 2
+        exit 64
     fi
 
     local task_desc="$*"

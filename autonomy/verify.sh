@@ -38,6 +38,8 @@
 #   1  CONCERNS
 #   2  BLOCKED
 #   3  verifier error (could not complete; never silently passes)
+#   64 usage error (unknown option / unexpected argument)
+#   Not a git repo exits 2; an empty diff exits 3 (enforced from v11.4.0).
 #
 # EXIT-CODE ORDERING, RECONCILED. An early draft spec listed
 # 0=VERIFIED, 1=BLOCKED, 2=CONCERNS, and this header used to say a human must
@@ -66,6 +68,7 @@ VERIFY_EXIT_VERIFIED=0
 VERIFY_EXIT_CONCERNS=1
 VERIFY_EXIT_BLOCKED=2
 VERIFY_EXIT_ERROR=3
+VERIFY_EXIT_USAGE=64
 VERIFY_SCHEMA_VERSION="1.0"
 
 # S-216: verify runs from the tree under review (tree="."), and a bare
@@ -355,8 +358,10 @@ verify_diff_base() {
     VERIFY_DIFF_INS=0
     VERIFY_DIFF_DEL=0
     VERIFY_DIFF_NAMES=""
+    VERIFY_NOT_GIT=0
 
     if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        VERIFY_NOT_GIT=1
         _verify_log "not a git repository; diff base unresolved (inconclusive)"
         return 0
     fi
@@ -2187,6 +2192,16 @@ verify_compute_verdict() {
     elif [ "$has_nonblock_finding" = "true" ] || [ "$inconclusive" = "true" ]; then
         VERIFY_VERDICT="CONCERNS"
         VERIFY_EXIT=$VERIFY_EXIT_CONCERNS
+        # Exit contract (v11.4.0): the two inputs that give the verifier nothing
+        # to check map to their own codes. The verdict word stays CONCERNS so
+        # evidence.json is unchanged; only the process status is sharper.
+        if [ "$has_nonblock_finding" != "true" ]; then
+            if [ "${VERIFY_NOT_GIT:-0}" = "1" ]; then
+                VERIFY_EXIT=$VERIFY_EXIT_BLOCKED
+            elif [ "${VERIFY_DIFF_RESOLVED:-false}" = "true" ] && [ "${VERIFY_DIFF_FILES:-0}" -eq 0 ]; then
+                VERIFY_EXIT=$VERIFY_EXIT_ERROR
+            fi
+        fi
     else
         VERIFY_VERDICT="VERIFIED"
         VERIFY_EXIT=$VERIFY_EXIT_VERIFIED
@@ -2570,6 +2585,11 @@ EXIT CODES:
     1  CONCERNS
     2  BLOCKED
     3  verifier error (could not complete; never silently passes)
+    64 usage error (unknown option or unexpected argument)
+
+    Two inputs that leave nothing to check have their own codes: a directory
+    that is not a git repository exits 2, an empty diff vs base exits 3. The
+    VERDICT line still reads CONCERNS for both.
 
     Severity rises with the code, so `[ $rc -ge 2 ]` means "at least blocked".
     An early draft spec listed 1=BLOCKED, 2=CONCERNS; that ordering was
@@ -3238,10 +3258,10 @@ verify_main() {
             --allow-unsigned) VERIFY_ALLOW_UNSIGNED=1; shift ;;
             --) shift; break ;;
             -*)
-                _verify_err "unknown option: $1"; verify_help; return $VERIFY_EXIT_ERROR ;;
+                _verify_err "unknown option: $1"; verify_help; return $VERIFY_EXIT_USAGE ;;
             *)
                 if [ -z "$base_ref" ]; then base_ref="$1"; else
-                    _verify_err "unexpected argument: $1"; return $VERIFY_EXIT_ERROR
+                    _verify_err "unexpected argument: $1"; return $VERIFY_EXIT_USAGE
                 fi
                 shift ;;
         esac
