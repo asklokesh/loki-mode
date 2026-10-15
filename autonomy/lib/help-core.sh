@@ -31,7 +31,7 @@ help_core_screen() {
     echo "  agents           Agent roles and routing (route shows where a task would go)"
     echo "  doctor [--json]  Check your setup is ready"
     echo ""
-    echo "Options for 'start': --provider NAME, --model ID, --budget USD, --isolation LVL (isolation dial: none | worktree | docker)"
+    echo "Options for 'start': --provider NAME, --model ID, --budget USD (default cap $(loki_budget_default_usd 2>/dev/null)), --isolation LVL (isolation dial: none | worktree | docker)"
     echo "Also: cost / estimate (spend before you build), resume (continue a paused or interrupted run)"
     echo "Exit codes: docs/exit-codes.md"
     echo ""

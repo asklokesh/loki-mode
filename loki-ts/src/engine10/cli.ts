@@ -8,6 +8,7 @@
 // Module contract: each target exports `main(args: string[])` returning an
 // exit code (or void for 0); stages/deep.ts exports `deepSupervise` and
 // `deepWorker` instead.
+const DEFAULT_MAX_COST_USD = (require("../e10ext/budget_cap.ts") as typeof import("../e10ext/budget_cap.ts")).DEFAULT_MAX_COST_USD; // LM-002: help text states the real default (require, not a static import: this router imports nothing statically)
 export interface Route {
   module: string; // path relative to this directory
   fn: string; // exported function name
@@ -27,7 +28,7 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   "deep-supervise": { module: "stages/deep.ts", fn: "deepSupervise" },
   "deep-worker": { module: "stages/deep.ts", fn: "deepWorker" },
 };
-const USAGE = `Usage:
+export const USAGE = `Usage:
   loki "<task>"                   run the engine on a free-text task
   loki <issue-url|owner/repo#N>   run on an issue
   loki status [run-id]            latest run by default
@@ -38,7 +39,7 @@ const USAGE = `Usage:
   loki modernize <repo> --to <target>  convert a codebase (loki modernize --help)
   loki plan <task> --spec         write the acceptance criteria to .loki/specs/<slug>.md for you to edit
   loki start --spec <file>        run against an edited spec as the authoritative intent (receipt records its sha256)
-Flags: --spec <file>, --deep, --provider <name>, --no-pr, --max-cost <usd> (per-run cap; default $100 with an API key, none on a subscription; or loki.yaml budgets.per_run)
+Flags: --spec <file>, --deep, --provider <name>, --no-pr, --max-cost <usd> (per-run cap; default $${DEFAULT_MAX_COST_USD} with an API key, none on a subscription; env LOKI_BUDGET_LIMIT or loki.yaml budgets.per_run override it)
 `;
 // Returns null for an empty or help invocation.
 export function route(args: string[]): Route | null {

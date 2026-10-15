@@ -59,7 +59,7 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
     stage: !done && open.size ? [...open].sort().join("+") : null,
     elapsed_s: Math.max(0, (endMs - startMs) / 1000),
     cost_usd: f.cost.usd,
-    outcome: f.run.verdict ?? (done ? "completed" : stale ? "stalled (no events for 30m+)" : "running"),
+    outcome: f.run.completed?.data.cancelled === true ? "cancelled" : f.run.verdict ?? (done ? "completed" : stale ? "stalled (no events for 30m+)" : "running"),
     pr_url: typeof pr === "string" && pr ? pr : null,
     receipt_path: typeof sealed === "string" && sealed ? sealed : existsSync(receipt) ? receipt : null,
   };

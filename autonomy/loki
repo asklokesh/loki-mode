@@ -71,6 +71,15 @@ if [ -f "$_LOKI_SCRIPT_DIR/lib/lock.sh" ]; then
     source "$_LOKI_SCRIPT_DIR/lib/lock.sh"
 fi
 
+# Default per-run spend cap (single source: default_max_cost_usd in loki-ts/data/model-pricing.json,
+# also read by loki-ts/src/e10ext/budget_cap.ts and autonomy/run.sh). Prints a plain number; 100 only if the file is unreadable.
+loki_budget_default_usd() {
+    local v=""
+    [ -f "$_LOKI_SCRIPT_DIR/../loki-ts/data/model-pricing.json" ] && \
+        v="$(sed -n 's/.*"default_max_cost_usd"[[:space:]]*:[[:space:]]*\([0-9][0-9.]*\).*/\1/p' "$_LOKI_SCRIPT_DIR/../loki-ts/data/model-pricing.json" | head -1)"
+    printf '%s\n' "${v:-100}"
+}
+
 # Guarded browser opener (loki_open_url). Every browser open goes through it
 # so tests, CI and non-TTY runs never pop a tab. If missing, nothing opens.
 if [ -f "$_LOKI_SCRIPT_DIR/lib/browser-open.sh" ]; then
@@ -1838,7 +1847,7 @@ show_help_all() {
     echo "  --spec FILE      Run against an edited spec (written by 'loki plan <task> --spec'; see also --spec-first)"
     echo "  --fresh-prd      Regenerate the PRD from the codebase (no-PRD runs; ignores the reusable generated PRD)"
     echo "  --compliance PRESET  Enable compliance mode (default|healthcare|fintech|government)"
-    echo "  --budget USD     Set cost budget limit (display in dashboard/status)"
+    echo "  --budget USD     Per-run cost cap in USD (default $(loki_budget_default_usd); auto-pause when exceeded; see docs/cost-controls.md)"
     echo "  --bmad-project PATH  Use BMAD Method project artifacts as input"
     echo "  --openspec PATH      Use OpenSpec change directory as input"
     echo "  --config PATH    Load settings from a config file (.yaml/.json/.env). Alias: --env-file, --vars"
@@ -2608,7 +2617,7 @@ cmd_start() {
                 echo "                        (ignores the reusable generated PRD; aliases: --regen-prd,"
                 echo "                        --regenerate-prd, --regen, or LOKI_PRD_REGEN=1)"
                 echo "  --compliance PRESET   Enable compliance mode (default|healthcare|fintech|government)"
-                echo "  --budget USD          Cost budget limit (auto-pause when exceeded)"
+                echo "  --budget USD          Per-run cost cap (default $(loki_budget_default_usd); auto-pause when exceeded)"
                 echo "  --bmad-project PATH   Use BMAD Method project artifacts as input"
                 echo "  --openspec PATH       Use OpenSpec change directory as input"
                 echo "  --mirofish [URL]      Enable MiroFish market validation (default: localhost:5001)"
@@ -2651,7 +2660,7 @@ cmd_start() {
                 echo "  LOKI_AUTO_CONFIRM     Set to 'true'/'false' to control prompts (takes precedence over CI)"
                 echo "  CI                    Fallback: auto-confirms when 'true' and LOKI_AUTO_CONFIRM is unset"
                 echo "  LOKI_MAX_ITERATIONS   Max iteration count"
-                echo "  LOKI_BUDGET_LIMIT     Cost budget limit in USD"
+                echo "  LOKI_BUDGET_LIMIT     Cost cap in USD (default $(loki_budget_default_usd); empty means unlimited)"
                 echo ""
                 echo "Examples:"
                 echo "  loki start                              # Interactive, analyze current dir"
@@ -3049,7 +3058,7 @@ cmd_start() {
                         echo -e "${RED}--budget must be greater than 0 (a 0 budget pauses before any work)${NC}" >&2
                         exit 1
                     fi
-                    export LOKI_BUDGET_LIMIT="$2"
+                    export LOKI_BUDGET_LIMIT="$2" LOKI_BUDGET_SOURCE=flag
                     shift 2
                 else
                     echo -e "${RED}--budget requires a USD amount (e.g., --budget 5.00)${NC}"
@@ -3067,7 +3076,7 @@ cmd_start() {
                     echo -e "${RED}--budget must be greater than 0 (a 0 budget pauses before any work)${NC}" >&2
                     exit 1
                 fi
-                export LOKI_BUDGET_LIMIT="$budget_val"
+                export LOKI_BUDGET_LIMIT="$budget_val" LOKI_BUDGET_SOURCE=flag
                 shift
                 ;;
             # v6.84.0: explicit mode flags (override auto-detection)
@@ -10865,7 +10874,7 @@ cmd_run() {
                 echo "  --no-dashboard     Disable web dashboard"
                 echo "  --sandbox          Run in Docker sandbox (default: off; requires Docker)"
                 echo "  --no-plan          Skip auto-shown PRD analysis at startup"
-                echo "  --budget USD       Set cost budget limit"
+                echo "  --budget USD       Per-run cost cap (default $(loki_budget_default_usd))"
                 echo ""
                 echo "Progressive Isolation:"
                 echo "  --worktree, -w     Git worktree isolation (separate branch)"

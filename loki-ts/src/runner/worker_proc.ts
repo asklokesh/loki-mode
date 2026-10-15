@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
+const CANCEL_GRACE_MS = Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) > 0 ? Number(process.env["LOKI_E10_CANCEL_GRACE_MS"]) : 10000; // SIGINT/SIGTERM: time the worker gets to stop sessions and record usage before SIGKILL
 const DRAIN_MS = 2000; // after the worker exits, how long P0 waits for stdout to drain before closing it
 export function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
   if (!pid) return;
@@ -12,7 +13,7 @@ export function killGroup(pid: number | undefined, sig: NodeJS.Signals): void {
 // backstopMs with SIGTERM then SIGKILL after escalateMs, clamped so a SIGTERM-trapping worker cannot outlive the cap.
 export function spawnWorker(
   argv: string[], env: NodeJS.ProcessEnv, cwd: string, backstopMs: number, escalateMs: number, onLine: (l: string) => void, onStopped: (stopped: boolean) => void = () => {},
-): Promise<{ code: number | null; killed: boolean }> {
+): Promise<{ code: number | null; killed: boolean; cancelled?: NodeJS.Signals }> {
   return new Promise((resolve) => {
     const [cmd, ...args] = argv;
     if (!cmd) return resolve({ code: null, killed: false });
@@ -22,19 +23,29 @@ export function spawnWorker(
     let killed = false;
     let settled = false;
     const timers: ReturnType<typeof setTimeout>[] = [];
-    const onStop = (sig: NodeJS.Signals) => { killGroup(child.pid, "SIGKILL"); onStopped(true); process.exit(sig === "SIGINT" ? 130 : 143); }; // the worker no longer shares the terminal's group, so forward a stop to it
-    process.once("SIGINT", onStop);
-    process.once("SIGTERM", onStop);
+    // Cancel: SIGTERM the worker so it can stop its sessions and record partial usage, keep draining its stdout, and
+    // SIGKILL the group after CANCEL_GRACE_MS (a second signal escalates at once). finish() then reports `cancelled`.
+    let cancelled: NodeJS.Signals | undefined;
+    const onStop = (sig: NodeJS.Signals) => { // the worker no longer shares the terminal's group, so forward a stop to it
+      if (cancelled) { killGroup(child.pid, "SIGKILL"); return; }
+      cancelled = sig;
+      killGroup(child.pid, "SIGTERM");
+      timers.push(setTimeout(() => killGroup(child.pid, "SIGKILL"), CANCEL_GRACE_MS));
+    };
+    process.on("SIGINT", onStop);
+    process.on("SIGTERM", onStop);
+    (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = true; // cli.ts's blanket exit(130/143) stands down while this supervisor owns the stop
     const finish = (code: number | null) => {
       if (settled) return;
       settled = true;
       process.off("SIGINT", onStop);
       process.off("SIGTERM", onStop);
+      (globalThis as Record<symbol, unknown>)[Symbol.for("loki.ownsStopSignals")] = false;
       for (const t of timers) clearTimeout(t);
       rl.close();
       child.stdout?.destroy();
-      killGroup(child.pid, "SIGKILL"); onStopped(false); // reap anything the worker left in its group, and every announced session group (backstop and worker-exit paths too)
-      resolve({ code, killed });
+      killGroup(child.pid, "SIGKILL"); onStopped(cancelled !== undefined); // reap anything the worker left in its group, and every announced session group (backstop and worker-exit paths too)
+      resolve({ code, killed, ...(cancelled ? { cancelled } : {}) });
     };
     timers.push(setTimeout(() => {
       killed = true;
