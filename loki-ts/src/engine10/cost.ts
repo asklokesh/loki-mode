@@ -173,70 +173,9 @@ export function readResultCost(lokiRoot: string, iteration: string): CostResult 
   return sumResultCosts(lokiRoot, [iteration]);
 }
 
-// --- E-06b: .loki/metrics/efficiency/iteration-<N>.json -------------------
-
-export interface EfficiencySessionInfo {
-  status: string; // "completed" | "failed" | "killed", matching SessionResult/legacy status_str
-  durationMs: number;
-  model: string;
-}
-
-const ITERATION_FILE_RE = /^iteration-(\d+)\.json$/;
-
-function efficiencyDir(lokiRoot: string): string {
-  return join(lokiRoot, "metrics", "efficiency");
-}
-
-/** N = next integer after any existing iteration-<N>.json (ENGINE.md section 10). */
-export function nextEfficiencyIteration(lokiRoot: string): number {
-  let names: string[];
-  try {
-    names = readdirSync(efficiencyDir(lokiRoot));
-  } catch {
-    return 1;
-  }
-  let max = 0;
-  for (const name of names) {
-    const m = ITERATION_FILE_RE.exec(name);
-    if (m?.[1]) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return max + 1;
-}
-
-// The one predicate for "this session has no recorded usage": its efficiency record and its cost event both omit every token key.
-export function tokensUnmeasured(cost: Pick<CostResult, "tokens_measured" | "records">): boolean {
-  return cost.tokens_measured !== undefined || cost.records?.resume === "ambiguous";
-}
-
-// Writes one efficiency record for a provider session and returns its N. cost_usd is omitted (never written as 0)
-// when the session had no provider-reported dollars -- cost-summary.py then reads it as unmeasured, never as free.
-export function writeEfficiencyRecord(lokiRoot: string, info: EfficiencySessionInfo, cost: CostResult, costSource = "provider"): number {
-  const dir = efficiencyDir(lokiRoot);
-  mkdirSync(dir, { recursive: true });
-  const n = nextEfficiencyIteration(lokiRoot);
-  const rec: Record<string, unknown> = {
-    iteration: n,
-    status: info.status,
-    duration_ms: info.durationMs,
-    model: cost.model ?? info.model, // E-50: provider-reported model wins over the caller's guess
-  };
-  if (cost.usd !== null) {
-    rec.cost_usd = cost.usd;
-    rec.cost_source = costSource; // EV-1 gate reads only provider-sourced dollars ("partial-stream": E-98e, priced from streamed usage, never itself provider-reported)
-  }
-  // A session left out of the token sums (ambiguous resume) writes NO token keys: every reader treats a record without them as
-  // unmeasured, where a written 0 would read as a measured zero.
-  if (tokensUnmeasured(cost)) {
-    rec.tokens_measured = false; // explicit marker the efficiency readers key on (kpis, stats, efficiency_cost.py, dashboard)
-  } else {
-    rec.input_tokens = cost.input_tokens;
-    rec.output_tokens = cost.output_tokens;
-    rec.cache_read_tokens = cost.cache_read_tokens;
-    rec.cache_creation_tokens = cost.cache_creation_tokens;
-  }
-  writeFileSync(join(dir, `iteration-${n}.json`), JSON.stringify(rec));
-  return n;
-}
+// E-06b efficiency record writers live in providers/provider_cost.ts (engine10 core line budget); re-exported for existing callers.
+export { type EfficiencySessionInfo, nextEfficiencyIteration, tokensUnmeasured, writeEfficiencyRecord } from "../providers/provider_cost.ts";
+import { type EfficiencySessionInfo, writeEfficiencyRecord } from "../providers/provider_cost.ts";
 
 // What a provider session calls once it ends: reads its own result-cost file and writes the derived efficiency record
 // in the same step. Returns the CostResult so the caller can also emit the `cost` event (section 5) from the same numbers.

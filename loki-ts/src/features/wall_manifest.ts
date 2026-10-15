@@ -4,9 +4,7 @@
 // examples that import no module the task names, and public signatures of the named modules. Function
 // and method bodies never enter the output. TS/JS: only text before a body's opening brace, and a file whose
 // lexing is undecidable emits nothing. Python: heads come from the stdlib ast in an isolated interpreter. Parameter and field defaults are always masked as `= ...`.
-import { spawnSync } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { pySignatures } from "../util/python.ts";
 export interface ManifestFile { path: string; content: string }
 
 export const MANIFEST_MAX_LINES = 400;
@@ -545,127 +543,6 @@ function tsSignatures(src: string, jsx: boolean): string[] {
     if (!done.some(hasTopSemi)) out.push(...done);
   }
   return out;
-}
-const PY_TIMEOUT_MS = 5000;
-const PY_SCRIPT = `
-import ast, sys, json, re
-def u(n): return ast.unparse(n)
-def chain(n):
-    if isinstance(n, ast.Name): return n.id
-    if isinstance(n, ast.Attribute):
-        c = chain(n.value)
-        return None if c is None else c + "." + n.attr
-    return None
-def deco(d):
-    if isinstance(d, ast.Call):
-        c = chain(d.func)
-        return "@" + c + "(...)" if c else "@..."
-    c = chain(d)
-    return "@" + c if c else "@..."
-def lit(n):
-    if isinstance(n, ast.Constant): return u(n)
-    if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub) and isinstance(n.operand, ast.Constant): return u(n)
-    if isinstance(n, ast.Tuple):
-        p = [lit(e) for e in n.elts]
-        return None if None in p else ", ".join(p)
-    return chain(n)
-def ann(n):
-    if isinstance(n, (ast.Name, ast.Attribute)): return chain(n)
-    if isinstance(n, ast.Constant): return u(n) if (n.value is None or n.value is Ellipsis) else None
-    if isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr):
-        l, r = ann(n.left), ann(n.right)
-        return None if l is None or r is None else l + " | " + r
-    if isinstance(n, ast.List):
-        p = [ann(e) for e in n.elts]
-        return None if None in p else "[" + ", ".join(p) + "]"
-    if isinstance(n, ast.Tuple):
-        p = [ann(e) for e in n.elts]
-        return None if None in p else ", ".join(p)
-    if isinstance(n, ast.Subscript):
-        v = chain(n.value)
-        if v is None: return None
-        last = v.split(".")[-1]
-        if last == "Literal":
-            s = lit(n.slice)
-            return None if s is None else v + "[" + s + "]"
-        if last == "Annotated" and isinstance(n.slice, ast.Tuple) and n.slice.elts:
-            first = ann(n.slice.elts[0])
-            return None if first is None else v + "[" + first + ", ...]"
-        s = ann(n.slice)
-        return None if s is None else v + "[" + s + "]"
-    return None
-def a_or_dots(n):
-    r = ann(n)
-    return "..." if r is None else r
-def clean(n):
-    r = ann(n)
-    return "..." if r is None else r
-def arg(a, has_default):
-    t = a.arg
-    if a.annotation is not None: t += ": " + a_or_dots(a.annotation)
-    if has_default: t += " = ..." if a.annotation is not None else "=..."
-    return t
-def args(a):
-    pos = list(a.posonlyargs) + list(a.args)
-    first_default = len(pos) - len(a.defaults)
-    out = []
-    for i, x in enumerate(pos):
-        out.append(arg(x, i >= first_default))
-        if a.posonlyargs and i == len(a.posonlyargs) - 1: out.append("/")
-    if a.vararg is not None: out.append("*" + arg(a.vararg, False))
-    elif a.kwonlyargs: out.append("*")
-    for x, d in zip(a.kwonlyargs, a.kw_defaults): out.append(arg(x, d is not None))
-    if a.kwarg is not None: out.append("**" + arg(a.kwarg, False))
-    return ", ".join(out)
-def fn(n, ind):
-    r = [ind + deco(d) for d in n.decorator_list]
-    h = ind + ("async def " if isinstance(n, ast.AsyncFunctionDef) else "def ") + n.name + "(" + args(n.args) + ")"
-    if n.returns is not None: h += " -> " + a_or_dots(n.returns)
-    return r + [h + ":"]
-def cls(n):
-    r = [deco(d) for d in n.decorator_list]
-    parts = [clean(b) for b in n.bases] + [(k.arg + "=" + clean(k.value)) if k.arg else "**..." for k in n.keywords]
-    return r + ["class " + n.name + ("(" + ", ".join(parts) + ")" if parts else "") + ":"]
-tree = ast.parse(sys.stdin.read())
-out = []
-for n in tree.body:
-    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and not n.name.startswith("_"):
-        out += fn(n, "")
-    elif isinstance(n, ast.ClassDef) and not n.name.startswith("_"):
-        out += cls(n)
-        for m in n.body:
-            if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and (not m.name.startswith("_") or re.fullmatch(r"__\\w+__", m.name)):
-                out += fn(m, "    ")
-    else:
-        t = n.targets[0] if isinstance(n, ast.Assign) and len(n.targets) == 1 else (n.target if isinstance(n, ast.AnnAssign) else None)
-        if isinstance(t, ast.Name) and re.fullmatch(r"[A-Z][A-Z0-9_]*", t.id): out.append(t.id + " = ...")
-print(json.dumps(out))
-`;
-
-// Python signatures from the stdlib ast, run in an isolated interpreter (-I -S) from a neutral cwd with the
-// source on stdin. Any parse error, missing python3, or timeout yields no signatures for the file.
-// Trusted interpreter boundary: an absolute PATH entry (for example a venv) is trusted; relative entries are not.
-function resolvePython3(): string | null {
-  for (const dir of (process.env.PATH ?? "").split(":")) {
-    if (!dir || !dir.startsWith("/")) continue;
-    const cand = `${dir}/python3`;
-    try { accessSync(cand, constants.X_OK); if (statSync(cand).isFile()) return cand; } catch { /* next */ }
-  }
-  return null;
-}
-
-function pySignatures(src: string): string[] {
-  try {
-    const py = resolvePython3();
-    if (!py) return [];
-    const r = spawnSync(py, ["-I", "-S", "-c", PY_SCRIPT], {
-      input: norm(src), cwd: tmpdir(), timeout: PY_TIMEOUT_MS, encoding: "utf8",
-      env: { PATH: process.env.PATH ?? "/usr/bin:/bin" }, maxBuffer: 8 * 1024 * 1024, stdio: ["pipe", "pipe", "ignore"],
-    });
-    if (r.error || r.status !== 0) return [];
-    const parsed: unknown = JSON.parse(r.stdout);
-    return Array.isArray(parsed) && parsed.every((l) => typeof l === "string") ? (parsed as string[]) : [];
-  } catch { return []; }
 }
 
 function packageRunner(content: string): string | null {

@@ -6,8 +6,9 @@
 //   plan.plan / plan.relevant_files <- plan stage.completed, else plan-output.txt
 //   verify.changed_files / checks   <- verify stage.completed (the diff and the evidence)
 //   wall.files / wall.base_run      <- wall stage.completed
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fold, readEvents } from "../engine10/events.ts";
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
@@ -102,7 +103,7 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
   const started = it.events.find((e) => e.type === "run.started")?.data ?? {};
   const origin = readOriginUrl(repoDir);
   if (!origin) { out("resume: no origin remote; nothing to publish\n"); return 2; }
-  const { SupervisorLog, prGate } = await import("../engine10/supervisor.ts");
+  const { SupervisorLog } = await import("../engine10/supervisor.ts");
   const gate = prGate(repoDir); // same policy egress as the supervisor pr callback: resume must not bypass autonomy
   if ("deny" in gate) { out(`resume: ${gate.deny}\n`); return 5; }
   const log = new SupervisorLog(join(repoDir, eventsRelPath(it.runId)), it.runId);
@@ -161,4 +162,24 @@ export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
 /** FC-15 (L5/L6): intake's harness-owned "work exists on <branch>, not on <target>" note, null when absent. */
 export function unmergedLokiWorkNote(events: EventEnvelope[]): string | null {
   return noteOf(events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data);
+}
+
+// Moved from engine10/supervisor.ts (core line budget); supervisor re-exports both.
+export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: string };
+/** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
+export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
+  const dataDir = env.LOKI_DATA_DIR || join(env.HOME ?? "", ".loki");
+  if (![join(repoDir, ".loki"), dataDir].some((d) => existsSync(join(d, "policies.json")) || existsSync(join(d, "policies.yaml")))) return { decision: "allow", reason: "no policy file" };
+  if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
+  if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
+  const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };
+  const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: 30000 });
+  if (r.error) return { decision: "deny", reason: `policy file present but node is unavailable: cannot evaluate policy (fail-closed)` };
+  let why = ""; try { why = String((JSON.parse(r.stdout || "{}") as { reason?: string }).reason ?? ""); } catch { /* keep empty */ }
+  return r.status === 0 ? { decision: "allow", reason: why } : r.status === 2 ? { decision: "approval", reason: why } : { decision: "deny", reason: why || "policy check failed (fail-closed)" };
+}
+/** One PR-egress decision shared by the supervisor pr callback and resumePublish: deny = no PR plus a not-proven line; approval = draft via ctx.draft (never process.env). */
+export function prGate(repoDir: string): { deny: string } | { draft: boolean } {
+  const gate = policyGate(repoDir, "pr");
+  return gate.decision === "deny" ? { deny: `PR not opened: policy denied (${gate.reason})` } : { draft: gate.decision === "approval" };
 }

@@ -92,12 +92,12 @@ export function freezeGroupContract(repoDir: string, groupId: string, units: Pic
   atomicWriteJson(path, gc);
   return { ok: true, path, contract: gc };
 }
-/** Freeze first, then call spawn with each unit's own criteria. A failed freeze never calls spawn. */
-export async function spawnWithContract<T>(repoDir: string, groupId: string, units: Pick<Unit, "id" | "items">[], contract: Contract, spawn: (unitId: string, acceptance: string[]) => Promise<T> | T): Promise<{ ok: true; results: T[] } | { ok: false; reason: string }> {
+/** Freeze first, then call launch with each unit's own criteria. A failed freeze never calls spawn. */
+export async function spawnWithContract<T>(repoDir: string, groupId: string, units: Pick<Unit, "id" | "items">[], contract: Contract, launch: (unitId: string, acceptance: string[]) => Promise<T> | T): Promise<{ ok: true; results: T[] } | { ok: false; reason: string }> {
   const f = freezeGroupContract(repoDir, groupId, units, contract);
   if (!f.ok) return { ok: false, reason: f.reason };
   const results: T[] = [];
-  for (const u of f.contract.units) results.push(await spawn(u.id, u.criteria.map((c) => c.text)));
+  for (const u of f.contract.units) results.push(await launch(u.id, u.criteria.map((c) => c.text)));
   return { ok: true, results };
 }
 const STOP = new Set(["the", "and", "for", "with", "that", "this", "must", "should", "shall", "when", "then", "are", "was", "all", "any", "can", "not", "has", "have", "from", "into", "each", "user", "users"]);

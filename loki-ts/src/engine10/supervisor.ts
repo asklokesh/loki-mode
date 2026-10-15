@@ -31,29 +31,11 @@ import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
 import { baseLine } from "../util/base_guard.ts";
-import { alreadyDoneTextComment, unmergedLokiWorkNote } from "../util/run_outputs.ts";
+import { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
-export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: string };
-/** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
-export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
-  const dataDir = env.LOKI_DATA_DIR || join(env.HOME ?? "", ".loki");
-  if (![join(repoDir, ".loki"), dataDir].some((d) => existsSync(join(d, "policies.json")) || existsSync(join(d, "policies.yaml")))) return { decision: "allow", reason: "no policy file" };
-  if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
-  if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
-  const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };
-  const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: 30000 });
-  if (r.error) return { decision: "deny", reason: `policy file present but node is unavailable: cannot evaluate policy (fail-closed)` };
-  let why = ""; try { why = String((JSON.parse(r.stdout || "{}") as { reason?: string }).reason ?? ""); } catch { /* keep empty */ }
-  return r.status === 0 ? { decision: "allow", reason: why } : r.status === 2 ? { decision: "approval", reason: why } : { decision: "deny", reason: why || "policy check failed (fail-closed)" };
-}
-/** One PR-egress decision shared by the supervisor pr callback and resumePublish: deny = no PR plus a not-proven line; approval = draft via ctx.draft (never process.env). */
-export function prGate(repoDir: string): { deny: string } | { draft: boolean } {
-  const gate = policyGate(repoDir, "pr");
-  return gate.decision === "deny" ? { deny: `PR not opened: policy denied (${gate.reason})` } : { draft: gate.decision === "approval" };
-}
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../e10ext/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../e10ext/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
 const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened", "log.sealed"]); // types only the supervisor may write; same types from the worker are dropped
@@ -225,7 +207,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   await slackEvent(env, "finished", { summary: formatSummary(summary), outcome: String(outcome), cost: summary.cost.usd != null ? `$${summary.cost.usd.toFixed(2)}` : "not measured", time: `${Math.round(wallS)}s` }); rmRunPid(); process.off("exit", rmRunPid); // D51-A4, replaces E-48 adapters/slack.ts call
   return { verdict, outcome, stop: stop ?? (receiptVerdict && allEvents.some((e) => e.type === "cap.hit") ? "cap" : null), receiptSha: typeof sealedData?.receipt_sha256 === "string" ? sealedData.receipt_sha256 : null, tampered: log.tampered, notProven, prUrl, workerExit };
 }
-export { alreadyDoneTextComment, unmergedLokiWorkNote }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers
+export { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type PolicyGate }; // moved to util/run_outputs.ts (line budget); re-exported for existing callers
 /** The block main() writes to stdout once a run finishes; pure because main() re-spawns process.argv[1] as the worker, so tests cannot drive it. */
 export function renderMainOutput(events: EventEnvelope[], summary: SummaryInput, verbose = true): string {
   const c = alreadyDoneTextComment(events), un = unmergedLokiWorkNote(events);

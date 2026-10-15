@@ -3,7 +3,7 @@
 // branches and run the suite once (engine10/integrate.ts). Moat: the exit code is never 0 (NOT_PROVEN until a group Seal exists); a launcher
 // failure, an orphan criterion or an unreadable result is never VERIFIED. This runner does not write group/manifest.json, so it
 // never claims a combined group Seal receipt: it says so.
-import { mkdirSync, existsSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import type { Dag } from "../decompose.ts";
@@ -12,6 +12,7 @@ import { integrate } from "../../engine10/integrate.ts";
 import { safeGitSpawn } from "../../util/safe_git.ts";
 import { atomicWriteJson } from "../../util/atomic.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
+import { discoverCommands } from "../../runner/repo_profile.ts";
 import { providerSlots, type GroupCtx } from "./route.ts";
 
 /** Group integrated but not sealed: distinct non-zero so no caller reads it as VERIFIED. */
@@ -44,12 +45,12 @@ const git = (dir: string, args: string[]): string => {
 };
 const SLUG_RE = /[:/]([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+?)(?:\.git)?$/;
 
-/** Repo test command argv: LOKI_GROUP_TEST_CMD (whitespace split) wins; else a detected default; else empty (the suite then did not run). */
+/** Repo test command argv: LOKI_GROUP_TEST_CMD (whitespace split) wins; else the repo profile's first test command (runner/repo_profile.ts); else empty (the suite then did not run). */
 export function testCommand(repoDir: string, env: NodeJS.ProcessEnv): string[] {
   const o = (env.LOKI_GROUP_TEST_CMD ?? "").trim();
   if (o) return o.split(/\s+/);
-  if (existsSync(join(repoDir, "package.json"))) return ["npm", "test", "--silent"];
-  if (existsSync(join(repoDir, "pyproject.toml")) || existsSync(join(repoDir, "pytest.ini"))) return ["python3", "-m", "pytest", "-q"];
+  const found = discoverCommands(repoDir).find((c) => c.kind === "test"); // the repo profile owns manifest and runner detection
+  if (found) return found.cmd.split(/\s+/);
   return [];
 }
 
