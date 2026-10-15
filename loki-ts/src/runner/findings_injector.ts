@@ -4,8 +4,8 @@
 // Part B "Phase 1 -- Close the 'fix issues completely' gaps".
 //
 // The pre-v7.5.0 prompt-build path only saw a comma-separated failure token
-// (e.g. "code_review,test_coverage,") because build_prompt_helpers.ts
-// loadGateFailures reads only .loki/quality/gate-failures.txt. The structured
+// (e.g. "code_review,test_coverage,") because
+// the gate-failure loader read only .loki/quality/gate-failures.txt. The structured
 // data the reviewers actually produced -- per-finding severity / file / line
 // / quote -- lives in:
 //

@@ -265,7 +265,7 @@ def check_quality_gate(trigger, loki_dir, iteration, notifications):
     defect as the budget key, in the same file.
 
     gate-failures.txt is the canonical failure source used by
-    proof-generator.py:413 and loki-ts build_prompt_helpers.ts:250, so this
+    proof-generator.py:413 and loki-ts build_prompt.ts, so this
     reuses a proven contract rather than introducing a second one.
     """
     failures_file = Path(loki_dir) / "quality" / "gate-failures.txt"
