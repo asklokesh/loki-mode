@@ -65,6 +65,7 @@
 - Formal state machines (k8s-valkey-operator)
 - Constitutional AI self-critique
 - Debate-based verification (DeepMind)
+- Code-Only agent pattern (code witnesses)
 
 ### testing.md
 **When:** Writing tests, E2E automation, verification
@@ -75,8 +76,7 @@
 
 ### production.md
 **When:** Deployment, CI/CD, production concerns
-- HN 2025 production patterns
-- Narrow scope, confidence-based routing
+- Pointer to HN 2025 patterns in references/production-patterns.md
 - Git worktree isolation (Cursor pattern)
 - Atomic checkpoint/rollback
 - CI/CD automation (Zencoder patterns)

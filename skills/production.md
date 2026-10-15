@@ -1,44 +1,8 @@
 # Production Patterns
 
-## HN 2025 Battle-Tested Patterns
+## HN 2025 Production Patterns
 
-### Narrow Scope Wins
-
-```yaml
-task_constraints:
-  max_steps_before_review: 3-5
-  characteristics:
-    - Specific, well-defined objectives
-    - Pre-classified inputs
-    - Deterministic success criteria
-    - Verifiable outputs
-```
-
-### Deterministic Outer Loops
-
-**Wrap agent outputs with rule-based validation (NOT LLM-judged):**
-
-```
-1. Agent generates output
-2. Run linter (deterministic)
-3. Run tests (deterministic)
-4. Check compilation (deterministic)
-5. Only then: human or AI review
-```
-
-### Context Engineering
-
-```yaml
-principles:
-  - "Less is more" - focused beats comprehensive
-  - Manual selection outperforms automatic RAG
-  - Fresh conversations per major task
-  - Remove outdated information aggressively
-
-context_budget:
-  target: "< 10k tokens for context"
-  reserve: "90% for model reasoning"
-```
+Narrow scope, deterministic outer loops and context engineering live in `references/production-patterns.md` (single source). The sections below cover deployment-side patterns.
 
 ---
 
