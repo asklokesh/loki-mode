@@ -153,6 +153,27 @@ export async function learnFromPr(repoDir: string, ref: string, gh: GhClient = d
   return res;
 }
 
+export const MAX_RECENT = 20;
+export interface RecentPrResult extends LearnResult { pr: string; error?: string }
+
+/** Learn from the newest N merged PRs of `repo` (owner/repo), one summary per PR. A gh failure on the list call throws GhError; a failure on one PR is recorded on that row. */
+export async function learnRecent(repoDir: string, repo: string, n: number, gh: GhClient = defaultGh, now: () => Date = () => new Date(), deps: CiteDeps = {}): Promise<RecentPrResult[]> {
+  if (!Number.isInteger(n) || n < 1 || n > MAX_RECENT) throw new RangeError(`--recent must be an integer from 1 to ${MAX_RECENT}`);
+  const list = parsePages(await ghText(gh, ["api", `repos/${repo}/pulls?state=closed&sort=updated&direction=desc&per_page=100`]));
+  const merged = list.filter((p) => p.merged_at && Number.isInteger(p.number))
+    .sort((a, b) => String(b.merged_at).localeCompare(String(a.merged_at))).slice(0, n);
+  const out: RecentPrResult[] = [];
+  for (const p of merged) {
+    const ref = `${repo}#${p.number}`;
+    try { out.push({ pr: ref, ...(await learnFromPr(repoDir, ref, gh, now, deps)) }); }
+    catch (e) {
+      if (e instanceof GhError && /gh CLI not found/.test(e.message)) throw e;
+      out.push({ pr: ref, added: 0, duplicates: 0, skipped: 0, error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
+}
+
 /** Verdict-bearing uses (null verdicts are in-flight and do not count) and how many were VERIFIED. */
 export function lessonStats(l: Lesson): { decided: number; verified: number } {
   let decided = 0, verified = 0;

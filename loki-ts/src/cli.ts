@@ -29,7 +29,7 @@ Bun-native commands:
   memory list            Cross-project learnings counts
   memory lessons [--json] PR review lessons with their uses and outcomes
   memory forget <prl-id> Delete one PR lesson and print its text
-  memory learn <o/r#PR>  Learn lessons from a merged PR's review comments
+  memory learn <o/r#PR>  Learn lessons from a merged PR's review comments (or --recent N, max 20)
   memory index [rebuild] Show or rebuild memory index
   doctor [--json]        System prerequisites health check
   rollback <subcmd>      Restore .loki/ state from a checkpoint
