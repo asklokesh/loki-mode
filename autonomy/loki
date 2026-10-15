@@ -20863,6 +20863,14 @@ main() {
             show_landing
             exit 0
         fi
+        # OC-CHAT: bare `loki` on a TTY opens the interactive chat (LOKI_NO_CHAT=1 opts out).
+        if [ $# -eq 0 ] && [ -t 0 ] && [ -t 1 ] && [ "${LOKI_NO_CHAT:-0}" != "1" ] \
+            && [ -f "$_LOKI_SCRIPT_DIR/lib/chat.sh" ]; then
+            # shellcheck disable=SC1091
+            source "$_LOKI_SCRIPT_DIR/lib/chat.sh"
+            cmd_chat
+            exit $?
+        fi
         cmd_ui "$@"
         exit $?
     fi
@@ -20967,6 +20975,11 @@ main() {
             ;;
         quick)
             cmd_quick "$@"
+            ;;
+        chat)
+            # shellcheck disable=SC1091
+            source "$_LOKI_SCRIPT_DIR/lib/chat.sh"
+            cmd_chat "$@"
             ;;
         monitor)
             cmd_monitor "$@"
