@@ -28,7 +28,7 @@ export interface WallSealedFile { path: string; sha256: string; } // path: absol
 export interface BaseTestRunner { run(repoDir: string, files: TestRef[]): { pass: number; fail: number; not_run?: number }; /** FC-69: why each not_run file of the LAST run was not executed */ lastNotRunFiles?: { file: string; reason: string }[]; }
 const BASE_RUN_TIMEOUT_MS = 60_000; // same per-check budget as verify.ts's CHECK_TIMEOUT_MS
 // B1/B2/B3/B4 (r3, opus review of E-125): only the short-summary line names the FINAL exception -- immune to a captured stdout/stderr block forging an earlier frame (B3), or an earlier link in a chain (B4).
-function pytestCollectionIsRed(output: string, repoDir: string): boolean {
+export function pytestCollectionIsRed(output: string, repoDir: string): boolean {
   if (/ModuleNotFoundError/.test(output)) return false;
   const real = (p: string): string | null => { try { return realpathSync(isAbsolute(p) ? p : join(repoDir, p)); } catch { return null; } };
   const repoReal = real(repoDir); const under = (p: string): boolean => { const r = real(p); return !!repoReal && !!r && (r === repoReal || r.startsWith(`${repoReal}/`)); };

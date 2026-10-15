@@ -259,7 +259,7 @@ The report never states more than the equivalence data proves. It is sealed and 
 | Input | The unit id, the sealed `cases.jsonl` (sha-verified before use), the new tree, and the target runner. |
 | Normalizers | Declared per unit in the card and sealed with the oracle: float tolerance, set ordering, and named nondeterministic fields. Nothing is implicit. |
 | Output | `{unit, cases, pass, fail, held_out_pass, held_out_fail, rate, branch_pct, failures:[{case, field, old, new}] (max 20), not_proven:[...]}` |
-| Proven equivalent | rate = 100%, held-out rate = 100%, branch_pct of 80% or higher, the no-op ablation goes red, and conformance passes. |
+| Proven equivalent | rate = 100%, held-out rate = 100%, branch_pct of 80% or higher, the no-op ablation goes red, and conformance passes (runner_reported, FC-24: not proof against unit code that subverts the test runner in-process). |
 | Otherwise | PARTIAL with the numbers, or FAILED when rate < 100% after re-slice. |
 
 **Target conformance**
@@ -268,6 +268,7 @@ The report never states more than the equivalence data proves. It is sealed and 
   - java21: it compiles with `--release 21` and `jdeprscan --for-removal --release 21` is clean.
 - The Wall runs under the target runtime. A Wall that is green before any change is a design error reported as `oracle.flagged`. It is never ALREADY_SATISFIED.
 - `stages/wall.ts` gains a pre-sealed mode (M-14) that takes these files instead of running the author session.
+- Conformance is runner_reported (FC-24): UnitRunResult.conformance and the unit.conformance_passed event carry trust "runner_reported", limit "FC-24". It stops accidental and low-effort false passes, not unit code that subverts pytest inside its own process.
 
 ## 8. Strangler adapters and routing flags per target
 
