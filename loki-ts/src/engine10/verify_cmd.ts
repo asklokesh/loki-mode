@@ -2,10 +2,11 @@
 // Reads receipt.json straight off disk, no RunContext. Three checks, cheapest first: TAMPER
 // (recompute receipt_sha256 with `verification`+itself removed), SIGNATURE (native Ed25519
 // against the active + retired keys), UNSIGNED (jwt null). Node crypto only, no python (A-121).
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
+import { latestRunId } from "../commands/run_status.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256 } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
@@ -105,11 +106,6 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   if (seal) return { verdict: seal.verdict, reasons: [seal.reason] };
   if (gp) return { verdict: gp.verdict, reasons: [gp.reason] };
   return { verdict: "VERIFIED", reasons: [], receiptSha256: computed };
-}
-function latestRunId(runsRoot: string): string | null {
-  if (!existsSync(runsRoot)) return null;
-  const dirs = readdirSync(runsRoot).filter((d) => { try { return statSync(join(runsRoot, d)).isDirectory(); } catch { return false; } });
-  return dirs.sort().pop() ?? null; // run ids are e10-<timestamp>-<suffix>: lexicographic is chronological
 }
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
 const EXIT_BY_VERDICT: Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 };

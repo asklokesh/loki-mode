@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { readEvents } from "../engine10/events.ts";
-import { eventsPath, findLatestRun, listRunIds } from "../contrib/status.ts";
+import { eventsPath, latestRunId, listRunIds, runsRoot } from "../commands/run_status.ts";
 import { REPO_ROOT } from "../util/paths.ts";
 
 export interface AnswerDeps {
@@ -30,7 +30,7 @@ const validId = (id: string): boolean => /^[A-Za-z0-9._-]+$/.test(id) && !id.inc
 
 export function readBlocked(repoDir: string, runId: string): BlockedRun | string {
   if (!validId(runId)) return "invalid run id (letters, digits, . _ - only)";
-  const p = eventsPath(repoDir, runId);
+  const p = eventsPath(runsRoot(process.env, repoDir), runId);
   if (!existsSync(p)) return `run ${runId} not found`;
   const evs = readEvents(p);
   const verdict = evs.findLast((e) => e.type === "run.completed")?.data.verdict;
@@ -42,7 +42,7 @@ export function readBlocked(repoDir: string, runId: string): BlockedRun | string
 }
 
 export function newestBlocked(repoDir: string): string | null {
-  const ids = listRunIds(repoDir);
+  const ids = listRunIds(runsRoot(process.env, repoDir));
   for (let i = ids.length - 1; i >= 0; i--) if (typeof readBlocked(repoDir, ids[i]!) !== "string") return ids[i]!;
   return null;
 }
@@ -65,7 +65,7 @@ export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> 
     else if (!runId && !a.startsWith("-")) runId = a;
     else { d.err("usage: loki answer [<run-id>] [--text \"...\"]"); return 2; }
   }
-  const id = runId || newestBlocked(d.repoDir) || findLatestRun(d.repoDir);
+  const id = runId || newestBlocked(d.repoDir) || latestRunId(runsRoot(process.env, d.repoDir));
   if (!id) { d.err("loki answer: no runs found; nothing is BLOCKED"); return 2; }
   const b = readBlocked(d.repoDir, id);
   if (typeof b === "string") { d.err(`loki answer: ${b}`); return 2; }
@@ -78,12 +78,12 @@ export async function runAnswer(args: string[], d: AnswerDeps): Promise<number> 
 }
 /** Real launcher: spawns bin/loki and discovers the run dir it creates. */
 function realLaunch(argv: string[], env: NodeJS.ProcessEnv, cwd: string): Promise<{ code: number; runId: string }> {
-  const before = new Set(listRunIds(cwd));
+  const before = new Set(listRunIds(runsRoot(process.env, cwd)));
   const child = spawn(argv[0]!, argv.slice(1), { cwd, env, stdio: "ignore" });
   return new Promise((res) => {
     let runId = "";
-    const poll = setInterval(() => { runId = listRunIds(cwd).find((x) => !before.has(x) && x.startsWith("e10-")) ?? runId; }, 100);
-    const fin = (code: number) => { clearInterval(poll); runId = runId || listRunIds(cwd).find((x) => !before.has(x)) || `pid-${child.pid}`; res({ code, runId }); };
+    const poll = setInterval(() => { runId = listRunIds(runsRoot(process.env, cwd)).find((x) => !before.has(x) && x.startsWith("e10-")) ?? runId; }, 100);
+    const fin = (code: number) => { clearInterval(poll); runId = runId || listRunIds(runsRoot(process.env, cwd)).find((x) => !before.has(x)) || `pid-${child.pid}`; res({ code, runId }); };
     child.on("exit", (c) => fin(c ?? 1));
     child.on("error", () => fin(1));
   });

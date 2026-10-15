@@ -2,8 +2,9 @@
 // A run starts from the base the user asked for; only the ALREADY_SATISFIED claim must rest on the PR target, never on
 // commits that exist only in target..HEAD (Loki's own unmerged work or the user's own).
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { listRunIds } from "../commands/run_status.ts";
 import { safeGit } from "./safe_git.ts";
 
 function git(repoDir: string, args: string[], timeout = 20000, extraEnv: Record<string, string> = {}): string | null {
@@ -49,8 +50,7 @@ const ok = (repoDir: string, args: string[]): boolean => git(repoDir, args) !== 
 function lokiCommitsOnHead(repoDir: string, target: string): boolean {
   if ((git(repoDir, ["log", `${target}..HEAD`, "--format=%(trailers:key=Loki-Run,valueonly)"]) ?? "").trim() !== "") return true;
   const runsDir = join(repoDir, ".loki", "runs");
-  if (!existsSync(runsDir)) return false;
-  for (const id of readdirSync(runsDir)) {
+  for (const id of listRunIds(runsDir)) {
     try {
       const rc = JSON.parse(readFileSync(join(runsDir, id, "receipt.json"), "utf8")) as { head_sha?: unknown; base_sha?: unknown };
       const sha = typeof rc.head_sha === "string" ? rc.head_sha : "", from = typeof rc.base_sha === "string" ? rc.base_sha : "";

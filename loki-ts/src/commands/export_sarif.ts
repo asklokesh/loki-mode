@@ -1,9 +1,10 @@
 // `loki export --sarif [run-id]`: writes .loki/runs/<id>/findings.sarif from the run receipt plus a secret scan of the run diff.
 // Findings are reported, never gating: the exit code does not depend on how many findings there are.
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { toSarif, type Finding } from "../contrib/sarif.ts";
 import { lokiDir, REPO_ROOT } from "../util/paths.ts";
+import { latestRunId } from "./run_status.ts";
 import { safeGitRun } from "../util/safe_git.ts";
 
 // Tier 1 formats from autonomy/lib/secret-scan.sh. Only the label is ever reported, never the matched text.
@@ -44,12 +45,6 @@ export function receiptFindings(receipt: Record<string, unknown>): Finding[] {
   const checks = Array.isArray(receipt["checks"]) ? (receipt["checks"] as Record<string, unknown>[]) : [];
   for (const c of checks) if (c["result"] === "fail") out.push({ kind: "verify", message: `check failed: ${String(c["name"] ?? "unnamed")}`, key: String(c["name"] ?? "") });
   return out;
-}
-
-function latestRunId(runsRoot: string): string | null {
-  if (!existsSync(runsRoot)) return null;
-  const dirs = readdirSync(runsRoot).filter((d) => { try { return statSync(join(runsRoot, d)).isDirectory(); } catch { return false; } });
-  return dirs.sort().pop() ?? null;
 }
 
 const USAGE = "Usage: loki export --sarif [run-id]\nWrite .loki/runs/<run-id>/findings.sarif (SARIF 2.1.0) from the run receipt and a secret scan of the run diff (default: latest run).\nFindings are reported only; they never change a verdict or this command's exit code.\nExit: 0 written, 2 usage error, 66 unknown run or no runs.\n";
