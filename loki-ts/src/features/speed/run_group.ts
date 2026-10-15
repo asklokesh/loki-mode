@@ -221,7 +221,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     const key = `unit-${groupId}-${units.length + 1}`, spec = join(specDir, `${fix.id}.json`), slug = slugOf();
     if (!slug) return null;
     atomicWriteJson(spec, { id: fix.id, writeSet: fix.writeSet, pack: fix.writeSet, tokenBudget: 1e9, acceptance: fix.acceptance });
-    fix.spec = spec; fix.done = false; units.push(fix);
+    fix.spec = spec; fix.done = false; fix.base = git(repoDir, ["rev-parse", "HEAD"]); units.push(fix); // backlog.py starts the worktree at the group tip, not origin/HEAD
     putDag(units.map((u) => (u === fix ? u : { ...u, done: true })));
     const res = await run([join(REPO_ROOT, "autonomy", "lib", "backlog.py"), slug, "--dag", dagPath, "--group", groupId, "--slots", "1", "--provider", provider], scopedEnv({ ...env, LOKI_PROVIDER: provider }), repoDir);
     if (res.code !== 0 || !new RegExp(`^backlog: ${key} (VERIFIED|PR \\S+)$`, "m").test(res.stdout)) { units.pop(); return null; }

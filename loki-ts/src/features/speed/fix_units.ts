@@ -7,7 +7,7 @@ import { safeGitSpawn } from "../../util/safe_git.ts";
 
 export const MAX_FIX_UNITS = 2;
 /** `fixFor` is the conflicting unit id or "suite"; `acceptance` goes to its frozen unit spec. */
-export type FixUnit = Unit & { fixFor: string; fixKind: "conflict" | "suite"; acceptance: string[]; done?: boolean; spec?: string };
+export type FixUnit = Unit & { fixFor: string; fixKind: "conflict" | "suite"; acceptance: string[]; done?: boolean; spec?: string; base?: string };
 export const fixEnabled = (env: NodeJS.ProcessEnv): boolean => (env["LOKI_GROUP_FIX_UNITS"] ?? "1") !== "0";
 
 /** Integration view of the DAG: a conflict fix takes its unit's place (its branch holds the resolved merge); a suite fix goes last. */
@@ -47,7 +47,7 @@ function suiteTail(repoDir: string, cmd: readonly string[]): string {
 
 export interface FixIo {
   integrate: (dag: Dag, branches: Record<string, string>, failed: string[]) => IntegrateResult;
-  launch: (fix: FixUnit) => Promise<string | null>; // branch only when the fix passed; starts from the checked-out group branch
+  launch: (fix: FixUnit) => Promise<string | null>; // branch only when the fix passed; starts at fix.base (the group tip), forwarded by dag.json to backlog.py
   leave: () => string | null;
   say: (s: string) => void;
 }
@@ -58,7 +58,7 @@ export async function integrateWithFixes(o: { repoDir: string; env: NodeJS.Proce
   const { io } = o;
   const again = (): IntegrateResult => io.integrate(effectiveDag(o.dag, o.fixes), o.branches, o.failed);
   let r = again();
-  while (!r.ok && fixEnabled(o.env) && o.fixes.length < MAX_FIX_UNITS) {
+  while (!r.ok && o.failed.length === 0 && fixEnabled(o.env) && o.fixes.length < MAX_FIX_UNITS) {
     const target = r.conflictUnit ?? (r.suiteExit !== null && r.suiteExit !== 0 ? "suite" : "");
     if (!target || o.fixes.some((f) => f.fixFor === target || f.id === target)) break;
     const id = `fixu-${o.fixes.length + 1}`, cmd = o.testCmd.join(" ");

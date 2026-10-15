@@ -505,7 +505,7 @@ describe("group run: Group Seal and resume", () => {
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
-    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; done?: boolean; fixKind?: string; fixFor?: string }[] };
+    const dag = JSON.parse(readFileSync(argv[argv.indexOf("--dag") + 1]!, "utf8")) as { units: { id: string; done?: boolean; fixKind?: string; fixFor?: string; base?: string }[] };
     let out = "";
     for (const [i, u] of dag.units.entries()) {
       const n = i + 1, br = `loki/unit-${g}-${n}`;
@@ -515,9 +515,9 @@ describe("group run: Group Seal and resume", () => {
       const has = Bun.spawnSync({ cmd: ["git", "rev-parse", "--verify", "--quiet", `refs/heads/${br}`], cwd: repo }).exitCode === 0;
       const prev = sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).trim();
       if (u.fixKind) {
-        // A fix unit starts from the checked-out group branch (backlog.py worktrees start at HEAD).
+        // Model backlog.py: a worktree starts at the unit's dag base when given, else at origin/HEAD (main here), never at the checked-out group branch.
         if (o.fixFail) { out += `backlog: unit-${g}-${n} FAILED: exit 1\n`; continue; }
-        sh(["git", "checkout", "-q", "-b", br], repo);
+        sh(["git", "checkout", "-q", "-b", br, u.base ?? "main"], repo);
         if (u.fixKind === "conflict") sh(["git", "merge", "--no-ff", "-q", "-X", "theirs", "-m", "fix", `loki/unit-${g}-${dag.units.findIndex((x) => x.id === u.fixFor) + 1}`], repo);
         else if (!o.fixNoop) { writeFileSync(join(repo, "ok.txt"), "ok\n"); sh(["git", "add", "ok.txt"], repo); }
         sh(["git", "commit", "-q", "--allow-empty", "-m", "fix"], repo);

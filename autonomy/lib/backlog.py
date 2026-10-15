@@ -196,6 +196,7 @@ def load_dag(path, group):
             raise ValueError("unit %s task text starts with '-' and would be read as an option" % uid)
         units.append({"n": n, "id": uid, "deps": deps[uid], "write_set": list(u.get("writeSet") or []),
                       "task": task, "done": u.get("done") is True,
+                      "base": str(u["base"]) if re.match(r"^[0-9a-f]{7,64}$", str(u.get("base") or "")) else "",
                       "spec": u["spec"] if isinstance(u.get("spec"), str) and os.path.isabs(u["spec"]) else ""})
     return group, units
 
@@ -315,7 +316,7 @@ def main(argv):
                    "deps": [key_of[d] for d in u["deps"]],
                    "env": {"LOKI_GROUP_ID": group, "LOKI_UNIT_ID": u["id"], "LOKI_UNIT_N": str(u["n"]),
                            "LOKI_UNIT_DEPS": ",".join(u["deps"]), "LOKI_UNIT_WRITE_SET": "\n".join(u["write_set"])},
-                   "done": u["done"]}
+                   "done": u["done"], "base": u["base"]}
         if u["spec"]:  # frozen group acceptance for unit_mode (wall.ts)
             spec[k]["env"].update(LOKI_UNIT_SPEC=u["spec"], LOKI_SPEED="1")
     state = {k: {"status": "queued", "ok": None, "cost": None, "ran": False} for k in spec}
@@ -393,13 +394,13 @@ def main(argv):
             # Shared worktree prep (D51-B05): per-base lock, clean start point, deps copied.
             git("branch", "-D", s["branch"], cwd=top)
             try:
-                worktree_prep.prepare_worktree(top, wt, s["branch"])
+                worktree_prep.prepare_worktree(top, wt, s["branch"], base=s.get("base") or None)
                 r = None
             except (RuntimeError, subprocess.CalledProcessError) as e:
                 msg = getattr(e, "stderr", None) or str(e)
                 r = subprocess.CompletedProcess([], 1, "", msg)
         else:
-            r = git("worktree", "add", "-B", s["branch"], wt, "HEAD", cwd=top)
+            r = git("worktree", "add", "-B", s["branch"], wt, s.get("base") or "HEAD", cwd=top)
         if r is not None and r.returncode != 0:
             err = (r.stderr.strip().splitlines() or ["git error"])[-1]
             state[k].update(status="FAILED: worktree: " + redact(err, token), ok=False)

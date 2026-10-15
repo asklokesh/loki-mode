@@ -37,6 +37,7 @@ echo "start $id $(git branch --show-current) args=$*" >> "$MOCK_DIR/events"
 mkdir "$MOCK_DIR/lock.$id"
 ls -d "$MOCK_DIR"/lock.* | wc -l | tr -d ' ' >> "$MOCK_DIR/conc"
 if [ -n "${LOKI_UNIT_ID:-}" ]; then
+    echo "head $id $(git rev-parse HEAD)" >> "$MOCK_DIR/events"
     echo "spec $id ${LOKI_UNIT_SPEC:-none} speed=${LOKI_SPEED:-unset}" >> "$MOCK_DIR/events"
     rd=".loki/runs/r1"; mkdir -p "$rd"
     if [ "$id" = "${MOCK_SYMLINK:-}" ]; then ln -s "$MOCK_DIR/secret.json" "$rd/receipt.json"; else echo "{\"unit\":\"$id\"}" > "$rd/receipt.json"; fi
@@ -161,6 +162,24 @@ grep -q '"unit":"c"' "$GU/c/receipt.json" 2>/dev/null && [ -f "$GU/c/events.json
 [ ! -e "$GU/b/receipt.json" ] && pass "symlinked receipt is not copied" || fail "symlink copied" "$(ls -l "$GU/b")"
 mode="$(stat -c %a "$GU/c" 2>/dev/null || stat -f %Lp "$GU/c")"
 [ "$mode" = "700" ] && pass "harvest dir mode 0700" || fail "mode" "$mode"
+
+echo "== unit base forwarded to the worktree (fix units start at the group tip)"
+git -C "$REPO" update-ref refs/remotes/origin/main HEAD
+git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+git -C "$REPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m tip
+TIP="$(git -C "$REPO" rev-parse HEAD)"; ORIGIN="$(git -C "$REPO" rev-parse origin/HEAD)"
+cat > "$TMP/dagb.json" <<DEOF
+{"group":"gb","units":[{"id":"fixu-1","items":["fix"],"base":"$TIP"}]}
+DEOF
+for ws in 1 0; do
+    reset_mock
+    LOKI_WORKSPACES=$ws $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagb.json" >/dev/null 2>&1
+    grep -q "^head fixu-1 $TIP" "$TMP/events" && pass "LOKI_WORKSPACES=$ws: unit with base starts at the base, not origin/HEAD" || fail "base ws=$ws" "$(cat "$TMP/events" 2>&1) origin=$ORIGIN"
+done
+reset_mock
+sed 's/,"base":"[0-9a-f]*"//' "$TMP/dagb.json" > "$TMP/dagn.json"
+LOKI_WORKSPACES=1 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagn.json" >/dev/null 2>&1
+grep -q "^head fixu-1 $ORIGIN" "$TMP/events" && pass "control: no base under workspaces starts at origin/HEAD" || fail "control" "$(cat "$TMP/events" 2>&1)"
 
 echo ""
 echo "Passed: $PASS  Failed: $FAIL"
