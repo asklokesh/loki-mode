@@ -97,6 +97,20 @@ Scope hierarchy:
 - `control` includes `write` and `read`
 - `write` includes `read`
 
+### Key Rotation and Revocation
+
+Dashboard API keys (`/api/keys`) can be rotated with a grace period during which the old key stays valid (default 24 hours, `grace_period_hours`):
+
+```bash
+curl -X POST http://localhost:57374/api/keys/ci-pipeline/rotate \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"grace_period_hours": 24}'
+
+curl -X DELETE http://localhost:57374/api/keys/ci-pipeline \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
 ### Roles
 
 Predefined roles map to common access patterns:
@@ -177,7 +191,11 @@ Running with signature verification off provides no authentication security.
 4. Provider redirects back with JWT
 5. Dashboard validates JWT and grants access
 
-OIDC-authenticated users receive full access scopes by default. For fine-grained control, combine OIDC with token-based authorization.
+OIDC-authenticated users are NOT granted full access by default. The role is resolved from claims (see below) and its scopes are enforced through the same hierarchy as API tokens.
+
+### OIDC Role Claims
+
+Role claims are read case-insensitively; values may be a string, a space-separated string or a list. Sources: the claim named by `LOKI_OIDC_ROLES_CLAIM` (dotted paths such as `realm_access.roles` work), then `roles`, `groups`, `realm_access.roles` (Keycloak) and `cognito:groups` (AWS Cognito). Only values that exactly match a built-in role name (`admin`, `operator`, `viewer`, `auditor`) grant that role; other group names fall through to `LOKI_OIDC_DEFAULT_ROLE`. When several roles match, the highest privilege wins (`admin` > `operator` > `auditor` > `viewer`). An unset or unrecognized default falls back to `viewer`, never `admin`. When PyJWT and cryptography are installed, the signature (RS256/RS384/RS512), issuer, audience and expiry are verified against the issuer JWKS.
 
 ### Mixed Mode
 

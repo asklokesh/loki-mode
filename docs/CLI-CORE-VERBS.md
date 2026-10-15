@@ -98,12 +98,8 @@ The process exit code equals `exit_code`.
 | 3 | Missing component, or verifier error |
 | 64 | Usage error for `verify`, `quick` and `start` (unknown option, missing task) |
 
-Severity rises with the code. `loki verify` exits 0 VERIFIED, 1 CONCERNS, 2
-BLOCKED or not a git directory, 3 verifier error or empty diff, 64 usage error.
-Gate CI with `loki verify || fail` and treat any code of 2 or higher as worse
-than CONCERNS. From 11.4.0 this is a breaking change for scripts that tested
-`rc == 1` on an empty diff or a non-git directory. Per-command detail:
-`docs/exit-codes.md`.
+Severity rises with the code. `loki verify` codes and the CI-gate guidance are
+in `docs/exit-codes.md`.
 
 ## Unknown commands
 
