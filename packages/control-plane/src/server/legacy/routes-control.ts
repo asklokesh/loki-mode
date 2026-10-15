@@ -1,17 +1,21 @@
 // CPE24-P4: legacy (port 57374) mappings for session control and the Completion Council. They share the /v1 implementation in
 // routes/session_control.ts (fixed action enum, signal files only, same-origin check, audit row). The shim guard (CP token or loopback peer) has already run.
 import type { Context } from "hono";
+import { isLoopbackHost, peerIsLoopback } from "../auth.ts";
 import type { Db } from "../../db/migrate.ts";
 import { councilConvergence, councilReport, councilState, councilTranscripts, councilVerdicts, intQ, runControl } from "../routes/session_control.ts";
 import { lokiDirOf } from "../routes/cost_ledger.ts";
 
 export function controlMapped(db: Db, repoDir: string): Record<string, (c: Context) => Response> {
   const loki = () => lokiDirOf(repoDir);
+  // State-changing legacy calls need a loopback peer AND a loopback Host, like /v1 (no JSON requirement: legacy callers send none).
+  const ctl = (action: Parameters<typeof runControl>[2]) => (c: Context) => (peerIsLoopback(c) && isLoopbackHost(c.req.header("host"))
+    ? runControl(db, repoDir, action, c, "legacy") : c.json({ error: "loopback only" }, 403));
   return {
-    "POST /api/control/pause": (c) => runControl(db, repoDir, "pause", c, "legacy"),
-    "POST /api/control/resume": (c) => runControl(db, repoDir, "resume", c, "legacy"),
-    "POST /api/control/stop": (c) => runControl(db, repoDir, "stop", c, "legacy"),
-    "POST /api/council/force-review": (c) => runControl(db, repoDir, "council-review", c, "legacy"),
+    "POST /api/control/pause": ctl("pause"),
+    "POST /api/control/resume": ctl("resume"),
+    "POST /api/control/stop": ctl("stop"),
+    "POST /api/council/force-review": ctl("council-review"),
     "GET /api/council/state": (c) => c.json(councilState(loki())),
     "GET /api/council/verdicts": (c) => { const n = intQ(c.req.query("limit"), 1000); return n === null || n === 0 ? c.json({ detail: "limit must be 1..1000" }, 422) : c.json(councilVerdicts(loki(), n)); },
     "GET /api/council/convergence": (c) => c.json(councilConvergence(loki())),

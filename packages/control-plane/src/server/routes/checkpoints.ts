@@ -17,6 +17,7 @@ const isObj = (v: unknown): v is Rec => typeof v === "object" && v !== null && !
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
 const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const MAX_CHECKPOINTS = 50;
+const ROLLBACK_ALLOW = new Set(["session.json", "dashboard-state.json", "CONTINUITY.md", "autonomy-state.json", "state", "queue"]);
 
 export const validCheckpointId = (id: string) => SAFE_ID.test(id);
 const storeOf = (repoDir: string) => join(repoDir, ".loki", "state", "checkpoints");
@@ -104,12 +105,20 @@ export function rollbackCheckpoint(repoDir: string, id: string, now = new Date()
   appendFileSync(join(store, "index.jsonl"), `${JSON.stringify(preMeta)}\n`);
   let restored = 0;
   const errors: string[] = [];
+  // Only the allowlisted names are restored; anything else in the checkpoint (a planted audit/, say) is ignored and reported.
+  const skipped = (src: string) => src === join(real, "state", "checkpoints");
   for (const e of readdirSync(real, { withFileTypes: true })) {
     if (e.name === "metadata.json" || e.name === "worktree-snapshot.txt") continue;
-    const src = join(real, e.name);
+    if (!ROLLBACK_ALLOW.has(e.name)) { errors.push(`${e.name}: not in the rollback allowlist, skipped`); continue; }
+    const src = join(real, e.name), dst = join(loki, e.name);
     try {
       if (lstatSync(src).isSymbolicLink()) { errors.push(`${e.name}: symlink skipped`); continue; }
-      cpSync(src, join(loki, e.name), { recursive: true, filter: (s) => s !== join(real, "state", "checkpoints") });
+      if (existsSync(dst) && lstatSync(dst).isSymbolicLink()) { errors.push(`${e.name}: destination is a symlink, skipped`); continue; }
+      cpSync(src, dst, { recursive: true, filter: (s) => {
+        if (skipped(s)) return false;
+        if (lstatSync(s).isSymbolicLink()) { errors.push(`${s.slice(real.length + 1)}: nested symlink skipped`); return false; }
+        return true;
+      } });
       restored++;
     } catch (err) { errors.push(`${e.name}: ${(err as Error).message}`); }
   }
