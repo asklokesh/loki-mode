@@ -12,6 +12,7 @@ import { fold, readEvents } from "../engine10/events.ts";
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
+import { noteOf } from "./base_guard.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 const REVERTED = "unrelated edit reverted:";
@@ -148,4 +149,14 @@ export async function resumeMain(args: string[], deps: ResumeDeps = {}): Promise
   out(`interrupted run ${it.runId} stopped in phase: ${it.phase} (last seq ${fold(it.events).lastSeq}); ${br ? `work is preserved on branch loki/${it.runId}` : "no run branch was created"}\n`);
   out(`phase ${it.phase} is not auto-resumable (stage state is in memory); start a new run${it.task ? " with the same task" : ""}: loki start\n`);
   return 4;
+}
+/** E-66: a text run confirmed already-done has no issue to comment on (no comment_argv, intake.ts);
+ *  main() prints intake's comment body instead so the no-change decision is not swallowed. */
+export function alreadyDoneTextComment(events: EventEnvelope[]): string | null {
+  const d = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data;
+  return d?.source === "text" && d?.already_satisfied === true && typeof d.comment === "string" ? d.comment : null;
+}
+/** FC-15 (L5/L6): intake's harness-owned "work exists on <branch>, not on <target>" note, null when absent. */
+export function unmergedLokiWorkNote(events: EventEnvelope[]): string | null {
+  return noteOf(events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data);
 }

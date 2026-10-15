@@ -41,7 +41,8 @@ check() {
 }
 
 # Line budgets: same split and limits as budget.test.ts (D29, D33, D42).
-lines() { find "$@" -name '*.ts' -print0 2>/dev/null | xargs -0 cat 2>/dev/null | awk 'END{print NR}'; }
+# Counts like the test's split("\n"): newline count plus one per file.
+lines() { find "$@" -name '*.ts' -print0 2>/dev/null | xargs -0 awk 'FNR==1{f++} END{print NR+f+0}' 2>/dev/null; }
 line_budgets() {
     local e=loki-ts/src/engine10 core mod ext contrib skill rc=0
     mod=$(lines "$e/modernize")

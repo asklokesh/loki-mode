@@ -115,7 +115,7 @@ PY
 then pass "merge keeps existing keys and adds Loki keys"; else fail "merge failed rc=$rc"; fi
 before="$(cat "$S")"
 msg="$(NO_COLOR=1 LOKI_LEGACY_BASH=1 bash "$LOKI" setup-skill --claude-code --settings "$S" --stop-hook 2>&1)"
-{ [ "$before" = "$(cat "$S")" ] && printf '%s' "$msg" | grep -q UNCHANGED; } && pass "second run is idempotent" || fail "not idempotent"
+{ [ "$before" = "$(cat "$S")" ] && grep -q UNCHANGED <<<"$msg"; } && pass "second run is idempotent" || fail "not idempotent"
 printf '{"enabledPlugins":{"loki-mode@loki-mode":false}}\n' > "$S"
 NO_COLOR=1 LOKI_LEGACY_BASH=1 bash "$LOKI" setup-skill --claude-code --settings "$S" >/dev/null 2>&1
 python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))["enabledPlugins"]["loki-mode@loki-mode"] is False' "$S" \
