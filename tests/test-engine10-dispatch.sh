@@ -116,9 +116,11 @@ done
 rm -rf "$T/cwd/.loki"
 
 # Legacy commands and existing paths fall through unchanged.
-for w in estimate intent outcomes; do
+for w in intent outcomes; do
     expect "legacy $w stays legacy" "BASH $w" "$(run_loki "$WITH_BUN" -- "$w")"
 done
+# 11.9.0 ESTIMATE-ONE: `loki estimate` runs the Bun estimate, the same one `loki start` shows.
+expect "estimate routes to bun" "BUN $ENTRY estimate" "$(run_loki "$WITH_BUN" -- estimate)"
 expect "--help -> bash" "BASH --help" "$(run_loki "$WITH_BUN" -- --help)"
 : >"$T/cwd/prd.md"
 expect "existing file prd.md -> bash" "BASH prd.md" "$(run_loki "$WITH_BUN" -- prd.md)"
