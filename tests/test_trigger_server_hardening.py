@@ -246,6 +246,26 @@ class TestChildReaping(unittest.TestCase):
 
         return patch("subprocess.Popen", side_effect=fake_popen)
 
+    def test_child_env_excludes_server_secrets(self):
+        names = ["GITHUB_WEBHOOK_SECRET", "LOKI_API_TOKEN", "LOKI_API_TOKEN_FILE",
+                 "LOKI_SENTRY_WEBHOOK_SECRET", "SENTRY_CLIENT_SECRET"]
+        seen = {}
+        import subprocess as real_subprocess
+        real_popen = real_subprocess.Popen
+
+        def fake_popen(cmd, **kwargs):
+            seen.update(kwargs.get("env") or {"__unscoped__": "1"})
+            return real_popen([sys.executable, "-c", "pass"], **kwargs)
+
+        env = {n: "probe" for n in names}
+        env["LOKI_KEEP_ME"] = "ok"
+        with patch.dict(os.environ, env), patch("subprocess.Popen", side_effect=fake_popen):
+            ts.run_loki_command(["start", "Fix x", "--pr", "--detach"])
+        self.assertNotIn("__unscoped__", seen)
+        for n in names:
+            self.assertNotIn(n, seen)
+        self.assertEqual(seen.get("LOKI_KEEP_ME"), "ok")
+
     def test_success_child_reaped(self):
         with self._stub_loki(exit_code=0):
             ok = ts.run_loki_command(["start", "owner/repo#1", "--detach"])

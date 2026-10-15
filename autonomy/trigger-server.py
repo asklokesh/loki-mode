@@ -404,6 +404,21 @@ OUTCOME_FAILED = JOB_STATUS_FAILED    # launch failed, or exited non-zero
 OUTCOME_UNKNOWN = JOB_STATUS_UNKNOWN  # detached; exit code never observed
 
 
+# Secrets this server holds that a spawned `loki start` must never inherit: a
+# prompt-injected run could otherwise forge /sentry, /webhook or /jobs requests.
+CHILD_ENV_DENYLIST = (
+    "GITHUB_WEBHOOK_SECRET",
+    "LOKI_API_TOKEN",
+    "LOKI_API_TOKEN_FILE",
+    "LOKI_SENTRY_WEBHOOK_SECRET",
+    "SENTRY_CLIENT_SECRET",
+)
+
+
+def _scoped_child_env():
+    return {k: v for k, v in os.environ.items() if k not in CHILD_ENV_DENYLIST}
+
+
 def run_loki_outcome(args, dry_run=False):
     """Run a loki command and report WHICH of the three outcomes occurred.
 
@@ -420,6 +435,7 @@ def run_loki_outcome(args, dry_run=False):
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=_scoped_child_env(),
         )
     except (FileNotFoundError, OSError) as e:
         logging.error("Failed to launch %s: %s", " ".join(cmd), e)
