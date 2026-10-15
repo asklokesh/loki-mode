@@ -123,9 +123,15 @@ _loki_completion() {
             fi
             ;;
 
+        setup-skill)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--claude-code --print --project --stop-hook --settings --help" -- "$cur") )
+                return 0
+            fi
+            ;;
         doctor)
             if [[ "$cur" == -* ]]; then
-                COMPREPLY=( $(compgen -W "--json --fix --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--json --fix --repo --requirements --help" -- "$cur") )
                 return 0
             fi
             ;;
