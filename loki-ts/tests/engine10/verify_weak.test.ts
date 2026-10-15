@@ -119,6 +119,11 @@ describe("engine10 verify: weakened checks (A-115)", () => {
     writeFileSync(join(dir, "package.json"), pkg("true", ""));
     expect(testConfigChanged(dir, base, ["package.json", "jest.config.js", "src/a.ts"])).toEqual(["package.json", "jest.config.js"]);
   });
+  test("FC-09s: a package.json pretest edit caps the verdict with a configuration note", async () => {
+    const pj = (pre: string): string => JSON.stringify({ name: "x", scripts: { test: "pytest", pretest: pre } });
+    const d = await verify({ ...TWO, "package.json": pj("echo a") }, { "impl.py": "def double(x):\n    return x * 2\n", "package.json": pj("echo b") }, TASK, py("test_target.py"), py("test_old.py"));
+    expect(d.not_proven).toContain("test configuration changed: package.json");
+  }, 60_000);
   // D50-F2-S2: humanize-174 shape. A literal swap in a parametrize row of a test calling the named symbol is worded as a spec change; never a verdict change.
   const HBASE = 'import pytest\nfrom impl import naturaldelta\n\n\n@pytest.mark.parametrize("s, e", [\n    (59, "59 seconds"),\n    (119, "a minute"),\n])\ndef test_nd(s, e):\n    assert naturaldelta(s) == e\n\n\ndef test_ok():\n    assert True\n';
   const HIMPL = (r: string): Record<string, string> => ({ "impl.py": `def naturaldelta(s):\n    return "59 seconds" if s < 60 else "${r}"\n` });

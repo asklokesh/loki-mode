@@ -144,3 +144,28 @@ describe("FC-09r dependency swaps, tsconfig extends, section headers, subdir bas
     expect(testConfigChanged(r.dir, r.base, ["pyproject.toml"])).toEqual(["pyproject.toml"]);
   });
 });
+
+describe("FC-09s runner_config sibling sweep", () => {
+  const CARGO = '[package]\nname = "x"\n\n[dependencies]\nserde = "1"\n\n[dev-dependencies]\ntokio = "1"\n\n[[test]]\nname = "it"\n';
+  const capsOn = (f: string, base: string, head: string): string[] => { const r = repo({ [f]: base }); r.edit(f, head); return testConfigChanged(r.dir, r.base, [f]); };
+  test("Cargo top-level dotted patch and replace keys before [package] cap", () => {
+    expect(capsOn("Cargo.toml", CARGO, 'patch.crates-io.serde = { path = "fake" }\n' + CARGO)).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", CARGO, 'replace."serde:1.0.0" = { path = "fake" }\n' + CARGO)).toEqual(["Cargo.toml"]);
+  });
+  test("Cargo [[test]] harness=false and dev-dependencies path= cap; a plain version bump does not", () => {
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('name = "it"', 'name = "it"\nharness = false'))).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('tokio = "1"', 'tokio = { path = "../fake" }'))).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace("[dependencies]", '[dev-dependencies.mock]\npath = "../m"\n\n[dependencies]'))).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = "2"').replace('tokio = "1"', 'tokio = "2"'))).toEqual([]);
+  });
+  test("go.work replace directive caps; a comment edit does not", () => {
+    const W = "go 1.21\n\nuse ./a\n";
+    expect(capsOn("go.work", W, W + "replace example.com/x => ../fake\n")).toEqual(["go.work"]);
+    expect(capsOn("go.work", W, W + "// note\n")).toEqual([]);
+  });
+  test.each([["babel.config.js"], ["babel.config.json"], [".babelrc"], [".babelrc.json"], [".pnpmfile.cjs"], ["sub/.pnpmfile.cjs"]])("%s edit caps", (f) => {
+    const r = repo({ [f]: "a\n" });
+    r.edit(f, "b\n");
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([f]);
+  });
+});
