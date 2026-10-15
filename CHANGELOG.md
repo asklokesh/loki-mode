@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.11.0 (2026-10-15)
+
+Four new operator commands and options. `loki start` with Claude remains the primary path.
+
+### Added
+- `loki intent show <run>` prints a past run's intent card (the header and Acceptance lines recorded by the plan stage), followed by "answered: y" or "answered: n" when the run has an intent answer. A run whose plan produced no card prints the "Intent: NOT STATED by plan" line, and an unknown run id exits 1 with "no such run". It is read-only and listed in help and completions.
+- `loki quickstart --explain-match` (with `--dry-run`) prints the top three template scores for the brief and a match confidence label (high, medium or low). When the best score is below 2 it adds "no strong match, using a plain spec". Without the flag the output is unchanged; the flag is refused with exit 2 without `--dry-run` and cannot be combined with `--json`.
+- `loki memory learn --recent N` (1 to 20, optional `--repo owner/repo`) learns from the newest N merged pull requests in one command and prints one summary line per PR plus a total. An already-learned PR is reported as duplicates without adding anything; N outside 1 to 20 exits 2, and a missing gh exits 1 with the install hint. The single-PR path is unchanged.
+
+### Changed
+- The PR reviewer brief has a "Tests that import the changed files" section naming up to three repo tests per changed file, with a "+N more" suffix. A file no test imports reads "no test imports this file", and when no test runner or test files are detected the section says "not measured". It runs no tests and no provider, and is skipped with the rest of the brief under LOKI_REVIEWER_BRIEF=0.
+
 ## v11.10.1 (2026-10-15)
 
 Fix-forward release. v11.10.0 was cut but failed CI and was never published to npm. v11.10.1 carries every v11.10.0 change listed below, plus this fix.

@@ -16,15 +16,15 @@ echo "T1 -- strong match prints 3 scored rows and a label"
 out="$(run_qs 'a URL shortener with click stats' --dry-run --explain-match)"
 rows="$(printf '%s\n' "$out" | grep -cE '^  [0-9]+\. .+ score [0-9]+$')"
 [ "$rows" = "3" ] && ok "3 scored rows" || bad "expected 3 scored rows, got $rows"
-printf '%s\n' "$out" | grep -q 'Match confidence: ' && ok "confidence label" || bad "no confidence label"
+grep -q 'Match confidence: ' <<<"$out" && ok "confidence label" || bad "no confidence label"
 
 echo "T2 -- strength-0 brief says no strong match"
 out="$(run_qs 'zzqx plumbing quux' --dry-run --explain-match)"
-printf '%s\n' "$out" | grep -q 'no strong match, using a plain spec' && ok "no strong match line" || bad "missing no-strong-match line"
+grep -q 'no strong match, using a plain spec' <<<"$out" && ok "no strong match line" || bad "missing no-strong-match line"
 
 echo "T3 -- flag off output is unchanged"
 out="$(run_qs 'a URL shortener with click stats' --dry-run)"
-if printf '%s\n' "$out" | grep -qE 'Match confidence|score [0-9]+$'; then bad "explain output leaked without flag"; else ok "no explain output without flag"; fi
+if grep -qE 'Match confidence|score [0-9]+$' <<<"$out"; then bad "explain output leaked without flag"; else ok "no explain output without flag"; fi
 
 echo "T4 -- flag requires --dry-run and refuses --json"
 run_qs 'a todo app' --explain-match >/dev/null; rc=$?
@@ -35,7 +35,7 @@ run_qs 'a todo app' --dry-run --json --explain-match >/dev/null; rc=$?
 echo "T5 -- bash 3.2"
 if [ -x /bin/bash ]; then
     out="$(timeout -k 5 60 /bin/bash -c 'source "$1"; shift; cmd_quickstart "$@"' _ "$QS" 'a URL shortener with click stats' --dry-run --explain-match 2>&1 </dev/null)"
-    if printf '%s\n' "$out" | grep -q 'Match confidence: '; then ok "works under /bin/bash"; else bad "fails under /bin/bash"; fi
+    if grep -q 'Match confidence: ' <<<"$out"; then ok "works under /bin/bash"; else bad "fails under /bin/bash"; fi
 fi
 
 echo "Results: $PASS passed, $FAIL failed, $((PASS+FAIL)) total"

@@ -2371,3 +2371,10 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - v11.10.0 (58344ed27): Tests run 38816323342 and Release failed: bun route_matrix_mutation B3 and B6 (anchor "let session = await ctx.sessions.run(first);" no longer exists after S41-13, so the mutations were not applied). Not published; npm next stays 11.9.1.
 - Fix: anchor updated to the S41-13 line in loki-ts/tests/engine10/route_matrix_mutation.test.ts (33 pass 0 fail); bun test tests/engine10 2037 pass 0 fail 1 skip.
 - M-15 round 4 (1c9a5e56a) Opus BLOCK: case-insensitive Conftest.py and symlinks under SKIP_DIRS; round 5 (class fixes) in flight.
+
+## 2026-10-15 23:35Z v11.10.1 green, v11.11.0 train
+- v11.10.1 (9d952ff56): Release and Tests success; npm next=11.10.1, GitHub release body set.
+- M-15 round 5 (f6b9bdd7d) and round 6 (c85b1a443) Opus BLOCK. Round 6 reproduced B1 (atexit rewrites the junit via the --junitxml path in sys.argv) and B2 (wrapping TestReport.from_item_and_call), both FC-24. CTO call: option (a), accept FC-24, delete the false "not forgeable" and "unreachable" claims, mark PROVEN conformance runner_reported, keep B1/B2 as documenting fixtures; modernize budget only, core is 4998/5000. Round 7 in flight.
+- R15 refill: six rows cut from BACKLOG-D91; three cards repointed at owning modules (run_status.ts, pr_lessons.ts, reviewer_brief.ts) per extend-never-duplicate.
+- v11.11.0 train: R15-F1 8e7e3c381, R15-F2 8df4a556d, R15-E1 c649c2ac1, R15-E2 b816a26e3, each sonnet Tech Lead APPROVE; dist conflicts resolved by rebuild.
+- R15-B1 rejected: stale premise (setDefaultTimeout(130_000) already present). R15-B2 rejected: issue 213 failures under load are wall-clock bound assertions, not the pid-file spin; trial fix still 43/3.
