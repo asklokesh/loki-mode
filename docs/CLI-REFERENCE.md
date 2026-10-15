@@ -12,6 +12,8 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki provider show` | Show current provider |
 | `loki provider list` | List providers and install status |
 | `loki provider set` | Switch the active provider |
+| `loki provider info` | Provider details; --json prints the capability contract |
+| `loki provider matrix` | Capability matrix per provider and engine |
 | `loki memory` | Cross-project learnings |
 | `loki memory list` | All learnings |
 | `loki memory index` | Show or rebuild the memory index |
