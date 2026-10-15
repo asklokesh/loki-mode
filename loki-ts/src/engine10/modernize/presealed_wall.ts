@@ -63,6 +63,8 @@ const RUNNER_FAILURE_EXIT: Record<ConformanceRunnerName, number> = {
 
 /** One conformance run's raw result, as an injected runner reports it -- never wall-clock or
  *  process plumbing this module parses itself. */
+export interface PytestCounts { passed: number; failed: number; errors: number; skipped: number; other: number }
+
 export interface BaseRunOutcome {
   runner: ConformanceRunnerName;
   exitCode: number | null;
@@ -71,6 +73,9 @@ export interface BaseRunOutcome {
    *  a finite integer >= 1 (undefined, NaN, Infinity, a fraction, 0, negative) is not proof of a
    *  real failure -- D42 (3) / r1's B1: that is not_run, never red. */
   failedCount?: number;
+  /** pytest only: counts from a parsed footer cross-checked against the junit report. Absent when
+   *  either is missing or they disagree (e.g. os._exit(0) before the session finished). */
+  counts?: PytestCounts;
   /** pytest exit-2 only: the raw stdout+stderr. classifyBaseRun derives red/not_run from it and
    *  repoDir itself; nothing else about a collection error is trusted from the caller. */
   output?: string;

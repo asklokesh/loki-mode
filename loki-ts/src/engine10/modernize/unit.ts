@@ -28,14 +28,14 @@
 //     unchanged on the new tree before the post-implement conformance run is trusted.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
 import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
 import { sealOracle, verifySeal } from "./oracle/seal.ts";
-import type { BaseConformanceRunner, BaseRunOutcome, PreSealedWallResult } from "./presealed_wall.ts";
+import type { BaseConformanceRunner, BaseRunOutcome, PreSealedWallResult, PytestCounts } from "./presealed_wall.ts";
 import { classifyBaseRun, sealPreSealedWall, verifyPreSealedWall } from "./presealed_wall.ts";
 import type { EquivResult, NewCaseRunner } from "./equiv.ts";
 import { checkEquivalence } from "./equiv.ts";
@@ -66,6 +66,47 @@ function parseFailedCount(stdout: string): number | undefined {
   return undefined; // no footer found at all: truncated output, never guessed at
 }
 
+/** Every count clause of the LAST pytest footer, or undefined when there is no footer. "other" is
+ *  xfailed + xpassed (collected, neither plainly passed nor failed). deselected/warnings are not tests run. */
+export function parseFooterCounts(stdout: string): PytestCounts | undefined {
+  const lines = stdout.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = SUMMARY_RE.exec((lines[i] ?? "").trim());
+    if (!m) continue;
+    const c: PytestCounts = { passed: 0, failed: 0, errors: 0, skipped: 0, other: 0 };
+    for (const [, n, word] of (m[1] ?? "").matchAll(/(\d+)\s+(passed|failed|errors?|skipped|xfailed|xpassed|deselected|warnings?|rerun)\b/g)) {
+      const k = Number(n);
+      if (word === "passed") c.passed += k;
+      else if (word === "failed") c.failed += k;
+      else if (word!.startsWith("error")) c.errors += k;
+      else if (word === "skipped") c.skipped += k;
+      else if (word === "xfailed" || word === "xpassed") c.other += k;
+    }
+    return c;
+  }
+  return undefined;
+}
+
+/** Totals from pytest's junit report (written only when the session finishes). */
+function parseJunit(xml: string): { tests: number; failures: number; errors: number } | undefined {
+  const m = /<testsuite\b[^>]*>/.exec(xml);
+  if (!m) return undefined;
+  const attr = (a: string): number | undefined => { const r = new RegExp(`\\b${a}="(\\d+)"`).exec(m[0]); return r ? Number(r[1]) : undefined; };
+  const tests = attr("tests"), failures = attr("failures"), errors = attr("errors");
+  return tests === undefined || failures === undefined || errors === undefined ? undefined : { tests, failures, errors };
+}
+
+/** Footer counts, trusted only when the junit report (never written by a process that dies early, and
+ *  not forgeable by printing a footer) agrees with them. */
+function trustedCounts(stdout: string, junitXml: string | undefined): PytestCounts | undefined {
+  const c = parseFooterCounts(stdout);
+  const j = junitXml === undefined ? undefined : parseJunit(junitXml);
+  if (!c || !j) return undefined;
+  if (j.tests !== c.passed + c.failed + c.errors + c.skipped + c.other) return undefined;
+  if (j.failures + j.errors !== c.failed + c.errors) return undefined;
+  return c;
+}
+
 /** Parses one pytest run's raw stdout into presealed_wall.ts's BaseRunOutcome. Pure and
  *  hermetic -- the actual `spawnSync` call lives in makePytestBaseRunner below, so this is
  *  directly testable against captured real pytest output (unit.test.ts). Fails closed by
@@ -77,9 +118,12 @@ export function parsePytestOutput(
   stdout: string,
   exitCode: number | null,
   timedOut: boolean,
+  junitXml?: string,
 ): BaseRunOutcome {
   const outcome: BaseRunOutcome = { runner: "pytest", exitCode, timedOut };
   if (timedOut || exitCode === null) return outcome;
+  const counts = trustedCounts(stdout, junitXml);
+  if (counts) outcome.counts = counts;
   // exit 2: hand the raw output to classifyBaseRun, which reuses the Wall's own red/not_run rule.
   if (exitCode === 2) return { ...outcome, output: stdout };
   if (exitCode === 1) {
@@ -100,19 +144,44 @@ export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000)
     // Bytecode must never answer for source: no in-tree .pyc is read (fresh empty PYTHONPYCACHEPREFIX)
     // or written (PYTHONDONTWRITEBYTECODE), and pytest's own cache plugin is off.
     const pycPrefix = mkdtempSync(join(tmpdir(), "loki-pyc-"));
+    const junit = join(pycPrefix, "junit.xml");
     let res;
+    let junitXml: string | undefined;
     try {
-      res = spawnSync(pythonBin, ["-m", "pytest", "-p", "no:cacheprovider"], {
+      let root = repoDir;
+      try { root = realpathSync(repoDir); } catch { /* spawn will report it */ }
+      // Pin rootdir/confcutdir to the tree and the ini to the tree's own (sealed) config, so no parent-dir
+      // ini or conftest.py is ever loaded; none in the tree means an empty config.
+      res = spawnSync(pythonBin, ["-m", "pytest", "-p", "no:cacheprovider", "--rootdir", root, "--confcutdir", root,
+        "-c", pytestConfigFor(root), `--junitxml=${junit}`], {
         cwd: repoDir, encoding: "utf8", timeout: timeoutMs,
         env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1", PYTHONPYCACHEPREFIX: pycPrefix },
       });
+      try { junitXml = readFileSync(junit, "utf8"); } catch { junitXml = undefined; }
     } finally { rmSync(pycPrefix, { recursive: true, force: true }); }
     const timedOut = res.signal === "SIGTERM" && res.status === null;
     // pytest's own report (the footer, the collection-error traceback) goes to stdout; stderr is
     // never appended ahead of it -- an unrelated stderr line (a warning, a plugin's own output)
     // must never shadow or precede the real footer this file's parser searches for.
-    return parsePytestOutput(repoDir, `${res.stdout ?? ""}\n${res.stderr ?? ""}`, res.status, timedOut);
+    return parsePytestOutput(repoDir, `${res.stdout ?? ""}\n${res.stderr ?? ""}`, res.status, timedOut, junitXml);
   };
+}
+
+/** The ini pytest itself would pick inside `root` (its documented order and section markers), or
+ *  /dev/null: passed with -c so ancestors above the tree are never searched. */
+function pytestConfigFor(root: string): string {
+  const has = (f: string, marker?: RegExp): boolean => {
+    const p = join(root, f);
+    if (!existsSync(p)) return false;
+    if (!marker) return true;
+    try { return marker.test(readFileSync(p, "utf8")); } catch { return false; }
+  };
+  if (has("pytest.ini")) return join(root, "pytest.ini");
+  if (has(".pytest.ini")) return join(root, ".pytest.ini");
+  if (has("pyproject.toml", /^\s*\[tool\.pytest|^\s*(tool\.)?pytest\./m)) return join(root, "pyproject.toml");
+  if (has("tox.ini", /^\s*\[pytest\]/m)) return join(root, "tox.ini");
+  if (has("setup.cfg", /^\s*\[tool:pytest\]/m)) return join(root, "setup.cfg");
+  return "/dev/null";
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -120,9 +189,14 @@ export function makePytestBaseRunner(pythonBin = "python3", timeoutMs = 300_000)
 // ---------------------------------------------------------------------------------------------
 const CONF_EVENT = "unit.conformance_sealed";
 const SKIP_DIRS = new Set([".git", ".loki", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache", ".tox"]);
-const TEST_FILE = /(^|\/)(test_[^/]*|[^/]*_test)\.py$/;
+const skipName = (n: string): boolean => SKIP_DIRS.has(n.toLowerCase());
+// Case-insensitive: pytest on a case-insensitive filesystem (macOS APFS) loads pkg/Conftest.py as a conftest.
+const TEST_FILE = /(^|\/)(test_[^/]*|[^/]*_test)\.py$/i;
 // Anything that can change what `python -m pytest` runs or reports; a NEW one is refused, not just a changed one.
-const PYTEST_CFG = /(^|\/)(conftest\.py|\.?pytest\.(ini|toml)|pytest\.py|pyproject\.toml|setup\.cfg|tox\.ini|sitecustomize\.py|usercustomize\.py)$|\.pth$|(^|\/)pytest\//;
+const PYTEST_CFG = /(^|\/)(conftest\.py|\.?pytest\.(ini|toml)|pytest\.py|pyproject\.toml|setup\.cfg|tox\.ini|sitecustomize\.py|usercustomize\.py)$|\.pth$|(^|\/)pytest\//i;
+
+/** True for a path whose NAME can steer what pytest loads or reports (case-insensitively). */
+export function isSealedName(rel: string): boolean { return TEST_FILE.test(rel) || PYTEST_CFG.test(rel); }
 
 /** Deletes every __pycache__ under dir (skipping SKIP_DIRS, never following a symlink), so stale or
  *  planted bytecode cannot stand in for a hashed .py. */
@@ -134,16 +208,18 @@ export function purgePycache(dir: string): void {
       if (!e.isDirectory()) continue; // a symlink is not a directory entry here
       const full = join(d, e.name);
       if (e.name === "__pycache__") rmSync(full, { recursive: true, force: true });
-      else if (!SKIP_DIRS.has(e.name)) walk(full);
+      else if (!skipName(e.name)) walk(full);
     }
   };
   walk(dir);
 }
 
 const LINK = "symlink:";
-// Skipped dirs still contribute files whose NAME can steer pytest or the interpreter (a conftest.py in
-// node_modules/venv/.tox): they are hashed, so a sealed-name file added there is drift. VCS and run state are fully skipped.
+// Only VCS and run state are fully skipped. Everything else, SKIP_DIRS included, is recorded (a norecursedirs
+// override or a link makes pytest walk node_modules/venv/.tox): sealed names by content, links by target, other
+// entries by name and type. __pycache__ and .pytest_cache hold only purged/disabled caches and are not recorded.
 const FULL_SKIP = new Set([".git", ".loki"]);
+const CACHE_DIRS = new Set(["__pycache__", ".pytest_cache"]);
 
 /** Digest of what a link points at, for links resolving outside `dir` (inside, the target is hashed under its own path).
  *  Files hash their bytes; directories hash names plus file bytes (nested links by target string); capped, fail closed. */
@@ -173,9 +249,9 @@ function outsideTargetDigest(dir: string, full: string): string {
 }
 
 /** sha256 of EVERY regular file under dir (bytes, so fixtures, snapshots and golden data are bound),
- *  keyed by relative path; pyproject.toml, setup.cfg and tox.ini are hashed in full. SKIP_DIRS (venvs,
- *  caches, node_modules) contribute only files whose name is sealed (test files, conftest.py, pytest
- *  config, *.pth, sitecustomize.py). A symlink is never followed: it is recorded as
+ *  keyed by relative path; pyproject.toml, setup.cfg and tox.ini are hashed in full. Under SKIP_DIRS (venvs,
+ *  node_modules) sealed names (test files, conftest.py, pytest config, *.pth, sitecustomize.py) are hashed
+ *  and every other entry is recorded by name and type ("entry:file" / "entry:dir"). A symlink is never followed: it is recorded as
  *  "symlink:<target>|<digest>" where the digest covers the target bytes when the link resolves outside dir. */
 export function conformanceHashes(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -184,14 +260,19 @@ export function conformanceHashes(dir: string): Record<string, string> {
     let ents;
     try { ents = readdirSync(join(dir, sub), { withFileTypes: true }); } catch { return; }
     for (const e of ents) {
-      if (FULL_SKIP.has(e.name)) continue;
+      if (FULL_SKIP.has(e.name.toLowerCase())) continue;
       const rel = sub ? `${sub}/${e.name}` : e.name;
-      const skipped = inSkip || SKIP_DIRS.has(e.name);
+      const cache = CACHE_DIRS.has(e.name.toLowerCase());
+      if (e.isSymbolicLink()) { rels.push(rel); continue; } // a link is recorded, never descended
+      if (cache) continue;
+      const skipped = inSkip || skipName(e.name);
       if (e.isDirectory()) {
-        if (!skipped) rels.push(rel);
-        walk(rel, skipped); // a symlinked dir is recorded as a link, never descended
-      } else if (!skipped || TEST_FILE.test(rel) || PYTEST_CFG.test(rel)) {
+        if (skipped) out[rel] = "entry:dir";
+        walk(rel, skipped);
+      } else if (!skipped || isSealedName(rel)) {
         rels.push(rel);
+      } else {
+        out[rel] = "entry:file";
       }
     }
   };
@@ -235,7 +316,7 @@ function conformanceDrift(base: Record<string, string>, now: Record<string, stri
   // and collects conftest.py inside) are immutable. Otherwise a listed path may change; an unlisted one
   // may not when a file list exists, and without one non-.py data is immutable.
   const immutable = (p: string, linked: boolean): boolean =>
-    sealed(p) || linked || (!listed(p) && (!!files || !p.endsWith(".py")));
+    sealed(p) || linked || (!listed(p) && (!!files || !p.toLowerCase().endsWith(".py")));
   for (const [p, h] of Object.entries(base)) {
     if (now[p] === h) continue;
     if (immutable(p, link(h) || link(now[p]))) return `${p} ${p in now ? "changed" : "removed"}`;
@@ -247,6 +328,18 @@ function conformanceDrift(base: Record<string, string>, now: Record<string, stri
   const bad = importableOutsideRepo(target, tops);
   const hit = added.find((p) => bad.has(p.split("/")[0]!.replace(/\.py$/, "")));
   return hit ? `${hit} added (shadows a module importable outside the repo)` : null;
+}
+
+/** Why `now` (the post-implement run) is not a full pass relative to `base`, or null. Fails closed. */
+export function conformanceShortfall(base: PytestCounts | undefined, now: PytestCounts | undefined): string | null {
+  if (!base) return "no base test counts were recorded at seal time";
+  if (!now) return "no verified pytest footer (the run did not finish or its report disagrees)";
+  if (now.failed > 0 || now.errors > 0) return `${now.failed} failed, ${now.errors} errors`;
+  // Every base test that was not skipped there must pass now (skips may stay skips, never grow).
+  const mustPass = base.passed + base.failed + base.errors + base.other;
+  if (now.passed < mustPass) return `${now.passed} passed, base collected ${mustPass} runnable`;
+  if (now.skipped > base.skipped) return `${now.skipped} skipped, base had ${base.skipped}`;
+  return null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -346,8 +439,13 @@ export function runUnit(
   // Pre-sealed Wall: runs the conformance check on the base (unmodernized) tree, still before
   // `implement` -- a green or not_run base refuses the seal outright (section 7, D42 (3)).
   let freshSeal = false;
+  let baseCounts: PytestCounts | undefined;
   try {
-    const attempt = sealPreSealedWall(repoDir, mid, unit, card.target, runConformance, log, card.baseSha ?? null);
+    const attempt = sealPreSealedWall(repoDir, mid, unit, card.target, (u, d) => {
+      const o = runConformance(u, d);
+      baseCounts = o.counts;
+      return o;
+    }, log, card.baseSha ?? null);
     if (!attempt.sealed) {
       return notProvenUnitResult(unit, attempt.reason ?? "presealed wall not sealed", oracle, attempt);
     }
@@ -385,7 +483,9 @@ export function runUnit(
   if (!sealedHashes) {
     if (!freshSeal) return notProvenUnitResult(unit, "conformance files not bound to the seal (no record from seal time)", oracle, wall);
     sealedHashes = conformanceHashes(repoDir);
-    log.append(CONF_EVENT, { unit, files: sealedHashes });
+    log.append(CONF_EVENT, { unit, files: sealedHashes, counts: baseCounts ?? null });
+  } else {
+    baseCounts = (bound?.data.counts as PytestCounts | null | undefined) ?? undefined;
   }
 
   // Only now: the actual code change.
@@ -425,6 +525,10 @@ export function runUnit(
       wall,
     );
   }
+  // A bare exit 0 is not proof (os._exit(0), an all-skipped run): the run must show a real pytest footer
+  // (confirmed by the junit report) with nothing failed, at least as many passes as the base collected, no new skips.
+  const shortfall = conformanceShortfall(baseCounts, newOutcome.counts);
+  if (shortfall) return notProvenUnitResult(unit, `target conformance run is not a full pass: ${shortfall}`, oracle, wall);
 
   return { unit, verdict: "PROVEN", oracle, wall, equiv, not_proven: [] };
 }

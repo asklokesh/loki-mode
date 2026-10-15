@@ -20,7 +20,7 @@ import { DEFAULT_NORMALIZERS, sealOracle } from "../../../src/engine10/modernize
 import { classifyBaseRun, sealPreSealedWall } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { CaseRecord, NewCaseOutcome } from "../../../src/engine10/modernize/equiv.ts";
-import { conformanceHashes, makePytestBaseRunner, parsePytestOutput, purgePycache, runUnit } from "../../../src/engine10/modernize/unit.ts";
+import { conformanceHashes, conformanceShortfall, isSealedName, makePytestBaseRunner, parsePytestOutput, purgePycache, runUnit } from "../../../src/engine10/modernize/unit.ts";
 import type { UnitCard } from "../../../src/engine10/modernize/unit.ts";
 import type { ModernizeLog as Log } from "../../../src/engine10/modernize/log.ts";
 
@@ -65,8 +65,8 @@ function baseCard(unit: string): UnitCard {
   return { unit, repoDir, mid, target: "python3", normalizers: DEFAULT_NORMALIZERS };
 }
 
-const redBase: BaseRunOutcome = { runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1 };
-const greenBase: BaseRunOutcome = { runner: "pytest", exitCode: 0, timedOut: false };
+const redBase: BaseRunOutcome = { runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1, counts: { passed: 0, failed: 1, errors: 0, skipped: 0, other: 0 } };
+const greenBase: BaseRunOutcome = { runner: "pytest", exitCode: 0, timedOut: false, counts: { passed: 1, failed: 0, errors: 0, skipped: 0, other: 0 } };
 const passingNewCase = (): NewCaseOutcome => ({
   return: { t: "int", v: "2" }, exc: null, stdout: { t: "text", v: "" }, files: [],
 });
@@ -715,4 +715,118 @@ describe("finding 2: conformance files are bound to the sealed Wall, real pytest
     expect(existsSync(join(repoDir, "__pycache__"))).toBe(false);
     expect(survived).toBe(true);
   });
+  // ---- r5: same class (a file pytest loads that the seal does not bind), fixed as classes ----
+  it("r5 NB1 matcher: sealed names match case-insensitively", () => {
+    for (const p of ["Conftest.py", "pkg/CONFTEST.PY", "pkg/Test_X.py", "a/X_TEST.py", "Pytest.INI", "PyProject.toml", "a/Tox.ini", "x.PTH", "SiteCustomize.py", "a/Pytest/x.py"]) {
+      expect(isSealedName(p)).toBe(true);
+    }
+    expect(isSealedName("pkg/helper.py")).toBe(false);
+  });
+  for (const withFiles of [false, true]) {
+    const tag = withFiles ? "with card.files" : "without card.files";
+    const card = (unit: string): UnitCard => (withFiles ? { ...baseCard(unit), files: ["u.py", "pkg/"] } : baseCard(unit));
+    it(`r5 NB1: a Conftest.py case variant added under a package is refused, ${tag}`, () => {
+      const unit = `conf_r5_case_${withFiles}`;
+      setup(unit);
+      mkdirSync(join(repoDir, "pkg"));
+      writeFileSync(join(repoDir, "pkg", "real.py"), "A = 1\n");
+      const add = () => { modernize(); writeFileSync(join(repoDir, "pkg", "Conftest.py"), SKIP_ALL); };
+      const result = runUnitAb(card(unit), log, real(), add, () => passingNewCase());
+      expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.not_proven[0]).toMatch(/pkg\/Conftest\.py added/);
+    });
+    it(`r5 NB2: a node_modules symlink to an outside conftest.py dir under a norecursedirs override is refused, ${tag}`, () => {
+      const unit = `conf_r5_nm_${withFiles}`;
+      setup(unit);
+      writeFileSync(join(repoDir, "pytest.ini"), "[pytest]\nnorecursedirs = .git .loki\n");
+      mkdirSync(join(repoDir, "node_modules"));
+      const target = outside("conftest.py", SKIP_ALL);
+      const link = () => { modernize(); symlinkSync(join(target, ".."), join(repoDir, "node_modules", "x")); };
+      const result = runUnitAb(card(unit), log, real(), link, () => passingNewCase());
+      rmSync(join(target, ".."), { recursive: true, force: true });
+      expect(result.verdict).toBe("NOT_PROVEN");
+      expect(result.not_proven[0]).toMatch(/node_modules\/x added/);
+    });
+  }
+  it("r5 NB2: any new entry under a skip dir is drift, and a pre-existing one is stable", () => {
+    const unit = "conf_r5_skipentry";
+    setup(unit);
+    mkdirSync(join(repoDir, "node_modules", "pkg"), { recursive: true });
+    writeFileSync(join(repoDir, "node_modules", "pkg", "index.js"), "1\n");
+    const h = conformanceHashes(repoDir);
+    expect(h["node_modules/pkg"]).toBe("entry:dir");
+    expect(h["node_modules/pkg/index.js"]).toBe("entry:file");
+    expect(conformanceHashes(repoDir)).toEqual(h);
+    const add = () => { modernize(); writeFileSync(join(repoDir, "node_modules", "pkg", "new.txt"), "x\n"); };
+    const result = runUnitAb({ ...baseCard(unit), files: ["u.py"] }, log, real(), add, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/node_modules\/pkg\/new\.txt added/);
+  });
+
+  it("r5 A1: u.py that calls os._exit(0) (exit 0, no footer) is never PROVEN", () => {
+    const unit = "conf_r5_osexit";
+    setup(unit);
+    const exit0 = () => writeFileSync(join(repoDir, "u.py"), "import os\nos._exit(0)\n");
+    const result = runUnitAb(baseCard(unit), log, real(), exit0, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/not a full pass/);
+  });
+  it("r5 A1: a forged footer printed before os._exit(0) is never PROVEN", () => {
+    const unit = "conf_r5_forged";
+    setup(unit);
+    const forge = () => writeFileSync(join(repoDir, "u.py"),
+      "import os, sys\nsys.stdout.write('\\n=== 1 passed in 0.01s ===\\n'); sys.stdout.flush()\nos._exit(0)\n");
+    const result = runUnitAb(baseCard(unit), log, real(), forge, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/not a full pass/);
+  });
+  it("r5 A1: an all-skipped post-implement run (exit 0) is never PROVEN", () => {
+    const unit = "conf_r5_allskip";
+    setup(unit);
+    const skipAll = () => writeFileSync(join(repoDir, "u.py"), "import pytest\npytest.skip('nope', allow_module_level=True)\n");
+    const result = runUnitAb(baseCard(unit), log, real(), skipAll, () => passingNewCase());
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven[0]).toMatch(/not a full pass|classified not_run/);
+  });
+  it("r5 A1: conformanceShortfall rules", () => {
+    const c = (passed: number, failed = 0, errors = 0, skipped = 0, other = 0) => ({ passed, failed, errors, skipped, other });
+    expect(conformanceShortfall(undefined, c(3))).toMatch(/no base/);
+    expect(conformanceShortfall(c(2, 1), undefined)).toMatch(/no verified/);
+    expect(conformanceShortfall(c(2, 1), c(2, 1))).toMatch(/1 failed/);
+    expect(conformanceShortfall(c(2, 0, 1), c(2, 0, 1))).toMatch(/errors/);
+    expect(conformanceShortfall(c(2, 1), c(2))).toMatch(/base collected 3 runnable/);
+    expect(conformanceShortfall(c(2, 1), c(3, 0, 0, 1))).toMatch(/skipped/);
+    expect(conformanceShortfall(c(2, 1), c(3))).toBeNull();
+    expect(conformanceShortfall(c(1, 0, 0, 1), c(1, 0, 0, 1))).toBeNull();
+  });
+
+  // A2: the conformance run never loads an ini or conftest.py from above the tree.
+  it("r5 A2: a parent-dir skip-all conftest.py and addopts ini are not loaded by the runner", () => {
+    const parent = mkdtempSync(join(tmpdir(), "loki-parent-"));
+    try {
+      writeFileSync(join(parent, "conftest.py"), SKIP_ALL);
+      writeFileSync(join(parent, "pytest.ini"), "[pytest]\naddopts = --collect-only\n");
+      repoDir = join(parent, "repo");
+      mkdirSync(repoDir);
+      log = new ModernizeLog(repoDir, mid);
+      const unit = "conf_r5_parent";
+      setup(unit);
+      const out = real()(unit, repoDir);
+      expect(out.exitCode).toBe(1);
+      expect(out.counts?.failed).toBe(1);
+      const result = runUnitAb(baseCard(unit), log, real(), modernize, () => passingNewCase());
+      expect(result.not_proven).toEqual([]);
+      expect(result.verdict).toBe("PROVEN");
+    } finally { rmSync(parent, { recursive: true, force: true }); }
+  });
+
+  it("r5 A1: footer counts are trusted only when the junit report exists and agrees", () => {
+    const out = "...\n=== 1 passed in 0.01s ===\n";
+    const xml = (tests: number, failures = 0, errors = 0) => `<?xml version="1.0"?><testsuites><testsuite name="pytest" errors="${errors}" failures="${failures}" skipped="0" tests="${tests}"></testsuite></testsuites>`;
+    expect(parsePytestOutput("/r", out, 0, false).counts).toBeUndefined(); // forged footer, process died: no junit
+    expect(parsePytestOutput("/r", out, 0, false, xml(1)).counts).toEqual({ passed: 1, failed: 0, errors: 0, skipped: 0, other: 0 });
+    expect(parsePytestOutput("/r", out, 0, false, xml(5)).counts).toBeUndefined(); // totals disagree
+    expect(parsePytestOutput("/r", out, 0, false, xml(1, 1)).counts).toBeUndefined(); // failures disagree
+  });
+
 });
