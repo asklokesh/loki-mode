@@ -130,28 +130,6 @@ transformation_agent:
 
 ---
 
-## Code-Only Agent Pattern (rijnard.com)
-
-**Enforce execution through code, creating verifiable "code witnesses".**
-
-```yaml
-code_only_principle:
-  benefit: "Produces executable, verifiable behavior traces"
-
-  patterns:
-    - Return small outputs (<1KB) inline
-    - Write large results to JSON files with path references
-    - Use dynamic languages (Python, TypeScript) for native runtime injection
-
-  enforcement:
-    - Tool PreHooks to catch banned operations
-    - Initial prompting toward code-generation patterns
-```
-
-**Key Insight:** LLM outputs should be executable code, not prose descriptions. This creates an auditable trace of what actually happened.
-
----
-
 ## Release Notes Generation
 
 **Auto-generate from commit history:**
