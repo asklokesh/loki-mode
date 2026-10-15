@@ -76,6 +76,18 @@ route bash "https://company.atlassian.net/browse/PROJ-12"
 # (orchestration wins -- the whole run needs bash's pre-loop work)
 route bash --simple --github ./prd.md
 
+# --- BRIEF-SHIP-FIX: brief runs have no issue (synthetic ref b<epoch>) ------
+LOKI_SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/autonomy/loki"
+chk() { if "${@:2}"; then PASS=$((PASS + 1)); echo "PASS: $1"; else FAIL=$((FAIL + 1)); echo "FAIL: $1"; fi; }
+chk "detached auto-merge closes issues only for numeric refs" \
+    grep -q '\[\[ "${LOKI_ISSUE_NUMBER:-}" =~ \^\[0-9\]+\$ \]\]' "$LOKI_SRC"
+chk "no bare non-empty LOKI_ISSUE_NUMBER close guard remains" \
+    bash -c '! grep -q -- "-n \"\${LOKI_ISSUE_NUMBER:-}\" \]\]" "$1"' _ "$LOKI_SRC"
+chk "non-detached auto-merge arm accepts brief" \
+    bash -c 'grep -A3 "Auto-merging" "$1" | grep -q "github|brief)"' _ "$LOKI_SRC"
+chk "loki run --help marks --brief-text internal" \
+    bash -c 'bash "$1" run --help 2>&1 | grep -- "--brief-text" | grep -q "(internal)"' _ "$LOKI_SRC"
+
 echo ""
 echo "test-start-bash-diversion: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
