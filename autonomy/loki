@@ -9824,7 +9824,6 @@ _deploy_policy_refusal() {
     local checkjs="${SKILL_DIR:-}/src/policies/check.js"
     [ -f "$checkjs" ] || checkjs="${PROJECT_DIR:-.}/src/policies/check.js"
     if ! command -v node >/dev/null 2>&1; then
-        if [ "${LOKI_POLICY_REQUIRE_NODE:-1}" = "0" ]; then printf '%s' ""; return 0; fi
         printf '%s' "policy file present but node is unavailable: cannot evaluate policy (fail-closed)"
         return 0
     fi
@@ -9836,7 +9835,20 @@ _deploy_policy_refusal() {
     out="$(env -i PATH="$PATH" HOME="$HOME" LOKI_PROJECT_DIR="$dir" \
         ${LOKI_DATA_DIR:+LOKI_DATA_DIR="$LOKI_DATA_DIR"} \
         node "$checkjs" pre_deployment '{"action":"deploy"}' 2>/dev/null)" || rc=$?
-    [ "$rc" -eq 0 ] && { printf '%s' ""; return 0; }
+    if [ "$rc" -eq 0 ]; then
+        # Exit 0 also means "nothing to evaluate". Deploy needs explicit permission:
+        # the policy must set autonomy or actions.deploy, else refuse.
+        local setsperm=""
+        setsperm="$(env -i PATH="$PATH" HOME="$HOME" LOKI_PROJECT_DIR="$dir" \
+            ${LOKI_DATA_DIR:+LOKI_DATA_DIR="$LOKI_DATA_DIR"} \
+            node -e 'var E=require(process.argv[1].replace(/check\.js$/,"engine.js")).PolicyEngine;var e=new E(process.env.LOKI_PROJECT_DIR);var p=e._policies;p=p&&(p.policies||p);var a=p&&p.actions&&typeof p.actions==="object"?p.actions.deploy:undefined;process.stdout.write(p&&(p.autonomy!==undefined||a!==undefined)?"yes":"");try{e.destroy()}catch(x){}process.exit(0)' "$checkjs" 2>/dev/null)" || setsperm=""
+        if [ "$setsperm" != "yes" ]; then
+            printf '%s' "policy file sets no autonomy/actions.deploy for deploy (no policy permission)"
+        else
+            printf '%s' ""
+        fi
+        return 0
+    fi
     local why
     why="$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("reason",""),end="")' 2>/dev/null || printf '')"
     if [ "$rc" -eq 2 ]; then
@@ -10173,7 +10185,7 @@ cmd_deploy() {
                 echo "     file alone can opt in."
                 echo "  5. Policy permits it. If .loki/policies.json (or the global one) exists,"
                 echo "     deploy needs autonomy 'operate' or actions.deploy 'allow'. An"
-                echo "     approval-required, denied or unevaluable policy REFUSES. No policy"
+                echo "     approval-required, denied, unevaluable or permission-less (neither key set) policy REFUSES. No policy"
                 echo "     file leaves the gate unchanged."
                 echo ""
                 echo "It FAILS CLOSED: if a check cannot be evaluated at all (no receipt,"
@@ -10253,6 +10265,9 @@ cmd_deploy() {
     if [ "$_LOKI_DEPLOY_AUTO_ROLLBACK" = true ] && [ -z "$_LOKI_DEPLOY_HEALTH_URL" ]; then
         echo "loki deploy --auto-rollback requires --health-url (no health signal, no rollback)" >&2
         return 1
+    fi
+    if [ "$do_execute" != true ] && [ -n "$_LOKI_DEPLOY_HEALTH_URL" ]; then
+        echo "Note: --health-url and --auto-rollback only apply with --execute; ignored on this advisory run." >&2
     fi
 
     # Resolve to '.' if the chosen dir does not exist (honest, no crash).

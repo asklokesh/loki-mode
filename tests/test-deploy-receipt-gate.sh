@@ -862,6 +862,15 @@ EOF
         else
             bad "18c. corrupt policy did not refuse" "rc=$RC18C"
         fi
+        printf '{}\n' > "$D18H/.loki/policies.json"
+        rm -f "$SENTINEL_DIR/vercel"
+        OUT18D="$(run_h "$D18H" --execute)"; RC18D=$?
+        if [ "$RC18D" -ne 0 ] && printf '%s' "$OUT18D" | grep -q "sets no autonomy/actions.deploy" \
+           && [ ! -e "$SENTINEL_DIR/vercel" ]; then
+            ok "18d. a policy file with no autonomy/actions.deploy refuses the deploy"
+        else
+            bad "18d. permission-less policy did not refuse" "rc=$RC18D $(printf '%s' "$OUT18D" | tail -4)"
+        fi
         # 19. Fly: the version is captured BEFORE the deploy and used for rollback
         FLY_BIN="$WORKROOT/fly-bin"; mkdir -p "$FLY_BIN"
         cat > "$FLY_BIN/fly" <<EOF
