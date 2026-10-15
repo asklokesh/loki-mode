@@ -41,7 +41,7 @@ Usage: loki proof <subcommand> [args]
 
 Subcommands:
   list                 List proof-of-run artifacts in .loki/proofs/
-  show <id>            Pretty-print .loki/proofs/<id>/proof.json
+  show <id> [--json]   Compact reviewer summary; --json prints the full proof.json
   verify <id>          Re-check a receipt against your code (tamper + drift)
                        [--jwks <url|file>] also checks its attestation; [--human]
                        Exit 0 clean, 1 tamper/drift or attestation FAILED/ABSENT,
@@ -136,7 +136,9 @@ function listProofs(): number {
   return 0;
 }
 
-function showProof(id: string | undefined): number {
+async function showProof(args: readonly string[]): Promise<number> {
+  const asJson = args.includes("--json");
+  const id = args.find((a) => a !== "--json");
   if (!id) {
     process.stderr.write(`${RED}Missing proof id.${NC} Use 'loki proof list'.\n`);
     return 2;
@@ -147,8 +149,34 @@ function showProof(id: string | undefined): number {
     process.stderr.write("Use 'loki proof list' to see available proofs.\n");
     return 1;
   }
-  process.stdout.write(`${JSON.stringify(d, null, 2)}\n`);
-  return 0;
+  if (asJson) {
+    process.stdout.write(`${JSON.stringify(d, null, 2)}\n`);
+    return 0;
+  }
+  // Compact reviewer summary from the one shared implementation
+  // (autonomy/lib/proof-verify.py; docs/PROOF-PASSPORT.md).
+  const summarizer = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
+  const target = resolveVerifyRoot();
+  const py = await findIsolatedPython3();
+  if (!existsSync(summarizer) || target === null || !py) {
+    process.stderr.write(
+      `${YELLOW}Summary unavailable (verifier module, project tree or python3 missing).${NC} Use 'loki proof show ${id} --json' for the full record.\n`,
+    );
+    return 2;
+  }
+  const pj = join(proofsDir(), id, "proof.json");
+  let r: Awaited<ReturnType<typeof run>>;
+  try {
+    r = await run([py, "-I", "-S", summarizer, "summary", pj, "--repo", target, "--loki-dir", lokiDir()], {
+      timeoutMs: 30000,
+    });
+  } catch (e) {
+    process.stderr.write(`${YELLOW}Summary unavailable (${String((e as Error).message || e)}).${NC}\n`);
+    return 2;
+  }
+  if (r.stdout) process.stdout.write(r.stdout);
+  if (r.stderr) process.stderr.write(r.stderr);
+  return r.exitCode;
 }
 
 async function openProof(id: string | undefined): Promise<number> {
@@ -704,7 +732,7 @@ export async function runProof(argv: readonly string[]): Promise<number> {
     case "list":
       return listProofs();
     case "show":
-      return showProof(rest[0]);
+      return showProof(rest);
     case "verify":
       // Any flag (--jwks, --human, in any position) goes to the bash CLI,
       // which owns flag parsing and the attestation check. verifyProof takes

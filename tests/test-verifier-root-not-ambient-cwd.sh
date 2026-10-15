@@ -92,6 +92,22 @@ for route in default legacy; do
     fi
 done
 
+# proof show (default summary) must refuse like Bun, never fall back to cwd.
+for route in default legacy; do
+    if [ "$route" = legacy ]; then _legacy=1; else _legacy=0; fi
+    out="$(cd "$BARE" && env -u TARGET_DIR LOKI_DIR="p/.loki" HOME="$SCRATCH/nohome" LOKI_LEGACY_BASH="$_legacy" timeout -k 5 120 bash "$ROOT/bin/loki" proof show r1 2>&1)"; rc=$?
+    if [ "$rc" -eq 2 ] && printf '%s' "$out" | grep -q 'Summary unavailable'; then
+        ok "proof show ($route route) from a non-project cwd exits 2 Summary unavailable"
+    else
+        bad "proof show ($route route) from a non-project cwd gave rc=$rc: $out"
+    fi
+done
+if grep -n 'loki_verify_root 2>/dev/null || pwd' "$LOKI" >/dev/null; then
+    bad "autonomy/loki proof show still falls back to pwd"
+else
+    ok "autonomy/loki proof show has no pwd fallback"
+fi
+
 # TARGET_DIR with a trailing slash must not slip past the HOME refusal.
 out="$(_root "$SCRATCH/home" HOME="$SCRATCH/home" TARGET_DIR="$SCRATCH/home/")"; rc=$?
 if [ "$rc" -ne 0 ] && [ -z "$out" ]; then ok "TARGET_DIR=HOME/ is refused"; else bad "TARGET_DIR=HOME/ resolved to '$out'"; fi

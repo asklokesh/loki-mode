@@ -179,7 +179,7 @@ if [ -n "$HEAD_COPY" ]; then
   fi
 fi
 MARK="$W/mark-show-green"
-OUT="$(run_attacked "$LOKI_BIN" "$SHOW_FIX" "$MARK" "" proof show x1 2>&1)"
+OUT="$(run_attacked "$LOKI_BIN" "$SHOW_FIX" "$MARK" "" proof show x1 --json 2>&1)"
 if [ ! -s "$MARK" ] && printf '%s' "$OUT" | grep -q '"run_id": "x1"'; then
   ok "GREEN: proof show -- the cwd python3 shim never ran, real proof.json content was printed"
 else
