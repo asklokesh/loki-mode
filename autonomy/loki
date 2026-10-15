@@ -21187,6 +21187,9 @@ main() {
         doctor)
             cmd_doctor "$@"
             ;;
+        models)
+            bash "$SKILL_DIR/providers/model_routes.sh" "$@"
+            ;;
         sentrux)
             cmd_sentrux "$@"
             ;;

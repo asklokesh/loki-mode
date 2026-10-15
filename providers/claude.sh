@@ -151,6 +151,11 @@ unset _loki_dap_root
 
 # Source the v7.5.22 Phase D mcp-config helper (idempotent).
 # shellcheck source=../autonomy/lib/mcp-config.sh
+# OC-MODELS: model routes (openrouter/ollama/... over the Claude harness).
+_loki_model_routes_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/model_routes.sh"
+# shellcheck disable=SC1090
+[ -f "$_loki_model_routes_helper" ] && . "$_loki_model_routes_helper"
+
 _loki_mcp_config_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/autonomy/lib/mcp-config.sh"
 if [ -f "$_loki_mcp_config_helper" ]; then
     # shellcheck disable=SC1090
@@ -385,7 +390,8 @@ provider_invoke() {
     # array is empty, and a bare "${arr[@]}" under `set -u` aborts with "unbound
     # variable" on bash 3.2 (stock macOS /bin/bash). ${arr[@]+...} expands to
     # nothing when unset/empty and preserves spaced elements otherwise.
-    claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    loki_model_route_prefix
+    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude --dangerously-skip-permissions "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
 
 # provider_invoke_argv <tier> <prompt> -- populate _LOKI_INVOKE_ARGV with the
@@ -427,7 +433,9 @@ provider_invoke_argv() {
     # silently unenforced on exactly the timeout-safe seam. resolve_model_for_tier
     # is base -> route -> clamp -> alt-provider in one call; keep both paths on it.
     model="$(resolve_model_for_tier "$tier" 2>/dev/null || provider_get_tier_param "$tier")"
+    loki_model_route_prefix
     _LOKI_INVOKE_ARGV=(
+        "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}"
         claude --dangerously-skip-permissions
         "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}"
     )
@@ -638,6 +646,11 @@ resolve_model_for_tier() {
         model="$LOKI_MODEL_OVERRIDE"
     fi
 
+    # OC-MODELS: an active model route (openrouter/ollama/...) wins; plain ids unchanged.
+    local _route_model
+    _route_model="$(loki_model_route_model 2>/dev/null || true)"
+    [ -n "$_route_model" ] && model="$_route_model"
+
     echo "$model"
 }
 
@@ -656,5 +669,6 @@ provider_invoke_with_tier() {
     # Guard empty auto-flag array under `set -u` on bash 3.2 (stock macOS): a bare
     # "${arr[@]}" on an empty array aborts with "unbound variable". ${arr[@]+...}
     # expands to nothing when empty and preserves spaced elements otherwise.
-    claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
+    loki_model_route_prefix
+    "${_LOKI_ROUTE_EXEC[@]+"${_LOKI_ROUTE_EXEC[@]}"}" claude --dangerously-skip-permissions --model "$model" "${_LOKI_CLAUDE_AUTO_FLAGS[@]+"${_LOKI_CLAUDE_AUTO_FLAGS[@]}"}" -p "$prompt" "$@" < /dev/null
 }
