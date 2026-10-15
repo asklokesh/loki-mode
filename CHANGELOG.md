@@ -5,6 +5,18 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.4.2 (2026-10-15)
+
+Fix-forward for v11.4.1, which was tagged on main but never reached npm. The full Bun test job on the release commit had 13 failures, so `required-ci` stopped the publish. v11.4.2 contains everything listed under v11.4.1 and v11.4.0 below, plus these fixes.
+
+### Fixed
+
+- Default `loki start` output on the v10 engine stays within the 8-line cap (D48). The unified run summary added a six-line block after the engine output. A default run now gets a single `Next:` line, and when the output already has seven lines that line is folded into the last one. `--verbose` and `--quiet` still print the full summary.
+- `loki doctor --fix` now passes a scoped environment (PATH only) to its `command -v` probe. It no longer lets the child process inherit the full parent environment, which the spawn environment guards forbid.
+- The CLI command registry now lists `chat`, `edit`, `diff`, `models` and `setup`, plus the `config list` subcommand. `docs/v10/CLI-MODERN.md` was regenerated from the registry.
+- The file restore in the provider revert guard (`providers/provider_guard.ts`) is now classified in the destructive git call registry. The reviewer stage's user-configured `--model` is vetted in the model-pin guard, so a cascade or cost downgrade still cannot pin a weaker model.
+- Tests that still expected opencode to be refused now match the v11.4 contract: opencode is a supported engine10 provider. The refusal tests now use a provider that really is unsupported, so the exit-code-2 refusal path is still covered.
+
 ## v11.4.1 (2026-10-15)
 
 Fix-forward for v11.4.0, which was tagged on main but never reached npm. Its release run stopped at `required-ci` because the Tests run on the release commit was red. v11.4.1 contains everything listed under v11.4.0 below, plus these fixes and the remaining parity gaps.
