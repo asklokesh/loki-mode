@@ -278,8 +278,7 @@ Backlog (loki backlog + loki.yaml)	40
 Backlog units (loki backlog --dag, D61)	10
 Backend Floor	2
 Backend Floor port scoping (kill by recorded PID, never by port)	3
-cmd_web_stop/start use a real process identity check (D14/D15 class)	8
-cmd_web_start port-conflict path scoped by identity	1
+cmd_web_stop uses a real process identity check (D14/D15 class)	8
 autonomy/verify.sh runtime teardown scoped to LISTEN + ownership	5
 Marketplace action Cleanup step scoped to this job's own loki run	0
 Dashboard API smoke cleanup kills only its own recorded PID	1
