@@ -57,7 +57,7 @@ Every run starts from a delivery contract derived from your task, writes checks 
 loki verify              # newest run; or: loki verify <run-id>
 ```
 
-`loki verify` re-hashes the receipt, checks its signature and checks it against the run's event log. It prints VERIFIED (exit 0), TAMPERED (1), UNCHECKED (2) or UNSIGNED (3). On another machine, export the public key with `loki keys export` and pass it with `loki verify --pubkey <file>`. A receipt claims only what its checks ran, and lists what they did not; signing proves who produced it, not that the code is bug-free. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
+`loki verify` re-hashes the receipt, checks its signature and checks it against the run's event log. It prints a verdict and exits 0 (VERIFIED), 1 (CONCERNS), 2 (BLOCKED), 3 (verifier error, never a silent pass) or 64 (usage error); `[ $rc -eq 0 ]` is the only safe test for "verified". Full table: [docs/exit-codes.md](docs/exit-codes.md). On another machine, export the public key with `loki keys export` and pass it with `loki verify --pubkey <file>`. A receipt claims only what its checks ran, and lists what they did not; signing proves who produced it, not that the code is bug-free. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
 
 A finished run prints a short summary (every run on both engines also ends with a unified Result, Files, Cost, Elapsed, Receipt and `next:` block; `--quiet` prints only that block, `--json` adds a `summary` object):
 

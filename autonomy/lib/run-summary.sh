@@ -4,9 +4,13 @@
 # Sourced by autonomy/run.sh; defines functions only.
 #
 #   loki_run_summary RESULT_CODE [START_SHA]
-# Honors NO_COLOR, LOKI_QUIET=1 (summary only is the caller's choice), LOKI_SUMMARY_JSON=1.
+# Honors NO_COLOR and LOKI_SUMMARY_JSON=1 (machine summary). LOKI_QUIET=1 is applied by the
+# caller's log threshold (banner noise off); the summary itself always prints.
 
 loki_run_summary() {
+    # Print once per process even if two exit paths both call it.
+    [ "${_LOKI_SUMMARY_PRINTED:-0}" = "1" ] && return 0
+    _LOKI_SUMMARY_PRINTED=1
     local code="${1:-0}" start_sha="${2:-${_LOKI_RUN_START_SHA:-}}"
     local loki_dir="${LOKI_DIR:-${TARGET_DIR:-.}/.loki}"
     local result="done-unverified" files="" ins="" del="" shortstat="" cost="" receipt="" next=""
@@ -27,7 +31,10 @@ loki_run_summary() {
 
     # Files changed vs run-start SHA (excluding .loki and .git).
     if [ -n "$start_sha" ]; then
-        shortstat="$( (cd "${TARGET_DIR:-.}" && git diff --shortstat "${start_sha}..HEAD" -- . ':(exclude).loki/' ':(exclude).git/') 2>/dev/null || true )"
+        local range="${start_sha}..HEAD"
+        # LOKI_SUMMARY_WORKTREE=1 (loki edit): compare against the working tree, edits are uncommitted.
+        [ "${LOKI_SUMMARY_WORKTREE:-0}" = "1" ] && range="${start_sha}"
+        shortstat="$( (cd "${TARGET_DIR:-.}" && git diff --shortstat "$range" -- . ':(exclude).loki/' ':(exclude).git/') 2>/dev/null || true )"
         files="$(printf '%s\n' "$shortstat" | grep -oE '[0-9]+ file' | grep -oE '[0-9]+' | head -1)"
         ins="$(printf '%s\n' "$shortstat" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+' | head -1)"
         del="$(printf '%s\n' "$shortstat" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+' | head -1)"
@@ -48,6 +55,10 @@ except Exception:
 " 2>/dev/null || true)"
     fi
 
+    # LOKI_SUMMARY_COST: exact cost from the caller (loki edit reads it from the provider).
+    local cost_exact=false
+    if [ -n "${LOKI_SUMMARY_COST:-}" ]; then cost="$LOKI_SUMMARY_COST"; cost_exact=true; fi
+
     case "$result" in
         verified) if [ "${files:-0}" != "0" ] && [ -n "$files" ]; then next="loki diff"; else next="loki status"; fi ;;
         done-unverified) next="loki verify" ;;
@@ -59,8 +70,8 @@ except Exception:
     if [ "$elapsed" -lt 60 ]; then elapsed_h="${elapsed}s"; else elapsed_h="${mm}m$(printf '%02d' "$ss")s"; fi
 
     if [ "${LOKI_SUMMARY_JSON:-0}" = "1" ]; then
-        printf '{"result":"%s","files_changed":%s,"insertions":%s,"deletions":%s,"cost_usd":%s,"cost_estimated":true,"elapsed_s":%s,"receipt":%s,"next":"%s"}\n' \
-            "$result" "${files:-null}" "${ins:-null}" "${del:-null}" "${cost:-null}" "$elapsed" \
+        printf '{"result":"%s","files_changed":%s,"insertions":%s,"deletions":%s,"cost_usd":%s,"cost_estimated":%s,"elapsed_s":%s,"receipt":%s,"next":"%s"}\n' \
+            "$result" "${files:-null}" "${ins:-null}" "${del:-null}" "${cost:-null}" "$([ "$cost_exact" = true ] && echo false || echo true)" "$elapsed" \
             "$([ -n "$receipt" ] && printf '"%s"' "$receipt" || printf 'null')" "$next"
         return 0
     fi
@@ -72,7 +83,9 @@ except Exception:
     fi
     local files_h="unknown" cost_h="not measured"
     [ -n "$files" ] && files_h="${files} changed (+${ins} -${del})"
-    [ -n "$cost" ] && cost_h="\$${cost} (estimated)"
+    if [ -n "$cost" ]; then
+        if [ "$cost_exact" = true ]; then cost_h="\$${cost}"; else cost_h="\$${cost} (estimated)"; fi
+    fi
     printf '\n'
     printf 'Result:   %s%s%s\n' "$c0" "$result" "$c1"
     printf 'Files:    %s\n' "$files_h"
