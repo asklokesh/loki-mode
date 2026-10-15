@@ -197,10 +197,13 @@ EOF
 # /run: the exact run the shell would give: loki start with this session's provider and model.
 # The summary prints at the end of the run; chat stays open afterwards.
 _chat_run_start() {
-    local loki="$1" input="$2" rc=0
+    local loki="$1" input="$2" rc=0 t0=$SECONDS
     local -a args=("start" "$input" --provider "$_CHAT_PROVIDER")
     [ -n "$_CHAT_MODEL" ] && args+=(--model "$_CHAT_MODEL")
     "$loki" "${args[@]}" || rc=$?
+    # HANDOFF: same file loki start wrote, so chat and the shell show one review view
+    # (only when written during this run; a stale file from an earlier run is never shown)
+    if [ -f ".loki/review/HANDOFF.md" ] && [ -n "$(find ".loki/review/HANDOFF.md" -mmin "-$(( (SECONDS - t0) / 60 + 1 ))" 2>/dev/null)" ]; then cat ".loki/review/HANDOFF.md"; fi
     echo "(run finished, exit $rc; chat is still open)"
     return 0
 }

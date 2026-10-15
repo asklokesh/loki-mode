@@ -321,8 +321,10 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       const { loadRunOutputs } = await import("../util/run_outputs.ts"), { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
       const events = readEvents(eventsPath);
       const sealed: Record<string, unknown> = { ...((events.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: notProven }; // notProven (backstop/tamper included): a killed worker never sealed a receipt; explicit Record annotation keeps sealed.path typed instead of narrowing to the {} branch of the ?? union (TS2339, E-67 round 5 REJECT finding 2)
+      const hf = await import("../features/handoff.ts"), hbase = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hpc = partialCost(events, false); // HANDOFF: the PR body carries the same handoff
+      const handoffMd = hf.handoffSection({ repoDir, runId, events, outcome: String(verdict), usd: fold(events).cost.usd, partialUsd: hpc.usd, measuredSessions: hpc.measured, totalSessions: hpc.total, elapsedS: null, notProven, baseSha: typeof hbase === "string" ? hbase : null, stats: diffStat(repoDir, typeof hbase === "string" ? hbase : null) });
       const r = await runPr({
-        runId, repoDir, runDir, branch: `loki/${runId}`, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN,
+        runId, repoDir, runDir, branch: `loki/${runId}`, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN, handoffMd,
         outputs: () => ({ ...loadRunOutputs(runDir, events), seal: { ...sealed, verdict, receipt_path: sealed.path } }), // L7: the PR body reads recorded intake, plan and verify data, not only seal
         capHit: () => events.some((e) => e.type === "cap.hit"),
         emit: () => {}, // pr.opened is appended by runSupervisor from the outcome
@@ -360,9 +362,10 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
   }, verbose);
+  let handoffRef = ""; if (!json) { const hb = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, hbs = typeof hb === "string" ? hb : null; handoffRef = (await import("../features/handoff.ts")).writeHandoff({ repoDir, runId, events, outcome: res.outcome, reason: reasonOf(events, res.tampered, res.stop, res.outcome), prUrl: res.prUrl, draft: res.verdict !== "VERIFIED", usd, partialUsd: pc.usd, measuredSessions: pc.measured, totalSessions: pc.total, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), notProven: res.notProven, task, baseSha: hbs, stats: diffStat(repoDir, hbs) }) ? "review: .loki/review/HANDOFF.md" : ""; } // HANDOFF: written on every outcome; the pointer folds into the last line (D48 cap)
   // OC-OUTPUT: unified run summary, same format as the legacy engine (autonomy/lib/run-summary.sh)
   const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, ds = diffStat(repoDir, typeof baseSha === "string" ? baseSha : null), rr = resultOf(res.outcome);
   const ui = { result: rr, filesChanged: ds?.files ?? null, insertions: ds?.ins, deletions: ds?.del, costUsd: usd, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), receiptPath: res.receiptSha ? join(runDir, "receipt.json") : null, next: nextOf(rr, ds?.files ?? null) };
-  process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: summaryObject(ui) })}\n` : quiet ? formatRunSummary(ui, { color: useColor() }) : verbose ? `${out}\n${formatRunSummary(ui, { color: useColor() })}` : withNextLine(out, ui)); // D48: default output stays within 8 lines, so the summary collapses to one line
+  process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: summaryObject(ui) })}\n` : quiet ? formatRunSummary(ui, { color: useColor() }) + (handoffRef ? `${handoffRef}\n` : "") : verbose ? `${out}\n${formatRunSummary(ui, { color: useColor() })}${handoffRef ? `${handoffRef}\n` : ""}` : handoffRef ? withNextLine(out, ui).replace(/\n$/, `; ${handoffRef}\n`) : withNextLine(out, ui)); // D48: default output stays within 8 lines, so the summary collapses to one line
   return EXIT[res.outcome];
 }
