@@ -3,7 +3,7 @@
 // (recompute receipt_sha256 with `verification`+itself removed), SIGNATURE (native Ed25519
 // against the active + retired keys), UNSIGNED (jwt null). Node crypto only, no python (A-121).
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
 import { latestRunId } from "../commands/run_status.ts";
@@ -128,6 +128,7 @@ async function verifyCompositeFile(receiptPath: string, receipt: Record<string, 
 /** `loki verify --seal-composite <run_dir>`: writes a signed composite.json, refusing unless every child repo has a receipt. */
 function sealCompositeCmd(runDir: string): number {
   let body;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(basename(runDir.replace(/\/+$/, "")))) return (process.stderr.write("loki verify: run directory name is not a valid run id; composite would never verify\n"), 2);
   try { body = composeComposite(runDir, computeReceiptHash); } catch (e) { return (process.stderr.write(`loki verify: ${(e as Error).message}\n`), 2); }
   const hash = compositeHash(body as unknown as Record<string, unknown>), sig = signReceipt(body.run_id, hash);
   const out = { ...body, composite_sha256: hash, verification: { jwt: sig.jwt, kid: sig.kid } }, path = join(runDir, "composite.json");

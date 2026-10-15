@@ -173,12 +173,19 @@ export async function verifyComposite(receiptPath: string, receipt: Record<strin
   let ibytes: Buffer;
   try { ibytes = readFileSync(join(runDir, "integration.json")); } catch { return bad("integration.json missing"); }
   if (sha(ibytes) !== receipt["integration_sha256"]) return bad("integration.json does not match its recorded hash");
-  const integ = readJson(join(runDir, "integration.json")), heads = isObj(integ) && isObj(integ["heads"]) ? integ["heads"] : {};
+  const integ = readJson(join(runDir, "integration.json"));
+  if (!isObj(integ) || !isObj(integ["outcomes"])) return bad("integration.json has no outcomes");
+  const heads = isObj(integ["heads"]) ? integ["heads"] : {}, outcomes = integ["outcomes"];
+  const order = Array.isArray(integ["order"]) ? (integ["order"] as unknown[]).map(String) : Object.keys(outcomes).sort();
+  const kidRepos = (kids as unknown[]).map((k) => (isObj(k) ? String(k["repo"] ?? "") : ""));
+  if (new Set(kidRepos).size !== kidRepos.length) return bad("children list a repo more than once");
+  if (kidRepos.length !== order.length || kidRepos.some((r, i) => r !== order[i])) return bad("children do not cover the integrated repos in order (a repo is missing or extra)");
   let unchecked: string | null = null;
   const verdicts: string[] = [];
   for (const raw of kids as unknown[]) {
     const c = isObj(raw) ? raw : {}, repo = String(c["repo"] ?? ""), rel = String(c["receipt_path"] ?? "");
-    if (!repo || !relOk(rel)) return bad(`child ${text(repo, 80) || "?"} has an invalid receipt path`);
+    if (!repo || !relOk(rel) || !rel.startsWith(`worktrees/${slugOf(repo)}/.loki/runs/`)) return bad(`child ${text(repo, 80) || "?"} has an invalid receipt path`);
+    if (outcomes[repo] !== "ok") return bad(`child ${text(repo, 80)} did not finish ok in integration.json`);
     const rp = join(runDir, rel);
     let bytes: Buffer;
     try { bytes = readFileSync(rp); } catch { return bad(`child ${repo} receipt missing`); }
@@ -188,7 +195,8 @@ export async function verifyComposite(receiptPath: string, receipt: Record<strin
     if (String(sub["verdict"] ?? "") !== c["verdict"]) return bad(`child ${repo} verdict differs from the composite`);
     if (String(sub["head_sha"] ?? "") !== c["head_sha"] || !c["head_sha"]) return bad(`child ${repo} head_sha differs from the composite`);
     verdicts.push(String(c["verdict"]));
-    if (typeof heads[repo] === "string" && heads[repo] !== c["head_sha"]) unchecked ??= `child ${repo} head ${String(c["head_sha"])} is not the integrated head ${String(heads[repo])}`;
+    if (typeof heads[repo] !== "string" || heads[repo] === "") unchecked ??= `child ${repo} has no integrated head to compare (freshness not checked)`;
+    else if (heads[repo] !== c["head_sha"]) unchecked ??= `child ${repo} head ${String(c["head_sha"])} is not the integrated head ${String(heads[repo])}`;
     const r = await verifyOne(rp, deps);
     if (r.verdict === "TAMPERED") return bad(`child ${repo} failed verify: ${r.reasons.join("; ")}`);
     if (r.verdict === "UNSIGNED" && signed) unchecked ??= `child ${repo} receipt is unsigned under a signed composite`;

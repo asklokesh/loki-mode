@@ -422,6 +422,52 @@ describe("composite receipt", () => {
     resign(p, (c) => { c["verdict"] = "VERIFIED"; });
     expect((await verdictOf(p)).verdict).toBe("TAMPERED");
   });
+  test("a signed composite that omits a repo is TAMPERED", async () => {
+    const dir = writeWs("omit", KIDS);
+    const p = await seal(dir);
+    resign(p, (c) => { c["children"] = (c["children"] as unknown[]).slice(0, 1); });
+    const r = await verdictOf(p);
+    expect(r.verdict).toBe("TAMPERED");
+    expect(r.reasons.join(" ")).toContain("cover");
+  });
+  test("a signed composite that lists a repo twice is TAMPERED", async () => {
+    const dir = writeWs("dup", KIDS);
+    const p = await seal(dir);
+    resign(p, (c) => { const k = c["children"] as unknown[]; c["children"] = [k[0], k[0]]; });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("a child receipt_path pointing at another repo is TAMPERED", async () => {
+    const dir = writeWs("xrepo", KIDS);
+    const p = await seal(dir);
+    resign(p, (c) => { const k = c["children"] as { receipt_path: string }[]; k[0]!.receipt_path = k[1]!.receipt_path; });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("a child whose integration outcome is not ok is TAMPERED", async () => {
+    const dir = writeWs("outcome", KIDS);
+    const p = await seal(dir);
+    const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
+    i.outcomes.web = "FAILED: exit 1";
+    writeFileSync(ip, JSON.stringify(i));
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("a null integrated head is UNCHECKED, not a silent pass", async () => {
+    const dir = writeWs("nullhead", KIDS);
+    const p = await seal(dir);
+    const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
+    i.heads.api = null;
+    writeFileSync(ip, JSON.stringify(i));
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    expect((await verdictOf(p)).verdict).toBe("UNCHECKED");
+  });
+  test("sealing refuses a run dir whose name is not a valid run id", async () => {
+    const dir = writeWs("badid", KIDS);
+    const bad = join(root, "bad id");
+    Bun.spawnSync({ cmd: ["cp", "-R", dir, bad] });
+    const err = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try { expect(await verifyMain(["--seal-composite", bad])).toBe(2); } finally { process.stderr.write = err; }
+  });
   test("sealing refuses unless every repo has a receipt", async () => {
     const dir = writeWs("missing", KIDS);
     rmSync(join(dir, "worktrees", "web"), { recursive: true });
