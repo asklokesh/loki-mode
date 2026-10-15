@@ -256,6 +256,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   legacy("cleanup", "Kill orphaned processes", "Legacy run.sh orphans"),
   legacy("state", "Legacy state store", "Legacy engine"),
   legacy("agent", "Legacy agent types", "Legacy engine"),
+  legacy("agents", "User-configurable child agents (.loki/agents)", "Legacy engine"),
   legacy("trigger", "Event triggers", "Legacy engine"),
   legacy("failover", "Provider failover", "Legacy engine"),
   legacy("reset", "Reset legacy state", "Legacy engine"),
