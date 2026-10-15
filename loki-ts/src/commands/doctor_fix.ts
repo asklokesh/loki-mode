@@ -13,7 +13,7 @@ export interface FixResult {
 }
 
 function has(cmd: string): boolean {
-  return spawnSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore" }).status === 0;
+  return spawnSync("sh", ["-c", `command -v ${cmd}`], { stdio: "ignore", env: { PATH: process.env.PATH ?? "" } }).status === 0;
 }
 
 const MANUAL: Record<string, string> = {
