@@ -1,3 +1,27 @@
+// REVIEW HANDOFF contract (renderHandoff, composeHandoff, writeHandoff, handoffSection).
+// Goal: a reviewer decides accept or reject in under 2 minutes without reading agent logs.
+// Outputs: .loki/review/HANDOFF.md (about 30 lines) and .loki/review/handoff.json (same data,
+// version 1, plus spend and decide). Written atomically at the end of every engine10 `loki start`
+// run (verified, failed, partial, budget stop, stalled, blocked); not under --json or when
+// preflight refuses before any run state. supervisor.ts calls it once after the run and passes
+// the markdown to the PR stage as ctx.handoffMd, appended below the reviewer body. `loki chat`
+// /run prints HANDOFF.md only if written during that run. The default final summary folds
+// "; review: .loki/review/HANDOFF.md" into its last line (D48 cap kept).
+// Sections: header (outcome verbatim, draft flag), task, reason, run id, risk tier, elapsed,
+// spend, interventions; Change (diff stat, up to 5 largest hunks); Demonstrated (verify checks
+// with result pass); Failures; Not checked (not_run, skipped, flaky, receipt not_proven,
+// uncovered requirements); Decide (exact accept and reject commands).
+// Honesty rules: the outcome is the supervisor's label, never recomputed. Spend is "$X (measured)",
+// "partial: $X for N of M sessions" or "not measured", never $0.00 for an unknown. Only result
+// pass renders as PASSED. No recorded checks reads "nothing is verified". Missing risk tier or
+// interventions read "not recorded". Accept/reject: PR url gives `gh pr ready && gh pr merge
+// --squash` and `gh pr close`; else run branch gives `git merge --no-ff` and `git branch -D`;
+// else `loki diff` and `loki undo`.
+// Inputs read tolerantly: events.jsonl, .loki/state/requirements-map.json (absent is fine), git
+// diff base..HEAD excluding .loki. Risk tier from plan.risk_tier, plan.tier or run.started.risk_tier.
+// Known gaps: legacy bash engine does not write a handoff; interventions are counted only from
+// steer.consumed or intervention events, which engine10 does not yet emit; hunk summaries are the
+// hunk header or first added line.
 // OC-OUTPUT: one shared end-of-run summary, same format as autonomy/lib/run-summary.sh
 // (legacy engine). Pure formatting; callers supply already-measured facts. Null is never shown as 0.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
