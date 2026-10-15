@@ -367,6 +367,11 @@ STUB
         # Limit: a local DNS forwarder or relay on loopback is not covered.
         printf 'export HTTP_PROXY=http://127.0.0.1:9 HTTPS_PROXY=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 NO_PROXY= no_proxy=\n'
         printf 'unset LOKI_LEGACY_BASH LOKI_SDK_LOOP LOKI_SDK_MODE\n'
+        # v11.4.0 routes a PRD file to engine10 by default (autonomy/route.sh), and engine10's
+        # gates (full suite, council, security scan) need a real provider, which this hermetic
+        # stub is not. The stub completes through the signal file, the legacy loop's channel, so
+        # pin that engine explicitly (--engine legacy equivalent); the seal/verify path is unchanged.
+        printf 'export LOKI_ENGINE=legacy\n'
         printf 'cd %q || exit 41\n' "$W"
         printf '%s 150 %q start ./prd.md >%q 2>%q\n' "$DEADLINE_CMD" "$LOKI_BIN" "$MOAT_TMP/start.out" "$MOAT_TMP/start.err"
         printf 'echo $? >%q\n' "$MOAT_TMP/start.rc"
