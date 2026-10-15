@@ -9238,33 +9238,36 @@ _deploy_detect_type() {
 # paraphrase). Project-dependent dirs stay as `<...>` placeholders the user fills.
 # Note: the Fly CLI binary is `flyctl` but the canonical deploy verb is
 # `fly deploy` -- "fly" not "flyctl" here is CORRECT, intentional, not a typo.
+# Row format: provider|cli|command|docs|rollback. rollback is a documented verb
+# (vercel rollback, fly releases rollback <captured-version>) or `manual:<note>`
+# when the provider documents no CLI rollback.
 _deploy_options_for_type() {
     local type="${1:-}"
     case "$type" in
         nextjs)
-            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli"
-            printf '%s\n' "Netlify|netlify|netlify deploy --prod|https://docs.netlify.com/cli/get-started/"
+            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli|vercel rollback"
+            printf '%s\n' "Netlify|netlify|netlify deploy --prod|https://docs.netlify.com/cli/get-started/|manual:Netlify documents no CLI rollback; restore the previous deploy from the Netlify dashboard"
             # fly not flyctl - correct: binary is flyctl, deploy verb is `fly deploy`.
-            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/|fly releases rollback <captured-version>"
             ;;
         static)
-            printf '%s\n' "Netlify|netlify|netlify deploy --prod --dir=<build-output>|https://docs.netlify.com/cli/get-started/"
-            printf '%s\n' "Cloudflare Pages|wrangler|wrangler pages deploy <build-output>|https://developers.cloudflare.com/workers/wrangler/install-and-update/"
-            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli"
+            printf '%s\n' "Netlify|netlify|netlify deploy --prod --dir=<build-output>|https://docs.netlify.com/cli/get-started/|manual:Netlify documents no CLI rollback; restore the previous deploy from the Netlify dashboard"
+            printf '%s\n' "Cloudflare Pages|wrangler|wrangler pages deploy <build-output>|https://developers.cloudflare.com/workers/wrangler/install-and-update/|manual:Cloudflare rollback is not automated here; roll back from the dashboard or with the provider CLI yourself"
+            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli|vercel rollback"
             ;;
         docker)
             # fly not flyctl - correct (see note above).
-            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
-            printf '%s\n' "Cloudflare|wrangler|wrangler deploy|https://developers.cloudflare.com/workers/wrangler/install-and-update/"
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/|fly releases rollback <captured-version>"
+            printf '%s\n' "Cloudflare|wrangler|wrangler deploy|https://developers.cloudflare.com/workers/wrangler/install-and-update/|manual:Cloudflare rollback is not automated here; roll back from the dashboard or with the provider CLI yourself"
             ;;
         node)
             # fly not flyctl - correct (see note above).
-            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
-            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli"
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/|fly releases rollback <captured-version>"
+            printf '%s\n' "Vercel|vercel|vercel --prod|https://vercel.com/docs/cli|vercel rollback"
             ;;
         python)
             # fly not flyctl - correct (see note above).
-            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/"
+            printf '%s\n' "Fly.io|flyctl|fly deploy|https://fly.io/docs/flyctl/install/|fly releases rollback <captured-version>"
             ;;
     esac
     return 0
@@ -9339,9 +9342,9 @@ _deploy_print_install_hint() {
     echo "Loki never accesses your cloud account or runs deploy for you -- you run"
     echo "the printed command. Install one of the following, then re-run 'loki deploy':"
     echo ""
-    local options provider cli command docs
+    local options provider cli command docs _rb
     options="$(_deploy_options_for_type "$type")"
-    while IFS='|' read -r provider cli command docs; do
+    while IFS='|' read -r provider cli command docs _rb; do
         [ -n "$provider" ] || continue
         case "$cli" in
             vercel)   echo "  Vercel:      brew install vercel       |  ${docs}" ;;
@@ -9373,8 +9376,8 @@ _deploy_print_cloud_options() {
 
     local printed=false
     local first_cmd=""
-    local provider cli command docs
-    while IFS='|' read -r provider cli command docs; do
+    local provider cli command docs _rb
+    while IFS='|' read -r provider cli command docs _rb; do
         [ -n "$cli" ] || continue
         if command -v "$cli" >/dev/null 2>&1; then
             if [ "$printed" != true ]; then
@@ -9636,6 +9639,9 @@ PYANCHOR
 # verified tree, never tearing an environment down. Word-boundary matched so
 # "wrangler pages deploy dist" is not caught by "destroy" appearing in a path.
 _deploy_is_destructive() {
+    # Allowlisted rollback verbs (the only ones auto-rollback may run) are never
+    # destructive: they restore a prior release rather than tear anything down.
+    printf '%s' "${1:-}" | grep -Eq '^(vercel rollback|fly releases rollback [0-9]+)$' && return 1
     printf '%s' "${1:-}" | grep -Eqi '(^|[^[:alnum:]_-])(delete|destroy|teardown|down|drop|rm|remove|purge|prune|wipe|scale-down)([^[:alnum:]_-]|$)'
 }
 
@@ -9694,12 +9700,16 @@ _deploy_record() {
     # "refused" needs no value: a refusal never reaches this function, so the
     # existence of a record already means one of the two above.
     local anchor_state="${6:-anchored}"
+    # Post-deploy health and rollback facts. "unchecked" never implies healthy.
+    local health_status="${7:-unchecked}" health_url="${8:-}"
+    local rb_attempted="${9:-false}" rb_exit="${10:-}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
     local f="$ddir/$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
     DR_CMD="$command" DR_RC="$rc" DR_RUN="$run_id" DR_ANCHOR="$anchor" DR_OUT="$f" \
-    DR_STATE="$anchor_state" \
+    DR_STATE="$anchor_state" DR_HS="$health_status" DR_HU="$health_url" \
+    DR_RBA="$rb_attempted" DR_RBX="$rb_exit" \
         python3 -c '
 import json, os, datetime
 state = os.environ.get("DR_STATE") or "anchored"
@@ -9713,6 +9723,10 @@ json.dump({
     # Spelled out so a reader months later does not have to know the vocabulary
     # to judge how strong the authorization was.
     "anchor_proven": state == "anchored",
+    "health_status": os.environ.get("DR_HS") or "unchecked",
+    "health_url": os.environ.get("DR_HU") or "",
+    "rollback_attempted": os.environ.get("DR_RBA") == "true",
+    "rollback_exit": int(os.environ["DR_RBX"]) if os.environ.get("DR_RBX", "") != "" else None,
 }, open(os.environ["DR_OUT"], "w"), indent=2)
 ' 2>/dev/null || return 0
     printf '%s' "$f"
@@ -9726,9 +9740,9 @@ json.dump({
 # differs from the one the advisory showed. `command -v` only; no CLI is run.
 _deploy_first_installed_command() {
     local dir="${1:-.}" type="${2:-}"
-    local options provider cli command docs
+    local options provider cli command docs _rb
     options="$(_deploy_options_for_type "$type")"
-    while IFS='|' read -r provider cli command docs; do
+    while IFS='|' read -r provider cli command docs _rb; do
         [ -n "$cli" ] || continue
         if command -v "$cli" >/dev/null 2>&1; then
             printf '%s' "$command"
@@ -9741,6 +9755,98 @@ EOF
     return 0
 }
 
+# _deploy_rollback_for <type> <command>
+# Echoes the rollback column of the first option row whose deploy command is
+# <command>, or "" when none. Pure table lookup; runs nothing.
+_deploy_rollback_for() {
+    local type="${1:-}" want="${2:-}" provider cli command docs rb
+    while IFS='|' read -r provider cli command docs rb; do
+        [ -n "$cli" ] || continue
+        if [ "$command" = "$want" ]; then
+            printf '%s' "$rb"
+            return 0
+        fi
+    done <<EOF
+$(_deploy_options_for_type "$type")
+EOF
+    printf '%s' ""
+    return 0
+}
+
+# _deploy_fly_capture_version <dir>
+# Echoes the newest Fly release version BEFORE a deploy so a rollback has a real
+# target, or "" when it cannot be read (then no rollback is attempted).
+_deploy_fly_capture_version() {
+    local dir="${1:-.}" out
+    out="$( cd "$dir" && fly releases --json 2>/dev/null )" || { printf '%s' ""; return 0; }
+    printf '%s' "$out" | python3 -c '
+import json, sys
+try:
+    rel = json.load(sys.stdin)
+    v = rel[0].get("Version") if rel else None
+    print(int(v) if v is not None else "", end="")
+except Exception:
+    print("", end="")
+' 2>/dev/null || printf '%s' ""
+    return 0
+}
+
+# _deploy_probe_health <url>
+# Bounded poll: echoes the last HTTP status, returns 0 on any 2xx. Attempts and
+# spacing are env-tunable (LOKI_DEPLOY_HEALTH_ATTEMPTS / _INTERVAL) for tests.
+_deploy_probe_health() {
+    local url="${1:-}" attempts="${LOKI_DEPLOY_HEALTH_ATTEMPTS:-5}" interval="${LOKI_DEPLOY_HEALTH_INTERVAL:-3}"
+    local i=0 code="000"
+    case "$attempts" in ''|*[!0-9]*) attempts=5 ;; esac
+    case "$interval" in ''|*[!0-9]*) interval=3 ;; esac
+    while [ "$i" -lt "$attempts" ]; do
+        i=$((i + 1))
+        code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$url" 2>/dev/null)" || code="000"
+        case "$code" in 2??) printf '%s' "$code"; return 0 ;; esac
+        [ "$i" -lt "$attempts" ] && [ "$interval" -gt 0 ] && sleep "$interval"
+    done
+    printf '%s' "$code"
+    return 1
+}
+
+# _deploy_policy_refusal <dir>
+# Echoes a refusal reason when the policy file does not permit a deploy, else "".
+# No policy file: "" (unchanged behaviour). File present and node or check.js
+# unavailable: refuse (fail-closed, mirrors run.sh check_policy). Exit 0 allows;
+# 2 (approval needed) and anything else refuse. Scoped env, no secrets forwarded.
+_deploy_policy_refusal() {
+    local dir="${1:-.}" gdir="${LOKI_DATA_DIR:-$HOME/.loki}"
+    if [ ! -f "$dir/.loki/policies.json" ] && [ ! -f "$dir/.loki/policies.yaml" ] \
+       && [ ! -f "$gdir/policies.json" ] && [ ! -f "$gdir/policies.yaml" ]; then
+        printf '%s' ""
+        return 0
+    fi
+    local checkjs="${SKILL_DIR:-}/src/policies/check.js"
+    [ -f "$checkjs" ] || checkjs="${PROJECT_DIR:-.}/src/policies/check.js"
+    if ! command -v node >/dev/null 2>&1; then
+        if [ "${LOKI_POLICY_REQUIRE_NODE:-1}" = "0" ]; then printf '%s' ""; return 0; fi
+        printf '%s' "policy file present but node is unavailable: cannot evaluate policy (fail-closed)"
+        return 0
+    fi
+    if [ ! -f "$checkjs" ]; then
+        printf '%s' "policy file present but check.js is missing (fail-closed)"
+        return 0
+    fi
+    local out rc=0
+    out="$(env -i PATH="$PATH" HOME="$HOME" LOKI_PROJECT_DIR="$dir" \
+        ${LOKI_DATA_DIR:+LOKI_DATA_DIR="$LOKI_DATA_DIR"} \
+        node "$checkjs" pre_deployment '{"action":"deploy"}' 2>/dev/null)" || rc=$?
+    [ "$rc" -eq 0 ] && { printf '%s' ""; return 0; }
+    local why
+    why="$(printf '%s' "$out" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("reason",""),end="")' 2>/dev/null || printf '')"
+    if [ "$rc" -eq 2 ]; then
+        printf '%s' "policy requires approval for deploy: ${why:-no reason given}"
+    else
+        printf '%s' "policy denied deploy: ${why:-policy check failed (fail-closed)}"
+    fi
+    return 0
+}
+
 # _deploy_try_execute <dir> <type>
 # The ONLY place a deploy command is ever run. Evaluates the gate, and either
 # executes + records, or REFUSES naming every failed check. Returns the deploy
@@ -9750,6 +9856,8 @@ EOF
 # refusal still leaves the user with exactly the output they get today.
 _deploy_try_execute() {
     local dir="${1:-.}" type="${2:-}"
+    # Set by cmd_deploy (dynamic scope); empty/false when called any other way.
+    local health_url="${_LOKI_DEPLOY_HEALTH_URL:-}" auto_rollback="${_LOKI_DEPLOY_AUTO_ROLLBACK:-false}"
 
     local command
     command="$(_deploy_first_installed_command "$dir" "$type")"
@@ -9827,17 +9935,72 @@ _deploy_try_execute() {
     # The string is NOT user input: it comes from the hardcoded
     # _deploy_options_for_type table, and the only path here has already passed
     # the destructive-operation check in _deploy_gate.
+    # Resolve the rollback target BEFORE deploying: after it, the previous Fly
+    # release is no longer the newest one and cannot be recovered.
+    local rb_cmd="" rb_note=""
+    if [ -n "$health_url" ]; then
+        local rb_raw
+        rb_raw="$(_deploy_rollback_for "$type" "$command")"
+        case "$rb_raw" in
+            manual:*) rb_note="${rb_raw#manual:}" ;;
+            *"<captured-version>"*)
+                local fv
+                fv="$(_deploy_fly_capture_version "$dir")"
+                if [ -n "$fv" ]; then rb_cmd="${rb_raw//<captured-version>/$fv}"
+                else rb_note="could not read the current Fly release before deploying, so no rollback target is known"; fi
+                ;;
+            "") rb_note="no rollback verb is documented for this command" ;;
+            *) rb_cmd="$rb_raw" ;;
+        esac
+    fi
+
     local rc=0
     ( cd "$dir" && eval "$command" ) || rc=$?
 
+    # Health probe only after a deploy that exited 0. Without a URL, or after a
+    # failed deploy, status is "unchecked": never a claim the service is healthy.
+    local health_status="unchecked" rb_attempted=false rb_exit="" hcode=""
+    if [ "$rc" -eq 0 ] && [ -n "$health_url" ]; then
+        echo "Probing health: ${health_url}"
+        if hcode="$(_deploy_probe_health "$health_url")"; then
+            health_status="healthy"
+        else
+            health_status="FAILED_HEALTH"
+        fi
+    fi
+
+    if [ "$health_status" = "FAILED_HEALTH" ]; then
+        echo -e "${RED}FAILED_HEALTH: ${health_url} did not return 2xx (last status ${hcode:-000}).${NC}" >&2
+        if [ "$auto_rollback" = true ] && [ -n "$rb_cmd" ] && ! _deploy_is_destructive "$rb_cmd"; then
+            echo "Rolling back: ${rb_cmd}" >&2
+            rb_attempted=true
+            rb_exit=0
+            ( cd "$dir" && eval "$rb_cmd" ) || rb_exit=$?
+            if [ "$rb_exit" -eq 0 ]; then
+                echo "Rollback command exited 0. Health of the rolled-back service was NOT re-checked." >&2
+            else
+                echo -e "${RED}Rollback command exited ${rb_exit}.${NC}" >&2
+            fi
+        elif [ "$auto_rollback" = true ]; then
+            echo "  No automatic rollback ran: ${rb_note:-no allowlisted rollback command}." >&2
+        elif [ -n "$rb_cmd" ]; then
+            echo "  Re-run with --auto-rollback to roll back automatically, or run: ${rb_cmd}" >&2
+        fi
+    fi
+
     local rec
     rec="$(_deploy_record "$dir" "$command" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
-        "$anchor_state")"
+        "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
     else
         echo -e "${RED}Deploy command exited ${rc}.${NC}" >&2
+    fi
+    if [ "$health_status" = "healthy" ]; then
+        echo -e "${GREEN}Health check passed${NC} (HTTP ${hcode})."
+    elif [ "$health_status" = "unchecked" ]; then
+        echo "Health: unchecked (no --health-url, or the deploy did not exit 0). Not a claim the service is healthy."
     fi
     if [ -n "$rec" ]; then
         echo "Deploy record: ${rec}"
@@ -9851,6 +10014,10 @@ _deploy_try_execute() {
         echo "  Command: ${command}" >&2
         echo "  Authorizing receipt run_id: ${run_id:-unknown}; anchor: ${anchor:-unknown}" >&2
         echo "  Record this yourself: a deploy with no record of itself is unevidenced." >&2
+    fi
+    # A deploy that exited 0 but failed its health probe is a failed deploy.
+    if [ "$rc" -eq 0 ] && [ "$health_status" = "FAILED_HEALTH" ]; then
+        return 4
     fi
     return "$rc"
 }
@@ -9937,6 +10104,11 @@ _deploy_gate() {
     [ -n "$dirty" ] && reasons="${reasons}${dirty}
 "
 
+    local pol
+    pol="$(_deploy_policy_refusal "$dir")"
+    [ -n "$pol" ] && reasons="${reasons}${pol}
+"
+
     printf '%s' "$reasons"
     return 0
 }
@@ -9957,6 +10129,8 @@ cmd_deploy() {
     # below sets it. Same rule --execute already follows -- no env var or config
     # file alone weakens this gate.
     local LOKI_DEPLOY_ALLOW_UNANCHORED=false
+    # Per-invocation like --execute; local so an ambient env var cannot set them.
+    local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_AUTO_ROLLBACK=false
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
@@ -9964,7 +10138,7 @@ cmd_deploy() {
             --help|-h|help)
                 echo -e "${BOLD}Loki Mode -- deploy command advisory (print-only by default)${NC}"
                 echo ""
-                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute]"
+                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute] [--health-url URL [--auto-rollback]]"
                 echo ""
                 echo "Detects your project type and your installed cloud CLI (and any"
                 echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
@@ -9997,6 +10171,10 @@ cmd_deploy() {
                 echo "                   --allow-unanchored does NOT bypass it."
                 echo "  4. You passed --execute on THIS invocation. No env var or config"
                 echo "     file alone can opt in."
+                echo "  5. Policy permits it. If .loki/policies.json (or the global one) exists,"
+                echo "     deploy needs autonomy 'operate' or actions.deploy 'allow'. An"
+                echo "     approval-required, denied or unevaluable policy REFUSES. No policy"
+                echo "     file leaves the gate unchanged."
                 echo ""
                 echo "It FAILS CLOSED: if a check cannot be evaluated at all (no receipt,"
                 echo "signing key or keys unavailable, anchor unresolvable, not a git repo), that is a"
@@ -10015,6 +10193,17 @@ cmd_deploy() {
                 echo "the command, its exit code, the authorizing receipt's run_id, the"
                 echo "resolved anchor, and anchor_state -- so a reader can tell later"
                 echo "whether the anchor was proven or explicitly overridden."
+                echo ""
+                echo "Health check and rollback (only with --execute):"
+                echo "  --health-url URL  After a deploy that exits 0, poll URL (bounded). Any"
+                echo "                    non-2xx marks the deploy FAILED_HEALTH and exits 4."
+                echo "                    Without a URL, health is recorded as 'unchecked',"
+                echo "                    never as healthy."
+                echo "  --auto-rollback   On FAILED_HEALTH run the provider's documented rollback:"
+                echo "                    'vercel rollback' or 'fly releases rollback <version"
+                echo "                    captured before the deploy>'. Netlify and Cloudflare"
+                echo "                    print a manual note. Needs --health-url. The rolled-back"
+                echo "                    service is not re-probed."
                 echo ""
                 echo "Options:"
                 echo "  --dir <path>   Project directory to scan (default: current dir)"
@@ -10035,6 +10224,15 @@ cmd_deploy() {
                 # never persisted and never settable by config alone.
                 LOKI_DEPLOY_ALLOW_UNANCHORED=true
                 ;;
+            --health-url)
+                case "${2:-}" in
+                    http://*|https://*) _LOKI_DEPLOY_HEALTH_URL="$2"; shift ;;
+                    *) echo "loki deploy --health-url requires an http(s) URL" >&2; return 1 ;;
+                esac
+                ;;
+            --auto-rollback)
+                _LOKI_DEPLOY_AUTO_ROLLBACK=true
+                ;;
             --dir)
                 # Guard against a missing OR flag-shaped value: an unguarded
                 # shift when --dir is the last arg underflows under set -e, and a
@@ -10051,6 +10249,11 @@ cmd_deploy() {
         esac
         shift
     done
+
+    if [ "$_LOKI_DEPLOY_AUTO_ROLLBACK" = true ] && [ -z "$_LOKI_DEPLOY_HEALTH_URL" ]; then
+        echo "loki deploy --auto-rollback requires --health-url (no health signal, no rollback)" >&2
+        return 1
+    fi
 
     # Resolve to '.' if the chosen dir does not exist (honest, no crash).
     [ -d "$dir" ] || dir="."

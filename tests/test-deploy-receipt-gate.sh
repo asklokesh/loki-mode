@@ -729,6 +729,171 @@ else
     echo "  SKIPPED: needs cryptography and test 8's signed fixture (not a pass)"
 fi
 
+# ===========================================================================
+# 14-18. HEALTH CHECK, AUTO-ROLLBACK AND THE POLICY PERMISSION.
+#
+# A local stub HTTP server (python3, loopback only, run-owned port, stopped by
+# the PID recorded here) answers /ok with 200 and /bad with 500. No cloud CLI
+# and no outside network is touched. The positive control is 14 (200 stays
+# healthy and never rolls back); 15 is the one that must go red on a regression.
+# ===========================================================================
+echo "14-18. health probe, auto-rollback and policy permission"
+if [ "${D8S_EXECUTED:-0}" = "1" ]; then
+    HS_PORT_FILE="$WORKROOT/hs.port"
+    python3 - "$HS_PORT_FILE" <<'PYEOF' &
+import http.server, socketserver, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        code = 200 if self.path.startswith("/ok") else 500
+        self.send_response(code); self.end_headers(); self.wfile.write(b"x")
+    def log_message(self, *a): pass
+srv = socketserver.TCPServer(("127.0.0.1", 0), H)
+open(sys.argv[1], "w").write(str(srv.server_address[1]))
+srv.serve_forever()
+PYEOF
+    HS_PID=$!
+    trap 'kill "$HS_PID" 2>/dev/null || true; cleanup' EXIT INT TERM
+    for _i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        [ -s "$HS_PORT_FILE" ] && break
+        sleep 0.25
+    done
+    HS_PORT="$(cat "$HS_PORT_FILE" 2>/dev/null || true)"
+
+    mk_hfix() {  # <name> ; signed receipt, nextjs project (vercel --prod)
+        local n="$1" b
+        b="$(make_fixture "$n")"
+        ( cd "$WORKROOT/$n" && _LOKI_RUN_START_SHA="$b" \
+            python3 "$GENERATOR" --loki-dir "$WORKROOT/$n/.loki" >/dev/null 2>&1 )
+    }
+    run_h() {  # <dir> [flags...]
+        local d="$1"; shift
+        ( cd "$d" && PATH="$FAKE_BIN:$PATH" LOKI_DIR="$d/.loki" LOKI_DATA_DIR="$WORKROOT/nodata" \
+            LOKI_DEPLOY_HEALTH_ATTEMPTS=2 LOKI_DEPLOY_HEALTH_INTERVAL=0 \
+            bash "$LOKI_BIN" deploy --dir "$d" --no-clip "$@" 2>&1 )
+    }
+    last_record() { ls -t "$1"/.loki/deploys/*.json 2>/dev/null | head -1; }
+    rec_field() { python3 -c 'import json,sys;print(json.load(open(sys.argv[1])).get(sys.argv[2]))' "$1" "$2"; }
+
+    if [ -z "$HS_PORT" ]; then
+        bad "stub health server did not start; 14-18 would be vacuous"
+    else
+        # 14. 200 -> healthy, no rollback (positive control)
+        mk_hfix d14h; D14H="$WORKROOT/d14h"
+        reset_sentinels
+        OUT14H="$(run_h "$D14H" --execute --health-url "http://127.0.0.1:$HS_PORT/ok" --auto-rollback)"; RC14=$?
+        R14="$(last_record "$D14H")"
+        if [ "$RC14" -eq 0 ] && [ -n "$R14" ] && [ "$(rec_field "$R14" health_status)" = "healthy" ] \
+           && [ "$(rec_field "$R14" rollback_attempted)" = "False" ] \
+           && ! grep -q rollback "$SENTINEL_DIR/vercel" 2>/dev/null; then
+            ok "14. HTTP 200 records healthy, exits 0, runs no rollback"
+        else
+            bad "14. healthy path wrong" "rc=$RC14 rec=$R14 $(printf '%s' "$OUT14H" | tail -3)"
+        fi
+
+        # 15. 500 + --auto-rollback -> FAILED_HEALTH, rollback invoked, exit != 0
+        mk_hfix d15h; D15H="$WORKROOT/d15h"
+        reset_sentinels
+        cat > "$FAKE_BIN/vercel" <<EOF
+#!/usr/bin/env bash
+echo "STUB-RAN \$*" >> "$SENTINEL_DIR/vercel"
+exit 0
+EOF
+        OUT15="$(run_h "$D15H" --execute --health-url "http://127.0.0.1:$HS_PORT/bad" --auto-rollback)"; RC15=$?
+        R15="$(last_record "$D15H")"
+        if [ "$RC15" -ne 0 ] && [ -n "$R15" ] \
+           && [ "$(rec_field "$R15" health_status)" = "FAILED_HEALTH" ] \
+           && [ "$(rec_field "$R15" rollback_attempted)" = "True" ] \
+           && [ "$(rec_field "$R15" rollback_exit)" = "0" ] \
+           && grep -q "STUB-RAN rollback" "$SENTINEL_DIR/vercel"; then
+            ok "15. HTTP 500 records FAILED_HEALTH, runs the rollback, exits non-zero"
+        else
+            bad "15. unhealthy path wrong" "rc=$RC15 rec=$R15 $(printf '%s' "$OUT15" | tail -4)"
+        fi
+
+        # 16. 500 without --auto-rollback: FAILED_HEALTH, NO rollback
+        mk_hfix d16h; D16H="$WORKROOT/d16h"
+        rm -f "$SENTINEL_DIR/vercel"
+        _="$(run_h "$D16H" --execute --health-url "http://127.0.0.1:$HS_PORT/bad")"; RC16=$?
+        R16="$(last_record "$D16H")"
+        if [ "$RC16" -ne 0 ] && [ "$(rec_field "$R16" health_status)" = "FAILED_HEALTH" ] \
+           && [ "$(rec_field "$R16" rollback_attempted)" = "False" ] \
+           && ! grep -q "rollback" "$SENTINEL_DIR/vercel" 2>/dev/null; then
+            ok "16. no --auto-rollback: FAILED_HEALTH, nothing rolled back"
+        else
+            bad "16. rollback ran without --auto-rollback, or status wrong" "rc=$RC16 rec=$R16"
+        fi
+
+        # 17. no URL -> unchecked (never healthy); --auto-rollback alone is a usage error
+        mk_hfix d17h; D17H="$WORKROOT/d17h"
+        _="$(run_h "$D17H" --execute)"; RC17=$?
+        R17="$(last_record "$D17H")"
+        OUT17B="$(run_h "$D17H" --execute --auto-rollback)"; RC17B=$?
+        if [ "$RC17" -eq 0 ] && [ "$(rec_field "$R17" health_status)" = "unchecked" ] \
+           && [ "$RC17B" -ne 0 ] && printf '%s' "$OUT17B" | grep -q "requires --health-url"; then
+            ok "17. no URL records unchecked; --auto-rollback without a URL is refused"
+        else
+            bad "17. unchecked handling wrong" "rc=$RC17 rec=$R17 rcb=$RC17B"
+        fi
+
+        # 18. policy: execute-level autonomy refuses deploy before exec; operate allows
+        mk_hfix d18h; D18H="$WORKROOT/d18h"
+        mkdir -p "$D18H/.loki"
+        printf '{"autonomy":"execute"}\n' > "$D18H/.loki/policies.json"
+        rm -f "$SENTINEL_DIR/vercel"
+        OUT18="$(run_h "$D18H" --execute)"; RC18=$?
+        if [ "$RC18" -ne 0 ] && printf '%s' "$OUT18" | grep -q "policy denied deploy" \
+           && [ ! -e "$SENTINEL_DIR/vercel" ]; then
+            ok "18. policy autonomy=execute refuses the deploy before any CLI runs"
+        else
+            bad "18. policy deny did not refuse" "rc=$RC18 $(printf '%s' "$OUT18" | tail -4)"
+        fi
+        printf '{"autonomy":"operate"}\n' > "$D18H/.loki/policies.json"
+        OUT18B="$(run_h "$D18H" --execute)"; RC18B=$?
+        if [ "$RC18B" -eq 0 ] && [ -e "$SENTINEL_DIR/vercel" ]; then
+            ok "18b. policy autonomy=operate permits the deploy (positive control)"
+        else
+            bad "18b. operate did not permit the deploy" "rc=$RC18B $(printf '%s' "$OUT18B" | tail -4)"
+        fi
+        printf '{not json' > "$D18H/.loki/policies.json"
+        rm -f "$SENTINEL_DIR/vercel"
+        _="$(run_h "$D18H" --execute)"; RC18C=$?
+        if [ "$RC18C" -ne 0 ] && [ ! -e "$SENTINEL_DIR/vercel" ]; then
+            ok "18c. an unparseable policy file fails closed"
+        else
+            bad "18c. corrupt policy did not refuse" "rc=$RC18C"
+        fi
+        # 19. Fly: the version is captured BEFORE the deploy and used for rollback
+        FLY_BIN="$WORKROOT/fly-bin"; mkdir -p "$FLY_BIN"
+        cat > "$FLY_BIN/fly" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = "releases" ] && [ "\$2" = "--json" ]; then echo '[{"Version":7},{"Version":6}]'; exit 0; fi
+echo "FLY-RAN \$*" >> "$SENTINEL_DIR/fly-calls"
+exit 0
+EOF
+        cp "$FLY_BIN/fly" "$FLY_BIN/flyctl"; chmod +x "$FLY_BIN/fly" "$FLY_BIN/flyctl"
+        D19_BASE="$(make_fixture d19h)"; D19H="$WORKROOT/d19h"
+        git -C "$D19H" rm -q package.json
+        echo "flask" > "$D19H/requirements.txt"
+        git -C "$D19H" add requirements.txt
+        git -C "$D19H" commit -qm "python app"
+        ( cd "$D19H" && _LOKI_RUN_START_SHA="$D19_BASE" \
+            python3 "$GENERATOR" --loki-dir "$D19H/.loki" >/dev/null 2>&1 )
+        rm -f "$SENTINEL_DIR/fly-calls"
+        OUT19="$( cd "$D19H" && PATH="$FLY_BIN:$PATH" LOKI_DIR="$D19H/.loki" LOKI_DATA_DIR="$WORKROOT/nodata" \
+            LOKI_DEPLOY_HEALTH_ATTEMPTS=1 LOKI_DEPLOY_HEALTH_INTERVAL=0 \
+            bash "$LOKI_BIN" deploy --dir "$D19H" --no-clip --execute \
+            --health-url "http://127.0.0.1:$HS_PORT/bad" --auto-rollback 2>&1 )"; RC19=$?
+        if [ "$RC19" -ne 0 ] && grep -q "releases rollback 7" "$SENTINEL_DIR/fly-calls" 2>/dev/null; then
+            ok "19. Fly rolls back to the version captured before the deploy"
+        else
+            bad "19. fly rollback target wrong" "rc=$RC19 $(cat "$SENTINEL_DIR/fly-calls" 2>/dev/null) $(printf '%s' "$OUT19" | tail -3)"
+        fi
+    fi
+    kill "$HS_PID" 2>/dev/null || true
+else
+    echo "  SKIPPED: needs test 8's signed fixture (not a pass)"
+fi
+
 echo ""
 echo "==================================================================="
 echo "Passed: $PASS   Failed: $FAIL"
