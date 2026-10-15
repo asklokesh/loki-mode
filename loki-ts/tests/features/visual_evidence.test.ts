@@ -275,7 +275,11 @@ test("monorepo without a root manifest names the packages it checked", async () 
   const repo = join(root, "mono");
   for (const d of ["backend", "frontend"]) { mkdirSync(join(repo, d), { recursive: true }); writeFileSync(join(repo, d, "package.json"), JSON.stringify({ scripts: { build: "x" } })); }
   const ev = await captureVisualEvidence(repo, RUN, ["frontend/app/page.tsx"], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 2000 });
-  expect(ev.skipped).toContain("no dev, preview or start script in backend/ or frontend/");
+  expect(ev.skipped).toBe("no dev, preview or start script in backend/ or frontend/ (no root package.json)");
+  const part = join(root, "mono-part");
+  for (const [d, sc] of [["backend", {}], ["frontend", { dev: "x" }]] as const) { mkdirSync(join(part, d), { recursive: true }); writeFileSync(join(part, d, "package.json"), JSON.stringify({ scripts: sc })); }
+  const pv = await captureVisualEvidence(part, RUN, ["frontend/app/page.tsx"], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 2000 });
+  expect(pv.skipped).toBe("no root package.json; no dev, preview or start script in backend/ (frontend/ has one)");
   const bare = join(root, "bare"); mkdirSync(bare, { recursive: true });
   expect((await captureVisualEvidence(bare, RUN, ["a/page.tsx"], { env: { ...process.env, LOKI_VISUAL_EVIDENCE: "1" }, budgetMs: 2000 })).skipped).toBe("no package.json");
 });
