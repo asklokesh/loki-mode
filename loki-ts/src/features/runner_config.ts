@@ -5,18 +5,19 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { safeGit } from "../util/safe_git";
 
-type Sections = RegExp | readonly string[] | "go" | "tsconfig";
+type Sections = RegExp | readonly string[] | "go" | "tsconfig" | "cargo";
 interface Spec { re: RegExp; shared?: Sections }
 const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 export const RUNNER_CONFIGS: Spec[] = [
   { re: /(^|\/)(conftest\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
   { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.[\w.]+$/ },
   { re: /(^|\/)\.cargo\/config(\.toml)?$/ },
+  { re: /(^|\/)(babel\.config\.[\w.]+|\.babelrc(\.[\w]+)?|\.pnpmfile\.cjs)$/ },
   { re: /(^|\/)package\.json$/, shared: PKG_KEYS },
   { re: /(^|\/)pyproject\.toml$/, shared: /^\[tool\.pytest/ },
   { re: /(^|\/)setup\.cfg$/, shared: /^\[tool:pytest\]/ },
-  { re: /(^|\/)go\.mod$/, shared: "go" },
-  { re: /(^|\/)Cargo\.toml$/, shared: /^\[(patch|replace)\b/ },
+  { re: /(^|\/)go\.(mod|work)$/, shared: "go" },
+  { re: /(^|\/)Cargo\.toml$/, shared: "cargo" },
   { re: /(^|\/)[jt]sconfig(\.[\w-]+)?\.json$/, shared: "tsconfig" },
 ];
 
@@ -34,6 +35,15 @@ function relevant(shared: Sections, text: string): string {
   if (shared === "go") { // replace directives, single-line or in a block
     let blk = false;
     return lines(text).filter((l) => { if (blk) { if (l === ")") blk = false; return true; } if (/^replace\s*\($/.test(l)) { blk = true; return true; } return /^replace\s/.test(l); }).join("\n");
+  }
+  if (shared === "cargo") { // top-level dotted patch/replace keys, [patch]/[replace], [[test]] harness, dev-dependencies path=
+    let sec = "";
+    return lines(text).filter((l) => {
+      if (/^\[\[?[^\]]+\]\]?$/.test(l)) { sec = l.replace(/^\[+|\]+$/g, ""); return /^(patch|replace)\b/.test(sec) || /dev-dependencies\./.test(sec) || KW.test(l); }
+      if (/^(patch|replace)\b/.test(sec) || (sec === "" && /^(patch|replace)\b/.test(l))) return true;
+      if (/dev-dependencies/.test(sec) || (sec === "" && /^[\w.-]*dev-dependencies\b/.test(l))) return /\bpath\s*=/.test(l) || KW.test(l);
+      return (sec === "test" && /^harness\b/.test(l)) || KW.test(l);
+    }).join("\n");
   }
   if (shared === "tsconfig") { const j = jsonc(text) as { compilerOptions?: Record<string, unknown>; extends?: unknown }; const o = j.compilerOptions ?? {}; return JSON.stringify(["extends", "baseUrl", "paths", "rootDirs", "moduleSuffixes", "customConditions"].map((k) => (k === "extends" ? j["extends"] : o[k]))); }
   if (Array.isArray(shared)) { const j = JSON.parse(text) as Record<string, unknown>; return JSON.stringify([shared.map((k) => j[k]), depGuard(j)]); }
