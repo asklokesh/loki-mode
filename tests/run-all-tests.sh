@@ -1427,6 +1427,8 @@ run_test "completion coverage (every real command in both shells)" "$SCRIPT_DIR/
 run_test "dry-run paths work and are discoverable from start --help" "$SCRIPT_DIR/test-dry-run-discoverable.sh"
 run_test "exit codes documented and matching the source" "$SCRIPT_DIR/test-exit-codes-documented.sh"
 run_test "Exit-code contract is discoverable from --help" "$SCRIPT_DIR/test-exit-codes-discoverable.sh"
+run_test "exit-code contract cases execute as documented (LM-006)" "timeout -k 10 300 bash $SCRIPT_DIR/test-exit-code-cases.sh"
+run_test "routing contract: loki route --json for every invocation form (LM-003)" "timeout -k 10 300 bash $SCRIPT_DIR/test-route-contract.sh"
 run_test "log verbosity (--quiet / LOKI_LOG_LEVEL, errors never hidden)" "$SCRIPT_DIR/test-log-verbosity.sh"
 run_test "verify --json emits pipeable evidence on stdout" "$SCRIPT_DIR/test-verify-json-stdout.sh"
 run_test "documented env vars exist in the source" "$SCRIPT_DIR/test-env-vars-documented.sh"
