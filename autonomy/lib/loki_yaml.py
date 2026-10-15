@@ -83,6 +83,8 @@ def _type_ok(val, t):
         return isinstance(val, list)
     if t == "string":
         return isinstance(val, str)
+    if t == "boolean":
+        return isinstance(val, bool)
     if t == "integer":
         return isinstance(val, int) and not isinstance(val, bool)
     if t == "number":
@@ -100,15 +102,19 @@ def validate(data, schema, path="", out=None):
     shown = "" if secret or not isinstance(data, (str, int, float)) else " (got %r)" % (data,)
     if t and not _type_ok(data, t):
         out.append("%s: must be %s%s" % (label, {"integer": "an integer", "object": "a mapping",
-                   "array": "a list", "string": "a string", "number": "a number"}[t], shown))
+                   "array": "a list", "string": "a string", "number": "a number",
+                   "boolean": "true or false"}[t], shown))
         return out
     if isinstance(data, dict):
         props = schema.get("properties", {})
         for k, v in data.items():
             kp = (path + "." if path else "") + str(k)
             if k not in props:
-                if schema.get("additionalProperties") is False:
+                extra = schema.get("additionalProperties")
+                if extra is False:
                     out.append("%s: unknown key (allowed: %s)" % (kp, ", ".join(sorted(props))))
+                elif isinstance(extra, dict):
+                    validate(v, extra, kp, out)
             else:
                 validate(v, props[k], kp, out)
     elif isinstance(data, list):

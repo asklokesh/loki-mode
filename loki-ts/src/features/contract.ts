@@ -10,6 +10,7 @@ import { REPO_ROOT } from "../util/paths.ts";
 import { safeGit } from "../util/safe_git.ts";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
+import type { Unit } from "./decompose.ts";
 
 export interface Criterion { id: string; text: string; source_line: number }
 export interface Contract { source: string; criteria: Criterion[] }
@@ -62,6 +63,42 @@ export function parseContract(markdown: string, source = ""): Contract {
     }
   });
   return { source, criteria: found.map((f, n) => ({ id: `AC-${n + 1}`, text: f.text, source_line: f.line })) };
+}
+// CONTRACT (v11.7.0): per-unit acceptance for a parallel group. Criteria are frozen to .loki/groups/<id>/contract.json before any
+// worker spawns; a criterion no unit owns fails the group closed (nothing is spawned, nothing is guessed).
+export interface GroupContract { group: string; units: { id: string; criteria: Criterion[] }[]; orphans: Criterion[] }
+const norm = (s: string): string => clean(s).toLowerCase();
+/** A criterion belongs to every unit one of whose items equals it or contains it (or is contained by it), after cleaning. Exact text only: no keyword guessing. */
+export function assignCriteria(units: Pick<Unit, "id" | "items">[], criteria: Criterion[]): { units: { id: string; criteria: Criterion[] }[]; orphans: Criterion[] } {
+  const owned = new Set<string>();
+  const out = units.map((u) => {
+    const items = u.items.map(norm).filter((i) => i.length >= 3);
+    const mine = criteria.filter((c) => { const t = norm(c.text); return items.some((i) => i === t || i.includes(t) || t.includes(i)); });
+    for (const c of mine) owned.add(c.id);
+    return { id: u.id, criteria: mine };
+  });
+  return { units: out, orphans: criteria.filter((c) => !owned.has(c.id)) };
+}
+export function groupContractPath(repoDir: string, groupId: string): string {
+  return join(repoDir, ".loki", "groups", groupId.replace(/[^A-Za-z0-9._-]/g, "_"), "contract.json");
+}
+/** Assign, then write the frozen group contract atomically. ok false (nothing written) when any criterion is orphaned. */
+export function freezeGroupContract(repoDir: string, groupId: string, units: Pick<Unit, "id" | "items">[], contract: Contract): { ok: true; path: string; contract: GroupContract } | { ok: false; reason: string; orphans: Criterion[] } {
+  const a = assignCriteria(units, contract.criteria);
+  if (a.orphans.length > 0) return { ok: false, reason: `NOT PROVEN: group contract has ${a.orphans.length} criterion owned by no unit: ${a.orphans.map((o) => `${sanitizeCriterion(o.id)} ${sanitizeCriterion(o.text)}`).join("; ")}`, orphans: a.orphans };
+  const gc: GroupContract = { group: groupId, units: a.units, orphans: [] };
+  const path = groupContractPath(repoDir, groupId);
+  mkdirSync(dirname(path), { recursive: true });
+  atomicWriteJson(path, gc);
+  return { ok: true, path, contract: gc };
+}
+/** Freeze first, then call spawn with each unit's own criteria. A failed freeze never calls spawn. */
+export async function spawnWithContract<T>(repoDir: string, groupId: string, units: Pick<Unit, "id" | "items">[], contract: Contract, spawn: (unitId: string, acceptance: string[]) => Promise<T> | T): Promise<{ ok: true; results: T[] } | { ok: false; reason: string }> {
+  const f = freezeGroupContract(repoDir, groupId, units, contract);
+  if (!f.ok) return { ok: false, reason: f.reason };
+  const results: T[] = [];
+  for (const u of f.contract.units) results.push(await spawn(u.id, u.criteria.map((c) => c.text)));
+  return { ok: true, results };
 }
 const STOP = new Set(["the", "and", "for", "with", "that", "this", "must", "should", "shall", "when", "then", "are", "was", "all", "any", "can", "not", "has", "have", "from", "into", "each", "user", "users"]);
 function words(s: string): string[] {

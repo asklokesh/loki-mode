@@ -22,6 +22,7 @@
 //   formatTrajectoryHuman(traj) -> string
 //   formatTrajectoryJson(traj) -> string
 //   writeTrajectoryCache(lokiDir, traj) -> string | null
+//   graduationAdvice(traj, currentLevel) -> GraduationAdvice (advisory only)
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -87,6 +88,10 @@ export type TrustRun = {
   gate_pass_rate: number | null;
   iterations: number | null;
   interventions: number | null;
+  /** Sealed verdict recorded in proof.json, or null when the proof carries none (UNCHECKED). */
+  verdict: string | null;
+  /** true only when proof.json records a VERIFIED verdict later contradicted by a FAILED outcome; null when no verdict evidence. */
+  false_verified: boolean | null;
 };
 
 export type TrustTrajectory = {
@@ -102,6 +107,24 @@ export type TrustTrajectory = {
   regressing_axes: AxisKey[];
   series: TrustRun[];
   notes: string[];
+  /** Advisory earned-autonomy verdict. Never written to the policy file. */
+  graduation: GraduationAdvice;
+};
+
+export type AutonomyLevel = "propose" | "execute" | "operate";
+const LEVEL_ORDER: AutonomyLevel[] = ["propose", "execute", "operate"];
+export const GRADUATION_MIN_RUNS = 10;
+
+export type GraduationAdvice = {
+  current_level: AutonomyLevel | null;
+  next_level: AutonomyLevel | null;
+  eligible: boolean;
+  runs: number;
+  runs_with_verdict: number;
+  false_verified: number;
+  council_pass_pct: number | null;
+  missing: string[];
+  summary: string;
 };
 
 function obj(v: unknown): Record<string, unknown> {
@@ -170,6 +193,15 @@ function interventionsValue(proof: Record<string, unknown>): number | null {
   return null;
 }
 
+function verdictEvidence(proof: Record<string, unknown>): { verdict: string | null; falseVerified: boolean | null } {
+  const raw = String(proof["verdict"] ?? "").trim().toUpperCase();
+  const verdict = raw ? raw : null;
+  const later = String(proof["later_verdict"] ?? "").trim().toUpperCase();
+  if (proof["false_verified"] === true) return { verdict, falseVerified: true };
+  if (verdict === null) return { verdict, falseVerified: null };
+  return { verdict, falseVerified: verdict === "VERIFIED" && later === "FAILED" };
+}
+
 function loadRuns(lokiDir: string): TrustRun[] {
   const proofsDir = join(lokiDir, "proofs");
   const runs: TrustRun[] = [];
@@ -198,7 +230,10 @@ function loadRuns(lokiDir: string): TrustRun[] {
       continue;
     }
     if (!proof || typeof proof !== "object") continue;
+    const ev = verdictEvidence(proof);
     runs.push({
+      verdict: ev.verdict,
+      false_verified: ev.falseVerified,
       run_id: String(proof["run_id"] ?? name),
       generated_at:
         typeof proof["generated_at"] === "string"
@@ -290,7 +325,61 @@ function directionForAxis(axis: AxisKey, orderedValues: (number | null)[]): Axis
   };
 }
 
-export function computeTrajectory(lokiDir: string): TrustTrajectory {
+/**
+ * Pure, advisory. Eligible for the next level only when: >= 10 runs carrying
+ * verdict evidence, zero FAILED-after-VERIFIED, and no regressing axis.
+ * Runs without verdict evidence are UNCHECKED and never count toward eligibility.
+ */
+export function graduationAdvice(
+  traj: Pick<TrustTrajectory, "series" | "regressing_axes">,
+  currentLevel: AutonomyLevel | null,
+): GraduationAdvice {
+  const runs = traj.series.length;
+  const withVerdict = traj.series.filter((r) => r.verdict !== null).length;
+  const passing = traj.series.filter((r) => r.verdict === "VERIFIED").length;
+  const nonPassing = withVerdict - passing;
+  const falseV = traj.series.filter((r) => r.false_verified === true).length;
+  const council = traj.series
+    .map((r) => r.council_pass_rate)
+    .filter((v): v is number => v !== null);
+  const councilPct = council.length > 0 ? Math.round((mean(council) * 1000)) / 10 : null;
+  const idx = currentLevel === null ? -1 : LEVEL_ORDER.indexOf(currentLevel);
+  const next = idx + 1 < LEVEL_ORDER.length ? LEVEL_ORDER[idx + 1]! : null;
+  const base = {
+    current_level: currentLevel,
+    next_level: next,
+    runs,
+    runs_with_verdict: withVerdict,
+    false_verified: falseV,
+    council_pass_pct: councilPct,
+  };
+  if (next === null) {
+    return { ...base, eligible: false, missing: [], summary: "already at the highest level (operate); nothing to graduate to" };
+  }
+  const missing: string[] = [];
+  if (passing < GRADUATION_MIN_RUNS) {
+    if (runs < GRADUATION_MIN_RUNS) {
+      missing.push(`need ${GRADUATION_MIN_RUNS}+ runs, have ${runs}`);
+    } else {
+      missing.push(
+        `need ${GRADUATION_MIN_RUNS}+ VERIFIED runs, have ${passing} (UNCHECKED runs do not count)`,
+      );
+    }
+  }
+  if (nonPassing > 0) {
+    missing.push(`${nonPassing} run(s) with a non-VERIFIED verdict (FAILED, PARTIAL or UNVERIFIED do not count)`);
+  }
+  if (falseV > 0) missing.push(`${falseV} false VERIFIED run(s) (FAILED after VERIFIED)`);
+  if (traj.regressing_axes.length > 0) missing.push(`regressing: ${traj.regressing_axes.join(", ")}`);
+  const eligible = missing.length === 0;
+  const stats = `${runs} runs, ${falseV} false VERIFIED, council pass ${councilPct === null ? "n/a" : councilPct + "%"}`;
+  const summary = eligible
+    ? `eligible for ${next}: ${stats}`
+    : `not yet eligible for ${next}: ${missing.join("; ")} (${stats})`;
+  return { ...base, eligible, missing, summary };
+}
+
+export function computeTrajectory(lokiDir: string, currentLevel: AutonomyLevel | null = null): TrustTrajectory {
   const runs = loadRuns(lokiDir);
   const series: TrustRun[] = runs.map((r) => ({
     run_id: r.run_id,
@@ -299,6 +388,8 @@ export function computeTrajectory(lokiDir: string): TrustTrajectory {
     gate_pass_rate: r.gate_pass_rate,
     iterations: r.iterations,
     interventions: r.interventions,
+    verdict: r.verdict,
+    false_verified: r.false_verified,
   }));
 
   const axes = {} as Record<AxisKey, AxisDirection>;
@@ -342,6 +433,7 @@ export function computeTrajectory(lokiDir: string): TrustTrajectory {
     regressing_axes: regressingAxes,
     series,
     notes,
+    graduation: graduationAdvice({ series, regressing_axes: regressingAxes }, currentLevel),
   };
 }
 
@@ -401,6 +493,7 @@ export function formatTrajectoryHuman(traj: TrustTrajectory): string {
     lines.push(`Not enough history yet.`);
     lines.push(`Trust trajectory needs 2+ recorded runs to show a direction.`);
     lines.push(`Each \`loki start\` run writes a proof-of-run; come back after the next run.`);
+    lines.push(`Autonomy advice (advisory, never changes policy): ${traj.graduation.summary}`);
     if (traj.notes.length > 0) {
       lines.push(``);
       lines.push(`Notes`);
@@ -419,6 +512,7 @@ export function formatTrajectoryHuman(traj: TrustTrajectory): string {
   else if (reg && !imp) lines.push(`Overall: trust regressing (${reg} axis regressing). Review recent runs.`);
   else if (imp || reg) lines.push(`Overall: mixed (${imp} improving / ${reg} regressing).`);
   else lines.push(`Overall: stable.`);
+  lines.push(`Autonomy advice (advisory, never changes policy): ${traj.graduation.summary}`);
   if (traj.notes.length > 0) {
     lines.push(``);
     lines.push(`Notes`);

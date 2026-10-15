@@ -167,3 +167,22 @@ describe('Policy check CLI (check.js)', function () {
         assert.ok(result.stderr.includes('Usage:'), 'Expected usage message on stderr');
     });
 });
+
+describe('check.js autonomy exit codes', function () {
+    it('propose exits 1, actions require_approval exits 2, execute exits 0 for pr', function () {
+        const cases = [
+            [{ autonomy: 'propose' }, 1],
+            [{ autonomy: 'execute', actions: { pr: 'require_approval' } }, 2],
+            [{ autonomy: 'execute' }, 0],
+        ];
+        for (const [doc, code] of cases) {
+            const dir = makeTempProject(doc);
+            try {
+                const r = runCheck('pre_deployment', '{"action":"pr"}', dir);
+                assert.strictEqual(r.status, code);
+            } finally {
+                fs.rmSync(dir, { recursive: true, force: true });
+            }
+        }
+    });
+});

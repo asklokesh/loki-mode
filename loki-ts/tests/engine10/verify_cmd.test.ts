@@ -663,3 +663,18 @@ describe("main() UNSIGNED policy (D47)", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); rmSync(home, { recursive: true, force: true }); }
   });
 });
+
+describe("main() --seal-composite", () => {
+  test("help documents it, a missing or extra run dir exits 2, a dir without integration.json exits 2", async () => {
+    const d = tmpDir();
+    expect((await runMain(["--help"], d)).out).toContain("--seal-composite RUN_DIR");
+    const err = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try {
+      expect((await runMain(["--seal-composite"], d)).code).toBe(2);
+      expect((await runMain(["--seal-composite", d, "x"], d)).code).toBe(2);
+      expect((await runMain(["--seal-composite", d], d)).code).toBe(2);
+    } finally { process.stderr.write = err; }
+    rmSync(d, { recursive: true, force: true });
+  });
+});

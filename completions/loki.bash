@@ -27,7 +27,7 @@ _loki_completion() {
 
             # If the word starts with a dash, show flags
             if [[ "$cur" == -* ]]; then
-                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --spec --spec-first --yes --budget --attempts --model --isolation --max-cost --no-pr --explain-route --help"
+                local flags="--provider --max-iterations --parallel --background --bg --simple --complex --github --no-dashboard --sandbox --skip-memory --spec --spec-first --yes --budget --attempts --model --isolation --max-cost --no-pr --explain-route --workspace --deploy --health-url --auto-rollback --help"
                 COMPREPLY=( $(compgen -W "${flags}" -- "$cur") )
                 return 0
             fi

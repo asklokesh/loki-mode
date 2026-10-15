@@ -65,6 +65,48 @@ class WorkspaceTest(unittest.TestCase):
         errs = loki_yaml.validate({"workspaces": self._ws()}, schema)
         self.assertEqual(errs, [])
 
+    def _errs(self, ws):
+        return loki_yaml.validate({"workspaces": ws}, loki_yaml.load_schema())
+
+    def test_schema_rejects_misspelled_after(self):
+        ws = {"shop": {"repos": [{"repo": "acme/api"},
+                                 {"repo": "acme/web", "afer": ["acme/api"]}]}}
+        errs = self._errs(ws)
+        self.assertEqual(len(errs), 1)
+        self.assertIn("workspaces.shop.repos[1].afer: unknown key", errs[0])
+
+    def test_schema_rejects_unknown_workspace_key_and_wrong_types(self):
+        errs = self._errs({"shop": {"repos": [], "concurency": 2}})
+        self.assertTrue(any("workspaces.shop.concurency: unknown key" in e for e in errs))
+        errs = self._errs({"shop": {"concurrency": "two"}})
+        self.assertTrue(any("workspaces.shop.concurrency: must be an integer" in e for e in errs))
+        errs = self._errs({"shop": {"concurrency": 0}})
+        self.assertTrue(any("workspaces.shop.concurrency: must be >= 1" in e for e in errs))
+        errs = self._errs({"shop": {"plan": "yes"}})
+        self.assertTrue(any("workspaces.shop.plan" in e for e in errs))
+
+    def test_schema_accepts_all_new_keys(self):
+        ws = self._ws(integration={"command": "true", "timeout_s": 5, "per_stage": True})
+        ws["shop"]["concurrency"] = 2
+        ws["shop"]["plan"] = True
+        self.assertEqual(self._errs(ws), [])
+
+    def test_cli_config_error_exit_2(self):
+        cfg = os.path.join(self.t, "loki.yaml")
+        with open(cfg, "w") as f:
+            f.write("workspaces:\n  shop:\n    repos:\n      - repo: acme/api\n"
+                    "      - repo: acme/web\n        afer: [acme/api]\n")
+        lines = []
+        orig_load, orig_say = loki_yaml.load, workspace.say
+        loki_yaml.load = lambda *a, **k: orig_load(path=cfg)
+        workspace.say = lines.append
+        try:
+            rc = workspace.main(["list"])
+        finally:
+            loki_yaml.load, workspace.say = orig_load, orig_say
+        self.assertEqual(rc, 2)
+        self.assertTrue(any("afer" in l for l in lines))
+
     def test_order_and_cycle(self):
         order = workspace.order_repos(self._ws()["shop"])
         self.assertEqual([e["repo"] for e in order], ["acme/api", "acme/web"])

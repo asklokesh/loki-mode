@@ -8,7 +8,8 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { snapshotContract } from "../../src/features/contract.ts";
 import { snapshotUntracked, splitDirty, untrackedAtIntake } from "../../src/e10ext/preexisting_dirty.ts";
-import { generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync } from "node:crypto";
+import { appendReceiptFact } from "../../src/util/pr_lessons.ts";
 import { sealedLog } from "./log_fixture.ts";
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
@@ -1328,4 +1329,35 @@ describe("FC-69 not_run Wall is disclosed and does not change the verdict", () =
     expect(s.data.verdict).toBe("VERIFIED");
     expect(receiptOf(s).not_proven.some((n: string) => n.startsWith("Wall test not executed:"))).toBe(true);
   }, 30000);
+});
+
+describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
+  const factFor = async (name: string, env?: string) => {
+    const { repo, base } = makeRepo(name);
+    const { ctx } = ctxFor(repo, base);
+    if (env !== undefined) process.env["LOKI_AUTO_LEARN_PR"] = env;
+    try {
+      await commitStage.run(ctx, new AbortController().signal);
+      const s = await sealStage.run(ctx, new AbortController().signal);
+      return { repo, s, r: receiptOf(s) };
+    } finally { delete process.env["LOKI_AUTO_LEARN_PR"]; }
+  };
+  test("writes a cited fact after the receipt; receipt hash re-verifies and is unchanged", async () => {
+    const { repo, s, r } = await factFor("learn-on");
+    const j = JSON.parse(readFileSync(join(repo, ".loki/memory/semantic/pr-lessons.json"), "utf8")) as { lessons: Array<Record<string, any>> };
+    expect(j.lessons.length).toBe(1);
+    expect(j.lessons[0]!.kind).toBe("receipt");
+    expect(j.lessons[0]!.justified_by).toEqual({ run_id: "r1", receipt_sha256: r.receipt_sha256, verdict: "VERIFIED" });
+    sealedLog(dirname(s.data.receipt_path as string), r.receipt_sha256);
+    expect((await verifyReceipt(s.data.receipt_path as string)).verdict).toBe("VERIFIED");
+  }, 30000);
+  test("LOKI_AUTO_LEARN_PR=0 writes no fact; appending a fact leaves receipt bytes unchanged", async () => {
+    const on = await factFor("learn-hash-on");
+    const rp = on.s.data.receipt_path as string;
+    const before = createHash("sha256").update(readFileSync(rp)).digest("hex");
+    appendReceiptFact(on.repo, { runId: "r-other", verdict: "VERIFIED", receiptSha256: "a".repeat(64), title: "x" });
+    expect(createHash("sha256").update(readFileSync(rp)).digest("hex")).toBe(before);
+    const off = await factFor("learn-off", "0");
+    expect(existsSync(join(off.repo, ".loki/memory/semantic/pr-lessons.json"))).toBe(false);
+  }, 60000);
 });

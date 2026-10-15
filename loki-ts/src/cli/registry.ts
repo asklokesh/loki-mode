@@ -65,6 +65,10 @@ const legacy = (name: string, desc: string, reason: string, aliases?: string[]):
 const startFlags: FlagSpec[] = [
   dyn("--provider", "providers", "AI provider"),
   bool("--parallel", "Parallel mode with git worktrees"),
+  str("--workspace", "<name>", "Run a loki.yaml workspace (multi-repo) for the brief"),
+  bool("--deploy", "After a VERIFIED run, deploy through the gated loki deploy --execute"),
+  str("--health-url", "<url>", "With --deploy: probe this URL after the deploy"),
+  bool("--auto-rollback", "With --deploy: roll back automatically when the health probe fails"),
   bool("--bg", "Run in background mode"),
   bool("--simple", "Force simple complexity tier", ["--complex"]),
   bool("--complex", "Force complex complexity tier", ["--simple"]),
@@ -102,6 +106,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("index", "Show or rebuild the memory index", { positionals: [{ name: "action", type: "enum", values: ["rebuild"] }] }),
       sub("learn", "Learn lessons from a merged PR's review comments", { positionals: [{ name: "pr", type: "string" }] }),
       sub("lessons", "List PR review lessons with uses and outcomes"),
+      sub("brief", "Print the lessons and learnings block an engine10 run injects", { flags: [str("--task", "text", "Task text used to pick relevant lessons")] }),
       sub("show", "Show one learning"),
       sub("search", "Search learnings"),
       sub("stats", "Memory statistics"),

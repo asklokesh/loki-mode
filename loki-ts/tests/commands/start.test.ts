@@ -4,7 +4,7 @@
 // LOKI_SDK_LOOP=1). The runAutonomous delegation itself is covered by the
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { parseStartArgs, startEngine } from "../../src/commands/start.ts";
+import { isBashOnlyStart, parseStartArgs, scopedStartEnv, startEngine } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -246,5 +246,32 @@ describe("FC-38 scope: plain start is 11.3.0, --attempts is engine10-only", () =
     errs.length = 0;
     expect(parseStartArgs(["./prd.md", "--attempts", "9"], collect)).toBe(2);
     expect(errs.join("")).toContain("--attempts must be an integer from 1 to 5");
+  });
+});
+
+describe("PATH: --workspace and --deploy divert to the bash route", () => {
+  it("diverts alone, never with --attempts or --spec", () => {
+    expect(isBashOnlyStart(["--workspace", "ws", "do it"])).toBe(true);
+    expect(isBashOnlyStart(["--workspace=ws", "do it"])).toBe(true);
+    expect(isBashOnlyStart(["prd.md", "--deploy", "--health-url", "http://x"])).toBe(true);
+    expect(isBashOnlyStart(["prd.md"])).toBe(false);
+    expect(isBashOnlyStart(["prd.md", "--deploy", "--attempts", "2"])).toBe(false);
+    expect(isBashOnlyStart(["--workspace", "ws", "--spec", "f.md"])).toBe(false);
+  });
+  it("attempts mode still refuses --workspace loudly", () => {
+    const errs: string[] = [];
+    expect(parseStartArgs(["x", "--attempts", "2", "--workspace", "ws"], (e) => errs.push(e))).toBe(2);
+    expect(errs.join("")).toContain("--workspace");
+  });
+});
+
+describe("PATH: bash divert env is scoped", () => {
+  it("forwards PATH, LOKI_* and provider keys but not unrelated secrets", () => {
+    const out = scopedStartEnv({ PATH: "/bin", HOME: "/h", LOKI_X: "1", ANTHROPIC_API_KEY: "k", FOO_SECRET: "s", DATABASE_PASSWORD: "p" });
+    expect(out.PATH).toBe("/bin");
+    expect(out.LOKI_X).toBe("1");
+    expect(out.ANTHROPIC_API_KEY).toBe("k");
+    expect(out.FOO_SECRET).toBeUndefined();
+    expect(out.DATABASE_PASSWORD).toBeUndefined();
   });
 });

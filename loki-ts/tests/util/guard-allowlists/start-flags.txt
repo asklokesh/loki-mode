@@ -70,3 +70,7 @@
 -h | both
 -w | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 -y | both
+--workspace | bash-only multi-repo workspace run; the Bun start diverts it to autonomy/loki, and --attempts or --spec refuse it
+--deploy | bash-only chains the gated loki deploy --execute after the run; the Bun start diverts it to autonomy/loki
+--health-url | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy
+--auto-rollback | bash-only modifier of --deploy; handled in the bash cmd_start pre-scan, Bun diverts with --deploy

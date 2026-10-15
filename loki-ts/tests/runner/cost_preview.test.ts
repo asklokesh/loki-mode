@@ -122,3 +122,19 @@ describe("rough prior (F2)", () => {
     expect(JSON.parse(encodeEstimate({ LOKI_COST_PRIOR: "0" }, root, root, "claude-sonnet-5-5")!).prior).toBeUndefined();
   });
 });
+
+describe("startText cap warning (POLICY)", () => {
+  const r = { ok: false as const, reason: "x", prior: { usd: [0.19, 0.63] as [number, number], tier: "haiku", size_class: "unplanned" } };
+  test("under cap, cap 0 and omitted cap are byte-identical", () => {
+    const base = startText(r);
+    expect(startText(r, 5)).toBe(base);
+    expect(startText(r, 0)).toBe(base);
+    expect(base).not.toContain("WARNING");
+  });
+  test("high bound over cap warns", () => {
+    expect(startText(r, 0.5)).toBe(`${startText(r)}; WARNING estimate high $0.63 exceeds cap $0.50`);
+  });
+  test("no estimate never warns", () => {
+    expect(startText({ ok: false, reason: "none" }, 0.01)).toBe("estimate: NOT AVAILABLE (none)");
+  });
+});

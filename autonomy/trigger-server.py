@@ -26,6 +26,12 @@ GitHub, the bearer token authenticates a human operator -- so holding one must
 never grant the other. If no API token is configured the server still starts but
 every /jobs request is rejected with 503 and an audit log line.
 
+Self-healing entry point: POST /sentry accepts a Sentry integration webhook
+authenticated by Sentry's own HMAC (sentry-hook-signature) under a THIRD,
+separate secret (LOKI_SENTRY_WEBHOOK_SECRET or SENTRY_CLIENT_SECRET). A valid
+alert enqueues `loki start "<normalized brief>" --pr --detach`: the output is a
+receipt-gated PR only, never a deploy. No secret means the route answers 503.
+
 Usage:
     python3 autonomy/trigger-server.py [--port PORT] [--secret SECRET] [--dry-run]
                                        [--workers N] [--queue-size N]
@@ -398,6 +404,21 @@ OUTCOME_FAILED = JOB_STATUS_FAILED    # launch failed, or exited non-zero
 OUTCOME_UNKNOWN = JOB_STATUS_UNKNOWN  # detached; exit code never observed
 
 
+# Secrets this server holds that a spawned `loki start` must never inherit: a
+# prompt-injected run could otherwise forge /sentry, /webhook or /jobs requests.
+CHILD_ENV_DENYLIST = (
+    "GITHUB_WEBHOOK_SECRET",
+    "LOKI_API_TOKEN",
+    "LOKI_API_TOKEN_FILE",
+    "LOKI_SENTRY_WEBHOOK_SECRET",
+    "SENTRY_CLIENT_SECRET",
+)
+
+
+def _scoped_child_env():
+    return {k: v for k, v in os.environ.items() if k not in CHILD_ENV_DENYLIST}
+
+
 def run_loki_outcome(args, dry_run=False):
     """Run a loki command and report WHICH of the three outcomes occurred.
 
@@ -414,6 +435,7 @@ def run_loki_outcome(args, dry_run=False):
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env=_scoped_child_env(),
         )
     except (FileNotFoundError, OSError) as e:
         logging.error("Failed to launch %s: %s", " ".join(cmd), e)
@@ -577,6 +599,104 @@ def handle_job_event(payload, dry_run=False):
     return summary, status
 
 
+# Pseudo-event for a Sentry alert. Like JOB_EVENT it is NOT a GitHub event and is
+# refused on /webhook: only /sentry, under its own HMAC secret, may enqueue it.
+SENTRY_EVENT = "sentry_issue"
+INTERNAL_EVENTS = (JOB_EVENT, SENTRY_EVENT)
+
+# Sentry actions that mean "a new problem needs a fix". resolved/assigned/etc.
+# are skipped so a state change never starts a build.
+SENTRY_ACTIONS = ("triggered", "created")
+SENTRY_BRIEF_MAX = 1500
+ISSUE_PROVIDERS_SH = Path(__file__).resolve().parent / "issue-providers.sh"
+
+
+def validate_sentry_signature(secret, body, signature_header):
+    """Validate Sentry's `sentry-hook-signature` (hex HMAC-SHA256, no prefix).
+
+    Fails closed: no secret or no header is never valid.
+    """
+    if not secret or not signature_header:
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    return constant_time_equals(expected, signature_header.strip().lower())
+
+
+def normalize_sentry_payload(payload):
+    """Run the existing normalize_sentry_json over a Sentry webhook payload.
+
+    Reuses autonomy/issue-providers.sh (single owner of the Sentry shape) via a
+    scoped-env bash call. Returns the normalized dict or None.
+    """
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    raw = {k: data[k] for k in ("issue", "event") if isinstance(data.get(k), dict)}
+    if not raw:
+        return None
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    ev = raw.get("event") or {}
+    env["_LOKI_SENTRY_URL"] = str(ev.get("web_url") or ev.get("url") or "")
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", 'source "$1" && normalize_sentry_json', "_",
+             str(ISSUE_PROVIDERS_SH)],
+            input=json.dumps(raw).encode("utf-8"), capture_output=True,
+            env=env, timeout=20,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        out = json.loads(proc.stdout.decode("utf-8", errors="replace").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None
+    return out if isinstance(out, dict) else None
+
+
+def build_sentry_brief(norm):
+    """One-line, control-char-free brief that can never parse as a CLI flag."""
+    culprit = ""
+    for line in str(norm.get("body", "")).splitlines():
+        if line.startswith("- Culprit: "):
+            culprit = line[len("- Culprit: "):].strip()
+            break
+    parts = ["Fix Sentry issue %s: %s" % (norm.get("number", "?"), norm.get("title", ""))]
+    if culprit:
+        parts.append("(culprit %s)" % culprit)
+    if norm.get("url"):
+        parts.append("See %s." % norm["url"])
+    parts.append("Reproduce with a regression test, then fix the root cause.")
+    brief = CONTROL_CHARS_RE.sub(" ", " ".join(parts))
+    brief = " ".join(brief.split())
+    return brief.encode("utf-8")[:SENTRY_BRIEF_MAX].decode("utf-8", errors="ignore")
+
+
+def handle_sentry_event(payload, dry_run=False):
+    """Handle a verified Sentry alert: loki start <brief> --pr --detach.
+
+    PR only. Never passes a deploy argument: a fix still has to earn a VERIFIED
+    receipt, and shipping it stays a separate, gated human step.
+    """
+    action = payload.get("action", "")
+    if action not in SENTRY_ACTIONS:
+        return None, "skipped (action=%s)" % action
+    norm = normalize_sentry_payload(payload)
+    if norm is None:
+        return None, "rejected (unparseable sentry payload)"
+    brief = build_sentry_brief(norm)
+    if not valid_spec(brief):
+        return None, "rejected (invalid brief)"
+    args = ["start", brief, "--pr", "--detach"]
+    summary = "sentry issue %s" % norm.get("number", "?")
+    success = run_loki_command(args, dry_run=dry_run)
+    status = "fired" if success else "error"
+    if success:
+        send_notification("Trigger fired: %s" % summary)
+    return summary, status
+
+
 # Map event name -> handler. Keeps do_POST routing declarative. JOB_EVENT rides
 # the same table (and therefore the same bounded queue and worker pool) but is
 # explicitly refused on the /webhook path.
@@ -585,6 +705,7 @@ EVENT_HANDLERS = {
     "pull_request": handle_pull_request_event,
     "workflow_run": handle_workflow_run_event,
     JOB_EVENT: handle_job_event,
+    SENTRY_EVENT: handle_sentry_event,
 }
 
 
@@ -875,6 +996,8 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
     # Bearer token for the /jobs API. MUST be a different secret from `secret`
     # above: one authenticates GitHub, the other authenticates a human.
     api_token = ""
+    # Sentry integration client secret for /sentry. Distinct from both above.
+    sentry_secret = ""
     dispatcher = None
     # Ed25519 key that attests receipts, and the retired public keys that keep
     # pre-rotation receipts verifiable. Both default to unconfigured, which
@@ -1179,10 +1302,50 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         log_event(JOB_EVENT, "", job["spec"], "queued")
         self._send_json(202, {"id": job_id, "status": "queued"})
 
+    def _handle_sentry(self):
+        """POST /sentry -- Sentry alert, HMAC-verified, enqueues a fix run."""
+        body = self._read_body()
+        if body is None:
+            return
+        event_type = SENTRY_EVENT
+        if not self.sentry_secret:
+            logging.warning("Rejecting /sentry from %s: no Sentry secret configured",
+                            self.address_string())
+            log_event(event_type, "", "", "rejected (no sentry secret configured)")
+            self._send_json(503, {"error": "sentry webhook secret not configured"})
+            return
+        sig = self.headers.get("sentry-hook-signature", "")
+        if not validate_sentry_signature(self.sentry_secret, body, sig):
+            logging.warning("Invalid Sentry signature from %s", self.address_string())
+            log_event(event_type, "", "", "rejected (invalid signature)")
+            self._send_json(401, {"error": "invalid signature"})
+            return
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError:
+            self._send_json(400, {"error": "invalid JSON"})
+            return
+        if not isinstance(payload, dict):
+            self._send_json(400, {"error": "payload must be a JSON object"})
+            return
+        action = payload.get("action", "")
+        if self.dispatcher.seen_delivery(self.headers.get("Request-ID", "")):
+            log_event(event_type, action, "", "duplicate")
+            self._send_json(200, {"event": event_type, "status": "duplicate"})
+            return
+        if not self.dispatcher.submit(event_type, payload):
+            log_event(event_type, action, "", "rejected (queue full)")
+            self._send_json(503, {"error": "server busy, retry later"})
+            return
+        self._send_json(202, {"event": event_type, "action": action, "status": "queued"})
+
     def do_POST(self):
         path = self.path.split("?", 1)[0]
         if path == "/jobs":
             self._handle_job_submit()
+            return
+        if path == "/sentry":
+            self._handle_sentry()
             return
         if path != "/webhook":
             self._send_json(404, {"error": "not found"})
@@ -1201,10 +1364,10 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         # never be reachable with the webhook HMAC. Without this, a holder of
         # the webhook secret could POST X-GitHub-Event: loki_job and submit an
         # arbitrary spec, defeating the separate-credential requirement.
-        if event_type == JOB_EVENT:
+        if event_type in INTERNAL_EVENTS:
             logging.warning(
                 "Rejecting %s on /webhook from %s: submits require the /jobs "
-                "API and its own bearer token",
+                "API and its own bearer token (Sentry uses /sentry)",
                 JOB_EVENT,
                 self.address_string(),
             )
@@ -1350,6 +1513,20 @@ def main():
         )
         api_token = ""
 
+    # Sentry secret: env only (never argv). Must differ from the other two
+    # credentials, since each authenticates a different party.
+    sentry_secret = (os.environ.get("LOKI_SENTRY_WEBHOOK_SECRET")
+                     or os.environ.get("SENTRY_CLIENT_SECRET") or "")
+    if sentry_secret and (
+        (secret and constant_time_equals(sentry_secret, secret))
+        or (api_token and constant_time_equals(sentry_secret, api_token))
+    ):
+        logging.error(
+            "The Sentry secret is identical to the webhook secret or API "
+            "token. They MUST differ; disabling /sentry."
+        )
+        sentry_secret = ""
+
     # Persist resolved values, but never write the secret to disk.
     config["port"] = port
     config["dry_run"] = dry_run
@@ -1363,6 +1540,7 @@ def main():
     WebhookHandler.dry_run = dry_run
     WebhookHandler.secret = secret
     WebhookHandler.api_token = api_token
+    WebhookHandler.sentry_secret = sentry_secret
     WebhookHandler.dispatcher = dispatcher
 
     signing_key, signing_kid = load_signing_key(auto_generate=False)
@@ -1403,6 +1581,11 @@ def main():
             "No API token configured: ALL /jobs requests will be rejected with "
             "503. Set LOKI_API_TOKEN or LOKI_API_TOKEN_FILE to enable remote "
             "submits."
+        )
+    if not sentry_secret:
+        logging.warning(
+            "No Sentry secret configured: POST /sentry is rejected with 503. "
+            "Set LOKI_SENTRY_WEBHOOK_SECRET or SENTRY_CLIENT_SECRET."
         )
     if not secret:
         logging.warning(

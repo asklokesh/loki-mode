@@ -6,7 +6,7 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpat
 import { isAbsolute, relative, resolve } from "node:path";
 import type { Staged } from "../../e10ext/commit_filter.ts";
 
-export interface UnitSpec { id: string; writeSet: string[]; pack: string[]; tokenBudget: number }
+export interface UnitSpec { id: string; writeSet: string[]; pack: string[]; tokenBudget: number; acceptance?: string[] }
 
 export const MAX_SPEC_BYTES = 1024 * 1024;
 export const MAX_TOKEN_BUDGET = 1e9;
@@ -34,7 +34,10 @@ function parseText(txt: string): UnitSpec | null {
   try {
     const j = JSON.parse(txt) as Record<string, unknown>, ws = strs(j.writeSet), pack = strs(j.pack), tb = j.tokenBudget;
     if (typeof j.id !== "string" || !j.id || !ws || ws.length === 0 || !pack || typeof tb !== "number" || !Number.isFinite(tb) || !(tb > 0) || tb > MAX_TOKEN_BUDGET) return null;
-    return { id: j.id, writeSet: ws, pack, tokenBudget: tb };
+    // CONTRACT: optional per-unit acceptance criteria frozen by the group contract; absent keeps the spec byte-identical to before.
+    const acc = j.acceptance === undefined ? [] : strs(j.acceptance);
+    if (acc === null) return null;
+    return { id: j.id, writeSet: ws, pack, tokenBudget: tb, ...(acc.length ? { acceptance: acc.map((a) => a.slice(0, 500)).slice(0, 50) } : {}) };
   } catch { return null; }
 }
 function parseSpec(path: string): UnitSpec | null {

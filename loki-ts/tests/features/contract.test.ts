@@ -1,6 +1,6 @@
 // D65-SPEC: spec to contract parsing and trace mapping.
 import { afterEach, beforeEach, describe, expect, it, test } from "bun:test";
-import { loadContract, repoRoot, sanitizeCriterion, parseContract, sealContract, snapshotContract, traceContract, untracedLines, MAX_CRITERIA, fromChecklist, fromPrdText, fromSpecText, mapRequirements, readRequirementsMap, renderRequirementsMap, writeFromChecklist, writeFromEngine10, type RanCheck } from "../../src/features/contract.ts";
+import { assignCriteria, freezeGroupContract, groupContractPath, spawnWithContract, loadContract, repoRoot, sanitizeCriterion, parseContract, sealContract, snapshotContract, traceContract, untracedLines, MAX_CRITERIA, fromChecklist, fromPrdText, fromSpecText, mapRequirements, readRequirementsMap, renderRequirementsMap, writeFromChecklist, writeFromEngine10, type RanCheck } from "../../src/features/contract.ts";
 import { formatRunSummary, withNextLine } from "../../src/util/run_summary.ts";
 import { SPEC_MARKER, renderSpec } from "../../src/util/spec_file.ts";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, symlinkSync } from "node:fs";
@@ -378,5 +378,52 @@ describe("requirements map (REQTRACE)", () => {
 
   it("spec marker constant stays the parser's first line", () => {
     expect(renderSpec("t", { intent: "i", criteria: ["c"] }).split("\n")[0]).toBe(SPEC_MARKER);
+  });
+});
+
+describe("group contract (CONTRACT)", () => {
+  const units = [
+    { id: "u1", items: ["Users can log in with email"] },
+    { id: "u2", items: ["Export report as CSV", "Export report as PDF"] },
+  ];
+  const mk = (texts: string[]) => ({ source: "s", criteria: texts.map((t, i) => ({ id: `AC-${i + 1}`, text: t, source_line: i + 1 })) });
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "loki-contract-grp-")); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it("units get only their own criteria", () => {
+    const a = assignCriteria(units, mk(["Users can log in with email", "Export report as CSV"]).criteria);
+    expect(a.orphans).toEqual([]);
+    expect(a.units.find((u) => u.id === "u1")!.criteria.map((c) => c.id)).toEqual(["AC-1"]);
+    expect(a.units.find((u) => u.id === "u2")!.criteria.map((c) => c.id)).toEqual(["AC-2"]);
+  });
+
+  it("an orphan criterion fails closed and writes nothing", () => {
+    const r = freezeGroupContract(dir, "g1", units, mk(["Users can log in with email", "Billing page shows invoices"]));
+    expect(r.ok).toBe(false);
+    if (!r.ok) { expect(r.reason).toContain("NOT PROVEN"); expect(r.orphans.map((o) => o.id)).toEqual(["AC-2"]); }
+    expect(existsSync(groupContractPath(dir, "g1"))).toBe(false);
+  });
+
+  it("writes .loki/groups/<id>/contract.json before any spawn", async () => {
+    const events: string[] = [];
+    const seen: Record<string, string[]> = {};
+    const r = await spawnWithContract(dir, "g2", units, mk(["Users can log in with email", "Export report as PDF"]), (id, acc) => {
+      events.push(existsSync(groupContractPath(dir, "g2")) ? `spawn:${id}:contract-present` : `spawn:${id}:contract-missing`);
+      seen[id] = acc;
+    });
+    expect(r.ok).toBe(true);
+    expect(events).toEqual(["spawn:u1:contract-present", "spawn:u2:contract-present"]);
+    expect(seen["u1"]).toEqual(["Users can log in with email"]);
+    expect(seen["u2"]).toEqual(["Export report as PDF"]);
+    const j = JSON.parse(readFileSync(join(dir, ".loki", "groups", "g2", "contract.json"), "utf8"));
+    expect(j.units.length).toBe(2);
+  });
+
+  it("a failed freeze never spawns", async () => {
+    let called = 0;
+    const r = await spawnWithContract(dir, "g3", units, mk(["nobody owns this criterion"]), () => { called++; });
+    expect(r.ok).toBe(false);
+    expect(called).toBe(0);
   });
 });

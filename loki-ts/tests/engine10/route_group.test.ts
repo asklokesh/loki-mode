@@ -20,6 +20,7 @@ const withDir = async (fn: (d: string) => Promise<void>): Promise<void> => {
   try { await fn(d); } finally { rmSync(d, { recursive: true, force: true }); }
 };
 const ON = { LOKI_SPEED: "1" };
+const SEQ = { LOKI_SPEED: "1", LOKI_PROVIDER: "aider" }; // a sequential provider always falls back, so these tests need no group runner
 
 describe("flag off is byte-identical", () => {
   test("route result and no group call for LOKI_SPEED=0", async () => {
@@ -58,10 +59,12 @@ describe("flag on", () => {
     expect(r).toBe(0);
     expect(err).toBe("");
   });
-  test("group machinery unavailable falls back and says so on stderr", async () => {
-    const { r, err } = await run(SPEC, ON, undefined);
+  test("a provider without parallel slots falls back with the reason", async () => {
+    let calls = 0;
+    const { r, err } = await run(SPEC, { LOKI_SPEED: "1", LOKI_PROVIDER: "aider" }, async () => { calls++; return 0; });
     expect(r).toBeNull();
-    expect(err).toContain("loki: sequential (reason: group machinery unavailable)");
+    expect(calls).toBe(0);
+    expect(err).toContain("loki: sequential (reason: provider aider runs units sequentially)");
   });
   test("one unit falls back and says so", async () => {
     let calls = 0;
@@ -145,7 +148,7 @@ describe("flag on", () => {
   test("a 200 KB spec falls back with a task of at most 64 KB (E2BIG guard)", () => withDir(async (d) => {
     const one = "- change src/a.ts\n" + "- also touch src/a.ts again\n".repeat(8000);
     writeFileSync(join(d, "big.md"), one);
-    const { r, task } = await run("big.md", ON, undefined, d, d);
+    const { r, task } = await run("big.md", SEQ, undefined, d, d);
     expect(r).toBeNull();
     expect(Buffer.byteLength(task)).toBeLessThanOrEqual(MAX_SEQ_TASK_BYTES);
     expect(task).toBe("big.md");
@@ -189,9 +192,115 @@ describe("flag on", () => {
     await withDir(async (d) => {
       const p = join(d, "big.md");
       writeFileSync(p, "- item a\n- item b\n" + "x".repeat(MAX_SEQ_TASK_BYTES + 10) + "\n");
-      const { task, err } = await run(p, ON, undefined, d, d);
+      const { task, err } = await run(p, SEQ, undefined, d, d);
       expect(task).toBe(p);
       expect(err).toContain("spec over 64 KB, passing the path");
+    });
+  });
+});
+
+describe("default group runner (run_group.ts)", () => {
+  const sh = (cwd: string, ...a: string[]): void => { const r = spawnSync("git", a, { cwd, encoding: "utf8" }); if (r.status !== 0) throw new Error(`git ${a.join(" ")}: ${r.stderr}`); };
+  const mkRepo = (d: string): void => {
+    sh(d, "init", "-q", "-b", "main");
+    sh(d, "config", "user.name", "t"); sh(d, "config", "user.email", "t@t.invalid"); sh(d, "config", "commit.gpgsign", "false");
+    writeFileSync(join(d, "README.md"), "x\n"); sh(d, "add", "README.md"); sh(d, "commit", "-q", "-m", "init");
+    sh(d, "remote", "add", "origin", "git@github.com:acme/widgets.git");
+  };
+  /** Fake backlog.py: records argv, creates a branch per unit (skipping those in failN), prints backlog status lines. */
+  const launcher = (repo: string, seen: string[][], failN: number[] = [], code = 0) => async (argv: string[]) => {
+    seen.push(argv);
+    const g = argv[argv.indexOf("--group") + 1]!;
+    let out = "";
+    for (let n = 1; n <= 3; n++) {
+      if (failN.includes(n)) { out += `backlog: unit-${g}-${n} FAILED: exit 1\n`; continue; }
+      sh(repo, "checkout", "-q", "-b", `loki/unit-${g}-${n}`, "main");
+      writeFileSync(join(repo, `u${n}.txt`), `${n}\n`); sh(repo, "add", `u${n}.txt`); sh(repo, "commit", "-q", "-m", `u${n}`);
+      sh(repo, "checkout", "-q", "main");
+      out += `backlog: unit-${g}-${n} VERIFIED\n`;
+    }
+    return { code, stdout: out };
+  };
+  const go = async (d: string, env: Record<string, string>, l: ReturnType<typeof launcher>) => {
+    let err = "";
+    const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true", ...env } as NodeJS.ProcessEnv, { backlog: l, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+    return { code: res.code, err };
+  };
+  const slotsOf = (a: string[]): string | undefined => a[a.indexOf("--slots") + 1];
+  test("claude: group runs with a slot cap, integrates, exit NOT_PROVEN (never 0: no group Seal)", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const seen: string[][] = [];
+      const { code, err } = await go(d, { LOKI_PROVIDER: "claude" }, launcher(d, seen));
+      expect(code).toBe(4);
+      expect(err).toContain("NOT PROVEN");
+      expect(seen.length).toBe(1);
+      expect(seen[0]!).toContain("--dag");
+      expect(slotsOf(seen[0]!)).toBe("3");
+      expect(readFileSync(join(d, ".loki/groups", seen[0]![seen[0]!.indexOf("--group") + 1]!, "dag.json"), "utf8")).toContain("units");
+    });
+  });
+  test("--provider (deps.provider) caps slots and is forwarded to the units", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const seen: string[][] = [];
+      const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true" } as NodeJS.ProcessEnv, { provider: "codex", backlog: launcher(d, seen), listFiles: () => files, select: sel, stderr: () => {} });
+      expect(res.code).toBe(4);
+      expect(slotsOf(seen[0]!)).toBe("2");
+      expect(seen[0]!.slice(seen[0]!.indexOf("--provider"))[1]).toBe("codex");
+    });
+  });
+  test("--provider aider falls back even when LOKI_PROVIDER is unset", async () => {
+    let calls = 0, err = "";
+    const res = await maybeRunGroup(SPEC, "/nonexistent", { LOKI_SPEED: "1" } as NodeJS.ProcessEnv, { provider: "aider", group: async () => { calls++; return 0; }, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+    expect(res.code).toBeNull();
+    expect(calls).toBe(0);
+    expect(err).toContain("provider aider runs units sequentially");
+  });
+  test("a unit child (LOKI_UNIT_ID) never re-decomposes", async () => {
+    let calls = 0;
+    const res = await maybeRunGroup(SPEC, "/nonexistent", { LOKI_SPEED: "1", LOKI_UNIT_ID: "u1" } as NodeJS.ProcessEnv, { group: async () => { calls++; return 0; }, listFiles: () => files, select: sel, stderr: () => {} });
+    expect(res.code).toBeNull();
+    expect(calls).toBe(0);
+  });
+  test("codex: slots capped at 2", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const seen: string[][] = [];
+      await go(d, { LOKI_PROVIDER: "codex" }, launcher(d, seen));
+      expect(slotsOf(seen[0]!)).toBe("2");
+    });
+  });
+  test("a failed unit never yields exit 0", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const { code, err } = await go(d, {}, launcher(d, [], [2], 1));
+      expect(code).toBe(1);
+      expect(err).toContain("group not verified");
+    });
+  });
+  test("launcher non-zero with every unit reported passing is still not VERIFIED", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const { code } = await go(d, {}, launcher(d, [], [], 1));
+      expect(code).toBe(1);
+    });
+  });
+  test("a failing suite is not VERIFIED", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const { code } = await go(d, { LOKI_GROUP_TEST_CMD: "false" }, launcher(d, []));
+      expect(code).toBe(1);
+    });
+  });
+  test("no origin remote: nothing starts, exit 1", async () => {
+    await withDir(async (d) => {
+      mkRepo(d); sh(d, "remote", "remove", "origin");
+      const seen: string[][] = [];
+      const { code, err } = await go(d, {}, launcher(d, seen));
+      expect(code).toBe(1);
+      expect(seen.length).toBe(0);
+      expect(err).toContain("NOT PROVEN");
     });
   });
 });

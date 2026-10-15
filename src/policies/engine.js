@@ -21,7 +21,7 @@ const path = require('path');
 const os = require('os');
 const { Decision, evaluateRule, scanContent, validatePreExecution,
   validatePreDeployment, validateResource, validateData,
-  validateApprovalGate, RULE_EVALUATORS } = require('./types');
+  validateApprovalGate, validateAutonomy, allowedActions, RULE_EVALUATORS } = require('./types');
 
 // -------------------------------------------------------------------
 // Minimal YAML parser for policy files
@@ -324,6 +324,8 @@ class PolicyEngine {
 
     const policies = parsed.policies || parsed;
 
+    validateAutonomy(policies).forEach(function (e) { errors.push('autonomy: ' + e); });
+
     if (policies.pre_execution && Array.isArray(policies.pre_execution)) {
       const knownRuleKeys = Object.keys(RULE_EVALUATORS);
       policies.pre_execution.forEach(function (entry, i) {
@@ -414,6 +416,13 @@ class PolicyEngine {
     }
 
     const policies = this._policies.policies || this._policies;
+
+    // Autonomy ladder: only consulted for a pre_deployment check that names an action.
+    if (enforcementPoint === 'pre_deployment' && context && context.action) {
+      const gate = this._evaluateAutonomy(policies, context.action);
+      if (gate) return gate;
+    }
+
     const entries = policies[enforcementPoint];
 
     if (!entries || !Array.isArray(entries) || entries.length === 0) {
@@ -508,6 +517,36 @@ class PolicyEngine {
         });
       }
     }
+  }
+
+  /**
+   * Decide an action (pr|push|deploy) against `autonomy` and `actions`.
+   * Returns a DENY / REQUIRE_APPROVAL result, or null when the action is
+   * permitted (or no autonomy is configured). An unknown level fails closed.
+   */
+  _evaluateAutonomy(policies, action) {
+    const level = policies.autonomy;
+    const override = policies.actions && typeof policies.actions === 'object' ? policies.actions[action] : undefined;
+    if (level === undefined && override === undefined) return null;
+    const mk = function (decision, reason) {
+      return {
+        allowed: false,
+        decision: decision,
+        reason: reason,
+        requiresApproval: decision === Decision.REQUIRE_APPROVAL,
+        violations: [{ name: 'autonomy', action: decision === Decision.DENY ? 'deny' : 'require_approval', reason: reason }],
+      };
+    };
+    if (level !== undefined && !allowedActions(level)) return mk(Decision.DENY, 'unknown autonomy level "' + level + '" (fail-closed)'); // level is checked first: an actions.<a> allow never rescues an invalid level
+    if (override === 'deny') return mk(Decision.DENY, 'actions.' + action + ' is deny');
+    if (override === 'require_approval') return mk(Decision.REQUIRE_APPROVAL, 'actions.' + action + ' requires approval');
+    if (override === 'allow') return null;
+    if (override !== undefined) return mk(Decision.DENY, 'actions.' + action + ' has an unknown value (fail-closed)');
+    const allowed = allowedActions(level);
+    if (!allowed) return mk(Decision.DENY, 'unknown autonomy level "' + level + '" (fail-closed)');
+    const key = action === 'push' ? 'pr' : action;
+    if (allowed[key] === true) return null;
+    return mk(Decision.DENY, 'autonomy ' + level + ' does not permit ' + action);
   }
 
   _evaluatePreDeployment(entries, context, violations) {
@@ -651,4 +690,4 @@ class PolicyEngine {
 // Exports
 // -------------------------------------------------------------------
 
-module.exports = { PolicyEngine, parseSimpleYaml };
+module.exports = { PolicyEngine, parseSimpleYaml, allowedActions };

@@ -135,3 +135,23 @@ describe("runTrust", () => {
     expect(r.stdout.length).toBeGreaterThan(0);
   });
 });
+
+describe("runTrust graduation advice", () => {
+  it("--json carries graduation, reads level read-only, never writes policies.json", () => {
+    mkdirSync(lokiDir, { recursive: true });
+    const pol = join(lokiDir, "policies.json");
+    writeFileSync(pol, JSON.stringify({ autonomy: "propose" }));
+    const before = readFileSync(pol, "utf8");
+    seedProof("run-a", "2026-01-01T00:00:00Z", 4, 8, 10);
+    const r = run(["--json"]);
+    const j = JSON.parse(r.stdout);
+    expect(j.graduation.current_level).toBe("propose");
+    expect(j.graduation.eligible).toBe(false);
+    expect(readFileSync(pol, "utf8")).toBe(before);
+  });
+  it("human output shows the advisory line without a policy file and creates none", () => {
+    const r = run([]);
+    expect(r.stdout).toContain("Autonomy advice (advisory, never changes policy)");
+    expect(existsSync(join(lokiDir, "policies.json"))).toBe(false);
+  });
+});

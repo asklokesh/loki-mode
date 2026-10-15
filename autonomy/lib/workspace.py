@@ -5,6 +5,7 @@
     loki workspace show <name>
     loki workspace run <name> <issue-ref>
     loki workspace status [<run-id>]
+    loki workspace infer <name>
 
 On by default (LOKI_WORKSPACES=0 disables). Workspaces are defined in loki.yaml:
 
@@ -19,8 +20,15 @@ Each repo gets its own worktree and engine run (continue-and-report: a failing
 repo does not stop the others; dependents of a failed repo are SKIPPED). After
 every repo has finished, the integration command runs once with each run branch
 checked out, and evidence lands in
-.loki/workspaces/<name>/<run-id>/integration.json. Integration evidence is not
-part of the Seal.
+.loki/workspaces/<name>/<run-id>/integration.json. When every repo finished ok,
+integration did not fail and every child sealed a receipt, the run seals
+composite.json (`loki verify --seal-composite`), which binds integration.json.
+Otherwise the run prints "composite not sealed: <reason>".
+
+With `plan: true` (workspace key) or LOKI_WORKSPACE_PLAN=1 one provider call
+through the launcher seam writes <run-dir>/plan.json ({"<repo>": "<task>"});
+a valid plan gives each listed repo its own task, an invalid one falls back to
+the generic text and prints why.
 
 Repos with no pending `after` run in parallel, at most `concurrency` at once
 (workspace key or LOKI_WORKSPACE_CONCURRENCY, default 2). SIGINT and SIGTERM
@@ -28,6 +36,12 @@ kill each recorded child process group.
 
 Exit: 0 all repos ok and integration not failed; 3 when the only non-ok
 outcomes are budget stops (child exit 3); 1 otherwise; 2 usage/config.
+
+`infer` prints suggested `after:` edges read from package.json, go.mod and
+pyproject.toml dependencies on other listed repos (print-only, cycle-checked).
+With `integration: {per_stage: true}` the integration command also runs after
+each topological layer; a failing stage SKIPs every later layer, so a broken
+contract stops before downstream repos build on it.
 
 Test seam: LOKI_WORKSPACE_LAUNCHER replaces the engine launcher (called with
 the issue ref or task text, cwd = the repo worktree).
@@ -104,6 +118,14 @@ def order_repos(ws):
     return ordered
 
 
+def layers_of(ordered):
+    """Map repo -> topological layer (0 = no `after`), for an order_repos result."""
+    layer = {}
+    for e in ordered:
+        layer[e["repo"]] = 1 + max([layer[d] for d in e.get("after") or []], default=-1)
+    return layer
+
+
 def _slug(repo):
     return repo.replace("/", "__")
 
@@ -141,8 +163,53 @@ def prepare(source, dest, branch, setup):
     return dest
 
 
-def task_for(entry, ref, siblings):
-    """(launcher argument, extra env) for a repo: the issue ref when it lives here, else task text."""
+def load_plan(run_dir, repos):
+    """(plan dict, reason): per-repo task text from run_dir/plan.json. Any problem gives ({}, reason)."""
+    path = os.path.join(run_dir, "plan.json")
+    try:
+        with open(path) as f:
+            plan = json.load(f)
+    except FileNotFoundError:
+        return {}, "plan.json was not written"
+    except (OSError, ValueError) as e:
+        return {}, "plan.json unreadable (%s)" % type(e).__name__
+    if not isinstance(plan, dict) or not plan:
+        return {}, "plan.json is not a non-empty object"
+    unknown = sorted(k for k in plan if k not in repos)
+    if unknown:
+        return {}, "plan.json names repos outside the workspace: %s" % ", ".join(map(str, unknown))
+    empty = sorted(k for k, v in plan.items() if not isinstance(v, str) or not v.strip())
+    if empty:
+        return {}, "plan.json has empty task text for: %s" % ", ".join(empty)
+    return plan, None
+
+
+def request_plan(ordered, ref, run_dir, launcher, env):
+    """One launcher call asking for plan.json; returns (plan, reason). The launcher may ignore it."""
+    repos = [e["repo"] for e in ordered]
+    prompt = ("Plan the change described by %s across the repos %s. Write JSON to %s mapping each "
+              "repo that needs work to its own task text. Do not edit any repo." %
+              (ref, ", ".join(repos), os.path.join(run_dir, "plan.json")))
+    try:
+        timeout = int(os.environ.get("LOKI_WORKSPACE_PLAN_TIMEOUT") or 600)
+    except ValueError:
+        timeout = 600
+    penv = dict(env, LOKI_E10_TASK_TEXT=prompt, LOKI_WORKSPACE_PLAN_OUT=os.path.join(run_dir, "plan.json"))
+    try:
+        subprocess.run([launcher, prompt], cwd=run_dir, env=penv, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=timeout,
+                       start_new_session=True)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return {}, "plan call failed (%s)" % type(e).__name__
+    return load_plan(run_dir, set(repos))
+
+
+def task_for(entry, ref, siblings, plan=None):
+    """(launcher argument, extra env) for a repo: its planned task, else the issue ref when it lives here, else task text."""
+    if plan and plan.get(entry["repo"]):
+        text = "%s\n\nPart of: %s. Sibling worktrees (read-only context, do not edit): %s" % (
+            plan[entry["repo"]].strip(), ref, ", ".join(siblings) or "none")
+        return text, {"LOKI_E10_TASK_TEXT": text}
     m = REF_RE.match(ref)
     if m and m.group(1) == entry["repo"]:
         return ref, {}
@@ -156,7 +223,7 @@ def run_integration(ws, run_dir, worktrees, heads):
     integ = ws.get("integration") or {}
     cmd = integ.get("command")
     ev = {"heads": heads, "exit_code": None, "log_sha256": None, "status": "not_configured",
-          "seal": False, "note": "integration evidence is not part of the Seal"}
+          "seal": False, "note": "integration evidence is bound by composite.json only when the run seals one"}
     if not cmd:
         return ev
     timeout = integ.get("timeout_s", 900)
@@ -183,6 +250,14 @@ def run_integration(ws, run_dir, worktrees, heads):
     with open(log_path, "rb") as f:
         ev["log_sha256"] = hashlib.sha256(f.read()).hexdigest()
     return ev
+
+
+def _heads(worktrees):
+    out = {}
+    for repo, wt in worktrees.items():
+        r = git("rev-parse", "HEAD", cwd=wt)
+        out[repo] = r.stdout.strip() if r.returncode == 0 else None
+    return out
 
 
 def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
@@ -215,6 +290,14 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     except (TypeError, ValueError):
         conc = 2
 
+    plan = {}
+    if ws.get("plan") is True or os.environ.get("LOKI_WORKSPACE_PLAN") == "1":
+        plan, why = request_plan(ordered, ref, run_dir, launcher, child_env_base)
+        if why:
+            say("workspace: plan not used (%s); every repo gets the generic task" % why)
+        else:
+            say("workspace: plan accepted for %s" % ", ".join(sorted(plan)))
+
     def stop(*_):
         for p, _lf in running.values():
             try:
@@ -244,7 +327,37 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
 
     index = {e["repo"]: i for i, e in enumerate(ordered)}
     pending = list(ordered)
+    per_stage = bool((ws.get("integration") or {}).get("per_stage"))
+    layer = layers_of(ordered)
+    gate, stages = {}, []  # layer -> "passed"/"failed"; stage evidence list
+
+    def process_gates():
+        """per_stage: once a layer has fully finished, gate it with the integration command."""
+        for lv in sorted(set(layer.values())):
+            members = [r for r, l in layer.items() if l == lv]
+            if lv in gate or not all(r in kind for r in members):
+                continue
+            if any(l < lv and l not in gate for l in set(layer.values())):
+                continue
+            if any(kind[r] != "ok" for r in members):
+                gate[lv] = "failed"
+            else:
+                sev = run_integration(ws, run_dir, worktrees, _heads(worktrees))
+                sev["layer"] = lv
+                stages.append(sev)
+                gate[lv] = "failed" if sev["status"] == "failed" else "passed"
+                say("workspace: stage %d integration %s" % (lv, sev["status"]))
+            if gate[lv] == "failed":
+                for e in list(pending):
+                    if layer[e["repo"]] > lv:
+                        pending.remove(e)
+                        outcome[e["repo"]] = "SKIPPED (stage %d integration failed)" % lv
+                        kind[e["repo"]] = "fail"
+                        say("workspace: %s %s" % (e["repo"], outcome[e["repo"]]))
+
     while pending or running:
+        if per_stage:
+            process_gates()
         for entry in list(pending):
             repo = entry["repo"]
             deps = entry.get("after") or []
@@ -260,6 +373,8 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
                 break
             if not all(kind.get(d) == "ok" for d in entry.get("after") or []):
                 continue
+            if per_stage and any(gate.get(lv) != "passed" for lv in range(layer[repo])):
+                continue
             pending.remove(entry)
             try:
                 src = source_checkout(entry)
@@ -271,7 +386,7 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
                 continue
             worktrees[repo] = wt
             siblings = [os.path.join(run_dir, "worktrees", _slug(o["repo"])) for o in ordered if o["repo"] != repo]
-            arg, extra = task_for(entry, ref, siblings)
+            arg, extra = task_for(entry, ref, siblings, plan)
             lf = open(os.path.join(run_dir, "%s.log" % _slug(repo)), "w")
             say("workspace: %s running" % repo)
             p = subprocess.Popen([launcher, arg], cwd=wt, env=dict(child_env_base, **extra), stdout=lf,
@@ -294,11 +409,14 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
         if running:
             time.sleep(0.05)
 
-    for repo, wt in worktrees.items():
-        r = git("rev-parse", "HEAD", cwd=wt)
-        heads[repo] = r.stdout.strip() if r.returncode == 0 else None
+    if per_stage:
+        process_gates()
+    heads = _heads(worktrees)
 
-    ev = run_integration(ws, run_dir, worktrees, heads)
+    if per_stage and stages:
+        ev = dict(stages[-1], heads=heads, stages=[{k: v for k, v in s_.items() if k != "heads"} for s_ in stages])
+    else:
+        ev = run_integration(ws, run_dir, worktrees, heads)
     ev["outcomes"] = outcome
     ev["timing"] = {r: t for r, t in timing.items() if "finished_at" in t}
     ev_path = os.path.join(run_dir, "integration.json")
@@ -306,6 +424,8 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     with open(tmp, "w") as f:
         json.dump(ev, f, indent=2, sort_keys=True)
     os.replace(tmp, ev_path)
+
+    seal_composite(ordered, outcome, ev, run_dir)
 
     try:
         import workspace_comment
@@ -321,6 +441,46 @@ def run_workspace(name, ref, workspaces, base_dir=None, launcher=None):
     if ev["status"] == "failed" or any(k == "fail" for k in kind.values()):
         return 1, ev_path
     return (3 if any(k == "budget" for k in kind.values()) else 0), ev_path
+
+
+_SEAL_ENV_KEYS = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SHELL", "USER", "BUN_INSTALL", "LOKI_NO_BROWSER",
+                  "LOKI_RECEIPT_SIGNING_KEY", "LOKI_RECEIPT_SIGNING_KEY_FILE", "LOKI_TS_ENTRY", "BUN_FROM_SOURCE",
+                  "LOKI_LEGACY_BASH")
+
+
+def seal_composite(ordered, outcome, ev, run_dir):
+    """Seal composite.json once when every repo finished ok with a receipt; otherwise say why not."""
+    if ev.get("status") == "failed":
+        say("composite not sealed: integration failed")
+        return False
+    for e in ordered:
+        repo = e["repo"]
+        if outcome.get(repo) != "ok":
+            say("composite not sealed: %s did not finish ok (%s)" % (repo, outcome.get(repo, "no outcome")))
+            return False
+        runs = os.path.join(run_dir, "worktrees", _slug(repo), ".loki", "runs")
+        try:
+            has = any(os.path.isfile(os.path.join(runs, n, "receipt.json")) for n in os.listdir(runs))
+        except OSError:
+            has = False
+        if not has:
+            say("composite not sealed: %s has no receipt" % repo)
+            return False
+    env = {k: os.environ[k] for k in _SEAL_ENV_KEYS if k in os.environ}
+    env["LOKI_NO_BROWSER"] = "1"
+    exe = os.environ.get("LOKI_WORKSPACE_VERIFY") or os.path.join(REPO_ROOT, "bin", "loki")
+    try:
+        r = subprocess.run([exe, "verify", "--seal-composite", run_dir], env=env, capture_output=True,
+                           text=True, stdin=subprocess.DEVNULL, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        say("composite not sealed: verify could not run (%s)" % type(e).__name__)
+        return False
+    if r.returncode != 0:
+        last = (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or ["no output"])[-1]
+        say("composite not sealed: verify exit %d (%s)" % (r.returncode, last))
+        return False
+    say("workspace: composite sealed: %s" % os.path.join(run_dir, "composite.json"))
+    return True
 
 
 def _runs(base_dir):
@@ -372,12 +532,106 @@ def show(name, workspaces, say=say):
     return 0
 
 
+def _read(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def _identities(entry, root):
+    """Names other repos may use to depend on this one (repo name, package, module)."""
+    ids = {entry["repo"].split("/", 1)[1].lower()}
+    pj = _read(os.path.join(root, "package.json"))
+    if pj:
+        try:
+            n = json.loads(pj).get("name")
+            if isinstance(n, str):
+                ids.add(n.lower())
+        except ValueError:
+            pass
+    gm = _read(os.path.join(root, "go.mod"))
+    if gm:
+        m = re.search(r"^module\s+(\S+)", gm, re.M)
+        if m:
+            ids.add(m.group(1).lower())
+    pp = _read(os.path.join(root, "pyproject.toml"))
+    if pp:
+        m = re.search(r'^name\s*=\s*["\']([^"\']+)["\']', pp, re.M)
+        if m:
+            ids.add(m.group(1).lower().replace("_", "-"))
+    return ids
+
+
+def _dep_tokens(root):
+    """Lower-cased dependency names/paths declared by one checkout."""
+    toks = set()
+    pj = _read(os.path.join(root, "package.json"))
+    if pj:
+        try:
+            d = json.loads(pj)
+            for k in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
+                toks.update(str(n).lower() for n in (d.get(k) or {}))
+        except (ValueError, AttributeError):
+            pass
+    gm = _read(os.path.join(root, "go.mod"))
+    if gm:
+        toks.update(t.lower() for t in re.findall(r"^\s*(?:require\s+)?([\w.\-]+(?:/[\w.\-]+)+)\s+v\S+", gm, re.M))
+    pp = _read(os.path.join(root, "pyproject.toml"))
+    if pp:
+        toks.update(t.lower().replace("_", "-") for t in
+                    re.findall(r'["\']([A-Za-z0-9][A-Za-z0-9_.\-]*)\s*(?:[<>=!~\[;,][^"\']*)?["\']', pp))
+    return toks
+
+
+def infer(name, workspaces, say=say):
+    """Print suggested `after:` edges from manifests; never writes loki.yaml."""
+    ws = workspaces.get(name)
+    if ws is None:
+        say("workspace: unknown workspace %r (known: %s)" % (name, ", ".join(sorted(workspaces)) or "none"))
+        return 2
+    entries = [e for e in ws.get("repos") or [] if isinstance(e.get("repo"), str)]
+    roots = {}
+    for e in entries:
+        root = os.path.abspath(os.path.expanduser(e["path"])) if e.get("path") else os.path.join(
+            os.path.expanduser("~"), ".loki", "repos", _slug(e["repo"]))
+        roots[e["repo"]] = root if os.path.isdir(root) else None
+    ids = {e["repo"]: _identities(e, roots[e["repo"]]) if roots[e["repo"]] else set() for e in entries}
+    proposed = {}
+    for e in entries:
+        repo = e["repo"]
+        if not roots[repo]:
+            say("workspace: %s: no local checkout, skipped" % repo)
+            proposed[repo] = list(e.get("after") or [])
+            continue
+        toks = _dep_tokens(roots[repo])
+        deps = list(e.get("after") or [])
+        for other in entries:
+            o = other["repo"]
+            if o == repo or o in deps:
+                continue
+            if any(t == i or t.startswith(i + "/") for t in toks for i in ids[o]):
+                deps.append(o)
+        proposed[repo] = deps
+    try:
+        order_repos({"repos": [{"repo": e["repo"], "after": proposed[e["repo"]]} for e in entries]})
+    except ValueError as err:
+        say("workspace: %s: inferred edges are not usable: %s" % (name, err))
+        return 1
+    say("workspace %s: suggested edges (print-only; copy into loki.yaml)" % name)
+    for e in entries:
+        say("%s" % e["repo"])
+        say("  after: [%s]" % ", ".join(proposed[e["repo"]]))
+    return 0
+
+
 def main(argv):
     if not enabled():
         say("loki workspace is disabled (LOKI_WORKSPACES=0). Unset it to use workspaces.")
         return 2
     if not argv or argv[0] in ("-h", "--help", "help"):
-        say("Usage: loki workspace list | show <name> | run <name> <owner/repo#N | task text> | status [<run-id>]")
+        say("Usage: loki workspace list | show <name> | infer <name> | run <name> <owner/repo#N | task text> | status [<run-id>]")
         return 0 if argv else 2
     try:
         workspaces, errors = load_workspaces()
@@ -395,6 +649,8 @@ def main(argv):
         for n, ws in sorted(workspaces.items()):
             say("%s: %s" % (n, ", ".join(e.get("repo", "?") for e in ws.get("repos") or [])))
         return 0
+    if cmd == "infer" and len(argv) == 2:
+        return infer(argv[1], workspaces)
     if cmd == "show" and len(argv) == 2:
         return show(argv[1], workspaces)
     if cmd == "status" and len(argv) <= 2:

@@ -57,7 +57,12 @@ export function estimateFromHistory(shape: string | null, key: string, cacheRoot
 
 const mins = (s: number): string => (s < 90 ? `${Math.round(s)}s` : `${Math.round(s / 60)}m`);
 
-export function startText(r: EstimateResult): string {
+export function startText(r: EstimateResult, capUsd = 0): string {
+  const base = startBase(r), high = r.ok ? r.est.usd[1] : r.prior?.usd[1];
+  return capUsd > 0 && high !== undefined && high > capUsd ? `${base}; WARNING estimate high $${high.toFixed(2)} exceeds cap $${capUsd.toFixed(2)}` : base;
+}
+
+function startBase(r: EstimateResult): string {
   if (!r.ok && r.prior) return `estimate: ~$${r.prior.usd[0].toFixed(2)}-$${r.prior.usd[1].toFixed(2)} (rough prior, no history for this shape)`;
   if (!r.ok) return `estimate: NOT AVAILABLE (${r.reason})`;
   const { est: e } = r;

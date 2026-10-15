@@ -36,6 +36,24 @@ import { alreadyDoneTextComment, unmergedLokiWorkNote } from "../util/run_output
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
+export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: string };
+/** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
+export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
+  const dataDir = env.LOKI_DATA_DIR || join(env.HOME ?? "", ".loki");
+  if (![join(repoDir, ".loki"), dataDir].some((d) => existsSync(join(d, "policies.json")) || existsSync(join(d, "policies.yaml")))) return { decision: "allow", reason: "no policy file" };
+  if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
+  if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
+  const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };
+  const r = spawnSync("node", [checkJs, "pre_deployment", JSON.stringify({ action })], { env: scoped, encoding: "utf8", timeout: 30000 });
+  if (r.error) return { decision: "deny", reason: `policy file present but node is unavailable: cannot evaluate policy (fail-closed)` };
+  let why = ""; try { why = String((JSON.parse(r.stdout || "{}") as { reason?: string }).reason ?? ""); } catch { /* keep empty */ }
+  return r.status === 0 ? { decision: "allow", reason: why } : r.status === 2 ? { decision: "approval", reason: why } : { decision: "deny", reason: why || "policy check failed (fail-closed)" };
+}
+/** One PR-egress decision shared by the supervisor pr callback and resumePublish: deny = no PR plus a not-proven line; approval = draft via ctx.draft (never process.env). */
+export function prGate(repoDir: string): { deny: string } | { draft: boolean } {
+  const gate = policyGate(repoDir, "pr");
+  return gate.decision === "deny" ? { deny: `PR not opened: policy denied (${gate.reason})` } : { draft: gate.decision === "approval" };
+}
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../e10ext/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../e10ext/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
 const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened", "log.sealed"]); // types only the supervisor may write; same types from the worker are dropped
@@ -258,7 +276,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     if (u && !u.ok) { process.stderr.write(`engine10: ${u.note}\n`); return 2; }
     if (u) { Object.assign(env, u.env); cap.usd = parseCapUsd(env.LOKI_E10_MAX_COST_USD) ?? cap.usd; }
   }
-  if (process.env.LOKI_SPEED !== "0" && !isIssue) { const g = await (await import("../features/speed/route.ts")).maybeRunGroup(task, repoDir, process.env); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
+  if (process.env.LOKI_SPEED !== "0" && !isIssue) { const g = await (await import("../features/speed/route.ts")).maybeRunGroup(task, repoDir, process.env, { provider }); if (g.code !== null) return g.code; task = g.task; } // D61-16: group entry; fallback runs on the text the group saw
   if (spec) { // the worker reads the snapshot of exactly the bytes hashed here, never the live file
     mkdirSync(runDir, { recursive: true }); writeFileSync(join(runDir, "spec.snapshot.md"), spec.raw);
     for (const e of [env, process.env]) { e.LOKI_E10_SPEC_PATH = relative(repoDir, spec.path); e.LOKI_E10_SPEC_SHA256 = spec.sha256; e.LOKI_E10_REPO_DIR = repoDir; }
@@ -275,7 +293,8 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0
   const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
-  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst))}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
+  if (costEst && process.env.LOKI_COST_CONFIRM === "1" && process.stdin.isTTY && !json && !(await (await import("../commands/issues_run.ts")).askYesNo("Proceed with this run? [y/N] "))) { process.stdout.write("Run cancelled before start (LOKI_COST_CONFIRM).\n"); return 1; }
   const capLine = !json ? disclosureLine(provider) : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
   const t0 = Date.now();
   const eventsPath = join(repoDir, eventsRelPath(runId));
@@ -315,6 +334,8 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       ...(downgrades.length ? { downgrades } : {}),
     },
     pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
+      const gate = prGate(repoDir); // autonomy ladder: deny = no PR plus a not-proven line; require_approval = draft PR
+      if ("deny" in gate) return { url: null, draft: false, existing: null, notProven: [gate.deny] };
       const { loadRunOutputs } = await import("../util/run_outputs.ts"), { runPr } = await import("./stages/pr.ts"); // supervisor-only: the worker never loads pr.ts
       const events = readEvents(eventsPath);
       const sealed: Record<string, unknown> = { ...((events.findLast((e) => e.type === "receipt.sealed")?.data ?? {}) as Record<string, unknown>), not_proven: notProven }; // notProven (backstop/tamper included): a killed worker never sealed a receipt; explicit Record annotation keeps sealed.path typed instead of narrowing to the {} branch of the ?? union (TS2339, E-67 round 5 REJECT finding 2)
@@ -323,7 +344,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
       const r = await runPr({
         runId, repoDir, runDir, branch: `loki/${runId}`, pinnedOrigin: pushEnv._LOKI_PINNED_ORIGIN, handoffMd,
         outputs: () => ({ ...loadRunOutputs(runDir, events), seal: { ...sealed, verdict, receipt_path: sealed.path } }), // L7: the PR body reads recorded intake, plan and verify data, not only seal
-        capHit: () => events.some((e) => e.type === "cap.hit"),
+        capHit: () => events.some((e) => e.type === "cap.hit"), draft: gate.draft,
         emit: () => {}, // pr.opened is appended by runSupervisor from the outcome
       } as unknown as PrContext, new AbortController().signal);
       const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null; not_proven?: string[] };

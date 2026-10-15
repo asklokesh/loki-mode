@@ -102,7 +102,9 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
   const started = it.events.find((e) => e.type === "run.started")?.data ?? {};
   const origin = readOriginUrl(repoDir);
   if (!origin) { out("resume: no origin remote; nothing to publish\n"); return 2; }
-  const { SupervisorLog } = await import("../engine10/supervisor.ts");
+  const { SupervisorLog, prGate } = await import("../engine10/supervisor.ts");
+  const gate = prGate(repoDir); // same policy egress as the supervisor pr callback: resume must not bypass autonomy
+  if ("deny" in gate) { out(`resume: ${gate.deny}\n`); return 5; }
   const log = new SupervisorLog(join(repoDir, eventsRelPath(it.runId)), it.runId);
   log.append("run.resumed", null, { phase: "publish", receipt_reused: true, receipt_sha256: sealedData["receipt_sha256"] ?? null });
   const notProven = [...(Array.isArray(sealedData["not_proven"]) ? (sealedData["not_proven"] as string[]) : []), "publish phase resumed after an interruption"];
@@ -113,7 +115,7 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
     runId: it.runId, repoDir, runDir, branch: `loki/${it.runId}`, pinnedOrigin: origin,
     provider: String(started["provider"] ?? "claude"), model: String(started["model"] ?? ""), baseSha: typeof baseSha === "string" ? baseSha : safeGit(repoDir, ["rev-parse", "HEAD"]).trim(),
     outputs: () => ({ ...loadRunOutputs(runDir, events), seal: { ...sealedData, not_proven: notProven, verdict, receipt_path: sealedData["path"] } }),
-    capHit: () => events.some((e) => e.type === "cap.hit"), emit: () => {},
+    capHit: () => events.some((e) => e.type === "cap.hit"), draft: gate.draft, emit: () => {},
   }, new AbortController().signal);
   const d = r.data as { pr_url?: string; draft?: boolean; existing?: boolean | null };
   if (r.status !== "completed" || !d.pr_url) { out(`resume: publish failed: ${r.reason ?? "no PR url"}\n`); return 5; }

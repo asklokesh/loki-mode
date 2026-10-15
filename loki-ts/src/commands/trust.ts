@@ -21,7 +21,23 @@ import {
   formatTrajectoryJson,
   writeTrajectoryCache,
 } from "../metrics/trust.ts";
+import type { AutonomyLevel } from "../metrics/trust.ts";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
+
+// Read-only: the current autonomy level from .loki/policies.json (JSON only).
+// Missing, unparseable or unknown level is null (no level set), never a guess.
+function currentAutonomy(lokiDir: string): AutonomyLevel | null {
+  const f = join(lokiDir, "policies.json");
+  if (!existsSync(f)) return null;
+  try {
+    const v = (JSON.parse(readFileSync(f, "utf8")) as { autonomy?: unknown }).autonomy;
+    return v === "propose" || v === "execute" || v === "operate" ? v : null;
+  } catch {
+    return null;
+  }
+}
 
 const HELP = `loki trust -- visible trust trajectory (R4)
 
@@ -38,7 +54,9 @@ Shows whether the agent is earning autonomy on THIS repo over time:
 
 Derived read-only from proof-of-run history in .loki/proofs/. With fewer
 than 2 recorded runs it reports "not enough history yet" rather than a
-fabricated trend. Complements 'loki kpis' (single-run snapshot).
+fabricated trend. Also prints advisory earned-autonomy advice (eligible for the
+next level after 10+ runs with recorded verdicts, zero false VERIFIED and no
+regressing axis); it never writes the policy file. Complements 'loki kpis' (single-run snapshot).
 `;
 
 export function runTrust(args: readonly string[]): number {
@@ -58,7 +76,7 @@ export function runTrust(args: readonly string[]): number {
     return 1;
   }
   const lokiDir = defaultLokiDir();
-  const traj = computeTrajectory(lokiDir);
+  const traj = computeTrajectory(lokiDir, currentAutonomy(lokiDir));
   // Best-effort cache so the CLI, dashboard, and bash fallback share one
   // source of truth (parity with the bash route + dashboard endpoint).
   writeTrajectoryCache(lokiDir, traj);

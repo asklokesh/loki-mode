@@ -6,10 +6,10 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { sealedLog } from "./log_fixture.ts";
-import { createPublicKey } from "node:crypto";
+import { createHash, createPublicKey, generateKeyPairSync } from "node:crypto";
 import { commitStage, loadSigningKey, receiptSha256, sealStage, sha256, signReceipt } from "../../src/engine10/stages/seal.ts";
-import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
-import { capGroupVerdict, sealGroup } from "../../src/features/speed/seal_group.ts";
+import { computeReceiptHash, main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
+import { capGroupVerdict, composeComposite, compositeHash, sealGroup } from "../../src/features/speed/seal_group.ts";
 import type { EventType, Receipt, RunContext, StageName, Verdict } from "../../src/engine10/types.ts";
 
 let root = "";
@@ -318,4 +318,166 @@ describe("D61-13 single run is unchanged", () => {
     expect((await verifyReceipt(s.data["receipt_path"] as string)).verdict).toBe("VERIFIED");
     expect(readdirSync(ctx.runDir)).not.toContain("group");
   }, 30000);
+});
+
+// Composite receipt: one signed artifact over every child repo receipt of a workspace run.
+interface C { repo: string; verdict?: string; unsigned?: boolean; head?: string }
+const childPath = (runDir: string, repo: string): string => join(runDir, "worktrees", repo, ".loki", "runs", `run-${repo}`, "receipt.json");
+/** Writes integration.json plus one child receipt per repo under a fresh workspace run dir. */
+function writeWs(name: string, kids: C[]): string {
+  const runDir = join(root, "ws", name, "20261015T000000Z");
+  mkdirSync(runDir, { recursive: true });
+  const heads: Record<string, string> = {}, outcomes: Record<string, string> = {};
+  for (const k of kids) {
+    const head = k.head ?? `${k.repo[0]}`.repeat(40);
+    heads[k.repo] = head; outcomes[k.repo] = "ok";
+    const body = { schema: "loki.v10.receipt/1", run_id: `run-${k.repo}`, verdict: k.verdict ?? "VERIFIED", head_sha: head, events_sha256: sha256(""), not_proven: [] };
+    const h = receiptSha256(body as never), sig = k.unsigned ? { jwt: null, kid: null } : signReceipt(`run-${k.repo}`, h);
+    mkdirSync(dirname(childPath(runDir, k.repo)), { recursive: true });
+    writeFileSync(childPath(runDir, k.repo), JSON.stringify({ ...body, receipt_sha256: h, verification: sig }, null, 2) + "\n");
+  }
+  writeFileSync(join(runDir, "integration.json"), JSON.stringify({ heads, outcomes, status: "passed" }, null, 2));
+  return runDir;
+}
+const quiet = async <T>(f: () => Promise<T>): Promise<T> => { const w = process.stdout.write.bind(process.stdout); process.stdout.write = (() => true) as typeof process.stdout.write; try { return await f(); } finally { process.stdout.write = w; } };
+async function seal(runDir: string): Promise<string> {
+  expect(await quiet(() => verifyMain(["--seal-composite", runDir]))).toBe(0);
+  return join(runDir, "composite.json");
+}
+const verdictOf = (p: string, deps = {}): Promise<{ verdict: string; reasons: string[] }> => verifyReceipt(p, deps);
+/** Re-signs an edited composite so only the semantic check (not the hash or signature) can catch the edit. */
+function resign(p: string, f: (c: Record<string, any>) => void): void {
+  const c = JSON.parse(readFileSync(p, "utf8")) as Record<string, any>;
+  f(c);
+  c["composite_sha256"] = compositeHash(c);
+  c["verification"] = signReceipt(String(c["run_id"]), c["composite_sha256"]);
+  writeFileSync(p, JSON.stringify(c));
+}
+
+describe("composite receipt", () => {
+  const KIDS: C[] = [{ repo: "api" }, { repo: "web" }];
+  test("all green: signed composite verifies VERIFIED, exit 0, children in order", async () => {
+    const dir = writeWs("green", KIDS);
+    const p = await seal(dir);
+    const c = JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
+    expect((c["children"] as { repo: string }[]).map((x) => x.repo)).toEqual(["api", "web"]);
+    expect(c["schema"]).toBe("loki.v10.composite/1");
+    expect(c["composite_sha256"]).toBe(compositeHash(c));
+    expect((await verdictOf(p)).verdict).toBe("VERIFIED");
+    expect(await quiet(() => verifyMain([p]))).toBe(0);
+  });
+  test("pubkey of the signer passes, a wrong key is never VERIFIED", async () => {
+    const dir = writeWs("pk", KIDS);
+    const p = await seal(dir);
+    expect((await verdictOf(p, { pubkey: createPublicKey(loadSigningKey(false)!) })).verdict).toBe("VERIFIED");
+    expect((await verdictOf(p, { pubkey: generateKeyPairSync("ed25519").publicKey })).verdict).not.toBe("VERIFIED");
+  });
+  test("tampered child byte is TAMPERED and exits 1", async () => {
+    const dir = writeWs("tamper", KIDS);
+    const p = await seal(dir);
+    rewrite(childPath(dir, "web"), (r) => { r["not_proven"] = ["x"]; }, false);
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+    expect(await quiet(() => verifyMain([p]))).toBe(1);
+  });
+  test("swapped child receipt (valid, different run) is TAMPERED", async () => {
+    const dir = writeWs("swap", KIDS);
+    const p = await seal(dir);
+    const other = writeWs("swap-other", [{ repo: "api", head: "z".repeat(40) }, { repo: "web" }]);
+    writeFileSync(childPath(dir, "api"), readFileSync(childPath(other, "api")));
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("composite body edited after signing is TAMPERED", async () => {
+    const dir = writeWs("edit", KIDS);
+    const p = await seal(dir);
+    rewrite(p, (r) => { (r["children"] as { head_sha: string }[])[0]!.head_sha = "q".repeat(40); }, false);
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("unsigned child under a signed composite is UNCHECKED and exits 2", async () => {
+    const dir = writeWs("unsigned", [{ repo: "api" }, { repo: "web", unsigned: true }]);
+    const p = await seal(dir);
+    expect((await verdictOf(p)).verdict).toBe("UNCHECKED");
+    expect(await quiet(() => verifyMain([p]))).toBe(2);
+  });
+  test("head mismatch: a child head that is not the integrated head is UNCHECKED", async () => {
+    const dir = writeWs("head", KIDS);
+    const p = await seal(dir);
+    const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
+    i.heads.api = "f".repeat(40);
+    writeFileSync(ip, JSON.stringify(i));
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    const r = await verdictOf(p);
+    expect(r.verdict).toBe("UNCHECKED");
+    expect(r.reasons.join(" ")).toContain("integrated head");
+  });
+  test("one PARTIAL child caps the composite at PARTIAL: integrity VERIFIED, exit 4", async () => {
+    const dir = writeWs("partial", [{ repo: "api" }, { repo: "web", verdict: "PARTIAL" }]);
+    const p = await seal(dir);
+    expect(JSON.parse(readFileSync(p, "utf8")).verdict).toBe("PARTIAL");
+    expect((await verdictOf(p)).verdict).toBe("VERIFIED");
+    expect(await quiet(() => verifyMain([p]))).toBe(4);
+  });
+  test("a re-signed verdict higher than the weakest child is TAMPERED", async () => {
+    const dir = writeWs("lie", [{ repo: "api" }, { repo: "web", verdict: "PARTIAL" }]);
+    const p = await seal(dir);
+    resign(p, (c) => { c["verdict"] = "VERIFIED"; });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("a signed composite that omits a repo is TAMPERED", async () => {
+    const dir = writeWs("omit", KIDS);
+    const p = await seal(dir);
+    resign(p, (c) => { c["children"] = (c["children"] as unknown[]).slice(0, 1); });
+    const r = await verdictOf(p);
+    expect(r.verdict).toBe("TAMPERED");
+    expect(r.reasons.join(" ")).toContain("cover");
+  });
+  test("a signed composite that lists a repo twice is TAMPERED", async () => {
+    const dir = writeWs("dup", KIDS);
+    const p = await seal(dir);
+    resign(p, (c) => { const k = c["children"] as unknown[]; c["children"] = [k[0], k[0]]; });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("a child receipt_path pointing at another repo is TAMPERED", async () => {
+    const dir = writeWs("xrepo", KIDS);
+    const p = await seal(dir);
+    resign(p, (c) => { const k = c["children"] as { receipt_path: string }[]; k[0]!.receipt_path = k[1]!.receipt_path; });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("a child whose integration outcome is not ok is TAMPERED", async () => {
+    const dir = writeWs("outcome", KIDS);
+    const p = await seal(dir);
+    const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
+    i.outcomes.web = "FAILED: exit 1";
+    writeFileSync(ip, JSON.stringify(i));
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
+  });
+  test("a null integrated head is UNCHECKED, not a silent pass", async () => {
+    const dir = writeWs("nullhead", KIDS);
+    const p = await seal(dir);
+    const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
+    i.heads.api = null;
+    writeFileSync(ip, JSON.stringify(i));
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    expect((await verdictOf(p)).verdict).toBe("UNCHECKED");
+  });
+  test("sealing refuses a run dir whose name is not a valid run id", async () => {
+    const dir = writeWs("badid", KIDS);
+    const bad = join(root, "bad id");
+    Bun.spawnSync({ cmd: ["cp", "-R", dir, bad] });
+    const err = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try { expect(await verifyMain(["--seal-composite", bad])).toBe(2); } finally { process.stderr.write = err; }
+  });
+  test("sealing refuses unless every repo has a receipt", async () => {
+    const dir = writeWs("missing", KIDS);
+    rmSync(join(dir, "worktrees", "web"), { recursive: true });
+    expect(() => composeComposite(dir, computeReceiptHash)).toThrow(/web/);
+    const err = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (() => true) as typeof process.stderr.write;
+    try { expect(await verifyMain(["--seal-composite", dir])).toBe(2); } finally { process.stderr.write = err; }
+    const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
+    i.outcomes.web = "FAILED: exit 1";
+    writeFileSync(ip, JSON.stringify(i));
+    expect(() => composeComposite(dir, computeReceiptHash)).toThrow(/did not finish/);
+  });
 });
