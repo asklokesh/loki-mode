@@ -70,8 +70,8 @@ expect "start --attempts 2 without bun is refused, no bash" "" "$(run_loki "$NO_
 expect "start --attempts 2 without bun exits 1" "1" "$(cat "$T/rc")"
 # The bun resolver probes `bun --version`; only a start/autonomy route counts as reaching a loop.
 route_of() { printf '%s' "$1" | grep -v -e '^BUN --version$' || true; }
-expect "start --attempts 2 --no-pr with opencode is refused, no route" "" "$(route_of "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- start --attempts 2 --no-pr)")"
-expect "start --attempts 2 --no-pr with opencode exits 2" "2" "$(cat "$T/rc")"
+expect "start --attempts 2 --no-pr with opencode -> Bun start (engine10 supports opencode)" "BUN $ENTRY start --attempts 2 --no-pr" "$(route_of "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- start --attempts 2 --no-pr)")"
+expect "start --attempts 2 --no-pr with opencode exits 0" "0" "$(cat "$T/rc")"
 expect "start --attempts 2 --parallel is refused, no route" "" "$(route_of "$(run_loki "$WITH_BUN" -- start --attempts 2 --no-pr --parallel)")"
 expect "start --attempts 2 --parallel exits 2" "2" "$(cat "$T/rc")"
 expect "start --attempts 2 bad provider is refused" "" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=gemini -- start --attempts 2 --no-pr)"
@@ -80,7 +80,8 @@ expect "start 'fix x' --budget 5 stays as typed (11.3.0)" "BUN $ENTRY engine10 f
 expect "start 'fix x' --attempts 1 --budget 5 -> --max-cost" "BUN $ENTRY engine10 fix x --max-cost 5" "$(run_loki "$WITH_BUN" -- start "fix x" --attempts 1 --budget 5)"
 expect "plain start with opencode stays bash (11.3.0)" "BASH start prd.md" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- start prd.md)"
 expect "no bun falls back to legacy, no error" "BASH fix x" "$(run_loki "$NO_BUN" -- "fix x")"
-expect "provider without an invoker -> legacy" "BASH fix x" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- "fix x")"
+expect "opencode has an engine10 invoker -> engine10" "BUN $ENTRY engine10 fix x" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=opencode -- "fix x")"
+expect "provider without an invoker is refused, no route" "" "$(run_loki "$WITH_BUN" LOKI_PROVIDER=gemini -- "fix x")"
 expect "LOKI_LEGACY_BASH=1 -> bash" "BASH quick fix x" "$(run_loki "$WITH_BUN" LOKI_LEGACY_BASH=1 -- quick "fix x")"
 
 # 1b. `loki legacy` is removed (11.0.0): a removal message, exit 2, nothing ran. LOKI_ENGINE is no longer read, whatever its value.

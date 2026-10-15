@@ -39,13 +39,15 @@ _route_classify() {
 # loki_route_resolve VERB ARGS...   VERB = start | quick | bare
 # Sets: R_DECIDED R_E10 R_HARD R_ENGINE R_REASON R_INPUT_TYPE R_INPUT R_PROVIDER
 #       R_MODEL R_NOTICE R_ERR R_EXPLAIN R_JSON R_E10_ARGS[] R_CLEAN[] R_SESSION_MODEL R_VERB
+# R_* are the result interface read by the sourcing caller.
+# shellcheck disable=SC2034
 loki_route_resolve() {
     local verb="$1"; shift
     R_DECIDED=0; R_E10=0; R_HARD=0; R_ENGINE=""; R_REASON=""; R_INPUT_TYPE=""; R_INPUT=""
     R_PROVIDER=""; R_MODEL=""; R_NOTICE=""; R_ERR=""; R_EXPLAIN=0; R_JSON=0; R_SESSION_MODEL=""; R_VERB=""
     R_E10_ARGS=(); R_CLEAN=()
 
-    local a v engine_req="" help=0 legacy_flag="" unknown_flag="" session_model="" provider_flag=""
+    local a engine_req="" help=0 legacy_flag="" session_model="" provider_flag=""
     local -a positionals=() passthru=()
     local i=0 n=$#
     local -a argv=("$@")
@@ -62,14 +64,13 @@ loki_route_resolve() {
         R_CLEAN+=("$a")
         case "$a" in
             -*)
-                local name="${a%%=*}" val="" hasval=0
+                local name="${a%%=*}" val=""
                 if _route_has "$_ROUTE_VALUE_FLAGS" "$name"; then
                     if [ "$name" = "$a" ]; then
                         val="${argv[$i]:-}"; i=$((i + 1)); R_CLEAN+=("$val")
                     else
                         val="${a#*=}"
                     fi
-                    hasval=1
                 fi
                 case "$name" in
                     --prd) positionals+=("$val"); continue ;;
@@ -227,6 +228,7 @@ loki_route_print() {
 # Entry used by bin/loki. Args: the full original argv. Sets R_* and returns:
 #   0 = handled (caller reads R_DECIDED); 7 = `loki route` / --explain-route printed (caller exits 0)
 #   8 = usage or input error already printed (caller exits 2)
+# shellcheck disable=SC2034
 loki_route_dispatch() {
     R_DECIDED=0
     local verb="" first="${1:-}"
