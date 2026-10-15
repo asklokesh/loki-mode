@@ -162,6 +162,27 @@ function _loki {
                 code)
                     _loki_code
                     ;;
+                deploy)
+                    _arguments \
+                        '--dir[Project directory to scan]:directory:_directories' \
+                        '--no-clip[Do not copy the command to the clipboard]' \
+                        '--execute[Run the deploy command if the receipt gate passes]' \
+                        '--canary[With --execute: staged rollout (Vercel promote, Fly canary)]' \
+                        '--allow-unanchored[Proceed when the receipt records no baseline]' \
+                        '--health-url[Health probe URL]:url:' \
+                        '--auto-rollback[Roll back on a failed health probe]' \
+                        '--help[Show help]'
+                    ;;
+                verify)
+                    _arguments \
+                        '--pubkey[Check against this public key only]:key file:_files' \
+                        '--sign-deploy[Sign a loki.deploy/1 deploy record in place]:record:_files' \
+                        '--receipt[Cited receipt file for a deploy record]:receipt:_files' \
+                        '--max-age[Reject a receipt older than DUR]:duration:' \
+                        '--seal-composite[Sign a workspace composite]:run dir:_directories' \
+                        '--help[Show help]' \
+                        '*:receipt or deploy record:_files'
+                    ;;
             esac
             ;;
     esac

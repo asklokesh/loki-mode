@@ -6,7 +6,7 @@ import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "n
 import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
-import { applyMaxAge, takeMaxAge } from "../util/receipt_signer.ts";
+import { applyMaxAge, deployAttestCmd, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
@@ -142,13 +142,13 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   if (ma.error) return (process.stderr.write(`loki verify: ${ma.error}\n`), 2);
   args = ma.args;
   if (args[0] === "--help" || args[0] === "-h") {
-    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --max-age DUR (or --max-age=DUR; Ns, Nm, Nh, Nd or seconds) rejects a receipt whose signed JWT iat is older than DUR, in the future, or absent: UNCHECKED, exit 2. Checked after integrity; tampered stays tampered.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\nUnknown flags and more than one run-id exit 2.\n");
+    process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --max-age DUR (or --max-age=DUR; Ns, Nm, Nh, Nd or seconds) rejects a receipt whose signed JWT iat is older than DUR, in the future, or absent: UNCHECKED, exit 2. Checked after integrity; tampered stays tampered.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\n         --sign-deploy FILE signs a loki.deploy/1 deploy record in place; verify FILE (add --receipt FILE when the cited receipt is not beside it) re-checks it offline and is VERIFIED only when the signature and the cited receipt both are.\nUnknown flags and more than one run-id exit 2.\n");
     return 0;
   }
   const sc = args.indexOf("--seal-composite");
   if (sc >= 0) return args.length === 2 && sc === 0 ? sealCompositeCmd(args[1]!) : (process.stderr.write("loki verify: --seal-composite takes exactly one run directory\n"), 2);
-  const pk = takePubkey(args);
-  if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
+  const dep = await deployAttestCmd(args, { takePubkey, maxAge: ma.raw, make: (pkey) => { const d = pkey ? { ...deps, pubkey: pkey } : deps; return { pubFor: (k) => pubFor(k, d.pubkey), verifyReceipt: (p) => verifyReceipt(p, d), attest: (j, h) => checkAttestation(j, h, d.pubkey) }; } }); if (dep !== null) return dep; // loki.deploy/1
+  const pk = takePubkey(args); if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   args = pk.args;
   if (pk.pubkey) deps = { ...deps, pubkey: pk.pubkey };
   const runsRoot = deps.runsRoot ?? join(lokiDir(), "runs");
