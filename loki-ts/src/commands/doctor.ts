@@ -1587,7 +1587,7 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
   }
 
   if (repo) { // REPOMEM: read-only print of .loki/state/repo-profile.json; never runs anything
-    const { loadProfile, renderProfile } = await import("../util/repo_baseline.ts");
+    const { loadProfile, renderProfile } = await import("../runner/repo_profile.ts");
     const p = loadProfile(process.cwd());
     process.stdout.write(json ? JSON.stringify(p, null, 2) + "\n" : renderProfile(p));
     return 0;

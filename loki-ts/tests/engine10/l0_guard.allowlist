@@ -76,6 +76,9 @@ src/runner/repo_profile.ts	go.mod
 src/runner/repo_profile.ts	package.json
 src/runner/repo_profile.ts	pyproject.toml
 src/runner/repo_profile.ts	requirements.txt
+src/runner/repo_profile.ts	cargo test
+src/runner/repo_profile.ts	go test
+src/runner/repo_profile.ts	pytest
 src/runner/trim.ts	npm test
 src/runner/trim.ts	package.json
 src/runner/trim.ts	pytest

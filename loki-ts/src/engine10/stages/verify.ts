@@ -16,7 +16,7 @@ import { WALL_COMPILE_REASON, wallOwnedFailure } from "../../util/wall_owned.ts"
 import type { ImplementExit, RunContext, Stage, StageResult, TestRef } from "../types.ts";
 import { STAGE_BUDGETS } from "../types.ts";
 import type { ProjectApi } from "../../project_model/api.ts"; import { groupByPackage, loadProjectApi, siteFor } from "../../project_model/resolve.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { attribute } from "../../util/repo_baseline.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { attribute } from "../../runner/repo_profile.ts";
 const CHECK_TIMEOUT_MS = 60_000; // ENGINE.md 16 E-09: "60s limit" per check; limitS (120s) is the stage's outer bound
 /** implement.ts's full stage.completed.data isn't in the shared contract yet; this is the one
  *  field verify.ts reads from it (ImplementExit itself IS a contract type, types.ts). */

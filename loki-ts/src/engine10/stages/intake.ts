@@ -13,7 +13,7 @@ import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_don
 import { snapshotContract } from "../../features/contract.ts";
 import { unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
-import { safeGit } from "../../util/safe_git.ts"; import { ensureProfile } from "../../util/repo_baseline.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { ensureProfile } from "../../runner/repo_profile.ts";
 export interface IntakeOptions {
   taskText?: string;
   issueJsonPath?: string;
