@@ -13488,10 +13488,18 @@ cmd_setup_skill() {
             echo "skills directory: ~/.claude/skills/, ~/.codex/skills/, etc."
             echo ""
             echo "Options:"
+            echo "  --claude-code  Merge the Loki plugin into Claude Code settings (see --claude-code --help)"
             echo "  --help, -h   Show this help and exit"
             echo ""
             echo "Side effects: writes symlinks/files under ~/.<provider>/skills/loki-mode/."
             return 0
+            ;;
+        --claude-code)
+            shift
+            # shellcheck source=/dev/null
+            . "${SKILL_DIR}/autonomy/claude-code-setup.sh"
+            cmd_claude_code_setup "$@"
+            return $?
             ;;
     esac
     echo -e "${BOLD}Loki Mode Skill Setup${NC}"
