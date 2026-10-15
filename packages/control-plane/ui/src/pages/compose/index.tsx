@@ -15,11 +15,17 @@ export function normalizeTarget(raw: string): string {
   return m ? `${m[1]}/${m[2]}#${m[3]}` : s;
 }
 
+/** Run models the picker offers; "" means the project default and sends no model at all. */
+export const MODELS = ["haiku", "sonnet", "opus"] as const;
+const MODEL_NOTES: Record<string, string> = { haiku: "haiku: fastest, may be less accurate" };
+/** One muted line for a smaller model. Informational only: it never blocks or changes the Review button. */
+export const modelNote = (m: string): string | null => MODEL_NOTES[m] ?? null;
+
 export function errorText(e: unknown): string {
   if (e instanceof StartError) {
     if (e.status === 400) return `The server refused this run: ${e.message}`;
     if (e.status === 403) return `Not allowed: ${e.message}. Starting runs works only from the machine running the control service.`;
-    if (e.status === 404) return `The control service does not offer this: ${e.message}`;
+    if (e.status === 404) return e.message;
     if (e.status === 409) return `${e.message}. Wait for it to finish, or pick another repo.`;
     return e.message;
   }
@@ -38,6 +44,7 @@ export function NewRunPicker({ preset, onDone }: { preset: string | null; onDone
   const [issues, setIssues] = useState<Issues>({ state: "idle" });
   const [issue, setIssue] = useState<RepoIssue | null>(null);
   const [task, setTask] = useState("");
+  const [model, setModel] = useState("");
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,7 +83,7 @@ export function NewRunPicker({ preset, onDone }: { preset: string | null; onDone
     setBusy(true);
     setError(null);
     try {
-      await postRun({ target, repo });
+      await postRun(model ? { target, repo, model } : { target, repo });
       onDone();
       location.hash = "#/runs";
     } catch (e) {
@@ -109,6 +116,14 @@ export function NewRunPicker({ preset, onDone }: { preset: string | null; onDone
           <option value="">Choose a registered repo</option>
           {repos.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
+      </label>
+      <a href="#/repos" data-testid="picker-browse" onClick={onDone} style={{ color: "var(--cp-accent)", fontSize: "var(--cp-text-sm)", alignSelf: "flex-start" }}>Browse repos</a>
+      <label style={label}>Model
+        <select aria-label="Model" data-testid="picker-model" value={model} onChange={(e) => setModel(e.target.value)} onInput={(e) => setModel((e.target as HTMLSelectElement).value)} style={field}>
+          <option value="">Project default</option>
+          {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+        </select>
+        {modelNote(model) ? <span data-testid="model-note">{modelNote(model)}</span> : null}
       </label>
       {repo ? (
         <div style={label}>Open issues

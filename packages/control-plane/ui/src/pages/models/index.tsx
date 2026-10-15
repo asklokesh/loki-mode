@@ -1,6 +1,6 @@
 // CPE-15: Models and providers. Detected CLIs, auth presence (a yes/no from env var NAMES, never a value) and the model catalog.
 import { useEffect, useState } from "react";
-import { authToken } from "../../api";
+import { authToken, failIfNotOk } from "../../api";
 import { Badge, Card, EmptyState, Spinner, StatusDot, Table } from "../../design/primitives";
 
 export interface ProviderRow {
@@ -21,7 +21,7 @@ async function fetchProviders(): Promise<ProvidersResponse> {
   const base = (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";
   const tok = authToken();
   const res = await fetch(`${base}/v1/providers`, { headers: tok ? { authorization: `Bearer ${tok}` } : {} });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  await failIfNotOk(res);
   return (await res.json()) as ProvidersResponse;
 }
 

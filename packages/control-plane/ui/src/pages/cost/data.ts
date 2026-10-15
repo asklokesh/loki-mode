@@ -1,5 +1,5 @@
 // CPE-13 data: GET /v1/stats/cost. measured = all sessions priced; partial = only some; unmeasured = none (never summed as 0).
-import { authToken } from "../../api";
+import { authToken, failIfNotOk } from "../../api";
 
 export type Dim = "day" | "model" | "repo" | "provider";
 export interface CostRow {
@@ -18,6 +18,6 @@ export async function getCost(group: Dim): Promise<CostResponse> {
   const base = (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";
   const t = authToken();
   const res = await fetch(`${base}/v1/stats/cost?group=${group}`, { headers: t ? { authorization: `Bearer ${t}` } : {} });
-  if (!res.ok) throw new Error(`/v1/stats/cost: HTTP ${res.status}`);
+  await failIfNotOk(res);
   return (await res.json()) as CostResponse;
 }
