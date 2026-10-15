@@ -9,6 +9,7 @@
 // identity" case. Every repo fixture pins HOME to an empty temp dir and
 // blanks GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM so the check is hermetic.
 import { afterAll, describe, expect, test } from "bun:test";
+import { requirementFix } from "../../src/util/requirements.ts";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,7 +90,7 @@ describe("checkPreflight", () => {
   test("missing provider CLI is fatal", async () => {
     const { dir, env } = identifiedRepo();
     const r = await checkPreflight({ repoDir: dir, provider: "claude", pr: false, env: { ...env, LOKI_CLAUDE_CLI: MISSING_CLI } });
-    expect(r.fatal).toBe(`provider CLI '${MISSING_CLI}' is not on PATH; install it or set LOKI_CLAUDE_CLI to its path`);
+    expect(r.fatal).toBe(`provider CLI '${MISSING_CLI}' is not on PATH; install it or set LOKI_CLAUDE_CLI to its path. Fix: ${requirementFix("claude")}`);
   });
 
   test("a present provider CLI clears that check", async () => {

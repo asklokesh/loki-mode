@@ -24,6 +24,7 @@ import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
 import { probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
+import { evaluateRequirements, firstTaskReady, renderRequirementsText, requirementFix, requirementMin, type RequirementsReport } from "../util/requirements.ts";
 
 // ---------- Types (mirror cmd_doctor_json shape) ------------------------------
 
@@ -103,6 +104,8 @@ export type DoctorJson = {
   sentrux: SentruxCheck;
   memory: MemoryHealth;
   model_catalog: CatalogFreshness;
+  // Requirements grouped by execution path from the shared table (autonomy/lib/setup-requirements.json).
+  requirements: RequirementsReport & { first_task_ready: boolean };
   summary: {
     passed: number;
     failed: number;
@@ -405,8 +408,9 @@ type ToolSpec = {
   min?: string;
 };
 
+const NODE_MIN = (requirementMin("node") ?? "20.0").split(".")[0];
 const TOOL_SPECS: readonly ToolSpec[] = [
-  { displayName: "Node.js (>= 18)", jsonName: "Node.js", cmd: "node", required: "required", min: "18.0" },
+  { displayName: `Node.js (>= ${NODE_MIN})`, jsonName: "Node.js", cmd: "node", required: "required", min: `${NODE_MIN}.0` },
   { displayName: "Python 3 (>= 3.8)", jsonName: "Python 3", cmd: "python3", required: "required", min: "3.8" },
   { displayName: "jq", jsonName: "jq", cmd: "jq", required: "required" },
   { displayName: "git", jsonName: "git", cmd: "git", required: "required" },
@@ -597,6 +601,11 @@ export function describeCatalogFreshness(): CatalogFreshness {
     : { status: "pass", updated, age_days: ageDays, detail: `Last updated ${updated} (${ageDays} days ago)` };
 }
 
+async function requirementsSection(): Promise<RequirementsReport & { first_task_ready: boolean }> {
+  const rep = await evaluateRequirements();
+  return { ...rep, first_task_ready: firstTaskReady(rep) };
+}
+
 export async function buildDoctorJson(): Promise<DoctorJson> {
   const rows = await runAllToolChecks();
   // Strip the displayName field for JSON output -- bash JSON has bare names.
@@ -624,7 +633,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     required: "required",
     detail: anyProviderFound
       ? null
-      : "No AI provider CLI. Fix: npm install -g @anthropic-ai/claude-code",
+      : `No AI provider CLI. Fix: ${requirementFix("claude") ?? "npm install -g @anthropic-ai/claude-code"}`,
   };
   statuses.push(aiProvider.status);
 
@@ -648,6 +657,7 @@ export async function buildDoctorJson(): Promise<DoctorJson> {
     // Advisory only: deliberately excluded from the passed/failed/warnings
     // tally and from `ok`, so a stale catalog can never flip the exit code.
     model_catalog: describeCatalogFreshness(),
+    requirements: await requirementsSection(),
     summary: summarizeStatuses(statuses),
   };
 }
@@ -796,9 +806,10 @@ export function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap]\n\n`);
   process.stdout.write(`Options:\n`);
-  process.stdout.write(`  --json    Output machine-readable JSON\n`);
+  process.stdout.write(`  --json    Output machine-readable JSON (includes requirements grouped by execution path)\n`);
+  process.stdout.write(`  --requirements  Print requirements per execution path (required or optional, present or missing, one-line fix)\n`);
   process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); print commands for the rest\n`);
   // --airgap never reaches this handler: bin/loki routes it to the bash audit.
   process.stdout.write(`  --airgap  Audit network egress: model inference, telemetry and the\n`);
@@ -1566,21 +1577,28 @@ else:
 export async function runDoctor(argv: readonly string[]): Promise<number> {
   let json = false;
   let fix = false;
+  let reqs = false;
   for (const arg of argv) {
     if (arg === "--json") {
       json = true;
     } else if (arg === "--fix") {
       fix = true;
+    } else if (arg === "--requirements") {
+      reqs = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--requirements] [--airgap]\n`);
       return 1;
     }
   }
 
+  if (reqs && !json) {
+    process.stdout.write(renderRequirementsText(await evaluateRequirements()) + "\n");
+    return 0;
+  }
   if (json) {
     const result = await buildDoctorJson();
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
