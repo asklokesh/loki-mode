@@ -174,6 +174,7 @@ export async function deployAttestCmd(args: readonly string[], env: { takePubkey
   let rec: Obj;
   try { if (statSync(file).size > 1_000_000) return null; rec = JSON.parse(readFileSync(file, "utf8")) as Obj; } catch { return si >= 0 ? (process.stderr.write(`loki verify: cannot read deploy record ${file}\n`), 2) : null; }
   if (rec === null || typeof rec !== "object" || rec["schema"] !== DEPLOY_SCHEMA) return si >= 0 ? (process.stderr.write(`loki verify: ${file} is not a ${DEPLOY_SCHEMA} record\n`), 2) : null;
+  if (si < 0 && pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   if (si >= 0) {
     const signed = signDeployRecord(rec);
     if (!signed) return (process.stdout.write("deploy record: UNSIGNED (no signing key)\n"), 2);

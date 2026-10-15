@@ -839,6 +839,16 @@ describe("loki.deploy/1 signed deploy records", () => {
     process.env["LOKI_RECEIPT_SIGNING_KEY_FILE"] = join(dir, "absent.pem");
     expect((await run([rec, "--pubkey", pub])).code).toBe(0);
   });
+  test("--pubkey holding a non-Ed25519 key exits 2 and never prints VERIFIED", async () => {
+    const { rec } = await fixture();
+    await run(["--sign-deploy", rec]);
+    const { generateKeyPairSync } = await import("node:crypto");
+    const rsa = join(dir, "rsa.pem");
+    writeFileSync(rsa, generateKeyPairSync("rsa", { modulusLength: 2048 }).publicKey.export({ type: "spki", format: "pem" }));
+    const r = await run([rec, "--pubkey", rsa]);
+    expect(r.code).toBe(2);
+    expect(r.out).not.toContain("VERIFIED");
+  });
   test("a tampered cited receipt is never VERIFIED", async () => {
     const { rec, proof } = await fixture();
     await run(["--sign-deploy", rec]);
