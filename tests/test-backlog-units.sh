@@ -159,7 +159,7 @@ grep -q "^spec b $TMP/accept.json speed=1" "$TMP/events" && pass "spec unit gets
 grep -q '^spec c none speed=unset' "$TMP/events" && pass "unit without spec gets neither" || fail "no spec env" "$(cat "$TMP/events")"
 grep -q '"unit":"c"' "$GU/c/receipt.json" 2>/dev/null && [ -f "$GU/c/events.jsonl" ] && pass "failed unit receipt and events harvested" || fail "fail harvest" "$(ls -R "$REPO/.loki" 2>&1 | head -20)"
 [ ! -e "$GU/b/receipt.json" ] && pass "symlinked receipt is not copied" || fail "symlink copied" "$(ls -l "$GU/b")"
-mode="$(stat -f %Lp "$GU/c" 2>/dev/null || stat -c %a "$GU/c")"
+mode="$(stat -c %a "$GU/c" 2>/dev/null || stat -f %Lp "$GU/c")"
 [ "$mode" = "700" ] && pass "harvest dir mode 0700" || fail "mode" "$mode"
 
 echo ""

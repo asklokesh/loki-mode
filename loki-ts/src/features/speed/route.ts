@@ -17,13 +17,13 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { decompose, parseItems, parseMilestones, type Dag } from "../decompose.ts";
 import { buildRepoMap, type RepoMap } from "../../engine10/repomap.ts";
 import { selectRelevantFiles } from "../../engine10/relevant_files.ts";
-import type { BacklogLauncher } from "./run_group.ts";
+import type { BacklogLauncher, SealDeps } from "./run_group.ts";
 
 export const MAX_SPEC_BYTES = 1_048_576;
 export const MAX_SEQ_TASK_BYTES = 65_536;
 const SPEC_PATH_RE = /\/|\.(md|txt|ya?ml|json)$/i;
 
-export interface GroupCtx { task: string; repoDir: string; env: NodeJS.ProcessEnv; provider: string; spec: string; specPath: string | null; say?: (s: string) => void }
+export interface GroupCtx { task: string; repoDir: string; env: NodeJS.ProcessEnv; provider: string; spec: string; specPath: string | null; seal?: SealDeps; say?: (s: string) => void }
 /** Group execution (D61-10..13: unit runner, unit mode, integrator, seal group). Returns an exit code. */
 export type GroupRunner = (dag: Dag, ctx: GroupCtx) => Promise<number>;
 
@@ -38,6 +38,8 @@ export interface RouteDeps {
   group?: GroupRunner;
   /** Test seam for the default group runner: replaces the backlog.py launcher. */
   backlog?: BacklogLauncher;
+  /** Seal and verify implementations for the default group runner; supplied by the caller outside features/. Missing means NOT PROVEN. */
+  seal?: SealDeps;
   listFiles?: (repoDir: string) => string[];
   select?: (task: string, map: RepoMap, max: number) => string[];
   stderr?: (s: string) => void;
@@ -108,7 +110,7 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
       for (let i = 0; i < missions.length; i++) {
         const m = missions[i]!, k = i + 1, N = missions.length;
         say(`loki: milestone ${k}/${N}: ${m.title || `Milestone ${m.n}`}\n`);
-        const code = await group(mdags[i]!, { task, repoDir, env, provider: cap.provider, spec: m.body, specPath, say });
+        const code = await group(mdags[i]!, { task, repoDir, env, provider: cap.provider, spec: m.body, specPath, seal: deps.seal, say });
         if (code !== 0) {
           say(`loki: milestone ${k}/${N} failed (exit ${code}); rerun the same loki start to resume\n`);
           return { code, task: spec };
@@ -125,7 +127,7 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
   if (cap.slots < 2) return fb(spec, `provider ${cap.provider} runs units sequentially`);
   try {
     const group = deps.group ?? (await import("./run_group.ts")).runGroup.bind(null, deps.backlog);
-    return { code: await group(dag, { task, repoDir, env, provider: cap.provider, spec, specPath, say }), task: spec };
+    return { code: await group(dag, { task, repoDir, env, provider: cap.provider, spec, specPath, seal: deps.seal, say }), task: spec };
   } catch (e) {
     say(`loki: group run failed: ${(e as Error).message.split("\n")[0]}\n`);
     return { code: 1, task: spec };

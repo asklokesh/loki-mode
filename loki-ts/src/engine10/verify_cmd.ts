@@ -6,17 +6,14 @@ import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "n
 import { basename, dirname, join } from "node:path";
 import { createHash, createPublicKey, verify, type KeyObject } from "node:crypto";
 import { lokiDir } from "../util/paths.ts";
+import { applyMaxAge, takeMaxAge } from "../util/receipt_signer.ts";
 import { latestRunId } from "../commands/run_status.ts";
 import { readEvents } from "./events.ts";
 import { kidOf, loadSigningKey, receiptSha256, signReceipt } from "./stages/seal.ts";
 import { exportDsseReceipt, isEnvelope, outcomeOf, runIdGuard, verifyDsseReceipt } from "../features/receipt_dsse.ts";
 import { composeComposite, compositeHash, isComposite, verifyComposite, verifyGroup } from "../features/speed/seal_group.ts"; import { takePubkey } from "./keys_cmd.ts"; import { receiptScreensProblem } from "../features/visual_evidence.ts";
 export type Verdict = "VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED";
-export interface VerifyResult {
-  verdict: Verdict;
-  reasons: string[];
-  receiptSha256?: string;
-}
+export interface VerifyResult { verdict: Verdict; reasons: string[]; receiptSha256?: string }
 /** The hash seal writes into receipt.json; receiptSha256 strips `verification` and `receipt_sha256` itself. */
 export const computeReceiptHash = (receipt: Record<string, unknown>): string => receiptSha256(receipt as never);
 export interface VerifyDeps {
@@ -85,9 +82,7 @@ export async function verifyReceipt(receiptPath: string, deps: VerifyDeps = {}):
   if (isComposite(receipt)) return verifyCompositeFile(receiptPath, receipt, deps);
   const recorded = receipt["receipt_sha256"];
   const computed = computeReceiptHash(receipt);
-  if (typeof recorded !== "string" || recorded !== computed) {
-    return { verdict: "TAMPERED", reasons: [`receipt_sha256 mismatch: recorded ${JSON.stringify(recorded)}, computed ${computed}`] };
-  }
+  if (typeof recorded !== "string" || recorded !== computed) return { verdict: "TAMPERED", reasons: [`receipt_sha256 mismatch: recorded ${JSON.stringify(recorded)}, computed ${computed}`] };
   const logProblem = checkEventLog(receiptPath, receipt);
   if (logProblem) return { verdict: "TAMPERED", reasons: [logProblem] };
   const gp = await verifyGroup(receiptPath, receipt, computeReceiptHash, verifyReceipt, deps); // D61-13
@@ -137,45 +132,15 @@ function sealCompositeCmd(runDir: string): number {
   process.stdout.write(`composite: ${path}\nverdict: ${body.verdict}\nchildren: ${body.children.length}\nsignature: ${sig.jwt ? "signed" : "UNSIGNED (no signing key)"}\n`);
   return sig.jwt ? 0 : EXIT_BY_VERDICT.UNSIGNED;
 }
-/** --max-age value: Ns, Nm, Nh, Nd or plain seconds; returns seconds, or null when invalid or <= 0. */
-function parseMaxAge(v: string): number | null {
-  const m = /^(\d+)([smhd]?)$/.exec(v);
-  const n = m ? Number(m[1]) * ({ "": 1, s: 1, m: 60, h: 3600, d: 86400 }[m[2]!] as number) : 0;
-  return n > 0 && Number.isFinite(n) ? n : null;
-}
-/** Age check on the signed JWT iat (receipts carry no other trusted time). Runs only after integrity checks: TAMPERED and UNCHECKED pass through unchanged. */
-function applyMaxAge(result: VerifyResult, receiptPath: string, raw: string, maxAge: number, now: number): VerifyResult {
-  if (result.verdict === "TAMPERED" || result.verdict === "UNCHECKED") return result;
-  const unchecked = (reason: string): VerifyResult => ({ ...result, verdict: "UNCHECKED", reasons: [...result.reasons, reason] });
-  let iat: unknown;
-  try {
-    const jwt = ((JSON.parse(readFileSync(receiptPath, "utf8")).verification ?? {}) as { jwt?: unknown }).jwt;
-    if (result.verdict === "VERIFIED" && typeof jwt === "string") iat = (JSON.parse(Buffer.from(jwt.split(".")[1] ?? "", "base64url").toString()) as { iat?: unknown }).iat;
-  } catch { /* no readable signed iat */ }
-  if (typeof iat !== "number" || !Number.isFinite(iat)) return unchecked("no signed iat; age cannot be checked");
-  const iso = new Date(iat * 1000).toISOString();
-  if (iat - now / 1000 > 300) return unchecked(`receipt iat ${iso} is in the future`);
-  if (now / 1000 - iat > maxAge) return unchecked(`receipt iat ${iso} is older than --max-age ${raw}`);
-  return result;
-}
 // D47: a stripped receipt must never rank above UNCHECKED; --allow-unsigned opts in
 const EXIT_BY_VERDICT: Record<Verdict, number> = { VERIFIED: 0, UNSIGNED: 3, TAMPERED: 1, UNCHECKED: 2 };
 export async function main(args: readonly string[], deps: VerifyDeps = {}): Promise<number> {
   const allowUnsigned = args.includes("--allow-unsigned") || process.env["LOKI_VERIFY_ALLOW_UNSIGNED"] === "1";
   const exportDsse = args.includes("--export-dsse");
   args = args.filter((a) => a !== "--allow-unsigned" && a !== "--export-dsse");
-  let maxAgeRaw: string | null = null, maxAge = 0;
-  if (!(args[0] === "--help" || args[0] === "-h")) {
-    const i = args.findIndex((a) => a === "--max-age" || a.startsWith("--max-age="));
-    if (i >= 0) {
-      const eq = args[i]!.startsWith("--max-age=");
-      maxAgeRaw = eq ? args[i]!.slice(10) : (args[i + 1] ?? "");
-      const parsed = parseMaxAge(maxAgeRaw);
-      if (parsed === null || args.some((a, j) => j > i + (eq ? 0 : 1) && (a === "--max-age" || a.startsWith("--max-age=")))) return (process.stderr.write(`loki verify: invalid --max-age ${JSON.stringify(maxAgeRaw)} (use Ns, Nm, Nh, Nd or seconds, greater than 0)\n`), 2);
-      maxAge = parsed;
-      args = args.filter((_, j) => j !== i && !(!eq && j === i + 1));
-    }
-  }
+  const ma = takeMaxAge(args);
+  if (ma.error) return (process.stderr.write(`loki verify: ${ma.error}\n`), 2);
+  args = ma.args;
   if (args[0] === "--help" || args[0] === "-h") {
     process.stdout.write("Usage: loki verify [run-id]\nVerify .loki/runs/<run-id>/receipt.json (default: latest run).\nExit: 0 verified, 1 tampered, 2 unchecked, 3 unsigned (refused), 4 run outcome not verified, 66 no runs.\nOptions: --allow-unsigned (or LOKI_VERIFY_ALLOW_UNSIGNED=1) accepts an UNSIGNED receipt; never changes tampered/unchecked.\n         --pubkey FILE (or --pubkey=FILE, once) checks the signature against that Ed25519 JWK/PEM public key only, never the local JWKS.\n         --seal-composite RUN_DIR signs <RUN_DIR>/composite.json over every child repo receipt of a workspace run (refuses unless each has one); verify RUN_DIR/composite.json re-checks it offline.\n         --max-age DUR (or --max-age=DUR; Ns, Nm, Nh, Nd or seconds) rejects a receipt whose signed JWT iat is older than DUR, in the future, or absent: UNCHECKED, exit 2. Checked after integrity; tampered stays tampered.\n         --export-dsse prints a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto Statement v1 in a DSSE envelope (Ed25519 over PAE); verify accepts that file too.\nUnknown flags and more than one run-id exit 2.\n");
     return 0;
@@ -195,7 +160,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   const bad = byRunId ? runIdGuard(receiptPath, runId) : null; // INTEL-1b: an envelope found under a run id must be for that run
   if (bad) return (process.stdout.write(`run: ${runId}\nverdict: TAMPERED\n  ${bad}\n`), 1);
   let result = await verifyReceipt(receiptPath, deps);
-  if (maxAgeRaw !== null) result = applyMaxAge(result, receiptPath, maxAgeRaw, maxAge, (deps.now ?? Date.now)());
+  if (ma.raw !== null) result = applyMaxAge(result, receiptPath, ma.raw, ma.seconds, (deps.now ?? Date.now)());
   // An intact (VERIFIED or UNSIGNED) receipt of a run that did not verify is never exit 0 and no flag changes that; unreadable fails closed.
   if (result.verdict === "VERIFIED" || result.verdict === "UNSIGNED") {
     const outcome = (() => { try { return outcomeOf(JSON.parse(readFileSync(receiptPath, "utf8"))); } catch { return "UNREADABLE"; } })();

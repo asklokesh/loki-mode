@@ -533,7 +533,7 @@ describe("group run: Group Seal and resume", () => {
   };
   const go = async (repo: string, l: ReturnType<typeof fake>, env: Record<string, string> = {}): Promise<{ code: number; err: string }> => {
     let err = "";
-    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", ...env } as NodeJS.ProcessEnv, provider: "claude", spec: SPEC, specPath: null, say: (s) => { err += s; } });
+    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", ...env } as NodeJS.ProcessEnv, provider: "claude", spec: SPEC, specPath: null, seal: { receiptSha256, verifyReceipt }, say: (s) => { err += s; } });
     return { code, err };
   };
   const groups = (repo: string): string[] => readdirSync(join(repo, ".loki", "groups")).filter((n) => n.startsWith("g"));
