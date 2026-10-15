@@ -211,6 +211,22 @@ class DroidArmTest(unittest.TestCase):
         self.assertIn("UNMEASURED (1 of 1 runs not measured)", md)
         self.assertIn("droid CLI not found on PATH", md)
 
+    def test_unmeasured_never_printed_as_zero_or_failure(self):
+        rows = [dict(row(arm="raw_claude", accepted=True, reported=True, cost=1.0)),
+                dict(row(arm="droid", status="unmeasured", cost=None, elapsed=None),
+                     unmeasured_reason="droid CLI not found on PATH")]
+        plan = A.build_plan([], 1, "m", 1.0, 5)
+        md = A.render_markdown({"generated_utc": "x", "plan": plan, "environment": {},
+                                "rows": rows, "summary": A.summarize(rows)})
+        droid_lines = [l for l in md.splitlines() if l.startswith("| ") and " droid " in l]
+        self.assertTrue(droid_lines)
+        for l in droid_lines:
+            cells = [c.strip() for c in l.strip("|").split("|")]
+            self.assertNotIn("0", cells, l)
+            self.assertNotIn("no", cells, l)
+        self.assertTrue(any("UNMEASURED | UNMEASURED | UNMEASURED" in l for l in droid_lines))
+        self.assertTrue(any("| unmeasured | - | - |" in l for l in droid_lines))
+
     def test_arms_flag_validation(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):

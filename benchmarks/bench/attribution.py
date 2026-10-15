@@ -578,7 +578,7 @@ def render_markdown(result: Dict[str, Any]) -> str:
     L.append("")
     L.append("## Pinned conditions")
     L.append("")
-    L.append("- Model id (both arms): `%s`" % plan["model"])
+    L.append("- Model id (claude arms): `%s`" % plan["model"])
     L.append("- Budget per run: $%s; wall-clock cap per run: %ss; repeats: %d" % (
         plan["budget_usd"], plan["timeout_s"], plan["repeats"]))
     L.append("- Claude Code version: %s" % (env.get("claude_version") or "not recorded"))
@@ -603,7 +603,7 @@ def render_markdown(result: Dict[str, Any]) -> str:
             _fmt(m["completion_rate"], pct=True), m["timeouts"], m["errors"],
             _cost_cell(m), _fmt(m["elapsed_median_accepted_s"], secs=True)))
     L.append("")
-    L.append("Failures, timeouts and harness errors are included in every denominator. "
+    L.append("Failures, timeouts and harness errors of measured runs are included in every denominator; unmeasured runs are excluded from all rates. "
              "Cost totals cover all attempts, not only accepted ones.")
     L.append("")
     L.append("## Summary by task class")
@@ -613,6 +613,10 @@ def render_markdown(result: Dict[str, Any]) -> str:
     for c, per in summ["by_class"].items():
         for arm in plan["arms"]:
             m = per[arm]
+            if m.get("unmeasured_runs"):
+                L.append("| %s | %s | %d | UNMEASURED | UNMEASURED | UNMEASURED |" % (
+                    c, arm, m["assigned"]))
+                continue
             L.append("| %s | %s | %d | %d | %s | %s |" % (
                 c, arm, m["assigned"], m["accepted"],
                 _fmt(m["acceptance_rate"], pct=True),
@@ -624,10 +628,11 @@ def render_markdown(result: Dict[str, Any]) -> str:
     L.append("|---|---|---|---|---|---|---|---|---|")
     for r in rows:
         cost = ("unmeasured" if r.get("cost_usd") is None else _fmt(r["cost_usd"], usd=True))
+        unm = r.get("status") == "unmeasured"
         L.append("| %s | %s | %s | %d | %s | %s | %s | %s | %s |" % (
             r["task"], r["class"], r["arm"], r["repeat"], r.get("status", "n/a"),
-            "yes" if r.get("reported_success") else "no",
-            "yes" if r.get("accepted") else "no",
+            "-" if unm else ("yes" if r.get("reported_success") else "no"),
+            "-" if unm else ("yes" if r.get("accepted") else "no"),
             _fmt(r.get("elapsed_s"), secs=True), cost))
     L.append("")
     L.append("## Disclosures")
@@ -652,7 +657,7 @@ def render_markdown(result: Dict[str, Any]) -> str:
 
 def print_plan(plan: Dict[str, Any], env: Dict[str, Any], warnings: List[str]) -> None:
     print("attribution plan (DRY RUN: no model call is made)")
-    print("  model (both arms): %s" % plan["model"])
+    print("  model (claude arms): %s" % plan["model"])
     print("  budget per run: $%s   timeout per run: %ss   repeats: %d"
           % (plan["budget_usd"], plan["timeout_s"], plan["repeats"]))
     print("  arms: %s" % ", ".join(plan["arms"]))
@@ -692,7 +697,7 @@ def _parser() -> argparse.ArgumentParser:
                    help="comma-separated arms (default: %s)" % ",".join(ARMS))
     p.add_argument("--repeats", type=int, default=1)
     p.add_argument("--model", default=os.environ.get("LOKI_BENCH_MODEL", DEFAULT_MODEL),
-                   help="exact model id used by BOTH arms (default %s)" % DEFAULT_MODEL)
+                   help="exact model id used by the claude arms (default %s)" % DEFAULT_MODEL)
     p.add_argument("--budget-usd", type=float, default=DEFAULT_BUDGET_USD)
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
     p.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
