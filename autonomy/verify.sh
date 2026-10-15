@@ -2590,8 +2590,9 @@ OPTIONS:
                        re-checks it offline. Routed to the engine10 verifier.
     --max-age <DUR>    With a receipt path: refuse a receipt whose signed issue
                        time is older than DUR (Ns, Nm, Nh, Nd or seconds), has
-                       no signed issue time, or is in the future. Exits 2
-                       (UNCHECKED). Routed to the engine10 verifier.
+                       no signed issue time, or is more than 300s in the
+                       future. Exits 2 (UNCHECKED). Routed to the engine10
+                       verifier.
     -h, --help         Show this help.
 
 GATES (deterministic, reproducible by construction):
