@@ -118,6 +118,15 @@ describe("FC-09r dependency swaps, tsconfig extends, section headers, subdir bas
     r.edit("package.json", dev({ left: "1.0.1" }));
     expect(testConfigChanged(r.dir, r.base, ["package.json"])).toEqual([]);
   });
+  test("subdir base: repoDir under app/ reads base text through the ./ form", () => {
+    const r = repo({ "app/package.json": dev({ left: "1.0.0" }) });
+    const sub = join(r.dir, "app");
+    r.edit("app/package.json", JSON.stringify({ scripts: { test: "changed" }, devDependencies: { left: "1.0.0" } }));
+    expect(testConfigChanged(sub, r.base, ["package.json"])).toEqual(["package.json"]);
+    r.edit("app/package.json", dev({ left: "1.0.0" }));
+    r.edit("app/package.json", dev({ left: "1.0.1" }));
+    expect(testConfigChanged(sub, r.base, ["package.json"])).toEqual([]);
+  });
   test("tsconfig extends change caps", () => {
     const r = repo({ "tsconfig.json": '{"extends":"./a.json"}' });
     r.edit("tsconfig.json", '{"extends":"./b.json"}');
