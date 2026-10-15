@@ -26,14 +26,13 @@ import {
   readFileSync,
   readdirSync,
   statSync,
-  writeFileSync,
   renameSync,
   appendFileSync,
   rmSync,
 } from "node:fs";
 import { join, dirname } from "node:path";
 import { lokiDir } from "../util/paths.ts";
-import { withFileLockSync } from "../util/atomic.ts";
+import { atomicWriteText, tmpPathFor, withFileLockSync } from "../util/atomic.ts";
 import { safeGitRun } from "../util/safe_git.ts";
 
 // Schema mirrors metadata.json exactly. Field names and types are load-bearing
@@ -180,16 +179,6 @@ function copyStateFiles(base: string, cpDir: string): void {
   }
 }
 
-// Atomic write via tmp + rename. POSIX rename(2) is atomic within a directory.
-// Use process pid + a counter to avoid tmp collisions across concurrent calls.
-let _tmpCounter = 0;
-function atomicWriteFile(target: string, contents: string): void {
-  mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.tmp.${process.pid}.${++_tmpCounter}`;
-  writeFileSync(tmp, contents);
-  renameSync(tmp, target);
-}
-
 // metadata.json must match bash json.dump(indent=2) output exactly so cross-
 // runtime checkpoints are byte-identical (autonomy/run.sh:6961-6962).
 // Python's json.dump(indent=2) uses ", " item separator and ": " key
@@ -270,7 +259,7 @@ async function _createCheckpointImpl(
 
   // Write metadata.json atomically. If this fails, the index is not touched
   // (matches bash: index append only happens after metadata write succeeds).
-  atomicWriteFile(join(cpDir, "metadata.json"), serializeMetadata(metadata));
+  atomicWriteText(join(cpDir, "metadata.json"), serializeMetadata(metadata), { durable: false });
 
   // Append to index.jsonl. Single appendFileSync writes are atomic for small
   // payloads on POSIX (PIPE_BUF = 4096+ bytes), and the serialize() chain
@@ -385,7 +374,7 @@ export function rebuildIndex(base: string): void {
   }
   const target = indexPath(base);
   const contents = lines.length > 0 ? `${lines.join("\n")}\n` : "";
-  atomicWriteFile(target, contents);
+  atomicWriteText(target, contents, { durable: false });
 }
 
 // v7.5.8: structured event emission for dropped checkpoint metadata.
@@ -670,7 +659,7 @@ export function executeRollback(plan: RollbackPlan): { restored: number; errors:
       // existed; restoring into a fresh project (where they don't) failed
       // with ENOENT. The new `loki rollback` CLI exposed this regression.
       mkdirSync(dirname(entry.to), { recursive: true });
-      const tmp = `${entry.to}.tmp.${process.pid}.${++_tmpCounter}`;
+      const tmp = tmpPathFor(entry.to);
       copyFileSync(entry.from, tmp);
       renameSync(tmp, entry.to);
       restored += 1;

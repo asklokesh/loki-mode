@@ -22,8 +22,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  renameSync,
-  writeFileSync,
   appendFileSync,
   readdirSync,
   statSync,
@@ -78,6 +76,7 @@ import type { CouncilHook, RunnerContext } from "./types.ts";
 import { lokiDir as defaultLokiDir } from "../util/paths.ts";
 import { claudeFlagSupported } from "../providers/claude_flags.ts";
 import { safeGit } from "../util/safe_git.ts";
+import { atomicWriteText } from "../util/atomic.ts";
 
 // Local shim. Phase C dispatch path only checks support synchronously; the
 // help cache must be populated by the caller chain in production (the
@@ -86,18 +85,6 @@ import { safeGit } from "../util/safe_git.ts";
 // means we fall through to the heuristic -- the desired safe default.
 function claudeFlagSupportedShim(flag: string): boolean {
   return claudeFlagSupported(flag);
-}
-
-// ---------------------------------------------------------------------------
-// Atomic write helper (POSIX rename is atomic within a directory).
-// ---------------------------------------------------------------------------
-
-let _tmpCounter = 0;
-function atomicWriteFile(target: string, contents: string): void {
-  mkdirSync(dirname(target), { recursive: true });
-  const tmp = `${target}.tmp.${process.pid}.${++_tmpCounter}`;
-  writeFileSync(tmp, contents);
-  renameSync(tmp, target);
 }
 
 // ---------------------------------------------------------------------------
@@ -149,7 +136,7 @@ export async function councilInit(prdPath: string | undefined): Promise<void> {
     prd_path: prdPath ?? null,
   };
 
-  atomicWriteFile(resolve(stateDir, "state.json"), JSON.stringify(state, null, 2) + "\n");
+  atomicWriteText(resolve(stateDir, "state.json"), JSON.stringify(state, null, 2) + "\n", { durable: false });
 }
 
 // ---------------------------------------------------------------------------
@@ -310,9 +297,10 @@ export const defaultCouncil: CouncilHook = {
         const stateDir2 = resolve(defaultLokiDir(), "council");
         try {
           state.confidence_spike_pending = false;
-          atomicWriteFile(
+          atomicWriteText(
             resolve(stateDir2, "state.json"),
             JSON.stringify(state, null, 2) + "\n",
+            { durable: false },
           );
         } catch {
           // Fail-safe: if the consume-write fails we must NOT keep returning
@@ -412,7 +400,7 @@ export const defaultCouncil: CouncilHook = {
     state.files_changed = filesChanged;
     state.last_track_iteration = iteration;
     // confidence_spike_pending / _total / last_confidence were set above.
-    atomicWriteFile(resolve(stateDir, "state.json"), JSON.stringify(state, null, 2) + "\n");
+    atomicWriteText(resolve(stateDir, "state.json"), JSON.stringify(state, null, 2) + "\n", { durable: false });
   },
 };
 
@@ -1066,7 +1054,7 @@ export async function councilWriteTranscript(
       total_members: nonContrarianVoters.length,
     };
 
-    atomicWriteFile(transcriptPath, JSON.stringify(transcript, null, 2) + "\n");
+    atomicWriteText(transcriptPath, JSON.stringify(transcript, null, 2) + "\n", { durable: false });
   } catch (err) {
     // Writer errors must never crash the caller.
     console.warn(
@@ -1130,5 +1118,5 @@ export async function councilWriteReport(
   }
   lines.push("");
 
-  atomicWriteFile(reportPath, lines.join("\n"));
+  atomicWriteText(reportPath, lines.join("\n"), { durable: false });
 }

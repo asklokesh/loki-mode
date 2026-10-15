@@ -7,10 +7,10 @@
 // trackGateFailure call sites in quality_gates.
 
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { withFileLock, withFileLockSync } from "../../src/util/atomic.ts";
+import { atomicWriteText, withFileLock, withFileLockSync } from "../../src/util/atomic.ts";
 
 function newDir(): string {
   return mkdtempSync(join(tmpdir(), "loki-flock-"));
@@ -147,5 +147,19 @@ describe("withFileLock -- symlink sentinel rejection", () => {
     // Decoy untouched: rmSync of a symlink removes only the link, not
     // the target.
     expect(existsSync(real)).toBe(true);
+  });
+});
+
+describe("atomicWriteText durable option", () => {
+  test("durable:false writes identical bytes, creates parents, leaves no tmp", () => {
+    const dir = newDir();
+    const body = '{\n  "a": 1\n}\n';
+    const fast = join(dir, "x", "fast.json");
+    const durable = join(dir, "durable.json");
+    atomicWriteText(fast, body, { durable: false });
+    atomicWriteText(durable, body);
+    expect(readFileSync(fast, "utf-8")).toBe(body);
+    expect(readFileSync(durable, "utf-8")).toBe(readFileSync(fast, "utf-8"));
+    expect(readdirSync(join(dir, "x"))).toEqual(["fast.json"]);
   });
 });
