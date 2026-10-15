@@ -599,7 +599,6 @@ web-app chat completion never says Done. for a silent failure (node --test)	1
 web-app issue list shows the gh comment count (node --test)	1
 a partly priced run renders as at least, never a total	1
 web-app CommandPalette file-search failure is not no-results (node --test)	1
-prune-worktrees treats cherry-picked branches as merged (S-154)	3
 Eval results archive: redaction and dirty-check exclude (E-101)	1
 auto-capture shadow-write skips empty PROJECT_DIR and never splices importance (S-156)	32
 web-app NLSearch failed request is not no-results (S-159)	1
