@@ -1,6 +1,6 @@
 // v11.7.0 GROUP: the default GroupRunner for route.ts (D61 slices 10-13 glued together). Order: freeze per-unit acceptance
 // (contract.ts), write the DAG, run units through autonomy/lib/backlog.py under the provider slot cap, merge passing unit
-// branches and run the suite once (engine10/integrate.ts). Moat: the exit code is 0 only when integrate() says ok; a launcher
+// branches and run the suite once (engine10/integrate.ts). Moat: the exit code is never 0 (NOT_PROVEN until a group Seal exists); a launcher
 // failure, an orphan criterion or an unreadable result is never VERIFIED. This runner does not write group/manifest.json, so it
 // never claims a combined group Seal receipt: it says so.
 import { mkdirSync, existsSync } from "node:fs";
@@ -13,6 +13,9 @@ import { safeGitSpawn } from "../../util/safe_git.ts";
 import { atomicWriteJson } from "../../util/atomic.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { providerSlots, type GroupCtx } from "./route.ts";
+
+/** Group integrated but not sealed: distinct non-zero so no caller reads it as VERIFIED. */
+export const NOT_PROVEN = 4;
 
 export interface BacklogRun { code: number; stdout: string }
 /** argv is the full python3 argument list after the interpreter; env is already scoped. */
@@ -68,11 +71,11 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const baseRef = git(repoDir, ["rev-parse", "HEAD"]);
   if (!baseRef) { say("loki: NOT PROVEN: cannot resolve HEAD; no unit was started\n"); return 1; }
 
-  const { provider, slots } = providerSlots(env);
+  const { provider, slots } = providerSlots(env, ctx.provider);
   const n = Math.min(slots, dag.units.length);
   say(`loki: group ${groupId}: ${dag.units.length} units, ${n} parallel slot(s) (provider ${provider})\n`);
   const backlog = join(REPO_ROOT, "autonomy", "lib", "backlog.py");
-  const res = await run([backlog, slug, "--dag", dagPath, "--group", groupId, "--slots", String(n)], scopedEnv(env), repoDir);
+  const res = await run([backlog, slug, "--dag", dagPath, "--group", groupId, "--slots", String(n), "--provider", provider], scopedEnv({ ...env, LOKI_PROVIDER: provider }), repoDir);
 
   // backlog prints `backlog: unit-<group>-<n> <status>`; a unit passed only when its status is VERIFIED or a PR url. Anything else is a fail.
   const status = new Map<string, string>();
@@ -92,6 +95,8 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     say(`loki: FAILED: group not verified (${r.reason ?? "launcher reported a failed unit"})\n`);
     return 1;
   }
-  say(`loki: group ${groupId} integrated on ${r.branch}, suite exit ${r.suiteExit}. Group Seal receipt: UNCHECKED (no combined receipt was written)\n`);
-  return 0;
+  // Moat: no group Seal receipt is written (sealGroup is not wired here) and the frozen per-unit acceptance is not forwarded to
+  // the workers, so the group is integrated but NOT PROVEN. Exit 4 (NOT_PROVEN), never 0: callers map 0 to VERIFIED.
+  say(`loki: group ${groupId} integrated on ${r.branch}, suite exit ${r.suiteExit}. NOT PROVEN: Group Seal receipt UNCHECKED (no combined receipt written, frozen unit acceptance not checked); exit ${NOT_PROVEN}\n`);
+  return NOT_PROVEN;
 }

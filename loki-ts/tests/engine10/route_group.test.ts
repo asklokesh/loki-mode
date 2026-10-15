@@ -227,17 +227,41 @@ describe("default group runner (run_group.ts)", () => {
     return { code: res.code, err };
   };
   const slotsOf = (a: string[]): string | undefined => a[a.indexOf("--slots") + 1];
-  test("claude: group runs with a slot cap, integrates, exit 0", async () => {
+  test("claude: group runs with a slot cap, integrates, exit NOT_PROVEN (never 0: no group Seal)", async () => {
     await withDir(async (d) => {
       mkRepo(d);
       const seen: string[][] = [];
-      const { code } = await go(d, { LOKI_PROVIDER: "claude" }, launcher(d, seen));
-      expect(code).toBe(0);
+      const { code, err } = await go(d, { LOKI_PROVIDER: "claude" }, launcher(d, seen));
+      expect(code).toBe(4);
+      expect(err).toContain("NOT PROVEN");
       expect(seen.length).toBe(1);
       expect(seen[0]!).toContain("--dag");
       expect(slotsOf(seen[0]!)).toBe("3");
       expect(readFileSync(join(d, ".loki/groups", seen[0]![seen[0]!.indexOf("--group") + 1]!, "dag.json"), "utf8")).toContain("units");
     });
+  });
+  test("--provider (deps.provider) caps slots and is forwarded to the units", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const seen: string[][] = [];
+      const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true" } as NodeJS.ProcessEnv, { provider: "codex", backlog: launcher(d, seen), listFiles: () => files, select: sel, stderr: () => {} });
+      expect(res.code).toBe(4);
+      expect(slotsOf(seen[0]!)).toBe("2");
+      expect(seen[0]!.slice(seen[0]!.indexOf("--provider"))[1]).toBe("codex");
+    });
+  });
+  test("--provider aider falls back even when LOKI_PROVIDER is unset", async () => {
+    let calls = 0, err = "";
+    const res = await maybeRunGroup(SPEC, "/nonexistent", { LOKI_SPEED: "1" } as NodeJS.ProcessEnv, { provider: "aider", group: async () => { calls++; return 0; }, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+    expect(res.code).toBeNull();
+    expect(calls).toBe(0);
+    expect(err).toContain("provider aider runs units sequentially");
+  });
+  test("a unit child (LOKI_UNIT_ID) never re-decomposes", async () => {
+    let calls = 0;
+    const res = await maybeRunGroup(SPEC, "/nonexistent", { LOKI_SPEED: "1", LOKI_UNIT_ID: "u1" } as NodeJS.ProcessEnv, { group: async () => { calls++; return 0; }, listFiles: () => files, select: sel, stderr: () => {} });
+    expect(res.code).toBeNull();
+    expect(calls).toBe(0);
   });
   test("codex: slots capped at 2", async () => {
     await withDir(async (d) => {
