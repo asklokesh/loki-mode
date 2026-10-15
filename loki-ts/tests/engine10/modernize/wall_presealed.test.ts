@@ -85,26 +85,17 @@ describe("classifyBaseRun (D42 (3))", () => {
     expect(classifyBaseRun({ runner: "pytest", exitCode: 1, timedOut: false }, repoDir)).toBe("not_run");
   });
 
-  it("classifies pytest exit 2 as red only for ImportError/AttributeError/NameError resolved inside the repo", () => {
+  it("classifies pytest exit 2 by the Wall's rule over the raw output: red only for a repo-owned symbol", () => {
     writeRepoModule(repoDir, "unit_under_test");
-    writeRepoModule(repoDir, "unit_under_test_attr");
-    writeRepoModule(repoDir, "new_symbol");
-    expect(classifyBaseRun({
-      runner: "pytest", exitCode: 2, timedOut: false,
-      collectionError: { kind: "ImportError", name: "unit_under_test" },
-    }, repoDir)).toBe("red");
-    expect(classifyBaseRun({
-      runner: "pytest", exitCode: 2, timedOut: false,
-      collectionError: { kind: "AttributeError", name: "unit_under_test_attr" },
-    }, repoDir)).toBe("red");
-    expect(classifyBaseRun({
-      runner: "pytest", exitCode: 2, timedOut: false,
-      collectionError: { kind: "NameError", name: "new_symbol" },
-    }, repoDir)).toBe("red");
+    const attr = "____ ERROR collecting test_conf.py ____\nE   AttributeError: module 'unit_under_test' has no attribute 'f'\n=== short test summary info ===\nERROR test_conf.py - AttributeError: module 'unit_under_test' has no attribute 'f'\n";
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, output: attr }, repoDir)).toBe("red");
   });
 
-  it("classifies pytest exit 2 as not_run for an unresolvable/other error", () => {
-    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, collectionError: { kind: "other", name: "x" } }, repoDir)).toBe("not_run");
+  it("classifies pytest exit 2 as not_run for a module that is not found, garbled or absent output", () => {
+    writeRepoModule(repoDir, "unit_under_test");
+    const nm = "E   ModuleNotFoundError: No module named 'unit_under_test'\n";
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, output: nm }, repoDir)).toBe("not_run");
+    expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, output: "garbled" }, repoDir)).toBe("not_run");
     expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false }, repoDir)).toBe("not_run");
   });
 
@@ -128,53 +119,16 @@ describe("classifyBaseRun (D42 (3))", () => {
     });
   });
 
-  // B2, r2 (opus reject on 86d078eb): a caller-supplied `inRepo: true` must no longer be
-  // trusted at all -- classifyBaseRun now derives it itself from the filesystem, so the exact
-  // repro the reviewer gave (a real third-party name, flagged true by the caller) must come back
-  // not_run, and a genuine in-repo module must come back red without any caller flag at all.
-  describe("B2: inRepo is derived from the filesystem, never trusted from the caller", () => {
-    it("red on 86d078eb: a third-party name with a caller-supplied inRepo:true is now not_run", () => {
-      const outcome = {
-        runner: "pytest" as const, exitCode: 2, timedOut: false,
-        // `six` has no file anywhere under repoDir -- a real third-party package. The extra
-        // `inRepo: true` here is exactly the reviewer's repro payload; classifyBaseRun's own
-        // BaseRunOutcome/CollectionError types no longer even declare the field, so this is cast
-        // to demonstrate a stale or adversarial caller cannot smuggle it back in.
-        collectionError: { kind: "ImportError" as const, name: "six", inRepo: true } as unknown as { kind: "ImportError"; name: string },
-      };
-      expect(classifyBaseRun(outcome, repoDir)).toBe("not_run");
+  describe("B2: red/not_run is derived from the output and the filesystem, never from a caller flag", () => {
+    it("an ImportError whose path pytest prints is outside the repo is not_run", () => {
+      const out = "E   ImportError: cannot import name 'NEW' from 'six' (/usr/lib/python3/site-packages/six.py)\n";
+      expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, output: out }, repoDir)).toBe("not_run");
     });
 
-    it("an ImportError for a package with no file in the repo is not_run", () => {
-      expect(classifyBaseRun({
-        runner: "pytest", exitCode: 2, timedOut: false,
-        collectionError: { kind: "ImportError", name: "numpy" },
-      }, repoDir)).toBe("not_run");
-    });
-
-    it("an ImportError resolved to a real file inside the repo is red", () => {
-      writeRepoModule(repoDir, "pkg.unit_under_test");
-      expect(classifyBaseRun({
-        runner: "pytest", exitCode: 2, timedOut: false,
-        collectionError: { kind: "ImportError", name: "pkg.unit_under_test" },
-      }, repoDir)).toBe("red");
-    });
-
-    it("a src/ layout module resolves inside the repo", () => {
-      mkdirSync(join(repoDir, "src", "pkg"), { recursive: true });
-      writeFileSync(join(repoDir, "src", "pkg", "unit.py"), "# fixture\n");
-      expect(classifyBaseRun({
-        runner: "pytest", exitCode: 2, timedOut: false,
-        collectionError: { kind: "ImportError", name: "pkg.unit" },
-      }, repoDir)).toBe("red");
-    });
-
-    it("a malformed name (empty segment, '..') never resolves, even if a same-named file exists", () => {
-      writeRepoModule(repoDir, "evil");
-      expect(classifyBaseRun({
-        runner: "pytest", exitCode: 2, timedOut: false,
-        collectionError: { kind: "ImportError", name: "..evil" },
-      }, repoDir)).toBe("not_run");
+    it("an ImportError whose printed path is a real file inside the repo is red", () => {
+      writeRepoModule(repoDir, "unit");
+      const out = `E   ImportError: cannot import name 'NEW' from 'unit' (${join(repoDir, "unit.py")})\n`;
+      expect(classifyBaseRun({ runner: "pytest", exitCode: 2, timedOut: false, output: out }, repoDir)).toBe("red");
     });
   });
 });
