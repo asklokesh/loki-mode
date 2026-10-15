@@ -23,7 +23,7 @@ with nowhere to look them up.
 |---|---|---|
 | `LOKI_PRD_FILE` | none | Path to a spec file, as an alternative to the positional argument. |
 | `LOKI_MAX_ITERATIONS` | `1000` | Hard cap on iterations. Reaching it is a deterministic terminal failure, not a success. Also in `config schema`. |
-| `LOKI_BUDGET_LIMIT` | `100.00` | Spend cap in USD. Breaching it **pauses** the run (writes `.loki/PAUSE` and saves state); it never kills work or discards a deliverable. Remove `.loki/PAUSE` to resume, or raise the cap. Set to `""` for no cap. A warning is logged at 80%. |
+| `LOKI_BUDGET_LIMIT` | `100.00` | Spend cap in USD on the previous loop (the Loki 10 engine uses `--max-cost`, `budgets.per_run` or a default of $100 only when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set; none on a subscription). Also enforced by kill on codex, cline, aider and opencode in the Loki 10 engine. Breaching it **pauses** the run (writes `.loki/PAUSE` and saves state); it never kills work or discards a deliverable. Remove `.loki/PAUSE` to resume, or raise the cap. Set to `""` for no cap. A warning is logged at 80%. |
 | `LOKI_MAX_DURATION` | unset (no cap) | Wall-clock cap in seconds. Stops cleanly at the next iteration boundary with a `max_duration_reached` terminal status. `loki start --max-duration` also accepts `90m` / `2h`. |
 | `LOKI_AUTO_CONFIRM` | unset | `true`/`false` to control prompts. Takes precedence over `CI`. |
 | `LOKI_CONFIG_DUMP` | `0` | `1` prints the resolved configuration and exits **without starting a run or spending anything**. |
@@ -40,7 +40,14 @@ interact and why hitting one is a failure rather than a success.
 | `LOKI_PROVIDER` | `claude` | `claude`, `cline`, `codex`, `aider`, or `opencode`. |
 | `LOKI_SESSION_MODEL` | `medium` | The capability tier for the run: `small`, `medium`, or `high`. See below. |
 | `LOKI_MAX_TIER` | unlimited | Caps model tier, so a run cannot escalate past what you are willing to pay for. |
-| `LOKI_MODEL_OVERRIDE` | unset | Overrides the resolved model outright. |
+| `LOKI_MODEL_OVERRIDE` | unset | Overrides the resolved model outright. A route spec (`ollama/<id>`) works too. |
+| `LOKI_MODEL_ROUTE` | unset | `<kind>/<id>` with kind `openrouter`, `ollama`, `lmstudio`, `llamacpp`, `vllm` or `custom`. Routes the Claude harness to that endpoint; `loki models` lists them, `loki models --local` discovers local runtimes. |
+| `LOKI_MODEL_BASE_URL` | unset | Base URL for a `custom/<id>` route (required for `custom`). |
+| `LOKI_MODEL_API_KEY` | unset | Token for a `custom/<id>` route (optional). OpenRouter reads `OPENROUTER_API_KEY`. |
+| `LOKI_OPENCODE_MODEL` | unset | `provider/model` id passed to opencode (for example `openrouter/deepseek/deepseek-v3.2`). Also `LOKI_OPENCODE_FLAGS` and `LOKI_OPENCODE_CLI`. |
+| `LOKI_EDIT_MODEL` | unset | Model for `loki edit`. |
+| `LOKI_ENGINE` | unset | `legacy` forces the previous loop; the `--engine` flag wins over it. |
+| `LOKI_SUMMARY_JSON` | unset | `1` prints the end-of-run summary as one JSON line on the previous loop. |
 | `LOKI_TIER` | `oss` | **Not a model setting.** The open-core licensing seam. Leave it unset. |
 | `LOKI_ALLOW_CLAUDE_SIDECALLS` | unset | `1` (exactly) lets PRD enrichment, done recognition, the council voters, the USAGE.md refresh and the quickstart intent check prompt the `claude` CLI under a non-claude provider; `loki doctor --airgap` then reports that as required egress to Anthropic. |
 

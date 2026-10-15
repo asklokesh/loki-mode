@@ -7,7 +7,7 @@ Your agent says done. Loki proves it: an autonomous coding agent that turns a ta
 [![Docker Pulls](https://img.shields.io/docker/pulls/asklokesh/loki-mode?style=for-the-badge&logo=docker&logoColor=white&color=2F71E3)](https://hub.docker.com/r/asklokesh/loki-mode)
 [![License](https://img.shields.io/badge/License-BUSL--1.1-36342E?style=for-the-badge)](LICENSE)
 
-[Website](https://www.autonomi.dev/) | [Install guide](docs/INSTALLATION.md) | [User guide](docs/v10/GUIDE.md) | [CLI reference](docs/CLI-REFERENCE.md) | [Changelog](CHANGELOG.md)
+[Website](https://www.autonomi.dev/) | [Quickstart](docs/QUICKSTART.md) | [Install guide](docs/INSTALLATION.md) | [User guide](docs/v10/GUIDE.md) | [CLI reference](docs/CLI-CORE-VERBS.md) | [Compare with opencode](docs/COMPARE-OPENCODE.md) | [Changelog](CHANGELOG.md)
 
 <!-- generated:facts -->
 The npm badge above tracks the current release; see [CHANGELOG.md](CHANGELOG.md) for release notes.
@@ -31,18 +31,19 @@ npx loki-mode tour    # prints a real receipt from a past build: no key, no spen
 
 ## First run
 
-Loki needs a model. An `ANTHROPIC_API_KEY` is enough, or an installed and logged-in [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI.
+Loki needs a model. [Claude Code](https://docs.claude.com/en/docs/claude-code) (`claude`) is the default provider: install it and log in. The bundled Agent SDK with an `ANTHROPIC_API_KEY` can stand in for the CLI on the main path. Other coding CLIs are optional. See [Requirements](#requirements).
 
 ```bash
-export ANTHROPIC_API_KEY=sk-...
 cd your-repo
-loki doctor                                  # names anything missing, exit 0 when ready
-loki quick "fix the login redirect loop"     # one small task, no PR
-loki "add rate limiting to /api/login"       # build, verify, seal a receipt, open a PR
-loki owner/repo#123                          # same, from a GitHub, GitLab or Jira issue
+loki setup                                   # first-run wizard (or: loki doctor --fix)
+loki start "add rate limiting to /api/login" # the primary path: build, verify, seal a receipt, open a PR
+loki start prd.md                            # same, from a PRD file
+loki start owner/repo#123                    # same, from a GitHub, GitLab or Jira issue
+loki edit "rename fooBar to foo_bar"         # one small change, no loop
+loki chat                                    # interactive alternative: Plan and Build modes
 ```
 
-`loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` run on the Loki 10 engine by default. <!-- loki10-default --> Add `--no-pr` to build and verify without opening a pull request, `--max-cost <usd>` to cap spend (default $100 with an API key, no dollar cap on a subscription), and `--provider <name>` to pick another coding CLI.
+`loki start`, `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"` all run on the Loki 10 engine by default, whatever the flag order or input form. <!-- loki10-default --> Add `--no-pr` to build and verify without opening a pull request, `--max-cost <usd>` to cap spend, and `--provider <name>` to pick another coding CLI. The spend cap defaults to $100 when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set and to no dollar cap on a subscription login; `budgets.per_run` in `loki.yaml` also sets it. Inspect the route without running: `loki route start prd.md` or `--explain-route`. New here? The [5-minute quickstart](docs/QUICKSTART.md) walks through it.
 
 ## What you get
 
@@ -58,7 +59,7 @@ loki verify              # newest run; or: loki verify <run-id>
 
 `loki verify` re-hashes the receipt, checks its signature and checks it against the run's event log. It prints VERIFIED (exit 0), TAMPERED (1), UNCHECKED (2) or UNSIGNED (3). On another machine, export the public key with `loki keys export` and pass it with `loki verify --pubkey <file>`. A receipt claims only what its checks ran, and lists what they did not; signing proves who produced it, not that the code is bug-free. Details: [docs/SIGNED-RECEIPTS.md](docs/SIGNED-RECEIPTS.md).
 
-A finished run prints a short summary:
+A finished run prints a short summary (every run on both engines also ends with a unified Result, Files, Cost, Elapsed, Receipt and `next:` block; `--quiet` prints only that block, `--json` adds a `summary` object):
 
 ```
 Outcome:    VERIFIED
@@ -73,19 +74,33 @@ Time:       4m12s (intake 11s, plan 20s, implement 3m10s, verify 31s)
 
 | Command | What it does |
 |---------|--------------|
-| `loki "<task>"` | Build a task, verify it, seal a receipt, open a PR (`--no-pr`, `--deep`, `--provider`, `--max-cost`) |
-| `loki owner/repo#N` | The same, from a GitHub, GitLab or Jira issue (issue URLs work too) |
-| `loki quick "<task>"` | One small task, no PR |
+| `loki start "<task>"` | The primary path: build a task, PRD file or issue, verify it, seal a receipt, open a PR (`--no-pr`, `--deep`, `--provider`, `--max-cost`). `loki "<task>"` and `loki owner/repo#N` are shorthand |
+| `loki edit "<change>"` | One targeted change in one pass, no PR, plan or council (`--verify`, `--receipt`, `--commit`, `--dry-run`) |
+| `loki quick "<task>"` | One small task with a verify loop, no PR |
+| `loki chat` | Interactive alternative: Plan and Build modes, slash commands, `/run` starts a `loki start` run, `--attach` joins one |
+| `loki route start <args>` | Show the engine, provider, model and reason without running (also `--explain-route`) |
+| `loki setup` | First-run wizard: tools, Claude login, provider, model route, spend cap |
+| `loki config list\|get\|set\|path` | Read and write settings |
+| `loki models [--local]` | List model routes (OpenRouter, Ollama, LM Studio, llama.cpp, vLLM, custom); discover local models |
+| `loki agents list\|new\|show\|export --claude` | Custom child agents in `.loki/agents/*.md` |
 | `loki status [run-id]` | Status of the latest run, or of a given run |
 | `loki verify [run-id]` | Check a receipt's hash, signature and event log |
 | `loki answer [run-id]` | Resume a BLOCKED run with your answer (`--text "..."`) |
-| `loki doctor [--json]` | Check prerequisites, providers and login |
+| `loki doctor [--fix] [--json]` | Check prerequisites, providers and login; `--fix` applies safe fixes |
 | `loki control serve` | Start the Control Plane (see below) |
 | `loki dashboard` | Open the Control Plane UI, starting it if needed |
 | `loki tour` | Show a sample receipt offline |
 | `loki --help` | Everything else; `loki help <command>` for one command |
 
-Full reference: [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Engine guide, provider table and model routing: [docs/v10/GUIDE.md](docs/v10/GUIDE.md).
+Core verbs: [docs/CLI-CORE-VERBS.md](docs/CLI-CORE-VERBS.md). Every command (generated): [docs/CLI-REFERENCE.md](docs/CLI-REFERENCE.md). Engine guide, provider table, model routes, custom agents and chat: [docs/v10/GUIDE.md](docs/v10/GUIDE.md). Honest comparison with opencode: [docs/COMPARE-OPENCODE.md](docs/COMPARE-OPENCODE.md).
+
+### Models, providers and local models
+
+Claude Code is the default Tier-1 provider. `--provider codex|cline|aider|opencode` (or `LOKI_PROVIDER`) picks another; on all of them the Loki 10 engine enforces the wall-clock limit and a post-iteration guard scan, and measures cost for codex, cline and aider (parsed from CLI output or estimated, flagged `estimated`) so `--max-cost` applies. For OpenRouter or a local model, set `LOKI_MODEL_ROUTE=<kind>/<id>` (kinds: `openrouter`, `ollama`, `lmstudio`, `llamacpp`, `vllm`, `custom`) before `loki start`; `loki models --local` finds local runtimes and prints ready-to-paste values.
+
+```bash
+LOKI_MODEL_ROUTE=ollama/qwen3-coder loki start prd.md
+```
 
 ## Control Plane
 
@@ -105,15 +120,16 @@ While it is running, runs on this machine ship to it automatically. Guides: [doc
 
 Required:
 
-- A model: `ANTHROPIC_API_KEY`, or a provider CLI such as Claude Code (`claude`). Cline, Codex, Aider and opencode are supported as experimental providers.
+- Claude Code (`claude`), installed and logged in: the default provider and the only one with every feature. The bundled Agent SDK with `ANTHROPIC_API_KEY` can stand in on the main `loki start` path, but `loki edit` and `loki chat` call the `claude` CLI.
 - Python 3.8+ (`python3`)
-- Node.js 20+ (`node`)
+- Node.js 18+ (`node`; 20+ recommended)
 - `jq`
 - Git 2.x (`git`)
 - `curl`
 
-Recommended:
+Optional:
 
+- Other coding CLIs: Codex, Cline, Aider, opencode (`--provider`). Ollama or an OpenRouter key for model routes.
 - Bun 1.3+ (`bun`) on your PATH (the npm package also bundles it).
 - Docker, to run Loki from the published image.
 
