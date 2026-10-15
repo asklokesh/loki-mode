@@ -8,10 +8,10 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 
 - KEEP-MODERN: 64
 - UPDATE: 22
-- DROP-LEGACY: 31
+- DROP-LEGACY: 32
 - DELETE: 14
-- Total rows: 131
-- Registry paths (commands and nested subcommands): 181
+- Total rows: 132
+- Registry paths (commands and nested subcommands): 182
 
 ## Commands
 
@@ -129,6 +129,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | cleanup | autonomy/loki | DROP-LEGACY | Legacy run.sh orphans |
 | state | autonomy/loki | DROP-LEGACY | Legacy engine |
 | agent | autonomy/loki | DROP-LEGACY | Legacy engine |
+| agents | autonomy/loki | DROP-LEGACY | Legacy engine |
 | trigger | autonomy/loki | DROP-LEGACY | Legacy engine |
 | failover | autonomy/loki | DROP-LEGACY | Legacy engine |
 | reset | autonomy/loki | DROP-LEGACY | Legacy engine |
