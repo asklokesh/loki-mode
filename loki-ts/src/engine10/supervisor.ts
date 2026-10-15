@@ -6,6 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process"; import { cu
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
+import { diffStat, formatRunSummary, nextOf, resultOf, summaryObject, useColor } from "./run_summary.ts"; // OC-OUTPUT
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -228,13 +229,14 @@ export function summaryTokens(f: Folded, sawCost: boolean): number | null {
 export { partialCost }; // E-69: defined in events.ts, next to fold(); re-exported so existing callers/tests keep importing it from here
 export async function main(args: string[]): Promise<number> { // `loki "<task>"` (cli.ts routes every run here): P0 of one run, ending in the 5-line summary
   const words: string[] = [];
-  let specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
+  let quiet = false, specFile: string | null = null, maxCost: string | null = null, noPr = false, deep = false, json = false, verbose = false, provider = process.env.LOKI_PROVIDER || "claude";
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a === "--no-pr") noPr = true;
     else if (a === "--deep") deep = true;
     else if (a === "--json") json = true;
     else if (a === "--verbose") verbose = true;
+    else if (a === "--quiet") quiet = true; // OC-OUTPUT: unified summary only
     else if (a.startsWith("--max-cost")) maxCost = a.includes("=") ? a.slice(11) : args[++i] ?? "";
     else if (a === "--provider") provider = args[++i] ?? provider;
     else if (a === "--spec") specFile = args[++i] ?? "";
@@ -358,6 +360,12 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     stages: events.filter((e) => e.type === "stage.completed" && typeof e.data.duration_s === "number")
       .map((e) => ({ label: String(e.stage), seconds: e.data.duration_s as number })),
   }, verbose);
+  { // OC-OUTPUT: unified run summary, same format as the legacy engine (autonomy/lib/run-summary.sh)
+    const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, ds = diffStat(repoDir, typeof baseSha === "string" ? baseSha : null), rr = resultOf(res.outcome);
+    const ui = { result: rr, filesChanged: ds?.files ?? null, insertions: ds?.ins, deletions: ds?.del, costUsd: usd, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), receiptPath: res.receiptSha ? join(runDir, "receipt.json") : null, next: nextOf(rr, ds?.files ?? null) };
+    process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: summaryObject(ui) })}\n` : quiet ? formatRunSummary(ui, { color: useColor() }) : `${out}\n${formatRunSummary(ui, { color: useColor() })}`);
+    return EXIT[res.outcome];
+  }
   process.stdout.write(out);
   return EXIT[res.outcome];
 }
