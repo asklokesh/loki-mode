@@ -13475,6 +13475,100 @@ cmd_config_path() {
     echo "Create a config file with: loki config init"
 }
 
+# Merge the Loki plugin into a Claude Code settings.json (loki setup-skill --claude-code).
+# Existing keys are never overwritten, invalid JSON is refused (rc 3), writes are atomic.
+_setup_skill_claude_code() {
+    local print_only=0 project=0 stop=0 settings=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --print) print_only=1 ;;
+            --project) project=1 ;;
+            --stop-hook) stop=1 ;;
+            --settings) settings="${2:-}"; shift ;;
+            --help|-h)
+                echo "Usage: loki setup-skill --claude-code [--print] [--project] [--stop-hook] [--settings FILE]"
+                echo ""
+                echo "Registers the Loki plugin marketplace and enables the plugin in Claude Code"
+                echo "settings (default ~/.claude/settings.json; --project uses ./.claude/settings.json)."
+                echo "Merges only: existing keys are kept, invalid JSON is refused."
+                echo ""
+                echo "  --print       Print the settings snippet and change nothing"
+                echo "  --stop-hook   Also opt in to the Stop-hook fast verifier (LOKI_STOP_VERIFY=1)"
+                return 0
+                ;;
+            *) echo "Unknown option: $1" >&2; return 2 ;;
+        esac
+        shift
+    done
+    command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; return 1; }
+    if [ -z "$settings" ] && [ "$print_only" -eq 0 ]; then
+        if [ "$project" -eq 1 ]; then
+            settings="${TARGET_DIR:-.}/.claude/settings.json"
+        else
+            settings="$HOME/.claude/settings.json"
+        fi
+    fi
+    local out rc
+    out="$(python3 - "$settings" "$stop" "$print_only" <<'PY'
+import json, os, sys, tempfile
+path, stop, print_only = sys.argv[1], sys.argv[2] == "1", sys.argv[3] == "1"
+want = {
+    "extraKnownMarketplaces": {
+        "loki-mode": {"source": {"source": "github", "repo": "asklokesh/loki-mode"}}
+    },
+    "enabledPlugins": {"loki-mode@loki-mode": True},
+}
+if stop:
+    want["env"] = {"LOKI_STOP_VERIFY": "1"}
+if print_only:
+    print(json.dumps(want, indent=2))
+    sys.exit(0)
+cur = {}
+if os.path.exists(path):
+    try:
+        raw = open(path).read()
+        cur = json.loads(raw) if raw.strip() else {}
+    except Exception as e:
+        print("REFUSED %s is not valid JSON (%s); fix or move it aside" % (path, e))
+        sys.exit(3)
+    if not isinstance(cur, dict):
+        print("REFUSED %s top level is not an object" % path)
+        sys.exit(3)
+added = []
+for top, kv in want.items():
+    node = cur.get(top)
+    if node is None:
+        cur[top] = {}
+        node = cur[top]
+    elif not isinstance(node, dict):
+        print("KEPT %s (existing value is not an object)" % top)
+        continue
+    for k, v in kv.items():
+        if k in node:
+            print("KEPT %s.%s" % (top, k))
+        else:
+            node[k] = v
+            added.append("%s.%s" % (top, k))
+            print("ADDED %s.%s" % (top, k))
+if added:
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".settings.", suffix=".tmp")
+    with os.fdopen(fd, "w") as f:
+        json.dump(cur, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, path)
+else:
+    print("UNCHANGED %s" % path)
+PY
+)"
+    rc=$?
+    printf '%s\n' "$out"
+    [ "$rc" -eq 0 ] || return "$rc"
+    [ "$print_only" -eq 1 ] || echo "Next: in Claude Code run /reload-plugins, then try /loki-mode:start, /loki-mode:loki-verify, /loki-mode:handoff."
+    return 0
+}
+
 # Set up skill symlinks for all providers
 cmd_setup_skill() {
     # v7.6.2 B-13 fix: --help must print help, not install skills.
@@ -13488,10 +13582,16 @@ cmd_setup_skill() {
             echo "skills directory: ~/.claude/skills/, ~/.codex/skills/, etc."
             echo ""
             echo "Options:"
+            echo "  --claude-code  Merge the Loki plugin into Claude Code settings (see --claude-code --help)"
             echo "  --help, -h   Show this help and exit"
             echo ""
             echo "Side effects: writes symlinks/files under ~/.<provider>/skills/loki-mode/."
             return 0
+            ;;
+        --claude-code)
+            shift
+            _setup_skill_claude_code "$@"
+            return $?
             ;;
     esac
     echo -e "${BOLD}Loki Mode Skill Setup${NC}"
