@@ -328,7 +328,7 @@ const ROUTER_AUTO_COMPACT_WINDOW = 100000; // SDK minimum; keeps requests under 
 // loses context. Unknown models fail safe to the ceiling.
 const hasNoPriceCliff = (m: string): boolean => /sonnet|opus/i.test(m) && !/haiku/i.test(m);
 
-// Claude Code version bundled in the pinned Agent SDK. A test (providers_advisor.test.ts) asserts this equals the
+// Claude Code version bundled in the pinned Agent SDK. A test (providers.test.ts, "providers advisor" block) asserts this equals the
 // installed SDK's claudeCodeVersion, so an SDK bump that forgets it fails CI instead of silently mis-probing.
 export const SDK_BUNDLED_CLAUDE_CODE = "2.1.293";
 function bundledClaudeCodeVersion(): string {
