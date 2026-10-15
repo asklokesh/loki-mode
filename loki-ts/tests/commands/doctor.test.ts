@@ -7,13 +7,23 @@
 //     write hook. This is the same shape as autonomy/loki doctor --json.
 //   - Avoid asserting exact pass/fail counts (depends on host) -- assert shape
 //     and invariants instead.
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, test } from "bun:test";
 import { createServer, type Server } from "node:http";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { REPO_ROOT } from "../../src/util/paths.ts";
 import {
   _setPythonImportOkForTest,
+  evaluateRequirements,
+  firstTaskReady,
+  loadRequirements,
+  requirementFix,
+  requirementMin,
+  sdkBinaryPresent,
+  type EvalDeps,
+  type ReqTable,
   buildDoctorJson,
   checkDisk,
   checkSkills,
@@ -757,4 +767,181 @@ describe("doctor BUG-002 Python 3.12 patch-version parity", () => {
     // The Python 3.12 line must contain the full version string, not just "3.12".
     expect(cap.out).toContain(`Python 3.12 (chromadb / sentence-transformers): ${ver} at ${py312}`);
   }, 30_000);
+});
+
+// LM-001: shared setup requirements table (autonomy/lib/setup-requirements.json).
+// Regenerate the doc block with: UPDATE_CONTRACT=1 bun test tests/commands/doctor.test.ts
+// Markdown requirements table; the doc block between the markers must equal this text.
+function renderContractTable(t: ReqTable = loadRequirements()): string {
+  const out: string[] = [];
+  for (const p of t.paths) {
+    out.push(`### ${p.title}`, "", `${p.summary}.`, "", "| Requirement | Level | Check | Fix |", "| --- | --- | --- | --- |");
+    for (const r of t.requirements.filter((x) => x.path === p.id)) {
+      const list = Array.isArray(r.target) ? r.target : [r.target];
+      const tg = list.join(" or ");
+      const check =
+        r.kind === "command" ? `\`${tg}\` on PATH${r.min ? `, version ${r.min} or newer` : ""}`
+        : r.kind === "sdk_binary" ? `executable \`${tg}-<platform>/claude\` in an installed node_modules`
+        : r.kind === "env_value" ? `\`${tg}\` is ${(r.values ?? []).map((v) => `\`${v}\``).join(" or ")}`
+        : `one of ${list.map((v) => `\`${v}\``).join(", ")} is set`;
+      out.push(`| ${r.label} | ${r.level} | ${check} | ${r.fix} |`);
+    }
+    out.push("");
+  }
+  out.push("### When an optional dependency is missing", "", "| Missing | Effect |", "| --- | --- |");
+  for (const m of t.missing_optional) out.push(`| ${m.dependency} | ${m.effect} |`);
+  return `${out.join("\n")}\n`;
+}
+
+const ALL_CMDS = ["node", "python3", "jq", "git", "curl", "bash", "bun", "claude", "codex", "cline", "aider", "opencode"];
+function deps(over: Partial<EvalDeps> & { cmds?: string[] } = {}): EvalDeps {
+  const cmds = over.cmds ?? ALL_CMDS;
+  return {
+    env: over.env ?? {},
+    commandPath: async (c) => (cmds.includes(c) ? `/usr/bin/${c}` : null),
+    version: async () => "99.0.0",
+    sdkBinary: over.sdkBinary ?? (() => false),
+  };
+}
+const pathOf = (rep: Awaited<ReturnType<typeof evaluateRequirements>>, id: string) => rep.paths.find((p) => p.id === id)!;
+
+describe("requirements table", () => {
+  test("every requirement has a known path, a fix, and a label", () => {
+    const t = loadRequirements();
+    const ids = new Set(t.paths.map((p) => p.id));
+    const seen = new Set<string>();
+    for (const r of t.requirements) {
+      expect(ids.has(r.path)).toBe(true);
+      expect(r.fix.length).toBeGreaterThan(0);
+      expect(r.label.length).toBeGreaterThan(0);
+      expect(seen.has(r.id)).toBe(false);
+      seen.add(r.id);
+    }
+  });
+
+  test("node minimum matches package.json engines", () => {
+    const eng = JSON.parse(readFileSync(join(REPO_ROOT, "package.json"), "utf8")).engines.node as string;
+    expect(eng).toBe(`>=${requirementMin("node")!.split(".")[0]}.0.0`);
+  });
+
+  test("claude path needs the CLI; api-key path needs mode, credentials, SDK binary and bun", async () => {
+    const none = await evaluateRequirements(deps({ cmds: ["node", "python3", "jq", "git", "curl"] }));
+    expect(pathOf(none, "claude-cli").ready).toBe(false);
+    expect(pathOf(none, "api-key-sdk").ready).toBe(false);
+    expect(firstTaskReady(none)).toBe(false);
+
+    const cli = await evaluateRequirements(deps());
+    expect(pathOf(cli, "claude-cli").ready).toBe(true);
+    expect(firstTaskReady(cli)).toBe(true);
+
+    const noCliButSdk = await evaluateRequirements(
+      deps({ cmds: ["node", "python3", "jq", "git", "curl", "bun"], env: { LOKI_SDK_LOOP: "1", ANTHROPIC_API_KEY: "k" }, sdkBinary: () => true }),
+    );
+    expect(pathOf(noCliButSdk, "claude-cli").ready).toBe(false);
+    expect(pathOf(noCliButSdk, "api-key-sdk").ready).toBe(true);
+    expect(firstTaskReady(noCliButSdk)).toBe(true);
+  });
+
+  test("missing optional SDK leaves the claude path ready and the api-key path not ready", async () => {
+    const rep = await evaluateRequirements(deps({ env: { LOKI_SDK_LOOP: "1", ANTHROPIC_API_KEY: "k" }, sdkBinary: () => false }));
+    expect(pathOf(rep, "claude-cli").ready).toBe(true);
+    const sdk = pathOf(rep, "api-key-sdk");
+    expect(sdk.ready).toBe(false);
+    expect(sdk.items.find((i) => i.id === "sdk-binary")!.status).toBe("missing");
+  });
+
+  test("missing bun is optional for common but blocks the api-key path", async () => {
+    const cmds = ALL_CMDS.filter((c) => c !== "bun");
+    const rep = await evaluateRequirements(deps({ cmds, env: { LOKI_SDK_LOOP: "1", ANTHROPIC_API_KEY: "k" }, sdkBinary: () => true }));
+    expect(pathOf(rep, "common").ready).toBe(true);
+    expect(pathOf(rep, "api-key-sdk").ready).toBe(false);
+  });
+
+  test("an old node fails the common path", async () => {
+    const rep = await evaluateRequirements({ ...deps(), version: async (c) => (c === "node" ? "18.19.0" : "99.0.0") });
+    expect(pathOf(rep, "common").ready).toBe(false);
+    expect(pathOf(rep, "common").items.find((i) => i.id === "node")!.detail).toContain("older than 20.0");
+  });
+
+  test("any one other provider makes that path ready", async () => {
+    const rep = await evaluateRequirements(deps({ cmds: ["codex"] }));
+    expect(pathOf(rep, "other-providers").ready).toBe(true);
+    const none = await evaluateRequirements(deps({ cmds: [] }));
+    expect(pathOf(none, "other-providers").ready).toBe(false);
+  });
+
+  test("runtime wording shares the table fix text", () => {
+    expect(requirementFix("claude")).toBe("npm install -g @anthropic-ai/claude-code");
+        expect(requirementFix("nonesuch")).toBeNull();
+  });
+
+  test("sdkBinaryPresent finds an executable platform binary and ignores a non-executable one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-run.req-"));
+    try {
+      const d = join(dir, "node_modules", "@anthropic-ai", "claude-agent-sdk-test-x64");
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, "claude"), "#!/bin/sh\n");
+      chmodSync(join(d, "claude"), 0o644);
+      expect(sdkBinaryPresent({ LOKI_SDK_NODE_MODULES: join(dir, "node_modules") })).toBe(false);
+      chmodSync(join(d, "claude"), 0o755);
+      expect(sdkBinaryPresent({ LOKI_SDK_NODE_MODULES: join(dir, "node_modules") })).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("docs/alternative-installations.md setup requirements", () => {
+  const file = join(REPO_ROOT, "docs", "alternative-installations.md");
+  const BEGIN = "<!-- BEGIN GENERATED REQUIREMENTS (loki-ts/tests/commands/doctor.test.ts) -->";
+  const END = "<!-- END GENERATED REQUIREMENTS -->";
+
+  test("embeds the table generated from the shared source", () => {
+    const want = renderContractTable();
+    let doc = readFileSync(file, "utf8");
+    if (process.env["UPDATE_CONTRACT"] === "1") {
+      const a = doc.indexOf(BEGIN), b = doc.indexOf(END);
+      doc = `${doc.slice(0, a + BEGIN.length)}\n\n${want}\n${doc.slice(b)}`;
+      writeFileSync(file, doc);
+    }
+    const a = doc.indexOf(BEGIN), b = doc.indexOf(END);
+    expect(a).toBeGreaterThan(-1);
+    expect(b).toBeGreaterThan(a);
+    expect(doc.slice(a + BEGIN.length, b).trim()).toBe(want.trim());
+  });
+});
+
+function bashReport(env: Record<string, string>): { paths: { id: string; ready: boolean; items: { id: string; status: string }[] }[]; first_task_ready: boolean } {
+  const lib = join(REPO_ROOT, "autonomy/provider-offer.sh");
+  const r = spawnSync("bash", ["-c", `source "$1"; loki_requirements_json "$2"`, "bash", lib, REPO_ROOT], {
+    env: { PATH: process.env["PATH"] ?? "", HOME: process.env["HOME"] ?? "", ...env },
+    encoding: "utf8",
+  });
+  expect(r.status).toBe(0);
+  return JSON.parse(r.stdout);
+}
+
+describe("bash requirements evaluator (autonomy/provider-offer.sh)", () => {
+  test("emits every path and item from the shared table", () => {
+    const rep = bashReport({ LOKI_SDK_NODE_MODULES: join(REPO_ROOT, "no-such-dir") });
+    const t = loadRequirements();
+    expect(rep.paths.map((p) => p.id)).toEqual(t.paths.map((p) => p.id));
+    const ids = rep.paths.flatMap((p) => p.items.map((i) => i.id)).sort();
+    expect(ids).toEqual(t.requirements.map((r) => r.id).sort());
+  });
+
+  test("api-key path is not ready without the SDK loop flag and SDK binary", () => {
+    const rep = bashReport({ ANTHROPIC_API_KEY: "k", LOKI_SDK_NODE_MODULES: join(REPO_ROOT, "no-such-dir") });
+    const sdk = rep.paths.find((p) => p.id === "api-key-sdk")!;
+    expect(sdk.ready).toBe(false);
+    expect(sdk.items.find((i) => i.id === "sdk-credentials")!.status).toBe("present");
+    expect(sdk.items.find((i) => i.id === "sdk-binary")!.status).toBe("missing");
+    expect(sdk.items.find((i) => i.id === "sdk-mode")!.status).toBe("missing");
+  });
+
+  test("SDK loop flag is honored", () => {
+    const rep = bashReport({ LOKI_SDK_LOOP: "1", LOKI_SDK_NODE_MODULES: join(REPO_ROOT, "no-such-dir") });
+    const sdk = rep.paths.find((p) => p.id === "api-key-sdk")!;
+    expect(sdk.items.find((i) => i.id === "sdk-mode")!.status).toBe("present");
+  });
 });

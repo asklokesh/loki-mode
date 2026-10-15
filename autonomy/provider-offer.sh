@@ -80,6 +80,60 @@ detect_any_provider() {
     return 1
 }
 
+# sdk_binary_present: true (0) when an executable Claude Agent SDK platform binary exists
+# in an installed node_modules. Shared by detect_bundled_sdk_provider and
+# loki_requirements_json.
+sdk_binary_present() {
+    # Search the node_modules trees Loki is actually installed into. The root is
+    # derived from THIS FILE's location (self-containment contract, see header):
+    # SKILL_DIR belongs to autonomy/loki and is NOT exported, so it would be
+    # empty when doctor.ts spawns this script standalone -- which would silently
+    # answer "no SDK" on the Bun route while the bash route said yes, exactly the
+    # kind of route split the parity gate exists to prevent.
+    # LOKI_SDK_NODE_MODULES is a TEST-ONLY seam (never set in production) so the
+    # shell tests can point at a fixture tree without mutating real node_modules.
+    local _po_root
+    _po_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || _po_root=""
+    # Array, not a word-split string: install roots can contain spaces.
+    local _po_search=()
+    if [ -n "${LOKI_SDK_NODE_MODULES:-}" ]; then
+        # When the test seam is set it is AUTHORITATIVE (not merely first): the
+        # real tree must not be consulted as a fallback, or a fixture asserting
+        # "no usable SDK" would silently pass by finding the repo's own binary.
+        _po_search=("$LOKI_SDK_NODE_MODULES")
+    elif [ -n "$_po_root" ]; then
+        # Two layouts, both real:
+        #   repo clone      -> <root>/node_modules, <root>/loki-ts/node_modules
+        #   npm install     -> npm HOISTS the SDK out of node_modules/loki-mode/
+        #                      up to the installing tree's top-level
+        #                      node_modules/ (verified by packing this repo and
+        #                      installing the tarball). Without the hoisted
+        #                      candidates the predicate silently returns 1 for
+        #                      every npm-installed user, i.e. the feature would
+        #                      be dead for exactly the audience it targets.
+        # <root> is .../node_modules/loki-mode, so ../ is the @scope-less
+        # top-level node_modules and ../../ covers a scoped install.
+        _po_search=(
+            "$_po_root/node_modules"
+            "$_po_root/loki-ts/node_modules"
+            "$_po_root/.."
+            "$_po_root/../.."
+        )
+    fi
+    local _nm
+    for _nm in ${_po_search+"${_po_search[@]}"}; do
+        [ -n "$_nm" ] || continue
+        set -- "$_nm"/@anthropic-ai/claude-agent-sdk-*/claude
+        # Unmatched globs stay literal in bash, so test the expansion for real.
+        while [ "$#" -gt 0 ]; do
+            [ -x "$1" ] && return 0
+            shift
+        done
+    done
+    return 1
+}
+
+
 # detect_bundled_sdk_provider: true (0) only when the bundled Claude Agent SDK
 # can ACTUALLY run this machine's main loop with no separate CLI install.
 #
@@ -130,53 +184,7 @@ detect_bundled_sdk_provider() {
         return 1
     fi
 
-    # Search the node_modules trees Loki is actually installed into. The root is
-    # derived from THIS FILE's location (self-containment contract, see header):
-    # SKILL_DIR belongs to autonomy/loki and is NOT exported, so it would be
-    # empty when doctor.ts spawns this script standalone -- which would silently
-    # answer "no SDK" on the Bun route while the bash route said yes, exactly the
-    # kind of route split the parity gate exists to prevent.
-    # LOKI_SDK_NODE_MODULES is a TEST-ONLY seam (never set in production) so the
-    # shell tests can point at a fixture tree without mutating real node_modules.
-    local _po_root
-    _po_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)" || _po_root=""
-    # Array, not a word-split string: install roots can contain spaces.
-    local _po_search=()
-    if [ -n "${LOKI_SDK_NODE_MODULES:-}" ]; then
-        # When the test seam is set it is AUTHORITATIVE (not merely first): the
-        # real tree must not be consulted as a fallback, or a fixture asserting
-        # "no usable SDK" would silently pass by finding the repo's own binary.
-        _po_search=("$LOKI_SDK_NODE_MODULES")
-    elif [ -n "$_po_root" ]; then
-        # Two layouts, both real:
-        #   repo clone      -> <root>/node_modules, <root>/loki-ts/node_modules
-        #   npm install     -> npm HOISTS the SDK out of node_modules/loki-mode/
-        #                      up to the installing tree's top-level
-        #                      node_modules/ (verified by packing this repo and
-        #                      installing the tarball). Without the hoisted
-        #                      candidates the predicate silently returns 1 for
-        #                      every npm-installed user, i.e. the feature would
-        #                      be dead for exactly the audience it targets.
-        # <root> is .../node_modules/loki-mode, so ../ is the @scope-less
-        # top-level node_modules and ../../ covers a scoped install.
-        _po_search=(
-            "$_po_root/node_modules"
-            "$_po_root/loki-ts/node_modules"
-            "$_po_root/.."
-            "$_po_root/../.."
-        )
-    fi
-    local _nm
-    for _nm in ${_po_search+"${_po_search[@]}"}; do
-        [ -n "$_nm" ] || continue
-        set -- "$_nm"/@anthropic-ai/claude-agent-sdk-*/claude
-        # Unmatched globs stay literal in bash, so test the expansion for real.
-        while [ "$#" -gt 0 ]; do
-            [ -x "$1" ] && return 0
-            shift
-        done
-    done
-    return 1
+    sdk_binary_present
 }
 
 # _po_assume_yes: true when the user has opted into unattended confirmation.
@@ -543,6 +551,46 @@ selected = os.environ.get("_PA_SELECTED", "") or None
 print(json.dumps({"selected": selected, "providers": rows}, indent=2))
 ' 2>/dev/null || exit 1
     ) || return 1
+}
+
+# loki_requirements_json: print the setup requirements report (shared table
+# autonomy/lib/setup-requirements.json) as one JSON object, matching the "requirements"
+# key of the Bun doctor (loki-ts/src/commands/doctor.ts). Used by the minimal
+# `loki doctor --json` fallback when the Bun doctor cannot run. Presence only: unlike the
+# Bun evaluator it does not compare versions.
+loki_requirements_json() {
+    local table statuses="" id kind target values st v
+    table="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/setup-requirements.json"
+    if [ ! -f "$table" ] || ! command -v jq >/dev/null 2>&1; then
+        printf 'null\n'
+        return 0
+    fi
+    while IFS=$'\t' read -r id kind target values; do
+        st=missing
+        case "$kind" in
+            command) command -v "$target" >/dev/null 2>&1 && st=present ;;
+            env_any)
+                for v in ${target//,/ }; do [ -n "${!v:-}" ] && st=present; done ;;
+            env_value)
+                for v in ${target//,/ }; do
+                    case ",${values}," in *",${!v:-},"*) [ -n "${!v:-}" ] && st=present ;; esac
+                done ;;
+            sdk_binary) sdk_binary_present && st=present ;;
+        esac
+        statuses="${statuses}${id} ${st}"$'\n'
+    done < <(jq -r '.requirements[] | [.id, .kind, (.target | if type == "array" then join(",") else . end), ((.values // []) | join(","))] | @tsv' "$table")
+
+    jq -n --rawfile st <(printf '%s' "$statuses") --slurpfile t "$table" '
+      ($st | split("\n") | map(select(length > 0) | split(" ") | {(.[0]): .[1]}) | add) as $s
+      | $t[0] as $tab
+      | {paths: [ $tab.paths[] as $p
+          | ([ $tab.requirements[] | select(.path == $p.id)
+               | {id, label, level, status: $s[.id], detail: (if $s[.id] == "present" then null else "not found by presence check" end), fix} ]) as $items
+          | ([ $items[] | select(.level == "required") ]) as $req
+          | {id: $p.id, title: $p.title,
+             ready: (if ($req | length) > 0 then ($req | all(.status == "present")) else ($items | any(.status == "present")) end),
+             items: $items} ]}
+      | . + {first_task_ready: ((.paths[] | select(.id == "common") | .ready) and ([.paths[] | select(.id != "common") | .ready] | any))}'
 }
 
 # Executed directly (doctor.ts child_process bridge, or manual): run the offer.

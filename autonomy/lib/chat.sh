@@ -107,7 +107,7 @@ _chat_attach_banner() {
 _chat_send() {
     local mode="$1" text="$2"
     if [ "$_CHAT_PROVIDER" = "claude" ]; then
-        command -v claude >/dev/null 2>&1 || { echo "loki chat: claude CLI not found" >&2; return 1; }
+        command -v claude >/dev/null 2>&1 || { echo "loki chat: claude CLI not found. Fix (same as loki doctor):" >&2; _loki_req_fix_line claude >&2; return 1; }
         local -a args=(-p "$text" --append-system-prompt "$_LOKI_CHAT_SYSTEM_PROMPT")
         if [ "$mode" = "plan" ]; then args+=(--permission-mode plan); else args+=(--permission-mode acceptEdits); fi
         [ -n "$_CHAT_MODEL" ] && args+=(--model "$_CHAT_MODEL")
@@ -227,7 +227,7 @@ cmd_chat() {
     done
 
     if [ "$tui" = "1" ]; then
-        command -v claude >/dev/null 2>&1 || { echo "loki chat: claude CLI not found" >&2; return 1; }
+        command -v claude >/dev/null 2>&1 || { echo "loki chat: claude CLI not found. Fix (same as loki doctor):" >&2; _loki_req_fix_line claude >&2; return 1; }
         local -a targs=(--append-system-prompt "$_LOKI_CHAT_SYSTEM_PROMPT")
         [ -n "${LOKI_MODEL:-}" ] && targs+=(--model "$LOKI_MODEL")
         exec claude "${targs[@]}"

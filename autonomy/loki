@@ -3965,15 +3965,8 @@ cmd_start() {
     if ! command -v "$effective_provider" &>/dev/null; then
         echo -e "${RED}Error: Provider CLI '$effective_provider' is not installed.${NC}"
         echo ""
-        echo "Install it first:"
-        case "$effective_provider" in
-            claude) echo "  npm install -g @anthropic-ai/claude-code" ;;
-            codex)  echo "  npm install -g @openai/codex" ;;
-            cline)  echo "  npm install -g cline" ;;
-            aider)  echo "  pip install aider-chat" ;;
-            opencode) echo "  npm install -g opencode-ai" ;;
-            *)      echo "  Check the provider documentation for installation." ;;
-        esac
+        echo "Install it first (same fix as loki doctor):"
+        _loki_req_fix_line "$effective_provider"
         echo ""
         echo "Check your environment: loki doctor"
         exit 1
@@ -14207,6 +14200,18 @@ _loki_bun_delegate() {
     exec "$bun_bin" "$cli" "$cmd" "$@"
 }
 
+# One-line fix for a requirement id (a provider name is an id), read from the shared
+# table autonomy/lib/setup-requirements.json so runtime errors match loki doctor.
+_loki_req_fix_line() {
+    local _id="$1" _fix=""
+    _fix="$(jq -r --arg id "$_id" '.requirements[] | select(.id == $id) | .fix' "${SKILL_DIR}/autonomy/lib/setup-requirements.json" 2>/dev/null | head -n 1)" || _fix=""
+    if [ -n "$_fix" ]; then
+        echo "  $_fix"
+    else
+        echo "  Check the provider documentation for installation."
+    fi
+}
+
 # loki doctor. The one implementation is loki-ts/src/commands/doctor.ts; this is a
 # delegator. Only --airgap stays in bash (_loki_airgap_audit). If the Bun route is
 # unavailable we print a minimal diagnostic (never a second copy of the checks).
@@ -14252,7 +14257,12 @@ cmd_doctor_json() {
     why="${why//\\/\\\\}"; why="${why//\"/\\\"}"
     fix="${fix//\\/\\\\}"; fix="${fix//\"/\\\"}"
     ver="${ver//\\/\\\\}"; ver="${ver//\"/\\\"}"
-    printf '{"loki_mode_version":"%s","checks":[],"provider_availability":null,"disk":null,"ai_provider":null,"skills":[],"sentrux":null,"memory":null,"model_catalog":null,"summary":{"passed":0,"failed":1,"warnings":0,"ok":false},"route":"unavailable","reason":"%s","fix":"%s"}\n' "$ver" "$why" "$fix"
+    local reqs=null
+    if declare -F loki_requirements_json >/dev/null 2>&1; then
+        reqs="$(loki_requirements_json 2>/dev/null | jq -c . 2>/dev/null)" || reqs=null
+        [ -n "$reqs" ] || reqs=null
+    fi
+    printf '{"loki_mode_version":"%s","checks":[],"provider_availability":null,"disk":null,"ai_provider":null,"skills":[],"sentrux":null,"memory":null,"model_catalog":null,"requirements":%s,"summary":{"passed":0,"failed":1,"warnings":0,"ok":false},"route":"unavailable","reason":"%s","fix":"%s"}\n' "$ver" "$reqs" "$why" "$fix"
 }
 
 # Architectural-drift gate (v7.5.14, opt-in).
@@ -15919,14 +15929,8 @@ QPRDEOF
     if ! command -v "$_quick_provider" &>/dev/null; then
         echo -e "${RED}Error: Provider CLI '$_quick_provider' is not installed.${NC}"
         echo ""
-        echo "Install your AI provider CLI first:"
-        case "$_quick_provider" in
-            claude) echo "  npm install -g @anthropic-ai/claude-code" ;;
-            codex)  echo "  npm install -g @openai/codex" ;;
-            cline)  echo "  npm install -g cline" ;;
-            aider)  echo "  pip install aider-chat" ;;
-            *)      echo "  Check the provider documentation for installation." ;;
-        esac
+        echo "Install your AI provider CLI first (same fix as loki doctor):"
+        _loki_req_fix_line "$_quick_provider"
         echo ""
         echo "Then verify: loki doctor"
         exit 1

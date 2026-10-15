@@ -4,7 +4,7 @@
 # file. `loki welcome` (intro), `loki quickstart` (first build) and
 # `loki doctor` (health) remain separate entry points.
 #
-# REQUIRED (doctor fails without them): node >= 18, python3 >= 3.8, jq, git, curl
+# REQUIRED (doctor fails without them): node >= 20, python3 >= 3.8, jq, git, curl
 # AT LEAST ONE of: a provider CLI (claude, codex, cline, aider, opencode) or the
 #   bundled Claude Agent SDK with credentials. Claude Code is the default.
 # OPTIONAL: bun (bundled by npm), bash >= 4, codex/cline/aider/opencode, ollama.
@@ -29,6 +29,14 @@ _lsw_confirm() {
     printf '%s [y/N] ' "$1" >&2
     read -r ans || ans=""
     case "$ans" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+_lsw_fix() {
+    # _lsw_fix ID FALLBACK -> the one-line fix from the shared requirements table
+    # (autonomy/lib/setup-requirements.json), the same text loki doctor prints.
+    local out=""
+    out="$(jq -r --arg id "$1" '.requirements[] | select(.id == $id) | .fix' "${SKILL_DIR}/autonomy/lib/setup-requirements.json" 2>/dev/null | head -n 1)" || out=""
+    printf '%s' "${out:-$2}"
 }
 
 _lsw_tool() {
@@ -79,12 +87,12 @@ cmd_setup() {
     echo "Loki Mode setup"
     echo ""
     echo "1. Required tools"
-    _lsw_tool node REQUIRED "https://nodejs.org (Node 20+ recommended, 18 minimum)" || true
-    _lsw_tool python3 REQUIRED "brew install python3, or your package manager" || true
-    _lsw_tool jq REQUIRED "brew install jq, or your package manager" || true
-    _lsw_tool git REQUIRED "brew install git, or your package manager" || true
-    _lsw_tool curl REQUIRED "brew install curl, or your package manager" || true
-    _lsw_tool bun OPTIONAL "bundled by npm; else see https://bun.sh" || true
+    _lsw_tool node REQUIRED "$(_lsw_fix node "install Node 20+ from https://nodejs.org")" || true
+    _lsw_tool python3 REQUIRED "$(_lsw_fix python3 "install python3")" || true
+    _lsw_tool jq REQUIRED "$(_lsw_fix jq "install jq")" || true
+    _lsw_tool git REQUIRED "$(_lsw_fix git "install git")" || true
+    _lsw_tool curl REQUIRED "$(_lsw_fix curl "install curl")" || true
+    _lsw_tool bun OPTIONAL "$(_lsw_fix bun "bundled by npm; else see https://bun.sh")" || true
     if [ "$_LSW_MISSING" -gt 0 ]; then
         echo ""
         echo "Install the missing REQUIRED tools above with your package manager (setup never installs system packages), then rerun: loki setup"
@@ -95,7 +103,7 @@ cmd_setup() {
     echo "2. Provider CLI (Claude Code is the default and the only Tier-1 provider)"
     local p
     for p in codex cline aider opencode; do
-        _lsw_tool "$p" OPTIONAL "see 'loki doctor' for the command" || true
+        _lsw_tool "$p" OPTIONAL "$(_lsw_fix "$p" "see 'loki doctor' for the command")" || true
     done
     if command -v claude >/dev/null 2>&1; then
         printf '  [ OK ]  %-10s DEFAULT\n' claude
@@ -108,7 +116,7 @@ cmd_setup() {
             fi
         fi
     else
-        echo "  [MISS]  claude     DEFAULT. Install: npm install -g @anthropic-ai/claude-code   (then: claude auth login)"
+        echo "  [MISS]  claude     DEFAULT. Install: $(_lsw_fix claude "npm install -g @anthropic-ai/claude-code")   (then: claude auth login)"
         if [ "$check_only" = 0 ] && [ -f "${SKILL_DIR}/autonomy/provider-offer.sh" ]; then
             if _lsw_confirm "Run that install command now?"; then
                 # shellcheck disable=SC1091
@@ -118,7 +126,8 @@ cmd_setup() {
         fi
         if ! command -v claude >/dev/null 2>&1; then
             echo "          Claude Code is not mandatory if another provider above is installed,"
-            echo "          or if the bundled Claude Agent SDK has credentials."
+            echo "          or if you use the Anthropic API-key path (LOKI_SDK_MODE=full with ANTHROPIC_API_KEY)."
+            echo "          Requirements per path: loki doctor --requirements"
         fi
     fi
 
