@@ -34,7 +34,7 @@
 --max-duration | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --max-iterations | bun-only declared on the Bun route only; bash cmd_start has no label for it
 --max-retries | bun-only declared on the Bun route only; bash cmd_start has no label for it
---max-wait | both
+--max-wait | both (Bun route only in practice: the bash label is the --workspace brief collector value-skip; the bash main loop rejects it with exit 64)
 --mirofish | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --mirofish-bg | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
 --mirofish-docker | bash-only legacy-loop or bash-route flag; Bun route refuses it with exit 2 (FC-38) because engine10 does not honor it
