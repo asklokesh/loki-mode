@@ -1725,12 +1725,6 @@ _help_verify_pr() {
 # Appended to `loki help verify`: the v10 DSSE export flag (docs/exit-codes.md).
 _help_verify_dsse() {
     echo ""
-    echo "RECEIPT AGE (v10 engine):"
-    echo "    loki verify <receipt.json> --max-age <Ns|Nm|Nh|Nd|seconds>"
-    echo "        Reject a receipt whose signed JWT iat is older than the limit, in the"
-    echo "        future, or absent (UNCHECKED, exit 2). Checked after integrity; a"
-    echo "        tampered receipt stays tampered (exit 1). Group receipts included."
-    echo ""
     echo "DSSE EXPORT (v10 engine):"
     echo "    loki verify <run-id|receipt.json> --export-dsse"
     echo "        Print a VERIFIED or ALREADY_SATISFIED run receipt as an in-toto"

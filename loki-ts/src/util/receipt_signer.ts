@@ -64,3 +64,40 @@ export function signReceipt(runId: string, hash: string): { jwt: string | null; 
   const input = `${b64u(canonicalJson({ alg: "EdDSA", typ: "JWT", kid }))}.${b64u(canonicalJson({ job_id: runId, run_id: runId, receipt_sha256: hash, iat: Math.floor(Date.now() / 1000) }))}`;
   return { jwt: `${input}.${b64u(sign(null, Buffer.from(input), key))}`, kid };
 }
+/** --max-age value: Ns, Nm, Nh, Nd or plain seconds; returns seconds, or null when invalid or <= 0. */
+function parseMaxAge(v: string): number | null {
+  const m = /^(\d+)([smhd]?)$/.exec(v);
+  const n = m ? Number(m[1]) * ({ "": 1, s: 1, m: 60, h: 3600, d: 86400 }[m[2]!] as number) : 0;
+  return n > 0 && Number.isFinite(n) ? n : null;
+}
+/** Age check on the signed JWT iat (receipts carry no other trusted time). Runs only after integrity checks: TAMPERED and UNCHECKED pass through unchanged. */
+export function applyMaxAge<R extends { verdict: string; reasons: string[] }>(result: R, receiptPath: string, raw: string, maxAge: number, now: number): R {
+  if (result.verdict === "TAMPERED" || result.verdict === "UNCHECKED") return result;
+  const unchecked = (reason: string): R => ({ ...result, verdict: "UNCHECKED", reasons: [...result.reasons, reason] });
+  let iat: unknown;
+  try {
+    const jwt = ((JSON.parse(readFileSync(receiptPath, "utf8")).verification ?? {}) as { jwt?: unknown }).jwt;
+    if (result.verdict === "VERIFIED" && typeof jwt === "string") iat = (JSON.parse(Buffer.from(jwt.split(".")[1] ?? "", "base64url").toString()) as { iat?: unknown }).iat;
+  } catch { /* no readable signed iat */ }
+  if (typeof iat !== "number" || !Number.isFinite(iat)) return unchecked("no signed iat; age cannot be checked");
+  const iso = new Date(iat * 1000).toISOString();
+  if (iat - now / 1000 > 300) return unchecked(`receipt iat ${iso} is in the future`);
+  if (now / 1000 - iat > maxAge) return unchecked(`receipt iat ${iso} is older than --max-age ${raw}`);
+  return result;
+}
+/** Pull --max-age (Ns, Nm, Nh, Nd or seconds; also --max-age=V) out of argv. `raw` is null when absent; `error` is set when invalid or repeated. */
+export function takeMaxAge(args: readonly string[]): { args: readonly string[]; raw: string | null; seconds: number; error?: string } {
+  let raw: string | null = null, seconds = 0;
+  if (!(args[0] === "--help" || args[0] === "-h")) {
+    const i = args.findIndex((a) => a === "--max-age" || a.startsWith("--max-age="));
+    if (i >= 0) {
+      const eq = args[i]!.startsWith("--max-age=");
+      raw = eq ? args[i]!.slice(10) : (args[i + 1] ?? "");
+      const parsed = parseMaxAge(raw);
+      if (parsed === null || args.some((a, j) => j > i + (eq ? 0 : 1) && (a === "--max-age" || a.startsWith("--max-age=")))) return { args, raw, seconds: 0, error: `invalid --max-age ${JSON.stringify(raw)} (use Ns, Nm, Nh, Nd or seconds, greater than 0)` };
+      seconds = parsed;
+      args = args.filter((_, j) => j !== i && !(!eq && j === i + 1));
+    }
+  }
+  return { args, raw, seconds };
+}

@@ -12,14 +12,17 @@ import { join } from "node:path";
 import type { Dag, Unit } from "../decompose.ts";
 import { freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
 import { integrate } from "../../engine10/integrate.ts";
-import { receiptSha256 } from "../../engine10/stages/seal.ts";
-import { verifyReceipt } from "../../engine10/verify_cmd.ts";
+import type { receiptSha256 as ReceiptSha256Fn } from "../../engine10/stages/seal.ts";
+import type { verifyReceipt as VerifyReceiptFn } from "../../engine10/verify_cmd.ts";
 import { composeGroupReceipt } from "./seal_group.ts";
 import { safeGitSpawn } from "../../util/safe_git.ts";
 import { atomicWriteJson } from "../../util/atomic.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { discoverCommands } from "../../runner/repo_profile.ts";
 import { providerSlots, type GroupCtx } from "./route.ts";
+
+/** Seal and verify functions, injected by the caller outside features/ (D66 fence: features/ never value-imports seal or verify_cmd). */
+export interface SealDeps { receiptSha256: typeof ReceiptSha256Fn; verifyReceipt: typeof VerifyReceiptFn }
 
 /** Group integrated but not sealed: distinct non-zero so no caller reads it as VERIFIED. */
 export const NOT_PROVEN = 4;
@@ -84,7 +87,7 @@ function findResumable(repoDir: string, specSha: string): { gid: string; stored:
 }
 
 /** A harvested unit counts as done only if its receipt verifies (signed), reads VERIFIED, and its head is the unit branch tip. */
-async function unitDone(repoDir: string, gid: string, n: number, id: string): Promise<boolean> {
+async function unitDone(verifyReceipt: SealDeps["verifyReceipt"], repoDir: string, gid: string, n: number, id: string): Promise<boolean> {
   if (!UNIT_ID_RE.test(id)) return false;
   const rp = join(repoDir, ".loki", "groups", gid, "group", "units", id, "receipt.json");
   const rec = readJson(rp);
@@ -107,6 +110,8 @@ function unitVerdictsOf(rec: Record<string, unknown>): string[] {
 export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, ctx: GroupCtx): Promise<number> {
   const say = ctx.say ?? ((s: string): void => { process.stderr.write(s); });
   const { repoDir, env } = ctx;
+  if (!ctx.seal) { say("loki: NOT PROVEN: no seal or verify implementation was supplied; no unit was started\n"); return NOT_PROVEN; }
+  const { receiptSha256, verifyReceipt } = ctx.seal;
   const run = launcher ?? defaultLauncher;
   const specSha = sha256(ctx.spec);
   const resumable = env.LOKI_GROUP_RESUME === "0" ? null : findResumable(repoDir, specSha);
@@ -170,7 +175,7 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   // Resume bookkeeping: a unit is done only on a verified, head-matching harvest; anything else drops its stale harvest and reruns.
   let doneCount = 0;
   for (const [i, u] of units.entries()) {
-    u.done = resumable ? await unitDone(repoDir, groupId, i + 1, u.id) : false;
+    u.done = resumable ? await unitDone(verifyReceipt, repoDir, groupId, i + 1, u.id) : false;
     if (u.done) doneCount++;
     else if (resumable && UNIT_ID_RE.test(u.id)) rmSync(join(groupDir, "group", "units", u.id), { recursive: true, force: true });
   }

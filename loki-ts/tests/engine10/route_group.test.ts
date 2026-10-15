@@ -5,6 +5,8 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../../src/engine10/cli.ts";
+import { receiptSha256 } from "../../src/engine10/stages/seal.ts";
+import { verifyReceipt } from "../../src/engine10/verify_cmd.ts";
 import { maybeRunGroup, MAX_SEQ_TASK_BYTES, MAX_SPEC_BYTES, type GroupCtx, type GroupRunner } from "../../src/features/speed/route.ts";
 
 const SPEC = "- update src/a.ts to add alpha\n- update src/b.ts to add beta\n- update src/c.ts to add gamma\n";
@@ -223,10 +225,21 @@ describe("default group runner (run_group.ts)", () => {
   };
   const go = async (d: string, env: Record<string, string>, l: ReturnType<typeof launcher>) => {
     let err = "";
-    const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true", ...env } as NodeJS.ProcessEnv, { backlog: l, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+    const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true", ...env } as NodeJS.ProcessEnv, { backlog: l, seal: { receiptSha256, verifyReceipt }, listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
     return { code: res.code, err };
   };
   const slotsOf = (a: string[]): string | undefined => a[a.indexOf("--slots") + 1];
+  test("no injected seal/verify: fails closed with NOT_PROVEN before any unit starts", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const seen: string[][] = [];
+      let err = "";
+      const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true" } as NodeJS.ProcessEnv, { backlog: launcher(d, seen), listFiles: () => files, select: sel, stderr: (s) => { err += s; } });
+      expect(res.code).toBe(4);
+      expect(err).toContain("NOT PROVEN");
+      expect(seen.length).toBe(0);
+    });
+  });
   test("claude: group runs with a slot cap, integrates, exit NOT_PROVEN (never 0: no group Seal)", async () => {
     await withDir(async (d) => {
       mkRepo(d);
@@ -244,7 +257,7 @@ describe("default group runner (run_group.ts)", () => {
     await withDir(async (d) => {
       mkRepo(d);
       const seen: string[][] = [];
-      const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true" } as NodeJS.ProcessEnv, { provider: "codex", backlog: launcher(d, seen), listFiles: () => files, select: sel, stderr: () => {} });
+      const res = await maybeRunGroup(SPEC, d, { LOKI_SPEED: "1", LOKI_GROUP_TEST_CMD: "true" } as NodeJS.ProcessEnv, { provider: "codex", seal: { receiptSha256, verifyReceipt }, backlog: launcher(d, seen), listFiles: () => files, select: sel, stderr: () => {} });
       expect(res.code).toBe(4);
       expect(slotsOf(seen[0]!)).toBe("2");
       expect(seen[0]!.slice(seen[0]!.indexOf("--provider"))[1]).toBe("codex");
