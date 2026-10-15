@@ -5,6 +5,34 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.7.0 (2026-10-15)
+
+Phase 1 of the multi-repo company operating system. Workspaces become reachable from `loki start` and `loki chat`, a whole multi-repo change set can be sealed into one signed composite receipt, autonomy is set by policy, and verified deploys gain a health check with automatic rollback. Every capability is an extension of an existing module; no parallel implementation was added. `loki start` with Claude remains the primary path.
+
+### Added
+- `loki start --workspace <name>` and `loki start --deploy`, plus `/workspace` and `/deploy` in `loki chat`. The workspace path now forwards every value-taking `loki start` flag (isolation, model, max cost, provider, budget and the rest) and `--brief TEXT`. The bash divert passes an allowlisted environment, so unrelated secrets such as `DATABASE_PASSWORD` are not forwarded.
+- Signed composite receipts. `loki verify --seal-composite <run dir>` seals a workspace run, and `loki verify` checks it offline. Verification requires every repo in the integration order to be present once, with outcome `ok`, a receipt path inside its own worktree, and a recorded integrated head; a missing head gives UNCHECKED. A workspace run seals the composite once after integration, and refuses with a named reason when integration failed or a repo has no receipt.
+- Workspace planner. With `plan: true` (or `LOKI_WORKSPACE_PLAN=1`) one planner call writes a per-repo task plan. A plan that is malformed or names unknown repos is not used; the run says why and falls back to the generic task text.
+- `loki workspace infer <name>` reads package.json, go.mod and pyproject.toml of local checkouts and prints a proposed `after:` graph. It never writes `loki.yaml`, never clones, and rejects a cyclic graph.
+- `integration.per_stage: true` runs the integration command after each dependency layer and holds later layers until the earlier gate passes. A failed stage marks later repos SKIPPED and the run exits non-zero.
+- Deploy health check and automatic rollback for `loki deploy --execute`, still gated on a VERIFIED receipt. Deploy also requires a policy that explicitly grants deploy (autonomy level or `actions.deploy`); an empty policy or a missing node refuses.
+- `loki trust` graduation advice: only VERIFIED runs count toward the 10 needed before execute is suggested. Other recorded verdicts are listed as missing evidence.
+- Lessons with provenance and confidence. Reviewer comments and facts from earlier sealed runs carry their source (PR, receipt, ticket or rejection), and confidence is computed from the verdict only when a well-formed receipt hash is present. `loki memory brief --task TEXT` prints the brief, and the engine10 implement stage and chat inject it.
+- Per-unit acceptance contracts. A unit spec may carry `acceptance` criteria, which seed that unit's Wall; the group contract is frozen before workers start, and an unowned criterion fails the group closed.
+- Parallel units on `loki start`. The integrator merges unit branches in dependency order, refuses a dirty tree or an existing group branch, and never discards user edits. The selected provider now reaches every unit. Honest limit: the group Seal is not wired yet, so a parallel group run exits 4 (NOT PROVEN, Group Seal receipt UNCHECKED) rather than 0.
+- HMAC-verified Sentry webhook on the trigger server. Child runs no longer inherit the server's webhook secrets or API token.
+- Factory-vs-Loki attribution bench task set (`coord-1-api-web`, `longspec-1-three-units`). The Factory arm is reported as UNMEASURED: no droid run has been measured headless, and unmeasured runs are excluded from every rate rather than shown as zero.
+
+### Changed
+- Autonomy policy: propose, execute and operate levels now govern engine10 PR egress through one shared decision. Propose opens no PR, require-approval opens a draft, and an unknown level cannot be rescued by an action allow. With `LOKI_COST_CONFIRM=1` on a terminal, a run shows its cost estimate and asks once before spending.
+- Workspace config fails closed. A typo or wrong type under `workspaces:` (for example `afer`) exits 2 and names the key. The schema gains `concurrency`, `plan` and `integration.per_stage`.
+
+### Documentation
+- README exit table for `loki verify` matches engine10 (0 VERIFIED, 1 TAMPERED, 2 UNCHECKED, 3 UNSIGNED, 4 run outcome not verified, 66 no runs). Workspaces docs and CLI reference cover the new flags and verbs.
+
+### Not in this release
+- Hosted Company OS, Slack and Linear delegation, cloud compute, multi-milestone missions, group resume and the group Seal. No claim is made of a measured advantage over Factory.
+
 ## v11.6.0 (2026-10-15)
 
 The consolidation release. Under the binding rule "extend existing code, never duplicate", every duplicate module, parallel implementation and copied document was found, then merged into the owner of its concern or deleted. The result is 3,354 fewer lines net (5,984 removed, 2,630 added, mostly restored spec and ported tests) with no lost behaviour. Each removal was ported to its owner, with the owner's tests extended to cover it. `loki start` behaves exactly as before; it now runs on one implementation per concern.
