@@ -501,7 +501,7 @@ describe("group run: Group Seal and resume", () => {
     sh(["git", "remote", "add", "origin", "git@github.com:acme/widgets.git"], d);
     return d;
   };
-  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean }
+  interface Opt { fail?: number[]; unsigned?: number[]; tamper?: number[]; satisfied?: number[]; shared?: number[]; fixNoop?: boolean; fixFail?: boolean; fixSkipMerge?: boolean }
   /** Fake backlog.py: for each unit not marked done in the dag, commit on loki/unit-<g>-<n> and harvest a signed receipt at that head. */
   const fake = (repo: string, calls: string[], o: Opt = {}) => async (argv: string[]): Promise<{ code: number; stdout: string }> => {
     const g = argv[argv.indexOf("--group") + 1]!;
@@ -518,7 +518,7 @@ describe("group run: Group Seal and resume", () => {
         // Model backlog.py: a worktree starts at the unit's dag base when given, else at origin/HEAD (main here), never at the checked-out group branch.
         if (o.fixFail) { out += `backlog: unit-${g}-${n} FAILED: exit 1\n`; continue; }
         sh(["git", "checkout", "-q", "-b", br, u.base ?? "main"], repo);
-        if (u.fixKind === "conflict") sh(["git", "merge", "--no-ff", "-q", "-X", "theirs", "-m", "fix", `loki/unit-${g}-${dag.units.findIndex((x) => x.id === u.fixFor) + 1}`], repo);
+        if (u.fixKind === "conflict" && !o.fixSkipMerge) sh(["git", "merge", "--no-ff", "-q", "-X", "theirs", "-m", "fix", `loki/unit-${g}-${dag.units.findIndex((x) => x.id === u.fixFor) + 1}`], repo);
         else if (!o.fixNoop) { writeFileSync(join(repo, "ok.txt"), "ok\n"); sh(["git", "add", "ok.txt"], repo); }
         sh(["git", "commit", "-q", "--allow-empty", "-m", "fix"], repo);
       } else {
@@ -683,6 +683,14 @@ describe("group run: Group Seal and resume", () => {
     const repo = mkRepo("gr-fix-fails"), calls: string[] = [];
     const { code, err } = await go(repo, fake(repo, calls, { shared: [1, 2], fixFail: true }));
     expect(calls).toEqual(["u1", "u2", "u3", "fixu-1"]);
+    expect(code).toBe(1);
+    expect(err).toContain("unit u2 conflict");
+    expect(err).toContain("fix unit fixu-1 did not pass");
+  });
+
+  test("fix unit: a conflict fix that never merged the unit branch is a failed fix, not VERIFIED", async () => {
+    const repo = mkRepo("gr-fix-skipmerge"), calls: string[] = [];
+    const { code, err } = await go(repo, fake(repo, calls, { shared: [1, 2], fixSkipMerge: true }));
     expect(code).toBe(1);
     expect(err).toContain("unit u2 conflict");
     expect(err).toContain("fix unit fixu-1 did not pass");

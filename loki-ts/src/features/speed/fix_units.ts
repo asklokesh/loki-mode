@@ -71,7 +71,8 @@ export async function integrateWithFixes(o: { repoDir: string; env: NodeJS.Proce
         items: [`Resolve a merge conflict. Merge branch ${ub} (unit ${target}) into the current tree, keep the intent of both sides, remove every conflict marker, commit the merge.\nConflicted files: ${c.files.join(", ") || "unknown"}\n${c.hunks}`] };
     io.say(`loki: integration stopped on ${target}; running fix unit ${id} (${o.fixes.length + 1} of ${MAX_FIX_UNITS})\n`);
     const branch = await io.launch(fix);
-    if (!branch) { io.say(`loki: fix unit ${id} did not pass; stopping at ${target}\n`); return r; }
+    const merged = !branch || fix.fixKind !== "conflict" || safeGitSpawn(o.repoDir, ["merge-base", "--is-ancestor", ub, branch]).status === 0;
+    if (!branch || !merged) { io.say(`loki: fix unit ${id} did not pass; stopping at ${target}\n`); return r; }
     o.fixes.push(fix); o.branches[id] = branch;
     const err = io.leave();
     if (err) { io.say(`loki: ${err}\n`); return r; }
