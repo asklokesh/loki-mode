@@ -5,6 +5,59 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.4.0 (2026-10-15)
+
+Usability release: Loki now matches or beats opencode on everyday use, onboarding, interactive work, small changes, provider and local-model flexibility, multi-agent setup, docs consistency and predictability. Loki stays autonomous. The RARV-C loop, receipts, Seal and council are unchanged, `loki start` is still the primary path, and Claude Code is still the default provider. Plan and scorecard: docs/v10/OPENCODE-PARITY-PLAN.md. Comparison: docs/COMPARE-OPENCODE.md.
+
+This release was built and shipped without running the test suites, on the founder's direct instruction (velocity first). Report anything that misbehaves and it will be fixed forward.
+
+### Added
+- Model routes on `loki start` (and `loki quick`): `loki start ./prd.md --model ollama/qwen3-coder` runs OpenRouter (`openrouter/<id>`, key from OPENROUTER_API_KEY), Ollama, LM Studio, llama.cpp, vLLM or any Anthropic-compatible endpoint (`custom/<id>` with LOKI_MODEL_BASE_URL) through the Claude Code harness. Cost tracking, the spend cap, kill-blocking and receipts keep working. The route env is set only on the provider child process, and the token is never logged. `--model` also accepts a tier (small, medium, high) or a model id on both engines, and LOKI_MODEL_ROUTE is the env form.
+- `loki models --local` finds running local runtimes (Ollama :11434, LM Studio :1234, llama.cpp :8080, vLLM :8000) and prints ready-to-paste `--model` values. `--json` is supported.
+- opencode is a supported Loki 10 provider: `loki start ./prd.md --provider opencode` runs `opencode run`, passing the model through with LOKI_OPENCODE_MODEL=provider/model. These runs no longer fall back to the previous loop.
+- Configurable child agents: markdown files with YAML frontmatter (model, provider, tools, deny, permission, prompt) in `.loki/agents/<name>.md` or `~/.config/loki/agents/`. Manage them with `loki agents list|new|show` and export them as Claude Code subagents with `loki agents export --claude`. Council reviewers and the Loki 10 cross-review use a matching agent's prompt and model; nothing changes when no agents are configured. Templates for reviewer, planner and tester ship in templates/agents/.
+- `loki edit "<change>"` is the lightest path for small changes. It makes one Claude pass on the current repo, with no PRD, plan, council, PR, receipt or branch switch. It then prints the diff stat, the diff, and the cost and elapsed time. Opt-ins: `--verify`, `--receipt`, `--commit` and `--dry-run`. Scope it with a path: `loki edit src/foo.ts "rename X to Y"`.
+- `loki chat`, an interactive alternative to `loki start`, with Plan mode (read-only) and Build mode:
+  - Slash commands: /plan, /build, /run, /quick, /edit, /verify, /receipt, /model, /provider, /cost, /diff, /undo, /help and /exit.
+  - `/run <prd|brief>` starts a normal `loki start` run with the chat's provider and model, and the chat stays open afterwards.
+  - `loki chat --attach` (or `/attach` inside chat) joins the current or most recent `loki start` run, with /status, /steer, /diff, /verify, /receipt and /stop, and answers questions about the run.
+  - `loki chat --tui` opens Claude Code's own interface with Loki context added.
+  - Bare `loki` is unchanged and does not open chat.
+- `loki route start ./prd.md` and `--explain-route` show which engine, provider, model and input type a command would use, and why, without running it. `--json` is supported.
+- Onboarding: `loki setup` is one wizard that covers required tools, Claude Code install and login, an optional provider, a model route and a spend cap. `loki setup --yes` runs it non-interactively. `loki doctor --fix` applies the safe fixes and prints the exact command for each remaining one. `loki config list [--json]` completes `loki config get|set|list|path`.
+- A unified end-of-run summary on both engines: result, files changed, cost (marked when estimated), elapsed time, receipt and a `next:` step that suggests `loki chat --attach`. NO_COLOR is honored, `--quiet` prints only the summary and `--json` adds a summary object.
+- New docs: docs/QUICKSTART.md (5 minutes from install to first run), docs/COMPARE-OPENCODE.md and a rewritten core CLI reference (docs/CLI-CORE-VERBS.md).
+
+### Changed
+- One predictable execution path. Flag order and input form (PRD file, issue ref, multi-word task, one-word brief, flag-first call) no longer change the engine. The previous loop runs only in two cases:
+  - On `--engine legacy` or `LOKI_ENGINE=legacy`.
+  - For a single call that uses a flag Loki 10 cannot honor (such as --simple or --parallel). One stderr line names the flag.
+  `--engine engine10` forces Loki 10 and refuses unsupported flags.
+- Provider parity in Loki 10:
+  - Codex, Cline, Aider and opencode now get cost measurement. Cost comes from CLI token output where the CLI prints it, and is otherwise estimated from a per-model price table and marked as estimated. The spend cap therefore applies to every provider.
+  - They also get the same guardrails: a budget-stop kill, and a check after each iteration that reverts and fails the iteration on mass deletes, edits to .git internals or writes outside the project (a `guard.violation` event). Each CLI's native sandbox flags are used where it has them.
+- `loki help` shows the core verbs, with `loki start` first as the primary command and `loki chat` as the interactive alternative. `loki help all` lists every command. `loki help <topic>` covers start, models, providers, agents, verify, exit-codes and config. Unknown commands get a "did you mean" hint.
+- The docs now agree with each other and with the code:
+  - Spend cap: the default is $100 when ANTHROPIC_API_KEY or OPENAI_API_KEY is set, and there is no dollar cap on a subscription. The guide's old $20 figure was wrong.
+  - Prerequisites are stated the same way everywhere.
+  - Routing and providers are described the same way everywhere.
+  - Stale claims are removed: that PRD, flag-first or opencode runs use the legacy engine, and that LOKI_ENGINE is ignored.
+
+### Breaking
+- The exit-code contract is enforced from 11.4.0 and closes the three `loki verify` gaps in docs/KNOWN-ISSUES.md:
+  - `loki verify` exits 3 on an empty diff (was 1).
+  - It exits 2 outside a git repository (was 1).
+  - It exits 64 on an unknown option (was 3).
+  - `loki quick` with no task, and `loki start` with an unknown option, exit 64.
+  See docs/exit-codes.md. Scripts that matched the old codes need updating.
+
+### Known gaps
+- `/steer` from chat takes effect on the previous loop only (with LOKI_PROMPT_INJECTION=1). On a Loki 10 run it records the note in .loki/HUMAN_INPUT.md.
+- Plan mode in chat is enforced for Claude only. Other providers get a read-only instruction in the prompt.
+
+### Upgrade
+- `npm install -g loki-mode@latest`, then `loki setup` and `loki start "<brief>"`. Check the version with `loki version`.
+
 ## v11.3.9 (2026-10-09)
 
 Security follow-up to v11.3.6 plus a release-pipeline fix that lets verified releases reach the `latest` tag sooner.
