@@ -95,6 +95,56 @@ describe("loki issues run", () => {
     expect(h.out.join("")).toContain("plan #7: t7");
   });
 
+  test("passes --milestone as separate gh argv elements", async () => {
+    const h = harness({ issues: [issue(7)] });
+    expect(await runIssues(["run", SLUG, "--label", "bug", "--milestone", "M1", "--dry-run"], h.inject)).toBe(0);
+    expect(h.ghCalls[0]!.slice(-4)).toEqual(["--label", "bug", "--milestone", "M1"]);
+    expect(h.out.join("")).toContain("in milestone M1");
+  });
+
+  test("keeps hostile label text as one literal argv element", async () => {
+    const evil = 'x"; touch /tmp/pwned #$(id)`';
+    const h = harness({});
+    expect(await runIssues(["run", SLUG, "--label", evil, "--dry-run"], h.inject)).toBe(0);
+    expect(h.ghCalls[0]).toContain(evil);
+  });
+
+  test("refuses a dash-leading label or milestone before calling gh", async () => {
+    for (const bad of [["--label", "--repo=evil"], ["--milestone", "-x"]]) {
+      const h = harness({});
+      expect(await runIssues(["run", SLUG, ...bad, "--dry-run"], h.inject)).toBe(2);
+      expect(h.err.join("")).toContain("invalid");
+      expect(h.ghCalls).toEqual([]);
+    }
+  });
+
+  test("refuses a repo with a .. or dash-leading segment", async () => {
+    for (const slug of ["a/..", "../b"]) {
+      const h = harness({});
+      expect(await runIssues(["run", slug, "--dry-run"], h.inject)).toBe(2);
+      expect(h.ghCalls).toEqual([]);
+    }
+  });
+
+  test("malformed gh issue rows abort with rc 1 and no triage", async () => {
+    const row = issue(7);
+    const bad: unknown[] = [[1], [null], [{ ...row, number: "7" }], [{ ...row, labels: ["bug"] }], [row, { ...row, title: 3 }], [{ ...row, body: 5 }]];
+    for (const rows of bad) {
+      const h = harness({ issues: rows as ReturnType<typeof issue>[] });
+      expect(await runIssues(["run", SLUG, "--yes"], h.inject)).toBe(1);
+      expect(h.err.join("")).toContain("malformed issue");
+      expect(h.triaged).toEqual([]);
+    }
+  });
+
+  test("a null body is empty and an empty list runs nothing", async () => {
+    const h = harness({ issues: [{ ...issue(7), body: null } as unknown as ReturnType<typeof issue>] });
+    expect(await runIssues(["run", SLUG, "--dry-run"], h.inject)).toBe(0);
+    const e = harness({ issues: [] });
+    expect(await runIssues(["run", SLUG, "--yes"], e.inject)).toBe(0);
+    expect(e.out.join("")).toContain("nothing to run");
+  });
+
   test("default triage path withholds the token from this process while gh keeps the user's", async () => {
     const bin = join(dir, "bin-tok");
     mkdirSync(bin);
