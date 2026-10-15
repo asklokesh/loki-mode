@@ -241,13 +241,11 @@ system packages and never runs sudo. Prerequisites are in
 
 ## Exit codes
 
-One contract, enforced from 11.4.0 (details in [exit-codes.md](../exit-codes.md)).
-`loki verify` exits 0 VERIFIED, 1 CONCERNS, 2 BLOCKED or not a git directory,
-3 verifier error or empty diff, 64 usage error. Usage errors from `loki quick`
-and `loki start` are also 64. CI gates should use `loki verify || fail`, not
-`[ $rc -eq 1 ]`, and treat any code of 2 or higher as worse than CONCERNS. This
-is a breaking change for scripts that tested rc==1 on an empty diff or a
-non-git directory.
+One contract, enforced from 11.4.0: [exit-codes.md](../exit-codes.md) lists the
+per-command codes, including `loki verify`. CI gates should use
+`loki verify || fail`, not `[ $rc -eq 1 ]`, and treat any code of 2 or higher as
+worse than CONCERNS. This is a breaking change for scripts that tested rc==1 on
+an empty diff or a non-git directory.
 
 ## The summary
 
