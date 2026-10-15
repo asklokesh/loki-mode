@@ -249,13 +249,11 @@ search) to MCP clients.
 **Key files:**
 - `server.py` - MCP server (47 tools: 31 in-file + magic + gated managed + 8 cp; plus
   3 resources, 2 prompts).
-- `tools.py` - Core tool implementations.
 - `magic_tools.py` - Magic Modules tools.
 - `cp_tools.py` - Read-only Control Plane data tools (`cp_*`, GET only; the CP URL
   and token come from the MCP child env and are never returned).
 - `managed_tools.py` - Managed-memory tool (`loki_memory_redact`, gated on
   `LOKI_MANAGED_AGENTS=true` and `LOKI_MANAGED_MEMORY=true`).
-- `resources.py` - MCP resources.
 - `lsp_proxy.py` - LSP proxy (find references, go to definition, symbol lookup).
 - `learning_collector.py` - Learning signal collection.
 - `_sdk_loader.py` - Bootstraps the Python MCP SDK on first run.

@@ -149,7 +149,7 @@ def _load_real_fastmcp():
                 sys.modules[_k] = _saved_local[_k]
         for _k, _v in _saved_local.items():
             # Restore any other purely-local submodules that the SDK import did
-            # not legitimately replace (e.g. mcp.magic_tools, mcp.tools).
+            # not legitimately replace (e.g. mcp.magic_tools, mcp.managed_tools).
             _real = sys.modules.get(_k)
             if _real is None:
                 sys.modules[_k] = _v
