@@ -40,10 +40,21 @@ from efficiency_cost import collect_efficiency as _collect_efficiency  # noqa: E
 import effort_estimator  # noqa: E402
 from tree_digest import MANIFEST_VERSION, compute_tree_digest  # noqa: E402
 from workspace_diff import collect_workspace_diff  # noqa: E402
-from verification_record import (  # noqa: E402
-    capture_environment as _vr_capture_environment,
-    git_dirty as _vr_git_dirty,
-)
+import importlib.util as _ilu  # noqa: E402
+
+
+def _load_proof_verify_mod():
+    # proof-verify.py is hyphenated (not importable); it owns the verification record.
+    spec = _ilu.spec_from_file_location(
+        "loki_proof_verify", os.path.join(os.path.dirname(os.path.abspath(__file__)), "proof-verify.py"))
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_PV = _load_proof_verify_mod()
+_vr_capture_environment = _PV.capture_environment
+_vr_git_dirty = _PV.git_dirty
 
 
 # ---------------------------------------------------------------------------
@@ -1629,7 +1640,7 @@ def _build_proof(args, loki_dir, target_dir, repo_root):
         # recompute it after runner exit to reject proofs followed by code edits.
         "tree_sha256": compute_tree_digest(target_dir),
         "tree_manifest_version": MANIFEST_VERSION,
-        # Execution validity (docs/contracts/verification.md): whether the tree
+        # Execution validity (docs/PROOF-PASSPORT.md): whether the tree
         # was dirty when the checks ran. None when git could not answer.
         "dirty": _vr_git_dirty(target_dir),
     }

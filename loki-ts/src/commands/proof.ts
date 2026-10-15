@@ -154,8 +154,8 @@ async function showProof(args: readonly string[]): Promise<number> {
     return 0;
   }
   // Compact reviewer summary from the one shared implementation
-  // (autonomy/lib/verification_record.py; docs/contracts/verification.md).
-  const summarizer = resolve(REPO_ROOT, "autonomy", "lib", "verification_record.py");
+  // (autonomy/lib/proof-verify.py; docs/PROOF-PASSPORT.md).
+  const summarizer = resolve(REPO_ROOT, "autonomy", "lib", "proof-verify.py");
   const target = resolveVerifyRoot();
   const py = await findIsolatedPython3();
   if (!existsSync(summarizer) || target === null || !py) {

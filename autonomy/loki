@@ -36518,8 +36518,8 @@ PYEOF
                 exit 1
             fi
             if [ "$_ps_json" -eq 0 ]; then
-                # Compact reviewer summary (docs/contracts/verification.md).
-                local _ps_py _ps_vr="${_LOKI_SCRIPT_DIR}/lib/verification_record.py"
+                # Compact reviewer summary (docs/PROOF-PASSPORT.md).
+                local _ps_py _ps_vr="${_LOKI_SCRIPT_DIR}/lib/proof-verify.py"
                 _ps_py="$(loki_verify_tool_path python3)" || {
                     echo -e "${RED}python3 is unavailable${NC}" >&2
                     exit 2

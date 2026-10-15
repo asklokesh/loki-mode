@@ -2402,14 +2402,18 @@ if _scope_verdict:
         "thresholds": _thresholds,
     }
 
-# Verification record (docs/contracts/verification.md): integrity, execution
+# Verification record (docs/PROOF-PASSPORT.md): integrity, execution
 # validity (revision + environment) and requirement coverage, kept separate, plus
 # per-check status and a scoped label. Additive; verdict/exit_code are untouched.
 # A failure to build it is recorded, never swallowed into a clean-looking doc.
 try:
     sys.path.insert(0, os.environ["_V_LIBDIR"])
-    import verification_record
-    doc["verification"] = verification_record.build_for_evidence(
+    import importlib.util
+    _spec = importlib.util.spec_from_file_location(
+        "loki_proof_verify", os.path.join(os.environ["_V_LIBDIR"], "proof-verify.py"))
+    _pv_mod = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_pv_mod)
+    doc["verification"] = _pv_mod.build_for_evidence(
         doc, repo_dir=".", loki_dir=os.environ.get("LOKI_DIR") or ".loki",
         record_path="", fresh_capture=True)
     # base_verdict duplicates doc["verdict"]; record_path would pin the output
@@ -3447,8 +3451,8 @@ verify_main() {
     local _v_lib _v_label _v_summary
     _v_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib"
     _v_label="$VERIFY_VERDICT"
-    if [ -f "$_v_lib/verification_record.py" ]; then
-        _v_summary="$(_verify_py "$_v_lib/verification_record.py" summary "$out_dir/evidence.json" --embedded 2>/dev/null)" || _v_summary=""
+    if [ -f "$_v_lib/proof-verify.py" ]; then
+        _v_summary="$(_verify_py "$_v_lib/proof-verify.py" summary "$out_dir/evidence.json" --embedded 2>/dev/null)" || _v_summary=""
         if [ -n "$_v_summary" ]; then
             _v_label="${_v_summary%%$'\n'*}"
             printf '%s\n' "${_v_summary#*$'\n'}" >&$_v_banner_fd

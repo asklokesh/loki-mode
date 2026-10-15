@@ -763,4 +763,3 @@ wall-executed guard, 11.3.1 vs 11.3.2 receipts (FC-68)	3
 main push scans previous-tag..SHA, nightly backstop scans full history (GITLEAKS-INCR)	8
 help drift (CHANGELOG loki invocations in help and completion)	3
 worktree reaper saves, removes and floors slice worktrees (AUTO-REAP, FC-99)	12
-verification record keeps integrity, execution validity and coverage apart (LM-005)	12
