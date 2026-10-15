@@ -38,7 +38,7 @@ else
 fi
 
 # The ground truth: the literal USAGE template string, not a re-typed copy.
-USAGE_TXT="$(sed -n '/^const USAGE = `/,/^`;/p' "$CLI")"
+USAGE_TXT="$(sed -n '/^\(export \)\{0,1\}const USAGE = `/,/^`;/p' "$CLI")"
 if [ -n "$USAGE_TXT" ]; then
     ok "read USAGE text from cli.ts"
 else

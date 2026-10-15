@@ -15823,15 +15823,6 @@ cmd_quick() {
         exit 64
     fi
 
-    # v7.29.0: provider pre-flight gate. Offer install on a TTY; print honest
-    # manual instructions and exit 2 on non-TTY/CI, before any spend. --help and
-    # the no-args usage path already returned/exited above.
-    if declare -f provider_offer_gate >/dev/null 2>&1; then
-        if ! provider_offer_gate; then
-            exit 2
-        fi
-    fi
-
     # #691: drop the unified config-file aliases from the task description. The
     # main() pre-pass already applied the file; without this, a trailing
     # `--config f.env` would be swept into task_desc (cmd_quick has no arg loop).
@@ -15863,6 +15854,16 @@ cmd_quick() {
         echo -e "${RED}Error: No task description provided${NC}"
         echo "Usage: loki quick [--verbose] \"description of what to do\""
         exit 64
+    fi
+
+    # v7.29.0: provider pre-flight gate. Offer install on a TTY; print honest
+    # manual instructions and exit 2 on non-TTY/CI, before any spend. --help and
+    # every usage error (no task, unknown option, exit 64) is decided above,
+    # so a host with no provider still reports a typo as 64, not 2.
+    if declare -f provider_offer_gate >/dev/null 2>&1; then
+        if ! provider_offer_gate; then
+            exit 2
+        fi
     fi
 
     local task_desc="$*"

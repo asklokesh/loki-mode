@@ -288,6 +288,7 @@ SOLO="$TMPROOT/soloroot"
 mkdir -p "$SOLO/tools" "$SOLO/autonomy/lib"
 cp "$DEMO" "$SOLO/tools/verify-demo.sh"
 ln -s "$ROOT/autonomy/lib/proof-generator.py" "$SOLO/autonomy/lib/proof-generator.py"
+ln -s "$ROOT/autonomy/lib/proof-verify.py" "$SOLO/autonomy/lib/proof-verify.py"  # the generator loads it as a sibling
 cp "$BLIND/tools/receipt-attest.py" "$SOLO/tools/receipt-attest.py"
 cat > "$SOLO/tools/ci-gate.py" <<'STUB'
 #!/usr/bin/env python3

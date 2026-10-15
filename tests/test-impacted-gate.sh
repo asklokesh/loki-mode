@@ -81,8 +81,8 @@ printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && ok "control-pla
 sel="$(select_for loki-ts/src/util/shell.ts)"
 printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && ok "util/shell.ts change selects CP-04" || bad "util/redact.ts change did not select CP-04"
 # A loki-ts/src file the control plane cannot reach must not drag CP-04 in.
-sel="$(select_for loki-ts/src/commands/doctor.ts)"
-printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && bad "unreached doctor.ts selected CP-04" || ok "unreached loki-ts/src file does not select CP-04"
+sel="$(select_for loki-ts/src/commands/completion.ts)"
+printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && bad "unreached completion.ts selected CP-04" || ok "unreached loki-ts/src file does not select CP-04"
 
 echo "impacted-gate fixtures: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]
