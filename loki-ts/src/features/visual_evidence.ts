@@ -149,6 +149,14 @@ async function stopServer(c: ReturnType<typeof spawn> | null, graceMs: number, s
   if (groupAlive(pid)) { try { process.kill(-pid, "SIGKILL"); } catch { try { c.kill("SIGKILL"); } catch { /* gone */ } } }
   for (let i = 0; i < 10 && groupAlive(pid); i++) await new Promise((r) => setTimeout(r, 50)); // let the kernel reap
 }
+/** Skip reason for a monorepo with no root manifest: subs have a package.json, lacking are those without a dev, preview or start script. */
+function noRootReason(subs: string[], lacking: string[]): string {
+  const list = (xs: string[]): string => xs.map((d) => `${d}/`).join(" or ");
+  if (subs.length === 0) return "no package.json";
+  if (lacking.length === subs.length) return `no dev, preview or start script in ${list(lacking)} (no root package.json)`;
+  if (lacking.length === 0) return `no root package.json (${list(subs)} have a dev, preview or start script but no UI boot was resolved)`;
+  return `no root package.json; no dev, preview or start script in ${list(lacking)} (${list(subs.filter((d) => !lacking.includes(d)))} has one)`;
+}
 /** Never throws. runDir is the run directory; evidence goes to a fresh dir under it. changed is repo-relative paths. */
 export async function captureVisualEvidence(repoDir: string, runDir: string, changed: string[], opts: CaptureOpts = {}): Promise<EvidenceResult> {
   const skip = (why: string): EvidenceResult => ({ screens: [], http: false, skipped: why });
@@ -166,8 +174,7 @@ export async function captureVisualEvidence(repoDir: string, runDir: string, cha
       if (!existsSync(pkgPath)) { // monorepo without a root manifest: name the packages checked
         const subs = ["backend", "frontend"].filter((d) => existsSync(join(repoDir, d, "package.json")));
         const has = (d: string): boolean => { try { return pickScript(JSON.parse(readFileSync(join(repoDir, d, "package.json"), "utf8"))) !== null; } catch { return false; } };
-        const lacking = subs.filter((d) => !has(d)), list = (xs: string[]): string => xs.map((d) => `${d}/`).join(" or ");
-        return skip(subs.length === 0 ? "no package.json" : lacking.length === subs.length ? `no dev, preview or start script in ${list(lacking)} (no root package.json)` : `no root package.json; no dev, preview or start script in ${list(lacking)} (${list(subs.filter(has))} has one)`);
+        return skip(noRootReason(subs, subs.filter((d) => !has(d))));
       }
       script = pickScript(JSON.parse(readFileSync(pkgPath, "utf8")));
       if (!script) return skip("no dev, preview or start script");
