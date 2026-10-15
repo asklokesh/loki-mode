@@ -252,6 +252,38 @@ Every claim below comes from reading main at 84c22568. I edited no files.
 - **Green:** all five assertions hold against the sandbox repo.
 - **Deps:** E-23, E-32, E-36.
 
+### Recovery of an interrupted run
+
+Code: `resumeMain`, `findInterrupted`, `resumePublish`, `startRecovery` in `loki-ts/src/util/run_outputs.ts`, `phaseOf` in `events.ts`, `runOwnerAlive` in `util/run_pid.ts`, the push-skip in `autonomy/lib/engine10-push.sh`, `loki resume` in `autonomy/loki`. Tests: the RECOVERY block in `loki-ts/tests/engine10/pr.test.ts` and the recovery block in `tests/test-engine10-push.sh`.
+
+An interrupted run has an `events.jsonl` with neither `run.completed` nor `pr.opened`, and a `run.pid` that does not name a live process with the recorded start time. A run owned by a live supervisor is never resumed. The phase comes from the event log only (`phaseOf`):
+
+| Phase     | Meaning                                                     | Recoverable |
+|-----------|-------------------------------------------------------------|-------------|
+| implement | no `stage.completed` for implement                          | No (reported) |
+| verify    | implement completed, no `receipt.sealed`                    | No (reported) |
+| publish   | `receipt.sealed` present, no `pr.opened` or `run.completed` | Yes |
+| done      | `pr.opened` or `run.completed` present                      | Nothing to do |
+
+`loki resume [run-id]`, and `loki start "<same task>"` when the newest interrupted run is in the publish phase, its recorded intake task equals the new task and `--no-pr` is absent, resume the publish phase and print `resumed phase: publish (run <id>); receipt reused; PR <url>`.
+
+- The sealed receipt is reused: no second `receipt.json`, no second `receipt.sealed` event. Resume never reseals.
+- Events appended: `run.resumed`, `pr.opened`, `run.completed` (with `resumed: true` and the not-proven note "publish phase resumed after an interruption"), then the log seal.
+- Push is skipped when the remote branch is already at the local commit (GitHub: `gh api .../git/ref/heads/<branch>`; local bare origin: `git ls-remote`). A newer commit is a new revision and is pushed.
+- PR creation checks `gh pr list --head <branch> --state open` first and reuses an open PR, so any number of publish attempts yields one PR.
+
+For implement and verify, `loki resume` prints the phase, whether branch `loki/<run-id>` holds preserved work, and exits 4. `loki start` prints a one-line note and starts a new run. `LOKI_NO_RESUME=1` disables the `loki start` check.
+
+Exit codes of `loki-ts engine10 resume`: 0 resumed, 3 no interrupted run, 4 phase reported but not auto-resumable, 5 publish attempted and failed (the run stays resumable), 2 not in a git repository or no origin.
+
+Honest limits:
+- implement and verify keep stage outputs in the worker's memory; the stage machine cannot skip completed stages. Work committed on `loki/<run-id>` is preserved but the run is not continued.
+- A crash between `gh pr create` returning and `pr.opened` being recorded is recovered by the open-PR lookup, provided GitHub lists the PR by then.
+- A crash after the commit status call but before `run.completed` sets the same status again.
+- GitLab origins (`engine10-push-gitlab.sh`) are unchanged; push-skip and PR reuse are verified for the GitHub and local-bare paths only.
+- The legacy bash loop (`autonomy/run.sh`) keeps its own iteration-level resume.
+- Deep verify (a detached child spawned after `pr.opened`) is not re-spawned on resume.
+
 ### BOARD rows
 
 The notes start with the requested "Source: ENGINE.md 23:00Z cut." and then add dependencies, following the 21:50Z rows. If you want the notes to be only that sentence, drop the dependency part.

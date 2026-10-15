@@ -95,6 +95,14 @@ _e10_local_push() {
         log_warn "Not pushing branch '$branch': it is (or may be) the default branch of $origin."
         return 2
     fi
+    # RECOVERY: remote already at the local commit means a prior attempt landed; push nothing.
+    local want have
+    want="$(_e10_git -C "$dir" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null)" || want=""
+    have="$(_e10_git ls-remote "$origin" "refs/heads/$branch" 2>/dev/null | awk '{print $1; exit}')" || have=""
+    if [ -n "$want" ] && [ "$want" = "$have" ]; then
+        log_info "push skipped: remote already has $branch at ${want:0:12}"
+        return 0
+    fi
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/loki-push.XXXXXX")" || return 1
     if _e10_git init -q --template= "$tmp" >/dev/null 2>&1 \
         && _e10_git -C "$tmp" fetch -q --no-tags --update-shallow "$dir" \
@@ -138,7 +146,17 @@ case "$mode" in
             printf 'local://%s#%s\n' "$_LOKI_PINNED_ORIGIN" "$branch"
             exit 0
         fi
-        _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" || die "push refused or failed (rc=$?)"
+        # RECOVERY: a resumed publish skips the push when the remote branch is already at the local commit.
+        _e10_want="$(_e10_git -C "$dir" rev-parse -q --verify "refs/heads/$branch" 2>/dev/null)" || _e10_want=""
+        _e10_have=""
+        case "$branch" in main | master | HEAD) ;; *)
+            _e10_have="$(_e10_gh api "repos/$_e10_repo/git/ref/heads/$branch" --jq .object.sha 2>/dev/null)" || _e10_have="" ;;
+        esac
+        if [ -n "$_e10_want" ] && [ "$_e10_want" = "$_e10_have" ]; then
+            log_info "push skipped: remote already has $branch at ${_e10_want:0:12}"
+        else
+            _loki_trusted_push _loki_with_github_tokens "$dir" "$branch" || die "push refused or failed (rc=$?)"
+        fi
         url="$(_e10_gh pr list --repo "$_e10_repo" --head "$branch" --state open --json url --jq '.[0].url')" \
             || die "gh pr list failed"
         if [ -z "$url" ] || [ "$url" = "null" ]; then

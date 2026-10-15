@@ -256,6 +256,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   try {
     repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim();
   } catch { process.stderr.write("engine10: not inside a git repository\n"); return 2; }
+  { const rec = await (await import("../util/run_outputs.ts")).startRecovery(repoDir, task, noPr); if (rec !== null) return rec; } // RECOVERY: an interrupted publish for this same task resumes instead of starting over
   const runId = `e10-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z")}-${Math.random().toString(16).slice(2, 6)}`;
   const runDir = join(repoDir, ".loki", "runs", runId);
   const cap = resolveCap(maxCost, repoDir); if ("error" in cap) { process.stderr.write(`engine10: ${cap.error}\n`); return 2; }

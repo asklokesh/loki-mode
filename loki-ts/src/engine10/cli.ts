@@ -22,6 +22,7 @@ const TABLE: Record<string, { module: string; fn: string }> = {
   dashboard: { module: "../runner/engine10_dashboard.ts", fn: "main" },
   modernize: { module: "modernize/cli.ts", fn: "main" },
   plan: { module: "plan_cmd.ts", fn: "main" },
+  resume: { module: "../util/run_outputs.ts", fn: "resumeMain" },
   // Hidden subcommands spawned by the supervisor.
   worker: { module: "worker.ts", fn: "main" },
   session: { module: "session.ts", fn: "main" },

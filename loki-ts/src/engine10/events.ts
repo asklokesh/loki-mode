@@ -185,3 +185,13 @@ export function tail(path: string, onEvent: (e: EventEnvelope) => void, opts: { 
   const timer = setInterval(poll, opts.intervalMs ?? 250);
   return () => clearInterval(timer);
 }
+
+export type Phase = "implement" | "verify" | "publish" | "done";
+
+/** RECOVERY: which phase an event log stopped in. "done" means nothing is left to resume. */
+export function phaseOf(events: readonly EventEnvelope[]): Phase {
+  if (events.some((e) => e.type === "run.completed" || e.type === "pr.opened")) return "done";
+  if (events.some((e) => e.type === "receipt.sealed")) return "publish";
+  const completed = new Set(events.filter((e) => e.type === "stage.completed").map((e) => String(e.stage)));
+  return completed.has("implement") ? "verify" : "implement";
+}
