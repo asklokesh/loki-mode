@@ -41,5 +41,40 @@ if [ "$_ws00_rc" -eq 1 ] && grep -q 'not usable' <<<"$_ws00_out"; then
 else
     bad "workspace infer: cycle rejected (rc=$_ws00_rc)"
 fi
+# Import-only dependency: no manifest entry, evidence printed as file:line.
+printf '{"name":"@acme/api","dependencies":{}}\n' > "$_ws00_tmp/api/package.json"
+printf '{"name":"web","dependencies":{}}\n' > "$_ws00_tmp/web/package.json"
+mkdir -p "$_ws00_tmp/web/src"
+printf 'import x from "y"\nimport { c } from "@acme/api/client";\n' > "$_ws00_tmp/web/src/a.ts"
+_ws00_out="$(cd "$_ws00_tmp/proj" && env -u LOKI_WORKSPACES python3 "$REPO_ROOT/autonomy/lib/workspace.py" infer shop 2>&1)"
+_ws00_rc=$?
+if [ "$_ws00_rc" -eq 0 ] && grep -q 'after: \[owner/api\]' <<<"$_ws00_out" && grep -q 'src/a.ts:2' <<<"$_ws00_out"; then
+    ok "workspace infer: import-only dependency prints file:line evidence"
+else
+    bad "workspace infer: import-only (rc=$_ws00_rc out=$_ws00_out)"
+fi
+
+# OpenAPI-only dependency: generator config input points into the sibling.
+rm -rf "$_ws00_tmp/web/src"
+printf 'openapi: 3.0.0\n' > "$_ws00_tmp/api/openapi.yaml"
+printf '{"generator-cli":{"generators":{"c":{\n"inputSpec": "../api/openapi.yaml"}}}}\n' > "$_ws00_tmp/web/openapitools.json"
+_ws00_out="$(cd "$_ws00_tmp/proj" && env -u LOKI_WORKSPACES python3 "$REPO_ROOT/autonomy/lib/workspace.py" infer shop 2>&1)"
+_ws00_rc=$?
+if [ "$_ws00_rc" -eq 0 ] && grep -q 'after: \[owner/api\]' <<<"$_ws00_out" && grep -q 'openapitools.json:2' <<<"$_ws00_out"; then
+    ok "workspace infer: openapi-only dependency prints file:line evidence"
+else
+    bad "workspace infer: openapi-only (rc=$_ws00_rc out=$_ws00_out)"
+fi
+
+# Import-derived cycle is still refused.
+mkdir -p "$_ws00_tmp/api/src"
+printf 'import w from "web"\n' > "$_ws00_tmp/api/src/b.ts"
+_ws00_out="$(cd "$_ws00_tmp/proj" && env -u LOKI_WORKSPACES python3 "$REPO_ROOT/autonomy/lib/workspace.py" infer shop 2>&1)"
+_ws00_rc=$?
+if [ "$_ws00_rc" -eq 1 ] && grep -q 'not usable' <<<"$_ws00_out"; then
+    ok "workspace infer: import/openapi cycle rejected"
+else
+    bad "workspace infer: evidence cycle (rc=$_ws00_rc)"
+fi
 rm -rf -- "$_ws00_tmp"
 unset _ws00_tmp _ws00_out _ws00_rc

@@ -585,6 +585,85 @@ def _dep_tokens(root):
     return toks
 
 
+_SRC_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go")
+_SKIP_DIRS = {"node_modules", ".git", "dist", "build", "vendor", "venv", ".venv", "__pycache__", ".loki"}
+_SCAN_MAX_FILES = 400
+_SCAN_MAX_BYTES = 262144
+_JS_SPEC = re.compile(r"""(?:from\s*|require\s*\(\s*|import\s*\(?\s*)["']([^"']+)["']""")
+_PY_IMPORT = re.compile(r"^\s*(?:from\s+([A-Za-z_][\w.]*)\s+import\b|import\s+([A-Za-z_][\w.]*))")
+_GO_IMPORT = re.compile(r'^\s*(?:import\s+)?(?:[\w.]+\s+)?"([^"]+)"\s*$')
+_SPEC_KEY = re.compile(r"""["']?(?:inputSpec|input|target)["']?\s*[:=]\s*["']?([^"',\s}]+)""")
+_GEN_CONFIG = re.compile(
+    r"^(openapitools\.json|openapi-generator.*\.(?:ya?ml|json)|orval\.config\.\w+|\.orvalrc(?:\.\w+)?)$")
+
+
+def _spec_hits(path, ext):
+    """Yield (line number, imported specifier) for one source file."""
+    text = _read(path)
+    if text is None or len(text) > _SCAN_MAX_BYTES:
+        return
+    for n, line in enumerate(text.splitlines(), 1):
+        if ext == ".py":
+            m = _PY_IMPORT.match(line)
+            if m:
+                yield n, (m.group(1) or m.group(2)).lower().replace("_", "-")
+        elif ext == ".go":
+            m = _GO_IMPORT.match(line)
+            if m:
+                yield n, m.group(1).lower()
+        else:
+            for m in _JS_SPEC.finditer(line):
+                yield n, m.group(1).lower()
+
+
+def _import_evidence(root, ids):
+    """First file:line per sibling whose package/module name a source file imports (bounded scan)."""
+    found, seen = {}, 0
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in _SKIP_DIRS)
+        for fn in sorted(files):
+            ext = os.path.splitext(fn)[1]
+            if ext not in _SRC_EXT:
+                continue
+            seen += 1
+            if seen > _SCAN_MAX_FILES:
+                return found
+            path = os.path.join(dirpath, fn)
+            for n, spec in _spec_hits(path, ext):
+                if spec.startswith("."):
+                    continue
+                for o, oids in ids.items():
+                    if o not in found and any(spec == i or spec.startswith(i + "/") or spec.startswith(i + ".")
+                                              for i in oids):
+                        found[o] = "%s:%d (imports %s)" % (os.path.relpath(path, root), n, spec)
+    return found
+
+
+def _openapi_evidence(root, roots):
+    """file:line per sibling whose checkout holds the spec a client generator config points at."""
+    found = {}
+    try:
+        names = sorted(os.listdir(root))
+    except OSError:
+        return found
+    for fn in names:
+        path = os.path.join(root, fn)
+        if not _GEN_CONFIG.match(fn) or not os.path.isfile(path):
+            continue
+        text = _read(path) or ""
+        for n, line in enumerate(text.splitlines(), 1):
+            for m in _SPEC_KEY.finditer(line):
+                val = m.group(1)
+                if "://" in val:
+                    continue
+                target = os.path.realpath(os.path.join(root, val))
+                for o, oroot in roots.items():
+                    if oroot and o not in found and os.path.realpath(oroot) != os.path.realpath(root) and \
+                            (target + os.sep).startswith(os.path.realpath(oroot) + os.sep):
+                        found[o] = "%s:%d (spec %s)" % (fn, n, val)
+    return found
+
+
 def infer(name, workspaces, say=say):
     """Print suggested `after:` edges from manifests; never writes loki.yaml."""
     ws = workspaces.get(name)
@@ -598,7 +677,7 @@ def infer(name, workspaces, say=say):
             os.path.expanduser("~"), ".loki", "repos", _slug(e["repo"]))
         roots[e["repo"]] = root if os.path.isdir(root) else None
     ids = {e["repo"]: _identities(e, roots[e["repo"]]) if roots[e["repo"]] else set() for e in entries}
-    proposed = {}
+    proposed, evidence = {}, {}
     for e in entries:
         repo = e["repo"]
         if not roots[repo]:
@@ -607,12 +686,21 @@ def infer(name, workspaces, say=say):
             continue
         toks = _dep_tokens(roots[repo])
         deps = list(e.get("after") or [])
-        for other in entries:
-            o = other["repo"]
-            if o == repo or o in deps:
+        others = {x["repo"]: ids[x["repo"]] for x in entries if x["repo"] != repo}
+        imp = _import_evidence(roots[repo], others)
+        api = _openapi_evidence(roots[repo], {o: roots[o] for o in others})
+        for o in others:
+            if o in deps:
                 continue
             if any(t == i or t.startswith(i + "/") for t in toks for i in ids[o]):
                 deps.append(o)
+                evidence[(repo, o)] = "manifest dependency"
+            elif o in api:
+                deps.append(o)
+                evidence[(repo, o)] = api[o]
+            elif o in imp:
+                deps.append(o)
+                evidence[(repo, o)] = imp[o]
         proposed[repo] = deps
     try:
         order_repos({"repos": [{"repo": e["repo"], "after": proposed[e["repo"]]} for e in entries]})
@@ -623,6 +711,9 @@ def infer(name, workspaces, say=say):
     for e in entries:
         say("%s" % e["repo"])
         say("  after: [%s]" % ", ".join(proposed[e["repo"]]))
+        for d in proposed[e["repo"]]:
+            if (e["repo"], d) in evidence:
+                say("    %s: %s" % (d, evidence[(e["repo"], d)]))
     return 0
 
 
