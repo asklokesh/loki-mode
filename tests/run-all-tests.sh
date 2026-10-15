@@ -1401,6 +1401,7 @@ run_test "fast gate planner selects the suites that guard a diff (D90)" "$SCRIPT
 run_test "impacted gate fails closed and survives suites that clean LOKI_RUN_TMP (FC-31)" "timeout -k 10 120 $SCRIPT_DIR/test-impacted-gate.sh"
 run_test "quarantine (non-blocking listed failure, rejects expired/moat/review/>7d)" "$SCRIPT_DIR/test-quarantine.sh"
 run_test "quickstart scorer works on macOS bash 3.2 (first-run path)" "$SCRIPT_DIR/test-quickstart-bash32.sh"
+run_test "quickstart --explain-match shows top 3 scores and confidence" "timeout -k 10 120 $SCRIPT_DIR/test-quickstart-explain-match.sh"
 run_test "first-run path works on macOS bash 3.2 (welcome, tour, quickstart)" "$SCRIPT_DIR/test-first-run-bash32.sh"
 run_test "competitor verify surface (head-to-head, locally reproducible)" "$SCRIPT_DIR/test-competitor-verify-surface.sh"
 run_test "efficiency baseline pipeline (writer + collector, honest zero)" "$SCRIPT_DIR/test-efficiency-baseline-pipeline.sh"
