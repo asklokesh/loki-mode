@@ -1722,7 +1722,14 @@ _help_verify_dsse() {
     echo "          66  no signing key, or no runs"
 }
 
+# Default help screen: core verbs only. `loki help all` prints show_help_all.
 show_help() {
+    # shellcheck source=/dev/null
+    source "$_LOKI_SCRIPT_DIR/lib/help-core.sh"
+    help_core_screen "$(get_version)"
+}
+
+show_help_all() {
     local version=$(get_version)
     # Strip color when stdout is not a TTY (piped/redirected) so captured help
     # output is clean, matching the bare-loki welcome path. Local overrides only.
@@ -12931,6 +12938,16 @@ cmd_config() {
         show)
             cmd_config_show
             ;;
+        list)
+            # HELP slice: `config list [--json]` is `config show` (json: wrapped).
+            # shellcheck source=/dev/null
+            source "$_LOKI_SCRIPT_DIR/lib/json-output.sh"
+            if loki_json_requested "$@"; then
+                loki_json_wrap config-list cmd_config_show
+            else
+                cmd_config_show
+            fi
+            ;;
         init)
             cmd_config_init
             ;;
@@ -12956,9 +12973,10 @@ cmd_config() {
             cmd_config_validate "$@"
             ;;
         *)
-            echo -e "${YELLOW}Usage: loki config [show|init|edit|path|set|get|example|schema|validate]${NC}"
+            echo -e "${YELLOW}Usage: loki config [show|list|init|edit|path|set|get|example|schema|validate]${NC}"
             echo ""
             echo "  show            Show current configuration (default)"
+            echo "  list [--json]   Same as show; --json emits one JSON object"
             echo "  init            Create a config file from template"
             echo "  edit            Open config file in editor"
             echo "  path            Show config file paths"
@@ -17902,6 +17920,15 @@ cmd_verify() {
     fi
     # shellcheck source=/dev/null
     source "$verify_mod"
+    # HELP slice: --json wraps the human output in one JSON object (shared helper).
+    # shellcheck source=/dev/null
+    source "$_LOKI_SCRIPT_DIR/lib/json-output.sh"
+    if loki_json_requested "$@"; then
+        local _vj_args=() _vj_a
+        while IFS= read -r _vj_a; do _vj_args+=("$_vj_a"); done < <(loki_json_strip "$@")
+        loki_json_wrap verify verify_main "${_vj_args[@]+"${_vj_args[@]}"}"
+        return $?
+    fi
     verify_main "$@"
     return $?
 }
@@ -20800,7 +20827,8 @@ sandbox api mcp magic compound assets export wiki control docs explain why audit
 welcome update self-update rollback failover cluster enterprise remote deploy docker \
 sandbox api mcp acp magic compound assets export wiki control docs explain why audit compliance \
 secrets analyze optimize bench ci reset cleanup notify trigger voice sentrux \
-worktree wt projects cp rc trust-metrics serve agent code self_update test help version"
+worktree wt projects cp rc trust-metrics serve agent code self_update test help version \
+chat route agents models edit receipt setup diff undo"
     local best
     best=$(printf '%s\n' $known | awk -v t="$typo" '
         function min3(a, b, c) { if (a < b) { if (a < c) return a; return c } if (b < c) return b; return c }
@@ -21401,6 +21429,10 @@ main() {
             # deprecated-alias table; bare help prints the grouped front page.
             if [ "${1:-}" = "aliases" ]; then
                 show_help_aliases
+            elif [ "${1:-}" = "all" ]; then
+                show_help_all
+            elif [ -n "${1:-}" ] && { source "$_LOKI_SCRIPT_DIR/lib/help-core.sh"; help_topic_text "$1"; }; then
+                :
             elif [ -n "${1:-}" ]; then
                 # `loki help <command>` reaches the command's own help. Before
                 # this, $1 was read only for the literal "aliases" and otherwise
@@ -21470,8 +21502,8 @@ main() {
                 echo "Did you mean 'loki ${_suggestion}'?" >&2
             fi
             # Always point to the full command list, even with no near-miss match.
-            echo "Run 'loki help' to see every command." >&2
-            exit 1
+            echo "Run 'loki help' for the core commands, 'loki help all' for every command." >&2
+            exit 2
             ;;
     esac
 }

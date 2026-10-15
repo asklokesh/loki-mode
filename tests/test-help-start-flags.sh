@@ -19,7 +19,7 @@ mkdir -p "$WORK/home"
 export HOME="$WORK/home"
 
 # Front page: only the 'Options for start' block.
-bash "$LOKI" help 2>&1 | sed -n "/^Options for 'start':/,/^Deprecated alias/p" > "$WORK/front.txt"
+bash "$LOKI" help all 2>&1 | sed -n "/^Options for 'start':/,/^Deprecated alias/p" > "$WORK/front.txt"
 bash "$LOKI" start --help 2>&1 | sed -n '/^Options:/,/^Issue-mode options/p' > "$WORK/start.txt"
 bash "$LOKI" start --help 2>&1 | sed -n '/^Examples:/,$p' > "$WORK/examples.txt"
 

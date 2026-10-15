@@ -95,7 +95,7 @@ if [ "$real_count" -lt 50 ]; then
 fi
 ok "resolved ${real_count} real top-level commands by probing the CLI"
 
-HELP_OUT="$("$LOKI" help </dev/null 2>&1 || true)"
+HELP_OUT="$("$LOKI" help all </dev/null 2>&1 || true)"
 if [ "$(printf '%s' "$HELP_OUT" | wc -l | tr -d ' ')" -lt 20 ]; then
     bad "'loki help' produced almost no output; the harness or help is broken"
     printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"

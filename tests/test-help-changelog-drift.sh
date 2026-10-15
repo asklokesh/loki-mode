@@ -70,7 +70,7 @@ if [ "$(wc -l < "$WORK/inv.txt" | tr -d ' ')" -lt 1 ]; then
 fi
 
 cd "$WORK/cwd" || exit 1
-HELP_ALL="$(bash "$LOKI" help </dev/null 2>&1 || true)"
+HELP_ALL="$(bash "$LOKI" help all </dev/null 2>&1 || true)"
 if [ "$(printf '%s\n' "$HELP_ALL" | wc -l | tr -d ' ')" -lt 20 ]; then
     bad "'loki help' produced almost no output"
     exit 1
