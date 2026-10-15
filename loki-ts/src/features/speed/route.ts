@@ -17,17 +17,27 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { decompose, parseItems, type Dag } from "../decompose.ts";
 import { buildRepoMap, type RepoMap } from "../../engine10/repomap.ts";
 import { selectRelevantFiles } from "../../engine10/relevant_files.ts";
+import type { BacklogLauncher } from "./run_group.ts";
 
 export const MAX_SPEC_BYTES = 1_048_576;
 export const MAX_SEQ_TASK_BYTES = 65_536;
 const SPEC_PATH_RE = /\/|\.(md|txt|ya?ml|json)$/i;
 
-export interface GroupCtx { task: string; repoDir: string; env: NodeJS.ProcessEnv; spec: string; specPath: string | null }
+export interface GroupCtx { task: string; repoDir: string; env: NodeJS.ProcessEnv; spec: string; specPath: string | null; say?: (s: string) => void }
 /** Group execution (D61-10..13: unit runner, unit mode, integrator, seal group). Returns an exit code. */
 export type GroupRunner = (dag: Dag, ctx: GroupCtx) => Promise<number>;
 
+/** Parallel unit slots per provider (providers/*.sh PROVIDER_MAX_PARALLEL). Unknown providers are sequential: never guess parallel. */
+const PROVIDER_SLOTS: Record<string, number> = { claude: 10, codex: 2, cline: 1, aider: 1, opencode: 1 };
+export function providerSlots(env: NodeJS.ProcessEnv): { provider: string; slots: number } {
+  const provider = (env.LOKI_PROVIDER || "claude").toLowerCase();
+  return { provider, slots: PROVIDER_SLOTS[provider] ?? 1 };
+}
+
 export interface RouteDeps {
   group?: GroupRunner;
+  /** Test seam for the default group runner: replaces the backlog.py launcher. */
+  backlog?: BacklogLauncher;
   listFiles?: (repoDir: string) => string[];
   select?: (task: string, map: RepoMap, max: number) => string[];
   stderr?: (s: string) => void;
@@ -83,9 +93,11 @@ export async function maybeRunGroup(task: string, repoDir: string, env: NodeJS.P
     return fb(spec, `group setup failed: ${(e as Error).message.split("\n")[0]}`);
   }
   if (dag.units.length < 2) return fb(spec, `decomposer returned ${dag.units.length} unit`);
-  if (!deps.group) return fb(spec, "group machinery unavailable");
+  const cap = providerSlots(env);
+  if (cap.slots < 2) return fb(spec, `provider ${cap.provider} runs units sequentially`);
   try {
-    return { code: await deps.group(dag, { task, repoDir, env, spec, specPath }), task: spec };
+    const group = deps.group ?? (await import("./run_group.ts")).runGroup.bind(null, deps.backlog);
+    return { code: await group(dag, { task, repoDir, env, spec, specPath, say }), task: spec };
   } catch (e) {
     say(`loki: group run failed: ${(e as Error).message.split("\n")[0]}\n`);
     return { code: 1, task: spec };

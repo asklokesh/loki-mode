@@ -2,7 +2,7 @@
 """loki backlog: run one v10 issue-mode run per open issue, N in parallel (D51).
 
     loki backlog owner/repo --all | --label X | --issues 1,2,3
-                 [--concurrency N] [--dry-run]
+                 [--concurrency N] [--slots N] [--dry-run]
 
 Each issue gets its own git worktree and branch (loki/backlog-N) beside the
 checkout; the launcher runs inside it. Success = the child exited 0 (the engine's
@@ -207,6 +207,7 @@ def main(argv):
     sel.add_argument("--label")
     sel.add_argument("--issues")
     ap.add_argument("--concurrency", type=int)
+    ap.add_argument("--slots", type=int, help="provider cap on parallel runs; the effective concurrency is the lower of this and --concurrency/loki.yaml")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--dag", help="decomposer DAG JSON; its units run on loki/unit-<group>-<n>")
     ap.add_argument("--group", help="unit group id (default: the DAG's group, else g1)")
@@ -240,6 +241,11 @@ def main(argv):
     conc = a.concurrency or cfg.get("concurrency", 2)
     if conc < 1:
         return die("--concurrency must be >= 1")
+    if a.slots is not None:
+        if a.slots < 1:
+            return die("--slots must be >= 1")
+        # An explicit --concurrency is capped too: the provider limit always wins.
+        conc = min(a.slots, a.concurrency) if a.concurrency else a.slots
 
     env = dict(os.environ)
     token = ""
