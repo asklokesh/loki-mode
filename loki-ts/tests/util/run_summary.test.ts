@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { composeHandoff, decisionCommands, renderHandoff, spendText, writeHandoff, type HandoffFacts, type HandoffInput } from "../../src/features/handoff.ts";
+import { composeHandoff, decisionCommands, renderHandoff, spendText, writeHandoff, type HandoffFacts, type HandoffInput } from "../../src/util/run_summary.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 
 const base: HandoffInput = {
