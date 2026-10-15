@@ -148,7 +148,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("session", "Session report", { flags: [bool("--efficiency", "Token and cost stats")] }),
       sub("metrics", "Metrics report"),
       sub("cost", "Cost report"),
-      sub("export", "Export session", { positionals: [{ name: "format", type: "enum", values: ["json", "markdown", "csv", "timeline"] }] }),
+      sub("export", "Export session", { positionals: [{ name: "format", type: "enum", values: ["json", "markdown", "csv", "timeline", "vibe-kanban"] }] }),
       sub("share", "Share a report"),
       sub("dogfood", "Dogfood report"),
     ],

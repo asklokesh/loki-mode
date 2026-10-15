@@ -12252,6 +12252,7 @@ cmd_export() {
             echo "  markdown   Human-readable session summary"
             echo "  csv        Task queue as CSV"
             echo "  timeline   Iteration timeline as JSON"
+            echo "  vibe-kanban  Sync .loki/queue tasks into the Vibe Kanban SQLite DB"
             echo ""
             echo "Flags:"
             echo "  --sarif [run-id]   Write .loki/runs/<id>/findings.sarif (SARIF 2.1.0; needs bun)"
@@ -12262,6 +12263,7 @@ cmd_export() {
             echo "  loki export markdown                     # Readable summary"
             echo "  loki export csv tasks.csv                # Task queue CSV"
             echo "  loki export timeline                     # Iteration timeline"
+            echo "  loki export vibe-kanban                  # Sync tasks to Vibe Kanban"
             exit 0
             ;;
         json)
@@ -12278,13 +12280,21 @@ cmd_export() {
             require_jq || return 1
             _export_timeline "$output_path"
             ;;
+        vibe-kanban)
+            local vk_script="${SKILL_DIR:-}/scripts/sync-to-vibe-kanban.sh"
+            if [ ! -f "$vk_script" ]; then
+                echo -e "${RED}Error: sync-to-vibe-kanban.sh not found at $vk_script${NC}" >&2
+                return 1
+            fi
+            bash "$vk_script"
+            ;;
         --sarif)
             echo -e "${RED}loki export --sarif needs bun (https://bun.sh).${NC}" >&2
             return 1
             ;;
         *)
             echo -e "${RED}Unknown format: $format${NC}"
-            echo "Supported: json, markdown, csv, timeline"
+            echo "Supported: json, markdown, csv, timeline, vibe-kanban"
             exit 1
             ;;
     esac

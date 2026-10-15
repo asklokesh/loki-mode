@@ -128,52 +128,15 @@ All synced tasks use `[Loki]` prefix in title for safe identification. On each s
 
 This ensures clean sync without duplicates.
 
-## Export Script
+## Export Command
 
-Add this to export Loki Mode tasks to Vibe Kanban:
+The sync script is also exposed through the CLI. Run it from the project directory:
 
 ```bash
-#!/bin/bash
-# scripts/export-to-vibe-kanban.sh
-
-LOKI_DIR=".loki"
-EXPORT_DIR="${VIBE_KANBAN_DIR:-~/.vibe-kanban/loki-tasks}"
-
-mkdir -p "$EXPORT_DIR"
-
-# Export pending tasks
-if [ -f "$LOKI_DIR/queue/pending.json" ]; then
-    python3 << EOF
-import json
-import os
-
-with open("$LOKI_DIR/queue/pending.json") as f:
-    tasks = json.load(f)
-
-export_dir = os.path.expanduser("$EXPORT_DIR")
-
-for task in tasks:
-    vibe_task = {
-        "id": f"loki-{task['id']}",
-        "title": task.get('payload', {}).get('description', task['type']),
-        "description": json.dumps(task.get('payload', {}), indent=2),
-        "status": "todo",
-        "agent": "claude-code",
-        "tags": [task['type'], f"priority-{task.get('priority', 5)}"],
-        "metadata": {
-            "lokiTaskId": task['id'],
-            "lokiType": task['type'],
-            "createdAt": task.get('createdAt', '')
-        }
-    }
-
-    with open(f"{export_dir}/{task['id']}.json", 'w') as out:
-        json.dump(vibe_task, out, indent=2)
-
-print(f"Exported {len(tasks)} tasks to {export_dir}")
-EOF
-fi
+loki export vibe-kanban
 ```
+
+It runs `scripts/sync-to-vibe-kanban.sh`. Set `VIBE_KANBAN_DB=/path/to/db.sqlite` to target a non-default database.
 
 ## Real-Time Sync (Advanced)
 
@@ -181,7 +144,7 @@ For real-time sync, run the watcher alongside Loki Mode:
 
 ```bash
 #!/bin/bash
-# scripts/vibe-sync-watcher.sh
+# scripts/vibe-sync-watcher.sh (simplified)
 
 LOKI_DIR=".loki"
 
@@ -194,7 +157,7 @@ while true; do
         inotifywait -e modify,create "$LOKI_DIR/queue/" 2>/dev/null
     fi
 
-    ./scripts/export-to-vibe-kanban.sh
+    ./scripts/sync-to-vibe-kanban.sh
     sleep 2
 done
 ```
@@ -225,7 +188,7 @@ If running Loki Mode on multiple projects, see all in one Vibe Kanban instance.
 
 ## Troubleshooting
 
-### Issue: "Exported 0 tasks total"
+### Issue: "Synced 0 tasks to Vibe Kanban"
 
 **Cause:** No tasks in `.loki/queue/` yet.
 
@@ -254,18 +217,17 @@ If running Loki Mode on multiple projects, see all in one Vibe Kanban instance.
 
 **Checklist:**
 1. Is Vibe Kanban running? Check http://127.0.0.1:53380
-2. Did you run the export script? `./scripts/export-to-vibe-kanban.sh`
-3. Check export directory has files: `ls ~/.vibe-kanban/loki-tasks/`
+2. Did you run the sync? `loki export vibe-kanban`
+3. Check the database has rows: `sqlite3 "<db path>" "SELECT title FROM tasks WHERE title LIKE '[Loki]%';"`
 4. Refresh the Vibe Kanban browser window
-5. Check Vibe Kanban is configured to watch that directory
 
 ### Issue: "No real-time updates"
 
-**Explanation:** The export script runs on-demand, not automatically.
+**Explanation:** The sync runs on-demand, not automatically.
 
 **Solutions:**
 1. Run `./scripts/vibe-sync-watcher.sh` for automatic sync
-2. Or manually run export script periodically: `watch -n 10 ./scripts/export-to-vibe-kanban.sh`
+2. Or run the sync periodically: `watch -n 10 loki export vibe-kanban`
 3. Or refresh manually when you want to check progress
 
 ## Expected Workflow

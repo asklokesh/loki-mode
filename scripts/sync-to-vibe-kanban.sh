@@ -19,6 +19,11 @@ else
     fi
 fi
 
+# Explicit DB override (also lets tests target a temp database)
+if [ -n "${VIBE_KANBAN_DB:-}" ]; then
+    DB_PATH="$VIBE_KANBAN_DB"
+fi
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -62,7 +67,7 @@ get_or_create_project() {
     project_id=$(sqlite3 "$DB_PATH" "SELECT hex(id) FROM projects WHERE name='$PROJECT_NAME' LIMIT 1;" 2>/dev/null)
 
     if [ -z "$project_id" ]; then
-        log_info "Creating new project: $PROJECT_NAME"
+        log_info "Creating new project: $PROJECT_NAME" >&2
         sqlite3 "$DB_PATH" "INSERT INTO projects (id, name, default_agent_working_dir, created_at, updated_at) VALUES (randomblob(16), '$PROJECT_NAME', '$PROJECT_PATH', datetime('now', 'subsec'), datetime('now', 'subsec'));"
         project_id=$(sqlite3 "$DB_PATH" "SELECT hex(id) FROM projects WHERE name='$PROJECT_NAME' LIMIT 1;")
     fi
@@ -85,7 +90,7 @@ sync_tasks() {
         [ ! -f "$queue_file" ] && continue
 
         # Parse and insert tasks
-        python3 << EOF
+        python3 >/dev/null << EOF
 import json
 import subprocess
 import sys
@@ -181,7 +186,7 @@ except:
 EOF
 )
         if [ "$inserted" -gt 0 ]; then
-            log_info "  $queue: $inserted tasks"
+            log_info "  $queue: $inserted tasks" >&2
             count=$((count + inserted))
         fi
     done

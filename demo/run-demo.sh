@@ -228,10 +228,9 @@ pause
 # Show kanban export
 banner "STEP 6: Vibe Kanban Integration"
 
-step "Exporting tasks to Vibe Kanban format..."
+step "Syncing tasks to Vibe Kanban..."
 
-mkdir -p ~/.vibe-kanban/loki-demo
-"$PROJECT_DIR/scripts/export-to-vibe-kanban.sh" ~/.vibe-kanban/loki-demo 2>/dev/null || true
+"$PROJECT_DIR/scripts/sync-to-vibe-kanban.sh" 2>/dev/null || true
 
 info "Tasks exported to kanban board"
 info "Run 'npx vibe-kanban' to view visual board"
