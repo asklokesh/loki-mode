@@ -164,16 +164,18 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   cleanup pass: an explicit exclusion list of live and approved-unmerged
   worktrees, plus `.git` file birth time (`stat -f %B`) in place of mtime as
   the recency signal (PROGRESS.md, turn 180). That was a one-time operational
-  fix. The standing guard is `scripts/prune-worktrees.sh` (S-154, commit
-  `e57262cf`): it decides removal only from structural state (branch merged
+  fix. The standing guard is `scripts/v10-worktree-reap.sh --strict` (S-154,
+  commit `e57262cf`, as `prune-worktrees.sh`; folded into the reaper in
+  v11.6.0): it decides removal only from structural state (branch merged
   into main by ancestry or `git cherry`, worktree not locked, working tree
   clean, path under `.claude/worktrees/`) and never from a file-age signal.
   A live agent marks its worktree with `git worktree lock`, which the script
   always skips.
-- **The test that proves it fires:** `tests/test-prune-worktrees.sh`
-  (S-154). Its GUARDS 5 assertion greps the script for `stat`, `mtime`,
-  `-mmin` and `-newer` and fails on any hit ("script uses a file-age signal
-  (GUARDS 5)"); the same suite proves locked and dirty worktrees survive.
+- **The test that proves it fires:** `tests/test-worktree-reap.sh`
+  (S-154). Its GUARDS 5 assertion greps the `strict_gate` function for `stat`,
+  `mtime`, `-mmin` and `-newer` and fails on any hit ("strict gate uses no
+  file-age signal (GUARDS 5)"); the same suite proves locked and dirty
+  worktrees survive.
 
 ## 6. Over-budget trivial agents, no violation surfaced it (S-75, AGENT_OVER_BUDGET, `c16d875f`)
 
@@ -772,22 +774,22 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   `${LOKI_EVAL_ARCHIVE:-$HOME/loki-ci-logs/eval}/<run-name>/results.jsonl`
   (outside the repo) and the committed `eval/loki10/archive/<run-name>.results.jsonl`,
   per row inside the same lock that writes the worktree-local copy, so a
-  killed run keeps what it already archived. `scripts/prune-worktrees.sh`
+  killed run keeps what it already archived. `scripts/v10-worktree-reap.sh --strict`
   refuses to remove a worktree that has a `results.jsonl` whose `run_id`s
   are not all present in an archived copy, and separately refuses to remove
   one with a live process inside it (`lsof -d cwd -Fn`) or a branch commit
   less than 30 minutes old (`git log -1 --format=%ct`) -- any check that
   cannot run (lsof missing/broken, unparseable JSON) REFUSES rather than
   guessing. No file-age signal (`stat`, `find -newermt`, etc.) is used
-  anywhere in it.
-- **The test that proves it fires:** `tests/test-prune-worktrees.sh` keeps a
+  anywhere in the strict gate.
+- **The test that proves it fires:** `tests/test-worktree-reap.sh` (strict
+  section) keeps a
   worktree with a live process inside it, keeps one whose results are not
   yet archived, removes one whose results ARE archived (positive control),
   and refuses everything when `lsof` is stubbed to fail. Deleting any one of
-  the three new checks from `scripts/prune-worktrees.sh` (live-process,
-  30-minute, or archived-results) turns the corresponding case red: 24
-  passed / 2 failed each time, vs. 26 passed / 0 failed with the check in
-  place. `tests/test-eval-archive.sh` plants a token
+  the three new checks from `strict_gate` in `scripts/v10-worktree-reap.sh`
+  (live-process, 30-minute, or archived-results) turns the corresponding
+  case red. `tests/test-eval-archive.sh` plants a token
   (`sk-ant-plantedTOKEN9999`, a GitHub-token-shaped string, and a
   `KEY=VALUE`-shaped one) in a synthetic row and asserts none of it survives
   `redact_row`, that the log paths are gone, that real fields (`task`,
@@ -796,7 +798,7 @@ previously mismarked two merged guards (S-16, S-74) as PENDING.
   would otherwise pass the secret check too). Replacing `redact_row` with a
   no-op (`return dict(row)`) reproduces the incident directly: the planted
   secret and the log paths both survive.
-  Run: `bash tests/test-prune-worktrees.sh && bash tests/test-eval-archive.sh`.
+  Run: `bash tests/test-worktree-reap.sh && bash tests/test-eval-archive.sh`.
 
 ## 21. A failed `cd` let an agent detach the shared main checkout (E-161)
 

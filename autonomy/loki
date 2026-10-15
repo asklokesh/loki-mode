@@ -8293,7 +8293,7 @@ PURPLE_LAB_STATE_DIR="${HOME}/.loki/purple-lab"
 PURPLE_LAB_PID_FILE="${PURPLE_LAB_STATE_DIR}/purple-lab.pid"
 
 # Is this pid positively identified as THIS installation's Purple Lab server
-# (cmd_web_start launches exactly `$DASHBOARD_PYTHON $SKILL_DIR/web-app/server.py`
+# (a server started before the web deprecation launched exactly `$DASHBOARD_PYTHON $SKILL_DIR/web-app/server.py`
 # at :8078), rather than a recycled pid, a decoy that merely mentions the path
 # in an argument, or another installation's server.py at a different SKILL_DIR?
 #
@@ -8504,205 +8504,6 @@ cmd_web_help() {
     echo "  loki web                  Launch the Control Plane"
     echo "  loki web --no-open        Same (--no-open is a no-op)"
     echo "  loki web stop             Stop a standalone web server started the old way"
-}
-
-cmd_web_start() {
-    local open_browser=true
-    local port="${PURPLE_LAB_DEFAULT_PORT}"
-    local prd_file=""
-
-    # Parse arguments
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --no-open)
-                open_browser=false
-                shift
-                ;;
-            --port)
-                if [[ -z "${2:-}" ]]; then
-                    echo -e "${RED}--port requires a port number${NC}"
-                    exit 1
-                fi
-                port="$2"
-                shift 2
-                ;;
-            --prd)
-                if [[ -z "${2:-}" ]]; then
-                    echo -e "${RED}--prd requires a file path${NC}"
-                    exit 1
-                fi
-                prd_file="$2"
-                shift 2
-                ;;
-            --help|-h)
-                cmd_web_help
-                exit 0
-                ;;
-            *)
-                echo -e "${RED}Unknown option: $1${NC}"
-                echo "Run 'loki web --help' for usage."
-                exit 1
-                ;;
-        esac
-    done
-
-    # Validate port: must be numeric and in valid range
-    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
-        echo -e "${RED}Error: Port must be a number, got '$port'${NC}"
-        exit 1
-    fi
-    if [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
-        echo -e "${RED}Error: Port must be between 1 and 65535, got $port${NC}"
-        exit 1
-    fi
-    # Port validation moved below (after PID file check) so we can offer to kill orphans
-
-    # Validate --prd file if provided
-    if [ -n "$prd_file" ]; then
-        if [ ! -f "$prd_file" ]; then
-            echo -e "${RED}Error: PRD file not found: $prd_file${NC}"
-            exit 1
-        fi
-        export PURPLE_LAB_PRD
-        PURPLE_LAB_PRD=$(cat "$prd_file")
-    fi
-
-    # Check that web-app dist exists
-    local web_dist="${SKILL_DIR}/web-app/dist"
-    if [ ! -d "$web_dist" ] || [ ! -f "$web_dist/index.html" ]; then
-        echo -e "${RED}Error: Web app not built${NC}"
-        echo "Expected files at: $web_dist"
-        echo ""
-        echo "Build the web app first:"
-        echo "  cd web-app && npm install && npm run build"
-        exit 1
-    fi
-
-    # Check that server.py exists
-    local server_py="${SKILL_DIR}/web-app/server.py"
-    if [ ! -f "$server_py" ]; then
-        echo -e "${RED}Error: Purple Lab server not found at $server_py${NC}"
-        exit 1
-    fi
-
-    # Ensure Python venv with FastAPI is available
-    if ! ensure_dashboard_venv; then
-        echo -e "${RED}Error: Failed to set up Python environment${NC}"
-        exit 1
-    fi
-
-    # Check if already running
-    mkdir -p "${LOKI_DIR}/purple-lab"
-    if [ -f "$PURPLE_LAB_PID_FILE" ]; then
-        local existing_pid
-        existing_pid=$(cat "$PURPLE_LAB_PID_FILE" 2>/dev/null)
-        if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
-            echo -e "${GREEN}Purple Lab already running (PID: $existing_pid)${NC}"
-            local url="http://${PURPLE_LAB_DEFAULT_HOST}:${port}/lab/"
-            echo -e "Open: ${CYAN}$url${NC}"
-            if [ "$open_browser" = true ]; then
-                loki_open_url "$url" 2>/dev/null || true
-            fi
-            return 0
-        fi
-    fi
-
-    # Check if port is already in use -- try to clean up orphaned processes.
-    # Only kill it if it is positively identified as THIS installation's own
-    # Purple Lab server (never a bare "it's listening on our port" guess): an
-    # unrelated process bound to the same port, or another installation's
-    # server, must never be signaled.
-    if lsof -i:"$port" -sTCP:LISTEN &> /dev/null; then
-        local blocking_pid
-        blocking_pid=$(lsof -ti:"$port" -sTCP:LISTEN 2>/dev/null | head -1)
-        if [ -n "$blocking_pid" ]; then
-            if _loki_pid_looks_like_purplelab "$blocking_pid"; then
-                echo -e "${YELLOW}Port $port in use by PID $blocking_pid -- stopping it...${NC}"
-                kill "$blocking_pid" 2>/dev/null
-                sleep 1
-                if kill -0 "$blocking_pid" 2>/dev/null; then
-                    kill -9 "$blocking_pid" 2>/dev/null
-                    sleep 1
-                fi
-                # Verify port is now free
-                if lsof -i:"$port" -sTCP:LISTEN &> /dev/null; then
-                    echo -e "${RED}Error: Could not free port $port${NC}"
-                    echo "Use --port to specify a different port, or manually kill the process."
-                    exit 1
-                fi
-                echo -e "${GREEN}Port $port freed.${NC}"
-            else
-                echo -e "${RED}Error: Port $port is in use by PID $blocking_pid, which is not this installation's Purple Lab server.${NC}"
-                echo "Use --port to specify a different port, or manually stop that process."
-                exit 1
-            fi
-        fi
-    fi
-
-    # Start the server
-    local log_dir="${LOKI_DIR}/purple-lab/logs"
-    mkdir -p "$log_dir"
-    local log_file="$log_dir/purple-lab.log"
-
-    echo -e "${CYAN}Starting Purple Lab...${NC}"
-
-    PURPLE_LAB_PORT="$port" PURPLE_LAB_HOST="${PURPLE_LAB_DEFAULT_HOST}" \
-    LOKI_DIR="$LOKI_DIR" LOKI_SKILL_DIR="$SKILL_DIR" PYTHONPATH="$SKILL_DIR" \
-    nohup "$DASHBOARD_PYTHON" "$server_py" > "$log_file" 2>&1 &
-    local pid=$!
-
-    mkdir -p "$PURPLE_LAB_STATE_DIR"
-    echo "$pid" > "$PURPLE_LAB_PID_FILE"
-    echo "$port" > "${PURPLE_LAB_STATE_DIR}/port"
-    # Also write to local .loki for backward compat
-    mkdir -p "${LOKI_DIR}/purple-lab"
-    echo "$pid" > "${LOKI_DIR}/purple-lab/purple-lab.pid"
-    echo "$port" > "${LOKI_DIR}/purple-lab/port"
-
-    # Wait for server to be ready
-    local retries=0
-    local server_ready=false
-    while [ $retries -lt 15 ]; do
-        if curl -s "http://${PURPLE_LAB_DEFAULT_HOST}:${port}/lab/api/session/status" > /dev/null 2>&1; then
-            server_ready=true
-            break
-        fi
-        sleep 0.5
-        retries=$((retries + 1))
-    done
-
-    if ! kill -0 "$pid" 2>/dev/null; then
-        echo -e "${RED}Error: Purple Lab failed to start${NC}"
-        echo "Check logs at: $log_file"
-        rm -f "$PURPLE_LAB_PID_FILE"
-        exit 1
-    fi
-
-    local url="http://${PURPLE_LAB_DEFAULT_HOST}:${port}/lab/"
-
-    if [ "$server_ready" = true ]; then
-        echo -e "${GREEN}Purple Lab (project web UI) running at: $url${NC} (PID: $pid)"
-    else
-        echo -e "${YELLOW}Purple Lab (project web UI) starting at: $url${NC} (PID: $pid)"
-        echo "Server may still be loading. Refresh the browser if it does not load immediately."
-    fi
-    echo -e "Logs: $log_file"
-    # v7.28.x UX #5: distinguish the two browser UIs so the ops monitor and the
-    # spec-input web UI are never confused for each other.
-    echo -e "${DIM}Looking for the live run monitor? loki dashboard (:${DASHBOARD_DEFAULT_PORT:-57374})${NC}"
-    echo -e "Stop with: ${CYAN}loki web stop${NC}"
-
-    # Open browser only after server is confirmed ready
-    if [ "$open_browser" = true ]; then
-        if [ "$server_ready" = true ]; then
-            echo ""
-            loki_open_url "$url" 2>/dev/null || echo "Please open in browser: $url"
-        else
-            echo ""
-            echo -e "${YELLOW}Browser not opened because server is not ready yet.${NC}"
-            echo "Open manually when ready: $url"
-        fi
-    fi
 }
 
 cmd_web_stop() {
@@ -12451,6 +12252,7 @@ cmd_export() {
             echo "  markdown   Human-readable session summary"
             echo "  csv        Task queue as CSV"
             echo "  timeline   Iteration timeline as JSON"
+            echo "  vibe-kanban  Sync .loki/queue tasks into the Vibe Kanban SQLite DB"
             echo ""
             echo "Flags:"
             echo "  --sarif [run-id]   Write .loki/runs/<id>/findings.sarif (SARIF 2.1.0; needs bun)"
@@ -12461,6 +12263,7 @@ cmd_export() {
             echo "  loki export markdown                     # Readable summary"
             echo "  loki export csv tasks.csv                # Task queue CSV"
             echo "  loki export timeline                     # Iteration timeline"
+            echo "  loki export vibe-kanban                  # Sync tasks to Vibe Kanban"
             exit 0
             ;;
         json)
@@ -12477,13 +12280,21 @@ cmd_export() {
             require_jq || return 1
             _export_timeline "$output_path"
             ;;
+        vibe-kanban)
+            local vk_script="${SKILL_DIR:-}/scripts/sync-to-vibe-kanban.sh"
+            if [ ! -f "$vk_script" ]; then
+                echo -e "${RED}Error: sync-to-vibe-kanban.sh not found at $vk_script${NC}" >&2
+                return 1
+            fi
+            bash "$vk_script"
+            ;;
         --sarif)
             echo -e "${RED}loki export --sarif needs bun (https://bun.sh).${NC}" >&2
             return 1
             ;;
         *)
             echo -e "${RED}Unknown format: $format${NC}"
-            echo "Supported: json, markdown, csv, timeline"
+            echo "Supported: json, markdown, csv, timeline, vibe-kanban"
             exit 1
             ;;
     esac

@@ -2,7 +2,9 @@
 # tests/test-worktree-reap.sh -- AUTO-REAP (FC-99): scripts/v10-worktree-reap.sh removes finished slice
 # worktrees (never force), saves dirty/detached state to wt-save/<name> first, keeps fresh, locked and
 # unmerged-fresh ones, refuses new worktrees under the disk floor; the pulse fires WORKTREE_SPRAWL above 20.
+# --strict (operator mode, ex prune-worktrees.sh) keeps merged-only removal behind lsof/30-minute/eval-archive/cherry checks.
 # REAP_SCRIPT overrides the script under test (red proof).
+# shellcheck disable=SC2034  # vars are read inside eval'd check strings
 set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -158,6 +160,94 @@ check "floor: 100G free passes with rc 0 (rc=$frc)" '[ "$frc" = 0 ]'
 REAP_FREE_GB_OVERRIDE=30 LOKI_WORKTREE_DISK_FLOOR_GB=20 REAP_REPO="$P" REAP_BASE=origin/main bash "$REAP" --check-floor >/dev/null 2>&1
 frc=$?
 check "floor: env override lowers the floor (rc=$frc)" '[ "$frc" = 0 ]'
+
+# --strict operator mode (S-154, E-96, E-101; GUARDS 5; ported from the retired prune-worktrees test).
+# Dry run by default, merged-only, cherry-picked counts as merged, live process / young commit /
+# un-archived eval results / dirty / locked / unmerged are kept, a broken lsof refuses everything.
+printf 'eval/loki10/results/\neval/loki10/archive/\n' >>"$(git -C "$P" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+S_NOW="$(date +%s)"
+S_REAP_NOW=$((S_NOW + 3600))   # one hour later: every fixture commit clears the 30-minute gate
+export LOKI_EVAL_ARCHIVE="$T/ext-archive"
+mkwt_strict() { # name [future]: new branch, one commit; "future" stamps it 3500s ahead (age 100s at S_REAP_NOW)
+    mkwt_branch "$1"
+    if [ "${2:-}" = future ]; then
+        GIT_COMMITTER_DATE="@$((S_NOW + 3500))" git -C "$WT/$1" commit -q --amend --no-edit
+    fi
+}
+git -C "$P" worktree add -q -b slice-s-ancestor "$WT/s-ancestor" origin/main 2>/dev/null
+for n in s-picked s-locked s-dirty s-unarchived s-archived s-live; do mkwt_strict "$n"; done
+mkwt_strict s-unique
+mkwt_strict s-recent future
+# main moves on first, so a cherry-pick is a new commit (not the identical SHA).
+git -C "$P" commit -q --allow-empty -m "main moves on"
+for n in s-picked s-locked s-dirty s-unarchived s-archived s-live s-recent; do
+    git -C "$P" cherry-pick "refs/heads/slice-$n" >/dev/null 2>&1
+done
+git -C "$P" push -q origin main 2>/dev/null
+git -C "$P" fetch -q origin
+git -C "$P" worktree lock "$WT/s-locked"
+echo wip >"$WT/s-dirty/wip.txt"
+mkdir -p "$WT/s-unarchived/eval/loki10/results/t1"
+printf '%s\n' '{"run_id": "run-unarchived-1", "task": "t1"}' >"$WT/s-unarchived/eval/loki10/results/t1/results.jsonl"
+mkdir -p "$WT/s-archived/eval/loki10/results/t1" "$WT/s-archived/eval/loki10/archive"
+printf '%s\n' '{"run_id": "run-archived-1", "task": "t1"}' >"$WT/s-archived/eval/loki10/results/t1/results.jsonl"
+printf '%s\n' '{"run_id": "run-archived-1", "arm": "v10", "task": "t1"}' >"$WT/s-archived/eval/loki10/archive/run1.results.jsonl"
+bash -c 'cd "$1" && exec sleep 300' _ "$WT/s-live" &
+S_LIVE_PID=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+    lsof -d cwd -Fn 2>/dev/null | grep -qF "$WT/s-live" && break
+    sleep 0.3
+done
+check "strict fixture: s-picked is not an ancestor of origin/main" '! git -C "$P" merge-base --is-ancestor refs/heads/slice-s-picked origin/main'
+
+strict() { REAP_NOW="$S_REAP_NOW" REAP_REPO="$P" REAP_BASE=origin/main bash "$REAP" --strict "$@" 2>&1; }
+SOUT="$(strict)"
+src=$?
+printf '%s\n' "$SOUT" | grep -F "$WT/s-" | sed 's/^/    | /'
+check "strict dry run exits 0 (rc=$src)" '[ "$src" = 0 ]'
+sline() { grep -F "$WT/$1" <<<"$SOUT"; }
+check "strict: cherry-picked branch WOULD-REMOVE" 'sline s-picked | grep -q "^WOULD-REMOVE strict-merged"'
+check "strict: ancestor branch WOULD-REMOVE" 'sline s-ancestor | grep -q "^WOULD-REMOVE strict-merged"'
+check "strict: unique commit kept" 'sline s-unique | grep -q "^KEPT unmerged"'
+check "strict: locked listed" 'sline s-locked | grep -q "^LISTED locked"'
+check "strict: dirty listed" 'sline s-dirty | grep -q "^LISTED dirty"'
+check "strict: commit under 30 minutes kept" 'sline s-recent | grep -q "^KEPT commit-under-30min"'
+check "strict: live process kept" 'sline s-live | grep -q "^KEPT live-process"'
+check "strict: un-archived eval results kept" 'sline s-unarchived | grep -q "^KEPT unarchived-eval-results"'
+check "strict: archived eval results WOULD-REMOVE" 'sline s-archived | grep -q "^WOULD-REMOVE strict-merged"'
+check "strict without --apply removed nothing" '[ -d "$WT/s-picked" ] && [ -d "$WT/s-ancestor" ] && [ -d "$WT/s-archived" ]'
+
+# A broken lsof must refuse every worktree, even one the real lsof let through.
+STUBBIN="$T/stubbin"
+mkdir -p "$STUBBIN"
+printf '#!/bin/sh\nexit 1\n' >"$STUBBIN/lsof"
+chmod +x "$STUBBIN/lsof"
+SOUT="$(PATH="$STUBBIN:$PATH" strict --apply)"
+check "strict: broken lsof refuses s-picked" 'sline s-picked | grep -q "^LISTED strict-refused lsof-unavailable"'
+check "strict --apply with broken lsof removed nothing" '[ -d "$WT/s-picked" ] && [ -d "$WT/s-ancestor" ] && [ -d "$WT/s-archived" ]'
+
+SOUT="$(strict --apply)"
+src=$?
+check "strict --apply exits 0 (rc=$src)" '[ "$src" = 0 ]'
+SLIST="$(git -C "$P" worktree list --porcelain)"
+for n in s-picked s-ancestor s-archived; do
+    check "strict --apply removed $n (dir and worktree entry gone)" '[ ! -e "$WT/$n" ] && ! grep -qF "$WT/$n" <<<"$SLIST"'
+done
+for n in s-unique s-locked s-dirty s-recent s-live s-unarchived; do
+    check "strict --apply kept $n" '[ -d "$WT/$n" ] && grep -qF "$WT/$n" <<<"$SLIST"'
+done
+check "strict: dirty worktree's uncommitted file survives" '[ -f "$WT/s-dirty/wip.txt" ]'
+check "strict --dry-run wins over --apply" '[ -d "$WT/s-live" ] && grep -q "^WOULD-REMOVE\|^KEPT\|^LISTED" <<<"$(strict --apply --dry-run)"'
+kill "$S_LIVE_PID" 2>/dev/null
+wait "$S_LIVE_PID" 2>/dev/null
+unset LOKI_EVAL_ARCHIVE
+
+# GUARDS 5: strict gate reads commit time from git, never a file-age signal.
+STRICT_BODY="$(awk '/^strict_gate\(\)/{f=1} f{print} f&&/^}/{exit}' "$REAP")"
+check "strict gate isolated" '[ -n "$STRICT_BODY" ]'
+check "strict gate uses git log %ct" 'grep -q "log -1 --format=%ct" <<<"$STRICT_BODY"'
+check "strict gate uses no file-age signal (GUARDS 5)" '! grep -qE "(^|[^A-Za-z0-9_-])(stat|mtime|-mmin|-newer)([^A-Za-z0-9_]|$)" <<<"$STRICT_BODY"'
+check "strict conflicts with --check-floor" '! bash "$REAP" --strict --check-floor >/dev/null 2>&1'
 
 # Pulse WORKTREE_SPRAWL
 pulse_list() {
