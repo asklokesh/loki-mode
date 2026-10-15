@@ -38,8 +38,9 @@
 // presealed_wall.json (target, failed_count, anything) after the fact is caught even though the
 // rewritten file is otherwise well-formed JSON.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { pytestCollectionIsRed } from "../stages/wall.ts";
 import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
 import type { SealedOracle } from "./oracle/seal.ts";
@@ -59,30 +60,6 @@ export type ConformanceRunnerName = "pytest" | "jest" | "vitest" | "bun" | "java
 const RUNNER_FAILURE_EXIT: Record<ConformanceRunnerName, number> = {
   pytest: 1, jest: 1, vitest: 1, bun: 1, javac: 1, jdeprscan: 1,
 };
-
-/** Collection-error red rule for pytest exit 2, MIRRORED VERBATIM from the Wall's own classifier
- *  (stages/wall.ts pytestCollectionIsRed as of slice-E-125@6fc6e950 (r4); main's copy lacks E-125's
- *  short-summary-only rule and core is frozen for this slice). Swap this for a
- *  core `classify` import when E-125 merges; never diverge from it: modernize and the Wall must
- *  agree on what is red. ModuleNotFoundError is never red (an environment problem, including a
- *  src/ layout that is not on sys.path); "cannot import name" resolves from the path pytest
- *  prints in parentheses (a site-packages shadow resolves outside the repo). */
-function pytestCollectionIsRed(output: string, repoDir: string): boolean {
-  if (/ModuleNotFoundError/.test(output)) return false;
-  const real = (p: string): string | null => { try { return realpathSync(isAbsolute(p) ? p : join(repoDir, p)); } catch { return null; } };
-  const repoReal = real(repoDir);
-  const under = (p: string): boolean => { const r = real(p); return !!repoReal && !!r && (r === repoReal || r.startsWith(`${repoReal}/`)); };
-  const imp = /ImportError: cannot import name .* from ['"][\w.]+['"] \(([^)]+)\)/.exec(output); if (imp) return under(imp[1]!);
-  // E-125 r4: trust only the LAST ERROR line after the final short-summary header, and E lines only from the first collecting block, cut at its first Captured separator. No header: fail closed.
-  const hdr = [...output.matchAll(/^=+ short test summary info =+$/gm)].pop(); if (!hdr) return false;
-  const cls = [...output.slice(hdr.index).matchAll(/^ERROR \S+ - (\w+Error): /gm)].pop()?.[1]; if (cls !== "AttributeError" && cls !== "NameError") return false;
-  const start = output.search(/^_+ ERROR collecting /m); if (start < 0 || start > hdr.index) return false; const block = output.slice(start, hdr.index).split(/^-+ Captured .*$/m)[0]!;
-  const eLines = [...block.matchAll(new RegExp(`^E {3}${cls}: (.*)$`, "gm"))]; const eLine = eLines[eLines.length - 1]; if (!eLine) return false;
-  if (cls === "AttributeError") { const m = /^module ['"]([\w.]+)['"] has no attribute/.exec(eLine[1]!); return !!m && moduleUnderRepo(repoDir, m[1]!); }
-  const frames = [...block.slice(0, eLine.index).matchAll(/^(.+?):\d+: in \S+\n\s*(.*)$/gm)]; const last = frames[frames.length - 1];
-  return !!last && under(last[1]!) && !/^\s*(import\s|from\s\S+\s+import\b)/.test(last[2] ?? "");
-}
-function moduleUnderRepo(repoDir: string, name: string): boolean { const rel = name.replace(/\./g, "/"); return existsSync(join(repoDir, `${rel}.py`)) || existsSync(join(repoDir, rel, "__init__.py")); }
 
 /** One conformance run's raw result, as an injected runner reports it -- never wall-clock or
  *  process plumbing this module parses itself. */

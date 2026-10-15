@@ -20,7 +20,7 @@
 //     presealed_wall.ts BaseRunOutcome, failing closed (no summary line, no parsed integer) on
 //     garbled or truncated output rather than guessing.
 // (4) A pytest collection error (exit 2) is classified by presealed_wall.ts's classifyBaseRun from
-//     the raw output, using the Wall's own rule (mirrored from stages/wall.ts, see there): no
+//     the raw output, using the Wall's own rule (pytestCollectionIsRed, imported from stages/wall.ts): no
 //     second classifier lives in this file.
 // (5) MODERNIZE.md:153/262 no-op ablation: an injected stub runner replaces the new unit with stubs;
 //     the oracle cases must then FAIL equivalence, else NOT_PROVEN "oracle does not constrain unit".
