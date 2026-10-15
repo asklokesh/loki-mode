@@ -146,6 +146,7 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("status", "Show control plane reachability"),
     ],
   }),
+  cmd("intent", "KEEP-MODERN", "bun", "Show a past run's intent card", "Read-only intent view", { subcommands: [sub("show", "Print the intent card and answer", { positionals: [runId] })] }),
   cmd("kpis", "KEEP-MODERN", "bun", "KPI snapshot (alias of report kpis)", "Bun-native KPI report", { flags: [json] }),
   cmd("report", "UPDATE", "both", "Reporting: kpis, session, metrics, cost, export, share, dogfood", "Mixed route; only kpis is Bun", {
     subcommands: [

@@ -1,11 +1,12 @@
 // CLI-MODERN-2: `loki status` on the Loki 10 engine. Reads only .loki/runs/<id>/events.jsonl (the
 // engine's own record), never STATUS.txt or any legacy state.
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/discover.ts";
 import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
+import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
 const STALE_S = 30 * 60;
@@ -142,5 +143,26 @@ export async function runModernStatus(argv: readonly string[], env: NodeJS.Proce
   }
   const s: ModernStatus = { ...summarize(hit.id, hit.events, root, now), control_plane_url: cp };
   process.stdout.write(json ? `${JSON.stringify(s)}\n` : `${render(s)}\n`);
+  return 0;
+}
+
+/** `loki intent show <run>`: read-only view of a past run's intent card and the user's answer. */
+export async function runIntentShow(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  const [sub, id] = argv;
+  if (sub !== "show" || !id) { process.stderr.write("Usage: loki intent show <run-id>\n"); return 1; }
+  const root = runsRoot(env, env.LOKI_E10_REPO_DIR ?? process.cwd());
+  const events = readEvents(eventsPath(root, id));
+  if (events.length === 0) { process.stderr.write(`loki intent: no such run ${id}\n`); return 1; }
+  const plan = [...events].reverse().find((e) => e.type === "stage.completed" && e.stage === "plan");
+  const raw = plan?.data.intent_card;
+  const card = Array.isArray(raw) ? raw.map(String) : null;
+  const lines = [renderIntent(card)];
+  if (card) {
+    try {
+      const ans = readFileSync(join(root, id, INTENT_ANSWER_FILE), "utf8").trim();
+      if (ans) lines.push(`answered: ${ans}`);
+    } catch { /* no answer recorded */ }
+  }
+  process.stdout.write(`${lines.join("\n")}\n`);
   return 0;
 }

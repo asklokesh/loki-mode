@@ -6,12 +6,12 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 
 ## Counts
 
-- KEEP-MODERN: 69
+- KEEP-MODERN: 70
 - UPDATE: 22
 - DROP-LEGACY: 32
 - DELETE: 14
-- Total rows: 137
-- Registry paths (commands and nested subcommands): 191
+- Total rows: 138
+- Registry paths (commands and nested subcommands): 193
 
 ## Commands
 
@@ -28,6 +28,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | receipt | bun route, bash fallthrough | DELETE | Alias of proof; shown only under 'loki help aliases' |
 | wiki | bun route, bash fallthrough | KEEP-MODERN | Bun-native knowledge feature |
 | control | bun route, bash fallthrough | KEEP-MODERN | D56 control plane, on by default |
+| intent | loki-ts/src/cli.ts | KEEP-MODERN | Read-only intent view |
 | kpis | loki-ts/src/cli.ts | KEEP-MODERN | Bun-native KPI report |
 | report | bun route, bash fallthrough | UPDATE | Mixed route; only kpis is Bun |
 | trust | bun route, bash fallthrough | KEEP-MODERN | Trust moat surface |

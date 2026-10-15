@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog } from "../../src/engine10/events.ts";
-import { NO_RUN_HINT, runModernStatus } from "../../src/commands/run_status.ts";
+import { NO_RUN_HINT, runIntentShow, runModernStatus } from "../../src/commands/run_status.ts";
 
 let dir: string;
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "e10-modern-status-")); });
@@ -119,5 +119,45 @@ describe("loki status (Loki 10)", () => {
       const out = await runWith({ LOKI_E10_REPO_DIR: dir, HOME: dir, LOKI_CONTROL_PORT: "1" }, []);
       expect(out).not.toContain("Control Plane:");
     });
+  });
+});
+
+describe("loki intent show <run>", () => {
+  const show = async (args: string[]): Promise<{ code: number; out: string; err: string }> => {
+    const oo = process.stdout.write.bind(process.stdout);
+    const oe = process.stderr.write.bind(process.stderr);
+    let out = ""; let err = "";
+    process.stdout.write = ((c: string | Uint8Array) => { out += String(c); return true; }) as typeof process.stdout.write;
+    process.stderr.write = ((c: string | Uint8Array) => { err += String(c); return true; }) as typeof process.stderr.write;
+    try { return { code: await runIntentShow(args, env()), out, err }; } finally { process.stdout.write = oo; process.stderr.write = oe; }
+  };
+  const mk = (id: string, planData: Record<string, unknown>): string => {
+    const runDir = join(dir, ".loki", "runs", id);
+    const log = new EventLog(join(runDir, "events.jsonl"), id);
+    log.append("run.started", null, {});
+    log.append("stage.completed", "plan", planData);
+    return runDir;
+  };
+
+  test("prints card and the answer", async () => {
+    const rd = mk("r1", { intent_enabled: true, intent_card: ["What I think you want: a thing", "Acceptance: it works", "Acceptance: tests pass"] });
+    writeFileSync(join(rd, "intent-answer.txt"), "y\n");
+    const r = await show(["show", "r1"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("What I think you want:");
+    expect(r.out).toContain("Acceptance: it works");
+    expect(r.out).toContain("answered: y");
+  });
+  test("no card prints NOT STATED", async () => {
+    mk("r2", { plan: "x" });
+    const r = await show(["show", "r2"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Intent: NOT STATED by plan");
+    expect(r.out).not.toContain("answered:");
+  });
+  test("unknown run exits 1", async () => {
+    const r = await show(["show", "nope"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("no such run");
   });
 });

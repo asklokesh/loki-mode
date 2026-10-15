@@ -23,6 +23,7 @@ Bun-native commands:
   version                Print Loki Mode version
   status [--json]        Show current orchestrator status
   stats [--json] [--efficiency]   Session statistics
+  intent show <run>      Print a past run's intent card and answer
   provider show [name]   Show current provider
   provider list          List available providers and install status
   memory list            Cross-project learnings counts
@@ -93,6 +94,11 @@ async function dispatch(argv: readonly string[]): Promise<number> {
       // CLI-MODERN-2: `loki status` shows Loki 10 runs only; the legacy box is gone from this path.
       const { runModernStatus } = await import("./commands/run_status.ts");
       return runModernStatus(rest);
+    }
+
+    case "intent": {
+      const { runIntentShow } = await import("./commands/run_status.ts");
+      return runIntentShow(rest);
     }
 
     case "stats": {
