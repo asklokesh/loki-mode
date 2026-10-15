@@ -810,6 +810,21 @@ describe("loki.deploy/1 signed deploy records", () => {
     expect(r.out).toContain("verdict: VERIFIED");
     expect(readFileSync(proof, "utf8")).toBe(before);
   });
+  test("--max-age on a deploy record is UNCHECKED, exit 2, never VERIFIED", async () => {
+    const { rec } = await fixture();
+    await run(["--sign-deploy", rec]);
+    for (const a of [[rec, "--max-age", "1s"], [rec, "--max-age=1s"]]) {
+      const r = await run(a);
+      expect(r.code).toBe(2);
+      expect(r.out).toContain("verdict: UNCHECKED");
+      expect(r.out).not.toContain("VERIFIED\n");
+    }
+  });
+  test("extra arguments after a deploy record exit 2", async () => {
+    const { rec } = await fixture();
+    await run(["--sign-deploy", rec]);
+    expect((await run([rec, rec])).code).toBe(2);
+  });
   test("a flipped field is TAMPERED, exit 1", async () => {
     const { rec } = await fixture();
     await run(["--sign-deploy", rec]);

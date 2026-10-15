@@ -147,7 +147,7 @@ export async function main(args: readonly string[], deps: VerifyDeps = {}): Prom
   }
   const sc = args.indexOf("--seal-composite");
   if (sc >= 0) return args.length === 2 && sc === 0 ? sealCompositeCmd(args[1]!) : (process.stderr.write("loki verify: --seal-composite takes exactly one run directory\n"), 2);
-  const dep = await deployAttestCmd(args, { takePubkey, make: (pkey) => { const d = pkey ? { ...deps, pubkey: pkey } : deps; return { pubFor: (k) => pubFor(k, d.pubkey), verifyReceipt: (p) => verifyReceipt(p, d), attest: (j, h) => checkAttestation(j, h, d.pubkey) }; } }); if (dep !== null) return dep; // loki.deploy/1
+  const dep = await deployAttestCmd(args, { takePubkey, maxAge: ma.raw, make: (pkey) => { const d = pkey ? { ...deps, pubkey: pkey } : deps; return { pubFor: (k) => pubFor(k, d.pubkey), verifyReceipt: (p) => verifyReceipt(p, d), attest: (j, h) => checkAttestation(j, h, d.pubkey) }; } }); if (dep !== null) return dep; // loki.deploy/1
   const pk = takePubkey(args); if (pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
   args = pk.args;
   if (pk.pubkey) deps = { ...deps, pubkey: pk.pubkey };

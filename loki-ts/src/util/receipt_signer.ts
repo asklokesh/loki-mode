@@ -165,7 +165,7 @@ export async function verifyDeployRecord(recPath: string, rec: Obj, deps: Deploy
   try { return await checkCited(path, hash, deps); } catch { return { verdict: "UNCHECKED", reasons: ["cited receipt is unreadable"] }; }
 }
 /** loki verify dispatch: `--sign-deploy FILE` signs a record in place; a loki.deploy/1 file is verified. Null means the args are not a deploy record. */
-export async function deployAttestCmd(args: readonly string[], env: { takePubkey(a: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string }; make(pk?: KeyObject): DeployDeps }): Promise<number | null> {
+export async function deployAttestCmd(args: readonly string[], env: { takePubkey(a: readonly string[]): { args: string[]; pubkey?: KeyObject; error?: string }; make(pk?: KeyObject): DeployDeps; maxAge?: string | null }): Promise<number | null> {
   const rc = args.indexOf("--receipt"), receiptFile = rc >= 0 ? (args[rc + 1] ?? null) : null;
   const pre = rc < 0 ? args : args.filter((_, i) => i !== rc && i !== rc + 1), si = pre.indexOf("--sign-deploy");
   const pk = env.takePubkey(si >= 0 ? pre.filter((_, i) => i !== si && i !== si + 1) : pre), deps = env.make(pk.pubkey);
@@ -175,6 +175,8 @@ export async function deployAttestCmd(args: readonly string[], env: { takePubkey
   try { if (statSync(file).size > 1_000_000) return null; rec = JSON.parse(readFileSync(file, "utf8")) as Obj; } catch { return si >= 0 ? (process.stderr.write(`loki verify: cannot read deploy record ${file}\n`), 2) : null; }
   if (rec === null || typeof rec !== "object" || rec["schema"] !== DEPLOY_SCHEMA) return si >= 0 ? (process.stderr.write(`loki verify: ${file} is not a ${DEPLOY_SCHEMA} record\n`), 2) : null;
   if (si < 0 && pk.error) return (process.stderr.write(`loki verify: ${pk.error}\n`), 2);
+  if (si < 0 && env.maxAge) return (process.stdout.write(`deploy: ${file}\nverdict: UNCHECKED\n  --max-age is not supported on a ${DEPLOY_SCHEMA} record (no signed iat); freshness was not checked\n`), 2);
+  if (si < 0 && pk.args.length > 1) return (process.stderr.write(`loki verify: unexpected arguments after the deploy record: ${pk.args.slice(1).join(" ")}\n`), 2);
   if (si >= 0) {
     const signed = signDeployRecord(rec);
     if (!signed) return (process.stdout.write("deploy record: UNSIGNED (no signing key)\n"), 2);
