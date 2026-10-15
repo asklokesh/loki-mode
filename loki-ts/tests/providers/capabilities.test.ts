@@ -1,10 +1,9 @@
-// LM-004: the capability table covers every supported provider, the committed doc equals the generator output,
+// LM-004: the capability table covers every supported provider, docs/cost-controls.md carries its engine10 rows,
 // and the disclosure line is empty for claude and names the gap for the others.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CAPABILITIES, PROVIDERS, capability, disclosureLine, renderCapabilitiesMd, matrixText } from "../../src/providers/capabilities.ts";
-import { providerSandboxFlags } from "../../src/providers/provider_guard.ts";
+import { CAPABILITIES, COLUMNS, PROVIDERS, capability, disclosureLine, matrixText, providerSandboxFlags } from "../../src/providers/provider_guard.ts";
 import { runProviderInfoJson } from "../../src/commands/provider.ts";
 import { REPO_ROOT } from "../../src/util/paths.ts";
 
@@ -27,8 +26,10 @@ describe("capability table", () => {
     for (const r of CAPABILITIES) expect(r.source.length).toBeGreaterThan(10);
   });
 
-  test("committed docs/contracts/capabilities.md equals the generator output", () => {
-    expect(readFileSync(join(REPO_ROOT, "docs", "contracts", "capabilities.md"), "utf8")).toBe(renderCapabilitiesMd());
+  test("docs/cost-controls.md carries every engine10 row", () => {
+    const doc = readFileSync(join(REPO_ROOT, "docs", "cost-controls.md"), "utf8");
+    const cell = (v: string | string[]): string => (Array.isArray(v) ? (v.length ? v.join(" ") : "none") : v);
+    for (const r of CAPABILITIES.filter((c) => c.engine === "engine10")) expect(doc).toContain(`| ${COLUMNS.map((c) => cell(r[c])).join(" | ")} |`);
   });
 
   test("matrix lists every row", () => {

@@ -1,7 +1,7 @@
 // Port of autonomy/loki:cmd_provider (line 2572) + cmd_provider_show (2615)
 // + cmd_provider_list (2708). Read-only operations only -- `set` stays in
 // bash for Phase 2 (it mutates .loki/state/provider).
-import { capabilitiesFor, matrixText } from "../providers/capabilities.ts";
+import { capabilitiesFor, matrixText } from "../providers/provider_guard.ts";
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { commandExists } from "../util/shell.ts";
