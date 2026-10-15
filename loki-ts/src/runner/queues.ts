@@ -26,12 +26,11 @@ import {
   readFileSync,
   readdirSync,
   writeFileSync,
-  renameSync,
   statSync,
 } from "node:fs";
 import { resolve } from "node:path";
 import type { RunnerContext } from "./types.ts";
-import { withFileLock } from "../util/atomic.ts";
+import { atomicWriteText, withFileLock } from "../util/atomic.ts";
 
 // --- MiroFish queue (real) ------------------------------------------------
 //
@@ -106,7 +105,7 @@ export async function populateMirofishQueue(ctx: RunnerContext): Promise<void> {
     }
 
     const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-    atomicWriteJson(pendingPath, out);
+    atomicWriteText(pendingPath, JSON.stringify(out, null, 2));
     writeFileSync(sentinel, "");
   });
 }
@@ -147,14 +146,6 @@ function readExisting(path: string): { tasks: PrdTask[]; wrapper: Record<string,
     // corrupt JSON -- treat as empty, mirroring bash bare-except behaviour
   }
   return { tasks: [], wrapper: null };
-}
-
-// Atomic write via tmp + rename (matches src/runner/state.ts pattern and the
-// bash `<path>.tmp.$$` + `mv -f` idiom in run.sh:8740).
-function atomicWriteJson(target: string, body: unknown): void {
-  const tmp = `${target}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(body, null, 2));
-  renameSync(tmp, target);
 }
 
 function extractTaskScope(md: string): string {
@@ -276,7 +267,7 @@ export async function populatePrdQueue(ctx: RunnerContext): Promise<void> {
     }
 
     const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-    atomicWriteJson(pendingPath, out);
+    atomicWriteText(pendingPath, JSON.stringify(out, null, 2));
     writeFileSync(sentinel, "");
   });
 }
@@ -425,7 +416,7 @@ export async function populateBmadQueue(ctx: RunnerContext): Promise<void> {
     }
 
     const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-    atomicWriteJson(pendingPath, out);
+    atomicWriteText(pendingPath, JSON.stringify(out, null, 2));
     writeFileSync(sentinel, "");
   });
 }
@@ -492,7 +483,7 @@ export async function populateOpenspecQueue(ctx: RunnerContext): Promise<void> {
     }
 
     const out: unknown = wrapper ? { ...wrapper, tasks: existing } : existing;
-    atomicWriteJson(pendingPath, out);
+    atomicWriteText(pendingPath, JSON.stringify(out, null, 2));
     writeFileSync(sentinel, "");
   });
 }
