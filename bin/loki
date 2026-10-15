@@ -482,6 +482,28 @@ if [ "${1:-}" = "start" ]; then
     unset _loki_sp_a
 fi
 
+# OC-ROUTE: normalize flags before the engine decision so argument order and input form
+# never change the engine (autonomy/route.sh; `loki route ...` and --explain-route print it).
+_R_APPLIED=0
+if [ -f "$REPO_ROOT/autonomy/route.sh" ] && { [ "$_LOKI_START_ATTEMPTS" != "1" ] || case " $* " in *" --explain-route "*) true ;; *) false ;; esac; }; then
+    # shellcheck source=/dev/null
+    . "$REPO_ROOT/autonomy/route.sh"
+    _r_rc=0
+    loki_route_dispatch "$@" || _r_rc=$?
+    case "$_r_rc" in 7) exit 0 ;; 8) exit 2 ;; esac
+    if [ "$R_DECIDED" = "1" ]; then
+        _R_APPLIED=1
+        if [ -n "$R_SESSION_MODEL" ]; then
+            case "$R_SESSION_MODEL" in small) R_SESSION_MODEL=fast ;; medium) R_SESSION_MODEL=development ;; high) R_SESSION_MODEL=planning ;; esac
+            export LOKI_SESSION_MODEL="$R_SESSION_MODEL"
+        fi
+        if [ "$R_E10" != "1" ]; then
+            set -- "$([ "$R_VERB" = "bare" ] && echo start || echo "$R_VERB")" ${R_CLEAN[@]+"${R_CLEAN[@]}"}
+        fi
+    fi
+    unset _r_rc
+fi
+
 # Loki 10 engine (D29, the only engine from 11.0.0). Routes `loki "<task>"`,
 # `loki owner/repo#N`, `loki quick "<task>"`, `keys` and `verify --pubkey` to engine10.
 # shellcheck disable=SC2194
@@ -566,6 +588,10 @@ case "v10" in
             # issue refs reach v10.
             *) _e10=0 ;;
         esac
+        if [ "$_R_APPLIED" = "1" ]; then
+            _e10="$R_E10"; _e10_hard="$R_HARD"
+            if [ "$R_E10" = "1" ]; then _e10_args=("${R_E10_ARGS[@]}"); fi
+        fi
         # Default (unset) mode never breaks a host: no bun, or a provider engine10 has no
         # invoker for, falls through to the legacy engine. Explicit v10 keeps its hard error.
         if [ "$_e10" = "1" ] && [ "$_e10_hard" = "0" ]; then

@@ -1,6 +1,6 @@
 # Loki 10 engine guide
 
-Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. `loki legacy` and LOKI_ENGINE were removed in 11.0.0. <!-- loki10-default -->
+Default: Loki 10 engine for `loki "<task>"`, `loki owner/repo#N` and `loki quick "<task>"`. `loki legacy` was removed in 11.0.0; the previous loop runs only on an explicit `--engine legacy` or `LOKI_ENGINE=legacy` (see Routing). <!-- loki10-default -->
 
 Loki 10 is the rewritten engine (docs/v10/ENGINE.md). Since the D48 flip it
 runs `loki "<task>"`, `loki owner/repo#N` (issue mode) and `loki quick
@@ -12,24 +12,66 @@ newest entry in .loki/runs/ is a v10 run newer than the newest legacy proof
 it runs the v10 verify, otherwise the legacy verify. If bun is missing or
 LOKI_PROVIDER is unsupported, the default mode falls back to the bash path
 and prints one stderr line saying why. In 11.0.0 (LEGACY-ZERO W1-01) `loki
-legacy` was removed (it exits 2 with a removal message) and LOKI_ENGINE is no
-longer read; any value is ignored.
+legacy` was removed (it exits 2 with a removal message). From 11.4.0
+`--engine legacy|engine10` and LOKI_ENGINE select the engine explicitly (see
+Routing below).
 
-`loki start owner/repo#N`, `loki start <issue URL>` and `loki start "<multi-word
-task>"` run Loki 10, the same as `loki owner/repo#N` and `loki "<task>"`. A PRD
-file, a flag-first call (`loki start --simple prd.md`) and a one-word start still
-run on the previous bash loop (autonomy/run.sh), and so does the opencode
-provider, until FC38-SWEEP ports them. `loki legacy` and LOKI_ENGINE remain
-removed. The previous loop is being removed (see docs/v10/LEGACY-REMOVAL.md).
+## Routing
+
+Argument order and input form never change the engine. Flags are normalized
+before the routing decision, so these all run on Loki 10:
+
+```
+loki start prd.md              loki start --no-pr prd.md
+loki start owner/repo#123      loki start --provider codex owner/repo#123
+loki start "fix the login bug" loki start --no-pr "fix the login bug"
+loki start fixit               loki quick -v "fix the login bug"
+```
+
+A PRD file, an issue ref or URL, a multi-word task and a one-word brief take
+the same path. `-v` means `--verbose`, `--budget` and `--budget-limit` mean
+`--max-cost`, and `--yes`, `-y`, `--no-plan`, `--no-mirofish` and
+`--no-dashboard` are accepted and ignored. A PRD file path that does not exist
+exits 2 with "PRD file not found".
+
+The previous loop (autonomy/run.sh) runs only when:
+
+1. you pass `--engine legacy` or set `LOKI_ENGINE=legacy` (`--engine engine10`
+   forces Loki 10 and refuses a flag it cannot honor; the flag wins over the
+   variable), or
+2. the call carries a flag Loki 10 does not support (for example `--simple`,
+   `--complex`, `--parallel`, `--github`, `--sandbox`, `--max-iterations`).
+   Only that call goes to the previous loop, and one stderr line names the flag
+   and the engine chosen, or
+3. LOKI_PROVIDER (or `--provider`) names a provider Loki 10 has no invoker
+   for (anything but claude, codex, cline, aider), or bun is missing, or the
+   PRD is larger than 100000 bytes. One stderr line says why.
+
+`loki <word>` with a single bare word stays the command namespace (`loki doctor`),
+so use `loki start <word>` for a one-word brief. A first argument starting with
+`-` followed by a multi-word task or an issue ref (`loki --no-pr "fix it now"`)
+runs on Loki 10 like the positional form.
+
+### See the route without running
+
+```
+loki route start prd.md
+loki route quick "fix the login redirect loop" --json
+loki start --simple prd.md --explain-route
+```
+
+`loki route [start|quick] <same args>` and `--explain-route` on start or quick
+print the engine, provider, model, input type and the reason, then exit 0
+without running anything. `--json` prints one JSON object with the keys
+`engine`, `provider`, `model`, `input_type`, `input`, `reason`.
 
 Some pieces named in this guide are still being built. Each one below says
 so plainly instead of describing a finished feature.
 
 ## Quickstart
 
-Put the task first, as a quoted multi-word string, so bin/loki's router
-sends it to the v10 engine. A one-word argument that is not an issue ref,
-or any first argument starting with `-`, stays on the legacy engine.
+Put the task in quotes. Flags may come before or after it; the engine is the
+same (see Routing).
 
 ```
 loki "fix the login redirect loop" --no-pr
@@ -42,8 +84,8 @@ skipped and implement runs on your run's own model, like a raw session.
 `LOKI_E10_CASCADE=1` opts in to the cheaper sonnet start (it prints and
 records the downgrade); a repeated test failure always escalates up, never
 down (Engine Law L1).
-`loki quick --help` and a flag-first `loki quick -v "<task>"` stay on the
-legacy quick.
+`loki quick --help` prints the help; `loki quick -v "<task>"` runs on Loki 10 with
+`--verbose`.
 
 ```
 loki quick "fix the login redirect loop"
@@ -51,7 +93,7 @@ loki quick "fix the login redirect loop"
 
 If bun is not installed, or LOKI_PROVIDER names a provider the v10 engine
 has no invoker for (anything but claude, codex, cline, aider), these entry
-points fall back to the legacy engine instead of failing.
+points fall back to the legacy engine with a one-line notice instead of failing.
 
 Issue refs work the same way:
 
