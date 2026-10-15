@@ -11,11 +11,11 @@ lives OUTSIDE the agent workspace (benchmarks/attribution/tasks/<id>/acceptance)
 and is copied in only AFTER the run, so the implementer cannot modify it.
 Neither arm grades itself: acceptance = held-out command exit code 0.
 
-Metrics follow docs/contracts/benchmark.md (the review's benchmark protocol):
+Metrics follow the harness attribution protocol in docs/EVALUATING.md:
 failures and timeouts stay in every denominator, unmeasured cost is reported as
 unmeasured (never zero), cost per accepted task is undefined when none accepted.
 
-Reuses benchmarks/bench/adapters (_base.run_cli process-group reaping, the
+Reuses runner._apply_overlay, report._median and benchmarks/bench/adapters (_base.run_cli process-group reaping, the
 claude JSON parser, the loki adapter and its cost collection). No model call is
 made by --dry-run, by the default (no --execute) invocation, or by the tests.
 """
@@ -40,6 +40,8 @@ sys.path.insert(0, HERE)
 from adapters import _base  # noqa: E402
 from adapters import claude_code as _claude_adapter  # noqa: E402
 from adapters import loki as _loki_adapter  # noqa: E402
+import report as _report  # noqa: E402
+import runner as _runner  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 DEFAULT_TASKS_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "tasks")
@@ -272,11 +274,8 @@ def wilson_interval(k: int, n: int, z: float = 1.96) -> Optional[List[float]]:
 
 
 def _median(vals: List[float]) -> Optional[float]:
-    if not vals:
-        return None
-    s = sorted(vals)
-    m = len(s) // 2
-    return round(s[m] if len(s) % 2 else (s[m - 1] + s[m]) / 2, 3)
+    m = _report._median(vals)
+    return None if m is None else round(m, 3)
 
 
 def compute_metrics(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -372,7 +371,7 @@ def materialize_seed(task: Dict[str, Any], workdir: str) -> None:
 
 def grade(task: Dict[str, Any], workdir: str) -> Dict[str, Any]:
     """Copy the hidden acceptance files in AFTER the run, run them, exit 0 = pass."""
-    shutil.copytree(task["acceptance_dir"], workdir, dirs_exist_ok=True)
+    _runner._apply_overlay(workdir, task["acceptance_dir"])
     try:
         rc, out, err = _base._run_reapable(
             shlex.split(task["acceptance_cmd"]), workdir,
