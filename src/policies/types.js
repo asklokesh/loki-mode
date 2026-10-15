@@ -181,6 +181,53 @@ function validateApprovalGate(entry) {
 }
 
 // -------------------------------------------------------------------
+// Autonomy level (top-level `autonomy` plus optional `actions` overrides)
+// -------------------------------------------------------------------
+
+const AUTONOMY_LEVELS = ['propose', 'execute', 'operate'];
+const AUTONOMY_ACTION_KEYS = ['pr', 'push', 'deploy'];
+const AUTONOMY_ACTION_VALUES = ['allow', 'deny', 'require_approval'];
+
+/**
+ * What an autonomy level permits: propose = nothing, execute = open a PR,
+ * operate = PR plus deploy. merge is never granted by a level.
+ * An unknown level returns null (callers must fail closed).
+ */
+function allowedActions(level) {
+  if (level === 'propose') return { pr: false, merge: false, deploy: false };
+  if (level === 'execute') return { pr: true, merge: false, deploy: false };
+  if (level === 'operate') return { pr: true, merge: false, deploy: true };
+  return null;
+}
+
+/**
+ * Validate the autonomy block of a policy document.
+ * `autonomy` is propose|execute|operate; `actions` maps pr/push/deploy to
+ * allow|deny|require_approval. Returns a list of error strings.
+ */
+function validateAutonomy(doc) {
+  const errors = [];
+  if (!doc || typeof doc !== 'object') return errors;
+  if (doc.autonomy !== undefined && AUTONOMY_LEVELS.indexOf(doc.autonomy) === -1) {
+    errors.push('autonomy must be one of: ' + AUTONOMY_LEVELS.join(', '));
+  }
+  if (doc.actions !== undefined) {
+    if (!doc.actions || typeof doc.actions !== 'object' || Array.isArray(doc.actions)) {
+      errors.push('actions must be an object keyed by: ' + AUTONOMY_ACTION_KEYS.join(', '));
+    } else {
+      Object.keys(doc.actions).forEach(function (k) {
+        if (AUTONOMY_ACTION_KEYS.indexOf(k) === -1) {
+          errors.push('actions.' + k + ': unknown action key (expected ' + AUTONOMY_ACTION_KEYS.join(', ') + ')');
+        } else if (AUTONOMY_ACTION_VALUES.indexOf(doc.actions[k]) === -1) {
+          errors.push('actions.' + k + ' must be one of: ' + AUTONOMY_ACTION_VALUES.join(', '));
+        }
+      });
+    }
+  }
+  return errors;
+}
+
+// -------------------------------------------------------------------
 // Built-in rule evaluators for pre_execution policies
 // -------------------------------------------------------------------
 
@@ -295,6 +342,8 @@ module.exports = {
   validateResource,
   validateData,
   validateApprovalGate,
+  validateAutonomy,
+  allowedActions,
   evaluateRule,
   scanContent,
   SECRET_PATTERNS,
