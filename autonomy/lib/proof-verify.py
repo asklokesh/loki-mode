@@ -139,12 +139,18 @@ def _canonical(obj):
 # git helpers
 # ---------------------------------------------------------------------------
 
-def _git(repo_dir, args, timeout=30):
-    """Run git in repo_dir. Returns stdout string, or None on any failure."""
+def _git(repo_dir, args, timeout=30, env=None, config=()):
+    """Run git in repo_dir. Returns stdout string, or None on any failure.
+
+    env replaces the child environment; config entries become `-c key=value`.
+    """
+    cfg = []
+    for c in config:
+        cfg += ["-c", c]
     try:
         out = subprocess.run(
-            ["git", "-C", repo_dir] + args,
-            capture_output=True, text=True, timeout=timeout,
+            ["git", "-C", repo_dir] + cfg + list(args),
+            capture_output=True, text=True, timeout=timeout, env=env,
         )
         if out.returncode != 0:
             return None
@@ -1110,7 +1116,7 @@ _PASS_WORDS = {"pass", "passed", "verified", "ok", "proven", "success", "complet
 _FAIL_WORDS = {"fail", "failed", "blocked", "weakened", "error", "findings"}
 _SKIP_WORDS = {"skipped", "disabled", "not_applicable", "n/a"}
 
-# Same shape as proof-generator._TI_TEST_FILE so both agree on "a test file".
+# Single definition of "a test file"; proof-generator reads it via _PV.
 _TEST_FILE = re.compile(
     r"(^|/)(tests?|__tests__|spec|specs)/|\.(test|spec)\.[\w]+$"
     r"|(^|/)test_[^/]*\.py$|_test\.(py|go|rs)$|(^|/)conftest\.py$")
@@ -1156,19 +1162,21 @@ def _run(argv, cwd=None, timeout=10):
     return r.stdout
 
 
-def _vr_git(repo, *args):
-    return _run(["git", "-C", repo or ".", "-c", "core.quotePath=false", *args])
+def _vr_git_args(repo, args):
+    """Verification-record git call: scoped env, short timeout, raw paths."""
+    return _git(repo or ".", args, timeout=10, env=_scoped_env(),
+                config=("core.quotePath=false",))
 
 
 def git_head(repo):
-    out = _vr_git(repo, "rev-parse", "HEAD")
+    out = _vr_git_args(repo, ["rev-parse", "HEAD"])
     return out.strip() if out and out.strip() else ""
 
 
 def git_dirty(repo):
     """True/False, or None when git cannot answer. .loki/ is excluded: the
     verifier writes its own artifacts there."""
-    out = _vr_git(repo, "status", "--porcelain")
+    out = _vr_git_args(repo, ["status", "--porcelain"])
     if out is None:
         return None
     for line in out.splitlines():
@@ -1206,9 +1214,6 @@ def capture_environment():
 
 def _tree_digest(repo):
     try:
-        if _HERE not in sys.path:
-            sys.path.insert(0, _HERE)
-        from tree_digest import compute_tree_digest
         return compute_tree_digest(repo) or None
     except Exception:
         return None
@@ -1352,7 +1357,7 @@ def modified_tests(repo, base, head=None):
     args = ["diff", "--name-status", "-M", "-z", base]
     if head:
         args.append(head)
-    out = _vr_git(repo, *args, "--")
+    out = _vr_git_args(repo, args + ["--"])
     if out is None:
         return {"status": "unknown", "files": [], "detail": "git diff could not be computed"}
     toks = out.split("\0")
@@ -1614,11 +1619,6 @@ def render_compact(rec):
 # CLI
 # ---------------------------------------------------------------------------
 
-def _vr_load_json(path):
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
-
-
 def _vr_cli(argv):
     usage = ("usage: proof-verify.py <label|summary|json> <proof.json|evidence.json> "
              "[--repo DIR] [--loki-dir DIR] [--embedded]")
@@ -1643,8 +1643,8 @@ def _vr_cli(argv):
             sys.stderr.write(usage + "\n")
             return 2
     try:
-        doc = _vr_load_json(path)
-    except (OSError, ValueError) as exc:
+        doc = _load_proof(path)
+    except ProofLoadError as exc:
         sys.stderr.write("cannot read %s: %s\n" % (path, exc))
         return 2
     if loki_dir is None:
@@ -1664,10 +1664,6 @@ def _vr_cli(argv):
     else:
         print(render_compact(rec))
     return 0
-
-
-if __name__ == "__main__":
-    sys.exit(_cli(sys.argv[1:]))
 
 
 if __name__ == "__main__":

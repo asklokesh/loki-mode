@@ -1136,8 +1136,6 @@ def _empty_tree_sha(repo_dir):
 # collect_workspace_diff), so uncommitted work is covered.
 _TI_CFG_ALWAYS = re.compile(r"(^|/)(conftest\.py|\.?pytest\.(?:ini|toml)|tox\.ini|jest\.config\.[\w.]+|vitest\.config\.[\w.]+|\.mocharc[\w.]*)$")
 _TI_CFG_SHARED = re.compile(r"(^|/)(setup\.cfg|pyproject\.toml|package\.json)$")
-_TI_TEST_FILE = re.compile(
-    r"(^|/)(tests?|__tests__|spec|specs)/|\.(test|spec)\.[\w]+$|(^|/)test_[^/]*\.py$|_test\.(py|go|rs)$|(^|/)conftest\.py$")
 _TI_SKIP_JS = re.compile(
     # options object only as the 2nd argument: title (string or identifier), then `, {`
     r"\b(test|it|describe|suite|context|specify)\s*\(\s*(?:'[^'\n]*'|\"[^\"\n]*\"|`[^`\n]*`|[\w.$]+)\s*,\s*\{[^}]*\b(skip|todo)\s*:\s*(?!(?:false|0|null|undefined)\b)\S"
@@ -1285,7 +1283,7 @@ def _collect_tests_integrity(target_dir, base):
         if u and not u.startswith(".loki/"):
             entries.append(("A", u, u))
     for st, old, new in entries:
-        if st in ("D", "R") and _TI_TEST_FILE.search(old):
+        if st in ("D", "R") and _PV._TEST_FILE.search(old):
             weakened.append("test file %s: %s" % ("deleted" if st == "D" else "renamed", old))
     if not greenfield:
         for st, old, new in entries:
@@ -1325,7 +1323,7 @@ def _collect_tests_integrity(target_dir, base):
                 edited.append(cur)
             cur, rx, removed_assert = None, None, False
         elif line.startswith("+++ b/"):
-            cur = line[6:] if _TI_TEST_FILE.search(line[6:]) else None
+            cur = line[6:] if _PV._TEST_FILE.search(line[6:]) else None
             rx = _ti_skip_re(cur) if cur else None
         elif cur and line.startswith("+") and rx and rx.search(line):
             weakened.append("skip added in %s" % cur)
@@ -1333,7 +1331,7 @@ def _collect_tests_integrity(target_dir, base):
                 and _TI_ASSERT.search(line):
             removed_assert = True
     for u in untracked.split("\0"):
-        if not u or u.startswith(".loki/") or not _TI_TEST_FILE.search(u):
+        if not u or u.startswith(".loki/") or not _PV._TEST_FILE.search(u):
             continue
         rx = _ti_skip_re(u)
         if not rx:
