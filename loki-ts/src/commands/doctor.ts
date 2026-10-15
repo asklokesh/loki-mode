@@ -796,9 +796,10 @@ export function bump(t: Tally, s: Status): void {
 
 function printHelp(): void {
   process.stdout.write(`${BOLD}loki doctor${NC} - Check system prerequisites\n\n`);
-  process.stdout.write(`Usage: loki doctor [--json] [--airgap]\n\n`);
+  process.stdout.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n\n`);
   process.stdout.write(`Options:\n`);
   process.stdout.write(`  --json    Output machine-readable JSON\n`);
+  process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); print commands for the rest\n`);
   // --airgap never reaches this handler: bin/loki routes it to the bash audit.
   process.stdout.write(`  --airgap  Audit network egress: model inference, telemetry and the\n`);
   process.stdout.write(`            update check, REQUIRED or optional, and how to disable\n`);
@@ -1564,15 +1565,18 @@ else:
 
 export async function runDoctor(argv: readonly string[]): Promise<number> {
   let json = false;
+  let fix = false;
   for (const arg of argv) {
     if (arg === "--json") {
       json = true;
+    } else if (arg === "--fix") {
+      fix = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
     } else {
       process.stderr.write(`${RED}Unknown option: ${arg}${NC}\n`);
-      process.stderr.write(`Usage: loki doctor [--json] [--airgap]\n`);
+      process.stderr.write(`Usage: loki doctor [--json] [--fix] [--airgap]\n`);
       return 1;
     }
   }
@@ -1582,5 +1586,13 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
     return result.summary.ok ? 0 : 1;
   }
+  if (fix) {
+    const code = await runText();
+    const { runDoctorFix } = await import("./doctor_fix.ts");
+    runDoctorFix();
+    return code;
+  }
+  // Hint goes to stderr so stdout stays byte-identical for the bun-parity gate.
+  process.stderr.write(`Hint: loki doctor --fix applies safe fixes and prints commands for the rest.\n`);
   return runText();
 }

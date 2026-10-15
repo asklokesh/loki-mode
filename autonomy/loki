@@ -1735,6 +1735,7 @@ show_help() {
     echo "Usage: loki <command> [options]"
     echo ""
     echo "New here? Try these in order:"
+    echo "  loki setup                One-step wizard: tools, provider login, model route, spend cap (--yes for defaults)"
     echo "  loki welcome              Friendly first-run opener (what Loki is, next steps)"
     echo "  loki doctor               Check your setup is ready (a few seconds)"
     echo "  loki quickstart           Guided first build from your idea (no PRD needed)"
@@ -1908,7 +1909,7 @@ show_help() {
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
     echo "  merge resume review rollback run sandbox secrets secure self-update sentrux"
-    echo "  serve setup-skill share ship spec start state stats status steer stop"
+    echo "  serve setup setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
     echo "  ultracode undo update verify version voice watch watchdog web welcome why"
     echo "  wiki workspace worktree (wt)"
@@ -12928,7 +12929,7 @@ cmd_config() {
     shift 2>/dev/null || true
 
     case "$subcommand" in
-        show)
+        show|list)
             cmd_config_show
             ;;
         init)
@@ -12956,9 +12957,9 @@ cmd_config() {
             cmd_config_validate "$@"
             ;;
         *)
-            echo -e "${YELLOW}Usage: loki config [show|init|edit|path|set|get|example|schema|validate]${NC}"
+            echo -e "${YELLOW}Usage: loki config [show|list|init|edit|path|set|get|example|schema|validate]${NC}"
             echo ""
-            echo "  show            Show current configuration (default)"
+            echo "  show, list      Show current configuration (default)"
             echo "  init            Create a config file from template"
             echo "  edit            Open config file in editor"
             echo "  path            Show config file paths"
@@ -20794,7 +20795,7 @@ _suggest_command() {
 ultracode council demo dogfood heal modernize import issue github init template \
 status stop pause resume monitor watch watchdog dashboard web open preview share \
 memory context ctx checkpoint state report kpis cost metrics stats logs otel \
-syslog telemetry crash config provider doctor setup-skill onboard quickstart \
+syslog telemetry crash config provider doctor setup setup-skill onboard quickstart \
 welcome update self-update rollback merge failover cluster enterprise remote deploy docker \
 sandbox api mcp magic compound assets export wiki control docs explain why audit compliance \
 welcome update self-update rollback failover cluster enterprise remote deploy docker \
@@ -20990,6 +20991,11 @@ main() {
             ;;
         welcome)
             cmd_welcome "$@"
+            ;;
+        setup)
+            # shellcheck disable=SC1091
+            . "${SKILL_DIR}/autonomy/setup-wizard.sh"
+            cmd_setup "$@"
             ;;
         init)
             cmd_init "$@"
