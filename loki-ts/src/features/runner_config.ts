@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 type Sections = RegExp | readonly string[] | "go" | "tsconfig";
 interface Spec { re: RegExp; shared?: Sections }
-const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm"] as const; // scripts is compared whole: pretest, posttest and test:* all count
+const PKG_KEYS = ["scripts", "jest", "overrides", "resolutions", "imports", "pnpm", "mocha", "vitest", "ava", "c8", "nyc", "babel", "bun"] as const; // scripts is compared whole: pretest, posttest and test:* all count
 export const RUNNER_CONFIGS: Spec[] = [
   { re: /(^|\/)(conftest\.py|tox\.ini|bunfig\.toml|\.?pytest\.(ini|toml)|\.mocharc[\w.]*)$/ },
   { re: /(^|\/)(vitest|vite|jest)\.(config|workspace)\.[\w.]+$/ },
@@ -20,6 +20,7 @@ export const RUNNER_CONFIGS: Spec[] = [
   { re: /(^|\/)[jt]sconfig(\.[\w-]+)?\.json$/, shared: "tsconfig" },
 ];
 
+const KW = /pytest|jest|mocha|vitest|addopts|testpaths/i; // main's original line trigger, kept as a union so no guard is weakened
 const lines = (t: string): string[] => t.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
 const jsonc = (t: string): unknown => JSON.parse(t.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, "$1").replace(/,(\s*[}\]])/g, "$1"));
 
@@ -32,7 +33,7 @@ function relevant(shared: Sections, text: string): string {
   if (shared === "tsconfig") { const o = (jsonc(text) as { compilerOptions?: Record<string, unknown> }).compilerOptions ?? {}; return JSON.stringify([o["baseUrl"], o["paths"]]); }
   if (Array.isArray(shared)) { const j = JSON.parse(text) as Record<string, unknown>; return JSON.stringify(shared.map((k) => j[k])); }
   let on = false;
-  return lines(text).filter((l) => { if (l.startsWith("[")) on = (shared as RegExp).test(l); return on; }).join("\n");
+  return lines(text).filter((l) => { if (l.startsWith("[")) on = (shared as RegExp).test(l); return on || KW.test(l); }).join("\n");
 }
 
 const baseText = (dir: string, base: string, f: string): string => {

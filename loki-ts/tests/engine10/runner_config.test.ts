@@ -78,3 +78,26 @@ describe("FC-09r testConfigChanged", () => {
     expect(testConfigChanged(".", "HEAD", ["bunfig.toml", "sub/vitest.workspace.ts", "src/a.ts"])).toEqual(["bunfig.toml", "sub/vitest.workspace.ts"]);
   });
 });
+
+describe("FC-09r no weakening of the main line-keyword guard", () => {
+  test.each([["mocha"], ["vitest"], ["ava"], ["nyc"], ["c8"]])("package.json %s key caps", (k) => {
+    const r = repo({ "package.json": pkg({ test: "t" }) });
+    r.edit("package.json", pkg({ test: "t" }, { [k]: { spec: "x" } }));
+    expect(testConfigChanged(r.dir, r.base, ["package.json"])).toEqual(["package.json"]);
+  });
+  test.each([
+    ["pyproject.toml", '[tool.hatch.envs.default.scripts]\ntest = "pytest"\n', '[tool.hatch.envs.default.scripts]\ntest = "pytest -k nothing"\n'],
+    ["pyproject.toml", '[tool.poe.tasks]\nt = "echo"\n', '[tool.poe.tasks]\nt = "echo"\ntest = "pytest -k nothing"\n'],
+    ["setup.cfg", "[aliases]\ntest=pytest\n", "[aliases]\ntest=pytest -k nothing\n"],
+  ])("%s line naming a runner caps outside the pytest section", (f, a, b) => {
+    const r = repo({ [f]: a });
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([]);
+    r.edit(f, b);
+    expect(testConfigChanged(r.dir, r.base, [f])).toEqual([f]);
+  });
+  test("pyproject metadata bump without a runner word does not cap", () => {
+    const r = repo({ "pyproject.toml": '[project]\nversion = "1"\n' });
+    r.edit("pyproject.toml", '[project]\nversion = "2"\n');
+    expect(testConfigChanged(r.dir, r.base, ["pyproject.toml"])).toEqual([]);
+  });
+});
