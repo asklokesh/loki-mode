@@ -161,5 +161,82 @@ else
     printf 'NOTE: doctor exited %s here; this host may genuinely lack a required tool\n' "$doctor_rc"
 fi
 
+# 8. Contract cases: every row of the "Contract cases" table in the doc is
+#    executed against the real CLI (all stop before any provider spend). A row
+#    with no executor, or an executor with no row, fails.
+XC_TMP="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.XXXXXXXX")" || { bad "cannot create temp dir"; XC_TMP=""; }
+xc_cleanup() { case "$XC_TMP" in */loki-run.*) rm -rf -- "$XC_TMP" ;; esac; }
+trap xc_cleanup EXIT
+if [ -n "$XC_TMP" ]; then
+XLOKI="$REPO_ROOT/bin/loki"
+NOGIT="$XC_TMP/nogit"
+REPO="$XC_TMP/repo"
+mkdir -p "$NOGIT" "$REPO"
+git -C "$REPO" init -q -b main
+git -C "$REPO" -c user.name=t -c user.email=t@example.com commit -q --allow-empty -m init
+printf 'a\n' >"$REPO/a.txt"
+git -C "$REPO" add a.txt
+git -C "$REPO" -c user.name=t -c user.email=t@example.com commit -q -m a
+
+# Run the CLI in DIR with a scoped env and a hard timeout; echo the exit code.
+rc_of() {
+    local dir="$1"; shift
+    ( cd "$dir" && env -u LOKI_PROVIDER -u LOKI_ENGINE -u LOKI_DURABLE_STATE -u LOKI_LEGACY_BASH \
+        LOKI_NO_BROWSER=1 HOME="$XC_TMP" PATH="$PATH" timeout -k 5 60 "$XLOKI" "$@" </dev/null >/dev/null 2>&1 )
+    echo $?
+}
+
+run_case() {
+    case "$1" in
+        verify-empty-diff)    rc_of "$REPO" verify ;;
+        verify-not-git)       rc_of "$NOGIT" verify ;;
+        verify-unknown-flag)  rc_of "$REPO" verify --no-such-flag ;;
+        run-unknown-flag)     rc_of "$REPO" run --no-such-flag ;;
+        run-no-issue-ref)     rc_of "$NOGIT" run ;;
+        quick-unknown-flag)   rc_of "$REPO" quick --no-such-flag ;;
+        quick-no-task)        rc_of "$REPO" quick ;;
+        quick-not-git)        rc_of "$NOGIT" quick fix the bug now ;;
+        edit-unknown-flag)    rc_of "$REPO" edit --no-such-flag ;;
+        edit-no-change)       rc_of "$REPO" edit ;;
+        edit-not-git)         rc_of "$NOGIT" edit "change x" ;;
+        start-unknown-flag)   rc_of "$REPO" start --no-such-flag ;;
+        start-missing-prd)    rc_of "$REPO" start missing-prd.md ;;
+        start-not-git)        rc_of "$NOGIT" start fix the bug now ;;
+        *) echo "none" ;;
+    esac
+}
+
+# Rows look like: | `case-id` | `loki ...` | 64 | note |
+documented="$(awk '/^## Contract cases/{on=1;next} /^## /{on=0} on && /^\| `/{
+    id=$2; ex=$4; gsub(/[ `]/,"",id); gsub(/ /,"",ex); print id, ex }' FS='|' "$DOC")"
+
+if [ -z "$documented" ]; then
+    bad "docs/exit-codes.md has no parsable Contract cases table"
+fi
+
+seen=" "
+while read -r id want; do
+    [ -n "$id" ] || continue
+    seen="$seen$id "
+    got="$(run_case "$id")"
+    if [ "$got" = "none" ]; then
+        bad "$id: documented but has no executor in this test"
+    elif [ "$got" = "$want" ]; then
+        ok "$id: exit $got"
+    else
+        bad "$id: documented exit $want, observed $got"
+    fi
+done <<<"$documented"
+
+for id in verify-empty-diff verify-not-git verify-unknown-flag run-unknown-flag run-no-issue-ref \
+          quick-unknown-flag quick-no-task quick-not-git edit-unknown-flag edit-no-change edit-not-git \
+          start-unknown-flag start-missing-prd start-not-git; do
+    case "$seen" in
+        *" $id "*) ;;
+        *) bad "$id: executor exists but the doc table has no row" ;;
+    esac
+done
+fi
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
