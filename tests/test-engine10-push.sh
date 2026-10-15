@@ -42,6 +42,8 @@ cat > "$W/bin/gh" <<EOF
 echo "cwd=\$PWD GH_REPO=\${GH_REPO:-} token=\${GH_TOKEN:-none} \$*" >> "$GHLOG"
 case "\$1 \$2" in
     "repo view") cat "$W/default" ;;
+    "api repos/octocat/hello/git/ref/heads/loki/e10-resume")
+        git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-resume 2>/dev/null ;;
     "pr list") [ -f "$W/pr.url" ] && cat "$W/pr.url" ;;
     "pr create") echo "$PRURL" > "$W/pr.url"; echo "Creating pull request"; echo "$PRURL" ;;
 esac
@@ -280,6 +282,27 @@ p4 "$W/fake2/autonomy/lib/engine10-push.sh" push-pr "$A" loki/e10-fix t "$W/body
 ); rc=$?
 [ "$rc" -eq 3 ] && [ ! -s "$GHLOG" ] && [ ! -s "$W/remote.log" ] && grep -q "region lacks _loki_run_neutral" "$W/err" \
     && ok "exported same-name function does not satisfy the region guard (rc 3, no gh, no push)" || bad "exported function bypass: rc=$rc err=$(tr '\n' ' ' < "$W/err")"
+
+# RECOVERY: push-pr is idempotent across an interrupted publish (docs/v10/ENGINE.md, "Recovery of an interrupted run").
+#   A. interrupted after the push, before the PR exists -> rerun: no second push, one PR.
+#   B. interrupted after the PR was created             -> rerun: no second push, no second PR.
+#   C. a new commit on the branch                       -> pushed once, still one PR.
+git -C "$A" branch loki/e10-resume
+git -C "$A" push -q "$BARE" loki/e10-resume:refs/heads/loki/e10-resume
+rm -f "$W/pr.url"; : > "$GHLOG"; : > "$W/remote.log"
+pushes() { wc -l < "$W/remote.log" | tr -d ' '; }
+out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>"$W/err")"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(pushes)" = "0" ] && grep -q "push skipped" "$W/err" && [ "$(creates)" = "1" ] \
+    && ok "recovery A: resume after push skips the push and opens one PR" || bad "recovery A: rc=$rc out=$out pushes=$(pushes) creates=$(creates)"
+out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(creates)" = "1" ] && [ "$(pushes)" = "0" ] \
+    && ok "recovery B: rerun reuses the PR, no second PR, no second push" || bad "recovery B: rc=$rc creates=$(creates) pushes=$(pushes)"
+git -C "$A" checkout -q loki/e10-resume
+git -C "$A" commit -q --allow-empty -m second
+out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>/dev/null)"; rc=$?
+[ "$rc" -eq 0 ] && [ "$(pushes)" = "1" ] && [ "$(creates)" = "1" ] \
+    && [ "$(git -C "$BARE" rev-parse loki/e10-resume)" = "$(git -C "$A" rev-parse loki/e10-resume)" ] \
+    && ok "recovery C: a new commit is pushed once, still one PR" || bad "recovery C: rc=$rc pushes=$(pushes) creates=$(creates)"
 
 echo "$PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

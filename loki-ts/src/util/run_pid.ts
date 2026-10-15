@@ -54,3 +54,9 @@ export function verifyRunPid(runDir: string, runId: string, startOf: (pid: numbe
   if (live !== rec.start) return { ok: false, reason: "the pid now belongs to a different process (start time differs)" };
   return { ok: true, pid: rec.pid };
 }
+
+/** RECOVERY: a recorded supervisor that is still alive (same pid and start time) owns the run. */
+export function runOwnerAlive(runDir: string): boolean {
+  const rec = readRunPid(runDir);
+  return rec !== null && processStartTime(rec.pid) === rec.start;
+}

@@ -5170,7 +5170,7 @@ cmd_resume() {
         exit 0
     fi
 
-    # RECOVERY: an interrupted engine10 run is resumed at its phase by loki-ts/src/util/run_recovery.ts
+    # RECOVERY: an interrupted engine10 run is resumed at its phase by loki-ts/src/util/run_outputs.ts
     # (exit 0 resumed, 4 phase reported, 5 publish failed, anything else: nothing for it, fall through).
     if ls "$LOKI_DIR"/runs/e10-*/events.jsonl >/dev/null 2>&1; then
         local _e10_rc=0
