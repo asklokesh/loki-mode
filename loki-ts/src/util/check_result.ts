@@ -134,6 +134,11 @@ function goJson(out: string): { failed: boolean } | null {
   }
   return any ? { failed } : null;
 }
+/** Executed-test count for a run whose `ran()` is null: node spec prints its failing-tests section after the summary block, so take the LAST
+ *  pass and fail summary lines, not every one (A-112b: moved out of core engine10 verify.ts, no behaviour change). */
+export function summaryPassFailCount(out: string): number {
+  return (["pass", "fail"] as const).reduce((t, k) => t + +([...out.matchAll(new RegExp(`^(?:#|\\u2139) ${k} (\\d+)$`, "gm"))].pop()?.[1] ?? 0), 0);
+}
 /** Skipped or deselected tests from the runner's FINAL summary lines only: pytest "N skipped|deselected", jest/vitest "Tests: N skipped",
  *  node "# skipped N". Test names and captured output above the summary never count (A-115). */
 export function skipped(raw: string): number {
