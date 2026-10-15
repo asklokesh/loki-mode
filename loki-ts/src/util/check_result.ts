@@ -207,7 +207,7 @@ const SENSITIVE: [string, RegExp][] = [
   ["payments", /(^|\/)(payments?|billing|checkout|stripe|invoice)[\w.-]*(\/|\.|$)/i],
   ["migration", /(^|\/)(migrations?|alembic)\/|\.sql$/i],
   ["ci", /(^|\/)(\.github\/(workflows|actions)|\.gitlab-ci\.yml|\.circleci|Jenkinsfile|azure-pipelines)/i],
-  ["lockfile", /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|Cargo\.lock|poetry\.lock|go\.sum|Gemfile\.lock|uv\.lock)$/],
+  ["lockfile", /(^|\/)(package-lock\.json|pnpm-lock\.yaml|bun\.lockb?|go\.sum|[\w-]+\.lock)$/],
   ["infra", /(^|\/)(Dockerfile[\w.-]*|docker-compose[\w.-]*\.ya?ml|terraform|helm|k8s|kubernetes|infra|deploy)(\/|\.|$)|\.tf$/i],
   ["env", /(^|\/)\.env[\w.]*$/],
 ];

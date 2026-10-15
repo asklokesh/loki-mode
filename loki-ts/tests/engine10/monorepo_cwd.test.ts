@@ -89,8 +89,11 @@ beforeEach(() => {
   chmodSync(join(stubDir, "npx"), 0o755);
   process.env["PATH"] = `${stubDir}:${savedPath ?? ""}`;
   delete process.env["LOKI_E10_PROJECT_MODEL"];
+  // RISKTIER: editing an existing test is a medium diff, which adds a full-suite run; these cases assert only the targeted call, so pin the tier low.
+  process.env["LOKI_RISK_TIER"] = "low"; process.env["LOKI_RISK_OVERRIDE_REASON"] = "FC-01 fixture asserts the targeted command only";
 });
 afterEach(() => {
+  delete process.env["LOKI_RISK_TIER"]; delete process.env["LOKI_RISK_OVERRIDE_REASON"];
   process.env["PATH"] = savedPath;
   if (savedFlag === undefined) delete process.env["LOKI_E10_PROJECT_MODEL"]; else process.env["LOKI_E10_PROJECT_MODEL"] = savedFlag;
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });

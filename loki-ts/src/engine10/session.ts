@@ -1,6 +1,7 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
 import { spawn, type ChildProcess } from "node:child_process";
+import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { writeProviderCost } from "../providers/provider_cost.ts";
@@ -151,25 +152,12 @@ function recordCost(cfg: SessionRunnerConfig, opts: SessionRunOptions, status: s
     cache_read_tokens: c.cache_read_tokens, cache_creation_tokens: c.cache_creation_tokens }), source: c.unmetered ? UNMETERED : c.source || "not measured", ...(pcost?.estimated ? { estimated: true, cost_basis: pcost.cost_basis } : {}), ...(pcost?.unmeasured_reason ? { unmeasured_reason: pcost.unmeasured_reason, cost_basis: pcost.cost_basis } : {}), ...(effort ? { effort } : {}), ...routedCostFields(dest),
   });
 }
-// Cancellation (docs/cost-controls.md): every provider child is spawned by createSessionRunner below, so one registry
-// covers all providers. cancelSessions() stops new spawns, kills each live child group (SIGTERM, then SIGKILL after
-// KILL_GRACE_MS via killGroupWithGrace) and resolves once each close handler has recorded its partial usage.
-const liveSessions = new Set<() => void>();
-let sessionsCancelled = false;
-const idleWaiters: Array<() => void> = [];
-const notifyIdle = () => { if (liveSessions.size === 0) for (const w of idleWaiters.splice(0)) w(); };
-export function cancelSessions(waitMs = 3 * KILL_GRACE_MS + 2000): Promise<void> {
-  sessionsCancelled = true;
-  for (const k of [...liveSessions]) k();
-  if (liveSessions.size === 0) return Promise.resolve();
-  return new Promise<void>((resolve) => { idleWaiters.push(resolve); setTimeout(resolve, waitMs).unref(); });
-}
 export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
   return {
     run(opts: SessionRunOptions): Promise<SessionResult & { stderrTail: string }> {
       const start = Date.now();
       // A signal aborted before run() never fires the listener below, so it never spawns.
-      if (opts.signal.aborted || sessionsCancelled) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
+      if (opts.signal.aborted || sessionsCancelled()) return Promise.resolve({ exit: null, markers: { done: false, alreadyDone: null, specConflict: null }, durationS: 0, killed: true, stderrTail: "" });
       const env = childEnv(opts, cfg);
       const [cmd, args] = cfg.childCommand ?? [
         process.execPath,
@@ -209,7 +197,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
-      const live = () => kill("aborted"); liveSessions.add(live);
+      const untrack = trackSession(() => kill("aborted"));
       return new Promise<SessionResult & { stderrTail: string }>((resolve) => {
         // "close", not "exit": stdout may still be draining, and the marker is usually last.
         child.on("close", (code) => {
@@ -227,7 +215,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
             session_id: sessionId, exit: exitKind(guard.ok ? code : 1, killed, markers), cause: classifyExitCause(code, killed, killCause ?? undefined), duration_s: durationS,
           });
           recordCost(cfg, opts, killed ? "killed" : code === 0 ? "completed" : "failed", durationS, stdout + logText);
-          liveSessions.delete(live); notifyIdle();
+          untrack();
           resolve({ exit: guard.ok ? code : 1, markers, durationS, killed, summary: (stdout + logText).trim().slice(-4096), stderrTail: (guard.ok ? "" : `guard violation: ${guard.violations.map((v) => v.detail).join("; ")}\n`) + stderrTail.toString("utf8") + (logText.match(/^\[sdk-loop error: .*\]$/gm) ?? []).join("\n") }); // only provider-written text is classified: child stderr and the SDK error line, never the agent transcript (A-113). The child echoes the provider's in-memory stderr (A-113b); only the claude CLI invoker returns one, since codex/cline/aider may print session activity on stderr (unmeasured)
         });
       });

@@ -7,8 +7,7 @@ import type { RepoMap } from "../engine10/repomap.ts";
 import { loadRepoMap } from "../engine10/sizing.ts";
 import type { RunContext, TestMap, TestRef } from "../engine10/types.ts";
 import { unitBrief } from "../features/speed/unit_mode.ts";
-import { readVerifiedCommand } from "./repomemory.ts";
-import { profileBrief } from "../runner/repo_profile.ts";
+import { readVerifiedCommand } from "./repomemory.ts"; import { profileBrief } from "../runner/repo_profile.ts";
 
 export interface ContextDeps {
   select: (task: string, map: RepoMap, max: number) => string[];

@@ -10,8 +10,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEFAULT_PUSH_SH, runPr, stage } from "../../src/engine10/stages/pr.ts";
-import { EventLog, phaseOf, readEvents } from "../../src/engine10/events.ts";
-import { findInterrupted, resumeMain, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
+import { EventLog, readEvents } from "../../src/engine10/events.ts";
+import { findInterrupted, phaseOf, resumeMain, startRecovery, type RunPrFn } from "../../src/util/run_outputs.ts";
 import type { CostReader, RunContext, SessionRunner, TestMapProvider, Verdict } from "../../src/engine10/types.ts";
 
 const PR_URL = "https://github.com/octocat/hello/pull/42";

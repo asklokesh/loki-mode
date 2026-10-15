@@ -8,7 +8,7 @@
 //   wall.files / wall.base_run      <- wall stage.completed
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fold, phaseOf, readEvents, type Phase } from "../engine10/events.ts";
+import { fold, readEvents } from "../engine10/events.ts";
 import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
@@ -56,6 +56,16 @@ export function loadRunOutputs(runDir: string, events: readonly EventEnvelope[])
 
 // RECOVERY: find an interrupted engine10 run, name the phase it died in, and resume the publish phase without
 // duplicating a side effect (design: docs/v10/ENGINE.md "Recovery of an interrupted run").
+export type Phase = "implement" | "verify" | "publish" | "done";
+
+/** RECOVERY: which phase an event log stopped in. "done" means nothing is left to resume. */
+export function phaseOf(events: readonly EventEnvelope[]): Phase {
+  if (events.some((e) => e.type === "run.completed" || e.type === "pr.opened")) return "done";
+  if (events.some((e) => e.type === "receipt.sealed")) return "publish";
+  const completed = new Set(events.filter((e) => e.type === "stage.completed").map((e) => String(e.stage)));
+  return completed.has("implement") ? "verify" : "implement";
+}
+
 export interface Interrupted { runId: string; phase: Phase; events: EventEnvelope[]; task: string | null }
 
 function taskOf(events: readonly EventEnvelope[]): string | null {
