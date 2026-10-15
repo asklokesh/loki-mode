@@ -89,3 +89,15 @@ With `LOKI_SPEED=1` (default off), intake no longer waits on the cheap-model alr
 ## D82-FLAGS status: default on
 
 Per the D82 founder directive, `LOKI_SPEED` is on unless set to `0` (decomposer routing, warm engine on a unix socket, stage prefix, deferred already-done check, lean keyword fallback, unit mode when `LOKI_UNIT_SPEC` is set). `LOKI_SPEED=0` restores the previous behaviour byte for byte. The other D82 opt-outs are `LOKI_VISUAL_EVIDENCE=0`, `LOKI_CONTRACT=0`, `LOKI_SLACK_INBOUND=0` (Slack stays inert until its credential is configured), `LOKI_CONTROL=0` and `LOKI_WORKSPACES=0`. Test: `loki-ts/tests/features/d82_default_on.test.ts`.
+
+## Missions and group Seal (v11.8.0)
+
+Missions: a spec with two or more milestones runs milestone by milestone. Format: `## Milestone N[: title]` headings (the body is everything up to the next milestone heading), or a top-level `milestones:` list of `- title` lines. Fewer than 2 milestones is not a mission and takes the normal path unchanged. Parsing is `parseMilestones` in `loki-ts/src/features/decompose.ts`; the loop is in `maybeRunGroup` (`loki-ts/src/features/speed/route.ts`), reached from `loki start` and from chat `/run` through the same supervisor call.
+
+Each milestone prints `loki: milestone k/N: <title>`, is decomposed on its own, and runs as its own group with its own frozen contract and group Seal. One-unit groups and sequential providers are allowed for milestones (the normal fewer-than-2-units and slot fallbacks do not apply). The mission stops at the first non-zero result, prints `loki: milestone k/N failed (exit X); rerun the same loki start to resume`, and returns that code; later milestones never start. All milestones exit 0 returns 0.
+
+Group exit codes: 0 = every unit VERIFIED and the group receipt VERIFIED; 4 = NOT PROVEN (integrated, but no checked group receipt); 1 = failures.
+
+Resume: rerun the same `loki start`. Each milestone group is found again by the hash of its body, so finished milestones re-verify and return 0 fast and the run continues at the failed one. No extra state is kept. `LOKI_GROUP_RESUME=0` disables auto-resume and starts every group fresh. Check any group receipt with `loki verify .loki/groups/<gid>/receipt.json`.
+
+Test command precedence: `LOKI_GROUP_TEST_CMD` (whitespace split) wins over the repo's own test script. Test: `loki-ts/tests/engine10/route_group.test.ts`.

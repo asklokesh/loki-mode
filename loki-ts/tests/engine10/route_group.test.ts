@@ -1,7 +1,7 @@
 // D61-16: LOKI_SPEED routing of `loki "<task>"` / `loki <file>` through the decomposer.
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route } from "../../src/engine10/cli.ts";
@@ -303,4 +303,50 @@ describe("default group runner (run_group.ts)", () => {
       expect(err).toContain("NOT PROVEN");
     });
   });
+  test("LOKI_GROUP_TEST_CMD wins over a package.json test script", async () => {
+    await withDir(async (d) => {
+      mkRepo(d);
+      const envMark = join(d, "env-ran.txt"), pkgMark = join(d, "pkg-ran.txt");
+      writeFileSync(join(d, "package.json"), JSON.stringify({ name: "x", scripts: { test: `touch ${pkgMark}` } }));
+      sh(d, "add", "package.json"); sh(d, "commit", "-q", "-m", "pkg");
+      const { code } = await go(d, { LOKI_GROUP_TEST_CMD: `touch ${envMark}` }, launcher(d, []));
+      expect(code).toBe(4);
+      expect(existsSync(envMark)).toBe(true);
+      expect(existsSync(pkgMark)).toBe(false);
+    });
+  });
 });
+
+describe("missions: multi-milestone specs", () => {
+  const MS = "# Plan\n\n## Milestone 1: scaffold\n- update src/a.ts to add alpha\n\n## Milestone 2: wire\nupdate src/b.ts to add beta\n\n## Milestone 3: ship\nupdate src/c.ts to add gamma\n";
+  const rec = (codes: number[]) => {
+    const seen: { units: number; spec: string }[] = [];
+    const g: GroupRunner = async (dag, ctx) => { seen.push({ units: dag.units.length, spec: ctx.spec }); return codes[seen.length - 1] ?? 0; };
+    return { seen, g };
+  };
+  test("milestones run in order, one group each, even on a sequential provider with 1-unit groups", async () => {
+    const { seen, g } = rec([]);
+    const { r, err } = await run(MS, SEQ, g);
+    expect(r).toBe(0);
+    expect(seen.map((s) => s.units)).toEqual([1, 1, 1]);
+    expect(seen[1]!.spec).toContain("src/b.ts");
+    expect(seen[1]!.spec).not.toContain("src/a.ts");
+    expect(err).toContain("loki: milestone 1/3: scaffold");
+    expect(err).toContain("loki: milestone 3/3: ship");
+  });
+  test("a failing milestone stops the mission, propagates its code, never starts the next", async () => {
+    const { seen, g } = rec([0, 4]);
+    const { r, err } = await run(MS, ON, g);
+    expect(r).toBe(4);
+    expect(seen.length).toBe(2);
+    expect(err).toContain("loki: milestone 2/3 failed (exit 4); rerun the same loki start to resume");
+  });
+  test("one milestone is not a mission: normal path", async () => {
+    const { seen, g } = rec([]);
+    const { r } = await run("## Milestone 1: only\n" + SPEC, ON, g);
+    expect(r).toBe(0);
+    expect(seen.length).toBe(1);
+    expect(seen[0]!.units).toBe(3);
+  });
+});
+
