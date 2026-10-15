@@ -63,6 +63,15 @@ export function formatRunSummary(i: RunSummaryInput, opts: { json?: boolean; col
   return `${lines.join("\n")}\n`;
 }
 
+/** Default (D48, at most 8 lines) output: add a "Next:" line, or fold it into the last line when the block already has 7 lines (the start line is printed separately). */
+export function withNextLine(out: string, i: RunSummaryInput): string {
+  const files = i.filesChanged == null ? "files unknown" : `${i.filesChanged} file${i.filesChanged === 1 ? "" : "s"} changed${i.insertions != null && i.deletions != null ? ` (+${i.insertions} -${i.deletions})` : ""}`;
+  const lines = out.replace(/\n+$/, "").split("\n");
+  if (lines.length < 7) return `${lines.join("\n")}\nNext:       ${i.next}  (${files})\n`;
+  lines[lines.length - 1] += `; next: ${i.next}`;
+  return `${lines.join("\n")}\n`;
+}
+
 /** Best-effort diff stat of the run range; null when git cannot answer. */
 export function diffStat(repoDir: string, base: string | null): { files: number; ins: number; del: number } | null {
   if (!base) return null;
