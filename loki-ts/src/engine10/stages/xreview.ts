@@ -2,8 +2,8 @@
 // read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL).
 // Off unless loki.yaml `review: codex|claude` or LOKI_REVIEW_PROVIDER is set.
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { loadReviewStageAgent } from "../../e10ext/role_agents.ts";
 import { run } from "../../util/shell.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
 import type { RunContext, Verdict } from "../types.ts";
@@ -68,20 +68,10 @@ export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.Proces
     : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"];
 }
 
-/** OC-AGENTS: a configured `reviewer` agent (.loki/agents/reviewer.md, then ~/.config/loki/agents) supplies the reviewer persona and, for a claude judge, its model. None configured: null, behavior unchanged. */
-export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = process.env): { prompt: string; model: string } | null {
-  const dirs = [env["LOKI_AGENTS_PROJECT_DIR"] || join(repoDir, ".loki", "agents"), env["LOKI_AGENTS_USER_DIR"] || join(env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "loki", "agents")];
-  for (const d of dirs) {
-    const f = join(d, "reviewer.md"); if (!existsSync(f)) continue;
-    try {
-      const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(readFileSync(f, "utf8")); if (!m) continue;
-      const body = m[2]!.trim(); if (!body) continue;
-      const kv = (k: string): string => new RegExp(`^${k}:[ \\t]*["']?([^"'\\r\\n#]*?)["']?[ \\t]*$`, "m").exec(m[1]!)?.[1]?.trim() ?? "";
-      const prov = kv("provider") || "claude";
-      return { prompt: body.slice(0, 4000), model: prov === "claude" ? kv("model") : "" };
-    } catch { /* unreadable agent file: ignore */ }
-  }
-  return null;
+/** OC-AGENTS: a configured reviewer or council agent (see e10ext/role_agents.ts) supplies the reviewer persona, its provider and, for a claude judge, its model. None configured: null, behavior unchanged. */
+export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = process.env): { prompt: string; model: string; provider: ReviewProvider | null } | null {
+  const a = loadReviewStageAgent(repoDir, env); if (!a) return null;
+  return { prompt: a.prompt, model: a.provider === "claude" ? a.model : "", provider: asProvider(a.provider) };
 }
 
 const clean = (s: string): string => s.replace(/[\x00-\x1f\x7f`]+/g, " ").trim().slice(0, 300);
@@ -98,11 +88,11 @@ export function parseReview(p: ReviewProvider, out: string): CrossReview {
 
 /** Runs the reviewer when enabled. Null when off. A missing CLI, a failure or a timeout is not_run with a NOT PROVEN note, never PASS. */
 export async function crossReview(ctx: RunContext, verdict: Verdict, head: string): Promise<CrossReview | null> {
-  const p = reviewProvider(ctx.repoDir, process.env, ctx.provider); if (!p) return null;
+  const agent = configuredReviewer(ctx.repoDir);
+  const p = reviewProvider(ctx.repoDir, process.env, ctx.provider) ?? agent?.provider ?? null; if (!p) return null; // a configured reviewer/council agent turns the default review on
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] };
-  const agent = configuredReviewer(ctx.repoDir);
   const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {

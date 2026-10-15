@@ -11,7 +11,7 @@ import re
 import sys
 
 PERMISSIONS = ("plan", "edit", "full")
-KEYS = ("name", "description", "model", "provider", "tools", "deny", "permission")
+KEYS = ("name", "description", "model", "provider", "tools", "deny", "permission", "role")
 LIST_KEYS = ("tools", "deny")
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 PROVIDERS = ("claude", "codex", "cline", "aider", "opencode")
@@ -111,6 +111,7 @@ def validate(meta, body, path, stem):
         "tools": meta.get("tools", []),
         "deny": meta.get("deny", []),
         "permission": perm,
+        "role": meta.get("role", ""),
         "prompt": body,
         "path": path,
     }
