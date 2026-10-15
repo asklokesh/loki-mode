@@ -209,7 +209,6 @@ memory/                    Memory system (Python package, ~19 modules)
   embeddings.py            Vector embeddings (optional)
   vector_index.py          Vector search index
   cross_project.py         Cross-project knowledge transfer
-  rag_injector.py          RAG context injection into prompts
   knowledge_graph.py       Knowledge graph over memories
   layers/                  Progressive-disclosure loading
 

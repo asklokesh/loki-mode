@@ -39,7 +39,7 @@ model explicitly rather than inherit the session model.
 - **Progressive Disclosure**: 3-layer loading (index, timeline, full details)
 - **Token Economics**: Discovery vs read token tracking
 - **Vector Search**: Optional embedding-based similarity (sentence-transformers)
-- **Cross-project + RAG injection**: `memory/cross_project.py`, `memory/rag_injector.py`, `memory/knowledge_graph.py` (added v7.x)
+- **Cross-project index + knowledge graph**: `memory/cross_project.py`, `memory/knowledge_graph.py` (added v7.x)
 - **Managed memory client**: `memory/managed_memory/` -- gated on `LOKI_MANAGED_MEMORY=true`. See `skills/memory.md`.
 - **CLI**: `loki memory index|timeline|consolidate|economics|retrieve|episode|pattern|skill|vectors`
 - **API**: REST endpoints at `/api/memory/*`

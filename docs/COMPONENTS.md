@@ -132,7 +132,7 @@ across projects.
 - `consolidation.py` - Episodic-to-semantic consolidation pipeline.
 - `token_economics.py` - Discovery vs read token accounting.
 - `embeddings.py`, `vector_index.py` - Optional embedding-based similarity.
-- `cross_project.py`, `knowledge_graph.py`, `rag_injector.py` - Cross-project
+- `cross_project.py`, `knowledge_graph.py` - Cross-project
   recall, knowledge graph, and RAG prompt injection (v7.1.0+).
 - `app_graph.py`, `error_log.py`, `ingest.py`, `namespace.py`, `replay.py`,
   `unified_access.py` - Supporting modules.
