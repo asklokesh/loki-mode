@@ -123,6 +123,12 @@ _loki_caveman_narration_level() {
     fi
 }
 
+# loki edit: one-pass small change fast path (functions-only, self-guarded).
+if [ -f "$_LOKI_SCRIPT_DIR/edit.sh" ]; then
+    # shellcheck source=edit.sh
+    source "$_LOKI_SCRIPT_DIR/edit.sh"
+fi
+
 # Quickstart guided interview (v7.29.0): provides cmd_quickstart and its
 # deterministic offline template matcher. Functions-only file (no top-level
 # command), sourced here so the dispatch case can call cmd_quickstart. Composes
@@ -15625,6 +15631,7 @@ cmd_quick() {
             echo ""
             echo "Runs the Loki 10 engine on one small task (no PR is opened). Best for"
             echo "tiny tasks."
+            echo "quick = small task with the verify loop. For a single pass with no loop, use loki edit."
             echo ""
             echo "Examples:"
             echo "  loki quick \"add dark mode to this React app\""
@@ -20980,6 +20987,9 @@ main() {
             # shellcheck disable=SC1091
             source "$_LOKI_SCRIPT_DIR/lib/chat.sh"
             cmd_chat "$@"
+            ;;
+        edit)
+            cmd_edit "$@"
             ;;
         monitor)
             cmd_monitor "$@"
