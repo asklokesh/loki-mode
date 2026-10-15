@@ -4,11 +4,11 @@
 // opus on a failed check or for a high-risk unit), best-of-2 after one failure, a fresh worktree per
 // attempt, and a budget stop that finishes in-flight units. The unit run itself (runUnit, M-15) and
 // the git calls are injected, so the policy here is tested without a model or a repo.
-import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import type { ClusterResult, Unit } from "./cluster.ts";
 import { budgetExceeded } from "./estimate.ts";
 import type { ModernizeLog } from "./log.ts";
+import { safeGit } from "../../util/safe_git.ts";
 import { modernizeRoot } from "./types.ts";
 import type { UnitRunResult } from "./unit.ts";
 
@@ -18,7 +18,9 @@ export const DEFAULT_WORKERS = 4;
 /** Section 3.4: per-unit cost cap is the estimate x 3. */
 export const UNIT_COST_CAP_FACTOR = 3;
 
+// No "~" in the class: the variant suffix "~v<n>" can never be part of a unit id, so paths cannot collide.
 const UNIT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
+const VARIANT_SEP = "~v";
 
 export interface AttemptCtx {
   unit: Unit;
@@ -41,14 +43,15 @@ export interface WorktreeOps {
   remove(repoDir: string, path: string): void;
 }
 
-/** Real git worktrees. Argument arrays only (no shell), detached at the recorded base. */
+/** Real git worktrees. Argument arrays only (no shell), detached at the recorded base. Routed through safeGit (FC-25): a unit agent
+ *  can plant hooks or config in the shared common git dir, so hooks and fsmonitor are off and the token is withheld. */
 export const gitWorktrees: WorktreeOps = {
   create(repoDir, path, baseSha) {
-    execFileSync("git", ["-C", repoDir, "worktree", "add", "--detach", "--force", path, baseSha], { stdio: "ignore" });
+    safeGit(repoDir, ["worktree", "add", "--detach", "--force", path, baseSha]);
   },
   remove(repoDir, path) {
     try {
-      execFileSync("git", ["-C", repoDir, "worktree", "remove", "--force", path], { stdio: "ignore" });
+      safeGit(repoDir, ["worktree", "remove", "--force", path]);
     } catch { /* already gone */ }
   },
 };
@@ -63,6 +66,8 @@ export interface SchedulerOpts {
   unitEstimateUsd: number | null;
   log: ModernizeLog;
   run: AttemptRunner;
+  /** Stamped on unit.started events when set. */
+  runId?: string;
   worktrees?: WorktreeOps;
 }
 
@@ -106,10 +111,14 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
   let inFlight = 0;
   let hit = false;
 
-  const stopped = (): boolean => {
+  // running = units counted in inFlight before this check. At dispatch the candidate is not yet in inFlight (add 1);
+  // inside the cascade the current unit already is (add 0).
+  const stopped = (candidates: 0 | 1): boolean => {
     if (hit) return true;
-    // Dispatch gate: what is spent plus what is already running plus this one must fit the budget.
-    if (budgetExceeded(spent, est == null ? null : (inFlight + 1) * est, opts.budgetUsd)) {
+    const over = est == null
+      ? opts.budgetUsd != null && spent > opts.budgetUsd
+      : budgetExceeded(spent, (inFlight + candidates) * est, opts.budgetUsd);
+    if (over) {
       hit = true;
       opts.log.append("budget.hit", { budget_usd: opts.budgetUsd, spent_usd: spent, in_flight: inFlight });
     }
@@ -131,14 +140,14 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
     // Cascade: attempt 0 on the routed model; after a failed check, both best-of-2 variants on opus.
     const steps: Array<[0 | 1 | 2, Model]> = [[0, firstModel(unit)], [1, "opus"], [2, "opus"]];
     for (const [variant, model] of steps) {
-      if (attempts > 0 && (stopped() || (cap != null && unitCost >= cap))) {
+      if (attempts > 0 && (stopped(0) || (cap != null && unitCost >= cap))) {
         reason = hit ? "budget stop" : "per-unit cost cap reached";
         break;
       }
-      const path = join(modernizeRoot(opts.repoDir, opts.mid), "wt", variant === 0 ? unit.id : `${unit.id}.v${variant}`);
+      const path = join(modernizeRoot(opts.repoDir, opts.mid), "wt", variant === 0 ? unit.id : `${unit.id}${VARIANT_SEP}${variant}`);
       let outcome: AttemptOutcome;
       attempts++;
-      opts.log.append("unit.started", { unit: unit.id, model, worker, variant });
+      opts.log.append("unit.started", { unit: unit.id, model, worker, variant, ...(opts.runId ? { run_id: opts.runId } : {}) });
       if (variant > 0) opts.log.append("unit.variant", { unit: unit.id, variant, model });
       try {
         wt.remove(opts.repoDir, path);
@@ -174,7 +183,7 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
     const pool = Array.from({ length: Math.min(workers, queue.length) }, async (_, i) => {
       while (next < queue.length) {
         const unit = queue[next++]!;
-        if (stopped()) { outcomes.push(skipped(unit.id, "budget stop")); continue; }
+        if (stopped(1)) { outcomes.push(skipped(unit.id, "budget stop")); continue; }
         inFlight++;
         try {
           outcomes.push(await runUnitCascade(unit, i + 1));

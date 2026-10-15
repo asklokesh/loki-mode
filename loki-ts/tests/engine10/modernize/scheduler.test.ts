@@ -1,11 +1,12 @@
 // M-17 wall: scheduler policy (cascade, best-of-2, workers, budget stop, id safety, single writer).
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClusterResult, Unit } from "../../../src/engine10/modernize/cluster.ts";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
-import { clampWorkers, schedule } from "../../../src/engine10/modernize/scheduler.ts";
+import { clampWorkers, gitWorktrees, schedule } from "../../../src/engine10/modernize/scheduler.ts";
 import type { AttemptCtx, AttemptOutcome, WorktreeOps } from "../../../src/engine10/modernize/scheduler.ts";
 import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
 
@@ -20,13 +21,14 @@ function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "m17-"));
   const created: string[] = [];
   const removed: string[] = [];
+  const seq: string[] = [];
   const worktrees: WorktreeOps = {
-    create: (_r, p) => { created.push(p); },
-    remove: (_r, p) => { removed.push(p); },
+    create: (_r, p) => { created.push(p); seq.push(`create ${p}`); },
+    remove: (_r, p) => { removed.push(p); seq.push(`remove ${p}`); },
   };
   const log = new ModernizeLog(dir, MID);
   const base = { repoDir: dir, mid: MID, baseSha: "abc123", log, worktrees, unitEstimateUsd: null as number | null, budgetUsd: null as number | null, workers: 2 };
-  return { dir, created, removed, log, base, done: () => rmSync(dir, { recursive: true, force: true }) };
+  return { dir, created, removed, seq, log, base, done: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 describe("scheduler", () => {
@@ -74,7 +76,62 @@ describe("scheduler", () => {
     expect(new Set(f.created).size).toBe(3);
     expect(r.outcomes[0]!.worktree).toBe(f.created[2]!);
     expect(f.removed).toContain(f.created[0]!);
+    // Each loser is removed after its run (a second remove after the create).
+    for (const loser of [f.created[0]!, f.created[1]!]) {
+      const idx = f.seq.map((s, i) => (s === `remove ${loser}` ? i : -1)).filter((i) => i >= 0);
+      expect(idx.length).toBe(2);
+      expect(f.seq[idx[0]! + 1]).toBe(`create ${loser}`);
+      expect(idx[1]!).toBeGreaterThan(idx[0]! + 1);
+    }
+    expect(f.seq.filter((s) => s === `remove ${f.created[2]!}`).length).toBe(1);
     expect(f.created[0]!).toContain(join(".loki", "modernize", MID, "wt"));
+    f.done();
+  });
+
+  it("a PROVEN result keeps its FC-24 runner_reported conformance unchanged", async () => {
+    const f = fixture();
+    const conformance = { trust: "runner_reported", limit: "FC-24" } as unknown as UnitRunResult["conformance"];
+    const run = (c: AttemptCtx): AttemptOutcome => ({ result: { ...res(c.unit.id, "PROVEN"), conformance }, costUsd: 0 });
+    const r = await schedule(planOf([[u("a")]]), { ...f.base, run });
+    expect(r.outcomes[0]!.result!.conformance).toEqual({ trust: "runner_reported", limit: "FC-24" });
+    f.done();
+  });
+
+  it("unit.started carries run_id when the option is set", async () => {
+    const f = fixture();
+    const run = (c: AttemptCtx): AttemptOutcome => ({ result: res(c.unit.id, "PROVEN"), costUsd: 0 });
+    await schedule(planOf([[u("a")]]), { ...f.base, run, runId: "run-7" });
+    const ev = readModernizeEvents(f.dir, MID).find((e) => e.type === "unit.started")!;
+    expect(ev.data).toMatchObject({ run_id: "run-7" });
+    f.done();
+  });
+
+  it("variant paths cannot collide: 'a.v1' at variant 0 differs from 'a' at variant 1", async () => {
+    const f = fixture();
+    const run = (c: AttemptCtx): AttemptOutcome => ({ result: res(c.unit.id, c.unit.id === "a" && c.variant < 1 ? "NOT_EQUAL" : "PROVEN"), costUsd: 0 });
+    await schedule(planOf([[u("a"), u("a.v1")]]), { ...f.base, run, workers: 1 });
+    expect(new Set(f.created).size).toBe(f.created.length);
+    expect(f.created.length).toBe(3);
+    f.done();
+  });
+
+  it("cascade stop does not double-count the current unit in flight", async () => {
+    const f = fixture();
+    // budget 3, estimate 1, one unit failing twice at cost 1: spent 1 + inFlight(1) = 2 <= 3, so attempt 2 runs.
+    const run = (c: AttemptCtx): AttemptOutcome => ({ result: res(c.unit.id, c.variant < 2 ? "NOT_EQUAL" : "PROVEN"), costUsd: 1 });
+    const r = await schedule(planOf([[u("a")]]), { ...f.base, run, workers: 1, budgetUsd: 3, unitEstimateUsd: 1 });
+    expect(r.outcomes[0]!.attempts).toBe(3);
+    expect(r.outcomes[0]!.status).toBe("PROVEN");
+    f.done();
+  });
+
+  it("budget with no estimate: stops dispatch once spent exceeds it, budget.hit once", async () => {
+    const f = fixture();
+    const run = (c: AttemptCtx): AttemptOutcome => ({ result: res(c.unit.id, "PROVEN"), costUsd: 1 });
+    const r = await schedule(planOf([[u("a"), u("b"), u("c"), u("d")]]), { ...f.base, run, workers: 1, budgetUsd: 1.5, unitEstimateUsd: null });
+    expect(r.outcomes.filter((o) => o.status === "PROVEN").length).toBe(2);
+    expect(r.outcomes.filter((o) => o.status === "SKIPPED_BUDGET").length).toBe(2);
+    expect(readModernizeEvents(f.dir, MID).filter((e) => e.type === "budget.hit").length).toBe(1);
     f.done();
   });
 
@@ -150,5 +207,31 @@ describe("scheduler", () => {
     expect(ev.map((e) => e.type)).toEqual(["wave.started", "unit.started"]);
     expect(ev[1]!.data).toMatchObject({ unit: "a", model: "sonnet", worker: 1 });
     f.done();
+  });
+
+  it("gitWorktrees.create does not run a hook planted in the common git dir, and withholds the token (FC-25)", () => {
+    const repo = mkdtempSync(join(tmpdir(), "m17-git-"));
+    const marker = join(repo, "HOOK_RAN");
+    const g = (...a: string[]) => execFileSync("git", ["-C", repo, ...a], { stdio: "ignore", env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } });
+    g("init", "-q");
+    writeFileSync(join(repo, "f"), "x");
+    g("add", "f");
+    g("commit", "-q", "-m", "i", "--no-gpg-sign");
+    const sha = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    mkdirSync(join(repo, ".git", "hooks"), { recursive: true });
+    const hook = join(repo, ".git", "hooks", "post-checkout");
+    writeFileSync(hook, `#!/bin/sh\necho "$GH_TOKEN" > "${marker}"\n`);
+    chmodSync(hook, 0o755);
+    const prev = process.env.GH_TOKEN;
+    process.env.GH_TOKEN = "secret-token-value";
+    try {
+      gitWorktrees.create(repo, join(repo, "wt2"), sha);
+      expect(existsSync(join(repo, "wt2", "f"))).toBe(true);
+      expect(existsSync(marker)).toBe(false);
+      gitWorktrees.remove(repo, join(repo, "wt2"));
+    } finally {
+      if (prev === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prev;
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
