@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
-import { GhError, formatLessonList, formatLessonsForBrief, learnFromPr, loadLessons, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
+import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, loadLessons, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
 const dirs: string[] = [];
 const mk = (): string => { const d = mkdtempSync(join(tmpdir(), "t6-lessons-")); dirs.push(d); return d; };
@@ -358,5 +358,47 @@ describe("pr lessons MC-2 rejected PRs", () => {
       expect(loadLessons(d)[0]!.kind).toBeUndefined();
       expect(formatLessonList(loadLessons(d))).not.toContain("REJECTED");
     });
+  });
+});
+
+describe("v11.7 receipt facts and confidence", () => {
+  const mkL = (over: Partial<Lesson>): Lesson => ({ id: "x", text: "cursor pagination validate", source: { pr: "o/r#1", pr_url: "", comment_url: "", kind: "review", author: "a" }, learned_at: "t", uses: [], ...over });
+  it("appendReceiptFact writes a cited fact once; unsigned stays unverified", () => {
+    const d = mk();
+    expect(appendReceiptFact(d, { runId: "r1", verdict: "VERIFIED", receiptSha256: "ab".repeat(32), title: "fix pagination" })).toBe(true);
+    expect(appendReceiptFact(d, { runId: "r1", verdict: "VERIFIED", receiptSha256: "ab".repeat(32), title: "fix pagination" })).toBe(false);
+    appendReceiptFact(d, { runId: "r2", verdict: "VERIFIED", receiptSha256: null, title: "other" });
+    const ls = loadLessons(d);
+    expect(ls.length).toBe(2);
+    expect(ls[0]!.justified_by).toEqual({ run_id: "r1", receipt_sha256: "ab".repeat(32), verdict: "VERIFIED" });
+    expect(ls[1]!.justified_by!.verdict).toBe("unverified");
+    expect(lessonConfidence(ls[0]!)).toBeGreaterThan(lessonConfidence(ls[1]!));
+  });
+  it("confidence is computed from the citation and from uses", () => {
+    const v = mkL({ justified_by: { run_id: "r", receipt_sha256: "h", verdict: "VERIFIED" } });
+    const f = mkL({ justified_by: { run_id: "r", receipt_sha256: "h", verdict: "FAILED" } });
+    expect(lessonConfidence(v)).toBe(0.9);
+    expect(lessonConfidence(mkL({}))).toBe(0.5);
+    expect(lessonConfidence(f)).toBe(0.3);
+    expect(lessonConfidence(mkL({ uses: [{ run_id: "a", verdict: "FAILED", at: "t" }, { run_id: "b", verdict: "FAILED", at: "t" }] }))).toBe(0.25);
+  });
+  it("retrieval ties break on confidence and the brief shows provenance", () => {
+    const d = mk();
+    mkdirSync(dirname(lessonsPath(d)), { recursive: true });
+    const lo = mkL({ id: "lo" });
+    const hi = mkL({ id: "hi", kind: "receipt", justified_by: { run_id: "r9", receipt_sha256: "c".repeat(64), verdict: "VERIFIED" } });
+    writeFileSync(lessonsPath(d), JSON.stringify({ version: 2, lessons: [lo, hi] }));
+    const got = retrieveLessons(d, "validate pagination cursor");
+    expect(got.map((l) => l.id)).toEqual(["hi", "lo"]);
+    const brief = formatLessonsForBrief(got);
+    expect(brief).toContain("[receipt run r9 receipt cccccccccccc confidence 0.90]");
+    expect(brief).toContain("[pr confidence 0.50]");
+  });
+  it("an old-format lessons file (no kind, no justified_by) still reads", () => {
+    const d = mk();
+    mkdirSync(dirname(lessonsPath(d)), { recursive: true });
+    writeFileSync(lessonsPath(d), JSON.stringify({ version: 2, lessons: [{ id: "o", text: "old lesson text here", source: { pr: "o/r#1", pr_url: "u", comment_url: "c", kind: "review", author: "a" }, learned_at: "t", uses: [] }] }));
+    expect(loadLessons(d)[0]!.id).toBe("o");
+    expect(formatLessonList(loadLessons(d))).toContain("no receipt");
   });
 });

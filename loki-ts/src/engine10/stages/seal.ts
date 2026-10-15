@@ -16,7 +16,7 @@ import { discardIfSatisfied } from "../../e10ext/discard.ts";
 import { dropSet, parseStaged } from "../../e10ext/commit_filter.ts";
 import { flagOutsideScope } from "../../e10ext/scope.ts";
 import { canonicalJson, kidOf, loadSigningKey, signReceipt } from "../../util/receipt_signer.ts";
-import { recordRunVerdict } from "../../util/pr_lessons.ts";
+import { appendReceiptFact, recordRunVerdict } from "../../util/pr_lessons.ts";
 import { run } from "../../util/shell.ts";
 import { sealEvidence } from "../../features/visual_evidence.ts";
 import { isTestFile } from "../testmap.ts";
@@ -315,6 +315,8 @@ export const sealStage: Stage = {
     const signed = sig.jwt !== null;
     const data = { receipt_path: path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(mp ? { mutation_line: mp.line } : {}), ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) };
     try { recordRunVerdict(ctx.repoDir, ctx.runId, verdict); } catch { /* memory is best-effort */ }
+    // v11.7 LESSONS: after the receipt files are final, outside the receipt body (receipt_sha256 is unchanged). Cited only when signed.
+    if (process.env["LOKI_AUTO_LEARN_PR"] !== "0") { try { appendReceiptFact(ctx.repoDir, { runId: ctx.runId, verdict, receiptSha256: signed ? hash : null, title: str(ctx.outputs().intake?.title) ?? `run ${ctx.runId}`, headSha: receipt.head_sha }); } catch { /* memory is best-effort */ } }
     ctx.emit("receipt.sealed", "seal", { path, receipt_sha256: hash, signed, kid: sig.kid, verdict, not_proven: receipt.not_proven, ...(routeBlock ? { route_line: routePrLine(routeBlock) } : {}) });
     return { status: "completed", data: { ...data, summary: `${verdict} receipt ${hash.slice(0, 12)} ${signed ? `SIGNED kid ${sig.kid}` : "UNSIGNED"}` } };
   },
