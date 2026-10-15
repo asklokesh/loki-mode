@@ -2342,3 +2342,8 @@ The swarm is stopped: .loki/V10-STOP exists, the loop has no wake-ups, and the c
 - 11.7.0 (8b22e5fba): Tests red on tests/test-help-changelog-drift.sh (three flags missing from help/completion) and tests/test-sigpipe-guard.sh (count 1743 over ceiling 1742). Not published.
 - 11.7.1 (a01a22740): Release and Tests completed/success (gh run watch log, runs 38794589410 and 38794589637); npm dist-tags next=11.7.1, latest=11.6.0.
 - v11.8.0 train (workflow wf_e6306e08-008): group Seal, group resume, multi-milestone missions, Slack and Linear delegation on the trigger server, receipt --max-age, deploy completion and pulse ID_RE fixes.
+
+## 2026-10-15T20:45Z (CoS) v11.8.0 failed CI, v11.8.1 fix-forward
+- v11.8.0 (b5191b999): Tests run 38800796458 and Release failed on line budgets (core engine10 5020, features 3190), the D66 fence (run_group.ts value-imported seal and verify_cmd), two unclassified checkouts in the L2 registry, macOS-first stat in tests/test-backlog-units.sh:162, and a `loki help verify` mismatch. Not published.
+- Fix 1d734e6ba (Opus HIGH review APPROVED, 162 pass 0 fail on five suites), merged as 1788db60b. The pulse ID_RE item (E-121) was not in the train and stays open.
+- Local guards on the merged tree, all rc=0: test-help-changelog-drift, test-sigpipe-guard, test-help-and-log-cap, test-backlog-units, structural-checks, test-ci-only-divergence, test-platform-infra; bun test budget, l2_destructive_registry, route_group, seal_group: 117 pass 0 fail.

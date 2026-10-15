@@ -5,6 +5,17 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.8.1 (2026-10-15)
+
+Fix-forward release. v11.8.0 was tagged but failed CI and was never published to npm. v11.8.1 carries every v11.8.0 change listed below, plus these fixes for the guards that failed.
+
+### Fixed
+- Group Seal no longer value-imports engine10 Seal and verify code from `features/` (D66 fence). Seal dependencies are injected through `GroupCtx.seal`, supplied by the supervisor; a group run with no Seal dependencies exits 4 before any unit starts.
+- Line budgets restored: the TypeScript signature lexer moved to `loki-ts/src/util/ts_signatures.ts`, and the `--max-age` parsing and age check moved to `loki-ts/src/util/receipt_signer.ts`. features is 2692 lines (cap 3000) and core engine10 is 4985 (cap 5000).
+- The two `git checkout` calls in group resume are classified in the L2 destructive registry. Neither uses `--force`.
+- `tests/test-backlog-units.sh` reads file modes GNU-first, matching the stat portability rule.
+- `loki help verify` matches `loki verify --help` again.
+
 ## v11.8.0 (2026-10-15)
 
 Phase 2 of the multi-repo company operating system. Parallel group runs on `loki start` can now be proven, interrupted groups resume without redoing verified work, multi-milestone specs run as missions, and work can be delegated from Slack and Linear. Every capability extends the module that already owned its concern. `loki start` with Claude remains the primary path, and `loki chat` reaches the same code.
