@@ -6,7 +6,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process"; import { cu
 import { createHash, createPublicKey, sign, type Hash } from "node:crypto";
 import { resolveRunCapS } from "../util/run_cap.ts"; import { safeGit } from "../util/safe_git.ts";
 import { terminalWidth } from "../util/term_width.ts";
-import { diffStat, formatRunSummary, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT
+import { diffStat, formatRunSummary, withNextLine, nextOf, resultOf, summaryObject, useColor } from "../util/run_summary.ts"; // OC-OUTPUT
 import { guardedBackstop, validBase } from "../e10ext/commit_filter.ts";
 import { kidOf, loadSigningKey } from "./stages/seal.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -363,6 +363,6 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   // OC-OUTPUT: unified run summary, same format as the legacy engine (autonomy/lib/run-summary.sh)
   const baseSha = events.find((e) => e.type === "stage.completed" && e.stage === "intake")?.data.base_sha, ds = diffStat(repoDir, typeof baseSha === "string" ? baseSha : null), rr = resultOf(res.outcome);
   const ui = { result: rr, filesChanged: ds?.files ?? null, insertions: ds?.ins, deletions: ds?.del, costUsd: usd, elapsedS: Number(f.run.completed?.data.wall_s ?? (Date.now() - t0) / 1000), receiptPath: res.receiptSha ? join(runDir, "receipt.json") : null, next: nextOf(rr, ds?.files ?? null) };
-  process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: summaryObject(ui) })}\n` : quiet ? formatRunSummary(ui, { color: useColor() }) : `${out}\n${formatRunSummary(ui, { color: useColor() })}`);
+  process.stdout.write(json ? `${JSON.stringify({ ...JSON.parse(out), summary: summaryObject(ui) })}\n` : quiet ? formatRunSummary(ui, { color: useColor() }) : verbose ? `${out}\n${formatRunSummary(ui, { color: useColor() })}` : withNextLine(out, ui)); // D48: default output stays within 8 lines, so the summary collapses to one line
   return EXIT[res.outcome];
 }
