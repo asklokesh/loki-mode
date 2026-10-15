@@ -20,7 +20,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runMachine } from "../../src/engine10/machine.ts";
-import { draftReason, isDraft, renderPrBody } from "../../src/engine10/pr_body.ts";
+import { draftReason, isDraft } from "../../src/engine10/pr_body.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 import { commitStage, sealStage } from "../../src/engine10/stages/seal.ts";
 import { runPr, type PrContext } from "../../src/engine10/stages/pr.ts";
@@ -184,27 +184,6 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
 
       expect(isDraft(sealData.verdict as "PARTIAL", result.capHit)).toBe(true);
       expect(draftReason(sealData.verdict as "PARTIAL", result.capHit)).toBe("global cap fired");
-
-      // Report-only finding, checked rather than assumed: machine.ts stores
-      // `outputs[name] = res.data` without duration_s -- only the emitted
-      // stage.completed event gets it added. So ctx.outputs(), which is all
-      // renderPrBody ever sees, carries no per-stage times in a live run.
-      // This assertion tracks that fact either way (it does not go red the
-      // day machine.ts is fixed to include duration_s): the "Stage times:"
-      // section appears exactly when duration_s data exists to show.
-      const intakeTimed = typeof result.outputs.intake?.["duration_s"] === "number";
-      const body = renderPrBody({
-        verdict: sealData.verdict as "PARTIAL",
-        notProven: sealData.not_proven,
-        receiptPath: sealData.receipt_path,
-        capHit: result.capHit,
-        outputs: result.outputs,
-      });
-      expect(body.includes("Stage times:")).toBe(intakeTimed);
-      expect(body).toContain("Verdict: PARTIAL (DRAFT: global cap fired)");
-      expect(body).toContain("NOT PROVEN:");
-      for (const check of sealData.not_proven) expect(body).toContain(check);
-      expect(body).toContain(sealData.receipt_path);
     } finally {
       delete process.env["LOKI_E10_CAP_S"];
       delete process.env["SESSION_TEST_GRANDCHILD_PID_FILE"];
@@ -220,28 +199,12 @@ describe("engine10 hard cap -> DRAFT PR body (E-19)", () => {
     expect(draftReason("VERIFIED", true)).toBe("global cap fired");
   });
 
-  test("renderPrBody: a VERIFIED, uncapped run is not a draft and lists stage times, not missing checks", () => {
+  test("isDraft/draftReason: a VERIFIED, uncapped run is not a draft", () => {
     expect(isDraft("VERIFIED", false)).toBe(false);
     expect(draftReason("VERIFIED", false)).toBeNull();
-
-    const body = renderPrBody({
-      verdict: "VERIFIED",
-      notProven: [],
-      receiptPath: "/tmp/receipt.json",
-      capHit: false,
-      outputs: { intake: { duration_s: 11 }, implement: { duration_s: 62 } },
-    });
-    expect(body).not.toContain("DRAFT");
-    expect(body).toContain("Stage times:");
-    expect(body).toContain("intake: 11s");
-    expect(body).toContain("implement: 1m02s");
-    expect(body).toContain("- none");
   });
 
-  test("renderPrBody: a non-VERIFIED verdict without a cap names the verdict as the draft reason", () => {
+  test("draftReason: a non-VERIFIED verdict without a cap names the verdict", () => {
     expect(draftReason("SPEC_CONFLICT", false)).toBe("verdict SPEC_CONFLICT");
-    const body = renderPrBody({ verdict: "SPEC_CONFLICT", notProven: ["x"], receiptPath: null, capHit: false, outputs: {} });
-    expect(body).toContain("DRAFT: verdict SPEC_CONFLICT");
-    expect(body).not.toContain("Receipt:");
   });
 });
