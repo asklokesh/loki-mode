@@ -150,8 +150,12 @@ loki_route_resolve() {
         R_MODEL="$session_model"
     elif [ -n "${LOKI_SESSION_MODEL:-}" ]; then
         R_MODEL="$LOKI_SESSION_MODEL"
+    elif [ -n "${LOKI_MODEL_ROUTE:-}" ]; then
+        R_MODEL="route: $LOKI_MODEL_ROUTE"
     elif [ -n "${LOKI_MODEL_OVERRIDE:-}" ]; then
         R_MODEL="$LOKI_MODEL_OVERRIDE"
+    elif [ "$R_PROVIDER" = "opencode" ] && [ -n "${LOKI_OPENCODE_MODEL:-}" ]; then
+        R_MODEL="$LOKI_OPENCODE_MODEL"
     elif [ "$R_PROVIDER" = "claude" ]; then
         R_MODEL="${LOKI_CLAUDE_MODEL_DEVELOPMENT:-${LOKI_MODEL_DEVELOPMENT:-claude (provider default)}}"
     else
@@ -187,8 +191,8 @@ loki_route_resolve() {
         R_NOTICE="loki: routing this call to the legacy engine because of $legacy_flag (engine10 does not support it). Drop the flag to use engine10, or pass --engine legacy to silence this."
     else
         case "$R_PROVIDER" in
-            claude|codex|cline|aider) ;;
-            *) why="provider $R_PROVIDER has no engine10 invoker (use claude, codex, cline or aider)" ;;
+            claude|codex|cline|aider|opencode) ;;
+            *) why="provider $R_PROVIDER has no engine10 invoker (use claude, codex, cline, aider or opencode)" ;;
         esac
         if [ -z "$why" ] && [ "$R_INPUT_TYPE" = "prd" ]; then
             local sz

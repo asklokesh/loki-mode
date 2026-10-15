@@ -245,6 +245,48 @@ if [ "${LOKI_PROVIDER:-}" = "gemini" ]; then
     exit 1
 fi
 
+# OC-MODELS: `loki start|quick ... --model <id>` (also flag-first). One place maps the flag to
+# env before ANY engine/route decision, so engine10, the Bun start command and the legacy
+# loop all see the same thing. Route specs (openrouter|ollama|lmstudio|llamacpp|vllm|custom/<id>)
+# set LOKI_MODEL_ROUTE (claude child only); tier names and Claude aliases become --session-model;
+# any other id sets LOKI_OPENCODE_MODEL for opencode or LOKI_MODEL_OVERRIDE otherwise.
+case "${1:-}" in
+    start|quick|--model|--model=*)
+        _lm_has=0
+        for _lm_a in "$@"; do case "$_lm_a" in --model|--model=*) _lm_has=1 ;; esac; done
+        if [ "$_lm_has" = "1" ]; then
+            _lm_out=(); _lm_model=""; _lm_prov=""; _lm_skip=0; _lm_pnext=0
+            for _lm_a in "$@"; do
+                if [ "$_lm_skip" = "1" ]; then case "$_lm_a" in -*) _lm_model=""; break ;; esac; _lm_model="$_lm_a"; _lm_skip=0; continue; fi
+                if [ "$_lm_pnext" = "1" ]; then _lm_prov="$_lm_a"; _lm_pnext=0; fi
+                case "$_lm_a" in
+                    --model) _lm_skip=1; continue ;;
+                    --model=*) _lm_model="${_lm_a#--model=}"; continue ;;
+                    --provider) _lm_pnext=1 ;;
+                    --provider=*) _lm_prov="${_lm_a#--provider=}" ;;
+                esac
+                _lm_out+=("$_lm_a")
+            done
+            if [ -n "$_lm_model" ]; then
+                [ -n "$_lm_prov" ] || _lm_prov="${LOKI_PROVIDER:-claude}"
+                case "$_lm_model" in
+                    openrouter/*|ollama/*|lmstudio/*|llamacpp/*|vllm/*|custom/*) export LOKI_MODEL_ROUTE="$_lm_model" ;;
+                    small|medium|high|opus|sonnet|haiku) _lm_out+=(--session-model "$_lm_model") ;;
+                    *)
+                        if [ "$_lm_prov" = "opencode" ]; then export LOKI_OPENCODE_MODEL="$_lm_model"
+                        else export LOKI_MODEL_OVERRIDE="$_lm_model"; fi
+                        ;;
+                esac
+            else
+                echo "loki: --model requires a value (for example ollama/qwen3-coder or openrouter/<id>)." >&2
+                exit 2
+            fi
+            set -- ${_lm_out[@]+"${_lm_out[@]}"}
+        fi
+        unset _lm_has _lm_out _lm_model _lm_prov _lm_skip _lm_pnext _lm_a
+        ;;
+esac
+
 # First-run funnel, stage C: the activation ATTEMPT (first `loki start`).
 #
 # WHY HERE. This shim runs for BOTH routes before any exec, so one emit at this
@@ -406,29 +448,16 @@ _loki_start_needs_bash() {
         esac
     done
     unset _loki_iso_next
-
-    # The Bun RARV loop has not ported the opencode invoker yet. Keep the
-    # released, autonomous shell adapter reachable when SDK mode is enabled
-    # instead of accepting the selection and then failing after intake. CLI
-    # selection wins over env, which wins over the project-level saved choice.
-    local effective_provider="$explicit_provider"
-    if [ -z "$effective_provider" ] && [ -n "${LOKI_PROVIDER:-}" ]; then
-        effective_provider="$LOKI_PROVIDER"
-    fi
-    if [ -z "$effective_provider" ] && [ -f "${PWD}/.loki/state/provider" ]; then
-        effective_provider="$(sed -n '1p' "${PWD}/.loki/state/provider" 2>/dev/null || true)"
-    fi
-    [ "$effective_provider" = "opencode" ] && return 0
     return 1
 }
 _loki_attempts_refuse() {
     if _loki_start_needs_bash "$@"; then
-        echo "loki: 'loki start --attempts' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, --detach, or opencode) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
+        echo "loki: 'loki start --attempts' runs only the Loki 10 engine; an option or provider in this command (for example --parallel, --github, --sandbox, --issue, --dry-run, or --detach) was only honored by the removed legacy loop. Remove it, or use a task string, an issue ref or a PRD path." >&2
         exit 2
     fi
     case "${LOKI_PROVIDER:-claude}" in
-        claude|codex|cline|aider) ;;
-        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider." >&2; exit 2 ;;
+        claude|codex|cline|aider|opencode) ;;
+        *) echo "loki: the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline, aider or opencode." >&2; exit 2 ;;
     esac
 }
 
@@ -596,10 +625,10 @@ case "v10" in
         # invoker for, falls through to the legacy engine. Explicit v10 keeps its hard error.
         if [ "$_e10" = "1" ] && [ "$_e10_hard" = "0" ]; then
             case "${LOKI_PROVIDER:-claude}" in
-                claude|codex|cline|aider) ;;
+                claude|codex|cline|aider|opencode) ;;
                 *)
                     _e10=0
-                    echo "loki: using the legacy engine (the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline or aider)." >&2
+                    echo "loki: using the legacy engine (the Loki 10 engine does not support LOKI_PROVIDER=${LOKI_PROVIDER:-}; use claude, codex, cline, aider or opencode)." >&2
                     ;;
             esac
             if [ "$_e10" = "1" ]; then

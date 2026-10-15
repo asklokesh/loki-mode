@@ -79,5 +79,5 @@ except Exception:
     printf 'Cost:     %s\n' "$cost_h"
     printf 'Elapsed:  %s\n' "$elapsed_h"
     [ -n "$receipt" ] && printf 'Receipt:  %s\n' "$receipt"
-    printf 'next:     %s\n' "$next"
+    printf 'next:     %s  (or: loki chat --attach)\n' "$next"
 }

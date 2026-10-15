@@ -58,7 +58,7 @@ export function formatRunSummary(i: RunSummaryInput, opts: { json?: boolean; col
     `Cost:     ${cost}`,
     `Elapsed:  ${dur(i.elapsedS)}`,
     ...(i.receiptPath ? [`Receipt:  ${i.receiptPath}`] : []),
-    `next:     ${i.next}`,
+    `next:     ${i.next}  (or: loki chat --attach)`,
   ];
   return `${lines.join("\n")}\n`;
 }

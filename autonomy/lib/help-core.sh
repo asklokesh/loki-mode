@@ -13,8 +13,8 @@ help_core_screen() {
     echo "Usage: loki <command> [options]"
     echo ""
     echo "Start:"
-    echo "  chat             Interactive session: talk to Loki, it builds and verifies"
-    echo "  start [SPEC]     Build from a PRD file, issue (owner/repo#N, PROJ-1) or no arg (alias: run)"
+    echo "  start [SPEC]     PRIMARY: build from a PRD file, brief, or issue (owner/repo#N, PROJ-1) (alias: run)"
+    echo "  chat [--attach]  Interactive alternative; --attach joins the current 'loki start' run"
     echo "  edit \"<change>\"  Make one targeted change to the current repo"
     echo "  quick \"<task>\"   One small task, no PR"
     echo ""
@@ -50,10 +50,11 @@ Starting work
   loki "<task>"                Same as quick
   loki quick "add dark mode"   One small task, no PR
   loki edit "rename foo to bar" One targeted change
-  loki chat                    Interactive session
+  loki chat                    Interactive alternative to start (/run inside chat runs loki start)
+  loki chat --attach           Chat about the current or latest start run (/status /steer /diff /stop)
   loki plan ./prd.md           Dry run: complexity, cost, plan
 
-Common flags: --provider NAME, --budget USD, --simple, --complex,
+Common flags: --provider NAME, --model ID (tier or route, e.g. ollama/qwen3-coder), --budget USD, --simple, --complex,
 --no-dashboard, --spec FILE, --config PATH. Full list: loki help all.
 T
             ;;
@@ -85,8 +86,8 @@ T
             cat <<'T'
 Agents
 
-  loki agents                  List agent roles and their model tiers
-  loki route "<task>"          Show which agent and model a task would use
+  loki agents list|new|show    Your own agents (.loki/agents/<name>.md); council reviewers use them
+  loki route "<task>"          Show which engine, provider and model a task would use
   loki agent --help            Lower-level agent commands
 
 Roles use Opus for planning, Sonnet for development, Haiku for fast work.

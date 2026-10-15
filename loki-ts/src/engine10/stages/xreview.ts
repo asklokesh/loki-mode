@@ -2,6 +2,7 @@
 // read-only and may only DOWNGRADE the verdict (flag adds NOT PROVEN, block caps at PARTIAL).
 // Off unless loki.yaml `review: codex|claude` or LOKI_REVIEW_PROVIDER is set.
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { run } from "../../util/shell.ts";
 import { safeGitRun } from "../../util/safe_git.ts";
@@ -60,11 +61,27 @@ export function reviewReceipt(builder: string, xr: CrossReview | null, env: Node
 }
 
 /** Read-only argv: codex runs in its read-only sandbox; claude gets read tools only with writers and shell denied. */
-export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.ProcessEnv = process.env): string[] {
+export function reviewArgv(p: ReviewProvider, prompt: string, env: NodeJS.ProcessEnv = process.env, model?: string): string[] {
   const cli = reviewCli(p, env);
   return p === "codex"
     ? [cli, "exec", "--sandbox", "read-only", prompt]
-    : [cli, "-p", prompt, "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"];
+    : [cli, "-p", prompt, ...(model ? ["--model", model] : []), "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Write,Edit,NotebookEdit,Bash"];
+}
+
+/** OC-AGENTS: a configured `reviewer` agent (.loki/agents/reviewer.md, then ~/.config/loki/agents) supplies the reviewer persona and, for a claude judge, its model. None configured: null, behavior unchanged. */
+export function configuredReviewer(repoDir: string, env: NodeJS.ProcessEnv = process.env): { prompt: string; model: string } | null {
+  const dirs = [env["LOKI_AGENTS_PROJECT_DIR"] || join(repoDir, ".loki", "agents"), env["LOKI_AGENTS_USER_DIR"] || join(env["XDG_CONFIG_HOME"] || join(homedir(), ".config"), "loki", "agents")];
+  for (const d of dirs) {
+    const f = join(d, "reviewer.md"); if (!existsSync(f)) continue;
+    try {
+      const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(readFileSync(f, "utf8")); if (!m) continue;
+      const body = m[2]!.trim(); if (!body) continue;
+      const kv = (k: string): string => new RegExp(`^${k}:[ \\t]*["']?([^"'\\r\\n#]*?)["']?[ \\t]*$`, "m").exec(m[1]!)?.[1]?.trim() ?? "";
+      const prov = kv("provider") || "claude";
+      return { prompt: body.slice(0, 4000), model: prov === "claude" ? kv("model") : "" };
+    } catch { /* unreadable agent file: ignore */ }
+  }
+  return null;
 }
 
 const clean = (s: string): string => s.replace(/[\x00-\x1f\x7f`]+/g, " ").trim().slice(0, 300);
@@ -85,10 +102,11 @@ export async function crossReview(ctx: RunContext, verdict: Verdict, head: strin
   if (verdict !== "VERIFIED" && verdict !== "ALREADY_SATISFIED") return null; // nothing a review could downgrade
   const d = await safeGitRun(ctx.repoDir, ["diff", "--no-color", ctx.baseSha, head, "--", ".", ":(exclude).loki"], { timeoutMs: 20000 }).catch(() => null);
   if (!d || d.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: diff unavailable for ${p}`] };
-  const prompt = ["You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
+  const agent = configuredReviewer(ctx.repoDir);
+  const prompt = [agent ? `${agent.prompt}\nReview ONLY the diff below. Do not modify files.` : "You are an independent code reviewer. Review ONLY the diff below for correctness bugs, spec violations and missing tests. Do not modify files.",
     "Reply with a first line exactly `VERDICT: PASS`, `VERDICT: FLAG` (concerns) or `VERDICT: BLOCK` (a reproduced defect), then one `- reason` line per concern.", "", "```diff", d.stdout.slice(0, MAX_DIFF), "```"].join("\n");
   try {
-    const r = await run(reviewArgv(p, prompt), { cwd: ctx.repoDir, timeoutMs: TIMEOUT_MS });
+    const r = await run(reviewArgv(p, prompt, process.env, p === "claude" ? agent?.model : undefined), { cwd: ctx.repoDir, timeoutMs: TIMEOUT_MS });
     if (r.exitCode !== 0) return { provider: p, level: "not_run", notes: [`cross-review not run: ${p} exited ${r.exitCode}`] };
     return parseReview(p, r.stdout);
   } catch {
