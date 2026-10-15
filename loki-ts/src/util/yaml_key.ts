@@ -2,6 +2,20 @@
 // yamlKey(text, "budgets", "run_cap_s") reads `budgets:` then `  run_cap_s: v`. Only a key at the
 // block's FIRST-CHILD indent counts, so `budgets.per_stage.run_cap_s` (a deeper key of the same
 // name) is ignored. CRLF is normalized; a trailing comment is stripped; quotes are removed.
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+/** The text of each existing, readable loki.yaml then loki.yml in repoDir (unreadable files skipped). { yamlOnly: true } reads loki.yaml only. */
+export function lokiYamlTexts(repoDir: string, opts: { yamlOnly?: boolean } = {}): string[] {
+  const out: string[] = [];
+  for (const f of opts.yamlOnly ? ["loki.yaml"] : ["loki.yaml", "loki.yml"]) {
+    const p = join(repoDir, f);
+    if (!existsSync(p)) continue;
+    try { out.push(readFileSync(p, "utf8")); } catch { /* unreadable */ }
+  }
+  return out;
+}
+
 const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export function yamlKey(text: string, parent: string, key: string): string | null {

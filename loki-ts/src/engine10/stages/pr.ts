@@ -5,7 +5,7 @@
 // while the script takes "--draft" (translated below); it cannot say whether the PR already
 // existed, so `existing` is null, never fabricated.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { PushArgs, RunContext, Stage, StageResult, Verdict } from "../types.ts";
 import { pushArgv } from "../types.ts";
@@ -17,18 +17,11 @@ import { intentSection } from "../../util/intent_card.ts";
 import { specPrLine } from "../../util/spec_file.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { safeGit } from "../../util/safe_git.ts";
-import { yamlKey } from "../../util/yaml_key.ts";
+import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
 export function resolvePrAuthor(repoDir: string, environ: NodeJS.ProcessEnv = process.env): "me" | "bot" {
   let v: string | null = (environ.LOKI_PR_AUTHOR ?? "").trim() || null;
-  if (v === null) {
-    for (const f of ["loki.yaml", "loki.yml"]) {
-      const p = join(repoDir, f);
-      if (!existsSync(p)) continue;
-      try { v = yamlKey(readFileSync(p, "utf8"), "pr", "author"); } catch { /* unreadable */ }
-      break;
-    }
-  }
+  if (v === null) { const t = lokiYamlTexts(repoDir)[0]; if (t !== undefined) v = yamlKey(t, "pr", "author"); } // the first file only, even if the key is absent
   return (v ?? "").toLowerCase() === "bot" ? "bot" : "me";
 }
 /** RunContext plus the pinned origin and the cap signal from the supervisor. */
