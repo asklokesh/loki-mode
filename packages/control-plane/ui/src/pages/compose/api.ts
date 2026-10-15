@@ -1,5 +1,5 @@
 // The picker's only network calls: POST /v1/runs (planStart in src/server/spawn.ts), GET /v1/repos, GET /v1/repos/issues.
-import { authToken, listRepos } from "../../api";
+import { authToken, explainHttp, listRepos } from "../../api";
 
 export interface RunRequest { target: string; repo?: string; model?: string; provider?: string; budget?: string; workspace?: string }
 export interface RunStarted { ok: true; pid: number; command: string }
@@ -16,7 +16,7 @@ const auth = (): Record<string, string> => { const t = authToken(); return t ? {
 export async function postRun(body: RunRequest): Promise<RunStarted> {
   const res = await fetch(`${base()}/v1/runs`, { method: "POST", headers: { "content-type": "application/json", ...auth() }, body: JSON.stringify(body) });
   const j = (await res.json().catch(() => ({}))) as Partial<RunStarted> & { error?: string };
-  if (!res.ok) throw new StartError(res.status, j.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new StartError(res.status, await explainHttp(res.status, j.error));
   return j as RunStarted;
 }
 
@@ -28,6 +28,6 @@ export const fetchRepoInfo = async (): Promise<{ repos: string[]; defaultRepo: s
 export async function fetchIssues(repo: string): Promise<RepoIssue[]> {
   const res = await fetch(`${base()}/v1/repos/issues?repo=${encodeURIComponent(repo)}`, { headers: auth() });
   const j = (await res.json().catch(() => ({}))) as { issues?: RepoIssue[]; error?: string };
-  if (!res.ok) throw new StartError(res.status, j.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new StartError(res.status, await explainHttp(res.status, j.error));
   return j.issues ?? [];
 }

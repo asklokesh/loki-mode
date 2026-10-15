@@ -1,5 +1,5 @@
 // Receipts page data: the run list comes from the shared api, verify and key from the CPE-16 routes.
-import { authToken } from "../../api";
+import { authToken, explainHttp, failIfNotOk } from "../../api";
 import { isVerified } from "../../design/primitives";
 
 export interface VerifyResult { run: string; verdict: "VERIFIED" | "NOT_VERIFIED" | "UNSIGNED" | "TAMPERED" | "UNCHECKED"; integrity?: string; outcome?: string; reasons: string[]; receipt_sha256: string | null; verified_at: string }
@@ -14,7 +14,7 @@ const headers = (extra: Record<string, string> = {}): Record<string, string> => 
 export async function verifyRun(source: string, run: string): Promise<VerifyResult> {
   const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}/verify`, { method: "POST", headers: headers({ "content-type": "application/json" }), body: "{}" });
   const j = (await res.json().catch(() => ({}))) as Partial<VerifyResult> & { error?: string };
-  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(await explainHttp(res.status, j.error));
   return j as VerifyResult;
 }
 
@@ -22,7 +22,7 @@ export async function verifyRun(source: string, run: string): Promise<VerifyResu
 export async function getPublicKey(): Promise<PublicKey | null> {
   const res = await fetch(`${base()}/v1/keys`, { headers: headers() });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`/v1/keys: HTTP ${res.status}`);
+  if (!res.ok) await failIfNotOk(res);
   return (await res.json()) as PublicKey;
 }
 

@@ -94,9 +94,41 @@ const authHeaders = (extra: Record<string, string> = {}): Record<string, string>
   return t ? { ...extra, authorization: `Bearer ${t}` } : extra;
 };
 
+/** Raised for any non-2xx answer. message is always a sentence a person can act on, never a bare "HTTP 404". */
+export class HttpError extends Error {
+  constructor(readonly status: number, message: string) { super(message); }
+}
+
+const RESTART = "Run `loki control serve` to restart it, then reload this page.";
+
+/** The sentence for a failed call. A 404 or 405 with no server message means this control service does not know the route: usually an older process still running, so /health decides which sentence. */
+export async function explainHttp(status: number, serverMessage?: string): Promise<string> {
+  if (serverMessage && status !== 404) return serverMessage;
+  if (status === 404 || status === 405) {
+    try {
+      const h = (await (await fetch(`${base()}/health`, { headers: authHeaders() })).json()) as { version?: string; installed_version?: string };
+      if (h.version && h.installed_version && h.installed_version !== "unknown" && h.version !== h.installed_version) {
+        return `This control service is out of date (running ${h.version}, installed ${h.installed_version}) and does not know this action. ${RESTART}`;
+      }
+    } catch { /* health unreachable: fall through to the generic sentence */ }
+    return `The control service did not recognise this request${serverMessage ? ` (${serverMessage})` : ""}. It is probably an older version still running. ${RESTART}`;
+  }
+  if (status === 401) return "The control service needs a sign-in token. Open the link printed by `loki control serve`.";
+  if (status === 403) return "The control service refused this request. Open it from the machine that runs the service.";
+  if (status >= 500) return "The control service hit an error. Try again, and check the terminal running `loki control serve` if it keeps happening.";
+  return "The control service could not complete this request. Reload this page and try again.";
+}
+
+/** Throws HttpError for a non-ok response, reading an {error} body when there is one. */
+export async function failIfNotOk(res: Response): Promise<void> {
+  if (res.ok) return;
+  const j = (await res.clone().json().catch(() => ({}))) as { error?: unknown };
+  throw new HttpError(res.status, await explainHttp(res.status, typeof j.error === "string" ? j.error : undefined));
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${base()}${path}`, { headers: authHeaders() });
-  if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+  await failIfNotOk(res);
   return (await res.json()) as T;
 }
 
@@ -117,16 +149,15 @@ export function getRun(source: string, run: string): Promise<RunDetailResponse> 
 /** POST the answer to a BLOCKED run; resolves with the file it was written to. */
 export async function postAnswer(source: string, run: string, answer: string): Promise<{ path: string; resume: string }> {
   const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}/answer`, { method: "POST", headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify({ answer }) });
-  const j = (await res.json()) as { error?: string; path?: string; resume?: string };
-  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  await failIfNotOk(res);
+  const j = (await res.json()) as { path?: string; resume?: string };
   return { path: j.path ?? "", resume: j.resume ?? "" };
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${base()}${path}`, { method: "POST", headers: authHeaders({ "content-type": "application/json" }), body: JSON.stringify(body) });
-  const j = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
-  return j;
+  await failIfNotOk(res);
+  return (await res.json().catch(() => ({}))) as T;
 }
 
 /** Import the server's own repo (.loki/runs) through the existing backfill. */
@@ -166,8 +197,8 @@ export const startRun = (target: string, repo: string): Promise<{ ok: true; pid:
 /** Remove one run and its events. Resolves with what the server says was removed; rejects with the server's own error text. */
 export async function deleteRun(source: string, run: string): Promise<{ ok: true; removed: { runs: number; events: number; sources: number }; remaining_runs: number }> {
   const res = await fetch(`${base()}/v1/runs/${encodeURIComponent(source)}/${encodeURIComponent(run)}`, { method: "DELETE", headers: authHeaders({ "content-type": "application/json" }) });
-  const j = (await res.json().catch(() => ({}))) as { error?: string; removed?: { runs: number; events: number; sources: number }; remaining_runs?: number };
-  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  await failIfNotOk(res);
+  const j = (await res.json().catch(() => ({}))) as { removed?: { runs: number; events: number; sources: number }; remaining_runs?: number };
   return { ok: true, removed: j.removed ?? { runs: 0, events: 0, sources: 0 }, remaining_runs: j.remaining_runs ?? 0 };
 }
 

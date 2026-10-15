@@ -1,6 +1,6 @@
 // CPE-25: Merge queue. Wraps `loki merge` through the control service; the CLI stays the source of truth.
 import { useCallback, useEffect, useState } from "react";
-import { authToken } from "../../api";
+import { authToken, explainHttp } from "../../api";
 import { Badge, Button, Card, EmptyState, Input, Spinner } from "../../design/primitives";
 
 const base = (): string => (globalThis as { LOKI_CONTROL_BASE?: string }).LOKI_CONTROL_BASE ?? "";
@@ -14,7 +14,7 @@ interface RunResult { ok: boolean; ran: boolean; dryRun: boolean; exit: number |
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${base()}${path}`, init);
   const j = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) throw new Error(j.error ?? `HTTP ${res.status}`);
+  if (!res.ok) throw new Error(await explainHttp(res.status, j.error));
   return j;
 }
 
@@ -22,7 +22,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 async function callRun(dryRun: boolean): Promise<RunResult> {
   const res = await fetch(`${base()}/v1/merge/run`, { method: "POST", headers: headers(true), body: JSON.stringify({ dryRun }) });
   const j = (await res.json().catch(() => null)) as Partial<RunResult> | null;
-  if (!j || !Array.isArray(j.lines)) throw new Error(j?.error ?? `HTTP ${res.status}`);
+  if (!j || !Array.isArray(j.lines)) throw new Error(await explainHttp(res.status, j?.error));
   return { ok: false, ran: false, dryRun, exit: null, ...j, lines: j.lines } as RunResult;
 }
 

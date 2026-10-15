@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../../src/server/app.ts";
 import { localRepos } from "../../src/db/schema.ts";
-import { parseNumstat } from "../../src/server/diffstat.ts";
+import { diffStatGitRuns, parseNumstat } from "../../src/server/diffstat.ts";
 
 const FIX = join(import.meta.dir, "../fixtures/runs");
 const root = realpathSync(mkdtempSync(join(tmpdir(), "cp-ds-")));
@@ -63,4 +63,21 @@ test("non-hex or missing shas read null (unmeasured), never an empty list", asyn
 
 test("parseNumstat keeps null counts for binary files and ignores noise", () => {
   expect(parseNumstat("3\t1\tsrc/a.ts\n-\t-\timg.png\nnoise\n")).toEqual([{ path: "src/a.ts", added: 3, removed: 1 }, { path: "img.png", added: null, removed: null }]);
+});
+
+test("a leading-dash sha never reaches git, and a git failure is cached per range", async () => {
+  const SRC3 = "00112233445566ff";
+  db.insert(localRepos).values({ sourceId: SRC3, realpath: repo, name: "repo3", discoveredAt: new Date().toISOString() }).run();
+  expect((await call("/v1/ingest", { method: "POST", body: JSON.stringify({ source: SRC3, run_id: RUN, events: evs }) })).status).toBe(200);
+  const q = async () => ((await (await call(`/v1/runs/${SRC3}/${RUN}`)).json()) as { diff_stat: unknown }).diff_stat;
+  writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ base_sha: `-${"a".repeat(39)}`, head_sha: HEAD }));
+  const before = diffStatGitRuns.n;
+  expect(await q()).toBeNull();
+  expect(diffStatGitRuns.n).toBe(before);
+  writeFileSync(join(runDir, "receipt.json"), JSON.stringify({ base_sha: "b".repeat(40), head_sha: HEAD }));
+  expect(await q()).toBeNull();
+  const ran = diffStatGitRuns.n;
+  expect(ran).toBe(before + 1);
+  expect(await q()).toBeNull();
+  expect(diffStatGitRuns.n).toBe(ran);
 });

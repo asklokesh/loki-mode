@@ -126,3 +126,44 @@ test("ask thread: a missing route shows a real error state", async () => {
   render(<AskThreadView id="gone" />);
   expect(await screen.findByText("Could not open this thread")).toBeTruthy();
 });
+
+// CP-START: a 404 from the Start call is a sentence with a next step, never a bare HTTP status.
+async function startWith(routes: Record<string, (init?: RequestInit) => Response>) {
+  serve({ "/v1/repos": json({ repos: ["alpha"] }), ...routes });
+  render(<NewRunPicker preset={null} onDone={() => {}} />);
+  pick(await screen.findByTestId("picker-repo"), "alpha");
+  fireEvent.input(await screen.findByLabelText("Task"), { target: { value: "tidy" } });
+  fireEvent.click(screen.getByTestId("picker-continue"));
+  fireEvent.click(screen.getByTestId("confirm-start"));
+  return (await screen.findByTestId("picker-error")).textContent ?? "";
+}
+const issuesEmpty = { "/v1/repos/issues": json({ issues: [] }) };
+
+test("start: a forced plain-text 404 renders a sentence with the next step", async () => {
+  const t = await startWith({ ...issuesEmpty, "/v1/runs": () => new Response("404 Not Found", { status: 404 }), "/health": json({ version: "11.8.1", installed_version: "11.8.1" }) });
+  expect(t).not.toMatch(/HTTP 404/);
+  expect(t).toContain("loki control serve");
+});
+
+test("start: a version-skewed control service gets the restart sentence", async () => {
+  const t = await startWith({ ...issuesEmpty, "/v1/runs": () => new Response("404 Not Found", { status: 404 }), "/health": json({ version: "11.7.0", installed_version: "11.8.1" }) });
+  expect(t).toContain("out of date");
+  expect(t).toContain("11.7.0");
+  expect(t).toContain("restart");
+});
+
+test("picker: Browse links to repos; a smaller model shows one muted line and never blocks", async () => {
+  serve({ "/v1/repos": json({ repos: ["alpha"] }), "/v1/repos/issues": json({ issues: [] }), "/v1/runs": json({ ok: true, pid: 1, command: "x" }) });
+  render(<NewRunPicker preset={null} onDone={() => {}} />);
+  pick(await screen.findByTestId("picker-repo"), "alpha");
+  expect(screen.getByTestId("picker-browse").getAttribute("href")).toBe("#/repos");
+  expect(screen.queryByTestId("model-note")).toBeNull();
+  pick(screen.getByTestId("picker-model"), "haiku");
+  expect(screen.getByTestId("model-note").textContent).toBe("haiku: fastest, may be less accurate");
+  fireEvent.input(await screen.findByLabelText("Task"), { target: { value: "tidy" } });
+  expect((screen.getByTestId("picker-continue") as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(screen.getByTestId("picker-continue"));
+  fireEvent.click(screen.getByTestId("confirm-start"));
+  await waitFor(() => expect(posts().length).toBe(1));
+  expect(JSON.parse(posts()[0]!.body!)).toEqual({ target: "tidy", repo: "alpha", model: "haiku" });
+});

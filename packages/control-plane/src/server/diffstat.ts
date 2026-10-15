@@ -22,6 +22,10 @@ const SHA = /^[0-9a-f]{40,64}$/;
 const MAX_RECEIPT_BYTES = 1024 * 1024;
 const GIT_TIMEOUT_MS = 5000;
 const cache = new Map<string, DiffStat>();
+// A git failure (timeout, unknown object) is remembered per run and range for a short while so a list refresh does not respawn git for every row.
+const FAIL_TTL_MS = 60_000;
+const failed = new Map<string, number>();
+export const diffStatGitRuns = { n: 0 };
 
 const gitEnv = (): NodeJS.ProcessEnv => ({ PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", LC_ALL: "C", GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" });
 
@@ -49,7 +53,7 @@ function readReceipt(runDir: string): { base_sha?: unknown; head_sha?: unknown }
   } catch { return null; } finally { closeSync(fd); }
 }
 
-/** Null when the run is unknown, has no local repo or receipt, has no valid shas, or git cannot answer. Only successes are cached (a finished run's range never changes). */
+/** Null when the run is unknown, has no local repo or receipt, has no valid shas, or git cannot answer. Successes are cached for good (a finished run's range never changes); git failures are cached for FAIL_TTL_MS. */
 export function diffStatFor(db: Db, source: string, run: string): DiffStat | null {
   if (!ID.test(source) || !ID.test(run) || source.includes("..") || run.includes("..")) return null;
   const key = `${source}/${run}`;
@@ -67,11 +71,15 @@ export function diffStatFor(db: Db, source: string, run: string): DiffStat | nul
   const r = readReceipt(runDir);
   const base = typeof r?.base_sha === "string" ? r.base_sha : "", head = typeof r?.head_sha === "string" ? r.head_sha : "";
   if (!SHA.test(base) || !SHA.test(head)) return null;
+  const failKey = `${key}:${base}:${head}`;
+  const failedAt = failed.get(failKey);
+  if (failedAt !== undefined && Date.now() - failedAt < FAIL_TTL_MS) return null;
   try {
+    diffStatGitRuns.n++;
     const out = execFileSync("git", ["-C", repoReal, "-c", "core.quotePath=false", "diff", "--numstat", "--no-renames", `${base}..${head}`, "--"], { env: gitEnv(), timeout: GIT_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     const files = parseNumstat(out);
     const stat: DiffStat = { base, head, files, added: files.reduce((n, f) => n + (f.added ?? 0), 0), removed: files.reduce((n, f) => n + (f.removed ?? 0), 0), source: "git" };
     cache.set(key, stat);
     return stat;
-  } catch { return null; }
+  } catch { failed.set(failKey, Date.now()); return null; }
 }
