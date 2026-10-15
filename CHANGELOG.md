@@ -5,6 +5,29 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.6.0 (2026-10-15)
+
+The consolidation release. Under the binding rule "extend existing code, never duplicate", every duplicate module, parallel implementation and copied document was found, then merged into the owner of its concern or deleted. The result is 3,354 fewer lines net (5,984 removed, 2,630 added, mostly restored spec and ported tests) with no lost behaviour. Each removal was ported to its owner, with the owner's tests extended to cover it. `loki start` behaves exactly as before; it now runs on one implementation per concern.
+
+### Changed
+- One `loki status` renderer. `contrib/status.ts` and its duplicate run-dir helpers and `latestRunId` copies are gone; `commands/run_status.ts` owns them. The group grid, blocked answer and dashboard now honour `LOKI_DIR`.
+- One `loki.yaml` reader. `lokiYamlTexts` now serves the run cap, budget cap, PR and install settings, replacing four separate readers.
+- One atomic writer. Council, checkpoint, failure history and engine origin all write through `util/atomic.ts` `atomicWriteText`. It gained a `durable` option so the non-fsync callers keep their cost. The bytes written to disk are unchanged.
+- One PR body renderer. `renderReviewerBody` is canonical. The never-used `renderPrBody`, `pr_criteria.ts` and `unitTableLines` are deleted.
+- One GitHub issues path. `loki issues` now validates the repo, refuses dash-leading labels and milestones, enforces the issue row shape, and accepts `--milestone`. The uncalled `e10ext/issues.ts` is deleted.
+- One worktree reaper. The checks from `prune-worktrees.sh` (open cwd, 30-minute commit age, eval archive run ids, `git cherry` merge detection) are now an opt-in `v10-worktree-reap --strict` mode. That mode is a dry run unless `--apply` is given. The default behaviour is unchanged, and `prune-worktrees.sh` is deleted.
+- One dashboard app. `dashboard/server.py` is the only dashboard server. The standalone FastAPI control app and `dashboard/run.py` are deleted, and their auth assertions now run against the server.
+
+### Removed
+- Dead code: the unused `usage_window` parser (the usage governor owns usage parsing) and the unused MCP `tools.py` and `resources.py` (`mcp/server.py` owns tools and resources).
+- Duplicate skill text: the three `.claude/commands` files are now symlinks to the plugin's commands. Copied skill doc blocks now point to their canonical references.
+- Suffixed test siblings (`*_v2`, `*_mc1`, `*_haiku55` and similar) are merged into their base test files as describe blocks. The test case count is unchanged.
+
+### Documentation
+- Exit codes are documented in one place, `docs/exit-codes.md`. Key rotation and OIDC claim mapping now live only in `docs/authentication.md`. That page no longer claims that OIDC users get full access by default.
+- `docs/v10/ENGINE.md` is restored to the engine specification. A cut log had overwritten it; that log now lives in `ARCHITECT-CUTS.md`. The OpenClaw integration page is folded into `integrations/openclaw/README.md`.
+- Release model wording in CLAUDE.md and the release checklist now follows D96: every approved slice is a release. D25 (trains) is marked superseded. Four stale snapshot docs are folded into PROGRESS.md and deleted.
+
 ## v11.5.1 (2026-10-15)
 
 Patch for v11.5.0, which was pushed but never published: its CI Tests run failed, so npm did not receive it. This release ships everything listed under v11.5.0 together with the fixes below.
