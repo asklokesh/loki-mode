@@ -15820,6 +15820,12 @@ cmd_quick() {
             --verbose|-v) if [ "$_quick_task_seen" = "false" ]; then export LOKI_VERBOSE=1; continue; fi ;;
             --config|--vars|--env-file)        _skip_next=true; continue ;;
             --config=*|--vars=*|--env-file=*)   continue ;;
+            # LM-006: a leading unknown --flag is a usage error, never task text (a typo must not start a paid run).
+            --?*) if [ "$_quick_task_seen" = "false" ] &&[[ "$_qa" != *" "* ]]; then
+                    echo -e "${RED}Error: unknown option: $_qa${NC}" >&2
+                    echo "Usage: loki quick [--verbose] \"description of what to do\"" >&2
+                    exit 64
+                 fi ;;
         esac
         _quick_task_seen=true
         _quick_args+=("$_qa")

@@ -45,7 +45,7 @@ loki_route_resolve() {
     local verb="$1"; shift
     R_DECIDED=0; R_E10=0; R_HARD=0; R_ENGINE=""; R_REASON=""; R_INPUT_TYPE=""; R_INPUT=""
     R_PROVIDER=""; R_MODEL=""; R_NOTICE=""; R_ERR=""; R_EXPLAIN=0; R_JSON=0; R_SESSION_MODEL=""; R_VERB=""
-    R_E10_ARGS=(); R_CLEAN=()
+    R_E10_ARGS=(); R_CLEAN=(); R_ADAPTER=""; R_CAPDIFF=()
 
     local a engine_req="" help=0 legacy_flag="" session_model="" provider_flag=""
     local -a positionals=() passthru=()
@@ -208,7 +208,32 @@ loki_route_resolve() {
             R_REASON="default: $R_INPUT_TYPE input runs on engine10 regardless of flag order"
         fi
     fi
+    _route_adapter_and_diffs "$legacy_flag"
     return 0
+}
+
+# Sets R_ADAPTER and R_CAPDIFF[] from R_ENGINE / R_PROVIDER. Empty R_CAPDIFF means the
+# full Claude Code path on the Loki 10 engine. Statements mirror providers/*.sh
+# (PROVIDER_HAS_TASK_TOOL=false for every non-claude provider).
+_route_adapter_and_diffs() {
+    local legacy_flag="$1"
+    R_CAPDIFF=()
+    if [ "$R_ENGINE" = "legacy" ]; then
+        R_ADAPTER="legacy-bash:$R_PROVIDER"
+        R_CAPDIFF+=("runs the previous bash loop (autonomy/run.sh) instead of the Loki 10 supervisor")
+        if [ -n "$legacy_flag" ]; then
+            R_CAPDIFF+=("honors $legacy_flag, which engine10 does not support")
+        fi
+    else
+        R_ADAPTER="engine10:$R_PROVIDER"
+    fi
+    case "$R_PROVIDER" in
+        claude) ;;
+        codex|cline|aider|opencode)
+            R_CAPDIFF+=("provider $R_PROVIDER has no Claude Code Task-tool subagents (providers/$R_PROVIDER.sh)") ;;
+        *)
+            R_CAPDIFF+=("provider $R_PROVIDER has no engine10 invoker") ;;
+    esac
 }
 
 # Print the route (human or --json). Returns 0.
@@ -216,13 +241,20 @@ loki_route_print() {
     local shown="$R_INPUT"
     if [ "${#shown}" -gt 72 ]; then shown="$(printf '%s' "$shown" | cut -c1-69)..."; fi
     if [ "$R_JSON" = "1" ]; then
-        printf '{"engine":"%s","provider":"%s","model":"%s","input_type":"%s","input":"%s","reason":"%s"}\n' \
-            "$(_route_json_str "$R_ENGINE")" "$(_route_json_str "$R_PROVIDER")" "$(_route_json_str "$R_MODEL")" \
-            "$(_route_json_str "$R_INPUT_TYPE")" "$(_route_json_str "$shown")" "$(_route_json_str "$R_REASON")"
+        local diffs="" d
+        for d in ${R_CAPDIFF[@]+"${R_CAPDIFF[@]}"}; do
+            diffs="${diffs:+$diffs,}\"$(_route_json_str "$d")\""
+        done
+        printf '{"engine":"%s","adapter":"%s","provider":"%s","model":"%s","input_type":"%s","input":"%s","reason":"%s","capability_differences":[%s]}\n' \
+            "$(_route_json_str "$R_ENGINE")" "$(_route_json_str "$R_ADAPTER")" "$(_route_json_str "$R_PROVIDER")" "$(_route_json_str "$R_MODEL")" \
+            "$(_route_json_str "$R_INPUT_TYPE")" "$(_route_json_str "$shown")" "$(_route_json_str "$R_REASON")" "$diffs"
     else
-        printf 'engine:   %s\nprovider: %s\nmodel:    %s\ninput:    %s (%s)\nreason:   %s\n' \
-            "$R_ENGINE" "$R_PROVIDER" "$R_MODEL" "$R_INPUT_TYPE" "$shown" "$R_REASON"
+        printf 'engine:   %s\nadapter:  %s\nprovider: %s\nmodel:    %s\ninput:    %s (%s)\nreason:   %s\n' \
+            "$R_ENGINE" "$R_ADAPTER" "$R_PROVIDER" "$R_MODEL" "$R_INPUT_TYPE" "$shown" "$R_REASON"
+        local d
+        for d in ${R_CAPDIFF[@]+"${R_CAPDIFF[@]}"}; do printf 'differs:  %s\n' "$d"; done
     fi
+    return 0
 }
 
 # Entry used by bin/loki. Args: the full original argv. Sets R_* and returns:

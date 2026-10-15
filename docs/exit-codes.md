@@ -24,7 +24,9 @@ is the part most likely to surprise a script author.
 
 Usage errors are distinct from run outcomes: `loki start` with an unknown
 option exits 64, and `loki quick` with no task description exits 64 (they were
-1 and 2). A missing provider CLI still exits 2 before any spend. There is no
+1 and 2). A missing provider CLI still exits 2 before any spend, and so does a
+working directory that is not a git repository (`engine10: not inside a git
+repository`). A PRD path that does not exist also exits 2 (`PRD file not found`). There is no
 finer run-outcome signal. A gate that needs to tell "failed the quality gate"
 from "crashed" must opt into the durable contract below.
 
@@ -59,7 +61,8 @@ identically; a parity test asserts they agree status for status.
 |---|---|
 | 0 | The run completed and its diff did not weaken the tests |
 | 3 | The diff weakened the tests (a skip marker added in a test file, a test runner config changed, or an existing test file deleted or renamed). The receipt headline is NOT VERIFIED and names what was weakened, for example `NOT VERIFIED (tests weakened: skip added in sum.test.js)` |
-| 64 | Usage error: no task description |
+| 2 | Not a git repository (engine10 preflight, before any spend), or a missing provider CLI |
+| 64 | Usage error: no task description, or an unknown leading `--option` (from 11.5.0; before that it was taken as task text and started a paid run) |
 | other nonzero | The run itself failed; this code is passed through unchanged |
 
 `loki quick` has no `--json` flag; its structured result is `loki why --json`, schema: `schemas/why-result.schema.json` (`state.lastExitCode` carries the ladder above).
@@ -363,3 +366,100 @@ One provider pass, no loop.
 | 0 | Edit done (or nothing to change, or `--dry-run` plan printed) |
 | 1 | Provider pass failed, or `--verify` failed (nothing is committed) |
 | 2 | Usage or setup error (no change text, not a git repo, claude or python3 missing, unsupported provider) |
+
+## `loki run` (deprecated alias of `loki start <issue-ref>`)
+
+Not changed. `loki run` with an unknown option exits 1 (it predates the 64 usage
+contract and keeps its code); with no issue reference it exits 2. New scripts
+should call `loki start` instead. `loki route` input errors (a missing PRD file,
+or `--engine engine10` combined with a flag engine10 cannot honor) exit 2.
+
+## Contract cases
+
+Each row is executed against the real CLI by `tests/test-exit-codes-documented.sh`,
+which fails if an observed code differs from the Exit column. Every case stops
+before any provider spend. An empty diff is a distinct code only for `loki verify`
+(3). `loki edit` treats it as "nothing to change" (exit 0, see above); `loki quick`,
+`loki start` and `loki run` have no empty-diff exit code, and none is asserted.
+
+| Case | Command and setup | Exit | Meaning |
+|---|---|---|---|
+| `verify-empty-diff` | `loki verify` in a repo with no diff vs base | 3 | Verifier error: nothing to check is never a pass |
+| `verify-not-git` | `loki verify` outside a git repository | 2 | Could not check |
+| `verify-unknown-flag` | `loki verify --no-such-flag` | 64 | Usage error |
+| `run-unknown-flag` | `loki run --no-such-flag` | 1 | Legacy alias keeps its pre-64 code |
+| `run-no-issue-ref` | `loki run` with no argument | 2 | Issue reference required |
+| `quick-unknown-flag` | `loki quick --no-such-flag` | 64 | Usage error (from 11.5.0) |
+| `quick-no-task` | `loki quick` with no argument | 64 | Usage error |
+| `quick-not-git` | `loki quick fix the bug now` outside a git repository | 2 | engine10 preflight, before spend |
+| `edit-unknown-flag` | `loki edit --no-such-flag` | 2 | Usage error |
+| `edit-no-change` | `loki edit` with no change text | 2 | Usage error |
+| `edit-not-git` | `loki edit "change x"` outside a git repository | 2 | Setup error |
+| `start-unknown-flag` | `loki start --no-such-flag` | 64 | Usage error |
+| `start-missing-prd` | `loki start missing-prd.md` | 2 | PRD file not found |
+| `start-not-git` | `loki start fix the bug now` outside a git repository | 2 | engine10 preflight, before spend |
+
+Migration note (11.5.0): `loki quick --some-typo` used to run a paid task whose text
+was the flag. It now exits 64 before any spend. Task text that starts with `--` must
+be rephrased or put after other words.
+
+## Routing contract
+
+Authoritative contract for which engine and adapter `loki start` and `loki quick` use for each input form. Inspect any call without running it:
+
+```sh
+loki route start <args> --json
+loki route quick <args> --json
+loki --explain-route <flag-first args>
+```
+
+The JSON carries `engine`, `adapter`, `provider`, `model`, `input_type`, `input`, `reason` and `capability_differences`. `capability_differences` is an empty list only for the full Claude Code path on the Loki 10 engine. Any compatibility route (the legacy bash loop, or a provider other than Claude) lists at least one difference.
+
+### Rules
+
+- Argument order never changes the route: flags first or last, `--prd FILE` or a positional file, `--provider X` or `LOKI_PROVIDER=X`, `--engine X` or `LOKI_ENGINE=X` all resolve identically (the flag wins over the env var).
+- Default engine is `engine10` for a PRD file (`.md`, `.json`, `.yaml`), an issue reference (`owner/repo#N` or an issue URL), a multi-word task and a one-word brief.
+- The legacy engine runs only on `--engine legacy` or `LOKI_ENGINE=legacy`, for one call when a flag engine10 does not support is present (a notice is printed), for a provider with no engine10 invoker, or for a PRD larger than 100000 bytes.
+- `--engine engine10` with an unsupported flag is refused (exit 2) instead of rerouted.
+- A missing PRD file path is a usage error (exit 2).
+- Adapter is `<engine>:<provider>`, with the legacy engine written `legacy-bash:<provider>`.
+- Claude Code is the primary provider. The `loki chat` surface does not use this router; it is a separate interactive entry point.
+
+### Invocation table
+
+The table below is rendered from live `loki route --json` output by `tests/test-engine10-dispatch.sh`. The test fails if it drifts; regenerate with `bash tests/test-engine10-dispatch.sh --update-doc`.
+
+<!-- route-table:begin (generated by tests/test-engine10-dispatch.sh --update-doc) -->
+| Invocation (after `loki route`, unless it starts with `loki` or an env var) | Engine | Adapter | Capability differences | Reason |
+|---|---|---|---|---|
+| `start p.md` | engine10 | engine10:claude | none | default: prd input runs on engine10 regardless of flag order |
+| `start p.md --provider claude` | engine10 | engine10:claude | none | default: prd input runs on engine10 regardless of flag order |
+| `start --provider claude p.md` | engine10 | engine10:claude | none | default: prd input runs on engine10 regardless of flag order |
+| `start --prd p.md` | engine10 | engine10:claude | none | default: prd input runs on engine10 regardless of flag order |
+| `start p.json` | engine10 | engine10:claude | none | default: prd input runs on engine10 regardless of flag order |
+| `start p.yaml` | engine10 | engine10:claude | none | default: prd input runs on engine10 regardless of flag order |
+| `start "fix the bug"` | engine10 | engine10:claude | none | default: task input runs on engine10 regardless of flag order |
+| `start fix the bug` | engine10 | engine10:claude | none | default: task input runs on engine10 regardless of flag order |
+| `loki --explain-route --json "fix the bug"` | engine10 | engine10:claude | none | default: task input runs on engine10 regardless of flag order |
+| `quick "fix the bug"` | engine10 | engine10:claude | none | default: task input runs on engine10 regardless of flag order |
+| `quick fix the bug` | engine10 | engine10:claude | none | default: task input runs on engine10 regardless of flag order |
+| `start owner/repo#5` | engine10 | engine10:claude | none | default: issue input runs on engine10 regardless of flag order |
+| `start owner/repo#5 --provider claude` | engine10 | engine10:claude | none | default: issue input runs on engine10 regardless of flag order |
+| `start https://github.com/owner/repo/issues/5` | engine10 | engine10:claude | none | default: issue input runs on engine10 regardless of flag order |
+| `start hello` | engine10 | engine10:claude | none | default: brief input runs on engine10 regardless of flag order |
+| `start p.md --provider codex` | engine10 | engine10:codex | 1 listed | default: prd input runs on engine10 regardless of flag order |
+| `start --provider codex p.md` | engine10 | engine10:codex | 1 listed | default: prd input runs on engine10 regardless of flag order |
+| `LOKI_PROVIDER=codex start p.md` | engine10 | engine10:codex | 1 listed | default: prd input runs on engine10 regardless of flag order |
+| `start p.md --provider cline` | engine10 | engine10:cline | 1 listed | default: prd input runs on engine10 regardless of flag order |
+| `start p.md --provider aider` | engine10 | engine10:aider | 1 listed | default: prd input runs on engine10 regardless of flag order |
+| `start p.md --provider opencode` | engine10 | engine10:opencode | 1 listed | default: prd input runs on engine10 regardless of flag order |
+| `start p.md --provider gemini` | legacy | legacy-bash:gemini | 2 listed | provider gemini has no engine10 invoker (use claude, codex, cline, aider or opencode) |
+| `start p.md --engine legacy` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |
+| `start --engine legacy p.md` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |
+| `LOKI_ENGINE=legacy start p.md` | legacy | legacy-bash:claude | 1 listed | explicit: --engine legacy or LOKI_ENGINE=legacy |
+| `start p.md --engine engine10` | engine10 | engine10:claude | none | explicit: --engine engine10 |
+| `LOKI_ENGINE=engine10 start p.md` | engine10 | engine10:claude | none | explicit: --engine engine10 |
+| `start p.md --parallel` | legacy | legacy-bash:claude | 2 listed | flag --parallel is not supported by engine10 |
+| `start --parallel p.md` | legacy | legacy-bash:claude | 2 listed | flag --parallel is not supported by engine10 |
+| `start big.md` | legacy | legacy-bash:claude | 1 listed | PRD is larger than 100000 bytes (engine10 takes the task as one argument) |
+<!-- route-table:end -->
