@@ -13,6 +13,7 @@ docs/v10/SCORECARD-PLAN.md	loki trimmed	output marker text [loki trimmed N lines
 docs/TOOLS.md	loki tools	output text printed by tools/tool-index.py, not a command
 docs/authorization.md	--role	denial: names the removed --role option
 docs/exit-codes.md	--no-such-flag	deliberate unknown flag documenting exit code 64
+docs/exit-codes.md	--some-typo	deliberate unknown flag in the 11.5.0 loki quick migration note
 docs/openclaw-integration.md	loki openclaw	denial: states the command does not exist
 docs/certification/02-enterprise-features/quiz.md	loki auth	wrong-answer distractor in a quiz
 docs/certification/02-enterprise-features/quiz.md	--new-token	wrong-answer distractor in a quiz
