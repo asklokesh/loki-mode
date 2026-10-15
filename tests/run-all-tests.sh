@@ -1633,6 +1633,7 @@ run_test "focus POST skipped when the dashboard is disabled (S-195)" "$SCRIPT_DI
 run_test "Loki 10 eval harness runner and scorer (EV-1)" "$SCRIPT_DIR/../eval/loki10/test-harness.sh"
 run_test "Loki 10 gate report generator (E-33)" "$SCRIPT_DIR/../eval/loki10/test-gate-report.sh"
 run_test "Loki 10 engine trusted push and PR (E-11)" "$SCRIPT_DIR/test-engine10-push.sh"
+run_test "Recovery: idempotent publish across an interrupted run" "timeout -k 10 120 $SCRIPT_DIR/test-recovery-idempotent-publish.sh"
 run_test "Loki 10 engine dispatch hook (E-12)" "$SCRIPT_DIR/test-engine10-dispatch.sh"
 run_test "loki verify --pubkey=FILE routes to v10 through bin/loki (P0-VERIFY-ARG)" "$SCRIPT_DIR/test-verify-pubkey-cli.sh"
 run_test "Loki Receipt check action posts success for a valid receipt and failure for a tampered one (B2)" "timeout -k 10 300 bash $SCRIPT_DIR/test-receipt-check-action.sh"
