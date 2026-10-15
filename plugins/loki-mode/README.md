@@ -35,7 +35,14 @@ Slash commands (namespaced as `loki-mode:<command>`):
 - `loki-mode:loki-spec-status` - check whether the spec has drifted from its
   lock using deterministic living-spec drift detection.
 - `loki-mode:loki-verify` - run Loki's deterministic PR verification on the
-  current change and summarize the evidence verdict.
+  current change and summarize the evidence verdict. `--fast [base]` runs
+  `loki verify --fast --diff-base ${base:-HEAD}` instead: deterministic, no
+  model or network call (exit 0 PASS, 1 FAIL, 3 INCONCLUSIVE).
+- `loki-mode:start <task or file>` - hand a task to Loki (`loki start --bg`).
+  Free-text tasks are written to `.loki/handoff-task.md` first. Claude Code
+  does not build it; Loki owns provider setup, budget and routing.
+- `loki-mode:handoff` - print `.loki/review/HANDOFF.md`, else `./HANDOFF.md`,
+  else `loki own`. Never invents text.
 
 MCP server (`loki-mode`): exposes Loki's tools (memory, task queue, code
 search, build management) to Claude Code.
@@ -81,6 +88,39 @@ runs before:
 
 With `LOKI_GUARD` unset the hook always allows the command through, so it never
 interferes unless you ask it to.
+
+## Optional Stop hook: fast verifier gate (off by default)
+
+The plugin ships a `Stop` hook (`scripts/loki-stop-verify.sh`, hook timeout
+30 s) that is a no-op unless `LOKI_STOP_VERIFY=1` (environment or Claude Code
+settings `env`) or the plugin option `CLAUDE_PLUGIN_OPTION_STOP_VERIFY` is set.
+It blocks completion only when `loki verify --fast --diff-base HEAD` exits 1
+(FAIL: at least one high-severity finding), emitting
+`{"decision":"block","reason":"..."}` with the first 15 verifier lines.
+
+It allows the stop (fail-open) when: not opted in; the event has
+`stop_hook_active: true` (never loops after one block); `loki`, `git` or a git
+work tree is absent; no tracked file has uncommitted changes; the verifier
+times out (`LOKI_STOP_VERIFY_TIMEOUT`, default 20 s); or it exits with anything
+other than 1 (INCONCLUSIVE is not a block). Untracked new files are outside the
+diff scope, and the fast verifier covers its detector set, not your test suite.
+
+## Configure Claude Code from the CLI
+
+```
+loki setup-skill --claude-code [--print] [--project] [--stop-hook] [--settings FILE]
+```
+
+Merges `extraKnownMarketplaces.loki-mode`, `enabledPlugins["loki-mode@loki-mode"]`
+and, with `--stop-hook`, `env.LOKI_STOP_VERIFY` into `~/.claude/settings.json`
+(`--project`: `./.claude/settings.json`). Existing keys are kept as you set them
+(even `false`), invalid JSON is refused (exit 3) with the file untouched,
+writes are atomic, and a second run reports `UNCHANGED`. `--print` prints the
+snippet and writes nothing. Then run `/reload-plugins` in Claude Code.
+
+Claude Code keeps tool permissions, the Stop-hook protocol, plugin
+install/update and the session itself; the plugin adds no model loop,
+permission system or sandbox.
 
 ## License
 

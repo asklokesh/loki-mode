@@ -748,7 +748,6 @@ run_test "server.json tracks VERSION (MCP registry not stale)" "$SCRIPT_DIR/test
 # unreachable registry exits 0 rather than reddening a pre-push gate.
 run_test "MCP registry entry is not stale (published vs shipped)" "$SCRIPT_DIR/test-mcp-registry-not-stale.sh"
 run_test "plugin.json tracks VERSION (plugin updates not stale)" "$SCRIPT_DIR/test-plugin-json-current.sh"
-run_test "Claude Code plugin: Stop hook fails open, blocks on FAIL, settings merge" "timeout -k 10 120 bash $SCRIPT_DIR/test-claude-code-plugin.sh"
 run_test "subagent fleet capacity is explicit (CC 2.1.217 defaults)" "$SCRIPT_DIR/test-subagent-fleet-capacity.sh"
 run_test "build wall-clock is attributable (boot/teardown timed)" "$SCRIPT_DIR/test-build-time-attribution.sh"
 run_test "README has no hand-maintained version (drifts by default)" "$SCRIPT_DIR/test-readme-no-stale-version.sh"

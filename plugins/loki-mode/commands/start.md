@@ -16,5 +16,5 @@ user does something else. Do not start building the task yourself.
 3. Report in at most five lines: that the run started in the background, the
    command to check progress (`loki status`), and where results land:
    `.loki/review/HANDOFF.md` (read it with `/loki-mode:handoff`) and the
-   evidence verdict (`/loki-mode:verify`).
+   evidence verdict (`/loki-mode:loki-verify --fast`).
 4. If `loki start` exits non-zero, show its first error line verbatim and stop.

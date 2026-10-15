@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2015
 # setup-skill must never overwrite or write inside an existing provider path
 # that is not already a valid Loki skill installation.
 
@@ -98,6 +99,32 @@ if [ "$CLEAN_RC" -eq 0 ] && [ "$VALID" -eq 4 ] \
 else
     fail "clean installation behavior regressed"
 fi
+
+echo "Claude Code settings merge (setup-skill --claude-code)"
+S="$TMP/cc-settings.json"
+printf '{"model":"opus","enabledPlugins":{"other@x":true},"env":{"FOO":"1"}}\n' > "$S"
+NO_COLOR=1 LOKI_LEGACY_BASH=1 bash "$LOKI" setup-skill --claude-code --settings "$S" --stop-hook >/dev/null 2>&1; rc=$?
+if [ "$rc" -eq 0 ] && python3 - "$S" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["model"] == "opus" and d["enabledPlugins"]["other@x"] is True and d["env"]["FOO"] == "1"
+assert d["enabledPlugins"]["loki-mode@loki-mode"] is True
+assert d["extraKnownMarketplaces"]["loki-mode"]["source"]["repo"] == "asklokesh/loki-mode"
+assert d["env"]["LOKI_STOP_VERIFY"] == "1"
+PY
+then pass "merge keeps existing keys and adds Loki keys"; else fail "merge failed rc=$rc"; fi
+before="$(cat "$S")"
+msg="$(NO_COLOR=1 LOKI_LEGACY_BASH=1 bash "$LOKI" setup-skill --claude-code --settings "$S" --stop-hook 2>&1)"
+{ [ "$before" = "$(cat "$S")" ] && printf '%s' "$msg" | grep -q UNCHANGED; } && pass "second run is idempotent" || fail "not idempotent"
+printf '{"enabledPlugins":{"loki-mode@loki-mode":false}}\n' > "$S"
+NO_COLOR=1 LOKI_LEGACY_BASH=1 bash "$LOKI" setup-skill --claude-code --settings "$S" >/dev/null 2>&1
+python3 -c 'import json,sys;assert json.load(open(sys.argv[1]))["enabledPlugins"]["loki-mode@loki-mode"] is False' "$S" \
+    && pass "never overwrites a user's explicit value" || fail "overwrote user value"
+printf '{not json' > "$S"
+NO_COLOR=1 LOKI_LEGACY_BASH=1 bash "$LOKI" setup-skill --claude-code --settings "$S" >/dev/null 2>&1; rc=$?
+{ [ "$rc" -eq 3 ] && [ "$(cat "$S")" = "{not json" ]; } && pass "refuses invalid JSON, file untouched" || fail "invalid JSON handling rc=$rc"
+bash "$LOKI" setup-skill --claude-code --print | python3 -c 'import json,sys;json.load(sys.stdin)' && pass "--print emits valid JSON" || fail "--print invalid"
+
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

@@ -1,13 +1,20 @@
 ---
 description: Run Loki's deterministic PR verification on the current change and summarize the evidence verdict.
-argument-hint: "[base-ref] (default: main)"
-allowed-tools: Bash(loki verify:*), Read
+argument-hint: "[--fast] [base-ref] (default: main; --fast defaults to HEAD, the uncommitted changes)"
+allowed-tools: Bash(loki verify:*), Bash(command -v:*), Read
 ---
 
 Run Loki's Autonomi Verify on the current working tree and report the verdict
 with its evidence, not just an opinion in chat. The differentiator is the
 auditable artifact: a verdict that refuses to silently pass on inconclusive
 evidence.
+
+Fast mode: if $ARGUMENTS starts with `--fast`, check `command -v loki` (stop if
+missing) and run `loki verify --fast --diff-base <ref>` (ref defaults to
+`HEAD`). It is deterministic, with no model or network call. Exit codes: 0 PASS,
+1 FAIL, 3 INCONCLUSIVE. Print the verdict line and each finding as
+`severity rule path:line`, say which findings block (severity high), and never
+describe INCONCLUSIVE as a pass. Skip the steps below.
 
 Steps:
 
