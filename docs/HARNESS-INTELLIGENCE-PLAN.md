@@ -133,6 +133,26 @@ Cap overrides (only meaningful when feature 8 is on):
 Profile knobs: `LOKI_REPO_PROFILE_TTL_SECONDS` (86400),
 `LOKI_REPO_PROFILE_MAX_CHARS` (2000).
 
+## Repo commands and baseline (REPOMEM, same module)
+
+`loki-ts/src/runner/repo_profile.ts` also owns the commands profile the engine10 path uses (`loki start`). The goal: the user never explains how the repo builds and tests, and a failure that was already there never blocks the run. It is not gated by `LOKI_REPO_PROFILE`; disable it with `LOKI_REPO_BASELINE=0`. Both profiles share one manifest hash (`manifestHash`: sha256 over name and content of package.json, requirements.txt, Makefile, pyproject.toml, tox.ini, pytest.ini, setup.cfg, go.mod, Cargo.toml and `.github/workflows/*.yml`).
+
+Artifact: `.loki/state/repo-profile.json` (version 1, `CommandProfile`), written by engine10 intake.
+
+- `revision`: HEAD the baseline ran on. `manifest_hash`: as above.
+- `commands[]`: `{kind: test|lint|typecheck|build, cmd, source, validated, exit_code, duration_s, failing_ids}`. `validated` is true only when the command ran to completion on the untouched tree, false when it could not run (missing, timed out), null when discovered but not executed. Only the first test command is executed.
+- `baseline`: `{ran, command, exit_code, duration_s, timed_out, failing_ids, attributable, reason?}`. `attributable` means exit 0, or non-zero with parseable failing ids (`failIds`).
+
+Lifecycle:
+
+1. Intake (after the dirty-tree refusal and the `.loki/` exclude, before any agent edit): same manifest hash and HEAD reuses the file; same hash and a new HEAD keeps the commands and re-runs only the baseline; a changed hash rediscovers and re-runs (`ensureProfile`).
+2. Baseline: `sh -c <test cmd>` in the repo, 60s timeout (SIGKILL), scoped env (`plainTestEnv`, `PYTHONDONTWRITEBYTECODE=1`, `CI=1`). Untracked files the run created are removed so the diff stays the agent's.
+3. Implementer brief (`briefContext`, e10ext/context.ts): a "Repo commands" block and the known-red test ids (`profileBrief`). Bytes depend only on the profile content (no timestamps).
+4. Verify (`verifyStage`): `attribute()` marks a failing check pre-existing only when the profile revision equals the run base sha, the baseline was attributable, the check is neither a Wall/task-named target nor in a file the diff touched, and every one of its failing ids is in the baseline. Those join `pre_red` and `pre_red_checks`. Everything else that fails is introduced and blocks as before; a check with no parsed ids is introduced. Verify data gains `baseline_line` (`baseline: N pre-existing failing check(s) (not blocking), M introduced (blocking)`) and `introduced_checks`; seal lists the line under NOT PROVEN only when a baseline failure was excused.
+5. Surface: `loki doctor --repo` (and `--repo --json`) prints the profile, read-only, from the current directory.
+
+`e10ext/repomemory.ts` still holds the last verified command, flaky list and failure causes (dynamic per-repo cache data, not discovery).
+
 ## Acceptance
 
 1. With all flags unset, `bun test tests/parity/` stays 60/60 byte-exact.

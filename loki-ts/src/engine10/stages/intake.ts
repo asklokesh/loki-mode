@@ -13,7 +13,7 @@ import { deferAlreadyDone, speedEnabled } from "../../features/speed/already_don
 import { snapshotContract } from "../../features/contract.ts";
 import { unmergedEvidence, unmergedEvidenceNote } from "../../util/base_guard.ts";
 import { intakeProjectModel } from "../../project_model/discover.ts"; import { sha256 } from "./seal.ts"; import { splitDirty, untrackedAtIntake, snapshotUntracked } from "../../e10ext/preexisting_dirty.ts";
-import { safeGit } from "../../util/safe_git.ts";
+import { safeGit } from "../../util/safe_git.ts"; import { ensureProfile } from "../../runner/repo_profile.ts";
 export interface IntakeOptions {
   taskText?: string;
   issueJsonPath?: string;
@@ -107,6 +107,7 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   const repoMap = buildRepoMap(ctx.repoDir);
   writeFileSync(repomapRef, JSON.stringify(repoMap));
   const testmap = await ctx.tests.detect(ctx.repoDir);
+  if (process.env.LOKI_REPO_BASELINE !== "0") ensureProfile(ctx.repoDir); // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over
   // repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files;
   // no candidate evidence means no session call (checkAlreadyDone's own gate).

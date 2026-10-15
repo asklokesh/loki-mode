@@ -86,7 +86,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   cmd("version", "KEEP-MODERN", "bun", "Show version", "Bun-native, no legacy dependency", { aliases: ["--version", "-v"] }),
   cmd("status", "UPDATE", "both", "Show current run status", "Reads both engines; fold legacy fields into the v10 view", { flags: [json], example: "loki status --json" }),
   cmd("stats", "DELETE", "bun", "Session statistics (alias of report session)", "Deprecated alias; use report session", { flags: [json, bool("--efficiency", "Token and cost efficiency")] }),
-  cmd("doctor", "KEEP-MODERN", "both", "System prerequisites health check", "Core onboarding gate", { flags: [json, bool("--airgap", "Air-gapped check")], example: "loki doctor --json" }),
+  cmd("doctor", "KEEP-MODERN", "both", "System prerequisites health check", "Core onboarding gate", { flags: [json, bool("--airgap", "Air-gapped check"), bool("--repo", "Print the repo profile")], example: "loki doctor --json" }),
   cmd("provider", "KEEP-MODERN", "both", "Show, list or set the AI provider", "Provider-agnostic core", {
     subcommands: [
       sub("show", "Show current provider", { positionals: [{ name: "name", type: "dynamic", dynamic: "providers" }] }),
