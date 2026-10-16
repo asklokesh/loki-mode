@@ -26,7 +26,7 @@ import { killGroup, spawnWorker } from "../runner/worker_proc.ts";
 import { askIntent } from "../util/intent_card.ts";
 import { assertPreflight, PreflightError } from "./preflight.ts";
 import { resolveModel } from "./session.ts";
-import { modelDowngrades } from "../runner/model_downgrades.ts";
+import { modelDowngrades } from "../runner/model_downgrades.ts"; import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
@@ -277,7 +277,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
 
   const routeStart = routeStartLine(process.env, provider); // FC-35: printed before any stage, so it states the pre-plan state only (route.json does not exist yet). R1-15: null unless LOKI_ROUTER is on, so the start line is byte-identical otherwise
   const costEst = encodeEstimate(process.env, repoDir, undefined, model); if (costEst) env.LOKI_E10_COST_ESTIMATE = costEst; // 11.3.0 T1: null under LOKI_COST_PREVIEW=0
-  const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
+  env.LOKI_REQUESTED_MODEL = model; const downgrades = modelDowngrades(provider); // D86 L1: any downgrade is printed here and recorded on run.started (key only when non-empty, receipt hashes stay stable)
   if (!json) process.stdout.write(`${START_LINE}, ${baseLine(repoDir)}, ${capNote(cap.usd, cap.source)}${downgrades.length ? `; downgrade: ${downgrades.map((d) => `${d.stage} ${d.model} (${d.reason})`).join(", ")}` : ""}${routeStart ? `; ${routeStart}` : ""}${costEst ? `; ${startText(JSON.parse(costEst), cap.usd)}` : ""}\n`); if (verbose && !json && cap.source === "subscription") process.stdout.write(`${SUBSCRIPTION_NOTE}\n`); // D48: one start line naming the engine; provider, model and run id are in the receipt
   if (costEst && process.env.LOKI_COST_CONFIRM === "1" && process.stdin.isTTY && !json && !(await (await import("../commands/issues_run.ts")).askYesNo("Proceed with this run? [y/N] "))) { process.stdout.write("Run cancelled before start (LOKI_COST_CONFIRM).\n"); return 1; }
   const capLine = !json ? [disclosureLine(provider), unenforceableNote(provider, cap.usd)].filter(Boolean).join("\n") : null; if (capLine) process.stdout.write(`${capLine}\n`); // LM-004: one line when the provider lacks a guarantee claude has; claude prints nothing extra
@@ -317,7 +317,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     started: {
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
       model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`, ...runIntent(repoDir),
-      ...(downgrades.length ? { downgrades } : {}),
+      ...(downgrades.length ? { downgrades } : {}), ...runIdentity(repoDir, process.env, model),
     },
     pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
       const gate = prGate(repoDir); // autonomy ladder: deny = no PR plus a not-proven line; require_approval = draft PR

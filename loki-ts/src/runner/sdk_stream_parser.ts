@@ -26,6 +26,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { num, routerTelemetryOn } from "../engine10/cost.ts";
+import { modelOutcome } from "../util/run_identity.ts";
 import { partialUsagePath } from "./budget.ts";
 
 // A structural subset of the Agent SDK's SDKMessage union -- only the fields the
@@ -573,6 +574,7 @@ function writeResultCost(
       ...(process.env["LOKI_E10_RESUME_SESSION"] ? { resumed_from: process.env["LOKI_E10_RESUME_SESSION"] } : {}),
       ...modelUsageFields(data),
       ...(model ? { model } : {}),
+      ...(model && process.env["LOKI_REQUESTED_MODEL"] ? { requested_model: process.env["LOKI_REQUESTED_MODEL"], model_downgraded: modelOutcome(process.env["LOKI_REQUESTED_MODEL"], model).downgraded } : {}), // P12-23 Q3: requested vs actual, flag only when a request was recorded
       ...(firstTurnPromptTokens !== undefined ? { first_turn_prompt_tokens: firstTurnPromptTokens } : {}),
       ...(router ?? {}),
     };
