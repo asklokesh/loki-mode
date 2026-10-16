@@ -64,7 +64,17 @@ function loadIssue(path: string): IssueFields {
 function isAlreadyDone(issue: IssueFields): boolean {
   return issue.state === "closed" || issue.closed_by_merged_pr === true;
 }
+let foldedReadiness: string | null = null; // set only when the supervisor would fold it into the last line; a failed intake never reaches that line, so it is printed here
 export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: IntakeOptions = {}): Promise<StageResult> {
+  foldedReadiness = null;
+  const flush = (): void => { if (foldedReadiness) process.stderr.write(`${foldedReadiness}\n`); foldedReadiness = null; };
+  let r: StageResult;
+  try { r = await runIntakeBody(ctx, signal, opts); } catch (e) { flush(); throw e; }
+  if (r.status === "failed") flush();
+  foldedReadiness = null;
+  return r;
+}
+async function runIntakeBody(ctx: RunContext, signal: AbortSignal, opts: IntakeOptions): Promise<StageResult> {
   const t0 = Date.now(); if (signal.aborted) return { status: "failed", data: {}, reason: "aborted before intake started" };
   const { blocking: dirty, preexisting } = splitDirty(ctx.repoDir, dirtyTrackedFiles(ctx.repoDir));
   if (dirty.length > 0) {
@@ -109,7 +119,8 @@ export async function runIntake(ctx: RunContext, signal: AbortSignal, opts: Inta
   const testmap = await ctx.tests.detect(ctx.repoDir);
   const built = process.env.LOKI_REPO_BASELINE !== "0" ? ensureProfile(ctx.repoDir) : null; // REPOMEM: commands + a baseline test run on the untouched tree, reused while the manifests are unchanged; never throws
   const rd = built ? repoReadiness(built.profile) : null, readiness = rd ? `Readiness: ${rd.score}/100 (${rd.grade})${rd.findings.length ? ` - run \`loki doctor --repo\` for ${rd.findings.length} fix(es)` : ""}` : null;
-  if (readiness && process.env.LOKI_E10_READINESS_FOLD !== "1") process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
+  if (readiness && process.env.LOKI_E10_READINESS_FOLD === "1") foldedReadiness = readiness;
+  else if (readiness) process.stderr.write(`${readiness}\n`); // FV-readiness-env-3; D48 default mode: the supervisor folds it into the last line instead
   // E-66: "already implemented" as a first-class outcome. A deterministic evidence search over
   // repoMap/testmap/CHANGELOG, confirmed by one short cheap-model session that must cite files;
   // no candidate evidence means no session call (checkAlreadyDone's own gate).

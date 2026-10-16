@@ -527,6 +527,19 @@ describe("respondToReview", () => {
     await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit })).rejects.toThrow(/head branch/);
   });
 
+  it("never stages .loki run artifacts: a real source edit is staged, the .loki file is not", async () => {
+    const e = mkEnv([C(1, "x")]);
+    let edited = false;
+    const vcs = (args: string[]): string => {
+      if (args[0] === "status") return edited ? " M src/real.ts\n?? .loki/runs/e10-1/spec.snapshot.md\n?? .loki/state.json\n" : "";
+      return e.vcs(args);
+    };
+    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, fix: async () => { edited = true; return true; } });
+    expect(r.fixed).toBe(1);
+    const add = e.gitCalls.find((a) => a[0] === "add")!;
+    expect(add).toEqual(["add", "--", "src/real.ts"]);
+  });
+
   it("skips replies and already-answered threads", async () => {
     const e = mkEnv([C(1, "x"), C(2, "reply", { in_reply_to_id: 1 }), C(4, "y"), C(5, "Addressed in abc <!-- loki-respond -->", { in_reply_to_id: 4 })]);
     const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit });

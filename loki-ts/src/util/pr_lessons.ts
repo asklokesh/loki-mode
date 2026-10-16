@@ -347,7 +347,7 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
   const done: Array<{ c: OpenComment; sha: string }> = [];
   for (const c of open.slice(0, Number.isInteger(max) && max > 0 ? max : MAX_RESPOND)) {
     if (!(await deps.fix(c))) continue;
-    const files = vcs(["status", "--porcelain"]).split("\n").filter((l) => l.length > 3).map((l) => l.slice(3).split(" -> ").pop()!.replace(/^"|"$/g, ""));
+    const files = vcs(["status", "--porcelain"]).split("\n").filter((l) => l.length > 3).map((l) => l.slice(3).split(" -> ").pop()!.replace(/^"|"$/g, "")).filter((f) => f !== ".loki" && !f.startsWith(".loki/")); // never stage Loki run artifacts into the user's PR
     if (files.length === 0) continue;
     vcs(["add", "--", ...files]);
     vcs(["commit", "-m", `Address review comment on ${c.path || "PR"}\n\nReview-Comment: ${c.url}`]);
