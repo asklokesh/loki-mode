@@ -21,7 +21,7 @@ import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 /** Receipt field (A04): the operator intent revisions this run consumed. Omitted when none so other receipts stay byte-stable. */
 export function intentRevisionsBlock(revs: readonly IntentRevision[] | undefined): { intent_revisions?: { rev: number; source: string | null; actor: string | null; sha: string }[] } {
-  const r = (revs ?? []).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
+  const r = (revs ?? []).filter((r) => r.unapplied !== true).map(({ rev, source, actor, sha }) => ({ rev, source, actor, sha }));
   return r.length ? { intent_revisions: r } : {};
 }
 
@@ -84,7 +84,7 @@ export function workItemState(events: readonly EventEnvelope[], nowMs?: number):
 /** Blockers live in their own field, never in the state string. The only blocker the engine writes is an implement spec conflict (stage.completed spec_conflict_reason on a SPEC_CONFLICT run). */
 export function workItemBlockers(events: readonly EventEnvelope[]): string[] {
   if (events.findLast((e) => e.type === "run.completed")?.data["verdict"] !== "SPEC_CONFLICT") return [];
-  const why = events.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data["spec_conflict_reason"];
+  const why = events.findLast((e) => e.type === "stage.completed" && e.stage === "implement")?.data["spec_conflict_reason"];
   return [`spec_conflict: ${typeof why === "string" && why ? why.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500) : "unspecified"}`];
 }
 
@@ -204,9 +204,11 @@ export function resumePoint(events: readonly EventEnvelope[], rawLog?: string): 
   const par = next === "plan" || next === "wall"; // plan and wall run in parallel (machine.ts FLOW): either may finish first
   const later = STAGE_ORDER.slice(idx + 1).find((s) => !(par && (s === "plan" || s === "wall")) && events.some((e) => e.stage === s && e.type === "stage.completed"));
   if (later) return { ok: false, reason: `stage ${later} completed but ${next} never did` };
-  const revs = events.findLast((e) => e.type === "intent.revised")?.data["revisions"]; // P12-07d: absent in an older log restores as empty
-  const wallStarts = events.flatMap((e) => e.type === "stage.started" && e.stage === "wall" && typeof e.data["start_ms"] === "number" ? [e.data["start_ms"] as number] : []);
-  return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events), intentRevisions: Array.isArray(revs) ? (revs as IntentRevision[]) : [], timeline: wallStarts.map((startMs) => ({ stage: "wall" as const, startMs, endMs: startMs })) };
+  // P12-07d: durable late-steer state. Nothing seeds ctx from these yet (re-entry is P12-07h); they are parsed here so a future re-entry can restore them.
+  const seen = new Set<number>(), intentRevisions: IntentRevision[] = []; // union of every intent.revised, so a later (forged or empty) event cannot clear an honest one
+  for (const e of events) if (e.type === "intent.revised" && Array.isArray(e.data["revisions"])) for (const r of e.data["revisions"] as IntentRevision[]) if (typeof r === "object" && r !== null && Number.isInteger(r.rev) && Number.isFinite(r.at) && !seen.has(r.rev)) { seen.add(r.rev); intentRevisions.push(r); }
+  const timeline = events.filter((e) => e.type === "stage.started" && e.stage === "wall").map((e) => { const m = e.data["start_ms"], startMs = typeof m === "number" && Number.isFinite(m) && m >= 0 ? m : 0; return { stage: "wall" as const, startMs, endMs: startMs }; }); // unknown start = 0: every revision is stale (fail closed)
+  return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events), intentRevisions, timeline };
 }
 
 /** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase prints the resume point and exits 4

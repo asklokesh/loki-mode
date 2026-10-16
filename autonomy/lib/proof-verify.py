@@ -1173,6 +1173,29 @@ def git_head(repo):
     return out.strip() if out and out.strip() else ""
 
 
+def _sparse_included(repo, paths):
+    """Set of `paths` git's own sparse matcher includes; None when git cannot answer.
+
+    One `git sparse-checkout check-rules` call for the whole batch: it echoes
+    the paths the patterns include, for cone, non-cone and negation alike.
+    Known limit: a .git directory writable by the subject can drop paths from
+    info/sparse-checkout. That hole predates this check (core.sparseCheckout=true
+    alone was enough).
+    """
+    enc = [p.encode("utf-8", "surrogateescape") for p in paths]
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo or ".", "sparse-checkout", "check-rules", "-z"],
+            input=b"".join(e + b"\0" for e in enc),
+            capture_output=True, timeout=60, env=_scoped_env())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    if r.returncode != 0:
+        return None
+    out = set(r.stdout.split(b"\0"))
+    return set(p for p, e in zip(paths, enc) if e in out)
+
+
 def git_dirty(repo):
     """True/False, or None when git cannot answer. .loki/ is excluded: the
     verifier writes its own artifacts there."""
@@ -1186,6 +1209,90 @@ def git_dirty(repo):
             path = path.strip('"')
         if not (path.startswith(".loki/") or path == ".loki"):
             return True
+    # A skip-worktree (S/s) or assume-unchanged (lowercase tag) flag hides edits
+    # from status. A flagged path is dirty only when its content differs from
+    # the index; a skip-worktree path absent on disk is sparse-excluded (clean).
+    flagged = _vr_git_args(repo, ["ls-files", "-v", "-z"])
+    if flagged is None:
+        return None
+    cand = []
+    for ent in flagged.split("\0"):
+        tag, path = ent[:1], ent[2:]
+        if not path or path.startswith(".loki/"):
+            continue
+        if tag in ("S", "s") or tag.islower():
+            cand.append((tag in ("S", "s"), path))
+    if not cand:
+        return False
+    staged = _vr_git_args(repo, ["ls-files", "-s", "-z"])
+    if staged is None:
+        return None
+    blobs = {}
+    for ent in staged.split("\0"):
+        meta, _, p = ent.partition("\t")
+        f = meta.split()
+        if len(f) == 3 and f[2] == "0":
+            blobs[p] = (f[0], f[1])
+    sparse = (_vr_git_args(repo, ["config", "--bool", "core.sparseCheckout"]) or "").strip() == "true"
+    root = repo or "."
+    bad = None
+    todo = []
+    sparse_missing = []
+    for skip, path in cand:
+        full = os.path.join(root, path)
+        mode, want = blobs.get(path, ("", ""))
+        if not os.path.lexists(full):
+            if skip and sparse:
+                # Decided after the loop in one batched git call: clean only when
+                # git's sparse patterns exclude the path. An in-cone path flagged
+                # by hand and deleted is a real deletion; fail closed otherwise.
+                sparse_missing.append(path)
+                continue
+            bad = (skip, path)
+            break
+        if mode == "160000":
+            continue
+        if os.path.islink(full):
+            data = os.readlink(full).encode("utf-8", "surrogateescape")
+            if hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest() != want:
+                bad = (skip, path)
+                break
+            continue
+        todo.append((skip, path))
+    if sparse_missing and not bad:
+        included = _sparse_included(repo, sparse_missing)
+        for path in sparse_missing:
+            if included is None or path in included:
+                bad = (True, path)
+                break
+    for i in range(0, len(todo), 200):
+        if bad:
+            break
+        chunk = todo[i:i + 200]
+        out = _vr_git_args(repo, ["hash-object", "--"] + [p for _, p in chunk])
+        if out is None:
+            return None
+        miss = [(s, p) for (s, p), h in zip(chunk, out.split())
+                if h != blobs.get(p, ("", ""))[1]]
+        if miss:
+            # Identical raw bytes mean clean (CRLF in the index plus autocrlf).
+            # The clean filter is not idempotent: the index may hold unfiltered
+            # bytes that a filtered hash of the worktree file never reproduces,
+            # so the filtered hash alone would call such a file dirty.
+            raw = _vr_git_args(repo, ["hash-object", "--no-filters", "--"] + [p for _, p in miss])
+            if raw is None:
+                return None
+            for (skip, path), h in zip(miss, raw.split()):
+                if h != blobs.get(path, ("", ""))[1]:
+                    bad = (skip, path)
+                    break
+    if bad:
+        skip, path = bad
+        kind, fix = (("skip-worktree", "--no-skip-worktree") if skip
+                     else ("assume-unchanged", "--no-assume-unchanged"))
+        sys.stderr.write("dirty: %s is flagged %s and differs from the index, which hides edits from the proof. "
+                         "Run: git update-index %s -- %s\n" % (path, kind, fix, path))
+        return True
     return False
 
 

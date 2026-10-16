@@ -3,17 +3,14 @@ import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
-  readFlaky,
   readRepoMapCache,
   readTestMapCache,
-  recordFailures,
-  recordFlaky,
   repoCacheDir,
   repoKey,
-  topFailures,
   writeRepoMapCache,
   writeTestMapCache,
 } from "../../src/engine10/cache.ts";
+import { readFlaky, recordFailures, recordFlaky, topFailures } from "../../src/util/failure_memory.ts";
 import type { RepoMap } from "../../src/engine10/repomap.ts";
 import type { TestMap } from "../../src/engine10/types.ts";
 

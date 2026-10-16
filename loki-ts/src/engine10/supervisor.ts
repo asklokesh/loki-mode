@@ -39,16 +39,19 @@ import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../e10ext/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../e10ext/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
-const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened", "log.sealed"]); // types only the supervisor may write; same types from the worker are dropped
+const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened", "log.sealed", "deep.started"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
 
+const isRev = (r: unknown): boolean => typeof r === "object" && r !== null && Number.isInteger((r as { rev?: unknown }).rev) && nonNegNum((r as { at?: unknown }).at);
 const nonNegNum = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v) && v >= 0;
 function dataOk(type: string, d: Record<string, unknown>): boolean { // per-type data checks for events the supervisor itself acts on (section 7 table)
   if (type === "session.ended") {
     return typeof d.session_id === "string" && SESSION_EXITS.has(d.exit as string) && nonNegNum(d.duration_s);
   }
+  if (type === "stage.started" && d.start_ms !== undefined) return nonNegNum(d.start_ms) && (d.start_ms as number) <= Date.now() + 1000; // P12-07d: a forged far-future Wall start is dropped
+  if (type === "intent.revised") return Array.isArray(d.revisions) && d.revisions.every(isRev);
   if (type === "cost") return typeof d.session_id === "string" && (d.usd === null || nonNegNum(d.usd));
   return true;
 }

@@ -172,6 +172,7 @@ describe("fix resume trust and mutation (MW-2)", () => {
 import { execFileSync } from "node:child_process";
 import { makeEvent } from "../../src/engine10/events.ts";
 import { firstIncompleteStage, resumeFlag, resumePoint, stageCheckpoints } from "../../src/util/run_outputs.ts";
+import { SupervisorLog } from "../../src/engine10/supervisor.ts";
 import { staleWallRevisions } from "../../src/util/steer.ts";
 import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
 
@@ -193,10 +194,30 @@ describe("resume from stage (P12-07)", () => {
     const r = resumePoint(withSteer());
     expect(r.ok && r.intentRevisions).toEqual([rev]);
   });
-  test("P12-07d: a steer that arrived after the Wall freeze still blocks Seal after resume", () => {
+  test("P12-07d: the restored state marks a post-freeze steer stale (parse only; re-entry is P12-07h)", () => {
     const r = resumePoint(withSteer());
     if (!r.ok) throw new Error(r.reason);
     expect(staleWallRevisions(r.intentRevisions, r.timeline).map((x) => x.rev)).toEqual([1]);
+  });
+  test("P12-07d: a later empty intent.revised cannot clear an honest revision (union)", () => {
+    const evs = mk([...withSteer().map((e): Spec => [e.type, e.stage, e.data]), ["intent.revised", "verify", { revisions: [] }], ["stage.completed", "verify"]]);
+    const r = resumePoint(evs);
+    expect(r.ok && r.intentRevisions.map((x) => x.rev)).toEqual([1]);
+  });
+  test("P12-07d: a malformed revision is skipped; a wall start without start_ms fails closed (every revision stale)", () => {
+    const evs = mk([["run.started", null], ["stage.completed", "intake", { base_sha: "abc" }], ["stage.started", "wall", {}], ["intent.revised", "plan", { revisions: [rev, { rev: "x" }, null] }], ["stage.completed", "plan"], ["stage.completed", "wall"]]);
+    const r = resumePoint(evs);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.intentRevisions).toEqual([rev]);
+    expect(staleWallRevisions(r.intentRevisions, r.timeline).map((x) => x.rev)).toEqual([1]);
+  });
+  test("P12-07d: SupervisorLog.ingest drops a forged far-future start_ms and a malformed intent.revised", () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-forge-")), log = new SupervisorLog(join(dir, "events.jsonl"), RID);
+    try {
+      expect(log.ingest(JSON.stringify({ type: "stage.started", stage: "wall", data: { start_ms: 9e15 } }))).toBeNull();
+      expect(log.ingest(JSON.stringify({ type: "intent.revised", stage: "plan", data: { revisions: [{ rev: "x" }] } }))).toBeNull();
+      expect(log.ingest(JSON.stringify({ type: "intent.revised", stage: "plan", data: { revisions: [rev] } }))).not.toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   test("P12-07d: an older log without the new fields resumes clean and empty", () => {
     const r = resumePoint(killedAfterImplement());
