@@ -540,6 +540,34 @@ describe("respondToReview", () => {
     expect(add).toEqual(["add", "--", "src/real.ts"]);
   });
 
+  it("real repo: an untracked root .loki is not dirty and is never committed; a nested sub/.loki edit is", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const d = mk();
+    const run = (args: string[]): string => execFileSync("git", args, { cwd: d, encoding: "utf8" });
+    run(["init", "-q", "-b", "feat"]); run(["config", "user.email", "t@t.test"]); run(["config", "user.name", "t"]);
+    writeFileSync(join(d, "a.ts"), "1\n"); mkdirSync(join(d, "sub", ".loki"), { recursive: true }); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "u\n");
+    run(["add", "-A"]); run(["commit", "-q", "-m", "base"]);
+    mkdirSync(join(d, ".loki", "runs"), { recursive: true }); writeFileSync(join(d, ".loki", "runs", "x.json"), "{}");
+    const e = mkEnv([C(1, "x")]);
+    const vcs = (args: string[]): string => args[0] === "push" ? "" : run(args);
+    const r = await respondToReview(d, "o/r#7", { gh: e.gh, git: vcs, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "v\n"); return true; } });
+    expect(r.fixed).toBe(1);
+    const files = run(["show", "--name-only", "--format=", "HEAD"]).trim().split("\n").sort();
+    expect(files).toEqual(["a.ts", "sub/.loki/keep.txt"]);
+    expect(run(["ls-files", ".loki"]).trim()).toBe("");
+  });
+
+  it("a rename out of .loki into src stages the destination only", async () => {
+    const e = mkEnv([C(1, "x")]);
+    let edited = false;
+    const vcs = (args: string[]): string => {
+      if (args[0] === "status") return edited ? "R  .loki/a.ts -> src/b.ts\n" : "";
+      return e.vcs(args);
+    };
+    await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, fix: async () => { edited = true; return true; } });
+    expect(e.gitCalls.find((a) => a[0] === "add")).toEqual(["add", "--", "src/b.ts"]);
+  });
+
   it("skips replies and already-answered threads", async () => {
     const e = mkEnv([C(1, "x"), C(2, "reply", { in_reply_to_id: 1 }), C(4, "y"), C(5, "Addressed in abc <!-- loki-respond -->", { in_reply_to_id: 4 })]);
     const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit });

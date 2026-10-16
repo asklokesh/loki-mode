@@ -109,3 +109,16 @@ describe("TRACKER-SITE-1 jira site mismatch", () => {
     expect(issue.title).toBe("S");
   });
 });
+
+describe("supervisor tracker writeback env", () => {
+  test("the LOKI_WRITEBACK_ISSUE/KIND export for a tracker ref is live code on its own statement, never swallowed by a // comment", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(import.meta.dir, "..", "..", "src", "engine10", "supervisor.ts"), "utf8");
+    const line = src.split("\n").find((l) => l.includes("process.env.LOKI_WRITEBACK_ISSUE = env.LOKI_WRITEBACK_ISSUE = trackerRef.key"));
+    expect(line).toBeDefined();
+    expect(line!.slice(0, line!.indexOf("process.env.LOKI_WRITEBACK_ISSUE = env"))).not.toContain("//");
+    expect(line).toContain("process.env.LOKI_WRITEBACK_KIND = env.LOKI_WRITEBACK_KIND = trackerRef.source");
+    expect(parseTrackerRef("jira:PROJ-1")).toEqual({ source: "jira", key: "PROJ-1" });
+  });
+});
