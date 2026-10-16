@@ -455,19 +455,23 @@ describe("learnRecent (R15-E1)", () => {
 
 describe("respondToReview", () => {
   const C = (id: number, body: string, extra: Record<string, unknown> = {}) => ({ id, body, path: `src/f${id}.ts`, line: id, html_url: `https://github.com/o/r/pull/7#discussion_r${id}`, user: { login: "rev" }, ...extra });
-  const mkEnv = (comments: unknown[], resolvedIds: number[] = []) => {
+  const mkEnv = (comments: unknown[], resolvedIds: number[] = [], opts: { branch?: string; head?: string | null; preDirty?: boolean } = {}) => {
+    const branch = opts.branch ?? "feat";
+    const head = opts.head === undefined ? "feat" : opts.head;
     const calls: string[][] = [];
     const gh: GhClient = async (args) => {
       calls.push(args);
       if (args.includes("graphql")) return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: resolvedIds.map((id) => ({ isResolved: true, comments: { nodes: [{ databaseId: id }] } })) } } } } }), stderr: "" };
       if (args[args.length - 1]!.endsWith("/comments")) return { code: 0, stdout: JSON.stringify(comments), stderr: "" };
+      if (args[args.length - 1]!.endsWith("/pulls/7")) return { code: 0, stdout: JSON.stringify(head === null ? {} : { head: { ref: head } }), stderr: "" };
       return { code: 0, stdout: "{}", stderr: "" };
     };
     const gitCalls: string[][] = [];
-    let n = 0, dirty = false;
+    let n = 0, dirty = opts.preDirty ?? false;
     const vcs = (args: string[]): string => {
       gitCalls.push(args);
       if (args[0] === "status") return dirty ? ` M src/f${n + 1}.ts\n` : "";
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return `${branch}\n`;
       if (args[0] === "rev-parse") return `sha${n}\n`;
       if (args[0] === "commit") { n++; dirty = false; }
       return "";
@@ -484,6 +488,7 @@ describe("respondToReview", () => {
     expect(r.skipped).toBe(1);
     expect(e.gitCalls.filter((a) => a[0] === "commit").length).toBe(2);
     expect(e.gitCalls.filter((a) => a[0] === "push").length).toBe(1);
+    expect(e.gitCalls.find((a) => a[0] === "push")).toEqual(["push", "origin", "HEAD:refs/heads/feat"]);
     const rp = replies(e.calls);
     expect(rp.length).toBe(2);
     expect(rp[0]!.join(" ")).toContain("sha1");
@@ -500,6 +505,26 @@ describe("respondToReview", () => {
     const r = await respondToReview(mk(), "o/r#7", { gh: e2.gh, git: e2.vcs, fix: e2.edit, max: 1 });
     expect(r.fixed).toBe(1);
     expect(replies(e2.calls).length).toBe(1);
+  });
+
+  it("refuses when the checkout is not the PR head branch: no fix, commit, push or reply", async () => {
+    const e = mkEnv([C(1, "x")], [], { branch: "main" });
+    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit })).rejects.toThrow(/PR branch/);
+    expect(e.gitCalls.some((a) => ["add", "commit", "push"].includes(a[0]!))).toBe(false);
+    expect(replies(e.calls).length).toBe(0);
+  });
+
+  it("refuses a tree that is dirty before any fix runs", async () => {
+    const e = mkEnv([C(1, "x")], [], { preDirty: true });
+    let fixed = false;
+    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: async () => { fixed = true; return true; } })).rejects.toThrow(/uncommitted/);
+    expect(fixed).toBe(false);
+    expect(e.gitCalls.some((a) => ["add", "commit", "push"].includes(a[0]!))).toBe(false);
+  });
+
+  it("refuses when the PR head branch cannot be resolved", async () => {
+    const e = mkEnv([C(1, "x")], [], { head: null });
+    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, fix: e.edit })).rejects.toThrow(/head branch/);
   });
 
   it("skips replies and already-answered threads", async () => {

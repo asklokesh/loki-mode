@@ -337,6 +337,12 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
   const gh = deps.gh ?? defaultGh;
   const vcs = deps.git ?? ((a: string[]) => safeGit(repoDir, a, { allowToken: a[0] === "push" }));
   const max = deps.max ?? Number(process.env["LOKI_PR_RESPOND_MAX"] ?? MAX_RESPOND);
+  let headRef = "";
+  try { headRef = String(JSON.parse(await ghText(gh, ["api", `repos/${pr.repo}/pulls/${pr.num}`]))?.head?.ref ?? ""); } catch (e) { if (e instanceof GhError) throw e; }
+  if (!headRef) throw new GhError(`Cannot resolve the head branch of ${ref}; refusing to push.`);
+  const current = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
+  if (current !== headRef) throw new GhError(`Checkout is '${current}' but the PR branch is '${headRef}'. Check out the PR branch first.`);
+  if (vcs(["status", "--porcelain"]).trim() !== "") throw new GhError("Working tree has uncommitted changes. Commit or stash them before running respond.");
   const { open, skipped } = await openReviewComments(gh, pr.repo, pr.num);
   const done: Array<{ c: OpenComment; sha: string }> = [];
   for (const c of open.slice(0, Number.isInteger(max) && max > 0 ? max : MAX_RESPOND)) {
@@ -348,7 +354,7 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
     done.push({ c, sha: vcs(["rev-parse", "HEAD"]).trim() });
   }
   if (done.length > 0) {
-    vcs(["push"]);
+    vcs(["push", "origin", `HEAD:refs/heads/${headRef}`]);
     for (const { c, sha } of done) {
       await ghText(gh, ["api", "-X", "POST", `repos/${pr.repo}/pulls/${pr.num}/comments/${c.id}/replies`, "-f", `body=Addressed in ${sha.slice(0, 12)}.\n${RESPOND_MARK}`]);
     }
