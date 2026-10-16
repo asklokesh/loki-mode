@@ -19,9 +19,11 @@
 // else `loki diff` and `loki undo`.
 // Inputs read tolerantly: events.jsonl, .loki/state/requirements-map.json (absent is fine), git
 // diff base..HEAD excluding .loki. Risk tier from plan.risk_tier, plan.tier or run.started.risk_tier.
-// Known gaps: legacy bash engine does not write a handoff; interventions are counted only from
-// steer.consumed or intervention events, which engine10 does not yet emit; hunk summaries are the
-// hunk header or first added line.
+// Interventions: steer.consumed or intervention events when present, else .loki/state/interventions.json
+// (count, by_type, waited_s as written at the pause site); waited is wall-clock blocked time, an upper
+// bound. Absent file and no events read "not recorded".
+// Known gaps: legacy bash engine does not write a handoff; hunk summaries are the hunk header or first
+// added line.
 // OC-OUTPUT: one shared end-of-run summary, same format as autonomy/lib/run-summary.sh
 // (legacy engine). Pure formatting; callers supply already-measured facts. Null is never shown as 0.
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
@@ -146,6 +148,8 @@ export interface HandoffInput {
   filesChanged: number | null; insertions?: number | null; deletions?: number | null; hunks: HandoffHunk[];
   riskTier?: string | null; deferred?: string[]; usd: number | null; partialUsd?: number; measuredSessions?: number; totalSessions?: number;
   elapsedS: number | null; interventions: number | null; baseSha?: string | null;
+  /** By-type counts and wall-clock waited seconds from interventions.json; absent for event-counted or unrecorded runs. */
+  interventionDetail?: { by_type: Record<string, number>; waited_s: number | null } | null;
 }
 const W = 110, clip = (s: string, n = W): string => { const t = redactSecrets(String(s)).replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 3)}...` : t; };
 /** Spend text: measured dollars, a partial figure, or "not measured". Never $0.00 for an unknown. */
@@ -153,6 +157,13 @@ export function spendText(i: Pick<HandoffInput, "usd" | "partialUsd" | "measured
   if (i.usd != null) return `$${i.usd.toFixed(2)} (measured)`;
   if (i.measuredSessions) return `partial: $${(i.partialUsd ?? 0).toFixed(2)} for ${i.measuredSessions} of ${i.totalSessions ?? i.measuredSessions} sessions, rest not measured`;
   return "not measured";
+}
+/** "2 (input 1, authorization 1); waited 4m00s", or "not recorded". Zero types are omitted; waited is an upper bound. */
+function interventionsText(i: Pick<HandoffInput, "interventions" | "interventionDetail">): string {
+  if (i.interventions == null) return "not recorded";
+  const d = i.interventionDetail;
+  const types = d ? Object.entries(d.by_type).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(", ") : "";
+  return `${i.interventions}${types ? ` (${types})` : ""}${d && d.waited_s != null ? `; waited ${formatDuration(d.waited_s)}` : ""}`;
 }
 /** The exact accept and reject commands for the surface this run produced. */
 export function decisionCommands(i: Pick<HandoffInput, "prUrl" | "branch" | "baseSha" | "outcome">): { accept: string; reject: string } {
@@ -172,7 +183,7 @@ export function renderHandoff(i: HandoffInput): string {
   const d = decisionCommands(i), L: string[] = [];
   L.push(`# Review handoff: ${i.outcome}${i.draft ? " (draft)" : ""}`, `Task: ${clip(i.task || "not recorded")}`);
   if (i.reason) L.push(`Reason: ${clip(i.reason)}`);
-  L.push(`Run ${i.runId}; risk tier: ${i.riskTier ? clip(i.riskTier, 30) : "not recorded"}; elapsed ${i.elapsedS == null ? "not measured" : formatDuration(i.elapsedS)}; spend ${spendText(i)}; interventions ${i.interventions == null ? "not recorded" : i.interventions}`);
+  L.push(`Run ${i.runId}; risk tier: ${i.riskTier ? clip(i.riskTier, 30) : "not recorded"}; elapsed ${i.elapsedS == null ? "not measured" : formatDuration(i.elapsedS)}; spend ${spendText(i)}; interventions ${interventionsText(i)}`);
   L.push("", `## Change: ${i.filesChanged == null ? "diff unavailable" : `${i.filesChanged} files (+${i.insertions ?? 0} -${i.deletions ?? 0})`}`);
   for (const h of i.hunks.slice(0, 5)) L.push(`- ${h.file}:${h.line} +${h.added} -${h.removed} ${clip(h.summary, 60)}`);
   if (i.hunks.length === 0) L.push("- no hunks recorded");
@@ -211,6 +222,19 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
   const risk = typeof rt?.tier === "string" ? rt.tier : undefined;
   const deferred = Array.isArray(rt?.checks_deferred) ? rt.checks_deferred.filter((x): x is string => typeof x === "string") : [];
   const iv = f.events.filter((e) => e.type === "steer.consumed" || e.type === "intervention").length;
+  let count: number | null = iv > 0 ? iv : null, detail: HandoffInput["interventionDetail"] = null;
+  if (count === null) { // engine10 emits no intervention events; fall back to the pause-site counter (fresh for this run only)
+    try {
+      const p = join(f.repoDir, ".loki", "state", "interventions.json");
+      const r = statSync(p).mtimeMs < (f.sinceMs ?? 0) ? null : JSON.parse(readFileSync(p, "utf8")) as { count?: unknown; by_type?: Record<string, unknown>; waited_s?: unknown };
+      const nn = (v: unknown): number | null => typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+      if (r && nn(r.count) !== null) {
+        count = nn(r.count);
+        const bt = r.by_type && typeof r.by_type === "object" ? Object.fromEntries(Object.entries(r.by_type).map(([k, v]) => [k, nn(v) ?? 0])) : null;
+        if (bt) detail = { by_type: bt, waited_s: nn(r.waited_s) };
+      }
+    } catch { /* absent or unreadable stays not recorded */ }
+  }
   let hunks: HandoffHunk[] = [];
   if (f.baseSha) { try { hunks = hunkSummary(safeGit(f.repoDir, ["diff", "--unified=0", `${f.baseSha}..HEAD`, "--", ".", ":(exclude).loki"], { maxBuffer: 8 << 20 })); } catch { /* diff unavailable */ } }
   const failed = f.events.filter((e) => e.type === "stage.failed").map((e) => `${e.stage} failed: ${String(e.data.reason ?? "no reason recorded")}`);
@@ -218,7 +242,7 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
     task: f.task ?? String(done("intake").task ?? "").split("\n").find((l) => l.trim()) ?? "", outcome: f.outcome, reason: f.reason, runId: f.runId, branch: typeof started.branch === "string" ? started.branch : null,
     prUrl: f.prUrl, draft: f.draft, checks, notProven: f.notProven, failures: failed, requirements: Array.isArray(rm?.requirements) ? rm.requirements : null,
     filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null, deferred,
-    usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: iv > 0 ? iv : null, baseSha: f.baseSha,
+    usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, baseSha: f.baseSha,
   };
 }
 /** Atomic write of HANDOFF.md and handoff.json; returns the markdown, or null when nothing could be written. Never throws. */
