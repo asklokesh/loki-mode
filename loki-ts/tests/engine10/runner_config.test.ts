@@ -242,3 +242,37 @@ describe("FC-09t r2 Cargo dotted-key paths", () => {
     expect(capsOn("go.work", B, B.replace("\t./a\n", "\t./a\n\t./x\n"))).toEqual(["go.work"]);
   });
 });
+
+describe("FC-09t r3 Cargo multi-line, nested inline and legacy sections", () => {
+  const CARGO = '[package]\nname = "x"\n\n[dependencies]\nserde = "1"\n\n[dev-dependencies]\ntokio = "1"\n\n[lib]\nname = "x"\n';
+  const capsOn = (f: string, base: string, head: string): string[] => { const r = repo({ [f]: base }); r.edit(f, head); return testConfigChanged(r.dir, r.base, [f]); };
+  const ML = (h: string, p = "tests/it.rs"): string => `test = [\n  { name = "it", path = "${p}", harness = ${h} },\n]\n`;
+  test("multi-line test array harness and path flips cap", () => {
+    expect(capsOn("Cargo.toml", ML("true") + CARGO, ML("false") + CARGO)).toEqual(["Cargo.toml"]);
+    expect(capsOn("Cargo.toml", ML("true") + CARGO, ML("true", "tests/fake.rs") + CARGO)).toEqual(["Cargo.toml"]);
+  });
+  test.each([
+    ["target inline", 'target = { "cfg(unix)" = { dev-dependencies = { x = { path = ".." } } } }\n'],
+    ["target section then inline", '[target]\n"cfg(unix)" = { dev-dependencies = { x = { path = ".." } } }\n'],
+    ["workspace inline", 'workspace = { dependencies = { x = { path = ".." } } }\n'],
+    ["multi-line workspace inline", 'workspace = {\n  dependencies = {\n    x = { path = ".." },\n  },\n}\n'],
+    ["dev_dependencies", '[dev_dependencies]\nfoo = { path = "../evil" }\n'],
+    ["build_dependencies", '[build_dependencies]\nfoo = { path = "../evil" }\n'],
+    ["autotests false", "[package]\nautotests = false\n"],
+    ["lib harness false", "[lib]\nharness = false\n"],
+    ["test test false", '[[test]]\nname = "it"\ntest = false\n'],
+    ["test required-features", '[[test]]\nname = "it"\nrequired-features = ["nope"]\n'],
+    ["lib doctest false", "[lib]\ndoctest = false\n"],
+    ["lib path", '[lib]\npath = "src/fake.rs"\n'],
+    ["bin test false", '[[bin]]\nname = "b"\ntest = false\n'],
+  ])("%s caps", (_n, add) => {
+    expect(capsOn("Cargo.toml", CARGO, add + "\n" + CARGO)).toEqual(["Cargo.toml"]);
+  });
+  test("false positives stay uncapped", () => {
+    const H = ML("true") + CARGO;
+    expect(capsOn("Cargo.toml", H, H + "# note\n")).toEqual([]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { version = "2", features = ["a"] }').replace('tokio = "1"', 'tokio = { version = "2", features = ["rt"] }'))).toEqual([]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('name = "x"\n\n[dep', 'name = "y"\ndescription = """\nmulti [ line {\n"""\n\n[dep') + '\n[features]\ndefault = ["a"]\n')).toEqual([]);
+    expect(capsOn("Cargo.toml", CARGO, CARGO.replace('serde = "1"', 'serde = { git = "https://x/y" }'))).toEqual([]);
+  });
+});
