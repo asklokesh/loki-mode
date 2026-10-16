@@ -5,6 +5,12 @@
   "updated": "2026-09-26",
   "providers": {
     "claude": {
+      "cli": {
+        "min_version": "2.1.0",
+        "qualified_version": "2.1.293",
+        "capabilities": ["stream-json", "permission-mode", "model-alias", "advisor"],
+        "_comment": "Qualified CLI range for doctor. min_version is a hard floor (doctor fails below it). qualified_version is the newest release the compat probe has passed; a newer CLI warns as unqualified. Bump qualified_version only after the compat probe passes on the new release."
+      },
       "latest_planning": "claude-opus-5-5",
       "latest_development": "claude-sonnet-5-5",
       "latest_fast": "claude-haiku-5-5",
