@@ -8,6 +8,9 @@ mode=deployment renders a long-running Deployment instead; mode=serverless rende
 a KEDA ScaledJob instead. Previously this gated on ne "deployment", which would
 have wrongly rendered alongside the serverless ScaledJob.
 */}}
+{{- if not (has (default "" .Values.worker.engine) (list "" "v10")) }}
+{{- fail (printf "worker.engine must be empty or v10, got %q" .Values.worker.engine) }}
+{{- end }}
 {{- if eq .Values.worker.mode "job" }}
 apiVersion: batch/v1
 kind: Job
@@ -76,6 +79,30 @@ spec:
         - name: worker
           image: {{ include "autonomi.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if eq (default "" .Values.worker.engine) "v10" }}
+          # worker.engine=v10 (M-23): run one engine10 modernize unit. Unit
+          # coordinates are plain args; credentials stay in the secret mount.
+          command:
+            - loki
+            - engine10
+            - modernize
+            - unit
+          args:
+            - --repo
+            - {{ required "worker.unit.repo is required when worker.engine=v10" .Values.worker.unit.repo | quote }}
+            - --ref
+            - {{ required "worker.unit.ref is required when worker.engine=v10" .Values.worker.unit.ref | quote }}
+            - --unit
+            - {{ required "worker.unit.id is required when worker.engine=v10" .Values.worker.unit.id | quote }}
+            {{- if .Values.worker.unit.mid }}
+            - --mid
+            - {{ .Values.worker.unit.mid | quote }}
+            {{- end }}
+            {{- if .Values.worker.unit.target }}
+            - --target
+            - {{ .Values.worker.unit.target | quote }}
+            {{- end }}
+          {{- else }}
           command:
             - loki
             - start
@@ -84,6 +111,7 @@ spec:
           # Omitted when worker.spec is empty -> codebase-analysis of /workspace.
           args:
             - {{ .Values.worker.spec | quote }}
+          {{- end }}
           {{- end }}
           envFrom:
             - configMapRef:
