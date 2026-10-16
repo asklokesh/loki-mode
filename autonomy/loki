@@ -5125,6 +5125,8 @@ cmd_steer() {
             ;;
         *)
             echo -e "${DIM}The Loki 10 engine applies it before the next plan or implement session.${NC}"
+            # Same text the issue comment ack posts (trigger-server.py steer_ack_text).
+            echo "Steer rev $rev received: applies at next plan/implement stage."
             ;;
     esac
     return 0

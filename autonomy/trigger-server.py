@@ -53,6 +53,7 @@ import signal
 import socket
 import socketserver
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -552,6 +553,50 @@ def find_live_run(ref):
     return None
 
 
+def steer_ack_text(rev):
+    """Ack line for a steer; byte-identical to the line `loki steer` prints (cmd_steer)."""
+    return "Steer rev %s received: applies at next plan/implement stage." % rev
+
+
+def _pending_steer_rev():
+    """Highest rev header in .loki/HUMAN_INPUT.md (the steer just written), else None."""
+    try:
+        text = (Path(".loki") / "HUMAN_INPUT.md").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    revs = re.findall(r"^## Operator directive rev (\d+) ", text, re.M)
+    return int(revs[-1]) if revs else None
+
+
+def post_steer_ack(ref, repo_full_name, rev, dry_run=False):
+    """Post one ack comment on the issue through engine10-push.sh issue-comment. Best effort."""
+    text = steer_ack_text(rev)
+    if dry_run:
+        logging.info("[DRY-RUN] Would ack %s: %s", ref, text)
+        return True
+    script = Path(__file__).resolve().parent / "lib" / "engine10-push.sh"
+    fd, body = tempfile.mkstemp(prefix="loki-steer-ack.", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+        env = _scoped_child_env()
+        env["_LOKI_ORIGIN_PINNED"] = "1"
+        env["_LOKI_PINNED_ORIGIN"] = "https://github.com/%s.git" % repo_full_name
+        proc = subprocess.run(["bash", str(script), "issue-comment", ref, body],
+                              capture_output=True, text=True, timeout=60, env=env)
+        if proc.returncode != 0:
+            logging.error("steer ack failed (%d): %s", proc.returncode, proc.stderr.strip())
+        return proc.returncode == 0
+    except (OSError, subprocess.SubprocessError) as e:
+        logging.error("steer ack failed: %s", e)
+        return False
+    finally:
+        try:
+            os.unlink(body)
+        except OSError:
+            pass
+
+
 def handle_issue_comment_event(payload, dry_run=False):
     """Handle issue_comment: an authorized new comment steers the issue's live run."""
     action = payload.get("action", "")
@@ -582,6 +627,9 @@ def handle_issue_comment_event(payload, dry_run=False):
     success = run_loki_command(["steer", note], dry_run=dry_run)
     if success:
         send_notification("Trigger fired: %s" % summary)
+        rev = _pending_steer_rev()
+        if rev is not None or dry_run:
+            post_steer_ack(ref, repo_full_name, rev if rev is not None else "?", dry_run=dry_run)
     return summary, "fired" if success else "error"
 
 
