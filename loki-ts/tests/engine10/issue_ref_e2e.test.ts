@@ -108,6 +108,12 @@ describe("engine10 issue-ref e2e (stub gh, stub claude)", () => {
     // worker is spawned) saw the real credential.
     expect(r.ghLog).toContain(`GH_TOKEN=${CANARY}`);
 
+    // FV-work-item-2: run.started records who asked and the intent keys (no policy file, no parent run here).
+    const started = r.events.find((e) => e.type === "run.started");
+    expect(started!.data.actor).toBe("e2e");
+    expect(started!.data.policy_revision).toBeNull();
+    expect(started!.data.parent_run).toBeNull();
+
     // Intake used the fixture's title and body (never a re-derivation from
     // the raw ref), and nothing that only the P1 fetch fields would carry
     // (state, closedByPullRequestsReferences) leaked into the task text.

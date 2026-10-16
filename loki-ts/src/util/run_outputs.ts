@@ -7,6 +7,7 @@
 //   verify.changed_files / checks   <- verify stage.completed (the diff and the evidence)
 //   wall.files / wall.base_run      <- wall stage.completed
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fold, readEvents } from "../engine10/events.ts";
@@ -14,6 +15,7 @@ import { eventsRelPath, readOriginUrl } from "./engine_origin.ts";
 import { runOwnerAlive } from "./run_pid.ts";
 import { safeGit } from "./safe_git.ts";
 import { noteOf } from "./base_guard.ts";
+import { redactSecrets } from "./redact.ts";
 import type { EventEnvelope, Verdict } from "../engine10/types.ts";
 
 const REVERTED = "unrelated edit reverted:";
@@ -198,11 +200,28 @@ export function unmergedLokiWorkNote(events: EventEnvelope[]): string | null {
 }
 
 // Moved from engine10/supervisor.ts (core line budget); supervisor re-exports both.
+/** The policies file policyGate reads (first of repo .loki, then the data dir; json before yaml), or null when there is none. */
+export function policyFile(repoDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const dataDir = env.LOKI_DATA_DIR || join(env.HOME ?? "", ".loki");
+  for (const d of [join(repoDir, ".loki"), dataDir]) for (const f of ["policies.json", "policies.yaml"]) if (existsSync(join(d, f))) return join(d, f);
+  return null;
+}
+/** run.started intent record: who asked (LOKI_ACTOR, else the repo user.name), under which policy (sha256 of the policies file, null when none) and,
+ *  for `loki answer`, which BLOCKED run this run resolves (LOKI_PARENT_RUN) and the sha256 of the answer. Redacted; absent keys stay null. */
+export function runIntent(repoDir: string, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+  let actor = (env.LOKI_ACTOR ?? "").trim();
+  if (!actor) { try { actor = safeGit(repoDir, ["config", "user.name"]).trim(); } catch { /* no identity configured */ } }
+  const pf = policyFile(repoDir, env);
+  let policy: string | null = null;
+  if (pf) { try { policy = createHash("sha256").update(readFileSync(pf)).digest("hex"); } catch { /* unreadable: leave null */ } }
+  const parent = /^[A-Za-z0-9._-]{1,128}$/.test(env.LOKI_PARENT_RUN ?? "") ? env.LOKI_PARENT_RUN! : null;
+  const ans = /^[0-9a-f]{64}$/.test(env.LOKI_ANSWER_SHA ?? "") ? env.LOKI_ANSWER_SHA! : null;
+  return { actor: actor ? redactSecrets(actor).slice(0, 200) : null, policy_revision: policy, parent_run: parent, answered_run: parent, answer_sha256: parent ? ans : null };
+}
 export type PolicyGate = { decision: "allow" | "deny" | "approval"; reason: string };
 /** Autonomy/policy gate before an engine10 action (pr). No policy file: allow, byte-identical to before. File present and node or check.js missing: deny (fail-closed, mirrors run.sh check_policy). Exit 0 allow, 2 approval, anything else deny. */
 export function policyGate(repoDir: string, action: string, env: NodeJS.ProcessEnv = process.env, checkJs: string = resolve(import.meta.dir, "../../../src/policies/check.js")): PolicyGate {
-  const dataDir = env.LOKI_DATA_DIR || join(env.HOME ?? "", ".loki");
-  if (![join(repoDir, ".loki"), dataDir].some((d) => existsSync(join(d, "policies.json")) || existsSync(join(d, "policies.yaml")))) return { decision: "allow", reason: "no policy file" };
+  if (policyFile(repoDir, env) === null) return { decision: "allow", reason: "no policy file" };
   if (env.LOKI_POLICY_REQUIRE_NODE === "0" && spawnSync("node", ["--version"], { env: { PATH: env.PATH }, encoding: "utf8" }).status !== 0) return { decision: "allow", reason: "node unavailable, enforcement skipped (LOKI_POLICY_REQUIRE_NODE=0)" };
   if (!existsSync(checkJs)) return { decision: "deny", reason: "policy file present but check.js is missing (fail-closed)" };
   const scoped: NodeJS.ProcessEnv = { PATH: env.PATH, HOME: env.HOME, LOKI_PROJECT_DIR: repoDir, ...(env.LOKI_DATA_DIR ? { LOKI_DATA_DIR: env.LOKI_DATA_DIR } : {}) };

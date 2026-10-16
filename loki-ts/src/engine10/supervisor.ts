@@ -31,7 +31,7 @@ import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
 import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
 import { baseLine } from "../util/base_guard.ts";
-import { alreadyDoneTextComment, policyGate, prGate, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
+import { alreadyDoneTextComment, policyGate, prGate, runIntent, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
 export { backstopS, BACKSTOP_GRACE_S }; // re-exported: callers import the backstop math from here, its home before r4
 import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
@@ -312,7 +312,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     workerArgv: [process.execPath, resolve(process.argv[1]!), "engine10", "worker", runId, provider, model, deep ? "deep" : "fast"], deepArgv: noPr ? undefined : [process.execPath, resolve(process.argv[1]!), "engine10", "deep-worker", runId, provider, model],
     started: {
       task_source: isIssue ? "issue" : "text", issue_ref: isIssue ? task : null, provider, model, deep, cap_s: capS, cap_ceiling_s: sized?.ceilingS ?? capS, max_cost_usd: cap.usd,
-      model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`,
+      model_override_applied: !!process.env.LOKI_MODEL_OVERRIDE && provider === "claude", branch: `loki/${runId}`, ...runIntent(repoDir),
       ...(downgrades.length ? { downgrades } : {}),
     },
     pr: noPr ? undefined : async ({ pushEnv, verdict, notProven }) => {
