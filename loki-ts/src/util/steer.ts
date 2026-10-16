@@ -22,13 +22,19 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
   let fd = -1;
   try {
     // One open with O_NOFOLLOW (O_NONBLOCK so a FIFO cannot hang the open); every check and the read use this fd, so a swap after the open cannot redirect the read.
-    try { fd = openSync(f, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
+    // On Windows O_NOFOLLOW and O_NONBLOCK are undefined, so they act as 0.
+    let st: { isFile(): boolean; size: number } | undefined;
+    try { fd = openSync(f, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); st = fstatSync(fd); } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return null;
       if (code === "ELOOP") { rmSync(f, { force: true }); unapplied("symlink"); return null; }
-      throw e;
+      // Open refused for another reason (socket, mode 000, ...): classify the entry by lstat so the refusal reason matches what is actually there.
+      const l = lstatSync(f, { throwIfNoEntry: false });
+      if (!l) return null;
+      if (l.isSymbolicLink()) { rmSync(f, { force: true }); unapplied("symlink"); return null; }
+      if (!l.isFile() || l.size <= STEER_MAX_BYTES) { if (!l.isFile()) { unapplied("not a regular file"); return null; } throw e; }
+      st = l; // oversize but unreadable: still quarantined below, as before
     }
-    const st = fstatSync(fd);
     if (!st.isFile()) { unapplied("not a regular file"); return null; }
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
