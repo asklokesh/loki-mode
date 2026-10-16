@@ -20,6 +20,8 @@ The token is sent only to the Sentry host through a curl config on stdin, never 
 2. Start the server: `python3 autonomy/trigger-server.py --port 8080` and point the Sentry alert webhook at `/sentry`.
 3. A valid alert is normalized with `normalize_sentry_json` and enqueues `loki start "<brief>" --pr --detach`. A bad signature gets 401.
 
+The brief also carries the event's release and environment, the newest `.loki/deploys` record (`last deploy <sha7> <finished_at> health=<status>`) and, when the culprit file resolves inside the project, its last `git log -1` author. All of it is sanitized to one line and capped; it adds no authority.
+
 The output is a receipt-gated PR only, never a deploy. Whether the PR opens is still decided by the policy file (`autonomy`).
 
 
@@ -54,6 +56,8 @@ Teams (`POST /teams`):
 1. Set `TEAMS_SECURITY_TOKEN` (the base64 token Teams shows when you create the outgoing webhook) and point the webhook at `/teams`.
 2. `Authorization: HMAC <base64>` is the base64 HMAC-SHA256 of the raw body keyed by the base64-decoded token. Bad signature: 401. The activity `timestamp` must be within 300s; a stale or missing one is refused with 401.
 3. The message text (with `<at>` mentions and tags removed) is the brief and runs as `loki start --brief "<brief>" --pr --detach`. Teams gets a synchronous reply whose text starts with "Queued" and ends with the job id. A repeated activity id is not queued twice.
+
+Jira completion comments: set `JIRA_BASE_URL` (https only), `JIRA_EMAIL` and `JIRA_API_TOKEN`; the result is then posted as a comment on the issue that triggered the run. Without all three nothing is posted, and `JIRA_API_TOKEN` never reaches the `loki start` child environment.
 
 Jira and Teams runs are receipt-gated PR runs only: the server always passes `--pr` and never a deploy argument, so shipping stays a separate gated step. `--brief` forces brief mode, so text that ends in `.md` or contains an issue URL is never reclassified, and `loki start --brief ... --pr/--worktree/--detach` runs in an isolated worktree, detached, and opens a PR carrying the Evidence Receipt (the same machinery as `loki start <issue>`). Sentry alerts use the same form. Neither secret reaches the `loki start` child environment, and both must differ from every other credential. A missing secret answers 503 naming the variable.
 

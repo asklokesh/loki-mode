@@ -880,6 +880,63 @@ class TestSentryWebhook(unittest.TestCase):
             for a in args[:1] + args[2:]:
                 self.assertNotIn("deploy", a.lower())
 
+    def _seed_deploy(self, **over):
+        os.makedirs(".loki/deploys")
+        rec = {"schema": "loki.deploy/1", "head_sha": "abcdef1234567890",
+               "finished_at": "2026-10-14T10:00:00Z", "health_status": "healthy"}
+        rec.update(over)
+        with open(".loki/deploys/20261014T100000Z-1.json", "w") as f:
+            json.dump(rec, f)
+
+    def test_brief_carries_release_env_and_last_deploy(self):
+        self._seed_deploy()
+        payload = json.loads(json.dumps(SENTRY_PAYLOAD))
+        payload["data"]["event"]["release"] = "web@1.2.3"
+        payload["data"]["event"]["environment"] = "production"
+        norm = ts.normalize_sentry_payload(payload)
+        brief = ts.build_sentry_brief(norm, payload)
+        self.assertIn("release web@1.2.3", brief)
+        self.assertIn("env production", brief)
+        self.assertIn("last deploy abcdef1 2026-10-14T10:00:00Z health=healthy", brief)
+        self.assertNotIn("\n", brief)
+        self.assertLessEqual(len(brief.encode()), ts.SENTRY_BRIEF_MAX)
+
+    def test_brief_deploy_context_sanitized_and_capped(self):
+        self._seed_deploy(health_status="ok\x1b[31m\nbad" + "z" * 5000)
+        payload = json.loads(json.dumps(SENTRY_PAYLOAD))
+        payload["data"]["event"]["release"] = "r\x07" + "y" * 5000
+        norm = ts.normalize_sentry_payload(payload)
+        brief = ts.build_sentry_brief(norm, payload)
+        self.assertNotIn("\x1b", brief)
+        self.assertNotIn("\x07", brief)
+        self.assertNotIn("\n", brief)
+        self.assertLessEqual(len(brief.encode()), ts.SENTRY_BRIEF_MAX)
+
+    def test_brief_without_deploy_record_unchanged(self):
+        norm = ts.normalize_sentry_payload(SENTRY_PAYLOAD)
+        self.assertNotIn("last deploy", ts.build_sentry_brief(norm, SENTRY_PAYLOAD))
+
+    def test_brief_names_culprit_file_owner(self):
+        import subprocess as sp
+        sp.run(["git", "init", "-q"], check=True)
+        open("app.js", "w").write("x\n")
+        sp.run(["git", "add", "app.js"], check=True)
+        sp.run(["git", "-c", "user.name=Ann Dev", "-c", "user.email=a@b.c",
+                "commit", "-qm", "init"], check=True)
+        payload = json.loads(json.dumps(SENTRY_PAYLOAD))
+        payload["data"]["issue"] = {"title": "T", "culprit": "app.js in go"}
+        norm = ts.normalize_sentry_payload(payload)
+        brief = ts.build_sentry_brief(norm, payload)
+        self.assertIn("last change to app.js by Ann Dev", brief)
+
+    def test_deploy_context_never_adds_deploy_arg(self):
+        self._seed_deploy()
+        seen = []
+        with patch.object(ts, "run_loki_command",
+                          side_effect=lambda a, dry_run=False: seen.append(a) or True):
+            ts.handle_sentry_event(SENTRY_PAYLOAD, dry_run=True)
+        self.assertEqual(seen[0][3:], ["--pr", "--detach"])
+
     def test_non_triggering_action_skipped(self):
         payload = dict(SENTRY_PAYLOAD, action="resolved")
         _, status = ts.handle_sentry_event(payload, dry_run=True)
@@ -1284,6 +1341,53 @@ class TestJiraTeamsDelegation(unittest.TestCase):
         self.assertIn("Line one Line two", args[2])
         self.assertEqual(args[3:], ["--pr", "--detach"])
         self.assertNotIn("--deploy", args)
+
+    JIRA_ENV = {"JIRA_BASE_URL": "https://acme.atlassian.net/",
+                "JIRA_EMAIL": "bot@acme.test", "JIRA_API_TOKEN": "tok"}
+
+    def _run_jira_notify(self, env, urlopen_side_effect=None):
+        posts = []
+
+        def fake_urlopen(req, timeout=None):
+            posts.append((req.full_url, json.loads(req.data), dict(req.header_items())))
+            if urlopen_side_effect:
+                raise urlopen_side_effect
+            return _fake_resp()
+
+        keys = ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")
+        with patch.dict(os.environ, {k: v for k, v in env.items()}), \
+                patch.object(ts, "urlopen", side_effect=fake_urlopen):
+            for k in keys:
+                if k not in env:
+                    os.environ.pop(k, None)
+            result, seen = self._run(self._jira(self._jira_body()))
+        return result, seen, posts
+
+    def test_jira_completion_posts_adf_comment_with_basic_auth(self):
+        (status, data), seen, posts = self._run_jira_notify(self.JIRA_ENV)
+        self.assertEqual(status, 202)
+        self.assertEqual(len(posts), 1)
+        url, body, headers = posts[0]
+        self.assertEqual(url, "https://acme.atlassian.net/rest/api/3/issue/ENG-7/comment")
+        self.assertEqual(body["body"]["type"], "doc")
+        text = body["body"]["content"][0]["content"][0]["text"]
+        self.assertIn(json.loads(data)["id"], text)
+        expect = "Basic " + base64.b64encode(b"bot@acme.test:tok").decode()
+        self.assertEqual(headers.get("Authorization"), expect)
+
+    def test_jira_no_comment_without_credentials_or_with_http_base(self):
+        _, _, posts = self._run_jira_notify({})
+        self.assertEqual(posts, [])
+        env = dict(self.JIRA_ENV, JIRA_BASE_URL="http://acme.atlassian.net")
+        _, _, posts = self._run_jira_notify(env)
+        self.assertEqual(posts, [])
+
+    def test_jira_notifier_failure_never_fails_job(self):
+        (status, _), seen, posts = self._run_jira_notify(
+            self.JIRA_ENV, urlopen_side_effect=OSError("boom"))
+        self.assertEqual(status, 202)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(posts), 1)
 
     def test_jira_label_match_and_non_matching_skipped(self):
         (status, _), seen = self._run(

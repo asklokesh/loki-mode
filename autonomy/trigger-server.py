@@ -420,6 +420,7 @@ CHILD_ENV_DENYLIST = (
     "LINEAR_WEBHOOK_SECRET",
     "LINEAR_API_KEY",
     "JIRA_WEBHOOK_SECRET",
+    "JIRA_API_TOKEN",
     "TEAMS_SECURITY_TOKEN",
 )
 
@@ -959,32 +960,61 @@ def _post_json(url, data, headers):
         resp.read()
 
 
+def _notify_slack(target, text):
+    url = target.get("response_url", "")
+    if not (isinstance(url, str) and url.startswith(SLACK_REPLY_PREFIX)):
+        return
+    _post_json(url, {"response_type": "in_channel", "text": text}, {})
+
+
+def _notify_linear(target, text):
+    key = os.environ.get("LINEAR_API_KEY", "")
+    issue_id = target.get("issue_id", "")
+    if not key or not isinstance(issue_id, str) or not issue_id:
+        return
+    _post_json(LINEAR_API_URL, {
+        "query": "mutation($i:String!,$b:String!){commentCreate(input:"
+                 "{issueId:$i,body:$b}){success}}",
+        "variables": {"i": issue_id, "b": text},
+    }, {"Authorization": key})
+
+
+def _notify_jira(target, text):
+    """ADF comment on the issue. Site and credentials come from the operator's
+    env only (never the payload); a non-https base URL is never contacted."""
+    base = os.environ.get("JIRA_BASE_URL", "").rstrip("/")
+    email = os.environ.get("JIRA_EMAIL", "")
+    token = os.environ.get("JIRA_API_TOKEN", "")
+    key = target.get("key", "")
+    if not (base.startswith("https://") and email and token
+            and isinstance(key, str) and JIRA_KEY_RE.match(key)):
+        return
+    auth = base64.b64encode(("%s:%s" % (email, token)).encode("utf-8")).decode("ascii")
+    _post_json("%s/rest/api/3/issue/%s/comment" % (base, key), {
+        "body": {"type": "doc", "version": 1, "content": [
+            {"type": "paragraph", "content": [{"type": "text", "text": text}]}]},
+    }, {"Authorization": "Basic " + auth})
+
+
+# Reply-target kind -> notifier. Sentry has no entry on purpose: it never replies.
+NOTIFIERS = {"slack": _notify_slack, "linear": _notify_linear, "jira": _notify_jira}
+
+
 def notify_job_complete(target, job_id, status, summary):
     """Send a completion summary to a reply target captured after verification.
 
-    Never raises: a notifier failure must not fail the job. The Slack URL is
-    re-checked here as defense in depth.
+    Never raises: a notifier failure must not fail the job. Each notifier
+    re-checks its own destination as defense in depth.
     """
     if not isinstance(target, dict):
+        return
+    notifier = NOTIFIERS.get(target.get("kind"))
+    if notifier is None:
         return
     text = ("loki job %s finished: %s. %s" % (job_id, status, summary or "")).strip()
     text = CONTROL_CHARS_RE.sub(" ", text)[:NOTIFY_TEXT_MAX]
     try:
-        if target.get("kind") == "slack":
-            url = target.get("response_url", "")
-            if not (isinstance(url, str) and url.startswith(SLACK_REPLY_PREFIX)):
-                return
-            _post_json(url, {"response_type": "in_channel", "text": text}, {})
-        elif target.get("kind") == "linear":
-            key = os.environ.get("LINEAR_API_KEY", "")
-            issue_id = target.get("issue_id", "")
-            if not key or not isinstance(issue_id, str) or not issue_id:
-                return
-            _post_json(LINEAR_API_URL, {
-                "query": "mutation($i:String!,$b:String!){commentCreate(input:"
-                         "{issueId:$i,body:$b}){success}}",
-                "variables": {"i": issue_id, "b": text},
-            }, {"Authorization": key})
+        notifier(target, text)
     except Exception as e:  # notifier errors never fail a job
         logging.warning("Completion notify for job %s failed: %s", job_id, e)
 
@@ -1022,7 +1052,64 @@ def normalize_sentry_payload(payload):
     return out if isinstance(out, dict) else None
 
 
-def build_sentry_brief(norm):
+def _clip(value, limit=80):
+    """Single-line, control-char-free, length-capped untrusted text."""
+    text = " ".join(CONTROL_CHARS_RE.sub(" ", str(value or "")).split())
+    return text.encode("utf-8")[:limit].decode("utf-8", errors="ignore")
+
+
+def _sentry_release_env(payload):
+    ev = ((payload or {}).get("data") or {}).get("event")
+    ev = ev if isinstance(ev, dict) else {}
+    release = ev.get("release")
+    if isinstance(release, dict):
+        release = release.get("version")
+    return _clip(release), _clip(ev.get("environment"), 40)
+
+
+def _last_deploy_context():
+    """'last deploy <sha7> <finished_at> health=<status>' from the newest
+    .loki/deploys record in the server's project dir, or ''."""
+    try:
+        ddir = os.path.join(os.getcwd(), ".loki", "deploys")
+        names = sorted(n for n in os.listdir(ddir) if n.endswith(".json"))
+        if not names:
+            return ""
+        with open(os.path.join(ddir, names[-1]), "r", encoding="utf-8") as fh:
+            rec = json.load(fh)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(rec, dict) or not rec.get("head_sha"):
+        return ""
+    return "last deploy %s %s health=%s" % (
+        _clip(rec.get("head_sha"), 7), _clip(rec.get("finished_at"), 30),
+        _clip(rec.get("health_status") or "unchecked", 20))
+
+
+def _culprit_owner(culprit):
+    """'last change to <file> by <author> <sha7>' via read-only git log -1, or ''."""
+    token = culprit.split(" ", 1)[0] if culprit else ""
+    if not token or token.startswith("-") or ".." in token:
+        return ""
+    root = os.path.realpath(os.getcwd())
+    full = os.path.realpath(os.path.join(root, token))
+    if not full.startswith(root + os.sep) or not os.path.isfile(full):
+        return ""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", root, "log", "-1", "--format=%an|%h", "--", full],
+            capture_output=True, timeout=5,
+            env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    out = proc.stdout.decode("utf-8", errors="replace").strip()
+    if proc.returncode != 0 or "|" not in out:
+        return ""
+    author, sha = out.rsplit("|", 1)
+    return "last change to %s by %s %s" % (_clip(token, 60), _clip(author, 40), _clip(sha, 12))
+
+
+def build_sentry_brief(norm, payload=None):
     """One-line, control-char-free brief that can never parse as a CLI flag."""
     culprit = ""
     for line in str(norm.get("body", "")).splitlines():
@@ -1032,6 +1119,17 @@ def build_sentry_brief(norm):
     parts = ["Fix Sentry issue %s: %s" % (norm.get("number", "?"), norm.get("title", ""))]
     if culprit:
         parts.append("(culprit %s)" % culprit)
+    release, env_name = _sentry_release_env(payload)
+    ctx = []
+    if release:
+        ctx.append("release %s" % release)
+    if env_name:
+        ctx.append("env %s" % env_name)
+    for extra in (_last_deploy_context(), _culprit_owner(culprit)):
+        if extra:
+            ctx.append(extra)
+    if ctx:
+        parts.append("[%s]" % "; ".join(ctx))
     if norm.get("url"):
         parts.append("See %s." % norm["url"])
     parts.append("Reproduce with a regression test, then fix the root cause.")
@@ -1052,7 +1150,7 @@ def handle_sentry_event(payload, dry_run=False):
     norm = normalize_sentry_payload(payload)
     if norm is None:
         return None, "rejected (unparseable sentry payload)"
-    brief = build_sentry_brief(norm)
+    brief = build_sentry_brief(norm, payload)
     if not valid_spec(brief):
         return None, "rejected (invalid brief)"
     args = brief_start_args(brief)
@@ -1924,7 +2022,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
         if dup_id or dup_body:
             self._send_json(200, {"status": "duplicate"})
             return
-        job_id = self._enqueue_job(brief, pr=True)
+        job_id = self._enqueue_job(brief, {"kind": "jira", "key": key}, pr=True)
         if job_id is None:
             return
         self._send_json(202, {"id": job_id, "status": "queued"})
