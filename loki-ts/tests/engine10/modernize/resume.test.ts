@@ -216,6 +216,20 @@ describe("resumeSchedule", () => {
     expect(existsSync(f.dir)).toBe(true);
     f.done();
   });
+
+  it("fails closed when isMerged throws: no unit.completed appended, runner never invoked", async () => {
+    const f = fx();
+    f.log.append("unit.started", { unit: "a", model: "sonnet", variant: 0 });
+    let ran = 0;
+    const merge: MergeOps = { isMerged: () => { throw new Error("git down"); }, merge: () => {} };
+    await expect(resumeSchedule(planOf([[u("a")]]), {
+      repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees, merge,
+      log: new ModernizeLog(f.dir, MID), run: async (c) => { ran++; return { result: proven(c.unit.id), costUsd: 0 }; },
+    })).rejects.toThrow(/git down/);
+    expect(readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.completed").length).toBe(0);
+    expect(ran).toBe(0);
+    f.done();
+  });
 });
 
 describe("scheduler merge path end to end", () => {
@@ -250,6 +264,21 @@ describe("scheduler merge path end to end", () => {
     expect(evs.filter((e) => e.type === "unit.completed").map((e) => e.data.unit)).toEqual(["a", "b", "c"]);
     const seqs = evs.map((e) => e.seq);
     expect(seqs.every((x, i) => i === 0 || x > seqs[i - 1]!)).toBe(true);
+    f.done();
+  });
+
+  it("a crash with an unmerged in-flight unit never merges or completes it outside the verify path", async () => {
+    const f = fx();
+    const plan = planOf([[u("a")]]);
+    f.log.append("unit.started", { unit: "a", run_id: "r-a", model: "sonnet", variant: 0 });
+    const mergeCalls: string[] = [];
+    const merge: MergeOps = { isMerged: () => false, merge: (x) => { mergeCalls.push(x); } };
+    const run = async (): Promise<AttemptOutcome> => ({ result: { ...proven("a"), verdict: "NOT_PROVEN" }, costUsd: 0 });
+    const log2 = new ModernizeLog(f.dir, MID);
+    const r = await resumeSchedule(plan, { repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees, merge, run, log: log2 });
+    expect(r.ok).toBe(true);
+    expect(mergeCalls).toEqual([]);
+    expect(readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.completed")).toEqual([]);
     f.done();
   });
 

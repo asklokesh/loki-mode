@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { EventEnvelope } from "../types.ts";
 import { validateEnvelope } from "../events.ts";
 import type { ClusterResult } from "./cluster.ts";
-import { mergeOnce, schedule } from "./scheduler.ts";
+import { schedule } from "./scheduler.ts";
 import type { ScheduleReport, SchedulerOpts } from "./scheduler.ts";
 import { modernizeEventsPath, planPath } from "./types.ts";
 
@@ -142,7 +142,10 @@ export async function resumeSchedule(plan: ClusterResult, opts: SchedulerOpts): 
   const state = loaded.state;
   if (opts.merge) {
     for (const id of [...state.inFlight.keys()]) {
-      if (mergeOnce(id, opts.merge, opts.log, state.completed) === "adopted") {
+      // Adopt only a merge that already landed. An unmerged in-flight unit is never merged here: it re-runs
+      // (reattach or clean restart) and reaches a merge only through the normal verify path.
+      if (opts.merge.isMerged(id)) {
+        opts.log.append("unit.completed", { unit: id, adopted: true });
         state.completed.add(id);
         state.inFlight.delete(id);
       }
