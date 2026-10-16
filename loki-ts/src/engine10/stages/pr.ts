@@ -17,7 +17,7 @@ import { specPrLine } from "../../util/spec_file.ts";
 import { REPO_ROOT } from "../../util/paths.ts";
 import { safeGit } from "../../util/safe_git.ts";
 import { stackBase, stackSection } from "../../util/run_outputs.ts";
-import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts";
+import { lokiYamlTexts, yamlKey } from "../../util/yaml_key.ts"; import { idempotencyKey, runOnce } from "../../util/outbox.ts";
 /** B7: who opens the PR. LOKI_PR_AUTHOR beats loki.yaml pr.author; anything but "bot" is "me". */
 export function resolvePrAuthor(repoDir: string, environ: NodeJS.ProcessEnv = process.env): "me" | "bot" {
   let v: string | null = (environ.LOKI_PR_AUTHOR ?? "").trim() || null;
@@ -115,7 +115,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin);
-  const pr = runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, env });
+  const pr = runOnce({ dir: ctx.runDir, key: idempotencyKey("pr", ctx.runId, ctx.branch), keep: (r) => r.ok, post: () => runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, env }) }); // P12-36: push-pr reuses an existing PR, so a pending replay is duplicate-safe
   if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason };
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
