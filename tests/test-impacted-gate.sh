@@ -84,5 +84,19 @@ printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && ok "util/shell.
 sel="$(select_for loki-ts/src/commands/completion.ts)"
 printf '%s\n' "$sel" | grep -qx 'tests/test-control-plane.sh' && bad "unreached completion.ts selected CP-04" || ok "unreached loki-ts/src file does not select CP-04"
 
+# REL-GUARD-b: --guards-only fails closed. Fixture repo with the real gate/selector and a broken guard list.
+GFIX="$FIX/gfix"
+mkdir -p "$GFIX/scripts" "$GFIX/eval/loki10"
+cp "$REPO_ROOT/scripts/impacted-gate.sh" "$REPO_ROOT/scripts/select-tests.sh" "$GFIX/scripts/"
+cp "$REPO_ROOT/eval/loki10/lib-tmp.sh" "$GFIX/eval/loki10/"
+out="$(cd "$GFIX" && timeout -k 5 60 /bin/bash scripts/impacted-gate.sh --guards-only 2>&1)"
+rc=$?
+[ "$rc" -ne 0 ] && ok "--guards-only with global-guards.tsv missing exits non-zero (rc=$rc)" || bad "--guards-only passed with missing guard list: $out"
+: >"$GFIX/scripts/global-guards.tsv"
+out="$(cd "$GFIX" && timeout -k 5 60 /bin/bash scripts/impacted-gate.sh --guards-only 2>&1)"
+rc=$?
+[ "$rc" -ne 0 ] && ok "--guards-only with zero rows exits non-zero (rc=$rc)" || bad "--guards-only passed with zero rows: $out"
+grep -q 'impacted-gate: PASS' <<<"$out" && bad "zero-row guards-only printed PASS" || ok "zero-row guards-only did not print PASS"
+
 echo "impacted-gate fixtures: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

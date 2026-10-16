@@ -405,7 +405,8 @@ sys.exit(1)
 # normally stands in for. Runs when that gate is skipped (LOKI_RELEASE_ALLOW_RED=1)
 # so a release cannot cut on a tree a guard already rejects. Same runner as the
 # impacted gate (scripts/impacted-gate.sh --guards-only): per-row timeout, parallel.
-# LOKI_RELEASE_SKIP_GUARDS=1 skips with a loud warning.
+# LOKI_RELEASE_SKIP_GUARDS=1 skips with a loud warning. LOKI_RELEASE_GUARD_TIMEOUT
+# (default 300s) is the per-row limit. A dirty tracked tree is refused (exit 3).
 run_release_guard_rows() {
     local out rc=0 started
     if [ "${LOKI_RELEASE_SKIP_GUARDS:-}" = "1" ]; then
@@ -415,9 +416,15 @@ run_release_guard_rows() {
         log_warn "=============================================================="
         return 0
     fi
+    # The guards read the working tree, not the commit: a dirty tree proves nothing.
+    if [ -n "$(git -C "$ROOT_DIR" status --porcelain --untracked-files=no)" ]; then
+        log_error "RELEASE_GUARD_DIRTY: tracked files are modified; the guard rows read the working tree, not HEAD. Commit or discard, or set LOKI_RELEASE_SKIP_GUARDS=1."
+        exit 3
+    fi
     log_step "Running global guard rows (scripts/impacted-gate.sh --guards-only)..."
     started="$(date +%s)"
-    out="$(IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-170}" \
+    # env -u: a caller-exported LOKI_RUN_TMP would make the gate's loki_run_tmp_create refuse.
+    out="$(env -u LOKI_RUN_TMP IMPACTED_SUITE_TIMEOUT="${LOKI_RELEASE_GUARD_TIMEOUT:-300}" \
         bash "$ROOT_DIR/scripts/impacted-gate.sh" --guards-only 2>&1)" || rc=$?
     printf '%s\n' "$out"
     log_info "Guard rows took $(( $(date +%s) - started ))s"
