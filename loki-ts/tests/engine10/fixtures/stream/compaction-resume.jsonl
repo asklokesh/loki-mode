@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","model":"opus","session_id":"s-old"}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"before compaction. "}]}}
+{"type":"system","subtype":"compact_boundary","compact_metadata":{"trigger":"auto","pre_tokens":180000}}
+{"type":"system","subtype":"init","model":"opus","session_id":"s-resumed"}
+{"type":"assistant","message":{"id":"m2","content":[{"type":"text","text":"after resume."},{"type":"tool_use","name":"Read","id":"t1","input":{"file_path":"a.ts"}}]}}
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.5,"session_id":"s-resumed","result":" done"}

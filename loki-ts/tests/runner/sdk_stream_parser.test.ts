@@ -578,3 +578,54 @@ describe("consumeSdkStream: T3(a) full-shape SDK message replay (loop-flip gate)
     expect(c.source).not.toBe("");
   });
 });
+
+// P12-39: transcript fixtures (compaction resume, truncated transcript, stale remote status).
+describe("consumeSdkStream transcript fixtures", () => {
+  const fx = (n: string): StreamMsg[] =>
+    readFileSync(join(import.meta.dir, "..", "engine10", "fixtures", "stream", n), "utf8")
+      .split("\n")
+      .flatMap((l) => {
+        try {
+          return l.trim() ? [JSON.parse(l) as StreamMsg] : [];
+        } catch {
+          return []; // a cut-off final line is dropped, as a transcript reader would
+        }
+      });
+
+  test("compaction resume: init re-fires, text from both segments kept, last session wins", async () => {
+    const r = await consumeSdkStream(fx("compaction-resume.jsonl"), ctx(), clock);
+    expect(r.sawResult).toBe(true);
+    expect(r.exitCode).toBe(0);
+    expect(r.sessionId).toBe("s-resumed");
+    expect(r.capturedText).toBe("before compaction. after resume. done");
+    expect(r.truncated).toBe(false);
+  });
+
+  test("truncated transcript: no throw, partial result flagged", async () => {
+    const r = await consumeSdkStream(fx("truncated-transcript.jsonl"), ctx(), clock);
+    expect(r.sawResult).toBe(false);
+    expect(r.exitCode).toBe(1);
+    expect(r.truncated).toBe(true);
+    expect(r.capturedText).toBe("partial work. ");
+  });
+
+  test("stream that throws mid-iteration and null entries degrade, not throw", async () => {
+    async function* broken(): AsyncGenerator<StreamMsg> {
+      yield { type: "assistant", message: { content: [{ type: "text", text: "half" }] } };
+      yield null as unknown as StreamMsg;
+      throw new Error("socket closed");
+    }
+    const r = await consumeSdkStream(broken(), ctx(), clock);
+    expect(r.truncated).toBe(true);
+    expect(r.exitCode).toBe(1);
+    expect(r.capturedText).toBe("half");
+  });
+
+  test("stale remote status: allowed heartbeat ignored, stale rejected epoch yields no wait", async () => {
+    const r = await consumeSdkStream(fx("stale-remote-status.jsonl"), ctx(), clock);
+    expect(r.rateLimit).toEqual({ resetSeconds: undefined });
+    expect(r.capturedText.split("[rate_limit]").length).toBe(2);
+    expect(r.sawResult).toBe(true);
+    expect(r.truncated).toBe(false);
+  });
+});
