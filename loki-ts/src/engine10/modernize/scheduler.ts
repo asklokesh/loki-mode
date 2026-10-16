@@ -9,7 +9,7 @@ import type { ClusterResult, Unit } from "./cluster.ts";
 import { budgetExceeded } from "./estimate.ts";
 import type { ModernizeLog } from "./log.ts";
 import { safeGit } from "../../util/safe_git.ts";
-import { modernizeRoot } from "./types.ts";
+import { encodeUnitId, isSafeUnitId, modernizeRoot } from "./types.ts";
 import type { UnitRunResult } from "./unit.ts";
 
 export type Model = "sonnet" | "opus";
@@ -19,7 +19,6 @@ export const DEFAULT_WORKERS = 4;
 export const UNIT_COST_CAP_FACTOR = 3;
 
 // No "~" in the class: the variant suffix "~v<n>" can never be part of a unit id, so paths cannot collide.
-const UNIT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 const VARIANT_SEP = "~v";
 
 export interface AttemptCtx {
@@ -166,8 +165,8 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
   });
 
   async function runUnitCascade(unit: Unit, worker: number): Promise<UnitOutcome> {
-    if (!UNIT_ID_RE.test(unit.id)) {
-      return { unit: unit.id, status: "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, reason: "unit id is not a safe path segment" };
+    if (!isSafeUnitId(unit.id)) {
+      return { unit: unit.id, status: "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, reason: "unit id is not a safe relative path" };
     }
     let unitCost = 0;
     let attempts = 0;
@@ -180,7 +179,7 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
         reason = hit ? "budget stop" : "per-unit cost cap reached";
         break;
       }
-      const path = join(modernizeRoot(opts.repoDir, opts.mid), "wt", variant === 0 ? unit.id : `${unit.id}${VARIANT_SEP}${variant}`);
+      const path = join(modernizeRoot(opts.repoDir, opts.mid), "wt", variant === 0 ? encodeUnitId(unit.id) : `${encodeUnitId(unit.id)}${VARIANT_SEP}${variant}`);
       let outcome: AttemptOutcome;
       attempts++;
       // Resume (M-22): reattach the recorded worktree at its base and hand the run id to E-39, else restart cleanly and log why.

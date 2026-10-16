@@ -24,8 +24,9 @@ import { safeGit } from "../../../src/util/safe_git.ts";
 
 const FIXTURE = join(import.meta.dir, "fixtures", "e2e_py2");
 const MID = "mod-20261016T000000Z-e2e001";
-const UNIT = "calc"; // unit ids are one safe path segment (no "/")
 const UNIT_FILE = "legacy/calc.py";
+const UNIT = UNIT_FILE; // the default unitFile reads the unit id as a repo-relative path, so a nested file is reachable
+const T = 30_000; // pytest-spawning tests: bun default 5s risks a CI timeout
 
 const pyProbe = spawnSync("python3", ["-m", "pytest", "--version"], { encoding: "utf8" });
 const SKIP_REASON = pyProbe.status === 0 ? "" : "python3 with pytest is not available on this host";
@@ -87,7 +88,7 @@ afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 /** Real unit-level pipeline on the fixture, with the golden oracle placed where oracle capture would put it. */
 async function driveUnit(stub: Stub, opts: { pythonBin?: string; ablate?: boolean } = {}) {
-  const runners = makeUnitRunners({ target: "python3", session: stub.session, unitFile: (_id, dir) => join(dir, UNIT_FILE),...(opts.pythonBin ? { pythonBin: opts.pythonBin } : {}) });
+  const runners = makeUnitRunners({ target: "python3", session: stub.session,...(opts.pythonBin ? { pythonBin: opts.pythonBin } : {}) });
   const seen: { result: UnitRunResult | null; events: string[]; sealedExists: boolean; conformance: number[] } = { result: null, events: [], sealedExists: false, conformance: [] };
   const real = makePytestBaseRunner();
   const stubbed = (): NewCaseOutcome => ({ return: { t: "none" }, exc: null, stdout: { t: "text", v: "" }, files: [] });
@@ -143,7 +144,7 @@ describe("loki modernize e2e on the py2 fixture", () => {
     expect(cap.out).toMatch(/units?:?\s*\d/i);
     const types = readModernizeEvents(repo, MID).map((e) => e.type);
     expect(types).toEqual(["modernize.started", "inventory.completed", "estimate.printed"]);
-  });
+  }, T);
 
   it.skipIf(SKIP_REASON !== "")("full-repo run exits 2 naming every unbuilt piece, converts nothing, claims no success", async () => {
     const before = readFileSync(join(repo, UNIT_FILE), "utf8");
@@ -152,11 +153,12 @@ describe("loki modernize e2e on the py2 fixture", () => {
     try { code = await main([repo, "--to", "python3", "--no-pr"], { makeId: () => MID }); } finally { cap.restore(); }
     expect(code).toBe(2);
     expect(cap.err).toContain("modernize: cannot run units yet, not built:");
-    for (const piece of ["oracle capture", "unit merge ops", "ablation stub runner", "wave verify commands"]) expect(cap.err).toContain(piece);
+    const listed = /not built: ([^\n]*?)(?:\.? ?use --dry-run|\n|$)/.exec(cap.err)![1]!.split("; ").map((x) => x.replace(/ \(.*$/, ""));
+    expect(listed).toEqual(["oracle capture", "unit merge ops", "ablation stub runner", "wave verify commands"]);
     expect(cap.err).toContain("use --dry-run");
     expect(cap.out).not.toMatch(/verified|shipped|PROVEN/);
     expect(readFileSync(join(repo, UNIT_FILE), "utf8")).toBe(before);
-  });
+  }, T);
 
   it.skipIf(SKIP_REASON !== "")("unit run: stub provider converts the unit, pytest passes under py3, oracle sealed, PROVEN", async () => {
     const stub = stubProvider(py2to3);
@@ -178,7 +180,7 @@ describe("loki modernize e2e on the py2 fixture", () => {
     const run = spawnSync("python3", ["-I", "-c", "exec(compile(open(0).read(), 'report.py', 'exec')); show(3)"], { input: stub.converted["legacy/report.py"]!, encoding: "utf8" });
     expect(run.stdout).toBe("total 3\n\n");
     expect(r.result!.verdict).toBe("PROVEN");
-    expect(r.result!.oracle!.case_count).toBe(10);
+    expect(r.result!.oracle!.case_count).toBe(12); // 10 tally cases, label("abc") (a text argument and return), label(7)
     expect(r.result!.conformance).toEqual({ trust: "runner_reported", limit: "FC-24", tests: 2 });
     expect(r.conformance.length).toBe(2);
     expect(r.conformance[0]).not.toBe(0); // base red
@@ -188,7 +190,7 @@ describe("loki modernize e2e on the py2 fixture", () => {
     expect(r.events.some((t) => t === "oracle.captured")).toBe(true);
     expect(readdirSync(root).filter((n) => n.startsWith("loki-unit-"))).toEqual([]); // run-owned checkout removed
     expect(readFileSync(join(repo, UNIT_FILE), "utf8")).toContain("iteritems"); // the source repo itself is untouched
-  });
+  }, T);
 
   it.skipIf(SKIP_REASON !== "")("a broken transform step is never PROVEN (exit 1, reason on stderr)", async () => {
     const noIter = (s: string) => py2to3(s).replace(".items()", ".iteritems()"); // iteritems step dropped
@@ -202,7 +204,7 @@ describe("loki modernize e2e on the py2 fixture", () => {
     const r2 = await driveUnit(stubProvider(wrongValue));
     expect(r2.code).toBe(1);
     expect(r2.result!.verdict).not.toBe("PROVEN");
-  });
+  }, T);
 
   it.skipIf(SKIP_REASON !== "")("an unrunnable replay interpreter fails closed, never a vacuous PROVEN", async () => {
     const r = await driveUnit(stubProvider(py2to3), { pythonBin: join(root, "no-such-python") });
@@ -210,7 +212,8 @@ describe("loki modernize e2e on the py2 fixture", () => {
     expect(r.out).not.toContain("PROVEN");
     expect(r.result!.verdict).not.toBe("PROVEN");
     expect(r.err).toContain(UNIT);
-  });
+    expect(r.err).toContain("runner error: new-tree case runner failed"); // the named reason, not just the unit
+  }, T);
 });
 
 describe("e2e host prerequisites", () => {

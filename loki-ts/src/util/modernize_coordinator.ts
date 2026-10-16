@@ -13,7 +13,7 @@ import { shipWave } from "../engine10/modernize/ship.ts";
 import type { PushRunner, ShipUnit } from "../engine10/modernize/ship.ts";
 import type { ModernizeLog } from "../engine10/modernize/log.ts";
 import { readModernizeEvents } from "../engine10/modernize/log.ts";
-import { modernizeRoot } from "../engine10/modernize/types.ts";
+import { oracleDir } from "../engine10/modernize/types.ts";
 import type { ModernizeTarget } from "../engine10/modernize/types.ts";
 import { runUnit } from "../engine10/modernize/unit.ts";
 import { nextWaveGate, verifyWave } from "../engine10/modernize/wave.ts";
@@ -52,7 +52,7 @@ const sha256 = (p: string): string => (existsSync(p) ? createHash("sha256").upda
 
 /** The sealed oracle is the unit's evidence file; it is named in the PR body with its hash. A unit with no outcome is NOT_PROVEN; resume fills in logged outcomes explicitly (runWaves). */
 function shipUnitOf(d: WaveDeps, unit: string, o: UnitOutcome | undefined): ShipUnit {
-  const sealed = join(modernizeRoot(d.repoDir, d.mid), "oracle", unit, "sealed.json");
+  const sealed = join(oracleDir(d.repoDir, d.mid, unit), "sealed.json");
   const eq = o?.result?.equiv;
   return {
     unit, verdict: o?.status === "PROVEN" ? "PROVEN" : o?.status === "NOT_EQUAL" ? "NOT_EQUAL" : "NOT_PROVEN",

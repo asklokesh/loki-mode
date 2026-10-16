@@ -454,6 +454,25 @@ def _check_boundary(name, value, declared):
     return None
 
 
+def _declared_for_case(declared, per_case, bound_names, call_args, call_kwargs):
+    """Per-case boundary declarations (optional "boundaries" key on a --cases line):
+    {"args": [kind|null, ...], "kwargs": {name: kind}, "return": kind|null}. This is how a replay declares
+    the kinds the ORACLE recorded, so a text argument is not "undeclared". It adds to the --boundaries file,
+    never overrides it, and a runtime type that differs from the declared kind is still flagged."""
+    if not isinstance(per_case, dict):
+        return declared
+    merged = dict(declared)
+    arg_kinds = per_case.get("args") or []
+    kw_kinds = per_case.get("kwargs") or {}
+    for i, name in enumerate(bound_names):
+        kind = arg_kinds[i] if i < len(call_args) and i < len(arg_kinds) else kw_kinds.get(name)
+        if kind in ("text", "bytes") and name not in merged:
+            merged[name] = kind
+    if per_case.get("return") in ("text", "bytes") and "return" not in merged:
+        merged["return"] = per_case["return"]
+    return merged
+
+
 def _unsupported_not_proven(tagged, path):
     """Recurse into an already-tagged structure (a return value or an
     exception arg) and turn every 'unsupported' tag at any nesting depth
@@ -570,17 +589,18 @@ def main(argv=None):
 
         not_proven = []
         bound_names = _bound_names(func, call_args, call_kwargs)
+        case_declared = _declared_for_case(declared, spec.get("boundaries"), bound_names, call_args, call_kwargs)
         for i, name in enumerate(bound_names):
             if i < len(call_args):
-                reason = _check_boundary(name, call_args[i], declared)
+                reason = _check_boundary(name, call_args[i], case_declared)
             elif name in call_kwargs:
-                reason = _check_boundary(name, call_kwargs[name], declared)
+                reason = _check_boundary(name, call_kwargs[name], case_declared)
             else:
                 reason = None
             if reason:
                 not_proven.append(reason)
         if outcome["had_result"]:
-            reason = _check_boundary("return", outcome["result"], declared)
+            reason = _check_boundary("return", outcome["result"], case_declared)
             if reason:
                 not_proven.append(reason)
             not_proven.extend(_unsupported_not_proven(outcome["result_tag"], "return"))
