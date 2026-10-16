@@ -63,3 +63,16 @@ describe("supervisor reaps announced session groups on every exit path", () => {
     expect(alive(pid)).toBe(false);
   }, 15_000);
 });
+
+describe("P12-11 supervisor persists verify flaky names as fingerprints", () => {
+  test("a verify stage flaky list lands in <repo>/.loki/state/fingerprints.jsonl", async () => {
+    const { dir } = repo();
+    const ev = JSON.stringify({ type: "stage.completed", stage: "verify", data: { flaky: ["t/a.test.ts"] } });
+    await runSupervisor({ runId: "e10-fp1", repoDir: dir, env: ENV, workerArgv: [process.execPath, "-e", `console.log(${JSON.stringify(ev)})`], capS: 10 });
+    const p = join(dir, ".loki", "state", "fingerprints.jsonl");
+    expect(existsSync(p)).toBe(true);
+    const row = JSON.parse(readFileSync(p, "utf8").trim().split("\n")[0] as string);
+    expect(row.name).toBe("t/a.test.ts");
+    expect(row.run).toBe("e10-fp1");
+  }, 20_000);
+});

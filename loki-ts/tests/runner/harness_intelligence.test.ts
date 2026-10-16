@@ -38,7 +38,8 @@ import {
   isIntegrationOwner,
   type ExecManifest,
 } from "../../src/runner/exec_manifest.ts";
-import { decideRecovery, signatureRepeated, recordFlaky, readFingerprints, failureFingerprint, FINGERPRINT_MAX } from "../../src/runner/recovery_policy.ts";
+import { decideRecovery, signatureRepeated } from "../../src/runner/recovery_policy.ts";
+import { recordFingerprints, readFingerprints, failureFingerprint, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
 
 const tmps: string[] = [];
 function tmp(): string {
@@ -901,17 +902,24 @@ describe("P12-11 recovery classes (FC-REQ)", () => {
   });
   it("fingerprints persist across two runs and are bounded", () => {
     const dir = tmp();
-    expect(recordFlaky(dir, "run1", ["a", "b"])).toEqual(["a", "b"]);
-    recordFlaky(dir, "run2", ["a"]);
+    expect(recordFingerprints(dir, "run1", "flaky", ["a", "b"])).toEqual(["a", "b"]);
+    recordFingerprints(dir, "run2", "flaky", ["a"]);
     const fp = readFingerprints(dir);
     expect(fp.length).toBe(3);
     expect(fp.filter((r) => r.fp === failureFingerprint("flaky", "a")).length).toBe(2);
-    for (let i = 0; i < FINGERPRINT_MAX + 20; i++) recordFlaky(dir, "r" + i, ["n" + i]);
+    for (let i = 0; i < FINGERPRINT_MAX + 20; i++) recordFingerprints(dir, "r" + i, "flaky", ["n" + i]);
     expect(readFingerprints(dir).length).toBeLessThanOrEqual(FINGERPRINT_MAX);
     expect(readFingerprints(dir).at(-1)?.run).toBe("r" + (FINGERPRINT_MAX + 19));
   });
-  it("recordFlaky tolerates junk input", () => {
-    expect(recordFlaky(tmp(), "r", undefined)).toEqual([]);
-    expect(recordFlaky(tmp(), "r", [1, "ok"] as unknown)).toEqual(["ok"]);
+  it("extend never duplicate: one recordFlaky owner, fingerprints live in util/failure_memory.ts", () => {
+    const rp = readFileSync(new URL("../../src/runner/recovery_policy.ts", import.meta.url), "utf8");
+    expect(rp).not.toMatch(/export function (recordFlaky|recordFingerprints|readFingerprints)/);
+    expect(rp).not.toContain("fingerprints.jsonl");
+    const fm = readFileSync(new URL("../../src/util/failure_memory.ts", import.meta.url), "utf8");
+    expect(fm.match(/export function recordFlaky/g)?.length).toBe(1);
+  });
+  it("recordFingerprints tolerates junk input", () => {
+    expect(recordFingerprints(tmp(), "r", "flaky", undefined)).toEqual([]);
+    expect(recordFingerprints(tmp(), "r", "flaky", [1, "ok"] as unknown)).toEqual(["ok"]);
   });
 });

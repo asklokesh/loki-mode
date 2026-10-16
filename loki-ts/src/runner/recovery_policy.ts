@@ -30,8 +30,7 @@
 // DEFAULT OFF (LOKI_RECOVERY_POLICY). With the flag unset, decideRecovery()
 // returns the pre-existing behavior: shouldStopRetrying() verbatim.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { lokiDir } from "../util/paths.ts";
 import { classifyFailure, shouldStopRetrying, type RetryDecision } from "./retry_class.ts";
@@ -88,61 +87,6 @@ export type RecoveryClass = "flaky" | "protocol_error" | "conflicting_requiremen
 // flaky = fail-then-pass on one non-empty tree id. Different or unknown trees prove nothing.
 export function isFlaky(r: RecoverySignals["rerun"]): boolean {
   return r !== undefined && r.test !== "" && r.failTree !== "" && r.failTree === r.passTree;
-}
-
-// ---------------------------------------------------------------------------
-// Failure fingerprints: append-only, bounded, persisted across runs
-// ---------------------------------------------------------------------------
-
-export const FINGERPRINT_MAX = 200;
-export interface FingerprintRow { readonly ts: string; readonly run: string; readonly cls: string; readonly fp: string; readonly name: string }
-
-export function failureFingerprint(cls: string, name: string): string {
-  return createHash("sha256").update(`${cls}\0${name}`).digest("hex").slice(0, 16);
-}
-
-function fingerprintPath(lokiDirPath: string): string {
-  return resolve(lokiDirPath, "state", "fingerprints.jsonl");
-}
-
-export function readFingerprints(lokiDirPath: string): FingerprintRow[] {
-  const p = fingerprintPath(lokiDirPath);
-  if (!existsSync(p)) return [];
-  try {
-    return readFileSync(p, "utf8").split("\n").filter((l) => l.trim() !== "").flatMap((l) => {
-      try {
-        const r = JSON.parse(l) as FingerprintRow;
-        return typeof r.fp === "string" ? [r] : [];
-      } catch {
-        return [];
-      }
-    });
-  } catch {
-    return [];
-  }
-}
-
-// Append one row per flaky test name; never throws (a state write must not fail a run).
-// Over FINGERPRINT_MAX the file is rewritten to its newest rows via tmp + rename.
-// Returns the accepted (string) names so a caller can render them.
-export function recordFlaky(lokiDirPath: string, runId: string, names: unknown): string[] {
-  const list = Array.isArray(names) ? names.filter((n): n is string => typeof n === "string" && n !== "") : [];
-  if (list.length === 0) return list;
-  try {
-    const p = fingerprintPath(lokiDirPath);
-    mkdirSync(resolve(lokiDirPath, "state"), { recursive: true });
-    const ts = new Date().toISOString();
-    appendFileSync(p, list.map((name) => JSON.stringify({ ts, run: runId, cls: "flaky", fp: failureFingerprint("flaky", name), name })).join("\n") + "\n");
-    const rows = readFingerprints(lokiDirPath);
-    if (rows.length > FINGERPRINT_MAX) {
-      const tmpP = `${p}.${process.pid}.tmp`;
-      writeFileSync(tmpP, rows.slice(-FINGERPRINT_MAX).map((r) => JSON.stringify(r)).join("\n") + "\n");
-      renameSync(tmpP, p);
-    }
-  } catch {
-    /* best effort */
-  }
-  return list;
 }
 
 const DEFAULT_MAX_ATTEMPTS = 3;
@@ -242,9 +186,11 @@ export interface DecideOpts {
 //   2. permanent failure -> stop (never retry an auth/model/quota error)
 //   3. repeated signature-> stop (circuit breaker; we are provably stuck)
 //   4. caps exhausted    -> escalate
+//   4b. conflicting_requirements, protocol_error -> stop / revise (P12-11, only from explicit signals)
 //   5. tree corrupt      -> checkpoint_rollback
 //   6. provider down     -> failover (tier request only)
 //   7. build failed      -> revise (exit code only, never prose)
+//   7b. flaky (identical-tree fail-then-pass, P12-11) -> retry flaky
 //   8. transient         -> retry
 export function decideRecovery(sig: RecoverySignals, opts: DecideOpts = {}): RecoveryDecision {
   const env = opts.env ?? process.env;
