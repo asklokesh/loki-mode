@@ -2643,6 +2643,32 @@ cmd_start() {
         cmd_deploy "${_ps_dargs[@]}"
         return $?
     fi
+    # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
+    # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
+    # new build. Exit 0 resumed, 4 phase reported, 3 nothing to resume, else failure.
+    local _ps_resume=0 _ps_resume_args=()
+    for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
+        case "$_ps_a" in
+            --resume) _ps_resume=1 ;;
+            --no-pr) ;;
+            -*) ;;
+            *) _ps_resume_args+=("$_ps_a") ;;
+        esac
+    done
+    if [ "$_ps_resume" = 1 ]; then
+        local _ps_rrc=0
+        for _ps_a in ${_ps_resume_args[@]+"${_ps_resume_args[@]}"}; do
+            case "$_ps_a" in
+                e10-[A-Za-z0-9-]*) ;;
+                *)
+                    echo -e "${RED}--resume resumes a sealed run; it takes an optional run id, not a task. Run \`loki start <task>\` for a new run.${NC}" >&2
+                    return 2 ;;
+            esac
+        done
+        ( _loki_bun_delegate engine10 resume ${_ps_resume_args[@]+"${_ps_resume_args[@]}"} ) || _ps_rrc=$?
+        [ "$_ps_rrc" = 4 ] && _ps_rrc=0
+        return "$_ps_rrc"
+    fi
     set -- ${_ps_rest[@]+"${_ps_rest[@]}"}
 
     local args=()
