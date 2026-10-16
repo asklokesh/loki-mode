@@ -703,7 +703,14 @@ def handle_issue_comment_event(payload, dry_run=False):
     note = "GitHub comment from %s: %s" % (login or "unknown", body)
     summary = "steer %s from comment" % ref
     sink = []
-    success = run_loki_command(["steer", note], dry_run=dry_run, stdout_sink=sink)
+    outcome = run_loki_outcome(["steer", note], dry_run=dry_run, stdout_sink=sink)
+    # Only a confirmed exit 0 proves the steer was written. A detached child
+    # (UNKNOWN) never reports its exit code, so acking would claim an unverified
+    # steer; report it as launched but post nothing.
+    if outcome == OUTCOME_UNKNOWN:
+        send_notification("Trigger fired: %s" % summary)
+        return summary, OUTCOME_UNKNOWN
+    success = outcome == OUTCOME_PASSED
     if success:
         send_notification("Trigger fired: %s" % summary)
         rev = parse_steer_rev("".join(sink))

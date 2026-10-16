@@ -84,6 +84,8 @@ class TestEventRouting(unittest.TestCase):
     def setUp(self):
         # Patch run_loki_command to avoid actually running loki
         self.mock_run = patch("trigger_server.run_loki_command", return_value=True).start()
+        self.real_outcome = ts.run_loki_outcome
+        self.mock_outcome = patch("trigger_server.run_loki_outcome", return_value=ts.OUTCOME_PASSED).start()
         self.mock_notify = patch("trigger_server.send_notification").start()
         # Patch log_event to avoid file I/O
         self.mock_log = patch("trigger_server.log_event").start()
@@ -157,7 +159,7 @@ class TestEventRouting(unittest.TestCase):
             summary, status = ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
         f.assert_called_once_with("owner/repo#42")
         self.assertEqual(status, "fired")
-        args = self.mock_run.call_args[0][0]
+        args = self.mock_outcome.call_args[0][0]
         self.assertEqual(args[0], "steer")
         self.assertEqual(len(args), 2)
         self.assertIn("focus on auth", args[1])
@@ -167,8 +169,8 @@ class TestEventRouting(unittest.TestCase):
         def fake(args, dry_run=False, stdout_sink=None):
             if stdout_sink is not None:
                 stdout_sink.append(text)
-            return True
-        self.mock_run.side_effect = fake
+            return ts.OUTCOME_PASSED
+        self.mock_outcome.side_effect = fake
 
     def test_issue_comment_authorized_steer_posts_ack_with_rev(self):
         self._steer_stdout("Steering note (rev 3) written\nSteer rev 3 received: applies at next plan/implement stage.\n")
@@ -188,12 +190,38 @@ class TestEventRouting(unittest.TestCase):
         ack.assert_not_called()
 
     def test_issue_comment_failed_steer_posts_no_ack(self):
-        self.mock_run.return_value = False
+        self.mock_outcome.return_value = ts.OUTCOME_FAILED
         with patch("trigger_server.find_live_run", return_value="run-1"), \
              patch("trigger_server.post_steer_ack") as ack:
             _, status = ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
         self.assertEqual(status, "error")
         ack.assert_not_called()
+
+    def test_issue_comment_unknown_steer_posts_no_ack(self):
+        self.mock_outcome.return_value = ts.OUTCOME_UNKNOWN
+        with patch("trigger_server.find_live_run", return_value="run-1"), \
+             patch("trigger_server.post_steer_ack") as ack:
+            _, status = ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
+        self.assertEqual(status, ts.OUTCOME_UNKNOWN)
+        ack.assert_not_called()
+
+    def test_issue_comment_detached_failing_loki_posts_no_ack(self):
+        import stat, shutil
+        d = tempfile.mkdtemp()
+        try:
+            fake = os.path.join(d, "loki")
+            with open(fake, "w") as f:
+                f.write("#!/bin/sh\nsleep 3\nexit 1\n")
+            os.chmod(fake, os.stat(fake).st_mode | stat.S_IXUSR)
+            self.mock_outcome.side_effect = self.real_outcome
+            with patch.dict(os.environ, {"PATH": d + os.pathsep + os.environ["PATH"]}), \
+                 patch.object(ts, "DISPATCH_WAIT_SECONDS", 1), \
+                 patch("trigger_server.find_live_run", return_value="run-1"), \
+                 patch("trigger_server.post_steer_ack") as ack:
+                ts.handle_issue_comment_event(self._make_comment_payload("MEMBER"))
+            ack.assert_not_called()
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
 
     def test_issue_comment_prompt_injection_off_posts_no_ack(self):
         with patch.dict(os.environ, {"LOKI_PROMPT_INJECTION": "0"}), \
@@ -210,7 +238,7 @@ class TestEventRouting(unittest.TestCase):
                 _, status = ts.handle_issue_comment_event(
                     self._make_comment_payload("OWNER", body=b))
             self.assertIn("skipped", status)
-        self.mock_run.assert_not_called()
+        self.mock_outcome.assert_not_called()
 
     def test_post_steer_ack_body_carries_marker(self):
         seen = {}
@@ -256,7 +284,7 @@ class TestEventRouting(unittest.TestCase):
         proc.communicate.return_value = (b"Steer rev 9 received: x\n", b"")
         sink = []
         with patch("subprocess.Popen", return_value=proc):
-            ts.run_loki_outcome(["steer", "n"], stdout_sink=sink)
+            self.real_outcome(["steer", "n"], stdout_sink=sink)
         self.assertEqual(ts.parse_steer_rev("".join(sink)), 9)
 
     def test_issue_comment_unauthorized_skipped_no_write(self):
@@ -264,7 +292,7 @@ class TestEventRouting(unittest.TestCase):
             with patch("trigger_server.find_live_run", return_value="run-1"):
                 _, status = ts.handle_issue_comment_event(self._make_comment_payload(assoc))
             self.assertIn("skipped", status)
-        self.mock_run.assert_not_called()
+        self.mock_outcome.assert_not_called()
 
     def test_issue_comment_bot_edited_deleted_skipped(self):
         cases = [self._make_comment_payload(user_type="Bot"),
@@ -275,25 +303,25 @@ class TestEventRouting(unittest.TestCase):
             with patch("trigger_server.find_live_run", return_value="run-1"):
                 _, status = ts.handle_issue_comment_event(payload)
             self.assertIn("skipped", status)
-        self.mock_run.assert_not_called()
+        self.mock_outcome.assert_not_called()
 
     def test_issue_comment_no_run_skipped(self):
         with patch("trigger_server.find_live_run", return_value=None):
             _, status = ts.handle_issue_comment_event(self._make_comment_payload("OWNER"))
         self.assertIn("skipped", status)
-        self.mock_run.assert_not_called()
+        self.mock_outcome.assert_not_called()
 
     def test_issue_comment_forged_repo_rejected(self):
         with patch("trigger_server.find_live_run", return_value="run-1"):
             _, status = ts.handle_issue_comment_event(self._make_comment_payload("OWNER", repo="--evil"))
         self.assertIn("rejected", status)
-        self.mock_run.assert_not_called()
+        self.mock_outcome.assert_not_called()
 
     def test_issue_comment_body_bounded_to_one_line(self):
         body = "line one\nline two\n" + "x" * 5000
         with patch("trigger_server.find_live_run", return_value="run-1"):
             ts.handle_issue_comment_event(self._make_comment_payload("OWNER", body=body))
-        note = self.mock_run.call_args[0][0][1]
+        note = self.mock_outcome.call_args[0][0][1]
         self.assertNotIn("\n", note)
         self.assertLessEqual(len(note), 1100)
 
