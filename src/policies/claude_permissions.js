@@ -52,7 +52,12 @@ function section(dir) {
 function hasOperatorPolicy(env) {
     env = env || process.env;
     try {
-        return section(env.LOKI_DATA_DIR || path.join(env.HOME || '', '.loki')) !== null;
+        var dir = env.LOKI_DATA_DIR || path.join(env.HOME || '', '.loki');
+        // yaml-only: the file may hold other policies (cost); only a claude_permissions key counts.
+        if (!fs.existsSync(path.join(dir, 'policies.json')) && fs.existsSync(path.join(dir, 'policies.yaml'))) {
+            return /^\s*claude_permissions\s*:/m.test(fs.readFileSync(path.join(dir, 'policies.yaml'), 'utf8'));
+        }
+        return section(dir) !== null;
     } catch (e) {
         return true;
     }

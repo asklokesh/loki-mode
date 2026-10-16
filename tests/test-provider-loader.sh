@@ -312,6 +312,11 @@ _pp_banner_def=$(env -u LOKI_PERMISSION_POLICY HOME="$_pp_dir" bash -c 'source "
 _pp_banner_nopol=$(env -u LOKI_PERMISSION_POLICY HOME="$_pp_dir/empty-home" bash -c 'source "$1/providers/claude.sh" 2>/dev/null; loki_permission_policy_banner' _ "$PROVIDERS_DIR/..")
 _pp_nopol_unset=$(env -u LOKI_PERMISSION_POLICY HOME="$_pp_dir/empty-home" LOKI_MANAGED_SETTINGS="$_pp_dir/none.json" LOKI_PROJECT_DIR="$_pp_dir" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/..")
 _pp_nopol_cmp=$(LOKI_PERMISSION_POLICY=compiled HOME="$_pp_dir/empty-home" LOKI_MANAGED_SETTINGS="$_pp_dir/none.json" LOKI_PROJECT_DIR="$_pp_dir/empty-home" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/.." 2>/dev/null)
+mkdir -p "$_pp_dir/yaml-cost/.loki" "$_pp_dir/yaml-cp/.loki"
+printf 'policies:\n  cost:\n    max: 5\n' > "$_pp_dir/yaml-cost/.loki/policies.yaml"
+printf 'policies:\n  claude_permissions:\n    mode: default\n' > "$_pp_dir/yaml-cp/.loki/policies.yaml"
+_pp_yaml_cost=$(env -u LOKI_PERMISSION_POLICY HOME="$_pp_dir/yaml-cost" LOKI_MANAGED_SETTINGS="$_pp_dir/none.json" LOKI_PROJECT_DIR="$_pp_dir/yaml-cost" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/..")
+_pp_yaml_cp=$(env -u LOKI_PERMISSION_POLICY HOME="$_pp_dir/yaml-cp" LOKI_MANAGED_SETTINGS="$_pp_dir/none.json" LOKI_PROJECT_DIR="$_pp_dir/yaml-cp" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/.." 2>/dev/null)
 _pp_banner_leg=$(LOKI_PERMISSION_POLICY=legacy bash -c 'source "$1/providers/claude.sh" 2>/dev/null; loki_permission_policy_banner' _ "$PROVIDERS_DIR/..")
 _pp_cmp=$(LOKI_PERMISSION_POLICY=compiled HOME="$_pp_dir" LOKI_MANAGED_SETTINGS="$_pp_dir/none.json" LOKI_PROJECT_DIR="$_pp_dir" bash -c "$_pp_probe" _ "$PROVIDERS_DIR/..")
 printf '%s' '{bad' > "$_pp_dir/.loki/policies.json"
@@ -326,11 +331,13 @@ if [ "$_pp_leg" = "--dangerously-skip-permissions|" ] \
    && [ "$_pp_banner_nopol" = "Permission policy: legacy (no operator policy found; add one to use compiled)" ] \
    && [ "$_pp_nopol_unset" = "--dangerously-skip-permissions|" ] \
    && [ "$_pp_nopol_cmp" = "--permission-mode|acceptEdits|" ] \
+   && [ "$_pp_yaml_cost" = "--dangerously-skip-permissions|" ] \
+   && [ "$_pp_yaml_cp" = "--permission-mode|plan|" ] \
    && [ "$_pp_cmp" = "$_pp_want" ] \
    && [ "$_pp_bad" = "--permission-mode|plan|" ]; then
     log_pass "default compiled, legacy escape hatch, unknown fails closed, banner present, invalid policy fails closed"
 else
-    log_fail "permission argv mismatch: leg=[$_pp_leg] unk=[$_pp_unk] banner=[$_pp_banner_def] def=[$_pp_def] cmp=[$_pp_cmp] bad=[$_pp_bad] nopol_banner=[$_pp_banner_nopol] nopol_unset=[$_pp_nopol_unset] nopol_cmp=[$_pp_nopol_cmp]"
+    log_fail "permission argv mismatch: leg=[$_pp_leg] unk=[$_pp_unk] banner=[$_pp_banner_def] def=[$_pp_def] cmp=[$_pp_cmp] bad=[$_pp_bad] nopol_banner=[$_pp_banner_nopol] nopol_unset=[$_pp_nopol_unset] nopol_cmp=[$_pp_nopol_cmp] yaml_cost=[$_pp_yaml_cost] yaml_cp=[$_pp_yaml_cp]"
 fi
 
 # ===========================================

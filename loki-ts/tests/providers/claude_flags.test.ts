@@ -776,6 +776,26 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     }
   });
 
+  it("C-C2: unset + yaml-only policy file without claude_permissions resolves legacy on both routes", () => {
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.yaml"), "policies:\n  cost:\n    max: 5\n");
+    const env = noManaged();
+    delete env["LOKI_PERMISSION_POLICY"];
+    expect(permissionPolicyMode(env)).toBe("legacy");
+    expect(permissionArgv(repo, env, () => {})).toEqual(SKIP);
+    expect(bashArgv(env)).toEqual(SKIP);
+  });
+
+  it("C-C2: unset + yaml-only policy file with a claude_permissions key resolves compiled (plan, yaml unsupported)", () => {
+    mkdirSync(join(repo, ".loki"), { recursive: true });
+    writeFileSync(join(repo, ".loki", "policies.yaml"), "policies:\n  claude_permissions:\n    mode: default\n");
+    const env = noManaged();
+    delete env["LOKI_PERMISSION_POLICY"];
+    expect(permissionPolicyMode(env)).toBe("compiled");
+    expect(permissionArgv(repo, env, () => {})).toEqual(["--permission-mode", "plan"]);
+    expect(bashArgv(env)).toEqual(["--permission-mode", "plan"]);
+  });
+
   it("C-C2: explicit compiled + no operator policy keeps fail-closed acceptEdits", () => {
     const env = noManaged();
     expect(permissionPolicyMode(env)).toBe("compiled");
