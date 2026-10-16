@@ -110,6 +110,11 @@ complexity = os.environ.get("_VA_COMPLEXITY", "standard")
 _effort_bump = {"low": "medium", "medium": "high", "high": "xhigh"}
 def _effort(base):
     return _effort_bump.get(base, base) if complexity == "complex" else base
+# Cost S7: the three base voters run on haiku for small/standard work; the
+# complex tier keeps the original opus/sonnet roster. haiku takes no effort knob.
+_lean = complexity != "complex"
+def _model(default):
+    return "haiku" if _lean else default
 prd_clause = (
     f"PRD at {prd}. Read it for ground-truth requirements."
     if prd else
@@ -118,8 +123,7 @@ prd_clause = (
 agents = {
     "requirements-verifier": {
         "description": "Verifies the iteration delivered the PRD-required behavior.",
-        "model": "opus",
-        "effort": _effort("high"),
+        "model": _model("opus"),
         "tools": ["Read", "Grep", "Bash"],
         "prompt": (
             f"You are the requirements-verifier for iteration {iter_n}. "
@@ -131,8 +135,7 @@ agents = {
     },
     "test-auditor": {
         "description": "Audits test coverage and pass status for the iteration.",
-        "model": "sonnet",
-        "effort": _effort("high"),
+        "model": _model("sonnet"),
         "tools": ["Read", "Grep", "Bash"],
         "prompt": (
             f"You are the test-auditor for iteration {iter_n}. "
@@ -144,8 +147,7 @@ agents = {
     },
     "convergence-voter": {
         "description": "Checks code churn and progress signals to judge convergence.",
-        "model": "sonnet",
-        "effort": _effort("medium"),
+        "model": _model("sonnet"),
         "tools": ["Read", "Grep", "Bash"],
         "prompt": (
             f"You are the convergence-voter for iteration {iter_n} on tier {tier}. "
@@ -156,6 +158,9 @@ agents = {
         ),
     },
 }
+if not _lean:
+    for _k, _b in (("requirements-verifier", "high"), ("test-auditor", "high"), ("convergence-voter", "medium")):
+        agents[_k]["effort"] = _effort(_b)
 print(json.dumps(agents, separators=(",", ":")))
 '
     return 0
@@ -289,6 +294,13 @@ loki_council_dispatch_agents() {
     local prompt
     prompt=$(printf 'Loki council iteration %s. Run each declared agent against the current workspace, return one finding per agent matching the provided JSON Schema. Be terse, be honest.' "$iteration")
 
+    # Cost S7: hand the council the PRD path so voters stop reporting "No PRD was
+    # provided". A missing/unreadable PRD adds nothing; voters then vote
+    # CANNOT_VALIDATE, which never approves.
+    if [ -n "$prd_path" ] && [ -r "$prd_path" ]; then
+        prompt="${prompt} PRD file: ${prd_path} (read it for ground-truth requirements)."
+    fi
+
     # Shared dispatch state (declared once, before either the SDK or claude arm).
     local response=""
     local rc=0
@@ -375,11 +387,54 @@ loki_council_dispatch_agents() {
     # (which has its own timeout + conservative defaults).
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
     ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
+    # Cost S7 lean child: council role flags (no hooks/MCP/tools on the main
+    # child) and --output-format json so usage lands in the child ledger. The
+    # envelope is unwrapped back to the {findings:[...]} object below.
+    local _va_lean=() _va_lf
+    if type loki_lean_child_flags >/dev/null 2>&1; then
+        while IFS= read -r _va_lf; do
+            [ -n "$_va_lf" ] && _va_lean+=("$_va_lf")
+        done < <(loki_lean_child_flags council 2>/dev/null)
+    fi
+    local _va_fmt=()
+    if loki_claude_flag_supported "--output-format"; then
+        _va_fmt=(--output-format json)
+    fi
     response=$(timeout "${LOKI_COUNCIL_REVIEW_TIMEOUT:-600}" \
                       env CAVEMAN_DEFAULT_MODE=off claude "${_LOKI_PERM_ARGV[@]}" \
+                      ${_va_lean[@]+"${_va_lean[@]}"} \
+                      ${_va_fmt[@]+"${_va_fmt[@]}"} \
                       -p "$prompt" \
                       --agents "$agents_json" \
                       --json-schema "$schema_content" 2>"$stderr_log") || rc=$?
+    if [ "$rc" -eq 0 ] && [ -n "$response" ] && [ "${#_va_fmt[@]}" -gt 0 ]; then
+        if type loki_child_ledger_append >/dev/null 2>&1; then
+            loki_child_ledger_append council "$response" >/dev/null 2>&1 || true
+        fi
+        local _va_unwrapped _va_upy
+        if _va_upy="$(_loki_snapshot_py_tool)"; then
+            # Unwrap the CLI envelope: structured_output, else a JSON string in
+            # result. A bare {findings:[...]} object passes through unchanged. Any
+            # other shape leaves the response as-is, so the parser fails closed.
+            _va_unwrapped=$(printf '%s' "$response" | "$_va_upy" -I -S -c 'import sys; sys.path[:] = [p for p in sys.path if p not in ("", ".")]; import json
+try:
+    e = json.load(sys.stdin)
+    if isinstance(e, dict) and "findings" in e:
+        p = e
+    else:
+        p = e.get("structured_output") if isinstance(e, dict) else None
+        if not isinstance(p, dict):
+            r = e.get("result") if isinstance(e, dict) else None
+            p = json.loads(r) if isinstance(r, str) else None
+    if isinstance(p, dict):
+        sys.stdout.write(json.dumps(p))
+    else:
+        sys.exit(1)
+except Exception:
+    sys.exit(1)' 2>/dev/null) || _va_unwrapped=""
+            if [ -n "$_va_unwrapped" ]; then response="$_va_unwrapped"; fi
+        fi
+    fi
     fi  # end claude-dispatch guard (SDK path skips it, already has $response)
 
     # Shared fail-closed check for BOTH paths: any non-zero exit (claude/SDK

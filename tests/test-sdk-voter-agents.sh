@@ -27,6 +27,13 @@ grep -q 'LOKI_SDK_VOTER_AGENTS:-0' "$VA" \
     && ok "SDK voter branch is opt-in (default 0)" \
     || bad "SDK voter branch not default-off"
 
+# ---- 2b. Cost S7: claude arm is lean, ledgered and PRD-aware; SDK arm untouched ----
+grep -q 'loki_lean_child_flags council' "$VA" \
+    && grep -q 'loki_child_ledger_append council' "$VA" \
+    && grep -q 'PRD file: ' "$VA" \
+    && ok "claude arm uses council lean flags, child ledger and the PRD path" \
+    || bad "claude arm missing S7 lean flags, ledger or PRD wiring"
+
 # ---- 3. binary-free ordering: SDK branch BEFORE the claude-binary guard ----
 sdk_line=$(grep -n 'LOKI_SDK_VOTER_AGENTS:-0' "$VA" | head -1 | cut -d: -f1)
 # the dispatch claude guard is the 'command -v claude ... || return 1' inside the

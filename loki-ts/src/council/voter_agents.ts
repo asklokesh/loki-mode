@@ -8,6 +8,9 @@
 //   - requirements-verifier  (model=opus,   effort=high)
 //   - test-auditor           (model=sonnet, effort=high)
 //   - convergence-voter      (model=sonnet, effort=medium)
+// Cost S7: unless LOKI_COMPLEXITY=complex the three base voters run on haiku
+// with no effort knob (byte-mirror of autonomy/lib/voter-agents.sh). The
+// devils-advocate is unchanged.
 //   - devils-advocate        (model=opus,   effort=xhigh)  -- conditional 4th
 //
 // The 3 base voters always run. The 4th (devils-advocate) is constructed via
@@ -146,11 +149,13 @@ export function buildVoterAgentsJson(cec: CouncilEvaluateContext): Record<string
   const baseHigh = effortForTier(tier === "fast" ? "development" : tier);
   // Convergence-voter is medium by intent (cheap signal); use 'fast' tier mapping.
   const convergenceEffort = effortForTier("fast");
+  const lean = (process.env["LOKI_COMPLEXITY"] ?? "standard") !== "complex";
+  const pick = (model: string, effort: string): { model: string; effort?: string } =>
+    lean ? { model: "haiku" } : { model, effort };
 
   const reqVerifier: AgentSpec = {
     description: "Requirements verifier -- checks current state against the PRD requirements.",
-    model: "opus",
-    effort: baseHigh,
+    ...pick("opus", baseHigh),
     prompt: [
       `You are the requirements-verifier voter for iteration ${iter}.`,
       prdLine,
@@ -165,8 +170,7 @@ export function buildVoterAgentsJson(cec: CouncilEvaluateContext): Record<string
 
   const testAuditor: AgentSpec = {
     description: "Test auditor -- inspects test logs and gate outcomes.",
-    model: "sonnet",
-    effort: baseHigh,
+    ...pick("sonnet", baseHigh),
     prompt: [
       `You are the test-auditor voter for iteration ${iter}.`,
       prdLine,
@@ -180,8 +184,7 @@ export function buildVoterAgentsJson(cec: CouncilEvaluateContext): Record<string
 
   const convergenceVoter: AgentSpec = {
     description: "Convergence voter -- monitors iteration delta and stagnation signals.",
-    model: "sonnet",
-    effort: convergenceEffort,
+    ...pick("sonnet", convergenceEffort),
     prompt: [
       `You are the convergence-voter for iteration ${iter}.`,
       prdLine,

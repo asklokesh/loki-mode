@@ -3,8 +3,8 @@
 #
 # Verifies autonomy/lib/voter-agents.sh:
 #   - loki_voter_agents_json emits valid JSON with exactly 3 top-level keys
-#   - models are pinned per architect: opus for requirements-verifier,
-#     sonnet for test-auditor and convergence-voter
+#   - models: haiku for the three base voters unless LOKI_COMPLEXITY=complex
+#     (opus/sonnet/sonnet there); devils-advocate stays opus
 #   - loki_finding_schema_path echoes a path containing "finding-schema.json"
 #   - loki_council_dispatch_agents returns 1 cleanly when --agents missing
 #     from cached help output (fallback path)
@@ -80,26 +80,41 @@ for role in "requirements-verifier" "test-auditor" "convergence-voter"; do
     fi
 done
 
-# Model assertions per architect.
-m=$(_J="$json" python3 -c "import json, os; print(json.loads(os.environ['_J'])['requirements-verifier'].get('model',''))" 2>/dev/null)
-if [ "$m" = "opus" ]; then
-    ok "voter_agents_json: requirements-verifier model=opus"
+# Model assertions (Cost S7): haiku on the default (standard) tier, the original
+# opus/sonnet roster on the complex tier, no effort knob on haiku.
+_va_field() { # <json> <role> <field>
+    _J="$1" _R="$2" _F="$3" python3 -c "import json, os; print(json.loads(os.environ['_J'])[os.environ['_R']].get(os.environ['_F'],''))" 2>/dev/null
+}
+for role in "requirements-verifier" "test-auditor" "convergence-voter"; do
+    m=$(_va_field "$json" "$role" model)
+    e=$(_va_field "$json" "$role" effort)
+    if [ "$m" = "haiku" ] && [ -z "$e" ]; then
+        ok "voter_agents_json: $role model=haiku with no effort on standard tier"
+    else
+        bad "voter_agents_json: $role expected haiku/no effort on standard, got [$m]/[$e]"
+    fi
+done
+cjson=$(LOKI_ITER=5 LOKI_PRD_PATH=/tmp/fake.prd LOKI_COMPLEXITY=complex loki_voter_agents_json)
+m1=$(_va_field "$cjson" requirements-verifier model)
+m2=$(_va_field "$cjson" test-auditor model)
+m3=$(_va_field "$cjson" convergence-voter model)
+e1=$(_va_field "$cjson" requirements-verifier effort)
+if [ "$m1" = "opus" ] && [ "$m2" = "sonnet" ] && [ "$m3" = "sonnet" ] && [ "$e1" = "xhigh" ]; then
+    ok "voter_agents_json: complex tier keeps opus/sonnet/sonnet and bumped effort"
 else
-    bad "voter_agents_json: requirements-verifier model expected opus, got [$m]"
+    bad "voter_agents_json: complex tier got [$m1]/[$m2]/[$m3] effort [$e1]"
 fi
-
-m=$(_J="$json" python3 -c "import json, os; print(json.loads(os.environ['_J'])['test-auditor'].get('model',''))" 2>/dev/null)
-if [ "$m" = "sonnet" ]; then
-    ok "voter_agents_json: test-auditor model=sonnet"
+sjson=$(LOKI_ITER=5 LOKI_PRD_PATH=/tmp/fake.prd LOKI_COMPLEXITY=simple loki_voter_agents_json)
+if [ "$(_va_field "$sjson" requirements-verifier model)" = "haiku" ]; then
+    ok "voter_agents_json: simple tier uses haiku"
 else
-    bad "voter_agents_json: test-auditor model expected sonnet, got [$m]"
+    bad "voter_agents_json: simple tier did not use haiku"
 fi
-
-m=$(_J="$json" python3 -c "import json, os; print(json.loads(os.environ['_J'])['convergence-voter'].get('model',''))" 2>/dev/null)
-if [ "$m" = "sonnet" ]; then
-    ok "voter_agents_json: convergence-voter model=sonnet"
+da_model=$(_va_field "$(loki_devils_advocate_json x)" devils-advocate model)
+if [ "$da_model" = "opus" ]; then
+    ok "devils_advocate_json: model stays opus (DA veto strength unchanged)"
 else
-    bad "voter_agents_json: convergence-voter model expected sonnet, got [$m]"
+    bad "devils_advocate_json: model expected opus, got [$da_model]"
 fi
 
 # ---------- loki_devils_advocate_json ----------
@@ -265,6 +280,65 @@ if [ ! -s "$TMPROOT/va.mark" ]; then
 else
     bad "dispatch_agents D7: repo module(s) ran: $(sort -u "$TMPROOT/va.mark" | tr '\n' ' ')"
 fi
+
+# Case E (Cost S7): lean child flags, PRD path in the prompt, child ledger line,
+# envelope unwrap. The stub records argv one argument per line and answers with a
+# claude --output-format json envelope.
+export __LOKI_CLAUDE_HELP_CACHE="  --agents  --json-schema  --effort  --output-format  --tools  --setting-sources  --strict-mcp-config  --mcp-config  --disable-slash-commands"
+cat > "$TMPROOT/stub-bin/claude" <<'EOF'
+#!/usr/bin/env bash
+: > "$VA_ARGV"
+for a in "$@"; do printf '%s\n' "$a" >> "$VA_ARGV"; done
+v="${VA_STUB_VOTE:-APPROVE}"
+f="{\"findings\":[{\"role\":\"requirements-verifier\",\"vote\":\"$v\"},{\"role\":\"test-auditor\",\"vote\":\"$v\"},{\"role\":\"convergence-voter\",\"vote\":\"$v\"}]}"
+printf '{"type":"result","structured_output":%s,"total_cost_usd":0.01,"usage":{"input_tokens":11,"output_tokens":7}}\n' "$f"
+EOF
+chmod +x "$TMPROOT/stub-bin/claude"
+PRDF="$TMPROOT/prd.md"
+printf 'prd\n' > "$PRDF"
+export VA_ARGV="$TMPROOT/argv.txt"
+export LOKI_DIR="$TMPROOT/.loki"
+rm -f "$COUNCIL_STATE_DIR/votes/round-7.json" "$LOKI_DIR/metrics/child-sessions.jsonl"
+rc=0
+( PATH="$TMPROOT/stub-bin:$PATH" LOKI_COMPLEXITY=standard loki_council_dispatch_agents 7 "$PRDF" ) >/dev/null 2>&1 || rc=$?
+argv=$(cat "$VA_ARGV" 2>/dev/null)
+if [ "$rc" -eq 0 ] && grep -q -- '--output-format' <<<"$argv" && grep -qx -- '--tools=' <<<"$argv"; then
+    ok "dispatch_agents S7: council child gets lean flags (--tools= as one arg) and json output"
+else
+    bad "dispatch_agents S7: rc=$rc lean flags missing from argv"
+fi
+if grep -Fq -- "PRD file: $PRDF" <<<"$argv"; then
+    ok "dispatch_agents S7: PRD path passed in the council prompt"
+else
+    bad "dispatch_agents S7: PRD path missing from the council prompt"
+fi
+if grep -Fq '"model":"haiku"' <<<"$argv"; then
+    ok "dispatch_agents S7: agents JSON carries haiku on standard tier"
+else
+    bad "dispatch_agents S7: agents JSON lacks haiku on standard tier"
+fi
+led=$(cat "$LOKI_DIR/metrics/child-sessions.jsonl" 2>/dev/null)
+if grep -Fq '"phase":"council"' <<<"$led" && grep -Fq '"input_tokens":11' <<<"$led"; then
+    ok "dispatch_agents S7: child ledger line appended with phase council"
+else
+    bad "dispatch_agents S7: ledger line missing, got [$led]"
+fi
+r=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('%s/%s' % (d['verdict'], d['complete_votes']))" "$COUNCIL_STATE_DIR/votes/round-7.json" 2>/dev/null || echo NOROUND)
+if [ "$r" = "COMPLETE/3" ]; then
+    ok "dispatch_agents S7: envelope structured_output unwrapped into the quorum path"
+else
+    bad "dispatch_agents S7: envelope round got [$r]"
+fi
+# Missing evidence never approves: CANNOT_VALIDATE votes and no PRD stay CONTINUE.
+rm -f "$COUNCIL_STATE_DIR/votes/round-7.json"
+( PATH="$TMPROOT/stub-bin:$PATH" VA_STUB_VOTE=CANNOT_VALIDATE loki_council_dispatch_agents 7 "$TMPROOT/no-such-prd.md" ) >/dev/null 2>&1 || true
+r=$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print('%s/%s' % (d['verdict'], d['complete_votes']))" "$COUNCIL_STATE_DIR/votes/round-7.json" 2>/dev/null || echo NOROUND)
+if [ "$r" = "CONTINUE/0" ] && ! grep -Fq 'PRD file:' "$VA_ARGV"; then
+    ok "dispatch_agents S7: missing PRD plus CANNOT_VALIDATE stays CONTINUE (no approval on missing evidence)"
+else
+    bad "dispatch_agents S7: missing-evidence round got [$r]"
+fi
+unset VA_ARGV LOKI_DIR
 
 unset __LOKI_CLAUDE_HELP_CACHE
 
