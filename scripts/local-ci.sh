@@ -1528,12 +1528,12 @@ if [ "${LOKI_LOCALCI_FULL_SHELL:-1}" = "1" ]; then
   case "$_shell_suite_shards" in ''|*[!0-9]*) _shell_suite_shards=4 ;; esac
   if [ "${LOCAL_CI_SERIAL:-0}" = "1" ] || [ "$_shell_suite_shards" -le 1 ]; then
     run_check "tests/run-all-tests.sh (FULL CI shell suite -- authoritative)" \
-      "bash tests/run-all-tests.sh 2>&1 | grep -aE '(✗.*FAILED|Passed: {5,}[0-9]|Failed: {5,}[0-9])' | tail -20"
+      "LOKI_REQUIRE_HARNESS_DEPS=1 bash tests/run-all-tests.sh 2>&1 | grep -aE '(✗.*FAILED|Passed: {5,}[0-9]|Failed: {5,}[0-9])' | tail -20"
   else
     _shard_cmd=""
     _i=0
     while [ "$_i" -lt "$_shell_suite_shards" ]; do
-      _shard_cmd="${_shard_cmd}LOKI_TEST_SHARD=${_i}/${_shell_suite_shards} bash tests/run-all-tests.sh > \"\${TMPDIR:-/tmp}/loki-shard-${_i}.log\" 2>&1 & "
+      _shard_cmd="${_shard_cmd}LOKI_REQUIRE_HARNESS_DEPS=1 LOKI_TEST_SHARD=${_i}/${_shell_suite_shards} bash tests/run-all-tests.sh > \"\${TMPDIR:-/tmp}/loki-shard-${_i}.log\" 2>&1 & "
       _i=$((_i + 1))
     done
     run_check "tests/run-all-tests.sh (FULL CI shell suite -- authoritative, ${_shell_suite_shards} shards)" \
