@@ -217,5 +217,31 @@ class TestGenuineOutputIsNotSuppressed(unittest.TestCase):
         self.assertTrue(result.consensus, "multi-round genuine approval was suppressed")
 
 
+class TestFallbackPermissionArgv(unittest.TestCase):
+    """P12-26d: the debate fallback (shared policy module unimportable) must
+    not reintroduce skip-permissions or bypass under LOKI_PERMISSION_POLICY=compiled."""
+
+    def _argv(self, policy):
+        import os
+        from unittest import mock
+
+        env = {k: v for k, v in os.environ.items() if k != "LOKI_PERMISSION_POLICY"}
+        if policy is not None:
+            env["LOKI_PERMISSION_POLICY"] = policy
+        # A None entry in sys.modules makes the import raise ImportError.
+        with mock.patch.dict(os.environ, env, clear=True), \
+                mock.patch.dict(sys.modules, {"autonomy.lib.claude_permissions": None}):
+            return DebateRunner(provider="claude")._build_command("p")  # noqa: SLF001
+
+    def test_compiled_fallback_is_plan_never_bypass(self):
+        argv = self._argv("compiled")
+        self.assertEqual(argv, ["claude", "--permission-mode", "plan", "-p", "p"])
+        self.assertNotIn("--dangerously-skip-permissions", argv)
+        self.assertNotIn("bypassPermissions", argv)
+
+    def test_unset_fallback_keeps_legacy_flag(self):
+        self.assertEqual(self._argv(None), ["claude", "--dangerously-skip-permissions", "-p", "p"])
+
+
 if __name__ == "__main__":
     unittest.main()

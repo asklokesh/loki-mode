@@ -28,8 +28,16 @@ case "${LOKI_HOST_GUARD:-0}" in
     1|true|yes|on) HOST_GUARD=true ;;
 esac
 
+# P12-26d: under LOKI_PERMISSION_POLICY=compiled the compiled allow/deny list
+# and permission mode decide. An explicit hook "allow" skips the permission
+# prompt for every command that passes the blocklist, which would widen the
+# compiled policy, so the hook never emits one and fails closed on bad input.
+COMPILED_POLICY=false
+[ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] && COMPILED_POLICY=true
+
 if ! command -v python3 >/dev/null 2>&1; then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: python3 is unavailable, so the Bash command cannot be inspected safely."
+    "$COMPILED_POLICY" && deny "LOKI_PERMISSION_POLICY=compiled: python3 is unavailable, so the Bash command cannot be inspected safely."
     printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
     exit 0
 fi
@@ -46,6 +54,7 @@ if not isinstance(command, str) or not command.strip():
 sys.stdout.write(command)
 '); then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: malformed or missing Bash command input was denied."
+    "$COMPILED_POLICY" && deny "LOKI_PERMISSION_POLICY=compiled: malformed or missing Bash command input was denied."
     printf '%s' '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow"}}'
     exit 0
 fi
@@ -343,9 +352,11 @@ BLOCKED_PATTERNS=(
 )
 
 # Safe path patterns that override blocked pattern matches
+# Each pattern is anchored to the WHOLE command: an unanchored match let
+# `rm -rf /tmp/x; rm -rf /` ride the override.
 SAFE_PATTERNS=(
-    "rm -rf /tmp/"
-    "rm -rf \.loki/queue/dead-letter"
+    "^[[:space:]]*rm -rf (/tmp/[A-Za-z0-9._/-]+[[:space:]]*)+$"
+    "^[[:space:]]*rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*[[:space:]]*$"
 )
 
 # Check for blocked patterns
@@ -354,7 +365,7 @@ for pattern in "${BLOCKED_PATTERNS[@]}"; do
         # Check if a safe pattern also matches (whitelist override)
         is_safe=false
         for safe in "${SAFE_PATTERNS[@]}"; do
-            if echo "$COMMAND" | grep -qE "$safe"; then
+            if [[ "$COMMAND" != *".."* ]] && echo "$COMMAND" | grep -qE "$safe"; then
                 is_safe=true
                 break
             fi
@@ -370,7 +381,10 @@ mkdir -p "$LOG_DIR"
 printf '%s' "{\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"command\":$(echo "$COMMAND" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')}" >> "$LOG_DIR/bash-audit.jsonl"
 echo >> "$LOG_DIR/bash-audit.jsonl"
 
-# Allow command
+# Allow command. Compiled policy: no decision, the permission flow decides.
+if "$COMPILED_POLICY"; then
+    exit 0
+fi
 printf '%s' '{"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "allow"}}'
 
 exit 0

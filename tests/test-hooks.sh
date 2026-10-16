@@ -386,6 +386,52 @@ test_simple_web_guard_bounds_model_commands() {
     pass "Simple-web guard enforces the bounded model command contract"
 }
 
+# Test 18: P12-26d validate-bash.sh cannot widen the compiled permission policy
+run_hook_case() {
+    local command_text="$1" policy="${2:-}" raw="${3:-}" payload out rc
+    if [ -n "$raw" ]; then payload="$raw"; else
+        payload=$(printf '%s' "$command_text" | python3 -c 'import json,sys; print(json.dumps({"tool_input":{"command":sys.stdin.read()},"cwd":sys.argv[1]}))' "$TEST_DIR")
+    fi
+    mkdir -p "$TEST_DIR/.loki/logs"
+    out=$(printf '%s' "$payload" | env ${policy:+LOKI_PERMISSION_POLICY=$policy} "$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" 2>/dev/null)
+    rc=$?
+    case "$out" in
+        *'"permissionDecision":'*'allow"'*) printf '%s:allow' "$rc" ;;
+        *'"permissionDecision":'*'deny"'*) printf '%s:deny' "$rc" ;;
+        '') printf '%s:none' "$rc" ;;
+        *) printf '%s:other' "$rc" ;;
+    esac
+}
+
+test_validate_bash_compiled_policy_not_widened() {
+    log_test "validate-bash.sh: compiled policy gets no explicit allow, fails closed"
+    local got
+    got=$(run_hook_case "ls -la" compiled)
+    [ "$got" = "0:none" ] || { fail "compiled: ordinary command must defer, got $got"; return; }
+    got=$(run_hook_case "ls -la" "")
+    [ "$got" = "0:allow" ] || { fail "unset policy must keep the explicit allow, got $got"; return; }
+    got=$(run_hook_case "" compiled '{"tool_input":{}}')
+    [ "$got" = "2:deny" ] || { fail "compiled: malformed input must deny, got $got"; return; }
+    got=$(run_hook_case "" "" '{"tool_input":{}}')
+    [ "$got" = "0:allow" ] || { fail "unset policy: malformed input behaviour changed, got $got"; return; }
+    pass "compiled policy: no hook allow, malformed input denied; unset unchanged"
+}
+
+test_validate_bash_safe_override_is_anchored() {
+    log_test "validate-bash.sh: safe-path override cannot launder a chained dangerous command"
+    local c got
+    for c in 'rm -rf /tmp/x; rm -rf /' 'rm -rf /tmp/x && rm -rf ~' 'rm -rf /tmp/../' \
+             'rm -rf .loki/queue/dead-letter; rm -rf .loki'; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "override bypass not blocked: $c (got $got)"; return; }
+    done
+    for c in 'rm -rf /tmp/loki-run.abc123' 'rm -rf /tmp/a /tmp/b' 'rm -rf .loki/queue/dead-letter'; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "0:allow" ] || { fail "legit safe-path cleanup blocked: $c (got $got)"; return; }
+    done
+    pass "safe-path override anchored; legit cleanup still allowed"
+}
+
 # Run tests
 setup
 test_session_init_exists
@@ -406,6 +452,8 @@ test_host_guard_is_hosted_only
 test_host_guard_run_wiring
 test_host_guard_rejects_unhooked_provider
 test_simple_web_guard_bounds_model_commands
+test_validate_bash_compiled_policy_not_widened
+test_validate_bash_safe_override_is_anchored
 
 # Summary
 echo ""
