@@ -4,7 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { route, runEngine10 } from "../../../src/engine10/cli.ts";
-import { main, parseArgs } from "../../../src/engine10/modernize/cli.ts";
+import { main, parseArgs, parseUnitArgs, unitMain } from "../../../src/engine10/modernize/cli.ts";
+import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
 import { modernizeEventsPath } from "../../../src/engine10/modernize/types.ts";
 
 const PY_FIXTURE = join(import.meta.dir, "fixtures", "py");
@@ -223,5 +224,61 @@ describe("main", () => {
     cap.restore();
     expect(code).toBe(0);
     expect(cap.out).toContain("units: 0");
+  });
+});
+
+describe("modernize unit subcommand (M-23)", () => {
+  const ARGS = ["--repo", "acme/app", "--ref", "loki/x", "--unit", "billing.core", "--mid", "mod-20261015T000000Z-abcdef", "--target", "python3"];
+  const result = (verdict: UnitRunResult["verdict"], not_proven: string[] = []): UnitRunResult =>
+    ({ unit: "billing.core", verdict, oracle: null, wall: null, equiv: null, not_proven, conformance: null });
+
+  it("routes through the existing engine10 modernize arm, no new arm", () => {
+    expect(route(["modernize", "unit", ...ARGS])?.module).toBe("modernize/cli.ts");
+  });
+
+  it("parses args and rejects unknown, missing and flag-shaped values", () => {
+    const ok = parseUnitArgs(ARGS);
+    expect(ok.ok && ok.opts).toEqual({ repo: "acme/app", ref: "loki/x", unit: "billing.core", mid: "mod-20261015T000000Z-abcdef", target: "python3" });
+    expect(parseUnitArgs(["--repo", "a/b"]).ok).toBe(false);
+    expect(parseUnitArgs([...ARGS, "--token", "t"]).ok).toBe(false);
+    expect(parseUnitArgs(["--repo", "--x/y", "--ref", "r", "--unit", "u"]).ok).toBe(false);
+  });
+
+  it("calls the unit runner with the parsed card and exits 0 on PROVEN", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "m23-"));
+    try {
+      let card: { unit: string; mid: string; target: string; repoDir: string } | undefined;
+      const cap = captureStd();
+      const code = await unitMain(ARGS, { unit: {
+        cwd: dir, implement: () => {}, runNew: (() => ({})) as never,
+        runConformance: (() => ({})) as never, collect: (() => ({})) as never,
+        runUnit: ((c: never) => { card = c; return result("PROVEN"); }) as never,
+      } });
+      cap.restore();
+      expect(code).toBe(0);
+      expect(card).toMatchObject({ unit: "billing.core", mid: "mod-20261015T000000Z-abcdef", target: "python3", repoDir: dir });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+
+  it("exits nonzero with the reason on NOT_PROVEN, a throw, and unwired runners", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "m23-"));
+    try {
+      const base = { cwd: dir, implement: () => {}, runNew: (() => ({})) as never, runConformance: (() => ({})) as never, collect: (() => ({})) as never };
+      let cap = captureStd();
+      let code = await unitMain(ARGS, { unit: { ...base, runUnit: (() => result("NOT_PROVEN", ["ablation not run"])) as never } });
+      cap.restore();
+      expect(code).toBe(1);
+      expect(cap.err).toContain("ablation not run");
+      cap = captureStd();
+      code = await unitMain(ARGS, { unit: { ...base, runUnit: (() => { throw new Error("boom"); }) as never } });
+      cap.restore();
+      expect(code).toBe(1);
+      expect(cap.err).toContain("boom");
+      cap = captureStd();
+      code = await unitMain(ARGS, { unit: { cwd: dir } });
+      cap.restore();
+      expect(code).toBe(2);
+      expect(cap.err).toContain("not wired");
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });

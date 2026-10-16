@@ -16,6 +16,12 @@ import type { CostPrior } from "./estimate.ts";
 import { ModernizeLog } from "./log.ts";
 import { isModernizeId, makeModernizeId } from "./types.ts";
 import type { ModernizeTarget } from "./types.ts";
+import { makePytestBaseRunner, makePytestCollector, runUnit } from "./unit.ts";
+import type { CollectRunner, Implementer, UnitCard, UnitRunResult } from "./unit.ts";
+import type { BaseConformanceRunner } from "./presealed_wall.ts";
+import type { NewCaseRunner } from "./equiv.ts";
+import { DEFAULT_NORMALIZERS } from "./oracle/seal.ts";
+import { buildUnitJob } from "./remote.ts";
 
 const TARGETS: readonly ModernizeTarget[] = ["python3", "java21"];
 const DEFAULT_WORKERS = 4;
@@ -24,6 +30,7 @@ const MAX_LOCAL_WORKERS = 32; // section 2: "max 32 locally"; --remote's cap com
 export const USAGE = `Usage:
   loki modernize <repo> --to "<target>" [--budget USD] [--workers N] [--remote URL]
                  [--resume <mid>] [--dry-run] [--provider P] [--no-pr]
+  loki modernize unit --repo <owner/name> --ref <ref> --unit <id> [--mid <mid>] [--target <target>]
 Targets: ${TARGETS.join(", ")}
 `;
 
@@ -175,6 +182,59 @@ export interface ModernizeCliDeps {
 }
 const NO_PRIOR: CostPrior = { usdPerUnit: null, p50UnitTimeS: null };
 
+export interface UnitCliOptions { repo: string; ref: string; unit: string; mid: string | null; target: ModernizeTarget }
+
+/** Pure parse of `modernize unit` args; reuses buildUnitJob so the CLI and POST /jobs (M-23) accept the same values. */
+export function parseUnitArgs(args: readonly string[]): { ok: true; opts: UnitCliOptions } | { ok: false; error: string } {
+  const f: Record<string, string> = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    const name = a.startsWith("--") ? a.slice(2) : "";
+    if (!["repo", "ref", "unit", "mid", "target"].includes(name)) return { ok: false, error: `unknown argument: ${a}` };
+    const v = args[++i];
+    if (v === undefined || v.startsWith("--")) return { ok: false, error: `--${name} needs a value` };
+    f[name] = v;
+  }
+  for (const k of ["repo", "ref", "unit"]) if (!f[k]) return { ok: false, error: `missing --${k}` };
+  try {
+    const job = buildUnitJob({ repo: f["repo"]!, ref: f["ref"]!, unit: f["unit"]!, mid: f["mid"], target: f["target"] as ModernizeTarget | undefined });
+    return { ok: true, opts: { repo: job.repo, ref: job.ref, unit: job.unit, mid: job.mid ?? null, target: job.target ?? "python3" } };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+/** Runners for one unit. Implementer and new-tree runner have no production wiring yet: absence is a nonzero exit, never a fake pass. */
+export interface UnitDeps {
+  runUnit?: typeof runUnit; runConformance?: BaseConformanceRunner; implement?: Implementer;
+  runNew?: NewCaseRunner; runStub?: NewCaseRunner; collect?: CollectRunner; cwd?: string;
+}
+
+/** `loki modernize unit`: runs ONE unit through runUnit (M-15) in the cwd checkout. Exit 0 only on PROVEN; else nonzero with reason on stderr. */
+export async function unitMain(args: readonly string[], deps: ModernizeCliDeps & { unit?: UnitDeps } = {}): Promise<number> {
+  const parsed = parseUnitArgs(args);
+  if (!parsed.ok) { process.stderr.write(`modernize unit: ${parsed.error}\n${USAGE}`); return 2; }
+  const o = parsed.opts;
+  const u = deps.unit ?? {};
+  const repoDir = u.cwd ?? process.cwd();
+  if (!u.implement || !u.runNew) {
+    process.stderr.write(`modernize unit: the implementer and new-tree case runners are not wired yet; cannot run unit ${o.unit}\n`); return 2;
+  }
+  const mid = o.mid ?? (deps.makeId ?? makeModernizeId)();
+  const log = new ModernizeLog(repoDir, mid, deps.now);
+  log.append("unit.started", { unit: o.unit, repo: o.repo, ref: o.ref, remote_job: true });
+  const card: UnitCard = { unit: o.unit, repoDir, mid, target: o.target, normalizers: DEFAULT_NORMALIZERS };
+  let result: UnitRunResult;
+  try {
+    result = (u.runUnit ?? runUnit)(card, log, u.runConformance ?? makePytestBaseRunner(), u.implement, u.runNew, u.runStub, u.collect ?? makePytestCollector());
+  } catch (e) {
+    process.stderr.write(`modernize unit: ${o.unit} failed: ${e instanceof Error ? e.message : String(e)}\n`); return 1;
+  }
+  if (result.verdict === "PROVEN") { process.stdout.write(`unit ${o.unit}: PROVEN\n`); return 0; }
+  process.stderr.write(`modernize unit: ${o.unit} ${result.verdict}: ${result.not_proven.join("; ") || "no reason recorded"}\n`);
+  return 1;
+}
+
 /** `loki modernize` entry point (TABLE route in ../cli.ts). Section 2/3.1: parses and
  *  validates flags, opens the modernize log, runs Inventory and the up-front estimate, and
  *  for --dry-run prints it and stops at zero model spend. Oracle capture, planning and
@@ -185,6 +245,7 @@ export async function main(args: readonly string[], deps: ModernizeCliDeps = {})
     process.stdout.write(USAGE);
     return args.length === 0 ? 2 : 0;
   }
+  if (args[0] === "unit") return unitMain(args.slice(1), deps);
   const parsed = parseArgs(args);
   if (!parsed.ok) {
     process.stderr.write(`modernize: ${parsed.error}\n${USAGE}`);
