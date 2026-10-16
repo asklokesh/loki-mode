@@ -3,7 +3,7 @@
 # Sourced by autonomy/loki; defines cmd_chat. Free text goes to the provider
 # in the current mode; slash commands delegate to existing loki commands.
 
-_LOKI_CHAT_SYSTEM_PROMPT="You are running inside Loki Mode chat. Be concise. Prefer small, verifiable changes. Loki commands available to the user: loki start (also --workspace and --deploy), loki quick, loki verify, loki receipt, loki undo."
+_LOKI_CHAT_SYSTEM_PROMPT="You are running inside Loki Mode chat. Be concise. Prefer small, verifiable changes. Loki commands available to the user: loki start (also --workspace and --deploy), loki quick, loki verify, loki receipt, loki undo. During a run, /steer sends a mid-run directive via loki steer (applied at the next plan or implement stage); /pause and /resume control the run, and /answer replies to a blocked run."
 
 _chat_loki_bin() {
     local d="${_LOKI_SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -41,7 +41,14 @@ _chat_help() {
 Loki chat commands:
   /plan              read-only mode (no edits)
   /build             edit mode
-  /run <prd|brief>   loki start with this session's model and provider (same run as the shell)
+  /run <prd|brief>   loki start with this session's model and provider, in the background (alias /start)
+  /start <prd|brief> alias of /run
+  /status            loki status
+  /steer <msg>       send a mid-run directive via loki steer (shows the "Steer rev N received" ack)
+  /stop              loki stop
+  /pause             loki pause (the run halts at the next iteration boundary)
+  /resume            loki resume
+  /answer <text>     loki answer --text: answer a BLOCKED run with a follow-up run
   /workspace <name> <brief>  loki start --workspace (multi-repo run, composite receipt)
   /deploy [--health-url U] [--auto-rollback]  loki deploy --execute after you confirm (gated on a VERIFIED receipt)
   /attach            attach to the current or most recent loki start run in this repo
@@ -64,14 +71,25 @@ HLP
 }
 
 
+# /steer: record source=chat and the chat user as actor (D02). Echo loki steer's own
+# "Steer rev N received" ack; never claim receipt it did not print.
+_chat_steer() {
+    local loki="$1" msg="$2" out rc=0 first
+    case "$msg" in
+        ""|help|h|-*) echo "usage: /steer <message> (not a flag or help)"; return 0 ;;
+    esac
+    out="$(LOKI_STEER_SOURCE=chat LOKI_STEER_ACTOR="${LOKI_STEER_ACTOR:-${USER:-chat}}" "$loki" steer "$msg" 2>&1)" || rc=$?
+    [ -z "$out" ] || printf '%s\n' "$out"
+    if [ "$rc" -ne 0 ]; then echo "(exit $rc)"
+    elif ! printf '%s\n' "$out" | grep -q 'Steer rev [0-9][0-9]* received'; then
+        first="$(printf '%s\n' "$out" | tr -d '\000-\010\013-\037\177' | sed -n '/[^[:space:]]/{p;q;}' | cut -c1-120)"
+        echo "Steer not confirmed: ${first:-no confirmation from loki steer}"
+    fi
+    return 0
+}
+
 # Run a delegate without letting a non-zero exit end the session (autonomy/loki runs under set -e).
 _chat_do() { local _rc=0; "$@" || _rc=$?; [ "$_rc" -eq 0 ] || echo "(exit $_rc)"; return 0; }
-
-# Steer from chat: record source=chat and the chat user as actor in the revision log (D02).
-_chat_steer() {
-    local loki="$1"; shift
-    LOKI_STEER_SOURCE=chat LOKI_STEER_ACTOR="${LOKI_STEER_ACTOR:-${USER:-chat}}" _chat_do "$loki" steer "$@"
-}
 
 # Newest loki start run in this repo: engine10 run dir first, then legacy session state.
 _chat_run_dir() {
@@ -334,9 +352,11 @@ Question: $line" || true
             /help) _chat_help ;;
             /plan) mode="plan"; echo "Plan mode: read-only." ;;
             /build) mode="build"; echo "Build mode: edits allowed." ;;
-            /run)
+            /run|/start)
                 [ -n "$rest" ] || { echo "usage: /run <prd|brief>"; continue; }
-                _chat_run_start "$loki" "$rest"
+                mkdir -p "${LOKI_DIR:-.loki}"
+                _chat_run_start "$loki" "$rest" < /dev/null > "${LOKI_DIR:-.loki}/chat-run.log" 2>&1 &
+                echo "Run started in the background (pid $!). Output: ${LOKI_DIR:-.loki}/chat-run.log"
                 _chat_attach_banner || true ;;
             /workspace)
                 local _ws_name="${rest%% *}" _ws_brief=""
@@ -352,6 +372,11 @@ Question: $line" || true
                 [ -n "$rest" ] || { echo "usage: /steer <message>"; continue; }
                 _chat_steer "$loki" "$rest" ;;
             /stop) _chat_do "$loki" stop ;;
+            /pause) _chat_do "$loki" pause ;;
+            /resume) _chat_do "$loki" resume ;;
+            /answer)
+                [ -n "$rest" ] || { echo "usage: /answer <text>"; continue; }
+                _chat_do "$loki" answer --text "$rest" ;;
             /detach) echo "Not attached." ;;
             /quick)
                 [ -n "$rest" ] || { echo "usage: /quick <task>"; continue; }
