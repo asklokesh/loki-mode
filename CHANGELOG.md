@@ -5,6 +5,30 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.3 (2026-10-16)
+
+v11.17.2 was written into this changelog but never published to npm: its required CI failed on help drift. This release publishes everything listed under v11.17.2 plus the changes below. `loki start` with Claude remains the primary path.
+
+### Changed
+- Claude permission policy: when an operator policy with a `claude_permissions` section exists, `loki start` runs Claude with the compiled policy (`--permission-mode acceptEdits` plus the compiled allow and deny lists) instead of skipping permissions. With no operator policy, runs keep the previous behaviour. `LOKI_PERMISSION_POLICY=legacy` forces the old mode and `LOKI_PERMISSION_POLICY=compiled` forces the compiled mode. A one-line banner at start names the active policy and why (C-C2).
+- The recursive-delete guard in the command safety hook judges variable targets by their real grammar: `${var:?}` and quoted variable paths under a named subdirectory are allowed, while defaults that expand to `~`, `..` or a temp root, backtick substitutions, and heredoc tricks that hide a later delete are denied (P12-26g-d).
+- Python projects with no build manifest now get a real build check (`python3 -m compileall`) instead of "build not run", so a working Python project is no longer reported as VERIFIED WITH GAPS. Pytest runs as `python3 -m pytest`, and when pytest collects nothing the gate falls back to `unittest discover`; zero tests run stays inconclusive and never counts as a pass (cost S3).
+- Cost reporting counts every child session (council, reviewers, docs, grill) from `.loki/metrics/child-sessions.jsonl`, not only the main session. A missing ledger is reported as absent, never as zero, and unpriced lines mark the total as partial (cost S1).
+- The benchmark compares Loki against two baselines, `raw-configured` (Claude Code with the operator's settings) and `raw-bare` (`claude --bare`, needs `ANTHROPIC_API_KEY`), and stops at `--max-spend-usd` using the true ledger spend (cost S10).
+- Child sessions (council, reviewers, docs, grill) can run with lean flags (`--strict-mcp-config --tools=`) and append one line each to the child-session cost ledger (cost S2).
+- The wiki generator passes `--tools=` as one argument; the earlier `--tools ""` form made the Claude CLI swallow the prompt. A missing batched section now prints a warning (cost S6).
+- Reviewer model routing by change tier lives in the existing Claude flags and quality gate modules instead of a separate file; moat reviewers keep their model regardless of tier (cost S9).
+- Modernize integration detection matches only real `tests/integration/` or `integration/` directories that hold Python files, reads `tox.ini` whenever present, and picks Maven `verify` only when Failsafe is declared (M-27D-b).
+- Holdout failure reasons go to a private triage file under `.loki/runs/<id>/` and never reach agent-visible events (C-C4b-c-b).
+- Python test gate (TS route) tolerates a missing `pytest` or `python3`: it falls back to `unittest discover`, and a missing interpreter or zero tests run is inconclusive, never a failure or a pass (cost S4).
+- Small build profile for simple projects: lean main session without `--bare` (hooks and the command guard stay on), full mandatory and security reviewers, and an empty reviewer list now fails closed instead of passing as 0/0. The supervised reviewer passes `--tools=` as one argument (cost S5).
+
+### Fixed
+- The command safety hook parses under macOS `/bin/bash` 3.2 again. A literal backtick in an embedded Python block made bash 3.2 reject the whole hook, which then denied every command.
+- `loki modernize --help` lists the `loki modernize <repo> --to <lang>` form.
+- `scripts/v10-guard.sh` (the session safety guard) parses under macOS `/bin/bash` 3.2 again, for the same reason.
+- The legacy council status routes answer only on loopback hosts, like the control routes (ROUTES-LOOPBACK).
+
 ## v11.17.2 (2026-10-16)
 
 Hardening release for `loki start` and its resume path, the steer channel, the Seal verifier, and the command safety hook. `loki start` with Claude remains the primary path and every change here applies to it; chat routes through the same commands.
