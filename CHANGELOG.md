@@ -5,6 +5,19 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.17.7 (2026-10-16)
+
+### Fixed
+- Modernize pilot (M-27b): a run counts as complete when it exits 0 or writes a COMPLETE modernize.completed event with empty blocking lists; any executed run with no measured cost is charged its full allowance, so spend is never undercounted; the planned-units denominator is the larger of the printed estimate and the units started across waves.
+- C-F1 cost benchmark (COST-HARN): loki rows store the real exit code and stdout/stderr tails, and reported success follows the engine verdict; seed repos get an origin remote so multi-unit specs no longer exit in 0.2s at the group runner; the loki adapter passes --no-pr and disables git and gh credential prompts, so a benchmark run never pushes or opens a PR; the adapter reads v10 run evidence (receipt verdict, stage.failed and cap.hit reasons, session count) before legacy paths; per-run .loki evidence and stderr are kept before the workdir is removed, skipping secret-looking file names.
+
+- Modernize final report (M-25w): every `loki modernize` run now writes a sealed .loki/modernize/<mid>/report.json with a COMPLETE or INCOMPLETE verdict from a finally block, so a blocked, throwing or refused run still leaves an honest INCOMPLETE report; the run also appends a modernize.completed event the pilot reads, reslice appends unit.resliced, and a guard test asserts every declared modernize event has a producer.
+
+### Changed
+- scripts/release.sh runs the global guard rows inside a clean detached worktree of HEAD instead of refusing a dirty tree (REL-GUARD-b), so a release from a checkout with uncommitted coordination files still runs every guard against exactly the committed tree; a missing guard list or zero selected suites fails closed, the guard timeout defaults to 300 seconds, and a preset LOKI_RUN_TMP is not inherited.
+- docs/v10/FAILURE-CLASSES.md records FC-M25W-b: the modernize events unit.planned and codemod.skipped are declared with no producer.
+- REL-GUARD-c: an interrupted release guard worktree is reclaimed on the next run (only direct children of the temp root named loki-guard.*), worktree prune runs after removal, and a chmod failure is logged.
+
 ## v11.17.6 (2026-10-16)
 
 ### Fixed
