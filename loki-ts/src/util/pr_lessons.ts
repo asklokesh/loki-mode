@@ -2,15 +2,15 @@
 // Stored in the existing per-repo memory tree (.loki/memory/semantic/pr-lessons.json). Lesson text is
 // the comment body verbatim; nothing is paraphrased. Each lesson carries its source (PR + comment URL)
 // and use tags (run id + that run's final verdict) so the list can show whether a lesson helps.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import { atomicWriteJson } from "./atomic.ts";
 import { safeGit } from "./safe_git.ts";
 import { spawnSync } from "node:child_process";
-import { DEFAULT_PUSH_SH } from "../engine10/stages/pr.ts";
-import { pushArgv } from "../engine10/types.ts";
-import { readOriginUrl } from "./engine_origin.ts";
+import { DEFAULT_PUSH_SH, toPushShellArgs } from "../engine10/stages/pr.ts";
+import { githubRepoFromUrl, readOriginUrl } from "./engine_origin.ts";
 
 export interface GhResult { code: number; stdout: string; stderr: string }
 /** Injected in tests. A spawn failure (gh not installed) must resolve with code 127, never throw. */
@@ -307,6 +307,8 @@ export interface RespondDeps {
   git?: (args: string[]) => string;
   /** Pushes the local PR head branch. Default: engine10-push.sh push-pr (the only credentialed push path); throws on failure. */
   push?: (headRef: string) => void;
+  /** Origin URL of the checkout. Default: readOriginUrl(repoDir). */
+  originUrl?: () => string | null;
   /** Edits the working tree for one comment. Returns false when it could not attempt a fix. */
   fix: (c: OpenComment) => Promise<boolean>;
   max?: number;
@@ -336,17 +338,20 @@ export async function openReviewComments(gh: GhClient, repo: string, num: number
 }
 
 const STATUS_ARGS = ["status", "--porcelain", "--untracked-files=all", "--", ".", ":(exclude).loki"]; // Loki run artifacts are neither "dirty" nor stageable
-/** Pushes through engine10-push.sh push-pr. It must find the open PR ("reused"); "created" means the PR is gone, so throw. */
+/** Pushes through engine10-push.sh push-pr. It must find the open PR ("reused"); "created" means a new PR was opened, so throw. */
 export function defaultRespondPush(repoDir: string, headRef: string, pushSh: string = DEFAULT_PUSH_SH): void {
-  const dir = join(repoDir, ".loki");
-  mkdirSync(dir, { recursive: true });
-  const bodyFile = join(dir, "respond-push-body.md");
-  writeFileSync(bodyFile, `Loki verify-pr respond push to ${headRef}. Not a new PR.\n`);
-  const origin = readOriginUrl(repoDir);
-  const argv = pushArgv({ cmd: "push-pr", repoDir, branch: headRef, title: `respond: ${headRef}`, bodyFile, draft: false });
-  const r = spawnSync("bash", [pushSh, ...argv], { env: origin ? { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin } : process.env, encoding: "utf8" });
-  if (r.status !== 0) throw new GhError(`push failed for ${headRef}: ${String(r.stderr ?? "").trim() || `exit ${r.status}`}`);
-  if (String(r.stdout ?? "").split("\n").some((l) => l.trim() === "created")) throw new GhError(`the PR for ${headRef} is no longer open; pushed but no reply posted`);
+  const dir = mkdtempSync(join(tmpdir(), "loki-respond-"));
+  try {
+    const bodyFile = join(dir, "body.md");
+    writeFileSync(bodyFile, `Loki verify-pr respond push to ${headRef}. Not a new PR.\n`);
+    const origin = readOriginUrl(repoDir);
+    const argv = toPushShellArgs({ cmd: "push-pr", repoDir, branch: headRef, title: `respond: ${headRef}`, bodyFile, draft: false });
+    const r = spawnSync("bash", [pushSh, ...argv], { env: origin ? { ...process.env, _LOKI_ORIGIN_PINNED: "1", _LOKI_PINNED_ORIGIN: origin } : process.env, encoding: "utf8" });
+    if (r.status !== 0) throw new GhError(`push failed for ${headRef}: ${String(r.stderr ?? "").trim() || `exit ${r.status}`}`);
+    const lines = String(r.stdout ?? "").split("\n").map((l) => l.trim());
+    const i = lines.indexOf("created");
+    if (i >= 0) throw new GhError(`the PR for ${headRef} was no longer open, so a NEW PR was opened: ${lines[i + 1] ?? "(url unknown)"}; no reply posted`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
 /** `loki verify-pr respond`: one fix commit per open review comment (bounded by max), one push, then a reply per fixed
@@ -358,9 +363,12 @@ export async function respondToReview(repoDir: string, ref: string, deps: Respon
   const vcs = deps.git ?? ((a: string[]) => safeGit(repoDir, a));
   const push = deps.push ?? ((h: string) => defaultRespondPush(repoDir, h));
   const max = deps.max ?? Number(process.env["LOKI_PR_RESPOND_MAX"] ?? MAX_RESPOND);
-  let headRef = "";
-  try { headRef = String(JSON.parse(await ghText(gh, ["api", `repos/${pr.repo}/pulls/${pr.num}`]))?.head?.ref ?? ""); } catch (e) { if (e instanceof GhError) throw e; }
+  let headRef = "", state = "";
+  try { const j = JSON.parse(await ghText(gh, ["api", `repos/${pr.repo}/pulls/${pr.num}`])); headRef = String(j?.head?.ref ?? ""); state = String(j?.state ?? ""); } catch (e) { if (e instanceof GhError) throw e; }
   if (!headRef) throw new GhError(`Cannot resolve the head branch of ${ref}; refusing to push.`);
+  if (state !== "open") throw new GhError(`${ref} is not open (state '${state || "unknown"}'); refusing to push.`);
+  const originRepo = githubRepoFromUrl(deps.originUrl ? deps.originUrl() : readOriginUrl(repoDir));
+  if (originRepo !== pr.repo) throw new GhError(`Checkout origin is '${originRepo ?? "not a github.com remote"}' but the PR is in '${pr.repo}' (fork or wrong checkout); refusing to push.`);
   const current = vcs(["rev-parse", "--abbrev-ref", "HEAD"]).trim();
   if (current !== headRef) throw new GhError(`Checkout is '${current}' but the PR branch is '${headRef}'. Check out the PR branch first.`);
   if (vcs(STATUS_ARGS).trim() !== "") throw new GhError("Working tree has uncommitted changes. Commit or stash them before running respond.");

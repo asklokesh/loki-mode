@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { GhError, appendReceiptFact, lessonConfidence, formatLessonList, formatLessonsForBrief, learnFromPr, learnRecent, loadLessons, respondToReview, defaultRespondPush, recordRunVerdict, recordUse, retrieveLessons, type GhClient, lessonsPath, type Lesson } from "../../src/util/pr_lessons.ts";
 
@@ -455,7 +456,7 @@ describe("learnRecent (R15-E1)", () => {
 
 describe("respondToReview", () => {
   const C = (id: number, body: string, extra: Record<string, unknown> = {}) => ({ id, body, path: `src/f${id}.ts`, line: id, html_url: `https://github.com/o/r/pull/7#discussion_r${id}`, user: { login: "rev" }, ...extra });
-  const mkEnv = (comments: unknown[], resolvedIds: number[] = [], opts: { branch?: string; head?: string | null; preDirty?: boolean } = {}) => {
+  const mkEnv = (comments: unknown[], resolvedIds: number[] = [], opts: { branch?: string; head?: string | null; preDirty?: boolean; state?: string } = {}) => {
     const branch = opts.branch ?? "feat";
     const head = opts.head === undefined ? "feat" : opts.head;
     const calls: string[][] = [];
@@ -463,7 +464,7 @@ describe("respondToReview", () => {
       calls.push(args);
       if (args.includes("graphql")) return { code: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes: resolvedIds.map((id) => ({ isResolved: true, comments: { nodes: [{ databaseId: id }] } })) } } } } }), stderr: "" };
       if (args[args.length - 1]!.endsWith("/comments")) return { code: 0, stdout: JSON.stringify(comments), stderr: "" };
-      if (args[args.length - 1]!.endsWith("/pulls/7")) return { code: 0, stdout: JSON.stringify(head === null ? {} : { head: { ref: head } }), stderr: "" };
+      if (args[args.length - 1]!.endsWith("/pulls/7")) return { code: 0, stdout: JSON.stringify(head === null ? {} : { state: opts.state ?? "open", head: { ref: head } }), stderr: "" };
       return { code: 0, stdout: "{}", stderr: "" };
     };
     const gitCalls: string[][] = [];
@@ -484,7 +485,7 @@ describe("respondToReview", () => {
 
   it("one commit and one sha-citing reply per open comment; resolved threads are skipped and never resolved", async () => {
     const e = mkEnv([C(1, "Rename this variable."), C(2, "Handle the null case."), C(3, "Old nit.")], [3]);
-    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit });
+    const r = await respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit });
     expect(r.fixed).toBe(2);
     expect(r.skipped).toBe(1);
     expect(e.gitCalls.filter((a) => a[0] === "commit").length).toBe(2);
@@ -499,8 +500,8 @@ describe("respondToReview", () => {
 
   it("a push that throws (PR no longer open) posts no reply", async () => {
     const e = mkEnv([C(1, "x")]);
-    const push = () => { throw new GhError("the PR for feat is no longer open; pushed but no reply posted"); };
-    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push, fix: e.edit })).rejects.toThrow(/no longer open/);
+    const push = () => { throw new GhError("a NEW PR was opened"); };
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push, fix: e.edit })).rejects.toThrow(/NEW PR was opened/);
     expect(replies(e.calls).length).toBe(0);
   });
 
@@ -510,27 +511,59 @@ describe("respondToReview", () => {
     const d = mk();
     const script = join(d, "fake-push.sh");
     writeFileSync(script, "#!/bin/sh\necho created\necho https://github.com/o/r/pull/9\n");
-    expect(() => defaultRespondPush(d, "feat", script)).toThrow(/no longer open/);
+    expect(() => defaultRespondPush(d, "feat", script)).toThrow(/NEW PR was opened: https:\/\/github.com\/o\/r\/pull\/9/);
     writeFileSync(script, "#!/bin/sh\necho reused\necho https://github.com/o/r/pull/9\n");
     expect(() => defaultRespondPush(d, "feat", script)).not.toThrow();
     writeFileSync(script, "#!/bin/sh\necho boom >&2\nexit 3\n");
     expect(() => defaultRespondPush(d, "feat", script)).toThrow(/boom/);
   });
 
+  it("refuses a closed PR and a fork checkout before any fix or push", async () => {
+    const closed = mkEnv([C(1, "x")], [], { state: "closed" });
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: closed.gh, git: closed.vcs, push: closed.push, fix: closed.edit })).rejects.toThrow(/not open/);
+    expect(closed.pushes.length).toBe(0);
+    const fork = mkEnv([C(1, "x")]);
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/me/r.git", gh: fork.gh, git: fork.vcs, push: fork.push, fix: fork.edit })).rejects.toThrow(/fork or wrong checkout/);
+    expect(fork.pushes.length).toBe(0);
+    expect(fork.gitCalls.some((a) => a[0] === "commit")).toBe(false);
+  });
+
+  it("default push passes the pinned origin env and runs the real push script onto the origin", () => {
+    const d = mk();
+    const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd, encoding: "utf8" });
+    const bare = join(d, "origin.git");
+    sh(d, "init", "-q", "--bare", bare);
+    const clone = join(d, "clone");
+    sh(d, "clone", "-q", bare, clone);
+    sh(clone, "checkout", "-q", "-b", "feat");
+    writeFileSync(join(clone, "a.txt"), "1\n");
+    sh(clone, "add", "a.txt");
+    sh(clone, "commit", "-q", "-m", "c1");
+    defaultRespondPush(clone, "feat");
+    expect(sh(bare, "rev-parse", "refs/heads/feat").trim()).toBe(sh(clone, "rev-parse", "HEAD").trim());
+    // env contract: a fake script records the pinned env derived from the clone's origin
+    const envOut = join(d, "env.txt");
+    const fake = join(d, "fake.sh");
+    writeFileSync(fake, `#!/bin/sh\nprintf '%s|%s\\n' "$_LOKI_ORIGIN_PINNED" "$_LOKI_PINNED_ORIGIN" > ${envOut}\necho reused\n`);
+    sh(clone, "remote", "set-url", "origin", "https://github.com/o/r.git");
+    defaultRespondPush(clone, "feat", fake);
+    expect(readFileSync(envOut, "utf8").trim()).toBe("1|https://github.com/o/r.git");
+  });
+
   it("a fix that edits nothing gets no commit and no reply; max bounds the work", async () => {
     const e = mkEnv([C(1, "a"), C(2, "b"), C(3, "c")]);
-    const none = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: async () => false });
+    const none = await respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: async () => false });
     expect(none.fixed).toBe(0);
     expect(replies(e.calls).length).toBe(0);
     const e2 = mkEnv([C(1, "a"), C(2, "b"), C(3, "c")]);
-    const r = await respondToReview(mk(), "o/r#7", { gh: e2.gh, git: e2.vcs, push: e2.push, fix: e2.edit, max: 1 });
+    const r = await respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e2.gh, git: e2.vcs, push: e2.push, fix: e2.edit, max: 1 });
     expect(r.fixed).toBe(1);
     expect(replies(e2.calls).length).toBe(1);
   });
 
   it("refuses when the checkout is not the PR head branch: no fix, commit, push or reply", async () => {
     const e = mkEnv([C(1, "x")], [], { branch: "main" });
-    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/PR branch/);
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/PR branch/);
     expect(e.gitCalls.some((a) => ["add", "commit", "push"].includes(a[0]!))).toBe(false);
     expect(replies(e.calls).length).toBe(0);
   });
@@ -538,14 +571,14 @@ describe("respondToReview", () => {
   it("refuses a tree that is dirty before any fix runs", async () => {
     const e = mkEnv([C(1, "x")], [], { preDirty: true });
     let fixed = false;
-    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: async () => { fixed = true; return true; } })).rejects.toThrow(/uncommitted/);
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: async () => { fixed = true; return true; } })).rejects.toThrow(/uncommitted/);
     expect(fixed).toBe(false);
     expect(e.gitCalls.some((a) => ["add", "commit", "push"].includes(a[0]!))).toBe(false);
   });
 
   it("refuses when the PR head branch cannot be resolved", async () => {
     const e = mkEnv([C(1, "x")], [], { head: null });
-    await expect(respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/head branch/);
+    await expect(respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit })).rejects.toThrow(/head branch/);
   });
 
   it("never stages .loki run artifacts: a real source edit is staged, the .loki file is not", async () => {
@@ -555,7 +588,7 @@ describe("respondToReview", () => {
       if (args[0] === "status") return edited ? " M src/real.ts\n?? .loki/runs/e10-1/spec.snapshot.md\n?? .loki/state.json\n" : "";
       return e.vcs(args);
     };
-    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, push: () => {}, fix: async () => { edited = true; return true; } });
+    const r = await respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: vcs, push: () => {}, fix: async () => { edited = true; return true; } });
     expect(r.fixed).toBe(1);
     const add = e.gitCalls.find((a) => a[0] === "add")!;
     expect(add).toEqual(["add", "--", "src/real.ts"]);
@@ -571,7 +604,7 @@ describe("respondToReview", () => {
     mkdirSync(join(d, ".loki", "runs"), { recursive: true }); writeFileSync(join(d, ".loki", "runs", "x.json"), "{}");
     const e = mkEnv([C(1, "x")]);
     const vcs = (args: string[]): string => args[0] === "push" ? "" : run(args);
-    const r = await respondToReview(d, "o/r#7", { gh: e.gh, git: vcs, push: () => {}, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "v\n"); return true; } });
+    const r = await respondToReview(d, "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: vcs, push: () => {}, fix: async () => { writeFileSync(join(d, "a.ts"), "2\n"); writeFileSync(join(d, "sub", ".loki", "keep.txt"), "v\n"); return true; } });
     expect(r.fixed).toBe(1);
     const files = run(["show", "--name-only", "--format=", "HEAD"]).trim().split("\n").sort();
     expect(files).toEqual(["a.ts", "sub/.loki/keep.txt"]);
@@ -585,13 +618,13 @@ describe("respondToReview", () => {
       if (args[0] === "status") return edited ? "R  .loki/a.ts -> src/b.ts\n" : "";
       return e.vcs(args);
     };
-    await respondToReview(mk(), "o/r#7", { gh: e.gh, git: vcs, push: () => {}, fix: async () => { edited = true; return true; } });
+    await respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: vcs, push: () => {}, fix: async () => { edited = true; return true; } });
     expect(e.gitCalls.find((a) => a[0] === "add")).toEqual(["add", "--", "src/b.ts"]);
   });
 
   it("skips replies and already-answered threads", async () => {
     const e = mkEnv([C(1, "x"), C(2, "reply", { in_reply_to_id: 1 }), C(4, "y"), C(5, "Addressed in abc <!-- loki-respond -->", { in_reply_to_id: 4 })]);
-    const r = await respondToReview(mk(), "o/r#7", { gh: e.gh, git: e.vcs, push: e.push, fix: e.edit });
+    const r = await respondToReview(mk(), "o/r#7", { originUrl: () => "https://github.com/o/r.git", gh: e.gh, git: e.vcs, push: e.push, fix: e.edit });
     expect(r.fixed).toBe(1);
   });
 });
