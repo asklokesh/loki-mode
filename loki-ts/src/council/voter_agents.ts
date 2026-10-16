@@ -43,6 +43,7 @@ import {
   ensureClaudeHelpCache,
   reviewAllowlistArgv,
   cavemanSuppressEnv,
+  permissionArgv,
 } from "../providers/claude_flags.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 
@@ -369,7 +370,7 @@ export async function dispatchClaudeAgents(
   // through the auto-flags builder.
   const argv = [
     "claude",
-    "--dangerously-skip-permissions",
+    ...permissionArgv(),
     "--agents",
     JSON.stringify(agentsJson),
     "--json-schema",
@@ -478,7 +479,7 @@ export async function dispatchDevilsAdvocate(
   // the tree-mutation guard / least-privilege allowlist apply identically.
   const argv = [
     "claude",
-    "--dangerously-skip-permissions",
+    ...permissionArgv(),
     "--agents",
     JSON.stringify(agentsJson),
     "--json-schema",

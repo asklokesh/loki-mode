@@ -5,12 +5,18 @@
 // New file: src/policies owns policy semantics; check.js is a gate, not a flag compiler.
 // Policy shape (policies.json, under "policies" or top level):
 //   "claude_permissions": { "mode": "plan|default|acceptEdits|bypassPermissions", "allow": [..], "deny": [..] }
+// The operator's ~/.loki policy and the repo .loki policy are both read; the repo file
+// may only NARROW the operator's (min mode, intersected allow, unioned deny).
 var fs = require('fs');
 var path = require('path');
 
 var MODES = ['plan', 'default', 'acceptEdits', 'bypassPermissions']; // most restrictive first
 var MOST_RESTRICTIVE = 'plan';
-var MANAGED_DEFAULT = '/Library/Application Support/ClaudeCode/managed-settings.json';
+var NO_POLICY_MODE = 'acceptEdits'; // headless 'default' is near read-only
+var MANAGED_DEFAULTS = [
+    '/Library/Application Support/ClaudeCode/managed-settings.json',
+    '/etc/claude-code/managed-settings.json'
+];
 
 function readJson(p) { return JSON.parse(fs.readFileSync(p, 'utf8')); }
 function strList(v) {
@@ -23,58 +29,61 @@ function failClosed(why, warnings) {
     warnings.push('LOKI_PERMISSION_POLICY=compiled: ' + why + '; using most restrictive mode (' + MOST_RESTRICTIVE + ')');
     return { args: ['--permission-mode', MOST_RESTRICTIVE], warnings: warnings };
 }
+function lower(a, b) { return MODES.indexOf(a) <= MODES.indexOf(b) ? a : b; }
 
-function findPolicy(repoDir, env) {
-    var dataDir = env.LOKI_DATA_DIR || path.join(env.HOME || '', '.loki');
-    var dirs = [path.join(repoDir, '.loki'), dataDir];
-    for (var i = 0; i < dirs.length; i++) {
-        var js = path.join(dirs[i], 'policies.json');
-        var ym = path.join(dirs[i], 'policies.yaml');
-        if (fs.existsSync(js)) return js;
-        if (fs.existsSync(ym)) return ym;
+// Section of one policies.json in dir: null when there is no file or no section; throws when unusable.
+function section(dir) {
+    var js = path.join(dir, 'policies.json');
+    if (!fs.existsSync(js)) {
+        if (fs.existsSync(path.join(dir, 'policies.yaml'))) throw new Error('policies.yaml cannot be compiled (use policies.json)');
+        return null;
     }
-    return null;
+    var parsed = readJson(js);
+    var pol = (parsed && parsed.policies) || parsed;
+    var cp = pol && pol.claude_permissions;
+    if (cp === undefined) return null;
+    if (!cp || typeof cp !== 'object' || Array.isArray(cp)) throw new Error('claude_permissions must be an object');
+    if (cp.mode !== undefined && MODES.indexOf(cp.mode) < 0) throw new Error('unknown mode ' + JSON.stringify(cp.mode));
+    return { mode: cp.mode, allow: cp.allow === undefined ? null : strList(cp.allow), deny: strList(cp.deny) };
 }
 
 function compile(repoDir, env) {
     env = env || process.env;
     var warnings = [];
-    var mode = 'default', allow = [], deny = [];
+    var mode = NO_POLICY_MODE, allow = null, deny = [];
     try {
-        var pf = findPolicy(repoDir, env);
-        if (pf) {
-            if (!/\.json$/.test(pf)) return failClosed('policies.yaml cannot be compiled (use policies.json)', warnings);
-            var parsed = readJson(pf);
-            var pol = (parsed && parsed.policies) || parsed;
-            var cp = pol && pol.claude_permissions;
-            if (cp !== undefined) {
-                if (!cp || typeof cp !== 'object' || Array.isArray(cp)) throw new Error('claude_permissions must be an object');
-                if (cp.mode !== undefined) {
-                    if (MODES.indexOf(cp.mode) < 0) throw new Error('unknown mode ' + JSON.stringify(cp.mode));
-                    mode = cp.mode;
-                }
-                allow = strList(cp.allow);
-                deny = strList(cp.deny);
-            }
+        var dataDir = env.LOKI_DATA_DIR || path.join(env.HOME || '', '.loki');
+        // operator first, then repo: each later layer can only narrow
+        var layers = [section(dataDir), section(path.join(repoDir, '.loki'))].filter(Boolean);
+        if (!layers.length) {
+            warnings.push('LOKI_PERMISSION_POLICY=compiled: no claude_permissions policy found; using ' + NO_POLICY_MODE);
+        } else {
+            mode = null;
+            layers.forEach(function (l) {
+                var m = l.mode === undefined ? 'default' : l.mode;
+                mode = mode === null ? m : lower(mode, m);
+                if (l.allow !== null) allow = allow === null ? l.allow : allow.filter(function (a) { return l.allow.indexOf(a) >= 0; });
+                deny = deny.concat(l.deny);
+            });
         }
     } catch (e) {
         return failClosed('invalid policy (' + e.message + ')', warnings);
     }
 
     // Managed settings: never pass a mode more permissive than the managed cap.
-    var mpath = env.LOKI_MANAGED_SETTINGS || MANAGED_DEFAULT;
-    if (fs.existsSync(mpath)) {
+    var mpaths = env.LOKI_MANAGED_SETTINGS ? [env.LOKI_MANAGED_SETTINGS] : MANAGED_DEFAULTS;
+    for (var i = 0; i < mpaths.length; i++) {
+        if (!fs.existsSync(mpaths[i])) continue;
         try {
-            var perms = readJson(mpath).permissions;
+            var perms = readJson(mpaths[i]).permissions;
             if (perms && typeof perms === 'object') {
                 var cap = null;
                 if (perms.defaultMode !== undefined) {
                     if (MODES.indexOf(perms.defaultMode) < 0) throw new Error('unknown managed defaultMode');
                     cap = perms.defaultMode;
                 }
-                if (perms.disableBypassPermissionsMode === 'disable' &&
-                    (cap === null || MODES.indexOf(cap) > MODES.indexOf('acceptEdits'))) cap = 'acceptEdits';
-                if (cap !== null && MODES.indexOf(mode) > MODES.indexOf(cap)) mode = cap;
+                if (perms.disableBypassPermissionsMode === 'disable') cap = cap === null ? 'acceptEdits' : lower(cap, 'acceptEdits');
+                if (cap !== null) mode = lower(mode, cap);
                 deny = deny.concat(strList(perms.deny));
             }
         } catch (e) {
@@ -82,8 +91,9 @@ function compile(repoDir, env) {
         }
     }
 
-    // Deny always wins over allow.
-    allow = allow.filter(function (a) { return deny.indexOf(a) < 0; });
+    // Deny always wins over allow; drop duplicate deny entries.
+    deny = deny.filter(function (d, j) { return deny.indexOf(d) === j; });
+    allow = (allow || []).filter(function (a) { return deny.indexOf(a) < 0; });
     var args = ['--permission-mode', mode];
     if (allow.length) args.push('--allowedTools', allow.join(','));
     if (deny.length) args.push('--disallowedTools', deny.join(','));

@@ -794,14 +794,21 @@ export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
 // --permission-mode plus --allowedTools/--disallowedTools from the task policy.
 // ---------------------------------------------------------------------------
 export function permissionArgv(
-  repoDir: string,
+  repoDir: string = process.env["LOKI_PROJECT_DIR"] || process.cwd(),
   env: NodeJS.ProcessEnv = process.env,
   warn: (m: string) => void = (m) => process.stderr.write(`[loki] WARNING: ${m}\n`),
 ): string[] {
   if (env["LOKI_PERMISSION_POLICY"] !== "compiled") return ["--dangerously-skip-permissions"];
   try {
     const req = createRequire(import.meta.url);
-    const mod = req(resolvePath(dirname(fileURLToPath(import.meta.url)), "../../../src/policies/claude_permissions.js")) as {
+    const moduleDir = dirname(fileURLToPath(import.meta.url));
+    // src/providers and dist sit at different depths below the repo root (same as designArchetypesText).
+    const modPath = [
+      resolvePath(moduleDir, "..", "..", "..", "src", "policies", "claude_permissions.js"), // src/providers -> repo root
+      resolvePath(moduleDir, "..", "..", "src", "policies", "claude_permissions.js"), // dist -> repo root
+    ].find((p) => existsSync(p));
+    if (!modPath) throw new Error("claude_permissions.js not found");
+    const mod = req(modPath) as {
       compile(d: string, e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
     };
     const r = mod.compile(repoDir, env);

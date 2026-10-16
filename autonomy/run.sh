@@ -6709,13 +6709,15 @@ spawn_worktree_session() {
                 # Expand the auto-flag array with the bash-3.2 empty-array guard
                 # (${arr[@]+...}) so a bare "${arr[@]}" under set -u does not
                 # abort with "unbound variable" when no flags were collected.
+                _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+                ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
                 if [ -n "$_loki_wt_cm" ]; then
-                    CAVEMAN_DEFAULT_MODE="$_loki_wt_cm" claude --dangerously-skip-permissions \
+                    CAVEMAN_DEFAULT_MODE="$_loki_wt_cm" claude "${_LOKI_PERM_ARGV[@]}" \
                         "${_LOKI_WT_AUTO_FLAGS[@]+"${_LOKI_WT_AUTO_FLAGS[@]}"}" \
                         -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                         >> "$log_file" 2>&1 || _wt_exit=$?
                 else
-                    claude --dangerously-skip-permissions \
+                    claude "${_LOKI_PERM_ARGV[@]}" \
                         "${_LOKI_WT_AUTO_FLAGS[@]+"${_LOKI_WT_AUTO_FLAGS[@]}"}" \
                         -p "Loki Mode: $task_prompt. Read .loki/CONTINUITY.md for context." \
                         >> "$log_file" 2>&1 || _wt_exit=$?
@@ -6950,7 +6952,9 @@ Output ONLY the resolved file content with no conflict markers. No explanations.
                 # variable (the shell, not the agent, writes the resolved file).
                 # It needs no hooks, LSP, CLAUDE.md auto-discovery, or MCP, so
                 # --bare is safe and cheaper. Gated + opt-out LOKI_BARE_SUBCALLS=0.
-                local _cr_argv=("--dangerously-skip-permissions")
+                _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+                ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
+                local _cr_argv=("${_LOKI_PERM_ARGV[@]}")
                 if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
                     _cr_argv+=("--bare")
                 fi
@@ -16282,7 +16286,9 @@ _dispatch_reviewer() {
             #     Guardrail, not a sandbox -- echo>/sed -i/etc. remain; the
             #     real net is commit-before-agent-wave. Opt out
             #     LOKI_REVIEW_TOOL_GUARD=0. See loki_review_guard_denylist.
-            local _rv_argv=("--dangerously-skip-permissions")
+            _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+            ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
+            local _rv_argv=("${_LOKI_PERM_ARGV[@]}")
             # OPT-IN advisor pin (v7.104.0, LOKI_ADVISOR_MODEL): reviewers still
             # pass NO --model by default (unchanged behavior: they run on the
             # account default). When the operator/user sets LOKI_ADVISOR_MODEL to
@@ -21352,7 +21358,9 @@ ${_commits}"
     # needed, so --bare is safe and cheaper. Opt out LOKI_BARE_SUBCALLS=0.
     # Always at least --dangerously-skip-permissions, so the array is never
     # empty (empty "${arr[@]}" under set -u errors on bash 3.2, stock macOS).
-    local _ic_argv=("--dangerously-skip-permissions")
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
+    local _ic_argv=("${_LOKI_PERM_ARGV[@]}")
     if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
         _ic_argv+=("--bare")
     fi
@@ -25529,7 +25537,9 @@ except Exception as exc:
         # present so the array is never empty (empty "${arr[@]}" under `set -u`
         # is an error on bash 3.2, the stock macOS shell). The autonomy override
         # is appended conditionally.
-        local _loki_claude_argv=("--dangerously-skip-permissions" "--model" "$tier_param")
+        _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+        ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
+        local _loki_claude_argv=("${_LOKI_PERM_ARGV[@]}" "--model" "$tier_param")
         if [ "${LOKI_AUTONOMY_OVERRIDE:-on}" != "off" ] \
            && type _loki_autonomy_override_text >/dev/null 2>&1 \
            && type loki_claude_flag_supported >/dev/null 2>&1 \

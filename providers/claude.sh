@@ -380,26 +380,6 @@ LOKI_FIRSTPASS_EOF
     fi
 }
 
-# P12-26: LOKI_PERMISSION_POLICY=compiled swaps --dangerously-skip-permissions for
-# --permission-mode / --allowedTools / --disallowedTools compiled from the task policy
-# by src/policies/claude_permissions.js (shared with the TS route). Unset = unchanged.
-# Result lands in _LOKI_PERM_ARGV. A compile failure fails closed to plan mode.
-_loki_claude_permission_argv() {
-    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
-    [ "${LOKI_PERMISSION_POLICY:-}" = "compiled" ] || return 0
-    local _helper _out _a
-    _helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/src/policies/claude_permissions.js"
-    _LOKI_PERM_ARGV=(--permission-mode plan)
-    if ! command -v node >/dev/null 2>&1 || [ ! -f "$_helper" ]; then
-        echo "[loki] WARNING: LOKI_PERMISSION_POLICY=compiled: compiler unavailable; using most restrictive mode (plan)" >&2
-        return 0
-    fi
-    _out="$(node "$_helper" "${LOKI_PROJECT_DIR:-$PWD}")" || return 0
-    [ -n "$_out" ] || return 0
-    _LOKI_PERM_ARGV=()
-    while IFS= read -r _a; do _LOKI_PERM_ARGV+=("$_a"); done <<< "$_out"
-}
-
 # Invocation function (basic, no tier).
 # Auto-flags use development tier defaults.
 provider_invoke() {

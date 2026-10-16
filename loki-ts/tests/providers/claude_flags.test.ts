@@ -9,7 +9,7 @@
 // - claudeFlagSupported respects the cache; ensureClaudeHelpCache idempotent
 // - buildAutoFlags composes only supported + non-null flags
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -804,5 +804,56 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     const managed = join(repo, "managed.json");
     writeFileSync(managed, "{broken");
     expect(permissionArgv(repo, noManaged({ LOKI_MANAGED_SETTINGS: managed }), () => {})).toEqual(["--permission-mode", "plan"]);
+  });
+
+  it("no policy: acceptEdits with a stderr warning (not default), same on bash", () => {
+    const warns: string[] = [];
+    expect(permissionArgv(repo, noManaged(), (m) => warns.push(m))).toEqual(["--permission-mode", "acceptEdits"]);
+    expect(warns.length).toBe(1);
+    expect(bashArgv(noManaged())).toEqual(["--permission-mode", "acceptEdits"]);
+  });
+
+  it("a repo policy may only narrow the operator policy, never widen it", () => {
+    const home = join(repo, "operator");
+    mkdirSync(home, { recursive: true });
+    writeFileSync(join(home, "policies.json"), JSON.stringify({ claude_permissions: { mode: "default", allow: ["Read"], deny: ["Bash(curl:*)"] } }));
+    writePolicy({ claude_permissions: { mode: "bypassPermissions", allow: ["Read", "Write"], deny: ["Bash(rm:*)"] } });
+    const env = noManaged({ LOKI_DATA_DIR: home });
+    const want = ["--permission-mode", "default", "--allowedTools", "Read", "--disallowedTools", "Bash(curl:*),Bash(rm:*)"];
+    expect(permissionArgv(repo, env)).toEqual(want);
+    expect(bashArgv(env)).toEqual(want);
+  });
+
+  it("every claude spawn site routes through the permission helper", () => {
+    const root = join(import.meta.dir, "../../..");
+    const lit = "--dangerously-skip-permissions";
+    const live = (rel: string): string[] =>
+      readFileSync(join(root, rel), "utf8").split("\n").filter((l) => l.includes(lit) && !/^\s*(#|\/\/|\*)/.test(l));
+    expect(live("autonomy/run.sh").filter((l) => !l.includes("PROVIDER_AUTONOMOUS_FLAG=") && !l.includes("_LOKI_PERM_ARGV=("))).toEqual([]);
+    expect(live("loki-ts/src/runner/quality_gates.ts")).toEqual([]);
+    expect(live("loki-ts/src/council/voter_agents.ts")).toEqual([]);
+    expect(live("providers/claude.sh").filter((l) => !l.includes("PROVIDER_AUTONOMOUS_FLAG="))).toEqual([]);
+  });
+
+  it("works from the bundled dist layout (and fails closed to plan when the compiler is absent)", () => {
+    const root = join(import.meta.dir, "../../..");
+    const lay = join(repo, "layout");
+    mkdirSync(join(lay, "loki-ts", "dist"), { recursive: true });
+    const bundle = join(lay, "loki-ts", "dist", "loki.js");
+    const b = Bun.spawnSync(["bun", "build", join(root, "loki-ts/src/providers/claude_flags.ts"), "--target=bun", `--outfile=${bundle}`]);
+    expect(b.exitCode).toBe(0);
+    writePolicy({ claude_permissions: { mode: "acceptEdits", deny: ["Bash(rm:*)"] } });
+    const probe = `import { permissionArgv } from ${JSON.stringify(bundle)}; console.log(JSON.stringify(permissionArgv(${JSON.stringify(repo)})));`;
+    const run = (): string => {
+      const pf = join(lay, "probe.mjs");
+      writeFileSync(pf, probe);
+      const r = Bun.spawnSync(["bun", pf], { env: noManaged() });
+      return r.stdout.toString().trim();
+    };
+    // compiler absent from the layout: fail closed to plan, never skip-permissions
+    expect(JSON.parse(run())).toEqual(["--permission-mode", "plan"]);
+    mkdirSync(join(lay, "src", "policies"), { recursive: true });
+    copyFileSync(join(root, "src/policies/claude_permissions.js"), join(lay, "src", "policies", "claude_permissions.js"));
+    expect(JSON.parse(run())).toEqual(["--permission-mode", "acceptEdits", "--disallowedTools", "Bash(rm:*)"]);
   });
 });
