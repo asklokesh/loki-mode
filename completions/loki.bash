@@ -249,6 +249,14 @@ _loki_completion() {
             COMPREPLY=( $(compgen -W "${issue_cmds}" -- "$cur") )
             ;;
 
+        modernize)
+            if [[ "$cur" == -* ]]; then
+                COMPREPLY=( $(compgen -W "--repo --ref --unit --mid --target --help" -- "$cur") )
+                return 0
+            fi
+            COMPREPLY=( $(compgen -W "heal migrate unit" -- "$cur") )
+            ;;
+
         onboard)
             if [[ "$cur" == -* ]]; then
                 COMPREPLY=( $(compgen -W "--depth --format --output --stdout --update --help" -- "$cur") )

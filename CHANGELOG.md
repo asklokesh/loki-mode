@@ -5,6 +5,24 @@ All notable changes to Loki Mode will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v11.14.0 (2026-10-16)
+
+v11.13.0 was tagged in the changelog but never published to npm: its required CI failed on the credentialed push guard, because `loki verify-pr respond` pushed with credentials outside the trusted push path. This release fixes that and ships everything listed under v11.13.0, plus the modernize and GitHub loop work below. `loki start` with Claude remains the primary path.
+
+### Added
+- Modernize waves now ship as one pull request per wave (M-21). The PR body lists every unit with its run id, verdict, pass rate, branch coverage and receipt path, and the PR is opened as a draft unless every unit is PROVEN. A reused PR that should be a draft is reported as a failure ("existing PR reused; draft state not applied") instead of being claimed as a draft, and table cells are escaped so a unit name or reason cannot forge rows.
+- Modernize now resumes at unit granularity after a coordinator crash (M-22). The log is read strictly (a torn last line is truncated and tolerated, any corruption elsewhere fails closed), finished units are skipped, and a merge that landed just before the crash is adopted instead of repeated through an idempotent `mergeOnce`. In-flight units reattach their worktree and hand the recorded run id to the runner, or restart cleanly with a logged reason.
+- New `loki modernize unit --repo --ref --unit [--mid] [--target]` runs one modernize unit (M-23). It fetches repo@ref into a run-owned temp directory, runs the unit there and exits 0 only on PROVEN. The trigger server accepts `POST /jobs` with kind `unit` using the same validation as the CLI, and the Helm job worker runs units with `worker.engine: v10` in job mode. Bash completion now covers `loki modernize` (heal, migrate, unit and the unit flags).
+- `loki merge pr` and `loki merge watch` now record the merge gate's outcome (merged, waiting, or blocked at a named gate) and the last checks state in `.loki/state/pr.json` for the matching PR (by branch, PR number, #N or URL), so the review handoff reports the real result and a blocked merge never reads as merged.
+- After an authorized GitHub issue comment steers a live run, the trigger server replies on the issue with "Steer rev N received: applies at next plan/implement stage", matching what `loki steer` prints. Comments Loki posts itself (the status comment and the end-of-run backstop comment) carry a hidden marker and are never treated as steers. Unauthorized, bot and failed steers, and runs with prompt injection off, get no reply.
+
+### Fixed
+- `loki verify-pr respond` now pushes only through the trusted push script (pinned origin, credentials scoped to the push), never with its own credentialed `git push`. It refuses before making any change when the PR is closed or the checkout's origin is a different repository than the PR (for example a fork), the origin is read once before the fix and the push refuses if it changed during the fix, and if a push would ever open a new PR the error names that PR's URL.
+- `loki verify-pr respond` no longer treats Loki's own `.loki` run files as uncommitted changes or stages them into fix commits. Only the repository-root `.loki` is excluded; a nested `.loki` directory belonging to the project is handled normally.
+- Runs started from a Jira or Linear ref now set the writeback target described under v11.13.0: a source comment had swallowed the statement that exports `LOKI_WRITEBACK_ISSUE` and `LOKI_WRITEBACK_KIND`.
+- The readiness fold used by `loki start` is now tracked per intake call, so one run's folded readiness line can no longer leak into another intake in the same process.
+- The modernize PR stage prints the bot-token fallback warning once instead of twice.
+
 ## v11.13.0 (2026-10-16)
 
 The factory-parity release: twelve lanes that close the gaps called out in the Factory comparison, from pull request repair and tracker writeback to a per-run cost cap that holds in every start mode and cheaper default effort. `loki start` with Claude remains the primary path, and every change below applies to it.
