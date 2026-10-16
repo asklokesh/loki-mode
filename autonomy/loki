@@ -1870,7 +1870,7 @@ show_help_all() {
     echo ""
     echo "Options for 'start':"
     echo "  --provider NAME  AI provider: claude (default), codex, cline, aider, opencode"
-    echo "  --model ID       Model tier or route (e.g. ollama/qwen3-coder)"
+    echo "  (model route: set LOKI_MODEL_ROUTE, e.g. ollama/qwen3-coder; there is no --model flag)"
     echo "  --simple         Force simple complexity tier (3 phases)"
     echo "  --complex        Force complex complexity tier (8 phases)"
     echo "  --no-dashboard   Disable web dashboard"
@@ -2549,9 +2549,11 @@ _loki_start_handoff() {
 # Start Loki Mode
 # Every value-taking cmd_start flag (its value is never brief text or a run id).
 # The one list: the --workspace brief scan and the --resume scan both use it.
+# It also names value flags only the Bun route (or an env route) honors, so a
+# scan never mistakes their value for a brief or run id.
 _loki_start_flag_takes_value() {
     case "$1" in
-        --provider|--brief|--budget|--prd|--issue|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) return 0 ;;
+        --provider|--brief|--budget|--prd|--issue|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker|--spec|--model|--max-cost|--max-wait|--base-wait|--max-iterations|--max-retries|--budget-limit|--session-model|--completion-promise) return 0 ;;
     esac
     return 1
 }
@@ -2759,7 +2761,7 @@ cmd_start() {
                 echo "                        Token from LOKI_REMOTE_TOKEN / LOKI_REMOTE_TOKEN_FILE"
                 echo "                        (never an argument). Env: LOKI_REMOTE_URL."
                 echo "  --provider NAME       AI provider: claude (default), codex, cline, aider, opencode"
-                echo "  --model NAME          Model or route override (for example ollama/qwen3-coder)"
+                echo "  (model route: set LOKI_MODEL_ROUTE, for example ollama/qwen3-coder; no --model flag)"
                 echo "  --allow-haiku        Enable Haiku model for the fast tier (default: disabled)"
                 echo "  --simple              Force simple complexity tier (3 phases)"
                 echo "  --complex             Force complex complexity tier (8 phases)"

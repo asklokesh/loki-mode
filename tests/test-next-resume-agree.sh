@@ -240,6 +240,18 @@ if command -v bun >/dev/null 2>&1; then
         *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish-docker IMG reaches engine10 resume" ;;
         *) fail "--mirofish-docker image was misparsed as a run id: $out" ;;
     esac
+    # P12-07g: every value-taking start flag (also the Bun-route ones) is skipped by the scan.
+    for pair in "--model sonnet" "--max-cost 5" "--max-wait 30" "--session-model high" "--max-iterations 3" "--budget-limit 4"; do
+        # shellcheck disable=SC2086 # intentional split: "$pair" is flag plus value
+        out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume $pair 2>&1)"
+        case "$out" in
+            *"STUB-ARGV:engine10 resume"*) pass "start --resume $pair reaches engine10 resume" ;;
+            *) fail "'$pair' value was misparsed as a run id: $out" ;;
+        esac
+    done
+    # The --workspace brief scan uses the same list: a flag value is never the brief.
+    out="$(cd "$dir" && bash -c 'source <(sed -n "/^_loki_start_flag_takes_value()/,/^}/p" "$1"); for f in --model --max-cost --max-wait; do _loki_start_flag_takes_value "$f" || echo "MISSING $f"; done' _ "$LOKI_BIN" 2>&1)"
+    [ -z "$out" ] && pass "shared list covers --model, --max-cost, --max-wait" || fail "shared list gaps: $out"
     # Parity: exit 5 (publish failed) maps to 1 in BOTH commands.
     out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc_start=$?
     mkdir -p "$dir/.loki/runs/e10-parity"; : > "$dir/.loki/runs/e10-parity/events.jsonl"
