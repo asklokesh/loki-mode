@@ -348,7 +348,14 @@ export interface HandlePauseOptions {
   pausedMdBody?: string;
   // Override TTY detection for the default PAUSED.md wording (defaults to stdin, matching bash `[ -t 0 ]`).
   isTTY?: boolean;
+  // Enum override for the intervention type recorded in interventions.json.
+  // Default is inferred from the signal files present when the pause starts.
+  interventionType?: InterventionType;
+  // Wall-clock source (ms) used only to measure waited_s; tests inject it.
+  clockMs?: () => number;
 }
+
+export type InterventionType = "steer" | "input" | "authorization" | "repair";
 
 export interface HandlePauseResult {
   // Mirrors bash return code: 0 = resumed normally, 1 = STOP signaled mid-pause.
@@ -383,6 +390,32 @@ Current state is saved. You can inspect:
 - \`.loki/logs/\` - Session logs
 `;
 
+// Enum only, never free text. HUMAN_INPUT.md present = input; a gate
+// escalation or council force-review = repair; a budget stop = steer;
+// anything else (plain PAUSE, checkpoint) = authorization.
+function inferInterventionType(dir: string): InterventionType {
+  const sp = signalPaths(dir);
+  if (existsSync(sp.humanInput)) return "input";
+  if (existsSync(join(dir, "signals", "GATE_ESCALATION")) || existsSync(sp.councilReview)) return "repair";
+  if (existsSync(sp.budgetExceeded)) return "steer";
+  return "authorization";
+}
+
+function readIv(ivPath: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(readFileSync(ivPath, "utf8"));
+    return parsed !== null && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  } catch {
+    return {};
+  }
+}
+
+const IV_TYPES: InterventionType[] = ["steer", "input", "authorization", "repair"];
+
+function nonNegInt(v: unknown): number {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : 0;
+}
+
 // Async loop equivalent of handle_pause (run.sh:11259-11326). Writes
 // .loki/PAUSED.md, then polls until either PAUSE is removed (resume) or
 // STOP appears (stop). Does NOT read stdin -- the caller is expected to
@@ -393,6 +426,8 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
   const interval = opts.pollIntervalMs ?? 1000;
   const ceiling = opts.maxWaitMs;
   const startMs = Date.now();
+  const clock = opts.clockMs ?? Date.now;
+  const waitStart = clock();
   const body = opts.pausedMdBody ?? defaultPausedMd(opts.isTTY ?? process.stdin.isTTY === true);
 
   try {
@@ -430,20 +465,19 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
     const stateDir = join(dir, "state");
     mkdirSync(stateDir, { recursive: true });
     const ivPath = join(stateDir, "interventions.json");
-    let prev = 0;
-    if (existsSync(ivPath)) {
-      try {
-        const parsed = JSON.parse(readFileSync(ivPath, "utf8"));
-        if (typeof parsed?.count === "number" && Number.isInteger(parsed.count) && parsed.count >= 0) {
-          prev = parsed.count;
-        }
-      } catch {
-        // Unreadable/corrupt counter restarts at 0 rather than throwing.
-      }
-    }
+    const prev = readIv(ivPath);
+    const prevTypes = (prev["by_type"] ?? {}) as Record<string, unknown>;
+    const by_type: Record<string, number> = {};
+    for (const t of IV_TYPES) by_type[t] = nonNegInt(prevTypes[t]);
+    by_type[opts.interventionType ?? inferInterventionType(dir)] += 1;
     atomicWriteFileSync(
       ivPath,
-      JSON.stringify({ count: prev + 1, basis: "blocking pauses that waited on a human" }) + "\n",
+      JSON.stringify({
+        count: nonNegInt(prev["count"]) + 1,
+        basis: "blocking pauses that waited on a human",
+        by_type,
+        waited_s: nonNegInt(prev["waited_s"]),
+      }) + "\n",
     );
   } catch {
     // Non-fatal: the receipt simply renders no interventions row.
@@ -471,5 +505,17 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
   } finally {
     // Defensive cleanup if a synchronous throw escaped the loop.
     rmIfExists(sp.pausedMd);
+    // waited_s: wall-clock seconds spent blocked, an upper bound on human
+    // attention (not active minutes). Best-effort like the counter above.
+    try {
+      const ivPath = join(dir, "state", "interventions.json");
+      if (existsSync(ivPath)) {
+        const cur = readIv(ivPath);
+        const secs = Math.max(0, Math.round((clock() - waitStart) / 1000));
+        atomicWriteFileSync(ivPath, JSON.stringify({ ...cur, waited_s: nonNegInt(cur["waited_s"]) + secs }) + "\n");
+      }
+    } catch {
+      // Non-fatal.
+    }
   }
 }

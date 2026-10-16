@@ -1307,6 +1307,47 @@ else
     bad "extracted is_completed from run.sh" "the D7 completion leg would be vacuous"
 fi
 
+# ===========================================================================
+# PART 3 (FV outcome metrics): interventions.json carries by_type + waited_s
+# ===========================================================================
+echo ""
+echo "--- interventions.json records type and waited seconds ---"
+IV_FN="$TMP/iv-fn.sh"
+python3 - "$RUN_SH" > "$IV_FN" <<'PYEOF'
+import sys
+s = open(sys.argv[1], encoding="utf-8").read()
+a = s.find("_loki_iv_record() {")
+if a >= 0:
+    b = s.index("\n}\n", a) + 3
+    sys.stdout.write(s[a:b])
+PYEOF
+if grep -q '^_loki_iv_record() {' "$IV_FN" && grep -q '_loki_iv_record "\$loki_dir" count' "$RUN_SH"; then
+    ok "extracted _loki_iv_record and handle_pause calls it"
+    IVD="$TMP/iv/.loki"; mkdir -p "$IVD/signals"
+    _iv() { ( . "$IV_FN"; _loki_iv_record "$IVD" "$@" ); }
+    _iv count
+    touch "$IVD/signals/BUDGET_EXCEEDED"; _iv count; rm -f "$IVD/signals/BUDGET_EXCEEDED"
+    _iv waited 7
+    _iv waited 5
+    _chk="$(python3 -c 'import json,sys
+d=json.load(open(sys.argv[1]))
+print(d["count"], d["by_type"]["authorization"], d["by_type"]["steer"], d["by_type"]["input"], d["by_type"]["repair"], d["waited_s"])' "$IVD/state/interventions.json" 2>&1)"
+    if [ "$_chk" = "2 1 1 0 0 12" ]; then
+        ok "count, by_type buckets and accumulated waited_s are written"
+    else
+        bad "count, by_type buckets and accumulated waited_s are written" "got: $_chk"
+    fi
+    rm -rf "$TMP/iv2"; mkdir -p "$TMP/iv2/.loki"
+    ( . "$IV_FN"; _loki_iv_record "$TMP/iv2/.loki" waited 9 )
+    if [ ! -e "$TMP/iv2/.loki/state/interventions.json" ]; then
+        ok "waited with no counter file stays absent (unmeasured, not zero)"
+    else
+        bad "waited with no counter file stays absent (unmeasured, not zero)"
+    fi
+else
+    bad "extracted _loki_iv_record and handle_pause calls it" "by_type/waited_s writer missing from run.sh"
+fi
+
 echo ""
 echo "  Passed: $PASS   Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
