@@ -494,16 +494,20 @@ CHILD_ENV_DENYLIST = (
 )
 
 
-def _scoped_child_env():
-    return {k: v for k, v in os.environ.items() if k not in CHILD_ENV_DENYLIST}
+def _scoped_child_env(extra_env=None):
+    env = {k: v for k, v in os.environ.items() if k not in CHILD_ENV_DENYLIST}
+    # Caller values override inherited ones but can never restore a denied secret.
+    env.update({k: v for k, v in (extra_env or {}).items() if k not in CHILD_ENV_DENYLIST})
+    return env
 
 
-def run_loki_outcome(args, dry_run=False, stdout_sink=None):
+def run_loki_outcome(args, dry_run=False, stdout_sink=None, extra_env=None):
     """Run a loki command and report WHICH of the three outcomes occurred.
 
     Returns one of OUTCOME_PASSED / OUTCOME_FAILED / OUTCOME_UNKNOWN. This is
     the honest version of run_loki_command, which answers only "did it launch".
     When stdout_sink is a list, the decoded stdout is appended to it on completion.
+    extra_env adds child env vars (e.g. LOKI_STEER_SOURCE) on top of the scoped env.
     """
     cmd = ["loki"] + args
     if dry_run:
@@ -515,7 +519,7 @@ def run_loki_outcome(args, dry_run=False, stdout_sink=None):
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            env=_scoped_child_env(),
+            env=_scoped_child_env(extra_env),
         )
     except (FileNotFoundError, OSError) as e:
         logging.error("Failed to launch %s: %s", " ".join(cmd), e)
@@ -703,7 +707,9 @@ def handle_issue_comment_event(payload, dry_run=False):
     note = "GitHub comment from %s: %s" % (login or "unknown", body)
     summary = "steer %s from comment" % ref
     sink = []
-    outcome = run_loki_outcome(["steer", note], dry_run=dry_run, stdout_sink=sink)
+    # Provenance for the revision log: loki steer records actor= and source= per revision.
+    steer_env = {"LOKI_STEER_SOURCE": "github", "LOKI_STEER_ACTOR": login or "unknown"}
+    outcome = run_loki_outcome(["steer", note], dry_run=dry_run, stdout_sink=sink, extra_env=steer_env)
     # Only a confirmed exit 0 proves the steer was written. A detached child
     # (UNKNOWN) never reports its exit code, so acking would claim an unverified
     # steer; report it as launched but post nothing.
