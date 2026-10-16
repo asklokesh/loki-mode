@@ -68,6 +68,16 @@ describe("engine10 session", () => {
     rmSync(dir, { recursive: true, force: true });
   }, 10_000);
 
+  test("a silent session emits one session.stalled and heartbeats carry a progress class", async () => {
+    process.env["LOKI_E10_STALL_S"] = "0.1";
+    const events: { type: string; data: Record<string, unknown> }[] = [];
+    const runner = createSessionRunner({ provider: "claude", childCommand: ["bash", ["-c", "sleep 2.5"]], heartbeatMs: 30, emit: (type, _s, data) => events.push({ type, data }) });
+    await runner.run(baseOpts({ limitS: 30 }));
+    delete process.env["LOKI_E10_STALL_S"];
+    expect(events.filter((e) => e.type === "session.stalled").length).toBe(1);
+    expect(events.find((e) => e.type === "heartbeat")?.data["progress"]).toBeDefined();
+  }, 10_000);
+
   test("emits a heartbeat event while waiting", async () => {
     const events: { type: string; stage: string | null; data: Record<string, unknown> }[] = [];
     const runner = createSessionRunner({

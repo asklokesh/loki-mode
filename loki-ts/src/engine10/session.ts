@@ -1,5 +1,6 @@
 // E-07: SessionRunner. Runs one provider session in its own OS process group so the whole tree can be
 // killed together at limitS (ENGINE.md 10). E-32: the child re-enters via cli.ts's `engine10 session` route.
+import { createWatchdog, stallThresholdS } from "../runner/watchdog.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
@@ -173,9 +174,9 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       let stdout = "";
       child.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
       // ponytail: re-concats on every chunk, fine for a CLI session's stderr volume; switch to a ring buffer if that stops holding.
-      let stderrTail = Buffer.alloc(0);
+      let stderrTail = Buffer.alloc(0), errBytes = 0;
       child.stderr?.on("data", (d: Buffer) => {
-        stderrTail = Buffer.concat([stderrTail, d]);
+        errBytes += d.length; stderrTail = Buffer.concat([stderrTail, d]);
         if (stderrTail.length > STDERR_TAIL_BYTES) stderrTail = stderrTail.subarray(stderrTail.length - STDERR_TAIL_BYTES);
       });
       let killed = false;
@@ -193,8 +194,11 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const onAbort = () => kill("aborted");
       const limitTimer = setTimeout(() => kill("limit"), opts.limitS * 1000);
       const capUsd = parseCapUsd(process.env["LOKI_E10_MAX_COST_USD"]), effDir = cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : null, effBase = effDir !== null && capUsd !== null ? calculateCostFromRecords(readEfficiencyDir(effDir)) : 0; const stopBudgetWatch = isGuarded(cfg.provider) && capUsd !== null ? watchBudget(() => (cfg.remaining?.() ?? 1) <= 0 || (effDir !== null && calculateCostFromRecords(readEfficiencyDir(effDir)) - effBase >= capUsd), () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE: live kill on the run cap (LOKI_E10_MAX_COST_USD), not the unset BUDGET_LIMIT
+      const watchdog = createWatchdog(Date.now);
       const heartbeatTimer = setInterval(() => {
-        cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff: diffShortstat(opts.cwd) });
+        const diff = diffShortstat(opts.cwd), w = watchdog.tick(stdout.length + errBytes, JSON.stringify(diff) ?? "");
+        cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls });
+        if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);
       opts.signal.addEventListener("abort", onAbort, { once: true });
       const untrack = trackSession(() => kill("aborted"));
