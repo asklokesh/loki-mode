@@ -14,6 +14,7 @@ only inside run(), and the loki/version probe accepts an injectable runner.
 
 import json
 import os
+import re
 
 try:
     from . import _base
@@ -21,10 +22,52 @@ except ImportError:  # allow running as a loose script / sys.path import
     import _base  # type: ignore
 
 
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.dirname(os.path.abspath(__file__)))))
+
+
+def loki_bin():
+    """Binary the bench runs. Default is the repo's own bin/loki, NEVER bare
+    `loki` on PATH (a stale global install made a paid run measure old code
+    while recording the repo SHA). LOKI_BENCH_LOKI_BIN overrides."""
+    override = os.environ.get("LOKI_BENCH_LOKI_BIN", "").strip()
+    return override or os.path.join(REPO_ROOT, "bin", "loki")
+
+
+def parse_loki_version(text):
+    """Extract X.Y.Z from `Loki Mode vX.Y.Z`. None if absent."""
+    m = re.search(r"Loki Mode v(\d+\.\d+\.\d+)", text or "")
+    return m.group(1) if m else None
+
+
+def repo_version():
+    try:
+        with open(os.path.join(REPO_ROOT, "VERSION")) as fh:
+            return fh.read().strip()
+    except OSError:
+        return None
+
+
+def version_mismatch_error(probed_text):
+    """Return an error string when the probed binary is not the repo version,
+    else None. LOKI_BENCH_ALLOW_VERSION_MISMATCH=1 waives the check."""
+    if os.environ.get("LOKI_BENCH_ALLOW_VERSION_MISMATCH") == "1":
+        return None
+    probed = parse_loki_version(probed_text)
+    want = repo_version()
+    if probed is not None and probed == want:
+        return None
+    return ("loki binary %s reports version %s but the repo VERSION is %s; "
+            "refusing a paid run that would measure different code. Set "
+            "LOKI_BENCH_LOKI_BIN to a matching build or "
+            "LOKI_BENCH_ALLOW_VERSION_MISMATCH=1 to override."
+            % (loki_bin(), probed or "unknown", want or "unknown"))
+
+
 def _detect_loki_version(runner=None, cwd=None):
     """Best-effort `loki version` probe. Returns a string or None."""
     rc, out, _err, _status, _dur = _base.run_cli(
-        ["loki", "version"], cwd=cwd or os.getcwd(), timeout=30, runner=runner
+        [loki_bin(), "version"], cwd=cwd or os.getcwd(), timeout=30, runner=runner
     )
     if rc != 0:
         return None
@@ -185,7 +228,7 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
     tool_version = _detect_loki_version(runner=runner, cwd=workdir)
 
     cmd = [
-        "loki", "start", spec,
+        loki_bin(), "start", spec,
         "--provider", provider,
         "--no-dashboard",
         "--yes",
