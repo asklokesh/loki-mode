@@ -110,6 +110,56 @@ else
     bad "SDK success path wrong: expected canned text, got '$mock_out'"
 fi
 
+# ---- 5. S8: grill + prd-enrich use lean child flags and append ledger lines ----
+S8="$(mktemp -d)"
+mkdir -p "$S8/bin" "$S8/proj"
+cat > "$S8/bin/claude" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--help" ]; then
+  echo "--bare --setting-sources --strict-mcp-config --mcp-config --disable-slash-commands --tools --output-format"
+  exit 0
+fi
+printf '%s\n' "$@" > "$S8_ARGV"
+printf '%s' '{"type":"result","result":"CANNED BODY","total_cost_usd":0.01,"usage":{"input_tokens":5,"output_tokens":6}}'
+STUB
+chmod +x "$S8/bin/claude"
+s8_run() { # s8_run <script> <fn>
+    (
+      cd "$S8/proj" || exit 1
+      export PATH="$S8/bin:$PATH" S8_ARGV="$S8/argv.txt" LOKI_DIR="$S8/proj/.loki"
+      export LOKI_PROVIDER=claude LOKI_PRD_ENRICH_TIMEOUT=30 LOKI_SDK_GRILL=0 LOKI_SDK_PRD_ENRICH=0
+      unset ANTHROPIC_API_KEY LOKI_LEAN_CHILDREN __LOKI_CLAUDE_HELP_CACHE
+      set +u
+      # shellcheck disable=SC1090
+      source "$1" >/dev/null 2>&1
+      "$2" "some prompt"
+    )
+}
+for spec in "grill|$GRILL|grill_invoke_provider" "enrich|$PE|_loki_prd_enrich_invoke"; do
+    phase="${spec%%|*}"; rest="${spec#*|}"; script="${rest%%|*}"; fn="${rest#*|}"
+    rm -rf "$S8/proj/.loki" "$S8/argv.txt"
+    got="$(s8_run "$script" "$fn" 2>/dev/null)"
+    argv="$(cat "$S8/argv.txt" 2>/dev/null)"
+    if grep -qxF -- "--tools=" <<<"$argv" && grep -qxF -- "--strict-mcp-config" <<<"$argv" \
+       && grep -qxF -- "--output-format" <<<"$argv"; then
+        ok "S8 $phase: claude called with lean child flags (--tools= as one arg)"
+    else
+        bad "S8 $phase: lean flags missing from argv: [$(tr '\n' ' ' <<<"$argv")]"
+    fi
+    if grep -qxF -- "CANNED BODY" <<<"$got"; then
+        ok "S8 $phase: output unwrapped to result text (schema unchanged)"
+    else
+        bad "S8 $phase: output not unwrapped: [$got]"
+    fi
+    led="$S8/proj/.loki/metrics/child-sessions.jsonl"
+    if [ -f "$led" ] && grep -q "\"phase\":\"$phase\"" "$led"; then
+        ok "S8 $phase: ledger line appended"
+    else
+        bad "S8 $phase: ledger line missing"
+    fi
+done
+rm -rf "$S8"
+
 echo ""
 echo "Total: $((PASS+FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]

@@ -88,14 +88,38 @@ _loki_prd_enrich_invoke() {
     local out=""
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
     ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
+    # S8: lean child flags (no user-scope settings/MCP/tools) + ledger line.
+    type loki_lean_child_flags >/dev/null 2>&1 \
+        || . "$(dirname "${BASH_SOURCE[0]}")/claude-flags.sh" 2>/dev/null || true
+    local _pe_argv=("${_LOKI_PERM_ARGV[@]}") _pe_lf _pe_ledger=false
+    if type loki_lean_child_flags >/dev/null 2>&1; then
+        while IFS= read -r _pe_lf; do
+            [ -n "$_pe_lf" ] && _pe_argv+=("$_pe_lf")
+        done < <(loki_lean_child_flags enrich 2>/dev/null)
+    fi
+    if type loki_child_ledger_append >/dev/null 2>&1; then
+        _pe_ledger=true
+        _pe_argv+=("--output-format" "json")
+    fi
     if command -v timeout >/dev/null 2>&1; then
         out=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_PRD_ENRICH_TIMEOUT}" \
-                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_pe_argv[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     else
         # No coreutils timeout (e.g. bare macOS). Run without it; the model
         # call is a one-shot and the caller still tolerates failure.
         out=$(CAVEMAN_DEFAULT_MODE=off \
-                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_pe_argv[@]}" -p "$prompt" 2>/dev/null) || rc=$?
+    fi
+    if [ "$rc" -eq 0 ] && [ "$_pe_ledger" = true ] && [ -n "$out" ]; then
+        loki_child_ledger_append enrich "$out" >/dev/null 2>&1 || true
+        out=$(printf '%s' "$out" | python3 -I -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    if isinstance(d, list):
+        d = next((x for x in reversed(d) if isinstance(x, dict) and x.get("type") == "result"), {})
+    sys.stdout.write(str(d.get("result", "")))
+except Exception:
+    pass' 2>/dev/null)
     fi
     [ "$rc" -ne 0 ] && return 1
     [ -z "$out" ] && return 1
