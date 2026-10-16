@@ -1,12 +1,12 @@
 // Operator steer on engine10: HUMAN_INPUT.md is injected into the next plan/implement brief once, then archived.
 import { afterAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { execFileSync } from "node:child_process";
-import { appendFileSync, chmodSync, lstatSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { appendFileSync, chmodSync, lstatSync, linkSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
-import { STEER_BEGIN, STEER_END, consumeSteer, type IntentRevision, readIntentRevisions, staleAtSeal, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
+import { STEER_BEGIN, STEER_END, consumeSteer, type IntentRevision, readIntentRevisions, staleAtSeal, staleReason, staleWallRevisions, withSteer } from "../../src/util/steer.ts";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -121,6 +121,59 @@ describe("engine10 steer", () => {
     expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "not a regular file"]]);
     expect(archived(d).some((n) => n.startsWith("human-input-REJECTED-NOTFILE-"))).toBe(true);
     expect(consumeSteer(d)).toBe("FRESH");
+  });
+  test("a hard-link failure (no-hardlink filesystem) never renames over a fresh steer: the non-file entry is quarantined", () => {
+    const d = repo();
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    execFileSync("mkfifo", [f]);
+    const sink: IntentRevision[] = [];
+    const link = ((): never => { throw Object.assign(new Error("no hard links"), { code: "EPERM" }); }) as unknown as typeof linkSync;
+    expect(consumeSteer(d, {}, () => new Date(), sink, { beforeRestore: () => writeFileSync(f, "FRESH"), link })).toBeNull();
+    expect(readFileSync(f, "utf8")).toBe("FRESH");
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "not a regular file"]]);
+    expect(archived(d).some((n) => n.startsWith("human-input-REJECTED-NOTFILE-"))).toBe(true);
+  });
+  const deadPid = (): number => spawnSync("true").pid!;
+  test("a claim orphaned by a dead consumer is archived and reported unapplied; a live pid's claim is left alone", () => {
+    const d = repo();
+    mkdirSync(join(d, ".loki", "logs"));
+    const gone = `.claim-${deadPid()}-abc123`, live = `.claim-${process.ppid}-abc123`;
+    writeFileSync(join(d, ".loki", "logs", gone), "LOST");
+    writeFileSync(join(d, ".loki", "logs", live), "BUSY");
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "orphaned claim"]]);
+    const names = archived(d);
+    expect(names).toContain(live);
+    expect(names).not.toContain(gone);
+    const o = names.find((n) => n.startsWith("human-input-ORPHAN-"))!;
+    expect(readFileSync(join(d, ".loki", "logs", o), "utf8")).toBe("LOST");
+  });
+  test("an orphan that cannot be archived is reported with its stranded path and a distinct remedy", () => {
+    const d = repo();
+    mkdirSync(join(d, ".loki", "logs"));
+    const gone = `.claim-${deadPid()}-abc123`;
+    writeFileSync(join(d, ".loki", "logs", gone), "LOST");
+    const link = ((): never => { throw Object.assign(new Error("denied"), { code: "EACCES" }); }) as unknown as typeof linkSync;
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink, { link });
+    expect(sink[0]).toMatchObject({ unapplied: true, reason: `steer stranded at .loki/logs/${gone}` });
+    expect(staleReason(sink)).toContain("Recover or delete the stranded file");
+    expect(existsSync(join(d, ".loki", "logs", gone))).toBe(true);
+  });
+  test("a failure after the archive (revision record) still yields an unapplied record, and the steer text is not dropped", () => {
+    const d = repo("KEEP");
+    const sink: IntentRevision[] = [];
+    const afterArchive = (): void => { throw new Error("record boom"); };
+    expect(consumeSteer(d, {}, () => new Date(), sink, { afterArchive })).toBe("KEEP");
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "steer applied but its revision record failed"]]);
+  });
+  test("a hard-link failure while archiving falls back to a collision-proof rename and keeps the steer", () => {
+    const d = repo("TXT");
+    const link = ((): never => { throw Object.assign(new Error("no hard links"), { code: "ENOTSUP" }); }) as unknown as typeof linkSync;
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { link })).toBe("TXT");
+    expect(archived(d).filter((n) => n.startsWith("human-input-")).length).toBe(1);
+    expect(archived(d).some((n) => n.startsWith(".claim-"))).toBe(false);
   });
   test("a non-file steer with no fresh steer is restored in place", () => {
     const d = repo();

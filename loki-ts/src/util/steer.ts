@@ -3,9 +3,9 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, rmSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, rmSync, unlinkSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
 
 export const STEER_MAX_BYTES = 1024 * 1024;
@@ -14,17 +14,33 @@ export const STEER_BEGIN = "--- BEGIN OPERATOR GUIDANCE (from loki steer) ---";
 export const STEER_END = "--- END OPERATOR GUIDANCE ---";
 
 /** Test seams: run right after the claim rename, and right after the claimed file is opened (before the read). */
-export interface SteerHooks { afterClaim?: (claimed: string) => void; afterOpen?: (claimed: string) => void; beforeRestore?: () => void }
+export interface SteerHooks { afterClaim?: (claimed: string) => void; afterOpen?: (claimed: string) => void; beforeRestore?: () => void; afterArchive?: () => void; link?: typeof linkSync }
 
 /** Moves an exclusively-owned file to `<prefix>.md` (or `<prefix>-N.md`) without ever replacing an existing archive: linkSync fails with EEXIST atomically, then the private name is dropped.
- *  A directory cannot be hard-linked, so it gets a random-suffix rename instead. Returns the archive's base name. */
-function archiveTo(logs: string, prefix: string, src: string): string {
+ *  Only a filesystem that cannot hard-link (EPERM, ENOTSUP, EXDEV, EMLINK; also directories) gets a random-suffix rename. A failed unlink after a good link keeps the link's name. Returns the archive's base name. */
+function archiveTo(logs: string, prefix: string, src: string, link: typeof linkSync = linkSync): string {
   for (let i = 0; ; i++) {
     const name = i === 0 ? `${prefix}.md` : `${prefix}-${i}.md`;
-    try { linkSync(src, join(logs, name)); unlinkSync(src); return name; } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === "EEXIST") continue;
+    try { link(src, join(logs, name)); } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") continue;
+      if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV" && code !== "EMLINK") throw e;
       const name2 = `${prefix}-${randomBytes(4).toString("hex")}.md`; renameSync(src, join(logs, name2)); return name2;
     }
+    try { unlinkSync(src); } catch { /* the archive is complete; a leftover private name is harmless */ }
+    return name;
+  }
+}
+
+/** Claims left by a consumer that died between the claim and the archive (pid dead): archive each and report it unapplied, so Seal refuses instead of the steer vanishing. */
+function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) => void, link?: typeof linkSync): void {
+  let names: string[];
+  try { names = readdirSync(logs); } catch { return; }
+  for (const n of names) {
+    const m = /^\.claim-(\d+)-[0-9a-f]+$/.exec(n);
+    if (!m || Number(m[1]) === process.pid) continue;
+    try { process.kill(Number(m[1]), 0); continue; } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") continue; }
+    try { archiveTo(logs, `human-input-ORPHAN-${stamp}`, join(logs, n), link); unapplied("orphaned claim"); } catch { unapplied(`steer stranded at .loki/logs/${n}`); }
   }
 }
 
@@ -40,16 +56,24 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
     const stamp = now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
+    sweepOrphans(logs, stamp, unapplied, hooks?.link);
     // A private, unique claim name: the rename can never collide with another consumer, and the archive name is chosen later by archiveTo.
     claimed = join(logs, `.claim-${process.pid}-${randomBytes(6).toString("hex")}`);
     try { renameSync(f, claimed); } catch (e) { claimed = ""; if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
     hooks?.afterClaim?.(claimed);
-    const reject = (tag: string, reason: string): null => { archiveTo(logs, `human-input-REJECTED-${tag}-${stamp}`, claimed); claimed = ""; unapplied(reason); return null; };
+    const reject = (tag: string, reason: string): null => { archiveTo(logs, `human-input-REJECTED-${tag}-${stamp}`, claimed, hooks?.link); claimed = ""; unapplied(reason); return null; };
     // A directory or special file goes back in place (the remedy deletes it). linkSync fails atomically with EEXIST when a fresh steer is there; a directory (EPERM) is renamed back, which a fresh regular file refuses with ENOTDIR. Either refusal quarantines.
     const notFile = (): null => {
       hooks?.beforeRestore?.();
-      try { try { linkSync(claimed, f); unlinkSync(claimed); } catch (e) { if ((e as NodeJS.ErrnoException).code === "EEXIST") throw e; renameSync(claimed, f); } claimed = ""; unapplied("not a regular file"); return null; } catch { /* quarantine below */ }
-      return reject("NOTFILE", "not a regular file");
+      let restored = false;
+      try {
+        // Only a directory may be renamed back (a fresh regular file refuses with ENOTDIR). Anything else uses an atomic link; any link failure quarantines, never a rename that could replace a fresh steer.
+        if (lstatSync(claimed).isDirectory()) renameSync(claimed, f); else (hooks?.link ?? linkSync)(claimed, f);
+        restored = true;
+      } catch { /* quarantine below */ }
+      if (!restored) return reject("NOTFILE", "not a regular file");
+      try { if (!lstatSync(claimed, { throwIfNoEntry: false })?.isDirectory()) unlinkSync(claimed); } catch { /* leftover private name */ }
+      claimed = ""; unapplied("not a regular file"); return null;
     };
     // O_NOFOLLOW (O_NONBLOCK so a FIFO cannot hang the open); every check and the read use this fd. On Windows both flags are undefined and act as 0.
     try { fd = openSync(claimed, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
@@ -71,10 +95,15 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
       chunks.push(Buffer.from(buf.subarray(0, n)));
     }
     const text = Buffer.concat(chunks).toString("utf8").trim();
-    const archive = archiveTo(logs, `human-input-${stamp}`, claimed); claimed = "";
-    if (text !== "") { const recs = recordRevisions(repoDir, text, archive, now()); sink?.push(...recs); }
+    const archive = archiveTo(logs, `human-input-${stamp}`, claimed, hooks?.link); claimed = "";
+    try { hooks?.afterArchive?.(); if (text !== "") { const recs = recordRevisions(repoDir, text, archive, now()); sink?.push(...recs); } } catch { unapplied("steer applied but its revision record failed"); }
     return text === "" ? null : text;
-  } catch { if (claimed) { try { archiveTo(join(repoDir, ".loki", "logs"), `human-input-${now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}`, claimed); } catch { /* stays under its claim name */ } unapplied("logs dir unwritable or file unreadable"); } else try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ } return null; }
+  } catch {
+    if (claimed) {
+      try { archiveTo(join(repoDir, ".loki", "logs"), `human-input-${now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}`, claimed, hooks?.link); unapplied("logs dir unwritable or file unreadable"); } catch { unapplied(`steer stranded at .loki/logs/${basename(claimed)}`); }
+    } else try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ }
+    return null;
+  }
   finally { if (fd >= 0) try { closeSync(fd); } catch { /* already closed */ } }
 }
 
@@ -127,11 +156,11 @@ export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, 
   return (revs ?? []).filter((r) => r.unapplied === true || r.at >= from); // an unapplied steer (never consumed) refuses whatever the Wall timeline says
 }
 
-const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory. A steer that was already claimed is archived as .loki/logs/human-input-*.md; one still at .loki/HUMAN_INPUT.md is unreadable, so delete it.", unknown: "Make .loki/logs writable." };
+const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory. A steer that was already claimed is archived as .loki/logs/human-input-*.md; one still at .loki/HUMAN_INPUT.md is unreadable, so delete it.", "orphaned claim": "A steer claimed by a crashed run was archived as .loki/logs/human-input-ORPHAN-*.md.", "steer applied but its revision record failed": "The steer reached the session but its revision could not be recorded; check .loki is writable.", unknown: "Make .loki/logs writable." };
 /** User-facing Seal refusal for a non-empty stale list: says what happened and what to do. */
 export function staleReason(stale: readonly IntentRevision[]): string {
   const bad = stale.filter((r) => r.unapplied), late = stale.filter((r) => !r.unapplied);
-  if (bad.length) { const why = [...new Set(bad.map((r) => r.reason ?? "unknown"))]; return `a steer in .loki/HUMAN_INPUT.md could not be applied (${why.join("; ")}); this run cannot be sealed. ${[...new Set(why.map((w) => STEER_REMEDY[w] ?? STEER_REMEDY.unknown!))].join(" ")} A steer left in place is read after the Wall starts and blocks the next run too: delete .loki/HUMAN_INPUT.md and re-run with loki "<task with the steer folded in>".`; }
+  if (bad.length) { const why = [...new Set(bad.map((r) => r.reason ?? "unknown"))]; return `a steer in .loki/HUMAN_INPUT.md could not be applied (${why.join("; ")}); this run cannot be sealed. ${[...new Set(why.map((w) => STEER_REMEDY[w] ?? (w.startsWith("steer stranded at ") ? "Recover or delete the stranded file named above; it was not archived." : STEER_REMEDY.unknown!)))].join(" ")} A steer left in place is read after the Wall starts and blocks the next run too: delete .loki/HUMAN_INPUT.md and re-run with loki "<task with the steer folded in>".`; }
   return `operator steer rev ${late.map((r) => r.rev).join(",")} arrived after the Wall was frozen, so the tests no longer match your new intent; nothing was sealed. Rerun with the new intent included: loki "<task with the steer folded in>"`;
 }
 
