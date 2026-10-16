@@ -199,6 +199,13 @@ if command -v bun >/dev/null 2>&1; then
         *) fail "start --resume dropped the run id: $out" ;;
     esac
     [ "$rc" -eq 0 ] && pass "phase-reported (4) maps to exit 0, same as loki resume" || fail "rc=$rc, expected 0 for a reported phase"
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start "fix the login bug" --resume 2>&1)"; rc=$?
+    [ "$rc" -eq 2 ] && pass "start <task> --resume is refused with exit 2" || fail "start <task> --resume rc=$rc, expected 2"
+    case "$out" in
+        *"takes an optional run id, not a task"*) pass "refusal names the run-id-only rule" ;;
+        *) fail "refusal message missing: $out" ;;
+    esac
+    case "$out" in *STUB-ARGV*) fail "task text reached the delegate" ;; *) pass "task text never reaches the delegate" ;; esac
     out="$(cd "$dir" && STUB_RC=3 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc=$?
     [ "$rc" -eq 3 ] && pass "nothing to resume (3) is not turned into a new build" || fail "rc=$rc, expected 3"
 else

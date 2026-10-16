@@ -2657,6 +2657,14 @@ cmd_start() {
     done
     if [ "$_ps_resume" = 1 ]; then
         local _ps_rrc=0
+        for _ps_a in ${_ps_resume_args[@]+"${_ps_resume_args[@]}"}; do
+            case "$_ps_a" in
+                e10-[A-Za-z0-9-]*) ;;
+                *)
+                    echo -e "${RED}--resume resumes a sealed run; it takes an optional run id, not a task. Run \`loki start <task>\` for a new run.${NC}" >&2
+                    return 2 ;;
+            esac
+        done
         ( _loki_bun_delegate engine10 resume ${_ps_resume_args[@]+"${_ps_resume_args[@]}"} ) || _ps_rrc=$?
         [ "$_ps_rrc" = 4 ] && _ps_rrc=0
         return "$_ps_rrc"
