@@ -316,6 +316,36 @@ else
     log_fail "permission argv mismatch: def=[$_pp_def] cmp=[$_pp_cmp] bad=[$_pp_bad]"
 fi
 
+# ===========================================
+# Test 14: P12-26b quickstart + python sites reach the shared helper
+# ===========================================
+log_test "quickstart classify and magic debate honor LOKI_PERMISSION_POLICY (stub claude)"
+_pq_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-run.pq.XXXXXX")"
+mkdir -p "$_pq_dir/.loki" "$_pq_dir/bin"
+printf '%s' '{"claude_permissions":{"mode":"acceptEdits","deny":["Bash(rm:*)"]}}' > "$_pq_dir/.loki/policies.json"
+printf '#!/bin/sh\nprintf "%%s|" "$@" > "%s/argv"\necho ok\n' "$_pq_dir" > "$_pq_dir/bin/claude"
+chmod +x "$_pq_dir/bin/claude"
+_pq_root="$PROVIDERS_DIR/.."
+# shellcheck disable=SC2016
+_pq_qs='source "$1/autonomy/quickstart.sh" >/dev/null 2>&1; _qs_classify_invoke "hi" >/dev/null 2>&1; cat "$2/argv"'
+_pq_env=(LOKI_NO_BROWSER=1 LOKI_ALLOW_CLAUDE_SIDECALLS=1 LOKI_PROVIDER=claude PATH="$_pq_dir/bin:$PATH" HOME="$_pq_dir" LOKI_MANAGED_SETTINGS="$_pq_dir/none.json" LOKI_PROJECT_DIR="$_pq_dir")
+_pq_def=$(env -u LOKI_PERMISSION_POLICY "${_pq_env[@]}" bash -c "$_pq_qs" _ "$_pq_root" "$_pq_dir")
+_pq_cmp=$(env LOKI_PERMISSION_POLICY=compiled "${_pq_env[@]}" bash -c "$_pq_qs" _ "$_pq_root" "$_pq_dir")
+# shellcheck disable=SC2016
+_pq_py='import sys; sys.path.insert(0, sys.argv[1]); from magic.core.debate import DebateRunner; r = DebateRunner.__new__(DebateRunner); r.provider = "claude"; r.project_dir = sys.argv[2]; print("|".join(r._build_command("p")))'
+_pq_pdef=$(env -u LOKI_PERMISSION_POLICY "${_pq_env[@]}" python3 -c "$_pq_py" "$_pq_root" "$_pq_dir")
+_pq_pcmp=$(env LOKI_PERMISSION_POLICY=compiled "${_pq_env[@]}" python3 -c "$_pq_py" "$_pq_root" "$_pq_dir")
+_pq_want="--permission-mode|acceptEdits|--disallowedTools|Bash(rm:*)|"
+rm -rf "$_pq_dir"
+if [ "$_pq_def" = "--dangerously-skip-permissions|-p|hi|" ] \
+   && [ "$_pq_cmp" = "${_pq_want}-p|hi|" ] \
+   && [ "$_pq_pdef" = "claude|--dangerously-skip-permissions|-p|p" ] \
+   && [ "$_pq_pcmp" = "claude|${_pq_want}-p|p" ]; then
+    log_pass "quickstart and debate: default unchanged, compiled policy applied"
+else
+    log_fail "p12-26b mismatch: qs_def=[$_pq_def] qs_cmp=[$_pq_cmp] py_def=[$_pq_pdef] py_cmp=[$_pq_pcmp]"
+fi
+
 echo ""
 echo "========================================"
 echo "Test Summary"

@@ -825,6 +825,13 @@ _qs_classify_invoke() {
     if command -v timeout >/dev/null 2>&1; then to="timeout"
     elif command -v gtimeout >/dev/null 2>&1; then to="gtimeout"; fi
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    if ! type _loki_claude_permission_argv >/dev/null 2>&1; then
+        # P12-26b: nothing on this path sources claude-flags.sh, so load it here.
+        local _qs_flags
+        _qs_flags="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/claude-flags.sh"
+        # shellcheck source=/dev/null
+        [ -f "$_qs_flags" ] && . "$_qs_flags" 2>/dev/null
+    fi
     ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
     if [ -n "$to" ]; then
         out=$(CAVEMAN_DEFAULT_MODE=off "$to" "${LOKI_QUICKSTART_CLASSIFY_TIMEOUT}" \

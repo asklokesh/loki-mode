@@ -480,7 +480,11 @@ class DebateRunner:
         """Map self.provider to an argv list."""
         provider = self.provider.lower()
         if provider == "claude":
-            return ["claude", "--dangerously-skip-permissions", "-p", prompt]
+            _root = str(Path(__file__).resolve().parents[2])
+            if _root not in sys.path:
+                sys.path.insert(0, _root)
+            from autonomy.lib.claude_permissions import claude_permission_argv
+            return ["claude", *claude_permission_argv(str(self.project_dir)), "-p", prompt]
         if provider == "codex":
             # Codex uses `exec --sandbox workspace-write` with the prompt as
             # positional (codex 0.132.0 deprecated --full-auto; workspace-write

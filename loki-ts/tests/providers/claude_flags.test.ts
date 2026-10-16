@@ -9,7 +9,7 @@
 // - claudeFlagSupported respects the cache; ensureClaudeHelpCache idempotent
 // - buildAutoFlags composes only supported + non-null flags
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, copyFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -845,7 +845,7 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     expect(bashArgv(env)).toEqual(want);
   });
 
-  it("every in-run-path claude spawn site routes through the permission helper (out of scope: autonomy/loki migrate/doc/heal, dashboard/build_supervisor.py, magic/core/debate.py, benchmarks, eval, scripts)", () => {
+  it("every in-run-path claude spawn site routes through the permission helper (out of scope: benchmarks, eval, scripts)", () => {
     const root = join(import.meta.dir, "../../..");
     const lit = "--dangerously-skip-permissions";
     const live = (rel: string): string[] =>
@@ -857,6 +857,41 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     expect(live("loki-ts/src/runner/quality_gates.ts")).toEqual([]);
     expect(live("loki-ts/src/council/voter_agents.ts")).toEqual([]);
     expect(live("providers/claude.sh").filter((l) => !l.includes("PROVIDER_AUTONOMOUS_FLAG="))).toEqual([]);
+  });
+
+  it("P12-26b: no unlisted raw --dangerously-skip-permissions launch remains in autonomy/, providers/, dashboard/, magic/", () => {
+    const root = join(import.meta.dir, "../../..");
+    const lit = "--dangerously-skip-permissions";
+    // Scoped-out list: path -> (reason, max live lines). Everything else must be policy-routed.
+    const scopedOut: Record<string, string> = {
+      "autonomy/run.sh": "PROVIDER_AUTONOMOUS_FLAG default and _LOKI_PERM_ARGV legacy defaults",
+      "autonomy/lib/claude-flags.sh": "defines the legacy default of the helper",
+      "autonomy/lib/done-recognition.sh": "_LOKI_PERM_ARGV legacy default",
+      "autonomy/lib/prd-enrich.sh": "_LOKI_PERM_ARGV legacy default",
+      "autonomy/lib/voter-agents.sh": "_LOKI_PERM_ARGV legacy default",
+      "autonomy/grill.sh": "_LOKI_PERM_ARGV legacy default",
+      "autonomy/quickstart.sh": "_LOKI_PERM_ARGV legacy default",
+      "providers/claude.sh": "PROVIDER_AUTONOMOUS_FLAG default",
+      "dashboard/build_supervisor.py": "sandboxed fixed printf readiness probe must run Bash; a policy would cause a false auth failure",
+      "autonomy/lib/claude_permissions.py": "legacy default of the python entry",
+      "autonomy/loki": "display text, usage docs, and _loki_perm_argv_for legacy default",
+      "autonomy/README.md": "documentation",
+    };
+    const allowedLine = /_LOKI_PERM_ARGV=\(|PROVIDER_AUTONOMOUS_FLAG=|_LEGACY = |^\s*(#|\/\/|\*)|echo "Flag:|^claude --dangerously|^\|/;
+    const out: string[] = [];
+    const walk = (rel: string): void => {
+      for (const e of readdirSync(join(root, rel), { withFileTypes: true })) {
+        const r = `${rel}/${e.name}`;
+        if (e.isDirectory()) { if (!["node_modules", "__pycache__", "dist", ".git"].includes(e.name)) walk(r); continue; }
+        if (!/\.(sh|py|ts|js|mjs)$/.test(e.name) && e.name !== "loki") continue;
+        const bad = readFileSync(join(root, r), "utf8").split("\n")
+          .filter((l) => l.includes(lit) && !allowedLine.test(l.trim()) && !allowedLine.test(l));
+        if (bad.length && !(r in scopedOut)) out.push(`${r}: ${bad[0].slice(0, 100)}`);
+        if (bad.length && r in scopedOut && !["dashboard/build_supervisor.py"].includes(r)) out.push(`${r}: scoped-out file has non-default raw launch`);
+      }
+    };
+    for (const d of ["autonomy", "providers", "dashboard", "magic"]) walk(d);
+    expect(out).toEqual([]);
   });
 
   it("works from the bundled dist layout (and fails closed to plan when the compiler is absent)", () => {
