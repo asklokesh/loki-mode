@@ -4,7 +4,7 @@ This file is the full Plan v1.2 todo list and slice plan, kept in the repo so it
 
 Source: /Users/lokesh/Downloads/LOKI_MODE_INTEGRATED_ENGINEERING_PLAN_v1.2.md, cross-checked against
 /Users/lokesh/Downloads/FACTORY_VS_LOKI_MODE_INTEGRATED_v1.1.md (already planned as FV-*, COST-*, M-*, INTEL-* rows).
-Validated against main at dad1b2872, VERSION 11.14.0, 2026-10-15. Author: Architect (opus), read-only pass.
+Originally validated against main at dad1b2872 (VERSION 11.14.0) on 2026-10-15 by the Architect (opus), read-only pass. Version and status lines were refreshed on 2026-10-16, see section 0.
 Prefix P12-NN verified unused on docs/v10/BOARD.md.
 
 Ground rules every card inherits (not repeated per card):
@@ -27,7 +27,7 @@ Ground rules every card inherits (not repeated per card):
 
 ## 0. Live todo list (status as of 2026-10-16)
 
-Audited against main, VERSION 11.17.1, local main a9f8b0b99 is pushed to origin, 57 commits ahead of b136ed44e (the v11.17.1 release commit), and will be cut as v11.17.2. Rows are the source epic ids from source section 9 (P0-01 to P2-01), the plan item ids from section A (S, A, B, C, D, E, Q, T, M, N, R; A-prefixed and A9-prefixed ids are plan items or plan A.9 epics that are not source epics), the P12 slice ids from section B, the P12 slice ids from section B, and the founder and CTO decisions from section C. One work item can appear under several ids, so counts below are rows, not unique slices. The per-slice P12-NN rows are the authoritative status; the other ids point at them.
+Version facts as of 2026-10-16: VERSION file 11.17.2 (release commit fe839d6e2 is in git history); npm dist-tags (npm view loki-mode dist-tags): npm latest 11.10.1, next 11.17.1, so v11.17.2 is not on npm next and its publish is unverified. Row evidence below was audited earlier against main a9f8b0b99, 57 commits ahead of b136ed44e (the v11.17.1 release commit); commits merged to main since then are not re-audited here and any row not backed by git log stays unverified. In the rows, 'ships in v11.17.2' means merged and awaiting npm publication; none of those rows is verified released. Rows are the source epic ids from source section 9 (P0-01 to P2-01), the plan item ids from section A (S, A, B, C, D, E, Q, T, M, N, R; A-prefixed and A9-prefixed ids are plan items or plan A.9 epics that are not source epics), the P12 slice ids from section B, the P12 slice ids from section B, and the founder and CTO decisions from section C. One work item can appear under several ids, so counts below are rows, not unique slices. The per-slice P12-NN rows are the authoritative status; the other ids point at them.
 
 ### Summary count by status
 
@@ -176,7 +176,7 @@ None at this audit. No P12-NN slice is in ready state on docs/v10/BOARD.md (P12 
 | ID | Item | Evidence | Remaining |
 |---|---|---|---|
 | S07 | North star hosted Company OS | C-F5 founder scope call | Founder decision C-F5 |
-| S08 | Stale version references (v11.4.2) | C-F8; plan says VERSION 11.14.0, now 11.17.1 | Founder-owned doc refresh; update plan version refs |
+| S08 | Stale version references (v11.4.2) | C-F8; plan said VERSION 11.14.0, VERSION file now 11.17.2 (npm latest 11.10.1, next 11.17.1); version refs refreshed 2026-10-16 | Done in this file; other docs not checked (unverified) |
 | S14 | Cost at or under half of raw CC | P12-28 not started; COST-6 parked@2026-10-16 paid eval; C-F1 spend go | C-F1 spend approval, COST-6 run, P12-28 valid B9 row and parity gate |
 | C01 | Wall authored in isolation with holdout | P12-05 87637d1ee released v11.17.1, default ON per D99 item 4 (C-C4 decided) | None; opt out with LOKI_WALL_HOLDOUT=0 |
 | M4 | n>=3 per cell | COST-6 parked@2026-10-16T00:12Z; C-F1 paid spend | Founder approves spend; run COST-6 attribution --execute n=3 |
