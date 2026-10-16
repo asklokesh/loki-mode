@@ -353,4 +353,12 @@ for (let i = 0; i < ${per}; i++) m.emit("cost" as never, "x" as never, { usd: 0.
       expect(ledgerSum(ledger)).toBe(n * per * 0.25);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
+  test("ledgerSum counts only the first seed line, first seed wins", () => {
+    const d = mk();
+    try {
+      const f = join(d, "s.ledger");
+      writeFileSync(f, JSON.stringify({ usd: 2, seed: true }) + "\n" + JSON.stringify({ usd: 3, seed: true }) + "\n" + JSON.stringify({ usd: 0.5 }) + "\n");
+      expect(ledgerSum(f)).toBe(2.5);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
 });

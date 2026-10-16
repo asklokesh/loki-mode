@@ -34,12 +34,12 @@ export function capNote(usd: number, source: CapSource): string {
 export function groupEnv(env: NodeJS.ProcessEnv, capUsd: number, repoDir?: string): NodeJS.ProcessEnv {
   if (!(capUsd > 0)) return env;
   const out: NodeJS.ProcessEnv = { ...env, LOKI_BUDGET_LIMIT: String(capUsd) };
-  if (repoDir && !out.LOKI_BUDGET_LEDGER) { try { const d = join(resolve(repoDir), ".loki", "runs"); mkdirSync(d, { recursive: true }); out.LOKI_BUDGET_LEDGER = join(d, `group-${process.pid}-${Date.now()}.ledger`); } catch (e) { out.LOKI_BUDGET_LEDGER = join(resolve(repoDir), ".loki", "runs", "unusable", "group.ledger"); process.stderr.write(`budget: cannot create the shared ledger dir (${e instanceof Error ? e.message : String(e)}); units will stop, failing closed\n`); } } // P12-22s: a path under a non-directory, so capMeter fails closed on it
+  if (repoDir && !out.LOKI_BUDGET_LEDGER) { try { const d = join(resolve(repoDir), ".loki", "runs"); mkdirSync(d, { recursive: true }); out.LOKI_BUDGET_LEDGER = join(d, `group-${process.pid}-${Date.now()}.ledger`); } catch (e) { out.LOKI_BUDGET_LEDGER = join(resolve(repoDir), ".loki", "runs", "unusable", "group.ledger"); /* deliberately unreachable path, used only when mkdir fails */ process.stderr.write(`budget: cannot create the shared ledger dir (${e instanceof Error ? e.message : String(e)}); units will stop, failing closed\n`); } } // P12-22s: a path under a non-directory, so capMeter fails closed on it
   return out;
 }
 /** P12-22r: shared ledger. One JSON line per priced cost, written with a single O_APPEND write (atomic for small lines). Sum = spend of every unit. */
 export function ledgerSum(path: string): number | null {
-  try { let t = 0, seeded = false; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l) as { usd?: unknown; seed?: unknown }, u = r.usd; if (r.seed === true) { if (seeded) continue; seeded = true; } if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
+  try { let t = 0, seeded = false; for (const l of readFileSync(path, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l) as { usd?: unknown; seed?: unknown }, u = r.usd; if (r.seed === true) { if (seeded) continue; seeded = true; } /* first seed wins when units carry different seeds */ if (typeof u === "number" && Number.isFinite(u) && u > 0) t += u; } return t; } catch { return null; }
 }
 /** Worker side: wraps the emit fn so every cost event feeds the meter; `over` is RunContext.overCap. */
 export function capMeter<E extends (type: never, stage: never, data: Record<string, unknown>) => void>(raw: E, env: NodeJS.ProcessEnv): { emit: E; over: () => boolean; remaining: () => number | null } {
