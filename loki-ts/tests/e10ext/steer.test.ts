@@ -2,7 +2,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:net";
 import { execFileSync, spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, lstatSync, linkSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, utimesSync, lstatSync, linkSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
@@ -148,6 +148,33 @@ describe("engine10 steer", () => {
     expect(names).not.toContain(gone);
     const o = names.find((n) => n.startsWith("human-input-ORPHAN-"))!;
     expect(readFileSync(join(d, ".loki", "logs", o), "utf8")).toBe("LOST");
+  });
+  test("a stale claim is orphaned even when its pid answers (recycled pid); a fresh one is left alone", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    const stale = `.claim-${process.ppid}-aaaaaa`, fresh = `.claim-${process.ppid}-bbbbbb`;
+    writeFileSync(join(logs, stale), "OLD"); writeFileSync(join(logs, fresh), "NEW");
+    const old = new Date(Date.now() - 11 * 60 * 1000); utimesSync(join(logs, stale), old, old);
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "orphaned claim"]]);
+    const names = archived(d);
+    expect(names).not.toContain(stale);
+    expect(names).toContain(fresh);
+    const o = names.find((n) => n.startsWith("human-input-ORPHAN-"))!;
+    expect(readFileSync(join(logs, o), "utf8")).toBe("OLD");
+  });
+  test("an orphan already archived with identical bytes is removed without a new archive or record", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    writeFileSync(join(logs, "human-input-ORPHAN-20200101T000000.md"), "LOST");
+    writeFileSync(join(logs, `.claim-${deadPid()}-abc123`), "LOST");
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink).toEqual([]);
+    expect(archived(d)).toEqual(["human-input-ORPHAN-20200101T000000.md"]);
   });
   test("an orphan that cannot be archived is reported with its stranded path and a distinct remedy", () => {
     const d = repo();

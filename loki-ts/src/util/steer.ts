@@ -3,7 +3,7 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, rmSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, statSync, rmSync, unlinkSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { basename, join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
@@ -32,15 +32,38 @@ function archiveTo(logs: string, prefix: string, src: string, link: typeof linkS
   }
 }
 
-/** Claims left by a consumer that died between the claim and the archive (pid dead): archive each and report it unapplied, so Seal refuses instead of the steer vanishing. */
-function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) => void, link?: typeof linkSync): void {
+/** A claim older than this is orphaned even if its pid answers: a dead consumer's pid can be recycled by an unrelated process, and kill(pid, 0) would then succeed forever. */
+export const STEER_CLAIM_MAX_AGE_MS = 10 * 60 * 1000;
+
+/** True when an earlier ORPHAN archive already holds exactly these bytes (a claim whose unlink failed after a good archive). */
+function orphanAlreadyArchived(logs: string, claim: string): boolean {
+  const bytes = readFileSync(claim);
+  for (const a of readdirSync(logs)) {
+    if (!/^human-input-ORPHAN-.*\.md$/.test(a)) continue;
+    try { if (bytes.equals(readFileSync(join(logs, a)))) return true; } catch { /* unreadable archive: not a match */ }
+  }
+  return false;
+}
+
+/** Claims left by a consumer that died between the claim and the archive (pid dead, or claim older than STEER_CLAIM_MAX_AGE_MS): archive each and report it unapplied, so Seal refuses instead of the steer vanishing.
+ *  A claim whose bytes an ORPHAN archive already holds is only removed, never re-archived or re-reported. */
+function sweepOrphans(logs: string, stamp: string, unapplied: (reason: string) => void, link?: typeof linkSync, nowMs: number = Date.now()): void {
   let names: string[];
   try { names = readdirSync(logs); } catch { return; }
   for (const n of names) {
     const m = /^\.claim-(\d+)-[0-9a-f]+$/.exec(n);
     if (!m || Number(m[1]) === process.pid) continue;
-    try { process.kill(Number(m[1]), 0); continue; } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") continue; }
-    try { archiveTo(logs, `human-input-ORPHAN-${stamp}`, join(logs, n), link); unapplied("orphaned claim"); } catch { unapplied(`steer stranded at .loki/logs/${n}`); }
+    let alive = true;
+    try { process.kill(Number(m[1]), 0); } catch (e) { if ((e as NodeJS.ErrnoException).code === "ESRCH") alive = false; }
+    if (alive) {
+      let ageMs = 0;
+      try { ageMs = nowMs - statSync(join(logs, n)).mtimeMs; } catch { continue; }
+      if (ageMs <= STEER_CLAIM_MAX_AGE_MS) continue;
+    }
+    try {
+      if (orphanAlreadyArchived(logs, join(logs, n))) { unlinkSync(join(logs, n)); continue; }
+      archiveTo(logs, `human-input-ORPHAN-${stamp}`, join(logs, n), link); unapplied("orphaned claim");
+    } catch { unapplied(`steer stranded at .loki/logs/${n}`); }
   }
 }
 
@@ -56,7 +79,7 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
     const stamp = now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
-    sweepOrphans(logs, stamp, unapplied, hooks?.link);
+    sweepOrphans(logs, stamp, unapplied, hooks?.link, now().getTime());
     // A private, unique claim name: the rename can never collide with another consumer, and the archive name is chosen later by archiveTo.
     claimed = join(logs, `.claim-${process.pid}-${randomBytes(6).toString("hex")}`);
     try { renameSync(f, claimed); } catch (e) { claimed = ""; if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
