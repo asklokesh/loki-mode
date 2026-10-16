@@ -84,10 +84,10 @@ class MetricsTest(unittest.TestCase):
         self.assertIsNone(A._wilson_ci95(0, 0))
 
     def test_summarize_and_markdown(self):
-        rows = [row(arm="raw_claude", accepted=True, reported=True, cost=1.0),
+        rows = [row(arm="raw-configured", accepted=True, reported=True, cost=1.0),
                 row(arm="loki", accepted=False, reported=True, cost=None)]
         s = A.summarize(rows)
-        self.assertEqual(s["by_arm"]["raw_claude"]["acceptance_rate"], 1.0)
+        self.assertEqual(s["by_arm"]["raw-configured"]["acceptance_rate"], 1.0)
         self.assertEqual(s["by_arm"]["loki"]["false_completion_rate"], 1.0)
         plan = A.build_plan([], 1, "m", 1.0, 5)
         md = A.render_markdown({"generated_utc": "x", "plan": plan,
@@ -110,11 +110,11 @@ class MetricsTest(unittest.TestCase):
 
 class PlanTest(unittest.TestCase):
     def test_arm_order_alternates(self):
-        two = ("raw_claude", "loki")
-        self.assertEqual(A.arm_order(0, 0, two), ["raw_claude", "loki"])
-        self.assertEqual(A.arm_order(1, 0, two), ["loki", "raw_claude"])
-        self.assertEqual(A.arm_order(0, 1, two), ["loki", "raw_claude"])
-        self.assertEqual(A.arm_order(1, 0), ["loki", "droid", "raw_claude"])
+        two = ("raw-configured", "loki")
+        self.assertEqual(A.arm_order(0, 0, two), ["raw-configured", "loki"])
+        self.assertEqual(A.arm_order(1, 0, two), ["loki", "raw-configured"])
+        self.assertEqual(A.arm_order(0, 1, two), ["loki", "raw-configured"])
+        self.assertEqual(A.arm_order(1, 0), ["raw-bare", "loki", "droid", "raw-configured"])
 
     def test_dry_run_no_model_call(self):
         def boom(*a, **k):
@@ -125,7 +125,7 @@ class PlanTest(unittest.TestCase):
         text = out.getvalue()
         self.assertEqual(rc, 0)
         self.assertIn("DRY RUN", text)
-        self.assertIn("32 model-backed runs", text)
+        self.assertIn("48 model-backed runs", text)
         self.assertIn("not probed", text)
         self.assertIn("droid arm: 16 cells", text)
         for tid in ("coord-1-api-web", "longspec-1-three-units"):
@@ -214,7 +214,7 @@ class DroidArmTest(unittest.TestCase):
         self.assertIsNone(A.compute_metrics(rows)["acceptance_rate"])
 
     def test_report_marks_droid_unmeasured(self):
-        rows = [row(arm="raw_claude", accepted=True, reported=True, cost=1.0),
+        rows = [row(arm="raw-configured", accepted=True, reported=True, cost=1.0),
                 dict(row(arm="droid", status="unmeasured", cost=None, elapsed=None),
                      unmeasured_reason="droid CLI not found on PATH")]
         plan = A.build_plan([], 1, "m", 1.0, 5)
@@ -224,7 +224,7 @@ class DroidArmTest(unittest.TestCase):
         self.assertIn("droid CLI not found on PATH", md)
 
     def test_unmeasured_never_printed_as_zero_or_failure(self):
-        rows = [dict(row(arm="raw_claude", accepted=True, reported=True, cost=1.0)),
+        rows = [dict(row(arm="raw-configured", accepted=True, reported=True, cost=1.0)),
                 dict(row(arm="droid", status="unmeasured", cost=None, elapsed=None),
                      unmeasured_reason="droid CLI not found on PATH")]
         plan = A.build_plan([], 1, "m", 1.0, 5)
@@ -242,7 +242,148 @@ class DroidArmTest(unittest.TestCase):
     def test_arms_flag_validation(self):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
-            rc = A.main(["--dry-run", "--arms", "raw_claude,nope"])
+            rc = A.main(["--dry-run", "--arms", "raw-configured,nope"])
+        self.assertEqual(rc, 2)
+
+
+class BaselineArmsTest(unittest.TestCase):
+    def test_arm_names_are_configured_and_bare(self):
+        self.assertIn("raw-configured", A.ARMS)
+        self.assertIn("raw-bare", A.ARMS)
+        self.assertNotIn("raw_claude", A.ARMS)
+
+    def test_legacy_alias_is_rejected_not_silently_mapped(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = A.main(["--dry-run", "--arms", "raw_claude"])
+        self.assertEqual(rc, 2)
+
+    def _cmd(self, arm):
+        seen = {}
+
+        def fake(cmd, **kw):
+            seen["cmd"] = list(cmd)
+            return subprocess.CompletedProcess(cmd, 0, "{}", "")
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            A.run_raw_claude(d, "p", model="m", budget_usd=1.0, timeout_s=5,
+                             runner=fake, bare=(arm == "raw-bare"))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        return seen["cmd"]
+
+    def test_bare_flag_only_on_raw_bare(self):
+        self.assertIn("--bare", self._cmd("raw-bare"))
+        self.assertNotIn("--bare", self._cmd("raw-configured"))
+
+    def _task(self):
+        return {"id": "t1", "class": "bugfix", "prompt": "p"}
+
+    def test_raw_bare_without_key_is_unmeasured_with_reason_and_arm_name(self):
+        r = A.run_cell(self._task(), "raw-bare", 1, model="m", budget_usd=1.0,
+                       timeout_s=5, scratch=tempfile.gettempdir(),
+                       bare_probe={"available": False, "reason": "no ANTHROPIC_API_KEY"})
+        self.assertEqual(r["arm"], "raw-bare")
+        self.assertEqual(r["status"], "unmeasured")
+        self.assertIsNone(r["cost_usd"])
+        self.assertIn("ANTHROPIC_API_KEY", r["unmeasured_reason"])
+
+    def test_raw_bare_without_probe_never_runs(self):
+        r = A.run_cell(self._task(), "raw-bare", 1, model="m", budget_usd=1.0,
+                       timeout_s=5, scratch=tempfile.gettempdir())
+        self.assertEqual(r["status"], "unmeasured")
+
+    def test_probe_bare_reads_env_key(self):
+        self.assertTrue(A.probe_bare({"ANTHROPIC_API_KEY": "k"})["available"])
+        no = A.probe_bare({})
+        self.assertFalse(no["available"])
+        self.assertIn("ANTHROPIC_API_KEY", no["reason"])
+
+    def test_report_drops_stripped_wording_and_names_both_baselines(self):
+        plan = A.build_plan([], 1, "m", 1.0, 5)
+        md = A.render_markdown({"generated_utc": "x", "plan": plan, "environment": {},
+                                "rows": [], "summary": A.summarize([])})
+        self.assertNotIn("stripped", md.lower())
+        self.assertIn("raw-configured", md)
+        self.assertIn("raw-bare", md)
+
+
+class SpendCapTest(unittest.TestCase):
+    def _ledger_dir(self, usd_lines):
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        os.makedirs(os.path.join(d, ".loki", "metrics"))
+        with open(os.path.join(d, ".loki", "metrics", "child-sessions.jsonl"), "w") as fh:
+            for u in usd_lines:
+                fh.write('{"phase":"x","usd":%s}\n' % u)
+        return d
+
+    def test_ledger_spend_sums_usd(self):
+        d = self._ledger_dir([0.5, 0.25])
+        try:
+            self.assertAlmostEqual(A.ledger_spend(d), 0.75)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_ledger_spend_absent_or_garbage_is_none(self):
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            self.assertIsNone(A.ledger_spend(d))
+            os.makedirs(os.path.join(d, ".loki", "metrics"))
+            with open(os.path.join(d, ".loki", "metrics", "child-sessions.jsonl"), "w") as fh:
+                fh.write("not json\n")
+            self.assertIsNone(A.ledger_spend(d))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def test_true_spend_prefers_larger_of_reported_and_ledger(self):
+        self.assertAlmostEqual(A.row_true_spend({"cost_usd": 0.2, "true_cost_usd": 1.6}), 1.6)
+        self.assertAlmostEqual(A.row_true_spend({"cost_usd": 2.0, "true_cost_usd": 1.0}), 2.0)
+        self.assertEqual(A.row_true_spend({"cost_usd": None}), 0.0)
+
+    def _plan(self, n):
+        tasks = [{"id": "t%d" % i, "class": "bugfix", "prompt": "p",
+                  "seed_sha256": "a", "acceptance_sha256": "b", "prompt_sha256": "c"}
+                 for i in range(n)]
+        return tasks, A.build_plan(tasks, 1, "m", 1.0, 5, ("raw-configured",))
+
+    def test_cap_aborts_before_next_run_and_marks_rest_unmeasured(self):
+        tasks, plan = self._plan(3)
+        calls = []
+        orig = A.run_cell
+
+        def fake_cell(task, arm, repeat, **kw):
+            calls.append(task["id"])
+            return {"task": task["id"], "class": "bugfix", "arm": arm, "repeat": repeat,
+                    "accepted": True, "reported_success": True, "status": "completed",
+                    "cost_usd": 0.6, "elapsed_s": 1.0}
+        A.run_cell = fake_cell
+        try:
+            rows = A.run_all(tasks, plan, max_spend_usd=1.0)
+        finally:
+            A.run_cell = orig
+        self.assertEqual(calls, ["t0", "t1"])
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[2]["status"], "unmeasured")
+        self.assertEqual(rows[2]["arm"], "raw-configured")
+        self.assertIn("spend cap", rows[2]["unmeasured_reason"])
+
+    def test_no_cap_runs_everything(self):
+        tasks, plan = self._plan(2)
+        orig = A.run_cell
+        A.run_cell = lambda task, arm, repeat, **kw: {
+            "task": task["id"], "class": "bugfix", "arm": arm, "repeat": repeat,
+            "accepted": True, "reported_success": True, "status": "completed",
+            "cost_usd": 99.0, "elapsed_s": 1.0}
+        try:
+            rows = A.run_all(tasks, plan)
+        finally:
+            A.run_cell = orig
+        self.assertEqual([r["status"] for r in rows], ["completed", "completed"])
+
+    def test_max_spend_flag_must_be_positive(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = A.main(["--dry-run", "--max-spend-usd", "0"])
         self.assertEqual(rc, 2)
 
 

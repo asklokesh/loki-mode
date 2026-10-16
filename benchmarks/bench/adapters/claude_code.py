@@ -90,11 +90,15 @@ def _parse_json_result(stdout):
     return cost, t_in, t_out, model
 
 
-def run(workdir, spec, *, model="sonnet", timeout=900, runner=None):
+def run(workdir, spec, *, model="sonnet", timeout=900, runner=None, bare=False):
     """Run Claude Code on `spec` inside `workdir`; return adapter-output dict.
 
     `spec` is read as the prompt body (a path inside workdir or absolute).
+    `bare=True` adds `--bare` (no hooks, skills, CLAUDE.md or OAuth); it needs
+    ANTHROPIC_API_KEY and raises rather than silently running configured.
     """
+    if bare and not os.environ.get("ANTHROPIC_API_KEY"):
+        raise RuntimeError("claude --bare requires ANTHROPIC_API_KEY")
     tool_version = _detect_claude_version(runner=runner, cwd=workdir)
 
     # Pass the spec path; the prompt instructs Claude to build from the spec
@@ -110,6 +114,8 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None):
         "--model", model,
         "--dangerously-skip-permissions",
     ]
+    if bare:
+        cmd.append("--bare")
     rc, out, err, status, duration = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout, runner=runner,
     )
@@ -141,7 +147,8 @@ def run(workdir, spec, *, model="sonnet", timeout=900, runner=None):
             "kind": "automated",
             "verified": True,
             "harness": "claude.headless",
-            "command": "claude -p <prompt> --output-format json --model %s" % model,
+            "command": "claude -p <prompt> --output-format json --model %s%s"
+                       % (model, " --bare" if bare else ""),
             "cost_basis": ("native" if native_cost else
                            ("priced_from_tokens" if cost_usd is not None
                             else "not_recorded")),
