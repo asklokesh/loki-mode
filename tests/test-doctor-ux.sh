@@ -83,7 +83,7 @@ for entry in \
     "Aider|Install: pip install aider-chat"; do
     _name="${entry%%|*}"
     _hint="${entry#*|}"
-    if printf '%s' "$DOCTOR_STDERR" | grep -q "$_hint"; then
+    if grep -q "$_hint" <<<"$DOCTOR_STDERR"; then
         ok "C1: missing $_name CLI prints exact install command on stderr"
     else
         bad "C1: missing $_name CLI did NOT print '$_hint' on stderr"
@@ -108,7 +108,7 @@ fi
 for _ph in "Install: npm install -g @openai/codex" \
            "Install: npm install -g cline" \
            "Install: pip install aider-chat"; do
-    if printf '%s' "$DOCTOR_STDOUT" | grep -q "$_ph"; then
+    if grep -q "$_ph" <<<"$DOCTOR_STDOUT"; then
         bad "C1-parity: per-provider hint leaked to stdout: $_ph"
     else
         ok "C1-parity: per-provider hint absent from stdout: $_ph"

@@ -46,7 +46,7 @@ export function scan(files: Array<[string, string]>): Record<string, number> {
   for (const [rel, text] of files) {
     for (const line of text.split("\n")) {
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;
-      if (/^\s*legacy\(/.test(line)) continue; // cli/registry.ts command names (`loki reset`), not git argv
+      if (/^\s*(legacy|cmd)\(/.test(line)) continue; // cli/registry.ts command names (`loki reset`, `loki restore`), not git argv
       for (const v of VERBS) {
         const n = (line.match(new RegExp(`["'\`]${v}["'\`]\\s*[,\\]]`, "g")) ?? []).length;
         if (n > 0) found[`${rel}|${v}`] = (found[`${rel}|${v}`] ?? 0) + n;

@@ -90,7 +90,7 @@ export function receiptBlock(env: Env, usd: number | null, unmetered: boolean, w
 
 /**
  * The history row for a sealed run, or null when none is recorded. VERIFIED is an accepted pass (the estimator reads only these).
- * FAILED is a code-owned loss (router evidence for expectedCost). PARTIAL, SPEC_CONFLICT and ALREADY_SATISFIED say nothing about the route and are not recorded.
+ * FAILED is a code-owned loss (router evidence for expectedCost). PARTIAL, SPEC_CONFLICT and ALREADY_SATISFIED say nothing about the route and get no history row.
  */
 export function outcomeFor(shape: string, model: string, verdict: string, usd: number, wallS: number): RunOutcome | null {
   const executor = /haiku/i.test(model) ? "haiku" : "sonnet";

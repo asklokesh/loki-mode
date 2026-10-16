@@ -32,7 +32,6 @@ import { resolvePrdForRun } from "./prd_reuse.ts";
 import { withholdGithubTokens } from "./github_token.ts";
 import { decideRecovery } from "./recovery_policy.ts";
 import { cleanTreeId, flakyRerunSignal } from "../util/failure_memory.ts";
-import { spawnSync } from "node:child_process";
 import {
   checkpointedStateCorrupt,
   providerUnavailableFromThrow,

@@ -194,7 +194,7 @@ for bad in nosuchref -x; do
     reset_mock
     sed "s/\"base\":\"[0-9a-f]*\"/\"base\":\"$bad\"/" "$TMP/dagb.json" > "$TMP/dagx.json"
     out="$($TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagx.json" 2>&1)"; rc=$?
-    [ "$rc" -ne 0 ] && echo "$out" | grep -q "base '$bad' is not a commit SHA" && [ ! -s "$TMP/events" ] && pass "bad base '$bad' fails loudly, nothing launched" || fail "bad base $bad" "rc=$rc $out"
+    [ "$rc" -ne 0 ] && grep -q "base '$bad' is not a commit SHA" <<<"$out" && [ ! -s "$TMP/events" ] && pass "bad base '$bad' fails loudly, nothing launched" || fail "bad base $bad" "rc=$rc $out"
 done
 
 echo ""
@@ -205,7 +205,7 @@ DEOF
 reset_mock
 out="$(MOCK_COST=0.80 LOKI_BUDGET_LIMIT=1 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagc.json" --concurrency 1 2>&1)"; rc=$?
 [ "$(grep -c '^start ' "$TMP/events")" = "2" ] && pass "third unit not launched once group total >= cap" || fail "group cap launches" "$(cat "$TMP/events") $out"
-echo "$out" | grep -q 'BUDGET_STOP: group budget' && [ "$rc" -ne 0 ] && pass "pending unit reports group BUDGET_STOP" || fail "group stop line" "rc=$rc $out"
+grep -q 'BUDGET_STOP: group budget' <<<"$out" && [ "$rc" -ne 0 ] && pass "pending unit reports group BUDGET_STOP" || fail "group stop line" "rc=$rc $out"
 reset_mock
 out="$(MOCK_COST=0.80 $TO bash "$LOKI" backlog acme/widgets --dag "$TMP/dagc.json" --concurrency 1 2>&1)"
 [ "$(grep -c '^start ' "$TMP/events")" = "3" ] && pass "no cap set: all units run" || fail "no cap" "$out"
