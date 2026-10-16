@@ -19,6 +19,7 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import socket
 import sys
 import threading
@@ -31,7 +32,7 @@ try:
     import fcntl
 except ImportError:  # pragma: no cover - non-POSIX
     fcntl = None  # type: ignore[assignment]
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -46,6 +47,12 @@ AUDIT_DIR = Path.home() / ".loki" / "dashboard" / "audit"
 # Log rotation settings
 MAX_LOG_SIZE_MB = int(os.environ.get("LOKI_AUDIT_MAX_SIZE_MB", "10"))
 MAX_LOG_FILES = int(os.environ.get("LOKI_AUDIT_MAX_FILES", "10"))
+
+# Retention: audit files whose UTC date is older than this many days are pruned
+# (on the first write of each UTC day, or via prune_logs()). 0 or negative
+# disables pruning. Pruning writes a checkpoint so the chain still verifies.
+DEFAULT_RETENTION_DAYS = 90
+CHECKPOINT_NAME = "audit-checkpoint.json"
 
 # Syslog forwarding (optional, off by default)
 _SYSLOG_HOST = os.environ.get("LOKI_AUDIT_SYSLOG_HOST", "").strip()
@@ -151,12 +158,10 @@ def _recover_last_hash() -> str:
         except (json.JSONDecodeError, IOError, OSError):
             continue
 
-    return genesis
+    # No surviving entries: continue from a retention checkpoint if one exists,
+    # so a fully pruned directory does not re-root the chain at genesis.
+    return _load_checkpoint(AUDIT_DIR)[0].get("last_pruned_hash", genesis)
 
-
-# Recover chain hash from existing logs on startup
-if INTEGRITY_ENABLED:
-    _last_hash = _recover_last_hash()
 
 # Actions considered security-relevant (logged at WARNING level in syslog)
 _SECURITY_ACTIONS = frozenset({
@@ -240,9 +245,184 @@ def _cleanup_old_logs() -> None:
 
     log_files = sorted(AUDIT_DIR.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
 
-    while len(log_files) > MAX_LOG_FILES:
-        oldest = log_files.pop(0)
-        oldest.unlink()
+    excess = len(log_files) - MAX_LOG_FILES
+    if excess <= 0:
+        return
+    # Count-cap removal goes through the checkpointing path so the chain still
+    # verifies; only a chain that is already broken falls back to a plain unlink.
+    if _prune_files(AUDIT_DIR, log_files[:excess])["status"] == "refused_chain_invalid":
+        for oldest in log_files[:excess]:
+            oldest.unlink()
+
+
+# ---------------------------------------------------------------------------
+# Retention with a chain checkpoint
+#
+# Deleting the oldest files removes the genesis the verifier starts from. The
+# checkpoint records the hash of the last pruned entry so verification resumes
+# there. It is written BEFORE the files are deleted and lists them under
+# "removing", so a crash between the two steps leaves a directory that still
+# verifies (leftovers are skipped, then cleaned by the next prune).
+# ---------------------------------------------------------------------------
+_GENESIS = "0" * 64
+_HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_FILE_DATE = re.compile(r"^audit-(\d{4}-\d{2}-\d{2})")
+_last_prune_day: str = ""
+
+
+def _checkpoint_digest(cp: dict) -> str:
+    body = {k: v for k, v in cp.items() if k != "checkpoint_hash"}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _load_checkpoint(audit_dir) -> "tuple[dict, bool]":
+    """Return (checkpoint, ok). ({}, True) when none exists; ({}, False) when
+    the file exists but is unreadable, malformed or fails its own digest."""
+    path = Path(audit_dir) / CHECKPOINT_NAME
+    if not path.exists():
+        return {}, True
+    try:
+        cp = json.loads(path.read_text())
+        if (isinstance(cp, dict)
+                and isinstance(cp.get("last_pruned_hash"), str)
+                and _HEX64.match(cp["last_pruned_hash"])
+                and cp.get("checkpoint_hash") == _checkpoint_digest(cp)):
+            return cp, True
+    except (OSError, ValueError):
+        pass
+    return {}, False
+
+
+def _write_checkpoint(audit_dir, cp: dict) -> None:
+    cp = {k: v for k, v in cp.items() if k != "checkpoint_hash"}
+    cp["checkpoint_hash"] = _checkpoint_digest(cp)
+    path = Path(audit_dir) / CHECKPOINT_NAME
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(cp, sort_keys=True))
+    os.replace(tmp, path)
+
+
+def _chain_files(audit_dir) -> "tuple[list, str, bool]":
+    """Return (files in chain order, start hash, checkpoint_ok). Files named in
+    a checkpoint's "removing" list are leftovers of an interrupted prune."""
+    audit_dir = Path(audit_dir)
+    cp, ok = _load_checkpoint(audit_dir)
+    skip = set(cp.get("removing", []))
+    files = sorted((p for p in audit_dir.glob("audit-*.jsonl") if p.name not in skip),
+                   key=lambda p: p.stat().st_mtime)
+    return files, cp.get("last_pruned_hash", _GENESIS), ok
+
+
+def _prune_files(audit_dir, targets) -> dict:
+    """Remove `targets` (a prefix of the chain) and checkpoint their last hash.
+    Caller holds _hash_lock. Refuses, deleting nothing, if the prefix does not
+    verify: pruning must not launder a broken chain into a clean one."""
+    audit_dir = Path(audit_dir)
+    cp, ok = _load_checkpoint(audit_dir)
+    if not ok:
+        return {"status": "refused_checkpoint_invalid", "pruned_files": 0}
+    # Finish an interrupted prune first.
+    for name in cp.get("removing", []):
+        try:
+            (audit_dir / name).unlink()
+        except FileNotFoundError:
+            pass
+    if cp.get("removing"):
+        cp["removing"] = []
+        _write_checkpoint(audit_dir, cp)
+    targets = list(targets)
+    if not targets:
+        return {"status": "nothing_to_prune", "pruned_files": 0}
+    prev = cp.get("last_pruned_hash", _GENESIS)
+    hashed = prev != _GENESIS
+    entries = 0
+    for f in targets:
+        if not hashed and not _file_has_integrity(str(f)):
+            continue  # pre-integrity file: carries no hash to preserve
+        r = verify_log_integrity(str(f), start_hash=prev)
+        if not r.get("valid", False):
+            return {"status": "refused_chain_invalid", "pruned_files": 0,
+                    "first_tampered_file": str(f)}
+        prev = r["last_hash"]
+        hashed = True
+        entries += r["entries_checked"]
+    if hashed:
+        _write_checkpoint(audit_dir, {
+            "version": 1,
+            "last_pruned_hash": prev,
+            "pruned_entries": int(cp.get("pruned_entries", 0)) + entries,
+            "pruned_files": int(cp.get("pruned_files", 0)) + len(targets),
+            "pruned_at": datetime.now(timezone.utc).isoformat(),
+            "removing": [f.name for f in targets],
+        })
+    for f in targets:
+        try:
+            f.unlink()
+        except FileNotFoundError:
+            pass
+    if hashed:
+        cp, _ = _load_checkpoint(audit_dir)
+        cp["removing"] = []
+        _write_checkpoint(audit_dir, cp)
+    return {"status": "pruned", "pruned_files": len(targets), "pruned_entries": entries}
+
+
+def _retention_days() -> int:
+    raw = os.environ.get("LOKI_AUDIT_RETENTION_DAYS", "").strip()
+    try:
+        return int(raw) if raw else DEFAULT_RETENTION_DAYS
+    except ValueError:
+        return DEFAULT_RETENTION_DAYS
+
+
+def _prune_expired_locked(audit_dir, days: int, now: datetime) -> dict:
+    if days <= 0:
+        return {"status": "disabled", "pruned_files": 0}
+    audit_dir = Path(audit_dir)
+    if not audit_dir.exists():
+        return {"status": "nothing_to_prune", "pruned_files": 0}
+    cutoff = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    files, _start, _ok = _chain_files(audit_dir)
+    expired = []
+    # Contiguous oldest prefix only, and never the newest file (the live tip).
+    for f in files[:-1]:
+        m = _FILE_DATE.match(f.name)
+        if not m or m.group(1) >= cutoff:
+            break
+        expired.append(f)
+    return _prune_files(audit_dir, expired)
+
+
+def prune_logs(retention_days: Optional[int] = None, audit_dir=None,
+               now: Optional[datetime] = None) -> dict:
+    """Prune audit files older than the retention window, keeping the chain
+    verifiable via a checkpoint. `retention_days` defaults to
+    LOKI_AUDIT_RETENTION_DAYS (default 90); 0 disables. Returns a dict with
+    `status` (pruned, nothing_to_prune, disabled, refused_*) and counts."""
+    days = _retention_days() if retention_days is None else int(retention_days)
+    with _hash_lock:
+        return _prune_expired_locked(
+            audit_dir if audit_dir is not None else AUDIT_DIR,
+            days, now or datetime.now(timezone.utc))
+
+
+def _maybe_prune_daily_locked() -> None:
+    """Prune once per UTC day per process, on the write path. Never raises:
+    losing an audit entry is worse than a late prune."""
+    global _last_prune_day
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if _last_prune_day == today:
+        return
+    _last_prune_day = today
+    try:
+        _prune_expired_locked(AUDIT_DIR, _retention_days(), datetime.now(timezone.utc))
+    except Exception as exc:  # noqa: BLE001
+        print(f"[loki-audit] WARNING: retention prune failed: {exc}", file=sys.stderr)
+
+# Recover chain hash from existing logs on startup
+if INTEGRITY_ENABLED:
+    _last_hash = _recover_last_hash()
 
 
 def _forward_to_syslog(entry: dict) -> None:
@@ -333,6 +513,7 @@ def log_event(
     global _last_hash
     with _hash_lock:
         log_file = _get_current_log_file()
+        _maybe_prune_daily_locked()
         _rotate_logs_if_needed(log_file)
 
         if not INTEGRITY_ENABLED:
@@ -666,8 +847,12 @@ def verify_all_logs_in_dir(audit_dir) -> dict:
     # would break chain ordering and false-negative on any user who hit
     # size-based rotation. Sort by mtime instead -- mirrors what
     # `_cleanup_old_logs` already does at line 178.
-    files = sorted(audit_dir.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
-    prev_hash = "0" * 64
+    files, prev_hash, cp_ok = _chain_files(audit_dir)
+    if not cp_ok:
+        return {"valid": False, "files_checked": 0, "files_skipped": 0,
+                "entries_checked": 0, "first_tampered_file": str(audit_dir / CHECKPOINT_NAME),
+                "first_tampered_line": None, "genesis_file": None,
+                "verified": False, "status": "tampered"}
     total_entries = 0
     files_checked = 0
     files_skipped = 0
@@ -762,8 +947,7 @@ def compute_chain_tip_in_dir(audit_dir) -> dict:
     genesis = "0" * 64
     tip_hash = genesis
     if audit_dir.exists():
-        files = sorted(audit_dir.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
-        prev = genesis
+        files, prev, _cp_ok = _chain_files(audit_dir)
         for log_file in files:
             if not _file_has_integrity(str(log_file)):
                 continue
@@ -812,8 +996,7 @@ def compute_prefix_hash_in_dir(audit_dir, n_entries: int) -> dict:
         return {"found": True, "prefix_hash": genesis, "entries_available": 0}
     if not audit_dir.exists():
         return {"found": False, "prefix_hash": genesis, "entries_available": 0}
-    files = sorted(audit_dir.glob("audit-*.jsonl"), key=lambda p: p.stat().st_mtime)
-    prev_hash = genesis
+    files, prev_hash, _cp_ok = _chain_files(audit_dir)
     seen = 0
     started = False
     for log_file in files:
@@ -868,12 +1051,16 @@ def _unified_cli() -> int:
     `tip` keeps exiting 0 on an empty chain (src/audit/crosslink.js reads it).
     """
     argv = sys.argv[1:]
-    if len(argv) < 2 or argv[0] not in ("tip", "verify", "prefix"):
+    if len(argv) < 2 or argv[0] not in ("tip", "verify", "prefix", "prune"):
         print(json.dumps(
             {"error": "usage: audit.py {tip|verify} <audit_dir> "
-                      "| prefix <audit_dir> <n_entries>"}))
+                      "| prefix <audit_dir> <n_entries> | prune <audit_dir> [days]"}))
         return 2
     cmd, audit_dir = argv[0], argv[1]
+    if cmd == "prune":
+        out = prune_logs(int(argv[2]) if len(argv) > 2 else None, audit_dir)
+        print(json.dumps(out))
+        return 1 if out.get("status", "").startswith("refused") else 0
     if cmd == "tip":
         out = compute_chain_tip_in_dir(audit_dir)
         print(json.dumps(out))

@@ -1957,7 +1957,7 @@ show_help_all() {
     echo ""
     echo "All commands:"
     echo "  agents chat diff edit models route"
-    echo "  acp agent analyze api assets audit backlog bench checkpoint (cp) ci cleanup"
+    echo "  acp agent analyze api assets audit backlog backup bench checkpoint (cp) ci cleanup"
     echo "  cluster cockpit code compliance completions compound config context (ctx)"
     echo "  cost council crash dashboard demo deploy docker docs doctor dogfood"
     echo "  enterprise estimate explain export failover github grill heal help"
@@ -1965,7 +1965,7 @@ show_help_all() {
     echo "  issue keys kpis logs magic mcp memory metrics migrate modernize monitor"
     echo "  next notify onboard open optimize otel outcomes own (handoff) pause plan preview"
     echo "  projects proof (receipt) provider quick quickstart rc remote report reset"
-    echo "  merge resume review rollback run sandbox secrets secure self-update sentrux"
+    echo "  merge restore resume review rollback run sandbox secrets secure self-update sentrux"
     echo "  serve setup setup-skill share ship spec start state stats status steer stop"
     echo "  syslog telemetry template test tour trigger trust trust-metrics"
     echo "  ultracode undo update verify version voice watch watchdog web welcome why"
@@ -21877,6 +21877,12 @@ main() {
         rollback)
             cmd_rollback "$@"
             ;;
+        backup)
+            cmd_backup "$@"
+            ;;
+        restore)
+            cmd_restore "$@"
+            ;;
         merge)
             cmd_merge "$@"
             ;;
@@ -26417,6 +26423,178 @@ cmd_merge() {
 # Restore is destructive on .loki/ state, so it ALWAYS captures a forced
 # pre-rollback snapshot first (re-undoability invariant) and then glob-restores
 # whatever the checkpoint dir contains (works across all three checkpoint writers).
+# P12-48: back up and restore the machine-global dashboard state directory
+# (audit log, retention checkpoint, config). Archive = tar.gz holding
+# LOKI-BACKUP-MANIFEST (sha256 per file) plus the state tree, with a sidecar
+# <archive>.sha256 over the whole archive. Restore verifies both before
+# touching anything and refuses to overwrite existing state without --force.
+_backup_state_dir() {
+    printf '%s' "${LOKI_DASHBOARD_STATE_DIR:-${HOME}/.loki/dashboard}"
+}
+
+_backup_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+cmd_backup() {
+    local dir out="" arg
+    dir="$(_backup_state_dir)"
+    while [ $# -gt 0 ]; do
+        arg="$1"; shift
+        case "$arg" in
+            --dir) dir="${1:-}"; shift || true ;;
+            --out) out="${1:-}"; shift || true ;;
+            -h|--help)
+                echo "Usage: loki backup [--dir STATE_DIR] [--out ARCHIVE.tar.gz]"
+                echo "  Archives the dashboard state directory (default ~/.loki/dashboard) with a"
+                echo "  sha256 manifest and writes ARCHIVE.sha256 next to it."
+                return 0 ;;
+            *) echo -e "${RED}Unknown option: $arg${NC}" >&2; return 2 ;;
+        esac
+    done
+    if [ ! -d "$dir" ]; then
+        echo -e "${RED}Error: state directory not found: $dir${NC}" >&2
+        return 1
+    fi
+    [ -n "$out" ] || out="./loki-backup-$(date -u +%Y%m%d-%H%M%S).tar.gz"
+    if [ -e "$out" ]; then
+        echo -e "${RED}Error: refusing to overwrite existing archive: $out${NC}" >&2
+        return 1
+    fi
+    dir="$(cd "$dir" && pwd -P)" || return 1
+
+    local mdir manifest rel digest count=0
+    mdir="$(mktemp -d "${TMPDIR:-/tmp}/loki-backup.XXXXXXXX")" || return 1
+    manifest="$mdir/LOKI-BACKUP-MANIFEST"
+    : > "$manifest"
+    while IFS= read -r -d '' rel; do
+        digest="$(_backup_sha256 "$dir/$rel")" || { rm -rf -- "$mdir"; return 1; }
+        printf '%s  %s\n' "$digest" "$rel" >> "$manifest"
+        count=$((count + 1))
+    done < <(cd "$dir" && find . -type f ! -name '*.pid' -print0 | LC_ALL=C sort -z)
+
+    # Symlinks and special files cannot be verified by the manifest; refuse them.
+    if [ -n "$(cd "$dir" && find . ! -type f ! -type d ! -name '*.pid' -print -quit)" ]; then
+        rm -rf -- "$mdir"
+        echo -e "${RED}Error: $dir holds symlinks or special files; cannot back up safely${NC}" >&2
+        return 1
+    fi
+    if ! tar -czf "$out" --exclude='*.pid' -C "$mdir" LOKI-BACKUP-MANIFEST -C "$dir" .; then
+        rm -f -- "$out"
+        rm -rf -- "$mdir"
+        echo -e "${RED}Error: tar failed${NC}" >&2
+        return 1
+    fi
+    rm -rf -- "$mdir"
+    printf '%s  %s\n' "$(_backup_sha256 "$out")" "$(basename "$out")" > "${out}.sha256"
+    echo "Backed up $count file(s) from $dir"
+    echo "  archive: $out"
+    echo "  sha256:  ${out}.sha256"
+}
+
+cmd_restore() {
+    local archive="" dir force=0 expect="" arg
+    dir="$(_backup_state_dir)"
+    while [ $# -gt 0 ]; do
+        arg="$1"; shift
+        case "$arg" in
+            --dir) dir="${1:-}"; shift || true ;;
+            --force) force=1 ;;
+            --sha256) expect="${1:-}"; shift || true ;;
+            -h|--help)
+                echo "Usage: loki restore ARCHIVE.tar.gz [--dir STATE_DIR] [--force] [--sha256 HEX]"
+                echo "  Verifies the archive (sidecar or --sha256) and its manifest, then restores."
+                echo "  Refuses to replace a non-empty STATE_DIR without --force; with --force the"
+                echo "  existing directory is moved to STATE_DIR.pre-restore.<timestamp>."
+                return 0 ;;
+            -*) echo -e "${RED}Unknown option: $arg${NC}" >&2; return 2 ;;
+            *) archive="$arg" ;;
+        esac
+    done
+    if [ -z "$archive" ] || [ ! -f "$archive" ]; then
+        echo -e "${RED}Error: archive not found. Usage: loki restore ARCHIVE.tar.gz${NC}" >&2
+        return 2
+    fi
+
+    # 1. Whole-archive digest: explicit --sha256, else the sidecar. Required.
+    if [ -z "$expect" ]; then
+        if [ -f "${archive}.sha256" ]; then
+            expect="$(awk 'NR==1 {print $1}' "${archive}.sha256")"
+        else
+            echo -e "${RED}Error: no ${archive}.sha256 sidecar and no --sha256; refusing unverified restore${NC}" >&2
+            return 1
+        fi
+    fi
+    if [ "$(_backup_sha256 "$archive")" != "$expect" ]; then
+        echo -e "${RED}Error: archive sha256 mismatch (tampered or corrupt); nothing restored${NC}" >&2
+        return 1
+    fi
+
+    # 2. Entry names must be plain relative paths with no symlinks or specials.
+    local listing
+    listing="$(tar -tzf "$archive" 2>/dev/null)" || { echo -e "${RED}Error: unreadable archive${NC}" >&2; return 1; }
+    if printf '%s\n' "$listing" | grep -E -q '(^/|(^|/)\.\.(/|$))'; then
+        echo -e "${RED}Error: archive contains unsafe paths; nothing restored${NC}" >&2
+        return 1
+    fi
+
+    # 3. Extract to a staging dir beside the target (same filesystem), verify the manifest.
+    mkdir -p "$(dirname "$dir")" || return 1
+    local stage
+    stage="$(mktemp -d "${dir}.restore.XXXXXXXX")" || return 1
+    if ! tar -xzf "$archive" -C "$stage" 2>/dev/null; then
+        rm -rf -- "$stage"
+        echo -e "${RED}Error: extraction failed; nothing restored${NC}" >&2
+        return 1
+    fi
+    local bad=""
+    if [ ! -f "$stage/LOKI-BACKUP-MANIFEST" ]; then
+        bad="missing manifest"
+    elif [ -n "$(find "$stage" ! -type f ! -type d -print -quit)" ]; then
+        bad="non-regular entry in archive"
+    else
+        local digest rel n_files n_listed
+        while IFS= read -r line; do
+            digest="${line%%  *}"; rel="${line#*  }"
+            if [ ! -f "$stage/$rel" ] || [ "$(_backup_sha256 "$stage/$rel")" != "$digest" ]; then
+                bad="manifest mismatch: $rel"; break
+            fi
+        done < "$stage/LOKI-BACKUP-MANIFEST"
+        if [ -z "$bad" ]; then
+            n_files="$(find "$stage" -type f ! -name LOKI-BACKUP-MANIFEST | wc -l | tr -d ' ')"
+            n_listed="$(wc -l < "$stage/LOKI-BACKUP-MANIFEST" | tr -d ' ')"
+            [ "$n_files" = "$n_listed" ] || bad="archive holds files the manifest does not list"
+        fi
+    fi
+    if [ -n "$bad" ]; then
+        rm -rf -- "$stage"
+        echo -e "${RED}Error: archive failed verification ($bad); nothing restored${NC}" >&2
+        return 1
+    fi
+    rm -f -- "$stage/LOKI-BACKUP-MANIFEST"
+
+    # 4. Never overwrite existing state silently.
+    if [ -e "$dir" ] && [ -n "$(ls -A "$dir" 2>/dev/null)" ]; then
+        if [ "$force" -ne 1 ]; then
+            rm -rf -- "$stage"
+            echo -e "${RED}Error: $dir is not empty; re-run with --force to replace it${NC}" >&2
+            return 1
+        fi
+        local aside
+        aside="${dir}.pre-restore.$(date -u +%Y%m%d-%H%M%S)"
+        mv "$dir" "$aside" || { rm -rf -- "$stage"; return 1; }
+        echo "  previous state kept at: $aside"
+    elif [ -d "$dir" ]; then
+        rmdir "$dir" 2>/dev/null || true
+    fi
+    mv "$stage" "$dir" || return 1
+    echo "Restored $dir from $archive (verified)"
+}
+
 cmd_rollback() {
     local subcommand="${1:-help}"
     shift 2>/dev/null || true

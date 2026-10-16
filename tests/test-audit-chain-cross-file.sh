@@ -253,6 +253,66 @@ else:
 shutil.rmtree(scratch, ignore_errors=True)
 PYEOF
 
+# P12-48: retention prune must keep the chain verifiable (checkpoint carries the
+# last pruned hash). Fixture builds 4 dated files with real chain hashing and
+# mtimes in date order, then prunes with a 30-day window.
+RET_HOME="$LOKI_RUN_TMP/ret-home"
+mkdir -p "$RET_HOME"
+RET_OUT=$(HOME="$RET_HOME" LOKI_AUDIT_RETENTION_DAYS=0 $PY <<'PYEOF' 2>&1
+import sys, os, json, datetime
+sys.path.insert(0, '.')
+from dashboard import audit
+d = audit.AUDIT_DIR
+d.mkdir(parents=True, exist_ok=True)
+now = datetime.datetime(2026, 6, 1, tzinfo=datetime.timezone.utc)
+prev = "0" * 64
+names = []
+for i, age in enumerate((100, 60, 10, 0)):
+    day = (now - datetime.timedelta(days=age)).strftime("%Y-%m-%d")
+    f = d / f"audit-{day}.jsonl"
+    for j in range(3):
+        e = {"timestamp": f"{day}T00:00:0{j}Z", "action": f"a{i}{j}", "resource_type": "x",
+             "resource_id": None, "user_id": None, "token_id": None, "ip_address": None,
+             "user_agent": None, "success": True, "error": None, "details": {}}
+        e["_integrity_hash"] = audit._compute_chain_hash(json.dumps({k: v for k, v in e.items()}, sort_keys=True, default=str), prev)
+        prev = e["_integrity_hash"]
+        with open(f, "a") as fh:
+            fh.write(json.dumps(e) + "\n")
+    os.utime(f, (1000 + i, 1000 + i))
+    names.append(f.name)
+before = audit.verify_all_logs()
+assert before["valid"] and before["entries_checked"] == 12, before
+r = audit.prune_logs(30, now=now)
+assert r["status"] == "pruned" and r["pruned_files"] == 2, r
+after = audit.verify_all_logs()
+assert after["valid"] and after["verified"] and after["entries_checked"] == 6, after
+assert sorted(p.name for p in d.glob("audit-*.jsonl")) == names[2:], list(d.iterdir())
+tip = audit.compute_chain_tip_in_dir(d)
+assert tip["valid"] and tip["tip_hash"] == prev, tip
+# second prune is idempotent; a new write chains from the live tip and still verifies
+assert audit.prune_logs(30, now=now)["status"] == "nothing_to_prune"
+audit._last_hash = audit._recover_last_hash()
+audit.log_event("after.prune", "fixture")
+assert audit.verify_all_logs()["valid"]
+# tampering with a surviving file after prune is still caught
+fn = d / names[2]
+fn.write_text(fn.read_text().replace('"a20"', '"zzz"'))
+os.utime(fn, (1002, 1002))
+assert not audit.verify_all_logs()["valid"]
+# tampered checkpoint is caught
+cp = d / audit.CHECKPOINT_NAME
+fn.write_text(fn.read_text().replace('"zzz"', '"a20"'))
+os.utime(fn, (1002, 1002))
+assert audit.verify_all_logs()["valid"]
+cp.write_text(cp.read_text().replace("pruned_files", "pruned_filez"))
+assert not audit.verify_all_logs()["valid"]
+print("PRUNE_OK")
+PYEOF
+)
+RET_OUT=$(printf '%s' "$RET_OUT" | tail -3 | tr '\n' ' ')
+[ "${RET_OUT%% }" = "PRUNE_OK" ] && ok "prune_logs keeps chain verifiable via checkpoint (tamper still caught)" \
+  || bad "prune_logs chain/checkpoint test: $RET_OUT"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed, $SKIP skipped"
 [ "$FAIL" -eq 0 ]

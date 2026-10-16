@@ -122,6 +122,8 @@ export const REGISTRY: readonly CmdSpec[] = [
       sub("latest", "Restore the latest checkpoint"),
     ],
   }),
+  cmd("backup", "KEEP-MODERN", "bash", "Back up dashboard state (audit log, checkpoint) with a sha256 manifest", "Enterprise retention and backup (D99 item 7)", { flags: [str("--dir", "<path>", "State directory (default ~/.loki/dashboard)"), str("--out", "<archive>", "Archive path (default ./loki-backup-<timestamp>.tar.gz)")] }),
+  cmd("restore", "KEEP-MODERN", "bash", "Restore dashboard state from a verified backup archive", "Enterprise retention and backup (D99 item 7)", { flags: [str("--dir", "<path>", "State directory (default ~/.loki/dashboard)"), bool("--force", "Replace a non-empty state directory (old one is kept aside)"), str("--sha256", "<hex>", "Expected archive digest when no .sha256 sidecar exists")], positionals: [{ name: "archive", type: "path" }] }),
   cmd("proof", "KEEP-MODERN", "both", "Inspect and share proof-of-run receipts", "The Evidence Receipt moat", {
     aliases: ["receipt"],
     subcommands: [
