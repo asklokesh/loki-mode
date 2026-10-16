@@ -92,18 +92,18 @@ describe("Wall holdout end to end", () => {
     const vctx = mkCtx(repoDir, base, [], r.data); vctx.tests = { detect: async () => ({ runners: ["bun"], tests: visible }), impacted: () => [] } as never;
     const v = await verifyStage.run(vctx, new AbortController().signal);
     const checks = v.data.checks as { name: string; result: string; cmd: string }[];
-    expect(checks.find((c) => c.name === "holdout:1")?.result).toBe("fail");
-    expect(checks.find((c) => c.name === "holdout:1")!.cmd).not.toContain(held!); // neutral name
+    expect(checks.find((c) => c.name === "holdout")?.result).toBe("fail");
+    expect(checks.find((c) => c.name === "holdout")!.cmd).not.toContain(held!); // neutral name
     expect(checks.filter((c) => c.name.startsWith("bun:") && c.result !== "pass")).toEqual([]);
     expect(v.data.failures_grouped as unknown[]).toHaveLength(0); // C-C4b: a held-out failure never reaches the fix input as text, name or command...
     expect(v.data["holdout_failed"]).toBe(1); // ...only as an opaque count
     expect(JSON.stringify(v.data.failures_grouped)).not.toMatch(/holdout|loki_wall/);
-    expect(v.data.not_proven as string[]).toContain("holdout check failed: holdout:1"); // D99 item 4: names the holdout check, never a warning
+    expect(v.data.not_proven as string[]).toContain("holdout check failed"); // C-C4b-c: no index; D99 item 4: names the holdout check, never a warning
     expect(walk(repoDir).filter((p) => p.includes("loki_wall_holdout"))).toEqual([]); // copied in only for the run
     // control: implement the held function too -> holdout passes
     writeFileSync(join(repoDir, "src", "impl.ts"), all.map((_, k) => `export const f${k + 1} = () => ${k + 1};\n`).join(""));
     const ok = await verifyStage.run(vctx, new AbortController().signal);
-    expect((ok.data.checks as { name: string; result: string }[]).find((c) => c.name === "holdout:1")?.result).toBe("pass");
+    expect((ok.data.checks as { name: string; result: string }[]).find((c) => c.name === "holdout")?.result).toBe("pass");
   }, 120_000);
 
   test("fewer than 5 Wall tests, or opt-out: nothing held", async () => {
@@ -146,8 +146,32 @@ describe("Wall holdout end to end", () => {
     writeFileSync(join(dir, held), "// tampered\n"); expect(existsSync(join(dir, held))).toBe(true);
     writeFileSync(join(repoDir, "src", "impl.ts"), "export const f0 = () => 1;\n");
     const v = await verifyStage.run(mkCtx(repoDir, base, [], r.data), new AbortController().signal);
-    expect((v.data.checks as { name: string; result: string }[]).find((c) => c.name === "holdout:store")?.result).toBe("fail");
+    const hs = (v.data.checks as { name: string; result: string; owner?: string }[]).find((c) => c.name === "holdout")!;
+    expect(hs.result).toBe("not_run"); expect(hs.owner).toBe("harness"); // C-C4b-c: infrastructure failure, not a test failure the fixer sees
+    expect((v.data.failures_grouped as { signature: string }[]).some((g) => g.signature.includes("holdout"))).toBe(false); // the store failure adds no group
+    expect(JSON.stringify(v.data)).not.toContain(held);
   }, 60_000);
+
+  test("C-C4b-c: a holdout-only red leaves no holdout id or message in events, and the fixer sees one opaque count", async () => {
+    const { repoDir, base } = mkRepo(), all = names(5), [held] = holdoutSplit(RUN, all, { ratio: 0.2, min: 5 });
+    const r = await runWall(mkCtx(repoDir, base, all), new AbortController().signal, { baseRunner: pass });
+    const data = r.data as { files: { path: string }[] }, i = all.indexOf(held!) + 1;
+    writeFileSync(join(repoDir, "src", "impl.ts"), all.map((_, k) => (k + 1 === i ? "" : `export const f${k + 1} = () => ${k + 1};\n`)).join(""));
+    const visible: TestRef[] = data.files.map((f) => ({ runner: "bun", path: `tests/${f.path.split("/").pop()}` }));
+    const log: { type: string; data: unknown }[] = [];
+    mkdirSync(join(repoDir, ".loki", "state"), { recursive: true }); // a baseline at the same base sha, so attribute() sets its line and returns introduced names
+    writeFileSync(join(repoDir, ".loki", "state", "repo-profile.json"), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "2026-01-01T00:00:00.000Z", commands: [], baseline: { ran: true, command: "bun test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["unrelated-base-failure"], attributable: true } }));
+    const vctx = mkCtx(repoDir, base, [], r.data); vctx.emit = ((type: string, _s: unknown, d: unknown) => { log.push({ type, data: d }); }) as never;
+    vctx.tests = { detect: async () => ({ runners: ["bun"], tests: visible }), impacted: () => [] } as never;
+    const v = await verifyStage.run(vctx, new AbortController().signal);
+    log.push({ type: "stage.completed", data: v.data });
+    const text = JSON.stringify(log);
+    expect(text).not.toContain("holdout:"); expect(text).not.toContain(held!); expect(text).not.toContain(`f${i}`); expect(text).not.toContain("first_error");
+    expect(log.some((e) => e.type === "test.result" && (e.data as { name: string }).name === "holdout")).toBe(true);
+    expect(v.data.failures_grouped).toEqual([]); expect(v.data["holdout_failed"]).toBe(1); // the fixer sees one opaque count
+    expect(v.data["baseline_line"]).toBeDefined(); // the profile was honored, so introduced_checks was emitted
+    expect(v.data["introduced_checks"]).toEqual(["holdout"]);
+  }, 120_000);
 });
 
 describe("holdout store cleanup", () => {
@@ -168,5 +192,32 @@ describe("holdout store cleanup", () => {
     const { repoDir, dir } = stash(); const ctx = mkCtx(repoDir, "x", []);
     const r = await runMachine(ctx, stub("failed")); expect(r.stopped).toBe("intake failed");
     expect(existsSync(dir)).toBe(false);
+  });
+});
+
+describe("holdout-only red never escalates", () => {
+  test("fix stage, router off (default): repeated holdout-only signature keeps the pinned model and records no escalation", async () => {
+    const { fixStage } = await import("../../src/engine10/stages/fix.ts");
+    const groups: never[] = []; // a holdout-only red leaves no group, only holdout_failed
+    const events: { type: string; data: Record<string, unknown> }[] = [], calls: { model?: string }[] = [];
+    const savedRouter = process.env["LOKI_ROUTER"]; delete process.env["LOKI_ROUTER"];
+    try {
+      const ctx = { runId: "r", repoDir: "/nonexistent-c-c4b-c", runDir: "/nonexistent-c-c4b-c", baseSha: "x", branch: "b", provider: "claude", model: "claude-haiku-4-5", deep: false, capS: 900, emit: (type: string, _s: unknown, data: Record<string, unknown>) => { events.push({ type, data }); },
+        sessions: { run: async (o: { model?: string }) => { calls.push(o); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0.1, killed: false }; } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+        cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => 0 },
+        outputs: () => ({ verify: { failures_grouped: groups, holdout_failed: 1 }, fix: { round: 1, signatures: "" } }) } as unknown as RunContext;
+      const r = await fixStage.run(ctx, new AbortController().signal);
+      expect(r.status).toBe("completed");
+      const round = events.find((e) => e.type === "fix.round")!.data;
+      expect(round["escalated"]).toBe(false); expect(round["escalation_model"]).toBeUndefined(); expect(round["escalation_reason"]).toBeUndefined();
+      expect(round["model"]).toBe("claude-haiku-4-5"); expect(r.data["cascade"]).toBe(false);
+      expect(calls.length).toBe(1); expect(calls[0]!.model).toBeUndefined(); // no escalation model pinned
+      expect(events.map((e) => e.type)).not.toContain("route.escalated");
+    } finally { if (savedRouter !== undefined) process.env["LOKI_ROUTER"] = savedRouter; }
+  });
+  test("router: routedFix does not climb on a holdout-only group, even repeated or stalled", async () => {
+    const { routedFix } = await import("../../src/runner/router/unit_model.ts");
+    const groups: { signature: string }[] = [];
+    expect(routedFix("claude-sonnet-4-5", {}, { repeated: true, stall: true, groups, reason: "" }).climbed).toBeNull();
   });
 });
