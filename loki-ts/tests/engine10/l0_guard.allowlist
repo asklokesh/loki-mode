@@ -79,6 +79,7 @@ src/runner/repo_profile.ts	requirements.txt
 src/runner/repo_profile.ts	cargo test
 src/runner/repo_profile.ts	go test
 src/runner/repo_profile.ts	pytest
+src/runner/repo_profile.ts	npm test
 src/runner/trim.ts	npm test
 src/runner/trim.ts	package.json
 src/runner/trim.ts	pytest
