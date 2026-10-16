@@ -245,7 +245,7 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
   });
 
   // E-65: what actually reaches query() for an engine10 session, not just what buildSdkLoopOptions returns.
-  it("engine10 session: query() gets the 6 engine tools, the bare preset, and no LOKI_E10_* in the session env", async () => {
+  it("engine10 session: query() gets the 6 engine tools, the stable preset, and no LOKI_E10_* in the session env", async () => {
     const prev = { stage: process.env["LOKI_E10_STAGE"], brief: process.env["LOKI_E10_BRIEF"] };
     process.env["LOKI_E10_STAGE"] = "implement";
     process.env["LOKI_E10_BRIEF"] = "brief";
@@ -255,7 +255,7 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
       await sdkQueryProvider().invoke(call());
       const opts = lastQueryArgs?.options ?? {};
       expect(opts["tools"]).toEqual(["Bash", "Read", "Edit", "Write", "Glob", "Grep"]);
-      expect(opts["systemPrompt"]).toEqual({ type: "preset", preset: "claude_code" });
+      expect(opts["systemPrompt"]).toEqual({ type: "preset", preset: "claude_code", excludeDynamicSections: true });
       expect(opts["settingSources"]).toEqual(["project"]);
       expect(opts["mcpServers"]).toBeUndefined();
       const env = opts["env"] as Record<string, string>;
@@ -292,7 +292,7 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
     }
   });
 
-  it("engine10 session, LOKI_E10_PREFIX unset (default off): query() keeps the bare preset, byte-identical to main", async () => {
+  it("engine10 session, LOKI_E10_PREFIX unset (default off): query() keeps the stable preset (CP-01 default)", async () => {
     const prev = { stage: process.env["LOKI_E10_STAGE"], prefix: process.env["LOKI_E10_PREFIX"] };
     process.env["LOKI_E10_STAGE"] = "implement";
     delete process.env["LOKI_E10_PREFIX"];
@@ -301,7 +301,7 @@ describe("sdkQueryProvider (hermetic, stubbed query)", () => {
       const { sdkQueryProvider } = await import("../../src/runner/providers.ts");
       await sdkQueryProvider().invoke(call());
       const opts = lastQueryArgs?.options ?? {};
-      expect(opts["systemPrompt"]).toEqual({ type: "preset", preset: "claude_code" });
+      expect(opts["systemPrompt"]).toEqual({ type: "preset", preset: "claude_code", excludeDynamicSections: true });
     } finally {
       for (const [k, v] of [["LOKI_E10_STAGE", prev.stage], ["LOKI_E10_PREFIX", prev.prefix]] as const) {
         if (v === undefined) delete process.env[k];
