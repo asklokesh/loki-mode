@@ -857,7 +857,7 @@ export function sdkQueryProvider(): ProviderInvoker {
           cwd: call.cwd,
           iteration: process.env["LOKI_ITERATION"] ?? "0",
           hookEventsEnabled: process.env["LOKI_HOOK_EVENTS"] !== "off",
-          requestedModel: defaultModel ? PROVIDER_DEFAULT_MODEL : model, // P12-23: the exact value resolved for this call, never an inherited env var
+          requestedModel: defaultModel ? PROVIDER_DEFAULT_MODEL : (extra.model ?? model), // P12-23: the exact value resolved for this call, never an inherited env var
           write: (s) => process.stdout.write(s),
         });
         captured = res.capturedText;
