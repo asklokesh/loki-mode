@@ -143,7 +143,15 @@ export function composeGroupReceipt(groupDir: string, rh: RecHash, o: { baseRef:
 // (capGroupVerdict) and can never read higher than the weakest child.
 export const COMPOSITE_SCHEMA = "loki.v10.composite/1";
 export interface CompositeChild { repo: string; run_id: string; receipt_path: string; receipt_file_sha256: string; receipt_sha256: string; head_sha: string; verdict: string }
-export interface CompositeBody { schema: string; workspace: string; run_id: string; integration_sha256: string; children: CompositeChild[]; verdict: string }
+export interface CompositeIntegration { status: string; exit_code: number | null; log_sha256: string | null; heads: Record<string, string | null> }
+export interface CompositeBody { schema: string; workspace: string; run_id: string; integration_sha256: string; integration: CompositeIntegration; children: CompositeChild[]; verdict: string }
+/** Problem with the integration run recorded in integration.json (failed, interrupted or nonzero exit), or null. A missing status is legacy and not judged here. */
+function integrationProblem(integ: Record<string, unknown>): string | null {
+  const st = integ["status"], rc = integ["exit_code"];
+  if (st !== undefined && st !== "passed" && st !== "not_configured") return `integration status is ${text(st, 40) || "unknown"}, not passed`;
+  if (typeof rc === "number" && rc !== 0) return `integration exit code is ${rc}`;
+  return null;
+}
 const slugOf = (repo: string): string => repo.replace(/\//g, "__"); // mirrors workspace.py _slug
 export const isComposite = (r: Record<string, unknown>): boolean => r["schema"] === COMPOSITE_SCHEMA;
 /** Cap rule shared by seal and verify: FAILED child fails, SPEC_CONFLICT stays, any non-passing child caps at PARTIAL. */
@@ -160,6 +168,9 @@ export function composeComposite(runDir: string, rh: RecHash): CompositeBody {
   try { ibytes = readFileSync(ip); } catch { throw new Error("integration.json missing; the workspace run did not finish"); }
   const integ = readJson(ip);
   if (!isObj(integ) || !isObj(integ["outcomes"])) throw new Error("integration.json has no outcomes");
+  const iprob = integrationProblem(integ);
+  if (iprob) throw new Error(`${iprob}; no composite`);
+  if (typeof integ["status"] !== "string") throw new Error("integration.json has no status; no composite");
   const heads = isObj(integ["heads"]) ? integ["heads"] : {};
   const order = Array.isArray(integ["order"]) ? (integ["order"] as unknown[]).map(String) : Object.keys(integ["outcomes"]).sort();
   const children: CompositeChild[] = [];
@@ -178,7 +189,9 @@ export function composeComposite(runDir: string, rh: RecHash): CompositeBody {
     children.push({ repo, run_id: String(r["run_id"] ?? id), receipt_path: `worktrees/${slugOf(repo)}/.loki/runs/${id}/receipt.json`, receipt_file_sha256: sha(bytes), receipt_sha256: r["receipt_sha256"], head_sha: head, verdict: String(r["verdict"] ?? "") });
   }
   if (children.length === 0) throw new Error("workspace has no repos");
-  return { schema: COMPOSITE_SCHEMA, workspace: basename(dirname(runDir)), run_id: basename(runDir), integration_sha256: sha(ibytes), children, verdict: compositeVerdict(children.map((c) => c.verdict)) };
+  return { schema: COMPOSITE_SCHEMA, workspace: basename(dirname(runDir)), run_id: basename(runDir), integration_sha256: sha(ibytes),
+    integration: { status: String(integ["status"]), exit_code: typeof integ["exit_code"] === "number" ? integ["exit_code"] : null, log_sha256: typeof integ["log_sha256"] === "string" ? integ["log_sha256"] : null, heads: heads as Record<string, string | null> },
+    children, verdict: compositeVerdict(children.map((c) => c.verdict)) };
 }
 /** Verify side for composite.json. Null problem means the composite body checks out against disk; `verdict` is the recomputed (capped) outcome. */
 export async function verifyComposite(receiptPath: string, receipt: Record<string, unknown>, rh: RecHash, verifyOne: VerifyOne, deps: VerifyDeps = {}): Promise<{ problem: { verdict: "TAMPERED" | "UNCHECKED"; reason: string } | null; verdict: string }> {
@@ -192,7 +205,14 @@ export async function verifyComposite(receiptPath: string, receipt: Record<strin
   if (sha(ibytes) !== receipt["integration_sha256"]) return bad("integration.json does not match its recorded hash");
   const integ = readJson(join(runDir, "integration.json"));
   if (!isObj(integ) || !isObj(integ["outcomes"])) return bad("integration.json has no outcomes");
+  const iprob = integrationProblem(integ);
+  if (iprob) return bad(iprob);
   const heads = isObj(integ["heads"]) ? integ["heads"] : {}, outcomes = integ["outcomes"];
+  const stated = receipt["integration"];
+  if (stated !== undefined) {
+    const fileSide = { status: integ["status"] ?? null, exit_code: integ["exit_code"] ?? null, log_sha256: integ["log_sha256"] ?? null, heads };
+    if (!isObj(stated) || canonicalJson(stated) !== canonicalJson(fileSide)) return bad("integration section differs from integration.json");
+  }
   const order = Array.isArray(integ["order"]) ? (integ["order"] as unknown[]).map(String) : Object.keys(outcomes).sort();
   const kidRepos = (kids as unknown[]).map((k) => (isObj(k) ? String(k["repo"] ?? "") : ""));
   if (new Set(kidRepos).size !== kidRepos.length) return bad("children list a repo more than once");

@@ -326,7 +326,7 @@ describe("D61-13 single run is unchanged", () => {
 interface C { repo: string; verdict?: string; unsigned?: boolean; head?: string }
 const childPath = (runDir: string, repo: string): string => join(runDir, "worktrees", repo, ".loki", "runs", `run-${repo}`, "receipt.json");
 /** Writes integration.json plus one child receipt per repo under a fresh workspace run dir. */
-function writeWs(name: string, kids: C[]): string {
+function writeWs(name: string, kids: C[], integ: Record<string, unknown> = {}, log?: string): string {
   const runDir = join(root, "ws", name, "20261015T000000Z");
   mkdirSync(runDir, { recursive: true });
   const heads: Record<string, string> = {}, outcomes: Record<string, string> = {};
@@ -338,7 +338,9 @@ function writeWs(name: string, kids: C[]): string {
     mkdirSync(dirname(childPath(runDir, k.repo)), { recursive: true });
     writeFileSync(childPath(runDir, k.repo), JSON.stringify({ ...body, receipt_sha256: h, verification: sig }, null, 2) + "\n");
   }
-  writeFileSync(join(runDir, "integration.json"), JSON.stringify({ heads, outcomes, status: "passed" }, null, 2));
+  if (log !== undefined) writeFileSync(join(runDir, "integration.log"), log);
+  const log_sha256 = log === undefined ? null : sha256(log);
+  writeFileSync(join(runDir, "integration.json"), JSON.stringify({ heads, outcomes, status: "passed", exit_code: 0, log_sha256, ...integ }, null, 2));
   return runDir;
 }
 const quiet = async <T>(f: () => Promise<T>): Promise<T> => { const w = process.stdout.write.bind(process.stdout); process.stdout.write = (() => true) as typeof process.stdout.write; try { return await f(); } finally { process.stdout.write = w; } };
@@ -406,7 +408,7 @@ describe("composite receipt", () => {
     const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
     i.heads.api = "f".repeat(40);
     writeFileSync(ip, JSON.stringify(i));
-    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); delete c["integration"]; });
     const r = await verdictOf(p);
     expect(r.verdict).toBe("UNCHECKED");
     expect(r.reasons.join(" ")).toContain("integrated head");
@@ -459,8 +461,33 @@ describe("composite receipt", () => {
     const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
     i.heads.api = null;
     writeFileSync(ip, JSON.stringify(i));
-    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); delete c["integration"]; });
     expect((await verdictOf(p)).verdict).toBe("UNCHECKED");
+  });
+  test("a failed or interrupted integration run is never sealed and a re-signed edit is TAMPERED", async () => {
+    for (const status of ["failed", "interrupted"]) {
+      const bad = writeWs(`st-${status}`, KIDS, { status, exit_code: 1 });
+      expect(() => composeComposite(bad, computeReceiptHash)).toThrow(/integration/);
+    }
+    expect(() => composeComposite(writeWs("st-rc", KIDS, { exit_code: 3 }), computeReceiptHash)).toThrow(/exit/);
+    const dir = writeWs("st-edit", KIDS);
+    const p = await seal(dir);
+    const ip = join(dir, "integration.json"), i = JSON.parse(readFileSync(ip, "utf8"));
+    i.status = "failed"; i.exit_code = 1;
+    writeFileSync(ip, JSON.stringify(i));
+    resign(p, (c) => { c["integration_sha256"] = createHash("sha256").update(readFileSync(ip)).digest("hex"); });
+    const r = await verdictOf(p);
+    expect(r.verdict).toBe("TAMPERED");
+    expect(r.reasons.join(" ")).toContain("integration");
+  });
+  test("body states integration status, exit code, log hash and heads; editing the body is TAMPERED", async () => {
+    const dir = writeWs("st-body", KIDS, {}, "all green\n");
+    const p = await seal(dir);
+    const c = JSON.parse(readFileSync(p, "utf8"));
+    expect(c.integration).toEqual({ status: "passed", exit_code: 0, log_sha256: sha256("all green\n"), heads: { api: "a".repeat(40), web: "w".repeat(40) } });
+    expect((await verdictOf(p)).verdict).toBe("VERIFIED");
+    resign(p, (x) => { x["integration"].status = "not_configured"; });
+    expect((await verdictOf(p)).verdict).toBe("TAMPERED");
   });
   test("sealing refuses a run dir whose name is not a valid run id", async () => {
     const dir = writeWs("badid", KIDS);
