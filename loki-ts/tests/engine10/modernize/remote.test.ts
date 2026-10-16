@@ -259,4 +259,56 @@ describe("production ablation stub runner (M-27C)", () => {
       expect(result.not_proven).toEqual(["oracle does not constrain unit"]);
     } finally { rmSync(repoDir, { recursive: true, force: true }); }
   }, 60_000);
+
+  // Drives the real runNew and runStub through runUnit for a unit whose oracle holds 10 identical cases of `entry`.
+  const driveAblation = (src: string, entry: string, args: unknown[], ret: unknown, breakTree = false) => {
+    const repoDir = mkdtempSync(join(tmpdir(), "e10-m27c-"));
+    try {
+      const mid = "mod-20260928T010203Z-ab12cd", unit = "m.py";
+      writeFileSync(join(repoDir, "m.py"), src);
+      const dir = oracleDir(repoDir, mid, unit);
+      mkdirSync(dir, { recursive: true });
+      const ids = Array.from({ length: 10 }, (_, i) => `case-${i}`);
+      writeFileSync(join(dir, "cases.jsonl"), ids.map((id) => JSON.stringify({ format: 1, case: id, entry, args, kwargs: {}, return: ret, exc: null, stdout: { t: "text", v: "" }, files: [], not_proven: [] })).join("\n") + "\n");
+      writeFileSync(join(dir, "coverage.json"), JSON.stringify({ unit, entries: [entry], cases: 10, branches_total: 20, branches_taken: 18, branch_pct: 90 }));
+      const red = { runner: "pytest", exitCode: 1, timedOut: false, failedCount: 1, counts: { passed: 0, failed: 1, errors: 0, skipped: 0, other: 0 }, tests: { "t::a": "failed" } };
+      const green = { runner: "pytest", exitCode: 0, timedOut: false, counts: { passed: 1, failed: 0, errors: 0, skipped: 0, other: 0 }, tests: { "t::a": "passed" } };
+      let calls = 0;
+      const { runNew, runStub } = makeUnitRunners({ target: "python3" });
+      const stubFn: typeof runStub = breakTree ? (u, t, r) => { rmSync(join(t, "m.py")); return runStub(u, t, r); } : runStub;
+      const result = runUnit({ unit, repoDir, mid, target: "python3", normalizers: DEFAULT_NORMALIZERS }, new ModernizeLog(repoDir, mid), (() => (calls++ === 0 ? red : green)) as never, () => {}, runNew, stubFn);
+      return { result, repoDir, runNew, runStub };
+    } finally { rmSync(repoDir, { recursive: true, force: true }); }
+  };
+
+  it.skipIf(!py)("a bound-method entry cannot be stubbed: runStub throws and runUnit is NOT_PROVEN, ablation inconclusive", () => {
+    const src = "class R:\n    def run(self):\n        return 6\n\nf = R().run\n";
+    withTree(src, (tree) => {
+      const { runNew, runStub } = makeUnitRunners({ target: "python3" });
+      const r = rec({ entry: "f", return: { t: "int", v: "6" } });
+      expect(runNew("m.py", tree, r).return).toEqual({ t: "int", v: "6" });
+      expect(() => runStub("m.py", tree, r)).toThrow(/could not stub entry f/);
+    });
+    const { result } = driveAblation(src, "f", [], { t: "int", v: "6" });
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven.join(";")).toContain("ablation inconclusive");
+  }, 60_000);
+
+  it.skipIf(!py)("an imported entry cannot be stubbed: runStub throws and runUnit is NOT_PROVEN, ablation inconclusive", () => {
+    const src = "from operator import abs as f\n";
+    const args = [{ t: "int", v: "3" }];
+    withTree(src, (tree) => {
+      const { runStub } = makeUnitRunners({ target: "python3" });
+      expect(() => runStub("m.py", tree, rec({ entry: "f", args, return: { t: "int", v: "3" } }))).toThrow(/could not stub entry f/);
+    });
+    const { result } = driveAblation(src, "f", args, { t: "int", v: "3" });
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven.join(";")).toContain("ablation inconclusive");
+  }, 60_000);
+
+  it.skipIf(!py)("a runStub error (unit file missing from the new tree) is NOT_PROVEN, ablation inconclusive", () => {
+    const { result } = driveAblation("def f():\n    return 6\n", "f", [], { t: "int", v: "6" }, true);
+    expect(result.verdict).toBe("NOT_PROVEN");
+    expect(result.not_proven.join(";")).toContain("ablation inconclusive");
+  }, 60_000);
 });
