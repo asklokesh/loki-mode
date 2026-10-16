@@ -1173,20 +1173,24 @@ def git_head(repo):
     return out.strip() if out and out.strip() else ""
 
 
-def _sparse_in_cone(repo):
-    """Tracked paths git's sparse patterns include (cone and non-cone); None if unknown."""
-    pat = _vr_git_args(repo, ["rev-parse", "--git-path", "info/sparse-checkout"])
-    if pat is None or not pat.strip():
+def _sparse_in_cone(repo, path):
+    """True/False from git's own sparse matcher; None when git cannot answer.
+
+    `git sparse-checkout check-rules` echoes the paths the patterns include,
+    for cone, non-cone and negation alike. Known limit: a .git directory
+    writable by the subject can drop paths from info/sparse-checkout. That hole
+    predates this check (core.sparseCheckout=true alone was enough).
+    """
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo or ".", "sparse-checkout", "check-rules", "-z"],
+            input=path.encode("utf-8", "surrogateescape") + b"\0",
+            capture_output=True, timeout=10, env=_scoped_env())
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
-    pat = pat.strip()
-    if not os.path.isabs(pat):
-        pat = os.path.join(repo or ".", pat)
-    if not os.path.isfile(pat):
+    if r.returncode != 0:
         return None
-    out = _vr_git_args(repo, ["ls-files", "-c", "-i", "-z", "--exclude-from=" + pat])
-    if out is None:
-        return None
-    return set(p for p in out.split("\0") if p)
+    return path.encode("utf-8", "surrogateescape") in r.stdout.split(b"\0")
 
 
 def git_dirty(repo):
@@ -1230,7 +1234,6 @@ def git_dirty(repo):
     root = repo or "."
     bad = None
     todo = []
-    in_cone = None
     for skip, path in cand:
         full = os.path.join(root, path)
         mode, want = blobs.get(path, ("", ""))
@@ -1239,9 +1242,7 @@ def git_dirty(repo):
                 # Clean only when git's own sparse patterns exclude the path. An
                 # in-cone path flagged by hand and deleted is a real deletion;
                 # an undeterminable cone fails closed (dirty).
-                if in_cone is None:
-                    in_cone = _sparse_in_cone(repo)
-                if in_cone is not None and path not in in_cone:
+                if _sparse_in_cone(repo, path) is False:
                     continue
             bad = (skip, path)
             break

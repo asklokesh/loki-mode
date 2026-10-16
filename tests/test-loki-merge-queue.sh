@@ -211,6 +211,29 @@ mv "$SP_REPO/.git/info/sparse-checkout" "$SP_REPO/.git/info/sparse-checkout.bak"
 mv "$SP_REPO/.git/info/sparse-checkout.bak" "$SP_REPO/.git/info/sparse-checkout"
 git -C "$SP_REPO" update-index --no-skip-worktree keep/f
 git -C "$SP_REPO" checkout -q -- keep/f
+# P12-03d review: nested cone and negation sets are clean untouched, and a relative repo works.
+spdr() { (cd "$2" && python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty(sys.argv[2]))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" "$1" 2>/dev/null); }
+NS_REPO="$WORK/nsrepo"; mkdir -p "$NS_REPO/a/b/c" "$NS_REPO/a/d" "$NS_REPO/x/y" "$NS_REPO/x/z"
+git -C "$NS_REPO" init -q
+for _f in a/f a/b/f a/b/c/f a/d/f x/f x/y/f x/z/f top; do echo 1 > "$NS_REPO/$_f"; git -C "$NS_REPO" add "$_f"; done
+git -C "$NS_REPO" -c user.name=t -c user.email=t@t commit -qm ns
+git -C "$NS_REPO" sparse-checkout set --cone a/b >/dev/null 2>&1
+[ ! -e "$NS_REPO/a/d/f" ] && [ "$(spdr "$NS_REPO" "$WORK")" = "False" ] && ok "sparse nested cone (a/b), sibling a/d untouched, is clean" || bad "nested cone: $(spdr "$NS_REPO" "$WORK")"
+git -C "$NS_REPO" sparse-checkout set --cone a/b/c x/y >/dev/null 2>&1
+[ "$(spdr "$NS_REPO" "$WORK")" = "False" ] && ok "sparse nested cone (a/b/c x/y) untouched is clean" || bad "nested cone 2: $(spdr "$NS_REPO" "$WORK")"
+[ "$(cd "$WORK" && python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty("nsrepo"))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" 2>&1)" = "False" ] && ok "sparse: relative repo path is clean" || bad "relative repo"
+git -C "$NS_REPO" update-index --skip-worktree a/b/c/f
+rm "$NS_REPO/a/b/c/f"
+[ "$(cd "$WORK" && python3 -I -c 'import importlib.util,sys;s=importlib.util.spec_from_file_location("pv",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m);print(m.git_dirty("nsrepo"))' "$SCRIPT_DIR/../autonomy/lib/proof-verify.py" 2>/dev/null)" = "True" ] && ok "sparse: relative repo, in-cone deletion is dirty" || bad "relative repo dirty"
+git -C "$NS_REPO" update-index --no-skip-worktree a/b/c/f
+git -C "$NS_REPO" checkout -q -- a/b/c/f
+git -C "$NS_REPO" sparse-checkout set --no-cone /a/ '!/a/b/' >/dev/null 2>&1
+[ ! -e "$NS_REPO/a/b/f" ] && [ "$(spdr "$NS_REPO" "$WORK")" = "False" ] && ok "sparse no-cone negation (/a/ !/a/b/) untouched is clean" || bad "negation: $(spdr "$NS_REPO" "$WORK")"
+git -C "$NS_REPO" update-index --skip-worktree a/f
+rm "$NS_REPO/a/f"
+[ "$(spdr "$NS_REPO" "$WORK")" = "True" ] && ok "sparse no-cone negation: in-cone deletion is dirty" || bad "negation in-cone: $(spdr "$NS_REPO" "$WORK")"
+git -C "$NS_REPO" update-index --no-skip-worktree a/f
+git -C "$NS_REPO" checkout -q -- a/f
 # CRLF in the index plus autocrlf: raw bytes match, so a flagged file is clean.
 printf 'x\r\n' > "$GD_REPO/crlf"
 git -C "$GD_REPO" -c core.autocrlf=false add crlf
