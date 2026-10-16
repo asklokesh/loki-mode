@@ -409,6 +409,19 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
     } finally { f.done(); }
   });
 
+  it("resume: prepare (oracle capture) is NOT called for units already logged completed or not_proven", async () => {
+    const f = fx();
+    try {
+      f.log.append("unit.started", { unit: "a", model: "sonnet", variant: 0 });
+      f.log.append("unit.completed", { unit: "a" });
+      f.log.append("unit.not_proven", { unit: "b", reasons: ["old"] });
+      const prepared: string[] = [];
+      const restarted = new ModernizeLog(f.dir, MID);
+      await runWaves(planOf([[u("a"), u("b"), u("c")]]), mk(f, { log: restarted, resume: true, ship: false, prepare: (x) => { prepared.push(x.id); return null; } }));
+      expect(prepared).toEqual(["c"]);
+    } finally { f.done(); }
+  });
+
   it("resume: a logged NOT_PROVEN unit is never shipped PROVEN and blocks the next wave", async () => {
     const f = fx();
     try {
@@ -559,6 +572,21 @@ describe("M-27E coordinator wiring", () => {
       expect(noRuntime(unit1("u-5", ["a.py"]))).toBe("old runtime unavailable");
       expect(noRuntime(unit1("u-6", ["a.py", "b.py"]))).toBe("old runtime unavailable");
     } finally { f.done(); }
+  });
+
+  it("productionWaveDeps reads build files from the repo dir (F7: not the target string)", () => {
+    const repo = gitRepo(["tox.ini", "a.py"]);
+    writeFileSync(join(repo, "tox.ini"), "[tox]\n[testenv:integration]\ncommands = true\n");
+    const f = fx();
+    try {
+      const plan = planOf([[unit1("a.py", ["a.py"])]]);
+      const built = productionWaveDeps({ repoDir: repo, mid: MID, target: "python3", workers: 1, budgetUsd: null, resume: false, noPr: true, inv: buildInventory(repo), plan, log: f.log });
+      expect(built.ok).toBe(true);
+      if (!built.ok) return;
+      expect(built.deps.waveCommands.build).not.toBeNull();
+      expect(built.deps.waveCommands.integration).not.toBeNull();
+      expect(built.deps.optionalSteps).toEqual([]);
+    } finally { f.done(); rmSync(repo, { recursive: true, force: true }); }
   });
 
   it("productionWaveDeps on a tmp repo with --no-pr is ok and merges through gitMergeOps without a seam", () => {

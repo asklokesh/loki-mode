@@ -2,7 +2,8 @@
 // Lives in util/ because engine10/modernize/ is at its D33 line cap (like modernize_unit.ts). No existing file owns wave orchestration: cli.ts parses args; ship.ts, resume.ts, scheduler.ts and wave.ts each own one step.
 // Per wave: schedule (or resumeSchedule after a crash), verifyWave (M-20), nextWaveGate, shipWave (M-21). Every dependency is injected.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClusterResult, Unit } from "../engine10/modernize/cluster.ts";
 import type { InventoryResult } from "../engine10/modernize/inventory.ts";
@@ -76,7 +77,11 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
   let spent = 0;
   const shipped = new Set(readModernizeEvents(d.repoDir, d.mid).filter((e) => e.type === "wave.shipped").map((e) => e.data["wave"]));
   const unready = new Map<string, string>();
+  // F8: on resume a unit already settled in the log is never re-captured (the tree has changed since).
+  const settled = new Set<string>();
+  if (d.resume) { const st = loadResumeState(d.repoDir, d.mid); if (st.ok) for (const id of [...st.state.completed, ...st.state.notProven]) settled.add(id); }
   for (const u of plan.units) {
+    if (settled.has(u.id)) continue;
     const why = d.prepare?.(u) ?? null;
     if (why === null) continue;
     unready.set(u.id, why);
@@ -155,7 +160,11 @@ export const MULTI_FILE_REASON = "multi-file unit: capture not supported (founde
 /** Oracle capture for one unit (F8): null when the oracle exists or was captured, else the NOT_PROVEN reason. Captures once, never retried on a changed tree. */
 export function makeUnitPrep(o: { repoDir: string; mid: string; propose: ProposeInputs; capture?: typeof captureUnitOracle; runtimeOk?: () => boolean }): (unit: Unit) => string | null {
   // Probe the old runtime once: realCaptureRunner reports "old runtime unavailable" before it reads the unit, so every unit gets the same honest reason.
-  const runtimeOk = o.runtimeOk ?? ((): boolean => realCaptureRunner(join(o.repoDir, "probe.py"), []).error !== "old runtime unavailable");
+  const runtimeOk = o.runtimeOk ?? ((): boolean => {
+    // Probe a path inside a fresh temp dir, never a file in the user's repo.
+    const dir = mkdtempSync(join(tmpdir(), "loki-probe-"));
+    try { return realCaptureRunner(join(dir, "probe.py"), []).error !== "old runtime unavailable"; } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
   let runtime: boolean | null = null;
   return (unit) => {
     if (existsSync(join(oracleDir(o.repoDir, o.mid, unit.id), "cases.jsonl")) || alreadySealedInLog(o.repoDir, o.mid, unit.id)) return null;
