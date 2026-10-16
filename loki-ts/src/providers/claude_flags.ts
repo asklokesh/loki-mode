@@ -819,3 +819,43 @@ export function permissionArgv(
     return ["--permission-mode", "plan"];
   }
 }
+
+// P12-26c -- Agent SDK permission options, derived from permissionArgv (the one
+// resolver) so the SDK route honours LOKI_PERMISSION_POLICY exactly like the CLI.
+// Unset: bypassPermissions + the required companion flag, byte-identical to the
+// previous hardcoded options. Only the argv shapes the compiler emits are read.
+export interface SdkPermissionOptions {
+  permissionMode: "plan" | "default" | "acceptEdits" | "bypassPermissions";
+  allowDangerouslySkipPermissions?: true;
+  allowedTools?: string[];
+  disallowedTools?: string[];
+}
+
+export function sdkPermissionOptions(
+  repoDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
+  warn?: (m: string) => void,
+): SdkPermissionOptions {
+  const argv = warn ? permissionArgv(repoDir, env, warn) : permissionArgv(repoDir, env);
+  if (argv.includes("--dangerously-skip-permissions")) {
+    return { permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true };
+  }
+  const val = (flag: string): string | undefined => {
+    const i = argv.indexOf(flag);
+    return i >= 0 ? argv[i + 1] : undefined;
+  };
+  const csv = (s: string | undefined): string[] | undefined => {
+    const l = (s ?? "").split(",").filter(Boolean);
+    return l.length ? l : undefined;
+  };
+  const m = val("--permission-mode");
+  const modes = ["plan", "default", "acceptEdits", "bypassPermissions"] as const;
+  const mode = modes.find((x) => x === m) ?? "plan"; // unreadable mode fails closed
+  const out: SdkPermissionOptions = { permissionMode: mode };
+  if (mode === "bypassPermissions") out.allowDangerouslySkipPermissions = true;
+  const allow = csv(val("--allowedTools"));
+  const deny = csv(val("--disallowedTools"));
+  if (allow) out.allowedTools = allow;
+  if (deny) out.disallowedTools = deny;
+  return out;
+}

@@ -19,6 +19,7 @@ import {
   claudeFlagSupported,
   buildAutoFlags,
   permissionArgv,
+  sdkPermissionOptions,
   claudeSessionUuid,
   claudeIterationSessionUuid,
   sessionStampArgv,
@@ -869,6 +870,7 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
   ];
   // file -> exact lines allowed only there (docs/display text, never a launch)
   const FILE_LINES: Record<string, string[]> = {
+    "magic/core/debate.py": [`return ["${LIT}"]`], // import-failure fallback, only when the policy is unset
     "autonomy/loki": [`claude ${LIT}`, `echo "Flag:        ${LIT}"`],
   };
   // Whole files scoped out, with a reason. Any raw launch in them is accepted.
@@ -878,6 +880,8 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     "scripts/b9-scoreboard.sh": "benchmark raw-claude baseline arms and help-text stub, deliberately not policy-routed",
     "scripts/e2e-d65/stub-claude.sh": "stub claude help text only, not a launch",
     "eval/loki10/harness.py": "eval harness raw-claude baseline arm, deliberately not policy-routed",
+    "benchmarks/bench/attribution.py": "benchmark raw-claude baseline arm (and its recorded command string); a policy would skew the A/B against Loki",
+    "benchmarks/bench/adapters/claude_code.py": "head-to-head adapter that runs stock Claude Code as the competitor arm, not a Loki launch",
   };
   const rawLaunches = (rel: string, text: string): string[] =>
     text.split("\n").filter((l) => {
@@ -898,7 +902,7 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     expect(rawLaunches("autonomy/x.sh", `    _LOKI_PERM_ARGV=(${LIT})`).length).toBe(0);
   });
 
-  it("P12-26b: no unlisted raw --dangerously-skip-permissions launch remains in autonomy/, providers/, dashboard/, magic/, scripts/, eval/loki10/harness.py", () => {
+  it("P12-26b: no unlisted raw --dangerously-skip-permissions launch remains in autonomy/, providers/, dashboard/, magic/, scripts/, benchmarks/, eval/", () => {
     const root = join(import.meta.dir, "../../..");
     const out: string[] = [];
     const check = (r: string): void => {
@@ -912,9 +916,28 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
         if (/\.(sh|py|ts|js|mjs)$/.test(e.name) || e.name === "loki") check(r);
       }
     };
-    for (const d of ["autonomy", "providers", "dashboard", "magic", "scripts"]) walk(d);
-    check("eval/loki10/harness.py");
+    for (const d of ["autonomy", "providers", "dashboard", "magic", "scripts", "benchmarks", "eval"]) walk(d);
     expect(out).toEqual([]);
+  });
+
+  it("P12-26c: SDK path maps the policy to permissionMode via the same resolver", () => {
+    // unset: today's default, byte-identical
+    const unset = { ...noManaged(), LOKI_PERMISSION_POLICY: "" };
+    expect(sdkPermissionOptions(repo, unset)).toEqual({ permissionMode: "bypassPermissions", allowDangerouslySkipPermissions: true });
+    // compiled restrictive policy
+    writePolicy({ claude_permissions: { mode: "acceptEdits", allow: ["Read"], deny: ["Bash(rm:*)"] } });
+    expect(sdkPermissionOptions(repo, noManaged())).toEqual({
+      permissionMode: "acceptEdits", allowedTools: ["Read"], disallowedTools: ["Bash(rm:*)"],
+    });
+  });
+
+  it("P12-26c: SDK path never widens: repo bypass under a managed cap, and fail-closed plan", () => {
+    writePolicy({ claude_permissions: { mode: "bypassPermissions" } });
+    const managed = join(repo, "managed.json");
+    writeFileSync(managed, JSON.stringify({ permissions: { disableBypassPermissionsMode: "disable" } }));
+    expect(sdkPermissionOptions(repo, noManaged({ LOKI_MANAGED_SETTINGS: managed })).permissionMode).toBe("acceptEdits");
+    writePolicy("{not json");
+    expect(sdkPermissionOptions(repo, noManaged(), () => {}).permissionMode).toBe("plan");
   });
 
   it("works from the bundled dist layout (and fails closed to plan when the compiler is absent)", () => {
