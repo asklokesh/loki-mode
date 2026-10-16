@@ -4,7 +4,7 @@
 // LOKI_SDK_LOOP=1). The runAutonomous delegation itself is covered by the
 // existing loki_start_e2e.test.ts.
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { isBashOnlyStart, parseStartArgs, scopedStartEnv, startEngine } from "../../src/commands/start.ts";
+import { isBashOnlyStart, parseStartArgs, scopedStartEnv, startEngine, writebackEnv } from "../../src/commands/start.ts";
 
 // E2E-shaped: drives the real loop, which writes state files and spawns
 // processes. Bun's 5000ms default is fine idle and NOT fine inside a full CI
@@ -273,5 +273,15 @@ describe("PATH: bash divert env is scoped", () => {
     expect(out.ANTHROPIC_API_KEY).toBe("k");
     expect(out.FOO_SECRET).toBeUndefined();
     expect(out.DATABASE_PASSWORD).toBeUndefined();
+  });
+});
+
+describe("writebackEnv (tracker ref exports LOKI_WRITEBACK_ISSUE)", () => {
+  it("sets the key for jira: and linear: refs, leaves plain text alone", () => {
+    expect(writebackEnv("jira:PROJ-123", {}).LOKI_WRITEBACK_ISSUE).toBe("PROJ-123");
+    expect(writebackEnv("linear:ENG-42", {}).LOKI_WRITEBACK_ISSUE).toBe("ENG-42");
+    expect(writebackEnv("linear:ENG-42", {}).LOKI_WRITEBACK_KIND).toBe("linear");
+    expect(writebackEnv("jira:PROJ-123", {}).LOKI_WRITEBACK_KIND).toBe("jira");
+    expect(writebackEnv("add a login page", {}).LOKI_WRITEBACK_ISSUE).toBeUndefined();
   });
 });
