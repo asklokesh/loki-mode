@@ -276,13 +276,15 @@ grill_invoke_provider() {
             if [ "$_gr_ledger" = true ] && [ -n "$out" ]; then
                 loki_child_ledger_append grill "$out" >/dev/null 2>&1 || true
                 out="$(printf '%s' "$out" | python3 -I -c 'import json,sys
+raw = sys.stdin.read()
 try:
-    d = json.load(sys.stdin)
-    if isinstance(d, list):
-        d = next((x for x in reversed(d) if isinstance(x, dict) and x.get("type") == "result"), {})
-    sys.stdout.write(str(d.get("result", "")))
+    d = json.loads(raw)
 except Exception:
-    pass' 2>/dev/null)"
+    d = None
+if isinstance(d, list):
+    d = next((x for x in reversed(d) if isinstance(x, dict) and x.get("type") == "result"), {})
+# A CLI or stub that ignores --output-format json returns plain text: keep it.
+sys.stdout.write(str(d.get("result", "")) if isinstance(d, dict) else raw)' 2>/dev/null)"
             fi
             if [ -z "$out" ]; then
                 _grill_err "provider returned no output (timeout or invocation error)"
