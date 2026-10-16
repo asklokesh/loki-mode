@@ -201,12 +201,14 @@ describe("engine10 pr stage", () => {
   test("existing is null without a marker, true on 'reused', false on 'created'", async () => {
     for (const [marker, want] of [["", null], ["reused", true], ["created", false]] as const) {
       const script = writeStub(stubDir, logPath, undefined, PR_URL, marker);
-      const { ctx, emitted } = makeCtx(repoDir, runDir);
+      const rd = mkdtempSync(join(tmpdir(), "e10-pr-rd-")); // fresh run dir: the outbox replays a recorded PR
+      const { ctx, emitted } = makeCtx(repoDir, rd);
       const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
       expect(result.status).toBe("completed");
       expect(result.data.pr_url).toBe(PR_URL);
       expect(result.data.existing).toBe(want);
       expect(emitted[0]!.data.existing).toBe(want);
+      rmSync(rd, { recursive: true, force: true });
     }
   });
 
