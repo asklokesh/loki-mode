@@ -39,7 +39,7 @@ import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../e10ext/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../e10ext/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
-const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened", "log.sealed", "deep.started"]); // types only the supervisor may write; same types from the worker are dropped
+const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
@@ -76,6 +76,8 @@ export interface SupervisorOptions {
   capCeilingS?: number; // FC-21b: the backstop is set here (the most the worker's resized cap can reach), not at the initial cap
   capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap minus grace
   graceS?: number; // default BACKSTOP_GRACE_S
+  restoreBranch?: string | null; // P12-07i: the user's branch before a resume checkout, restored on stop instead of the run branch
+  resume?: boolean; // P12-07i: re-enter an interrupted run: appends run.resumed instead of run.started and tells the worker to restore settled stages
 }
 export interface SupervisorResult {
   verdict: Verdict;
@@ -139,9 +141,9 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
   // P0: a caller-built env (tests pass a minimal one) that omits LOKI_CONTROL inherits the process-level off switch the test preload sets.
   if ((env.LOKI_CONTROL ?? process.env.LOKI_CONTROL) !== "0") void import("../e10ext/ship_hook.ts").then((m) => m.startShip(opts.repoDir, log.path, env)).catch(() => {}); // CP-02: D56 shipper, off with LOKI_CONTROL=0
-  log.append("run.started", null, { ...opts.started, origin_repo: githubRepoFromUrl(origin) });
+  log.append(opts.resume ? "run.resumed" : "run.started", null, { ...opts.started, ...(opts.resume ? { phase: "stage" } : {}), origin_repo: githubRepoFromUrl(origin) });
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
-  withholdGithubTokens(workerEnv);
+  withholdGithubTokens(workerEnv); if (opts.resume) workerEnv.LOKI_E10_RESUME = "1";
   // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
   workerEnv.LOKI_INTENT_TTY = env.LOKI_CONFIRM === "1" && process.stdin.isTTY === true && process.stdout.isTTY === true ? "1" : "0";
   const envCap = Number(env.LOKI_E10_CAP_S);
@@ -149,7 +151,7 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const ceilingS = Math.max(capS, opts.capCeilingS ?? capS);
   const backstopMs = backstopS(ceilingS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
   const escalateMs = Math.max(0, Math.min(2000, ceilingS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
-  let sealed: Record<string, unknown> | null = null; const origBranch = currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
+  let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") sealed = e.data;
