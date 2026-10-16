@@ -24,6 +24,7 @@ import { detectProtocol } from "../cockpit/capability.ts";
 import { rasterAvailable } from "../cockpit/raster.ts";
 import { probeAdvisor } from "../runner/router/advisor_probe.ts";
 import { routerEnabled } from "../runner/router/flag.ts";
+import { tokenFreeEnv } from "../util/safe_git.ts";
 
 // ---------- Setup requirements per execution path -----------------------------
 // The table lives in autonomy/lib/setup-requirements.json (one source for doctor, loki setup,
@@ -1820,7 +1821,7 @@ const defaultRoundTrip: RoundTripRunner = async () => {
   const prompt = "Reply with the single word OK";
   const args = provider === "claude" ? ["-p", prompt] : provider === "codex" ? ["exec", prompt] : null;
   if (!args) return { ok: false, detail: `round-trip unsupported for provider ${provider}` };
-  const r = spawnSync(provider, args, { encoding: "utf8", timeout: 60000, env: { ...process.env } });
+  const r = spawnSync(provider, args, { encoding: "utf8", timeout: 60000, env: tokenFreeEnv() });
   if (r.error) return { ok: false, detail: String(r.error.message).slice(0, 200) };
   return { ok: r.status === 0, detail: (r.status === 0 ? r.stdout : r.stderr || `exit ${r.status}`).trim().slice(0, 200) };
 };
