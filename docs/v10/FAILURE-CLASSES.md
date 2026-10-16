@@ -149,6 +149,9 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
   - the equivalents for other runners: vitest.config setupFiles, jest setupFiles and moduleNameMapper, pytest conftest.py, and go test flags in Makefiles.
 - Mechanism: one runner-config registry for each runner. Any added or changed file that it names (configs, preloads, setup files, conftest) caps the verdict below VERIFIED, with NOT PROVEN naming the file.
 - Fixture: a stub-provider repro for each runner (bun preload, vitest setupFiles, jest moduleNameMapper, pytest conftest).
+- Status (FC-09r): mechanism in `loki-ts/src/features/runner_config.ts`, read by verify.ts (testConfigChanged, base vs working tree) and seal.ts (runnerConfigNotes, base vs head, adds a NOT PROVEN line so the verdict cannot be VERIFIED). Fixtures: `loki-ts/tests/engine10/runner_config.test.ts` (real commit + seal stages).
+- Covered: bunfig.toml; vitest, vite, jest config and vitest.workspace; .mocharc; pytest.ini, tox.ini, conftest.py; pyproject.toml and setup.cfg pytest sections; .cargo/config.toml; preload, setupFiles, globalSetup and exact-file moduleNameMapper targets (jest rootDir resolved, explicit rootDir fails closed); `__mocks__/`; package.json scripts and resolution redirects; go.mod and go.work replace; Cargo.toml patch and replace; tsconfig paths; a changed config that fails to parse is capped, an unchanged broken one is not.
+- Deferred: transitive imports of setup files, pytest `-p` plugins and `pytest_plugins`, .mocharc `require`/`spec` targets, setupFiles given as identifiers or globs, Makefile go test flags.
 
 ## FC-10 Live line truncated to ~20 columns on a pty with no size
 - User saw: on a pty with no column size (script -q, CI, tmux before a resize, IDE terminals) the quiet-mode live status line was cut to about 20 characters, for example "[implement] implemen". Raw: the stage events were complete; only the rendering was wrong.
