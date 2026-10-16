@@ -1440,13 +1440,13 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
     writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}change\n`);
     expect(withSteer({ stage: "implement", brief: "b" }, ctx.repoDir, ctx.intentRevisions).brief).toBe("b"); // not injected, but recorded as unapplied
-    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory, or delete an unreadable HUMAN_INPUT.md.");
+    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory. A steer that was already claimed is archived as .loki/logs/human-input-*.md; one still at .loki/HUMAN_INPUT.md is unreadable, so delete it.");
   }, 30000);
   test("logs path is a regular file: a late steer refuses the seal", async () => {
     const ctx = withRevs("rev-logs-file-late", []);
     writeFileSync(join(ctx.repoDir, ".loki/logs"), "not a dir");
     writeFileSync(join(ctx.repoDir, ".loki/HUMAN_INPUT.md"), `${HDR}late\n`);
-    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory, or delete an unreadable HUMAN_INPUT.md.");
+    await refuses(ctx, "logs dir unwritable or file unreadable", "Make .loki/logs a writable directory. A steer that was already claimed is archived as .loki/logs/human-input-*.md; one still at .loki/HUMAN_INPUT.md is unreadable, so delete it.");
   }, 30000);
   test("an oversize late steer refuses the seal", async () => {
     const ctx = withRevs("rev-oversize-late", []);

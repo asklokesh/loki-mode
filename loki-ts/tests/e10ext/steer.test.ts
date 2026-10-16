@@ -1,7 +1,8 @@
 // Operator steer on engine10: HUMAN_INPUT.md is injected into the next plan/implement brief once, then archived.
 import { afterAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, chmodSync, lstatSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
@@ -99,6 +100,34 @@ describe("engine10 steer", () => {
     const afterOpen = (c: string): void => appendFileSync(c, "y".repeat(1024 * 1024 + 5));
     expect(consumeSteer(d, {}, () => new Date(), sink, { afterOpen })).toBeNull();
     expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "over 1 MiB"]]);
+  });
+  test("two consumers choosing the same archive name never replace an earlier archive", () => {
+    const d = repo("MINE");
+    const fixed = new Date("2026-10-16T01:02:03.000Z");
+    const taken = join(d, ".loki", "logs", "human-input-20261016T010203.md");
+    const afterOpen = (): void => { mkdirSync(join(d, ".loki", "logs"), { recursive: true }); writeFileSync(taken, "OTHER"); };
+    expect(consumeSteer(d, {}, () => fixed, undefined, { afterOpen })).toBe("MINE");
+    expect(readFileSync(taken, "utf8")).toBe("OTHER");
+    expect(archived(d).filter((n) => n.startsWith("human-input-")).map((n) => readFileSync(join(d, ".loki", "logs", n), "utf8")).sort()).toEqual(["MINE", "OTHER"]);
+  });
+  test("a non-file steer restored in place never replaces a fresh steer written meanwhile", () => {
+    const d = repo();
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    execFileSync("mkfifo", [f]);
+    const sink: IntentRevision[] = [];
+    const beforeRestore = (): void => writeFileSync(f, "FRESH");
+    expect(consumeSteer(d, {}, () => new Date(), sink, { beforeRestore })).toBeNull();
+    expect(readFileSync(f, "utf8")).toBe("FRESH");
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "not a regular file"]]);
+    expect(archived(d).some((n) => n.startsWith("human-input-REJECTED-NOTFILE-"))).toBe(true);
+    expect(consumeSteer(d)).toBe("FRESH");
+  });
+  test("a non-file steer with no fresh steer is restored in place", () => {
+    const d = repo();
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    execFileSync("mkfifo", [f]);
+    expect(consumeSteer(d)).toBeNull();
+    expect(lstatSync(f).isFIFO()).toBe(true);
   });
   test("a unix socket at the steer path refuses as not a regular file", async () => {
     const d = repo();

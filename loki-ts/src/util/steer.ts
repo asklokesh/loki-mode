@@ -3,8 +3,8 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, rmSync, unlinkSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
 
@@ -14,7 +14,19 @@ export const STEER_BEGIN = "--- BEGIN OPERATOR GUIDANCE (from loki steer) ---";
 export const STEER_END = "--- END OPERATOR GUIDANCE ---";
 
 /** Test seams: run right after the claim rename, and right after the claimed file is opened (before the read). */
-export interface SteerHooks { afterClaim?: (claimed: string) => void; afterOpen?: (claimed: string) => void }
+export interface SteerHooks { afterClaim?: (claimed: string) => void; afterOpen?: (claimed: string) => void; beforeRestore?: () => void }
+
+/** Moves an exclusively-owned file to `<prefix>.md` (or `<prefix>-N.md`) without ever replacing an existing archive: linkSync fails with EEXIST atomically, then the private name is dropped.
+ *  A directory cannot be hard-linked, so it gets a random-suffix rename instead. Returns the archive's base name. */
+function archiveTo(logs: string, prefix: string, src: string): string {
+  for (let i = 0; ; i++) {
+    const name = i === 0 ? `${prefix}.md` : `${prefix}-${i}.md`;
+    try { linkSync(src, join(logs, name)); unlinkSync(src); return name; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "EEXIST") continue;
+      const name2 = `${prefix}-${randomBytes(4).toString("hex")}.md`; renameSync(src, join(logs, name2)); return name2;
+    }
+  }
+}
 
 /** Reads and archives .loki/HUMAN_INPUT.md. Returns its text, or null when absent, empty, a symlink, oversize or opted out (LOKI_PROMPT_INJECTION=0/false).
  *  Claim first: the inbox file is atomically renamed to its unique archive name, then read to EOF. A steer written after the claim creates a fresh inbox file for the next consume, so none is lost or half-read. */
@@ -28,13 +40,17 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
     const stamp = now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
-    let name = `human-input-${stamp}.md`;
-    for (let i = 1; lstatSync(join(logs, name), { throwIfNoEntry: false }); i++) name = `human-input-${stamp}-${i}.md`; // never overwrite an earlier archive
-    claimed = join(logs, name);
+    // A private, unique claim name: the rename can never collide with another consumer, and the archive name is chosen later by archiveTo.
+    claimed = join(logs, `.claim-${process.pid}-${randomBytes(6).toString("hex")}`);
     try { renameSync(f, claimed); } catch (e) { claimed = ""; if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
     hooks?.afterClaim?.(claimed);
-    const notFile = (): null => { try { if (!lstatSync(f, { throwIfNoEntry: false })) { renameSync(claimed, f); unapplied("not a regular file"); return null; } } catch { /* quarantine below */ } return reject("NOTFILE", "not a regular file"); }; // a directory or special file stays in place (the remedy deletes it); a fresh steer already there wins
-    const reject = (tag: string, reason: string): null => { renameSync(claimed, join(logs, `human-input-REJECTED-${tag}-${stamp}.md`)); unapplied(reason); return null; };
+    const reject = (tag: string, reason: string): null => { archiveTo(logs, `human-input-REJECTED-${tag}-${stamp}`, claimed); claimed = ""; unapplied(reason); return null; };
+    // A directory or special file goes back in place (the remedy deletes it). linkSync fails atomically with EEXIST when a fresh steer is there; a directory (EPERM) is renamed back, which a fresh regular file refuses with ENOTDIR. Either refusal quarantines.
+    const notFile = (): null => {
+      hooks?.beforeRestore?.();
+      try { try { linkSync(claimed, f); unlinkSync(claimed); } catch (e) { if ((e as NodeJS.ErrnoException).code === "EEXIST") throw e; renameSync(claimed, f); } claimed = ""; unapplied("not a regular file"); return null; } catch { /* quarantine below */ }
+      return reject("NOTFILE", "not a regular file");
+    };
     // O_NOFOLLOW (O_NONBLOCK so a FIFO cannot hang the open); every check and the read use this fd. On Windows both flags are undefined and act as 0.
     try { fd = openSync(claimed, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
       const l = lstatSync(claimed, { throwIfNoEntry: false });
@@ -55,9 +71,10 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
       chunks.push(Buffer.from(buf.subarray(0, n)));
     }
     const text = Buffer.concat(chunks).toString("utf8").trim();
-    if (text !== "") { const recs = recordRevisions(repoDir, text, name, now()); sink?.push(...recs); }
+    const archive = archiveTo(logs, `human-input-${stamp}`, claimed); claimed = "";
+    if (text !== "") { const recs = recordRevisions(repoDir, text, archive, now()); sink?.push(...recs); }
     return text === "" ? null : text;
-  } catch { if (claimed) unapplied("logs dir unwritable or file unreadable"); else try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ } return null; }
+  } catch { if (claimed) { try { archiveTo(join(repoDir, ".loki", "logs"), `human-input-${now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "")}`, claimed); } catch { /* stays under its claim name */ } unapplied("logs dir unwritable or file unreadable"); } else try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ } return null; }
   finally { if (fd >= 0) try { closeSync(fd); } catch { /* already closed */ } }
 }
 
@@ -110,7 +127,7 @@ export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, 
   return (revs ?? []).filter((r) => r.unapplied === true || r.at >= from); // an unapplied steer (never consumed) refuses whatever the Wall timeline says
 }
 
-const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory, or delete an unreadable HUMAN_INPUT.md.", unknown: "Make .loki/logs writable." };
+const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory. A steer that was already claimed is archived as .loki/logs/human-input-*.md; one still at .loki/HUMAN_INPUT.md is unreadable, so delete it.", unknown: "Make .loki/logs writable." };
 /** User-facing Seal refusal for a non-empty stale list: says what happened and what to do. */
 export function staleReason(stale: readonly IntentRevision[]): string {
   const bad = stale.filter((r) => r.unapplied), late = stale.filter((r) => !r.unapplied);
