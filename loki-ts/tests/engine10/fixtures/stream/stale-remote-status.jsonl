@@ -1,0 +1,4 @@
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1000000000}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1000000000}}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"ok"}]}}
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.1,"session_id":"s1"}

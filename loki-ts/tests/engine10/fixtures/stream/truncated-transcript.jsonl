@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","model":"opus"}
+{"type":"assistant","message":{"id":"m1","content":[{"type":"text","text":"partial work. "}]}}
+{"type":"assistant","message":{"id":"m2","content":[{"type":"te

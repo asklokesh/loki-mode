@@ -128,6 +128,9 @@ export interface StreamResult {
   // True iff a terminal `result` message arrived. When false, the loop ended
   // without a result (aborted/crashed) and the caller must treat it as failure.
   sawResult: boolean;
+  // True iff the stream ended abnormally (source threw mid-iteration, or no terminal result arrived). The
+  // result is then partial: whatever was consumed is kept, exitCode stays 1.
+  truncated: boolean;
 }
 
 export async function consumeSdkStream(
@@ -184,7 +187,8 @@ export async function consumeSdkStream(
   const reqById = new Map<string, RequestUsage>();
   const advisorById = new Map<string, AdvisorUsage>();
 
-  for await (const data of asAsync(messages)) {
+  const guard = { truncated: false };
+  for await (const data of asAsync(messages, guard)) {
     const msgType = data.type ?? "";
 
     // --- stream_event: live incremental delta text (--include-partial-messages)
@@ -382,16 +386,22 @@ export async function consumeSdkStream(
     }
   }
 
-  return { exitCode, sessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult };
+  return { exitCode, sessionId, totalCostUsd, capturedText: captured, rateLimit, sawResult, truncated: guard.truncated || !sawResult };
 }
 
 // --- helpers (translations of the Python functions) -----------------------
 
-async function* asAsync(src: AsyncIterable<StreamMsg> | Iterable<StreamMsg>): AsyncIterable<StreamMsg> {
-  if ((src as AsyncIterable<StreamMsg>)[Symbol.asyncIterator]) {
-    yield* src as AsyncIterable<StreamMsg>;
-  } else {
-    for (const m of src as Iterable<StreamMsg>) yield m;
+// Degrades a broken source: a throw mid-iteration ends the stream and flags it
+// truncated (never propagates); non-object entries are skipped.
+async function* asAsync(src: AsyncIterable<StreamMsg> | Iterable<StreamMsg>, guard: { truncated: boolean }): AsyncIterable<StreamMsg> {
+  try {
+    if ((src as AsyncIterable<StreamMsg>)[Symbol.asyncIterator]) {
+      for await (const m of src as AsyncIterable<StreamMsg>) if (m && typeof m === "object") yield m;
+    } else {
+      for (const m of src as Iterable<StreamMsg>) if (m && typeof m === "object") yield m;
+    }
+  } catch {
+    guard.truncated = true;
   }
 }
 
