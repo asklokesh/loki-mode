@@ -10,6 +10,9 @@ import { type RunExecutor, type RunOutcome, readRunHistory } from "./history_sto
 import { type ProjectModel } from "../../project_model/schema.ts";
 import { loadCached, loadCommitted } from "../../project_model/discover.ts";
 import { computeKey, shallowDirs } from "../../project_model/gather.ts";
+import { resolveExecutor } from "./decision.ts";
+import { repoKey } from "../../engine10/cache.ts";
+import { readOriginUrl } from "../../util/engine_origin.ts";
 
 export { HISTORY_FILE, WALL_KIND, appendRunOutcome, readRunHistory, type RunExecutor, type RunOutcome, type RunOwner, type RunVerdict } from "./history_store.ts";
 
@@ -118,6 +121,30 @@ export function haikuFloorExecutor(repoKey: string, shape: string | null, cacheR
   const ranked = rankExecutorsByCost(all, shape);
   return ranked.length === 2 && ranked[0] === "sonnet" ? "sonnet" : "haiku";
 }
+
+/**
+ * P12-32b: the live caller of the cost objective. "sonnet" only when this repo's history for the shape proves it
+ * (haikuFloorExecutor); "haiku" means no raise, i.e. today's routing. An error, no shape or no history is "haiku"
+ * (fail-safe: history only moves a route up, never to a cheaper unproven model). `shape` is injectable for tests.
+ */
+export function repoHistoryFloor(repoDir: string, cacheRoot?: string, shape?: string | null): RunExecutor {
+  try {
+    return haikuFloorExecutor(repoKey(readOriginUrl(repoDir), repoDir), shape === undefined ? shapeKeyForRepo(repoDir) : shape, cacheRoot);
+  } catch {
+    return "haiku";
+  }
+}
+
+/**
+ * P12-32b: applies a "sonnet" history floor to an already-valid cheapest-tier route through resolveExecutor, so history can only
+ * raise it. Null (keep today's route) for any other floor. The pure decision lives here, outside the L1-guarded stage files.
+ */
+export function historyRaisedRoute(reason: string, floor: RunExecutor): { model: string; reason: string } | null {
+  if (floor !== "sonnet") return null;
+  const r = resolveExecutor({ route: { executor: "haiku", source: "opus-plan", risk: "low", reason }, advisorAvailable: true, shapeDefault: "haiku", historyFloor: floor, priorDefaultModel: "sonnet", env: {} });
+  return rankOfModel(r.model) > 0 ? { model: r.model, reason: "history: sonnet has the lower expected accepted-outcome cost on this shape (or haiku lost 2 of its last 3 runs)" } : null;
+}
+const rankOfModel = (m: string): number => (m.toLowerCase().includes("haiku") ? 0 : 1);
 
 /**
  * The shipped per-shape default. "haiku" (the shape earned Haiku), "sonnet" and "prior-default" are the

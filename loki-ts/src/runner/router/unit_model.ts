@@ -5,6 +5,7 @@ import { resolveModelAlias } from "../../engine10/sizing.ts";
 import { PROVIDER_DEFAULT_MODEL } from "../../engine10/session.ts";
 import { envOverride, unitRedo } from "./decision.ts";
 import { routerEnabled } from "./flag.ts";
+import { historyRaisedRoute, type RunExecutor } from "./history.ts";
 import { climb, modelRank, type UnitEscalation } from "../model_rank.ts";
 
 export type StageOutputs = Partial<Record<string, Record<string, unknown> | undefined>>;
@@ -32,8 +33,10 @@ export const routerPinsAllowed = (env: Record<string, string | undefined> = proc
 export const routerActive = (env: Record<string, string | undefined> = process.env): boolean => routerEnabled(env) && routerPinsAllowed(env);
 
 /** The route record for the single "run" unit: haiku only with a valid record, otherwise the run floor. Callers gate on routerActive(). */
-export function routeRecord(runModel: string, plan: Record<string, unknown> | undefined): RouteRecord {
+export function routeRecord(runModel: string, plan: Record<string, unknown> | undefined, historyFloor?: () => RunExecutor): RouteRecord {
   const v = validHaikuRoute(plan);
+  const h = v && historyFloor ? historyRaisedRoute(v.reason, historyFloor()) : null; // P12-32b: history is read only when the cheapest tier is on the table, and can only raise
+  if (h) return { model: resolveModelAlias(h.model), source: "history", reason: h.reason, valid: true };
   return v ? { model: resolveModelAlias("haiku"), source: "opus-plan", reason: v.reason, valid: true } : { model: runFloor(runModel), source: "default", reason: "no valid haiku route record", valid: false };
 }
 

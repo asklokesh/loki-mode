@@ -20,8 +20,11 @@ import {
   shapeDefault,
   shapeKey,
   shapeKeyForRepo,
+  repoHistoryFloor,
 } from "../../src/runner/router/history.ts";
-import { repoCacheDir } from "../../src/engine10/cache.ts";
+import { repoCacheDir, repoKey } from "../../src/engine10/cache.ts";
+import { readOriginUrl } from "../../src/util/engine_origin.ts";
+import { routeRecord } from "../../src/runner/router/unit_model.ts";
 import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import type { ProjectModel } from "../../src/project_model/schema.ts";
 
@@ -351,5 +354,57 @@ describe("shapeDefault (shipped router-shape-defaults.json)", () => {
     const mk = (verdict: "pass" | "fail"): RunOutcome => ({ shape: "s", executor: "haiku", verdict, owner: verdict === "fail" ? "code" : null, escalated: false, usd: 1, wallS: 1 });
     const runs = [...Array(10).fill(0).map(() => mk("fail")), ...Array(10).fill(0).map(() => mk("pass"))];
     expect(routeScore(runs, "s", "haiku")!.acceptance).toBe(1);
+  });
+});
+
+describe("P12-32b live cost routing", () => {
+  const plan = { units: [{ id: "u1", kind: "k", executor: "haiku", reason: "safe" }], route_not_proven: [] };
+  const seed = (dir: string, runs: RunOutcome[]) => { for (const r of runs) appendRunOutcome(repoKey(readOriginUrl(dir), dir), r, root); };
+  const many = (n: number, o: Partial<RunOutcome>): RunOutcome[] => Array.from({ length: n }, () => run(o));
+  const mkRepo = () => mkdtempSync(join(tmpdir(), "p1232b-repo-"));
+
+  it("history above the floor with a lower sonnet expected cost raises the valid haiku route to sonnet", () => {
+    const dir = mkRepo();
+    seed(dir, [...many(1, { usd: 0.1 }), ...many(2, { usd: 0.1, verdict: "fail" }), ...many(3, { executor: "sonnet", usd: 0.3 })]);
+    const floor = repoHistoryFloor(dir, root, SHAPE);
+    expect(floor).toBe("sonnet");
+    const rr = routeRecord("sonnet", plan, () => floor);
+    expect(rr.model).toContain("sonnet");
+    expect(rr.source).toBe("history");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("history above the floor with haiku cheaper keeps haiku", () => {
+    const dir = mkRepo();
+    seed(dir, [...many(3, { usd: 0.1 }), ...many(3, { executor: "sonnet", usd: 0.3 })]);
+    const floor = repoHistoryFloor(dir, root, SHAPE);
+    expect(floor).toBe("haiku");
+    expect(routeRecord("sonnet", plan, () => floor)).toEqual(routeRecord("sonnet", plan));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("below the floor routing matches the no-history path exactly", () => {
+    const dir = mkRepo();
+    seed(dir, many(2, { verdict: "fail", usd: 0.1 }));
+    const floor = repoHistoryFloor(dir, root, SHAPE);
+    expect(floor).toBe("haiku");
+    expect(routeRecord("sonnet", plan, () => floor)).toEqual(routeRecord("sonnet", plan));
+    expect(routeRecord("sonnet", undefined, () => floor)).toEqual(routeRecord("sonnet", undefined));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("corrupt history falls back to today's routing", () => {
+    const dir = mkRepo();
+    const d = repoCacheDir(repoKey(readOriginUrl(dir), dir), root);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, HISTORY_FILE), "{not json");
+    const floor = repoHistoryFloor(dir, root, SHAPE);
+    expect(floor).toBe("haiku");
+    expect(routeRecord("sonnet", plan, () => floor)).toEqual(routeRecord("sonnet", plan));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a floor never lowers: a non-haiku route stays at the run floor", () => {
+    expect(routeRecord("opus", undefined, () => "sonnet")).toEqual(routeRecord("opus", undefined));
   });
 });
