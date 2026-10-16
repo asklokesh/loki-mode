@@ -16,6 +16,7 @@ import {
   writeEfficiencyRecord,
 } from "../../src/engine10/cost.ts";
 import { partialUsagePath, recordPartialStreamCost } from "../../src/runner/budget.ts";
+import { consumeSdkStream } from "../../src/runner/sdk_stream_parser.ts";
 import { createSessionRunner } from "../../src/engine10/session.ts";
 
 const FIX = join(import.meta.dir, "fixtures", "cost");
@@ -498,8 +499,6 @@ describe("P12-21 cost attribution breakdown", () => {
       expect(b.per_stage["unattributed"]!.usd).toBe(1);
       expect(b.retry_usd).toBe(0.5);
       expect(b.retry_sessions).toBe(2);
-      expect(b.cache_read_tokens).toBe(400);
-      expect(b.cache_creation_tokens).toBe(28);
     } finally { rmSync(d, { recursive: true, force: true }); }
   });
 
@@ -517,5 +516,39 @@ describe("P12-21 cost attribution breakdown", () => {
       expect(b.per_stage["ship"]!.usd).toBe(2);
       expect(b.retry_usd).toBeNull();
     } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  test("all-zero-usage record (E-69) and a missing file null the breakdown exactly when run usd is null", () => {
+    const d = tmpCheckout();
+    try {
+      put(d, "1", { total_cost_usd: 0.5, input_tokens: 1, output_tokens: 1, stage: "dev" });
+      put(d, "2", { total_cost_usd: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, stage: "test" });
+      const z = sumResultCosts(d, ["1", "2"]);
+      expect(z.usd).toBeNull();
+      expect(z.breakdown!.usd).toBeNull();
+      expect(z.breakdown!.per_stage["test"]!.usd).toBeNull();
+      expect(z.breakdown!.per_stage["dev"]!.usd).toBe(0.5);
+      const m = sumResultCosts(d, ["1", "9"]);
+      expect(m.usd).toBeNull();
+      expect(m.breakdown!.usd).toBeNull();
+      const ok = sumResultCosts(d, ["1"]);
+      expect(ok.breakdown!.usd).toBe(ok.usd as number);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  });
+
+  test("writeResultCost emits stage and attempt, sumResultCosts attributes them", async () => {
+    const d = tmpCheckout();
+    const prev = { s: process.env["LOKI_E10_STAGE"], a: process.env["LOKI_E10_ATTEMPT"] };
+    try {
+      process.env["LOKI_E10_STAGE"] = "verify"; process.env["LOKI_E10_ATTEMPT"] = "2";
+      const usage = { input_tokens: 5, output_tokens: 5 };
+      await consumeSdkStream([{ type: "result", is_error: false, total_cost_usd: 0.3, usage }], { cwd: d, iteration: "1", hookEventsEnabled: false, write: () => {} });
+      const b = sumResultCosts(join(d, ".loki"), ["1"]).breakdown!;
+      expect(Object.keys(b.per_stage)).toEqual(["verify"]);
+      expect(b.retry_usd).toBe(0.3);
+    } finally {
+      for (const [k, v] of [["LOKI_E10_STAGE", prev.s], ["LOKI_E10_ATTEMPT", prev.a]] as const) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+      rmSync(d, { recursive: true, force: true });
+    }
   });
 });

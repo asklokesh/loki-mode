@@ -99,7 +99,7 @@ describe("R1-08 flag off is byte-identical to pre-router", () => {
       writeFileSync(join(scratch, "metrics", "result-cost-9.json"), JSON.stringify({ ...rec, requests_total: 5, advisor_calls: 2 }));
       const c = sumResultCosts(scratch, ["9"]);
       expect("router" in c).toBe(false);
-      expect(Object.keys(c).sort()).toEqual(["cache_creation_seen", "cache_creation_tokens", "cache_read_seen", "cache_read_tokens", "input_tokens", "measuredCount", "missing", "model", "output_tokens", "partialUsd", "records", "source", "totalCount", "usd"].sort());
+      expect(Object.keys(c).sort()).toEqual(["breakdown", "cache_creation_seen", "cache_creation_tokens", "cache_read_seen", "cache_read_tokens", "input_tokens", "measuredCount", "missing", "model", "output_tokens", "partialUsd", "records", "source", "totalCount", "usd"].sort());
     });
   }
 });
