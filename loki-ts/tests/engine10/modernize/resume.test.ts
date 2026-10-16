@@ -216,6 +216,20 @@ describe("resumeSchedule", () => {
     expect(existsSync(f.dir)).toBe(true);
     f.done();
   });
+
+  it("fails closed when isMerged throws: no unit.completed appended, runner never invoked", async () => {
+    const f = fx();
+    f.log.append("unit.started", { unit: "a", model: "sonnet", variant: 0 });
+    let ran = 0;
+    const merge: MergeOps = { isMerged: () => { throw new Error("git down"); }, merge: () => {} };
+    await expect(resumeSchedule(planOf([[u("a")]]), {
+      repoDir: f.dir, mid: MID, baseSha: "x", workers: 1, budgetUsd: null, unitEstimateUsd: null, worktrees: f.worktrees, merge,
+      log: new ModernizeLog(f.dir, MID), run: async (c) => { ran++; return { result: proven(c.unit.id), costUsd: 0 }; },
+    })).rejects.toThrow(/git down/);
+    expect(readModernizeEvents(f.dir, MID).filter((e) => e.type === "unit.completed").length).toBe(0);
+    expect(ran).toBe(0);
+    f.done();
+  });
 });
 
 describe("scheduler merge path end to end", () => {
