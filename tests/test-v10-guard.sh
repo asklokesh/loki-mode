@@ -106,6 +106,20 @@ echo -e "${BOLD}v10-guard.sh fixture tests${NC}"
 echo "GUARD=$GUARD"
 echo "=============================="
 
+# A guard that does not parse denies nothing (or everything). macOS runs
+# /bin/bash 3.2, which rejects a lone backtick in a heredoc nested in $( ).
+for _sh in /bin/bash bash; do
+    command -v "$_sh" >/dev/null 2>&1 || continue
+    TOTAL=$((TOTAL+1))
+    if "$_sh" -n "$GUARD" 2>/dev/null; then
+        echo -e "${GREEN}[PASS]${NC} guard parses under $_sh"
+        PASS=$((PASS+1))
+    else
+        echo -e "${RED}[FAIL]${NC} guard does not parse under $_sh"
+        FAIL=$((FAIL+1))
+    fi
+done
+
 # ------------------------------------------------------------------
 # Fixture git repos for rules 2 and 3 (need real git state).
 # ------------------------------------------------------------------

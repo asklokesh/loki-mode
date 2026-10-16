@@ -1307,7 +1307,7 @@ for i, words in enumerate(segs):
         nxt = segs[i + 1] if i + 1 < len(segs) else []
         checked = i + 1 < len(seps) and (
             seps[i + 1] == "&&" or (seps[i + 1] == "||" and nxt[:1] in (["exit"], ["return"])))
-        if "$" in target or "`" in target:
+        if "$" in target or "\x60" in target:
             effective_cwd = cwd  # unresolvable: judge by the hook cwd (fail closed)
         else:
             candidate = target if target.startswith("/") else os.path.join(effective_cwd, target)
