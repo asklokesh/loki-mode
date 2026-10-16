@@ -92,18 +92,30 @@ _chat_steer() {
 # signals `loki status` reads show a live new run (a new engine10 run dir or a live pid file
 # that was not live before). A start that exits first reports its real error and the log path.
 # Returns non-zero when the start is not proven.
+# Monotonic milliseconds (perl clock_gettime, else whole seconds from $SECONDS) and a ms sleep;
+# both are functions so tests can inject a fake clock.
+_chat_now_ms() {
+    perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC -e 'printf "%d\n", clock_gettime(CLOCK_MONOTONIC) * 1000' 2>/dev/null \
+        || echo $(( SECONDS * 1000 ))
+}
+_chat_sleep_ms() {
+    local ms="$1"
+    sleep "$(( ms / 1000 )).$(printf '%03d' $(( ms % 1000 )))"
+}
+
 _chat_run_launch() {
-    local loki="$1" input="$2" root="${LOKI_DIR:-.loki}" log pid rc=0 i max before_dir before_state
+    local loki="$1" input="$2" root="${LOKI_DIR:-.loki}" log pid rc=0 start_ms deadline_ms now_ms rem_ms before_dir before_state
     log="$root/chat-run.log"
     mkdir -p "$root"
+    start_ms="$(_chat_now_ms)"
     before_dir="$(_chat_run_dir)"; before_state="$(_chat_run_state "$before_dir")"
     _chat_run_start "$loki" "$input" < /dev/null > "$log" 2>&1 &
     pid=$!
     local wait_s="${LOKI_CHAT_START_WAIT:-15}"
     case "$wait_s" in ''|*[!0-9]*) wait_s=15 ;; esac
     [ "$wait_s" -ge 1 ] || wait_s=1
-    max=$(( wait_s * 5 ))
-    for ((i = 0; i < max; i++)); do
+    deadline_ms=$(( start_ms + wait_s * 1000 ))
+    while :; do
         local nd ns
         nd="$(_chat_run_dir)"; ns="$(_chat_run_state "$nd")"
         if [ "$ns" = "running" ] && { { [ "$nd" != "$before_dir" ] && _chat_pidfile_live "$nd/run.pid"; } || { [ "$nd" = "$before_dir" ] && [ "$before_state" != "running" ]; }; }; then
@@ -118,7 +130,11 @@ _chat_run_launch() {
             tail -n 5 "$log" 2>/dev/null | cut -c1-200 >&2
             return "$rc"
         fi
-        sleep 0.2
+        now_ms="$(_chat_now_ms)"
+        rem_ms=$(( deadline_ms - now_ms ))
+        [ "$rem_ms" -gt 0 ] || break
+        [ "$rem_ms" -le 200 ] || rem_ms=200
+        _chat_sleep_ms "$rem_ms"
     done
     echo "Run start not confirmed after ${wait_s}s (no live run state; launcher pid $pid still running). Log: $log" >&2
     return 1

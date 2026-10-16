@@ -222,6 +222,24 @@ echo "$OTHER" > "$C_DIR/n/.loki/loki.pid"
 out="$(LOKI_DIR="$C_DIR/n/.loki" LOKI_CHAT_START_WAIT=2 bash -c 'source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=; _chat_run_launch "$2" brief; echo "rc=$?"' _ "$CHAT_SH" "$C_DIR/loki-nopid" 2>&1)"
 kill "$OTHER" 2>/dev/null; wait "$OTHER" 2>/dev/null
 if grep -q 'rc=1' <<<"$out" && ! grep -q 'Run started' <<<"$out" && grep -q 'not confirmed' <<<"$out"; then ok "P12-16c: new run dir without its own live run.pid is not 'Run started'"; else bad "P12-16c: new-dir output: $out"; fi
+# P12-16c: the wait is deadline-based. A fake clock (file) advances 700ms per poll and per sleep;
+# the launcher stays alive and no run ever appears, so the total fake wait must stay within the budget.
+printf '#!/bin/sh\nsleep 6\n' > "$C_DIR/loki-sleep"
+chmod +x "$C_DIR/loki-sleep"
+# shellcheck disable=SC2016
+DL_SCRIPT='source "$1"; _CHAT_PROVIDER=claude; _CHAT_MODEL=
+CLK="$3"; echo 0 > "$CLK"
+_chat_now_ms() { cat "$CLK"; }
+_chat_sleep_ms() { echo $(( $(cat "$CLK") + $1 )) > "$CLK"; }
+_chat_run_dir() { echo $(( $(cat "$CLK") + 700 )) > "$CLK"; if [ -n "$APPEAR_AT" ] && [ "$(cat "$CLK")" -ge "$APPEAR_AT" ]; then echo "$LOKI_DIR/runs/e10-9"; fi; }
+_chat_run_state() { if [ -n "$1" ]; then echo running; else echo finished; fi; }
+_chat_pidfile_live() { return 0; }
+_chat_run_launch "$2" brief; echo "rc=$?"; echo "elapsed=$(cat "$CLK")"'
+out="$(LOKI_DIR="$C_DIR/d1/.loki" LOKI_CHAT_START_WAIT=3 bash -c "$DL_SCRIPT" _ "$CHAT_SH" "$C_DIR/loki-sleep" "$C_DIR/clk1" 2>&1)"
+el="$(sed -n 's/^elapsed=//p' <<<"$out")"
+if grep -q 'rc=1' <<<"$out" && [ -n "$el" ] && [ "$el" -le 3700 ]; then ok "P12-16c: wait loop stays within its deadline (fake clock ${el}ms of 3000ms + one poll)"; else bad "P12-16c: deadline overrun, elapsed=${el:-none}: $out"; fi
+out="$(APPEAR_AT=3000 LOKI_DIR="$C_DIR/d2/.loki" LOKI_CHAT_START_WAIT=3 bash -c "$DL_SCRIPT" _ "$CHAT_SH" "$C_DIR/loki-sleep" "$C_DIR/clk2" 2>&1)"
+if grep -q 'rc=0' <<<"$out" && grep -q 'Run started' <<<"$out"; then ok "P12-16c: a run appearing at the deadline is caught by the final check"; else bad "P12-16c: final-check output: $out"; fi
 rm -rf "$C_DIR"
 
 # --- Cleanup ------------------------------------------------------------------
