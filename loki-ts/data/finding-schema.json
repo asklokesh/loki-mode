@@ -63,7 +63,8 @@
                 "description": {
                   "type": "string",
                   "minLength": 1,
-                  "maxLength": 2000
+                  "maxLength": 2000,
+                  "description": "What is wrong. CRITICAL and HIGH issues should cite path:line (e.g. src/a.ts:42); uncited ones are downgraded to MEDIUM."
                 }
               }
             }
