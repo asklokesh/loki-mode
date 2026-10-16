@@ -84,7 +84,7 @@ export function workItemState(events: readonly EventEnvelope[], nowMs?: number):
 /** Blockers live in their own field, never in the state string. The only blocker the engine writes is an implement spec conflict (stage.completed spec_conflict_reason on a SPEC_CONFLICT run). */
 export function workItemBlockers(events: readonly EventEnvelope[]): string[] {
   if (events.findLast((e) => e.type === "run.completed")?.data["verdict"] !== "SPEC_CONFLICT") return [];
-  const why = events.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data["spec_conflict_reason"];
+  const why = events.findLast((e) => e.type === "stage.completed" && e.stage === "implement")?.data["spec_conflict_reason"];
   return [`spec_conflict: ${typeof why === "string" && why ? why.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500) : "unspecified"}`];
 }
 
