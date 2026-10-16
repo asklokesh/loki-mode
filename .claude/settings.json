@@ -17,8 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/autonomy/hooks/validate-bash.sh\"",
-            "timeout": 10
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-.}/autonomy/hooks/validate-bash.sh\""
           }
         ]
       }

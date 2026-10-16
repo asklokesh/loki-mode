@@ -614,9 +614,31 @@ _run_tmp_valid() {
     [[ "/${v}/" != *"/../"* && "/${v}/" != *"/./"* ]]
 }
 
-_has_dotdot_component() { [[ "/${1}/" == *"/../"* ]]; }
+# A component that can expand to `..`: a literal `..`, one built by gluing
+# variables onto dots (`..$X`, `.$X.`; X may be empty or `.`), or a dot-leading
+# glob (`.?`, `.*`, `..*`, `.[.]`; bash < 5.2 has no globskipdots, so these
+# match `..`). Worst case is assumed everywhere.
+_is_dotdotish() {
+    local c="$1" s="$1"
+    [[ "$c" == *.* ]] || return 1
+    while [[ "$s" =~ (\$\{[^\}]*\}|\$[[:alpha:]_][[:alnum:]_]*) ]]; do
+        s="${s/"${BASH_REMATCH[0]}"/}"
+    done
+    [ "$s" = "." ] && [ "$s" = "$c" ] && return 1
+    [[ "$s" =~ ^\.[.*?]*$ ]] || [[ "$s" =~ ^\.[.*?]*\[ ]]
+}
 
-# Lexical resolve of an absolute path; `..` at the root stays at the root.
+_has_dotdot_component() {
+    local c
+    local -a p=()
+    [[ "$1" == *.* ]] || return 1
+    IFS=/ read -r -a p <<< "$1"
+    for c in ${p[@]+"${p[@]}"}; do _is_dotdotish "$c" && return 0; done
+    return 1
+}
+
+# Lexical resolve of an absolute path; `..` (or a possible `..`) at the root
+# stays at the root.
 _lex_resolve() {
     local comp out=""
     local -a parts=() stack=()
@@ -624,8 +646,13 @@ _lex_resolve() {
     for comp in ${parts[@]+"${parts[@]}"}; do
         case "$comp" in
             ''|.) ;;
-            ..) [ "${#stack[@]}" -gt 0 ] && unset 'stack[${#stack[@]}-1]' ;;
-            *) stack+=("$comp") ;;
+            *)
+                if _is_dotdotish "$comp"; then
+                    [ "${#stack[@]}" -gt 0 ] && unset 'stack[${#stack[@]}-1]'
+                else
+                    stack+=("$comp")
+                fi
+                ;;
         esac
     done
     for comp in ${stack[@]+"${stack[@]}"}; do out="${out}/${comp}"; done
@@ -652,18 +679,46 @@ _dotdot_escapes_base() {
     return 1
 }
 
+# Absolute path an empty or defaulted variable can build: deny when it is, or
+# climbs to, a temp root or the filesystem root, or holds a glob root.
+_abs_path_deny() {
+    _resolved_reaches_temp "$(_lex_resolve "$1")" && return 0
+    _alt_extra_deny "$1"
+}
+
 _alt_extra_deny() {
-    local a="$1" name="" mod="" rest="" r n c1 c2 c3
+    local a="$1" name="" mod="" rest="" rest0="" r n c1 c2 c3 w combined
+    local multi=false
     if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)([^\}]*)\}(.*)$ ]]; then
         name="${BASH_REMATCH[1]}"; mod="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
     elif [[ "$a" =~ ^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
         name="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
     fi
+    rest0="$rest"
     if [ -n "$name" ]; then
+        # Strip every further leading expansion ($X$Y/..., "$X""$Y"/...).
+        while [[ "$rest" =~ ^(\$\{[[:alpha:]_][[:alnum:]_]*[^\}]*\}|\$[[:alpha:]_][[:alnum:]_]*)(.*)$ ]]; do
+            multi=true
+            rest="${BASH_REMATCH[2]}"
+        done
+        # A default or alternative word can supply the root: ${X:-/}tmp/*,
+        # ${X:-/tmp}. Check the word plus the rest as the path it can build.
+        if [ -n "$mod" ] && [ "$name" != "LOKI_RUN_TMP" ]; then
+            case "$mod" in
+                :-*|:=*|:+*) w="${mod:2}" ;;
+                -*|=*|+*) w="${mod:1}" ;;
+                *) w="" ;;
+            esac
+            combined="${w}${rest0}"
+            if [[ "$combined" == /* ]]; then
+                _abs_path_deny "$combined" && return 0
+            fi
+        fi
         case "$name" in
             LOKI_RUN_TMP*)
                 [ "$name" = "LOKI_RUN_TMP" ] || return 0
                 [ -z "$mod" ] || return 0
+                "$multi" && return 0
                 _run_tmp_valid || return 0
                 [ -z "$rest" ] && return 1
                 [[ "$rest" == /* ]] || return 0
@@ -671,11 +726,13 @@ _alt_extra_deny() {
                 [[ "$rest" =~ $_DOT_GLOB ]] && return 0
                 return 1
                 ;;
-            TMPDIR) return 1 ;;
+            TMPDIR) "$multi" || return 1 ;;
             HOME)
-                _has_dotdot_component "$rest" || return 1
-                _dotdot_escapes_base "${HOME:-}" "$rest"
-                return
+                if ! "$multi"; then
+                    _has_dotdot_component "$rest" || return 1
+                    _dotdot_escapes_base "${HOME:-}" "$rest"
+                    return
+                fi
                 ;;
         esac
         _has_dotdot_component "$rest" && return 0
@@ -705,11 +762,25 @@ _alt_extra_deny() {
             _dotdot_escapes_base "${HOME:-}" "$rest"
             return
             ;;
+        '~+'*|'~-'*)
+            # PWD / OLDPWD: OLDPWD is unknown, so a glob, dotdot or bare form denies.
+            rest="${a#\~?}"
+            [ -z "$rest" ] && return 0
+            [[ "$rest" == /* ]] || return 1
+            r="${rest#/}"
+            case "$r" in ''|'*'*|'?'*|'['*|'{'*) return 0 ;; esac
+            _has_dotdot_component "$rest" && return 0
+            return 1
+            ;;
         '$'*|'{'*) return 1 ;;
         /*)
             n="$a"
             r=""
             while [ "$n" != "$r" ]; do r="$n"; n="${n//\/\//\/}"; n="${n//\/.\//\/}"; done
+            if _has_dotdot_component "$n"; then
+                n=$(_lex_resolve "$n")
+                _resolved_reaches_temp "$n" && return 0
+            fi
             n="${n#/}"
             c1="${n%%/*}"
             c2=""
@@ -727,6 +798,9 @@ _alt_extra_deny() {
     _dotdot_escapes_base "$CWD" "$a"
 }
 
+# Over-cap groups cannot be enumerated: deny when any dot touches a brace,
+# comma, glob, bracket or variable (a possible `..`), or a `*` alternative.
+_OVERCAP_RE='\.\.|[{,]\.|\.[{},]|\.[^/,{}]*[*?[$]|[{,]\*[,}]'
 _rm_target_extra_deny() {
     local q="${1%%[<>]*}" alt rc=0
     q="${q//[\"\'\\]/}"
@@ -736,12 +810,22 @@ _rm_target_extra_deny() {
         [ "$rc" -eq 1 ] && return 0
         # Over cap (rc 2): a `.` or `..` alternative or a dot glued to a group
         # can build a dotdot component bash will expand; fail closed.
-        if [ "$rc" -eq 2 ] && [[ "$q" =~ [\{,]\.{1,2}[,\}]|\}\.|\.\{ ]]; then
+        if [ "$rc" -eq 2 ] && [[ "$q" =~ $_OVERCAP_RE ]]; then
             return 0
         fi
         [ "$rc" -eq 0 ] && alts=(${_ALTS[@]+"${_ALTS[@]}"})
     fi
+    local stripped
     for alt in ${alts[@]+"${alts[@]}"}; do
+        # A comma group the expander could not peel (a parameter expansion
+        # inside it) is unenumerable: fail closed.
+        if [ "$rc" -eq 0 ] && [[ "$alt" == *"{"* ]]; then
+            stripped="$alt"
+            while [[ "$stripped" =~ \$\{[^\{\}]*\} ]]; do
+                stripped="${stripped/"${BASH_REMATCH[0]}"/}"
+            done
+            [[ "$stripped" =~ \{[^\}]*,[^\}]*\} ]] && return 0
+        fi
         _alt_extra_deny "$alt" && return 0
     done
     return 1
@@ -775,12 +859,17 @@ _segment_rm_hits_temp_root() {
             continue
         fi
         case "$tok" in -*) continue ;; esac
+        # Fail closed before the hook timeout (Claude Code treats it as allow).
+        [ $((SECONDS - _RM_T0)) -ge "$_RM_BUDGET" ] && return 0
         _rm_target_is_temp_root_or_glob "$tok" && return 0
         _rm_target_extra_deny "$tok" && return 0
     done
     return 1
 }
 
+_RM_T0=$SECONDS
+_RM_BUDGET="${LOKI_RM_GUARD_BUDGET_SECS:-20}"
+case "$_RM_BUDGET" in ""|*[!0-9]*) _RM_BUDGET=20 ;; esac
 _flat_for_temp_root=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
 while IFS= read -r _seg; do
     if _segment_rm_hits_temp_root "$_seg"; then

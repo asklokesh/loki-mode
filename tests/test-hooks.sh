@@ -538,6 +538,14 @@ test_validate_bash_residual_rm_gaps_denied() {
         '/private/var/t?p' '/private/var/t?p/*' '/private/var/t*/x'
         '"$X"/tmp/*' '$X/tmp/*' '"$X"/t?p' '"$X"/t?p/*' '"$X"/{tmp,a}' '"$X"/{tmp,a}/*'
         '"$X"/var/tmp/*' '"$X"/.*'
+        '$X/tmp' '"$X"/var'
+        '"$LOKI_RUN_TMP"/..$X/*' '"$LOKI_RUN_TMP"/..${X}/*' 'x/..$X/..$X/..$X/..$X/..$X/tmp'
+        '$HOME/..$X/..$X/tmp' '$X$Y/tmp/*' '"$X""$Y"/tmp/*' '${X}${Y}/*' '$X$Y/tmp'
+        '${X:-/}tmp/*' '${X:-/tmp}' '${X-/tmp}' '${X:=/tmp}' '"${X:-/tmp}"' '${X:+/tmp}'
+        '/var/../t?p' '/private/../t?p' '/private/var/../var/t?p/*'
+        '.?/.?/.?/.?/.?/tmp' '..*/..*/..*/..*/..*/tmp' '.[.]/.[.]/.[.]/.[.]/.[.]/tmp'
+        '~/.[.]/.[.]/tmp' '$HOME/.[.]/.[.]/tmp' '"$HOME"/.?/.?/tmp' '"$LOKI_RUN_TMP"/.?/*'
+        '~-/*' '~+/../../../../../../../tmp'
     )
     # Over-cap brace groups hiding a dotdot alternative (bash expands them).
     local big="" i
@@ -545,6 +553,8 @@ test_validate_bash_residual_rm_gaps_denied() {
     deny_set+=(
         "\"\$LOKI_RUN_TMP\"/{..${big}}/*"
         "x/{..${big}}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/tmp"
+        "\"\$LOKI_RUN_TMP\"/{..\$X${big}}/*" "\"\$LOKI_RUN_TMP\"/{..\${X}${big}}/*"
+        "x/{..\$X${big}}/..\$X/..\$X/..\$X/..\$X/..\$X/tmp" "\"\$LOKI_RUN_TMP\"/{.?${big}}/*"
     )
     for t in "${deny_set[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
@@ -568,6 +578,19 @@ test_validate_bash_residual_rm_gaps_denied() {
         [ "$got" = "0:allow" ] || { fail "legit target wrongly denied: $c (got $got)"; return; }
     done
     pass "residual rm gaps denied; legit run-dir, range and named targets allowed"
+}
+
+# P12-26g-c: a slow analysis must fail closed before the hook timeout.
+test_validate_bash_rm_analysis_budget_fails_closed() {
+    log_test "validate-bash.sh: rm analysis over its time budget denies instead of timing out"
+    local c="" i got
+    for i in 1 2 3 4 5 6 7 8; do c="${c}rm -r x/{a,b,c,d,e,f,g,h}/y${i} z/{a,b,c,d,e,f,g,h}/w${i} ; "; done
+    c="${c}rm -r build/ok"
+    got=$(LOKI_RM_GUARD_BUDGET_SECS=0 run_hook_case "$c" "")
+    [ "$got" = "2:deny" ] || { fail "budget exhausted must deny (got $got)"; return; }
+    got=$(run_hook_case "$c" "")
+    [ "$got" = "0:allow" ] || { fail "default budget must allow benign rm (got $got)"; return; }
+    pass "rm analysis budget fails closed"
 }
 
 test_validate_bash_safe_patterns_locale_independent() {
@@ -722,6 +745,7 @@ test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
 test_validate_bash_temp_root_and_glob_denied
 test_validate_bash_residual_rm_gaps_denied
+test_validate_bash_rm_analysis_budget_fails_closed
 test_validate_bash_safe_patterns_locale_independent
 test_validate_bash_safe_override_rejects_risky_env
 test_validate_bash_safe_override_rejects_earlier_segment_taint
