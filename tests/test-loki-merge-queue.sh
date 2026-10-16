@@ -19,8 +19,9 @@ case "$1 $2" in
                [ "$3" = "22" ] && exit 1
                [ "$3" = "feat-pend" ] && exit 8; [ "$3" = "feat-auth" ] && exit 4
                exit 0 ;;
-  "pr view") case "$*" in *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1; if [ "$3" = "feat-moved" ]; then echo "$STUB_HEAD2"; else echo "$STUB_HEAD"; fi; exit 0 ;; *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
-  "pr merge") [ "$3" = "feat-mfail" ] && exit 1; exit 0 ;;
+  "pr view") case "$*" in *headRefOid*) [ "$3" = "feat-nohead" ] && exit 1
+                if [ "$3" = "feat-race" ]; then if [ -f "$STUB_WORK/race1" ]; then echo "$STUB_HEAD2"; else touch "$STUB_WORK/race1"; echo "$STUB_HEAD"; fi; exit 0; fi; if [ "$3" = "feat-moved" ]; then echo "$STUB_HEAD2"; else echo "$STUB_HEAD"; fi; exit 0 ;; *headRefName*) echo feat-w ;; *) [ "$3" = "feat-draft" ] && echo true || echo false ;; esac; exit 0 ;;
+  "pr merge") [ "$3" = "feat-mfail" ] && exit 1; [ "$3" = "feat-race" ] && exit 1; exit 0 ;;
   "run list") echo 99; exit 0 ;;
   "run view") echo "FAILED: boom in test_x"; exit 0 ;;
 esac
@@ -80,6 +81,28 @@ printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "
 bash "$LOKI" merge pr feat-moved --require-verified >/dev/null 2>&1
 grep -q "^pr merge feat-moved --squash --match-head-commit $STUB_HEAD2\$" "$STUB_LOG" && ok "ship: proof resolved by PR head, not last-proof-id" || bad "head-resolved proof: $(cat "$STUB_LOG")"
 rm -rf .loki/proofs/p2
+# Older VERIFIED must not override a newer NOT_PROVEN for the same head (disagreement refuses).
+mkdir -p .loki/proofs/p3 .loki/proofs/p2
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"NOT_PROVEN"}}' "$STUB_HEAD2" > .loki/proofs/p3/proof.json
+printf '{"facts":{"git":{"head_sha":"%s"}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p2/proof.json
+: > "$STUB_LOG"
+OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
+grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "conflicting proofs merged" || ok "ship: VERIFIED + NOT_PROVEN for one head never merges"
+[ "$RC" -ne 0 ] && echo "$OUT" | grep -q "gate: verdict" && ok "ship: disagreement names the verdict gate" || bad "disagree msg: $OUT"
+rm -r .loki/proofs/p2 .loki/proofs/p3
+# A dirty-tree proof for the head does not count.
+mkdir -p .loki/proofs/p4
+printf '{"facts":{"git":{"head_sha":"%s","dirty":true}},"honesty":{"headline":"VERIFIED"}}' "$STUB_HEAD2" > .loki/proofs/p4/proof.json
+: > "$STUB_LOG"
+OUT="$(bash "$LOKI" merge pr feat-moved --require-verified 2>&1)"; RC=$?
+grep -q "^pr merge feat-moved" "$STUB_LOG" && bad "dirty proof merged" || ok "ship: dirty-tree proof never merges"
+echo "$OUT" | grep -q "gate: head" && ok "ship: dirty proof names the head gate" || bad "dirty msg: $OUT"
+rm -r .loki/proofs/p4
+# Head moving after the gate (merge refused) records blocked:head, not blocked:merge.
+printf '{"state":"created","url":"https://github.com/o/r/pull/50","branch":"feat-race"}' > .loki/state/pr.json
+bash "$LOKI" merge pr feat-race >/dev/null 2>&1
+[ "$(jq -r .merge.outcome .loki/state/pr.json)" = "blocked:head" ] && ok "pr.json: head moved during checks records blocked:head" || bad "race: $(cat .loki/state/pr.json)"
+rm -f .loki/state/pr.json
 # Unreadable PR head fails closed, even without --require-verified.
 : > "$STUB_LOG"
 OUT="$(bash "$LOKI" merge pr feat-nohead 2>&1)"; RC=$?
