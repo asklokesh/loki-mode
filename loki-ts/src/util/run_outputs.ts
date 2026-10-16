@@ -69,33 +69,29 @@ export function loadRunOutputs(runDir: string, events: readonly EventEnvelope[])
 export type WorkItemState =
   | "received" | "prepared" | "planned" | "executing" | "validating" | "ready_to_ship" | "completed"
   | "waiting_for_input" | "budget_stopped" | "failed" | "cancelled" | "stalled"
-  | "delivering" | "observing" | "waiting_for_policy" | "paused";
+  | "delivering" | "observing";
 export const STALE_S = 30 * 60;
 
 /** The one work-item vocabulary (docs/v10/ENGINE.md "Work-item state"). Pure over the event log. Terminal states come only from run.completed;
  *  `nowMs` (optional) enables "stalled" for an unfinished run with no events for STALE_S. */
 export function workItemState(events: readonly EventEnvelope[], nowMs?: number): WorkItemState {
-  if (!events.some((e) => e.type === "run.completed")) {
-    // Non-terminal overlays (P12-08). Latest toggle wins; events are plain strings so no core event-type change is needed.
-    const on = (a: string, b: string): boolean => events.findLast((e) => e.type === a || e.type === b)?.type === a;
-    if (on("work.paused", "work.resumed")) return "paused";
-    if (on("policy.waiting", "policy.cleared")) return "waiting_for_policy";
-    if (!(nowMs !== undefined && events.length > 0 && nowMs - Date.parse(events[events.length - 1]!.ts) > STALE_S * 1000) && events.some((e) => e.type === "pr.opened"))
-      return events.some((e) => e.type === "delivery.observing") ? "observing" : "delivering";
-  }
+  // delivering = pr.opened (supervisor); observing = the detached post-PR deep verify has started (deep.started, supervisor).
+  if (!events.some((e) => e.type === "run.completed") && !(nowMs !== undefined && events.length > 0 && nowMs - Date.parse(events[events.length - 1]!.ts) > STALE_S * 1000) && events.some((e) => e.type === "pr.opened"))
+    return events.some((e) => e.type === "deep.started") ? "observing" : "delivering";
   return stageState(events, nowMs);
 }
 
-/** Blockers live in their own field, never in the state string. Open policy wait or pause reason, else []. */
+/** Blockers live in their own field, never in the state string. The only blocker the engine writes is an implement spec conflict (stage.completed spec_conflict_reason on a SPEC_CONFLICT run). */
 export function workItemBlockers(events: readonly EventEnvelope[]): string[] {
-  const last = (a: string, b: string): EventEnvelope | undefined => { const e = events.findLast((x) => x.type === a || x.type === b); return e?.type === a ? e : undefined; };
-  return [last("work.paused", "work.resumed"), last("policy.waiting", "policy.cleared")].flatMap((e) => e ? [`${e.type}: ${String(e.data["reason"] ?? "unspecified")}`] : []);
+  if (events.findLast((e) => e.type === "run.completed")?.data["verdict"] !== "SPEC_CONFLICT") return [];
+  const why = events.find((e) => e.type === "stage.completed" && e.stage === "implement")?.data["spec_conflict_reason"];
+  return [`spec_conflict: ${typeof why === "string" && why ? why.replace(/[\x00-\x1f\x7f]+/g, " ").slice(0, 500) : "unspecified"}`];
 }
 
-/** One work item spans runs: keyed by the issue or PR ref on run.started; null for a text task. */
+/** One work item spans runs: keyed by the issue ref on run.started; null for a text task. */
 export function workItemId(events: readonly EventEnvelope[]): string | null {
   const d = events.find((e) => e.type === "run.started")?.data ?? {};
-  const k = d["issue_ref"] ?? d["pr_ref"];
+  const k = d["issue_ref"];
   return typeof k === "string" && k ? k : null;
 }
 
