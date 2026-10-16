@@ -1769,10 +1769,15 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
     return 64;
   }
   if (repo) { // REPOMEM: read-only print of .loki/state/repo-profile.json; never runs anything
-    const { loadProfile, renderProfile } = await import("../runner/repo_profile.ts");
+    const { loadProfile, renderProfile, repoReadiness } = await import("../runner/repo_profile.ts");
     const p = loadProfile(process.cwd());
-    if (json) process.stdout.write(JSON.stringify(reqs ? { repo: p, requirements: await evaluateRequirements() } : p, null, 2) + "\n");
-    else process.stdout.write(renderProfile(p) + (reqs ? renderRequirementsText(await evaluateRequirements()) + "\n" : ""));
+    const rep = await evaluateRequirements();
+    const ready = firstTaskReady(rep);
+    const failing = rep.paths.flatMap((x) => x.items).find((i) => i.level === "required" && i.status !== "present");
+    const host = { firstTaskReady: ready, fix: failing ? requirementFix(failing.id) : null };
+    const withReadiness = p ? { ...p, readiness: repoReadiness(p, host) } : p;
+    if (json) process.stdout.write(JSON.stringify(reqs ? { repo: withReadiness, requirements: rep } : withReadiness, null, 2) + "\n");
+    else process.stdout.write(renderProfile(p, host) + (reqs ? renderRequirementsText(rep) + "\n" : ""));
     return 0;
   }
   if (reqs && !json) {

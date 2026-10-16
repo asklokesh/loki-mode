@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { basename, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { attribute, attributeFullSuite, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, type BaselineRunner } from "../../src/runner/repo_profile.ts";
+import { attribute, attributeFullSuite, discoverCommands, ensureProfile, loadProfile, manifestHash, profileBrief, commandProfilePath, renderProfile, repoReadiness, type BaselineRunner, type CommandProfile, type ProfileCommand } from "../../src/runner/repo_profile.ts";
 import { runIntake } from "../../src/engine10/stages/intake.ts";
 import { verifyStage } from "../../src/engine10/stages/verify.ts";
 import type { RunContext, TestRef } from "../../src/engine10/types.ts";
@@ -774,6 +774,53 @@ describe("repo baseline profile (REPOMEM)", () => {
         expect(text).toContain("baseline:");
         expect(JSON.parse(await cap(["--repo", "--json"])).baseline.command).toBe("npm test");
         expect(readFileSync(commandProfilePath(d), "utf8")).toBe(before);
+      } finally { process.chdir(cwd); }
+    }, 60_000);
+  });
+
+  describe("repoReadiness (FV-readiness-env-1)", () => {
+    const base = (over: Partial<CommandProfile["baseline"]> = {}): CommandProfile["baseline"] => ({ ran: true, command: "npm test", exit_code: 0, duration_s: 1, timed_out: false, failing_ids: [], attributable: true, ...over });
+    const cmd = (kind: ProfileCommand["kind"], validated: boolean | null = true): ProfileCommand => ({ kind, cmd: `run ${kind}`, source: "package.json", validated, exit_code: 0, duration_s: 1, failing_ids: [] });
+    const prof = (commands: ProfileCommand[], baseline = base()): CommandProfile => ({ version: 1, revision: "abc", manifest_hash: "h", created_at: "t", commands, baseline });
+    const all = [cmd("test"), cmd("lint"), cmd("typecheck"), cmd("build")];
+    test("clean profile scores 100; each gap costs points and carries a fix", () => {
+      expect(repoReadiness(prof(all))).toMatchObject({ score: 100, grade: "A", findings: [] });
+      const none = repoReadiness(prof([cmd("lint"), cmd("typecheck"), cmd("build")], base({ ran: false })));
+      expect(none.score).toBe(70);
+      expect(none.findings.map((f) => f.id)).toContain("no-test-command");
+      expect(none.findings.every((f) => f.fix.length > 0 && f.message.length > 0)).toBe(true);
+      const bare = repoReadiness(prof([cmd("test")]));
+      expect(bare.score).toBe(75);
+      expect(bare.findings.map((f) => f.id)).toEqual(expect.arrayContaining(["no-lint", "no-typecheck", "no-build"]));
+    });
+    test("red baseline names the failing ids; unattributable and timed-out baselines are flagged", () => {
+      const red = repoReadiness(prof(all, base({ exit_code: 1, failing_ids: ["a", "b"] })));
+      expect(red.score).toBe(80);
+      const f = red.findings.find((x) => x.id === "baseline-red")!;
+      expect(f.message).toContain("2");
+      expect(f.fix).toContain("will not blame these on your change");
+      expect(repoReadiness(prof(all, base({ timed_out: true, attributable: false }))).findings.map((x) => x.id)).toContain("baseline-unattributable");
+      expect(repoReadiness(prof([{ ...cmd("test"), validated: false }, cmd("lint"), cmd("typecheck"), cmd("build")], base({ attributable: false }))).findings.map((x) => x.id)).toContain("command-not-runnable");
+    });
+    test("host not ready caps the score and surfaces the host fix", () => {
+      const r = repoReadiness(prof(all), { firstTaskReady: false, fix: "npm install -g @anthropic-ai/claude-code" });
+      expect(r.score).toBeLessThanOrEqual(40);
+      expect(r.findings.find((x) => x.id === "host-not-ready")!.fix).toContain("claude-code");
+    });
+    test("renderProfile and doctor --repo --json carry readiness", async () => {
+      const text = renderProfile(prof([cmd("test")]));
+      expect(text).toContain("Readiness: 75/100 (C)");
+      expect(text).toContain("Fix:");
+      expect(renderProfile(prof(all))).toContain("Readiness: 100/100 (A)");
+      const d = repo(NODE), cwd = process.cwd(), chunks: string[] = [], w = process.stdout.write.bind(process.stdout);
+      try {
+        process.chdir(d); ensureProfile(d);
+        process.stdout.write = ((s: string) => (chunks.push(String(s)), true)) as typeof process.stdout.write;
+        try { await runDoctor(["--repo", "--json"]); } finally { process.stdout.write = w; }
+        const j = JSON.parse(chunks.join(""));
+        expect(j.baseline.command).toBe("npm test");
+        expect(typeof j.readiness.score).toBe("number");
+        expect(Array.isArray(j.readiness.findings)).toBe(true);
       } finally { process.chdir(cwd); }
     }, 60_000);
   });
