@@ -338,6 +338,7 @@ function _loki_commands {
 }
 
 function _loki_start {
+    # Rule: list every flag bin/loki routes (Bun/engine10 ones such as --model, --max-cost, --spec, --no-pr too), not only cmd_start's own.
     _arguments \
         '--provider[AI provider]:provider name:(claude cline codex aider opencode)' \
         '--parallel[Parallel mode]' \
