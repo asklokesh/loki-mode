@@ -158,7 +158,7 @@ export async function resumePublish(repoDir: string, it: Interrupted, deps: Resu
   log.append("pr.opened", "pr", { url: d.pr_url, draft: d.draft === true, existing: d.existing ?? null });
   log.append("run.completed", null, { verdict, pr_url: d.pr_url, not_proven: notProven, resumed: true });
   log.sealLog();
-  out(`resumed phase: publish (run ${it.runId}); receipt reused; PR ${d.pr_url}\n`);
+  out(`resumed phase: publish (run ${it.runId}); receipt reused; PR ${d.existing === true ? "reused " : ""}${d.pr_url}\n`);
   return 0;
 }
 

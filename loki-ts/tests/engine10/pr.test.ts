@@ -32,7 +32,7 @@ function freshRepo(): string {
 /** Writes a fake engine10-push.sh: logs every call (mode, args, the two pin
  *  env vars) to logPath, then prints PR_URL for push-pr and exits 0 for
  *  status. failOn makes one mode exit 2 with a stderr message instead. */
-function writeStub(dir: string, logPath: string, failOn?: "push-pr" | "status", printUrl: string = PR_URL): string {
+function writeStub(dir: string, logPath: string, failOn?: "push-pr" | "status", printUrl: string = PR_URL, marker = ""): string {
   const scriptPath = join(dir, "push-stub.sh");
   const content = `#!/bin/sh
 mode="$1"; shift
@@ -40,7 +40,7 @@ printf 'CALL mode=%s args=%s\\n' "$mode" "$*" >> "${logPath}"
 printf 'ENV pinned=%s origin=%s\\n' "\${_LOKI_ORIGIN_PINNED:-}" "\${_LOKI_PINNED_ORIGIN:-}" >> "${logPath}"
 if [ "$mode" = "${failOn ?? ""}" ]; then echo "stub: refused" >&2; exit 2; fi
 case "$mode" in
-  push-pr) echo "${printUrl}" ;;
+  push-pr) ${marker ? `echo "${marker}"; ` : ""}echo "${printUrl}" ;;
   status) exit 0 ;;
 esac
 exit 0
@@ -198,11 +198,16 @@ describe("engine10 pr stage", () => {
     expect(result.data.not_proven).toEqual(["commit status loki/deep-verify not set"]);
   });
 
-  test("existing is reported as null (the push script cannot tell reuse from create)", async () => {
-    const script = writeStub(stubDir, logPath);
-    const { ctx } = makeCtx(repoDir, runDir);
-    const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
-    expect(result.data.existing).toBeNull();
+  test("existing is null without a marker, true on 'reused', false on 'created'", async () => {
+    for (const [marker, want] of [["", null], ["reused", true], ["created", false]] as const) {
+      const script = writeStub(stubDir, logPath, undefined, PR_URL, marker);
+      const { ctx, emitted } = makeCtx(repoDir, runDir);
+      const result = await runPr(ctx, new AbortController().signal, { pushScriptPath: script });
+      expect(result.status).toBe("completed");
+      expect(result.data.pr_url).toBe(PR_URL);
+      expect(result.data.existing).toBe(want);
+      expect(emitted[0]!.data.existing).toBe(want);
+    }
   });
 
   test("an already-aborted signal fails before touching anything", async () => {
@@ -427,6 +432,15 @@ describe("RECOVERY: interrupted run resume", () => {
     try { expect(await resumeMain([], { runPr, out: say })).toBe(4); } finally { process.chdir(cwd); }
     expect(out.join("")).toContain("phase: verify");
     expect(prCalls).toBe(0);
+  });
+
+  test("resume that finds an already-open PR says 'PR reused' and records existing true", async () => {
+    seal();
+    const reused: RunPrFn = async () => { prCalls++; return { status: "completed", data: { pr_url: "https://github.com/o/r/pull/9", draft: false, existing: true } }; };
+    const cwd = process.cwd(); process.chdir(repo);
+    try { expect(await resumeMain([], { runPr: reused, out: say })).toBe(0); } finally { process.chdir(cwd); }
+    expect(out.join("")).toContain("PR reused https://github.com/o/r/pull/9");
+    expect(readEvents(evPath()).findLast((e) => e.type === "pr.opened")!.data.existing).toBe(true);
   });
 
   test("interrupted in publish: resume opens exactly one PR, reuses the receipt, and a second resume finds nothing", async () => {

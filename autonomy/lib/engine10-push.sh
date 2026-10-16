@@ -159,11 +159,14 @@ case "$mode" in
         fi
         url="$(_e10_gh pr list --repo "$_e10_repo" --head "$branch" --state open --json url --jq '.[0].url')" \
             || die "gh pr list failed"
+        _e10_pr_state=reused
         if [ -z "$url" ] || [ "$url" = "null" ]; then
+            _e10_pr_state=created
             url="$(_e10_gh pr create --repo "$_e10_repo" --head "$branch" --title "$title" --body-file "$body" "${draft[@]}" "${base[@]}")" \
                 || die "gh pr create failed"
             url="$(printf '%s\n' "$url" | tail -n 1)"
         fi
+        printf '%s\n' "$_e10_pr_state"  # marker line before the URL: reused (open PR found) or created
         printf '%s\n' "$url"
         ;;
     comment)

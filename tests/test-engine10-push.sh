@@ -76,7 +76,7 @@ grep -q "token=$CANARY" "$REC" && ok "control: planted pre-push hook sees the ca
 # push-pr: push lands, hook records nothing, PR created as draft from /.
 : > "$REC"; : > "$W/remote.log"; : > "$GHLOG"
 out="$(p4 "$LIB" push-pr "$A" loki/e10-fix "E10 title" "$W/body.md" --draft 2>"$W/err")"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && ok "push-pr prints the PR URL" \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'created\n%s' "$PRURL")" ] && ok "push-pr prints the created marker then the PR URL" \
     || bad "push-pr rc=$rc out=$out err=$(tr '\n' ' ' < "$W/err")"
 [ "$(git -C "$BARE" rev-parse -q --verify refs/heads/loki/e10-fix)" = "$(git -C "$A" rev-parse loki/e10-fix)" ] \
     && grep -qx "remote token=$CANARY" "$W/remote.log" && ok "push landed on the remote with the credential" \
@@ -90,7 +90,7 @@ grep -q '^cwd=/ .* pr create --repo octocat/hello --head loki/e10-fix --title E1
 
 # Second call reuses the open PR.
 out="$(p4 "$LIB" push-pr "$A" loki/e10-fix "E10 title" "$W/body.md" 2>/dev/null)"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(creates)" = "1" ] && ok "second call reuses the existing PR URL" \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'reused\n%s' "$PRURL")" ] && [ "$(creates)" = "1" ] && ok "second call reuses the existing PR URL and prints the reused marker" \
     || bad "second call rc=$rc out=$out creates=$(creates)"
 
 # MASS-2: a stacked slice PR targets its parent slice's branch (--base, either order with --draft).
@@ -292,10 +292,10 @@ git -C "$A" push -q "$BARE" loki/e10-resume:refs/heads/loki/e10-resume
 rm -f "$W/pr.url"; : > "$GHLOG"; : > "$W/remote.log"
 pushes() { wc -l < "$W/remote.log" | tr -d ' '; }
 out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>"$W/err")"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(pushes)" = "0" ] && grep -q "push skipped" "$W/err" && [ "$(creates)" = "1" ] \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'created\n%s' "$PRURL")" ] && [ "$(pushes)" = "0" ] && grep -q "push skipped" "$W/err" && [ "$(creates)" = "1" ] \
     && ok "recovery A: resume after push skips the push and opens one PR" || bad "recovery A: rc=$rc out=$out pushes=$(pushes) creates=$(creates)"
 out="$(p4 "$LIB" push-pr "$A" loki/e10-resume t "$W/body.md" 2>/dev/null)"; rc=$?
-[ "$rc" -eq 0 ] && [ "$out" = "$PRURL" ] && [ "$(creates)" = "1" ] && [ "$(pushes)" = "0" ] \
+[ "$rc" -eq 0 ] && [ "$out" = "$(printf 'reused\n%s' "$PRURL")" ] && [ "$(creates)" = "1" ] && [ "$(pushes)" = "0" ] \
     && ok "recovery B: rerun reuses the PR, no second PR, no second push" || bad "recovery B: rc=$rc creates=$(creates) pushes=$(pushes)"
 git -C "$A" checkout -q loki/e10-resume
 git -C "$A" commit -q --allow-empty -m second
