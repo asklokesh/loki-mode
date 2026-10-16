@@ -224,6 +224,22 @@ if command -v bun >/dev/null 2>&1; then
         *) fail "--brief text was misparsed as a run id: $out" ;;
     esac
     case "$out" in *"build a todo app"*"STUB-ARGV"*|*"STUB-ARGV"*"build a todo app"*) fail "--brief text leaked to the delegate: $out" ;; *) pass "--brief text never reaches the delegate" ;; esac
+    # P12-07f: --mirofish takes an optional URL, --mirofish-docker a required image.
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --mirofish http://x 2>&1)"; rc=$?
+    case "$out" in
+        *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish URL reaches engine10 resume" ;;
+        *) fail "--mirofish URL was misparsed as a run id: $out" ;;
+    esac
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --mirofish --provider claude 2>&1)"; rc=$?
+    case "$out" in
+        *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish before another flag reaches engine10 resume" ;;
+        *) fail "bare --mirofish broke the scan: $out" ;;
+    esac
+    out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume --mirofish-docker img 2>&1)"; rc=$?
+    case "$out" in
+        *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish-docker IMG reaches engine10 resume" ;;
+        *) fail "--mirofish-docker image was misparsed as a run id: $out" ;;
+    esac
     # Parity: exit 5 (publish failed) maps to 1 in BOTH commands.
     out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc_start=$?
     mkdir -p "$dir/.loki/runs/e10-parity"; : > "$dir/.loki/runs/e10-parity/events.jsonl"
