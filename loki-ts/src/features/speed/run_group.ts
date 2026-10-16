@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import type { Dag, Unit } from "../decompose.ts";
-import { freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
+import { assignCriteria, freezeGroupContract, groupContractPath, parseContract } from "../contract.ts";
 import { integrate } from "../../engine10/integrate.ts";
 import { integrateWithFixes, type FixUnit } from "./fix_units.ts";
 import type { receiptSha256 as ReceiptSha256Fn } from "../../engine10/stages/seal.ts";
@@ -71,8 +71,11 @@ const readJson = (p: string): Record<string, unknown> | null => { try { const v 
 /** A unit as stored in dag.json: the decomposer's fields plus `spec` (abs path of its frozen unit spec) and `done` (backlog.py skips it). */
 type StoredUnit = Unit & { spec?: string; done?: boolean };
 
-/** Newest .loki/groups/<gid>/dag.json whose spec_sha256 equals specSha, or null. */
-function findResumable(repoDir: string, specSha: string): { gid: string; stored: Record<string, unknown> } | null {
+/** Hash of one unit's contract slice (criterion texts only: ids shift when criteria are inserted). */
+const sliceSha = (criteria: { text: string }[]): string => sha256(JSON.stringify(criteria.map((c) => c.text)));
+
+/** Newest .loki/groups/<gid>/dag.json whose spec_sha256 equals specSha (or, with unitIds, whose non-fix unit ids equal unitIds: a revised spec), or null. */
+function findResumable(repoDir: string, specSha: string, unitIds?: string[]): { gid: string; stored: Record<string, unknown> } | null {
   const root = join(repoDir, ".loki", "groups");
   let names: string[] = [];
   try { names = readdirSync(root); } catch { return null; }
@@ -80,7 +83,7 @@ function findResumable(repoDir: string, specSha: string): { gid: string; stored:
   for (const gid of names) {
     if (!GID_RE.test(gid)) continue;
     const p = join(root, gid, "dag.json"), d = readJson(p);
-    if (!d || d["spec_sha256"] !== specSha || typeof d["base_ref"] !== "string" || !Array.isArray(d["units"])) continue;
+    if (!d || (unitIds ? JSON.stringify((Array.isArray(d["units"]) ? (d["units"] as Partial<FixUnit>[]) : []).filter((u) => !u.fixKind).map((u) => u.id)) !== JSON.stringify(unitIds) : d["spec_sha256"] !== specSha) || typeof d["base_ref"] !== "string" || !Array.isArray(d["units"])) continue;
     let at = 0; try { at = statSync(p).mtimeMs; } catch { continue; }
     if (!best || at > best.at || (at === best.at && gid > best.gid)) best = { gid, stored: d, at };
   }
@@ -115,7 +118,11 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   const { receiptSha256, verifyReceipt } = ctx.seal;
   const run = launcher ?? defaultLauncher;
   const specSha = sha256(ctx.spec);
-  const resumable = env.LOKI_GROUP_RESUME === "0" ? null : findResumable(repoDir, specSha);
+  const resumeOn = env.LOKI_GROUP_RESUME !== "0";
+  const exact = resumeOn ? findResumable(repoDir, specSha) : null;
+  const resumable = exact ?? (resumeOn ? findResumable(repoDir, specSha, dag.units.map((u) => u.id)) : null); // revised spec: same decomposition, different spec
+  const revised = resumable !== null && exact === null;
+  const changed = new Set<string>(); // revised spec: units whose contract slice hash changed (these rerun; the rest are skipped-unchanged)
   const groupId = resumable?.gid ?? `g${Date.now().toString(36)}`;
   const groupDir = join(repoDir, ".loki", "groups", groupId);
   const receiptPath = join(groupDir, "receipt.json");
@@ -141,14 +148,23 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
     startBranch = String(resumable.stored["start_branch"] ?? "");
     full = { units: resumable.stored["units"] as Unit[], sharedFiles: (resumable.stored["sharedFiles"] as string[] | undefined) ?? [], edges: (resumable.stored["edges"] as Dag["edges"] | undefined) ?? [] };
     units = full.units as StoredUnit[];
-    if (!existsSync(groupContractPath(repoDir, groupId))) {
+    if (revised) {
+      const next = assignCriteria(units, parseContract(ctx.spec, ctx.specPath ?? "").criteria).units;
+      const oldUnits = readJson(groupContractPath(repoDir, groupId))?.["units"];
+      const old = new Map<string, string>();
+      for (const cu of Array.isArray(oldUnits) ? (oldUnits as { id: string; criteria: { text: string }[] }[]) : []) old.set(cu.id, sliceSha(cu.criteria));
+      for (const nu of next) if (old.get(nu.id) !== sliceSha(nu.criteria)) changed.add(nu.id);
+      const f = freezeGroupContract(repoDir, groupId, units, parseContract(ctx.spec, ctx.specPath ?? ""));
+      if (!f.ok) { say(`loki: ${f.reason}\n`); return 1; }
+      for (const u of units) if (changed.has(u.id)) { const nd = dag.units.find((x) => x.id === u.id); if (nd) { u.items = nd.items; u.writeSet = nd.writeSet; } }
+    } else if (!existsSync(groupContractPath(repoDir, groupId))) {
       const f = freezeGroupContract(repoDir, groupId, units, parseContract(ctx.spec, ctx.specPath ?? ""));
       if (!f.ok) { say(`loki: ${f.reason}\n`); return 1; }
     }
     // A VERIFIED group receipt whose head is still the group branch re-verifies and finishes without launching anything.
     const rec = readJson(receiptPath);
     const tip = git(repoDir, ["rev-parse", "--verify", "--quiet", `refs/heads/loki/group-${groupId}`]);
-    if (rec && rec["verdict"] === "VERIFIED" && tip !== "" && rec["head_sha"] === tip && allUnitsVerified(unitVerdictsOf(rec)) && (await verifyReceipt(receiptPath)).verdict === "VERIFIED") {
+    if (changed.size === 0 && rec && rec["verdict"] === "VERIFIED" && tip !== "" && rec["head_sha"] === tip && allUnitsVerified(unitVerdictsOf(rec)) && (await verifyReceipt(receiptPath)).verdict === "VERIFIED") {
       say(`loki: resuming group ${groupId}: group receipt already VERIFIED on ${`loki/group-${groupId}`}; nothing to run\n`);
       return 0;
     }
@@ -180,8 +196,8 @@ export async function runGroup(launcher: BacklogLauncher | undefined, dag: Dag, 
   // Resume bookkeeping: a unit is done only on a verified, head-matching harvest; anything else drops its stale harvest and reruns.
   let doneCount = 0;
   for (const [i, u] of units.entries()) {
-    u.done = resumable ? await unitDone(verifyReceipt, repoDir, groupId, i + 1, u.id) : false;
-    if (u.done) doneCount++;
+    u.done = resumable && !changed.has(u.id) ? await unitDone(verifyReceipt, repoDir, groupId, i + 1, u.id) : false;
+    if (u.done) { doneCount++; if (revised) say(`loki: unit ${u.id} skipped-unchanged\n`); }
     else if (resumable && UNIT_ID_RE.test(u.id)) rmSync(join(groupDir, "group", "units", u.id), { recursive: true, force: true });
   }
   // An unfinished fix unit (and every later one) is dropped: its base integration no longer exists; the fix loop re-derives it.
