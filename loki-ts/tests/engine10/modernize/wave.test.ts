@@ -1,6 +1,6 @@
 // M-20 wall: wave verify (build, integration, original suite) and the next-wave gate.
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
@@ -149,7 +149,7 @@ describe("detectWaveCommands (M-27D)", () => {
 
   it("python with pytest evidence: build and suite set, integration null, verifyWave blocks on integration", () => {
     const c = detectWaveCommands(mkInv("setuptools", "setup.py", ["setup.py", "pkg/a.py"], { pytest: "tests/test_a.py" }), "/nonexistent");
-    expect(c.build).toEqual({ argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|node_modules|\\.tox)/", "."] });
+    expect(c.build).toEqual({ argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|venv|node_modules|\\.tox|\\.git)/", "."] });
     expect(c.original_suite).toEqual({ argv: ["python3", "-m", "pytest", "-q"] });
     expect(c.integration).toBeNull();
     const ran: string[] = [];
@@ -161,10 +161,33 @@ describe("detectWaveCommands (M-27D)", () => {
     const c = detectWaveCommands(mkInv("poetry", "pyproject.toml", ["tests/integration/test_x.py"], { pytest: "tests/integration/test_x.py" }), "/nonexistent");
     expect(c.integration).toEqual({ argv: ["python3", "-m", "pytest", "-q", "tests/integration"] });
   });
-  it("maven: exact argv for all three steps", () => {
-    expect(detectWaveCommands(mkInv("maven", "pom.xml", ["pom.xml"]), "/nonexistent")).toEqual({
-      build: { argv: ["mvn", "-B", "-q", "compile"] }, integration: { argv: ["mvn", "-B", "verify"] }, original_suite: { argv: ["mvn", "-B", "test"] },
-    });
+  it("maven: failsafe declared gives verify; surefire-only IT classes run via -Dtest; neither gives null", () => {
+    const dir = mkdtempSync(join(tmpdir(), "m27db-"));
+    try {
+      writeFileSync(join(dir, "pom.xml"), "<plugin><artifactId>maven-failsafe-plugin</artifactId></plugin>");
+      expect(detectWaveCommands(mkInv("maven", "pom.xml", ["pom.xml"]), dir)).toEqual({
+        build: { argv: ["mvn", "-B", "-q", "compile"] }, integration: { argv: ["mvn", "-B", "verify"] }, original_suite: { argv: ["mvn", "-B", "test"] },
+      });
+      writeFileSync(join(dir, "pom.xml"), "<plugin><artifactId>maven-surefire-plugin</artifactId></plugin>");
+      expect(detectWaveCommands(mkInv("maven", "pom.xml", ["pom.xml", "src/test/java/FooIT.java"]), dir).integration)
+        .toEqual({ argv: ["mvn", "-B", "test", "-Dtest=*IT,*ITCase,*IntegrationTest", "-Dsurefire.failIfNoSpecifiedTests=false"] });
+      expect(detectWaveCommands(mkInv("maven", "pom.xml", ["pom.xml", "src/test/java/FooTest.java"]), dir).integration).toBeNull();
+    } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+  it("python integration dir: segment-prefix match, needs a .py file, no sibling-name false match", () => {
+    const i = (files: string[]) => detectWaveCommands(mkInv("poetry", "pyproject.toml", files, { pytest: "x" }), "/nonexistent").integration;
+    expect(i(["tests/integration/api/test_x.py"])).toEqual({ argv: ["python3", "-m", "pytest", "-q", "tests/integration"] });
+    expect(i(["tests/integration_old/test_x.py"])).toBeNull();
+    expect(i(["tests/integration/README.md"])).toBeNull();
+    expect(i(["integration/a.py"])).toEqual({ argv: ["python3", "-m", "pytest", "-q", "integration"] });
+  });
+  it("tox integration env is reachable even when pyproject is the marker", () => {
+    const dir = mkdtempSync(join(tmpdir(), "m27db-"));
+    try {
+      writeFileSync(join(dir, "tox.ini"), "[testenv:integration]\ncommands=pytest\n");
+      const c = detectWaveCommands(mkInv("poetry", "pyproject.toml", ["pyproject.toml", "tox.ini"], { pytest: "x" }), dir);
+      expect(c.integration).toEqual({ argv: ["tox", "-e", "integration"] });
+    } finally { rmSync(dir, { recursive: true, force: true }); }
   });
   it("gradle: gradle fallback without a wrapper, integrationTest only when declared", () => {
     const c = detectWaveCommands(mkInv("gradle", "build.gradle", ["build.gradle"]), "/nonexistent");
