@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
-import { oracleDir } from "../../../src/engine10/modernize/types.ts";
+import { encodeUnitId, isSafeUnitId, oracleDir, unitCardPath } from "../../../src/engine10/modernize/types.ts";
 import { DEFAULT_NORMALIZERS, sealOracle } from "../../../src/engine10/modernize/oracle/seal.ts";
 import { classifyBaseRun, sealPreSealedWall } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
@@ -1049,4 +1049,25 @@ describe("FC-24 known limit: in-process forgery is runner_reported, not detected
     expect(r.conformance).toBeNull();
     expect(conformanceEvents("fc24_sysexit").length).toBe(0);
   }, 120_000);
+});
+
+describe("nested unit ids (M-26b)", () => {
+  it("accepts repo-relative paths, rejects traversal, absolute, empty segment, backslash, NUL and odd characters", () => {
+    for (const ok of ["calc", "legacy/calc.py", "a/b/c.d-e_f"]) expect(isSafeUnitId(ok)).toBe(true);
+    for (const bad of ["", "/abs", "a//b", "a/", "../x", "a/../b", "a/./b", "a\\b", "a\0b", "a b", "-x", "a/-b", "a..b", "x".repeat(129), 5 as never]) expect(isSafeUnitId(bad)).toBe(false);
+  });
+
+  it("encodes reversibly and every derived path stays inside the run dir", () => {
+    expect(encodeUnitId("legacy/calc.py")).toBe("legacy%2Fcalc.py");
+    // "%" is outside the id alphabet, so the encoding is injective: no id can collide with another's encoded form.
+    for (const pct of ["a%b", "a%2Fb", "%", "legacy%2Fcalc.py"]) {
+      expect(isSafeUnitId(pct)).toBe(false);
+      expect(() => encodeUnitId(pct)).toThrow(/unsafe unit id/);
+    }
+    const dir = oracleDir("/r", "mod-20261016T000000Z-aaaaaa", "legacy/calc.py");
+    expect(dir).toBe(join("/r", ".loki", "modernize", "mod-20261016T000000Z-aaaaaa", "oracle", "legacy%2Fcalc.py"));
+    expect(unitCardPath("/r", "mod-20261016T000000Z-aaaaaa", "legacy/calc.py")).toBe(join("/r", ".loki", "modernize", "mod-20261016T000000Z-aaaaaa", "units", "legacy%2Fcalc.py.md"));
+    expect(() => oracleDir("/r", "m", "../../etc")).toThrow(/unsafe unit id/);
+    expect(() => encodeUnitId("/abs")).toThrow();
+  });
 });

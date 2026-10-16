@@ -232,6 +232,21 @@ describe("checkEquivalence: each NOT_PROVEN cause gives NOT_PROVEN", () => {
     expect(result.verdict).toBe("NOT_PROVEN");
   });
 
+  it("a replay that reports a not_proven reason (undeclared boundary) is a named NOT_PROVEN, never a throw or a pass", () => {
+    sealRaw(
+      "bnd",
+      [baseCase({ case: "c1" }), baseCase({ case: "c2" })],
+      { unit: "bnd", entries: ["f"], cases: 2, branches_total: 2, branches_taken: 2, branch_pct: 100, missing: [] },
+    );
+    const runNew: NewCaseRunner = (_u, _t, rec) => ({
+      return: rec.return, exc: rec.exc, stdout: rec.stdout, files: rec.files,
+      ...(rec.case === "c1" ? { not_proven: ["boundary:raw undeclared"] } : {}),
+    });
+    const result = check("bnd", "/new-tree", NO_NORMALIZERS, runNew);
+    expect(result.not_proven).toEqual(["c1: new tree: boundary:raw undeclared"]);
+    expect(result.verdict).toBe("NOT_PROVEN");
+  });
+
   it("a missing capture field is NOT_PROVEN, not a crash or a pass", () => {
     sealRaw(
       "missing_field",

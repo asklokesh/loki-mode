@@ -37,6 +37,7 @@ GOOD = {
 class TestUnitValidation(unittest.TestCase):
     def test_accepts_minimal_and_full(self):
         self.assertIsNotNone(ts.validate_unit_job(dict(GOOD))[0])
+        self.assertIsNotNone(ts.validate_unit_job(dict(GOOD, unit="legacy/calc.py"))[0])
         full = dict(GOOD, mid="mod-20261015T000000Z-abcdef", target="python3")
         self.assertEqual(ts.validate_unit_job(full)[0]["target"], "python3")
 
@@ -65,7 +66,11 @@ class TestUnitValidation(unittest.TestCase):
             dict(GOOD, ref="a@{1}"),
             dict(GOOD, unit="-x"),
             dict(GOOD, unit="u" * 129),
-            dict(GOOD, unit="a/b"),
+            dict(GOOD, unit="a//b"),
+            dict(GOOD, unit="/a"),
+            dict(GOOD, unit="a/../b"),
+            dict(GOOD, unit="a/"),
+            dict(GOOD, unit="a\\b"),
             dict(GOOD, unit="a~v1"),
             dict(GOOD, mid="not-a-mid"),
             dict(GOOD, target="cobol"),

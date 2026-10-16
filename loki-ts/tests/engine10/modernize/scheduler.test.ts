@@ -210,6 +210,18 @@ describe("scheduler", () => {
     f.done();
   });
 
+  it("a nested unit id (legacy/calc.py) is accepted and its worktree name is one encoded path segment", async () => {
+    const f = fixture();
+    const run = (c: AttemptCtx): AttemptOutcome => ({ result: res(c.unit.id, "PROVEN"), costUsd: 0 });
+    const r = await schedule(planOf([[u("legacy/calc.py"), u("/abs"), u("a//b"), u("a\\b"), u("a/../b"), u("a/")]]), { ...f.base, run });
+    const by = Object.fromEntries(r.outcomes.map((o) => [o.unit, o]));
+    expect(by["legacy/calc.py"]!.status).toBe("PROVEN");
+    for (const bad of ["/abs", "a//b", "a\\b", "a/../b", "a/"]) expect(by[bad]!.attempts).toBe(0);
+    expect(f.created).toHaveLength(1);
+    expect(f.created[0]!.endsWith(join("wt", "legacy%2Fcalc.py"))).toBe(true);
+    f.done();
+  });
+
   it("coordinator is the single log writer: unit.started carries model and worker", async () => {
     const f = fixture();
     const run = (c: AttemptCtx): AttemptOutcome => ({ result: res(c.unit.id, "PROVEN"), costUsd: 0 });

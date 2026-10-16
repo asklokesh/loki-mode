@@ -1,9 +1,14 @@
 // M-23 wall: remote unit dispatch never trusts the remote verdict (docs/v10/MODERNIZE.md, D30).
 import { describe, expect, it } from "bun:test";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  boundariesFromCase,
   buildUnitJob,
+  defaultUnitFile,
+  makeUnitRunners,
   dispatchRemoteUnit,
   dispatchRemoteUnits,
   httpTransport,
@@ -133,4 +138,54 @@ describe("remote units", () => {
       expect(`${c.name}: ${ok}`).toBe(`${c.name}: ${c.valid}`);
     }
   });
+});
+
+describe("nested unit ids and text boundaries (M-26b)", () => {
+  it("buildUnitJob accepts a nested unit path and rejects traversal forms", () => {
+    expect(buildUnitJob({ ...spec, unit: "legacy/calc.py" }).unit).toBe("legacy/calc.py");
+    for (const unit of ["../x", "/abs", "a//b", "a/", "a\\b", "a/../b"]) expect(() => buildUnitJob({ ...spec, unit })).toThrow();
+  });
+
+  it("defaultUnitFile reaches a nested file and refuses traversal and a symlink that escapes the tree", () => {
+    const root = mkdtempSync(join(tmpdir(), "e10-m26b-"));
+    try {
+      const tree = join(root, "tree"), outside = join(root, "outside");
+      mkdirSync(join(tree, "legacy"), { recursive: true }); mkdirSync(outside);
+      writeFileSync(join(tree, "legacy", "calc.py"), "x = 1\n"); writeFileSync(join(outside, "evil.py"), "x = 2\n");
+      symlinkSync(join(outside, "evil.py"), join(tree, "link.py"));
+      symlinkSync(outside, join(tree, "dirlink"));
+      expect(defaultUnitFile("legacy/calc.py", tree)).toBe(join(require("node:fs").realpathSync(tree), "legacy", "calc.py"));
+      expect(defaultUnitFile("link.py", tree)).toBeNull();
+      expect(defaultUnitFile("dirlink/evil.py", tree)).toBeNull();
+      expect(defaultUnitFile("../outside/evil.py", tree)).toBeNull();
+      expect(defaultUnitFile("missing.py", tree)).toBeNull();
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  const rec = (over: Record<string, unknown>) => ({ format: 1, case: "c", entry: "label", args: [], kwargs: {}, return: null, exc: null, stdout: { t: "text", v: "" }, files: [], not_proven: [], ...over }) as never;
+
+  it("boundariesFromCase declares the text kind the oracle recorded, nested too; mixed and non-text stay undeclared", () => {
+    const b = boundariesFromCase(rec({
+      args: [{ t: "text", v: "a" }, { t: "int", v: "1" }, { t: "list", v: [{ t: "bytes", v: "x" }] }, { t: "list", v: [{ t: "text", v: "a" }, { t: "bytes", v: "b" }] }],
+      kwargs: { k: { t: "dict", v: [[{ t: "text", v: "a" }, { t: "int", v: "1" }]] } },
+      return: { t: "text", v: "A" },
+    }));
+    expect(b).toEqual({ args: ["text", null, "bytes", null], kwargs: { k: "text" }, return: "text" });
+  });
+
+  const py = spawnSync("python3", ["-c", "pass"]).status === 0;
+  it.skipIf(!py)("replays a text-argument case without throwing; a genuinely undeclared boundary is a named not_proven", () => {
+    const tree = mkdtempSync(join(tmpdir(), "e10-m26b-"));
+    try {
+      writeFileSync(join(tree, "m.py"), "def label(raw):\n    return raw.upper() if isinstance(raw, str) else str(raw)\n\ndef leak():\n    return 'now text'\n");
+      const { runNew } = makeUnitRunners({ target: "python3" });
+      const ok = runNew("m.py", tree, rec({ args: [{ t: "text", v: "abc" }], return: { t: "text", v: "ABC" } }));
+      expect(ok.not_proven ?? []).toEqual([]);
+      expect(ok.return).toEqual({ t: "text", v: "ABC" });
+      const bad = runNew("m.py", tree, rec({ entry: "leak", return: { t: "none" } }));
+      expect(bad.not_proven).toEqual(["boundary:return undeclared"]);
+      const mixed = runNew("m.py", tree, rec({ args: [{ t: "list", v: [{ t: "text", v: "a" }, { t: "bytes", v: "YWJj" }] }], return: { t: "text", v: "x" } }));
+      expect(mixed.not_proven!.join(";")).toContain("boundary:raw mixes text and bytes");
+    } finally { rmSync(tree, { recursive: true, force: true }); }
+  }, 30_000);
 });

@@ -60,6 +60,8 @@ export interface NewCaseOutcome {
   exc: ExcTagged | null;
   stdout: Tagged;
   files: FileEntry[];
+  /** Why this replay cannot be proven (undeclared or mismatched boundary, unsupported type): a named NOT_PROVEN, never a throw. */
+  not_proven?: string[];
 }
 
 /** Injected target runner (M-10's CaptureRunner pattern). It MAY throw (timeout, crash);
@@ -331,6 +333,10 @@ export function checkEquivalence(
       outcome = runNew(unit, newTreeDir, rec);
     } catch (e) {
       notProven.push(`${rec.case}: runner error: ${errMsg(e)}`);
+      continue;
+    }
+    if (outcome.not_proven && outcome.not_proven.length > 0) {
+      notProven.push(`${rec.case}: new tree: ${outcome.not_proven.join("; ")}`);
       continue;
     }
     const cmp = compareCase(rec, outcome, normalizers);

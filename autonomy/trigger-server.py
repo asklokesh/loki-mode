@@ -203,7 +203,7 @@ MAX_UNIT_REF_LEN = 200
 # "\d" would accept Unicode digits. Mirrors the TS REPO_RE/REF_RE/UNIT_RE/MID_RE.
 UNIT_REPO_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]*/[A-Za-z0-9._-]+", re.ASCII)
 UNIT_REF_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/-]*", re.ASCII)
-UNIT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", re.ASCII)
+UNIT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*(?:/[A-Za-z0-9][A-Za-z0-9_.-]*)*", re.ASCII)
 UNIT_MID_RE = re.compile(r"mod-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}", re.ASCII)
 
 
@@ -231,7 +231,7 @@ def validate_unit_job(payload):
     if (not ref or len(ref) > MAX_UNIT_REF_LEN or not UNIT_REF_RE.fullmatch(ref)
             or ".." in ref or ref.endswith((".lock", "/", "."))):
         return None, "invalid ref"
-    if not UNIT_ID_RE.fullmatch(unit):
+    if len(unit) > 128 or ".." in unit or not UNIT_ID_RE.fullmatch(unit):
         return None, "invalid unit"
     clean = {"kind": UNIT_JOB_KIND, "repo": repo, "ref": ref, "unit": unit}
     if "mid" in payload:
