@@ -121,7 +121,8 @@ describe("registry vs dispatchers", () => {
     const line = BASH_SRC.find((l) => l.includes('steer \\"<note>\\"'));
     expect(line).toBeDefined();
     expect(line).not.toContain("needs LOKI_PROMPT_INJECTION=1");
-    expect(line).toContain("LOKI_PROMPT_INJECTION=0");
+    expect(line).toContain("LOKI_PROMPT_INJECTION=true");
+    expect(BASH_SRC.join("\n")).not.toContain("LOKI_PROMPT_INJECTION=1");
   });
 
   test("CLI-MODERN.md matches the registry", () => {
