@@ -1,7 +1,7 @@
 // loki-ts/src/util/seal_drift.ts -- P12-01: compare a sealed receipt with the workspace it describes (composite_seal.ts is group binding; nothing owned this).
 // Three checks on an intact VERIFIED/UNSIGNED receipt: fabricated success (a pass the bound log never recorded), intent drift (task sha256 vs the current spec),
 // head drift (head_sha vs the repo HEAD). Fabricated success is TAMPERED; drift is UNCHECKED (the seal is intact but no longer describes the current state).
-import { execFileSync } from "node:child_process";
+import { safeGit } from "./safe_git.ts";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -59,7 +59,7 @@ export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = proces
   const repo = repoOf(receiptPath);
   if (repo && env["LOKI_VERIFY_ALLOW_HEAD_DRIFT"] !== "1" && typeof r["head_sha"] === "string") {
     let head = "";
-    try { head = execFileSync("git", ["-C", repo, "rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return null; }
+    try { head = safeGit(repo, ["rev-parse", "HEAD"]).trim(); } catch { return null; }
     if (head !== "" && head !== r["head_sha"]) return { verdict: "UNCHECKED", reason: `head drift: receipt head_sha ${r["head_sha"]} is not the current HEAD ${head} (LOKI_VERIFY_ALLOW_HEAD_DRIFT=1 accepts)` };
   }
   return null;
