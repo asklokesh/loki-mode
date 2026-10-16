@@ -18771,6 +18771,7 @@ cmd_modernize() {
             echo "  heal <path>      Legacy system healing in phases (was: loki heal)"
             echo "  migrate <path>   Codebase migration in phases (was: loki migrate)"
             echo "  unit --repo <owner/name> --ref <ref> --unit <id>   Run one unit (remote unit job worker)"
+            echo "  <repo> --to <lang>   Full modernization: oracle capture, waves, verify, ship"
             echo ""
             echo "Run 'loki modernize <subcommand> --help' for each. The old"
             echo "top-level names still work; see 'loki help aliases'."

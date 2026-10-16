@@ -1170,7 +1170,7 @@ def emit(text):
 
 # Any construct that can turn data into code disables masking entirely.
 # ANSI-C / locale quoting ($' $") hides quote boundaries from this walker.
-if re.search(r"`|\$\(|<\(|>\(|\$['\"]", cmd) or RISKY_WORD.search(cmd) or DOT_CMD.search(cmd):
+if re.search(r"\x60|\$\(|<\(|>\(|\$['\"]", cmd) or RISKY_WORD.search(cmd) or DOT_CMD.search(cmd):
     emit(cmd)
 
 n = len(cmd)

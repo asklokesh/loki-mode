@@ -819,6 +819,20 @@ test_precompact_flush() {
     if [ "$rc" -eq 0 ]; then pass "precompact-flush tolerates garbage input"; else fail "precompact-flush failed on garbage input"; fi
 }
 
+# A hook that does not parse fails closed and denies every command. macOS
+# runs /bin/bash 3.2, which rejects a backtick inside a heredoc nested in $( ).
+test_validate_bash_parses_on_every_bash() {
+    local hook="$PROJECT_ROOT/autonomy/hooks/validate-bash.sh" sh
+    for sh in /bin/bash bash; do
+        command -v "$sh" >/dev/null 2>&1 || continue
+        if "$sh" -n "$hook" 2>/dev/null; then
+            pass "validate-bash.sh parses under $sh ($("$sh" -c 'echo $BASH_VERSION'))"
+        else
+            fail "validate-bash.sh does not parse under $sh"
+        fi
+    done
+}
+
 # Run tests
 setup
 test_session_init_exists
@@ -842,6 +856,7 @@ test_host_guard_rejects_unhooked_provider
 test_simple_web_guard_bounds_model_commands
 test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
+test_validate_bash_parses_on_every_bash
 test_validate_bash_temp_root_and_glob_denied
 test_validate_bash_residual_rm_gaps_denied
 test_validate_bash_rm_allow_grammar
