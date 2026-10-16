@@ -1,6 +1,6 @@
 // D51-A4: pr_opened / blocked / finished post well-formed Slack payloads to a local mock webhook.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { notifyEvent } from "../../src/e10ext/slack_events.ts";
+import { notifyEvent } from "../../src/util/slack_events.ts";
 
 const bodies: any[] = [];
 let server: ReturnType<typeof Bun.serve>;
