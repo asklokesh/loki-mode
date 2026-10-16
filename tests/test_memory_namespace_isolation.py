@@ -295,3 +295,84 @@ def test_unstamped_entry_filtered_but_stamped_sibling_kept(tmp_path: Path):
     assert "stamped-a" in ids, "stamped project-a entry must be kept"
     assert "unstamped-x" not in ids, \
         "unstamped (unprovable-origin) entry must be filtered from a namespaced query"
+
+
+# ---------------------------------------------------------------------------
+# P12-42: tenant scope, TTL expiry, outcome feedback
+# ---------------------------------------------------------------------------
+
+def _seed_patterns(tmp_path: Path, patterns):
+    root = tmp_path / "mem42"
+    (root / "semantic").mkdir(parents=True)
+    (root / "semantic" / "patterns.json").write_text(json.dumps({"patterns": patterns}))
+    return MemoryStorage(base_path=str(root))
+
+
+def _pat(pid, **extra):
+    rec = {"id": pid, "pattern": "zeta rollout", "category": "ops", "confidence": 0.9}
+    rec.update(extra)
+    return rec
+
+
+def test_expired_item_not_retrieved(tmp_path):
+    storage = _seed_patterns(tmp_path, [
+        _pat("live", expires_at="2999-01-01T00:00:00+00:00"),
+        _pat("dead", expires_at="2000-01-01T00:00:00+00:00"),
+    ])
+    ids = [r["id"] for r in MemoryRetrieval(storage).retrieve_by_keyword(["zeta"], "semantic")]
+    assert ids == ["live"]
+
+
+def test_ttl_seconds_expires_from_created_at(tmp_path):
+    storage = _seed_patterns(tmp_path, [
+        _pat("old", ttl_seconds=60, created_at="2000-01-01T00:00:00+00:00"),
+        _pat("fresh", ttl_seconds=3600, created_at="2999-01-01T00:00:00+00:00"),
+    ])
+    ids = [r["id"] for r in MemoryRetrieval(storage).retrieve_by_keyword(["zeta"], "semantic")]
+    assert ids == ["fresh"]
+
+
+def test_cross_tenant_not_retrieved_default_preserved(tmp_path):
+    storage = _seed_patterns(tmp_path, [
+        _pat("legacy"),
+        _pat("acme-1", tenant="acme"),
+        _pat("globex-1", tenant="globex"),
+    ])
+    acme = MemoryRetrieval(storage, tenant="acme")
+    assert [r["id"] for r in acme.retrieve_by_keyword(["zeta"], "semantic")] == ["acme-1"]
+    default = MemoryRetrieval(storage, tenant="default")
+    assert [r["id"] for r in default.retrieve_by_keyword(["zeta"], "semantic")] == ["legacy"]
+    unscoped = MemoryRetrieval(storage)
+    assert len(unscoped.retrieve_by_keyword(["zeta"], "semantic")) == 3
+
+
+def test_success_outcome_ranks_higher(tmp_path):
+    storage = _seed_patterns(tmp_path, [
+        _pat("fail", outcome="failure"),
+        _pat("none"),
+        _pat("win", outcome="success"),
+    ])
+    r = MemoryRetrieval(storage)
+    merged = r._merge_results(
+        {"semantic": r.retrieve_by_keyword(["zeta"], "semantic")}, {"semantic": 1.0}, 10)
+    assert [m["id"] for m in merged] == ["win", "none", "fail"]
+
+
+def test_schema_roundtrip_and_old_records_load():
+    from memory.schemas import SemanticPattern
+    old = SemanticPattern.from_dict({"id": "x", "pattern": "p", "category": "c"})
+    assert old.tenant == "default" and old.expires_at is None and old.outcome is None
+    assert "tenant" in old.to_dict()
+    new = SemanticPattern.from_dict(SemanticPattern.from_dict(
+        {"id": "x", "pattern": "p", "category": "c", "tenant": "acme",
+         "ttl_seconds": 5, "outcome": "success"}).to_dict())
+    assert (new.tenant, new.ttl_seconds, new.outcome) == ("acme", 5, "success")
+    assert new.validate() == []
+    assert SemanticPattern(id="x", pattern="p", category="c", outcome="bogus").validate()
+
+
+def test_storage_stamps_tenant_and_expiry(tmp_path):
+    storage = MemoryStorage(base_path=str(tmp_path / "m"))
+    storage.save_pattern({"id": "p1", "pattern": "q", "category": "c", "ttl_seconds": 100})
+    rec = storage.load_pattern("p1")
+    assert rec["tenant"] == "default" and rec["expires_at"]

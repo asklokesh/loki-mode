@@ -32,6 +32,7 @@ except ImportError:
 
 # Default namespace constant
 DEFAULT_NAMESPACE = "default"
+DEFAULT_TENANT = "default"
 
 # Allowed namespace characters. A namespace becomes a single path segment under
 # the memory root, so it must not contain separators, traversal, or whitespace.
@@ -491,6 +492,13 @@ class MemoryStorage:
             for c in str(episode_id)
         )
 
+    @staticmethod
+    def _stamp_lifecycle(data: dict) -> None:
+        """Default tenant and resolve ttl_seconds into expires_at (P12-42). Old records stay valid without either."""
+        data["tenant"] = data.get("tenant") or DEFAULT_TENANT
+        if data.get("ttl_seconds") is not None and not data.get("expires_at"):
+            data["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=float(data["ttl_seconds"]))).isoformat()
+
     def save_episode(self, episode: EpisodeTrace) -> str:
         """
         Save an episode trace to storage.
@@ -520,6 +528,7 @@ class MemoryStorage:
         # leak defense, v7.5.10). Defaults to DEFAULT_NAMESPACE for unscoped
         # storage instances.
         episode_data["_namespace"] = self._namespace or DEFAULT_NAMESPACE
+        self._stamp_lifecycle(episode_data)
 
         # Determine storage path based on date
         timestamp = episode_data.get("timestamp", datetime.now(timezone.utc).isoformat())
@@ -731,6 +740,7 @@ class MemoryStorage:
         )
         # Stamp namespace for cross-namespace leak defense (v7.5.10).
         pattern_data["_namespace"] = self._namespace or DEFAULT_NAMESPACE
+        self._stamp_lifecycle(pattern_data)
 
         patterns_path = self.base_path / "semantic" / "patterns.json"
 
@@ -1012,6 +1022,7 @@ class MemoryStorage:
         )
         # Stamp namespace for cross-namespace leak defense (v7.5.10).
         skill_data["_namespace"] = self._namespace or DEFAULT_NAMESPACE
+        self._stamp_lifecycle(skill_data)
 
         # Use skill name for filename if available, otherwise use ID
         skill_name = skill_data.get("name", skill_id)
