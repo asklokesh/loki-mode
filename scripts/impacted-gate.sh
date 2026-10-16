@@ -58,6 +58,8 @@ else
     if grep -q '^R0	ALL' "$SEL"; then
         echo "impacted-gate: R0 (broad-blast-radius diff); the full run owns this, not run here:"
         grep '^R0	ALL' "$SEL"
+        # --guards-only must fail closed: R0 there means the guard list is missing.
+        [ "$BASE" = "--guards-only" ] && exit 1
         exit 0
     fi
 
@@ -68,7 +70,15 @@ else
 fi
 N="$(wc -l <"$SUITES" | tr -d ' ')"
 echo "impacted-gate: $N shell suite(s) selected for $BASE..$HEAD_REF (jobs=$JOBS, ${LIMIT}s each)"
-[ "$N" -gt 0 ] || { echo "impacted-gate: PASS (nothing impacted)"; exit 0; }
+if [ "$N" -le 0 ]; then
+    # --guards-only with zero rows is a broken guard list, not "nothing impacted".
+    if [ "$BASE" = "--guards-only" ]; then
+        echo "impacted-gate: FAIL (--guards-only selected zero suites)"
+        exit 1
+    fi
+    echo "impacted-gate: PASS (nothing impacted)"
+    exit 0
+fi
 
 log_of() { printf '%s/%s.log' "$LOKI_RUN_TMP" "$(printf '%s' "$1" | tr '/' '_')"; }
 
