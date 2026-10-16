@@ -2,9 +2,15 @@
 // and the capture executor (runCapture) are both stubbed, per section 13 "Tests deterministic
 // with a stub provider" -- no python or py_capture.py dependency here.
 import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "bun:test";
-import { realCaptureRunner, search } from "../../../src/engine10/modernize/oracle/search.ts";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { ModernizeLog } from "../../../src/engine10/modernize/log.ts";
+import { sealOracle } from "../../../src/engine10/modernize/oracle/seal.ts";
+import { captureUnitOracle, makeProposeInputs, realCaptureRunner, search } from "../../../src/engine10/modernize/oracle/search.ts";
+import type { ProposeSession } from "../../../src/engine10/modernize/oracle/search.ts";
+import { oracleDir } from "../../../src/engine10/modernize/types.ts";
 import type { CaptureRunner, CaseSpec, CoverageMissing, ProposeInputs } from "../../../src/engine10/modernize/oracle/search.ts";
 
 const UNIT_SRC = "def f(x):\n    if x:\n        return 1\n    return 0\n";
@@ -233,5 +239,80 @@ describe("realCaptureRunner honors LOKI_MOD_OLD_RUNTIME (section 3.2)", () => {
       if (prev === undefined) delete process.env["LOKI_MOD_OLD_RUNTIME"];
       else process.env["LOKI_MOD_OLD_RUNTIME"] = prev;
     }
+  });
+});
+
+// M-27A: production oracle capture. Real py_capture.py under LOKI_MOD_OLD_RUNTIME=python3 on 2/3-compatible fixtures.
+describe.skipIf(!PYTHON3)("captureUnitOracle (M-27A)", () => {
+  const mid = "mod-20260928T010203Z-ab12cd";
+  const T = { t: "bool", v: true }, F = { t: "bool", v: false };
+  const both = [JSON.stringify({ entry: "f", args: [T], kwargs: {} }), JSON.stringify({ entry: "f", args: [F], kwargs: {} })].join("\n");
+  let repoDir = "";
+  let prev: string | undefined;
+  beforeEach(() => {
+    repoDir = mkdtempSync(join(tmpdir(), "e10-m27a-"));
+    prev = process.env["LOKI_MOD_OLD_RUNTIME"];
+    process.env["LOKI_MOD_OLD_RUNTIME"] = PYTHON3;
+  });
+  afterEach(() => {
+    if (prev === undefined) delete process.env["LOKI_MOD_OLD_RUNTIME"];
+    else process.env["LOKI_MOD_OLD_RUNTIME"] = prev;
+    rmSync(repoDir, { recursive: true, force: true });
+  });
+  const stub = (lines: string): ProposeSession => ({ cwd }) => writeFileSync(join(cwd, "proposals.jsonl"), lines);
+  const unitFile = (src: string) => {
+    const p = join(repoDir, "u.py");
+    writeFileSync(p, src);
+    return p;
+  };
+
+  it("captures branch.py, writes both files, and sealOracle accepts them", () => {
+    const r = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)) });
+    expect(r.ok).toBe(true);
+    const dir = oracleDir(repoDir, mid, "branch");
+    expect(existsSync(join(dir, "cases.jsonl"))).toBe(true);
+    expect(existsSync(join(dir, "coverage.json"))).toBe(true);
+    expect(sealOracle(repoDir, mid, "branch", new ModernizeLog(repoDir, mid)).verdict).toBe("PROVEN_ORACLE");
+  });
+
+  it("marks a random-valued record not_proven with nondeterministic field return", () => {
+    const unitPath = unitFile("import random\ndef f(x):\n    if x:\n        return random.random()\n    return 0\n");
+    const r = captureUnitOracle({ repoDir, mid, unit: "rnd", unitPath, propose: makeProposeInputs(stub(both)) });
+    expect(r.ok).toBe(true);
+    const recs = readFileSync(join(oracleDir(repoDir, mid, "rnd"), "cases.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(recs.some((x) => x.not_proven.includes("nondeterministic field return"))).toBe(true);
+    expect(recs.some((x) => x.not_proven.length === 0)).toBe(true);
+  });
+
+  it("fails closed with no files when the old runtime is unavailable", () => {
+    process.env["LOKI_MOD_OLD_RUNTIME"] = "/no/such/interpreter-loki-m27a";
+    const r = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)) });
+    expect(r).toEqual({ ok: false, reason: "old runtime unavailable" });
+    expect(existsSync(join(oracleDir(repoDir, mid, "branch"), "cases.jsonl"))).toBe(false);
+    expect(existsSync(join(oracleDir(repoDir, mid, "branch"), "coverage.json"))).toBe(false);
+  });
+
+  it("refuses a second capture; a throwing propose plateaus instead of crashing", () => {
+    const throwing = () => { throw new Error("session died"); };
+    const first = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: throwing });
+    expect(first.ok).toBe(true); // seed has no cases, branch.py is below floor but still written and flagged by seal
+    const again = captureUnitOracle({ repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT, propose: makeProposeInputs(stub(both)) });
+    expect(again.ok).toBe(false);
+  });
+
+  it("runs the propose session outside repoDir with a token-free env", () => {
+    process.env["GITHUB_TOKEN"] = "ghp_secret";
+    let seen: { cwd: string; token: string | undefined } | undefined;
+    try {
+      captureUnitOracle({
+        repoDir, mid, unit: "branch", unitPath: FIXTURE_UNIT,
+        propose: makeProposeInputs(({ cwd, env }) => { seen = { cwd, token: env["GITHUB_TOKEN"] }; }),
+      });
+    } finally {
+      delete process.env["GITHUB_TOKEN"];
+    }
+    expect(seen).toBeDefined();
+    expect(seen!.cwd.startsWith(repoDir)).toBe(false);
+    expect(seen!.token === undefined || seen!.token !== "ghp_secret").toBe(true);
   });
 });
