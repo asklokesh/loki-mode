@@ -62,7 +62,27 @@ describe("buildVoterAgentsJson", () => {
       expect(typeof a.prompt).toBe("string");
       expect(a.prompt.length).toBeGreaterThan(50);
       expect(typeof a.model).toBe("string");
-      expect(typeof a.effort).toBe("string");
+    }
+  });
+
+  it("Cost S7: haiku with no effort unless complexity=complex, which keeps opus/sonnet", () => {
+    const prev = process.env["LOKI_COMPLEXITY"];
+    try {
+      delete process.env["LOKI_COMPLEXITY"];
+      const lean = buildVoterAgentsJson(fakeCtx());
+      for (const a of Object.values(lean)) {
+        expect(a.model).toBe("haiku");
+        expect(a.effort).toBeUndefined();
+      }
+      process.env["LOKI_COMPLEXITY"] = "complex";
+      const cx = buildVoterAgentsJson(fakeCtx());
+      expect(cx[VOTER_SLUGS.REQUIREMENTS_VERIFIER]!.model).toBe("opus");
+      expect(cx[VOTER_SLUGS.TEST_AUDITOR]!.model).toBe("sonnet");
+      expect(cx[VOTER_SLUGS.CONVERGENCE_VOTER]!.model).toBe("sonnet");
+      expect(typeof cx[VOTER_SLUGS.TEST_AUDITOR]!.effort).toBe("string");
+    } finally {
+      if (prev === undefined) delete process.env["LOKI_COMPLEXITY"];
+      else process.env["LOKI_COMPLEXITY"] = prev;
     }
   });
 
