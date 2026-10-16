@@ -19,7 +19,7 @@ let receipt: Record<string, unknown>;
 
 beforeAll(() => {
   process.env["LOKI_RECEIPT_SIGNING_KEY"] = pem;
-  const body = { run_id: "e10-1", verdict: "VERIFIED", base_sha: "c3".repeat(20), head_sha: HEAD, tree: TREE, diff_sha256: "d".repeat(64), events_sha256: createHash("sha256").digest("hex"), task: "t" };
+  const body = { schema: "loki.v10.receipt/1", time: { wall_s: 0, stages: {} }, run_id: "e10-1", verdict: "VERIFIED", base_sha: "c3".repeat(20), head_sha: HEAD, tree: TREE, diff_sha256: "d".repeat(64), events_sha256: createHash("sha256").digest("hex"), task: "t" };
   const hash = receiptSha256(body as never);
   receipt = { ...body, receipt_sha256: hash, verification: signReceipt("e10-1", hash) };
   mkdirSync(join(root, "runs", "e10-1"), { recursive: true });

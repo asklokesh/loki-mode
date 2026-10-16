@@ -2807,6 +2807,7 @@ cmd_start() {
                 echo "  --pr                  Worktree + auto-create PR"
                 echo "  --ship                Worktree + PR + auto-merge"
                 echo "  --detach, -d          Run in background (implies --worktree)"
+                echo "  --resume [RUN_ID]     Resume an interrupted run at the stage it stopped in"
                 echo ""
                 echo "Preview without spending (any input mode):"
                 echo "  loki plan <PRD>       Analyze a spec WITHOUT executing: complexity,"

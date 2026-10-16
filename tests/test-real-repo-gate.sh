@@ -116,5 +116,15 @@ expect "missing env file is a setup error (exit 2)" 2 'not a regular file'
 run_gate pass "$AQ"
 expect "unset LOKI_E2E_ENV_FILE keeps current behaviour" 0 'GATE PASS'
 
+# P12-30e: resolve_source failure (stub python3 refuses it) fails closed, no clone of an empty source
+mkdir -p "$T/pybin"
+REALPY="$(command -v python3)"
+printf '#!/bin/sh\ncase "$*" in *resolve_source*) exit 1 ;; esac\nexec "%s" "$@"\n' "$REALPY" > "$T/pybin/python3"
+chmod +x "$T/pybin/python3"
+run_gate pass "$CO" PATH="$T/pybin:$PATH"
+expect "resolve_source failure fails closed with a named detail" 1 'resolve_source failed for .*GATE FAIL'
+if printf '%s' "$OUT" | grep -q 'clone of  at'; then bad "empty-source clone attempted"; else ok "no empty-source clone"; fi
+if grep -q 'python3 -I -c .import sys; sys.path.insert' "$GATE"; then ok "gate runs resolve_source under python3 -I"; else bad "gate lacks python3 -I"; fi
+
 echo "passed=$PASS failed=$FAIL"
 [ "$FAIL" -eq 0 ]

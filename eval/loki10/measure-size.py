@@ -317,7 +317,16 @@ def main(argv=None):
                 ok = False
                 note = (note + "; " if note else "") + "online: no merge_sha/source/ref to verify against"
             else:
-                full, err = fetch_upstream_diff(source, ref, merge_sha)
+                sys.path.insert(0, HERE)
+                try:
+                    import harness  # lazy: only --online needs it
+                    resolved = harness.resolve_source(source)
+                except Exception as exc:
+                    harness = None
+                    resolved = None
+                    full, err = None, "cannot import harness: %s" % exc
+                if resolved is not None:
+                    full, err = fetch_upstream_diff(resolved, ref, merge_sha)
                 if err:
                     ok = False
                     note = (note + "; " if note else "") + "online fetch failed: %s" % err

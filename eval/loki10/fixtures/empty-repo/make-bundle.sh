@@ -4,8 +4,9 @@
 # a one-commit repo on branch main holding only README.md. Identity and dates
 # are pinned so the commit SHA is deterministic:
 #   a49d132f67fd193a89e55363dc8c8a8933a1304e (repo.ref of every quickstart task)
-# Quickstart task.json files point repo.source at the main-checkout path
-# eval/loki10/fixtures/empty-repo/empty-repo.bundle
+# Quickstart task.json files give repo.source as the repo-relative path
+# fixtures/empty-repo/empty-repo.bundle, resolved against eval/loki10 by
+# harness.resolve_source
 # Usage: bash make-bundle.sh   (writes empty-repo.bundle next to this script)
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd -P)"
