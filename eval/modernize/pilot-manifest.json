@@ -11,7 +11,7 @@
     "finding": "A public set exists but is only 10 open sample tasks (COBOL, Java 7, C89, Fortran, Assembly) out of hundreds; the full set is not public. The samples are agent repair and migration tasks with hidden tests, not repo-level modernization targets, and none is Python 2. Too small and the wrong shape to calibrate unit sizing.",
     "path_taken": "fallback"
   },
-  "fallback": "10 public py2 and Java repos under 20K source lines, each with a test suite, pinned by URL and commit (MODERNIZE.md section 12 item 1). The Java repos target Java 6/7 source level and build on JDK 8; the java21 route is the modernization target. loc_verified and suite_verified are false until a --clone run measures them; the pilot records the measured line count and refuses a repo over max_loc.",
+  "fallback": "10 public py2 and Java repos under 20K source lines, each with a test suite, pinned by URL and commit (MODERNIZE.md section 12 item 1). The Java repos target Java 6/7 source level and build on JDK 8; the java21 route is the modernization target. loc_verified and suite_verified are false: the line counts and suites are not yet confirmed. A --execute run counts source lines after fetching and skips a repo over max_loc; the suite commands are unverified guesses.",
   "cap": {
     "start_lines": 1500,
     "min_lines": 300,

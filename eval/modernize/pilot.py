@@ -2,7 +2,7 @@
 """M-27: Legacy-Bench pilot harness for `loki modernize` (docs/v10/MODERNIZE.md sections 4 and 12).
 
 Modes (exactly one):
-  --dry-run   validate the manifest, print the plan, no model calls, no network (clones only with --clone)
+  --dry-run   validate the manifest, print the plan, no model calls, no network (no clones)
   --stub      run the pipeline shape against the local M-26 py2 fixture with a deterministic
               py2 to py3 rewrite instead of a model; hermetic, writes a results file
   --execute   real paid run of `loki modernize` over every manifest repo; needs --max-spend-usd
@@ -117,32 +117,56 @@ def round_to(value, step):
     return int(round(value / step) * step)
 
 
+def run_class(run):
+    """valid = measured evidence (ok / not_proven); skipped = never run; failed = anything else."""
+    st = run["status"]
+    if st in ("ok", "not_proven"):
+        return "valid"
+    if st.startswith("skipped"):
+        return "skipped"
+    return "failed"
+
+
 def aggregate(runs):
-    units = sum(r["units_total"] for r in runs)
-    first = sum(r["units_first_pass"] for r in runs)
-    proven = sum(r["units_proven"] for r in runs)
-    lines = sum(r["source_lines"] for r in runs)
-    cost = sum(r["cost_usd"] for r in runs)
+    valid = [r for r in runs if run_class(r) == "valid"]
+    units = sum(r["units_total"] for r in valid)
+    first = sum(r["units_first_pass"] for r in valid)
+    proven = sum(r["units_proven"] for r in valid)
+    lines = sum(r["source_lines"] for r in valid)
+    costs = [r["cost_usd"] for r in valid]
+    measured = bool(valid) and all(c is not None for c in costs)
+    resl = [r["units_resliced"] for r in valid]
     return {
         "runs": len(runs),
+        "runs_valid": len(valid),
+        "runs_failed": sum(1 for r in runs if run_class(r) == "failed"),
+        "runs_skipped": sum(1 for r in runs if run_class(r) == "skipped"),
         "units_total": units,
         "first_pass_equivalence": (first / units) if units else None,
         "equivalence_rate": (proven / units) if units else None,
-        "cost_per_1k_lines_usd": (cost / (lines / 1000.0)) if lines else None,
-        "human_touches": sum(r["human_touches"] for r in runs),
-        "units_resliced": sum(r["units_resliced"] for r in runs),
+        "cost_per_1k_lines_usd": (sum(costs) / (lines / 1000.0)) if measured and lines else None,
+        "cost_note": None if measured else "not measured",
+        "human_touches": sum(r["human_touches"] for r in valid),
+        "units_resliced": sum(resl) if valid and all(x is not None for x in resl) else None,
     }
 
 
 def calibrate_cap(runs, cap_cfg, current=None):
     """MODERNIZE.md section 4: raise the cap while first-pass equivalence stays at or above the
-    threshold (90%), lower it when it does not. Bounded by min/max, rounded to a step."""
+    threshold (90%), lower it when it does not. Bounded by min/max, rounded to a step. Holds, with a
+    reason, when any run failed or was skipped: a partial pilot is not calibration evidence."""
     cur = cap_cfg["start_lines"] if current is None else current
     agg = aggregate(runs)
+
+    def hold(reason):
+        return {"current_cap": cur, "recommended_cap": cur, "action": "hold", "first_pass_equivalence": None, "reason": reason}
+
+    if agg["runs_failed"] or agg["runs_skipped"]:
+        return hold("hold: %d run(s) failed or lacked artifacts and %d were skipped, so the pilot is incomplete" % (
+            agg["runs_failed"], agg["runs_skipped"]))
     fpe = agg["first_pass_equivalence"]
     if fpe is None:
-        return {"current_cap": cur, "recommended_cap": cur, "action": "hold", "first_pass_equivalence": None,
-                "reason": "no units were run, so no calibration evidence"}
+        return hold("hold: no units were run, so no calibration evidence")
     if fpe >= cap_cfg["raise_threshold"]:
         action, raw = "raise", cur * cap_cfg["raise_factor"]
     else:
@@ -157,15 +181,16 @@ def calibrate_cap(runs, cap_cfg, current=None):
 
 
 def make_run(rid, mode, status, units_total, units_proven, units_first_pass, source_lines, cost_usd,
-             human_touches, units_resliced, wall_time_s):
+             human_touches, units_resliced, wall_time_s, note=None):
+    """cost_usd and units_resliced are None when not measured; never 0 standing in for unknown."""
     return {
-        "id": rid, "mode": mode, "status": status,
+        "id": rid, "mode": mode, "status": status, "note": note,
         "units_total": units_total, "units_proven": units_proven, "units_first_pass": units_first_pass,
         "source_lines": source_lines, "cost_usd": cost_usd,
         "equivalence_rate": (units_proven / units_total) if units_total else 0.0,
         "not_proven_share": ((units_total - units_proven) / units_total) if units_total else 1.0,
         "human_touches": human_touches,
-        "cost_per_1k_lines_usd": (cost_usd / (source_lines / 1000.0)) if source_lines else 0.0,
+        "cost_per_1k_lines_usd": (cost_usd / (source_lines / 1000.0)) if cost_usd is not None and source_lines else None,
         "wall_time_s": round(wall_time_s, 3),
         "units_resliced": units_resliced,
     }
@@ -248,81 +273,135 @@ def stub_run(fixture):
 
 
 # --- real paid run
-def read_modernize_artifacts(repo_dir):
-    """Best-effort parse of .loki/modernize/<mid>/{report.json,events.jsonl}. Returns (units, proven,
-    first_pass, resliced, cost, touches)."""
+def find_mid(repo_dir):
+    """The mid comes from the modernize.started event (its envelope `run`), never from directory order."""
     base = os.path.join(repo_dir, ".loki", "modernize")
-    mids = sorted(os.listdir(base)) if os.path.isdir(base) else []
-    if not mids:
-        raise PilotError("no modernize run directory found under %s" % base)
-    mdir = os.path.join(base, mids[-1])
-    units, proven_units = {}, set()
-    try:
-        with open(os.path.join(mdir, "report.json"), encoding="utf8") as fh:
-            rep = json.load(fh)
-        for u in rep.get("units", []):
-            units[u["unit"]] = u
-            if u.get("verdict") == "PROVEN" and not u.get("not_proven"):
-                proven_units.add(u["unit"])
-        touches = len(rep.get("blocking_units", []))
-    except (OSError, ValueError, KeyError):
-        touches = 0
-    disturbed, resliced, cost = set(), 0, 0.0
-    try:
-        with open(os.path.join(mdir, "events.jsonl"), encoding="utf8") as fh:
-            for ln in fh:
-                try:
-                    ev = json.loads(ln)
-                except ValueError:
-                    continue
-                data = ev.get("data") or {}
-                if ev.get("type") == "unit.resliced":
-                    resliced += 1
-                    disturbed.add(data.get("unit"))
-                elif ev.get("type") == "unit.variant":
-                    disturbed.add(data.get("unit"))
-                c = data.get("cost_usd")
-                if isinstance(c, (int, float)) and ev.get("type") in ("unit.completed", "unit.not_proven"):
-                    cost += c
-    except OSError:
-        pass
-    first = len([u for u in proven_units if u not in disturbed])
-    return len(units), len(proven_units), first, resliced, cost, touches
+    found = []
+    if os.path.isdir(base):
+        for d in os.listdir(base):
+            ev = os.path.join(base, d, "events.jsonl")
+            if not os.path.isfile(ev):
+                continue
+            with open(ev, encoding="utf8") as fh:
+                for ln in fh:
+                    try:
+                        e = json.loads(ln)
+                    except ValueError:
+                        continue
+                    if e.get("type") == "modernize.started" and isinstance(e.get("run"), str):
+                        found.append((e.get("ts", ""), e["run"], os.path.join(base, d)))
+                        break
+    if not found:
+        raise PilotError("no modernize.started event found under %s" % base)
+    found.sort()
+    _, mid, mdir = found[-1]
+    return mid, mdir
 
 
-def fetch_repo(url, commit, dest):
+def proven_ok(verdict, not_proven, rate):
+    """Mirror of provenOk in report.ts: PROVEN with leftover reasons or a rate below 1 is not proof."""
+    return verdict == "PROVEN" and not not_proven and not (isinstance(rate, (int, float)) and rate < 1)
+
+
+def read_modernize_artifacts(repo_dir):
+    """Per-repo facts from the run's own artifacts. report.json when present, else derived from the
+    emitted events (unit.equivalence, unit.not_proven, unit.completed). Raises PilotError (status
+    no_report) when units cannot be derived. cost is None unless a budget.hit event carries spent_usd;
+    resliced is always None because no writer emits unit.resliced."""
+    mid, mdir = find_mid(repo_dir)
+    events = []
+    with open(os.path.join(mdir, "events.jsonl"), encoding="utf8") as fh:
+        for ln in fh:
+            try:
+                events.append(json.loads(ln))
+            except ValueError:
+                continue
+    rep_path = os.path.join(mdir, "report.json")
+    units = {}
+    if os.path.isfile(rep_path):
+        try:
+            with open(rep_path, encoding="utf8") as fh:
+                rep = json.load(fh)
+            for u in rep["units"]:
+                units[u["unit"]] = proven_ok(u.get("verdict"), u.get("not_proven"), u.get("rate"))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise PilotError("report.json unreadable: %s" % exc)
+    else:
+        last_eq, npv, seen = {}, set(), set()
+        for e in events:
+            d = e.get("data") or {}
+            u = d.get("unit")
+            if not isinstance(u, str):
+                continue
+            t = e.get("type")
+            if t in ("unit.equivalence", "unit.completed", "unit.not_proven", "unit.started"):
+                seen.add(u)
+            if t == "unit.equivalence":
+                last_eq[u] = d
+            elif t == "unit.not_proven":
+                npv.add(u)
+        for u in seen:
+            d = last_eq.get(u)
+            units[u] = bool(d) and u not in npv and proven_ok(d.get("verdict"), [], d.get("rate"))
+    if not units:
+        raise PilotError("no units derivable from report.json or events under %s" % mdir)
+    started, disturbed = {}, set()
+    cost = None
+    for e in events:
+        d = e.get("data") or {}
+        if e.get("type") == "unit.started":
+            started[d.get("unit")] = started.get(d.get("unit"), 0) + 1
+        elif e.get("type") == "unit.variant":
+            disturbed.add(d.get("unit"))
+        elif e.get("type") == "budget.hit" and isinstance(d.get("spent_usd"), (int, float)):
+            cost = float(d["spent_usd"])
+    disturbed |= {u for u, n in started.items() if n > 1}
+    proven = [u for u, ok in units.items() if ok]
+    first = len([u for u in proven if u not in disturbed])
+    return {"mid": mid, "units": len(units), "proven": len(proven), "first_pass": first,
+            "resliced": None, "cost": cost, "touches": len(units) - len(proven)}
+
+
+def fetch_repo(url, commit, dest, source_dir=None, rid=None):
+    if source_dir:
+        shutil.copytree(os.path.join(source_dir, rid), dest)
+        return
     subprocess.run(["git", "init", "-q", dest], check=True)
     subprocess.run(["git", "-C", dest, "fetch", "-q", "--depth", "1", url, commit], check=True, timeout=600)
     subprocess.run(["git", "-C", dest, "checkout", "-q", "FETCH_HEAD"], check=True)
 
 
-def execute_repo(r, budget, loki_bin):
+def execute_repo(r, budget, loki_bin, source_dir=None):
     tmp = run_tmp("pilot-%s-" % r["id"])
     t0 = time.time()
     try:
         dest = os.path.join(tmp, "repo")
-        fetch_repo(r["url"], r["commit"], dest)
+        fetch_repo(r["url"], r["commit"], dest, source_dir, r["id"])
         lines = count_lines(dest, LANGS[r["language"]][1])
         if lines > r["max_loc"]:
-            return make_run(r["id"], "execute", "skipped_over_max_loc", 0, 0, 0, lines, 0.0, 0, 0, time.time() - t0)
+            return make_run(r["id"], "execute", "skipped_over_max_loc", 0, 0, 0, lines, None, 0, None, time.time() - t0)
         p = subprocess.run([loki_bin, "modernize", dest, "--to", r["target"], "--budget", "%.2f" % budget, "--no-pr"],
                            capture_output=True, text=True, timeout=4 * 3600)
         try:
-            n, proven, first, resliced, cost, touches = read_modernize_artifacts(dest)
-        except PilotError:
-            return make_run(r["id"], "execute", "no_artifacts_rc%d" % p.returncode, 0, 0, 0, lines, 0.0, 0, 0, time.time() - t0)
-        status = "ok" if n and proven == n else "not_proven"
-        return make_run(r["id"], "execute", status, n, proven, first, lines, cost, touches, resliced, time.time() - t0)
+            a = read_modernize_artifacts(dest)
+        except PilotError as exc:
+            return make_run(r["id"], "execute", "no_report", 0, 0, 0, lines, None, 0, None, time.time() - t0,
+                            note="rc=%d: %s" % (p.returncode, exc))
+        status = "ok" if a["proven"] == a["units"] else "not_proven"
+        return make_run(r["id"], "execute", status, a["units"], a["proven"], a["first_pass"], lines, a["cost"],
+                        a["touches"], a["resliced"], time.time() - t0,
+                        note="mid=%s; cost %s; units_resliced not measured (no writer emits unit.resliced)" % (
+                            a["mid"], "from budget.hit.spent_usd" if a["cost"] is not None else "not measured"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def plan(manifest, clone):
+def plan(manifest):
     rows = []
     for r in manifest["repos"]:
         rows.append({"id": r["id"], "url": r["url"], "commit": r["commit"], "language": r["language"],
                      "target": r["target"], "suite": r["suite"], "max_loc": r["max_loc"],
-                     "would_clone": bool(clone), "model_calls": 0})
+                     "model_calls": 0})
     return {"path_taken": manifest["public_set"]["path_taken"], "public_set_url": manifest["public_set"]["url"],
             "public_set_license": manifest["public_set"]["license"], "repos": rows,
             "start_cap_lines": manifest["cap"]["start_lines"]}
@@ -348,9 +427,9 @@ def main(argv=None):
     g.add_argument("--stub", action="store_true", help="run against the local fixture with a deterministic stub provider")
     g.add_argument("--execute", action="store_true", help="real paid run; needs --max-spend-usd")
     ap.add_argument("--max-spend-usd", type=float, default=None, help="hard total spend ceiling for --execute")
-    ap.add_argument("--clone", action="store_true", help="with --dry-run: shallow-fetch each repo to measure lines (network)")
+    ap.add_argument("--source-dir", default=None, help="with --execute: copy each repo from <dir>/<id> instead of cloning (hermetic tests)")
     ap.add_argument("--manifest", default=DEFAULT_MANIFEST)
-    ap.add_argument("--results-dir", default=DEFAULT_RESULTS)
+    ap.add_argument("--results-dir", default=None, help="default: eval/modernize/results; for --stub, $LOKI_RUN_TMP when set")
     ap.add_argument("--fixture", default=DEFAULT_FIXTURE)
     ap.add_argument("--loki-bin", default=os.path.join(REPO_ROOT, "bin", "loki"))
     ap.add_argument("--only", default=None, help="with --execute: run only this repo id")
@@ -374,7 +453,7 @@ def main(argv=None):
             return 2
 
         if a.dry_run:
-            doc = plan(manifest, a.clone)
+            doc = plan(manifest)
             print(json.dumps(doc, indent=2))
             return 0
 
@@ -390,20 +469,37 @@ def main(argv=None):
             runs, spent = [], 0.0
             for r in repos:
                 if spent >= a.max_spend_usd:
-                    runs.append(make_run(r["id"], "execute", "skipped_budget_exhausted", 0, 0, 0, 0, 0.0, 0, 0, 0.0))
+                    runs.append(make_run(r["id"], "execute", "skipped_budget_exhausted", 0, 0, 0, 0, None, 0, None, 0.0,
+                                         note="spend cap %.2f USD reached (%.2f spent)" % (a.max_spend_usd, spent)))
                     continue
-                run = execute_repo(r, min(per, a.max_spend_usd - spent), a.loki_bin)
-                spent += run["cost_usd"]
+                allowed = min(per, a.max_spend_usd - spent)
+                run = execute_repo(r, allowed, a.loki_bin, a.source_dir)
+                # Real spend only (budget.hit.spent_usd). Unmeasured spend is charged at the full allowance, so the cap holds.
+                spent += run["cost_usd"] if run["cost_usd"] is not None else (allowed if run["status"] in ("ok", "not_proven", "no_report") else 0.0)
                 runs.append(run)
             mode = "execute"
 
         calibration = calibrate_cap(runs, manifest["cap"])
-        path = write_results(a.results_dir, mode, runs, calibration, a.manifest)
+        results_dir = a.results_dir
+        if results_dir is None:
+            tmp_root = os.environ.get("LOKI_RUN_TMP")
+            results_dir = os.path.join(tmp_root, "pilot-results") if mode == "stub" and tmp_root else DEFAULT_RESULTS
+        if mode == "stub":
+            calibration["non_evidence"] = True
+            calibration["reason"] += " (stub run on a local fixture: non_evidence, never publish as the pilot result)"
+        path = write_results(results_dir, mode, runs, calibration, a.manifest)
+        agg = aggregate(runs)
+        print("runs: %d valid, %d failed, %d skipped" % (agg["runs_valid"], agg["runs_failed"], agg["runs_skipped"]))
+        print("cost per 1K lines: %s; units re-sliced: %s" % (
+            "%.4f USD" % agg["cost_per_1k_lines_usd"] if agg["cost_per_1k_lines_usd"] is not None else "not measured",
+            agg["units_resliced"] if agg["units_resliced"] is not None else "not measured"))
         print("results: %s" % path)
         print("calibration: %s" % calibration["reason"])
         print("recommended cap: %d lines per unit (was %d, %s)" % (
             calibration["recommended_cap"], calibration["current_cap"], calibration["action"]))
-        return 0 if all(r["status"] == "ok" or mode == "execute" for r in runs) else 1
+        if mode == "execute":
+            return 1 if agg["runs_failed"] else 0
+        return 0 if all(r["status"] == "ok" for r in runs) else 1
     except PilotError as exc:
         print("error: %s" % exc, file=sys.stderr)
         return 2
