@@ -3,7 +3,7 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
@@ -19,20 +19,27 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
   const f = join(repoDir, ".loki", "HUMAN_INPUT.md");
   // One mechanism for every steer that could not be consumed (unwritable logs dir, oversize, non-file entry, any throw): an `unapplied` record in the sink, which Seal always refuses.
   const unapplied = (reason: string): void => { sink?.push({ rev: 0, source: null, actor: null, sha: "", at: now().getTime(), unapplied: true, reason }); };
+  let fd = -1;
   try {
-    const st = lstatSync(f, { throwIfNoEntry: false });
-    if (!st) return null;
-    if (st.isSymbolicLink()) { rmSync(f, { force: true }); unapplied("symlink"); return null; }
+    // One open with O_NOFOLLOW (O_NONBLOCK so a FIFO cannot hang the open); every check and the read use this fd, so a swap after the open cannot redirect the read.
+    try { fd = openSync(f, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return null;
+      if (code === "ELOOP") { rmSync(f, { force: true }); unapplied("symlink"); return null; }
+      throw e;
+    }
+    const st = fstatSync(fd);
     if (!st.isFile()) { unapplied("not a regular file"); return null; }
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
     const stamp = now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
     if (st.size > STEER_MAX_BYTES) { renameSync(f, join(logs, `human-input-REJECTED-TOOLARGE-${stamp}.md`)); unapplied("over 1 MiB"); return null; }
-    const text = readFileSync(f, "utf8").trim();
+    const text = readFileSync(fd, "utf8").trim();
     renameSync(f, join(logs, `human-input-${stamp}.md`));
     if (text !== "") { const recs = recordRevisions(repoDir, text, `human-input-${stamp}.md`, now()); sink?.push(...recs); }
     return text === "" ? null : text;
   } catch { try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ } return null; }
+  finally { if (fd >= 0) try { closeSync(fd); } catch { /* already closed */ } }
 }
 
 const REV_HDR = /^## Operator directive rev (\d+) \(([^)]*)\) actor=(\S*) source=(\S*)\s*$/;
@@ -84,7 +91,7 @@ export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, 
   return (revs ?? []).filter((r) => r.unapplied === true || r.at >= from); // an unapplied steer (never consumed) refuses whatever the Wall timeline says
 }
 
-const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory.", unknown: "Make .loki/logs writable." };
+const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory, or delete an unreadable HUMAN_INPUT.md.", unknown: "Make .loki/logs writable." };
 /** User-facing Seal refusal for a non-empty stale list: says what happened and what to do. */
 export function staleReason(stale: readonly IntentRevision[]): string {
   const bad = stale.filter((r) => r.unapplied), late = stale.filter((r) => !r.unapplied);
