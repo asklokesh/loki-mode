@@ -50,6 +50,19 @@ run_steer "$D2/.loki" "second note" >/dev/null 2>&1
 if grep -q "first note" "$D2/.loki/HUMAN_INPUT.md" && grep -q "second note" "$D2/.loki/HUMAN_INPUT.md"; then ok; else fail "steer should append, not overwrite"; fi
 rm -rf "$D2"
 
+# 2b. each steer is a numbered revision with actor and source; rev counts
+# pending headers plus already-archived revisions; actor/source are sanitized
+D2B="$(mktemp -d)"; mkdir -p "$D2B/.loki"
+LOKI_STEER_ACTOR="al ice;x" LOKI_STEER_SOURCE="https://github.com/o/r/issues/7#issuecomment-9" run_steer "$D2B/.loki" "one" >/dev/null 2>&1
+run_steer "$D2B/.loki" "two" >/dev/null 2>&1
+grep -q '^## Operator directive rev 1 (.*) actor=al-ice-x source=https://github.com/o/r/issues/7#issuecomment-9$' "$D2B/.loki/HUMAN_INPUT.md" && ok || fail "first steer header should be rev 1 with sanitized actor and source"
+grep -q '^## Operator directive rev 2 (.*) actor=.* source=cli$' "$D2B/.loki/HUMAN_INPUT.md" && ok || fail "second steer header should be rev 2 source=cli"
+rm -f "$D2B/.loki/HUMAN_INPUT.md"
+printf '{"rev":1}\n{"rev":2}\n' > "$D2B/.loki/intent-revisions.jsonl"
+run_steer "$D2B/.loki" "three" >/dev/null 2>&1
+grep -q '^## Operator directive rev 3 ' "$D2B/.loki/HUMAN_INPUT.md" && ok || fail "steer after archive should continue at rev 3"
+rm -rf "$D2B"
+
 # 3. no .loki dir -> non-zero (nothing to steer)
 D3="$(mktemp -d)"  # no .loki subdir
 out="$(run_steer "$D3/.loki" "note" 2>&1)"
