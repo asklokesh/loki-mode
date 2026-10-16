@@ -1,12 +1,12 @@
 // M-17 wall: scheduler policy (cascade, best-of-2, workers, budget stop, id safety, single writer).
 import { describe, expect, it } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ClusterResult, Unit } from "../../../src/engine10/modernize/cluster.ts";
 import { ModernizeLog, readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
-import { clampWorkers, gitWorktrees, schedule } from "../../../src/engine10/modernize/scheduler.ts";
+import { clampWorkers, gitMergeOps, gitWorktrees, mergeOnce, schedule } from "../../../src/engine10/modernize/scheduler.ts";
 import type { AttemptCtx, AttemptOutcome, WorktreeOps } from "../../../src/engine10/modernize/scheduler.ts";
 import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
 
@@ -256,5 +256,208 @@ describe("scheduler", () => {
       if (prev === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = prev;
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  describe("gitMergeOps (M-27B)", () => {
+    const env = { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+    const git = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, ...a], { encoding: "utf8", env }).trim();
+    function setup() {
+      const repo = mkdtempSync(join(tmpdir(), "m27b-"));
+      git(repo, "init", "-q");
+      writeFileSync(join(repo, "f"), "base\n");
+      git(repo, "add", "f");
+      git(repo, "commit", "-q", "-m", "i", "--no-gpg-sign");
+      const base = git(repo, "rev-parse", "HEAD");
+      const wt = (name: string) => { const p = join(repo, "wt-" + name); gitWorktrees.create(repo, p, base); return p; };
+      const log = new ModernizeLog(repo, MID);
+      return { repo, wt, log, ops: gitMergeOps(repo, MID), done: () => rmSync(repo, { recursive: true, force: true }) };
+    }
+
+    it("lands a PROVEN unit on HEAD, isMerged true, second mergeOnce adopts", () => {
+      const s = setup();
+      try {
+        const w = s.wt("a");
+        writeFileSync(join(w, "g"), "new\n");
+        expect(s.ops.isMerged("a")).toBe(false);
+        expect(mergeOnce("a", s.ops, s.log, new Set(), w)).toBe("merged");
+        expect(readFileSync(join(s.repo, "g"), "utf8")).toBe("new\n");
+        expect(git(s.repo, "log", "-1", "--format=%B")).toContain(`Loki-Modernize-Unit: ${MID}/a`);
+        expect(s.ops.isMerged("a")).toBe(true);
+        expect(mergeOnce("a", s.ops, s.log, new Set(), w)).toBe("adopted");
+      } finally { s.done(); }
+    });
+
+    it("records a no-op unit, and merging ab does not make a merged", () => {
+      const s = setup();
+      try {
+        s.ops.merge("ab", s.wt("ab"));
+        expect(s.ops.isMerged("ab")).toBe(true);
+        expect(s.ops.isMerged("a")).toBe(false);
+      } finally { s.done(); }
+    });
+
+    it("conflict throws, HEAD unchanged, no cherry-pick in progress; fails closed on bad inputs", () => {
+      const s = setup();
+      try {
+        const w = s.wt("c");
+        writeFileSync(join(w, "f"), "unit\n");
+        writeFileSync(join(s.repo, "f"), "other\n");
+        git(s.repo, "commit", "-aqm", "other", "--no-gpg-sign");
+        const head = git(s.repo, "rev-parse", "HEAD");
+        expect(() => s.ops.merge("c", w)).toThrow("merge refused on c");
+        expect(git(s.repo, "rev-parse", "HEAD")).toBe(head);
+        expect(existsSync(join(s.repo, ".git", "CHERRY_PICK_HEAD"))).toBe(false);
+        expect(() => s.ops.merge("c")).toThrow();
+        writeFileSync(join(s.repo, "f"), "dirty\n");
+        expect(() => s.ops.merge("c", w)).toThrow("repo not clean");
+        git(s.repo, "checkout", "-q", "--", "f");
+        git(s.repo, "checkout", "-q", "--detach");
+        expect(() => s.ops.merge("c", w)).toThrow("detached");
+      } finally { s.done(); }
+    });
+
+    it("squashes earlier worktree commits and uncommitted files into one merge", () => {
+      const s = setup();
+      try {
+        const w = s.wt("s");
+        writeFileSync(join(w, "agent.py"), "1");
+        git(w, "add", "agent.py");
+        git(w, "commit", "-qm", "runner", "--no-gpg-sign");
+        writeFileSync(join(w, "late.py"), "2");
+        s.ops.merge("s", w);
+        expect(readFileSync(join(s.repo, "agent.py"), "utf8")).toBe("1");
+        expect(readFileSync(join(s.repo, "late.py"), "utf8")).toBe("2");
+        expect(s.ops.isMerged("s")).toBe(true);
+      } finally { s.done(); }
+    });
+
+    it("ignores repo trailer.separators config, and rejects unsafe unit or merge ids", () => {
+      const s = setup();
+      try {
+        const w = s.wt("t");
+        git(s.repo, "config", "trailer.separators", "#");
+        s.ops.merge("t", w);
+        expect(s.ops.isMerged("t")).toBe(true);
+        expect(() => s.ops.merge("x\nLoki-Modernize-Unit: " + MID + "/y", w)).toThrow("unsafe");
+        expect(() => s.ops.isMerged("../x")).toThrow("unsafe");
+        expect(() => gitMergeOps(s.repo, "bad").isMerged("a")).toThrow("unsafe");
+      } finally { s.done(); }
+    });
+
+    it("drops runner-committed excluded paths from the squash", () => {
+      const s = setup();
+      try {
+        const w = s.wt("rc");
+        mkdirSync(join(w, ".loki"), { recursive: true });
+        mkdirSync(join(w, "pkg", "__pycache__"), { recursive: true });
+        writeFileSync(join(w, ".loki", "state.json"), "{}");
+        writeFileSync(join(w, "pkg", "__pycache__", "m.pyc"), "x");
+        writeFileSync(join(w, "pkg", "m.py"), "1");
+        git(w, "add", "-f", ".");
+        git(w, "commit", "-qm", "runner", "--no-gpg-sign");
+        s.ops.merge("rc", w);
+        const files = git(s.repo, "ls-files");
+        expect(files).toContain("pkg/m.py");
+        expect(files).not.toContain(".loki");
+        expect(files).not.toContain("__pycache__");
+      } finally { s.done(); }
+    });
+
+    it("keeps the trailer under commit.cleanup=strip and core.commentChar=L", () => {
+      const s = setup();
+      try {
+        git(s.repo, "config", "commit.cleanup", "strip");
+        git(s.repo, "config", "core.commentChar", "L");
+        const w = s.wt("cl");
+        git(w, "config", "commit.cleanup", "strip");
+        git(w, "config", "core.commentChar", "L");
+        writeFileSync(join(w, "g"), "n");
+        s.ops.merge("cl", w);
+        expect(s.ops.isMerged("cl")).toBe(true);
+      } finally { s.done(); }
+    });
+
+    it("excludes .loki and caches at any depth", () => {
+      const s = setup();
+      try {
+        const w = s.wt("d");
+        for (const d of ["pkg/.pytest_cache", "pkg/.loki"]) {
+          mkdirSync(join(w, d), { recursive: true });
+          writeFileSync(join(w, d, "x"), "1");
+        }
+        writeFileSync(join(w, "pkg", "ok.py"), "1");
+        s.ops.merge("d", w);
+        const files = git(s.repo, "ls-files");
+        expect(files).toContain("pkg/ok.py");
+        expect(files).not.toContain(".pytest_cache");
+        expect(files).not.toContain(".loki");
+      } finally { s.done(); }
+    });
+
+    it("never commits .loki or __pycache__", () => {
+      const s = setup();
+      try {
+        const w = s.wt("p");
+        mkdirSync(join(w, ".loki"));
+        mkdirSync(join(w, "pkg", "__pycache__"), { recursive: true });
+        mkdirSync(join(w, "__pycache__"));
+        writeFileSync(join(w, "__pycache__", "t.pyc"), "1");
+        writeFileSync(join(w, ".loki", "x"), "1");
+        writeFileSync(join(w, "pkg", "__pycache__", "m.pyc"), "1");
+        writeFileSync(join(w, "pkg", "m.py"), "1");
+        s.ops.merge("p", w);
+        const files = git(s.repo, "ls-files");
+        expect(files).toContain("pkg/m.py");
+        expect(files).not.toContain(".loki");
+        expect(files).not.toContain("__pycache__");
+      } finally { s.done(); }
+    });
+
+    it("keeps a base-tracked excluded path unchanged through the squash", () => {
+      const s = setup();
+      try {
+        mkdirSync(join(s.repo, "pkg", "__pycache__"), { recursive: true });
+        writeFileSync(join(s.repo, "pkg", "__pycache__", "old.pyc"), "old");
+        git(s.repo, "add", "-f", "pkg/__pycache__/old.pyc");
+        git(s.repo, "commit", "-qm", "legacy", "--no-gpg-sign");
+        const base = git(s.repo, "rev-parse", "HEAD");
+        const w = join(s.repo, "wt-leg");
+        gitWorktrees.create(s.repo, w, base);
+        writeFileSync(join(w, "n.py"), "1");
+        s.ops.merge("leg", w);
+        expect(git(s.repo, "diff", "--name-status", "-M", base, "HEAD")).toBe("A\tn.py");
+        expect(git(s.repo, "ls-files")).toContain("pkg/__pycache__/old.pyc");
+        expect(readFileSync(join(s.repo, "pkg", "__pycache__", "old.pyc"), "utf8")).toBe("old");
+      } finally { s.done(); }
+    });
+
+    it("rolls back the commit when the trailer check fails after cherry-pick", () => {
+      const s = setup();
+      try {
+        const w = s.wt("rb");
+        writeFileSync(join(w, "g"), "1");
+        const pre = git(s.repo, "rev-parse", "HEAD");
+        const ops = gitMergeOps(s.repo, MID, { isMerged: () => false });
+        expect(() => ops.merge("rb", w)).toThrow("trailer missing");
+        expect(git(s.repo, "rev-parse", "HEAD")).toBe(pre);
+        expect(existsSync(join(s.repo, "g"))).toBe(false);
+      } finally { s.done(); }
+    });
+
+    it("does not run a hook planted in the common git dir", () => {
+      const s = setup();
+      try {
+        const w = s.wt("h");
+        const marker = join(s.repo, "HOOK_RAN");
+        mkdirSync(join(s.repo, ".git", "hooks"), { recursive: true });
+        for (const h of ["pre-commit", "commit-msg", "post-commit", "post-merge", "post-rewrite"]) {
+          writeFileSync(join(s.repo, ".git", "hooks", h), `#!/bin/sh\necho x > "${marker}"\n`);
+          chmodSync(join(s.repo, ".git", "hooks", h), 0o755);
+        }
+        writeFileSync(join(w, "g"), "1");
+        s.ops.merge("h", w);
+        expect(existsSync(marker)).toBe(false);
+      } finally { s.done(); }
+    });
   });
 });
