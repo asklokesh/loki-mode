@@ -742,9 +742,13 @@ if [ "${D8S_EXECUTED:-0}" = "1" ]; then
     HS_PORT_FILE="$WORKROOT/hs.port"
     python3 - "$HS_PORT_FILE" <<'PYEOF' &
 import http.server, socketserver, sys
+HITS = {"recover": 0}
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         code = 200 if self.path.startswith("/ok") else 500
+        if self.path.startswith("/recover"):
+            HITS["recover"] += 1
+            code = 500 if HITS["recover"] <= 2 else 200
         self.send_response(code); self.end_headers(); self.wfile.write(b"x")
     def log_message(self, *a): pass
 srv = socketserver.TCPServer(("127.0.0.1", 0), H)
@@ -808,6 +812,27 @@ EOF
             ok "15. HTTP 500 records FAILED_HEALTH, runs the rollback, exits non-zero"
         else
             bad "15. unhealthy path wrong" "rc=$RC15 rec=$R15 $(printf '%s' "$OUT15" | tail -4)"
+        fi
+
+        # 15b. rollback exit 0 is re-probed: still 500 -> post_rollback_health FAILED_HEALTH, exit 5
+        OUT15B="$(run_h "$D15H" --execute --health-url "http://127.0.0.1:$HS_PORT/bad" --auto-rollback)"; RC15B=$?
+        R15B="$(last_record "$D15H")"
+        if [ "$RC15B" -eq 5 ] && [ "$(rec_field "$R15B" post_rollback_health)" = "FAILED_HEALTH" ] \
+           && [ "$(rec_field "$R15B" health_http_code)" = "500" ] \
+           && ! grep -q "NOT re-checked" <<<"$OUT15B"; then
+            ok "15b. an unhealthy rolled-back service is recorded FAILED_HEALTH and exits 5"
+        else
+            bad "15b. rollback health not re-checked" "rc=$RC15B rec=$R15B $(printf '%s' "$OUT15B" | tail -4)"
+        fi
+        # 15c. rollback restores service: /recover fails the 2 deploy probes then answers 200
+        mk_hfix d15c; D15C="$WORKROOT/d15c"
+        OUT15C="$(run_h "$D15C" --execute --health-url "http://127.0.0.1:$HS_PORT/recover" --auto-rollback)"; RC15C=$?
+        R15C="$(last_record "$D15C")"
+        if [ "$RC15C" -eq 4 ] && [ "$(rec_field "$R15C" health_status)" = "FAILED_HEALTH" ] \
+           && [ "$(rec_field "$R15C" post_rollback_health)" = "healthy" ]; then
+            ok "15c. a rollback that restores service records post_rollback_health healthy"
+        else
+            bad "15c. recovered rollback mis-recorded" "rc=$RC15C rec=$R15C $(printf '%s' "$OUT15C" | tail -4)"
         fi
 
         # 16. 500 without --auto-rollback: FAILED_HEALTH, NO rollback

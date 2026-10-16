@@ -39,6 +39,11 @@ it", not an independent build. A receipt signed by a key the gate does not hold
 UNCHECKED and refuses; it is never reported as TAMPERED. Keep retired public
 keys listed after a rotation so old receipts stay VERIFIED.
 
+The signed `loki.deploy/1` record also carries the post-deploy facts:
+`health_status`, `health_http_code`, and, when `--auto-rollback` ran, whether the
+rolled-back service answered again (`post_rollback_health`: `healthy`,
+`FAILED_HEALTH` or `unchecked`). A rollback that leaves the service down exits 5.
+
 ## Honest limits
 
 - A signature proves **provenance and integrity**, not correctness. The
