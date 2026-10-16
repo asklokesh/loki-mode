@@ -412,15 +412,20 @@ test_validate_bash_compiled_policy_not_widened() {
     local got
     got=$(run_hook_case "ls -la" compiled)
     [ "$got" = "0:none" ] || { fail "compiled: ordinary command must defer, got $got"; return; }
-    got=$(run_hook_case "ls -la" default)
-    [ "$got" = "0:none" ] || { fail "C-C2: default policy must select compiled (no allow), got $got"; return; }
+    local nopol_dir="$TEST_DIR/op-none" pol_dir="$TEST_DIR/op-policy"
+    mkdir -p "$nopol_dir" "$pol_dir"
+    printf '%s' '{"claude_permissions":{"mode":"default","allow":["Bash(ls:*)"]}}' > "$pol_dir/policies.json"
+    got=$(LOKI_DATA_DIR="$nopol_dir" run_hook_case "ls -la" default)
+    [ "$got" = "0:allow" ] || { fail "C-C2: unset policy with no operator policy resolves legacy (keeps allow), got $got"; return; }
+    got=$(LOKI_DATA_DIR="$pol_dir" run_hook_case "ls -la" default)
+    [ "$got" = "0:none" ] || { fail "C-C2: unset policy with an operator policy resolves compiled (no allow), got $got"; return; }
     got=$(run_hook_case "ls -la" legacy)
     [ "$got" = "0:allow" ] || { fail "legacy policy must keep the explicit allow, got $got"; return; }
     got=$(run_hook_case "" compiled '{"tool_input":{}}')
     [ "$got" = "2:deny" ] || { fail "compiled: malformed input must deny, got $got"; return; }
     got=$(run_hook_case "" legacy '{"tool_input":{}}')
     [ "$got" = "0:allow" ] || { fail "legacy policy: malformed input behaviour changed, got $got"; return; }
-    pass "compiled (and default) policy: no hook allow, malformed input denied; legacy unchanged"
+    pass "compiled (and default with operator policy) policy: no hook allow, malformed input denied; legacy unchanged"
 }
 
 test_validate_bash_safe_override_is_anchored() {

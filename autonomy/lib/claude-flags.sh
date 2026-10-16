@@ -973,27 +973,54 @@ loki_export_subagent_capacity() {
 # without each one having to remember to call this.
 loki_export_subagent_capacity
 
-# P12-26 / C-C2: the compiled permission policy is the DEFAULT. It swaps
-# --dangerously-skip-permissions for --permission-mode / --allowedTools / --disallowedTools
-# compiled from the task policy by src/policies/claude_permissions.js (shared with the TS
-# permissionArgv). LOKI_PERMISSION_POLICY=legacy restores the old flag byte-identically.
-# Any other value fails closed to compiled with a warning. Result lands in _LOKI_PERM_ARGV.
-# A compile failure fails closed to plan.
+# P12-26 / C-C2: the compiled permission policy swaps --dangerously-skip-permissions for
+# --permission-mode / --allowedTools / --disallowedTools compiled from the task policy by
+# src/policies/claude_permissions.js (shared with the TS permissionArgv). Resolution:
+#   LOKI_PERMISSION_POLICY=legacy    -> legacy (old flag, byte-identical)
+#   LOKI_PERMISSION_POLICY=compiled  -> compiled (fail-closed acceptEdits with no policy)
+#   unset                            -> compiled only when an operator claude_permissions
+#                                       policy exists, else legacy (headless acceptEdits
+#                                       with no allowedTools denies npm test / git commit)
+#   any other value                  -> compiled, with a one-time warning per process
+# Result lands in _LOKI_PERM_ARGV. A compile failure fails closed to plan.
+_LOKI_PERM_UNKNOWN_WARNED=0
 _loki_permission_policy_mode() {
     case "${LOKI_PERMISSION_POLICY:-}" in
         legacy) echo legacy ;;
-        ""|compiled) echo compiled ;;
-        *)
-            echo "[loki] WARNING: LOKI_PERMISSION_POLICY=${LOKI_PERMISSION_POLICY}: unknown value; using compiled" >&2
-            echo compiled
+        compiled) echo compiled ;;
+        "")
+            local _helper
+            _helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/src/policies/claude_permissions.js"
+            if command -v node >/dev/null 2>&1 && [ -f "$_helper" ] \
+                && [ "$(node "$_helper" --has-operator-policy 2>/dev/null)" = "1" ]; then
+                echo compiled
+            else
+                echo legacy
+            fi
             ;;
+        *) echo compiled ;;
     esac
+}
+
+# Unknown-value warning, once per process. Runs in the caller shell (never inside $(...)),
+# so the guard variable persists.
+_loki_permission_warn_unknown_once() {
+    case "${LOKI_PERMISSION_POLICY:-}" in
+        ""|legacy|compiled) return 0 ;;
+    esac
+    [ "${_LOKI_PERM_UNKNOWN_WARNED:-0}" = "1" ] && return 0
+    _LOKI_PERM_UNKNOWN_WARNED=1
+    echo "[loki] WARNING: LOKI_PERMISSION_POLICY=${LOKI_PERMISSION_POLICY}: unknown value; using compiled" >&2
 }
 
 # The one start-banner line naming the active mode.
 loki_permission_policy_banner() {
     if [ "$(_loki_permission_policy_mode 2>/dev/null)" = "legacy" ]; then
-        echo "Permission policy: legacy (unset LOKI_PERMISSION_POLICY to use compiled)"
+        if [ -z "${LOKI_PERMISSION_POLICY:-}" ]; then
+            echo "Permission policy: legacy (no operator policy found; add one to use compiled)"
+        else
+            echo "Permission policy: legacy (unset LOKI_PERMISSION_POLICY to use compiled)"
+        fi
     else
         echo "Permission policy: compiled (set LOKI_PERMISSION_POLICY=legacy to revert)"
     fi
@@ -1001,6 +1028,7 @@ loki_permission_policy_banner() {
 
 _loki_claude_permission_argv() {
     _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    _loki_permission_warn_unknown_once
     [ "$(_loki_permission_policy_mode)" = "legacy" ] && return 0
     local _helper _out _a
     _helper="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/src/policies/claude_permissions.js"

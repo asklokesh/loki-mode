@@ -47,6 +47,17 @@ function section(dir) {
     return { mode: cp.mode, allow: cp.allow === undefined ? null : strList(cp.allow), deny: strList(cp.deny) };
 }
 
+// True when an operator claude_permissions policy exists (same check compile() uses). An
+// unusable policy counts as present so the caller fails closed. Decides the unset default.
+function hasOperatorPolicy(env) {
+    env = env || process.env;
+    try {
+        return section(env.LOKI_DATA_DIR || path.join(env.HOME || '', '.loki')) !== null;
+    } catch (e) {
+        return true;
+    }
+}
+
 function compile(repoDir, env) {
     env = env || process.env;
     var warnings = [];
@@ -105,9 +116,11 @@ function compile(repoDir, env) {
     return { args: args, warnings: warnings };
 }
 
-module.exports = { compile: compile };
+module.exports = { compile: compile, hasOperatorPolicy: hasOperatorPolicy };
 
-if (require.main === module) {
+if (require.main === module && process.argv[2] === '--has-operator-policy') {
+    process.stdout.write(hasOperatorPolicy(process.env) ? '1\n' : '0\n');
+} else if (require.main === module) {
     var r = compile(process.argv[2] || process.env.LOKI_PROJECT_DIR || process.cwd(), process.env);
     r.warnings.forEach(function (w) { process.stderr.write('[loki] WARNING: ' + w + '\n'); });
     process.stdout.write(r.args.join('\n') + '\n'); // rules reject newlines, so one arg per line is safe

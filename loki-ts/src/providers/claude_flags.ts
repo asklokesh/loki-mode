@@ -788,27 +788,66 @@ export function _resetClaudeHelpCacheForTest(text: string | null = null): void {
 // ---------------------------------------------------------------------------
 // P12-26 / C-C2 -- compiled permission policy (the default)
 //
-// Permission argv for the Claude CLI. Default (unset or "compiled"): the shared rule in
+// Permission argv for the Claude CLI. LOKI_PERMISSION_POLICY=compiled: the shared rule in
 // src/policies/claude_permissions.js (also invoked by providers/claude.sh) emits
 // --permission-mode plus --allowedTools/--disallowedTools from the task policy.
 // LOKI_PERMISSION_POLICY=legacy: the historical --dangerously-skip-permissions,
-// byte-identical. Any other value fails closed to compiled with a warning.
+// byte-identical. Unset: compiled only when an operator claude_permissions policy exists,
+// otherwise legacy (headless acceptEdits with no allowedTools denies npm test / git commit).
+// Any other value fails closed to compiled with a one-time warning.
 // ---------------------------------------------------------------------------
+interface PermissionsModule {
+  compile(d: string, e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
+  hasOperatorPolicy(e: NodeJS.ProcessEnv): boolean;
+}
+
+function loadPermissionsModule(): PermissionsModule {
+  const req = createRequire(import.meta.url);
+  const moduleDir = dirname(fileURLToPath(import.meta.url));
+  // src/providers and dist sit at different depths below the repo root (same as designArchetypesText).
+  const modPath = [
+    resolvePath(moduleDir, "..", "..", "..", "src", "policies", "claude_permissions.js"), // src/providers -> repo root
+    resolvePath(moduleDir, "..", "..", "src", "policies", "claude_permissions.js"), // dist -> repo root
+  ].find((p) => existsSync(p));
+  if (!modPath) throw new Error("claude_permissions.js not found");
+  return req(modPath) as PermissionsModule;
+}
+
+let permissionUnknownWarned = false;
+/** Test hook: re-arm the once-per-process unknown-value warning. */
+export function resetPermissionPolicyWarning(): void {
+  permissionUnknownWarned = false;
+}
+
 export function permissionPolicyMode(
   env: NodeJS.ProcessEnv = process.env,
   warn: (m: string) => void = (m) => process.stderr.write(`[loki] WARNING: ${m}\n`),
 ): "compiled" | "legacy" {
   const v = env["LOKI_PERMISSION_POLICY"] ?? "";
   if (v === "legacy") return "legacy";
-  if (v !== "" && v !== "compiled") warn(`LOKI_PERMISSION_POLICY=${v}: unknown value; using compiled`);
+  if (v === "compiled") return "compiled";
+  if (v === "") {
+    try {
+      return loadPermissionsModule().hasOperatorPolicy(env) ? "compiled" : "legacy";
+    } catch {
+      return "legacy";
+    }
+  }
+  if (!permissionUnknownWarned) {
+    permissionUnknownWarned = true;
+    warn(`LOKI_PERMISSION_POLICY=${v}: unknown value; using compiled`);
+  }
   return "compiled";
 }
 
 // The one start-banner line naming the active mode (byte-identical to the bash banner).
 export function permissionPolicyBanner(env: NodeJS.ProcessEnv = process.env): string {
-  return permissionPolicyMode(env, () => {}) === "legacy"
-    ? "Permission policy: legacy (unset LOKI_PERMISSION_POLICY to use compiled)"
-    : "Permission policy: compiled (set LOKI_PERMISSION_POLICY=legacy to revert)";
+  if (permissionPolicyMode(env, () => {}) === "legacy") {
+    return (env["LOKI_PERMISSION_POLICY"] ?? "") === ""
+      ? "Permission policy: legacy (no operator policy found; add one to use compiled)"
+      : "Permission policy: legacy (unset LOKI_PERMISSION_POLICY to use compiled)";
+  }
+  return "Permission policy: compiled (set LOKI_PERMISSION_POLICY=legacy to revert)";
 }
 
 export function permissionArgv(
@@ -818,17 +857,7 @@ export function permissionArgv(
 ): string[] {
   if (permissionPolicyMode(env, warn) === "legacy") return ["--dangerously-skip-permissions"];
   try {
-    const req = createRequire(import.meta.url);
-    const moduleDir = dirname(fileURLToPath(import.meta.url));
-    // src/providers and dist sit at different depths below the repo root (same as designArchetypesText).
-    const modPath = [
-      resolvePath(moduleDir, "..", "..", "..", "src", "policies", "claude_permissions.js"), // src/providers -> repo root
-      resolvePath(moduleDir, "..", "..", "src", "policies", "claude_permissions.js"), // dist -> repo root
-    ].find((p) => existsSync(p));
-    if (!modPath) throw new Error("claude_permissions.js not found");
-    const mod = req(modPath) as {
-      compile(d: string, e: NodeJS.ProcessEnv): { args: string[]; warnings: string[] };
-    };
+    const mod = loadPermissionsModule();
     const r = mod.compile(repoDir, env);
     r.warnings.forEach(warn);
     return r.args;
