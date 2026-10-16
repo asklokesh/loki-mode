@@ -140,7 +140,7 @@ with open('$PROJECT_ROOT/.claude/settings.json') as f:
     hooks = json.load(f).get('hooks', {})
     print(' '.join(hooks.keys()))
 ")
-    REQUIRED="SessionStart PreToolUse PostToolUse Stop"
+    REQUIRED="SessionStart PreToolUse PostToolUse Stop PreCompact"
     MISSING=""
     for event in $REQUIRED; do
         if ! echo "$EVENTS" | grep -q "$event"; then
@@ -577,6 +577,35 @@ test_validate_bash_compiled_no_python_denies() {
     fi
 }
 
+test_precompact_flush() {
+    log_test "precompact-flush.sh writes atomic snapshot and never fails"
+    local hook="$PROJECT_ROOT/autonomy/hooks/precompact-flush.sh" d out rc
+    d=$(mktemp -d "$TEST_DIR/pc.XXXXXX")
+    mkdir -p "$d/.loki/state"
+    echo '{"phase":"build"}' > "$d/.loki/state/orchestrator.json"
+    printf '%s' '{"session_id":"s1","trigger":"auto","cwd":"'"$d"'"}' | "$hook" 2>/dev/null
+    rc=$?
+    out="$d/.loki/state/precompact-snapshot.json"
+    if [ "$rc" -eq 0 ] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert d['session_id']=='s1' and d['orchestrator']['phase']=='build'" "$out" 2>/dev/null \
+        && [ -z "$(find "$d/.loki/state" -name '.precompact-snapshot.*')" ]; then
+        pass "precompact-flush writes snapshot atomically"
+    else
+        fail "precompact-flush snapshot missing or wrong (rc=$rc)"
+    fi
+    # unwritable state dir (.loki is a file): must still exit 0 with a note
+    mkdir -p "$d/ro"; : > "$d/ro/.loki"
+    printf '%s' '{"cwd":"'"$d/ro"'"}' | "$hook" >/dev/null 2>"$d/err"
+    rc=$?
+    if [ "$rc" -eq 0 ] && [ -s "$d/err" ]; then
+        pass "precompact-flush exits 0 with stderr note on error"
+    else
+        fail "precompact-flush must exit 0 with note on error (rc=$rc)"
+    fi
+    printf 'garbage' | "$hook" >/dev/null 2>&1
+    rc=$?
+    if [ "$rc" -eq 0 ]; then pass "precompact-flush tolerates garbage input"; else fail "precompact-flush failed on garbage input"; fi
+}
+
 # Run tests
 setup
 test_session_init_exists
@@ -588,6 +617,7 @@ test_quality_gate_json
 test_track_metrics
 test_settings_json
 test_settings_hook_events
+test_precompact_flush
 test_validate_bash_blocks_forkbomb
 test_host_guard_blocks_host_control
 test_host_guard_blocks_port_claims
