@@ -128,6 +128,132 @@ else
     log_pass "no build process spawned (aborted before orchestrator launch)"
 fi
 
+# ===========================================
+# P12-07k: ONE allowlist (_loki_start_flag_kind) feeds the cmd_start parser check,
+# the --workspace brief scan and the --resume scan. An unknown flag in a scan
+# exits 64 "Unknown option: <flag>" (the parser's message), and every known flag
+# keeps its value-or-boolean shape.
+# ===========================================
+export LOKI_NO_BROWSER=1
+run_start() { (cd "$TEST_DIR" && LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start "$@" 2>&1); }
+
+# The allowlist, read straight from the function body: "kind<TAB>flag" rows.
+allow_rows=$(sed -n '/^_loki_start_flag_kind()/,/^}/p' "$LOKI_BIN" | awk '
+    /_LOKI_START_FLAG_KIND=(value|optional|bool) ;;/ {
+        kind = $0; sub(/.*_LOKI_START_FLAG_KIND=/, "", kind); sub(/ ;;.*/, "", kind)
+        pats = $0; sub(/\) *_LOKI_START_FLAG_KIND.*/, "", pats); gsub(/^[ \t]+/, "", pats)
+        n = split(pats, a, "|"); for (i = 1; i <= n; i++) print kind "\t" a[i]
+    }')
+
+log_test "allowlist has value, optional and boolean rows"
+if printf '%s\n' "$allow_rows" | grep -q '^value'$'\t''--provider$' &&
+   printf '%s\n' "$allow_rows" | grep -q '^optional'$'\t''--mirofish$' &&
+   printf '%s\n' "$allow_rows" | grep -q '^bool'$'\t''--fast$'; then
+    log_pass "allowlist rows parsed"
+else
+    log_fail "could not read the allowlist rows from _loki_start_flag_kind"
+fi
+
+log_test "allowlist agrees with the cmd_start parser case arms (both directions)"
+parser_flags=$(sed -n '/local issue_run_detached=false/,/Unknown option: \$1/p' "$LOKI_BIN" |
+    grep -E '^            -[^ ]*\)$' | sed -e 's/^ *//' -e 's/)$//' | tr '|' '\n' |
+    sed -e 's/=.*$//' | grep -v '^-\*$' | sort -u)
+table_flags=$(printf '%s\n' "$allow_rows" | cut -f2 | grep -vx -e '--resume' | sort -u)
+if [ "$parser_flags" = "$table_flags" ]; then
+    log_pass "parser arms and allowlist name the same flags"
+else
+    log_fail "parser and allowlist differ: $(diff <(printf '%s\n' "$parser_flags") <(printf '%s\n' "$table_flags") | tr '\n' ' ')"
+fi
+
+log_test "unknown valued flag before a --workspace brief exits 64"
+out=$(run_start --workspace nows --max-wait 30 "my brief"); rc=$?
+if [ "$rc" -eq 64 ] && printf '%s' "$out" | grep -q 'Unknown option: --max-wait'; then
+    log_pass "--workspace scan: unknown flag exits 64"
+else
+    log_fail "--workspace scan rc=$rc: $out"
+fi
+
+log_test "plain unknown valued flag before the brief exits 64"
+out=$(run_start --max-wait 30 brief.md); rc=$?
+if [ "$rc" -eq 64 ] && printf '%s' "$out" | grep -q 'Unknown option: --max-wait'; then
+    log_pass "parser: unknown flag exits 64"
+else
+    log_fail "parser rc=$rc: $out"
+fi
+
+log_test "unknown flag after --resume exits 64"
+for pair in "--foo bar" "--model sonnet" "--max-wait 30" "--max-cost 5"; do
+    # shellcheck disable=SC2086 # intentional split: flag plus value
+    out=$(run_start --resume $pair); rc=$?
+    if [ "$rc" -eq 64 ] && printf '%s' "$out" | grep -q "Unknown option: ${pair%% *}"; then
+        log_pass "start --resume $pair exits 64"
+    else
+        log_fail "start --resume $pair rc=$rc: $out"
+    fi
+done
+out=$(run_start --foo bar --resume); rc=$?
+if [ "$rc" -eq 64 ]; then log_pass "unknown flag before --resume exits 64"; else log_fail "flag before --resume rc=$rc: $out"; fi
+
+# Scan shape per allowlisted flag. --config/--vars/--env-file/--attempts are
+# consumed by main() before cmd_start, and --brief IS the brief, so the scans skip them here.
+skip_scan=" --config --vars --env-file --attempts --brief -- --help -h --resume "
+ws_bad=""; resume_bad=""
+if command -v bun >/dev/null 2>&1; then
+    stub="$TEST_DIR/stub-entry.js"
+    printf 'console.log("STUB-ARGV:" + process.argv.slice(2).join(" ")); process.exit(0);\n' > "$stub"
+else
+    stub=""
+fi
+while IFS=$'\t' read -r kind flag; do
+    [ -n "$flag" ] || continue
+    case "$skip_scan" in *" $flag "*) continue ;; esac
+    case "$kind" in
+        value)    set -- "$flag" notarunid ;;
+        optional) set -- "$flag" http://u ;;
+        *)        set -- "$flag" ;;
+    esac
+    # --workspace scan: with no real brief it must reach "needs a brief"; a leaked
+    # value would reach cmd_workspace instead ("unknown workspace").
+    out=$(run_start --workspace nows "$@")
+    printf '%s' "$out" | grep -q 'needs a brief or an issue ref' || ws_bad="$ws_bad $flag($kind)"
+    # --resume scan: a consumed value is never a run id, so the stub delegate runs.
+    if [ -n "$stub" ]; then
+        out=$(cd "$TEST_DIR" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume "$@" 2>&1)
+        case "$out" in
+            *"STUB-ARGV:engine10 resume"*) case "$out" in *notarunid*|*http://u*) resume_bad="$resume_bad $flag(leaked)" ;; esac ;;
+            *) resume_bad="$resume_bad $flag($kind)" ;;
+        esac
+    fi
+done <<EOF
+$allow_rows
+EOF
+log_test "every allowlisted flag keeps its shape in the --workspace scan"
+if [ -z "$ws_bad" ]; then log_pass "valued, optional and boolean flags all handled"; else log_fail "scan misread:$ws_bad"; fi
+log_test "every allowlisted flag keeps its shape in the --resume scan"
+if [ -z "$stub" ]; then
+    log_fail "bun unavailable: the --resume scan was NOT measured (unmeasured, not clean)"
+elif [ -z "$resume_bad" ]; then
+    log_pass "valued, optional and boolean flags all reach the resume delegate"
+else
+    log_fail "resume scan misread:$resume_bad"
+fi
+
+log_test "a boolean flag does not swallow the next token in the --workspace scan"
+out=$(run_start --workspace nows --simple "my brief")
+if printf '%s' "$out" | grep -q 'unknown workspace'; then
+    log_pass "--simple left the brief intact"
+else
+    log_fail "boolean flag swallowed the brief: $out"
+fi
+
+log_test "--model is gone from start help and completions"
+if printf '%s' "$help_out" | grep -qE '^  --model'; then log_fail "start --help still lists --model"; else log_pass "start --help has no --model flag line"; fi
+if sed -n '/start|quick)/,/;;/p' "$PROJECT_DIR/completions/loki.bash" | grep -q -- '--model'; then
+    log_fail "completions/loki.bash start flags still list --model"
+else
+    log_pass "completions/loki.bash start flags have no --model"
+fi
+
 echo ""
 echo "========================================"
 echo "Test Summary"

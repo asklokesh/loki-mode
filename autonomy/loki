@@ -2547,23 +2547,32 @@ _loki_start_handoff() {
 }
 
 # Start Loki Mode
-# Every value-taking cmd_start flag (its value is never brief text or a run id).
-# The one list: the --workspace brief scan and the --resume scan both use it.
-# It also names value flags that are not cmd_start's own, so a scan never
-# mistakes their value for a brief or run id. --model is honored nowhere (model
-# routing is LOKI_MODEL_ROUTE); --max-cost only via the engine10 rewrite.
-_loki_start_flag_takes_value() {
-    case "$1" in
-        --provider|--brief|--budget|--prd|--issue|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker|--spec|--model|--max-cost|--max-wait|--base-wait|--max-iterations|--max-retries|--budget-limit|--session-model|--completion-promise) return 0 ;;
+# The ONE allowlist of cmd_start flags. _loki_start_flag_kind sets
+# _LOKI_START_FLAG_KIND to value | optional | bool, or returns 1 for an unknown
+# flag. The --workspace brief scan and the --resume scan both read it, so a value
+# is never mistaken for a brief or run id and an unknown flag exits 64 like the
+# parser's own catch-all. tests/test-cli-allow-haiku-flag.sh checks it against the
+# cmd_start case arms, so the parser and this list cannot drift apart. Flags that
+# only the Bun route honors (--model, --max-wait, ...) are unknown here on purpose.
+_loki_start_flag_kind() {
+    _LOKI_START_FLAG_KIND=""
+    case "${1%%=*}" in
+        --provider|--brief|--budget|--prd|--issue|--isolation|--aider-model|--aider-flags|--cline-model|--compliance|--max-duration|--log-level|--bmad-project|--openspec|--mirofish-rounds|--mirofish-timeout|--output|--config|--vars|--env-file|--remote|--attempts|--mirofish-docker) _LOKI_START_FLAG_KIND=value ;;
+        --mirofish) _LOKI_START_FLAG_KIND=optional ;;
+        --parallel|--allow-haiku|--regen-prd|--regenerate-prd|--regen|--fresh-prd|--bg|--background|--simple|--complex|--github|--no-dashboard|--api|--sandbox|--skip-memory|--yes|-y|--quiet|--mirofish-bg|--no-mirofish|--no-plan|--fast|--repo-fast|--full|--repo-full|--dry-run|--no-start|--worktree|-w|--pr|--prepare-pr|--ship|--detach|-d|--help|-h|--resume|--) _LOKI_START_FLAG_KIND=bool ;;
+        *) return 1 ;;
     esac
-    return 1
+    # A "--flag=value" token carries its own value, so it never consumes the next one.
+    if [[ "$1" == --*=* ]]; then _LOKI_START_FLAG_KIND=bool; fi
+    return 0
 }
 
 # Optional-value cmd_start flags (--mirofish [URL]). The one decision on whether
 # the NEXT token is the flag's value: non-empty and not another --flag. The
 # cmd_start --mirofish arm and both scans use it, so they cannot disagree.
-_loki_start_flag_optional_value() { [ "$1" = "--mirofish" ]; }
 _loki_start_optval_consumes() { [[ -n "${1:-}" && "${1:-}" != --* ]]; }
+# Same message and exit code as the cmd_start parser's catch-all arm.
+_loki_start_unknown_flag() { echo -e "${RED}Unknown option: $1${NC}"; exit 64; }
 
 # One exit-code mapping for an engine10 resume, shared by cmd_resume and
 # `loki start --resume`. 0 and 4 (phase reported) -> 0, 5 (publish failed) -> 1.
@@ -2649,7 +2658,8 @@ cmd_start() {
                 --brief=*) _ps_brief+=("${_ps_a#*=}") ;;
                 --brief) _ps_skip=2 ;;
                 # Every value-taking cmd_start flag: its value is never brief text.
-                -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_skip=1; elif _loki_start_flag_optional_value "$_ps_a"; then _ps_skip=3; fi ;;
+                -*) _loki_start_flag_kind "$_ps_a" || _loki_start_unknown_flag "$_ps_a"
+                    if [ "$_LOKI_START_FLAG_KIND" = value ]; then _ps_skip=1; elif [ "$_LOKI_START_FLAG_KIND" = optional ]; then _ps_skip=3; fi ;;
                 *) _ps_brief+=("$_ps_a") ;;
             esac
         done
@@ -2677,17 +2687,22 @@ cmd_start() {
     # P12-07b: a bare `loki start --resume [run-id]` goes to the same engine10
     # resume path as `loki resume` (util/run_outputs.ts resumeMain), never into a
     # new build. Exit codes go through _loki_e10_resume_map (0 and 4 -> 0, 5 -> 1); any other code, such as 3 for nothing to resume, is returned as is.
-    local _ps_resume=0 _ps_resume_args=() _ps_rskip=0
+    local _ps_resume=0 _ps_resume_args=() _ps_rskip=0 _ps_unknown=""
     for _ps_a in ${_ps_rest[@]+"${_ps_rest[@]}"}; do
         if [ "$_ps_rskip" = 1 ]; then _ps_rskip=0; continue; fi
         if [ "$_ps_rskip" = 3 ]; then _ps_rskip=0; if _loki_start_optval_consumes "$_ps_a"; then continue; fi; fi
         case "$_ps_a" in
             --resume) _ps_resume=1 ;;
-            --*=*) ;;
-            -*) if _loki_start_flag_takes_value "$_ps_a"; then _ps_rskip=1; elif _loki_start_flag_optional_value "$_ps_a"; then _ps_rskip=3; fi ;;
+            -*) if ! _loki_start_flag_kind "$_ps_a"; then
+                    [ -n "$_ps_unknown" ] || _ps_unknown="$_ps_a"
+                elif [ "$_LOKI_START_FLAG_KIND" = value ]; then _ps_rskip=1
+                elif [ "$_LOKI_START_FLAG_KIND" = optional ]; then _ps_rskip=3
+                fi ;;
             *) _ps_resume_args+=("$_ps_a") ;;
         esac
     done
+    # Without --resume the cmd_start parser reports the same error itself.
+    if [ "$_ps_resume" = 1 ] && [ -n "$_ps_unknown" ]; then _loki_start_unknown_flag "$_ps_unknown"; fi
     if [ "$_ps_resume" = 1 ]; then
         local _ps_rrc=0
         for _ps_a in ${_ps_resume_args[@]+"${_ps_resume_args[@]}"}; do

@@ -240,9 +240,9 @@ if command -v bun >/dev/null 2>&1; then
         *"STUB-ARGV:engine10 resume"*) pass "start --resume --mirofish-docker IMG reaches engine10 resume" ;;
         *) fail "--mirofish-docker image was misparsed as a run id: $out" ;;
     esac
-    # P12-07g: every value-taking start flag (also the Bun-route ones) is skipped by the scan.
-    # Tolerance intent: the scan must only skip each flag value; it need not honor the flag.
-    for pair in "--model sonnet" "--max-cost 5" "--max-wait 30" "--session-model high" "--max-iterations 3" "--budget-limit 4"; do
+    # P12-07k: the scan consumes only the value of an allowlisted valued flag, and an unknown flag (even a Bun-route-only one) exits 64 so its value is never read as a run id.
+    # Tolerance: a pair here only has to be skipped by the scan; the legacy bash route need not honor the flag.
+    for pair in "--provider claude" "--budget 4" "--max-duration 30m" "--log-level debug" "--isolation none"; do
         # shellcheck disable=SC2086 # intentional split: "$pair" is flag plus value
         out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume $pair 2>&1)"
         case "$out" in
@@ -250,9 +250,14 @@ if command -v bun >/dev/null 2>&1; then
             *) fail "'$pair' value was misparsed as a run id: $out" ;;
         esac
     done
-    # The --workspace brief scan uses the same list: a flag value is never the brief.
-    out="$(cd "$dir" && bash -c 'source <(sed -n "/^_loki_start_flag_takes_value()/,/^}/p" "$1"); for f in --model --max-cost --max-wait; do _loki_start_flag_takes_value "$f" || echo "MISSING $f"; done' _ "$LOKI_BIN" 2>&1)"
-    [ -z "$out" ] && pass "shared list covers --model, --max-cost, --max-wait" || fail "shared list gaps: $out"
+    for pair in "--model sonnet" "--max-wait 30" "--foo bar"; do
+        # shellcheck disable=SC2086 # intentional split: "$pair" is flag plus value
+        out="$(cd "$dir" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume $pair 2>&1)"; rc=$?
+        if [ "$rc" -eq 64 ] && [[ "$out" == *"Unknown option: ${pair%% *}"* ]]; then pass "start --resume $pair exits 64"; else fail "start --resume $pair rc=$rc: $out"; fi
+    done
+    # The --workspace brief scan reads the same allowlist as the --resume scan.
+    out="$(cd "$dir" && bash -c 'source <(sed -n "/^_loki_start_flag_kind()/,/^}/p" "$1"); for f in --provider --mirofish --resume --fast; do _loki_start_flag_kind "$f" || echo "MISSING $f"; done; for f in --model --max-cost --max-wait; do ! _loki_start_flag_kind "$f" || echo "UNEXPECTED $f"; done' _ "$LOKI_BIN" 2>&1)"
+    [ -z "$out" ] && pass "shared allowlist knows start flags and rejects Bun-only ones" || fail "shared list gaps: $out"
     # Parity: exit 5 (publish failed) maps to 1 in BOTH commands.
     out="$(cd "$dir" && STUB_RC=5 LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume 2>&1)"; rc_start=$?
     mkdir -p "$dir/.loki/runs/e10-parity"; : > "$dir/.loki/runs/e10-parity/events.jsonl"
