@@ -143,7 +143,7 @@ describe("verifyReceipt: unsigned", () => {
 
 describe("verifyReceipt: unrecognized schema (P12-01d)", () => {
   const rehash = (r: Record<string, unknown>) => { const { receipt_sha256: _h, verification: _v, ...rest } = r; r["receipt_sha256"] = computeReceiptHash(rest); };
-  for (const [name, schema] of [["renamed", "loki.v10.receipt/2"], ["removed", undefined], ["non-string", 7]] as const) {
+  for (const [name, schema] of [["renamed", "loki.v10.receipt/2"], ["removed", undefined], ["non-string", 7], ["empty", ""], ["null", null], ["case-variant", "LOKI.V10.RECEIPT/1"]] as const) {
     test(`a correctly re-hashed unsigned receipt with a ${name} schema is TAMPERED, not UNSIGNED, and exits non-zero`, async () => {
       const dir = tmpDir();
       try {
