@@ -498,11 +498,12 @@ def _scoped_child_env():
     return {k: v for k, v in os.environ.items() if k not in CHILD_ENV_DENYLIST}
 
 
-def run_loki_outcome(args, dry_run=False):
+def run_loki_outcome(args, dry_run=False, stdout_sink=None):
     """Run a loki command and report WHICH of the three outcomes occurred.
 
     Returns one of OUTCOME_PASSED / OUTCOME_FAILED / OUTCOME_UNKNOWN. This is
     the honest version of run_loki_command, which answers only "did it launch".
+    When stdout_sink is a list, the decoded stdout is appended to it on completion.
     """
     cmd = ["loki"] + args
     if dry_run:
@@ -521,7 +522,9 @@ def run_loki_outcome(args, dry_run=False):
         return OUTCOME_FAILED
 
     try:
-        _, stderr = proc.communicate(timeout=DISPATCH_WAIT_SECONDS)
+        stdout, stderr = proc.communicate(timeout=DISPATCH_WAIT_SECONDS)
+        if stdout_sink is not None:
+            stdout_sink.append((stdout or b"").decode("utf-8", errors="replace"))
     except subprocess.TimeoutExpired:
         # Detached past the wait window. The reaper collects the child, but we
         # never see its exit code, so the outcome is genuinely UNKNOWN -- NOT a
@@ -555,7 +558,7 @@ def run_loki_outcome(args, dry_run=False):
     return OUTCOME_FAILED
 
 
-def run_loki_command(args, dry_run=False):
+def run_loki_command(args, dry_run=False, stdout_sink=None):
     """Run a loki command synchronously and reap it; or print it if dry_run.
 
     Returns True if the command was launched and exited 0 (or backgrounded
@@ -571,7 +574,7 @@ def run_loki_command(args, dry_run=False):
     passed wants run_loki_outcome instead. Behaviour is unchanged: a detached
     dispatch (UNKNOWN) still reads as True here, exactly as before.
     """
-    return run_loki_outcome(args, dry_run=dry_run) in (
+    return run_loki_outcome(args, dry_run=dry_run, stdout_sink=stdout_sink) in (
         OUTCOME_PASSED, OUTCOME_UNKNOWN,
     )
 
@@ -595,11 +598,11 @@ def _process_start_time(pid):
 def find_live_run(ref):
     """Return the id of a live run for issue ref "owner/repo#N", else None.
 
-    Scans .loki/runs/*/events.jsonl for a run.started whose issue_ref matches and
+    Scans $LOKI_DIR (default .loki)/runs/*/events.jsonl for a run.started whose issue_ref matches and
     whose run.pid names a live process. Mirrors runOwnerAlive: the recorded
     start time and run_id must match, so a recycled pid does not read as live.
     """
-    runs = Path(".loki") / "runs"
+    runs = Path(os.environ.get("LOKI_DIR") or ".loki") / "runs"
     try:
         dirs = sorted(runs.iterdir())
     except OSError:
@@ -623,6 +626,8 @@ def find_live_run(ref):
 
 def steer_ack_text(rev):
     """Ack line for a steer; byte-identical to the line `loki steer` prints (cmd_steer)."""
+    if rev is None:
+        return "Steer received: applies at next plan/implement stage."
     return "Steer rev %s received: applies at next plan/implement stage." % rev
 
 
@@ -630,14 +635,11 @@ STEER_ACK_MARKER = "<!-- loki-steer-ack -->"
 LOKI_COMMENT_MARKER = "<!-- loki-"  # any Loki-authored comment (status projector, steer ack) never steers
 
 
-def _pending_steer_rev():
-    """Highest rev header in .loki/HUMAN_INPUT.md (the steer just written), else None."""
-    try:
-        text = (Path(os.environ.get("LOKI_DIR") or ".loki") / "HUMAN_INPUT.md").read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return None
-    revs = re.findall(r"^## Operator directive rev (\d+) ", text, re.M)
-    return int(revs[-1]) if revs else None
+def parse_steer_rev(stdout):
+    """Revision number from `loki steer` stdout (its ack line), else None. Never guesses."""
+    m = re.search(r"Steer rev (\d+) received", stdout or "") \
+        or re.search(r"Steering note \(rev (\d+)\)", stdout or "")
+    return int(m.group(1)) if m else None
 
 
 def post_steer_ack(ref, repo_full_name, rev, dry_run=False):
@@ -700,13 +702,21 @@ def handle_issue_comment_event(payload, dry_run=False):
     login = re.sub(r"[^A-Za-z0-9-]", "", login)[:39]
     note = "GitHub comment from %s: %s" % (login or "unknown", body)
     summary = "steer %s from comment" % ref
-    success = run_loki_command(["steer", note], dry_run=dry_run)
+    sink = []
+    outcome = run_loki_outcome(["steer", note], dry_run=dry_run, stdout_sink=sink)
+    # Only a confirmed exit 0 proves the steer was written. A detached child
+    # (UNKNOWN) never reports its exit code, so acking would claim an unverified
+    # steer; report it as launched but post nothing.
+    if outcome == OUTCOME_UNKNOWN:
+        send_notification("Trigger fired: %s" % summary)
+        return summary, OUTCOME_UNKNOWN
+    success = outcome == OUTCOME_PASSED
     if success:
         send_notification("Trigger fired: %s" % summary)
-        rev = _pending_steer_rev()
+        rev = parse_steer_rev("".join(sink))
         injection_off = os.environ.get("LOKI_PROMPT_INJECTION", "").lower() in ("0", "false")
-        if not injection_off and (rev is not None or dry_run):
-            post_steer_ack(ref, repo_full_name, rev if rev is not None else "?", dry_run=dry_run)
+        if not injection_off:
+            post_steer_ack(ref, repo_full_name, rev, dry_run=dry_run)
     return summary, "fired" if success else "error"
 
 
