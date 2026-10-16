@@ -148,6 +148,8 @@ describe("Wall holdout end to end", () => {
     writeFileSync(join(repoDir, "src", "impl.ts"), all.map((_, k) => (k + 1 === i ? "" : `export const f${k + 1} = () => ${k + 1};\n`)).join(""));
     const visible: TestRef[] = data.files.map((f) => ({ runner: "bun", path: `tests/${f.path.split("/").pop()}` }));
     const log: { type: string; data: unknown }[] = [];
+    mkdirSync(join(repoDir, ".loki", "state"), { recursive: true }); // a baseline at the same base sha, so attribute() sets its line and returns introduced names
+    writeFileSync(join(repoDir, ".loki", "state", "repo-profile.json"), JSON.stringify({ version: 1, revision: base, manifest_hash: "h", created_at: "2026-01-01T00:00:00.000Z", commands: [], baseline: { ran: true, command: "bun test", exit_code: 1, duration_s: 1, timed_out: false, failing_ids: ["unrelated-base-failure"], attributable: true } }));
     const vctx = mkCtx(repoDir, base, [], r.data); vctx.emit = ((type: string, _s: unknown, d: unknown) => { log.push({ type, data: d }); }) as never;
     vctx.tests = { detect: async () => ({ runners: ["bun"], tests: visible }), impacted: () => [] } as never;
     const v = await verifyStage.run(vctx, new AbortController().signal);
@@ -156,6 +158,8 @@ describe("Wall holdout end to end", () => {
     expect(text).not.toContain("holdout:"); expect(text).not.toContain(held!); expect(text).not.toContain(`f${i}`); expect(text).not.toContain("first_error");
     expect(log.some((e) => e.type === "test.result" && (e.data as { name: string }).name === "holdout")).toBe(true);
     expect(v.data.failures_grouped).toEqual([{ signature: HOLDOUT_GROUP, count: 1, sample: "" }]);
+    expect(v.data["baseline_line"]).toBeDefined(); // the profile was honored, so introduced_checks was emitted
+    expect(v.data["introduced_checks"]).toEqual(["holdout"]);
   }, 120_000);
 });
 
@@ -181,16 +185,24 @@ describe("holdout store cleanup", () => {
 });
 
 describe("holdout-only red never escalates", () => {
-  test("fix stage: repeated holdout-only signature pins no escalation model and emits no route.escalated", async () => {
+  test("fix stage, router off (default): repeated holdout-only signature keeps the pinned model and records no escalation", async () => {
     const { fixStage } = await import("../../src/engine10/stages/fix.ts");
     const groups = [{ signature: HOLDOUT_GROUP, count: 1, sample: "" }];
-    const events: string[] = [];
-    const ctx = { runId: "r", repoDir: "/nonexistent-c-c4b-c", runDir: "/nonexistent-c-c4b-c", baseSha: "x", branch: "b", provider: "claude", model: "claude-sonnet-4-5", deep: false, capS: 900, emit: (t: string) => { events.push(t); },
-      sessions: { run: async () => { throw new Error("stop"); } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
-      cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => 0 },
-      outputs: () => ({ verify: { failures_grouped: groups }, fix: { round: 1, signatures: HOLDOUT_GROUP } }) } as unknown as RunContext;
-    await fixStage.run(ctx, new AbortController().signal).catch(() => undefined);
-    expect(events).not.toContain("route.escalated");
+    const events: { type: string; data: Record<string, unknown> }[] = [], calls: { model?: string }[] = [];
+    const savedRouter = process.env["LOKI_ROUTER"]; delete process.env["LOKI_ROUTER"];
+    try {
+      const ctx = { runId: "r", repoDir: "/nonexistent-c-c4b-c", runDir: "/nonexistent-c-c4b-c", baseSha: "x", branch: "b", provider: "claude", model: "claude-haiku-4-5", deep: false, capS: 900, emit: (type: string, _s: unknown, data: Record<string, unknown>) => { events.push({ type, data }); },
+        sessions: { run: async (o: { model?: string }) => { calls.push(o); return { exit: 0, markers: { done: true, alreadyDone: null, specConflict: null }, durationS: 0.1, killed: false }; } }, tests: { detect: async () => ({ runners: [], tests: [] }), impacted: () => [] },
+        cost: { read: () => ({ usd: null, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0 }) }, clock: { now: () => 0 },
+        outputs: () => ({ verify: { failures_grouped: groups }, fix: { round: 1, signatures: HOLDOUT_GROUP } }) } as unknown as RunContext;
+      const r = await fixStage.run(ctx, new AbortController().signal);
+      expect(r.status).toBe("completed");
+      const round = events.find((e) => e.type === "fix.round")!.data;
+      expect(round["escalated"]).toBe(false); expect(round["escalation_model"]).toBeUndefined(); expect(round["escalation_reason"]).toBeUndefined();
+      expect(round["model"]).toBe("claude-haiku-4-5"); expect(r.data["cascade"]).toBe(false);
+      expect(calls.length).toBe(1); expect(calls[0]!.model).toBeUndefined(); // no escalation model pinned
+      expect(events.map((e) => e.type)).not.toContain("route.escalated");
+    } finally { if (savedRouter !== undefined) process.env["LOKI_ROUTER"] = savedRouter; }
   });
   test("router: routedFix does not climb on a holdout-only group, even repeated or stalled", async () => {
     const { routedFix } = await import("../../src/runner/router/unit_model.ts");
