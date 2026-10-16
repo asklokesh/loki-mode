@@ -172,6 +172,7 @@ describe("fix resume trust and mutation (MW-2)", () => {
 import { execFileSync } from "node:child_process";
 import { makeEvent } from "../../src/engine10/events.ts";
 import { firstIncompleteStage, resumeFlag, resumePoint, stageCheckpoints } from "../../src/util/run_outputs.ts";
+import { staleWallRevisions } from "../../src/util/steer.ts";
 import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
 
 const RID = "e10-20260101T000000Z-abcd";
@@ -183,6 +184,25 @@ const killedAfterImplement = () => mk([
 const text = (evs: ReturnType<typeof mk>): string => evs.map((e) => JSON.stringify(e)).join("\n") + "\n";
 
 describe("resume from stage (P12-07)", () => {
+  const rev = { rev: 1, source: "chat", actor: "a", sha: "s", at: 2000 };
+  const withSteer = (): ReturnType<typeof mk> => mk([
+    ["run.started", null], ["stage.completed", "intake", { base_sha: "abc", task: "t" }], ["stage.started", "wall", { start_ms: 1000 }], ["stage.completed", "plan"], ["stage.completed", "wall"],
+    ["intent.revised", "implement", { revisions: [rev] }], ["stage.completed", "implement"],
+  ]);
+  test("P12-07d: a revision applied before the interrupt is still in ctx after resume", () => {
+    const r = resumePoint(withSteer());
+    expect(r.ok && r.intentRevisions).toEqual([rev]);
+  });
+  test("P12-07d: a steer that arrived after the Wall freeze still blocks Seal after resume", () => {
+    const r = resumePoint(withSteer());
+    if (!r.ok) throw new Error(r.reason);
+    expect(staleWallRevisions(r.intentRevisions, r.timeline).map((x) => x.rev)).toEqual([1]);
+  });
+  test("P12-07d: an older log without the new fields resumes clean and empty", () => {
+    const r = resumePoint(killedAfterImplement());
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.intentRevisions).toEqual([]); expect(r.timeline).toEqual([]); }
+  });
   test("kill after implement: resume skips intake, plan and wall and re-enters at verify", () => {
     const evs = killedAfterImplement();
     const r = resumePoint(evs, text(evs));

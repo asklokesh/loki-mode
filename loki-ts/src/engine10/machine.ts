@@ -77,7 +77,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
   let implementStartMs: number | null = null;
   const withTimeNote = (brief: string, limitS: number): string => brief.endsWith(FINISH_LINE) ? `${brief.slice(0, -FINISH_LINE.length)}${timeBudgetNote(limitS)}\n\n${FINISH_LINE}` : `${brief}\n\n${timeBudgetNote(limitS)}`;
   const sessions = { run: async (o0: Parameters<typeof ctx.sessions.run>[0]) => {
-    const o = withSteer(o0, ctx.repoDir, intentRevs); // operator steer (.loki/HUMAN_INPUT.md), consumed once
+    const nRev = intentRevs.length, o = withSteer(o0, ctx.repoDir, intentRevs); if (intentRevs.length > nRev) ctx.emit("intent.revised", o.stage, { revisions: intentRevs }); // P12-07d: operator steer (.loki/HUMAN_INPUT.md), consumed once; the revisions are durable so a resume restores them
     const left = implementStartMs === null ? Infinity : Math.max(1, implementBudgetS - (ctx.clock.now() - implementStartMs) / 1000), imp = o.stage === "implement" ? { ...o, limitS: Math.min(Math.max(o.limitS, implementBudgetS), left) } : o, r = await rerunOnQuota(() => ctx.sessions.run(imp.stage === "implement" && typeof imp.brief === "string" && imp.limitS > 0 ? { ...imp, brief: withTimeNote(imp.brief, imp.limitS) } : imp), sessionKind, ctx.clock, imp.signal, capAtMs); // FC-21 (c): the time note goes after the byte-stable prefix and body; FC-21b A2: a resumed session gets only the budget left, and the note sits BEFORE the closing FINISH_LINE
     const k = r.exit === 0 ? null : sessionKind(r as { exit: number; stderrTail?: string }); // P12-09: quota waits and reruns inside rerunOnQuota; it is fatal only if no cap ended the wait
     if (k === "auth" || (k === "quota_exhausted" && !capReached())) fatal ??= `fatal:${k}`; if (ctx.overCap?.() || (k === "quota_exhausted" && capReached())) capCtl.abort(); // D60-5: dollar cap reached, stop the running stage too
@@ -110,7 +110,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     }
     if (underCap && capReached()) { markCap(name); return null; }
     const limitS = name === "implement" ? (ctx.deep ? DEEP_IMPLEMENT_LIMIT_S : st.limitS >= STAGE_BUDGETS.implement.limitS ? implementLimitS(st.limitS) : st.limitS) : st.limitS; if (name === "implement") { implementBudgetS = limitS; implementStartMs = ctx.clock.now(); } // FC-19: implement gets the run budget left, not a fixed 480s
-    ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS });
+    ctx.emit("stage.started", name, { target_s: st.targetS, limit_s: limitS, ...(name === "wall" ? { start_ms: ctx.clock.now() } : {}) });
     const t0 = ctx.clock.now();
     const dur = (): number => (ctx.clock.now() - t0) / 1000;
     const ctl = new AbortController();
@@ -184,7 +184,7 @@ export async function runMachine(ctx: RunContext, opts: MachineOptions = {}): Pr
     const timer = setTimeout(() => kill("limit"), st.limitS * 1000), onCap = (): void => kill("cap");
     if (capCtl.signal.aborted) onCap(); else capCtl.signal.addEventListener("abort", onCap);
     const aborted = new Promise<null>((res) => ctl.signal.addEventListener("abort", () => res(null)));
-    ctx.emit("stage.started", "wall", { target_s: st.targetS, limit_s: st.limitS });
+    ctx.emit("stage.started", "wall", { target_s: st.targetS, limit_s: st.limitS, start_ms: ctx.clock.now() });
     const promise = st.split.author(sctx, ctl.signal); promise.catch(() => {});
     wallJob = { snap: hooks.wall!.snapshotTree(ctx.repoDir, ctl.signal), split: st.split, promise, ctl, aborted, t0: ctx.clock.now(), timer, why: () => why, onCap }; timeline.push({ stage: "wall", startMs: wallJob.t0, endMs: wallJob.t0 });
     return true;

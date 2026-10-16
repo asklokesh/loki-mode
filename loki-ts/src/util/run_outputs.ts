@@ -180,7 +180,7 @@ export function firstIncompleteStage(events: readonly EventEnvelope[], completed
   return STAGE_ORDER.find((s) => !(completedOnly ? events.some((e) => e.stage === s && e.type === "stage.completed") : settled(events, s))) ?? null;
 }
 
-export type ResumePoint = { ok: true; stage: string; skip: string[]; checkpoints: Checkpoint[] } | { ok: false; reason: string };
+export type ResumePoint = { ok: true; stage: string; skip: string[]; checkpoints: Checkpoint[]; intentRevisions: IntentRevision[]; timeline: { stage: "wall"; startMs: number; endMs: number }[] } | { ok: false; reason: string };
 
 /** The stage a resumed run re-enters at. Fail closed: a torn or unreadable log, a seq gap, a finished run, a mixed run id or a stage
  *  recorded as done while an earlier one never settled all refuse. rawLog (the file text) lets a corrupt line be detected. */
@@ -204,7 +204,9 @@ export function resumePoint(events: readonly EventEnvelope[], rawLog?: string): 
   const par = next === "plan" || next === "wall"; // plan and wall run in parallel (machine.ts FLOW): either may finish first
   const later = STAGE_ORDER.slice(idx + 1).find((s) => !(par && (s === "plan" || s === "wall")) && events.some((e) => e.stage === s && e.type === "stage.completed"));
   if (later) return { ok: false, reason: `stage ${later} completed but ${next} never did` };
-  return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events) };
+  const revs = events.findLast((e) => e.type === "intent.revised")?.data["revisions"]; // P12-07d: absent in an older log restores as empty
+  const wallStarts = events.flatMap((e) => e.type === "stage.started" && e.stage === "wall" && typeof e.data["start_ms"] === "number" ? [e.data["start_ms"] as number] : []);
+  return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events), intentRevisions: Array.isArray(revs) ? (revs as IntentRevision[]) : [], timeline: wallStarts.map((startMs) => ({ stage: "wall" as const, startMs, endMs: startMs })) };
 }
 
 /** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase prints the resume point and exits 4
