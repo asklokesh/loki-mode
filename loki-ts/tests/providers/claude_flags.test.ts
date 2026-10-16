@@ -33,6 +33,8 @@ import {
   _resetClaudeHelpCacheForTest,
   AUTONOMY_OVERRIDE_TEXT,
   FIRST_PASS_EXCELLENCE_TEXT,
+  reviewerModelForTier,
+  leanReviewerFlags,
 } from "../../src/providers/claude_flags.ts";
 
 describe("claude_flags.effortForTier", () => {
@@ -960,5 +962,68 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     mkdirSync(join(lay, "src", "policies"), { recursive: true });
     copyFileSync(join(root, "src/policies/claude_permissions.js"), join(lay, "src", "policies", "claude_permissions.js"));
     expect(JSON.parse(run())).toEqual(["--permission-mode", "acceptEdits", "--disallowedTools", "Bash(rm:*)"]);
+  });
+});
+
+describe("claude_flags.reviewerModelForTier (S9)", () => {
+  it("routes simple and standard tiers to haiku", () => {
+    for (const tier of ["simple", "standard", " SIMPLE "]) {
+      expect(reviewerModelForTier({ tier, reviewer: "test-coverage-auditor", env: {} })).toBe("haiku");
+    }
+  });
+  it("complex, unknown and absent tiers stay unpinned", () => {
+    expect(reviewerModelForTier({ tier: "complex", reviewer: "a", env: {} })).toBeNull();
+    expect(reviewerModelForTier({ tier: "bogus", reviewer: "a", env: {} })).toBeNull();
+    expect(reviewerModelForTier({ reviewer: "a", env: {} })).toBeNull();
+  });
+  it("never downgrades moat reviewers or HIGH-tier changes", () => {
+    expect(reviewerModelForTier({ tier: "simple", reviewer: "security-sentinel", env: {} })).toBeNull();
+    expect(reviewerModelForTier({ tier: "simple", reviewer: "devils-advocate", env: {} })).toBeNull();
+    expect(reviewerModelForTier({ tier: "simple", reviewer: "a", highTier: true, env: {} })).toBeNull();
+  });
+  it("LOKI_ADVISOR_MODEL keeps precedence; fable refused", () => {
+    expect(reviewerModelForTier({ tier: "complex", reviewer: "a", env: { LOKI_ADVISOR_MODEL: "opus" } })).toBe("opus");
+    expect(reviewerModelForTier({ tier: "simple", reviewer: "security-sentinel", env: { LOKI_ADVISOR_MODEL: "sonnet" } })).toBe("sonnet");
+    expect(reviewerModelForTier({ tier: "simple", reviewer: "a", env: { LOKI_ADVISOR_MODEL: "fable" } })).toBe("haiku");
+    expect(reviewerModelForTier({ tier: "complex", reviewer: "a", env: { LOKI_ADVISOR_MODEL: "fable" } })).toBeNull();
+  });
+  it("LOKI_REVIEWER_TIER_ROUTING=0 disables routing", () => {
+    expect(reviewerModelForTier({ tier: "simple", reviewer: "a", env: { LOKI_REVIEWER_TIER_ROUTING: "0" } })).toBeNull();
+  });
+});
+
+describe("claude_flags.leanReviewerFlags (S9)", () => {
+  const all = () => true;
+  it("emits --tools= as ONE argument, never --tools plus empty", () => {
+    const f = leanReviewerFlags({ env: {}, flagSupported: all });
+    expect(f).toContain("--tools=");
+    expect(f).not.toContain("--tools");
+    expect(f).not.toContain("");
+  });
+  it("--bare only with API key", () => {
+    expect(leanReviewerFlags({ env: { ANTHROPIC_API_KEY: "k" }, flagSupported: all })).toEqual(["--bare", "--tools="]);
+    const f = leanReviewerFlags({ env: {}, flagSupported: all });
+    expect(f).not.toContain("--bare");
+    expect(f[f.indexOf("--setting-sources") + 1]).toBe("project");
+    expect(f).toContain("--strict-mcp-config");
+    expect(f).toContain("--disable-slash-commands");
+  });
+  it("LOKI_BARE_SUBCALLS=0 disables --bare", () => {
+    expect(leanReviewerFlags({ env: { ANTHROPIC_API_KEY: "k", LOKI_BARE_SUBCALLS: "0" }, flagSupported: all })).not.toContain("--bare");
+  });
+  it("drops unsupported flags", () => {
+    const f = leanReviewerFlags({ env: {}, flagSupported: (x) => x !== "--tools" && x !== "--disable-slash-commands" });
+    expect(f).not.toContain("--tools=");
+    expect(f).not.toContain("--disable-slash-commands");
+  });
+  it("LOKI_LEAN_CHILDREN=0 disables all", () => {
+    expect(leanReviewerFlags({ env: { LOKI_LEAN_CHILDREN: "0", ANTHROPIC_API_KEY: "k" }, flagSupported: all })).toEqual([]);
+  });
+  it("defaults to the claude help cache", () => {
+    _resetClaudeHelpCacheForTest(null);
+    expect(leanReviewerFlags({ env: {} })).toEqual([]);
+    _resetClaudeHelpCacheForTest("--tools --setting-sources");
+    expect(leanReviewerFlags({ env: {} })).toEqual(["--setting-sources", "project", "--tools="]);
+    _resetClaudeHelpCacheForTest(null);
   });
 });
