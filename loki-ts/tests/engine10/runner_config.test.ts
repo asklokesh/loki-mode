@@ -447,6 +447,28 @@ describe("FC-09 seal caps a run that touches runner config", () => {
     sh(repo, ["add", "package.json"]); sh(repo, ["commit", "-qm", "c"]);
     expect(runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["package.json"]).join("\n")).toContain("unparseable");
   }, 30000);
+  test("LOST-1b: an unchanged unparseable config caps when a non-test file in its tree changed", () => {
+    const { repo, base } = sealRepo({ "package.json": "{ not json" }, { "src/helper.ts": "export {};\n", "calc.test.ts": "// t\n" });
+    sh(repo, ["add", "src/helper.ts", "calc.test.ts", "calc.ts"]); sh(repo, ["commit", "-qm", "c"]);
+    const head = sh(repo, ["rev-parse", "HEAD"]);
+    expect(runnerConfigNotes(repo, base, head, ["src/helper.ts"]).join("\n")).toContain("runner config unparseable");
+    expect(runnerConfigNotes(repo, base, head, ["calc.test.ts"])).toEqual([]);
+  }, 30000);
+  test("LOST-1b: an unchanged unparseable config in a subtree ignores changes elsewhere", () => {
+    const { repo, base } = sealRepo({ "fixtures/bad/package.json": "{ not json" }, { "src/helper.ts": "export {};\n" });
+    sh(repo, ["add", "src/helper.ts"]); sh(repo, ["commit", "-qm", "c"]);
+    expect(runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["src/helper.ts"])).toEqual([]);
+  }, 30000);
+  test("LOST-1b: an unchanged config blob is read once, not twice", () => {
+    const { repo, base } = sealRepo({ "bunfig.toml": "[test]\n" }, { "notes.txt": "x\n" });
+    sh(repo, ["add", "notes.txt"]); sh(repo, ["commit", "-qm", "c"]);
+    const bin = mkdtempSync(join(tmpdir(), "rcbin-")); dirs.push(bin);
+    const log = join(bin, "log"), real = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$@" >> ${log}\nexec ${real} "$@"\n`, { mode: 0o755 });
+    const old = process.env["PATH"]; process.env["PATH"] = `${bin}:${old}`;
+    try { runnerConfigNotes(repo, base, sh(repo, ["rev-parse", "HEAD"]), ["notes.txt"]); } finally { process.env["PATH"] = old; }
+    expect((readFileSync(log, "utf8").match(/show .*:bunfig\.toml/g) ?? []).length).toBe(1);
+  }, 30000);
   test("a package.json change outside runner sections is not runner config", () => {
     const { repo, base } = sealRepo({ "package.json": '{"name":"x","jest":{}}\n' }, { "package.json": '{"name":"x","version":"2","jest":{}}\n' });
     sh(repo, ["add", "package.json"]); sh(repo, ["commit", "-qm", "c"]);
