@@ -98,11 +98,10 @@ function unitBrief(card: UnitCard): string {
 /** One factory for the per-unit implementer and new-tree case runner, shared by the local coordinator and `loki modernize unit`.
  *  implement runs the same engine10 session child the implement stage uses (provider resolution included). runNew replays one
  *  oracle case against the new tree; a target with no runner throws, so every case is NOT_PROVEN and nothing is faked. */
-export function makeUnitRunners(o: UnitRunnerOpts): { implement: Implementer; runNew: NewCaseRunner } {
+export function makeUnitRunners(o: UnitRunnerOpts): { implement: Implementer; runNew: NewCaseRunner; runStub: NewCaseRunner } {
   const provider = o.provider ?? process.env["LOKI_E10_PROVIDER"] ?? "claude";
   const limitS = o.sessionLimitS ?? SESSION_LIMIT_S;
-  const cli = import.meta.path.endsWith("modernize_unit.ts") ? join(import.meta.dir, "..", "cli.ts") : import.meta.path;
-  const session = o.session ?? ((_brief, cwd, env) => spawnSync(process.execPath, [cli, "engine10", "session"], { cwd, env, stdio: ["ignore", "ignore", "pipe"], timeout: limitS * 1000 }));
+  const session = makeSessionRunner(o);
   const implement: Implementer = (card) => {
     const cwd = card.newTreeDir ?? card.repoDir;
     const brief = unitBrief(card);
@@ -112,9 +111,20 @@ export function makeUnitRunners(o: UnitRunnerOpts): { implement: Implementer; ru
   };
   const runNew: NewCaseRunner = (unitId, newTreeDir, rec) => {
     if (o.target !== "python3") throw new Error(`no new-tree runner for target ${o.target}`);
-    return runPythonCase(o, unitId, newTreeDir, rec);
+    return runPythonCase(o, unitId, newTreeDir, rec, false);
   };
-  return { implement, runNew };
+  const runStub: NewCaseRunner = (unitId, newTreeDir, rec) => {
+    if (o.target !== "python3") throw new Error(`no stub runner for target ${o.target}`);
+    return runPythonCase(o, unitId, newTreeDir, rec, true);
+  };
+  return { implement, runNew, runStub };
+}
+
+/** The session spawn behind implement: o.session when injected, else the engine10 session child run synchronously. */
+export function makeSessionRunner(o: Pick<UnitRunnerOpts, "session" | "sessionLimitS">): NonNullable<UnitRunnerOpts["session"]> {
+  const limitS = o.sessionLimitS ?? SESSION_LIMIT_S;
+  const cli = import.meta.path.endsWith("modernize_unit.ts") ? join(import.meta.dir, "..", "cli.ts") : import.meta.path;
+  return o.session ?? ((_brief, cwd, env) => spawnSync(process.execPath, [cli, "engine10", "session"], { cwd, env, stdio: ["ignore", "ignore", "pipe"], timeout: limitS * 1000 }));
 }
 
 /** The unit id read as a repo-relative path. Null (so the caller reports "cannot locate") unless the id is safe and
@@ -153,15 +163,15 @@ export function boundariesFromCase(rec: CaseRecord): { args: (Kind | null)[]; kw
   return { args: (rec.args ?? []).map(declaredKind), kwargs, return: declaredKind(rec.return) };
 }
 
-/** Replays one oracle case against the new tree with the same tracer that captured it (py_capture.py), so old and new are tagged identically. */
-function runPythonCase(o: UnitRunnerOpts, unitId: string, newTreeDir: string, rec: CaseRecord): NewCaseOutcome {
+/** Replays one oracle case against the new tree (or, with stub, against the unit replaced by no-op stubs) with the same tracer that captured it (py_capture.py), so old and new are tagged identically. */
+function runPythonCase(o: UnitRunnerOpts, unitId: string, newTreeDir: string, rec: CaseRecord, stub: boolean): NewCaseOutcome {
   const src = o.unitFile ? o.unitFile(unitId, newTreeDir) : defaultUnitFile(unitId, newTreeDir);
   if (!src || !src.endsWith(".py") || !existsSync(src)) throw new Error(`cannot locate the source of unit ${unitId} in the new tree`);
   const dir = mkdtempSync(join(tmpdir(), "loki-newcase-"));
   try {
     const cases = join(dir, "in.jsonl"), out = join(dir, "out.jsonl");
     writeFileSync(cases, JSON.stringify({ entry: rec.entry, args: rec.args, kwargs: rec.kwargs, boundaries: boundariesFromCase(rec) }) + "\n", "utf8");
-    const r = spawnSync(o.pythonBin ?? "python3", [join(REPO_ROOT, "autonomy", "lib", "modernize", "py_capture.py"), "--unit", src, "--cases", cases, "--out", out],
+    const r = spawnSync(o.pythonBin ?? "python3", [join(REPO_ROOT, "autonomy", "lib", "modernize", "py_capture.py"), "--unit", src, "--cases", cases, "--out", out, ...(stub ? ["--stub"] : [])],
       { cwd: newTreeDir, encoding: "utf8", timeout: CASE_TIMEOUT_MS, env: { ...tokenFreeEnv(), PYTHONDONTWRITEBYTECODE: "1" } });
     if (r.status !== 0 || !existsSync(out)) throw new Error(`new-tree case runner failed (${r.status ?? r.signal ?? "no status"}): ${String(r.stderr ?? "").trim().split("\n").pop() ?? ""}`);
     const line = readFileSync(out, "utf8").split("\n").find((l) => l.trim() !== "");
@@ -181,8 +191,8 @@ export async function unitMain(args: readonly string[], deps: { makeId?: () => s
   if (!parsed.ok) { process.stderr.write(`modernize unit: ${parsed.error}\nUsage: ${UNIT_USAGE}\n`); return 2; }
   const o = parsed.opts;
   const u = deps.unit ?? {};
-  const runners = u.implement && u.runNew ? null : makeUnitRunners({ target: o.target });
-  const implement = u.implement ?? runners!.implement, runNew = u.runNew ?? runners!.runNew;
+  const runners = u.implement && u.runNew && u.runStub ? null : makeUnitRunners({ target: o.target });
+  const implement = u.implement ?? runners!.implement, runNew = u.runNew ?? runners!.runNew, runStub = u.runStub ?? runners!.runStub;
   const runTmp = process.env["LOKI_RUN_TMP"] ?? "";
   const root = u.tmpRoot ?? (runTmp !== "" && isRealDir(runTmp) ? runTmp : tmpdir());
   let repoDir: string;
@@ -199,7 +209,7 @@ export async function unitMain(args: readonly string[], deps: { makeId?: () => s
     const card: UnitCard = { unit: o.unit, repoDir, mid, target: o.target, normalizers: DEFAULT_NORMALIZERS };
     let result: UnitRunResult;
     try {
-      result = (u.runUnit ?? runUnit)(card, log, u.runConformance ?? makePytestBaseRunner(), implement, runNew, u.runStub, u.collect ?? makePytestCollector());
+      result = (u.runUnit ?? runUnit)(card, log, u.runConformance ?? makePytestBaseRunner(), implement, runNew, runStub, u.collect ?? makePytestCollector());
     } catch (e) {
       process.stderr.write(`modernize unit: ${o.unit} failed: ${e instanceof Error ? e.message : String(e)}\n`); return 1;
     }
