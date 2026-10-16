@@ -1261,6 +1261,7 @@ check_lg_shortcuts() {
         ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["repo"]["ref"])' "$td/task.json")"
         setup="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("setup") or "")' "$td/task.json")"
         run="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["hidden"]["run"])' "$td/task.json")"
+        source="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source(sys.argv[2]))' "$HERE" "$source")"
         workdir="$T/lgshortcut-$name"
         rm -rf "$workdir"
         if ! git clone -q "$source" "$workdir" >/dev/null 2>&1 || ! git -C "$workdir" checkout -q "$ref" >/dev/null 2>&1; then
@@ -1694,6 +1695,23 @@ FR="$T/out-fam-noop"
 STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$HERE/tasks" bash "$HERE/run.sh" --arm raw-claude --task fam-flaky --out "$FR" >/dev/null 2>&1
 [ "$(row "$FR/results.jsonl" completed)" != true ] && pass "P12-30: a noop arm does not complete a fam task" \
     || fail "P12-30: noop arm completed fam-flaky"
+
+# P12-30c: a relative repo.source resolves against the harness directory from
+# any cwd; URLs and absolute paths pass through. The other readers (real-repo-gate.sh,
+# check_lg_shortcuts, measure-size.py) use the same harness.resolve_source.
+rs_got="$(cd / && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source("fixtures/empty-repo/empty-repo.bundle")); print(harness.resolve_source("/abs/x")); print(harness.resolve_source("https://h/r.git"))' "$HERE" 2>&1)"
+rs_want="$HERE/fixtures/empty-repo/empty-repo.bundle
+/abs/x
+https://h/r.git"
+[ "$rs_got" = "$rs_want" ] && pass "P12-30c: resolve_source anchors a relative source on the harness dir from another cwd" \
+    || fail "P12-30c: resolve_source got '$rs_got'"
+grep -q 'resolve_source' "$HERE/../../scripts/real-repo-gate.sh" && grep -q 'resolve_source' "$HERE/measure-size.py" \
+    && sed -n '/^check_lg_shortcuts()/,/^}/p' "$HERE/test-harness.sh" | grep -q 'resolve_source' \
+    && pass "P12-30c: gate, measure-size and lg-shortcuts readers resolve repo.source" \
+    || fail "P12-30c: a repo.source reader still uses the raw value"
+rs_src="$(cd / && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source("fixtures/empty-repo/empty-repo.bundle"))' "$HERE")"
+(cd / && git clone -q "$rs_src" "$T/rs-clone" >/dev/null 2>&1) && [ -f "$T/rs-clone/README.md" ] \
+    && pass "P12-30c: resolved relative source clones from another cwd" || fail "P12-30c: resolved source did not clone"
 
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
