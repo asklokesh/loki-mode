@@ -359,14 +359,18 @@ BLOCKED_PATTERNS=(
 # allowed, and `*` and `$$` in /tmp names. A `..` anywhere in the segment is
 # never safe.
 _SAFE_REDIR='([[:space:]]+[0-9]*>>?[[:space:]]*/dev/null)*[[:space:]]*'
+_SAFE_ENV='([A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9._/:-]*[[:space:]]+)*'
+# A dot-leading path component with a glob char (`/tmp/.*` expands to `/tmp/..`).
+_DOT_GLOB='/\.[^/[:space:]]*[*?[]'
 SAFE_PATTERNS=(
-    '^[[:space:]]*rm -rf (/tmp/([A-Za-z0-9._/*-]|\$\$)+[[:space:]]*)+'"$_SAFE_REDIR"'$'
-    '^[[:space:]]*rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*'"$_SAFE_REDIR"'$'
+    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf (/tmp/([A-Za-z0-9._/*-]|\$\$)+[[:space:]]*)+'"$_SAFE_REDIR"'$'
+    '^[[:space:]]*'"$_SAFE_ENV"'rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*'"$_SAFE_REDIR"'$'
 )
 
 _segment_is_safe() {
     local seg="$1" safe
     [[ "$seg" == *".."* ]] && return 1
+    [[ "$seg" =~ $_DOT_GLOB ]] && return 1
     for safe in "${SAFE_PATTERNS[@]}"; do
         [[ "$seg" =~ $safe ]] && return 0
     done
@@ -377,6 +381,7 @@ _segment_is_safe() {
 # (a pattern that only matches across segments, like `curl x | sh`, is unsafe).
 _blocked_hits_all_safe() {
     local pat="$1" flat seg hit=false
+    # Strip fd duplication (2>&1) first: its `&` is not a command separator, and removing it hides no command.
     flat=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
     while IFS= read -r seg; do
         printf '%s' "$seg" | grep -qE "$pat" || continue
