@@ -248,8 +248,17 @@ grill_invoke_provider() {
             _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
             ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
             local _gr_argv=("${_LOKI_PERM_ARGV[@]}" "--model" "${LOKI_GRILL_MODEL:-sonnet}")
-            if type loki_subcall_bare_enabled >/dev/null 2>&1 && loki_subcall_bare_enabled; then
-                _gr_argv+=("--bare")
+            # S8: lean child flags (text-only role, no tools/MCP/slash commands) and
+            # a ledger line per call via --output-format json (unwrapped below).
+            local _gr_lf _gr_ledger=false
+            if type loki_lean_child_flags >/dev/null 2>&1; then
+                while IFS= read -r _gr_lf; do
+                    [ -n "$_gr_lf" ] && _gr_argv+=("$_gr_lf")
+                done < <(loki_lean_child_flags grill 2>/dev/null)
+            fi
+            if type loki_child_ledger_append >/dev/null 2>&1; then
+                _gr_ledger=true
+                _gr_argv+=("--output-format" "json")
             fi
             if type loki_review_guard_enabled >/dev/null 2>&1 && loki_review_guard_enabled; then
                 _gr_argv+=("--disallowedTools" "$(loki_review_guard_denylist)")
@@ -264,6 +273,17 @@ grill_invoke_provider() {
             # _grill_with_timeout, where the first token is exec'd as the command.
             out="$(printf '%s' "$prompt" \
                 | _grill_with_timeout "${LOKI_GRILL_TIMEOUT:-180}" env CAVEMAN_DEFAULT_MODE=off claude "${_gr_argv[@]}" -p - 2>/dev/null)"
+            if [ "$_gr_ledger" = true ] && [ -n "$out" ]; then
+                loki_child_ledger_append grill "$out" >/dev/null 2>&1 || true
+                out="$(printf '%s' "$out" | python3 -I -c 'import json,sys
+try:
+    d = json.load(sys.stdin)
+    if isinstance(d, list):
+        d = next((x for x in reversed(d) if isinstance(x, dict) and x.get("type") == "result"), {})
+    sys.stdout.write(str(d.get("result", "")))
+except Exception:
+    pass' 2>/dev/null)"
+            fi
             if [ -z "$out" ]; then
                 _grill_err "provider returned no output (timeout or invocation error)"
                 return $GRILL_EXIT_ERROR
