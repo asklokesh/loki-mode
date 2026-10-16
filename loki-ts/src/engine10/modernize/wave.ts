@@ -132,17 +132,25 @@ export function detectWaveCommands(inv: InventoryResult, target: string): Record
   const { system, marker } = inv.buildSystem;
   const none = { build: null, integration: null, original_suite: null };
   const text = (): string => { try { return readFileSync(join(target, marker ?? ""), "utf8"); } catch { return ""; } };
-  if (system === "maven") return { build: { argv: ["mvn", "-B", "-q", "compile"] }, integration: { argv: ["mvn", "-B", "verify"] }, original_suite: { argv: ["mvn", "-B", "test"] } };
+  if (system === "maven") {
+    // failsafe binds ITs to verify; surefire-only projects run IT-named classes through test; neither fails closed (null).
+    const integration: StepCommand | null = text().includes("maven-failsafe-plugin") ? { argv: ["mvn", "-B", "verify"] }
+      : inv.files.some((f) => /(IT|ITCase|IntegrationTest)\.java$/.test(f)) ? { argv: ["mvn", "-B", "test", "-Dtest=*IT,*ITCase,*IntegrationTest", "-Dsurefire.failIfNoSpecifiedTests=false"] } : null;
+    return { build: { argv: ["mvn", "-B", "-q", "compile"] }, integration, original_suite: { argv: ["mvn", "-B", "test"] } };
+  }
   if (system === "gradle") {
     let gw = "gradle";
     try { if (inv.files.includes("gradlew") && (statSync(join(target, "gradlew")).mode & 0o111) !== 0) gw = "./gradlew"; } catch { /* keep gradle */ }
     return { build: { argv: [gw, "assemble"] }, integration: text().includes("integrationTest") ? { argv: [gw, "integrationTest"] } : null, original_suite: { argv: [gw, "test"] } };
   }
   if (system !== "setuptools" && system !== "poetry" && system !== "tox") return none;
-  const dirs = inv.files.map((f) => f.split("/").slice(0, -1).join("/"));
-  const itDir = dirs.find((d) => d === "tests/integration" || d === "integration");
+  // Segment-prefix match (never raw startsWith) and the dir must hold at least one .py file.
+  const itDir = ["tests/integration", "integration"].find((d) => inv.files.some((f) => f.startsWith(d + "/") && f.endsWith(".py")));
   const pytest = "pytest" in inv.tests.evidence;
-  const integration: StepCommand | null = system === "tox" && text().includes("[testenv:integration") ? { argv: ["tox", "-e", "integration"] }
+  // tox.ini is read by file, not by build-system marker: pyproject usually wins the marker and would hide tox.
+  let toxIni = "";
+  if (inv.files.includes("tox.ini")) { try { toxIni = readFileSync(join(target, "tox.ini"), "utf8"); } catch { /* none */ } }
+  const integration: StepCommand | null = toxIni.includes("[testenv:integration") ? { argv: ["tox", "-e", "integration"] }
     : itDir && pytest ? { argv: ["python3", "-m", "pytest", "-q", itDir] } : null;
-  return { build: { argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|node_modules|\\.tox)/", "."] }, integration, original_suite: pytest ? { argv: ["python3", "-m", "pytest", "-q"] } : null };
+  return { build: { argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|venv|node_modules|\\.tox|\\.git)/", "."] }, integration, original_suite: pytest ? { argv: ["python3", "-m", "pytest", "-q"] } : null };
 }

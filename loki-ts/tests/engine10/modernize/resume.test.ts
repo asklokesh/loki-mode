@@ -613,7 +613,7 @@ describe("M-27E coordinator wiring", () => {
     const f = fx();
     try {
       writeFileSync(join(f.dir, "a.py"), "x = 1\n"); writeFileSync(join(f.dir, "b.py"), "y = 2\n");
-      const build = { argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|node_modules|\\.tox)/", "."] };
+      const build = { argv: ["python3", "-m", "compileall", "-q", "-x", "/(\\.loki|\\.venv|venv|node_modules|\\.tox|\\.git)/", "."] };
       const seen: string[][] = [];
       const spy: StepRunner = (step, c) => { if (step === "build") seen.push(c.argv); return { status: 0, timedOut: false, error: null, tail: "" }; };
       const mkd = { repoDir: f.dir, mid: MID, baseSha: "base", workers: 1, budgetUsd: null, unitEstimateUsd: null, log: f.log, run: (ctx: AttemptCtx): AttemptOutcome => ({ result: proven(ctx.unit.id), costUsd: 0 }), merge: { isMerged: () => false, merge: () => {} }, worktrees: f.worktrees, resume: false, waveCommands: { build, integration: { argv: ["true"] }, original_suite: { argv: ["true"] } }, stepRunner: spy, ship: false, pinnedOrigin: "" } as WaveDeps;
