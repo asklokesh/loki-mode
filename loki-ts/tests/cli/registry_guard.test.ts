@@ -116,6 +116,15 @@ describe("registry vs dispatchers", () => {
     }
   });
 
+  test("steer is modern and its help does not claim it needs LOKI_PROMPT_INJECTION=1 (P12-20)", () => {
+    expect(findCommand("steer")?.cls).toBe("KEEP-MODERN");
+    const line = BASH_SRC.find((l) => l.includes('steer \\"<note>\\"'));
+    expect(line).toBeDefined();
+    expect(line).not.toContain("needs LOKI_PROMPT_INJECTION=1");
+    expect(line).toContain("LOKI_PROMPT_INJECTION=true");
+    expect(BASH_SRC.join("\n")).not.toContain("LOKI_PROMPT_INJECTION=1");
+  });
+
   test("CLI-MODERN.md matches the registry", () => {
     expect(readFileSync(join(REPO_ROOT, "docs", "v10", "CLI-MODERN.md"), "utf8")).toBe(renderDoc(REPO_ROOT));
   });

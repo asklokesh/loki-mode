@@ -159,3 +159,4 @@ Hidden and legacy-only commands are omitted; see `docs/v10/CLI-MODERN.md` for th
 | `loki metrics` | Metrics |
 | `loki sentrux` | Architecture sensor |
 | `loki magic` | Magic modules |
+| `loki steer` | Nudge a running build |

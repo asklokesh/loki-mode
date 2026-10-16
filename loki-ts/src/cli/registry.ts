@@ -277,7 +277,7 @@ export const REGISTRY: readonly CmdSpec[] = [
   legacy("heal", "Legacy healing", "Legacy engine"),
   legacy("migrate", "Legacy migration", "Superseded by modernize"),
   legacy("dogfood", "Dogfood run", "Legacy engine"),
-  legacy("steer", "Nudge a running legacy build", "Needs legacy prompt injection"),
+  cmd("steer", "KEEP-MODERN", "bash", "Nudge a running build", "Session control"),
   legacy("outcomes", "Outcome analytics", "Legacy outcome store"),
   legacy("worktree", "Worktree management", "Legacy parallel mode", ["wt"]),
   legacy("checkpoint", "Legacy checkpoints", "Legacy engine", ["cp"]),
