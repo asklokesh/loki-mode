@@ -598,9 +598,9 @@ describe("group run: Group Seal and resume", () => {
     }
     return { code: 0, stdout: out };
   };
-  const go = async (repo: string, l: ReturnType<typeof fake>, env: Record<string, string> = {}): Promise<{ code: number; err: string }> => {
+  const go = async (repo: string, l: ReturnType<typeof fake>, env: Record<string, string> = {}, spec = SPEC): Promise<{ code: number; err: string }> => {
     let err = "";
-    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", ...env } as NodeJS.ProcessEnv, provider: "claude", spec: SPEC, specPath: null, seal: { receiptSha256, verifyReceipt }, say: (s) => { err += s; } });
+    const code = await runGroup(l, DAG, { task: "t", repoDir: repo, env: { LOKI_GROUP_TEST_CMD: "true", LOKI_PROVIDER: "claude", ...env } as NodeJS.ProcessEnv, provider: "claude", spec, specPath: null, seal: { receiptSha256, verifyReceipt }, say: (s) => { err += s; } });
     return { code, err };
   };
   const groups = (repo: string): string[] => readdirSync(join(repo, ".loki", "groups")).filter((n) => n.startsWith("g"));
@@ -662,6 +662,20 @@ describe("group run: Group Seal and resume", () => {
     expect(groups(repo).length).toBe(1);
     expect(err).toContain(`loki: resuming group ${groups(repo)[0]}: 2 of 3 units already VERIFIED`);
     expect(dagOf(repo, groups(repo)[0]!).units.map((u: { done: boolean }) => u.done)).toEqual([true, true, false]);
+  });
+
+  const AC = "## Acceptance criteria\n", BASE = AC + SPEC, REVISED = AC + "- add alpha\n- add beta v2\n- add gamma\n";
+  test("spec revision resume: unaffected units are skipped-unchanged, the changed unit reruns on the same gid", async () => {
+    const repo = mkRepo("gr-revised"), calls: string[] = [];
+    expect((await go(repo, fake(repo, calls), {}, BASE)).code).toBe(0);
+    const { code, err } = await go(repo, fake(repo, calls), {}, REVISED);
+    expect(code).toBe(0);
+    expect(calls).toEqual(["u1", "u2", "u3", "u2"]);
+    expect(groups(repo).length).toBe(1);
+    expect(err).toContain("unit u1 skipped-unchanged");
+    expect(err).toContain("unit u3 skipped-unchanged");
+    expect(err).not.toContain("unit u2 skipped-unchanged");
+    expect(dagOf(repo, groups(repo)[0]!).spec_sha256).toBe(createHash("sha256").update(REVISED).digest("hex"));
   });
 
   test("a unit whose branch head moved since its receipt reruns", async () => {
