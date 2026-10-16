@@ -476,15 +476,37 @@ class DebateRunner:
 
         return completed.stdout or ""
 
+    def _permission_argv(self) -> list:
+        """Claude permission argv via autonomy/lib/claude_permissions.py.
+
+        autonomy/ and magic/ are siblings under the package root, but magic/
+        can be vendored or copied without autonomy/. A missing or shadowed
+        module must not break the debate: unset policy keeps the legacy flag,
+        LOKI_PERMISSION_POLICY=compiled fails closed to plan.
+        """
+        root = str(Path(__file__).resolve().parents[2])
+        added = root not in sys.path
+        if added:
+            sys.path.insert(0, root)
+        try:
+            from autonomy.lib.claude_permissions import claude_permission_argv
+            return list(claude_permission_argv(str(self.project_dir)))
+        except ImportError:
+            if os.environ.get("LOKI_PERMISSION_POLICY", "") == "compiled":
+                return ["--permission-mode", "plan"]
+            return ["--dangerously-skip-permissions"]
+        finally:
+            if added:
+                try:
+                    sys.path.remove(root)
+                except ValueError:
+                    pass
+
     def _build_command(self, prompt: str) -> list:
         """Map self.provider to an argv list."""
         provider = self.provider.lower()
         if provider == "claude":
-            _root = str(Path(__file__).resolve().parents[2])
-            if _root not in sys.path:
-                sys.path.insert(0, _root)
-            from autonomy.lib.claude_permissions import claude_permission_argv
-            return ["claude", *claude_permission_argv(str(self.project_dir)), "-p", prompt]
+            return ["claude", *self._permission_argv(), "-p", prompt]
         if provider == "codex":
             # Codex uses `exec --sandbox workspace-write` with the prompt as
             # positional (codex 0.132.0 deprecated --full-auto; workspace-write

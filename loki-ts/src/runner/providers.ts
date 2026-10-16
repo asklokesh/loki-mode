@@ -39,6 +39,7 @@ import {
   fallbackForPrimary,
   tierRouteModel,
   permissionArgv,
+  sdkPermissionOptions,
 } from "../providers/claude_flags.ts";
 import { mcpConfigPath } from "../providers/mcp_config.ts";
 import { LEAN_PREFIX } from "../features/lean_prefix.ts";
@@ -802,10 +803,9 @@ export function sdkQueryProvider(): ProviderInvoker {
             ...(resumeId ? { resume: resumeId } : {}),
             ...(defaultModel ? {} : { model: extra.model ?? model }),
             cwd: call.cwd,
-            // fully autonomous, like --dangerously-skip-permissions. bypassPermissions
-            // REQUIRES the allowDangerouslySkipPermissions companion or it throws.
-            permissionMode: "bypassPermissions",
-            allowDangerouslySkipPermissions: true,
+            // P12-26c: honours LOKI_PERMISSION_POLICY via the shared resolver. Unset keeps
+            // bypassPermissions + the required allowDangerouslySkipPermissions companion.
+            ...sdkPermissionOptions(call.cwd),
             includePartialMessages: true, // live delta streaming
             includeHookEvents: true, // hooks arrive as system messages (parser)
             // S41-11: LOKI_E10_TRIM=1, default off. Read directly from
