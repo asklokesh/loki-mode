@@ -653,7 +653,7 @@ _dotdot_escapes_base() {
 }
 
 _alt_extra_deny() {
-    local a="$1" name="" mod="" rest="" r n c1 c2
+    local a="$1" name="" mod="" rest="" r n c1 c2 c3
     if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)([^\}]*)\}(.*)$ ]]; then
         name="${BASH_REMATCH[1]}"; mod="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
     elif [[ "$a" =~ ^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
@@ -683,6 +683,17 @@ _alt_extra_deny() {
             r="$rest"
             while [[ "$r" == /* || "$r" == ./* ]]; do r="${r#/}"; r="${r#./}"; done
             case "$r" in ''|'*'*|'?'*|'['*|'{'*) return 0 ;; esac
+            # An unset variable makes the rest an absolute path: deny when it
+            # is, or climbs to, a temp root, or any component holds a glob.
+            # The only brace left after expansion that stays ok is a numeric
+            # range glued to a literal prefix in the last component.
+            local lastc="${rest##*/}" headp="${rest%/*}"
+            [[ "$headp" == *[\*\?\[\{]* ]] && return 0
+            [[ "$lastc" == *[\*\?\[]* ]] && return 0
+            if [[ "$lastc" == *"{"* ]]; then
+                [[ "$lastc" =~ ^[^\{]+\{-?[0-9]+\.\.-?[0-9]+\}$ ]] || return 0
+            fi
+            _resolved_reaches_temp "$(_lex_resolve "$rest")" && return 0
         fi
         return 1
     fi
@@ -705,6 +716,10 @@ _alt_extra_deny() {
             [[ "$n" == */* ]] && { c2="${n#*/}"; c2="${c2%%/*}"; }
             case "$c1" in *[\*\?\[]*) return 0 ;; esac
             case "$c2" in *[\*\?\[]*) [ "$c1" = "tmp" ] || return 0 ;; esac
+            if [ "$c1" = "private" ] && [ "$c2" = "var" ]; then
+                c3="${n#*/}"; c3="${c3#*/}"; c3="${c3%%/*}"
+                case "$c3" in *[\*\?\[]*) return 0 ;; esac
+            fi
             return 1
             ;;
     esac
@@ -719,6 +734,11 @@ _rm_target_extra_deny() {
     if [[ "$q" == *"{"* ]]; then
         _expand_braces "$q" || rc=$?
         [ "$rc" -eq 1 ] && return 0
+        # Over cap (rc 2): a `.` or `..` alternative or a dot glued to a group
+        # can build a dotdot component bash will expand; fail closed.
+        if [ "$rc" -eq 2 ] && [[ "$q" =~ [\{,]\.{1,2}[,\}]|\}\.|\.\{ ]]; then
+            return 0
+        fi
         [ "$rc" -eq 0 ] && alts=(${_ALTS[@]+"${_ALTS[@]}"})
     fi
     for alt in ${alts[@]+"${alts[@]}"}; do

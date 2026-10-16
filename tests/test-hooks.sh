@@ -535,6 +535,16 @@ test_validate_bash_residual_rm_gaps_denied() {
         '../../../../../../../tmp' 'a/{.,x}./{.,x}./tmp' '../x'
         '"$X"/*' '"$X"/{a,*}' '$X/{a,*}' '"$X"/' '$X/../y'
         '/t?p' '/t?p/*' '/[t]mp/{a,*}' '/?mp/{a,*}' '/var/t?p/x' '/private/t*/x'
+        '/private/var/t?p' '/private/var/t?p/*' '/private/var/t*/x'
+        '"$X"/tmp/*' '$X/tmp/*' '"$X"/t?p' '"$X"/t?p/*' '"$X"/{tmp,a}' '"$X"/{tmp,a}/*'
+        '"$X"/var/tmp/*' '"$X"/.*'
+    )
+    # Over-cap brace groups hiding a dotdot alternative (bash expands them).
+    local big="" i
+    for i in $(seq 0 69); do big="${big},p${i}"; done
+    deny_set+=(
+        "\"\$LOKI_RUN_TMP\"/{..${big}}/*"
+        "x/{..${big}}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/{..,q}/tmp"
     )
     for t in "${deny_set[@]}"; do
         for rmcmd in "rm -rf" "rm -r"; do
