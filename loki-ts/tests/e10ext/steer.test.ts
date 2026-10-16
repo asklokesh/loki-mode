@@ -327,6 +327,21 @@ describe("engine10 steer", () => {
     expect(existsSync(join(logs, ".applied-human-input-20200101T000000.md"))).toBe(true);
     expect(existsSync(join(logs, ".applied-human-input-19990101T000000.md"))).toBe(false);
   });
+  test("P12-02h: a sweep over many entries prunes only the markers whose archive is gone", () => {
+    const d = repo();
+    const logs = join(d, ".loki", "logs");
+    mkdirSync(logs);
+    for (let i = 0; i < 300; i++) {
+      const name = `human-input-2020${String(i).padStart(8, "0")}.md`;
+      if (i % 2 === 0) writeFileSync(join(logs, name), "X");
+      writeFileSync(join(logs, `.applied-${name}`), "d");
+    }
+    consumeSteer(d, {}, () => new Date(), []);
+    for (let i = 0; i < 300; i++) {
+      const name = `human-input-2020${String(i).padStart(8, "0")}.md`;
+      expect(existsSync(join(logs, `.applied-${name}`))).toBe(i % 2 === 0);
+    }
+  });
   test("a non-file steer with no fresh steer is restored in place", () => {
     const d = repo();
     const f = join(d, ".loki", "HUMAN_INPUT.md");
