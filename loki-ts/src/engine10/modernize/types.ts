@@ -53,14 +53,11 @@ export function isSafeUnitId(unit: unknown): unit is string {
   return typeof unit === "string" && unit.length <= MAX_UNIT_ID && UNIT_ID_RE.test(unit) && !unit.includes("..");
 }
 
-/** Reversible, filename-safe form of a unit id: "/" becomes "%2F" ("%" is outside the id alphabet, so decode is exact).
+/** Injective, filename-safe form of a unit id: "/" becomes "%2F" ("%" is outside the id alphabet, so no two ids collide).
  *  Every on-disk name derived from a unit id (oracle dir, card, worktree) goes through this; an unsafe id throws. */
 export function encodeUnitId(unit: string): string {
   if (!isSafeUnitId(unit)) throw new Error(`unsafe unit id: ${JSON.stringify(String(unit).slice(0, 60))}`);
   return unit.replace(/\//g, "%2F");
-}
-export function decodeUnitId(enc: string): string {
-  return enc.replace(/%2F/g, "/");
 }
 
 export function oracleDir(repoDir: string, mid: string, unit: string): string {
