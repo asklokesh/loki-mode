@@ -167,3 +167,70 @@ describe("fix resume trust and mutation (MW-2)", () => {
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 });
+
+// P12-07: per-stage checkpoints and resume-from-stage. Resume fails closed on any torn or inconsistent log.
+import { execFileSync } from "node:child_process";
+import { makeEvent } from "../../src/engine10/events.ts";
+import { firstIncompleteStage, resumeFlag, resumePoint, stageCheckpoints } from "../../src/util/run_outputs.ts";
+import { composeHandoff, renderHandoff } from "../../src/util/run_summary.ts";
+
+const RID = "e10-20260101T000000Z-abcd";
+type Spec = [string, string | null, Record<string, unknown>?];
+const mk = (spec: Spec[]) => spec.map(([t, s, d], i) => makeEvent(RID, i, t, s as never, d ?? {}, "2026-01-01T00:00:00.000Z"));
+const killedAfterImplement = () => mk([
+  ["run.started", null], ["stage.completed", "intake", { base_sha: "abc", task: "t" }], ["stage.completed", "plan"], ["stage.completed", "wall"], ["stage.completed", "implement"],
+]);
+const text = (evs: ReturnType<typeof mk>): string => evs.map((e) => JSON.stringify(e)).join("\n") + "\n";
+
+describe("resume from stage (P12-07)", () => {
+  test("kill after implement: resume skips intake, plan and wall and re-enters at verify", () => {
+    const evs = killedAfterImplement();
+    const r = resumePoint(evs, text(evs));
+    expect(r.ok).toBe(true);
+    if (r.ok) { expect(r.stage).toBe("verify"); expect(r.skip).toEqual(["intake", "plan", "wall", "implement"]); expect(r.checkpoints.map((c) => c.stage)).toEqual(["intake", "plan", "wall", "implement"]); }
+  });
+  test("checkpoints are deterministic and chain inputs to prior outputs", () => {
+    const a = stageCheckpoints(killedAfterImplement()), b = stageCheckpoints(killedAfterImplement());
+    expect(a).toEqual(b);
+    expect(a[1]!.inputs_sha).not.toBe(a[0]!.inputs_sha);
+  });
+  test("torn mid-log line refuses", () => {
+    const evs = killedAfterImplement(), lines = text(evs).split("\n");
+    lines[2] = lines[2]!.slice(0, 20);
+    expect(resumePoint(evs.filter((_, i) => i !== 2), lines.join("\n")).ok).toBe(false);
+  });
+  test("torn last line, seq gap, finished run, out-of-order stage, empty log all refuse", () => {
+    const evs = killedAfterImplement();
+    expect(resumePoint(evs, text(evs).trimEnd()).ok).toBe(false);
+    expect(resumePoint(evs.map((e, i) => (i === 4 ? { ...e, seq: 9 } : e))).ok).toBe(false);
+    expect(resumePoint([...evs, makeEvent(RID, evs.length, "run.completed", null, {})]).ok).toBe(false);
+    expect(resumePoint(evs.filter((e) => e.stage !== "plan").map((e, i) => ({ ...e, seq: i }))).ok).toBe(false);
+    expect(resumePoint([]).ok).toBe(false);
+  });
+  test("handoff names the stage a stopped run never settled", () => {
+    const evs = killedAfterImplement();
+    const h = (outcome: string): string => renderHandoff(composeHandoff({ repoDir: tmpdir(), runId: RID, events: evs, outcome, usd: null, elapsedS: null, notProven: [] }));
+    expect(firstIncompleteStage(evs)).toBe("verify");
+    expect(h("BUDGET_STOP")).toContain("Resume from stage verify");
+    expect(h("VERIFIED")).not.toContain("Resume from stage");
+  });
+  test("resumeFlag: torn log exits 2 and never resumes; intact pre-publish log exits 4 naming the stage", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "loki-p1207-"));
+    const cwd = process.cwd();
+    try {
+      execFileSync("git", ["init", "-q"], { cwd: dir });
+      mkdirSync(join(dir, ".loki", "runs", RID), { recursive: true });
+      const p = join(dir, ".loki", "runs", RID, "events.jsonl");
+      const evs = killedAfterImplement();
+      const say: string[] = [], out = (s: string): void => { say.push(s); };
+      process.chdir(dir);
+      writeFileSync(p, text(evs));
+      expect(await resumeFlag(RID, { out })).toBe(4);
+      expect(say.join("")).toContain("resume from stage verify");
+      writeFileSync(p, text(evs) + '{"v":1,"seq":5,"ty');
+      say.length = 0;
+      expect(await resumeFlag(RID, { out })).toBe(2);
+      expect(say.join("")).toContain("refused");
+    } finally { process.chdir(cwd); rmSync(dir, { recursive: true, force: true }); }
+  });
+});

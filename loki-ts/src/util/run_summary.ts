@@ -32,6 +32,7 @@ import { safeGit } from "../util/safe_git.ts";
 import { redactSecrets } from "../util/redact.ts";
 import { formatDuration, type Outcome } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
+import { firstIncompleteStage } from "./run_outputs.ts";
 
 export type RunResult = "verified" | "done-unverified" | "failed" | "stopped";
 
@@ -152,6 +153,8 @@ export interface HandoffInput {
   interventionDetail?: { by_type: Record<string, number>; waited_s: number | null } | null;
   /** Merge state recorded in .loki/state/pr.json: "merged", "waiting" or "blocked:<gate>". Absent means not recorded. */
   merge?: { outcome: string; gate?: string | null; checks?: string | null } | null;
+  /** First engine10 stage that never settled; set only for a run that stopped early (D07, P12-07). */
+  resumeFrom?: string | null;
 }
 const W = 110, clip = (s: string, n = W): string => { const t = redactSecrets(String(s)).replace(/[\x00-\x1f\x7f]+/g, " ").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n - 3)}...` : t; };
 /** Spend text: measured dollars, a partial figure, or "not measured". Never $0.00 for an unknown. */
@@ -206,6 +209,7 @@ export function renderHandoff(i: HandoffInput): string {
   for (const n of notChecked.slice(0, 8)) L.push(`- ${n}`);
   if (notChecked.length === 0) L.push(i.checks.length === 0 ? "- no checks were recorded, so nothing is verified" : "- nothing recorded as skipped or uncovered");
   if (notChecked.length > 8) L.push(`- +${notChecked.length - 8} more`);
+  if (i.resumeFrom) L.push("", `Resume from stage ${clip(i.resumeFrom, 20)} (first stage that never settled in run ${i.runId})`);
   L.push("", "## Decide", `Accept: ${d.accept}`, `Reject: ${d.reject}`);
   if (i.prUrl) L.push(`Merge: ${mergeText(i.merge)}`);
   return `${L.join("\n")}\n`;
@@ -261,6 +265,7 @@ export function composeHandoff(f: HandoffFacts): HandoffInput {
     prUrl: f.prUrl, draft: f.draft, checks, notProven: f.notProven, failures: failed, requirements: Array.isArray(rm?.requirements) ? rm.requirements : null,
     filesChanged: f.stats?.files ?? null, insertions: f.stats?.ins ?? null, deletions: f.stats?.del ?? null, hunks, riskTier: risk ?? null, deferred,
     usd: f.usd, partialUsd: f.partialUsd, measuredSessions: f.measuredSessions, totalSessions: f.totalSessions, elapsedS: f.elapsedS, interventions: count, interventionDetail: detail, merge, baseSha: f.baseSha,
+    resumeFrom: ["BUDGET_STOP", "CANCELLED", "STALLED", "FAILED"].includes(f.outcome) ? firstIncompleteStage(f.events) : null,
   };
 }
 /** Atomic write of HANDOFF.md and handoff.json; returns the markdown, or null when nothing could be written. Never throws. */

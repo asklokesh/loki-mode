@@ -235,7 +235,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
     else if (a === "--provider") provider = args[++i] ?? provider;
     else if (a === "--spec") specFile = args[++i] ?? "";
     else if (a.startsWith("--spec=")) specFile = a.slice(7);
-    else if (a === "--resume") { process.stderr.write("engine10: --resume was removed; start a new run\n"); return 2; }
+    else if (a === "--resume") return (await import("../util/run_outputs.ts")).resumeFlag(args[i + 1]);
     else words.push(a);
   }
   let task = words.join(" ").trim();
