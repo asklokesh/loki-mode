@@ -29,6 +29,7 @@ import os
 __all__ = [
     "collect_efficiency",
     "record_is_measured",
+    "read_child_ledger",
     "load_prices",
     "price_from_tokens",
     "DEFAULT_PRICES_PATH",
@@ -223,7 +224,108 @@ def collect_efficiency(loki_dir):
             "cache_read_tokens", "cache_creation_tokens",
         ):
             cost[key] = None
+    _merge_child_ledger(loki_dir, cost)
     return cost, model
+
+
+# ---------------------------------------------------------------------------
+# child-session ledger (S1 of the cost program)
+# ---------------------------------------------------------------------------
+
+LEDGER_RELPATH = os.path.join("metrics", "child-sessions.jsonl")
+_LEDGER_TOKEN_KEYS = (
+    "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens",
+)
+
+
+def read_child_ledger(loki_dir):
+    """Read .loki/metrics/child-sessions.jsonl, one JSON object per child session.
+
+    Record format: phase, model, input_tokens, output_tokens,
+    cache_creation_tokens, cache_read_tokens, usd, source.
+
+    Returns (records, invalid_lines) or (None, 0) when the file is absent or
+    unreadable. None is the honest "no ledger" signal: callers must not treat
+    it as zero child spend. Blank lines are ignored; non-JSON lines and
+    non-object lines are skipped and counted.
+    """
+    path = os.path.join(loki_dir, LEDGER_RELPATH)
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except Exception:
+        return None, 0
+    records, invalid = [], 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except Exception:
+            invalid += 1
+            continue
+        if isinstance(rec, dict):
+            records.append(rec)
+        else:
+            invalid += 1
+    return records, invalid
+
+
+def _merge_child_ledger(loki_dir, cost):
+    """Fold the child-session ledger into the cost dict, in place.
+
+    The main RARV session's efficiency record is only one of 11-20 child
+    `claude -p` sessions per run (grill, reviewers, council, docgen); summing
+    it alone undercounts true spend. Always sets cost["ledger"] to "present" or
+    "absent" so a missing ledger is visible, never a silent zero. A ledger line
+    without a usd value is unpriced (counted, never treated as 0.0), and the
+    total then becomes a lower bound via cost_partial.
+    """
+    records, invalid = read_child_ledger(loki_dir)
+    main_usd = cost.get("usd")
+    by_phase = {}
+    if main_usd is not None:
+        by_phase["implement"] = main_usd
+    if records is None:
+        cost["ledger"] = "absent"
+        if by_phase:
+            cost["cost_by_phase"] = by_phase
+        return
+    cost["ledger"] = "present"
+    cost["ledger_records"] = len(records)
+    cost["ledger_invalid_lines"] = invalid
+    if not records:
+        if by_phase:
+            cost["cost_by_phase"] = by_phase
+        return
+    ledger_usd, priced, unpriced = 0.0, 0, 0
+    main_known = bool(cost.get("available"))
+    tokens = {k: cost.get(k) for k in _LEDGER_TOKEN_KEYS}
+    if not main_known:
+        tokens = {k: 0 for k in _LEDGER_TOKEN_KEYS}
+    for rec in records:
+        usd = rec.get("usd")
+        if isinstance(usd, (int, float)) and not isinstance(usd, bool):
+            ledger_usd += float(usd)
+            priced += 1
+            phase = str(rec.get("phase") or "unknown")
+            by_phase[phase] = by_phase.get(phase, 0.0) + float(usd)
+        else:
+            unpriced += 1
+        for k in _LEDGER_TOKEN_KEYS:
+            if tokens[k] is not None:
+                tokens[k] += _to_int(rec.get(k))
+    cost.update(tokens)
+    cost["available"] = True
+    if priced:
+        cost["usd"] = round((main_usd or 0.0) + ledger_usd, 4)
+        cost["cost_available"] = True
+    partial = bool(cost.get("cost_partial")) or unpriced > 0 or not main_known
+    cost["cost_partial"] = partial
+    cost["cost_unpriced_records"] = int(cost.get("cost_unpriced_records") or 0) + unpriced
+    if by_phase:
+        cost["cost_by_phase"] = {k: round(v, 4) for k, v in by_phase.items()}
 
 
 # ---------------------------------------------------------------------------

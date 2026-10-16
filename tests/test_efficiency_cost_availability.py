@@ -142,5 +142,108 @@ class UnrecordedSessionTests(unittest.TestCase):
             self.assertNotIn("tokens_unmeasured_records", cost)
 
 
+def _ledger(loki_dir, lines):
+    m = pathlib.Path(loki_dir) / "metrics"
+    m.mkdir(parents=True, exist_ok=True)
+    with open(m / "child-sessions.jsonl", "w", encoding="utf-8") as fh:
+        for ln in lines:
+            fh.write((ln if isinstance(ln, str) else json.dumps(ln)) + "\n")
+
+
+def _child(phase, usd, inp=10, out=5, cw=100, cr=50, model="sonnet"):
+    rec = {"phase": phase, "model": model, "input_tokens": inp,
+           "output_tokens": out, "cache_creation_tokens": cw,
+           "cache_read_tokens": cr, "source": "claude_json"}
+    if usd is not None:
+        rec["usd"] = usd
+    return rec
+
+
+MAIN = {"iteration": 1, "input_tokens": 1000, "output_tokens": 200,
+        "cache_read_tokens": 300, "cache_creation_tokens": 400,
+        "cost_usd": 0.25, "model": "sonnet"}
+
+
+class ChildLedgerTests(unittest.TestCase):
+    """S1: the cost total must include every child session, not only the main one."""
+
+    def test_total_is_main_plus_ledger_with_phase_map(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            _ledger(loki, [_child("reviewer", 0.1), _child("reviewer", 0.2),
+                           _child("grill", 0.05)])
+            cost, _ = collect_efficiency(loki)
+            self.assertAlmostEqual(cost["usd"], 0.6, places=4)
+            self.assertEqual(cost["ledger"], "present")
+            self.assertEqual(cost["ledger_records"], 3)
+            by = cost["cost_by_phase"]
+            self.assertAlmostEqual(by["implement"], 0.25, places=4)
+            self.assertAlmostEqual(by["reviewer"], 0.3, places=4)
+            self.assertAlmostEqual(by["grill"], 0.05, places=4)
+            self.assertAlmostEqual(sum(by.values()), cost["usd"], places=4)
+            self.assertEqual(cost["input_tokens"], 1030)
+            self.assertEqual(cost["cache_creation_tokens"], 700)
+
+    def test_missing_ledger_is_main_only_and_flagged_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            cost, _ = collect_efficiency(loki)
+            self.assertAlmostEqual(cost["usd"], 0.25, places=4)
+            self.assertEqual(cost["ledger"], "absent")
+            self.assertEqual(cost["cost_by_phase"], {"implement": 0.25})
+
+    def test_no_records_and_no_ledger_stays_unavailable(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            pathlib.Path(loki).mkdir()
+            cost, _ = collect_efficiency(loki)
+            self.assertFalse(cost["available"])
+            self.assertIsNone(cost["usd"])
+            self.assertEqual(cost["ledger"], "absent")
+
+    def test_ledger_without_main_record_is_lower_bound(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            pathlib.Path(loki).mkdir()
+            _ledger(loki, [_child("council", 0.07)])
+            cost, _ = collect_efficiency(loki)
+            self.assertTrue(cost["available"])
+            self.assertAlmostEqual(cost["usd"], 0.07, places=4)
+            self.assertTrue(cost["cost_partial"])
+
+    def test_unpriced_ledger_line_is_not_zero_and_marks_partial(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            _ledger(loki, [_child("reviewer", 0.1), _child("grill", None)])
+            cost, _ = collect_efficiency(loki)
+            self.assertAlmostEqual(cost["usd"], 0.35, places=4)
+            self.assertTrue(cost["cost_partial"])
+            self.assertEqual(cost["cost_unpriced_records"], 1)
+            self.assertNotIn("grill", cost["cost_by_phase"])
+
+    def test_malformed_ledger_lines_are_skipped_and_counted(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            _ledger(loki, ["not json", "[1,2]", _child("docs", 0.1), ""])
+            cost, _ = collect_efficiency(loki)
+            self.assertAlmostEqual(cost["usd"], 0.35, places=4)
+            self.assertEqual(cost["ledger_records"], 1)
+            self.assertEqual(cost["ledger_invalid_lines"], 2)
+
+    def test_empty_ledger_file_reads_present_with_zero_records(self):
+        with tempfile.TemporaryDirectory() as d:
+            loki = os.path.join(d, ".loki")
+            _write(loki, [MAIN])
+            _ledger(loki, [])
+            cost, _ = collect_efficiency(loki)
+            self.assertEqual(cost["ledger"], "present")
+            self.assertEqual(cost["ledger_records"], 0)
+            self.assertAlmostEqual(cost["usd"], 0.25, places=4)
+
+
 if __name__ == "__main__":
     unittest.main()
