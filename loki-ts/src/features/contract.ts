@@ -11,27 +11,22 @@ import { safeGit } from "../util/safe_git.ts";
 import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Unit } from "./decompose.ts";
-
 export interface Criterion { id: string; text: string; source_line: number }
 export interface Contract { source: string; criteria: Criterion[] }
 export interface TracedCriterion { id: string; text: string; files: string[]; checks: string[]; status: "keyword_match" | "no_match" }
 export interface ContractTrace { criteria: TracedCriterion[]; sha256?: string }
-
 export const MAX_CRITERIA = 50;
 export const MAX_TEXT = 500;
 const HEADING = /^#{1,6}\s+(.*?)\s*#*\s*$/;
 const SECTION = /(acceptance\s+criteria|requirements?|must(\s+have)?)\b/i;
 const CHECKLIST = /^\s*[-*+]\s+\[[ xX]\]\s+(.+)$/;
 const BULLET = /^\s*(?:[-*+]|\d+[.)])\s+(.+)$/;
-
 export function contractEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env["LOKI_CONTRACT"] !== "0";
 }
-
 function clean(s: string): string {
   return s.replace(/\*\*|__|`/g, "").replace(/\s+/g, " ").trim();
 }
-
 export function parseContract(markdown: string, source = ""): Contract {
   const found: { text: string; line: number }[] = [];
   const seen = new Set<string>();
@@ -128,17 +123,13 @@ export function sanitizeCriterion(s: string): string {
   const capped = collapsed.length > MAX_TEXT ? `${collapsed.slice(0, MAX_TEXT)}...` : collapsed;
   return capped.replace(/`/g, "'").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/#/g, "&#35;");
 }
-
 export function untracedLines(trace: ContractTrace): string[] {
   return trace.criteria.filter((c) => c.status === "no_match").map((c) => `contract ${sanitizeCriterion(c.id)} untraced (no keyword match in changed files): ${sanitizeCriterion(c.text)}`);
 }
-
 export function contractPath(repoDir: string): string {
   return join(repoDir, ".loki", "contract.json");
 }
-
 export const MAX_CONTRACT_BYTES = 1024 * 1024;
-
 export interface ContractRead { contract: Contract | null; notes: string[]; sha256: string | null }
 /** The contract as intake saw it (D65-SPEC-F2): sha256 of the raw file bytes (null when no readable file), the parsed contract, and read notes. */
 export type ContractSnapshot = ContractRead
@@ -176,11 +167,9 @@ export function snapshotContract(repoDir: string, env: NodeJS.ProcessEnv = proce
   if (!contractEnabled(env)) return undefined;
   try { return readContract(repoDir); } catch { return { contract: null, notes: ["contract unreadable: snapshot failed"], sha256: null }; }
 }
-
 export function loadContract(repoDir: string): Contract | null {
   return readContract(repoDir).contract;
 }
-
 export function renderContract(c: Contract): string {
   if (c.criteria.length === 0) return "No acceptance criteria found.\n";
   return `${c.criteria.map((x) => `${x.id}  ${x.text}  (line ${x.source_line})`).join("\n")}\n`;
@@ -191,7 +180,6 @@ export function repoRoot(cwd: string): string {
   try { top = safeGit(cwd, ["rev-parse", "--show-toplevel"]).trim(); } catch { /* not a repo */ }
   return top !== "" ? top : cwd;
 }
-
 export function main(args: string[]): number {
   const file = args[0];
   if (!contractEnabled()) { process.stderr.write("contract: disabled by LOKI_CONTRACT=0\n"); return 2; }
@@ -233,7 +221,6 @@ export function sealContract(repoDir: string, body: object, rawDiff: string[], c
     return [`contract trace failed: ${sanitizeCriterion(e instanceof Error ? e.message : String(e))}`];
   }
 }
-
 // REQTRACE: requirement-to-check map, .loki/state/requirements-map.json. Requirements come from existing extractors only:
 // the PRD checklist (.loki/checklist/checklist.json), a loki-spec file (spec_file.ts parseSpec), or the requirements_contract.py
 // unit extractor. Checks are what actually ran. A requirement is covered only by a check that ran and passed. Doc: docs/spec-first-intent.md.
@@ -242,29 +229,23 @@ export interface Requirement { id: string; text: string; links: string[] }
 export interface RanCheck { id: string; label: string; passed: boolean }
 export interface MapEntry { id: string; text: string; checks: string[]; status: "covered" | "uncovered"; method: "explicit" | "heuristic" }
 export interface RequirementsMap { version: 1; revision: string; requirements: MapEntry[] }
-
 const REQ_STOP = new Set(["with", "that", "this", "from", "have", "will", "should", "must", "when", "then", "into", "each", "every", "user", "users", "page", "able", "allow", "support", "ensure", "using", "their", "there", "which", "shall"]);
 const MAX_REQ = 40, MIN_REQ_CHARS = 12;
 const LINK_RE = /\s*\[checks?:\s*([^\]]+)\]\s*$/i;
-
 function tokens(s: string): Set<string> {
   return new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter((t) => t.length >= 4 && !REQ_STOP.has(t)));
 }
-
 /** Splits a trailing "[check: a, b]" annotation (explicit link) from a requirement text. */
 export function splitLinks(raw: string): { text: string; links: string[] } {
   const m = LINK_RE.exec(raw);
   if (!m) return { text: raw.trim(), links: [] };
   return { text: raw.slice(0, m.index).trim(), links: m[1]!.split(",").map((x) => x.trim()).filter(Boolean) };
 }
-
 const numbered = (texts: string[]): Requirement[] => texts.map((t, i) => ({ id: `R${i + 1}`, ...splitLinks(t) }));
-
 /** Requirements from a loki-spec file's acceptance criteria. Null when the text is not a spec. */
 export function fromSpecText(raw: string): Requirement[] | null {
   try { const r = numbered(parseSpec(raw).criteria); return r.length ? r : null; } catch { return null; }
 }
-
 /** Requirements from PRD or task text, via the existing requirements_contract.py extractor. Fewer than 2 units (a one-line brief) is not a PRD: null. */
 export function fromPrdText(text: string, python = "python3"): Requirement[] | null {
   const script = join(REPO_ROOT, "autonomy", "lib", "requirements_contract.py");
@@ -278,7 +259,6 @@ export function fromPrdText(text: string, python = "python3"): Requirement[] | n
   const kept = units.filter((u): u is string => typeof u === "string" && u.length >= MIN_REQ_CHARS && u.length <= 400).slice(0, MAX_REQ);
   return kept.length >= 2 ? numbered(kept) : null;
 }
-
 /** Pure mapping. Explicit link ids win; otherwise at least 2 shared significant words (or all of them when the requirement has one) between the requirement and a passing check's label. */
 export function mapRequirements(reqs: Requirement[], ran: RanCheck[], revision: string): RequirementsMap {
   const byId = new Map(ran.map((c) => [c.id, c] as const));
