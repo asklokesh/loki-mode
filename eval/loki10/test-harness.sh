@@ -273,6 +273,7 @@ row() { note_read "$1"; python3 -c 'import json,sys; r=[json.loads(l) for l in o
 # an older harness.py that lacks the key entirely reads as a false pass).
 haskey() { note_read "$1"; python3 -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1])][-1]; sys.exit(0 if sys.argv[2] in r else 1)' "$1" "$2"; }
 
+rm -f "$T/.read-blocked"
 # ---- 1. validator
 if H validate "$TASKS/fx-greet" "$TASKS/fx-cap" >/dev/null 2>&1; then pass "validator accepts fixtures"; else fail "validator rejected fixtures"; fi
 bad_case() {
@@ -289,6 +290,7 @@ bad_case idmismatch "t['id']='other'"
 bad_case norun "del t['hidden']['run']"
 bad_case badoutcome "t['expected_outcome']='built_it'"
 
+rm -f "$T/.read-blocked"
 # ---- 2. leak check positive control
 mkdir -p "$T/leak" && touch "$T/leak/hidden_test.sh"
 out="$(cd "$T/leak" && STUB_MODE=check bash "$STUB" 2>&1)"; rc=$?
@@ -299,6 +301,7 @@ export LOKI_EVAL_CLAUDE_BIN="$T/bin/claude-stub" LOKI_EVAL_LOKI_BIN="$T/bin/loki
 # real repo and the operator's real $HOME/loki-ci-logs.
 export LOKI_EVAL_ARCHIVE_REPO_ROOT="$T/archive-repo-root" LOKI_EVAL_ARCHIVE="$T/archive-ext"
 
+rm -f "$T/.read-blocked"
 # ---- 3. pass
 R="$T/out-pass"
 STUB_MODE=pass LOKI_SENTINEL_X=1 GH_TOKEN=fake-token RUN --arm raw-claude --task fx-greet --out "$R" >"$T/pass.log" 2>&1
@@ -347,6 +350,7 @@ PL="$(cat "$T/out-probe"/logs/*/arm_stdout.log)"
 printf '%s' "$PL" | grep -q "FUTURE ABSENT" && pass "later upstream commits pruned from the arm checkout" \
     || fail "future commit visible to the arm: $PL"
 
+rm -f "$T/.read-blocked"
 # ---- Rb. arm cannot reach repo.source or the operator's git config
 printf '%s' "$PL" | grep -qF "$T/seed-fx-greet" && fail "Rb: repo.source path visible to the arm" \
     || pass "Rb: repo.source path not visible to the arm (argv, env, .git)"
@@ -360,6 +364,7 @@ if printf '%s' "$PSL" | grep -qF "$TASKS"; then fail "Rb: tasks dir visible in t
 elif printf '%s' "$PSL" | grep -qF "$T/seed-"; then fail "Rb: repo.source visible in the process list during the arm"
 else pass "Rb: neither tasks dir nor repo.source in the process list during the arm"; fi
 
+rm -f "$T/.read-blocked"
 # ---- 4. cost
 R="$T/out-cost"
 STUB_MODE=cost RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
@@ -368,6 +373,7 @@ R2="$T/out-costpretty"
 STUB_MODE=costpretty RUN --arm raw-claude --task fx-greet --out "$R2" >/dev/null 2>&1
 [ "$(row "$R2/results.jsonl" cost_usd)" = 0.25 ] && pass "cost parsed from pretty-printed message array" || fail "pretty cost=$(row "$R2/results.jsonl" cost_usd)"
 
+rm -f "$T/.read-blocked"
 # ---- 5. nofix
 R="$T/out-nofix"
 STUB_MODE=nofix RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
@@ -375,6 +381,7 @@ J="$R/results.jsonl"
 [ "$(row "$J" pr_opened)" = true ] && [ "$(row "$J" hidden_pass)" = false ] && [ "$(row "$J" completed)" = false ] \
     && pass "pushed branch without the fix is not completed" || fail "nofix row: $(tail -1 "$J")"
 
+rm -f "$T/.read-blocked"
 # ---- 6. noop
 R="$T/out-noop"
 STUB_MODE=noop RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
@@ -382,6 +389,7 @@ J="$R/results.jsonl"
 [ "$(row "$J" pr_opened)" = false ] && [ "$(row "$J" completed)" = false ] && [ "$(row "$J" time_to_pr_s)" = null ] \
     && pass "no-op is not completed" || fail "noop row: $(tail -1 "$J")"
 
+rm -f "$T/.read-blocked"
 # ---- 7. cap
 R="$T/out-cap"
 t0=$(date +%s)
@@ -394,6 +402,7 @@ alive=0
 while read -r p; do kill -0 "$p" 2>/dev/null && alive=1; done < "$T/sleep.pids"
 [ "$alive" = 0 ] && pass "sleeper and its child are gone" || fail "sleeper survived the cap"
 
+rm -f "$T/.read-blocked"
 # ---- 8. v10 availability
 R="$T/out-v10"
 STUB_MODE=pass LOKI_EVAL_LOKI_BIN="$T/bin/missing" RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
@@ -404,6 +413,7 @@ STUB_MODE=pass RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
 STUB_MODE=pass STUB_V10_MARKER=1 RUN --arm v10 --task fx-greet --out "$R" >/dev/null 2>&1
 [ "$(row "$R/results.jsonl" completed)" = true ] && pass "v10 with marker and fresh events -> completed" || fail "v10 marker: $(tail -1 "$R/results.jsonl")"
 
+rm -f "$T/.read-blocked"
 # ---- R1. a pre-existing marker makes the task invalid, never a v10 pass
 for v in v-committed-marker v-setup-marker; do
     R="$T/out-$v"
@@ -411,6 +421,7 @@ for v in v-committed-marker v-setup-marker; do
     [ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && [ "$(row "$R/results.jsonl" completed)" = false ] \
         && pass "R1: $v -> task_invalid" || fail "R1: $v row: $(tail -1 "$R/results.jsonl")"
 done
+rm -f "$T/.read-blocked"
 # ---- R1b. marker must point at an events file written during this run
 for m in noevents stale oldpath badfield; do
     R="$T/out-v10-$m"
@@ -419,6 +430,7 @@ for m in noevents stale oldpath badfield; do
         || fail "R1b: $m row: $(tail -1 "$R/results.jsonl")"
 done
 
+rm -f "$T/.read-blocked"
 # ---- R2. loki-arm cost only from provider-sourced records
 R="$T/out-metrics"
 STUB_MODE=pass RUN --arm legacy --task v-committed-metrics --out "$R" >/dev/null 2>&1
@@ -433,6 +445,7 @@ STUB_MODE=pass STUB_LOKI_COST=provider RUN --arm legacy --task fx-greet --out "$
 [ "$(row "$R/results.jsonl" cost_usd)" = 0.5 ] && pass "R2: provider-sourced record -> cost recorded" \
     || fail "R2: provider cost=$(row "$R/results.jsonl" cost_usd)"
 
+rm -f "$T/.read-blocked"
 # ---- Ra. nonce: early exit 0 and skip-only pytest cannot pass
 R="$T/out-exit0"
 STUB_MODE=exit0 RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
@@ -455,6 +468,7 @@ FAKE_PYTEST=skip STUB_MODE=pass RUN --arm raw-claude --task v-venv-pytest --out 
 [ "$(row "$R/results.jsonl" hidden_pass)" = false ] && pass "Ra: venv pytest reporting only skips does not pass" \
     || fail "Ra: venv pytest skip row: $(tail -1 "$R/results.jsonl")"
 
+rm -f "$T/.read-blocked"
 # ---- Rc. symlinked or blocked hidden paths in the PR tree grade as fail
 echo ORIGINAL > "$T/symlink-target"
 R="$T/out-symlink"
@@ -475,6 +489,7 @@ STUB_MODE=blocker RUN --arm raw-claude --task v-blocker --out "$R" >/dev/null 2>
     && pass "Rc: file blocking a hidden parent dir -> graded fail, not harness_error" \
     || fail "Rc: blocker row: $(tail -1 "$R/results.jsonl")"
 
+rm -f "$T/.read-blocked"
 # ---- Rd. harness_error after the push keeps pr_opened
 R="$T/out-chmod"
 STUB_MODE=chmodafter STUB_CHMOD_FILE="$TASKS/v-chmod/hidden/hidden_test.sh" RUN --arm raw-claude --task v-chmod --out "$R" >/dev/null 2>&1
@@ -483,6 +498,7 @@ chmod 644 "$TASKS/v-chmod/hidden/hidden_test.sh"
     && [ "$(row "$R/results.jsonl" completed)" = false ] && pass "Rd: harness_error after push keeps pr_opened" \
     || fail "Rd: row: $(tail -1 "$R/results.jsonl")"
 
+rm -f "$T/.read-blocked"
 # ---- Re. orphans left by the arm die with its process group
 R="$T/out-orphan"
 rm -f "$T/orphan.pids"
@@ -491,6 +507,7 @@ op="$(cat "$T/orphan.pids" 2>/dev/null)"
 if [ -n "$op" ] && ! kill -0 "$op" 2>/dev/null; then pass "Re: orphan sleeper killed after the arm exits"; else
     fail "Re: orphan $op still alive"; [ -n "$op" ] && kill "$op" 2>/dev/null; fi
 
+rm -f "$T/.read-blocked"
 # ---- Rj. (EV-10) a setsid-escaped orphan (own process group, own session,
 # same cwd as the clone -- what a legacy detached /tmp/loki-run-*.sh loop
 # looks like once it reparents to launchd) is still reaped by cwd, not by
@@ -508,6 +525,7 @@ else
     fail "Rj: setsid orphan sp=$sp esc=$esc still alive"; [ -n "$sp" ] && kill -9 "$sp" 2>/dev/null
 fi
 
+rm -f "$T/.read-blocked"
 # ---- Rk. (EV-10) a setsid orphan that chdir'd OUT of the clone before exec
 # (so the cwd reap above cannot see it) is still reaped, from its own PID
 # recorded in a *.pid file under the clone's .loki/ -- what legacy loki
@@ -534,6 +552,7 @@ if kill -0 "$DECOY" 2>/dev/null; then pass "Rk: a decoy PID predating the run is
 else fail "Rk: decoy PID $DECOY (predates the run) was killed"; fi
 kill "$DECOY" 2>/dev/null; wait "$DECOY" 2>/dev/null
 
+rm -f "$T/.read-blocked"
 # ---- Rl. (EV-10) pid-file candidates are filtered before any kill is even
 # attempted: pid<=1 (kill(2) treats -1/0 as "every process the caller may
 # signal", never a single-PID cleanup) and a PID older than the run's own
@@ -567,6 +586,7 @@ then pass "Rl: pid-file candidates filtered by pid<=1 and by age before any kill
 else fail "Rl: pid-file filter"; fi
 kill "$RL_OLD" 2>/dev/null; wait "$RL_OLD" 2>/dev/null
 
+rm -f "$T/.read-blocked"
 # ---- Rf. hidden tests that pass before the arm make the task invalid
 R="$T/out-baseline"
 STUB_MODE=noop RUN --arm raw-claude --task v-baseline-pass --out "$R" >/dev/null 2>&1
@@ -577,6 +597,7 @@ STUB_MODE=pass RUN --arm raw-claude --task v-blocked-base --out "$R" >/dev/null 
 [ "$(row "$R/results.jsonl" status)" = '"task_invalid"' ] && pass "Rf: hidden files unplaceable at repo.ref -> task_invalid" \
     || fail "Rf: blocked-base row: $(tail -1 "$R/results.jsonl")"
 
+rm -f "$T/.read-blocked"
 # ---- Rh. push time before the run start is flagged
 R="$T/out-backdate"
 STUB_MODE=backdate RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>&1
@@ -584,6 +605,7 @@ STUB_MODE=backdate RUN --arm raw-claude --task fx-greet --out "$R" >/dev/null 2>
     && [ "$(row "$R/results.jsonl" completed)" = false ] && pass "Rh: backdated push flagged, not clamped to 0" \
     || fail "Rh: row: $(tail -1 "$R/results.jsonl")"
 
+rm -f "$T/.read-blocked"
 # ---- Ri. harness_sha marks a dirty tree (deterministic: a private mini repo
 # holding a copy of the harness, run clean and then with an untracked file)
 M="$T/minirepo"
@@ -601,6 +623,7 @@ case "$c" in *-dirty\" | null | "") cok=0 ;; *) cok=1 ;; esac
 case "$d" in *-dirty\") dok=1 ;; *) dok=0 ;; esac
 [ "$cok" = 1 ] && [ "$dok" = 1 ] && pass "Ri: harness_sha clean=$c dirty=$d" || fail "Ri: clean=$c dirty=$d"
 
+rm -f "$T/.read-blocked"
 # ---- 17. (E-62/EV-8) v10 arm binary default + loki-ts lockfile refusal.
 # Reuses the Ri minirepo M (harness.py resolves REPO as its own two-parents-up,
 # so M is "the repo" for a run through M/eval/loki10/run.sh) with its own
@@ -662,6 +685,7 @@ STUB_MODE=noop MRUN_NOBIN --arm raw-claude --task fx-greet --out "$R" >/dev/null
 mkdir -p "$M/loki-ts/node_modules/fake-pinned-dep"
 set_dep_version 1.2.3
 
+rm -f "$T/.read-blocked"
 # ---- 9. --all --parallel
 R="$T/out-all"
 mkdir -p "$T/tasks-all"
@@ -670,6 +694,7 @@ STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$T/tasks-all" bash "$HER
 n="$(grep -c . "$R/results.jsonl" 2>/dev/null)"
 [ "$n" = 2 ] && pass "--all --parallel 2 records both tasks" || fail "--all rows=$n"
 
+rm -f "$T/.read-blocked"
 # ---- 10. SIGTERM to run.sh stops only its children and records no verdict
 R="$T/out-stop"
 rm -f "$T/stop.pids"
@@ -689,6 +714,7 @@ rtmp="$(sed -n 's/^run tmp: //p' "$T/stop.log")"
 st="$(row "$R/results.jsonl" status 2>/dev/null)"
 [ -z "$st" ] || [ "$st" = '"interrupted"' ] && pass "interrupted run is not recorded as ok ($st)" || fail "stop row status=$st"
 
+rm -f "$T/.read-blocked"
 # ---- Rg. summarize: dedupe, grouping, denominators (synthetic rows)
 S_IN="$T/synthetic.jsonl"
 python3 - "$S_IN" <<'PY'
@@ -733,6 +759,7 @@ printf '%s' "$md" | grep -q "| raw-claude | 1/4 | 25.0% |" && printf '%s' "$md" 
     && printf '%s' "$md" | grep -q "t4: hidden tests already pass at repo.ref" && printf '%s' "$md" | grep -q "harness s2" \
     && pass "Rg: Markdown groups, invalid tasks and misses" || fail "Rg: markdown: $md"
 
+rm -f "$T/.read-blocked"
 # ---- 12. config isolation (EV-3): every arm gets a fresh empty
 # CLAUDE_CONFIG_DIR under its rundir (overriding the operator's), plus auth,
 # and the auth reaches ONLY the arm process: never setup, grade or argv.
@@ -791,6 +818,7 @@ got="$(grep -h '^ENV-CHECK2:' "$R"/logs/*/arm_stderr.log)"
 no_auth_outside_arm "$R" "api-key"
 if grep -rqF -e "$FAKE_OAUTH" -e "$FAKE_KEY" "$T"/out-*; then fail "auth token value written to a log"; else pass "auth token value appears in no log"; fi
 
+rm -f "$T/.read-blocked"
 # ---- 13. (E-38) --tasks runs exactly the listed ids; an unknown id is
 # refused before any run, so a 5-task measurement never silently shrinks.
 R="$T/out-tasks"
@@ -803,6 +831,7 @@ rc=$?
 [ "$rc" = 2 ] && [ ! -s "$R/results.jsonl" ] && pass "E-38: --tasks with an unknown id exits 2 with no rows" \
     || fail "E-38: bad --tasks rc=$rc rows=$(wc -l < "$R/results.jsonl" 2>/dev/null)"
 
+rm -f "$T/.read-blocked"
 # ---- 14. (E-52) v10-only engine knob passthrough
 cat > "$T/bin/e52-stub" <<'EOF'
 #!/usr/bin/env bash
@@ -818,6 +847,7 @@ got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
 [ "$got" = "ENV-CHECK3: entry=/fake/dist/loki.js plan=plan-value task_text=unset gh=" ] \
     && pass "E-52: v10 arm gets LOKI_TS_ENTRY and allowlisted LOKI_E10_PLAN, not LOKI_E10_TASK_TEXT or GH_TOKEN" \
     || fail "E-52: v10 ENV-CHECK3: got '$got'"
+note_read "$R/x"
 grep -rqF "$GH_CANARY" "$R" && fail "E-52: GH_TOKEN canary reached a log" || pass "E-52: GH_TOKEN canary in no log"
 
 R="$T/out-e52-legacy"
@@ -828,6 +858,7 @@ got="$(grep -h '^ENV-CHECK3:' "$R"/logs/*/arm_stderr.log)"
 [ "$got" = "ENV-CHECK3: entry=unset plan=unset task_text=unset gh=" ] \
     && pass "E-52: legacy arm gets neither LOKI_TS_ENTRY nor LOKI_E10_PLAN" || fail "E-52: legacy ENV-CHECK3: got '$got'"
 
+rm -f "$T/.read-blocked"
 # ---- 15. (EV-13) expected_outcome=no_change_needed
 R="$T/out-nc-badbase"
 STUB_MODE=noop RUN --arm raw-claude --task v-nochange-badbase --out "$R" >/dev/null 2>&1
@@ -923,6 +954,7 @@ J="$R/results.jsonl"
 [ "$(row "$J" no_source_diff)" = false ] && [ "$(row "$J" completed)" = false ] \
     && pass "EV-13 v10: a receipt naming a real edit as a Wall file does not exclude it" \
     || fail "EV-13 v10 fakewall row: $(tail -1 "$J")"
+rm -f "$T/.read-blocked"
 # ---- 16. (D30) tier field: validate + --tier selection
 bad_case tier_bogus "t['tier']='bogus'"
 seed_task fx-medium fx-greet "t['tier']='medium'" ":"
@@ -953,6 +985,7 @@ rc=$?
 [ "$rc" = 2 ] && pass "D30: --tier medium exits 2 on a task with an invalid tier value, not a silent drop" \
     || fail "D30: bad-tier rc=$rc"
 
+rm -f "$T/.read-blocked"
 # ---- 18. (D34) measure-size.py: real-task offline pass + negative controls
 MS="$REPO_ROOT/eval/loki10/measure-size.py"
 
@@ -1050,6 +1083,7 @@ rc=$?
     && pass "D34: --online against an unreachable source -> rc=1" \
     || fail "D34: unreachable-source rc=$rc: $(cat "$T/ms-unreachable.out")"
 
+rm -f "$T/.read-blocked"
 # ---- 19. (S41-01) partial-stream cost, the allowlist grant, and the new row fields
 # A minimal inline arm: no push (cost_usd is set unconditionally right after
 # the arm exits, whether or not it ever opens a PR -- same as R2's estimate
@@ -1198,6 +1232,7 @@ J="$R/results.jsonl"
     && pass "S41-01: a started session without a cost event -> tokens null" \
     || fail "S41-01: tokens=$(row "$J" tokens)"
 
+rm -f "$T/.read-blocked"
 # ---- 19. (D38/EV-12E) measure-size.py: typing-examples/ and examples/ are
 # excluded from the file count. This fixture is alone in its own tasks-dir,
 # so max_medium_lines is self-referential (equals its own line count either
@@ -1233,6 +1268,7 @@ rc=$?
     && pass "D38: attrs-602-shaped fixture (3 product files + typing-examples) reads medium: 3 files, 180 lines" \
     || fail "D38: attrs-602-shaped exclusion rc=$rc: $(cat "$T/ms-attrs602.out")"
 
+rm -f "$T/.read-blocked"
 # ---- 20a. (D38/EV-12E) validate: tier=large requires hidden.provenance,
 # hidden.sha256 (re-hashed, not just present) and hidden.requirements[]
 # naming a test id. A hand-built fixture, not a dependency on any sibling
@@ -1300,6 +1336,7 @@ then pass "D38: requirements[].test (singular, EV-12G's shape) validates"
 else fail "D38: requirements[].test (singular, EV-12G's shape) was rejected"
 fi
 
+rm -f "$T/.read-blocked"
 # ---- 20. (D38/EV-12E) tasks/lg-*/shortcuts/*.patch: applying a committed
 # shortcut at repo.ref must never let the hidden run complete, and the
 # baseline hidden run at repo.ref must be RED by assertion (an "N failed"
@@ -1488,6 +1525,7 @@ PY
 [ "$hs_out" = "['a.py'] None None" ] && pass "D38: hidden_subset lists verbatim files; None without provenance" \
     || fail "D38: hidden_subset got: $hs_out"
 
+rm -f "$T/.read-blocked"
 # ---- 21. (D61 slice 17) speed eval tier (authored spd- tasks, D67)
 # (A) the 8 authored spd- tasks: 4 decomposable, 4 sequential, all valid (D38).
 spd_dirs=("$HERE"/tasks/spd-*)
@@ -1651,6 +1689,7 @@ if printf '%s' "$ltxt" | grep -qF "  $HEAD_TXT" && printf '%s' "$lmd" | grep -qF
 else
     fail "D67: speed tier heading missing: $ltxt $lmd"
 fi
+rm -f "$T/.read-blocked"
 # ---- D62-VIS-F1 F2: a visual-evidence pgid announcement is not a provider session needing a cost record
 if python3 - "$HERE/harness.py" <<'PY'
 import importlib.util, sys
@@ -1669,6 +1708,7 @@ assert tok is None, "a real session with no cost record must still be unknown"
 PY
 then pass "D62-VIS-F1 F2: visual-evidence pgid announcements are ignored when matching sessions to cost records"
 else fail "D62-VIS-F1 F2: group announcement counted as a provider session"; fi
+rm -f "$T/.read-blocked"
 # ---- P12-29: configured-claude arm. Same claude binary and scoring as
 # raw-claude, but its per-run CLAUDE_CONFIG_DIR is seeded from an operator-named
 # source (LOKI_EVAL_CONFIGURED_CC_DIR: CLAUDE.md, settings.json, hooks, skills).
@@ -1723,6 +1763,7 @@ LOKI_EVAL_CONFIGURED_CC_DIR="$T/cc-src" STUB_MODE=pass RUN --arm configured-clau
     && [ "$(row "$R/results.jsonl" completed)" = "true" ] \
     && pass "P12-29: configured-claude runs through the claude stub with a source" \
     || fail "P12-29: with-source row=$(cat "$R/results.jsonl" 2>/dev/null)"
+rm -f "$T/.read-blocked"
 # ---- 22. (P12-30, M5) predeclared task families: one authored fam- manifest per
 # family, all valid, each seeded by setup so the hidden test grades behavior.
 fam_want="api-migration ci-failure flaky incident review-response staging ui"
