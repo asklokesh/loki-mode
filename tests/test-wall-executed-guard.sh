@@ -65,6 +65,44 @@ for s in trivial-sum two-bug; do
     expect_fail "real-run $s rejects the 11.3.2 shape" "$rc" "exit 0: $(cat "$T/w2.log")"
 done
 
+# Q17-04: an expected non-Wall check (lint, mutation proof, cross review) missing from checks[] fails.
+cat > "$T/r-full.json" <<'J'
+{"verdict":"VERIFIED",
+ "checks":[{"name":"wall:loki_wall_sum.test.js","result":"pass"},
+           {"name":"node:test","result":"pass"},
+           {"name":"lint:eslint","result":"pass"},
+           {"name":"mutation:proof","result":"pass"},
+           {"name":"cross-review","result":"pass"}],
+ "wall":{"files":[{"path":"loki_wall_sum.test.js","sha256":"aa"}],"passed":true},
+ "not_proven":[]}
+J
+grep -v 'lint:eslint' "$T/r-full.json" > "$T/r-nolint.json"
+sed 's/"lint:eslint","result":"pass"/"lint:eslint","result":"not_run"/' "$T/r-full.json" > "$T/r-lint-notrun.json"
+rc=0; bash "$GUARD" "$T/r-full.json" 2 lint,mutation,review > "$T/q1.log" 2>&1 || rc=$?
+check "Q17-04 complete receipt stays green with expected checks" "$rc" "$(cat "$T/q1.log")"
+rc=0; bash "$GUARD" "$T/r-nolint.json" 2 lint,mutation,review > "$T/q2.log" 2>&1 || rc=$?
+expect_fail "Q17-04 receipt with lint dropped goes red" "$rc" "exit 0: $(cat "$T/q2.log")"
+grep -F "FAIL wall-guard:" "$T/q2.log" | grep -qF 'expected check "lint"'; check "Q17-04 failure names the lint check" "$?" "$(cat "$T/q2.log")"
+rc=0; bash "$GUARD" "$T/r-lint-notrun.json" 2 lint > /dev/null 2>&1 || rc=$?
+expect_fail "Q17-04 expected check with result not_run goes red" "$rc" "exit 0"
+rc=0; bash "$GUARD" "$T/r-nolint.json" 2 > /dev/null 2>&1 || rc=$?
+check "Q17-04 knob unset: dropped lint is ignored (behavior unchanged)" "$rc" "exit $rc"
+rc=0; bash "$GUARD" "$T/garbage.json" 2 lint > /dev/null 2>&1 || rc=$?
+expect_fail "Q17-04 malformed JSON with expected checks fails closed" "$rc" "exit 0"
+rc=0; bash "$GUARD" "$T/r-full.json" 2 'li;nt' > /dev/null 2>&1 || rc=$?
+usage_ok=1; [ "$rc" -eq 2 ] && usage_ok=0
+check "Q17-04 malformed expected list is a usage error (rc 2)" "$usage_ok" "rc=$rc"
+# Wiring: a scenario with SC_EXPECT_CHECKS makes --check-receipt go red on a receipt missing the check.
+mkdir -p "$T/sc"
+{ cat "$ROOT/tests/real-run/scenarios/trivial-sum.sh"; echo 'SC_EXPECT_CHECKS=lint,mutation,review'; } > "$T/sc/trivial-sum.sh"
+for f in full nolint; do
+    node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(process.argv[1]));r.cost={usd:0.1,input_tokens:1,output_tokens:1};r.time={wall_s:5};fs.writeFileSync(process.argv[2],JSON.stringify(r))' "$T/r-$f.json" "$T/rr-$f.json"
+done
+rc=0; REAL_RUN_SCENARIO_DIR="$T/sc" bash "$ROOT/scripts/real-run.sh" --check-receipt "$T/rr-nolint.json" trivial-sum > "$T/w3.log" 2>&1 || rc=$?
+expect_fail "Q17-04 real-run --check-receipt with SC_EXPECT_CHECKS rejects a dropped lint" "$rc" "exit 0: $(cat "$T/w3.log")"
+rc=0; REAL_RUN_SCENARIO_DIR="$T/sc" bash "$ROOT/scripts/real-run.sh" --check-receipt "$T/rr-full.json" trivial-sum > "$T/w4.log" 2>&1 || rc=$?
+check "Q17-04 real-run --check-receipt with SC_EXPECT_CHECKS accepts a complete receipt" "$rc" "$(cat "$T/w4.log")"
+
 # Post-Release Smoke must run the guard as a blocking step (no continue-on-error, no || true).
 WF="$ROOT/.github/workflows/post-release-smoke.yml"
 python3 -I - "$WF" <<'PY'
