@@ -212,6 +212,93 @@ _loki_apikey_helper_configured() {
     return 1
 }
 
+# ---------- S2: lean child-session flags + cost ledger ----------
+# loki_lean_child_flags <role> prints the lean flag set for a NON-MAIN child
+# `claude -p` session, ONE ARGUMENT PER LINE (never an empty line).
+# Callers read it with a line loop.
+#   - API-key/apiKeyHelper host: "--bare" (gated by loki_subcall_bare_enabled,
+#     which keeps OAuth-only hosts off --bare; it would fail auth there).
+#   - Otherwise: --setting-sources project, --strict-mcp-config, an empty
+#     --mcp-config, --disable-slash-commands.
+#   - Text-only roles additionally get the single argument "--tools=" (no tools). --tools is
+#     variadic: "--tools" plus an empty argument swallows a trailing prompt.
+# Every flag is probed with loki_claude_flag_supported; an unsupported flag and
+# its value are dropped. LOKI_LEAN_CHILDREN=0 prints nothing. Main-session
+# flags are not touched by this helper.
+loki_lean_child_flags() {
+    local role="${1:-}"
+    [ "${LOKI_LEAN_CHILDREN:-1}" = "0" ] && return 0
+    if loki_subcall_bare_enabled; then
+        printf '%s\n' "--bare"
+    else
+        if loki_claude_flag_supported "--setting-sources"; then
+            printf '%s\n' "--setting-sources" "project"
+        fi
+        if loki_claude_flag_supported "--strict-mcp-config"; then
+            printf '%s\n' "--strict-mcp-config"
+        fi
+        if loki_claude_flag_supported "--mcp-config"; then
+            printf '%s\n' "--mcp-config" '{"mcpServers":{}}'
+        fi
+        if loki_claude_flag_supported "--disable-slash-commands"; then
+            printf '%s\n' "--disable-slash-commands"
+        fi
+    fi
+    case "$role" in
+        grill|council|vote|review|reviewer|enrich|wiki|docs|docgen|summary)
+            if loki_claude_flag_supported "--tools"; then
+                printf '%s\n' "--tools="
+            fi
+            ;;
+    esac
+    return 0
+}
+
+# loki_child_ledger_append <phase> <claude --output-format json> appends one
+# line to .loki/metrics/child-sessions.jsonl in the format read by
+# autonomy/lib/efficiency_cost.py read_child_ledger: phase, model,
+# input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, usd,
+# source. A missing usd is omitted, never written as 0. Returns 1 (writes
+# nothing) when the json is not a parseable result object.
+loki_child_ledger_append() {
+    local phase="${1:-}" payload="${2:-}"
+    [ -n "$phase" ] && [ -n "$payload" ] || return 1
+    local dir="${LOKI_DIR:-.loki}/metrics" line
+    line=$(printf '%s' "$payload" | python3 -I -c '
+import json, sys
+phase = sys.argv[1]
+try:
+    d = json.loads(sys.stdin.read())
+except Exception:
+    sys.exit(1)
+if isinstance(d, list):
+    d = next((x for x in reversed(d) if isinstance(x, dict) and x.get("type") == "result"), None)
+if not isinstance(d, dict):
+    sys.exit(1)
+u = d.get("usage") if isinstance(d.get("usage"), dict) else {}
+def n(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
+mu = d.get("modelUsage")
+model = next(iter(mu), "") if isinstance(mu, dict) and mu else (d.get("model") or "")
+rec = {
+    "phase": phase,
+    "model": model if isinstance(model, str) else "",
+    "input_tokens": n(u.get("input_tokens")),
+    "output_tokens": n(u.get("output_tokens")),
+    "cache_creation_tokens": n(u.get("cache_creation_input_tokens")),
+    "cache_read_tokens": n(u.get("cache_read_input_tokens")),
+}
+usd = d.get("total_cost_usd", d.get("cost_usd"))
+if isinstance(usd, (int, float)) and not isinstance(usd, bool):
+    rec["usd"] = usd
+rec["source"] = "claude-json"
+print(json.dumps(rec, separators=(",", ":")))
+' "$phase" 2>/dev/null) || return 1
+    [ -n "$line" ] || return 1
+    mkdir -p "$dir" 2>/dev/null || return 1
+    printf '%s\n' "$line" >> "$dir/child-sessions.jsonl" || return 1
+}
+
 # EMBED 3 -- --disallowedTools (reviewer / adversarial subcalls). Motivation: a
 # parallel agent once ran `git reset --hard` and wiped uncommitted work, so a
 # reviewer/voter subcall should not casually mutate the tree. Per `claude --help`

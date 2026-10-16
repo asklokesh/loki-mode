@@ -163,6 +163,105 @@ else
     ok "SKIP: claude not on PATH; flag_supported behavior untested"
 fi
 
+# ---------- S2: loki_lean_child_flags / loki_child_ledger_append ----------
+LEAN_HELP="  --bare  --setting-sources  --strict-mcp-config  --mcp-config  --disable-slash-commands  --tools"
+LEAN_TMP=$(mktemp -d)
+TMPROOT="$LEAN_TMP"
+REAL_HOME="$HOME"
+export HOME="$LEAN_TMP/home"
+mkdir -p "$HOME/.claude" "$LEAN_TMP/proj"
+export __LOKI_CLAUDE_HELP_CACHE="$LEAN_HELP"
+unset LOKI_LEAN_CHILDREN LOKI_BARE_SUBCALLS ANTHROPIC_API_KEY
+cd "$LEAN_TMP/proj" || exit 1
+
+has_line() { printf '%s\n' "$1" | grep -qxF -- "$2"; }
+
+# OAuth-only host: never --bare, lean fallback flags present
+out=$(loki_lean_child_flags grill)
+if has_line "$out" "--bare"; then
+    bad "S2: OAuth-only host got --bare"
+elif has_line "$out" "--setting-sources" && has_line "$out" "project" \
+    && has_line "$out" "--strict-mcp-config" && has_line "$out" "--disable-slash-commands" \
+    && has_line "$out" '{"mcpServers":{}}'; then
+    ok "S2: OAuth-only host gets lean fallback flags, no --bare"
+else
+    bad "S2: OAuth-only lean flags missing: [$out]"
+fi
+
+# API key host: --bare
+out=$(ANTHROPIC_API_KEY=sk-test loki_lean_child_flags review)
+if has_line "$out" "--bare" && ! has_line "$out" "--strict-mcp-config"; then
+    ok "S2: API key host gets --bare"
+else
+    bad "S2: API key host flags wrong: [$out]"
+fi
+
+# whitespace-only key does not count
+out=$(ANTHROPIC_API_KEY="   " loki_lean_child_flags review)
+has_line "$out" "--bare" && bad "S2: blank key got --bare" || ok "S2: blank API key does not enable --bare"
+
+# apiKeyHelper host: --bare
+printf '{"apiKeyHelper": "echo k"}\n' > "$HOME/.claude/settings.json"
+out=$(loki_lean_child_flags review)
+has_line "$out" "--bare" && ok "S2: apiKeyHelper host gets --bare" || bad "S2: apiKeyHelper host no --bare: [$out]"
+rm -f "$HOME/.claude/settings.json"
+
+# text-only role: single argument "--tools=" (the variadic --tools swallows a
+# trailing prompt when given an empty value); tool role: no --tools
+lines=()
+while IFS= read -r l; do lines+=("$l"); done < <(loki_lean_child_flags grill)
+last=$(( ${#lines[@]} - 1 ))
+if [ "${lines[$last]}" = "--tools=" ]; then
+    ok "S2: text-only role gets single argument --tools="
+else
+    bad "S2: text-only role --tools value wrong: [${lines[*]}]"
+fi
+empty=0
+for l in "${lines[@]}"; do [ -z "$l" ] && empty=$((empty + 1)); done
+[ "$empty" -eq 0 ] && ok "S2: no emitted argument is an empty line" || bad "S2: $empty empty line(s) emitted: [${lines[*]}]"
+has_line "$(loki_lean_child_flags grill)" "--tools" && bad "S2: bare --tools emitted" || ok "S2: bare --tools never emitted"
+out=$(loki_lean_child_flags implement)
+has_line "$out" "--tools" && bad "S2: tool role got --tools" || ok "S2: tool role never gets --tools"
+
+# unsupported flag dropped together with its value
+export __LOKI_CLAUDE_HELP_CACHE="  --setting-sources --strict-mcp-config --disable-slash-commands"
+out=$(loki_lean_child_flags grill)
+if has_line "$out" "--tools" || has_line "$out" "--mcp-config" || has_line "$out" '{"mcpServers":{}}'; then
+    bad "S2: unsupported flag or value leaked: [$out]"
+else
+    ok "S2: unsupported flags and their values are dropped"
+fi
+export __LOKI_CLAUDE_HELP_CACHE="$LEAN_HELP"
+
+# opt-out
+out=$(LOKI_LEAN_CHILDREN=0 loki_lean_child_flags grill)
+[ -z "$out" ] && ok "S2: LOKI_LEAN_CHILDREN=0 prints nothing" || bad "S2: opt-out printed [$out]"
+
+# ledger
+loki_child_ledger_append grill '{"type":"result","total_cost_usd":0.0123,"usage":{"input_tokens":10,"output_tokens":20,"cache_creation_input_tokens":30,"cache_read_input_tokens":40},"modelUsage":{"claude-sonnet-x":{}}}'
+loki_child_ledger_append council '{"usage":{"input_tokens":1,"output_tokens":2}}'
+loki_child_ledger_append broken 'not json'
+bad_rc=$?
+LEDGER="$LEAN_TMP/proj/.loki/metrics/child-sessions.jsonl"
+if python3 -I - "$LEDGER" "$bad_rc" <<'PY'
+import json, sys
+lines = open(sys.argv[1]).read().splitlines()
+assert len(lines) == 2, lines
+a, b = map(json.loads, lines)
+assert a["phase"] == "grill" and a["usd"] == 0.0123 and a["model"] == "claude-sonnet-x", a
+assert (a["input_tokens"], a["output_tokens"], a["cache_creation_tokens"], a["cache_read_tokens"]) == (10, 20, 30, 40), a
+assert isinstance(a["source"], str) and a["source"], a
+assert b["phase"] == "council" and "usd" not in b and b["input_tokens"] == 1 and b["cache_read_tokens"] == 0, b
+assert sys.argv[2] == "1"
+PY
+then ok "S2: ledger lines match S1 format; missing usd omitted; invalid json skipped"; else bad "S2: ledger format check failed"; fi
+
+cd "$SCRIPT_DIR" || true
+export HOME="$REAL_HOME"
+unset __LOKI_CLAUDE_HELP_CACHE
+rm -rf "$LEAN_TMP"
+TMPROOT=""
+
 echo
 echo "Total: $((PASS + FAIL))  Passed: $PASS  Failed: $FAIL"
 [ "$FAIL" -eq 0 ]
