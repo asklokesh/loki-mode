@@ -12,4 +12,4 @@ def load(env):
 if load({}) != "{'db': 'sqlite:///dev.db', 'debug': True}": fail('default changed: ' + load({}))
 stg = {'APP_ENV': 'staging', 'STAGING_DB_URL': 'postgres://stg/x'}
 if load(stg) != "{'db': 'postgres://stg/x', 'debug': False}": fail('staging: ' + load(stg))
-print('PASS')
+print(os.environ.get('LOKI_EVAL_NONCE', 'PASS'))

@@ -1,0 +1,6 @@
+seed files only (no fix)
+command: python3 tests_hidden/test_fam.py
+exit: 1
+last output line: FAIL: main.py rc=1 out='' err=" import parse\nImportError: cannot import name 'parse' from 'util' (/private/tmp/claude-501/-Users-lokesh-git-lokimode-anthropic/5ac34f8c-616c-4411-a780-4155b00a2390/scratchpad/rg/tmp85p07m8z/util.py)\n"
+seconds: 0.1
+repo: empty-repo.bundle @ a49d132f67fd193a89e55363dc8c8a8933a1304e plus setup seed

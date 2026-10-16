@@ -7,7 +7,7 @@
     "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
     "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
   },
-  "setup": "python3 -c \"import base64;open('config.py','wb').write(base64.b64decode('aW1wb3J0IG9zCgpkZWYgbG9hZCgpOgogICAgcmV0dXJuIHsnZGInOiAnc3FsaXRlOi8vL2Rldi5kYicsICdkZWJ1Zyc6IFRydWV9Cg=='))\"",
+  "setup": "[ -e config.py ] || python3 -c \"import base64;open('config.py','wb').write(base64.b64decode('aW1wb3J0IG9zCgpkZWYgbG9hZCgpOgogICAgcmV0dXJuIHsnZGInOiAnc3FsaXRlOi8vL2Rldi5kYicsICdkZWJ1Zyc6IFRydWV9Cg=='))\"",
   "hidden": {
     "files": [
       "tests_hidden/test_fam.py"

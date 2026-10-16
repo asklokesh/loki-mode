@@ -15,4 +15,4 @@ try:
 finally:
     open('handler.py', 'w').write(new)
 if subprocess.run([sys.executable, 'test_handler.py'], capture_output=True).returncode != 0: fail('regression test fails on the fix')
-print('PASS')
+print(os.environ.get('LOKI_EVAL_NONCE', 'PASS'))

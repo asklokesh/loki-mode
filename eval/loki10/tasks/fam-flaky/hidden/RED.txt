@@ -1,0 +1,6 @@
+seed files only (no fix)
+command: python3 tests_hidden/test_fam.py
+exit: 1
+last output line: FAIL: seed 0: rc=1
+seconds: 0.1
+repo: empty-repo.bundle @ a49d132f67fd193a89e55363dc8c8a8933a1304e plus setup seed

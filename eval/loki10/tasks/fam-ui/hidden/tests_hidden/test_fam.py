@@ -28,4 +28,4 @@ if not p.t.strip(): fail('no title text')
 for i in ('email', 'pw'):
     if i not in p.ids or i not in p.fors: fail('input %s lacks id or label' % i)
 if not p.btn: fail('no submit button inside form')
-print('PASS')
+print(os.environ.get('LOKI_EVAL_NONCE', 'PASS'))

@@ -7,7 +7,7 @@
     "source": "/Users/lokesh/git/lokimode-anthropic/eval/loki10/fixtures/empty-repo/empty-repo.bundle",
     "ref": "a49d132f67fd193a89e55363dc8c8a8933a1304e"
   },
-  "setup": "python3 -c \"import base64;open('ci.log','wb').write(base64.b64decode('JCBweXRob24zIG1haW4ucHkKVHJhY2ViYWNrIChtb3N0IHJlY2VudCBjYWxsIGxhc3QpOgogIEZpbGUgIm1haW4ucHkiLCBsaW5lIDEsIGluIDxtb2R1bGU+CiAgICBmcm9tIHV0aWwgaW1wb3J0IHBhcnNlCkltcG9ydEVycm9yOiBjYW5ub3QgaW1wb3J0IG5hbWUgJ3BhcnNlJyBmcm9tICd1dGlsJwpleGl0IDEK'))\"; python3 -c \"import base64;open('util.py','wb').write(base64.b64decode('ZGVmIHBhcnNlX2xpbmUocyk6CiAgICBrLCB2ID0gcy5zcGxpdCgnPScsIDEpCiAgICByZXR1cm4gay5zdHJpcCgpLCB2LnN0cmlwKCkK'))\"; python3 -c \"import base64;open('main.py','wb').write(base64.b64decode('ZnJvbSB1dGlsIGltcG9ydCBwYXJzZQoKcHJpbnQocGFyc2UoJ2EgPSAxJykpCg=='))\"",
+  "setup": "[ -e ci.log ] || python3 -c \"import base64;open('ci.log','wb').write(base64.b64decode('JCBweXRob24zIG1haW4ucHkKVHJhY2ViYWNrIChtb3N0IHJlY2VudCBjYWxsIGxhc3QpOgogIEZpbGUgIm1haW4ucHkiLCBsaW5lIDEsIGluIDxtb2R1bGU+CiAgICBmcm9tIHV0aWwgaW1wb3J0IHBhcnNlCkltcG9ydEVycm9yOiBjYW5ub3QgaW1wb3J0IG5hbWUgJ3BhcnNlJyBmcm9tICd1dGlsJwpleGl0IDEK'))\"; [ -e util.py ] || python3 -c \"import base64;open('util.py','wb').write(base64.b64decode('ZGVmIHBhcnNlX2xpbmUocyk6CiAgICBrLCB2ID0gcy5zcGxpdCgnPScsIDEpCiAgICByZXR1cm4gay5zdHJpcCgpLCB2LnN0cmlwKCkK'))\"; [ -e main.py ] || python3 -c \"import base64;open('main.py','wb').write(base64.b64decode('ZnJvbSB1dGlsIGltcG9ydCBwYXJzZQoKcHJpbnQocGFyc2UoJ2EgPSAxJykpCg=='))\"",
   "hidden": {
     "files": [
       "tests_hidden/test_fam.py"
