@@ -31,7 +31,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import fnmatch
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -368,7 +370,14 @@ def materialize_seed(task: Dict[str, Any], workdir: str) -> None:
     env = _scoped_env({"GIT_AUTHOR_DATE": "2026-01-01T00:00:00Z",
                        "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"})
     ident = ["-c", "user.name=attribution-bench", "-c", "user.email=bench@example.invalid"]
-    for args in (["init", "-q"], ["add", "-A"], ident + ["commit", "-q", "-m", "seed"]):
+    # run_group.ts only parses `git remote get-url origin` against owner/repo (no
+    # fetch), so a URL-only remote lets multi-unit specs start. The URL is only
+    # parsed: the PR stage is disabled by --no-pr in the loki adapter, and any
+    # stray fetch fails fast because the adapter turns credential prompts off.
+    remote = "https://github.com/loki-bench/%s.git" % re.sub(
+        r"[^A-Za-z0-9_.-]", "-", str(task.get("id") or "seed"))
+    for args in (["init", "-q"], ["add", "-A"], ident + ["commit", "-q", "-m", "seed"],
+                 ["remote", "add", "origin", remote]):
         subprocess.run(["git", "-C", workdir] + args, check=True,
                        capture_output=True, env=env, timeout=60)
 
@@ -474,10 +483,15 @@ def run_loki(workdir: str, prompt_file: str, *, model: str, budget_usd: float,
             os.environ["LOKI_SESSION_MODEL"] = prev_model
     prov = res.get("provenance") or {}
     status = res["exit_status"]
+    rc = prov.get("rc")
     return {
-        "status": status, "rc": 0 if status == "completed" else None,
+        "status": status, "rc": rc,
         "elapsed_s": res["duration_s"],
-        "reported_success": status == "completed",
+        # Engine verdict: exit 0 is VERIFIED/success; anything else (including an
+        # unknown rc) is not.
+        "reported_success": rc == 0,
+        "stderr_tail": prov.get("stderr_tail"),
+        "stdout_tail": prov.get("stdout_tail"),
         "cost_usd": res["cost_usd"],
         "cost_source": "loki.efficiency_cost" if res["cost_usd"] is not None else None,
         "tokens_in": res["tokens_in"], "tokens_out": res["tokens_out"],
@@ -519,11 +533,54 @@ def run_droid(workdir: str, prompt: str, *, timeout_s: int,
     }
 
 
+EVIDENCE_SKIP_DIRS = ("node_modules", "cache", "caches", "worktrees", ".git", "__pycache__")
+EVIDENCE_MAX_FILE_BYTES = 5 * 1024 * 1024
+
+
+def _evidence_secret_name(name: str) -> bool:
+    """True for names that may hold credentials. receipt*.json is the one exemption."""
+    low = name.lower()
+    if low.startswith("receipt") and low.endswith(".json"):
+        return False
+    return any(fnmatch.fnmatch(low, pat)
+               for pat in ("*.env", "*token*", "*secret*", "*key*"))
+
+
+def keep_evidence(workdir: str, dest: str, row: Dict[str, Any]) -> None:
+    """Copy .loki/ (minus large caches) and the stderr tail out of a workdir that is
+    about to be deleted. Best effort: evidence loss never fails a measured cell."""
+    try:
+        os.makedirs(dest, exist_ok=True)
+        src = os.path.join(workdir, ".loki")
+        if os.path.isdir(src):
+            def _ignore(d: str, names: List[str]) -> List[str]:
+                skip = [n for n in names if n in EVIDENCE_SKIP_DIRS]
+                skip += [n for n in names if _evidence_secret_name(n)]
+                for n in names:
+                    fp = os.path.join(d, n)
+                    try:
+                        if (os.path.isfile(fp) and not os.path.islink(fp)
+                                and os.path.getsize(fp) > EVIDENCE_MAX_FILE_BYTES):
+                            skip.append(n)
+                    except OSError:
+                        skip.append(n)
+                return skip
+            shutil.copytree(src, os.path.join(dest, ".loki"), ignore=_ignore,
+                            symlinks=True, dirs_exist_ok=True)
+        tail = row.get("stderr_tail")
+        if tail:
+            with open(os.path.join(dest, "stderr.txt"), "w") as fh:
+                fh.write(tail)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
              budget_usd: float, timeout_s: int, scratch: str,
              runner: Optional[Callable] = None,
              droid_probe: Optional[Dict[str, Any]] = None,
-             bare_probe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+             bare_probe: Optional[Dict[str, Any]] = None,
+             evidence_dir: Optional[str] = None) -> Dict[str, Any]:
     row: Dict[str, Any] = {"task": task["id"], "class": task["class"], "arm": arm,
                            "repeat": repeat, "accepted": False,
                            "reported_success": False}
@@ -570,6 +627,8 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
         row.setdefault("cost_usd", None)
         row.setdefault("elapsed_s", None)
     finally:
+        if evidence_dir:
+            keep_evidence(workdir, os.path.join(evidence_dir, os.path.basename(workdir)), row)
         shutil.rmtree(workdir, ignore_errors=True)
     return row
 
@@ -579,7 +638,8 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
             progress: Callable[[str], None] = lambda s: None,
             droid_probe: Optional[Dict[str, Any]] = None,
             bare_probe: Optional[Dict[str, Any]] = None,
-            max_spend_usd: Optional[float] = None) -> List[Dict[str, Any]]:
+            max_spend_usd: Optional[float] = None,
+            evidence_dir: Optional[str] = None) -> List[Dict[str, Any]]:
     by_id = {t["id"]: t for t in tasks}
     scratch = tempfile.mkdtemp(prefix="loki-attr-")
     rows: List[Dict[str, Any]] = []
@@ -601,7 +661,7 @@ def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
                                  model=plan["model"], budget_usd=plan["budget_usd"],
                                  timeout_s=plan["timeout_s"], scratch=scratch,
                                  runner=runner, droid_probe=droid_probe,
-                                 bare_probe=bare_probe))
+                                 bare_probe=bare_probe, evidence_dir=evidence_dir))
             spent += row_true_spend(rows[-1])
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
@@ -832,7 +892,9 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
     env["droid"] = droid_probe
     bare_probe = probe_bare() if "raw-bare" in arms else None
     env["raw_bare"] = bare_probe
-    rows = run_all(tasks, plan, runner=runner,
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    evidence_dir = os.path.join(args.out_dir, "evidence-%s" % stamp)
+    rows = run_all(tasks, plan, runner=runner, evidence_dir=evidence_dir,
                    progress=lambda s: print(s, file=sys.stderr),
                    droid_probe=droid_probe, bare_probe=bare_probe,
                    max_spend_usd=args.max_spend_usd)
@@ -845,7 +907,6 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         "rows": rows, "summary": summarize(rows, arms),
     }
     os.makedirs(args.out_dir, exist_ok=True)
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     jpath = os.path.join(args.out_dir, "attribution-%s.json" % stamp)
     mpath = os.path.join(args.out_dir, "attribution-%s.md" % stamp)
     with open(jpath, "w") as fh:
