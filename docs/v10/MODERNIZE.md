@@ -381,7 +381,7 @@ The report never states more than the equivalence data proves. It is sealed and 
 | M-20 | Wave verify: full build, integration and original suite | mod/wave.ts, T/wave.test.ts | MEDIUM | Wb T/wave.test.ts | M-17, M-19 |
 | M-21 | Wave ship: one PR per wave with unit receipts, draft unless all proven | mod/ship.ts, T/ship.test.ts | HIGH | Wb T/ship.test.ts | M-20 |
 | M-22 | Unit-level resume after coordinator crash | mod/resume.ts, T/resume.test.ts | MEDIUM | Wb T/resume.test.ts | M-17, E-39 |
-| M-23 | Remote units via POST /jobs kind unit, Helm worker.engine v10, local re-verify | autonomy/trigger-server.py (unit job kind only), deploy/helm/autonomi/templates/job-worker.yaml, deploy/helm/autonomi/values.yaml, mod/remote.ts, T/remote.test.ts, tests/test-trigger-server-unit-jobs.py | HIGH | python3 tests/test-trigger-server-unit-jobs.py && Wb T/remote.test.ts | M-17 |
+| M-23 | Remote units via POST /jobs kind unit, Helm worker.engine v10, local re-verify | autonomy/trigger-server.py (unit job kind only), deploy/helm/autonomi/templates/job-worker.yaml, deploy/helm/autonomi/values.yaml, loki-ts/src/util/modernize_unit.ts, T/remote.test.ts, tests/test-trigger-server-unit-jobs.py | HIGH | python3 tests/test-trigger-server-unit-jobs.py && Wb T/remote.test.ts | M-17 |
 | M-24 | Dashboard /modernize view | loki-ts/src/engine10/dashboard/modernize.ts, loki-ts/src/engine10/dashboard/server.ts (one route), T/dashboard.test.ts | LOW | Wb T/dashboard.test.ts | M-01 |
 | M-25 | Final report and verdict (COMPLETE only if all proven), sealed | mod/report.ts, T/report.test.ts | HIGH | Wb T/report.test.ts | M-13, M-21 |
 | M-26 | End-to-end: py2 fixture repo modernized with stub provider | T/e2e.test.ts, T/fixtures/e2e_py2/ | MEDIUM | Wb T/e2e.test.ts | M-08, M-22, M-25 |
@@ -398,3 +398,34 @@ The report never states more than the equivalence data proves. It is sealed and 
 - Red: the test file is missing or asserts the absent behavior.
 - Green: every assertion named in the goal holds.
 - Each HIGH slice needs a unanimous opus review (D12).
+
+## 14. Fan-out alignment: G-04 cloud dispatch and the M-23 unit job (G-05)
+
+Both fan-outs hand one independent piece of work to a remote worker and accept the result only after the coordinator checks it. They share one shape so a single dispatcher can drive either.
+
+**M-23 unit job schema** (POST /jobs, same bearer token as every job kind; the schema is closed and any other field is rejected with 400):
+
+| Field | Bound | Required |
+|---|---|---|
+| `kind` | the literal `unit` | yes |
+| `repo` | `owner/name`, at most 140 chars, no leading dash, no `.` or `..` segment | yes |
+| `ref` | git ref, at most 200 chars, no `..`, no leading dash | yes |
+| `unit` | unit id, `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`, never contains `~` | yes |
+| `mid` | `mod-<utc>-<6 hex>` | no |
+| `target` | `python3` or `java21` | no |
+
+The worker runs `loki modernize unit --repo <repo> --ref <ref> --unit <unit>` (plus `--mid` and `--target` when given). It fetches repo@ref into a run-owned temp directory with the safe_git helpers, runs the unit there through the same unit runner as a local run, and removes the directory afterwards. A checkout failure, a runner failure or any verdict other than PROVEN exits nonzero with the reason on stderr; exit 2 means bad arguments or runners that are not wired yet.
+
+**G-04 dispatch fields mapped onto it** (scripts/cloud-dispatch.sh, docs/v10/SWARM.md "Cloud dispatch"):
+
+| G-04 field | M-23 field | Rule |
+|---|---|---|
+| slice id (`SLICE-ID`) | `unit` | Same unit-id charset; the id is the unit of fan-out and of overlap checks. |
+| branch `cloud/<slice-id>` | `ref` | The worker works on this ref (G-04 also returns it); the coordinator never merges a ref it did not name. |
+| repository of the checkout | `repo` | Always `owner/name`; no URL, no userinfo. |
+| file set (overlap check) | the unit's own files | Resolved coordinator-side from plan.json before dispatch; never sent in the job. Overlap with in-flight work refuses the dispatch in both. |
+| tier and governor max | scheduler `--workers` | Concurrency is the governor cap, not a job field. |
+| cloud session id (BOARD note) | server job `id` | Recorded by the coordinator against the unit (events.jsonl for M-23, the BOARD row for G-04). |
+| PR and check conclusion | local re-verify | The PR check result and the remote "passed" are claims. The coordinator re-verifies locally (equivalence check for a unit, required checks for a slice) and merges only if both agree. |
+
+Shared rules: credentials are never in the payload (the token is an Authorization header for POST /jobs, and the cloud session uses its own login); an unobserved or unknown remote outcome is not a pass; a remote pass with a failing local re-verify never merges; dispatch refuses rather than guesses when the schema, the overlap check or the cap cannot be evaluated.

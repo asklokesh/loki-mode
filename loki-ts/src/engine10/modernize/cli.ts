@@ -16,6 +16,7 @@ import type { CostPrior } from "./estimate.ts";
 import { ModernizeLog } from "./log.ts";
 import { isModernizeId, makeModernizeId } from "./types.ts";
 import type { ModernizeTarget } from "./types.ts";
+import { unitMain } from "../../util/modernize_unit.ts";
 
 const TARGETS: readonly ModernizeTarget[] = ["python3", "java21"];
 const DEFAULT_WORKERS = 4;
@@ -24,6 +25,7 @@ const MAX_LOCAL_WORKERS = 32; // section 2: "max 32 locally"; --remote's cap com
 export const USAGE = `Usage:
   loki modernize <repo> --to "<target>" [--budget USD] [--workers N] [--remote URL]
                  [--resume <mid>] [--dry-run] [--provider P] [--no-pr]
+  loki modernize unit --repo <owner/name> --ref <ref> --unit <id> [--mid <mid>] [--target <target>]
 Targets: ${TARGETS.join(", ")}
 `;
 
@@ -185,6 +187,7 @@ export async function main(args: readonly string[], deps: ModernizeCliDeps = {})
     process.stdout.write(USAGE);
     return args.length === 0 ? 2 : 0;
   }
+  if (args[0] === "unit") return unitMain(args.slice(1), deps);
   const parsed = parseArgs(args);
   if (!parsed.ok) {
     process.stderr.write(`modernize: ${parsed.error}\n${USAGE}`);

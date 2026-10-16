@@ -1,5 +1,5 @@
 // Loki 10 event log (docs/v10/ENGINE.md "Event log"): append-only JSONL at <repo>/.loki/runs/<run-id>/events.jsonl, written only by the supervisor.
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, truncateSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
 import type { EventEnvelope, EventType, Obj, StageName, Verdict } from "./types.ts";
 
@@ -60,10 +60,10 @@ export class EventLog {
     mkdirSync(dirname(path), { recursive: true });
     const prior = readEvents(path);
     this.nextSeq = prior.length ? Math.max(...prior.map((e) => e.seq)) + 1 : 0;
-    // A torn last line has no newline; terminate it so the next event is not glued to it.
+    // A torn last line has no newline; truncate it so the next event is not glued to it and no torn line survives mid-log.
     if (existsSync(path)) {
       const buf = readFileSync(path);
-      if (buf.length > 0 && buf[buf.length - 1] !== 0x0a) this.writeRaw("\n");
+      if (buf.length > 0 && buf[buf.length - 1] !== 0x0a) truncateSync(path, buf.lastIndexOf(0x0a) + 1);
     }
   }
 

@@ -265,6 +265,7 @@ One entry per decision: context, choice, why, how to reverse. Newest last.
 - modernize/ gets its own cap of 4,000 lines in the same test: 25 planned modules (MODERNIZE.md section 13) at about 150 lines each plus 15% slack. M-24's view moves to mod/dashboard.ts. M-14 stays under 20 lines in wall.ts and calls into mod/oracle/.
 - Core never imports modernize/ (the cli.ts TABLE string is exempt), so the split cannot hide core code.
 - Hitting either cap means re-slice or delete, never raise. Ruled by the CTO (opus) on the Chief of Staff's request; implemented by E-76.
+- 2026-10-15 (M-22/M-23 integration): loki-ts/src/util/ may host engine10 entry points and modernize helpers that would push modernize/ past its cap (util/modernize_unit.ts for remote unit jobs, util/python.ts for pytest running and parsing); they import engine10, engine10 core never imports them.
 
 ## D34. 2026-09-28: large tier is real upstream PRs, one size gate, legacy moves to M-27
 

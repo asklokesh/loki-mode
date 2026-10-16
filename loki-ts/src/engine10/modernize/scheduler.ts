@@ -30,6 +30,9 @@ export interface AttemptCtx {
   worker: number;
   worktree: string;
   baseSha: string;
+  /** Set on a resumed unit (M-22): the recorded engine10 run id, to be continued through the E-39 resume path
+   *  (`loki --resume <run-id>`) inside the reattached worktree rather than started over. */
+  resumeRunId?: string;
 }
 export interface AttemptOutcome {
   result: UnitRunResult;
@@ -41,6 +44,29 @@ export type AttemptRunner = (ctx: AttemptCtx) => AttemptOutcome | Promise<Attemp
 export interface WorktreeOps {
   create(repoDir: string, path: string, baseSha: string): void;
   remove(repoDir: string, path: string): void;
+  /** True when path is an existing worktree whose HEAD is baseSha (MODERNIZE.md section 5). Absent = never reusable. */
+  reusable?(repoDir: string, path: string, baseSha: string): boolean;
+}
+
+/** The unit merge, injected. isMerged must read the repo, not memory. */
+export interface MergeOps {
+  isMerged(unit: string): boolean;
+  merge(unit: string, worktree?: string): void;
+}
+export type MergeResult = "merged" | "already_completed" | "adopted";
+
+/** Idempotent merge. The merge and the unit.completed write are not atomic, so a crash can land between
+ *  them: on restart the repo says merged but the log does not say completed. That case is adopted (the
+ *  completion is recorded) and the merge is never repeated. */
+export function mergeOnce(unit: string, ops: MergeOps, log: ModernizeLog, completed: ReadonlySet<string>, worktree?: string): MergeResult {
+  if (completed.has(unit)) return "already_completed";
+  if (ops.isMerged(unit)) {
+    log.append("unit.completed", { unit, adopted: true });
+    return "adopted";
+  }
+  ops.merge(unit, worktree);
+  log.append("unit.completed", { unit });
+  return "merged";
 }
 
 /** Real git worktrees. Argument arrays only (no shell), detached at the recorded base. Routed through safeGit (FC-25): a unit agent
@@ -53,6 +79,13 @@ export const gitWorktrees: WorktreeOps = {
     try {
       safeGit(repoDir, ["worktree", "remove", "--force", path]);
     } catch { /* already gone */ }
+  },
+  reusable(_repoDir, path, baseSha) {
+    try {
+      return safeGit(path, ["rev-parse", "HEAD"]).trim() === baseSha;
+    } catch {
+      return false;
+    }
   },
 };
 
@@ -69,6 +102,12 @@ export interface SchedulerOpts {
   /** Stamped on unit.started events when set. */
   runId?: string;
   worktrees?: WorktreeOps;
+  /** When set, a PROVEN unit is merged through mergeOnce, which emits unit.completed (M-22). */
+  merge?: MergeOps;
+  /** Units the log already marks completed; mergeOnce never merges these again. */
+  completed?: ReadonlySet<string>;
+  /** unit id -> recorded run id for units resumed after a crash (M-22). */
+  resumeRuns?: ReadonlyMap<string, string>;
 }
 
 export type UnitStatus = "PROVEN" | "NOT_EQUAL" | "NOT_PROVEN" | "SKIPPED_BUDGET";
@@ -147,12 +186,23 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
       const path = join(modernizeRoot(opts.repoDir, opts.mid), "wt", variant === 0 ? unit.id : `${unit.id}${VARIANT_SEP}${variant}`);
       let outcome: AttemptOutcome;
       attempts++;
-      opts.log.append("unit.started", { unit: unit.id, model, worker, variant, ...(opts.runId ? { run_id: opts.runId } : {}) });
+      // Resume (M-22): reattach the recorded worktree and hand the run id to the E-39 path. If the worktree cannot be
+      // reattached at the recorded base, restart cleanly and say why in the log.
+      let resumeRunId: string | undefined;
+      const wantRun = variant === 0 ? opts.resumeRuns?.get(unit.id) : undefined;
+      if (wantRun !== undefined) {
+        if (wt.reusable?.(opts.repoDir, path, opts.baseSha)) resumeRunId = wantRun;
+        else opts.log.append("unit.resume_fallback", { unit: unit.id, run_id: wantRun, reason: wt.reusable ? "worktree missing or HEAD differs from the recorded base; restarted cleanly" : "worktree reattach not supported; restarted cleanly" });
+      }
+      const stampRun = resumeRunId ?? opts.runId;
+      opts.log.append("unit.started", { unit: unit.id, model, worker, variant, ...(stampRun ? { run_id: stampRun } : {}) });
       if (variant > 0) opts.log.append("unit.variant", { unit: unit.id, variant, model });
       try {
-        wt.remove(opts.repoDir, path);
-        wt.create(opts.repoDir, path, opts.baseSha);
-        outcome = await opts.run({ unit, model, variant, worker, worktree: path, baseSha: opts.baseSha });
+        if (resumeRunId === undefined) {
+          wt.remove(opts.repoDir, path);
+          wt.create(opts.repoDir, path, opts.baseSha);
+        }
+        outcome = await opts.run({ unit, model, variant, worker, worktree: path, baseSha: opts.baseSha, ...(resumeRunId ? { resumeRunId } : {}) });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         outcome = {
@@ -166,6 +216,17 @@ export async function schedule(plan: ClusterResult, opts: SchedulerOpts): Promis
       spent += c;
       last = outcome.result;
       if (last.verdict === "PROVEN") {
+        if (opts.merge) {
+          try {
+            mergeOnce(unit.id, opts.merge, opts.log, opts.completed ?? new Set(), path);
+          } catch (e) {
+            wt.remove(opts.repoDir, path);
+            const msg = e instanceof Error ? e.message : String(e);
+            let landed = false;
+            try { landed = opts.merge.isMerged(unit.id); } catch { /* unknown: report a plain merge failure */ }
+            return { unit: unit.id, status: "NOT_PROVEN", attempts, costUsd: unitCost, result: last, worktree: null, needsReslice: false, reason: landed ? `merge landed, log append failed: ${msg}` : `merge failed: ${msg}` };
+          }
+        }
         return { unit: unit.id, status: "PROVEN", attempts, costUsd: unitCost, result: last, worktree: path, needsReslice: false };
       }
       wt.remove(opts.repoDir, path);

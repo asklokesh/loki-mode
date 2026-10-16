@@ -20,7 +20,8 @@ import { DEFAULT_NORMALIZERS, sealOracle } from "../../../src/engine10/modernize
 import { classifyBaseRun, sealPreSealedWall } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { BaseConformanceRunner, BaseRunOutcome } from "../../../src/engine10/modernize/presealed_wall.ts";
 import type { CaseRecord, NewCaseOutcome } from "../../../src/engine10/modernize/equiv.ts";
-import { conformanceHashes, conformanceShortfall, isSealedName, makePytestBaseRunner, makePytestCollector, nodeidKey, parsePytestOutput, purgePycache, runUnit } from "../../../src/engine10/modernize/unit.ts";
+import { conformanceHashes, conformanceShortfall, isSealedName, purgePycache, runUnit } from "../../../src/engine10/modernize/unit.ts";
+import { makePytestBaseRunner, makePytestCollector, nodeidKey, parsePytestOutput } from "../../../src/util/python.ts";
 import type { UnitCard } from "../../../src/engine10/modernize/unit.ts";
 import type { ModernizeLog as Log } from "../../../src/engine10/modernize/log.ts";
 
