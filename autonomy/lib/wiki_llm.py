@@ -27,7 +27,7 @@ _LEAN_FLAGS = (
     ("--strict-mcp-config", []),
     ("--mcp-config", ['{"mcpServers":{}}']),
     ("--disable-slash-commands", []),
-    ("--tools", [""]),
+    ("--tools=", []),
 )
 
 
@@ -49,10 +49,10 @@ def lean_claude_flags():
     except (OSError, subprocess.SubprocessError):
         return []
     if os.environ.get("ANTHROPIC_API_KEY") and "--bare" in help_txt:
-        return ["--bare", "--tools", ""] if "--tools" in help_txt else ["--bare"]
+        return ["--bare", "--tools="] if "--tools" in help_txt else ["--bare"]
     flags = []
     for name, vals in _LEAN_FLAGS:
-        if name in help_txt:
+        if name.rstrip("=") in help_txt:
             flags.append(name)
             flags.extend(vals)
     return flags

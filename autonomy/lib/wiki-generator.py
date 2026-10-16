@@ -311,7 +311,11 @@ def _batch_prose(context):
             found[key].append(line)
     prose = {k: "\n".join(v).strip() for k, v in found.items() if "".join(v).strip()}
     if not prose:
-        return {_BATCH_KEYS[0]: out.strip()}
+        prose = {_BATCH_KEYS[0]: out.strip()}
+    missing = [k for k in _BATCH_KEYS if k not in prose]
+    if missing:
+        print("warning: wiki batched call missing sections (using fallback): "
+              + ", ".join(missing), file=sys.stderr)
     return prose
 
 

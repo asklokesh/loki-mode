@@ -308,6 +308,17 @@ class TestWikiBatchedLeanCall(unittest.TestCase):
                     "if [ \"$1\" = \"--help\" ]; then\n"
                     "  echo '--setting-sources --strict-mcp-config --mcp-config "
                     "--disable-slash-commands --tools --bare'; exit 0; fi\n"
+                    "# Mimic real CLI: --tools is variadic and swallows the prompt\n"
+                    "# unless written as --tools=VALUE.\n"
+                    "tools_open=0; prompt=''\n"
+                    "for a in \"$@\"; do\n"
+                    "  case \"$a\" in\n"
+                    "    --tools) tools_open=1;;\n"
+                    "    -*) tools_open=0;;\n"
+                    "    *) if [ \"$tools_open\" = 1 ]; then :; elif [ \"$a\" != -p ]; then prompt=\"$a\"; fi;;\n"
+                    "  esac\n"
+                    "done\n"
+                    "if [ -z \"$prompt\" ]; then echo 'Input must be provided' >&2; exit 1; fi\n"
                     "echo \"CALL $*\" | tr '\\n' ' ' | cut -c1-300 >> \"%s\"; echo >> \"%s\"\n"
                     "cat \"%s\"\n" % (self.log, self.log, self.reply))
         os.chmod(fake, 0o755)
@@ -327,6 +338,7 @@ class TestWikiBatchedLeanCall(unittest.TestCase):
         r = subprocess.run([sys.executable, _GEN, "--root", self.root, "--quiet"],
                            capture_output=True, text=True, env=env, cwd=self.root)
         self.assertEqual(r.returncode, 0, r.stderr)
+        self.stderr = r.stderr
         calls = ([l for l in open(self.log).read().splitlines() if l.startswith("CALL")]
                  if os.path.isfile(self.log) else [])
         wiki = json.load(open(os.path.join(self.root, ".loki", "wiki", "wiki.json")))
@@ -348,6 +360,7 @@ class TestWikiBatchedLeanCall(unittest.TestCase):
         self.assertIn("--strict-mcp-config", calls[0])
         self.assertIn("--disable-slash-commands", calls[0])
         self.assertNotIn("--bare", calls[0])
+        self.assertIn("--tools=", calls[0].split())
 
     def test_missing_section_falls_back_without_second_call(self):
         calls, by_id = self._gen("=== SECTION: data flow ===\nFLOW-ONLY\n")
@@ -355,6 +368,8 @@ class TestWikiBatchedLeanCall(unittest.TestCase):
         self.assertIn("FLOW-ONLY", by_id["data-flow"]["body"])
         self.assertIn("Entry points", by_id["architecture"]["body"])
         self.assertEqual([s for s in by_id], ["architecture", "modules", "data-flow"])
+        self.assertIn("missing sections", self.stderr)
+        self.assertIn("architecture overview", self.stderr)
 
 
 if __name__ == "__main__":
