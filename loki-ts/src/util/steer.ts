@@ -3,7 +3,7 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, statSync, lutimesSync, rmSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, readdirSync, lstatSync, mkdirSync, linkSync, openSync, readFileSync, readSync, renameSync, statSync, lutimesSync, rmSync, unlinkSync, writeFileSync, existsSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { basename, join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
@@ -18,7 +18,7 @@ export interface SteerHooks { afterClaim?: (claimed: string) => void; afterOpen?
 
 /** Moves an exclusively-owned file to `<prefix>.md` (or `<prefix>-N.md`) without ever replacing an existing archive: linkSync fails with EEXIST atomically, then the private name is dropped.
  *  Only a filesystem that cannot hard-link (EPERM, ENOTSUP, EXDEV, EMLINK; also directories) gets a random-suffix rename. A failed unlink after a good link keeps the link's name. Returns the archive's base name. */
-function archiveTo(logs: string, prefix: string, src: string, link: typeof linkSync = linkSync): string {
+function archiveTo(logs: string, prefix: string, src: string, link: typeof linkSync = linkSync, onLinked?: (name: string) => void): string {
   for (let i = 0; ; i++) {
     const name = i === 0 ? `${prefix}.md` : `${prefix}-${i}.md`;
     try { link(src, join(logs, name)); } catch (e) {
@@ -27,6 +27,8 @@ function archiveTo(logs: string, prefix: string, src: string, link: typeof linkS
       if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV" && code !== "EMLINK") throw e;
       const name2 = `${prefix}-${randomBytes(4).toString("hex")}.md`; renameSync(src, join(logs, name2)); return name2;
     }
+    // onLinked runs while the claim still exists: the applied record and marker are durable before the claim goes, so a kill in this window leaves a claim the sweep can prove unapplied.
+    onLinked?.(name);
     try { unlinkSync(src); } catch { /* the archive is complete; a leftover private name is harmless */ }
     return name;
   }
@@ -35,13 +37,21 @@ function archiveTo(logs: string, prefix: string, src: string, link: typeof linkS
 /** A claim older than this is orphaned even if its pid answers: a dead consumer's pid can be recycled by an unrelated process, and kill(pid, 0) would then succeed forever. */
 export const STEER_CLAIM_MAX_AGE_MS = 10 * 60 * 1000;
 
-/** True when the claim is a regular file that a human-input-*.md archive (normal or ORPHAN) already shares an inode with (unlink failed after a good link). Never reads content: a FIFO would hang and a repeated steer text must not be dropped. */
+/** Durable "applied" marker for a normal archive, written only after its revisions were recorded. Not matched by the human-input-*.md archive pattern. */
+const appliedMarker = (logs: string, archive: string): string => join(logs, `.applied-${archive}`);
+
+/** True when the claim is a regular file that a human-input-*.md archive already shares an inode with AND that sharing is proven harmless: the archive is an ORPHAN or REJECTED one (already reported), or a normal one whose applied marker exists
+ *  (unlink failed after a good record). A normal archive without a marker means the consumer died before the steer was applied or recorded: false, so the sweep reports it. Never reads content: a FIFO would hang and a repeated steer text must not be dropped. */
 function orphanAlreadyArchived(logs: string, claim: string): boolean {
   const c = lstatSync(claim);
   if (!c.isFile()) return false;
   for (const a of readdirSync(logs)) {
     if (!/^human-input-.*\.md$/.test(a)) continue;
-    try { const s = statSync(join(logs, a)); if (s.ino === c.ino && s.dev === c.dev) return true; } catch { /* unreadable archive: not a match */ }
+    try {
+      const s = statSync(join(logs, a));
+      if (s.ino !== c.ino || s.dev !== c.dev) continue;
+      if (/^human-input-(ORPHAN|REJECTED)-/.test(a) || existsSync(appliedMarker(logs, a))) return true;
+    } catch { /* unreadable archive: not a match */ }
   }
   return false;
 }
@@ -121,8 +131,12 @@ export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.e
       chunks.push(Buffer.from(buf.subarray(0, n)));
     }
     const text = Buffer.concat(chunks).toString("utf8").trim();
-    const archive = archiveTo(logs, `human-input-${stamp}`, claimed, hooks?.link); claimed = "";
-    try { hooks?.afterArchive?.(); if (text !== "") { const recs = recordRevisions(repoDir, text, archive, now()); sink?.push(...recs); } } catch { unapplied("steer applied but its revision record failed"); }
+    const src = claimed;
+    archiveTo(logs, `human-input-${stamp}`, src, hooks?.link, (archive) => {
+      // Record first, mark second, unlink last (in archiveTo). Any failure here is reported now; the claim is then dropped because the archive holds the text.
+      try { hooks?.afterArchive?.(); if (text !== "") { const recs = recordRevisions(repoDir, text, archive, now()); sink?.push(...recs); } writeFileSync(appliedMarker(logs, archive), `${now().toISOString()}\n`); } catch { unapplied("steer applied but its revision record failed"); }
+    });
+    claimed = "";
     return text === "" ? null : text;
   } catch {
     if (claimed) {
@@ -182,7 +196,7 @@ export function staleWallRevisions(revs: readonly IntentRevision[] | undefined, 
   return (revs ?? []).filter((r) => r.unapplied === true || r.at >= from); // an unapplied steer (never consumed) refuses whatever the Wall timeline says
 }
 
-const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory. A steer that was already claimed is archived as .loki/logs/human-input-*.md; one still at .loki/HUMAN_INPUT.md is unreadable, so delete it.", "orphaned claim": "A steer claimed by a crashed run was archived as .loki/logs/human-input-ORPHAN-*.md.", "steer applied but its revision record failed": "The steer reached the session but its revision could not be recorded; check .loki is writable.", unknown: "Make .loki/logs writable." };
+const STEER_REMEDY: Record<string, string> = { symlink: "The symlink was removed.", "not a regular file": "It is a directory or special file.", "over 1 MiB": "The oversize file was moved to .loki/logs/.", "logs dir unwritable or file unreadable": "Make .loki/logs a writable directory. A steer that was already claimed is archived as .loki/logs/human-input-*.md; one still at .loki/HUMAN_INPUT.md is unreadable, so delete it.", "orphaned claim": "A steer claimed by a crashed run was archived as .loki/logs/human-input-ORPHAN-*.md (or human-input-*.md if the run died before applying it); it was not applied, so re-send it.", "steer applied but its revision record failed": "The steer reached the session but its revision could not be recorded; check .loki is writable.", unknown: "Make .loki/logs writable." };
 /** User-facing Seal refusal for a non-empty stale list: says what happened and what to do. */
 export function staleReason(stale: readonly IntentRevision[]): string {
   const bad = stale.filter((r) => r.unapplied), late = stale.filter((r) => !r.unapplied);

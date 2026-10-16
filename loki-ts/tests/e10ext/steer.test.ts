@@ -176,18 +176,49 @@ describe("engine10 steer", () => {
     expect(sink).toEqual([]);
     expect(archived(d)).toEqual(["human-input-ORPHAN-20200101T000000.md"]);
   });
-  test("an orphan hard-linked to a NORMAL archive (unlink failed) is only removed: no ORPHAN archive, no record", () => {
+  test("an orphan hard-linked to a NORMAL archive WITH an applied marker (unlink failed after record) is only removed: no ORPHAN archive, no record", () => {
     const d = repo();
     const logs = join(d, ".loki", "logs");
     mkdirSync(logs);
     writeFileSync(join(logs, "human-input-20200101T000000.md"), "APPLIED");
+    writeFileSync(join(logs, ".applied-human-input-20200101T000000.md"), "done\n");
     const claim = join(logs, `.claim-${deadPid()}-abc123`);
     linkSync(join(logs, "human-input-20200101T000000.md"), claim);
     const sink: IntentRevision[] = [];
     expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
     expect(sink).toEqual([]);
     expect(existsSync(claim)).toBe(false);
-    expect(archived(d)).toEqual(["human-input-20200101T000000.md"]);
+    expect(archived(d).filter((n) => n.startsWith("human-input-"))).toEqual(["human-input-20200101T000000.md"]);
+  });
+  test("P12-02g: a consumer killed after the link and before the revision record leaves a claim on a NORMAL archive with no marker: reported unapplied, Seal refuses", () => {
+    const d = repo("KILLED");
+    const logs = join(d, ".loki", "logs");
+    // Real consume, stopped (simulated kill) inside the link-to-unlink window: afterArchive throws, then we rebuild the post-kill disk state.
+    const sink0: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink0, { afterArchive: () => { throw new Error("killed"); } });
+    const normal = readdirSync(logs).find((n) => /^human-input-\d/.test(n))!;
+    for (const n of readdirSync(logs)) if (n.startsWith(".applied-")) rmSync(join(logs, n));
+    const claim = join(logs, `.claim-${deadPid()}-abc123`);
+    linkSync(join(logs, normal), claim);
+    const sink: IntentRevision[] = [];
+    expect(consumeSteer(d, {}, () => new Date(), sink)).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "orphaned claim"]]);
+    expect(existsSync(claim)).toBe(false);
+    expect(readdirSync(logs).some((n) => n.startsWith("human-input-ORPHAN-"))).toBe(true);
+    expect(staleReason(sink)).toContain("could not be applied");
+    expect(staleWallRevisions(sink, undefined).length).toBe(1);
+  });
+  test("P12-02g: a normal consume writes the applied marker and the revision record before the claim is unlinked", () => {
+    const d = repo("## Operator directive rev 1 (t) actor=a source=cli\nbody\n");
+    const logs = join(d, ".loki", "logs");
+    let seenClaim = false;
+    const sink: IntentRevision[] = [];
+    consumeSteer(d, {}, () => new Date(), sink, { afterArchive: () => { seenClaim = readdirSync(logs).some((n) => n.startsWith(".claim-")); } });
+    expect(seenClaim).toBe(true);
+    const normal = readdirSync(logs).find((n) => /^human-input-\d/.test(n))!;
+    expect(existsSync(join(logs, `.applied-${normal}`))).toBe(true);
+    expect(readdirSync(logs).some((n) => n.startsWith(".claim-"))).toBe(false);
+    expect(sink.length).toBe(1);
   });
   test("a claim another sweeper removes mid-sweep (ENOENT) is not reported stranded", () => {
     const d = repo();

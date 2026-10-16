@@ -813,3 +813,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: verify_cmd.ts checkEventLog, for schema loki.v10.receipt/1 only, returns TAMPERED naming the missing field (events_sha256 not 64-char lowercase hex, time absent or null, time.stages not a plain object) and ends "Re-run the task to produce a fresh receipt."
 - Fixture: loki-ts/tests/engine10/verify_cmd.test.ts P12-01c (field missing, malformed hash, time removed with stages at top level, time null, stages string, stages array, honest zero-stage receipt stays UNSIGNED); hand-built receipt/1 fixtures in seal_group, log_seal and visual_evidence tests now carry both fields.
 - Known limits: a receipt with a schema variant or no schema field falls to the ungated path and reads UNSIGNED (its receipt_sha256 still must match, and signed ones are covered by the attestation).
+
+## FC-102 A steer claim linked to a normal archive was swept as "applied" although the consumer died before applying it (STEER-APPLIED-UNPROVEN)
+- User saw: an operator steer vanished: never injected, never reported, and Seal passed.
+- Law: "applied" must be provable from a durable record written before the evidence that could contradict it is removed; an inode match proves only that a link happened.
+- Cause (measured): consumeSteer linked the claim to human-input-<stamp>.md, unlinked the claim, then recorded revisions. P12-02f's sweep removed any claim sharing an inode with a normal archive, so a kill between link and record (or unlink and record) lost the steer silently.
+- Siblings swept: ORPHAN and REJECTED archives (already reported when made, still removed quietly); the rename fallback (no claim survives, text is in the archive and recorded in-process).
+- Mechanism: archiveTo runs an onLinked step before the claim unlink: revisions are recorded, then a .applied-<archive> marker is written. sweepOrphans removes a claim linked to a normal archive only when that marker exists; otherwise it archives it ORPHAN and reports "orphaned claim" so Seal refuses.
+- Fixture: loki-ts/tests/e10ext/steer.test.ts (P12-02g kill-before-record, marker-before-unlink order, applied-then-unlink-failed removed quietly).
+- Known limits: the marker is agent-writable like the revision file; a kill between record and marker reports a recorded steer as unapplied (fails closed).
