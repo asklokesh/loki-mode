@@ -1,7 +1,7 @@
 // Operator steer on engine10: HUMAN_INPUT.md is injected into the next plan/implement brief once, then archived.
 import { afterAll, describe, expect, test } from "bun:test";
 import { createServer } from "node:net";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FINISH_LINE } from "../../src/e10ext/context.ts";
@@ -68,17 +68,37 @@ describe("engine10 steer", () => {
       expect(archived(d)).toEqual([]);
     }
   });
-  test("the content comes from the opened fd: a path swapped to a symlink between open and read is not followed", () => {
+  test("the content comes from the opened fd: the claimed path swapped to a symlink after the open is not followed", () => {
     const d = repo("REAL");
-    const f = join(d, ".loki", "HUMAN_INPUT.md");
     writeFileSync(join(d, "secret.md"), "SECRET");
     let swapped = false;
-    const now = (): Date => { // first call happens after the open and fstat, before the read
-      if (!swapped) { swapped = true; renameSync(f, join(d, "moved.md")); symlinkSync(join(d, "secret.md"), f); }
-      return new Date();
-    };
-    expect(consumeSteer(d, {}, now)).toBe("REAL");
+    const afterOpen = (c: string): void => { swapped = true; renameSync(c, join(d, "moved.md")); symlinkSync(join(d, "secret.md"), c); };
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { afterOpen })).toBe("REAL");
     expect(swapped).toBe(true);
+  });
+  test("a steer written between the read and the archive is not lost: it becomes a fresh inbox file consumed next", () => {
+    const d = repo("FIRST");
+    const f = join(d, ".loki", "HUMAN_INPUT.md");
+    let wrote = false;
+    const afterClaim = (): void => { wrote = true; writeFileSync(f, "SECOND"); };
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { afterClaim })).toBe("FIRST");
+    expect(wrote).toBe(true);
+    expect(readFileSync(f, "utf8")).toBe("SECOND");
+    expect(consumeSteer(d)).toBe("SECOND");
+    expect(archived(d).filter((n) => n.startsWith("human-input-")).length).toBe(2);
+  });
+  test("content appended after the open (size changed since any fstat) is read to EOF, not truncated", () => {
+    const d = repo("A".repeat(10));
+    const extra = "B".repeat(200000);
+    const afterOpen = (c: string): void => appendFileSync(c, extra);
+    expect(consumeSteer(d, {}, () => new Date(), undefined, { afterOpen })).toBe("A".repeat(10) + extra);
+  });
+  test("growth past 1 MiB after the open is still quarantined as oversize with an unapplied record", () => {
+    const d = repo("x");
+    const sink: IntentRevision[] = [];
+    const afterOpen = (c: string): void => appendFileSync(c, "y".repeat(1024 * 1024 + 5));
+    expect(consumeSteer(d, {}, () => new Date(), sink, { afterOpen })).toBeNull();
+    expect(sink.map((r) => [r.unapplied, r.reason])).toEqual([[true, "over 1 MiB"]]);
   });
   test("a unix socket at the steer path refuses as not a regular file", async () => {
     const d = repo();

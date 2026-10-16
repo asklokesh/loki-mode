@@ -3,7 +3,7 @@
 // byte-stable prefix and body, before the closing FINISH_LINE, like the time note), then archived so it applies once.
 // Each steer carries a header `## Operator directive rev N (ts) actor=A source=cli|chat|<url>` (written by cmd_steer); consuming it
 // appends one record per header to .loki/intent-revisions.jsonl (rev, ts, actor, source, chars, sha256 of the body; never the text).
-import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { appendFileSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { FINISH_LINE } from "../e10ext/context.ts";
@@ -13,38 +13,51 @@ export const STEER_STAGES: ReadonlySet<string> = new Set(["plan", "implement"]);
 export const STEER_BEGIN = "--- BEGIN OPERATOR GUIDANCE (from loki steer) ---";
 export const STEER_END = "--- END OPERATOR GUIDANCE ---";
 
-/** Reads and archives .loki/HUMAN_INPUT.md. Returns its text, or null when absent, empty, a symlink, oversize or opted out (LOKI_PROMPT_INJECTION=0/false). */
-export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.env, now: () => Date = () => new Date(), sink?: IntentRevision[]): string | null {
+/** Test seams: run right after the claim rename, and right after the claimed file is opened (before the read). */
+export interface SteerHooks { afterClaim?: (claimed: string) => void; afterOpen?: (claimed: string) => void }
+
+/** Reads and archives .loki/HUMAN_INPUT.md. Returns its text, or null when absent, empty, a symlink, oversize or opted out (LOKI_PROMPT_INJECTION=0/false).
+ *  Claim first: the inbox file is atomically renamed to its unique archive name, then read to EOF. A steer written after the claim creates a fresh inbox file for the next consume, so none is lost or half-read. */
+export function consumeSteer(repoDir: string, env: NodeJS.ProcessEnv = process.env, now: () => Date = () => new Date(), sink?: IntentRevision[], hooks?: SteerHooks): string | null {
   if (/^(0|false)$/i.test(env.LOKI_PROMPT_INJECTION ?? "")) return null;
   const f = join(repoDir, ".loki", "HUMAN_INPUT.md");
   // One mechanism for every steer that could not be consumed (unwritable logs dir, oversize, non-file entry, any throw): an `unapplied` record in the sink, which Seal always refuses.
   const unapplied = (reason: string): void => { sink?.push({ rev: 0, source: null, actor: null, sha: "", at: now().getTime(), unapplied: true, reason }); };
-  let fd = -1;
+  let fd = -1, claimed = "";
   try {
-    // One open with O_NOFOLLOW (O_NONBLOCK so a FIFO cannot hang the open); every check and the read use this fd, so a swap after the open cannot redirect the read.
-    // On Windows O_NOFOLLOW and O_NONBLOCK are undefined, so they act as 0.
-    let st: { isFile(): boolean; size: number } | undefined;
-    try { fd = openSync(f, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); st = fstatSync(fd); } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") return null;
-      if (code === "ELOOP") { rmSync(f, { force: true }); unapplied("symlink"); return null; }
-      // Open refused for another reason (socket, mode 000, ...): classify the entry by lstat so the refusal reason matches what is actually there.
-      const l = lstatSync(f, { throwIfNoEntry: false });
-      if (!l) return null;
-      if (l.isSymbolicLink()) { rmSync(f, { force: true }); unapplied("symlink"); return null; }
-      if (!l.isFile() || l.size <= STEER_MAX_BYTES) { if (!l.isFile()) { unapplied("not a regular file"); return null; } throw e; }
-      st = l; // oversize but unreadable: still quarantined below, as before
-    }
-    if (!st.isFile()) { unapplied("not a regular file"); return null; }
     const logs = join(repoDir, ".loki", "logs");
     mkdirSync(logs, { recursive: true });
     const stamp = now().toISOString().replace(/[-:]/g, "").replace(/\..*/, "");
-    if (st.size > STEER_MAX_BYTES) { renameSync(f, join(logs, `human-input-REJECTED-TOOLARGE-${stamp}.md`)); unapplied("over 1 MiB"); return null; }
-    const text = readFileSync(fd, "utf8").trim();
-    renameSync(f, join(logs, `human-input-${stamp}.md`));
-    if (text !== "") { const recs = recordRevisions(repoDir, text, `human-input-${stamp}.md`, now()); sink?.push(...recs); }
+    let name = `human-input-${stamp}.md`;
+    for (let i = 1; lstatSync(join(logs, name), { throwIfNoEntry: false }); i++) name = `human-input-${stamp}-${i}.md`; // never overwrite an earlier archive
+    claimed = join(logs, name);
+    try { renameSync(f, claimed); } catch (e) { claimed = ""; if ((e as NodeJS.ErrnoException).code === "ENOENT") return null; throw e; }
+    hooks?.afterClaim?.(claimed);
+    const notFile = (): null => { try { if (!lstatSync(f, { throwIfNoEntry: false })) { renameSync(claimed, f); unapplied("not a regular file"); return null; } } catch { /* quarantine below */ } return reject("NOTFILE", "not a regular file"); }; // a directory or special file stays in place (the remedy deletes it); a fresh steer already there wins
+    const reject = (tag: string, reason: string): null => { renameSync(claimed, join(logs, `human-input-REJECTED-${tag}-${stamp}.md`)); unapplied(reason); return null; };
+    // O_NOFOLLOW (O_NONBLOCK so a FIFO cannot hang the open); every check and the read use this fd. On Windows both flags are undefined and act as 0.
+    try { fd = openSync(claimed, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); } catch (e) {
+      const l = lstatSync(claimed, { throwIfNoEntry: false });
+      if (!l) throw e;
+      if (l.isSymbolicLink() || (e as NodeJS.ErrnoException).code === "ELOOP") { rmSync(claimed, { force: true }); unapplied("symlink"); return null; }
+      if (!l.isFile()) return notFile();
+      if (l.size > STEER_MAX_BYTES) return reject("TOOLARGE", "over 1 MiB"); // oversize but unreadable: still quarantined
+      throw e;
+    }
+    if (!fstatSync(fd).isFile()) return notFile();
+    hooks?.afterOpen?.(claimed);
+    // Read to EOF (never trust a size taken earlier): a writer still holding the old inode may append until the read returns 0.
+    const chunks: Buffer[] = [], buf = Buffer.alloc(65536);
+    let total = 0;
+    for (let n = readSync(fd, buf, 0, buf.length, null); n > 0; n = readSync(fd, buf, 0, buf.length, null)) {
+      total += n;
+      if (total > STEER_MAX_BYTES) { closeSync(fd); fd = -1; return reject("TOOLARGE", "over 1 MiB"); }
+      chunks.push(Buffer.from(buf.subarray(0, n)));
+    }
+    const text = Buffer.concat(chunks).toString("utf8").trim();
+    if (text !== "") { const recs = recordRevisions(repoDir, text, name, now()); sink?.push(...recs); }
     return text === "" ? null : text;
-  } catch { try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ } return null; }
+  } catch { if (claimed) unapplied("logs dir unwritable or file unreadable"); else try { if (lstatSync(f, { throwIfNoEntry: false })) unapplied("logs dir unwritable or file unreadable"); } catch { /* unreadable: nothing more to learn */ } return null; }
   finally { if (fd >= 0) try { closeSync(fd); } catch { /* already closed */ } }
 }
 
