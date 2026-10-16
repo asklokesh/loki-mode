@@ -1,7 +1,8 @@
 // Per-repo flaky-test list and failure-signature log, stored in the E-18 per-repo cache dir
 // (engine10/cache.ts, ENGINE.md section 13). Moved out of engine10/cache.ts to keep the core under its
 // line cap; only e10ext/repomemory.ts consumes it. Reads never throw: missing or corrupt = empty.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { readJson, writeJson } from "../engine10/cache.ts";
 
@@ -72,4 +73,49 @@ export function topFailures(dir: string, n = 3): FailureSignature[] {
     });
   }
   return [...totals.values()].sort((a, b) => b.count - a.count).slice(0, n);
+}
+
+/** P12-11 (FC-REQ): cross-run failure fingerprints, append-only, bounded. Extends this module (flaky.json holds
+ *  only a deduped path set, failures.jsonl holds aggregate signatures; neither keeps a per-run row). Best effort:
+ *  a concurrent append between the bounding read and the rename can lose a row. */
+export const FINGERPRINT_MAX = 200;
+export interface FingerprintRow { readonly ts: string; readonly run: string; readonly cls: string; readonly fp: string; readonly name: string }
+export function failureFingerprint(cls: string, name: string): string {
+  return createHash("sha256").update(`${cls}\0${name}`).digest("hex").slice(0, 16);
+}
+export function readFingerprints(dir: string): FingerprintRow[] {
+  const p = resolve(dir, "fingerprints.jsonl");
+  if (!existsSync(p)) return [];
+  try {
+    return readFileSync(p, "utf8").split("\n").filter((l) => l.trim() !== "").flatMap((l) => {
+      try {
+        const r = JSON.parse(l) as FingerprintRow;
+        return typeof r?.fp === "string" ? [r] : [];
+      } catch {
+        return [];
+      }
+    });
+  } catch {
+    return [];
+  }
+}
+/** Appends one row per string name; never throws. Returns the accepted names. */
+export function recordFingerprints(dir: string, runId: string, cls: string, names: unknown): string[] {
+  const list = Array.isArray(names) ? names.filter((n): n is string => typeof n === "string" && n !== "") : [];
+  if (list.length === 0) return list;
+  try {
+    const p = resolve(dir, "fingerprints.jsonl");
+    mkdirSync(dir, { recursive: true });
+    const ts = new Date().toISOString();
+    appendFileSync(p, `${list.map((name) => JSON.stringify({ ts, run: runId, cls, fp: failureFingerprint(cls, name), name })).join("\n")}\n`);
+    const rows = readFingerprints(dir);
+    if (rows.length > FINGERPRINT_MAX) {
+      const tmpP = `${p}.${process.pid}.tmp`;
+      writeFileSync(tmpP, `${rows.slice(-FINGERPRINT_MAX).map((r) => JSON.stringify(r)).join("\n")}\n`);
+      renameSync(tmpP, p);
+    }
+  } catch {
+    /* best effort */
+  }
+  return list;
 }

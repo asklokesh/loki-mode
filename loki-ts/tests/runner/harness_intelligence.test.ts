@@ -39,6 +39,7 @@ import {
   type ExecManifest,
 } from "../../src/runner/exec_manifest.ts";
 import { decideRecovery, signatureRepeated } from "../../src/runner/recovery_policy.ts";
+import { recordFingerprints, readFingerprints, failureFingerprint, FINGERPRINT_MAX } from "../../src/util/failure_memory.ts";
 
 const tmps: string[] = [];
 function tmp(): string {
@@ -873,5 +874,52 @@ describe("repo baseline profile (REPOMEM)", () => {
       try { await runIntake(ictx(e), new AbortController().signal, { taskText: "t" }); } finally { delete process.env.LOKI_REPO_BASELINE; }
       expect(loadProfile(e)).toBeNull();
     }, 60_000);
+  });
+});
+
+describe("P12-11 recovery classes (FC-REQ)", () => {
+  const E = ON.recovery;
+  const T = "tree-abc";
+  const table: Array<[string, Parameters<typeof decideRecovery>[0], string, string]> = [
+    ["rerun same tree fail then pass", { output: "x", rerun: { test: "t1", failTree: T, passTree: T } }, "retry", "flaky"],
+    ["rerun on different trees is not flaky", { output: "x", rerun: { test: "t1", failTree: T, passTree: "other" } }, "retry", "transient"],
+    ["rerun with empty tree is not flaky", { output: "x", rerun: { test: "t1", failTree: "", passTree: "" } }, "retry", "transient"],
+    ["prose saying flaky is not evidence", { output: "this test is flaky, flaky flaky" }, "retry", "transient"],
+    ["protocol error signal", { output: "x", protocolError: true }, "revise", "protocol_error"],
+    ["conflicting requirements signal", { output: "x", conflictingRequirements: true }, "escalate", "conflicting_requirements"],
+    ["unrecognized stays transient retry", { output: "never seen before zzz" }, "retry", "transient"],
+  ];
+  for (const [name, sig, action, klass] of table) {
+    it(name, () => {
+      const d = decideRecovery(sig, { env: E, history: [] });
+      expect(d.action).toBe(action as never);
+      expect(d.reason).toContain(klass);
+    });
+  }
+  it("flaky never overrides a permanent failure", () => {
+    const d = decideRecovery({ output: "invalid_api_key", rerun: { test: "t", failTree: T, passTree: T } }, { env: E, history: [] });
+    expect(d.action).toBe("stop");
+  });
+  it("fingerprints persist across two runs and are bounded", () => {
+    const dir = tmp();
+    expect(recordFingerprints(dir, "run1", "flaky", ["a", "b"])).toEqual(["a", "b"]);
+    recordFingerprints(dir, "run2", "flaky", ["a"]);
+    const fp = readFingerprints(dir);
+    expect(fp.length).toBe(3);
+    expect(fp.filter((r) => r.fp === failureFingerprint("flaky", "a")).length).toBe(2);
+    for (let i = 0; i < FINGERPRINT_MAX + 20; i++) recordFingerprints(dir, "r" + i, "flaky", ["n" + i]);
+    expect(readFingerprints(dir).length).toBeLessThanOrEqual(FINGERPRINT_MAX);
+    expect(readFingerprints(dir).at(-1)?.run).toBe("r" + (FINGERPRINT_MAX + 19));
+  });
+  it("extend never duplicate: one recordFlaky owner, fingerprints live in util/failure_memory.ts", () => {
+    const rp = readFileSync(new URL("../../src/runner/recovery_policy.ts", import.meta.url), "utf8");
+    expect(rp).not.toMatch(/export function (recordFlaky|recordFingerprints|readFingerprints)/);
+    expect(rp).not.toContain("fingerprints.jsonl");
+    const fm = readFileSync(new URL("../../src/util/failure_memory.ts", import.meta.url), "utf8");
+    expect(fm.match(/export function recordFlaky/g)?.length).toBe(1);
+  });
+  it("recordFingerprints tolerates junk input", () => {
+    expect(recordFingerprints(tmp(), "r", "flaky", undefined)).toEqual([]);
+    expect(recordFingerprints(tmp(), "r", "flaky", [1, "ok"] as unknown)).toEqual(["ok"]);
   });
 });
