@@ -51,6 +51,10 @@ except Exception:
     raise SystemExit(2)
 if not isinstance(command, str) or not command.strip():
     raise SystemExit(2)
+# Join backslash-newline continuations as bash does (an odd run of backslashes
+# before the newline), so every later split and pattern match sees one command.
+import re
+command = re.sub(r"(?<!\\)((?:\\\\)*)\\\r?\n", r"\1", command)
 sys.stdout.write(command)
 '); then
     "$HOST_GUARD" && deny "LOKI_HOST_GUARD: malformed or missing Bash command input was denied."
@@ -367,9 +371,24 @@ SAFE_PATTERNS=(
     '^[[:space:]]*'"$_SAFE_ENV"'rm -rf \.loki/queue/dead-letter[A-Za-z0-9._/-]*'"$_SAFE_REDIR"'$'
 )
 
+# Env names that change what the allowed command executes or loads; a prefix
+# naming one never rides the safe-path override.
+_env_prefix_is_risky() {
+    local rest="$1" name
+    while [[ "$rest" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)=[^[:space:]]*(.*)$ ]]; do
+        name="${BASH_REMATCH[1]}"
+        rest="${BASH_REMATCH[2]}"
+        case "$name" in
+            PATH|LD_*|DYLD_*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 _segment_is_safe() {
     local seg="$1" safe
     [[ "$seg" == *".."* ]] && return 1
+    _env_prefix_is_risky "$seg" && return 1
     [[ "$seg" =~ $_DOT_GLOB ]] && return 1
     for safe in "${SAFE_PATTERNS[@]}"; do
         [[ "$seg" =~ $safe ]] && return 0
