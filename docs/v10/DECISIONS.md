@@ -799,3 +799,18 @@ Founder: "you are taking hours long for releases, I wanted 3 releases to 10 rele
 1. A guard (a test that fails a build on a shape it detects) blocks a merge only on findings that a realistic change would trigger: an ordinary workflow edit or an ordinary contributor mistake. A realistic finding always blocks.
 2. Contrived adversarial bypasses (exit 256, eval rc=0, writes hidden in arithmetic or through an indirect name, deliberately obfuscated shell) are logged as LOW follow-up rows in FAILURE-CLASSES.md and do not block. These guards protect against our own mistakes; an attacker who controls workflow files is covered by branch protection and review.
 3. HIGH reviews have a 2-round limit. Round 3 escalates to the CTO with the finding list, and the CTO decides. Reason: opus share was about 50% against the 30% budget (D13).
+
+## D99 (2026-10-16, founder grant at 19:33Z "make all decisions on my behalf to make loki mode better than anything in the world", CoS records): every open founder and CTO decision is decided
+Standing: from this grant on, the CoS decides founder-queue items without waiting and records each here. Items needing a credential or money beyond the caps below still go to FOUNDER-QUEUE.md. Claude stays the primary provider and `loki start` stays the primary entry point (founder, standing).
+1. C-C1 gateway lane wording: a non-Anthropic model routed behind the claude CLI is labelled "gateway lane (unqualified)". `loki doctor` prints that label and a feature-loss list (prompt caching, extended thinking, server tools and hooks are not guaranteed on that lane). Claude routes stay unlabelled and default. Unblocks P12-27.
+2. C-C2 permission default: the compiled permission policy becomes the default once P12-26g-c merges with a HIGH approve. The legacy skip-permissions path stays reachable only with LOKI_PERMISSION_POLICY=legacy, and run start prints which mode is active. Flip slice is HIGH.
+3. C-C3 cost moat overlap: COST-2 and COST-3 fold into P12-32. One scoring module computes expected accepted-outcome cost (price divided by the measured acceptance rate); no parallel moat change. Unparks COST-2/3 as P12-32 inputs.
+4. C-C4 Wall holdout: ratio 0.2, active when a Wall has 5 or more checks (at least 1 held out). A holdout failure blocks the Seal (NOT_PROVEN with the holdout reason), never a warning. Default on. Reason: moat and Seal accuracy rank above cost and speed.
+5. C-F1 paid evaluation: approved, hard cap 150 USD for this cycle across COST-6 n=3, the B9 live run and the S-112 ablation unpark. Each run sets a per-run cost cap; spend lands in METRICS.md. The 50 USD/day line (queue item 3) still binds.
+6. C-F5 hosted Company OS: out of scope until cost at or under 0.5x raw Claude Code is proven. The CLI and `loki start` stay the product.
+7. C-F6 enterprise commitments: no SCIM, HA or named support owner yet. P12-48 (retention and backup) proceeds.
+8. C-F7 comparative external pilot: deferred until C-F1 runs prove the cost claim; no external spend now.
+9. C-F8 stale version references: the CoS refreshes in-repo docs (PLAN-V12) to the shipped VERSION; the source plan outside the repo is left as an archived input.
+10. M-27 Legacy-Bench pilot: use the public set named in MODERNIZE.md; calibrate the cap from the first 3 pilot runs inside the C-F1 cap.
+11. M-27E defaults: D1 (multi-file units NOT_PROVEN), D2 (a wave with no detected integration tests verifies with a warning; build and original suite still block) and D3 (overflow goes to util/, the modernize/ cap stays 4,000) are adopted as built.
+12. P12-13b journeys: the U1-U8 list is confirmed as the journey set; add the gh pr edit and comment stubs.
