@@ -6,9 +6,9 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 
 ## Counts
 
-- KEEP-MODERN: 70
+- KEEP-MODERN: 71
 - UPDATE: 22
-- DROP-LEGACY: 32
+- DROP-LEGACY: 31
 - DELETE: 14
 - Total rows: 138
 - Registry paths (commands and nested subcommands): 194
@@ -143,7 +143,7 @@ Classes: KEEP-MODERN (v10-native or engine-neutral), UPDATE (live but needs mode
 | heal | autonomy/loki | DROP-LEGACY | Legacy engine |
 | migrate | autonomy/loki | DROP-LEGACY | Superseded by modernize |
 | dogfood | autonomy/loki | DROP-LEGACY | Legacy engine |
-| steer | autonomy/loki | DROP-LEGACY | Needs legacy prompt injection |
+| steer | autonomy/loki | KEEP-MODERN | Session control |
 | outcomes | autonomy/loki | DROP-LEGACY | Legacy outcome store |
 | worktree | autonomy/loki | DROP-LEGACY | Legacy parallel mode |
 | wt | autonomy/loki | DELETE | Alias of worktree; shown only under 'loki help aliases' |

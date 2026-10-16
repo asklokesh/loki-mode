@@ -157,13 +157,15 @@ _loki_done_recog_invoke() {
         local _dr_schema_content _dr_json _dr_obj
         _dr_schema_content="$(cat "$_dr_schema" 2>/dev/null)" || _dr_schema_content=""
         if [ -n "$_dr_schema_content" ]; then
+            _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+            ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
             if command -v timeout >/dev/null 2>&1; then
                 _dr_json=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_DONE_RECOG_TIMEOUT}" \
-                    claude --dangerously-skip-permissions -p "$prompt" \
+                    claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" \
                     --json-schema "$_dr_schema_content" --output-format json 2>/dev/null) || _dr_json=""
             else
                 _dr_json=$(CAVEMAN_DEFAULT_MODE=off \
-                    claude --dangerously-skip-permissions -p "$prompt" \
+                    claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" \
                     --json-schema "$_dr_schema_content" --output-format json 2>/dev/null) || _dr_json=""
             fi
             local _dr_py
@@ -192,12 +194,14 @@ except Exception:
 
     local rc=0
     local out=""
+    _LOKI_PERM_ARGV=(--dangerously-skip-permissions)
+    ! type _loki_claude_permission_argv >/dev/null 2>&1 || _loki_claude_permission_argv
     if command -v timeout >/dev/null 2>&1; then
         out=$(CAVEMAN_DEFAULT_MODE=off timeout "${LOKI_DONE_RECOG_TIMEOUT}" \
-                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     else
         out=$(CAVEMAN_DEFAULT_MODE=off \
-                  claude --dangerously-skip-permissions -p "$prompt" 2>/dev/null) || rc=$?
+                  claude "${_LOKI_PERM_ARGV[@]}" -p "$prompt" 2>/dev/null) || rc=$?
     fi
     [ "$rc" -ne 0 ] && return 1
     [ -z "$out" ] && return 1

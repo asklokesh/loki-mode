@@ -1797,7 +1797,7 @@ show_help_all() {
     echo "  stop             Stop execution immediately"
     echo "  pause            Pause after current session"
     echo "  resume           Resume a paused or interrupted run (after Ctrl-C or a crash)"
-    echo "  steer \"<note>\"    Nudge a running build (needs LOKI_PROMPT_INJECTION=1)"
+    echo "  steer \"<note>\"    Nudge a running build (Loki 10 engine; legacy loop needs LOKI_PROMPT_INJECTION=true)"
     echo ""
     echo "Verify / trust:"
     echo "  verify [base]    Deterministic PR verification (CI-gate exit codes)"
@@ -5071,7 +5071,7 @@ cmd_pause() {
 # RUN-25 iter 22 (Wave D #3): `loki steer "<note>"` writes an operator directive
 # to .loki/HUMAN_INPUT.md. engine10 reads it before the next plan or implement
 # session (default on; only LOKI_PROMPT_INJECTION=0/false opts out, steer.ts).
-# The legacy loop injects it only when LOKI_PROMPT_INJECTION=1.
+# The legacy loop injects it only when LOKI_PROMPT_INJECTION=true.
 # Each steer is a numbered revision: `## Operator directive rev N (ts) actor=A source=S`.
 # engine10 (util/steer.ts) archives the file and appends the revisions to
 # .loki/intent-revisions.jsonl. Actor and source come from LOKI_STEER_ACTOR
@@ -5091,7 +5091,7 @@ cmd_steer() {
             echo "  loki steer \"focus on the auth flow, skip the docs for now\""
             echo ""
             echo "Opt out with LOKI_PROMPT_INJECTION=0. The legacy loop reads the note"
-            echo "only when LOKI_PROMPT_INJECTION=1."
+            echo "only when LOKI_PROMPT_INJECTION=true."
             [ -z "${1:-}" ] && return 2
             return 0
             ;;
@@ -6290,7 +6290,7 @@ if _unc and os.path.exists(_unc):
         except Exception:
             pass
     print("  Unstick it   : give the loop a concrete next step:")
-    print("                   loki steer \"<what to try next>\"   (needs LOKI_PROMPT_INJECTION=1)")
+    print("                   loki steer \"<what to try next>\"   (Loki 10 engine; legacy loop needs LOKI_PROMPT_INJECTION=true)")
     print("                 or narrow the spec / fix the blocker, then loki resume.")
 
 # Surface the structured per-iteration error record, if one exists at
@@ -26031,9 +26031,11 @@ _pr_record_merge() {
 
 # Shared merge gate. One PR (number or branch) merges only when it is not a
 # draft, `gh pr checks` exits 0 after polling pending (rc=8), and, with
-# --require-verified, this run's proof headline is VERIFIED (missing proof or
-# an unreadable headline is never VERIFIED). On refusal it prints the exact
-# blocking gate ("gate: draft|verdict|checks") and leaves the PR open.
+# --require-verified, every clean proof recorded for the PR's head commit
+# (facts.git.head_sha == headRefOid, dirty-tree proofs ignored) says VERIFIED; a stale or missing proof
+# refuses ("gate: head"). The merge passes --match-head-commit so a push after
+# the gate cannot land unjudged. On refusal it prints the exact blocking gate
+# ("gate: draft|head|verdict|checks") and leaves the PR open.
 # Usage: _merge_pr_gated <pr> [--require-verified] [--delete-branch]
 _merge_pr_gated() {
     local pr="$1" need_verified=false margs=(--squash) rc d
@@ -26052,14 +26054,54 @@ _merge_pr_gated() {
         _pr_record_merge "$pr" "blocked:draft" "draft"
         return 1
     fi
+    # Pin the merge to the exact head the checks and proof are about to judge.
+    local head=""
+    head="$(gh pr view "$pr" --json headRefOid -q .headRefOid 2>/dev/null)" || head=""
+    case "$head" in
+        *[!0-9a-f]*) head="" ;;
+    esac
+    if [ "${#head}" != "40" ] && [ "${#head}" != "64" ]; then
+        echo "$pr: not merged, gate: head (PR head commit is unreadable); PR left open" >&2
+        _pr_record_merge "$pr" "blocked:head" "head"
+        return 1
+    fi
     if $need_verified; then
-        local pid="" headline=""
+        local pid="" headline="" pj="" ph="" cands=() dirty_n=0
+        # Resolve the proof recorded for THIS head: the run pointer first, then
+        # any proof in .loki/proofs whose facts.git.head_sha equals the PR head.
         [ -f .loki/state/last-proof-id.txt ] && pid="$(cat .loki/state/last-proof-id.txt 2>/dev/null)"
-        if [ -n "$pid" ] && [ -f ".loki/proofs/${pid}/proof.json" ] && command -v jq >/dev/null 2>&1; then
-            headline="$(jq -r '.honesty.headline // empty' ".loki/proofs/${pid}/proof.json" 2>/dev/null)"
+        [ -z "$pid" ] || cands+=(".loki/proofs/${pid}/proof.json")
+        cands+=(.loki/proofs/*/proof.json)
+        if command -v jq >/dev/null 2>&1; then
+            # Every clean proof for this head must agree: an older VERIFIED
+            # never overrides a newer NOT_PROVEN. A proof taken on a dirty tree
+            # (facts.git.dirty true; .loki/ is excluded from that flag) judged
+            # bytes other than the commit and is ignored.
+            local hl="" disagree=false
+            for pj in "${cands[@]}"; do
+                [ -f "$pj" ] || continue
+                ph="$(jq -r '.facts.git.head_sha // empty' "$pj" 2>/dev/null)"
+                [ "$ph" = "$head" ] || continue
+                if [ "$(jq -r '.facts.git.dirty // false' "$pj" 2>/dev/null)" = "true" ]; then
+                    dirty_n=$((dirty_n + 1)); continue
+                fi
+                hl="$(jq -r '.honesty.headline // empty' "$pj" 2>/dev/null)"
+                [ -n "$hl" ] || hl="UNREADABLE"
+                if [ -z "$headline" ]; then headline="$hl"; elif [ "$headline" != "$hl" ]; then disagree=true; fi
+            done
+            if $disagree; then
+                echo "$pr: not merged, gate: verdict (proofs for PR head ${head:0:12} disagree); PR left open" >&2
+                _pr_record_merge "$pr" "blocked:verdict" "verdict"
+                return 1
+            fi
+        fi
+        if [ -z "$headline" ]; then
+            echo "$pr: not merged, gate: head (no clean proof recorded for PR head ${head:0:12}; proof is stale, dirty ($dirty_n) or missing); PR left open" >&2
+            _pr_record_merge "$pr" "blocked:head" "head"
+            return 1
         fi
         if [ "$headline" != "VERIFIED" ]; then
-            echo "$pr: not merged, gate: verdict (run verdict is '${headline:-missing}', need VERIFIED); PR left open" >&2
+            echo "$pr: not merged, gate: verdict (run verdict is '${headline}', need VERIFIED); PR left open" >&2
             _pr_record_merge "$pr" "blocked:verdict" "verdict"
             return 1
         fi
@@ -26074,7 +26116,14 @@ _merge_pr_gated() {
         esac
         return 1
     fi
-    if ! gh pr merge "$pr" "${margs[@]}" >/dev/null 2>&1; then
+    if ! gh pr merge "$pr" "${margs[@]}" --match-head-commit "$head" >/dev/null 2>&1; then
+        local head_now=""
+        head_now="$(gh pr view "$pr" --json headRefOid -q .headRefOid 2>/dev/null)" || head_now=""
+        if [ -n "$head_now" ] && [ "$head_now" != "$head" ]; then
+            echo "$pr: not merged, gate: head (PR head moved from ${head:0:12} to ${head_now:0:12} during checks); PR left open" >&2
+            _pr_record_merge "$pr" "blocked:head" "head" "passing"
+            return 1
+        fi
         echo "$pr: not merged, gate: merge (gh pr merge failed); PR left open" >&2
         _pr_record_merge "$pr" "blocked:merge" "merge" "passing"
         return 1

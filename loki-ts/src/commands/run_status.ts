@@ -6,7 +6,7 @@ import { discoverControlUrl } from "../../../packages/control-plane/src/shipper/
 import { fold, readEvents } from "../engine10/events.ts";
 import { formatDuration } from "../engine10/output.ts";
 import type { EventEnvelope } from "../engine10/types.ts";
-import { STALE_S, workItemState, type WorkItemState } from "../util/run_outputs.ts";
+import { STALE_S, workItemBlockers, workItemId, workItemState, type WorkItemState } from "../util/run_outputs.ts";
 import { INTENT_ANSWER_FILE, renderIntent } from "../util/intent_card.ts";
 
 export const NO_RUN_HINT = "No Loki 10 runs here yet. Start one with: loki \"<task>\" or loki owner/repo#N";
@@ -17,6 +17,8 @@ export interface ModernStatus {
   run_id: string | null;
   ref: string | null;
   state: WorkItemState;
+  work_item_id: string | null;
+  blockers: string[];
   stage: string | null;
   elapsed_s: number | null;
   cost_usd: number | null;
@@ -69,6 +71,8 @@ export function summarize(runId: string, events: EventEnvelope[], root: string, 
     run_id: runId,
     ref: typeof issue === "string" && issue ? issue : null,
     state,
+    work_item_id: workItemId(events),
+    blockers: workItemBlockers(events),
     stage: !done && open.size ? [...open].sort().join("+") : null,
     elapsed_s: Math.max(0, (endMs - startMs) / 1000),
     cost_usd: f.cost.usd,
@@ -98,6 +102,7 @@ export function render(s: ModernStatus): string {
     `  ${s.ref ?? "text task"}, ${formatDuration(s.elapsed_s ?? 0)} elapsed, ${cost}`,
     `  PR: ${s.pr_url ?? "none"}, receipt: ${s.receipt_path ?? "not sealed yet"}`,
   ];
+  if (s.blockers.length) lines.push(`  Blockers: ${s.blockers.join("; ")}`);
   if (s.control_plane_url) lines.push(`  Control Plane: ${s.control_plane_url}`);
   return lines.join("\n");
 }

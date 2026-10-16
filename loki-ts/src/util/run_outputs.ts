@@ -61,12 +61,38 @@ export function loadRunOutputs(runDir: string, events: readonly EventEnvelope[])
 /** Work-item state (docs/v10/ENGINE.md "Work-item state"); lives here, not in engine10/events.ts, to keep the core line budget. */
 export type WorkItemState =
   | "received" | "prepared" | "planned" | "executing" | "validating" | "ready_to_ship" | "completed"
-  | "waiting_for_input" | "budget_stopped" | "failed" | "cancelled" | "stalled";
+  | "waiting_for_input" | "budget_stopped" | "failed" | "cancelled" | "stalled"
+  | "delivering" | "observing" | "waiting_for_policy" | "paused";
 export const STALE_S = 30 * 60;
 
 /** The one work-item vocabulary (docs/v10/ENGINE.md "Work-item state"). Pure over the event log. Terminal states come only from run.completed;
  *  `nowMs` (optional) enables "stalled" for an unfinished run with no events for STALE_S. */
 export function workItemState(events: readonly EventEnvelope[], nowMs?: number): WorkItemState {
+  if (!events.some((e) => e.type === "run.completed")) {
+    // Non-terminal overlays (P12-08). Latest toggle wins; events are plain strings so no core event-type change is needed.
+    const on = (a: string, b: string): boolean => events.findLast((e) => e.type === a || e.type === b)?.type === a;
+    if (on("work.paused", "work.resumed")) return "paused";
+    if (on("policy.waiting", "policy.cleared")) return "waiting_for_policy";
+    if (!(nowMs !== undefined && events.length > 0 && nowMs - Date.parse(events[events.length - 1]!.ts) > STALE_S * 1000) && events.some((e) => e.type === "pr.opened"))
+      return events.some((e) => e.type === "delivery.observing") ? "observing" : "delivering";
+  }
+  return stageState(events, nowMs);
+}
+
+/** Blockers live in their own field, never in the state string. Open policy wait or pause reason, else []. */
+export function workItemBlockers(events: readonly EventEnvelope[]): string[] {
+  const last = (a: string, b: string): EventEnvelope | undefined => { const e = events.findLast((x) => x.type === a || x.type === b); return e?.type === a ? e : undefined; };
+  return [last("work.paused", "work.resumed"), last("policy.waiting", "policy.cleared")].flatMap((e) => e ? [`${e.type}: ${String(e.data["reason"] ?? "unspecified")}`] : []);
+}
+
+/** One work item spans runs: keyed by the issue or PR ref on run.started; null for a text task. */
+export function workItemId(events: readonly EventEnvelope[]): string | null {
+  const d = events.find((e) => e.type === "run.started")?.data ?? {};
+  const k = d["issue_ref"] ?? d["pr_ref"];
+  return typeof k === "string" && k ? k : null;
+}
+
+function stageState(events: readonly EventEnvelope[], nowMs?: number): WorkItemState {
   const done = events.findLast((e) => e.type === "run.completed");
   if (done) {
     const v = done.data.verdict;
@@ -97,7 +123,7 @@ export type Phase = "implement" | "verify" | "publish" | "done";
 /** RECOVERY: which phase an event log stopped in. "done" means nothing is left to resume. */
 export function phaseOf(events: readonly EventEnvelope[]): Phase {
   if (events.some((e) => e.type === "pr.opened")) return "done";
-  const s = workItemState(events);
+  const s = stageState(events);
   if (s === "ready_to_ship") return "publish";
   if (s === "validating") return "verify";
   return s === "received" || s === "prepared" || s === "planned" || s === "executing" ? "implement" : "done";
@@ -123,6 +149,78 @@ export function findInterrupted(repoDir: string, runId?: string): Interrupted | 
   const phase = phaseOf(events);
   if (phase === "done" || runOwnerAlive(join(root, top.id)) || events.length === 0) return null;
   return { runId: top.id, phase, events, task: taskOf(events) };
+}
+
+// P12-07: per-stage checkpoints and the resume point. The append-only event log is the durable checkpoint store; a checkpoint is the
+// last stage.completed per stage with a sha of its inputs (earlier stages' outputs) and of its own outputs. Resume fails closed.
+export const STAGE_ORDER = ["intake", "plan", "wall", "implement", "verify", "commit", "seal", "pr"] as const;
+export interface Checkpoint { stage: string; seq: number; inputs_sha: string; outputs_sha: string }
+const sha = (v: unknown): string => createHash("sha256").update(JSON.stringify(v) ?? "null").digest("hex");
+const settled = (events: readonly EventEnvelope[], s: string): boolean => events.some((e) => e.stage === s && (e.type === "stage.completed" || e.type === "stage.skipped"));
+
+/** One checkpoint per completed stage, in flow order; inputs_sha covers every earlier stage's recorded outputs. */
+export function stageCheckpoints(events: readonly EventEnvelope[]): Checkpoint[] {
+  const last = new Map<string, EventEnvelope>();
+  for (const e of events) if (e.type === "stage.completed" && typeof e.stage === "string") last.set(e.stage, e);
+  const out: Checkpoint[] = [], prior: unknown[] = [];
+  for (const s of STAGE_ORDER) {
+    const e = last.get(s);
+    if (!e) continue;
+    out.push({ stage: s, seq: e.seq, inputs_sha: sha(prior), outputs_sha: sha(e.data) });
+    prior.push([s, e.data]);
+  }
+  return out;
+}
+
+/** First flow stage with no stage.completed (or stage.skipped, unless completedOnly); null when every stage settled. Pure and lenient (handoff text only). */
+export function firstIncompleteStage(events: readonly EventEnvelope[], completedOnly = false): string | null {
+  return STAGE_ORDER.find((s) => !(completedOnly ? events.some((e) => e.stage === s && e.type === "stage.completed") : settled(events, s))) ?? null;
+}
+
+export type ResumePoint = { ok: true; stage: string; skip: string[]; checkpoints: Checkpoint[] } | { ok: false; reason: string };
+
+/** The stage a resumed run re-enters at. Fail closed: a torn or unreadable log, a seq gap, a finished run, a mixed run id or a stage
+ *  recorded as done while an earlier one never settled all refuse. rawLog (the file text) lets a corrupt line be detected. */
+export function resumePoint(events: readonly EventEnvelope[], rawLog?: string): ResumePoint {
+  if (rawLog !== undefined) {
+    const lines = rawLog.split("\n").filter((l) => l.trim() !== "");
+    if (lines.length !== events.length) return { ok: false, reason: `event log is torn or corrupt (${lines.length - events.length} unreadable line(s))` };
+    if (rawLog.length > 0 && !rawLog.endsWith("\n")) return { ok: false, reason: "event log ends in a torn line" };
+  }
+  if (events.length === 0) return { ok: false, reason: "event log is empty or unreadable" };
+  if (events.some((e, i) => e.seq !== i)) return { ok: false, reason: "event log has a sequence gap" };
+  if (new Set(events.map((e) => e.run)).size !== 1) return { ok: false, reason: "event log mixes run ids" };
+  if (!events.some((e) => e.type === "run.started")) return { ok: false, reason: "no run.started event" };
+  if (events.some((e) => e.type === "tamper.detected")) return { ok: false, reason: "event log was flagged as tampered" };
+  if (events.some((e) => e.type === "run.completed")) return { ok: false, reason: "run already completed; nothing to resume" };
+  const intake = events.findLast((e) => e.type === "stage.completed" && e.stage === "intake");
+  if (intake && typeof intake.data["base_sha"] !== "string") return { ok: false, reason: "intake checkpoint has no base_sha" };
+  const next = firstIncompleteStage(events);
+  if (next === null) return { ok: false, reason: "every stage settled; nothing to resume" };
+  const idx = STAGE_ORDER.indexOf(next as (typeof STAGE_ORDER)[number]);
+  const par = next === "plan" || next === "wall"; // plan and wall run in parallel (machine.ts FLOW): either may finish first
+  const later = STAGE_ORDER.slice(idx + 1).find((s) => !(par && (s === "plan" || s === "wall")) && events.some((e) => e.stage === s && e.type === "stage.completed"));
+  if (later) return { ok: false, reason: `stage ${later} completed but ${next} never did` };
+  return { ok: true, stage: next, skip: STAGE_ORDER.slice(0, idx), checkpoints: stageCheckpoints(events) };
+}
+
+/** `loki start --resume [run-id]`. The publish phase resumes through resumePublish; an earlier phase prints the resume point and exits 4
+ *  (stage re-entry is not wired). Exit 2 on a refusal: unreadable state is never a success. */
+export async function resumeFlag(runId: string | undefined, noPr = false, deps: ResumeDeps = {}): Promise<number> {
+  const out = deps.out ?? ((s: string) => { process.stderr.write(s); });
+  let repoDir: string;
+  try { repoDir = safeGit(process.cwd(), ["rev-parse", "--show-toplevel"]).trim(); } catch { out("engine10: --resume: not inside a git repository\n"); return 2; }
+  const id = runId && /^e10-[A-Za-z0-9-]+$/.test(runId) ? runId : undefined;
+  const it = findInterrupted(repoDir, id);
+  if (!it) { out("engine10: --resume: no interrupted engine10 run\n"); return 3; }
+  let raw = "";
+  try { raw = readFileSync(join(repoDir, eventsRelPath(it.runId)), "utf8"); } catch { out(`engine10: --resume refused: run ${it.runId} event log unreadable\n`); return 2; }
+  const rp = resumePoint(it.events, raw);
+  if (!rp.ok) { out(`engine10: --resume refused: ${rp.reason}\n`); return 2; }
+  if (it.phase === "publish" && noPr) { out("engine10: --resume refused: --no-pr was given and this run is in its publish phase\n"); return 2; }
+  if (it.phase === "publish") return resumePublish(repoDir, it, deps);
+  out(`engine10: resume from stage ${rp.stage} (settled: ${rp.skip.join(", ") || "none"}); re-entry at ${rp.stage} is not wired yet, start a new run: loki start\n`);
+  return 4;
 }
 
 export type RunPrFn = (ctx: Record<string, unknown>, signal: AbortSignal) => Promise<{ status: string; reason?: string; data: Record<string, unknown> }>;

@@ -5,9 +5,9 @@
 // its verdict, receipt path and sha256. The push (runPushPr) is injectable so tests need no network.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { runPushPr } from "../stages/pr.ts";
+import { runPrReady, runPushPr } from "../stages/pr.ts";
 import type { PushPrResult } from "../stages/pr.ts";
-import { clean } from "../pr_body.ts";
+import { cleanMarked } from "../pr_body.ts";
 import type { ModernizeLog } from "./log.ts";
 import type { WaveVerdict } from "./wave.ts";
 
@@ -25,6 +25,7 @@ export interface ShipUnit {
 type PushArgs = Parameters<typeof runPushPr>[0];
 /** Injectable; defaults to the shared credentialed push helper in stages/pr.ts. */
 export type PushRunner = (a: PushArgs) => PushPrResult;
+export type ReadyRunner = (a: Parameters<typeof runPrReady>[0]) => ReturnType<typeof runPrReady>;
 export interface ShipResult { shipped: boolean; url: string | null; draft: boolean; existing: boolean | null; reason: string | null }
 
 export interface ShipWaveOpts {
@@ -39,6 +40,7 @@ export interface ShipWaveOpts {
   units: ShipUnit[];
   log?: ModernizeLog;
   push?: PushRunner;
+  ready?: ReadyRunner;
 }
 
 export function waveIsDraft(verdict: WaveVerdict | null, units: ShipUnit[]): boolean {
@@ -46,7 +48,7 @@ export function waveIsDraft(verdict: WaveVerdict | null, units: ShipUnit[]): boo
 }
 
 /** One table cell: single line, bounded, pipes escaped, so a value can never forge a row or header. */
-const cell = (v: string): string => clean(String(v)).replace(/\|/g, "\\|");
+const cell = (v: string): string => cleanMarked(String(v)).replace(/\|/g, "\\|");
 const num = (v: number | null, f: (n: number) => string): string => (typeof v === "number" && Number.isFinite(v) ? f(v) : "n/a");
 
 export function renderWaveBody(wave: number, verdict: WaveVerdict | null, units: ShipUnit[]): string {
@@ -70,8 +72,13 @@ export function shipWave(o: ShipWaveOpts): ShipResult {
   writeFileSync(bodyFile, renderWaveBody(o.wave, o.verdict, o.units), "utf8");
   const r = (o.push ?? runPushPr)({ repoDir: o.repoDir, branch: o.branch, title: `Loki modernize: wave ${o.wave}${draft ? " (draft)" : ""}`, bodyFile, draft, pinnedOrigin });
   if (!r.ok) return fail(r.reason);
-  // engine10-push.sh ignores --draft when it reuses an open PR, so a draft claim would be false.
+  // engine10-push.sh ignores --draft and the new body when it reuses an open PR. A wanted draft cannot be applied (honest failure);
+  // a ready wave replaces the old body and marks the PR ready through the script (pr-ready), else it stays a stale draft.
   if (draft && r.existing !== false) return fail("existing PR reused; draft state not applied", r.url, r.existing);
+  if (!draft && r.existing !== false) {
+    const rr = (o.ready ?? runPrReady)({ repoDir: o.repoDir, branch: o.branch, bodyFile, url: r.url, pinnedOrigin });
+    if (!rr.ok) return fail("existing PR reused; draft state not applied", r.url, r.existing);
+  }
   o.log?.append("wave.shipped", { wave: o.wave, url: r.url, draft, existing: r.existing });
   return { shipped: true, url: r.url, draft, existing: r.existing, reason: null };
 }

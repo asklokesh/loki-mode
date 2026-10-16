@@ -38,6 +38,7 @@ import {
   remainingBudget,
   fallbackForPrimary,
   tierRouteModel,
+  permissionArgv,
 } from "../providers/claude_flags.ts";
 import { mcpConfigPath } from "../providers/mcp_config.ts";
 import { LEAN_PREFIX } from "../features/lean_prefix.ts";
@@ -478,8 +479,8 @@ export function claudeProvider(): ProviderInvoker {
 
       const argv: string[] = [
         cli,
-        // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG
-        "--dangerously-skip-permissions",
+        // claude.sh:31 PROVIDER_AUTONOMOUS_FLAG (LOKI_PERMISSION_POLICY=compiled swaps it, P12-26)
+        ...permissionArgv(call.cwd),
         ...modelArgv,
         ...autoFlags,
         ...sessionArgv,

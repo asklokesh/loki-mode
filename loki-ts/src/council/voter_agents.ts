@@ -43,6 +43,7 @@ import {
   ensureClaudeHelpCache,
   reviewAllowlistArgv,
   cavemanSuppressEnv,
+  permissionArgv,
 } from "../providers/claude_flags.ts";
 import { resolveClaudeModel } from "../util/claude_model.ts";
 
@@ -127,6 +128,7 @@ function commonSuffix(slug: string): string {
     "",
     `Your role slug is "${slug}". Emit exactly one finding with role=${slug}.`,
     "Return ONLY the JSON object {\"findings\":[...]} matching the provided --json-schema.",
+    "For every CRITICAL or HIGH issue, cite the evidence as path:line (for example src/a.ts:42, or .loki/logs/x.log:9); an uncited blocking issue is downgraded to MEDIUM.",
     "Do not wrap in markdown fences. Do not add prose before or after the JSON.",
   ].join("\n");
 }
@@ -369,7 +371,7 @@ export async function dispatchClaudeAgents(
   // through the auto-flags builder.
   const argv = [
     "claude",
-    "--dangerously-skip-permissions",
+    ...permissionArgv(),
     "--agents",
     JSON.stringify(agentsJson),
     "--json-schema",
@@ -478,7 +480,7 @@ export async function dispatchDevilsAdvocate(
   // the tree-mutation guard / least-privilege allowlist apply identically.
   const argv = [
     "claude",
-    "--dangerously-skip-permissions",
+    ...permissionArgv(),
     "--agents",
     JSON.stringify(agentsJson),
     "--json-schema",

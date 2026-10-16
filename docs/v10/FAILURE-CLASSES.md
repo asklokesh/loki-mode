@@ -795,3 +795,12 @@ L0 review rule (ENGINE-LAWS.md L0): a fix that adds an `if` or a regex about the
 - Mechanism: scripts/v10-worktree-reap.sh removes (non-force, by exact path) clean worktrees merged into origin/main or idle past 6h by HEAD reflog mtime and not on an active BOARD row; idle dirty ones are salvaged to wt-save/<name> first (node_modules and .rv deleted, loki-ts/dist discarded); detached unmerged HEADs get a wt-save ref; locked and fresh ones are kept. It runs after each main sync in train-cycle.sh and from .githooks/post-merge. scripts/v10-worktree-add.sh enforces the 40G floor (LOKI_WORKTREE_DISK_FLOOR_GB), reaping first. Pulse emits WORKTREE_SPRAWL above 20.
 - Fixture: tests/test-worktree-reap.sh (merged, idle, detached, dirty-idle, .rv, dist-only, dirty-fresh, locked, fresh, BOARD-held, floor refusal, pulse 20 vs 21).
 - Known limits: a locked worktree whose owning agent is dead is kept (the reaper cannot tell dead from alive, so it never touches a locked one); and slice worktrees created by the agent harness bypass the disk floor unless the dispatcher creates them through scripts/v10-worktree-add.sh.
+
+## FC-100 The merge gate accepted a proof not bound to the PR head (MERGE-HEAD-PIN)
+- User saw: a PR could merge on a VERIFIED verdict that was earned by a different commit than the one merged (last-proof-id pointed at whatever ran last, and gh pr merge named no expected head).
+- Law: a verdict binds to the exact bytes it judged; the merge must prove the head it lands equals the head that was proven.
+- Cause (measured): _merge_pr_gated read .loki/state/last-proof-id.txt without comparing facts.git.head_sha to the PR headRefOid, and called gh pr merge without --match-head-commit; a scan that stopped at the first matching proof let an older VERIFIED override a newer NOT_PROVEN.
+- Siblings swept: verify-pr respond headRefOid compare (P12-04, loki-ts); the queue path shares _merge_pr_gated and is pinned too.
+- Mechanism: the gate reads headRefOid, requires every clean (non-dirty) proof for that head to agree on VERIFIED, refuses with gate: head when none exists or the head is unreadable or moved, and merges with --match-head-commit.
+- Fixture: tests/test-loki-merge-queue.sh (pin flag, stale proof, proof resolved by head, older VERIFIED vs newer NOT_PROVEN, dirty proof, unreadable head, head moved).
+- Known limits: a proof without facts.git.head_sha never matches (fails closed); dirty is ignoring .loki/ only.

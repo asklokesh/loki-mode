@@ -52,7 +52,7 @@ function runDoctor(mode: "yes" | "empty" | "flaky", json: boolean): string {
         : `if [ -f "${counter}" ]; then echo '{"loggedIn": true}'; else touch "${counter}"; fi`;
   writeFileSync(
     join(bin, "claude"),
-    `#!/bin/bash\nif [ "$1" = "auth" ]; then ${body}; exit 0; fi\necho "1.0.0"\n`,
+    `#!/bin/bash\nif [ "$1" = "auth" ]; then ${body}; exit 0; fi\necho "2.1.293"\n`,
   );
   chmodSync(join(bin, "claude"), 0o755);
   const r = Bun.spawnSync(["bun", CLI, "doctor", ...(json ? ["--json"] : [])], {

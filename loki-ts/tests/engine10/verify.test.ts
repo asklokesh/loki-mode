@@ -204,7 +204,7 @@ describe("engine10 verify: test selection and select-tests.sh", () => {
     const testChecks = checks.filter((c) => c.name.startsWith("bun:"));
     expect(testChecks).toHaveLength(1); // 3 sources (impacted, wall, changed-test-file), 1 run
     expect(testChecks[0]?.result).toBe("pass");
-    expect(emitted.filter((e) => e.type === "test.result")).toHaveLength(1);
+    expect(emitted.filter((e) => e.type === "test.result" && String(e.data["name"]).startsWith("bun:"))).toHaveLength(1);
   }, 20_000);
 
   test("an absolute Wall path is normalized to repo-relative and still selected", async () => {
@@ -550,5 +550,17 @@ describe("diffFiles and recordRisk against a real repo", () => {
     const p = recordRisk(d, r);
     expect(p && existsSync(p)).toBe(true);
     expect(JSON.parse(readFileSync(p!, "utf8")).tier).toBe("high");
+  });
+});
+
+describe("engine10 verify: full-suite evidence (P12-01)", () => {
+  test("a medium-risk run emits a verify-stage test.result for each full-suite check it records", async () => {
+    const repoDir = mkRepo();
+    writeFileSync(join(repoDir, "big.ts"), Array.from({ length: 150 }, (_, i) => `export const v${i} = ${i};`).join("\n") + "\n");
+    const { ctx, emitted } = fakeCtx({ repoDir, baseSha: baseSha(repoDir), detect: async () => ({ runners: ["node"], tests: [] }) });
+    const result = await verifyStage.run(ctx, sig());
+    const full = (result.data.checks as VerifyCheck[]).filter((c) => c.name.startsWith("full suite"));
+    expect(full.length).toBeGreaterThan(0);
+    for (const c of full) expect(emitted.some((e) => e.type === "test.result" && e.stage === "verify" && e.data["name"] === c.name && e.data["result"] === c.result)).toBe(true);
   });
 });

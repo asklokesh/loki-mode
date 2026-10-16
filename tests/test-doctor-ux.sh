@@ -154,6 +154,43 @@ else
     bad "FV-readiness-env-3: chat.sh missing /doctor help line or doctor --repo delegation"
 fi
 
+# --- P12-16: loki chat command completeness -------------------------------------
+export LOKI_NO_BROWSER=1
+chat_ok() { if grep -Eq "$1" "$CHAT_SH"; then ok "P12-16: $2"; else bad "P12-16: $2"; fi; }
+chat_ok '^  /answer <text>' "/answer listed in /help"
+chat_ok '/answer\)' "/answer dispatch"
+chat_ok 'answer --text' "/answer delegates to loki answer --text"
+chat_ok '^  /pause' "/pause listed in /help"
+chat_ok '/pause\) _chat_do "\$loki" pause' "/pause delegates to loki pause"
+chat_ok '^  /resume' "/resume listed in /help"
+chat_ok '/resume\) _chat_do "\$loki" resume' "/resume delegates to loki resume"
+chat_ok '/run\|/start\)' "/start is an alias of /run"
+chat_ok '^  /start' "/start listed in /help"
+chat_ok '_chat_run_start "\$loki" "\$rest" < /dev/null .* &$' "/run backgrounds the run"
+chat_ok '/status /steer.*/stop' "help lists /status /steer /stop"
+chat_ok '/steer sends a mid-run directive via loki steer' "system prompt explains /steer"
+CHAT_STUB="$(mktemp -d)"
+printf '#!/bin/sh\necho "Steer rev 7 received: applies at next plan/implement stage."\n' > "$CHAT_STUB/loki"
+chmod +x "$CHAT_STUB/loki"
+printf '#!/bin/sh\necho quiet\n' > "$CHAT_STUB/loki-quiet"
+chmod +x "$CHAT_STUB/loki-quiet"
+if out="$(bash -c 'source "$1"; _chat_steer "$2" go' _ "$CHAT_SH" "$CHAT_STUB/loki" 2>&1)" && echo "$out" | grep -q 'Steer rev 7 received'; then
+    ok "P12-16: /steer shows loki steer's rev ack"
+else
+    bad "P12-16: /steer ack missing: $out"
+fi
+if out="$(bash -c 'source "$1"; _chat_steer "$2" go' _ "$CHAT_SH" "$CHAT_STUB/loki-quiet" 2>&1)" && echo "$out" | grep -q '^Steer not confirmed: quiet$' && ! echo "$out" | grep -q received; then
+    ok "P12-16: /steer without a rev line says 'not confirmed', never 'received'"
+else
+    bad "P12-16: /steer fallback missing: $out"
+fi
+if out="$(bash -c 'source "$1"; _chat_steer "$2" help' _ "$CHAT_SH" "$CHAT_STUB/loki" 2>&1)" && echo "$out" | grep -q '^usage: /steer' && ! echo "$out" | grep -q received; then
+    ok "P12-16: /steer refuses bare help without calling loki steer"
+else
+    bad "P12-16: /steer help guard missing: $out"
+fi
+rm -rf "$CHAT_STUB"
+
 # --- Cleanup ------------------------------------------------------------------
 rm -rf "$(dirname "$SANDBOX_BIN")" 2>/dev/null || true
 

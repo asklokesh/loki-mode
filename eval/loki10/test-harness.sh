@@ -1479,7 +1479,7 @@ h = importlib.util.module_from_spec(sp); sp.loader.exec_module(h)
 os.environ["LOKI_SPEED"] = "operator-value"
 d = tempfile.mkdtemp()
 e = {a: h.arm_env(d, "m", "a", a) for a in ("v10", "v10-parallel", "v10-seq", "raw-claude", "legacy")}
-print(sorted(h.ARMS) == sorted(["v10", "raw-claude", "legacy", "v10-parallel", "v10-seq"]),
+print(sorted(h.ARMS) == sorted(["v10", "raw-claude", "legacy", "v10-parallel", "v10-seq", "configured-claude"]),
       e["v10-parallel"].get("LOKI_SPEED"), e["v10-seq"].get("LOKI_SPEED"),
       "LOKI_SPEED" in e["v10"], "LOKI_SPEED" in e["raw-claude"], "LOKI_SPEED" in e["legacy"])
 PY
@@ -1607,5 +1607,93 @@ assert tok is None, "a real session with no cost record must still be unknown"
 PY
 then pass "D62-VIS-F1 F2: visual-evidence pgid announcements are ignored when matching sessions to cost records"
 else fail "D62-VIS-F1 F2: group announcement counted as a provider session"; fi
+# ---- P12-29: configured-claude arm. Same claude binary and scoring as
+# raw-claude, but its per-run CLAUDE_CONFIG_DIR is seeded from an operator-named
+# source (LOKI_EVAL_CONFIGURED_CC_DIR: CLAUDE.md, settings.json, hooks, skills).
+# raw-claude stays stripped. A configured run with no source fails closed.
+mkdir -p "$T/cc-src/hooks" "$T/cc-src/skills/s1" "$T/cc-src/junk"
+echo "configured rule" > "$T/cc-src/CLAUDE.md"
+echo '{"hooks":{}}' > "$T/cc-src/settings.json"
+echo "echo hook" > "$T/cc-src/hooks/h.sh"
+echo "skill" > "$T/cc-src/skills/s1/SKILL.md"
+echo "secret" > "$T/cc-src/junk/creds.json"
+mkdir -p "$T/cc-secret-dir" && echo "TOPSECRET" > "$T/cc-secret-dir/key.txt"
+ln -s "$T/cc-secret-dir" "$T/cc-src/skills/evil-dir"
+ln -s "$T/cc-secret-dir/key.txt" "$T/cc-src/hooks/evil-file"
+if python3 - "$HERE" "$T/cc-src" <<'PY'
+import importlib.util, os, sys, tempfile
+sp = importlib.util.spec_from_file_location("h", sys.argv[1] + "/harness.py")
+h = importlib.util.module_from_spec(sp); sp.loader.exec_module(h)
+src = sys.argv[2]
+assert "configured-claude" in h.ARMS, h.ARMS
+os.environ["LOKI_EVAL_CONFIGURED_CC_DIR"] = src
+d1, d2 = tempfile.mkdtemp(), tempfile.mkdtemp()
+c = h.arm_env(d1, "m", "a", "configured-claude")
+r = h.arm_env(d2, "m", "a", "raw-claude")
+cc = c["CLAUDE_CONFIG_DIR"]
+assert cc == os.path.join(d1, "claude-config"), cc
+for rel in ("CLAUDE.md", "settings.json", "hooks/h.sh", "skills/s1/SKILL.md"):
+    assert os.path.isfile(os.path.join(cc, rel)), rel
+for root, dirs, files in os.walk(cc, followlinks=False):
+    for n in dirs + files:
+        assert "evil" not in n, "nested symlink copied: " + os.path.join(root, n)
+        assert not os.path.islink(os.path.join(root, n)), "link in config dir"
+    for n in files:
+        assert "TOPSECRET" not in open(os.path.join(root, n)).read(), "symlink target content copied"
+assert not os.path.exists(os.path.join(cc, "junk")), "non-allowlisted entry copied"
+assert os.listdir(r["CLAUDE_CONFIG_DIR"]) == [], "raw-claude config dir must stay empty"
+assert "LOKI_EVAL_CONFIGURED_CC_DIR" not in c
+assert h.configured_config_error("raw-claude") is None
+assert h.configured_config_error("configured-claude") is None
+del os.environ["LOKI_EVAL_CONFIGURED_CC_DIR"]
+assert h.configured_config_error("configured-claude"), "missing source must fail closed"
+PY
+then pass "P12-29: configured-claude seeds config from the source, raw-claude stays empty, missing source fails closed"
+else fail "P12-29: configured-claude arm config"; fi
+R="$T/out-cc-none"
+(unset LOKI_EVAL_CONFIGURED_CC_DIR; STUB_MODE=pass RUN --arm configured-claude --task fx-greet --out "$R" >/dev/null 2>&1)
+[ "$(row "$R/results.jsonl" status)" = '"arm_unavailable"' ] \
+    && pass "P12-29: configured-claude with no config source is arm_unavailable" \
+    || fail "P12-29: no-source status=$(row "$R/results.jsonl" status)"
+R="$T/out-cc-ok"
+LOKI_EVAL_CONFIGURED_CC_DIR="$T/cc-src" STUB_MODE=pass RUN --arm configured-claude --task fx-greet --out "$R" >/dev/null 2>&1
+[ -s "$R/results.jsonl" ] && [ "$(row "$R/results.jsonl" status)" != '"arm_unavailable"' ] \
+    && [ "$(row "$R/results.jsonl" completed)" = "true" ] \
+    && pass "P12-29: configured-claude runs through the claude stub with a source" \
+    || fail "P12-29: with-source row=$(cat "$R/results.jsonl" 2>/dev/null)"
+# ---- 22. (P12-30, M5) predeclared task families: one authored fam- manifest per
+# family, all valid, each seeded by setup so the hidden test grades behavior.
+fam_want="api-migration ci-failure flaky incident review-response staging ui"
+fam_have=""
+for d in "$HERE"/tasks/fam-*; do [ -d "$d" ] && fam_have="${fam_have:+$fam_have }${d##*/fam-}"; done
+[ "$fam_have" = "$fam_want" ] && pass "P12-30: the 7 predeclared families have a fam- manifest" \
+    || fail "P12-30: fam- families '$fam_have' want '$fam_want'"
+fam_dirs=("$HERE"/tasks/fam-*)
+fam_out="$(H validate "${fam_dirs[@]}" 2>&1)"; rc=$?
+[ "$rc" = 0 ] && [ "${#fam_dirs[@]}" = 7 ] && pass "P12-30: every fam- task passes the validator" \
+    || fail "P12-30: fam- validate rc=$rc: $fam_out"
+# Negative leg: a malformed fam task must make validate exit 1.
+mkdir -p "$T/fam-bad"
+cp -R "$HERE/tasks/fam-ui" "$T/fam-bad/fam-ui"
+python3 -c 'import json,sys; p=sys.argv[1]; t=json.load(open(p)); del t["hidden"]["run"]; json.dump(t, open(p, "w"))' "$T/fam-bad/fam-ui/task.json"
+H validate "$T/fam-bad/fam-ui" >/dev/null 2>&1; rc=$?
+[ "$rc" = 1 ] && pass "P12-30: a malformed fam task makes validate exit 1" || fail "P12-30: malformed fam validate rc=$rc"
+# Green leg: a stub arm applies the reference edit (fixtures/fam-ref/NAME) and
+# the harness regrades the PR branch, re-running setup first, so the row must
+# be completed with hidden_pass true. A noop arm must NOT complete (control).
+for fam in $fam_want; do
+    FR="$T/out-fam-$fam"
+    STUB_MODE=famref STUB_FAM_REF_DIR="$HERE/fixtures/fam-ref/$fam" env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$HERE/tasks" \
+        bash "$HERE/run.sh" --arm raw-claude --task "fam-$fam" --out "$FR" >"$T/fam-$fam.log" 2>&1
+    FJ="$FR/results.jsonl"
+    [ "$(row "$FJ" completed)" = true ] && [ "$(row "$FJ" hidden_pass)" = true ] \
+        && pass "P12-30: fam-$fam reference edit completes with hidden_pass" \
+        || fail "P12-30: fam-$fam reference edit: $(tail -1 "$FJ" 2>/dev/null) $(tail -3 "$T/fam-$fam.log")"
+done
+FR="$T/out-fam-noop"
+STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$HERE/tasks" bash "$HERE/run.sh" --arm raw-claude --task fam-flaky --out "$FR" >/dev/null 2>&1
+[ "$(row "$FR/results.jsonl" completed)" != true ] && pass "P12-30: a noop arm does not complete a fam task" \
+    || fail "P12-30: noop arm completed fam-flaky"
+
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" = 0 ]
