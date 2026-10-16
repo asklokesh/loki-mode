@@ -17,7 +17,8 @@ import { makeAttemptRunner, makeProposeSession, makeUnitPrep, productionWaveDeps
 import type { WaveDeps } from "../../../src/util/modernize_coordinator.ts";
 import type { StepRunner } from "../../../src/engine10/modernize/wave.ts";
 import { makeUnitRunners } from "../../../src/util/modernize_unit.ts";
-import { modernizeEventsPath, planPath } from "../../../src/engine10/modernize/types.ts";
+import { readReport } from "../../../src/engine10/modernize/report.ts";
+import { modernizeEventsPath, planPath, reportJsonPath } from "../../../src/engine10/modernize/types.ts";
 
 const MID = "mod-20260101T000000Z-abcdef";
 const u = (id: string): Unit => ({ id, nodes: [id], lines: 1, highRisk: false });
@@ -367,6 +368,30 @@ describe("runWaves (coordinator): verify, ship, resume", () => {
       ...over,
     };
   };
+
+  it("FC-M25W: writes the sealed report once per run: COMPLETE when proven, INCOMPLETE naming the unrun wave when blocked", async () => {
+    const f = fx();
+    const f2 = fx();
+    try {
+      await runWaves(planOf([[u("a")], [u("b")]]), mk(f));
+      const rep = readReport(f.dir, MID);
+      expect(rep.verdict).toBe("COMPLETE");
+      expect(rep.units.map((x) => [x.unit, x.verdict])).toEqual([["a", "PROVEN"], ["b", "PROVEN"]]);
+      expect(rep.units[0]).toHaveProperty("receiptSha256");
+      expect(existsSync(reportJsonPath(f.dir, MID))).toBe(true);
+      expect(readModernizeEvents(f.dir, MID).filter((e) => e.type === "modernize.completed")).toHaveLength(1);
+
+      const bad: StepRunner = (step) => ({ status: step === "build" ? 1 : 0, timedOut: false, error: null, tail: "" });
+      const r2 = await runWaves(planOf([[u("a")], [u("b")]]), mk(f2, { stepRunner: bad }));
+      expect(r2.ok).toBe(false);
+      const rep2 = readReport(f2.dir, MID);
+      expect(rep2.verdict).toBe("INCOMPLETE");
+      expect(rep2.blocking_waves).toEqual([1, 2]);
+      expect(rep2.units.map((x) => x.unit)).toEqual(["a", "b"]);
+      expect(rep2.units.find((x) => x.unit === "b")!.verdict).toBe("NOT_PROVEN");
+      expect(readModernizeEvents(f2.dir, MID).filter((e) => e.type === "modernize.completed")).toHaveLength(1);
+    } finally { f.done(); f2.done(); }
+  });
 
   it("a verified wave invokes shipWave (non-draft PR) and records wave.shipped; a failed verify ships a draft and blocks the next wave", async () => {
     const f = fx();

@@ -13,6 +13,7 @@ import { alreadySealedInLog, DEFAULT_NORMALIZERS } from "../engine10/modernize/o
 import { loadResumeState, resumeSchedule } from "../engine10/modernize/resume.ts";
 import { gitMergeOps, schedule } from "../engine10/modernize/scheduler.ts";
 import type { AttemptRunner, MergeOps, SchedulerOpts, UnitOutcome, WorktreeOps } from "../engine10/modernize/scheduler.ts";
+import { writeReport } from "../engine10/modernize/report.ts";
 import { shipWave } from "../engine10/modernize/ship.ts";
 import type { PushRunner, ShipUnit } from "../engine10/modernize/ship.ts";
 import type { ModernizeLog } from "../engine10/modernize/log.ts";
@@ -79,12 +80,34 @@ export function scopeBuildToWave(cmd: StepCommand | null | undefined, repoDir: s
   return files.length ? { ...cmd, argv: [...cmd.argv.slice(0, x + 2), ...files] } : cmd;
 }
 
+interface RunAcc { verdicts: WaveVerdict[]; outcomes: Map<string, UnitOutcome>; unready: Map<string, string> }
+
+/** FC-M25W: every run, including one that stops on a failed wave, a budget hit or NOT_PROVEN units, ends by sealing report.json once. Waves that never ran are unverified; units with no outcome are NOT_PROVEN. */
 export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesResult> {
+  const acc: RunAcc = { verdicts: [], outcomes: new Map(), unready: new Map() };
+  try {
+    return await runWavesInner(plan, d, acc);
+  } finally {
+    try {
+      writeReport({
+        repoDir: d.repoDir, mid: d.mid, log: d.log,
+        units: plan.units.map((x) => {
+          const o = acc.outcomes.get(x.id);
+          const su = shipUnitOf(d, x.id, o);
+          return o ? su : { ...su, not_proven: [acc.unready.get(x.id) ?? "not run: the run stopped before this unit"] };
+        }),
+        waves: plan.waves.map((_, i) => ({ wave: i + 1, verdict: acc.verdicts[i] ?? null })),
+      });
+    } catch (e) { process.stderr.write(`modernize: could not write report.json: ${e instanceof Error ? e.message : String(e)}\n`); }
+  }
+}
+
+async function runWavesInner(plan: ClusterResult, d: WaveDeps, acc: RunAcc): Promise<WavesResult> {
   const waves: WaveReport[] = [];
-  const verdicts: WaveVerdict[] = [];
+  const verdicts = acc.verdicts;
   let spent = 0;
   const shipped = new Set(readModernizeEvents(d.repoDir, d.mid).filter((e) => e.type === "wave.shipped").map((e) => e.data["wave"]));
-  const unready = new Map<string, string>();
+  const unready = acc.unready;
   // F8: on resume a unit already settled in the log is never re-captured (the tree has changed since).
   const settled = new Set<string>();
   if (d.resume) { const st = loadResumeState(d.repoDir, d.mid); if (st.ok) for (const id of [...st.state.completed, ...st.state.notProven]) settled.add(id); }
@@ -125,6 +148,7 @@ export async function runWaves(plan: ClusterResult, d: WaveDeps): Promise<WavesR
     }
     for (const id of ids) if (unready.has(id)) outcomes.push({ unit: id, status: "NOT_PROVEN", attempts: 0, costUsd: 0, result: null, worktree: null, needsReslice: false, reason: unready.get(id)! });
     const byUnit = new Map(outcomes.map((o) => [o.unit, o]));
+    for (const [k, o] of byUnit) acc.outcomes.set(k, o);
     const verdict = verifyWave({ repoDir: d.repoDir, wave: n, commands: { ...d.waveCommands, build: scopeBuildToWave(d.waveCommands.build, d.repoDir, sub.units) }, log: d.log, ...(d.optionalSteps ? { optional: d.optionalSteps } : {}), ...(d.stepRunner ? { run: d.stepRunner } : {}) });
     verdicts.push(verdict);
     let url: string | null = null, reason: string | null = null, didShip = false;

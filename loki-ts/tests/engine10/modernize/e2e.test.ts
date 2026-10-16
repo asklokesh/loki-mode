@@ -14,7 +14,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "../../../src/engine10/modernize/cli.ts";
 import { readModernizeEvents } from "../../../src/engine10/modernize/log.ts";
-import { oracleDir } from "../../../src/engine10/modernize/types.ts";
+import { readReport, verifyReport } from "../../../src/engine10/modernize/report.ts";
+import { oracleDir, reportJsonPath } from "../../../src/engine10/modernize/types.ts";
 import { runUnit } from "../../../src/engine10/modernize/unit.ts";
 import type { UnitRunResult } from "../../../src/engine10/modernize/unit.ts";
 import type { NewCaseOutcome } from "../../../src/engine10/modernize/equiv.ts";
@@ -161,6 +162,19 @@ describe("loki modernize e2e on the py2 fixture", () => {
     expect(cap.err).not.toContain("not built");
     expect(cap.out).not.toMatch(/PROVEN|shipped/);
     expect(readFileSync(join(repo, UNIT_FILE), "utf8")).toBe(before);
+    // FC-M25W: even this NOT PROVEN run seals report.json with the verdict and per-unit fields.
+    const report = readReport(repo, MID);
+    expect(existsSync(reportJsonPath(repo, MID))).toBe(true);
+    expect(report.verdict).toBe("INCOMPLETE");
+    expect(report.report_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(report.units.length).toBeGreaterThan(0);
+    for (const x of report.units) {
+      expect(x.verdict).not.toBe("PROVEN");
+      expect(x.not_proven.join(" ")).toContain("old runtime unavailable");
+      for (const k of ["unit", "verdict", "not_proven", "rate", "branchPct", "receiptPath", "receiptSha256"]) expect(x).toHaveProperty(k);
+    }
+    expect(report.blocking_units).toEqual(report.units.map((x) => x.unit));
+    expect(verifyReport(report).ok).toBe(true);
   }, T);
 
   it.skipIf(SKIP_REASON !== "")("unit run: stub provider converts the unit, pytest passes under py3, oracle sealed, PROVEN", async () => {
