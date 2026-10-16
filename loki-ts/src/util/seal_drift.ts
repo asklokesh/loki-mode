@@ -31,7 +31,7 @@ function fabricatedPass(receiptPath: string, r: Obj): string | null {
   if (typeof bound !== "string" || bound === EMPTY_SHA || !Array.isArray(r["checks"])) return null;
   const events = boundEvents(join(dirname(receiptPath), "events.jsonl"), bound);
   if (!events || !events.some((e) => e.stage === "verify")) return null; // the verify stage left no trace (hand-built or partial log): nothing to compare
-  const passed = new Set(events.filter((e) => e.type === "test.result" && e.data["result"] === "pass").map((e) => String(e.data["name"])));
+  const passed = new Set(events.filter((e) => e.type === "test.result" && e.stage === "verify" && e.data["result"] === "pass").map((e) => String(e.data["name"])));
   const missing = (r["checks"] as Obj[]).filter((c) => c?.["result"] === "pass" && !passed.has(String(c["name"]))).map((c) => String(c["name"]));
   return missing.length ? `receipt claims pass with no test.result pass in events.jsonl: ${missing.join(", ")}` : null;
 }
@@ -50,7 +50,7 @@ function repoOf(receiptPath: string): string | null {
 
 export function sealDrift(given: string, r: Obj, env: NodeJS.ProcessEnv = process.env): Drift | null {
   let receiptPath = given;
-  try { receiptPath = realpathSync(given); } catch { /* keep the given path */ } // ./, ../ and symlinked dirs must not hide the .loki/runs layout
+  try { receiptPath = join(realpathSync(dirname(given)), basename(given)); } catch { /* keep the given path */ } // resolve the DIRECTORY only (as verifyReceipt/checkEventLog read the log from dirname(given)); a receipt.json symlink must not move the log and layout lookup
   const fab = fabricatedPass(receiptPath, r);
   if (fab) return { verdict: "TAMPERED", reason: fab };
   const task = (r["task"] ?? {}) as { source?: unknown; sha256?: unknown };

@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { sealedLog } from "./log_fixture.ts";
 import { createHash, generateKeyPairSync, sign as nodeSign, type KeyObject } from "node:crypto";
 import { kidOf } from "../../src/engine10/stages/seal.ts";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { computeReceiptHash, main, verifyReceipt } from "../../src/engine10/verify_cmd.ts";
@@ -1021,5 +1021,52 @@ describe("seal drift review fixes (P12-01)", () => {
       symlinkSync(dir, lnk);
       expect((await verify("unused", join(lnk, "receipt.json"))).code).toBe(2);
     } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  const runs = (repo: string): string => join(repo, ".loki", "runs");
+  const verifyLog = (extra: string): string => ev(0, "run.started", {}) + ev(1, "stage.started", {}, "verify") + extra;
+
+  test("a test.result with result fail does not count as a pass", async () => {
+    const repo = tmpDir();
+    try {
+      seal(repo, "r-failev", { checks: [unit] }, verifyLog(ev(2, "test.result", { ...unit, result: "fail" }, "verify")));
+      expect((await verify(runs(repo), "r-failev")).code).toBe(1);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  test("a test.result from another stage does not count as a verify pass", async () => {
+    const repo = tmpDir();
+    try {
+      seal(repo, "r-stage", { checks: [unit] }, verifyLog(ev(2, "test.result", unit, "deep")));
+      expect((await verify(runs(repo), "r-stage")).code).toBe(1);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  test("a pass recorded after log.sealed does not count even inside the hashed prefix", async () => {
+    const repo = tmpDir();
+    try {
+      seal(repo, "r-after", { checks: [unit] }, verifyLog(ev(2, "log.sealed", {}) + ev(3, "test.result", unit, "verify")));
+      expect((await verify(runs(repo), "r-after")).code).toBe(1);
+    } finally { rmSync(repo, { recursive: true, force: true }); }
+  });
+
+  test("receipt.json as a file symlink to a copy elsewhere still gets the log and head checks", async () => {
+    const repo = tmpDir(), away = tmpDir();
+    try {
+      vcs(repo, "init", "-q"); writeFileSync(join(repo, "a"), "1"); vcs(repo, "add", "a"); vcs(repo, "commit", "-qm", "one");
+      const head = vcs(repo, "rev-parse", "HEAD");
+      const dir = seal(repo, "r-fsym", { head_sha: head, checks: [unit] }, verifyLog(ev(2, "test.result", unit, "verify")));
+      const real = join(away, "receipt.json");
+      renameSync(join(dir, "receipt.json"), real);
+      symlinkSync(real, join(dir, "receipt.json"));
+      expect((await verify(runs(repo), "r-fsym")).code).toBe(0); // control: honest and at HEAD
+      writeFileSync(join(repo, "a"), "2"); vcs(repo, "commit", "-qam", "two");
+      expect((await verify(runs(repo), "r-fsym")).code).toBe(2); // head drift still seen through the symlink
+      const dir2 = seal(repo, "r-fsym2", { head_sha: vcs(repo, "rev-parse", "HEAD"), checks: [unit] }, verifyLog(""));
+      const real2 = join(away, "receipt2.json");
+      renameSync(join(dir2, "receipt.json"), real2);
+      symlinkSync(real2, join(dir2, "receipt.json"));
+      expect((await verify(runs(repo), "r-fsym2")).code).toBe(1); // fabricated pass still seen through the symlink
+    } finally { rmSync(repo, { recursive: true, force: true }); rmSync(away, { recursive: true, force: true }); }
   });
 });
