@@ -12,7 +12,11 @@ import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 import type { Unit } from "./decompose.ts";
 export interface Criterion { id: string; text: string; source_line: number }
-export interface Contract { source: string; criteria: Criterion[] }
+export interface Contract { source: string; criteria: Criterion[]; constraints?: Constraint[] }
+export const CONSTRAINT_KINDS = ["perf", "api", "security"] as const;
+export type ConstraintKind = (typeof CONSTRAINT_KINDS)[number];
+/** P12-43: a typed constraint, traced to the Wall case ids that prove it. */
+export interface Constraint { id: string; kind: ConstraintKind; text: string; wall_cases: string[] }
 export interface TracedCriterion { id: string; text: string; files: string[]; checks: string[]; status: "keyword_match" | "no_match" }
 export interface ContractTrace { criteria: TracedCriterion[]; sha256?: string }
 export const MAX_CRITERIA = 50;
@@ -94,6 +98,19 @@ export async function spawnWithContract<T>(repoDir: string, groupId: string, uni
   const results: T[] = [];
   for (const u of f.contract.units) results.push(await launch(u.id, u.criteria.map((c) => c.text)));
   return { ok: true, results };
+}
+/** Problems with typed constraints, empty when valid: known kind, and at least one wall case id that exists in wallCaseIds. */
+export function validateConstraints(constraints: Constraint[], wallCaseIds: Iterable<string>): string[] {
+  const known = new Set(wallCaseIds);
+  const errs: string[] = [];
+  for (const c of constraints) {
+    const id = sanitizeCriterion(String(c.id));
+    if (!(CONSTRAINT_KINDS as readonly string[]).includes(c.kind)) errs.push(`constraint ${id} has unknown kind ${sanitizeCriterion(String(c.kind))}`);
+    if (!Array.isArray(c.wall_cases) || c.wall_cases.length === 0) { errs.push(`constraint ${id} names no wall case id`); continue; }
+    const missing = c.wall_cases.filter((w) => !known.has(w));
+    if (missing.length > 0) errs.push(`constraint ${id} names unknown wall case id: ${missing.map(sanitizeCriterion).join(", ")}`);
+  }
+  return errs;
 }
 const STOP = new Set(["the", "and", "for", "with", "that", "this", "must", "should", "shall", "when", "then", "are", "was", "all", "any", "can", "not", "has", "have", "from", "into", "each", "user", "users"]);
 function words(s: string): string[] {
