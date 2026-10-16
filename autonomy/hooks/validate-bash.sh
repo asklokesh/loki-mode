@@ -842,6 +842,267 @@ _rm_target_extra_deny() {
     return 1
 }
 
+# P12-26g-d: allow-grammar for recursive rm targets. A target is allowed only
+# when, after quotes and braces are removed, it matches one of the shapes
+# below; anything else denies (fail closed). It runs BEFORE the older
+# temp-root checks, which still run on every target the grammar lets through.
+#   (a) plain relative path: first component not a glob, never climbs above start
+#   (b) absolute path outside every temp root and its ancestors, no glob in the
+#       first two components (except /tmp/<name>*), no expansion inside it
+#   (c) "$LOKI_RUN_TMP"[/...] with a valid LOKI_RUN_TMP
+#   (d) $TMPDIR or ${TMPDIR} with no modifier, then /<non-glob name>
+#   (e) $HOME or ~ then /..., staying inside HOME and off every temp root
+#   (f) another named variable, then /<non-glob, non-dotdot name>
+# Denied outright: positional or special parameters, ${!X}, ${#X}, $'..',
+# $"..", command substitution, nested ${..${..}}, any ${X<modifier>} other than
+# a whole-target :- or - default, and any expansion inside an absolute path.
+# Every function below returns 0 to DENY.
+_G_CAP=64
+_g_expand() {
+    local cur pre body post lo hi i span b alt
+    local -a work=("$1")
+    _G_ALTS=()
+    while [ "${#work[@]}" -gt 0 ]; do
+        cur="${work[0]}"
+        work=("${work[@]:1}")
+        # A leading sentinel keeps the regex free of an empty alternation.
+        if [[ "@${cur}" =~ ^(.*[^$])\{([^\{\}]*)\}(.*)$ ]]; then
+            pre="${BASH_REMATCH[1]#@}"; body="${BASH_REMATCH[2]}"; post="${BASH_REMATCH[3]}"
+            if [[ "$body" =~ ^(-?[0-9]+)\.\.(-?[0-9]+)$ ]]; then
+                lo="${BASH_REMATCH[1]}"; hi="${BASH_REMATCH[2]}"
+                [ "${#lo}" -le 6 ] && [ "${#hi}" -le 6 ] || return 2
+                case "$lo" in -*) lo=$(( -(10#${lo#-}) )) ;; *) lo=$(( 10#$lo )) ;; esac
+                case "$hi" in -*) hi=$(( -(10#${hi#-}) )) ;; *) hi=$(( 10#$hi )) ;; esac
+                span=$(( hi - lo )); [ "$span" -lt 0 ] && span=$(( -span ))
+                [ "$span" -lt "$_G_CAP" ] || return 2
+                i="$lo"
+                while :; do
+                    work+=("${pre}${i}${post}")
+                    [ "$i" -eq "$hi" ] && break
+                    if [ "$lo" -le "$hi" ]; then i=$(( i + 1 )); else i=$(( i - 1 )); fi
+                done
+            elif [[ "$body" == *,* ]]; then
+                b="$body"
+                while :; do
+                    alt="${b%%,*}"
+                    work+=("${pre}${alt}${post}")
+                    [[ "$b" == *,* ]] || break
+                    b="${b#*,}"
+                done
+            else
+                return 1
+            fi
+        else
+            [[ "$cur" =~ (^|[^$])\{ ]] && return 1
+            _G_ALTS+=("$cur")
+        fi
+        [ $(( ${#work[@]} + ${#_G_ALTS[@]} )) -le "$_G_CAP" ] || return 2
+    done
+    return 0
+}
+
+# After the first variable, a component that is exactly $name or ${name}
+# (not TMPDIR or HOME) is folded to a plain word; the glob and dotdot checks
+# then judge the folded path.
+_g_fold_vars() {
+    local rest="$1" c out="" n
+    local -a p=()
+    [[ "$rest" == /* ]] || { printf '%s' "$rest"; return; }
+    IFS=/ read -r -a p <<< "${rest#/}"
+    for c in ${p[@]+"${p[@]}"}; do
+        if [[ "$c" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$ ]]; then
+            n="${BASH_REMATCH[1]}"
+            case "$n" in TMPDIR|HOME) ;; *) c="v" ;; esac
+        fi
+        out="${out}/${c}"
+    done
+    [[ "$rest" == */ ]] && out="${out}/"
+    printf '%s' "$out"
+}
+
+# Rest after a variable: "/" then a non-glob first component, and no
+# dotdot-capable component anywhere.
+_g_named_rest_deny() {
+    local rest="$1" c first=true
+    local -a p=()
+    [[ "$rest" == /* ]] || return 0
+    IFS=/ read -r -a p <<< "${rest#/}"
+    [ "${#p[@]}" -gt 0 ] || return 0
+    for c in "${p[@]}"; do
+        _is_dotdotish "$c" && return 0
+        if $first; then
+            [ -n "$c" ] || return 0
+            [[ "$c" == *[\*\?\[]* ]] && return 0
+            first=false
+        fi
+    done
+    return 1
+}
+
+_g_home_deny() {
+    local rest="$1" home="${HOME:-}" hr res
+    [[ "$home" == /* ]] || return 0
+    [ -n "$rest" ] || return 0
+    [[ "$rest" == /* ]] || return 0
+    hr=$(_lex_resolve "$home")
+    [ "$hr" != "/" ] || return 0
+    _resolved_reaches_temp "$hr" && return 0
+    res=$(_lex_resolve "${hr}${rest}")
+    _resolved_reaches_temp "$res" && return 0
+    [[ "$res" == "$hr"/* ]] || return 0
+    return 1
+}
+
+_g_abs_deny() {
+    local a="$1" r n c1 c2 c3
+    [[ "$a" == *'$'* ]] && return 0
+    [[ "$a" =~ $_DOT_GLOB ]] && return 0
+    r=$(_lex_resolve "$a")
+    _resolved_reaches_temp "$r" && return 0
+    n="${r#/}"
+    c1="${n%%/*}"
+    c2=""
+    [[ "$n" == */* ]] && { c2="${n#*/}"; c2="${c2%%/*}"; }
+    case "$c1" in *[\*\?\[]*) return 0 ;; esac
+    case "$c2" in *[\*\?\[]*) [ "$c1" = "tmp" ] || return 0 ;; esac
+    if [ "$c1" = "private" ] && [ "$c2" = "var" ]; then
+        c3="${n#*/}"; c3="${c3#*/}"; c3="${c3%%/*}"
+        case "$c3" in *[\*\?\[]*) return 0 ;; esac
+    fi
+    return 1
+}
+
+_g_rel_deny() {
+    local a="$1" c depth=0 seen=false
+    local -a p=()
+    [[ "$a" == *'$'* ]] && return 0
+    IFS=/ read -r -a p <<< "$a"
+    for c in ${p[@]+"${p[@]}"}; do
+        case "$c" in
+            '') continue ;;
+            .) seen=true; continue ;;
+            ..) depth=$(( depth - 1 )); [ "$depth" -ge 0 ] || return 0; continue ;;
+        esac
+        _is_dotdotish "$c" && return 0
+        if ! $seen; then
+            seen=true
+            case "$c" in [\*\?\[]*) return 0 ;; esac
+        fi
+        depth=$(( depth + 1 ))
+    done
+    [ "$depth" -gt 0 ] && return 1
+    return 0
+}
+
+_g_alt_deny() {
+    local a="$1" name rest w
+    [ -n "$a" ] || return 0
+    # Whole-target default: ${N:-W} or ${N-W}, N not TMPDIR, W a variable, a
+    # relative word with no leading glob, or an allowed absolute path.
+    if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)(:-|-)(.*)\}$ ]]; then
+        name="${BASH_REMATCH[1]}"; w="${BASH_REMATCH[3]}"
+        [ "$name" != "TMPDIR" ] && [ "$name" != "HOME" ] || return 0
+        [ -n "$w" ] || return 0
+        if [[ "$w" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?$ ]]; then
+            [ "${BASH_REMATCH[1]}" != "TMPDIR" ] && [ "${BASH_REMATCH[1]}" != "HOME" ] || return 0
+            return 1
+        fi
+        [[ "$w" == *'$'* || "$w" == *'{'* || "$w" == *'}'* ]] && return 0
+        _g_alt_deny "$w"
+        return
+    fi
+    # ${TMPDIR:-<temp root>}/<named child>
+    if [[ "$a" =~ ^\$\{TMPDIR:-(/[^\}\$]*)\}(/.*)$ ]]; then
+        w="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
+        case "$(_lex_resolve "$w")" in
+            /tmp|/var/tmp|/private/tmp|/private/var/tmp) ;;
+            *) return 0 ;;
+        esac
+        [[ "$rest" == *'$'* ]] && return 0
+        _g_named_rest_deny "$rest"
+        return
+    fi
+    # ${N:?} and ${N:?msg} guards behave exactly like a bare ${N}.
+    if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*):\?[^\}\$\{]*\}(.*)$ ]]; then
+        a="\${${BASH_REMATCH[1]}}${BASH_REMATCH[2]}"
+    fi
+    # shellcheck disable=SC2088 # literal tilde in a string being inspected
+    case "$a" in
+        '$'*)
+            if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)\}(.*)$ ]] || [[ "$a" =~ ^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
+                name="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
+            else
+                return 0
+            fi
+            case "$name" in
+                LOKI_RUN_TMP|HOME|TMPDIR) ;;
+                *) rest=$(_g_fold_vars "$rest") ;;
+            esac
+            [[ "$rest" == *'$'* || "$rest" == *'{'* || "$rest" == *'}'* ]] && return 0
+            [ -z "$rest" ] || [[ "$rest" == /* ]] || return 0
+            case "$name" in
+                LOKI_RUN_TMP)
+                    _run_tmp_valid || return 0
+                    [ -z "$rest" ] && return 1
+                    _has_dotdot_component "$rest" && return 0
+                    [[ "$rest" =~ $_DOT_GLOB ]] && return 0
+                    return 1
+                    ;;
+                HOME) _g_home_deny "$rest"; return ;;
+                *)
+                    # A whole-target named variable (rm -r "$dir") is allowed;
+                    # TMPDIR bare names the temp root itself.
+                    if [ -z "$rest" ]; then
+                        [ "$name" != "TMPDIR" ] || return 0
+                        return 1
+                    fi
+                    _g_named_rest_deny "$rest"
+                    return
+                    ;;
+            esac
+            ;;
+        '~'|'~/'*)
+            [[ "$a" == *'$'* ]] && return 0
+            _g_home_deny "${a#\~}"
+            return
+            ;;
+        '~'*|'{'*|*'{'*|*'}'*) return 0 ;;
+        /*) _g_abs_deny "$a"; return ;;
+    esac
+    _g_rel_deny "$a"
+}
+
+_rm_grammar_deny() {
+    local t="${1%%[<>]*}" q alt rc=0
+    [ -n "$t" ] || return 1
+    # $' and $" open ANSI-C / locale quoting; a $$ before the quote is a PID.
+    [[ "$t" =~ (^|[^$])\$[\'\"] ]] && return 0
+    q="${t//[\"\'\\]/}"
+    # find -exec rm -r {} + / \; : a bare {} is find's placeholder, not a brace.
+    [ "$q" = "{}" ] && return 1
+    [[ "$q" == *'`'* || "$q" == *'$('* ]] && return 0
+    # $$ is a PID only mid-component (/tmp/test-$$); a leading $$ denies below.
+    while [[ "$q" =~ ^(.*[^/\$])\$\$(.*)$ ]]; do q="${BASH_REMATCH[1]}0${BASH_REMATCH[2]}"; done
+    local -a alts=("$q")
+    if [[ "$q" == *"{"* ]]; then
+        _g_expand "$q" || rc=$?
+        [ "$rc" -eq 1 ] && return 0
+        if [ "$rc" -eq 2 ]; then
+            # Over the cap: only a named relative first component, no
+            # expansion and no dot trick, can be left unexpanded.
+            [[ "$q" =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]*/ ]] || return 0
+            [[ "$q" == *'$'* ]] && return 0
+            [[ "$q" =~ $_OVERCAP_RE ]] && return 0
+            return 1
+        fi
+        alts=(${_G_ALTS[@]+"${_G_ALTS[@]}"})
+    fi
+    for alt in ${alts[@]+"${alts[@]}"}; do
+        _g_alt_deny "$alt" && return 0
+    done
+    return 1
+}
+
 # `rm`, `/bin/rm`, `\rm`, `"rm"` all name rm.
 _is_rm_token() {
     local x="${1//[\"\'\\]/}"
@@ -851,6 +1112,9 @@ _is_rm_token() {
 _segment_rm_hits_temp_root() {
     local seg="$1" tok recursive=false seen_rm=false
     local -a words
+    # Command substitution and grouping open a new command word: split on them.
+    [[ "$seg" == *'`'* ]] && seg="${seg//\`/ \$( }"
+    seg="${seg//[()\`]/ }"
     read -r -a words <<< "$seg"
     for tok in "${words[@]}"; do
         if ! $seen_rm; then
@@ -870,8 +1134,10 @@ _segment_rm_hits_temp_root() {
             continue
         fi
         case "$tok" in -*) continue ;; esac
+        [ -n "${tok//[\"\'\\]/}" ] || continue
         # Fail closed before the hook timeout (Claude Code treats it as allow).
         [ $((SECONDS - _RM_T0)) -ge "$_RM_BUDGET" ] && return 0
+        _rm_grammar_deny "$tok" && return 0
         _rm_target_is_temp_root_or_glob "$tok" && return 0
         _rm_target_extra_deny "$tok" && return 0
     done
@@ -881,7 +1147,134 @@ _segment_rm_hits_temp_root() {
 _RM_T0=$SECONDS
 _RM_BUDGET="${LOKI_RM_GUARD_BUDGET_SECS:-20}"
 case "$_RM_BUDGET" in ""|*[!0-9]*) _RM_BUDGET=20 ;; esac
-_flat_for_temp_root=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
+# P12-26g-d: inspect only real command words. Quoted data of a final-in-pipeline
+# printf/echo/cat (and a cat heredoc body) is masked; any construct that can run
+# data as code (eval, shells, $( ), backticks, pipes into them) disables masking.
+_INSPECT=$(_LOKI_MASK_CMD="$COMMAND" python3 - <<'PY'
+import os
+import re
+import sys
+
+cmd = os.environ.get("_LOKI_MASK_CMD", "")
+DATA = {"printf", "echo", "cat"}
+RISKY_WORD = re.compile(
+    r"(^|[^\w./-])(eval|source|sh|bash|zsh|dash|ksh|xargs|exec|python3?|perl|ruby|node|ssh|find|parallel)(?![\w-])"
+)
+DOT_CMD = re.compile(r"(^|[;&|\n(]\s*)\.\s")
+
+
+def emit(text):
+    sys.stdout.write(text)
+    raise SystemExit(0)
+
+
+# Any construct that can turn data into code disables masking entirely.
+# ANSI-C / locale quoting ($' $") hides quote boundaries from this walker.
+if re.search(r"`|\$\(|<\(|>\(|\$['\"]", cmd) or RISKY_WORD.search(cmd) or DOT_CMD.search(cmd):
+    emit(cmd)
+
+n = len(cmd)
+out = list(cmd)
+HEREDOC = re.compile(r"(?<!<)<<(?!<)-?\s*([\"']?)([A-Za-z_]\w*)\1")
+ASSIGN = re.compile(r"^\s*[A-Za-z_]\w*=\S*\s+")
+
+
+def is_data(text):
+    while ASSIGN.match(text):
+        text = ASSIGN.sub("", text, count=1)
+    m = re.match(r"\s*(\S+)", text)
+    if not m or m.group(1) not in DATA:
+        return False
+    if m.group(1) == "printf" and re.search(r"(^|\s)-v", text):
+        return False
+    return True
+
+
+def mask(s, e):
+    for k in range(s, e):
+        if out[k] != "\n":
+            out[k] = "x"
+
+
+i = 0
+unit_start = 0
+spans = []
+pending = []  # (delimiter, strip_tabs, mask_body)
+unit_hd = []  # heredocs opened by an unquoted << in the current unit
+
+
+def end_unit(end, piped):
+    data = is_data(cmd[unit_start:end]) and not piped
+    if data:
+        for s, e in spans:
+            mask(s, e)
+    for delim, strip in unit_hd:
+        pending.append((delim, strip, data))
+
+
+while i < n:
+    c = cmd[i]
+    if c == "\\":
+        i += 2
+        continue
+    if c == "#" and (i == 0 or cmd[i - 1] in " \t;&|()\n"):
+        j = cmd.find("\n", i)
+        i = n if j < 0 else j
+        continue
+    if c == "<" and cmd.startswith("<<", i):
+        m = HEREDOC.match(cmd, i)
+        if m:
+            unit_hd.append((m.group(2), cmd.startswith("<<-", i)))
+            i = m.end()
+            continue
+    if c == "'":
+        j = cmd.find("'", i + 1)
+        if j < 0:
+            emit(cmd)
+        spans.append((i + 1, j))
+        i = j + 1
+        continue
+    if c == '"':
+        j = i + 1
+        while j < n and cmd[j] != '"':
+            j += 2 if cmd[j] == "\\" else 1
+        if j >= n:
+            emit(cmd)
+        spans.append((i + 1, j))
+        i = j + 1
+        continue
+    if c in ";&|\n":
+        piped = c == "|" and cmd[i + 1:i + 2] != "|"
+        end_unit(i, piped)
+        spans = []
+        unit_hd = []
+        if c == "\n" and pending:
+            pos = i + 1
+            for delim, strip, do_mask in pending:
+                while pos < n:
+                    nl = cmd.find("\n", pos)
+                    stop = n if nl < 0 else nl
+                    line = cmd[pos:stop]
+                    if (line.lstrip("\t") if strip else line) == delim:
+                        pos = stop
+                        break
+                    if do_mask:
+                        mask(pos, stop)
+                    pos = stop + 1
+            pending = []
+            i = pos
+            unit_start = i
+            continue
+        i += 1
+        unit_start = i
+        continue
+    i += 1
+end_unit(n, False)
+emit("".join(out))
+PY
+) || _INSPECT="$COMMAND"
+[ -n "$_INSPECT" ] || _INSPECT="$COMMAND"
+_flat_for_temp_root=$(printf '%s' "$_INSPECT" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
 while IFS= read -r _seg; do
     if _segment_rm_hits_temp_root "$_seg"; then
         deny "Blocked: recursive delete of a temp root or a bare glob under it"
