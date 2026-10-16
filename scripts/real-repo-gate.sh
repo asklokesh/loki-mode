@@ -107,6 +107,7 @@ print(t["repo"]["source"]); print(t["repo"]["ref"]); print(t.get("setup","")); p
         python3 -c 'import json,sys;sys.stdout.write(json.load(open(sys.argv[1]))["prompt"]+"\n")' "$tj" > "$T/issue-$name.md"
         # the prompt text itself is the task: a multi-word argument is what bin/loki routes to Loki 10 (a file path stays legacy, which rejects --no-pr)
         arg="$(cat "$T/issue-$name.md")"
+        source="$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source(sys.argv[2]))' "$REPO_ROOT/eval/loki10" "$source")"
         if ! git clone -q "$source" "$d" 2>/dev/null || ! git -C "$d" checkout -q "$ref" 2>/dev/null; then DETAIL="clone of $source at $ref failed"; return; fi
     else
         slug="${spec%%#*}"; arg="$spec"
