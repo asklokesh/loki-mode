@@ -90,14 +90,15 @@ export function diffShortstat(cwd: string | undefined): { files: number; inserti
 /** Watchdog signature: shortstat counts plus a cheap content signal (size and mtime of every changed file), so in-place growth of one already-modified file moves it. */
 export function diffSignature(cwd: string | undefined, stat: { files: number; insertions: number; deletions: number } = diffShortstat(cwd)): string {
   const dir = cwd ?? process.cwd(), o = { timeout: 10_000 };
-  let bytes = 0, newest = 0, n = 0;
-  const add = (list: string): void => {
+  let bytes = 0, newest = 0;
+  const add = (list: string): void => { // each list gets its own 1000-file budget, so a huge tracked list never starves the untracked one
+    let n = 0;
     for (const f of list.split("\0").filter(Boolean)) {
-      if (n++ >= 2000) return; // bound the stat work on huge trees
+      if (n++ >= 1000) return; // bound the stat work on huge trees
       try { const st = statSync(join(dir, f)); bytes += st.size; if (st.mtimeMs > newest) newest = st.mtimeMs; } catch { /* deleted: counted by shortstat */ }
     }
   };
-  try { add(safeGit(dir, ["diff", "--name-only", "-z"], o)); } catch { /* unreadable: counts only */ }
+  try { add(safeGit(dir, ["diff", "--name-only", "--relative", "-z"], o)); } catch { /* unreadable: counts only */ } // --relative: cwd-relative like ls-files --others, so join(dir, f) holds from a repo subdirectory
   try { add(safeGit(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], o)); } catch { /* tracked only */ }
   return `${JSON.stringify(stat)}|${bytes}|${newest}`;
 }

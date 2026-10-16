@@ -29,7 +29,7 @@ export interface GuardSnapshot {
 }
 
 const git = (cwd: string, args: string[]): string => { try { return safeGit(cwd, args).trim(); } catch { return ""; } };
-// Porcelain status keeps its leading column: trim() would eat the space of the first " D path" line and mangle the path.
+// Absolute git dir (worktree and submodule safe), falling back to cwd/.git when rev-parse fails.
 const gitDir = (cwd: string): string => { const g = git(cwd, ["rev-parse", "--absolute-git-dir"]); return g || join(cwd, ".git"); };
 const listHooks = (gd: string): string[] => { try { return readdirSync(join(gd, "hooks")).filter((f) => !f.endsWith(".sample")).sort(); } catch { return []; } };
 const readSafe = (p: string): string => { try { return readFileSync(p, "utf8"); } catch { return ""; } };
