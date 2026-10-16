@@ -977,7 +977,8 @@ function printHelp(): void {
   process.stdout.write(`  --fix     Apply safe fixes (dirs, config defaults); print commands for the rest\n`);
   // --airgap never reaches this handler: bin/loki routes it to the bash audit.
   process.stdout.write(`  --repo    Print the repo profile (.loki/state/repo-profile.json): discovered\n`);
-  process.stdout.write(`            test/lint/typecheck/build commands and the baseline test run\n`);
+  process.stdout.write(`            test/lint/typecheck/build commands, the baseline test run and a\n`);
+  process.stdout.write(`            readiness score. Builds the profile if absent; with --fix, refreshes it\n`);
   process.stdout.write(`  --airgap  Audit network egress: model inference, telemetry and the\n`);
   process.stdout.write(`            update check, REQUIRED or optional, and how to disable\n`);
   process.stdout.write(`            each. Exits non-zero while a required egress remains.\n\n`);
@@ -1764,13 +1765,10 @@ export async function runDoctor(argv: readonly string[]): Promise<number> {
     }
   }
 
-  if (repo && fix) { // --fix repairs the host install; --repo is a read-only profile print, so the combination has no meaning
-    process.stderr.write(`${RED}--fix cannot be combined with --repo (repo profile is read-only)${NC}\nUsage: loki doctor [--json] [--fix] [--requirements] [--airgap] [--repo]\n`);
-    return 64;
-  }
-  if (repo) { // REPOMEM: read-only print of .loki/state/repo-profile.json; never runs anything
-    const { loadProfile, renderProfile, repoReadiness } = await import("../runner/repo_profile.ts");
-    const p = loadProfile(process.cwd());
+  if (repo) { // REPOMEM: print .loki/state/repo-profile.json; an absent profile (or --fix) builds/refreshes it via ensureProfile, which reuses a fresh one and never throws
+    const { loadProfile, ensureProfile, renderProfile, repoReadiness } = await import("../runner/repo_profile.ts");
+    let p = loadProfile(process.cwd());
+    if ((!p || fix) && process.env.LOKI_REPO_BASELINE !== "0") p = ensureProfile(process.cwd())?.profile ?? p;
     const rep = await evaluateRequirements();
     const ready = firstTaskReady(rep);
     const failing = rep.paths.flatMap((x) => x.items).find((i) => i.level === "required" && i.status !== "present");

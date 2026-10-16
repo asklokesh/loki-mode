@@ -431,7 +431,7 @@ export function repoReadiness(p: CommandProfile, host?: ReadinessHost): Readines
 export const readinessLines = (r: Readiness): string[] => [`  Readiness: ${r.score}/100 (${r.grade})`, ...(r.findings.length ? ["  Fix:", ...r.findings.map((f) => `    - ${f.fix}`)] : [])];
 
 export function renderProfile(p: CommandProfile | null, host?: ReadinessHost): string {
-  if (!p) return "repo profile: none yet (built on the first `loki start` in this repo)\n";
+  if (!p) return "repo profile: none yet (run `loki doctor --repo` to build it; LOKI_REPO_BASELINE=0 disables building)\n";
   const rows = p.commands.map((c) => `  ${c.kind.padEnd(9)} ${c.cmd}  [${c.source}]  ${c.validated === true ? `validated exit=${c.exit_code} ${c.duration_s}s` : c.validated === false ? `not runnable${c.note ? `: ${c.note}` : ""}` : "not executed"}`);
   const b = p.baseline;
   const bl = b.ran ? `${b.command} exit=${b.exit_code}${b.timed_out ? " (timed out)" : ""}, ${b.failing_ids.length} failing id(s)${b.attributable ? "" : `, not attributable${b.reason ? ` (${b.reason})` : ""}`}` : `not run (${b.reason ?? "unknown"})`;

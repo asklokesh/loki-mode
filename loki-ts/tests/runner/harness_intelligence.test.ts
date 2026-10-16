@@ -761,13 +761,22 @@ describe("repo baseline profile (REPOMEM)", () => {
       expect(briefContext(ctx, { select: () => [], cmd: () => ["x", [], undefined, "."] })).toContain(brief);
       expect(profileBrief(repo({ "README.md": "x" }))).toBe("");
     }, 60_000);
-    test("loki doctor --repo prints the profile read-only, --json prints it raw; an absent profile is stated", async () => {
+    test("loki doctor --repo prints the profile, builds it on demand, --json prints it raw; --fix refreshes it", async () => {
       const d = repo(NODE), cwd = process.cwd(), chunks: string[] = [], w = process.stdout.write.bind(process.stdout);
       const cap = async (a: string[]): Promise<string> => { chunks.length = 0; process.stdout.write = ((s: string) => (chunks.push(String(s)), true)) as typeof process.stdout.write; try { await runDoctor(a); } finally { process.stdout.write = w; } return chunks.join(""); };
       try {
         process.chdir(d);
-        expect(await cap(["--repo"])).toContain("none yet");
-        ensureProfile(d);
+        process.env.LOKI_REPO_BASELINE = "0";
+        try { expect(await cap(["--repo"])).toContain("none yet"); } finally { delete process.env.LOKI_REPO_BASELINE; }
+        expect(loadProfile(d)).toBeNull();
+        const built = await cap(["--repo"]); // FV-readiness-env-2: an absent profile is built on demand
+        expect(built).toContain("npm test");
+        expect(built).toContain("Readiness:");
+        expect(loadProfile(d)!.baseline.command).toBe("npm test");
+        rmSync(commandProfilePath(d));
+        const fixed = await cap(["--repo", "--fix"]); // --fix means build/refresh the profile
+        expect(fixed).toContain("baseline:");
+        expect(loadProfile(d)).not.toBeNull();
         const before = readFileSync(commandProfilePath(d), "utf8");
         const text = await cap(["--repo"]);
         expect(text).toContain("npm test");

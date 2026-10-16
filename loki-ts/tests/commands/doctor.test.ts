@@ -387,15 +387,23 @@ describe("doctor.runDoctor (end-to-end)", () => {
     expect(cap.out).toContain("--json");
   });
 
-  it("F4: --repo --fix is rejected with exit 64; --repo --requirements prints both", async () => {
-    const bad = await captureStdio(() => runDoctor(["--repo", "--fix"]));
-    expect(bad.result).toBe(64);
-    expect(bad.cap.err).toContain("--fix cannot be combined with --repo");
-    const repoOnly = await captureStdio(() => runDoctor(["--repo"]));
-    const both = await captureStdio(() => runDoctor(["--repo", "--requirements"]));
-    expect(both.result).toBe(0);
-    expect(both.cap.out.startsWith(repoOnly.cap.out)).toBe(true);
-    expect(both.cap.out.length).toBeGreaterThan(repoOnly.cap.out.length);
+  it("F4: --repo --fix refreshes the profile instead of being rejected; --repo --requirements prints both", async () => {
+    const prev = process.env.LOKI_REPO_BASELINE, cwd = process.cwd(), d = mkdtempSync(join(tmpdir(), "doctor-f4-"));
+    process.env.LOKI_REPO_BASELINE = "0"; // never run a baseline from a unit test
+    try {
+      process.chdir(d);
+      const fixed = await captureStdio(() => runDoctor(["--repo", "--fix"]));
+      expect(fixed.result).toBe(0);
+      expect(fixed.cap.err).not.toContain("cannot be combined");
+      const repoOnly = await captureStdio(() => runDoctor(["--repo"]));
+      const both = await captureStdio(() => runDoctor(["--repo", "--requirements"]));
+      expect(both.result).toBe(0);
+      expect(both.cap.out.startsWith(repoOnly.cap.out)).toBe(true);
+      expect(both.cap.out.length).toBeGreaterThan(repoOnly.cap.out.length);
+    } finally {
+      process.chdir(cwd); rmSync(d, { recursive: true, force: true });
+      if (prev === undefined) delete process.env.LOKI_REPO_BASELINE; else process.env.LOKI_REPO_BASELINE = prev;
+    }
   });
 
   it("rejects unknown options with exit 1", async () => {
