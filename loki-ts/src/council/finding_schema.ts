@@ -40,6 +40,10 @@ export const FINDING_SCHEMA: Readonly<Record<string, unknown>> = Object.freeze(
 const VOTE_ENUM = new Set(["APPROVE", "REJECT", "CANNOT_VALIDATE"]);
 const SEVERITY_ENUM = new Set(["CRITICAL", "HIGH", "MEDIUM", "LOW"]);
 
+// A blocking issue (CRITICAL or HIGH) must cite a file:line anchor, e.g. src/a.ts:42.
+const BLOCKING_SEVERITY = new Set(["CRITICAL", "HIGH"]);
+const FILE_LINE_ANCHOR = /[\w./-]+\.\w+:\d+/;
+
 export type ValidationError = { error: string; path: string };
 
 function isRecord(v: unknown): v is Record<string, unknown> {
@@ -95,6 +99,12 @@ export function validateFinding(obj: unknown): AgentVerdict | ValidationError {
       }
       if (typeof desc !== "string" || desc.length === 0) {
         return { error: "issue.description must be a non-empty string", path: `$.issues[${i}].description` };
+      }
+      if (BLOCKING_SEVERITY.has(sev) && !FILE_LINE_ANCHOR.test(desc)) {
+        return {
+          error: "blocking issue must cite a file:line anchor (e.g. src/a.ts:42)",
+          path: `$.issues[${i}].description`,
+        };
       }
       issuesOut.push({ severity: sev as Severity, description: desc });
     }

@@ -101,7 +101,7 @@ describe("validateFinding", () => {
       reason: "found issues",
       confidence: 0.8,
       issues: [
-        { severity: "HIGH", description: "blocking" },
+        { severity: "HIGH", description: "blocking at src/a.ts:42" },
         { severity: "LOW", description: "nit" },
       ],
     });
@@ -159,5 +159,33 @@ describe("parseMultiResponse", () => {
       ],
     });
     expect(() => parseMultiResponse(text)).toThrow(/findings\[1\]/);
+  });
+
+  it("blocking finding without anchor rejected", () => {
+    for (const severity of ["CRITICAL", "HIGH"]) {
+      const r = validateFinding({
+        role: "x",
+        vote: "REJECT",
+        reason: "bad",
+        confidence: 0.8,
+        issues: [{ severity, description: "this is broken somewhere" }],
+      });
+      expect("error" in r).toBe(true);
+      if ("error" in r) expect(r.path).toBe("$.issues[0].description");
+    }
+  });
+
+  it("blocking finding with a file:line anchor accepted; non-blocking needs none", () => {
+    const ok = validateFinding({
+      role: "x",
+      vote: "REJECT",
+      reason: "bad",
+      confidence: 0.8,
+      issues: [
+        { severity: "CRITICAL", description: "null deref at loki-ts/src/foo.ts:128" },
+        { severity: "LOW", description: "nit without anchor" },
+      ],
+    });
+    expect("error" in ok).toBe(false);
   });
 });

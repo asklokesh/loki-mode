@@ -141,7 +141,7 @@ describe("dispatchClaudeAgents", () => {
           vote: "REJECT",
           reason: "regression",
           confidence: 0.7,
-          issues: [{ severity: "HIGH", description: "more failing tasks" }],
+          issues: [{ severity: "HIGH", description: "more failing tasks at src/tasks.ts:7" }],
         },
       ],
     });

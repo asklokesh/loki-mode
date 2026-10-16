@@ -429,7 +429,7 @@ describe("councilEvaluate -- LLM devil's-advocate wiring", () => {
           vote: "REJECT",
           reason: "regressing",
           confidence: 0.7,
-          issues: [{ severity: "HIGH", description: "more failing tasks" }],
+          issues: [{ severity: "HIGH", description: "more failing tasks at src/tasks.ts:7" }],
         },
       ],
     });
