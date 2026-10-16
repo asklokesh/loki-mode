@@ -9,6 +9,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hardenCredentialEnv } from "./credential_env.ts";
 import { readStreamCapped } from "./shell.ts";
+import { killGroup } from "../runner/worker_proc.ts";
 
 export interface SkillCheck { skill: string; name: string; run: string }
 export interface SkillCheckLoad { checks: SkillCheck[]; errors: string[] }
@@ -36,8 +37,10 @@ export function parseSkillChecks(text: string, skill: string): SkillCheck[] | nu
   const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!m) return null;
   const lines = m[1]!.split(/\r?\n/);
-  const start = lines.findIndex((l) => /^checks\s*:\s*$/.test(l));
+  const start = lines.findIndex((l) => /^["']?checks["']?\s*:/.test(l));
   if (start < 0) return null;
+  // Only a bare `checks:` (optionally with a trailing comment) opens a block; any inline value is unsupported and must not pass silently.
+  if (!/^["']?checks["']?\s*:\s*(#.*)?$/.test(lines[start]!)) throw new Error(`skill ${skill}: inline checks value is unsupported, use a block list: ${lines[start]!.trim().slice(0, 80)}`);
   const out: SkillCheck[] = [];
   let cur: { name?: string; run?: string } | null = null;
   const flush = (): void => {
@@ -48,7 +51,7 @@ export function parseSkillChecks(text: string, skill: string): SkillCheck[] | nu
   };
   for (const l of lines.slice(start + 1)) {
     if (l.trim() === "" || l.trim().startsWith("#")) continue;
-    if (/^\S/.test(l)) break; // next top-level key
+    if (/^\S/.test(l) && !/^-\s/.test(l)) break; // next top-level key (a column-0 "- " item still belongs to the list)
     const item = l.match(/^\s*-\s+(.*)$/);
     const body = item ? item[1]! : l.trim();
     const kv = body.match(/^(name|run)\s*:\s*(.+)$/);
@@ -60,7 +63,7 @@ export function parseSkillChecks(text: string, skill: string): SkillCheck[] | nu
     else throw new Error(`skill ${skill}: unparseable checks line: ${l.trim()}`);
   }
   flush();
-  if (out.length === 0) throw new Error(`skill ${skill}: checks declared but none parsed`);
+  if (out.length === 0) throw new Error(`skill ${skill}: checks declared but none parsed (expected "- cmd" list items under the key)`);
   return out;
 }
 
@@ -84,17 +87,21 @@ export function loadSkillChecks(cwd: string): SkillCheckLoad {
 }
 
 async function runOne(c: SkillCheck, cwd: string, timeoutMs: number): Promise<string | null> {
-  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const proc = Bun.spawn({ cmd: ["sh", "-c", c.run], cwd, env: skillCheckEnv(), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    const t = setTimeout(() => { timedOut = true; try { proc.kill("SIGKILL"); } catch { /* exited */ } }, timeoutMs);
-    try {
-      const [out, err, code] = await Promise.all([readStreamCapped(proc.stdout as ReadableStream<Uint8Array>, 65536), new Response(proc.stderr).text(), proc.exited]);
-      if (timedOut) return `timed out after ${timeoutMs}ms`;
-      if (code !== 0) return `exit ${code}: ${(err || out).trim().split("\n").slice(-3).join(" | ").slice(0, 300)}`;
-      return null;
-    } finally { clearTimeout(t); }
+    // detached = own process group, so the timeout can kill backgrounded grandchildren too.
+    const proc = Bun.spawn({ cmd: ["sh", "-c", c.run], cwd, env: skillCheckEnv(), stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true });
+    const pid = proc.pid;
+    const expired = new Promise<"timeout">((res) => { timer = setTimeout(() => { killGroup(pid, "SIGKILL"); try { proc.kill("SIGKILL"); } catch { /* exited */ } res("timeout"); }, timeoutMs); });
+    const done = Promise.all([readStreamCapped(proc.stdout as ReadableStream<Uint8Array>, 65536), readStreamCapped(proc.stderr as ReadableStream<Uint8Array>, 65536), proc.exited]);
+    const r = await Promise.race([done, expired]);
+    if (r === "timeout") { done.catch(() => {}); return `timed out after ${timeoutMs}ms`; }
+    const [out, err, code] = r;
+    killGroup(pid, "SIGKILL"); // reap any background child left after a normal exit
+    if (code !== 0) return `exit ${code}: ${(err || out).trim().split("\n").slice(-3).join(" | ").slice(0, 300)}`;
+    return null;
   } catch (e) { return `spawn error: ${(e as Error).message}`; }
+  finally { if (timer) clearTimeout(timer); }
 }
 
 /** Run every declared check; fails closed. No skills or no checks declared = pass. */

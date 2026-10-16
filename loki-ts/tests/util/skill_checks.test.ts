@@ -48,7 +48,32 @@ describe("parseSkillChecks", () => {
   });
 });
 
+describe("parseSkillChecks fail-closed key forms", () => {
+  it("throws on inline flow, scalar and commented checks values", () => {
+    expect(() => parseSkillChecks('---\nchecks: ["exit 1"]\n---\n', "x")).toThrow();
+    expect(() => parseSkillChecks("---\nchecks: exit 1\n---\n", "x")).toThrow();
+    expect(() => parseSkillChecks('---\n"checks": exit 1\n---\n', "x")).toThrow();
+    expect(() => parseSkillChecks("---\nchecks:   # note\n---\n", "x")).toThrow();
+  });
+  it("accepts a trailing comment before the block and a column-0 list", () => {
+    expect(parseSkillChecks("---\nchecks:   # note\n  - exit 1\n---\n", "x")?.length).toBe(1);
+    expect(parseSkillChecks("---\nchecks:\n- exit 1\n---\n", "x")?.[0]?.run).toBe("exit 1");
+  });
+  it("a flow-sequence check fails the gate", async () => {
+    skill("flow", 'checks: ["exit 1"]');
+    expect((await runSkillChecks(dir)).passed).toBe(false);
+  });
+});
+
 describe("runSkillChecks", () => {
+  it("timeout bounds the gate even when a background child holds the pipes", async () => {
+    skill("bg", "checks:\n  - sleep 8 & wait");
+    const t0 = Date.now();
+    const r = await runSkillChecks(dir, 500);
+    expect(r.passed).toBe(false);
+    expect(r.detail).toContain("timed out");
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
   it("passes when no skills exist or none declare checks", async () => {
     expect((await runSkillChecks(dir)).passed).toBe(true);
     skill("plain", "description: none");
