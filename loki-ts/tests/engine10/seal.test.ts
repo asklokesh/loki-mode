@@ -21,6 +21,11 @@ import { main as verifyMain, verifyReceipt } from "../../src/engine10/verify_cmd
 import { runMachine } from "../../src/engine10/machine.ts";
 import { costTotalsOf, sumResultCosts } from "../../src/engine10/cost.ts";
 import { buildTime, reconciledTotalS } from "../../src/contrib/receipt_time.ts";
+import { hooks } from "../../src/engine10/hooks.ts";
+import { readRunHistory, type RunOutcome } from "../../src/runner/router/history.ts";
+import { repoKey } from "../../src/engine10/cache.ts";
+import { readOriginUrl } from "../../src/util/engine_origin.ts";
+import { computeKey, shallowDirs } from "../../src/project_model/gather.ts";
 import { EXIT, formatSummary, outcomeOf } from "../../src/engine10/output.ts";
 import { safeRestore } from "../../src/e10ext/discard.ts"; import { commitStage, DEEP_NOT_PROVEN, renderReceiptMd, SIGNING_UNAVAILABLE, sealStage } from "../../src/engine10/stages/seal.ts";
 import type { EventType, Receipt, RunContext, StageName } from "../../src/engine10/types.ts";
@@ -1479,5 +1484,44 @@ describe("v11.7 LESSONS: sealed run becomes a receipt fact", () => {
     await commitStage.run(ctx, new AbortController().signal);
     const r = receiptOf(await sealStage.run(ctx, new AbortController().signal));
     expect(r.intent_revisions).toEqual([{ rev: 1, source: "chat", actor: "alice", sha: "1".repeat(64) }, { rev: 2, source: "chat", actor: "alice", sha: "2".repeat(64) }]);
+  }, 30000);
+});
+
+// P12-32b-c: the history row is keyed on the model that actually ran, and on escalation only the final rung records.
+describe("seal records routing history under the model that ran (P12-32b-c)", () => {
+  async function sealRows(name: string, over: Partial<Record<StageName, Record<string, unknown>>>): Promise<RunOutcome[]> {
+    const { repo, base } = makeRepo(name);
+    writeFileSync(join(repo, "package.json"), "{}");
+    const cite = ["package.json"];
+    const pkg = { name: "p0", root: ".", runner: "vitest", commands: { test: null, lint: null, build: null, start: null }, ui: { present: false, boot: null, cite }, cite };
+    const m = { schema: "loki.v10.project/1", status: "ok", workspaceKind: "single", workspaceCite: cite, packages: [pkg], fingerprintFiles: cite, key: computeKey(repo, cite, shallowDirs(repo)) };
+    writeFileSync(join(repo, ".loki", "project.json"), JSON.stringify(m));
+    const home = join(root, `${name}-home`);
+    mkdirSync(home, { recursive: true });
+    const prevHome = process.env["HOME"], prevPrev = process.env["LOKI_COST_PREVIEW"], prevTime = hooks.time;
+    process.env["HOME"] = home; delete process.env["LOKI_COST_PREVIEW"];
+    hooks.time = { build: () => ({ wall_s: 5, stages: {} }) as never, firstEventMs: () => null, reconciled: () => 5 };
+    try {
+      const { ctx } = ctxFor(repo, base, "claude", over);
+      ctx.cost = { read: () => ({ usd: 0.5, inputTokens: 10, outputTokens: 5, cacheReadTokens: 0 }) };
+      await commitStage.run(ctx, new AbortController().signal);
+      await sealStage.run(ctx, new AbortController().signal);
+      return readRunHistory(repoKey(readOriginUrl(repo), repo));
+    } finally {
+      hooks.time = prevTime;
+      if (prevHome === undefined) delete process.env["HOME"]; else process.env["HOME"] = prevHome;
+      if (prevPrev !== undefined) process.env["LOKI_COST_PREVIEW"] = prevPrev;
+    }
+  }
+  const impl = (extra: Record<string, unknown>) => ({ exit: "done", tests_reverted: [], duration_s: 3, iteration_id: "e10-r1-impl", ...extra });
+
+  test("the recorded executor is the routed implement model, not the run model", async () => {
+    const rows = await sealRows("hist-ran", { implement: impl({ model: "claude-haiku-4-5", route_model: "claude-haiku-4-5" }) });
+    expect(rows.map((r) => r.executor)).toEqual(["haiku"]);
+  }, 30000);
+
+  test("a haiku implement followed by a sonnet fix writes one row, the final rung", async () => {
+    const rows = await sealRows("hist-esc", { implement: impl({ model: "claude-haiku-4-5", route_model: "claude-haiku-4-5" }), fix: { round: 1, model: "claude-sonnet-4-6" } });
+    expect(rows.map((r) => r.executor)).toEqual(["sonnet"]);
   }, 30000);
 });
