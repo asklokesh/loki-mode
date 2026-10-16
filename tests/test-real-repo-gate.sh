@@ -123,7 +123,7 @@ printf '#!/bin/sh\ncase "$*" in *resolve_source*) exit 1 ;; esac\nexec "%s" "$@"
 chmod +x "$T/pybin/python3"
 run_gate pass "$CO" PATH="$T/pybin:$PATH"
 expect "resolve_source failure fails closed with a named detail" 1 'resolve_source failed for .*GATE FAIL'
-if printf '%s' "$OUT" | grep -q 'clone of  at'; then bad "empty-source clone attempted"; else ok "no empty-source clone"; fi
+if grep -q 'clone of  at' <<<"$OUT"; then bad "empty-source clone attempted"; else ok "no empty-source clone"; fi
 if grep -q 'python3 -I -c .import sys; sys.path.insert' "$GATE"; then ok "gate runs resolve_source under python3 -I"; else bad "gate lacks python3 -I"; fi
 
 echo "passed=$PASS failed=$FAIL"

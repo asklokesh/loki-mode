@@ -146,9 +146,9 @@ allow_rows=$(sed -n '/^_loki_start_flag_kind()/,/^}/p' "$LOKI_BIN" | awk '
     }')
 
 log_test "allowlist has value, optional and boolean rows"
-if printf '%s\n' "$allow_rows" | grep -q '^value'$'\t''--provider$' &&
-   printf '%s\n' "$allow_rows" | grep -q '^optional'$'\t''--mirofish$' &&
-   printf '%s\n' "$allow_rows" | grep -q '^bool'$'\t''--fast$'; then
+if grep -q '^value'$'\t''--provider$' <<<"$allow_rows" &&
+   grep -q '^optional'$'\t''--mirofish$' <<<"$allow_rows" &&
+   grep -q '^bool'$'\t''--fast$' <<<"$allow_rows"; then
     log_pass "allowlist rows parsed"
 else
     log_fail "could not read the allowlist rows from _loki_start_flag_kind"
@@ -171,7 +171,7 @@ fi
 
 log_test "unknown valued flag before a --workspace brief exits 64"
 out=$(run_start --workspace nows --max-wait 30 "my brief"); rc=$?
-if [ "$rc" -eq 64 ] && printf '%s' "$out" | grep -q 'Unknown option: --max-wait'; then
+if [ "$rc" -eq 64 ] && grep -q 'Unknown option: --max-wait' <<<"$out"; then
     log_pass "--workspace scan: unknown flag exits 64"
 else
     log_fail "--workspace scan rc=$rc: $out"
@@ -179,7 +179,7 @@ fi
 
 log_test "plain unknown valued flag before the brief exits 64"
 out=$(run_start --max-wait 30 brief.md); rc=$?
-if [ "$rc" -eq 64 ] && printf '%s' "$out" | grep -q 'Unknown option: --max-wait'; then
+if [ "$rc" -eq 64 ] && grep -q 'Unknown option: --max-wait' <<<"$out"; then
     log_pass "parser: unknown flag exits 64"
 else
     log_fail "parser rc=$rc: $out"
@@ -189,7 +189,7 @@ log_test "unknown flag after --resume exits 64"
 for pair in "--foo bar" "--model sonnet" "--max-wait 30" "--max-cost 5"; do
     # shellcheck disable=SC2086 # intentional split: flag plus value
     out=$(run_start --resume $pair); rc=$?
-    if [ "$rc" -eq 64 ] && printf '%s' "$out" | grep -q "Unknown option: ${pair%% *}"; then
+    if [ "$rc" -eq 64 ] && grep -q "Unknown option: ${pair%% *}" <<<"$out"; then
         log_pass "start --resume $pair exits 64"
     else
         log_fail "start --resume $pair rc=$rc: $out"
@@ -219,7 +219,7 @@ while IFS=$'\t' read -r kind flag; do
     # --workspace scan: with no real brief it must reach "needs a brief"; a leaked
     # value would reach cmd_workspace instead ("unknown workspace").
     out=$(run_start --workspace nows "$@")
-    printf '%s' "$out" | grep -q 'needs a brief or an issue ref' || ws_bad="$ws_bad $flag($kind)"
+    grep -q 'needs a brief or an issue ref' <<<"$out" || ws_bad="$ws_bad $flag($kind)"
     # --resume scan: a consumed value is never a run id, so the stub delegate runs.
     if [ -n "$stub" ]; then
         out=$(cd "$TEST_DIR" && LOKI_TS_ENTRY="$stub" LOKI_LEGACY_BASH=1 bash "$LOKI_BIN" start --resume "$@" 2>&1)
@@ -244,14 +244,14 @@ fi
 
 log_test "a boolean flag does not swallow the next token in the --workspace scan"
 out=$(run_start --workspace nows --simple "my brief")
-if printf '%s' "$out" | grep -q 'unknown workspace'; then
+if grep -q 'unknown workspace' <<<"$out"; then
     log_pass "--simple left the brief intact"
 else
     log_fail "boolean flag swallowed the brief: $out"
 fi
 
 log_test "--model is not advertised in start help (bin/loki consumes it before cmd_start)"
-if printf '%s' "$help_out" | grep -qE '^  --model'; then log_fail "start --help still lists --model"; else log_pass "start --help has no --model flag line"; fi
+if grep -qE '^  --model' <<<"$help_out"; then log_fail "start --help still lists --model"; else log_pass "start --help has no --model flag line"; fi
 
 echo ""
 echo "========================================"
