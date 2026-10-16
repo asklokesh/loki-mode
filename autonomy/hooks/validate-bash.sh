@@ -505,7 +505,7 @@ _expand_braces() {
     local q="${s//[\"\'\\]/}" stripped
     temp=true
     case "$q" in
-        '$LOKI_RUN_TMP'*|'${LOKI_RUN_TMP}'*) temp=false ;;
+        '$LOKI_RUN_TMP'|'$LOKI_RUN_TMP/'*|'${LOKI_RUN_TMP}'|'${LOKI_RUN_TMP}/'*) temp=false ;;
         /*|'~'*|'$'*|'{'*) ;;
         *)
             if [[ "/${q}/" != *"/../"* ]]; then temp=false; fi
@@ -517,6 +517,13 @@ _expand_braces() {
         while [[ "$stripped" =~ \$\{[^\{\}]*\} ]]; do
             stripped="${stripped/"${BASH_REMATCH[0]}"/}"
         done
+        # A numeric range under a non-TMPDIR variable only appends digits, so it
+        # cannot build a temp root (`$BUILD_DIR/shard{1..4}`).
+        if [[ "$q" =~ ^\$\{?([A-Za-z_][A-Za-z0-9_]*) && "${BASH_REMATCH[1]}" != TMPDIR ]]; then
+            while [[ "$stripped" =~ \{-?[0-9]+\.\.-?[0-9]+\} ]]; do
+                stripped="${stripped/"${BASH_REMATCH[0]}"/}"
+            done
+        fi
         if [[ "$stripped" =~ \{[^\}]*\{ ]] || [[ "$stripped" =~ \{[^\}]*\.\.[^\}]*\} ]]; then
             return 1
         fi
@@ -598,6 +605,128 @@ _rm_target_is_temp_root_or_glob() {
     _temp_target_is_root_or_glob "$1"
 }
 
+# P12-26g-c: residual shapes that reach a temp root or the filesystem root
+# without naming it. Each helper returns 0 to DENY (fail closed).
+_RUN_TMP_RE='^/([^/]+/)*loki-run\.[A-Za-z0-9]+$'
+_run_tmp_valid() {
+    local v="${LOKI_RUN_TMP:-}"
+    [[ "$v" =~ $_RUN_TMP_RE ]] || return 1
+    [[ "/${v}/" != *"/../"* && "/${v}/" != *"/./"* ]]
+}
+
+_has_dotdot_component() { [[ "/${1}/" == *"/../"* ]]; }
+
+# Lexical resolve of an absolute path; `..` at the root stays at the root.
+_lex_resolve() {
+    local comp out=""
+    local -a parts=() stack=()
+    IFS=/ read -r -a parts <<< "$1"
+    for comp in ${parts[@]+"${parts[@]}"}; do
+        case "$comp" in
+            ''|.) ;;
+            ..) [ "${#stack[@]}" -gt 0 ] && unset 'stack[${#stack[@]}-1]' ;;
+            *) stack+=("$comp") ;;
+        esac
+    done
+    for comp in ${stack[@]+"${stack[@]}"}; do out="${out}/${comp}"; done
+    printf '%s' "${out:-/}"
+}
+
+# Resolved path is a temp root, a bare temp glob, or an ancestor of a temp root.
+_resolved_reaches_temp() {
+    case "$1" in
+        /|/tmp|/var|/var/tmp|/private|/private/tmp|/private/var|/private/var/tmp) return 0 ;;
+    esac
+    _temp_target_is_root_or_glob "$1"
+}
+
+# `..` climbing from a known base: deny when the result leaves the base or
+# reaches a temp root; an unknown or relative base is unresolvable (deny).
+_dotdot_escapes_base() {
+    local base="$1" rel="$2" res
+    [[ "$base" == /* ]] || return 0
+    base=$(_lex_resolve "$base")
+    res=$(_lex_resolve "${base}/${rel}")
+    _resolved_reaches_temp "$res" && return 0
+    [[ "$res" == "$base" || "$res" == "$base"/* ]] || return 0
+    return 1
+}
+
+_alt_extra_deny() {
+    local a="$1" name="" mod="" rest="" r n c1 c2
+    if [[ "$a" =~ ^\$\{([A-Za-z_][A-Za-z0-9_]*)([^\}]*)\}(.*)$ ]]; then
+        name="${BASH_REMATCH[1]}"; mod="${BASH_REMATCH[2]}"; rest="${BASH_REMATCH[3]}"
+    elif [[ "$a" =~ ^\$([A-Za-z_][A-Za-z0-9_]*)(.*)$ ]]; then
+        name="${BASH_REMATCH[1]}"; rest="${BASH_REMATCH[2]}"
+    fi
+    if [ -n "$name" ]; then
+        case "$name" in
+            LOKI_RUN_TMP*)
+                [ "$name" = "LOKI_RUN_TMP" ] || return 0
+                [ -z "$mod" ] || return 0
+                _run_tmp_valid || return 0
+                [ -z "$rest" ] && return 1
+                [[ "$rest" == /* ]] || return 0
+                _has_dotdot_component "$rest" && return 0
+                [[ "$rest" =~ $_DOT_GLOB ]] && return 0
+                return 1
+                ;;
+            TMPDIR) return 1 ;;
+            HOME)
+                _has_dotdot_component "$rest" || return 1
+                _dotdot_escapes_base "${HOME:-}" "$rest"
+                return
+                ;;
+        esac
+        _has_dotdot_component "$rest" && return 0
+        if [[ "$rest" == /* ]]; then
+            r="$rest"
+            while [[ "$r" == /* || "$r" == ./* ]]; do r="${r#/}"; r="${r#./}"; done
+            case "$r" in ''|'*'*|'?'*|'['*|'{'*) return 0 ;; esac
+        fi
+        return 1
+    fi
+    # shellcheck disable=SC2088 # literal tilde in a string being inspected
+    case "$a" in
+        '~'|'~/'*)
+            rest="${a#\~}"
+            _has_dotdot_component "$rest" || return 1
+            _dotdot_escapes_base "${HOME:-}" "$rest"
+            return
+            ;;
+        '$'*|'{'*) return 1 ;;
+        /*)
+            n="$a"
+            r=""
+            while [ "$n" != "$r" ]; do r="$n"; n="${n//\/\//\/}"; n="${n//\/.\//\/}"; done
+            n="${n#/}"
+            c1="${n%%/*}"
+            c2=""
+            [[ "$n" == */* ]] && { c2="${n#*/}"; c2="${c2%%/*}"; }
+            case "$c1" in *[\*\?\[]*) return 0 ;; esac
+            case "$c2" in *[\*\?\[]*) [ "$c1" = "tmp" ] || return 0 ;; esac
+            return 1
+            ;;
+    esac
+    _has_dotdot_component "$a" || return 1
+    _dotdot_escapes_base "$CWD" "$a"
+}
+
+_rm_target_extra_deny() {
+    local q="${1%%[<>]*}" alt rc=0
+    q="${q//[\"\'\\]/}"
+    local -a alts=("$q")
+    if [[ "$q" == *"{"* ]]; then
+        _expand_braces "$q" || rc=$?
+        [ "$rc" -eq 1 ] && return 0
+        [ "$rc" -eq 0 ] && alts=(${_ALTS[@]+"${_ALTS[@]}"})
+    fi
+    for alt in ${alts[@]+"${alts[@]}"}; do
+        _alt_extra_deny "$alt" && return 0
+    done
+    return 1
+}
+
 # `rm`, `/bin/rm`, `\rm`, `"rm"` all name rm.
 _is_rm_token() {
     local x="${1//[\"\'\\]/}"
@@ -627,6 +756,7 @@ _segment_rm_hits_temp_root() {
         fi
         case "$tok" in -*) continue ;; esac
         _rm_target_is_temp_root_or_glob "$tok" && return 0
+        _rm_target_extra_deny "$tok" && return 0
     done
     return 1
 }
