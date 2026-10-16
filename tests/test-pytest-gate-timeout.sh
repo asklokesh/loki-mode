@@ -181,7 +181,7 @@ printf 'def add(a, b):\n    return a + b\n' > "$S3_WORK/rootmod/mod.py"
 printf 'import mod\n\ndef test_add():\n    assert mod.add(2, 3) == 5\n' > "$S3_WORK/rootmod/tests/test_mod.py"
 out4=$(_loki_run_pytest_with_timeout "$S3_WORK/rootmod" -q -p no:cacheprovider 2>&1)
 exit4=$?
-if [ "$exit4" -eq 0 ] && printf '%s' "$out4" | grep -q '1 passed'; then
+if [ "$exit4" -eq 0 ] && grep -q '1 passed' <<<"$out4"; then
     log_pass "root-module import: python3 -m pytest passes (no ModuleNotFoundError)"
 else
     log_fail "root-module import" "exit=$exit4 out=$(printf '%s' "$out4" | tail -3 | tr '\n' ' ')"
@@ -193,8 +193,8 @@ printf '[pytest]\npython_files = nomatch_*.py\n' > "$S3_WORK/fallback/pytest.ini
 printf 'import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertEqual(1, 1)\n' > "$S3_WORK/fallback/test_ok.py"
 out5=$(_loki_run_pytest_with_timeout "$S3_WORK/fallback" -q -p no:cacheprovider 2>&1)
 exit5=$?
-if [ "$exit5" -eq 0 ] && printf '%s' "$out5" | grep -q 'fell back to python3 -m unittest discover' \
-   && printf '%s' "$out5" | grep -qE '^Ran 1 test'; then
+if [ "$exit5" -eq 0 ] && grep -q 'fell back to python3 -m unittest discover' <<<"$out5" \
+   && grep -qE '^Ran 1 test' <<<"$out5"; then
     log_pass "fallback: exit 0 and unittest ran 1 test"
 else
     log_fail "fallback" "exit=$exit5 out=$(printf '%s' "$out5" | tail -4 | tr '\n' ' ')"
@@ -205,7 +205,7 @@ mkdir -p "$S3_WORK/zero"
 printf 'assert 1 + 1 == 2\n' > "$S3_WORK/zero/test_modlevel.py"
 out6=$(_loki_run_pytest_with_timeout "$S3_WORK/zero" -q -p no:cacheprovider 2>&1)
 exit6=$?
-if [ "$exit6" -eq 5 ] && printf '%s' "$out6" | grep -qE '^Ran 0 tests'; then
+if [ "$exit6" -eq 5 ] && grep -qE '^Ran 0 tests' <<<"$out6"; then
     log_pass "zero tests: exit 5 with 'Ran 0 tests' (caller records inconclusive)"
 else
     log_fail "zero tests" "exit=$exit6 out=$(printf '%s' "$out6" | tail -4 | tr '\n' ' ')"
@@ -231,7 +231,7 @@ if [ -d "$COORD/reference" ]; then
     cp "$COORD/acceptance/acceptance_test.py" "$S3_WORK/coord/tests/test_acceptance.py"
     out8=$(_loki_run_pytest_with_timeout "$S3_WORK/coord" -q -p no:cacheprovider 2>&1)
     exit8=$?
-    if [ "$exit8" -eq 0 ] && printf '%s' "$out8" | grep -q 'passed'; then
+    if [ "$exit8" -eq 0 ] && grep -q 'passed' <<<"$out8"; then
         log_pass "coord-1-api-web reference + acceptance: tests passed"
     else
         log_fail "coord-1-api-web" "exit=$exit8 out=$(printf '%s' "$out8" | tail -3 | tr '\n' ' ')"
