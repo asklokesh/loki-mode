@@ -15,7 +15,6 @@ src/engine10/modernize/inventory.ts	setup.py
 src/engine10/modernize/presealed_wall.ts	jest
 src/engine10/modernize/presealed_wall.ts	pytest
 src/engine10/modernize/presealed_wall.ts	vitest
-src/engine10/modernize/unit.ts	pyproject.toml
 src/engine10/modernize/unit.ts	pytest
 src/util/python.ts	pyproject.toml
 src/util/python.ts	pytest
