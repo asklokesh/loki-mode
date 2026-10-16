@@ -511,6 +511,45 @@ class CostHarnRealOutcomeTest(unittest.TestCase):
             shutil.rmtree(scratch, ignore_errors=True)
             shutil.rmtree(ev, ignore_errors=True)
 
+    def test_loki_command_has_no_pr_and_prompts_off(self):
+        seen = {}
+
+        def fake(cmd, **kw):
+            if cmd[1:2] == ["start"]:
+                seen["cmd"] = cmd
+                seen["env"] = kw.get("env") or {}
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        d = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            pf = os.path.join(d, "p.md")
+            open(pf, "w").write("x")
+            A.run_loki(d, pf, model="claude-sonnet-5", budget_usd=1.0,
+                       timeout_s=5, runner=fake)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+        self.assertIn("--no-pr", seen["cmd"])
+        self.assertEqual(seen["env"].get("GIT_TERMINAL_PROMPT"), "0")
+        self.assertEqual(seen["env"].get("GH_PROMPT_DISABLED"), "1")
+
+    def test_evidence_skips_secret_names_keeps_receipts(self):
+        wd = tempfile.mkdtemp(prefix="loki-attr-test-")
+        dest = tempfile.mkdtemp(prefix="loki-attr-test-")
+        try:
+            lk = os.path.join(wd, ".loki")
+            os.makedirs(os.path.join(lk, "runs", "r1"))
+            for n in (".env", "prod.ENV", "gh_token.txt", "Secrets.json",
+                      "signing-key.pem", "keys.json"):
+                open(os.path.join(lk, n), "w").write("s")
+            for n in ("runs/r1/receipt.json", "runs/r1/events.jsonl", "engine.json"):
+                open(os.path.join(lk, n), "w").write("{}")
+            A.keep_evidence(wd, dest, {})
+            kept = sorted(os.listdir(os.path.join(dest, ".loki")))
+            self.assertEqual(kept, ["engine.json", "runs"])
+            self.assertTrue(os.path.isfile(os.path.join(dest, ".loki", "runs", "r1", "receipt.json")))
+        finally:
+            shutil.rmtree(wd, ignore_errors=True)
+            shutil.rmtree(dest, ignore_errors=True)
+
 
 class LokiLedgerRowTest(unittest.TestCase):
     """S1: the loki row carries true (ledger-summed) cost, phase split, engine and honesty."""

@@ -316,8 +316,13 @@ def run(workdir, spec, *, model="claude", timeout=900, runner=None,
         "--provider", provider,
         "--no-dashboard",
         "--yes",
+        # The seed's origin is a placeholder URL: never let the PR stage push to it.
+        "--no-pr",
     ]
-    run_env = {"LOKI_AUTO_CONFIRM": "true"}
+    # Prompts off so a stray fetch against the placeholder origin fails fast
+    # instead of blocking on a credential prompt.
+    run_env = {"LOKI_AUTO_CONFIRM": "true", "GIT_TERMINAL_PROMPT": "0",
+               "GH_PROMPT_DISABLED": "1"}
     # Model pin: `loki start` has no --model flag; the whole-run tier pin is the
     # LOKI_SESSION_MODEL env var (run.sh:742, default sonnet). The `model` arg
     # here doubles as a provider LABEL ("claude") when no real model is chosen,

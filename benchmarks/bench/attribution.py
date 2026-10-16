@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import fnmatch
 import os
 import re
 import shlex
@@ -370,7 +371,9 @@ def materialize_seed(task: Dict[str, Any], workdir: str) -> None:
                        "GIT_COMMITTER_DATE": "2026-01-01T00:00:00Z"})
     ident = ["-c", "user.name=attribution-bench", "-c", "user.email=bench@example.invalid"]
     # run_group.ts only parses `git remote get-url origin` against owner/repo (no
-    # fetch), so a URL-only remote lets multi-unit specs start. Never contacted.
+    # fetch), so a URL-only remote lets multi-unit specs start. The URL is only
+    # parsed: the PR stage is disabled by --no-pr in the loki adapter, and any
+    # stray fetch fails fast because the adapter turns credential prompts off.
     remote = "https://github.com/loki-bench/%s.git" % re.sub(
         r"[^A-Za-z0-9_.-]", "-", str(task.get("id") or "seed"))
     for args in (["init", "-q"], ["add", "-A"], ident + ["commit", "-q", "-m", "seed"],
@@ -534,6 +537,15 @@ EVIDENCE_SKIP_DIRS = ("node_modules", "cache", "caches", "worktrees", ".git", "_
 EVIDENCE_MAX_FILE_BYTES = 5 * 1024 * 1024
 
 
+def _evidence_secret_name(name: str) -> bool:
+    """True for names that may hold credentials. receipt*.json is the one exemption."""
+    low = name.lower()
+    if low.startswith("receipt") and low.endswith(".json"):
+        return False
+    return any(fnmatch.fnmatch(low, pat)
+               for pat in ("*.env", "*token*", "*secret*", "*key*"))
+
+
 def keep_evidence(workdir: str, dest: str, row: Dict[str, Any]) -> None:
     """Copy .loki/ (minus large caches) and the stderr tail out of a workdir that is
     about to be deleted. Best effort: evidence loss never fails a measured cell."""
@@ -543,6 +555,7 @@ def keep_evidence(workdir: str, dest: str, row: Dict[str, Any]) -> None:
         if os.path.isdir(src):
             def _ignore(d: str, names: List[str]) -> List[str]:
                 skip = [n for n in names if n in EVIDENCE_SKIP_DIRS]
+                skip += [n for n in names if _evidence_secret_name(n)]
                 for n in names:
                     fp = os.path.join(d, n)
                     try:
