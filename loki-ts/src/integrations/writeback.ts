@@ -45,7 +45,7 @@ export async function writeBack(i: WritebackInput, env: Env = process.env): Prom
     const legacy = !!(env.LOKI_JIRA_URL && env.LOKI_JIRA_TOKEN && env.LOKI_JIRA_EMAIL) || !!env.LOKI_LINEAR_TOKEN;
     const key = issueKeyOf(i.task, env, i.origin, legacy);
     if (!key) return;
-    const kind = i.origin?.kind;
+    const envKind = env.LOKI_WRITEBACK_KIND, kind = i.origin?.kind ?? (envKind === "jira" || envKind === "linear" ? envKind : undefined); // LOKI_WRITEBACK_KIND carries the intake source when no origin is passed
     const text = commentText(i);
     const done = (i.phase ?? "done") === "done";
     if (jiraOn && kind !== "linear" && kind !== "github") {

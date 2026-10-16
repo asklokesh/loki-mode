@@ -55,4 +55,12 @@ describe("writeback phases", () => {
     await writeBack({ ...base, phase: "done", task: "ship ENG-7" }, { LOKI_LINEAR_TOKEN: "k" });
     expect(calls.length).toBe(1);
   });
+  it("LOKI_WRITEBACK_KIND=linear with both tracker creds makes no Jira call", async () => {
+    const both = { LOKI_WRITEBACK_ISSUE: "ENG-42", LOKI_WRITEBACK_KIND: "linear", JIRA_BASE_URL: "https://j.x", JIRA_EMAIL: "a", JIRA_API_TOKEN: "t", LINEAR_API_KEY: "k" };
+    await writeBack({ ...base, phase: "done" }, both);
+    expect(calls.map((c) => c.url)).toEqual(["https://api.linear.app/graphql"]);
+    calls = [];
+    await writeBack({ ...base, phase: "done" }, { ...both, LOKI_WRITEBACK_KIND: "jira" });
+    expect(calls.map((c) => c.url)).toEqual(["https://j.x/rest/api/3/issue/ENG-42/comment"]);
+  });
 });

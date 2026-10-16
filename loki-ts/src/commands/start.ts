@@ -307,10 +307,10 @@ export function startEngine(o: ParsedStartOpts): "runner" | "attempts" | "spec" 
   return o.attempts === undefined ? "runner" : "attempts";
 }
 
-/** A jira:/linear: ref exports LOKI_WRITEBACK_ISSUE so tracker writeback keys off the intake ref (returns a copy when set). */
+/** A jira:/linear: ref exports LOKI_WRITEBACK_ISSUE and LOKI_WRITEBACK_KIND so tracker writeback keys off the intake ref (returns a copy when set). */
 export function writebackEnv(task: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const m = /^(?:jira|linear):([A-Za-z][A-Za-z0-9_]*-\d+)$/.exec(task.trim());
-  return m ? { ...env, LOKI_WRITEBACK_ISSUE: m[1]!.toUpperCase() } : env;
+  const m = /^(jira|linear):([A-Za-z][A-Za-z0-9_]*-\d+)$/.exec(task.trim());
+  return m ? { ...env, LOKI_WRITEBACK_ISSUE: m[2]!.toUpperCase(), LOKI_WRITEBACK_KIND: m[1]! } : env;
 }
 
 /** One engine10 run (FC-38: the only engine `start --attempts` may reach; it seals a receipt). */
