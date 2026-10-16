@@ -903,7 +903,7 @@ describe("claude_flags.permissionArgv (P12-26)", () => {
     const out: string[] = [];
     const check = (r: string): void => {
       const bad = rawLaunches(r, readFileSync(join(root, r), "utf8"));
-      if (bad.length && !(r in SCOPED_OUT)) out.push(`${r}: ${bad[0].trim().slice(0, 100)}`);
+      if (bad.length && !(r in SCOPED_OUT)) out.push(`${r}: ${(bad[0] ?? "").trim().slice(0, 100)}`);
     };
     const walk = (rel: string): void => {
       for (const e of readdirSync(join(root, rel), { withFileTypes: true })) {
