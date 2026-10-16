@@ -150,6 +150,9 @@ describe("Wall holdout end to end", () => {
     expect(hs.result).toBe("not_run"); expect(hs.owner).toBe("harness"); // C-C4b-c: infrastructure failure, not a test failure the fixer sees
     expect((v.data.failures_grouped as { signature: string }[]).some((g) => g.signature.includes("holdout"))).toBe(false); // the store failure adds no group
     expect(JSON.stringify(v.data)).not.toContain(held);
+    expect(v.data.holdout_failed).toBe(0); expect(hasFailures({ holdout_failed: v.data.holdout_failed })).toBe(false); // C-C4b-c-b: a store failure is never counted as an agent failure
+    const tri = readFileSync(join(repoDir, ".loki", "runs", RUN, "holdout-triage.jsonl"), "utf8"); // operator-readable reason in the private channel only
+    expect(tri).toContain("holdout:store"); expect(tri).toContain("missing or altered");
   }, 60_000);
 
   test("C-C4b-c: a holdout-only red leaves no holdout id or message in events, and the fixer sees one opaque count", async () => {

@@ -1,7 +1,7 @@
 // Shared deterministic holdout (P12-05): modernize holds out oracle cases, engine10's Wall holds out acceptance tests.
 // Selection is ranked by sha256(seed:id): no clock, file order or RNG. Held files live outside the repo (the implementer's cwd).
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
 
@@ -67,4 +67,10 @@ export function stageHoldout(dir: string, repoDir: string): { tests: { runner: s
     copyFileSync(src, dest); put.push(dest); tests.push({ runner: f.runner, path: relative(repoDir, dest) });
   });
   return { tests, missing, cleanup: () => { for (const p of put) rmSync(p, { force: true }); } };
+}
+
+/** C-C4b-c-b: private triage channel. The real reason a holdout check or store failed goes to <runDir>/holdout-triage.jsonl (0600), never to an event, a stage result or any agent-visible record. An operator reads it from .loki state. Best effort: a write failure never affects the run. */
+export const HOLDOUT_TRIAGE_FILE = "holdout-triage.jsonl";
+export function recordHoldoutTriage(runDir: string, entry: { check: string; result: string; reason: string }): void {
+  try { mkdirSync(runDir, { recursive: true }); appendFileSync(join(runDir, HOLDOUT_TRIAGE_FILE), JSON.stringify(entry) + "\n", { mode: 0o600 }); } catch { /* triage is best effort */ }
 }
