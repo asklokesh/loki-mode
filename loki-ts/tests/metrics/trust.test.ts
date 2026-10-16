@@ -305,7 +305,7 @@ import { graduationAdvice, type TrustRun } from "../../src/metrics/trust.ts";
 function gRun(i: number, over: Partial<TrustRun> = {}): TrustRun {
   return {
     run_id: `r${i}`, generated_at: null, council_pass_rate: 1, gate_pass_rate: 1,
-    iterations: 3, interventions: 0, verdict: "VERIFIED", false_verified: false, ...over,
+    iterations: 3, interventions: 0, verdict: "VERIFIED", cost_usd: null, interventions_by_type: null, waited_s: null, false_verified: false, ...over,
   };
 }
 

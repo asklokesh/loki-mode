@@ -469,7 +469,8 @@ export async function handlePause(opts: HandlePauseOptions = {}): Promise<Handle
     const prevTypes = (prev["by_type"] ?? {}) as Record<string, unknown>;
     const by_type: Record<string, number> = {};
     for (const t of IV_TYPES) by_type[t] = nonNegInt(prevTypes[t]);
-    by_type[opts.interventionType ?? inferInterventionType(dir)] += 1;
+    const ivType = opts.interventionType ?? inferInterventionType(dir);
+    by_type[ivType] = (by_type[ivType] ?? 0) + 1;
     atomicWriteFileSync(
       ivPath,
       JSON.stringify({

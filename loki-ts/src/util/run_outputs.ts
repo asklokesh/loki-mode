@@ -267,3 +267,17 @@ export function prGate(repoDir: string): { deny: string } | { draft: boolean } {
   const gate = policyGate(repoDir, "pr");
   return gate.decision === "deny" ? { deny: `PR not opened: policy denied (${gate.reason})` } : { draft: gate.decision === "approval" };
 }
+/** MASS-2: a stacked slice's PR targets its parent slice's run branch (LOKI_PR_BASE, set by `loki issues run`).
+ *  undefined = no stacking (the default branch); null = set but not a safe branch name, so the stage fails closed. */
+export function stackBase(env: NodeJS.ProcessEnv): string | null | undefined {
+  const b = env.LOKI_PR_BASE;
+  if (b === undefined || b === "") return undefined;
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]{0,200}$/.test(b) && !b.includes("..") && !b.includes("//") && !b.endsWith("/") && !b.endsWith(".lock") ? b : null;
+}
+/** MASS-2: a slice run has no issue.json, so `loki issues run` names the epic it belongs to (LOKI_PR_REFS=owner/repo#N).
+ *  A slice never closes its epic, so this is always "Refs"; a strict ref or nothing reaches the body. */
+export function stackSection(env: NodeJS.ProcessEnv, base: string | undefined, hasIssueLink: boolean): string {
+  const r = env.LOKI_PR_REFS ?? "";
+  const refs = !hasIssueLink && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#\d+$/.test(r) ? `\nRefs ${r}\n` : "";
+  return refs + (base ? `\nStacked on \`${base}\`: review and merge that pull request first.\n` : "");
+}

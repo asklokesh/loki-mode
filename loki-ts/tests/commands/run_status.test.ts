@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventLog, readEvents } from "../../src/engine10/events.ts";
-import { issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemState } from "../../src/util/run_outputs.ts";
+import { issueStatusBody, issueStatusProjector, STATUS_MARKER, workItemState, type WorkItemState } from "../../src/util/run_outputs.ts";
 import type { EventEnvelope } from "../../src/engine10/types.ts";
 import { NO_RUN_HINT, render, runIntentShow, runModernStatus, summarize } from "../../src/commands/run_status.ts";
 import { DEFAULT_PUSH_SH } from "../../src/engine10/stages/pr.ts";
@@ -129,7 +129,7 @@ describe("work-item state (one vocabulary)", () => {
   const mk = (...rows: [string, string | null, Record<string, unknown>?][]): EventEnvelope[] =>
     rows.map(([type, stage, data], seq) => ({ v: 1, seq, ts: "2026-10-15T00:00:00Z", run: "e10-x", type, stage, data: data ?? {} }));
   const S = (t: string, st: string) => [t, st] as [string, string];
-  const cases: [string, EventEnvelope[], string][] = [
+  const cases: [string, EventEnvelope[], WorkItemState][] = [
     ["received", mk(["run.started", null]), "received"],
     ["prepared", mk(["run.started", null], ["stage.completed", "intake"]), "prepared"],
     ["planned", mk(["run.started", null], ["stage.completed", "intake"], ["stage.completed", "plan"]), "planned"],
@@ -159,7 +159,7 @@ describe("work-item state (one vocabulary)", () => {
     writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$*" >> "${ghLog}"\nexit 0\n`); chmodSync(join(bin, "gh"), 0o755);
     const runDir = join(dir, ".loki", "runs", "r3"), eventsPath = join(runDir, "events.jsonl");
     new EventLog(eventsPath, "r3").append("run.started", null, {});
-    const base = { ...process.env, PATH: `${bin}:${process.env.PATH}` }; delete base._LOKI_ORIGIN_PINNED; delete base._LOKI_PINNED_ORIGIN;
+    const base: NodeJS.ProcessEnv = { ...process.env, PATH: `${bin}:${process.env.PATH}` }; delete base._LOKI_ORIGIN_PINNED; delete base._LOKI_PINNED_ORIGIN;
     const o = { pushSh: DEFAULT_PUSH_SH, env: base, repoDir: dir, runDir, runId: "r3", issueRef: "octocat/hello#9", eventsPath };
     expect((await issueStatusProjector(o)())!.ok).toBe(false);
     expect((await issueStatusProjector({ ...o, origin: "https://github.com/octocat/hello.git" })())!.ok).toBe(true);
