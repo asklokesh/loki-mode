@@ -4,7 +4,7 @@
 // Off with LOKI_COST_PREVIEW=0: no start-line text, no receipt block, no history append.
 import { repoKey } from "../../engine10/cache.ts";
 import { resolveModel } from "../../engine10/session.ts";
-import { appendRunOutcome, readRunHistory, shapeKeyForRepo, WALL_KIND } from "./history.ts";
+import { appendRunOutcome, readRunHistory, shapeKeyForRepo, WALL_KIND, type RunOutcome } from "./history.ts";
 import { readOriginUrl } from "../../util/engine_origin.ts";
 
 export const MIN_RUNS = 3;
@@ -88,12 +88,24 @@ export function receiptBlock(env: Env, usd: number | null, unmetered: boolean, w
   } };
 }
 
-/** Feed the history this estimator reads: only a VERIFIED run with measured cost is recorded. */
+/**
+ * The history row for a sealed run, or null when none is recorded. VERIFIED is an accepted pass (the estimator reads only these).
+ * FAILED is a code-owned loss (router evidence for expectedCost). PARTIAL, SPEC_CONFLICT and ALREADY_SATISFIED say nothing about the route and are not recorded.
+ */
+export function outcomeFor(shape: string, model: string, verdict: string, usd: number, wallS: number): RunOutcome | null {
+  const executor = /haiku/i.test(model) ? "haiku" : "sonnet";
+  if (verdict === "VERIFIED") return { shape, executor, verdict: "pass", owner: null, escalated: false, usd, wallS, wallKind: WALL_KIND };
+  if (verdict === "FAILED") return { shape, executor, verdict: "fail", owner: "code", escalated: false, usd, wallS, wallKind: WALL_KIND };
+  return null;
+}
+
+/** Feed the history this estimator and the router read: a VERIFIED pass or a FAILED code-owned loss, with measured cost only. */
 export function recordRun(env: Env, repoDir: string, model: string, verdict: string, usd: number | null, unmetered: boolean, wallS: number | null, cacheRoot?: string): boolean {
-  if (!previewOn(env) || verdict !== "VERIFIED" || usd === null || unmetered || wallS === null || wallS <= 0) return false; // wallS null = the receipt time block did not reconcile: no history row
+  if (!previewOn(env) || usd === null || unmetered || wallS === null || wallS <= 0) return false; // wallS null = the receipt time block did not reconcile: no history row
   const shape = shapeKeyForRepo(repoDir);
   if (shape === null) return false;
-  return appendRunOutcome(repoKey(readOriginUrl(repoDir), repoDir), { shape, executor: /haiku/i.test(model) ? "haiku" : "sonnet", verdict: "pass", owner: null, escalated: false, usd, wallS, wallKind: WALL_KIND }, cacheRoot);
+  const row = outcomeFor(shape, model, verdict, usd, wallS);
+  return row !== null && appendRunOutcome(repoKey(readOriginUrl(repoDir), repoDir), row, cacheRoot);
 }
 
 export const ESTIMATE_HELP = `loki estimate - Show what a run is likely to cost
