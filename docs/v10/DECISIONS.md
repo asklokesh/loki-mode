@@ -822,3 +822,10 @@ Standing: from this grant on, the CoS decides founder-queue items without waitin
 - Rule: never fold code to fit a cap. When a correct, readable change crosses a cap, the cap owner raises it in the same slice and records why.
 - Unchanged: the engine10 core cap (D29, D33), the e10ext cap (D42) and the contrib cap.
 - Reverse: lower the cap back once A-150 or a features split frees lines.
+
+## D101 (2026-10-16, CTO call under D99, CoS records): runner config files cap trust on any byte change
+- FC-09v round 1 HIGH review reproduced a bypass with real pnpm 11.1.3: a block scalar indicator on its own line made Bun.YAML swallow `overrides` into a string while js-yaml 4 installed a malicious `link:` override. A fuzz found more parser disagreements (`1_000`, timestamps, block indentation indicators).
+- Rule: never trust a second parser's view of a file another tool will load. For YAML runner config, byte-identical means unchanged; any other byte change caps trust. Changed `*.patch` files and paths under `patches/` cap as well.
+- Cost: an unrelated edit to pnpm-workspace.yaml now caps. Accepted: such edits are rare and moat beats convenience.
+- Rejected: more regexes on a strict subset (round 1 showed the class is open); bundling js-yaml (pnpm can change parsers between versions).
+- Reverse: only by comparing with the exact parser the installed package manager uses, proven by a differential fuzz against it.
