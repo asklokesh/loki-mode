@@ -144,4 +144,32 @@ ab_one rnc B9_STUB_CLAUDE_JSON='{"type":"result","total_cost_usd":0.2,"duration_
 # the report then says NOT RECORDED for cost and wall, never a number
 [ "$(jget "$T/old.json" cost_ratio.value)" = "$NRS" ] && [ "$(jget "$T/old.json" wall_ratio.value)" = "$NRS" ]; check report-not-recorded-when-fields-missing $? "$(cat "$T/old.json")"
 
+# P12-28: per-task table with CI and the small-edit parity gate (recorded fixtures, fail closed).
+pg_rows() { # pg_rows TASK RAWUSD LOKIUSD N
+    local i
+    for i in $(seq 1 "$4"); do
+        printf 'raw\t%s\t%s\t1\t1\t20\t%s\n' "$1" "$i" "$2"
+        printf 'loki\t%s\t%s\t1\t1\t30\t%s\n' "$1" "$i" "$3"
+    done
+}
+{ pg_rows M7 0.10 0.08 3; pg_rows M9 0.10 0.10 3; pg_rows S14 0.10 0.05 3; } > "$T/pg-ok.tsv"
+bash "$B9" --parity-gate "$T/pg-ok.tsv" > "$T/pg-ok.out" 2>&1
+check parity-pass-rc $? "$(cat "$T/pg-ok.out")"
+grep -q 'parity_gate=PASS' "$T/pg-ok.out" && grep -q 'parity M7 cost_ratio=0.80 ci95=' "$T/pg-ok.out"; check parity-pass-lines $? "$(cat "$T/pg-ok.out")"
+{ pg_rows M7 0.10 0.08 3; pg_rows M9 0.10 0.20 3; pg_rows S14 0.10 0.05 3; } > "$T/pg-over.tsv"
+bash "$B9" --parity-gate "$T/pg-over.tsv" > "$T/pg-over.out" 2>&1
+[ $? -eq 1 ] && grep -q 'parity_gate=FAIL loki costs more than raw on M9' "$T/pg-over.out"; check parity-fails-when-loki-costs-more $? "$(cat "$T/pg-over.out")"
+{ pg_rows M7 0.10 0.08 3; pg_rows M9 0.10 0.10 2; pg_rows S14 0.10 0.05 3; } > "$T/pg-n2.tsv"
+bash "$B9" --parity-gate "$T/pg-n2.tsv" > "$T/pg-n2.out" 2>&1
+[ $? -eq 2 ] && grep -q 'M9 n=2/2' "$T/pg-n2.out" && ! grep -q 'cost_ratio' "$T/pg-n2.out"; check parity-n-below-3-fails-closed-no-score $? "$(cat "$T/pg-n2.out")"
+{ pg_rows M7 0.10 0.08 3; pg_rows S14 0.10 0.05 3; } > "$T/pg-miss.tsv"
+bash "$B9" --parity-gate "$T/pg-miss.tsv" > "$T/pg-miss.out" 2>&1
+[ $? -eq 2 ] && grep -q 'M9 missing' "$T/pg-miss.out"; check parity-missing-task-fails-closed $? "$(cat "$T/pg-miss.out")"
+{ pg_rows M7 0.10 0.08 3; pg_rows M9 0.10 0.10 3; pg_rows S14 0.10 0.05 3; printf 'loki\tS14\t4\t1\t1\t30\tNOT RECORDED\n'; } > "$T/pg-nr.tsv"
+bash "$B9" --parity-gate "$T/pg-nr.tsv" > "$T/pg-nr.out" 2>&1
+[ $? -eq 2 ] && grep -q 'S14 cost NOT RECORDED' "$T/pg-nr.out"; check parity-unrecorded-cost-fails-closed $? "$(cat "$T/pg-nr.out")"
+bash "$B9" --ab-report "$T/pg-ok.tsv" --json-out "$T/pg-ok.json" --version t > "$T/pg-rep.out" 2>&1
+grep -q '^task M7 n=3/3 cost_ratio=0.80 ci95=\[0.80,0.80\]' "$T/pg-rep.out" && [ "$(jget "$T/pg-ok.json" per_task.S14.n.loki)" = "3" ]
+check per-task-table-with-ci $? "$(cat "$T/pg-rep.out")"
+
 [ "$FAILS" -eq 0 ]

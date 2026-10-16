@@ -64,6 +64,10 @@
 #   --json-out FILE         the report JSON (cost, correctness and wall ratios, 95% bootstrap intervals, n)
 #   --ab-report TSV         no runs: report over an AB results TSV (arm fixture run solved verified wall usd cache_read cache_create);
 #                           with --json-out, --metrics-out, --version. Math lives in scripts/b9-ab-report.py.
+#   --parity-gate TSV       no runs: small-edit parity gate over tasks M7, M9, S14 of an AB results TSV (fixture column
+#                           holds the task id). Each task needs n>=3 per arm and a recorded cost, else rc 2 and no score
+#                           (fail closed); rc 1 when Loki's cost ratio exceeds 1 on any task; rc 0 = PASS. --ab-report also
+#                           prints a per-task table (n and cost ratio with CI) and writes it as per_task in the JSON.
 # Dry-run uses a throwaway HOME; real mode keeps the caller's HOME (credentials).
 #
 # Dry-run fixture: scripts/b9-fixtures/trivial-sum.sh (also used for the T10 supply-guard cost measurement,
@@ -73,11 +77,12 @@ set -uo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 TASK="sum() skips the first element; fix it"
-DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE="" AB=0 ABREPORT="" JSONOUT="" VERSION_LABEL="unknown" MODEL="" ABFIX="" ARMS="raw,loki" CHECKTASKS=""
+DRY=0 REPO="" BASE="" TESTCMD="" NAME="" N="" RESULTS_OUT="" METRICS_OUT="" EMIT="" SEED="" RESULTS_IN="" CONFIRM_IN="" TIMEOUT=600 SUMMARIZE="" AB=0 ABREPORT="" JSONOUT="" VERSION_LABEL="unknown" MODEL="" ABFIX="" ARMS="raw,loki" CHECKTASKS="" PARITY=""
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run|--dry) DRY=1 ;;
         --ab) AB=1 ;;
+        --parity-gate) PARITY="${2:-}"; shift ;;
         --ab-report) ABREPORT="${2:-}"; shift ;;
         --json-out) JSONOUT="${2:-}"; shift ;;
         --version) VERSION_LABEL="${2:-}"; shift ;;
@@ -332,6 +337,15 @@ PY
 if [ -n "$CHECKTASKS" ]; then
     [ -f "$CHECKTASKS" ] || { echo "--check-tasks needs an existing TSV: $CHECKTASKS" >&2; exit 2; }
     check_tasks "$CHECKTASKS"; exit $?
+fi
+
+if [ -n "$PARITY" ]; then
+    [ -f "$PARITY" ] || { echo "--parity-gate needs an existing results TSV: $PARITY" >&2; exit 2; }
+    _pj="$(mktemp "${LOKI_RUN_TMP:-${TMPDIR:-/tmp}}/b9-parity.XXXXXX")" || exit 2
+    python3 -I "$REPO_ROOT/scripts/b9-ab-report.py" "$PARITY" --parity-gate --json-out "$_pj"
+    _prc=$?
+    rm -f -- "$_pj"
+    exit "$_prc"
 fi
 
 if [ -n "$ABREPORT" ]; then

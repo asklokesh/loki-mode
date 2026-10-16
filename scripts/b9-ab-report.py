@@ -11,6 +11,10 @@ Outputs a JSON file and one METRICS row:
   correctness_ratio loki solve rate / raw solve rate
   wall_ratio        mean loki wall / mean raw wall
 95 percent intervals: percentile bootstrap, resampling runs within each (arm, fixture) cell, fixed seed.
+Per-task table: one line per fixture (n per arm, cost ratio with its own interval); the JSON carries it as per_task.
+Parity gate (--parity-gate): over PARITY_TASKS (M7, M9, S14) every task needs n>=3 per arm and a recorded numeric
+cost ratio, else exit 2 and NO score is printed (fail closed); exit 1 when any task's cost ratio exceeds 1 (Loki
+costs more than raw on the small-edit family); exit 0 only when all three are at or under 1.
 A cost that is missing, non-numeric or <= 0 anywhere in an arm makes cost_ratio NOT RECORDED (never 0, never a
 ratio over the runs that happened to be recorded).
 """
@@ -23,6 +27,8 @@ import datetime
 
 NR = "NOT RECORDED"
 NC = "NOT COMPUTABLE"
+PARITY_TASKS = ("M7", "M9", "S14")
+MIN_N = 3
 
 
 def load(path):
@@ -124,6 +130,39 @@ def fmt(m):
     return "%.2f ci95=%s" % (m["value"], ci if isinstance(ci, str) else "[%.2f,%.2f]" % (ci[0], ci[1]))
 
 
+def per_task(runs, rng, boots):
+    out = {}
+    for f in sorted({r["fixture"] for r in runs}):
+        fr = [r for r in runs if r["fixture"] == f]
+        raw, loki = sums(fr, "raw"), sums(fr, "loki")
+        bad = sum(1 for r in raw + loki if r["usd"] is None)
+        reason = "%d run(s) have no recorded cost" % bad if bad else None
+        out[f] = {"n": {"raw": len(raw), "loki": len(loki)},
+                  "cost_ratio": metric("cost", stat_cost, fr, rng, boots, reason) if raw and loki
+                  else {"value": NC, "ci95": NC, "reason": "a task needs both arms"}}
+    return out
+
+
+def parity_gate(tasks):
+    """Return (rc, lines). Fail closed: no ratio is printed for a task with n<MIN_N or a missing/unrecorded cost."""
+    short = []
+    for t in PARITY_TASKS:
+        e = tasks.get(t)
+        if e is None:
+            short.append("%s missing" % t)
+        elif min(e["n"].values()) < MIN_N:
+            short.append("%s n=%d/%d (need >=%d per arm)" % (t, e["n"]["raw"], e["n"]["loki"], MIN_N))
+        elif isinstance(e["cost_ratio"]["value"], str):
+            short.append("%s cost %s" % (t, e["cost_ratio"]["value"]))
+    if short:
+        return 2, ["parity_gate=FAIL insufficient: " + "; ".join(short)]
+    lines = ["parity %s cost_ratio=%s" % (t, fmt(tasks[t]["cost_ratio"])) for t in PARITY_TASKS]
+    over = [t for t in PARITY_TASKS if tasks[t]["cost_ratio"]["value"] > 1]
+    if over:
+        return 1, lines + ["parity_gate=FAIL loki costs more than raw on " + ",".join(over)]
+    return 0, lines + ["parity_gate=PASS"]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("tsv")
@@ -132,6 +171,7 @@ def main():
     ap.add_argument("--version", default="unknown")
     ap.add_argument("--seed", type=int, default=20261008)
     ap.add_argument("--boots", type=int, default=10000)
+    ap.add_argument("--parity-gate", action="store_true")
     a = ap.parse_args()
     runs = load(a.tsv)
     raw, loki = sums(runs, "raw"), sums(runs, "loki")
@@ -143,6 +183,11 @@ def main():
         bad = sum(1 for r in raw + loki if r["usd"] is None)
         missing = "%d run(s) have no recorded cost (missing, non-numeric or 0)" % bad
     rng = random.Random(a.seed)
+    tasks = per_task(runs, random.Random(a.seed), a.boots)
+    if a.parity_gate:
+        rc, lines = parity_gate(tasks)
+        print("\n".join(lines))
+        return rc
     cost = metric("cost", stat_cost, runs, rng, a.boots, missing)
     corr = metric("correctness", stat_correct, runs, rng, a.boots)
     wall = metric("wall", stat_wall, runs, rng, a.boots)
@@ -152,7 +197,7 @@ def main():
     fixtures = sorted({r["fixture"] for r in runs})
     significant = all(cells.get((arm, f), 0) >= 3 for arm in ("raw", "loki") for f in fixtures)
     rep = {"version": a.version, "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%MZ"),
-           "fixtures": fixtures, "n": {"raw": len(raw), "loki": len(loki)}, "significant": significant,
+           "fixtures": fixtures, "n": {"raw": len(raw), "loki": len(loki)}, "significant": significant, "per_task": tasks,
            "cost_ratio": cost, "correctness_ratio": corr, "wall_ratio": wall,
            "seed": a.seed, "boots": a.boots,
            "definitions": {"cost_ratio": "(loki usd per VERIFIED and hidden-check passing task) / (raw usd per task solved); failed-run cost included",
@@ -165,6 +210,8 @@ def main():
     row = "| %s | b9-ab %s | %s | cost_ratio=%s correctness_ratio=%s wall_ratio=%s n=%d/%d%s |" % (
         rep["date"], a.version, ",".join(fixtures), fmt(cost), fmt(corr), fmt(wall), len(raw), len(loki), label)
     print(row)
+    for f in fixtures:
+        print("task %s n=%d/%d cost_ratio=%s" % (f, tasks[f]["n"]["raw"], tasks[f]["n"]["loki"], fmt(tasks[f]["cost_ratio"])))
     if a.metrics_out:
         with open(a.metrics_out, "a") as fh:
             fh.write(row + "\n")
