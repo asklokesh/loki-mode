@@ -1815,7 +1815,8 @@ grep -q 'resolve_source' "$HERE/../../scripts/real-repo-gate.sh" && grep -q 'res
     && pass "P12-30c: gate, measure-size and lg-shortcuts readers resolve repo.source" \
     || fail "P12-30c: a repo.source reader still uses the raw value"
 rs_src="$(cd / && python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.resolve_source("fixtures/empty-repo/empty-repo.bundle"))' "$HERE")"
-(cd / && git clone -q "$rs_src" "$T/rs-clone" >/dev/null 2>&1) && [ -f "$T/rs-clone/README.md" ] \
+# -b main: the bundle carries no HEAD, so a plain clone checks out nothing when init.defaultBranch is not main (ubuntu CI)
+(cd / && git clone -q -b main "$rs_src" "$T/rs-clone" >/dev/null 2>&1) && [ -f "$T/rs-clone/README.md" ] \
     && pass "P12-30c: resolved relative source clones from another cwd" || fail "P12-30c: resolved source did not clone"
 
 # P12-30e: readers run python3 -I (no cwd on sys.path) and fail closed when
