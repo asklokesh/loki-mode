@@ -9909,7 +9909,7 @@ _deploy_latest_receipt() {
     return 0
 }
 
-# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha]
+# _deploy_record <dir> <command> <exit_code> <run_id> <anchor_sha> [state] [health_status] [health_url] [rb_attempted] [rb_exit] [receipt_sha256] [started_at] [finished_at] [target] [canary] [post_rollback_health] [health_http_code] [health_match] [tree_sha] [destination]
 # Writes the executed deploy's own record, then signs it (loki.deploy/1, Ed25519 via the
 # receipt signer in loki-ts/src/util/receipt_signer.ts) so it is bound to the receipt that
 # authorized it; `loki verify <record>` re-checks it offline. An unsigned record is reported
@@ -9932,7 +9932,7 @@ _deploy_record() {
     local health_status="${7:-unchecked}" health_url="${8:-}"
     local rb_attempted="${9:-false}" rb_exit="${10:-}"
     local receipt_sha="${11:-}" started_at="${12:-}" finished_at="${13:-}" target="${14:-}" canary="${15:-false}"
-    local post_rb="${16:-unchecked}" hcode_rec="${17:-}" hmatch="${18:-}" tree_sha="${19:-}"
+    local post_rb="${16:-unchecked}" hcode_rec="${17:-}" hmatch="${18:-}" tree_sha="${19:-}" dest_rec="${20:-}"
     local ddir="$dir/.loki/deploys"
     [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
     mkdir -p "$ddir" 2>/dev/null || return 0
@@ -9940,7 +9940,7 @@ _deploy_record() {
     DR_CMD="$command" DR_RC="$rc" DR_RUN="$run_id" DR_ANCHOR="$anchor" DR_OUT="$f" \
     DR_STATE="$anchor_state" DR_HS="$health_status" DR_HU="$health_url" \
     DR_RBA="$rb_attempted" DR_RBX="$rb_exit" DR_RSHA="$receipt_sha" DR_T0="$started_at" \
-    DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" DR_HM="$hmatch" DR_TREE="$tree_sha" \
+    DR_T1="$finished_at" DR_TGT="$target" DR_CAN="$canary" DR_PRB="$post_rb" DR_HC="$hcode_rec" DR_HM="$hmatch" DR_TREE="$tree_sha" DR_DEST="$dest_rec" \
         python3 -c '
 import json, os, datetime
 state = os.environ.get("DR_STATE") or "anchored"
@@ -9969,6 +9969,7 @@ json.dump({
     "post_rollback_health": os.environ.get("DR_PRB") or "unchecked",
     "health_match": os.environ.get("DR_HM", ""),
     "tree_sha": os.environ.get("DR_TREE", ""),
+    "destination": os.environ.get("DR_DEST", ""),
     "health_http_code": int(os.environ["DR_HC"]) if os.environ.get("DR_HC", "").isdigit() else None,
 }, open(os.environ["DR_OUT"], "w"), indent=2)
 ' 2>/dev/null || return 0
@@ -10117,6 +10118,26 @@ _deploy_policy_refusal() {
     return 0
 }
 
+# _deploy_staging_receipt_ok <dir> <sha>
+# Returns 0 only when a staging deploy record for exactly <sha> exists in
+# .loki/deploys/, exited 0, did not fail its health probe, and `loki verify`
+# reports VERIFIED. Anything that cannot be evaluated is "no" (fail closed).
+_deploy_staging_receipt_ok() {
+    local dir="${1:-.}" sha="${2:-}" ddir="$1/.loki/deploys" f
+    [ -n "$sha" ] || return 1
+    [ -d "${LOKI_DIR:-}" ] && ddir="${LOKI_DIR}/deploys"
+    [ -d "$ddir" ] || return 1
+    for f in "$ddir"/*.json; do
+        [ -f "$f" ] || continue
+        python3 -c 'import json,sys
+r=json.load(open(sys.argv[1]))
+ok=r.get("schema")=="loki.deploy/1" and r.get("destination")=="staging" and r.get("anchor_sha")==sys.argv[2] and r.get("exit_code")==0 and r.get("health_status")!="FAILED_HEALTH"
+sys.exit(0 if ok else 1)' "$f" "$sha" 2>/dev/null || continue
+        ( _loki_bun_delegate engine10 verify "$f" 2>&1 ) | grep -q "^verdict: VERIFIED" && return 0
+    done
+    return 1
+}
+
 # _deploy_try_execute <dir> <type>
 # The ONLY place a deploy command is ever run. Evaluates the gate, and either
 # executes + records, or REFUSES naming every failed check. Returns the deploy
@@ -10148,6 +10169,19 @@ _deploy_try_execute() {
             *)
                 echo -e "${RED}REFUSED: --canary is not supported for: ${command}${NC}" >&2
                 echo "  This provider documents no staged rollout verb (Vercel: deploy then 'vercel promote'; Fly: 'fly deploy --strategy canary'). Nothing was run." >&2
+                return 1
+                ;;
+        esac
+    fi
+
+    # preview/staging use a non-production verb; only Vercel documents one here.
+    local dest="${_LOKI_DEPLOY_DESTINATION:-}"
+    if [ "$dest" = preview ] || [ "$dest" = staging ]; then
+        case "$command" in
+            "vercel --prod") exec_cmd="vercel" ;;
+            *)
+                echo -e "${RED}REFUSED: --destination ${dest} is not supported for: ${command}${NC}" >&2
+                echo "  No non-production verb is documented for this provider (Vercel: 'vercel' without --prod). Nothing was run." >&2
                 return 1
                 ;;
         esac
@@ -10312,7 +10346,7 @@ _deploy_try_execute() {
     rsha="$(python3 -c 'import json,sys;print((json.load(open(sys.argv[1])).get("verification") or {}).get("hash") or "")' "$pj" 2>/dev/null || printf '')"
     rec="$(_deploy_record "$dir" "$exec_cmd" "$rc" "${run_id:-unknown}" "${anchor:-unknown}" \
         "$anchor_state" "$health_status" "$health_url" "$rb_attempted" "$rb_exit" \
-        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)")"
+        "$rsha" "$started_at" "$finished_at" "${command%% *}" "$canary" "$post_rb" "$hcode" "$health_match" "$(git -C "$dir" rev-parse 'HEAD^{tree}' 2>/dev/null || true)" "$dest")"
     echo ""
     if [ "$rc" -eq 0 ]; then
         echo -e "${GREEN}Deploy command exited 0.${NC}"
@@ -10423,6 +10457,12 @@ _deploy_gate() {
         esac
     fi
 
+    if [ "${_LOKI_DEPLOY_DESTINATION:-}" = production ]; then
+        _deploy_staging_receipt_ok "$dir" "$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)" \
+            || reasons="${reasons}no VERIFIED staging deploy receipt for this SHA (deploy with --destination staging first)
+"
+    fi
+
     local dirty
     dirty="$(_deploy_tree_clean "$dir")"
     [ -n "$dirty" ] && reasons="${reasons}${dirty}
@@ -10454,7 +10494,7 @@ cmd_deploy() {
     # file alone weakens this gate.
     local LOKI_DEPLOY_ALLOW_UNANCHORED=false
     # Per-invocation like --execute; local so an ambient env var cannot set them.
-    local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_HEALTH_MATCH="" _LOKI_DEPLOY_AUTO_ROLLBACK=false _LOKI_DEPLOY_CANARY=false
+    local _LOKI_DEPLOY_HEALTH_URL="" _LOKI_DEPLOY_HEALTH_MATCH="" _LOKI_DEPLOY_AUTO_ROLLBACK=false _LOKI_DEPLOY_CANARY=false _LOKI_DEPLOY_DESTINATION=""
 
     # Arg parse (mirror cmd_preview: lenient on unknown args -> no behavior drift).
     while [ $# -gt 0 ]; do
@@ -10462,7 +10502,7 @@ cmd_deploy() {
             --help|-h|help)
                 echo -e "${BOLD}Loki Mode -- deploy command advisory (print-only by default)${NC}"
                 echo ""
-                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary]] [--health-url URL [--health-match STR] [--auto-rollback]]"
+                echo "Usage: loki deploy [--dir <path>] [--no-clip] [--execute [--canary]] [--destination preview|staging|production] [--health-url URL [--health-match STR] [--auto-rollback]]"
                 echo ""
                 echo "Detects your project type and your installed cloud CLI (and any"
                 echo "CI/CD pipeline), then PRINTS the exact deploy command for YOU to run."
@@ -10548,6 +10588,10 @@ cmd_deploy() {
                 echo "  --dir <path>   Project directory to scan (default: current dir)"
                 echo "  --no-clip      Do not copy the idiomatic command to the clipboard"
                 echo "  --execute      Run the deploy command if the receipt gate passes"
+                echo "  --destination preview|staging|production"
+                echo "                 With --execute: preview/staging run a non-production deploy"
+                echo "                 (Vercel only); production is refused unless a VERIFIED staging"
+                echo "                 deploy record exists for the same SHA. Unset keeps today's behavior."
                 echo "  --allow-unanchored"
                 echo "                 Proceed when the receipt records NO baseline (nothing"
                 echo "                 about this tree is proven). Never bypasses a recorded"
@@ -10579,6 +10623,12 @@ cmd_deploy() {
             --canary)
                 _LOKI_DEPLOY_CANARY=true
                 ;;
+            --destination)
+                case "${2:-}" in
+                    preview|staging|production) _LOKI_DEPLOY_DESTINATION="$2"; shift ;;
+                    *) echo "loki deploy --destination must be one of: preview, staging, production" >&2; return 1 ;;
+                esac
+                ;;
             --dir)
                 # Guard against a missing OR flag-shaped value: an unguarded
                 # shift when --dir is the last arg underflows under set -e, and a
@@ -10606,6 +10656,10 @@ cmd_deploy() {
     fi
     if [ "$_LOKI_DEPLOY_CANARY" = true ] && [ "$do_execute" != true ]; then
         echo "loki deploy --canary requires --execute" >&2
+        return 1
+    fi
+    if [ "$_LOKI_DEPLOY_CANARY" = true ] && [ -n "$_LOKI_DEPLOY_DESTINATION" ] && [ "$_LOKI_DEPLOY_DESTINATION" != production ]; then
+        echo "loki deploy --canary only applies to --destination production" >&2
         return 1
     fi
     if [ "$do_execute" != true ] && [ -n "$_LOKI_DEPLOY_HEALTH_URL" ]; then
