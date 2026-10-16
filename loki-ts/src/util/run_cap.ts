@@ -2,7 +2,7 @@
 // An explicit cap (LOKI_E10_CAP_S or loki.yaml budgets.run_cap_s) is fixed: never shrunk or grown, and it wins over the ceiling.
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { DEFAULT_CAP_S } from "../engine10/types.ts";
+import { DEFAULT_CAP_S, envCapS } from "../engine10/types.ts";
 import { dependentsOf } from "../project_model/graph.ts";
 import type { ProjectApi } from "../project_model/api.ts";
 import { lokiYamlTexts, yamlKey } from "./yaml_key.ts";
@@ -57,7 +57,7 @@ export function yamlRunCapS(text: string): number | null {
 export function resolveRunCapS(repoDir: string, subscription: boolean, env: NodeJS.ProcessEnv = process.env): { capS: number; fixedS?: number; ceilingS: number } {
   const texts = lokiYamlTexts(repoDir);
   const yamlS = texts.length > 0 ? yamlRunCapS(texts[texts.length - 1]!) : null; // the last readable file wins
-  const fixedS = fixedCapS(Number(env.LOKI_E10_CAP_S) || undefined, yamlS);
+  const fixedS = fixedCapS(envCapS(env.LOKI_E10_CAP_S) ?? undefined, yamlS);
   return { capS: fixedS ?? DEFAULT_CAP_S, fixedS, ceilingS: fixedS ?? capCeilingS(subscription) };
 }
 /** The line appended to the implement brief (after the cache-stable prefix) so the model can checkpoint. */

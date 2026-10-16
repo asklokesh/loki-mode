@@ -81,7 +81,7 @@ export function deferAlreadyDone(
     if (!hitsUnchangedFromBase(ctx.repoDir, ctx.baseSha, [...new Set(hits.map((x) => x.path))])) { hit = null; return; }
     try { apply(h); } catch { hit = null; return; }
     fired = true;
-    ctx.emit("already.satisfied", "intake", { evidence: h.evidence, deferred: true });
+    ctx.emit("already.satisfied", "intake", { already_satisfied: true, evidence: h.evidence, deferred: true });
     impl.abort();
   };
   ctx.sessions = {

@@ -19,16 +19,18 @@ export const STAGE_BUDGETS: Readonly<Record<StageName, { targetS: number | null;
 };
 export const DEFAULT_CAP_S = 900;
 export const DEEP_CAP_S = 2700;
+/** LOKI_E10_CAP_S as a usable cap: finite and positive, else null ("Infinity", NaN, 0, negatives are rejected). */
+export function envCapS(raw: string | undefined): number | null { const n = Number(raw); return Number.isFinite(n) && n > 0 ? n : null; }
 export const BACKSTOP_GRACE_S = 30;
 export function backstopS(capS: number, graceS: number = BACKSTOP_GRACE_S): number { return capS - Math.min(graceS, capS / 30); } // supervisor.ts's backstop; machine.ts's soft cap stays under it
 export const DEEP_IMPLEMENT_LIMIT_S = 1800; // ENGINE.md section 4: 480s, 1800s with --deep
 export const MAX_FIX_ROUNDS = 2;
 export const EVENT_TYPES = [
-  "run.started", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
+  "run.started", "run.resumed", "stage.started", "stage.completed", "stage.failed", "stage.skipped",
   "heartbeat", "session.started", "session.ended", "session.stalled", "cost", "wall.sealed",
   "tests.restored", "test.result", "test.scoped_out", "fix.round", "already.satisfied", "spec.conflict",
   "escalated", "cap.hit", "cap.sized", "tamper.detected", "receipt.sealed", "pr.opened",
-  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised",
+  "deep.started", "deep.completed", "receipt.addendum", "run.completed", "log.sealed", "variant", "route", "route.escalated", "provider.failover", "project_model.fallback", "intent.revised", "already.attested",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 /** One line of events.jsonl. All keys required; stage is null for run-level events; readers tolerate unknown `type` values. */

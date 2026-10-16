@@ -30,7 +30,7 @@ import { modelDowngrades } from "../runner/model_downgrades.ts";
 import { runIdentity } from "../util/run_identity.ts";
 import type { PrContext } from "./stages/pr.ts";
 import type { EventEnvelope, PushEnv, StageName, Verdict } from "./types.ts";
-import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, pushArgv, STAGE_BUDGETS } from "./types.ts";
+import { backstopS, BACKSTOP_GRACE_S, DEEP_CAP_S, DEFAULT_CAP_S, envCapS, pushArgv, STAGE_BUDGETS } from "./types.ts";
 import { baseLine } from "../util/base_guard.ts";
 import { alreadyDoneTextComment, policyGate, prGate, runIntent, unmergedLokiWorkNote, type PolicyGate } from "../util/run_outputs.ts";
 
@@ -39,7 +39,7 @@ import { encodeEstimate, startText } from "../runner/router/cost_preview.ts";
 export const START_LINE = "Loki 10 engine";
 export const TAMPER_NOT_PROVEN = "event log modified outside the engine";
 async function slackEvent(...a: Parameters<typeof import("../e10ext/slack_events.ts").notifyEvent>): Promise<void> { try { await (await import("../e10ext/slack_events.ts")).notifyEvent(...a); } catch { /* best-effort */ } }
-const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "pr.opened", "log.sealed", "deep.started"]); // types only the supervisor may write; same types from the worker are dropped
+const SUPERVISOR_ONLY = new Set(["run.started", "run.completed", "tamper.detected", "run.resumed", "pr.opened", "log.sealed", "deep.started", "already.attested"]); // types only the supervisor may write; same types from the worker are dropped
 const VERDICTS = new Set<string>(["VERIFIED", "PARTIAL", "ALREADY_SATISFIED", "SPEC_CONFLICT", "FAILED"]);
 const SESSION_EXITS = new Set(["done", "already_done", "spec_conflict", "killed", "error"]);
 export const BACKSTOP_NOT_PROVEN = "worker killed by the supervisor backstop (cap minus grace)";
@@ -76,6 +76,8 @@ export interface SupervisorOptions {
   capCeilingS?: number; // FC-21b: the backstop is set here (the most the worker's resized cap can reach), not at the initial cap
   capS?: number; // global cap in seconds (default LOKI_E10_CAP_S, else DEFAULT_CAP_S); the backstop fires at cap minus grace
   graceS?: number; // default BACKSTOP_GRACE_S
+  restoreBranch?: string | null; // P12-07i: the user's branch before a resume checkout, restored on stop instead of the run branch
+  resume?: boolean; // P12-07i: re-enter an interrupted run: appends run.resumed instead of run.started and tells the worker to restore settled stages
 }
 export interface SupervisorResult {
   verdict: Verdict;
@@ -94,9 +96,11 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     this.hash = createHash("sha256"); // seed AFTER construction: EventLog may terminate a torn last line
     try { this.hash.update(readFileSync(path)); } catch { /* new file */ }
   }
+  private implementOpen = false; // P12-07j: implement started and not yet settled; the only window a deferred already-done hit can be genuine
   append(type: string, stage: StageName | null, data: Record<string, unknown>): EventEnvelope {
     const e = this.log.append(type, stage, data);
     this.hash.update(JSON.stringify(e) + "\n");
+    if (stage === "implement") { if (type === "stage.started") this.implementOpen = true; else if (type === "stage.completed" || type === "stage.failed" || type === "stage.skipped") this.implementOpen = false; }
     return e;
   }
   ingest(line: string): EventEnvelope | null { // validates one untrusted worker stdout line; returns the appended event or null when dropped
@@ -110,6 +114,9 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     if (!dataOk(type, data as Record<string, unknown>)) return null;
     const e = this.append(type, stage as StageName | null, data as Record<string, unknown>);
     if (type === "session.ended") this.verify();
+    // P12-07j (D61-04): resume trusts only the supervisor-written already.attested. The worker's already.satisfied is attested here, and only for a well-formed deferred hit on intake while implement is in flight; anything else stays an inert note.
+    const d = data as Record<string, unknown>, ev = d["evidence"];
+    if (type === "already.satisfied" && stage === "intake" && this.implementOpen && d["deferred"] === true && d["already_satisfied"] === true && Array.isArray(ev) && ev.length > 0 && ev.every((x) => typeof x === "string" && x !== "")) this.append("already.attested", "intake", { already_satisfied: true, evidence: ev });
     return e;
   }
   sealLog(): void { // A-117: signed line after run.completed over every earlier byte, so deleting the tail or the line itself breaks `loki verify`; unsigned runs have no key and skip it
@@ -129,6 +136,11 @@ export class SupervisorLog { // single writer with a running sha256 of the bytes
     return false;
   }
 }
+/** P12-07l: the worker cap env. A deep worker reads the same cap env as fast, never a stale user value; a sized (fast) run also pins or clears the fixed-cap marker. */
+export function applyCapEnv(env: NodeJS.ProcessEnv, capS: number, sized: { fixedS?: number } | null): void {
+  env.LOKI_E10_CAP_S = String(capS);
+  if (sized) { if (sized.fixedS) env.LOKI_E10_CAP_FIXED_S = String(sized.fixedS); else delete env.LOKI_E10_CAP_FIXED_S; }
+}
 export async function runSupervisor(opts: SupervisorOptions): Promise<SupervisorResult> {
   const t0 = Date.now();
   const startedProvider = opts.started?.["provider"]; // E-36: provider read off opts.started, not a dedicated field (main(), below, is the only populater)
@@ -139,17 +151,16 @@ export async function runSupervisor(opts: SupervisorOptions): Promise<Supervisor
   const log = new SupervisorLog(join(opts.repoDir, eventsRelPath(opts.runId)), opts.runId);
   // P0: a caller-built env (tests pass a minimal one) that omits LOKI_CONTROL inherits the process-level off switch the test preload sets.
   if ((env.LOKI_CONTROL ?? process.env.LOKI_CONTROL) !== "0") void import("../e10ext/ship_hook.ts").then((m) => m.startShip(opts.repoDir, log.path, env)).catch(() => {}); // CP-02: D56 shipper, off with LOKI_CONTROL=0
-  log.append("run.started", null, { ...opts.started, origin_repo: githubRepoFromUrl(origin) });
+  log.append(opts.resume ? "run.resumed" : "run.started", null, { ...opts.started, ...(opts.resume ? { phase: "stage" } : {}), origin_repo: githubRepoFromUrl(origin) });
   const workerEnv: NodeJS.ProcessEnv = { ...env }; // withholdGithubTokens mutates its argument: always a copy, never env itself
-  withholdGithubTokens(workerEnv);
+  withholdGithubTokens(workerEnv); if (opts.resume) workerEnv.LOKI_E10_RESUME = "1";
   // T3: the worker has no terminal; only the supervisor can ask the LOKI_CONFIRM question.
   workerEnv.LOKI_INTENT_TTY = env.LOKI_CONFIRM === "1" && process.stdin.isTTY === true && process.stdout.isTTY === true ? "1" : "0";
-  const envCap = Number(env.LOKI_E10_CAP_S);
-  const capS = opts.capS ?? (envCap > 0 ? envCap : DEFAULT_CAP_S);
+  const capS = opts.capS ?? envCapS(env.LOKI_E10_CAP_S) ?? DEFAULT_CAP_S;
   const ceilingS = Math.max(capS, opts.capCeilingS ?? capS);
   const backstopMs = backstopS(ceilingS, opts.graceS ?? BACKSTOP_GRACE_S) * 1000; // hard SIGKILL safety net for a stage blocking past the worker's own soft cap
   const escalateMs = Math.max(0, Math.min(2000, ceilingS * 1000 - backstopMs)); // SIGTERM->SIGKILL clamped so a trapping worker cannot outlive the cap
-  let sealed: Record<string, unknown> | null = null; const origBranch = currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
+  let sealed: Record<string, unknown> | null = null; const origBranch = opts.restoreBranch !== undefined ? opts.restoreBranch : currentBranch(opts.repoDir), sessionGroups = new Set<number>(); // session children are detached (own group), so the worker's group kill misses them
   const worker = await spawnWorker(opts.workerArgv, workerEnv, opts.repoDir, backstopMs, escalateMs, (line) => {
     const e = log.ingest(line);
     if (e?.type === "session.started" && typeof e.data.pgid === "number") sessionGroups.add(e.data.pgid); if (e?.type === "receipt.sealed") sealed = e.data;
@@ -313,7 +324,7 @@ export async function main(args: string[]): Promise<number> { // `loki "<task>"`
   let reqMap: { requirements: { id: string; text: string; status: string }[] } | null | undefined; // REQTRACE: computed once, before the PR stage, from intake/spec plus verify results; undefined = not yet computed
   const reqOnce = async (evs: ReturnType<typeof readEvents>): Promise<NonNullable<typeof reqMap> | null> => { if (reqMap === undefined) { const rq = await import("../features/contract.ts"); reqMap = rq.writeFromEngine10(repoDir, join(repoDir, ".loki"), runDir, isIssue ? null : task, evs); } return reqMap; }; // also removes a prior run's stale map when this run has no requirements
   const sized = deep ? null : resolveRunCapS(repoDir, cap.usd <= 0, env), capS = sized?.capS ?? DEEP_CAP_S;
-  if (sized) { env.LOKI_E10_CAP_S = String(capS); if (sized.fixedS) env.LOKI_E10_CAP_FIXED_S = String(sized.fixedS); else delete env.LOKI_E10_CAP_FIXED_S; } // FC-21b: starts at DEFAULT_CAP_S; the worker resizes once after plan from plan-scope.json unless the cap is fixed
+  applyCapEnv(env, capS, sized); // FC-21b: starts at DEFAULT_CAP_S; the worker resizes once after plan from plan-scope.json unless the cap is fixed
   const statusStep = noPr || !ISSUE_RE.test(task) ? undefined : (await import("../util/run_outputs.ts")).issueStatusProjector({ pushSh: (await import("./stages/pr.ts")).DEFAULT_PUSH_SH, env, origin: readOriginUrl(repoDir), repoDir, runDir, runId, issueRef: task, eventsPath }), stopPlan = statusStep ? tail(eventsPath, (e) => { if (e.type === "stage.completed" && e.stage === "plan") void statusStep(); }, { intervalMs: 500 }) : () => {};
   const res = await runSupervisor({
     runId, repoDir, env, capS, capCeilingS: sized?.ceilingS,
