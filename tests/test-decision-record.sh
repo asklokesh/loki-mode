@@ -34,7 +34,7 @@ echo "TEST: decision records make a model swap detectable, and leak nothing"
 # --- 1. A record is written and is append-only -------------------------------
 T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
 OUT="$(cd "$T" && python3 "$DR" record --model_id=claude-opus-4 --temperature=0.2 --stage=plan --outcome=ok 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"status": "recorded"'; then
+if grep -q '"status": "recorded"' <<<"$OUT"; then
     ok "a decision record is written"
 else
     bad "recording failed"
@@ -50,12 +50,12 @@ fi
 # --- 2. THE AUDIT FACT: a model swap is surfaced ----------------------------
 (cd "$T" && python3 "$DR" record --model_id=claude-sonnet-4 --temperature=0.7 --stage=review --outcome=ok >/dev/null 2>&1)
 OUT="$(cd "$T" && python3 "$DR" summary 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"model_changed": true'; then
+if grep -q '"model_changed": true' <<<"$OUT"; then
     ok "a mid-project model change is surfaced"
 else
     bad "a model swap was NOT surfaced -- the whole point of the record"
 fi
-if printf '%s' "$OUT" | grep -q '"temperature_changed": true'; then
+if grep -q '"temperature_changed": true' <<<"$OUT"; then
     ok "a temperature change is surfaced"
 else
     bad "a temperature change was not surfaced"
@@ -67,7 +67,7 @@ rm -rf "$T"
 # trust this product sells.
 T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
 OUT="$(cd "$T" && python3 "$DR" record --model_id=m1 --prompt="secret user code" --api_key=sk-12345 --file_contents="private data" 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"dropped_fields"'; then
+if grep -q '"dropped_fields"' <<<"$OUT"; then
     ok "fields outside the allowlist are dropped"
 else
     bad "a non-allowlisted field was accepted"
@@ -82,7 +82,7 @@ else
     bad "sensitive content was written to the record ($LEAK matches)"
 fi
 # The refusal must be visible, or a caller assumes it was stored.
-if printf '%s' "$OUT" | grep -q 'api_key'; then
+if grep -q 'api_key' <<<"$OUT"; then
     ok "the refusal is surfaced, so a caller cannot assume it was stored"
 else
     bad "fields were dropped silently"
@@ -104,7 +104,7 @@ fi
 # --- 5. A record without model_id is refused, not half-written -------------
 T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
 OUT="$(cd "$T" && python3 "$DR" record --stage=plan --outcome=ok 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"reason": "no_model_id"'; then
+if grep -q '"reason": "no_model_id"' <<<"$OUT"; then
     ok "a record with no model_id is refused with a named reason"
 else
     bad "a record without model_id was written as a half-record"
@@ -117,7 +117,7 @@ fi
 
 # --- 6. UNKNOWN discipline on an empty project -----------------------------
 OUT="$(cd "$T" && python3 "$DR" summary 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"reason": "no_records"'; then
+if grep -q '"reason": "no_records"' <<<"$OUT"; then
     ok "an empty project reports a named UNKNOWN, not a zero"
 else
     bad "an empty project did not report a named UNKNOWN"
@@ -131,7 +131,7 @@ T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
 mkdir -p "$T/.loki/decisions"
 printf '{"model_id":"m1"}\nnot json at all\n' > "$T/.loki/decisions/decisions.jsonl"
 OUT="$(cd "$T" && python3 "$DR" summary 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"unparseable_lines": 1'; then
+if grep -q '"unparseable_lines": 1' <<<"$OUT"; then
     ok "an unparseable line is counted and reported"
 else
     bad "a corrupt line was silently skipped"
@@ -165,7 +165,7 @@ fi
 # --- 11. Design records: schema round-trip ---------------------------------
 T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
 OUT="$(cd "$T" && python3 "$DR" design --rationale="smaller blast radius" --alternatives="rewrite|patch in place" --source=plan --scope=auth --decided_at=2026-10-16T00:00:00Z --prompt="secret" 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"status": "recorded"' && printf '%s' "$OUT" | grep -q '"dropped_fields"'; then
+if grep -q '"status": "recorded"' <<<"$OUT" && grep -q '"dropped_fields"' <<<"$OUT"; then
     ok "a design record is written and non-allowlisted fields are surfaced as dropped"
 else
     bad "design record not written: $OUT"
@@ -196,13 +196,13 @@ rm -rf "$T"
 # --- 12. Design record without rationale is rejected ------------------------
 T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
 OUT="$(cd "$T" && python3 "$DR" design --source=plan --scope=auth 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"reason": "no_rationale"' && [ ! -f "$T/.loki/decisions/design.jsonl" ]; then
+if grep -q '"reason": "no_rationale"' <<<"$OUT" && [ ! -f "$T/.loki/decisions/design.jsonl" ]; then
     ok "a design record without rationale is refused and writes nothing"
 else
     bad "a rationale-less design record was accepted: $OUT"
 fi
 OUT="$(cd "$T" && python3 "$DR" design --rationale="   " 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"reason": "no_rationale"'; then
+if grep -q '"reason": "no_rationale"' <<<"$OUT"; then
     ok "a blank rationale is refused"
 else
     bad "a blank rationale was accepted"
@@ -213,7 +213,7 @@ rm -rf "$T"
 T="$(mktemp -d)"; export LOKI_DIR="$T/.loki"
 printf '{"rationale":"keep the module","alternatives":["fork it"],"source":"plan","scope":"cli"}' > "$T/dd.json"
 OUT="$(cd "$T" && python3 "$DR" design-file "$T/dd.json" 2>/dev/null)"
-if printf '%s' "$OUT" | grep -q '"status": "recorded"' && grep -q 'keep the module' "$T/.loki/decisions/design.jsonl"; then
+if grep -q '"status": "recorded"' <<<"$OUT" && grep -q 'keep the module' "$T/.loki/decisions/design.jsonl"; then
     ok "design-file records the plan-stage decision"
 else
     bad "design-file did not record: $OUT"

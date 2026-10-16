@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { readJson, writeJson } from "../engine10/cache.ts";
+import { safeGit } from "./safe_git.ts";
 
 export interface FailureSignature {
   signature: string;
@@ -98,6 +99,10 @@ export function readFingerprints(dir: string): FingerprintRow[] {
   } catch {
     return [];
   }
+}
+/** The HEAD tree hash of a checkout, or "" when it cannot be read; never throws. */
+export function headTree(repoDir: string): string {
+  try { return safeGit(repoDir, ["rev-parse", "HEAD^{tree}"]).trim(); } catch { return ""; }
 }
 /** Appends one row per string name; never throws. Returns the accepted names. */
 export function recordFingerprints(dir: string, runId: string, cls: string, names: unknown, tree = ""): string[] {

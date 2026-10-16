@@ -117,7 +117,7 @@ _fresh_dir="$(mktemp -d "${TMPDIR:-/tmp}/loki-fresh.XXXXXXXX")"
 mkdir -p "$_fresh_dir/.loki/runs/e10-20261016T000000Z-aaaa"
 printf '%s\n' '{"v":1,"seq":7,"ts":"2020-01-01T00:00:00Z","run":"e10-20261016T000000Z-aaaa","type":"heartbeat","stage":null,"data":{}}' > "$_fresh_dir/.loki/runs/e10-20261016T000000Z-aaaa/events.jsonl"
 _fresh_out="$(cd "$_fresh_dir" && LOKI_DIR="$_fresh_dir/.loki" "$LOKI" status 2>&1)" || true
-if echo "$_fresh_out" | grep -Eq 'last event [0-9]+s ago \(seq 7\)'; then
+if grep -Eq 'last event [0-9]+s ago \(seq 7\)' <<<"$_fresh_out"; then
     log_pass "loki status shows last event age and seq"
 else
     log_fail "loki status shows last event age and seq" "got: $_fresh_out"
