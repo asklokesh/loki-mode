@@ -601,6 +601,7 @@ export interface SdkLoopExtraOptions {
   settings?: { advisorModel: string; autoCompactWindow?: number };
   noAppend?: boolean;
   systemPrompt?: string;
+  excludeDynamic?: boolean;
 }
 // E-65: engine10 sessions (LOKI_E10_STAGE is set only by engine10/session.ts) run lean. Measured "OK" prefix on
 // sonnet: 20,413 tokens with the full preset tool set + loki append vs 7,136 with these 6 tools, paid on every turn.
@@ -637,6 +638,9 @@ export function buildSdkLoopOptions(args: {
     // claude_code preset so every stage/task shares a byte-identical leading
     // block (cache-stable prefix, D41 item 2). Flag off: unchanged preset below.
     if (process.env["LOKI_E10_PREFIX"] === "lean") out.systemPrompt = LEAN_PREFIX;
+    // CP-01 (D99): cwd, repo status and memory leave the system prompt (moved to the first user message) so the
+    // leading block is byte-identical across stages and runs. ON by default; LOKI_E10_STABLE_PREFIX=0 opts out.
+    if (process.env["LOKI_E10_STABLE_PREFIX"] !== "0") out.excludeDynamic = true;
   }
 
   // MCP tools: reuse the exact bundle the shell route writes (loki-mode server +
@@ -694,8 +698,9 @@ export function buildSdkLoopOptions(args: {
 // without loading the Agent SDK.
 export function resolveSystemPrompt(
   extra: SdkLoopExtraOptions,
-): string | { type: "preset"; preset: "claude_code"; append?: string } {
+): string | { type: "preset"; preset: "claude_code"; append?: string; excludeDynamicSections?: boolean } {
   if (extra.systemPrompt) return extra.systemPrompt;
+  if (extra.excludeDynamic) return { type: "preset", preset: "claude_code", excludeDynamicSections: true };
   return autonomyAppendEnabled() && !extra.noAppend
     ? { type: "preset", preset: "claude_code", append: autonomyAppendText() }
     : { type: "preset", preset: "claude_code" };

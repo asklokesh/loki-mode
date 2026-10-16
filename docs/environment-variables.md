@@ -49,6 +49,7 @@ interact and why hitting one is a failure rather than a success.
 | `LOKI_ENGINE` | unset | `legacy` forces the previous loop; the `--engine` flag wins over it. |
 | `LOKI_SUMMARY_JSON` | unset | `1` prints the end-of-run summary as one JSON line on the previous loop. |
 | `LOKI_TIER` | `oss` | **Not a model setting.** The open-core licensing seam. Leave it unset. |
+| `LOKI_E10_STABLE_PREFIX` | on | Engine10 sessions send the `claude_code` preset with `excludeDynamicSections: true`, so the system prompt is byte-identical across stages and runs and hits the prompt cache. `0` restores the previous preset. `LOKI_E10_PREFIX=lean` still wins when set. |
 | `LOKI_REPO_BASELINE` | unset | `0` skips the intake repo profile and baseline test run (see docs/HARNESS-INTELLIGENCE-PLAN.md). |
 | `LOKI_ALLOW_CLAUDE_SIDECALLS` | unset | `1` (exactly) lets PRD enrichment, done recognition, the council voters, the USAGE.md refresh and the quickstart intent check prompt the `claude` CLI under a non-claude provider; `loki doctor --airgap` then reports that as required egress to Anthropic. |
 

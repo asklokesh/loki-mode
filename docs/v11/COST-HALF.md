@@ -148,7 +148,9 @@ sequenced, never concurrent. Full 60-line cards for ER-01, WC-01a and WC-01b wer
   - loki-ts/src/features/lean_prefix.ts
   - loki-ts/tests/e10ext/system_prefix_identity.test.ts (new)
   - dist
-- Change: under LOKI_E10_STABLE_PREFIX=1, engine10 sessions send
+- STATUS: implemented (LOST-2 port). ON by default per D99; LOKI_E10_STABLE_PREFIX=0 opts out. The lean prefix
+  (LOKI_E10_PREFIX=lean) still wins when active. The live cache_creation fixture check below is not yet run.
+- Change: unless LOKI_E10_STABLE_PREFIX=0, engine10 sessions send
   `{type:"preset", preset:"claude_code", excludeDynamicSections:true}`. This option is in the pinned sdk.d.ts
   and moves cwd, git and memory into the first user message. No run id, timestamp, path, branch or stage name
   goes in system or tools.
