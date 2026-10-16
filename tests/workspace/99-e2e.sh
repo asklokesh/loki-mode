@@ -101,7 +101,7 @@ cat > "$_ws99_tmp/receipt.ts" <<TS
 import { receiptSha256, signReceipt } from "$REPO_ROOT/loki-ts/src/engine10/stages/seal.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 const [dir, head, id] = process.argv.slice(2);
-const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", head_sha: head, events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", not_proven: [] };
+const body = { schema: "loki.v10.receipt/1", run_id: id, verdict: "VERIFIED", head_sha: head, events_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", time: { wall_s: 0, stages: {} }, not_proven: [] };
 const h = receiptSha256(body as never);
 mkdirSync(dir + "/.loki/runs/" + id, { recursive: true });
 writeFileSync(dir + "/.loki/runs/" + id + "/events.jsonl", "");

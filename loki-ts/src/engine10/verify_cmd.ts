@@ -54,7 +54,8 @@ function checkEventLog(receiptPath: string, receipt: Record<string, unknown>): s
   const bound = receipt["events_sha256"];
   if (receipt["schema"] === "loki.v10.receipt/1") { // P12-01c: seal.ts always writes these, so absence means an edit (other receipt kinds are not gated)
     const time = receipt["time"] as { stages?: unknown } | null | undefined;
-    const miss = typeof bound !== "string" || !/^[0-9a-f]{64}$/.test(bound) ? "events_sha256" : !time || typeof time !== "object" ? "time" : !isPlain(time.stages) ? "time.stages" : null;
+    const hashOk = typeof bound === "string" && /^[0-9a-f]{64}$/.test(bound);
+    const miss = !hashOk ? "events_sha256" : !time || typeof time !== "object" ? "time" : !isPlain(time.stages) ? "time.stages" : null;
     if (miss) return `the receipt is missing a valid ${miss}, which seal always writes; it was edited. Re-run the task to produce a fresh receipt.`;
   }
   if (typeof bound !== "string") return null;

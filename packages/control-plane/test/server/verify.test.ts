@@ -1,6 +1,6 @@
 // CPE-16: in-process receipt verify and the public key. A signed receipt verifies; a one-field edit fails; the key route never leaks private bytes.
 import { afterAll, expect, test } from "bun:test";
-import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,10 +38,12 @@ const get = (path: string, env: unknown = peer("127.0.0.1")) =>
   app.fetch(new Request(`http://127.0.0.1:1234${path}`, { headers: { host: "127.0.0.1:1234" } }), env as object);
 
 const b64 = (o: unknown) => Buffer.from(JSON.stringify(o)).toString("base64url");
-/** A receipt the real verifier accepts: hash recomputed, EdDSA jwt over it, no log binding (those need a full run dir). */
+/** A receipt the real verifier accepts: hash recomputed, EdDSA jwt over it, zero stages bound to the empty-log hash (a real log needs a full run dir). */
 function signed(runId: string, patch: Record<string, unknown> = {}): Record<string, unknown> {
   const r = JSON.parse(readFileSync(join(FIX, "verified", "receipt.json"), "utf8")) as Record<string, unknown>;
-  for (const k of ["events_sha256", "log_seal", "group", "screens"]) delete r[k];
+  for (const k of ["log_seal", "group", "screens"]) delete r[k];
+  r["events_sha256"] = createHash("sha256").digest("hex");
+  r["time"] = { wall_s: 0, stages: {} };
   r["run_id"] = runId;
   Object.assign(r, patch);
   const hash = computeReceiptHash(r);
