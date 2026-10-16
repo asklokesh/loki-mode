@@ -385,6 +385,22 @@ _env_prefix_is_risky() {
     return 1
 }
 
+# A risky env name set, exported, declared or unset in ANY segment, an alias,
+# or a function definition changes how a later safe-looking command resolves,
+# so no segment of that command may ride the safe-path override. Over-deny is
+# intended: a risky name as a bare word counts wherever it appears.
+_RISKY_NAMES='(PATH|LD_[A-Za-z0-9_]*|DYLD_[A-Za-z0-9_]*|BASH_ENV|ENV|IFS|PS4|SHELLOPTS|BASHOPTS|PROMPT_COMMAND|GIT_SSH_COMMAND|GIT_EXEC_PATH|NODE_OPTIONS|PYTHONPATH|PERL5OPT|GCONV_PATH|LOCPATH)'
+_RISKY_TOKEN='(^|[[:space:]])'"$_RISKY_NAMES"'(\+?=|[[:space:]]|$)'
+_SHADOW_DEF='(^|[[:space:]])(alias|function)[[:space:]]|[A-Za-z_][A-Za-z0-9_.:-]*[[:space:]]*\([[:space:]]*\)'
+_command_taints_override() {
+    local seg
+    while IFS= read -r seg; do
+        [[ "$seg" =~ $_RISKY_TOKEN ]] && return 0
+        [[ "$seg" =~ $_SHADOW_DEF ]] && return 0
+    done <<< "$1"
+    return 1
+}
+
 _segment_is_safe() {
     local seg="$1" safe
     [[ "$seg" == *".."* ]] && return 1
@@ -402,6 +418,7 @@ _blocked_hits_all_safe() {
     local pat="$1" flat seg hit=false
     # Strip fd duplication (2>&1) first: its `&` is not a command separator, and removing it hides no command.
     flat=$(printf '%s' "$COMMAND" | sed -E 's/[0-9]*>&[0-9]+//g' | tr ';&|\r' '\n')
+    _command_taints_override "$flat" && return 1
     while IFS= read -r seg; do
         printf '%s' "$seg" | grep -qE "$pat" || continue
         hit=true

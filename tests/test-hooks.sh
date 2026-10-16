@@ -475,6 +475,28 @@ test_validate_bash_safe_override_rejects_risky_env() {
     pass "risky env prefixes denied; ordinary prefixes still allowed"
 }
 
+test_validate_bash_safe_override_rejects_earlier_segment_taint() {
+    log_test "validate-bash.sh: earlier risky env/alias/function segment voids safe-path override"
+    local c got
+    local taint=(
+        'export PATH=/tmp/x; rm -rf /tmp/a' 'PATH=/tmp/x; rm -rf /tmp/a'
+        'declare -x PATH=/tmp/x; rm -rf /tmp/a' 'alias rm=/tmp/x; rm -rf /tmp/a'
+        'function rm { /tmp/x; }; rm -rf /tmp/a' 'rm() { /tmp/x; }; rm -rf /tmp/a'
+        'export LD_PRELOAD=/tmp/x.so && rm -rf /tmp/a' 'IFS=x; rm -rf /tmp/a'
+        'unset PATH; rm -rf /tmp/a' 'export GCONV_PATH=/tmp/x; rm -rf /tmp/a'
+        'rm () { :; }; rm -rf /tmp/a'
+    )
+    for c in "${taint[@]}"; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "2:deny" ] || { fail "earlier-segment taint not blocked: $(printf '%q' "$c") (got $got)"; return; }
+    done
+    for c in 'FOO=1; rm -rf /tmp/a' 'rm -rf /tmp/a' 'echo hi; rm -rf /tmp/PATH' 'export FOO=1; rm -rf /tmp/a'; do
+        got=$(run_hook_case "$c" "")
+        [ "$got" = "0:allow" ] || { fail "control blocked: $c (got $got)"; return; }
+    done
+    pass "earlier-segment taint denied; controls still allowed"
+}
+
 test_validate_bash_compiled_no_python_denies() {
     log_test "validate-bash.sh: compiled policy denies when python3 is absent"
     local stub payload out rc
@@ -514,6 +536,7 @@ test_simple_web_guard_bounds_model_commands
 test_validate_bash_compiled_policy_not_widened
 test_validate_bash_safe_override_is_anchored
 test_validate_bash_safe_override_rejects_risky_env
+test_validate_bash_safe_override_rejects_earlier_segment_taint
 test_validate_bash_compiled_no_python_denies
 
 # Summary
