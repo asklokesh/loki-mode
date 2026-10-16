@@ -2,7 +2,10 @@
 """Harness attribution benchmark: does Loki beat raw Claude Code on the SAME model?
 
 Runs each task twice under matched conditions:
-  raw_claude : `claude -p` with the pinned model, same permissions, same budget
+  raw-configured : `claude -p` as the operator has it configured (hooks, skills,
+               CLAUDE.md load as usual), pinned model, same permissions, same budget
+  raw-bare   : `claude -p --bare` (no hooks, skills or CLAUDE.md); needs
+               ANTHROPIC_API_KEY, else every raw-bare cell is UNMEASURED with a reason
   loki       : `loki start --provider claude` with the same pinned model
   droid      : optional `droid exec` arm (its own model). When `droid exec` is
                absent or fails its probe, every droid cell is UNMEASURED: never
@@ -51,8 +54,9 @@ REPO_ROOT = os.path.dirname(os.path.dirname(HERE))
 DEFAULT_TASKS_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "tasks")
 DEFAULT_OUT_DIR = os.path.join(REPO_ROOT, "benchmarks", "attribution", "results")
 
-ARMS = ("raw_claude", "loki", "droid")
-MODEL_PINNED_ARMS = ("raw_claude", "loki")
+ARMS = ("raw-configured", "raw-bare", "loki", "droid")
+MODEL_PINNED_ARMS = ("raw-configured", "raw-bare", "loki")
+LEDGER_REL = os.path.join(".loki", "metrics", "child-sessions.jsonl")
 TASK_CLASSES = ("bugfix", "feature", "refactor", "integration")
 PILOT_MIX = {"bugfix": 2, "feature": 3, "refactor": 1, "integration": 2}
 DEFAULT_MODEL = "claude-sonnet-5"
@@ -382,10 +386,49 @@ def grade(task: Dict[str, Any], workdir: str) -> Dict[str, Any]:
     return {"passed": rc == 0, "rc": rc, "tail": "\n".join(tail)}
 
 
+def ledger_spend(workdir: str) -> Optional[float]:
+    """Sum of `usd` over the child-session ledger, or None when absent/unreadable."""
+    path = os.path.join(workdir, LEDGER_REL)
+    try:
+        with open(path) as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None
+    total, seen = 0.0, False
+    for ln in lines:
+        try:
+            v = json.loads(ln).get("usd")
+            total += float(v)
+            seen = True
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return round(total, 6) if seen else None
+
+
+def row_true_spend(row: Dict[str, Any]) -> float:
+    """Spend a row counts toward the cap: the larger of the tool-reported cost and
+    the ledger sum, so a partial report can never hide child-session spend."""
+    vals = [v for v in (row.get("cost_usd"), row.get("true_cost_usd")) if v is not None]
+    return float(max(vals)) if vals else 0.0
+
+
+def probe_bare(env: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """raw-bare needs an API key: `claude --bare` skips OAuth and keychain reads."""
+    e = os.environ if env is None else env
+    if e.get("ANTHROPIC_API_KEY"):
+        return {"available": True}
+    return {"available": False,
+            "reason": "raw-bare needs ANTHROPIC_API_KEY (claude --bare skips OAuth); "
+                      "no fallback to raw-configured"}
+
+
 def run_raw_claude(workdir: str, prompt: str, *, model: str, budget_usd: float,
-                   timeout_s: int, runner: Optional[Callable] = None) -> Dict[str, Any]:
+                   timeout_s: int, runner: Optional[Callable] = None,
+                   bare: bool = False) -> Dict[str, Any]:
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--model", model,
            "--dangerously-skip-permissions", "--max-budget-usd", str(budget_usd)]
+    if bare:
+        cmd.append("--bare")
     rc, out, _err, status, dur = _base.run_cli(
         cmd, cwd=workdir, timeout=timeout_s, runner=runner,
         env={"LOKI_NO_BROWSER": "1"})
@@ -402,7 +445,8 @@ def run_raw_claude(workdir: str, prompt: str, *, model: str, budget_usd: float,
         "cost_usd": cost, "cost_source": "claude_json.total_cost_usd" if cost is not None else None,
         "tokens_in": t_in, "tokens_out": t_out, "model_used": model_used or model,
         "command": "claude -p <prompt> --output-format json --model %s "
-                   "--dangerously-skip-permissions --max-budget-usd %s" % (model, budget_usd),
+                   "--dangerously-skip-permissions --max-budget-usd %s%s"
+                   % (model, budget_usd, " --bare" if bare else ""),
     }
 
 
@@ -476,7 +520,8 @@ def run_droid(workdir: str, prompt: str, *, timeout_s: int,
 def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
              budget_usd: float, timeout_s: int, scratch: str,
              runner: Optional[Callable] = None,
-             droid_probe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+             droid_probe: Optional[Dict[str, Any]] = None,
+             bare_probe: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     row: Dict[str, Any] = {"task": task["id"], "class": task["class"], "arm": arm,
                            "repeat": repeat, "accepted": False,
                            "reported_success": False}
@@ -486,6 +531,11 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
                     "unmeasured_reason": (droid_probe or {}).get(
                         "reason", "droid availability not probed")})
         return row
+    if arm == "raw-bare" and not (bare_probe and bare_probe.get("available")):
+        row.update({"status": "unmeasured", "cost_usd": None, "elapsed_s": None,
+                    "unmeasured_reason": (bare_probe or {}).get(
+                        "reason", "raw-bare availability not probed")})
+        return row
     workdir = os.path.join(scratch, "%s-%s-%d" % (task["id"], arm, repeat))
     try:
         materialize_seed(task, workdir)
@@ -494,10 +544,10 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
         if arm == "droid":
             res = run_droid(workdir, task["prompt"], timeout_s=eff_timeout,
                             runner=runner)
-        elif arm == "raw_claude":
+        elif arm in ("raw-configured", "raw-bare"):
             res = run_raw_claude(workdir, task["prompt"], model=model,
                                  budget_usd=budget_usd, timeout_s=eff_timeout,
-                                 runner=runner)
+                                 runner=runner, bare=(arm == "raw-bare"))
         else:
             # PRD lives OUTSIDE the workspace so it is not part of the repo.
             pf = os.path.join(scratch, "%s-%d.prd.md" % (task["id"], repeat))
@@ -506,6 +556,9 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
             res = run_loki(workdir, pf, model=model, budget_usd=budget_usd,
                            timeout_s=eff_timeout, runner=runner)
         row.update(res)
+        led = ledger_spend(workdir)
+        if led is not None:
+            row["true_cost_usd"] = led
         g = grade(task, workdir)
         row["accepted"] = bool(g["passed"])
         row["acceptance"] = {"rc": g["rc"], "tail": g["tail"]}
@@ -522,17 +575,32 @@ def run_cell(task: Dict[str, Any], arm: str, repeat: int, *, model: str,
 def run_all(tasks: List[Dict[str, Any]], plan: Dict[str, Any],
             runner: Optional[Callable] = None,
             progress: Callable[[str], None] = lambda s: None,
-            droid_probe: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+            droid_probe: Optional[Dict[str, Any]] = None,
+            bare_probe: Optional[Dict[str, Any]] = None,
+            max_spend_usd: Optional[float] = None) -> List[Dict[str, Any]]:
     by_id = {t["id"]: t for t in tasks}
     scratch = tempfile.mkdtemp(prefix="loki-attr-")
     rows: List[Dict[str, Any]] = []
     try:
+        spent = 0.0
         for cell in plan["cells"]:
+            if max_spend_usd is not None and spent >= max_spend_usd:
+                # Abort before the next run; the cell stays in the table as UNMEASURED.
+                t = by_id[cell["task"]]
+                rows.append({"task": t["id"], "class": t["class"], "arm": cell["arm"],
+                             "repeat": cell["repeat"], "accepted": False,
+                             "reported_success": False, "status": "unmeasured",
+                             "cost_usd": None, "elapsed_s": None,
+                             "unmeasured_reason": "spend cap reached: true spend %.4f USD >= "
+                                                  "--max-spend-usd %s" % (spent, max_spend_usd)})
+                continue
             progress("run %s %s #%d" % (cell["task"], cell["arm"], cell["repeat"]))
             rows.append(run_cell(by_id[cell["task"]], cell["arm"], cell["repeat"],
                                  model=plan["model"], budget_usd=plan["budget_usd"],
                                  timeout_s=plan["timeout_s"], scratch=scratch,
-                                 runner=runner, droid_probe=droid_probe))
+                                 runner=runner, droid_probe=droid_probe,
+                                 bare_probe=bare_probe))
+            spent += row_true_spend(rows[-1])
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
     return rows
@@ -643,7 +711,12 @@ def render_markdown(result: Dict[str, Any]) -> str:
     L.append("")
     L.append("## Disclosures")
     L.append("")
-    L.append("- Reported success: raw arm is `claude -p` exit 0 with is_error false; "
+    L.append("- Baselines: `raw-configured` is `claude -p` with this host's hooks, skills and "
+             "CLAUDE.md loaded (it carries that host's context cost); `raw-bare` is `claude -p --bare` and "
+             "is the floor. Cost ratios are reported against both, never only the favorable one.")
+    L.append("- Cost: `cost_usd` is what each tool reported; `true_cost_usd` is the Loki "
+             "child-session ledger sum. Spend caps use the larger of the two.")
+    L.append("- Reported success: raw arms are `claude -p` exit 0 with is_error false; "
              "Loki arm is `loki start` exit 0. Acceptance is the held-out test only.")
     L.append("- Unmeasured cost is reported as unmeasured, never as zero. Subscription "
              "usage and API dollars are not interchangeable; costs here are API-dollar "
@@ -673,7 +746,7 @@ def print_plan(plan: Dict[str, Any], env: Dict[str, Any], warnings: List[str]) -
             t["id"], t["class"], t["seed_sha256"][:8], t["acceptance_sha256"][:8]))
     print("  cells in run order (%d model-backed runs would execute):" % plan["model_calls_planned"])
     for c in plan["cells"]:
-        print("    %-28s %-11s run %d" % (c["task"], c["arm"], c["repeat"]))
+        print("    %-28s %-14s run %d" % (c["task"], c["arm"], c["repeat"]))
     if plan.get("droid_cells_planned"):
         print("  droid arm: %d cells, availability not probed in dry run; an absent "
               "`droid exec` records UNMEASURED, never zero" % plan["droid_cells_planned"])
@@ -706,6 +779,9 @@ def _parser() -> argparse.ArgumentParser:
                    help="exact model id used by the claude arms (default %s)" % DEFAULT_MODEL)
     p.add_argument("--budget-usd", type=float, default=DEFAULT_BUDGET_USD)
     p.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
+    p.add_argument("--max-spend-usd", type=float, default=None,
+                   help="abort before the next run once cumulative true spend "
+                        "(max of reported cost and child-session ledger) reaches this")
     p.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
     return p
 
@@ -719,6 +795,9 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         return 0
     if args.repeats < 1 or args.budget_usd <= 0 or args.timeout < 1:
         print("repeats, budget-usd and timeout must be positive", file=sys.stderr)
+        return 2
+    if args.max_spend_usd is not None and args.max_spend_usd <= 0:
+        print("--max-spend-usd must be positive", file=sys.stderr)
         return 2
     arms = tuple(a for a in args.arms.split(",") if a)
     if not arms or any(a not in ARMS for a in arms) or len(set(arms)) != len(arms):
@@ -744,13 +823,18 @@ def main(argv: Optional[List[str]] = None, runner: Optional[Callable] = None) ->
         return 2
     droid_probe = probe_droid(runner=runner) if "droid" in arms else None
     env["droid"] = droid_probe
+    bare_probe = probe_bare() if "raw-bare" in arms else None
+    env["raw_bare"] = bare_probe
     rows = run_all(tasks, plan, runner=runner,
                    progress=lambda s: print(s, file=sys.stderr),
-                   droid_probe=droid_probe)
+                   droid_probe=droid_probe, bare_probe=bare_probe,
+                   max_spend_usd=args.max_spend_usd)
     result = {
         "schema_version": SCHEMA_VERSION,
         "generated_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "plan": plan, "environment": env, "warnings": warnings,
+        "max_spend_usd": args.max_spend_usd,
+        "true_spend_usd": round(sum(row_true_spend(r) for r in rows), 6),
         "rows": rows, "summary": summarize(rows, arms),
     }
     os.makedirs(args.out_dir, exist_ok=True)

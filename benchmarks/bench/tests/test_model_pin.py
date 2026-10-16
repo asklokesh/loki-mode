@@ -45,8 +45,56 @@ def test_provider_label_default_does_not_pin():
     assert "LOKI_SESSION_MODEL" not in env
 
 
+def _claude_cmd(**kw):
+    from adapters import claude_code
+    cap = {}
+
+    def fake_runner(cmd, **k):
+        cap.setdefault("cmds", []).append(list(cmd))
+
+        class R:
+            returncode = 0
+            stdout = "{}"
+            stderr = ""
+        return R()
+
+    claude_code.run(tempfile.mkdtemp(), "spec.md", timeout=10, runner=fake_runner, **kw)
+    return [c for c in cap["cmds"] if "-p" in c][0]
+
+
+def test_claude_adapter_bare_flag_only_when_requested():
+    assert "--bare" not in _claude_cmd()
+    old = os.environ.get("ANTHROPIC_API_KEY")
+    os.environ["ANTHROPIC_API_KEY"] = "k"
+    try:
+        assert "--bare" in _claude_cmd(bare=True)
+    finally:
+        if old is None:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+        else:
+            os.environ["ANTHROPIC_API_KEY"] = old
+
+
+def test_claude_adapter_bare_without_key_raises_not_falls_back():
+    from adapters import claude_code
+    old = os.environ.pop("ANTHROPIC_API_KEY", None)
+    try:
+        try:
+            claude_code.run(tempfile.mkdtemp(), "spec.md", bare=True,
+                            runner=lambda *a, **k: None)
+        except RuntimeError as exc:
+            assert "ANTHROPIC_API_KEY" in str(exc)
+        else:
+            raise AssertionError("bare without key must raise")
+    finally:
+        if old is not None:
+            os.environ["ANTHROPIC_API_KEY"] = old
+
+
 if __name__ == "__main__":
     test_real_alias_pins_session_model()
     test_full_claude_id_pins()
     test_provider_label_default_does_not_pin()
+    test_claude_adapter_bare_flag_only_when_requested()
+    test_claude_adapter_bare_without_key_raises_not_falls_back()
     print("ALL GREEN")
