@@ -1,5 +1,7 @@
 // M-23 wall: remote unit dispatch never trusts the remote verdict (docs/v10/MODERNIZE.md, D30).
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildUnitJob,
   dispatchRemoteUnit,
@@ -105,5 +107,30 @@ describe("remote units", () => {
     expect(seen[0]!.headers["Authorization"]).toBe("Bearer tok-123");
     expect(seen[0]!.body).not.toContain("tok-123");
     expect(seen[0]!.url).toBe("http://host:1/jobs");
+  });
+
+  it("http transport gives every request an abort signal so a hung server cannot stall the poll loop", async () => {
+    const signals: (AbortSignal | undefined)[] = [];
+    const fakeFetch = (async (url: string, init: { method: string; signal?: AbortSignal }) => {
+      signals.push(init.signal);
+      return init.method === "POST"
+        ? new Response(JSON.stringify({ id: "j9" }), { status: 202 })
+        : new Response(JSON.stringify({ status: "passed" }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const t = httpTransport("http://host:1/", "tok", fakeFetch, 1, 5000);
+    await t.submit(buildUnitJob(spec));
+    await t.wait("j9");
+    expect(signals.length).toBe(2);
+    expect(signals.every((s) => s instanceof AbortSignal)).toBe(true);
+  });
+
+  it("shares a fixture with the Python validator: same verdict for every case (tests/test-trigger-server-unit-jobs.py)", () => {
+    const cases = JSON.parse(readFileSync(join(import.meta.dir, "fixtures", "unit_job_parity.json"), "utf8")) as { name: string; valid: boolean; payload: never }[];
+    expect(cases.length).toBeGreaterThan(10);
+    for (const c of cases) {
+      let ok = true;
+      try { buildUnitJob(c.payload); } catch { ok = false; }
+      expect(`${c.name}: ${ok}`).toBe(`${c.name}: ${c.valid}`);
+    }
   });
 });

@@ -198,9 +198,12 @@ UNIT_JOB_REQUIRED = ("repo", "ref", "unit")
 UNIT_JOB_TARGETS = ("python3", "java21")
 MAX_UNIT_REPO_LEN = 140
 MAX_UNIT_REF_LEN = 200
-UNIT_REF_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$")
-UNIT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
-UNIT_MID_RE = re.compile(r"^mod-\d{8}T\d{6}Z-[0-9a-f]{6}$")
+# fullmatch + explicit ASCII classes: "$" would accept a trailing newline and
+# "\d" would accept Unicode digits. Mirrors the TS REPO_RE/REF_RE/UNIT_RE/MID_RE.
+UNIT_REPO_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._-]*/[A-Za-z0-9._-]+", re.ASCII)
+UNIT_REF_RE = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/-]*", re.ASCII)
+UNIT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", re.ASCII)
+UNIT_MID_RE = re.compile(r"mod-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}", re.ASCII)
 
 
 def validate_unit_job(payload):
@@ -221,16 +224,17 @@ def validate_unit_job(payload):
         if not isinstance(value, str):
             return None, "field %s must be a string" % key
     repo, ref, unit = payload["repo"], payload["ref"], payload["unit"]
-    if len(repo) > MAX_UNIT_REPO_LEN or not valid_repo_full_name(repo):
+    if (len(repo) > MAX_UNIT_REPO_LEN or not UNIT_REPO_RE.fullmatch(repo)
+            or any(seg in (".", "..") for seg in repo.split("/"))):
         return None, "invalid repo"
-    if (not ref or len(ref) > MAX_UNIT_REF_LEN or not UNIT_REF_RE.match(ref)
+    if (not ref or len(ref) > MAX_UNIT_REF_LEN or not UNIT_REF_RE.fullmatch(ref)
             or ".." in ref or ref.endswith((".lock", "/", "."))):
         return None, "invalid ref"
-    if not UNIT_ID_RE.match(unit):
+    if not UNIT_ID_RE.fullmatch(unit):
         return None, "invalid unit"
     clean = {"kind": UNIT_JOB_KIND, "repo": repo, "ref": ref, "unit": unit}
     if "mid" in payload:
-        if not UNIT_MID_RE.match(payload["mid"]):
+        if not UNIT_MID_RE.fullmatch(payload["mid"]):
             return None, "invalid mid"
         clean["mid"] = payload["mid"]
     if "target" in payload:
@@ -241,8 +245,8 @@ def validate_unit_job(payload):
 
 
 def unit_start_args(unit_job):
-    """argv for the engine10 unit worker. One list, never a shell string."""
-    args = ["engine10", "modernize", "unit", "--repo", unit_job["repo"],
+    """argv for the modernize unit worker. One list, never a shell string."""
+    args = ["modernize", "unit", "--repo", unit_job["repo"],
             "--ref", unit_job["ref"], "--unit", unit_job["unit"]]
     if "mid" in unit_job:
         args += ["--mid", unit_job["mid"]]
@@ -1656,7 +1660,7 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
             self._send_json(400, {"error": "payload must be a JSON object"})
             return
 
-        if "kind" in payload:
+        if payload.get("kind") == UNIT_JOB_KIND:
             self._handle_unit_submit(payload)
             return
 
@@ -1673,16 +1677,16 @@ class WebhookHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_unit_submit(self, payload):
         """POST /jobs {"kind": "unit", ...}; caller already authenticated."""
-        if payload.get("kind") != UNIT_JOB_KIND:
-            log_event(JOB_EVENT, "", "", "rejected (unsupported job kind)")
-            self._send_json(400, {"error": "unsupported job kind"})
-            return
         clean, err = validate_unit_job(payload)
         if clean is None:
             log_event(JOB_EVENT, "", "", "rejected (invalid unit job)")
             self._send_json(400, {"error": err})
             return
         summary = "unit:%s@%s:%s" % (clean["repo"], clean["ref"], clean["unit"])
+        if not valid_spec(summary):
+            log_event(JOB_EVENT, "", "", "rejected (invalid unit job)")
+            self._send_json(400, {"error": "invalid unit job"})
+            return
         job_id = self._enqueue_job(summary, unit_job=clean)
         if job_id is None:
             return

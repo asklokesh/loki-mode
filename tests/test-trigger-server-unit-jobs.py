@@ -15,6 +15,8 @@ Standard library only. Run with: python3 tests/test-trigger-server-unit-jobs.py
 
 import importlib
 import json
+import shutil
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -74,6 +76,43 @@ class TestUnitValidation(unittest.TestCase):
             self.assertIsNone(ts.validate_unit_job(p)[0], p)
 
 
+class TestUnitParity(unittest.TestCase):
+    """The TS buildUnitJob test reads this same fixture, so both validators agree."""
+
+    FIXTURE = (Path(__file__).parent.parent / "loki-ts" / "tests" / "engine10"
+               / "modernize" / "fixtures" / "unit_job_parity.json")
+
+    def test_shared_fixture_verdicts(self):
+        cases = json.loads(self.FIXTURE.read_text(encoding="utf-8"))
+        self.assertGreater(len(cases), 10)
+        for case in cases:
+            clean, err = ts.validate_unit_job(case["payload"])
+            self.assertEqual(clean is not None, case["valid"], "%s: %s" % (case["name"], err))
+
+
+@unittest.skipUnless(shutil.which("helm"), "helm not installed")
+class TestUnitHelm(unittest.TestCase):
+    CHART = str(Path(__file__).parent.parent / "deploy" / "helm" / "autonomi")
+    UNIT = ["--set", "worker.engine=v10", "--set", "worker.unit.repo=a/b",
+            "--set", "worker.unit.ref=main", "--set", "worker.unit.id=u1"]
+
+    def render(self, *extra):
+        return subprocess.run(["helm", "template", "t", self.CHART, *self.UNIT, *extra],
+                              capture_output=True, text=True)
+
+    def test_job_runs_loki_modernize_unit(self):
+        r = self.render()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("- modernize\n            - unit\n", r.stdout)
+        self.assertNotIn("engine10", r.stdout)
+
+    def test_engine_v10_needs_job_mode(self):
+        for mode in ("deployment", "serverless"):
+            r = self.render("--set", "worker.mode=" + mode)
+            self.assertNotEqual(r.returncode, 0, mode)
+            self.assertIn("needs worker.mode=job", r.stderr)
+
+
 class TestUnitJobsHttp(base._JobsTestBase):
     def post(self, payload, token=base.API_TOKEN):
         headers = {"Content-Type": "application/json"}
@@ -108,10 +147,22 @@ class TestUnitJobsHttp(base._JobsTestBase):
         self.assertFalse(self.fired.wait(0.3))
         self.assertEqual(self.dispatched, [])
 
-    def test_unknown_kind_rejected(self):
+    def test_non_unit_kind_takes_the_unchanged_spec_path(self):
         self.start()
-        status, _ = self.post({"kind": "shell", "spec": "x"})
+        status, _ = self.post({"kind": "shell"})
         self.assertEqual(status, 400)
+        self.assertEqual(self.dispatched, [])
+        status, _ = self.post({"kind": "shell", "spec": "./prd.md"})
+        self.assertEqual(status, 202)
+        self.assertTrue(self.fired.wait(5))
+        self.assertEqual(self.dispatched[0], ["start", "./prd.md", "--detach"])
+
+    def test_trailing_newline_and_unicode_digits_get_400(self):
+        self.start()
+        for bad in (dict(GOOD, repo="acme/app\n"), dict(GOOD, unit="u1\n"),
+                    dict(GOOD, mid="mod-\u0662\u0660\u0662\u0661\u0661\u0660\u0661\u0665T000000Z-abcdef")):
+            status, _ = self.post(bad)
+            self.assertEqual(status, 400, bad)
         self.assertEqual(self.dispatched, [])
 
     def test_valid_unit_enqueued_as_argv(self):
@@ -121,7 +172,7 @@ class TestUnitJobsHttp(base._JobsTestBase):
         job_id = json.loads(data)["id"]
         self.assertTrue(self.fired.wait(5))
         argv = self.dispatched[0]
-        self.assertEqual(argv[:3], ["engine10", "modernize", "unit"])
+        self.assertEqual(argv[:2], ["modernize", "unit"])
         self.assertIn("acme/legacy-app", argv)
         self.assertIn("billing.core", argv)
         self.assertEqual(argv[argv.index("--target") + 1], "python3")

@@ -151,7 +151,7 @@ worker:
   mode: "job"
 
   # Engine selector. "" (default) runs `loki start`. "v10" runs the engine10
-  # modernize unit instead (`loki engine10 modernize unit`), the worker side of
+  # modernize unit instead (`loki modernize unit`), the worker side of
   # POST /jobs {"kind":"unit"} (M-23). Only the non-secret unit coordinates
   # below go on the command line; credentials always come from the secret
   # mount, never from a job payload or a value here. The coordinator never

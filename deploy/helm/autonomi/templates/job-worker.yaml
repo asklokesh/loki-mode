@@ -11,6 +11,9 @@ have wrongly rendered alongside the serverless ScaledJob.
 {{- if not (has (default "" .Values.worker.engine) (list "" "v10")) }}
 {{- fail (printf "worker.engine must be empty or v10, got %q" .Values.worker.engine) }}
 {{- end }}
+{{- if and (eq (default "" .Values.worker.engine) "v10") (ne .Values.worker.mode "job") }}
+{{- fail (printf "worker.engine=v10 runs one modernize unit and needs worker.mode=job, got %q" .Values.worker.mode) }}
+{{- end }}
 {{- if eq .Values.worker.mode "job" }}
 apiVersion: batch/v1
 kind: Job
@@ -80,11 +83,10 @@ spec:
           image: {{ include "autonomi.image" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           {{- if eq (default "" .Values.worker.engine) "v10" }}
-          # worker.engine=v10 (M-23): run one engine10 modernize unit. Unit
+          # worker.engine=v10 (M-23): run one `loki modernize unit`. Unit
           # coordinates are plain args; credentials stay in the secret mount.
           command:
             - loki
-            - engine10
             - modernize
             - unit
           args:

@@ -391,9 +391,12 @@ _loki_bun_why() {
 # them to the legacy CLI today. (`--help`'s own content -- whether it should
 # also mention heal/migrate -- is modernize/cli.ts's USAGE text, outside this
 # arm's file set; left unchanged.)
+# M-23: `loki modernize unit ...` (the remote unit worker) is the second routing
+# signal. It takes no --to, and the legacy cmd_modernize has no `unit` subcommand,
+# so routing it to Bun changes nothing for heal/migrate.
 if [ "${1:-}" = "modernize" ]; then
     for _loki_mod_a in "$@"; do
-        if [ "$_loki_mod_a" = "--to" ]; then
+        if [ "$_loki_mod_a" = "--to" ] || [ "${2:-}" = "unit" ]; then
             _lb=$(_loki_bun)
             [ -n "$_lb" ] || { echo "Error: loki modernize needs bun." >&2; exit 1; }
             exec "$_lb" "$BUN_CLI" engine10 "$@"

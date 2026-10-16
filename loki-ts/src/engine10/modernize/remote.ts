@@ -37,7 +37,7 @@ export function buildUnitJob(spec: RemoteUnitSpec): RemoteUnitJob {
   const allowed = new Set<string>(REMOTE_UNIT_FIELDS);
   for (const k of Object.keys(spec)) if (!allowed.has(k)) throw new Error(`unknown unit job field: ${k.slice(0, 40)}`);
   const { repo, ref, unit, mid, target } = spec;
-  if (typeof repo !== "string" || repo.length > MAX_REPO || !REPO_RE.test(repo)) throw new Error("invalid repo");
+  if (typeof repo !== "string" || repo.length > MAX_REPO || !REPO_RE.test(repo) || repo.split("/").some((seg) => seg === "." || seg === "..")) throw new Error("invalid repo");
   if (typeof ref !== "string" || !ref || ref.length > MAX_REF || !REF_RE.test(ref) || ref.includes("..") || /(\.lock|\/|\.)$/.test(ref)) {
     throw new Error("invalid ref");
   }
@@ -129,14 +129,15 @@ export async function dispatchRemoteUnits(
 
 const POLL_MS = 2000;
 const POLL_MAX = 1800;
+const REQUEST_TIMEOUT_MS = 30_000; // per request: a hung server must not stall a poll loop forever
 
 /** Bearer-token HTTP transport for the trigger server's /jobs API. The token is a header, never part of the payload. */
-export function httpTransport(baseUrl: string, token: string, fetchImpl: typeof fetch = fetch, pollMs = POLL_MS): RemoteTransport {
+export function httpTransport(baseUrl: string, token: string, fetchImpl: typeof fetch = fetch, pollMs = POLL_MS, requestTimeoutMs = REQUEST_TIMEOUT_MS): RemoteTransport {
   const root = baseUrl.replace(/\/+$/, "");
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   return {
     async submit(job) {
-      const res = await fetchImpl(`${root}/jobs`, { method: "POST", headers, body: JSON.stringify(job) });
+      const res = await fetchImpl(`${root}/jobs`, { method: "POST", headers, body: JSON.stringify(job), signal: AbortSignal.timeout(requestTimeoutMs) });
       if (res.status !== 202) throw new Error(`submit rejected: HTTP ${res.status}`);
       const body = (await res.json()) as { id?: unknown };
       if (typeof body.id !== "string" || !body.id) throw new Error("submit returned no job id");
@@ -144,7 +145,7 @@ export function httpTransport(baseUrl: string, token: string, fetchImpl: typeof 
     },
     async wait(id) {
       for (let i = 0; i < POLL_MAX; i++) {
-        const res = await fetchImpl(`${root}/jobs/${encodeURIComponent(id)}`, { method: "GET", headers });
+        const res = await fetchImpl(`${root}/jobs/${encodeURIComponent(id)}`, { method: "GET", headers, signal: AbortSignal.timeout(requestTimeoutMs) });
         if (res.status !== 200) throw new Error(`status check failed: HTTP ${res.status}`);
         const body = (await res.json()) as { status?: unknown };
         if (body.status === "passed" || body.status === "failed" || body.status === "unknown") return { status: body.status };

@@ -408,11 +408,13 @@ Both fan-outs hand one independent piece of work to a remote worker and accept t
 | Field | Bound | Required |
 |---|---|---|
 | `kind` | the literal `unit` | yes |
-| `repo` | `owner/name`, at most 140 chars, no leading dash | yes |
+| `repo` | `owner/name`, at most 140 chars, no leading dash, no `.` or `..` segment | yes |
 | `ref` | git ref, at most 200 chars, no `..`, no leading dash | yes |
 | `unit` | unit id, `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`, never contains `~` | yes |
 | `mid` | `mod-<utc>-<6 hex>` | no |
 | `target` | `python3` or `java21` | no |
+
+The worker runs `loki modernize unit --repo <repo> --ref <ref> --unit <unit>` (plus `--mid` and `--target` when given). It fetches repo@ref into a run-owned temp directory with the safe_git helpers, runs the unit there through the same unit runner as a local run, and removes the directory afterwards. A checkout failure, a runner failure or any verdict other than PROVEN exits nonzero with the reason on stderr; exit 2 means bad arguments or runners that are not wired yet.
 
 **G-04 dispatch fields mapped onto it** (scripts/cloud-dispatch.sh, docs/v10/SWARM.md "Cloud dispatch"):
 
