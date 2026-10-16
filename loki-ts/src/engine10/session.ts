@@ -3,7 +3,7 @@
 import { createWatchdog, stallThresholdS } from "../runner/watchdog.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { cancelSessions, sessionsCancelled, trackSession } from "../util/run_pid.ts"; export { cancelSessions }; // one registry covers every provider child (docs/cost-controls.md)
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync, writeSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { archivePriorCosts, writeProviderCost } from "../providers/provider_cost.ts";
 import { modelRouteModel } from "../providers/model_routes.ts";
@@ -86,6 +86,20 @@ export function diffShortstat(cwd: string | undefined): { files: number; inserti
   try { untracked = safeGit(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], o).split("\0").filter(Boolean).length; } catch { /* keep the tracked stat */ }
   const files = /(\d+) files? changed/.exec(out), ins = /(\d+) insertions?\(\+\)/.exec(out), del = /(\d+) deletions?\(-\)/.exec(out);
   return { files: (files ? Number(files[1]) : 0) + untracked, insertions: ins ? Number(ins[1]) : 0, deletions: del ? Number(del[1]) : 0 };
+}
+/** Watchdog signature: shortstat counts plus a cheap content signal (size and mtime of every changed file), so in-place growth of one already-modified file moves it. */
+export function diffSignature(cwd: string | undefined, stat: { files: number; insertions: number; deletions: number } = diffShortstat(cwd)): string {
+  const dir = cwd ?? process.cwd(), o = { timeout: 10_000 };
+  let bytes = 0, newest = 0, n = 0;
+  const add = (list: string): void => {
+    for (const f of list.split("\0").filter(Boolean)) {
+      if (n++ >= 2000) return; // bound the stat work on huge trees
+      try { const st = statSync(join(dir, f)); bytes += st.size; if (st.mtimeMs > newest) newest = st.mtimeMs; } catch { /* deleted: counted by shortstat */ }
+    }
+  };
+  try { add(safeGit(dir, ["diff", "--name-only", "-z"], o)); } catch { /* unreadable: counts only */ }
+  try { add(safeGit(dir, ["ls-files", "-z", "--others", "--exclude-standard", "--", ".", ":(exclude).loki"], o)); } catch { /* tracked only */ }
+  return `${JSON.stringify(stat)}|${bytes}|${newest}`;
 }
 function parseMarkers(stdout: string): SessionMarkers {
   // Line-anchored, so prose that merely names a marker (or an echoed brief) never counts.
@@ -197,7 +211,7 @@ export function createSessionRunner(cfg: SessionRunnerConfig): SessionRunner {
       const capUsd = parseCapUsd(process.env["LOKI_E10_MAX_COST_USD"]), effDir = cfg.lokiRoot ? join(cfg.lokiRoot, "metrics", "efficiency") : null, effBase = effDir !== null && capUsd !== null ? calculateCostFromRecords(readEfficiencyDir(effDir)) : 0; const stopBudgetWatch = isGuarded(cfg.provider) && capUsd !== null ? watchBudget(() => (cfg.remaining?.() ?? 1) <= 0 || (effDir !== null && calculateCostFromRecords(readEfficiencyDir(effDir)) - effBase >= capUsd), () => { cfg.emit?.("guard.budget_stop", opts.stage, { provider: cfg.provider }); kill("limit"); }) : () => {}; // PARITY-ENFORCE: live kill on the run cap (LOKI_E10_MAX_COST_USD), not the unset BUDGET_LIMIT
       const watchdog = createWatchdog(Date.now);
       const heartbeatTimer = setInterval(() => {
-        const diff = diffShortstat(opts.cwd), w = watchdog.tick(stdout.length + errBytes, JSON.stringify(diff) ?? "");
+        const diff = diffShortstat(opts.cwd), w = watchdog.tick(stdout.length + errBytes, diffSignature(opts.cwd, diff));
         cfg.emit?.("heartbeat", opts.stage, { waiting_on: opts.stage, elapsed_s: (Date.now() - start) / 1000, diff, progress: w.cls });
         if (w.stalledNow) cfg.emit?.("session.stalled", opts.stage, { session_id: sessionId, idle_s: w.idleS, threshold_s: stallThresholdS() });
       }, cfg.heartbeatMs ?? HEARTBEAT_MS_DEFAULT);

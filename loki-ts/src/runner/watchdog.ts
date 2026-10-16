@@ -23,7 +23,7 @@ export function createWatchdog(now: () => number, stallS: number = stallThreshol
       const moreOutput = bytes > lastBytes, diffMoved = diff !== lastDiff;
       lastBytes = bytes;
       if (diffMoved) { lastDiff = diff; loopTicks = 0; lastChange = t; stalled = false; }
-      else if (moreOutput) { loopTicks++; if (loopTicks < LOOP_TICKS) lastChange = t; }
+      else if (moreOutput) { loopTicks++; lastChange = t; stalled = false; } // streamed output is progress; "looping" only labels it, a silent static session still stalls
       else loopTicks = 0;
       const idleS = (t - lastChange) / 1000;
       if (idleS >= stallS) { const stalledNow = !stalled; stalled = true; return { cls: "stalled", idleS, stalledNow }; }

@@ -14,14 +14,23 @@ describe("watchdog progress classes", () => {
     t = 500_000; expect(w.tick(20, "b").stalledNow).toBe(false);
     t = 510_000; expect(w.tick(20, "c").cls).toBe("progressing");
   });
-  it("output with an unchanged diff is looping, then stalls", () => {
+  it("output with an unchanged diff is labelled looping but never stalls while output grows", () => {
     let t = 0;
     const w = createWatchdog(() => t, 300);
     w.tick(1, "x");
     const cls: string[] = [];
-    for (let i = 2; i <= 12; i++) { t += 40_000; cls.push(w.tick(i, "x").cls); }
+    for (let i = 2; i <= 40; i++) { t += 40_000; cls.push(w.tick(i, "x").cls); }
     expect(cls).toContain("looping");
-    expect(cls[cls.length - 1]).toBe("stalled");
+    expect(cls).not.toContain("stalled");
+  });
+  it("a silent static session still stalls after streamed output stops", () => {
+    let t = 0;
+    const w = createWatchdog(() => t, 300);
+    w.tick(1, "x");
+    for (let i = 2; i <= 8; i++) { t += 40_000; w.tick(i, "x"); }
+    t += 100_000; expect(w.tick(8, "x").cls).not.toBe("stalled");
+    t += 250_000; const s = w.tick(8, "x");
+    expect(s.cls).toBe("stalled"); expect(s.stalledNow).toBe(true);
   });
   it("threshold env: default below 1800, override, junk falls back", () => {
     expect(DEFAULT_STALL_S).toBeLessThan(1800);

@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { classifyExitCause, createSessionRunner, diffShortstat, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
+import { classifyExitCause, createSessionRunner, diffShortstat, diffSignature, HEARTBEAT_MS_DEFAULT } from "../../src/engine10/session.ts";
 import { resultCostPath, sumResultCosts, UNMETERED } from "../../src/engine10/cost.ts";
 import { liveArchivedCosts, withArchivedCosts } from "../../src/providers/provider_cost.ts";
 const archivedCostIds = (root: string, ids: string[]): string[] => liveArchivedCosts(root, ids, UNMETERED);
@@ -522,6 +522,22 @@ describe("engine10 session", () => {
       expect(result.killed).toBe(true);
       expect(events).toContain("guard.budget_stop");
     }, 20000);
+  });
+});
+
+describe("P12-12c diffSignature sees in-place growth of one modified file", () => {
+  const g = (d: string, ...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: d, encoding: "utf8" });
+  test("shortstat repeats (1 file, 1 insertion) but the signature moves", () => {
+    const d = mkdtempSync(join(tmpdir(), "p12-12c-"));
+    try {
+      g(d, "init", "-q"); writeFileSync(join(d, "a.txt"), "one\n"); g(d, "add", "a.txt"); g(d, "commit", "-qm", "init");
+      writeFileSync(join(d, "a.txt"), "one\ntwo\n");
+      const before = diffSignature(d), stat = diffShortstat(d);
+      writeFileSync(join(d, "a.txt"), "one\ntwo-with-more-text\n");
+      expect(diffShortstat(d)).toEqual(stat);
+      expect(diffSignature(d)).not.toBe(before);
+      expect(diffSignature(d)).toBe(diffSignature(d));
+    } finally { rmSync(d, { recursive: true, force: true }); }
   });
 });
 
