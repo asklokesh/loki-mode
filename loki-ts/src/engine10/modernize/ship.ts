@@ -1,8 +1,8 @@
 // loki-ts/src/engine10/modernize/ship.ts -- M-21: wave ship (docs/v10/MODERNIZE.md sections 3.6 and 9).
-// One PR per wave through the existing credentialed push script (stages/pr.ts DEFAULT_PUSH_SH and
-// pushArgv), supervisor side only. The PR is a draft unless the wave verified (M-20) and every unit is
+// One PR per wave through runPushPr (stages/pr.ts), the shared credentialed
+// push-script helper, supervisor side only. The PR is a draft unless the wave verified (M-20) and every unit is
 // PROVEN; a missing verdict or an empty wave is a draft too (fail-safe). The body lists every unit with
-// its verdict, receipt path and sha256. The push is injectable so tests need no network.
+// its verdict, receipt path and sha256. The push (runPushPr) is injectable so tests need no network.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runPushPr } from "../stages/pr.ts";

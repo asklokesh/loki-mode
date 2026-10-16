@@ -66,6 +66,11 @@ describe("shipWave", () => {
     const ok = s.ship([u("a")], good);
     expect(ok).toMatchObject({ shipped: true, draft: false, existing: true });
   }));
+  it("treats an unknown reuse state (existing null) as not applied when a draft is wanted", () => withSetup(() => ({ ok: true, url: URL, existing: null, localOk: false }), (s) => {
+    const r = s.ship([u("a")], bad);
+    expect(r.shipped).toBe(false);
+    expect(r.reason).toBe("existing PR reused; draft state not applied");
+  }));
   it("lists each unit with verdict, rate, coverage, run id, receipt path and sha in the body", () => {
     const body = renderWaveBody(2, good, [u("a"), { ...u("b", "NOT_PROVEN", ["no oracle"]), rate: 0.5, branchPct: null }]);
     for (const t of [".loki/receipts/a.json", "a".repeat(64), "NOT_PROVEN", "no oracle", "run-a", "100.0%", "87.5%", "50.0%", "n/a"]) expect(body).toContain(t);

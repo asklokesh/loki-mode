@@ -66,9 +66,9 @@ function pushEnv(repoDir: string, pinnedOrigin: string): NodeJS.ProcessEnv {
 }
 /** The one credentialed push-pr call (env, bot token, spawn, URL check incl. E-41 local://); stage and modernize ship share it. */
 export type PushPrResult = { ok: true; url: string; existing: boolean | null; localOk: boolean } | { ok: false; reason: string };
-export function runPushPr(a: { repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean; pinnedOrigin: string; base?: string | null; scriptPath?: string }): PushPrResult {
+export function runPushPr(a: { repoDir: string; branch: string; title: string; bodyFile: string; draft: boolean; pinnedOrigin: string; base?: string | null; scriptPath?: string; env?: NodeJS.ProcessEnv }): PushPrResult {
   const args = [...toPushShellArgs({ cmd: "push-pr", repoDir: a.repoDir, branch: a.branch, title: a.title, bodyFile: a.bodyFile, draft: a.draft }), ...(a.base ? ["--base", a.base] : [])];
-  const env = pushEnv(a.repoDir, a.pinnedOrigin);
+  const env = a.env ?? pushEnv(a.repoDir, a.pinnedOrigin);
   const r = spawnSync("bash", [a.scriptPath ?? DEFAULT_PUSH_SH, ...args], { env, encoding: "utf8" });
   if (r.status !== 0) return { ok: false, reason: `engine10-push.sh push-pr failed (exit ${r.status}): ${(r.stderr ?? "").trim()}` };
   const url = lastNonEmptyLine(r.stdout ?? "");
@@ -114,7 +114,7 @@ export async function runPr(ctx: PrContext, signal: AbortSignal, opts: PrOptions
   const title = `Loki 10: ${verdict} (${ctx.runId})`;
   const scriptPath = opts.pushScriptPath ?? DEFAULT_PUSH_SH;
   const env = pushEnv(ctx.repoDir, pinnedOrigin);
-  const pr = runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath });
+  const pr = runPushPr({ repoDir: ctx.repoDir, branch: ctx.branch, title, bodyFile, draft, pinnedOrigin, base, scriptPath, env });
   if (!pr.ok) return { status: "failed", data: {}, reason: pr.reason };
   const { url, localOk, existing } = pr;
   ctx.emit("pr.opened", "pr", { url, draft, existing });
