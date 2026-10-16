@@ -1688,7 +1688,7 @@ for fam in $fam_want; do
     FJ="$FR/results.jsonl"
     [ "$(row "$FJ" completed)" = true ] && [ "$(row "$FJ" hidden_pass)" = true ] \
         && pass "P12-30: fam-$fam reference edit completes with hidden_pass" \
-        || fail "P12-30: fam-$fam reference edit: $(tail -1 "$FJ" 2>/dev/null) $(tail -3 "$T/fam-$fam.log")"
+        || fail "P12-30: fam-$fam reference edit: $(tail -1 "$FJ" 2>/dev/null) $(tail -3 "$T/fam-$fam.log") prepare.log: $(tail -5 "$FR"/logs/*/prepare.log 2>/dev/null)"
 done
 FR="$T/out-fam-noop"
 STUB_MODE=noop env -u LOKI_RUN_TMP LOKI_EVAL_TASKS_DIR="$HERE/tasks" bash "$HERE/run.sh" --arm raw-claude --task fam-flaky --out "$FR" >/dev/null 2>&1
