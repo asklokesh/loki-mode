@@ -395,11 +395,12 @@ function conformanceDrift(base: Record<string, string>, now: Record<string, stri
   // may not when a file list exists, and without one non-.py data is immutable.
   const immutable = (p: string, linked: boolean): boolean =>
     sealed(p) || linked || (!listed(p) && (!!files || !p.toLowerCase().endsWith(".py")));
-  for (const [p, h] of Object.entries(base)) {
+  // Sorted so the named path is the same on every platform (readdir order differs).
+  for (const [p, h] of Object.entries(base).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     if (now[p] === h) continue;
     if (immutable(p, link(h) || link(now[p]))) return `${p} ${p in now ? "changed" : "removed"}`;
   }
-  const added = Object.keys(now).filter((p) => !(p in base));
+  const added = Object.keys(now).filter((p) => !(p in base)).sort();
   for (const p of added) if (immutable(p, link(now[p]))) return `${p} added`;
   if (files) return null;
   const tops = [...new Set(added.map((p) => p.split("/")[0]!.replace(/\.py$/, "")))];
