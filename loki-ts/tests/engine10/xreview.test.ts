@@ -1,9 +1,9 @@
 // XV-1: default to a different vendor when one is installed (LOKI_XVENDOR_DEFAULT=1). Vendor CLIs are stubbed on a temp PATH; no real CLI runs.
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { minVerdict, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
+import { crossReview, minVerdict, reviewArgv, reviewProvider, reviewReceipt } from "../../src/engine10/stages/xreview.ts";
 
 const root = mkdtempSync(join(tmpdir(), "xv1-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -70,5 +70,24 @@ describe("flag-off and CLI resolution", () => {
   it("reviewArgv spawns the same CLI vendorAvailable resolved", () => {
     expect(reviewArgv("codex", "p", { LOKI_CODEX_CLI: "mycodex" })[0]).toBe("mycodex");
     expect(reviewArgv("claude", "p", {})[0]).toBe("claude");
+  });
+});
+
+describe("crossReview COST-4 risk gate", () => {
+  const withTier = (tier?: string) => {
+    const d = mkdtempSync(join(root, "risk-"));
+    if (tier) { mkdirSync(join(d, ".loki", "state"), { recursive: true }); writeFileSync(join(d, ".loki", "state", "risk-tier.json"), JSON.stringify({ tier })); }
+    return { repoDir: d, provider: "claude", baseSha: "HEAD", runDir: d } as never;
+  };
+  const run = async (tier?: string) => { process.env["LOKI_REVIEW_PROVIDER"] = "codex"; try { return await crossReview(withTier(tier), "VERIFIED", "HEAD"); } finally { delete process.env["LOKI_REVIEW_PROVIDER"]; } };
+  it("low risk is skipped honestly, never pass", async () => {
+    const r = await run("low");
+    expect(r?.level).toBe("not_run"); expect(r?.notes.join(" ")).toContain("skipped: low risk");
+  });
+  it("medium and high still attempt the review", async () => {
+    for (const t of ["medium", "high"]) expect((await run(t))?.notes.join(" ")).not.toContain("skipped: low risk");
+  });
+  it("unknown risk (no record) still attempts the review", async () => {
+    expect((await run())?.notes.join(" ")).not.toContain("skipped: low risk");
   });
 });
