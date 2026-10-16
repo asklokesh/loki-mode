@@ -31,12 +31,9 @@ export interface ClusterResult {
 export const UNIT_LINE_CAP = 1500;
 export const UNIT_FILE_CAP = 40;
 
-/** Tarjan's SCC algorithm, iterative (explicit work stack instead of recursion: a linear
- *  dependency chain of tens of thousands of nodes would blow the JS call stack otherwise).
- *  Returns components in the order they are closed off (each component appears only after
- *  every component it depends on has already been emitted) -- identical output to the
- *  recursive formulation, since each work-stack frame mirrors one strongconnect(v) call and
- *  is popped at the same point that call would have returned. */
+/** Tarjan's SCC algorithm, iterative (a long dependency chain would blow the JS call stack).
+ *  Components are returned in close-off order (dependencies first), identical to the recursive
+ *  formulation: each work-stack frame mirrors one strongconnect(v) call. */
 export function tarjanSCC(graph: DepGraph): string[][] {
   const adj = new Map<string, string[]>();
   for (const n of graph.nodes) adj.set(n.id, []);
@@ -102,10 +99,8 @@ export function tarjanSCC(graph: DepGraph): string[][] {
   return out;
 }
 
-/** Kahn-style layering over a dependency map (node -> the nodes it depends on): repeatedly
- *  peels off nodes with zero remaining dependencies. A cycle would mean the caller passed
- *  something other than an SCC-condensed (acyclic) graph; the leftover is dumped as a final
- *  layer rather than looping forever. */
+/** Kahn-style layering over a node -> dependencies map, peeling nodes with no remaining dependencies.
+ *  A leftover cycle (a non-condensed graph) is dumped as a final layer rather than looping forever. */
 function waveLayers(ids: readonly string[], deps: ReadonlyMap<string, ReadonlySet<string>>): string[][] {
   const remaining = new Map<string, Set<string>>();
   for (const id of ids) remaining.set(id, new Set(deps.get(id) ?? []));

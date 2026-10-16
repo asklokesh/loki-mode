@@ -1,40 +1,20 @@
 // loki-ts/src/engine10/modernize/equiv.ts -- M-13: equivalence checker with sealed normalizers
 // and contract output (docs/v10/MODERNIZE.md section 7 "Equivalence checker contract").
 //
-// Rejection history: slice-M-13-equiv (2026-09-28) was rejected, reproduced: a unit whose oracle
-// seal verdict is NOT_PROVEN (M-12's SealedOracle.verdict) still produced a clean equivalence
-// pass, because the checker read sealed.json's held_out/branch_pct but never read `verdict` or
-// `not_proven`. Fix here: `sealed.verdict !== "PROVEN_ORACLE"` forces this unit's result to
-// NOT_PROVEN outright, before a single case is compared (see checkEquivalence).
+// Rule: "Claims stop exactly where equivalence data stops." Every place a fact cannot be
+// established (missing field, unknown/unsupported tag, malformed value, a runner that throws, zero
+// held-out cases compared) becomes a NOT_PROVEN entry; nothing here upgrades "could not tell" into
+// "equal", and checkEquivalence returns NOT_PROVEN rather than throwing, so a caller cannot catch
+// an error and carry on. A seal verdict other than PROVEN_ORACLE forces NOT_PROVEN before any case
+// is compared (slice-M-13-equiv was rejected for reading held_out/branch_pct but not `verdict`).
 //
-// The wider rule this file exists to enforce (section 7, goals section): "Claims stop exactly
-// where equivalence data stops." Every place a fact cannot be established -- a missing field, an
-// unknown/unsupported tag, a malformed float or list, a runner that throws (a timeout or a
-// normalizer error), zero held-out cases actually compared -- is caught and turned into a
-// NOT_PROVEN entry. Nothing in this file ever upgrades "could not tell" into "equal": on any
-// doubt, `checkEquivalence` returns a NOT_PROVEN result rather than throwing, so the seal and the
-// modernize event log (this unit's receipt) always carry the honest verdict, and a caller cannot
-// wrap a try/catch around a thrown error and silently carry on as if nothing happened.
+// Normalizers (D42 (4)) are declared per unit and hashed into sealed.json by oracle/seal.ts's
+// sealOracle, the same write-once call that seals cases_sha256/coverage_sha256. This file only
+// READS that hash and refuses (NOT_PROVEN) on a mismatch or a seal with none. A separate
+// sealNormalizers call was rejected: nothing bound it to run before implementation.
 //
-// Scope: this file, its own tests, and its fixtures only (BOARD.md M-13 file set), except for
-// oracle/seal.ts's sealing code, which D42 (4) lets M-13 edit as the single writer for this one
-// change (see that file's header). It does not implement the no-op ablation or target
-// conformance (M-14/M-15's job) and takes no input for them.
-//
-// Normalizers (D42 (4), CTO ruling on the M-13 r3 reject): declared per unit and sealed WITH the
-// oracle, literally -- oracle/seal.ts's sealOracle takes them as an argument and hashes them into
-// sealed.json and the sealing event, the same write-once call that already seals
-// cases_sha256/coverage_sha256. checkEquivalence below only ever READS that hash and refuses
-// (NOT_PROVEN) when the normalizers it is given do not match it, or when the seal has none at
-// all. Fix (b) from r3 -- a separate sealNormalizers call, sealed independently of the oracle --
-// was rejected: nothing bound its event to run before implementation, so whichever caller ran it
-// first could still pick the tolerance. Binding the hash into sealOracle itself removes that
-// gap: sealOracle already has to run before capture is trusted, let alone before implementation.
-//
-// Input is the unit id, the sealed cases.jsonl (verified via M-12's verifySeal before any case
-// is trusted), the new tree, and an injected target runner -- same pattern as M-10's
-// oracle/search.ts CaptureRunner: the algorithm here is pure and testable with a stub, while
-// wiring the real python3/java21 runner under the new runtime is the unit runner's job (M-15).
+// The target runner is injected (M-10's CaptureRunner pattern), so the algorithm is pure and
+// testable with a stub; the real python3/java21 runner is M-15's job.
 import type { ModernizeLog } from "./log.ts";
 import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
 import { normalizersSha, verifySeal } from "./oracle/seal.ts";
@@ -44,11 +24,10 @@ import { join } from "node:path";
 
 export type { EquivNormalizers } from "./oracle/seal.ts";
 
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+export const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** py_capture.py's type-tagged value (section 7: "type-tagged canonical JSON, never pickle").
- *  A tag outside this whitelist, or a value whose shape does not match its own tag, is a
- *  NOT_PROVEN cause (a normalizer error), never silently read as equal or unequal. */
+/** py_capture.py's type-tagged value (section 7). A tag outside this whitelist, or a value whose
+ *  shape does not match its tag, is a NOT_PROVEN cause, never read as equal or unequal. */
 const ALLOWED_TAGS = new Set([
   "none", "bool", "int", "float", "decimal", "text", "bytes", "bytearray",
   "datetime", "date", "time", "list", "tuple", "set", "frozenset", "dict", "exc", "unsupported",
@@ -75,9 +54,7 @@ export interface CaseRecord {
   not_proven: string[];
 }
 
-/** What running one OLD case's (entry, args, kwargs) against the NEW tree produces -- same
- *  fields py_capture.py captures, minus the input echo (already known from the CaseRecord being
- *  compared against). */
+/** What running one OLD case against the NEW tree produces: py_capture.py's fields minus the input echo. */
 export interface NewCaseOutcome {
   return: Tagged | null;
   exc: ExcTagged | null;
@@ -85,14 +62,9 @@ export interface NewCaseOutcome {
   files: FileEntry[];
 }
 
-/** Injected target runner (M-10's CaptureRunner pattern): runs one case against the new tree.
- *  It MAY throw (a timeout, a crash, an unrunnable case) -- checkEquivalence catches it and
- *  records the case as NOT_PROVEN with the thrown message, rather than letting one bad case
- *  abort the whole unit or silently compare as unequal. */
+/** Injected target runner (M-10's CaptureRunner pattern). It MAY throw (timeout, crash);
+ *  checkEquivalence records that case as NOT_PROVEN with the message, never aborting the unit. */
 export type NewCaseRunner = (unitId: string, newTreeDir: string, rec: CaseRecord) => NewCaseOutcome;
-
-// EquivNormalizers itself now lives in oracle/seal.ts (D42 (4)): sealOracle is what hashes and
-// seals it, so its shape belongs next to that seal, not duplicated here. Re-exported above.
 
 export interface EquivFailure {
   case: string;
@@ -101,12 +73,9 @@ export interface EquivFailure {
   new: unknown;
 }
 
-/** Contract output shape (section 7's table), plus `verdict`: the table only specifies the raw
- *  counts, but leaving the caller to re-derive "proven" from them is exactly how the rejected
- *  branch's bug happened (a seal-level NOT_PROVEN silently produced a 100% rate). `verdict` is
- *  computed once here, next to the data it is computed from, and it is never PROVEN unless the
- *  oracle seal itself was PROVEN_ORACLE, every case was comparable, every comparable case
- *  matched, and at least one held-out case was actually compared. */
+/** Contract output shape (section 7's table) plus `verdict`, computed once here so callers never
+ *  re-derive "proven" from raw counts (how the rejected branch's bug happened). Never PROVEN unless
+ *  the seal was PROVEN_ORACLE, every case was comparable and matched, and a held-out case was compared. */
 export interface EquivResult {
   unit: string;
   cases: number;
@@ -114,8 +83,7 @@ export interface EquivResult {
   fail: number;
   held_out_pass: number;
   held_out_fail: number;
-  /** pass / cases (not pass / compared): a case excluded as not_proven still counts against the
-   *  denominator, so a unit with any not_proven case can never show rate 1.0. */
+  /** pass / cases: a not_proven case stays in the denominator, so such a unit never shows 1.0. */
   rate: number;
   branch_pct: number;
   failures: EquivFailure[]; // capped at 20, in case order
@@ -135,13 +103,9 @@ function parseCases(raw: string): CaseRecord[] {
   return out;
 }
 
-/** Checks a checkEquivalence call's normalizers against the hash oracle/seal.ts's sealOracle
- *  already bound into this unit's sealed oracle (D42 (4)) -- never writes anything, and never
- *  trusts a hash equiv.ts computed or stored itself. Two refusals, both NOT_PROVEN, never a
- *  silent pass: the seal has no hash at all (an old sealed.json, from before this field existed),
- *  or the hash it has does not match the normalizers this call was given (loosened, tightened, or
- *  just different, at any point after the oracle was sealed -- sealOracle's write-once contract
- *  means there is no "later" sealing call left to race). */
+/** Checks the call's normalizers against the hash sealOracle bound into the sealed oracle (D42 (4));
+ *  writes nothing and trusts no hash equiv.ts stored itself. Two NOT_PROVEN refusals: the seal has
+ *  no hash (pre-field sealed.json), or the hash differs from the normalizers given. */
 function verifyNormalizersAgainstSeal(sealed: SealedOracle, normalizers: EquivNormalizers): { ok: boolean; reason?: string } {
   if (typeof sealed.normalizers_sha256 !== "string") {
     return { ok: false, reason: `oracle seal for ${sealed.unit} has no normalizer hash (sealed before normalizers were bound to the oracle)` };
@@ -156,9 +120,8 @@ function verifyNormalizersAgainstSeal(sealed: SealedOracle, normalizers: EquivNo
   return { ok: true };
 }
 
-/** Parses a float/decimal tag's value. Throws (never silently returns NaN or 0) on anything that
- *  is not the literal "nan"/"inf"/"-inf" or a genuinely finite number -- an unparseable value is
- *  a malformed capture, a NOT_PROVEN cause, never a comparison that happens to pass. */
+/** Parses a float/decimal tag's value. Throws on anything but "nan"/"inf"/"-inf" or a finite number:
+ *  a malformed capture is a NOT_PROVEN cause, never a comparison that happens to pass. */
 function parseFloatTagged(t: Tagged): number {
   const v = t.v;
   if (v === "nan") return NaN;
@@ -173,8 +136,7 @@ function canonStr(t: Tagged): string {
   return JSON.stringify(t);
 }
 
-/** Order-independent element match: greedy, each new-side element used at most once. Case counts
- *  in a real unit's captures are small (dozens, not thousands), so O(n^2) is the right size. */
+/** Order-independent element match: greedy, each new-side element used once (captures are small, O(n^2) is fine). */
 function multisetEqual(av: Tagged[], bv: Tagged[], tol: number): boolean {
   if (av.length !== bv.length) return false;
   const used = new Array(bv.length).fill(false) as boolean[];
@@ -187,12 +149,9 @@ function multisetEqual(av: Tagged[], bv: Tagged[], tol: number): boolean {
 }
 
 /** Deep structural equality over tagged values (section 7's normalizers: float tolerance, set
- *  ordering, nothing else implicit). Throws -- never returns a silent result -- for anything it
- *  cannot actually judge: an unknown/missing tag, either side tagged "unsupported", or a value
- *  whose shape does not match its own tag (a malformed float, list, dict or exc). The caller
- *  (compareCase) turns that throw into a NOT_PROVEN case, per the file's core rule. A genuine
- *  type mismatch between two well-formed tags (`ta.t !== tb.t`) is real evidence of a behavior
- *  difference, so it returns false, not a throw. */
+ *  ordering, nothing implicit). Throws for anything it cannot judge: an unknown/missing tag, an
+ *  "unsupported" side, or a shape that does not match its tag; compareCase turns that into
+ *  NOT_PROVEN. A type mismatch between two well-formed tags is real evidence, so it returns false. */
 function taggedEqual(a: unknown, b: unknown, tol: number, unordered: boolean): boolean {
   if (a === null || b === null) return a === b;
   const ta = a as Tagged;
@@ -204,10 +163,8 @@ function taggedEqual(a: unknown, b: unknown, tol: number, unordered: boolean): b
     throw new Error(`unknown tag: ${ta.t}/${tb.t}`);
   }
   if (ta.t === "unsupported" || tb.t === "unsupported") {
-    // section 7 (py_capture.py docstring): "two unsupported values of the same type ... must
-    // never be read as proven equal, only as not proven." A case whose OLD value is unsupported
-    // is already filtered before reaching here (CaseRecord.not_proven); this also covers an
-    // unsupported value appearing only on the NEW side.
+    // Section 7: two unsupported values must never be read as proven equal. An unsupported OLD
+    // value is filtered earlier (CaseRecord.not_proven); this covers one appearing only on the NEW side.
     throw new Error(`unsupported type cannot be proven equal (${ta.t}/${tb.t})`);
   }
   if (ta.t !== tb.t) return false;
@@ -264,10 +221,8 @@ function taggedEqual(a: unknown, b: unknown, tol: number, unordered: boolean): b
     }
     default: {
       // none/bool/int/text/bytes/bytearray/datetime/date/time: byte-for-byte tag equality.
-      // B2 (opus reject on b379c171): this branch used to compare with JSON.stringify alone,
-      // with no shape check, so two shapeless values of the same tag (e.g. {t:"int"} with no
-      // "v" on either side) counted as equal by accident. "none" is the one tag whose whole
-      // meaning is the absence of a value, so it alone is exempt from the "v" requirement.
+      // B2 (opus reject): shapeless same-tag values (e.g. {t:"int"} with no "v") used to compare
+      // equal by accident; only "none" (the absence of a value) is exempt from requiring "v".
       if (ta.t !== "none" && (!("v" in ta) || !("v" in tb))) {
         throw new Error(`malformed ${ta.t} value: missing "v"`);
       }
@@ -281,10 +236,8 @@ function filesToTagged(files: FileEntry[]): Tagged {
   return { t: "dict", v: sorted.map((f) => [{ t: "text", v: f.path }, f.content]) };
 }
 
-/** Compares one OLD case record against its NEW outcome, field by field. Never throws: any
- *  failure inside the comparison (a missing field, a malformed or unsupported value) is caught
- *  and turned into a NOT_PROVEN reason for the whole case, per the file's core rule -- a case
- *  this function cannot judge is reported as unprovable, never as equal or as a plain failure. */
+/** Compares one OLD case record against its NEW outcome, field by field. Never throws: any failure
+ *  (missing field, malformed or unsupported value) becomes a NOT_PROVEN reason for the whole case. */
 function compareCase(rec: CaseRecord, outcome: NewCaseOutcome, n: EquivNormalizers): { failures: EquivFailure[] } | { notProven: string } {
   const failures: EquivFailure[] = [];
   try {
@@ -298,12 +251,9 @@ function compareCase(rec: CaseRecord, outcome: NewCaseOutcome, n: EquivNormalize
     check("return", rec.return, outcome.return, n.unordered_fields.includes("return"));
     check("exc", rec.exc, outcome.exc, false);
     check("stdout", rec.stdout, outcome.stdout, n.unordered_fields.includes("stdout"));
-    // files are always order-independent by path -- that is what "the files a call wrote" means,
-    // not a normalizer choice. B1 (opus reject on b379c171): `?? []` here used to turn a missing
-    // files capture into "no files", which never triggers the undefined guard in `check` above
-    // (filesToTagged always returns a defined Tagged, even for []). Check for a missing files
-    // list on the raw value, before transforming it, so a genuinely missing capture is
-    // NOT_PROVEN instead of silently read as an empty (and therefore trivially matching) list.
+    // files are always order-independent by path (not a normalizer choice). B1 (opus reject):
+    // `?? []` turned a missing files capture into "no files", bypassing the undefined guard in
+    // `check` (filesToTagged always returns a defined Tagged), so check the raw value first.
     if (!n.skip_fields.includes("files") && (rec.files === undefined || outcome.files === undefined)) {
       throw new Error("missing capture: files");
     }
@@ -314,9 +264,8 @@ function compareCase(rec: CaseRecord, outcome: NewCaseOutcome, n: EquivNormalize
   return { failures };
 }
 
-/** Builds a NOT_PROVEN result with no cases examined (the oracle seal did not verify, or the
- *  declared normalizers are invalid or changed after sealing) and logs it -- never throws, so a
- *  caller cannot catch an exception and silently treat the unit as skipped rather than recorded. */
+/** Builds and logs a NOT_PROVEN result with no cases examined (seal unverified, or normalizers
+ *  invalid or changed). Never throws, so a caller cannot treat the unit as skipped. */
 function notProvenResult(unit: string, reason: string, log: ModernizeLog): EquivResult {
   const result: EquivResult = {
     unit, cases: 0, pass: 0, fail: 0, held_out_pass: 0, held_out_fail: 0,
@@ -327,10 +276,8 @@ function notProvenResult(unit: string, reason: string, log: ModernizeLog): Equiv
   return result;
 }
 
-/** Runs the equivalence check for one sealed unit (section 7's contract). Never throws: an
- *  unverifiable oracle seal, invalid or re-sealed-different normalizers, a case this checker
- *  cannot judge, or a runner that throws (a timeout, a crash) all become part of the returned
- *  NOT_PROVEN data rather than an exception a caller could catch and ignore. */
+/** Runs the equivalence check for one sealed unit (section 7). Never throws: an unverifiable seal,
+ *  bad normalizers, an unjudgeable case or a throwing runner all become NOT_PROVEN data. */
 export function checkEquivalence(
   repoDir: string,
   mid: string,
@@ -353,9 +300,7 @@ export function checkEquivalence(
   const dir = oracleDir(repoDir, mid, unit);
   const sealed = JSON.parse(readFileSync(join(dir, "sealed.json"), "utf8")) as SealedOracle;
 
-  // D42 (4): the normalizers hash lives on the oracle seal itself, bound there by sealOracle --
-  // checked here, against the seal just read above, never against a second log event equiv.ts
-  // writes on its own (that was r3's rejected fix (b)).
+  // D42 (4): the hash lives on the oracle seal; check against it, never a second event of our own (r3's rejected fix (b)).
   const normCheck = verifyNormalizersAgainstSeal(sealed, normalizers);
   if (!normCheck.ok) return notProvenResult(unit, `normalizers: ${normCheck.reason ?? "check failed"}`, log);
 
@@ -372,10 +317,7 @@ export function checkEquivalence(
 
   for (const rec of records) {
     const isHeldOut = heldOutSet.has(rec.case);
-    // A record whose own not_proven field is missing or malformed (not an array) is a corrupt
-    // capture, not a clean case -- report it as NOT_PROVEN instead of throwing (rec.not_proven
-    // .length on a missing field used to crash the whole unit at this line, escaping as an
-    // uncaught exception nothing downstream could log).
+    // A missing or non-array not_proven field is a corrupt capture: NOT_PROVEN, not a crash.
     if (!Array.isArray(rec.not_proven)) {
       notProven.push(`${rec.case ?? "?"}: malformed case record: missing not_proven field`);
       continue;
@@ -407,15 +349,12 @@ export function checkEquivalence(
     }
   }
 
-  // This is the exact bug the prior attempt was rejected for: a seal-level NOT_PROVEN (below the
-  // coverage floor, too few cases, duplicate ids) must dominate every case-level number below it.
+  // The rejected attempt's bug: a seal-level NOT_PROVEN (below floor, too few cases, duplicate ids) must dominate.
   const oracleNotProven = sealed.verdict !== "PROVEN_ORACLE";
   if (oracleNotProven) {
     notProven.unshift(`oracle: ${sealed.not_proven ?? "oracle seal not proven"}`);
   }
-  // Unconditional on heldOutSet.size (not just "> 0 and vacuous"): a sealed held_out of []
-  // cannot prove held-out equivalence either, however PROVEN_ORACLE the seal claims to be, so
-  // zero held-out cases compared is always NOT_PROVEN, never a silent PROVEN.
+  // Zero held-out cases compared is always NOT_PROVEN, even for a sealed held_out of [].
   if (heldOutCompared === 0) {
     notProven.push("unit: no held-out cases were compared (empty held-out set, all excluded, or all not_proven)");
   }
@@ -449,11 +388,8 @@ export function checkEquivalence(
   return result;
 }
 
-/** True only if every field this result carries is consistent with an actually-proven unit:
- *  recomputed from the raw counts rather than trusted from the `verdict` string, so a hand-built
- *  or corrupted result claiming PROVEN with a non-empty not_proven list (or any fail, or zero
- *  held-out cases compared) is still refused. This is the same "never trust the label alone"
- *  discipline M-12's verifySeal applies to sealed.json. */
+/** True only if the raw counts are consistent with a proven unit, recomputed rather than trusted
+ *  from the `verdict` label (like verifySeal), so a corrupted result claiming PROVEN is refused. */
 function isFullyProven(r: EquivResult): boolean {
   return (
     r.not_proven.length === 0 &&
@@ -464,9 +400,7 @@ function isFullyProven(r: EquivResult): boolean {
   );
 }
 
-/** A modernization run can never report itself verified while any unit carries a NOT_PROVEN item
- *  (section 1 goal: "Claims stop exactly where equivalence data stops"). False on an empty list:
- *  nothing was proven, so nothing is verified. */
+/** A run is never verified while any unit carries a NOT_PROVEN item. False on an empty list. */
 export function modernizationVerified(results: readonly EquivResult[]): boolean {
   return results.length > 0 && results.every(isFullyProven);
 }

@@ -4,39 +4,29 @@
 // unit is re-clustered at function granularity, to a depth of 2. After that it is NOT PROVEN
 // with the failing case ids. It is never force-passed."
 //
-// Pure, no I/O: the actual function-granularity re-clustering (a finer DepGraph -> M-05's
-// clusterInventory) and the actual equivalence run (M-13's checkEquivalence against a real
-// runtime) both belong to the unit runner (M-15, not yet built) -- this module only takes them
-// as injected callbacks (the same pattern equiv.ts uses for NewCaseRunner) and owns the depth-2
-// recursion and verdict rule, so that rule is tested once, deterministically, without a runtime.
+// Pure, no I/O: the function-granularity re-clustering and the equivalence run belong to the unit
+// runner (M-15) and are injected as callbacks (as equiv.ts does for NewCaseRunner); this module owns
+// the depth-2 recursion and verdict rule.
 //
-// Depth: the input unit is depth 0. Re-slicing is allowed only while depth < RESLICE_MAX_DEPTH,
-// so a re-slice's children land at depth 1 and (if they still fail) grandchildren at depth 2. A
-// unit at depth 2 that still fails is NOT PROVEN "depth cap reached" and is never sliced again --
-// re-slicing at function granularity twice is section 3.5's whole allowance, not a per-child
-// retry budget.
+// Depth: the input unit is depth 0; re-slicing is allowed only while depth < RESLICE_MAX_DEPTH, so
+// children land at depth 1 and grandchildren at depth 2. A unit at depth 2 that still fails is
+// NOT PROVEN "depth cap reached" (section 3.5's whole allowance, not a per-child retry budget).
 //
-// Verdict rule (never "equivalent" on doubt, per section 1's "claims stop exactly where
-// equivalence data stops"): a parent is PROVEN only if every re-sliced child is PROVEN. An empty
-// re-slice (the slicer found nothing to split further), any child stuck NOT_PROVEN at the depth
-// cap, or an injected callback throwing, all make the parent NOT PROVEN -- never silently
-// skipped, per equiv.ts's same discipline of turning doubt into a NOT_PROVEN result rather than
-// an exception a caller could swallow.
+// Verdict rule (never "equivalent" on doubt): a parent is PROVEN only if every re-sliced child is
+// PROVEN. An empty re-slice, a child stuck NOT_PROVEN at the cap, or a throwing callback makes the
+// parent NOT PROVEN, never silently skipped.
 import type { Unit } from "./cluster.ts";
 import type { EquivResult } from "./equiv.ts";
-import { modernizationVerified } from "./equiv.ts";
+import { errMsg, modernizationVerified } from "./equiv.ts";
 
 /** Produces this unit's children at the next depth (function granularity, per section 3.5).
  *  MAY throw; reslice() catches it and records the unit as NOT_PROVEN rather than propagating. */
 export type ResliceSlicer = (unit: Unit) => Unit[];
 
-/** Runs the equivalence check for one (re-sliced) unit. MAY throw; reslice() catches it and
- *  records the unit as NOT_PROVEN rather than propagating -- same discipline as equiv.ts's
- *  injected NewCaseRunner. */
+/** Runs the equivalence check for one (re-sliced) unit. MAY throw; reslice() records NOT_PROVEN. */
 export type ResliceChecker = (unit: Unit) => EquivResult;
 
-/** Section 3.5: "re-clustered ... to a depth of 2." Exported so a caller (the unit runner, or a
- *  test) can cite the exact cap rather than a bare literal. */
+/** Section 3.5: "re-clustered ... to a depth of 2." */
 export const RESLICE_MAX_DEPTH = 2;
 
 export interface ResliceUnitResult {
@@ -45,15 +35,12 @@ export interface ResliceUnitResult {
   verdict: "PROVEN" | "NOT_PROVEN";
   /** Set only on NOT_PROVEN: why this specific node failed (its own cause, not a child's). */
   reason?: string;
-  /** Failing case ids / reasons bubbled up from every NOT_PROVEN leaf under this node (section
-   *  3.5: "NOT PROVEN with the failing case ids"). Empty when this node is PROVEN. */
+  /** Failing case ids / reasons from every NOT_PROVEN leaf under this node (section 3.5). Empty when PROVEN. */
   notProven: string[];
-  /** This node's re-sliced children, in slicer order. Empty for a leaf (proven directly, an
-   *  empty re-slice, the depth cap, or a thrown callback). */
+  /** Re-sliced children in slicer order; empty for a leaf. */
   children: ResliceUnitResult[];
 }
 
-const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 function leafNotProven(unit: Unit, result: EquivResult): string[] {
   if (result.failures.length > 0) {
@@ -69,12 +56,9 @@ function notProvenNode(unit: Unit, depth: number, reason: string, notProven: str
   return { unit: unit.id, depth, verdict: "NOT_PROVEN", reason, notProven, children: [] };
 }
 
-/** True only if `childNodes` is a strict (proper) subset of `parentNodes`: every child node
- *  belongs to the parent, and the child is strictly smaller. TL reject (M-18 r1, reproduced): a
- *  slicer returning the parent unchanged (`u => [u]`) was accepted as a "re-slice", so a flaky
- *  checker that fails once and passes on retry turned the depth cap into a two-call retry
- *  budget rather than a narrowing requirement. A child with the same nodes, a superset, or any
- *  node outside the parent is rejected here, before check() ever runs on it. */
+/** True only if `childNodes` is a strict subset of `parentNodes`. TL reject (M-18 r1, reproduced):
+ *  a slicer returning the parent unchanged (`u => [u]`) was accepted, turning the depth cap into a
+ *  retry budget for a flaky checker. Same, superset or foreign nodes are rejected before check(). */
 function isStrictNarrowing(childNodes: readonly string[], parentNodes: readonly string[]): boolean {
   const parentSet = new Set(parentNodes);
   const childSet = new Set(childNodes);
@@ -83,10 +67,8 @@ function isStrictNarrowing(childNodes: readonly string[], parentNodes: readonly 
   return true;
 }
 
-/** Slices `unit` (at `depth`, its own depth) into children at `depth + 1` and evaluates each.
- *  PROVEN only if the re-slice produced at least one child, every child is a strict narrowing of
- *  `unit` (never the parent unchanged, a superset, or a disjoint node set), and every such child
- *  is PROVEN. */
+/** Slices `unit` into children at `depth + 1` and evaluates each. PROVEN only if there is at least
+ *  one child, every child strictly narrows `unit`, and every child is PROVEN. */
 function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: ResliceChecker): ResliceUnitResult {
   let kids: Unit[];
   try {
@@ -118,10 +100,8 @@ function resliceAt(unit: Unit, depth: number, slice: ResliceSlicer, check: Resli
   };
 }
 
-/** Checks `unit` (already at `depth`). PROVEN if the checker proves it outright (per equiv.ts's
- *  modernizationVerified, never a hand-rolled second opinion on what "proven" means). Otherwise,
- *  re-slices it further -- unless `depth` has already reached the cap, in which case it is
- *  NOT_PROVEN and is never sliced again (grandchildren at depth 2 are checked, never re-sliced). */
+/** Checks `unit` at `depth`. PROVEN if modernizationVerified says so; otherwise re-slices further
+ *  unless `depth` reached the cap, in which case it is NOT_PROVEN and never sliced again. */
 function evaluate(unit: Unit, depth: number, slice: ResliceSlicer, check: ResliceChecker): ResliceUnitResult {
   let result: EquivResult;
   try {
@@ -138,10 +118,8 @@ function evaluate(unit: Unit, depth: number, slice: ResliceSlicer, check: Reslic
   return resliceAt(unit, depth, slice, check);
 }
 
-/** Re-slices a unit that has already failed equivalence (the caller's job: run M-13's
- *  checkEquivalence first, and only reach for reslice() on NOT_EQUAL/NOT_PROVEN after fix rounds
- *  and best-of-2 -- see section 3.5). Starts at depth 0 and never checks `unit` itself again;
- *  it is presumed already known to have failed. */
+/** Re-slices a unit that already failed equivalence after fix rounds and best-of-2 (section 3.5).
+ *  Starts at depth 0 and never re-checks `unit` itself. */
 export function reslice(unit: Unit, slice: ResliceSlicer, check: ResliceChecker): ResliceUnitResult {
   return resliceAt(unit, 0, slice, check);
 }

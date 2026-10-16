@@ -3,24 +3,17 @@
 // output, autonomy/lib/modernize/py_capture.py) into sealed.json: sha256 of both inputs, a
 // deterministic ~20% held-out split, and the 80% branch-coverage verdict.
 //
-// sealed.json alone is NOT tamper-evident: it lives in the same directory as the data it
-// protects, so a session with filesystem access can delete it and re-seal over a rewritten
-// coverage.json, laundering a below-floor unit into PROVEN_ORACLE. The anchor is the
-// modernize event log (log.ts, ../events.ts EventLog): append-only (opened O_APPEND, one
-// write(2) per line) and single-writer by the M-01 design contract -- the coordinator, not a
-// unit session, per section 3.4. It is rooted one directory above oracle/<unit>/, outside the
-// specific directory a delete-and-reseal targets. That said, this is a contract boundary, not
-// an OS permission one: nothing in seal.ts or log.ts stops a process that can reach
-// `.loki/modernize/<mid>/` from writing events.jsonl directly -- rewriting a sealing line
-// consistently, or corrupting it (readEvents silently skips an unparseable line) and then
-// deleting sealed.json to reseal. Closing that requires the log itself to be tamper-hashed or
-// externally write-protected, which this slice does not add (M-13/M-14, or a dedicated guard).
-// sealOracle refuses to seal a unit that already has a sealing event in that log (so
-// delete-and-reseal is refused even once sealed.json is gone), and verifySeal never trusts
-// sealed.json's own bytes: it cross-checks the recomputed hashes, held-out split and verdict
-// against the FIRST sealing event recorded for the unit, then recomputes the whole sealed
-// record from disk and compares it field-by-field against sealed.json, so a hand-edited
-// sealed.json (any field, not just the hashes or verdict) is caught too.
+// sealed.json alone is NOT tamper-evident: it sits beside the data it protects, so a session with
+// filesystem access could delete it and re-seal over a rewritten coverage.json, laundering a
+// below-floor unit into PROVEN_ORACLE. The anchor is the modernize event log (log.ts): append-only,
+// single-writer by the M-01 contract (the coordinator, section 3.4), rooted above oracle/<unit>/.
+// This is a contract boundary, not an OS permission one: a process that can reach
+// `.loki/modernize/<mid>/` could still write events.jsonl directly (closing that needs a
+// tamper-hashed or write-protected log, not added here).
+// sealOracle refuses a unit that already has a sealing event (delete-and-reseal is refused even
+// with sealed.json gone), and verifySeal never trusts sealed.json's own bytes: it cross-checks the
+// recomputed hashes, held-out split and verdict against the FIRST sealing event for the unit, then
+// recomputes the whole record from disk and compares it field-by-field with sealed.json.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,20 +21,13 @@ import type { ModernizeLog } from "../log.ts";
 import { readModernizeEvents } from "../log.ts";
 import { oracleDir } from "../types.ts";
 
-const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
+export const sha256 = (s: string): string => createHash("sha256").update(s).digest("hex");
 
-// D42 (4), CTO ruling on the M-13 r3 reject: normalizers are bound to the ORACLE seal, not to a
-// separate log event equiv.ts writes on its own. sealOracle below takes the card's normalizers
-// (default: tolerance 0, empty skip_fields -- exact comparison, nothing skipped) and hashes them
-// into sealed.json and the oracle.captured/oracle.flagged event, the same write-once anchor
-// cases_sha256/coverage_sha256 already use. equiv.ts (checkEquivalence) then refuses PROVEN
-// whenever the normalizers it is given do not hash-match this seal, or the seal has no hash at
-// all (an old sealed.json from before this change). Fix (b) -- a separate sealNormalizers call
-// -- was rejected: "event order is not a binding," i.e. nothing stopped that second call from
-// running after the new tree already existed, which is the exact bug (a caller picking
-// tolerance 1e9 post-implementation and getting PROVEN). Binding the hash into the SAME sealing
-// call that produces cases_sha256/coverage_sha256 -- which is already required to run before any
-// implementation touches the unit -- closes that gap structurally instead of by convention.
+// D42 (4), CTO ruling on the M-13 r3 reject: normalizers are bound to the ORACLE seal. sealOracle
+// hashes the card's normalizers into sealed.json and the sealing event (write-once, like
+// cases_sha256); equiv.ts refuses PROVEN on a hash mismatch or a seal with none. A separate
+// sealNormalizers call was rejected: it could run after the new tree existed, letting a caller
+// pick tolerance 1e9 post-implementation and get PROVEN.
 export interface EquivNormalizers {
   /** Absolute tolerance for "float"/"decimal" tagged values. 0 means exact. */
   float_tolerance: number;
@@ -52,13 +38,10 @@ export interface EquivNormalizers {
   skip_fields: Array<"return" | "exc" | "stdout" | "files">;
 }
 
-/** The card's default when a unit declares no normalizers: exact comparison, nothing skipped
- *  (D42 (4)). */
+/** Default when a unit declares no normalizers: exact comparison, nothing skipped (D42 (4)). */
 export const DEFAULT_NORMALIZERS: EquivNormalizers = { float_tolerance: 0, unordered_fields: [], skip_fields: [] };
 
-/** Canonical hash of a normalizers object -- sorted arrays so key order in the source never
- *  changes the hash, used both to seal (sealOracle) and to check a later call against that seal
- *  (equiv.ts's checkEquivalence). */
+/** Canonical hash of a normalizers object (sorted arrays), used to seal and to check against the seal. */
 export function normalizersSha(n: EquivNormalizers): string {
   return sha256(JSON.stringify({
     float_tolerance: n.float_tolerance,
@@ -91,24 +74,18 @@ export interface SealedOracle {
   held_out: string[]; // held-out case ids, subset of case_ids; never shown to the implementer
   held_out_pct: number;
   branch_pct: unknown; // carried through as captured; may be invalid, see computeVerdict
-  // "still converted. Its verdict can never exceed PARTIAL" (section 3.2): a below-floor or
-  // otherwise unprovable unit is flagged here, up front, at seal time -- never a silent pass
-  // some later stage must notice.
+  // Section 3.2: a below-floor or unprovable unit is flagged here at seal time, never a silent pass.
   verdict: "PROVEN_ORACLE" | "NOT_PROVEN";
   not_proven?: string; // set iff verdict is NOT_PROVEN; "; "-joined when more than one reason
-  // Optional, not required: an old sealed.json from before D42 (4) has no such field at all,
-  // and buildSealedOracle below only sets it when a hash was actually supplied (sealOracle
-  // always supplies one for a new seal; verifySeal supplies whatever the anchoring log event
-  // carries, which is nothing for an old event). equiv.ts treats a missing hash as NOT_PROVEN.
+  // Optional: a pre-D42 (4) sealed.json has none; buildSealedOracle sets it only when a hash was
+  // supplied. equiv.ts treats a missing hash as NOT_PROVEN.
   normalizers_sha256?: string;
 }
 
-/** Deterministic ~20% split, ranked by sha256(unit + ":" + case id) -- seeded only by the unit
- * id and each case's own id, never by wall-clock time, file order, or an RNG seed that could be
- * lost or leaked. Rank-based (not bucket-threshold) so the held-out count scales with N instead
- * of being a coin flip per case: `max(1, round(0.2*N))` for N >= MIN_CASES_FOR_HELD_OUT, so a
- * small unit never gets an accidentally-empty held-out set that would let "held-out rate = 100%"
- * pass vacuously (section 7). Below that floor, sealOracle marks the unit NOT PROVEN instead. */
+/** Deterministic ~20% split ranked by sha256(unit:caseId): no clock, file order or RNG seed.
+ * Rank-based so the count is `max(1, round(0.2*N))` for N >= MIN_CASES_FOR_HELD_OUT, so a small
+ * unit never gets an empty held-out set that passes vacuously (section 7). Below that floor,
+ * sealOracle marks the unit NOT PROVEN. */
 function heldOutSplit(unit: string, caseIds: string[]): string[] {
   if (caseIds.length < MIN_CASES_FOR_HELD_OUT) return [];
   const ranked = caseIds
@@ -137,15 +114,10 @@ interface VerdictResult {
   not_proven?: string;
 }
 
-/** Shared by sealOracle and verifySeal so the two can never drift apart: verifySeal must reach
- * the exact same verdict sealOracle did, from the same inputs, or it reports tamper. Fails
- * closed on `branchPct`: anything that is not a finite number in [0, 100] is NOT PROVEN, never
- * silently coerced (a JSON "95" string in a hand-edited coverage.json must not pass `>= 80`).
- * `duplicateIds`: py_capture.py derives a case id as sha256(entry+args+kwargs) and never
- * dedupes, so a repeated input produces duplicate ids in cases.jsonl. heldOutSplit holds out
- * (or shows) every record sharing an id as one group, so a duplicate id shrinks the number of
- * distinct held-out cases below the intended ~20% without ever appearing as an empty split --
- * NOT PROVEN instead of a coverage number nobody can trust. */
+/** Shared by sealOracle and verifySeal so they cannot drift (a different verdict reads as tamper).
+ * Fails closed on `branchPct`: not a finite number in [0, 100] is NOT PROVEN, never coerced (a JSON
+ * "95" string must not pass `>= 80`). `duplicateIds`: py_capture.py never dedupes ids and
+ * heldOutSplit groups records sharing one, shrinking the held-out set below ~20%: NOT PROVEN. */
 function computeVerdict(caseCount: number, branchPct: unknown, duplicateIds: boolean): VerdictResult {
   const reasons: string[] = [];
   if (caseCount < MIN_CASES_FOR_HELD_OUT) {
@@ -164,14 +136,10 @@ function computeVerdict(caseCount: number, branchPct: unknown, duplicateIds: boo
     : { verdict: "NOT_PROVEN", not_proven: reasons.join("; ") };
 }
 
-/** Builds the full sealed record from the raw file contents, with no disk I/O of its own, so
- * sealOracle (writing) and verifySeal (checking) run the identical construction and can never
- * silently diverge. `normalizersSha256` is not derived from casesRaw/coverageRaw (unlike every
- * other field here) -- it is the caller's own external input, passed straight through: sealOracle
- * passes the real hash of the normalizers it was given, verifySeal passes whatever the anchoring
- * log event recorded (possibly nothing, for an old event). Omitted (not just undefined) when not
- * supplied, so JSON.stringify drops the key entirely and an old sealed.json with no such key
- * compares equal to a legacy event that also carries none. */
+/** Builds the full sealed record from raw file contents (no disk I/O), so sealOracle and verifySeal
+ * run the identical construction. `normalizersSha256` is passed straight through (verifySeal passes
+ * what the log event recorded, maybe nothing); the key is omitted when absent so a legacy sealed.json
+ * compares equal to a legacy event. */
 function buildSealedOracle(unit: string, casesRaw: string, coverageRaw: string, normalizersSha256?: string): SealedOracle {
   const coverage = JSON.parse(coverageRaw) as OracleCoverage;
   const caseIds = parseCaseIds(casesRaw);
@@ -194,26 +162,18 @@ function buildSealedOracle(unit: string, casesRaw: string, coverageRaw: string, 
 }
 
 /** True iff the modernize log already carries a sealing event (oracle.captured/oracle.flagged)
- * for this unit. The log is append-only and outside the unit's own oracle/<unit>/ directory, so
- * this survives a deleted or rewritten sealed.json -- the anchor delete-and-reseal cannot reach. */
-function alreadySealedInLog(repoDir: string, mid: string, unit: string): boolean {
+ * for this unit; it survives a deleted or rewritten sealed.json. */
+export function alreadySealedInLog(repoDir: string, mid: string, unit: string): boolean {
   return readModernizeEvents(repoDir, mid).some(
     (e) => (e.type === "oracle.captured" || e.type === "oracle.flagged") && e.data.unit === unit,
   );
 }
 
-/** Reads `oracle/<unit>/cases.jsonl` and `coverage.json` (already captured by M-09/M-10) and
- * writes the sealed record. `log` is mandatory: it is the tamper-evidence anchor (see file
- * header), and a seal nobody can later verify is not a seal. Write-once: refuses to run twice
- * for the same unit, checking the log first (survives a deleted sealed.json) and the file
- * second (belt and suspenders). The "one more capture round" for a below-floor unit (section
- * 3.2) happens before this is ever called, so write-once does not conflict with it. Throws if
- * either input is missing -- capture is never skipped.
- *
- * `normalizers` (D42 (4)): the unit card's declared normalizers, defaulting to
- * DEFAULT_NORMALIZERS (exact comparison, nothing skipped) when the card declares none. Hashed
- * into sealed.json and the sealing event, write-once along with everything else this function
- * seals -- there is no later call that can change it (see file header on EquivNormalizers). */
+/** Reads `oracle/<unit>/cases.jsonl` and `coverage.json` (M-09/M-10) and writes the sealed record.
+ * `log` is mandatory: the tamper-evidence anchor. Write-once: refuses a second seal, checking the
+ * log first (survives a deleted sealed.json). The "one more capture round" for a below-floor unit
+ * (section 3.2) happens before this is called. Throws if an input is missing. `normalizers`
+ * (D42 (4)) default to DEFAULT_NORMALIZERS and are hashed into sealed.json and the sealing event. */
 export function sealOracle(
   repoDir: string,
   mid: string,
@@ -242,7 +202,6 @@ export function sealOracle(
   mkdirSync(dir, { recursive: true });
   writeFileSync(sealedPath, JSON.stringify(sealed, null, 2));
 
-  // The log entry, not sealed.json, is what verifySeal ultimately trusts -- see file header.
   log.append(sealed.verdict === "PROVEN_ORACLE" ? "oracle.captured" : "oracle.flagged", {
     unit,
     cases: sealed.case_count,
@@ -257,16 +216,10 @@ export function sealOracle(
   return sealed;
 }
 
-/** Tamper check, anchored to the modernize log rather than to sealed.json (see file header: a
- * session with filesystem access can delete-and-reseal sealed.json, but not the append-only
- * log). Two independent checks, either of which reports tamper:
- * 1. The FIRST sealing event recorded for this unit must still match what cases.jsonl and
- *    coverage.json hash and split to today -- a rewritten source file, even one re-sealed with
- *    matching bytes, is caught here because the log's copy cannot be un-appended.
- * 2. The on-disk sealed.json must equal the record freshly recomputed from those same files,
- *    field by field -- catching a hand edit to any field (case_ids, held_out_pct, branch_pct,
- *    verdict, ...), not only the hashes.
- * Consumed by M-13/M-14 before trusting a sealed oracle they did not just produce themselves. */
+/** Tamper check anchored to the modernize log, not sealed.json (see file header): (1) the FIRST
+ * sealing event must still match what cases.jsonl and coverage.json hash and split to today; (2) the
+ * on-disk sealed.json must equal the record recomputed from those files, field by field. Consumed
+ * by M-13/M-14 before trusting a sealed oracle they did not just produce. */
 export function verifySeal(repoDir: string, mid: string, unit: string): { ok: boolean; reason?: string } {
   const dir = oracleDir(repoDir, mid, unit);
   const sealedPath = join(dir, "sealed.json");
@@ -292,10 +245,7 @@ export function verifySeal(repoDir: string, mid: string, unit: string): { ok: bo
     return { ok: false, reason: "coverage.json does not match the sealing event's hash (tampered or re-captured)" };
   }
 
-  // The event's own normalizers_sha256 (possibly absent, for a pre-D42(4) event) is passed
-  // straight through, not recomputed -- it is external input the raw files can't derive, same
-  // as `unit`. The final field-by-field compare below still catches a hand-edited sealed.json
-  // whose normalizers_sha256 disagrees with what the log actually recorded.
+  // Passed through (absent for a pre-D42(4) event); the final compare still catches disagreement.
   const eventNormalizersSha = typeof sealEvent.data.normalizers_sha256 === "string" ? sealEvent.data.normalizers_sha256 : undefined;
   const recomputed = buildSealedOracle(unit, casesRaw, coverageRaw, eventNormalizersSha);
   if (JSON.stringify(recomputed.held_out) !== JSON.stringify(sealEvent.data.held_out)) {

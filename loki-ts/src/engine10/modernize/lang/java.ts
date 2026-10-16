@@ -17,14 +17,11 @@ export interface JavaGraphResult {
   method: JavaGraphMethod;
   /** Why jdeps was not used. Null when method is "jdeps", or when there were no .java files. */
   fallbackReason: string | null;
-  /** Imports (import-scan path only) that named no local file, so they got no edge -- recorded
-   *  here instead of silently vanishing. Always [] when method is "jdeps": that path never reads
-   *  the source-level import text, so there is nothing to record from it (its own dropped
-   *  external edges, e.g. java.lang.Object, are simply not tracked here). */
+  /** Imports (import-scan path only) that named no local file and got no edge. Always [] for "jdeps". */
   unresolvedImports: string[];
 }
 
-const PACKAGE_RE = /^\s*package\s+([\w.]+)\s*;/m;
+export const PACKAGE_RE = /^\s*package\s+([\w.]+)\s*;/m;
 // Captures: [1] "static " when present, [2] the dotted path (package for a wildcard class
 // import, member path for a static import, class fqcn otherwise), [3] ".*" when present.
 const IMPORT_RE = /^\s*import\s+(static\s+)?([\w.]+)(\.\*)?\s*;/gm;
@@ -46,16 +43,13 @@ function scanJavaFiles(repoDir: string, files: readonly string[]): JavaFile[] {
   });
 }
 
-// jdeps reports inner/anonymous classes as "Outer$Inner" / "Outer$1"; neither is a file of its
-// own, so drop everything from "$" on to land back on the outer class jdeps compiled from.
+// jdeps reports "Outer$Inner" / "Outer$1"; neither is a file, so drop from "$" on.
 function stripNestedSuffix(fqcn: string): string {
   const i = fqcn.indexOf("$");
   return i < 0 ? fqcn : fqcn.slice(0, i);
 }
 
-// Collects deduplicated (from !== to) edges into `edges`, keyed on the pair so the same edge
-// reported twice (e.g. an outer class and its $N inner class both -> the same target, or a
-// wildcard and an explicit import of the same class) is recorded once.
+// Collects deduplicated (from !== to) edges into `edges`, keyed on the pair.
 function makeEdgeCollector(edges: DepEdge[]) {
   const seen = new Set<string>();
   return (from: string, to: string) => {

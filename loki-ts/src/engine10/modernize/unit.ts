@@ -3,32 +3,22 @@
 // (equiv.ts), M-14 (presealed_wall.ts).
 //
 // Binding requirements (BOARD.md M-15 notes, M-13/M-14 opus reviews, D42 (3)/(4)):
-// (1) sealOracle runs with the card's normalizers BEFORE any implementation exists for the unit.
-//     runUnit below calls oracle/seal.ts's sealOracle as its very first step, strictly before the
-//     injected `implement` callback -- see runUnit's ordering comment and unit.test.ts's ordering
-//     test, which fails an `implement` that runs before the oracle.captured/oracle.flagged event
-//     exists in the modernize log.
-// (2) verifySeal and verifyPreSealedWall are called before trusting an oracle or a Wall. Both
-//     M-13's checkEquivalence and M-14's sealPreSealedWall already call verifySeal internally
-//     (never take a caller's word for a seal); runUnit additionally calls verifyPreSealedWall
-//     itself, right after sealing the Wall and again before ever calling `implement` or
-//     checkEquivalence, so a Wall this run just sealed (or one left over from a crashed resume)
-//     is re-checked from disk/log, never trusted from a return value alone.
-// (3) The base-run parsing M-14 consumes -- runner, exit code, failedCount -- is this file's job
-//     (presealed_wall.ts's own header: "shelling out ... under the target runtime is the unit
-//     runner's job (M-15)"). parsePytestOutput below parses real pytest stdout into a
-//     presealed_wall.ts BaseRunOutcome, failing closed (no summary line, no parsed integer) on
-//     garbled or truncated output rather than guessing.
-// (4) A pytest collection error (exit 2) is classified by presealed_wall.ts's classifyBaseRun from
-//     the raw output, using the Wall's own rule (pytestCollectionIsRed, imported from stages/wall.ts): no
-//     second classifier lives in this file.
+// (1) sealOracle runs with the card's normalizers BEFORE any implementation exists: it is runUnit's
+//     very first step, strictly before the injected `implement` callback (unit.test.ts's ordering
+//     test fails an `implement` that runs before the oracle.captured/oracle.flagged event exists).
+// (2) verifySeal and verifyPreSealedWall run before an oracle or Wall is trusted. runUnit re-checks
+//     the Wall from disk/log right after sealing and again before `implement` or checkEquivalence,
+//     so a just-sealed or crash-resumed Wall is never trusted from a return value alone.
+// (3) parsePytestOutput turns real pytest stdout into a BaseRunOutcome and fails closed (no summary
+//     line, no parsed integer) on garbled or truncated output.
+// (4) A pytest collection error (exit 2) is classified by classifyBaseRun: no second classifier here.
 // (5) MODERNIZE.md:153/262 no-op ablation: an injected stub runner replaces the new unit with stubs;
 //     the oracle cases must then FAIL equivalence, else NOT_PROVEN "oracle does not constrain unit".
-// (6) Conformance files (tests, conftest.py, pytest config) and every .py are hashed at Wall-seal time and must be
-//     unchanged on the new tree before the post-implement conformance run is trusted.
-// (7) FC-24 (docs/v10/FAILURE-CLASSES.md): target conformance is runner_reported. Checks (6) and the per-test
-//     identity check stop accidental and low-effort false passes, not unit code that deliberately subverts
-//     pytest inside its own process. PROVEN's conformance leg carries that limit in the result and the log.
+// (6) Conformance files (tests, conftest.py, pytest config) and every .py are hashed at Wall-seal
+//     time and must be unchanged on the new tree before the post-implement run is trusted.
+// (7) FC-24 (docs/v10/FAILURE-CLASSES.md): target conformance is runner_reported. Checks (6) and the
+//     per-test identity check stop accidental and low-effort false passes, not unit code that
+//     deliberately subverts pytest in-process. PROVEN's conformance leg carries that limit.
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync, readlinkSync, realpathSync, rmSync } from "node:fs";
@@ -37,7 +27,7 @@ import { join, sep } from "node:path";
 import type { ModernizeLog } from "./log.ts";
 import { readModernizeEvents } from "./log.ts";
 import type { EquivNormalizers, SealedOracle } from "./oracle/seal.ts";
-import { sealOracle, verifySeal } from "./oracle/seal.ts";
+import { alreadySealedInLog, sealOracle, verifySeal } from "./oracle/seal.ts";
 import type { BaseConformanceRunner, BaseRunOutcome, PreSealedWallResult } from "./presealed_wall.ts";
 import { classifyBaseRun, sealPreSealedWall, verifyPreSealedWall } from "./presealed_wall.ts";
 import type { EquivResult, NewCaseRunner } from "./equiv.ts";
@@ -48,9 +38,7 @@ import type { CollectRunner } from "../../util/python.ts";
 import { oracleDir } from "./types.ts";
 import type { ModernizeTarget } from "./types.ts";
 
-// ---------------------------------------------------------------------------------------------
 // (6): conformance-file binding.
-// ---------------------------------------------------------------------------------------------
 const CONF_EVENT = "unit.conformance_sealed";
 const SKIP_DIRS = new Set([".git", ".loki", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache", ".tox"]);
 const skipName = (n: string): boolean => SKIP_DIRS.has(n.toLowerCase());
@@ -79,14 +67,14 @@ export function purgePycache(dir: string): void {
 }
 
 const LINK = "symlink:";
-// Only VCS and run state are fully skipped. Everything else, SKIP_DIRS included, is recorded (a norecursedirs
-// override or a link makes pytest walk node_modules/venv/.tox): sealed names by content, links by target, other
-// entries by name and type. __pycache__ and .pytest_cache hold only purged/disabled caches and are skipped.
+// Only VCS and run state are fully skipped. Everything else, SKIP_DIRS included, is recorded (a
+// norecursedirs override or a link makes pytest walk node_modules/venv/.tox). __pycache__ and
+// .pytest_cache hold only purged/disabled caches and are skipped.
 const FULL_SKIP = new Set([".git", ".loki"]);
 const CACHE_DIRS = new Set(["__pycache__", ".pytest_cache"]);
 
-/** Digest of what a link points at, for links resolving outside `dir` (inside, the target is hashed under its own path).
- *  Files hash their bytes; directories hash names plus file bytes (nested links by target string); capped, fail closed. */
+/** Digest of a link target resolving outside `dir` (inside, it is hashed under its own path): file
+ *  bytes, or directory names plus file bytes (nested links by target string); capped, fail closed. */
 function outsideTargetDigest(dir: string, full: string): string {
   let real: string;
   try { real = realpathSync(full); } catch { return "dangling"; }
@@ -112,11 +100,9 @@ function outsideTargetDigest(dir: string, full: string): string {
   return h.digest("hex");
 }
 
-/** sha256 of EVERY regular file under dir (bytes, so fixtures, snapshots and golden data are bound),
- *  keyed by relative path; pyproject.toml, setup.cfg and tox.ini are hashed in full. Under SKIP_DIRS (venvs,
- *  node_modules) sealed names (test files, conftest.py, pytest config, *.pth, sitecustomize.py) are hashed
- *  and every other entry is recorded by name and type ("entry:file" / "entry:dir"). A symlink is never followed: it is recorded as
- *  "symlink:<target>|<digest>" where the digest covers the target bytes when the link resolves outside dir. */
+/** sha256 of EVERY regular file under dir (fixtures and golden data are bound), keyed by relative
+ *  path. Under SKIP_DIRS only sealed names are hashed; other entries are "entry:file" / "entry:dir".
+ *  A symlink is never followed: "symlink:<target>|<digest>" (digest of the bytes when outside dir). */
 export function conformanceHashes(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   const rels: string[] = [];
@@ -168,17 +154,15 @@ function importableOutsideRepo(target: string, names: string[]): Set<string> {
 }
 
 /** First way `now` departs from the sealed `base` set, or null: a sealed test/config file changed or
- *  removed; a test file or config-class file (conftest.py, pytest config, pytest shim, sitecustomize/
- *  usercustomize, .pth) the base never had; or a .py outside the card's `files` changed, removed or added.
- *  Without `files`, only the importable-outside-repo fallback applies to added modules (a changed
- *  existing module cannot be told apart from the unit's own code). */
+ *  removed; a test or config-class file the base never had; or a .py outside the card's `files`
+ *  changed, removed or added. Without `files`, only the importable-outside-repo fallback applies to
+ *  added modules (a changed module cannot be told apart from the unit's own code). */
 function conformanceDrift(base: Record<string, string>, now: Record<string, string>, files: string[] | undefined, target: string): string | null {
   const sealed = (p: string): boolean => TEST_FILE.test(p) || PYTEST_CFG.test(p);
   const listed = (p: string): boolean => !!files?.some((f) => p === f || p.startsWith(f.replace(/\/?$/, "/")));
   const link = (h: string | undefined): boolean => !!h?.startsWith(LINK);
-  // Sealed test/config files and any symlink (new or changed, listed or not: pytest follows linked dirs
-  // and collects conftest.py inside) are immutable. Otherwise a listed path may change; an unlisted one
-  // may not when a file list exists, and without one non-.py data is immutable.
+  // Sealed test/config files and any symlink (pytest follows linked dirs) are immutable. Otherwise a
+  // listed path may change; an unlisted one may not when a file list exists, else non-.py data is immutable.
   const immutable = (p: string, linked: boolean): boolean =>
     sealed(p) || linked || (!listed(p) && (!!files || !p.toLowerCase().endsWith(".py")));
   // Sorted so the named path is the same on every platform (readdir order differs).
@@ -195,9 +179,8 @@ function conformanceDrift(base: Record<string, string>, now: Record<string, stri
   return hit ? `${hit} added (shadows a module importable outside the repo)` : null;
 }
 
-/** Why the post-implement run is not a full pass of the sealed tests, or null. Fails closed. `expected` are the
- *  sealed test identities ("classname::name"); every one must have outcome passed (not skipped, xfailed,
- *  xpassed or error). Identities outside the set never count. */
+/** Why the post-implement run is not a full pass of the sealed tests, or null. Fails closed. Every
+ *  `expected` identity ("classname::name") must be passed (not skipped, xfailed, xpassed or error). */
 export function conformanceShortfall(expected: string[] | undefined, now: Pick<BaseRunOutcome, "counts" | "tests"> | undefined): string | null {
   if (!expected || expected.length === 0) return "no sealed test identities were recorded";
   if (!now?.counts || !now.tests) return "no verified pytest footer (the run did not finish or its report disagrees)";
@@ -207,13 +190,10 @@ export function conformanceShortfall(expected: string[] | undefined, now: Pick<B
   return `${bad.length} of ${expected.length} sealed tests did not pass (${bad.slice(0, 3).map((id) => `${id}: ${now.tests![id] ?? "did not run"}`).join(", ")})`;
 }
 
-// ---------------------------------------------------------------------------------------------
 // (1)/(2): card to v10 run orchestration.
-// ---------------------------------------------------------------------------------------------
 
-/** One unit's card (section 3.3 plan.json / units/<unit>.md), narrowed to what runUnit needs.
- *  `newTreeDir` defaults to `repoDir` (implementation happens in place) -- per-unit worktree
- *  isolation is the scheduler's job (M-17), not this file's. */
+/** One unit's card (section 3.3), narrowed to what runUnit needs. `newTreeDir` defaults to `repoDir`
+ *  (in place); per-unit worktree isolation is the scheduler's job (M-17). */
 export interface UnitCard {
   unit: string;
   repoDir: string;
@@ -226,9 +206,8 @@ export interface UnitCard {
   baseSha?: string | null;
 }
 
-/** Modernizes one unit in place. Receives the card and must leave `newTreeDir` (repoDir, by
- *  default) with the modernized code before returning. runUnit never calls this until the oracle
- *  is sealed and verified and the pre-sealed Wall is sealed and verified (1)/(2) above. */
+/** Modernizes one unit in place; must leave `newTreeDir` modernized before returning. runUnit calls
+ *  it only after the oracle and pre-sealed Wall are sealed and verified (1)/(2). */
 export type Implementer = (card: UnitCard) => void;
 
 export interface UnitRunResult {
@@ -255,25 +234,11 @@ function readOracleSealed(repoDir: string, mid: string, unit: string): SealedOra
   return JSON.parse(readFileSync(join(oracleDir(repoDir, mid, unit), "sealed.json"), "utf8")) as SealedOracle;
 }
 
-/** True once this unit's oracle already has a sealing event, without needing sealOracle's own
- *  throw -- lets runUnit tell "already sealed from a prior/resumed run" apart from any other
- *  sealOracle failure (missing cases.jsonl/coverage.json), which must still surface. */
-function oracleAlreadySealed(repoDir: string, mid: string, unit: string): boolean {
-  return readModernizeEvents(repoDir, mid).some(
-    (e) => (e.type === "oracle.captured" || e.type === "oracle.flagged") && e.data.unit === unit,
-  );
-}
-
 /** Card to v10 run: seals the oracle, seals and verifies the pre-sealed Wall against the base
- *  tree, only THEN runs the implementation, and finally checks equivalence -- section 3.4/3.5,
- *  D30. Every step that can fail turns into a NOT_PROVEN result rather than a thrown error, same
- *  discipline as equiv.ts's checkEquivalence: "claims stop exactly where equivalence data stops."
- *
- *  Ordering (1): sealOracle is the very first call in this function, strictly before
- *  `implement(card)` -- nothing on any path below reaches `implement` before it.
- *  Trust (2): verifySeal gates whether the just-sealed (or resumed) oracle is trusted at all;
- *  verifyPreSealedWall gates whether the just-sealed (or resumed) Wall is trusted, both re-read
- *  from disk/log rather than taken from a return value. */
+ *  tree, only THEN runs the implementation, and finally checks equivalence (section 3.4/3.5, D30).
+ *  Every failing step becomes a NOT_PROVEN result, never a throw. Ordering (1): sealOracle is the
+ *  first call, strictly before `implement(card)`. Trust (2): verifySeal and verifyPreSealedWall
+ *  gate the oracle and Wall, both re-read from disk/log, not from a return value. */
 export function runUnit(
   card: UnitCard,
   log: ModernizeLog,
@@ -289,7 +254,7 @@ export function runUnit(
   const newTreeDir = card.newTreeDir ?? repoDir;
 
   // (1) sealOracle first, unconditionally, before implement is ever reachable below.
-  if (!oracleAlreadySealed(repoDir, mid, unit)) {
+  if (!alreadySealedInLog(repoDir, mid, unit)) {
     try {
       sealOracle(repoDir, mid, unit, log, card.normalizers);
     } catch (e) {
@@ -305,8 +270,7 @@ export function runUnit(
   }
   const oracle = readOracleSealed(repoDir, mid, unit);
 
-  // Pre-sealed Wall: runs the conformance check on the base (unmodernized) tree, still before
-  // `implement` -- a green or not_run base refuses the seal outright (section 7, D42 (3)).
+  // Pre-sealed Wall: conformance on the base tree, before `implement`; a green or not_run base refuses the seal (D42 (3)).
   let freshSeal = false;
   let expected: string[] | null | undefined; // sealed test identities; null = base never collected, derive post-implement
   try {
@@ -320,22 +284,17 @@ export function runUnit(
     }
     freshSeal = true;
   } catch (e) {
-    // Write-once throw: already sealed from a prior/resumed run. verifyPreSealedWall below is the
-    // real trust check regardless of why this call produced no fresh seal.
+    // Write-once throw: already sealed by a prior run; verifyPreSealedWall below is the trust check.
     void e;
   }
 
-  // (2) verifyPreSealedWall before trusting the Wall, whether just sealed above or resumed --
-  // never taken from sealPreSealedWall's own return value alone.
+  // (2) verifyPreSealedWall before trusting the Wall, just sealed or resumed.
   const wallCheck = verifyPreSealedWall(repoDir, mid, unit);
   if (!wallCheck.ok) {
     return notProvenUnitResult(unit, `presealed wall invalid: ${wallCheck.reason ?? "unknown"}`, oracle, null);
   }
-  // Read the classification back from the sealing event itself ("wall.presealed.sealed",
-  // duplicated here the same way presealed_wall.ts's own file header duplicates D42 (3) from
-  // wall.ts, rather than importing an unexported constant) instead of assuming it. sealPreSealedWall
-  // only ever writes a seal on "red", so this is always "red" today, but the B2 ablation check
-  // below reads it explicitly rather than trusting that invariant silently across a refactor.
+  // Read the classification back from the "wall.presealed.sealed" event rather than assuming it:
+  // sealPreSealedWall only seals on "red" today, but the B2 check must not rely on that silently.
   const sealedEvent = readModernizeEvents(repoDir, mid).find(
     (e) => e.type === "wall.presealed.sealed" && e.data.unit === unit,
   );
@@ -345,8 +304,8 @@ export function runUnit(
     sealed: true,
   };
 
-  // (6) Bind the conformance files to the seal: hashed from the pristine base tree, persisted as an
-  // event so a resumed run never re-hashes an already modified tree. No record, no PROVEN.
+  // (6) Bind conformance files to the seal: hashed from the pristine base tree and persisted, so a
+  // resumed run never re-hashes a modified tree. No record, no PROVEN.
   const bound = readModernizeEvents(repoDir, mid).find((e) => e.type === CONF_EVENT && e.data.unit === unit);
   let sealedHashes = bound?.data.files as Record<string, string> | undefined;
   if (!sealedHashes) {
@@ -380,9 +339,7 @@ export function runUnit(
   // Conformance files must be byte-identical to the sealed base (tests, conftest.py, pytest config).
   const drift = conformanceDrift(sealedHashes, conformanceHashes(newTreeDir), card.files, card.target);
   if (drift) return notProvenUnitResult(unit, `conformance files changed since the Wall sealed: ${drift}`, oracle, wall);
-  // Target conformance: the same check, re-run against the MODERNIZED tree, must now pass (exit
-  // 0 / green) -- a unit whose cases match the oracle but whose target-runtime conformance still
-  // fails (or cannot even run) has not actually been modernized.
+  // Target conformance re-run against the MODERNIZED tree must pass: matching the oracle alone is not modernized.
   purgePycache(newTreeDir);
   const newOutcome = runConformance(unit, newTreeDir);
   const newClassification = classifyBaseRun(newOutcome, newTreeDir);
@@ -394,8 +351,7 @@ export function runUnit(
       wall,
     );
   }
-  // A bare exit 0 is not proof (os._exit(0), pytest.exit, an all-skipped or xfailed run): every sealed test
-  // identity must appear in the runner-reported junit report (FC-24) with outcome passed.
+  // A bare exit 0 is not proof (os._exit(0), pytest.exit, all-skipped): every sealed test identity must be passed in the junit report (FC-24).
   let want = expected ?? undefined;
   if (expected === null) {
     const files = Object.keys(sealedHashes).filter((p) => TEST_FILE.test(p) && !p.split("/").some(skipName) && !sealedHashes![p]!.startsWith(LINK) && !sealedHashes![p]!.startsWith("entry:"));
